@@ -515,6 +515,8 @@ def test_a_node_that_publishes_nothing_checks_anyway(monkeypatch):
     watcher = BlockWatcher(state)
     assert watcher._update_checked == 0.0
     looked = []
+    monkeypatch.setattr("arcade.web.watcher.update._layout",
+                        lambda: (pathlib.Path("venv"), pathlib.Path("src"), True))
     monkeypatch.setattr("arcade.web.watcher.update.check",
                         lambda: looked.append(1) or (None, None, False))
     monkeypatch.setattr(type(state), "setting",
@@ -554,6 +556,8 @@ def test_it_says_what_it_decided(monkeypatch):
     monkeypatch.setattr(type(state), "setting",
                         lambda self, name, default=None: True, raising=False)
 
+    monkeypatch.setattr("arcade.web.watcher.update._layout",
+                        lambda: (pathlib.Path("venv"), pathlib.Path("src"), True))
     monkeypatch.setattr("arcade.web.watcher.update.check",
                         lambda: ("abc1234", "abc1234", False))
     watcher._auto_update()
@@ -565,6 +569,8 @@ def test_it_says_what_it_decided(monkeypatch):
         raise OSError("connection refused")
 
     watcher._update_checked = 0.0
+    monkeypatch.setattr("arcade.web.watcher.update._layout",
+                        lambda: (pathlib.Path("venv"), pathlib.Path("src"), True))
     monkeypatch.setattr("arcade.web.watcher.update.check", unreachable)
     watcher._auto_update()
     assert state.update_status["what"] == "could not reach the site"
@@ -638,6 +644,8 @@ def test_a_successful_update_is_not_read_from_the_exit_status(monkeypatch, tmp_p
 
     checks = iter([("old1234", "new5678", True),      # before
                    ("new5678", "new5678", False)])    # after, on disk
+    monkeypatch.setattr("arcade.web.watcher.update._layout",
+                        lambda: (pathlib.Path("venv"), pathlib.Path("src"), True))
     monkeypatch.setattr("arcade.web.watcher.update.check", lambda: next(checks))
 
     class Killed:
@@ -660,6 +668,8 @@ def test_an_update_that_really_failed_still_says_so(monkeypatch):
     monkeypatch.setattr(type(state), "setting",
                         lambda self, name, default=None: True, raising=False)
     checks = iter([("old1234", "new5678", True), ("old1234", "new5678", True)])
+    monkeypatch.setattr("arcade.web.watcher.update._layout",
+                        lambda: (pathlib.Path("venv"), pathlib.Path("src"), True))
     monkeypatch.setattr("arcade.web.watcher.update.check", lambda: next(checks))
 
     class Broke:
@@ -671,3 +681,27 @@ def test_an_update_that_really_failed_still_says_so(monkeypatch):
     watcher._auto_update()
     assert state.update_status["what"] == "the update did not take"
     assert "wheel" in state.update_status["error"], "and what it said"
+
+
+
+def test_a_source_checkout_is_never_updated_automatically(monkeypatch):
+    """2026-10-13: the mini PC runs from a source checkout. Its commit never matches the
+    published one (a filtered copy, with commits of its own), so every 15 minutes the
+    automatic update ran: nothing to fetch, then a restart of the interface. A source
+    checkout updates with git; the watcher says so and does nothing else."""
+    from arcade.web.watcher import BlockWatcher
+
+    state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
+    watcher = BlockWatcher(state)
+    monkeypatch.setattr(type(state), "setting",
+                        lambda self, name, default=None: True, raising=False)
+    monkeypatch.setattr("arcade.web.watcher.update._layout",
+                        lambda: (pathlib.Path("venv"), pathlib.Path("."), False))
+    monkeypatch.setattr("arcade.web.watcher.update.current_revision", lambda checkout: "453b7b5")
+    ran = []
+    monkeypatch.setattr("arcade.web.watcher.update.check", lambda: ran.append("check") or ("a", "b", True))
+    monkeypatch.setattr("arcade.web.watcher.subprocess.run", lambda *a, **k: ran.append("run"))
+    watcher._auto_update()
+    assert ran == [], "neither asked the site nor ran the updater"
+    assert state.update_status["what"].startswith("a source checkout")
+    assert state.update_status["installed"] == "453b7b5"

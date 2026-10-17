@@ -5,13 +5,19 @@
 <h1>Overview</h1>
 <p class="sub" style="margin-top:-4px">Seats, limits, the node's coins and every switch
   are in one place: <a href="/admin">the admin panel</a>.</p>
-<p class="sub">Two chains, permanently: messages on testnet, value on mainnet.</p>
+<p class="sub">Messages on testnet, value on mainnet{{ ' and on Dogecoin' if doge }}.</p>
 
 <div class="chainbar">
   {{ chains.card(state.messaging, messaging, "Messenger — messages are conversational, and testnet chains get reset.",
                  None) }}
   {{ chains.card(state.ledger, ledger, "Tokens, NFTs and PEP — assets belong on a chain nobody resets.",
                  "Read-only until a wallet is enabled here." if not ledger.wallet else None) }}
+  {% if doge %}
+  {# The third network (2026-10-13), from the start, opening when synced. #}
+  {{ chains.card(state.doge, doge, "Dogecoin — DOGE tips, tokens, NFTs and coins.",
+                 None if doge_sync.ready else
+                 "Opens when its node has synced: " ~ ('%.1f' % (100 * (doge_sync.progress or 0))) ~ "% so far.") }}
+  {% endif %}
 </div>
 
 <div class="grid">

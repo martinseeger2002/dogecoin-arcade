@@ -134,7 +134,23 @@ def wallet_summary(rpc: RpcClient) -> dict[str, Any]:
     return info
 
 
+#: (node) -> (until, addresses): known_addresses, for thirty seconds (2026-10-05:
+#: the backup page asked twice, half a second each).
+_KNOWN: dict = {}
+
+
 def known_addresses(rpc: RpcClient) -> list[str]:
+    creds = getattr(rpc, "_creds", None)
+    key = (getattr(creds, "host", ""), getattr(creds, "port", 0))
+    held = _KNOWN.get(key)
+    if held and held[0] > time.time():
+        return list(held[1])
+    found = _known_addresses(rpc)
+    _KNOWN[key] = (time.time() + 30, list(found))
+    return found
+
+
+def _known_addresses(rpc: RpcClient) -> list[str]:
     """Every address the wallet knows, deduplicated, in a stable order.
 
     `listaddressgroupings` only reports addresses that have been used, so the

@@ -696,6 +696,13 @@ def public(offer: dict) -> dict:
     """The offer as it is sent to the buyer: everything but the bookkeeping."""
     out = {k: offer[k] for k in ("id", "network", "shop", "listing", "seller", "buyer",
                                  "give", "take", "outpoint", "created", "expires")}
+    # Which of the two kinds of key stands on this offer (a tester). Every
+    # row in this book was made by a wallet whose key sits on the node that made
+    # it -- `make_offer` and `offer_for_order` both refuse an offer whose maker
+    # is not in their `own` list -- so its signature is a node's, and never a
+    # browser's. The reader is told, rather than left to infer it from the fact
+    # that the offer came from a node at all.
+    out["signed_by"] = "node"
     # The order a fill is for travels with it. The buyer already knows which
     # order it asked about; carrying it here lets every check downstream be
     # made against the offer itself rather than against who called what.

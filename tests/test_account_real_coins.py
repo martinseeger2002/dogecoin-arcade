@@ -1,19 +1,14 @@
-"""Real coins stay out of reach until somebody proves they can come back.
+"""Real coins are an account's own from the start; backing up is a notice.
 
-docs/multi-user.md §1b: mainnet is opt-in per account, behind the mnemonic
-confirmation, "so nobody touches real coins before proving they wrote the
-words down". An account gets a wallet on both chains the minute it exists
-(D-162), so without this gate the first thing a careless person ever does
-with real money is move it out of a browser they can never return to.
+docs/multi-user.md §1b used to put mainnet behind the mnemonic
+confirmation. 2026-10-08, after an account of his own had real coins
+it could not move: "don't require them to enter their 12 words in order to
+enable main chain transactions, but allow them to back them up at their
+leisure. If they don't back them up, that's on them give them a notice."
 
-What the gate is and is not, since the difference is the part worth
-testing: the node cannot check the words without knowing them, which every
-other decision here exists to prevent (D-155, D-159). So the browser checks
-them by deriving the account's own mainnet address out of the words as
-typed, and the node is told the answer. These tests are about what the node
-then does with it -- refuses a real send, refuses it in a way that says
-what to do, refuses it without eating the offer or the account's neighbour's
-turn, and never once mentions it while the coins are the free kind.
+So: no send is refused for the words, the pages say when they were never
+typed back, and the check that takes the notice away still happens in the
+browser -- the node is told the answer and never the words (D-155, D-159).
 """
 
 import pathlib
@@ -71,21 +66,18 @@ def _open_both(app):
     return pubkey
 
 
-def test_a_new_account_cannot_see_mainnet_as_unlocked(client):
-    """The page has to know before it offers a send, not after somebody
-    signs and reads why it failed."""
+def test_a_new_account_is_told_it_has_not_backed_up(client):
+    """The notice needs to know before the person sends anything."""
     app, _ = client
     _open_both(app)
-    row = _main_chain_row(app)
-    assert row["locked"] is True
-    assert next(one for one in app.get("/account").json()["chains"]
-                if not one["mainnet"])["locked"] is False, \
-        "the free coins stay exactly as available as they were"
+    assert all(row["backed_up"] is False
+               for row in app.get("/account").json()["chains"])
+    assert "locked" not in _main_chain_row(app), "nothing is locked any more"
 
 
-def test_a_real_send_is_refused_in_words_somebody_can_act_on(client):
-    """Not "403 forbidden": the answer to "why not" has to be the thing to
-    do next, because the person reading it has not written anything down."""
+def test_a_real_send_is_not_refused_for_the_words(client):
+    """A real send goes as far as its signatures: these are junk, so it
+    fails -- and not because the words were never typed back."""
     app, state = client
     _open_both(app)
     _fund(app, state, MAIN)
@@ -95,60 +87,46 @@ def test_a_real_send_is_refused_in_words_somebody_can_act_on(client):
     assert offered.status_code == 200, offered.text
     done = app.post("/account/sign", json={
         "offer": offered.json()["offer"], "signatures": [], "pubkey": "02" + "aa" * 31})
-    assert done.status_code == 400
-    assert WORDS in done.json()["detail"], done.json()["detail"]
+    assert WORDS not in str(done.json()), done.text
 
 
-def test_saying_no_costs_the_offer_nothing(client):
-    """A refusal that ate the offer would send the browser away to build the
-    whole transaction again after a trip to another page -- and an offer is
-    single-use by design, so the second attempt is not free.
-    """
-    app, state = client
-    _open_both(app)
-    _fund(app, state, MAIN)
-    offered = app.post("/account/send",
-                       json={"to": THEIRS_MAIN,
-                             "amount": "1", "chain": "main"}).json()
-    body = {"offer": offered["offer"], "signatures": [],
-            "pubkey": "02" + "aa" * 31}
-    first = app.post("/account/sign", json=body)
-    assert first.status_code == 400 and WORDS in first.json()["detail"]
-    again = app.post("/account/sign", json=body)
-    assert WORDS in again.json()["detail"], \
-        "the second refusal found the offer, so the first did not consume it"
-
-
-def test_the_words_are_the_answer_and_not_a_passport(client):
-    """Confirming switches it on; refusing to confirm switches on nothing;
-    and it is this account's flag and nobody else's."""
+def test_typing_the_words_back_takes_the_notice_away(client):
+    """Right words mark it backed up; wrong ones change nothing; and it is
+    this account's flag and nobody else's."""
     app, state = client
     _open_both(app)
     refused = app.post("/account/mainnet", json={"words_match": False})
     assert refused.status_code == 400
-    assert _main_chain_row(app)["locked"] is True, "nothing was changed"
+    assert _main_chain_row(app)["backed_up"] is False, "nothing was changed"
+    assert "Show my twelve words" in app.get("/me/backup").text
+    assert "not backed up your twelve words" in app.get("/me/backup").text
 
     taken = app.post("/account/mainnet", json={"words_match": True})
     assert taken.status_code == 200, taken.text
-    assert taken.json()["mainnet"] is True
-    assert _main_chain_row(app)["locked"] is False
+    assert taken.json()["backed_up"] is True
+    assert _main_chain_row(app)["backed_up"] is True
+    page = app.get("/me/backup").text
+    assert "not backed up your twelve words" not in page and "Backed up" in page
 
     # A second account on the same node has not typed anything.
     _seat(app)
-    assert _main_chain_row(app)["locked"] is True, \
-        "one account's words are not another account's permission"
+    assert _main_chain_row(app)["backed_up"] is False, \
+        "one account's words are not another account's backup"
 
 
-def test_no_sentence_about_words_on_a_chain_where_coins_are_free(client):
-    """The gate is about money. Testnet sends must not be slowed by it, and
-    a testnet failure must not be explained by it."""
+def test_the_words_page_asks_for_the_password_itself(client):
+    """Shown only after the password is typed on the Backup page, never from
+    the wallet already open in the tab (2026-10-08: "Make sure you have to
+    enter the password a second time to view the 12 words")."""
     app, _ = client
     _open_both(app)
-    broke = app.post("/account/send",
-                     json={"to": THEIRS_TEST, "amount": "1",
-                           "chain": "regtest"})
-    assert broke.status_code == 400, "no coins, which is the true reason"
-    assert WORDS not in str(broke.json()), broke.text
+    page = app.get("/me/backup").text
+    script = page.split('$("show-words").onclick', 1)[1].split("};\n", 1)[0]
+    assert 'wallet.open(sealed, password)' in script
+    assert '$("words-pw").value' in script
+    assert "opened(" not in script and "sessionStorage" not in script, \
+        "an unlocked tab must not be a way to the words"
+    assert "fetch(\"/account" not in script, "the words are never sent"
 
 
 def test_the_words_never_reach_the_node(app_state):

@@ -60,6 +60,7 @@ outside an arcade viewer, or anything else goes wrong, the room has
 | `room.send(value)` | send to everyone else; a string as is, anything else as JSON |
 | `room.on('message', fn(data, player))` | `data` is parsed JSON when it parses |
 | `room.on('join', fn(player))`, `room.on('leave', fn(player))` | |
+| `room.on('rejoined', fn(me))` | your connection dropped for longer than the node waits (30 seconds) and you were seated again: everyone else saw you leave and come back, so **send your state again** (position, gear) |
 | `room.on('closed', fn(why))` | the room is gone for good (the node unreachable for about ten minutes); join again to retry |
 | `room.leave()` | leave the room |
 
@@ -99,6 +100,93 @@ Nothing is required. When the tab closes or navigates, the viewer leaves every
 room. Call `room.leave()` when a player moves to another part of your game,
 then `join()` the next room. Being in several rooms at once is fine.
 
+### Busy places: cells and full rooms
+
+One room for a whole town means everybody hears everybody: a thousand players
+sending five messages a second is five thousand a second for each of them. Two
+helpers keep a crowd cheap:
+
+```js
+// A full room sends you on: town, town#2, town#3 ... (room.name says which).
+arcade.realtime.join('town', {cap: 50});
+
+// The world in square cells: you hear the cells within sight, and speak in your own.
+arcade.realtime.area('world', {cell: 64, view: 48, x: px, y: py}).then(function (a) {
+  a.on('message', function (data, p) { movePlayer(p, data); });
+  a.on('join', addPlayer); a.on('leave', removePlayer);
+  // as the player walks:
+  a.move(px, py);                // cells come and go by themselves
+  a.send({x: px, y: py});        // heard by everyone who can see your cell
+});
+```
+
+Keep `view` smaller than `cell` and a player is in at most four cells, whatever the
+size of the world. A player standing in two of your cells is one player to you:
+`join` once, `leave` when they are out of all of them.
+
+### Any node is the way in
+
+A room is the same room on every node, so a player can use whichever node answers
+them fastest. The viewer showing a game asks its own node for the other nodes it
+can reach over https (their tunnel addresses, and arcade domains on the chain),
+times a hello to each, and plays through the quickest one if it is clearly faster
+than its own; it checks again every ten minutes, and goes back to its own node if
+the chosen one stops answering. A player signed in on one node is still themselves
+on another: their wallet signs that node's one-day room certificate. A node's
+tunnel carries only its room routes (`/realtime/...`) -- never the wallet or the
+rest of the arcade. Nothing changes for a game: `arcade.realtime` works the same.
+
+### A service for your game: a bank, a dealer, a referee
+
+Some games need something that is always in the room: a bank that pays out, a
+dealer, a referee. You can run one for your own game on your own node, with
+Python and no browser. It joins your game's rooms as your node's own account, so
+players see your @tag, and nobody can run one in your name: every node checks the
+certificate with its own Core.
+
+```python
+from arcade.service import Room
+
+with Room("mygame", "bank") as room:          # your game's name, the room's name
+    for event in room.events():               # join, leave, message -- comes back by itself after a restart
+        if event["type"] == "message":
+            room.send({"t": "ack", "to": event["member"]["id"]})
+```
+
+Run it on the node's machine, as the user the node runs as: it reads the node's
+service key (`~/.dogecoinarcade/realtime-service.key`, made when the node starts,
+readable only by that user). The key works only from the machine itself, never
+through the door. `python -m arcade.service mygame bank` prints a room's events,
+a starting point. A service has the same limits as a player (512 bytes, about
+five messages a second); anything that must last goes on the chain.
+
+### Many nodes, one mesh
+
+Every node carries its own players into the same rooms, so it does not matter
+which node a player uses. A node finds others from the chain's mesh
+announcements, from `--mesh-peer`, from what its peers pass on, and from the
+peers it reached before (`mesh-peers.json`, kept for 30 days), so a restart never
+depends on any one node still being there. It keeps four links and swaps its
+slowest for a faster peer when it finds one.
+
+A node behind a router that cannot forward a port (carrier NAT, Starlink) still
+dials out. If it has IPv6 it announces that address and meets other IPv6 nodes
+halfway: both dial each other on the same beat of the clock, so each router lets
+the other in. And if `cloudflared` is installed, it also opens a free Cloudflare
+quick tunnel and announces that `wss://` address, so even IPv4-only players' nodes
+can reach it. The mesh's own encryption runs inside the tunnel, so Cloudflare
+carries only ciphertext; nodes still link directly wherever they can, and
+`--mesh-tunnel off` turns it off.
+
+The node's Pepecoin Core nodes ride the mesh too: for up to four linked arcades per
+chain (the quickest links), the node gives its Core a local peer address that leads,
+through the mesh link, to that arcade's Core. Two nodes behind routers that Core
+alone could never connect still sync and relay to each other. Core traffic is capped
+at 256 KB/s per link and sent in small pieces, so games stay quick; `--mesh-core off`
+turns it off. Anybody with a public address can run a node that everyone else
+links to automatically -- it announces itself, and the others dial it within a
+minute. More such nodes, from more people, make the mesh harder to break.
+
 ## Trades: `arcade.swap.trade`
 
 A trade window between two players in the same room. Load both scripts:
@@ -129,8 +217,7 @@ A side is one of:
   string,
 * `{coins: '1.5'}`: coins.
 
-At least one side must be an NFT. Both players must be signed in; guests
-cannot trade.
+Both players must be signed in; guests cannot trade.
 
 ### Calls
 
@@ -155,6 +242,25 @@ and `get` are always from the point of view of the page that hears it, and
 | `broadcast` | the trade is sent; `txid` names it |
 | `settled` | it is in a block and the NFT really moved: both sides moved |
 | `declined`, `cancelled`, `failed` | it is over; `why` says why when there is a reason |
+
+### Several things each way
+
+Pass lists to trade several things at once -- two swords and 50 Gold for a
+ring, a stack of 20 of one token, two copies of the same piece:
+
+```js
+arcade.swap.trade({with: player.id,
+                   give: [{inscription: swordA}, {inscription: swordB},
+                          {token: 26, amount: '50'}],
+                   get:  [{inscription: ring}]});
+```
+
+* Up to 64 things each way: NFTs, token amounts, and coins (coins one way only).
+* It is still ONE transaction both players sign: everything moves, or nothing.
+* No NFT is needed on either side; a single `{token, amount}` each way works too.
+* Trade events carry `give` and `get` as lists for a trade made this way.
+* A trade of lists is read from an announced block (`bundles_from`) on each
+  chain; before it, `trade` says the chain does not read them yet.
 
 ### What players see
 

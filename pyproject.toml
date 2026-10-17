@@ -57,6 +57,7 @@ arcade-msg = "arcade.messaging.cli:main"
 arcade-web = "arcade.web.__main__:main"
 arcade-admin-window = "arcade.adminwindow:main"
 arcade-rpc = "arcade.rpccli:main"
+arcade-publish = "arcade.publish:main"
 dogecoinarcade-update = "arcade.update:main"
 
 [tool.setuptools]

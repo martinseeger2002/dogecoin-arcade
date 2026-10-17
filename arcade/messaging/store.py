@@ -364,6 +364,10 @@ def _unpack_chunks(blob: bytes) -> list[bytes]:
     return chunks
 
 
+#: Store files this process has migrated (MessageStore.__init__).
+_MIGRATED: set[str] = set()
+
+
 class MessageStore:
     """Message and key-announcement storage."""
 
@@ -389,11 +393,18 @@ class MessageStore:
         # Deterministic for the same three arguments: the clock is one of them
         # (`asof`), passed in, never read inside.
         self.conn.create_function("hot", 3, feed.hot, deterministic=True)
-        self.conn.executescript(SCHEMA)
-        add_missing_columns(self.conn, SCHEMA)
+        # The tables and their migrations, once per process for each file
+        # (2026-10-05): a page opens the store about ten times.
+        key = str(Path(self.path).resolve())
+        if key not in _MIGRATED:
+            self.conn.executescript(SCHEMA)
+            add_missing_columns(self.conn, SCHEMA)
+            if self.get_meta("schema_version") is None:
+                self.set_meta("schema_version", str(SCHEMA_VERSION))
+            _MIGRATED.add(key)
+        # Every open, as before: its backfills and repairs fix rows a broken
+        # version may still be writing, and they cost a few milliseconds.
         self._migrate()
-        if self.get_meta("schema_version") is None:
-            self.set_meta("schema_version", str(SCHEMA_VERSION))
 
     #: Columns added to existing tables after the first release, as
     #: (table, column, definition). `CREATE TABLE IF NOT EXISTS` does nothing to
@@ -647,14 +658,15 @@ class MessageStore:
                                  (network, piece)).fetchall()
 
     def mesh_peers(self, network: str, since: int = 0) -> list[sqlite3.Row]:
-        """The latest announcement per mesh key seen since `since` (unix time),
-        newest first."""
+        """The latest announcement per mesh key and kind (an IP address, or a wss://
+        tunnel address -- a node may have both) seen since `since` (unix time), newest first."""
         return self.conn.execute(
             "SELECT * FROM mesh_announcement a WHERE a.network = ? AND a.seen_at >= ?"
             " AND NOT EXISTS (SELECT 1 FROM mesh_announcement b"
             "   WHERE b.network = a.network AND b.mesh_key = a.mesh_key"
+            "     AND (b.host LIKE 'wss://%') = (a.host LIKE 'wss://%')"
             "     AND (b.seen_at, b.txid) > (a.seen_at, a.txid))"
-            " ORDER BY a.seen_at DESC LIMIT 200", (network, int(since))).fetchall()
+            " ORDER BY a.seen_at DESC LIMIT 2000", (network, int(since))).fetchall()   # hundreds of nodes, two kinds each
 
     def set_meta(self, key: str, value: str) -> None:
         self.conn.execute(
@@ -940,6 +952,26 @@ class MessageStore:
             "SELECT * FROM key_announcement WHERE address=? "
             "ORDER BY stated DESC, height DESC, rowid DESC LIMIT 1", (address,),
         ).fetchone()
+
+    def first_announced(self, address: str) -> int:
+        """When this address first said who it is, as a block time, or 0.
+
+        The profile's "Joined" (2026-10-08): the earliest announcement in a
+        block, because that is the first moment anybody could look the person
+        up. A pool row (height 0) has no block time yet and does not count.
+        """
+        row = self.conn.execute(
+            "SELECT MIN(block_time) FROM key_announcement "
+            "WHERE address=? AND height > 0 AND block_time > 0", (address,)).fetchone()
+        return int(row[0] or 0) if row else 0
+
+    def feed_post_count(self, network: str, author: str) -> int:
+        """How many posts one author has on this chain, replies included --
+        the same rows their profile pages through (feed_posts)."""
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM group_post WHERE network=? AND sender=?",
+            (network, author)).fetchone()
+        return int(row[0] or 0) if row else 0
 
     def address_for_other(self, other: str) -> str:
         """The messaging-chain address an announcement binds to `other`, an

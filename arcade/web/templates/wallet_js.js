@@ -503,10 +503,77 @@ export async function offerSend(to, amount, chain) {
  * key is used -- which is the only place the refusal can be effective. A
  * node that can choose what you sign does not need your key.
  */
-async function signOffer(wallet, offer, given = null) {
-  const keys = given || keysOn(wallet, offer.chain
-                      || (wallet.on && Object.keys(wallet.on)[0]));
+/* --- real coins: every mainnet transaction is said before it is signed -------
+ *
+ * 2026-10-09: "make sure any main net transactions are verified by the
+ * user ... Just a prompt with what their fees and costs are going to be being
+ * very honest". Every path that broadcasts goes through `signOffer`, so it is
+ * here: on mainnet, the costs are read off the transaction's own bytes (the
+ * same `verifyOffer` the signature covers) -- the network fee, the coins locked
+ * into data outputs, anything paid to somebody else, the operator's fee -- and
+ * `arcadeMainnetReview` (base.html) shows them with one button. Nothing is
+ * signed without a yes.
+ *
+ * A collection is asked once for the whole run ("Show total confirm once"):
+ * `approveMainnet` leaves an allowance in this tab that each of its pieces
+ * draws down without asking; a piece that would go past it asks again.
+ */
+let mainnetNets = null;
+async function isMainnet(network) {
+  if (!network) return false;
+  if (!mainnetNets) {
+    mainnetNets = new Set((await chains()).filter((c) => c.mainnet).map((c) => c.network));
+  }
+  return mainnetNets.has(network);
+}
+const ALLOWANCE = "arcade.mainnet.allowance";
+/** Let up to `sats` of mainnet spending through without asking, for `minutes`. */
+export function approveMainnet(sats, label = "", minutes = 180) {
+  try {
+    sessionStorage.setItem(ALLOWANCE, JSON.stringify(
+      {left: Math.max(0, Math.round(Number(sats) || 0)), label, until: Date.now() + minutes * 60e3}));
+  } catch (e) { /* without storage every transaction asks, which is the safe way */ }
+}
+export function endMainnetApproval() {
+  try { sessionStorage.removeItem(ALLOWANCE); } catch (e) {}
+}
+/** What a transaction costs, by kind, from its own bytes. */
+export function mainnetCosts(offer, shown) {
+  const opAddr = offer.operator_fee && offer.operator_fee.address;
+  let operator = 0, data = 0, others = 0;
+  for (const p of shown.pays || []) {
+    if (p.mine) continue;
+    if (p.bytes !== undefined) data += Number(p.value);
+    else if (opAddr && p.to === opAddr) operator += Number(p.value);
+    else others += Number(p.value);
+  }
+  const network = Number(shown.fee || 0);
+  return {network, data, others, operator, total: network + data + others + operator,
+          fee: offer.operator_fee || null, what: shown.what || offer.what || "",
+          chain: offer.chain || ""};
+}
+async function mainnetOk(offer, shown, network, options) {
+  if (!(await isMainnet(network))) return;
+  const costs = mainnetCosts(offer, shown);
+  if (options && options.reviewed) return;     // the page's own review listed these costs
+  let allowed = null;
+  try { allowed = JSON.parse(sessionStorage.getItem(ALLOWANCE) || "null"); } catch (e) {}
+  if (allowed && allowed.until > Date.now() && costs.total <= allowed.left) {
+    allowed.left -= costs.total;
+    try { sessionStorage.setItem(ALLOWANCE, JSON.stringify(allowed)); } catch (e) {}
+    return;
+  }
+  const ask = globalThis.arcadeMainnetReview;
+  if (typeof ask !== "function" || !(await ask(costs))) {
+    throw new Error("Not sent: this mainnet transaction was not confirmed. Nothing was signed.");
+  }
+}
+
+async function signOffer(wallet, offer, given = null, options = null) {
+  const network = offer.chain || (wallet.on && Object.keys(wallet.on)[0]);
+  const keys = given || keysOn(wallet, network);
   const shown = await coins.verifyOffer(offer, keys);
+  await mainnetOk(offer, shown, network, options);
   const signatures = [];
   for (const sighash of shown.hashes) {
     signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
@@ -540,8 +607,10 @@ export async function checked(offer, wallet) {
   return coins.verifyOffer(offer, keys);
 }
 
-export async function confirm(wallet, offer) {
-  return working(() => signOffer(wallet, offer));
+/** Sign and send. `{reviewed: true}` only from a page whose own review already
+ *  listed every cost of this mainnet transaction from `checked` (the Wallet's). */
+export async function confirm(wallet, offer, options = null) {
+  return working(() => signOffer(wallet, offer, null, options));
 }
 
 /* --- listing a piece ----------------------------------------------------
@@ -758,6 +827,9 @@ export async function makeChainPool(wallet, spec, chain, onStep = () => {}) {
   return working(async () => {
     const phrase = String(spec.phrase || "").trim();
     if (!phrase) throw new Error("a prize pool needs a \"phrase\"");
+    if (spec.fee === "pool" && !spec.referee) {
+      throw new Error("a pool that pays its own claims (\"fee\": \"pool\") needs a \"referee\"");
+    }
     const nft = spec.kind === "nft";
     let pieces = [];
     if (nft) {
@@ -802,10 +874,11 @@ export async function makeChainPool(wallet, spec, chain, onStep = () => {}) {
     const funding = await askJson("/account/pools/fund", nft ? {
       chain, pool: home, kind: "nft", pieces, price: String(spec.price),
       days: spec.days || 0, bound: spec.game ? String(spec.game) : "", once: !!spec.once,
+      fee: spec.fee === "pool" ? "pool" : "",
       claim_hash: await claimHash(phrase)} : {
       chain, pool: home, property_id: spec.token, lot: String(spec.lot),
       count: Number(spec.lots), price: String(spec.price), days: spec.days || 0,
-      once: !!spec.once,
+      once: !!spec.once, fee: spec.fee === "pool" ? "pool" : "",
       bound: spec.game ? String(spec.game) : "", claim_hash: await claimHash(phrase)});
     if (!funding.ok) throw new Error(funding.said.detail || "the pool could not be funded");
     onStep(nft ? "Putting coins into the pool\u2026" : "Moving the tokens and coins into the pool\u2026");
@@ -844,6 +917,18 @@ export async function offerPrize(pool, lot, sigs, secret, page, chain, replay = 
     if (!r.ok) throw new Error(r.said.detail || "that prize cannot be claimed");
     return {...r.said, _ask: {pool, lot, signatures: sigs, secret, page, chain: chain || "",
                               ...(replay ? {replay} : {})}};
+  });
+}
+
+/** Claim a lot of a pool that pays its own claims ("fee": "pool", 2026-10-04):
+ *  no key, no coins, nothing to sign -- the referee signs the whole claim once
+ *  the pool's judge passes the replay, and the node sends it. */
+export async function takePrize(pool, lot, sigs, secret, page, chain, replay = null) {
+  return working(async () => {
+    const r = await askJson("/account/prize/take", {pool, lot, signatures: sigs, secret, page,
+                                                    chain: chain || "", ...(replay ? {replay} : {})});
+    if (!r.ok) throw new Error(r.said.detail || "that prize cannot be claimed");
+    return r.said;
   });
 }
 
@@ -1289,6 +1374,45 @@ export async function tradeLeg(wallet, t) {
     const checked = await back.json();
     if (!back.ok) throw new Error(checked.detail || "the node would not take it");
     return checked;                        // {leg, seal_to, what, held_until}
+  });
+}
+
+/** A bundle, the proposer's half (2026-10-04): built by the node, this key's
+ *  inputs signed here, everything the other player needs handed back to seal. */
+export async function bundleBuild(wallet, t) {
+  return working(async () => {
+    const r = await askJson("/account/bundle/build", t);
+    if (!r.ok) throw new Error(r.said.detail || "that trade cannot be built");
+    const keys = keysOn(wallet, r.said.chain);
+    const shown = await coins.verifyOffer(r.said, keys);
+    const sigs = [];
+    for (const h of shown.hashes) sigs.push(coinsHex(await coins.signInput(keys.key, unhex(h))));
+    return {seal_to: r.said.seal_to, fee: shown.fee, coinsOf: shown.coinsOf, says: shown.says,
+            handoff: {raw: r.said.raw, a: r.said.a, b: r.said.b, a_sigs: sigs,
+                      a_pubkey: coinsHex(keys.pubkey), give: t.give, get: t.get}};
+  });
+}
+
+/** A bundle, the other player's half: what this key is asked to sign. */
+export async function bundleOffer(handoff, expect, chain) {
+  return working(async () => {
+    const r = await askJson("/account/bundle/fill", {handoff, expect, chain: chain || ""});
+    if (!r.ok) throw new Error(r.said.detail || "that trade cannot be finished");
+    return r.said;
+  });
+}
+
+/** Sign this key's inputs of a bundle and send it. */
+export async function bundleFill(wallet, handoff, offer, expect) {
+  return working(async () => {
+    const keys = keysOn(wallet, offer.chain || (wallet.on && Object.keys(wallet.on)[0]));
+    const shown = await coins.verifyOffer(offer, keys);
+    const signatures = [];
+    for (const h of shown.hashes) signatures.push(coinsHex(await coins.signInput(keys.key, unhex(h))));
+    const r = await askJson("/account/bundle/fill/sign", {handoff, expect, chain: offer.chain || "",
+                                                          signatures, pubkey: coinsHex(keys.pubkey)});
+    if (!r.ok) throw new Error(r.said.detail || "the node would not send it");
+    return r.said;
   });
 }
 
@@ -1795,11 +1919,11 @@ export async function react(wallet, txid, kind, text) {
  * uses. It is deliberately not `signAndSend`: a page that spends coins on the
  * way to being able to say what they cost has already spent them.
  */
-export async function offerReact(txid, kind, amount) {
+export async function offerReact(txid, kind, amount, chain = "") {
   return working(async () => {
     const asked = await fetch("/account/react", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({txid, kind, amount: String(amount || "")}),
+      body: JSON.stringify({txid, kind, amount: String(amount || ""), chain: chain || ""}),
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be done");
@@ -2008,6 +2132,7 @@ if (TABS) {
   };
 }
 
+let _noTabUntil = 0;   // nobody answered just now: opened() does not wait again for a while
 function fromAnotherTab(ms = 400) {
   if (!TABS) return Promise.resolve(null);
   return new Promise((resolve) => {
@@ -2089,7 +2214,13 @@ export async function opened(chain) {
   let phrase = null;
   try { phrase = sessionStorage.getItem(OPEN_WALLET); } catch (e) {}
   if (!phrase) {
-    phrase = await fromAnotherTab();
+    // a second, longer ask before giving up (2026-10-08, asked to sign in two or
+    // three times): a phone wakes a backgrounded tab slower than 400 ms, and the page
+    // then asked for a password another tab already had open
+    if (Date.now() >= _noTabUntil) {
+      phrase = (await fromAnotherTab()) || (TABS ? await fromAnotherTab(1500) : null);
+      if (!phrase) _noTabUntil = Date.now() + 30000;   // a tab that unlocks later sends it anyway
+    }
     if (phrase) { try { sessionStorage.setItem(OPEN_WALLET, phrase); } catch (e) {} }
   }
   if (!phrase) return null;
@@ -2115,4 +2246,92 @@ export async function opened(chain) {
  */
 export async function unlockHere(tag, password, chain) {
   return signIn(tag, password, chain);
+}
+
+/* --- tipping a post: coins or a token, on either chain ---------------------
+ *
+ * 2026-10-13: "When a user selects tip on the feed, it should give them
+ * the options of testnet PEP mainnet PEP and testnet or mainnet token", and the
+ * same on the Games tab. One flow for both pages, so the two cannot drift.
+ *
+ * The form carries `pay` ("coin:<network>" or "token:<network>", from
+ * templates/_tip.html), `token` and `amount`. A coin tip is one transaction on
+ * the chain picked: the coins and the note naming the post. A token tip is the
+ * token send on its own chain (to the address the author published there, which
+ * the node works out from `tip_of`), then a TIP_TOKEN note on the tag chain
+ * naming that send. A mainnet one still goes through the mainnet review in
+ * `confirm`: real coins are asked about twice, on purpose.
+ */
+let tipHeld = null;
+
+/** Keep a tip form's three steps in step: the coin named for the network picked, and
+ *  the token list (this account's own holdings there) when "a token" is picked.
+ *  Call once per page. */
+export function tipPicker(root = document) {
+  root.addEventListener("change", async (e) => {
+    const box = e.target;
+    if (!box.form || !(box.hasAttribute("data-tip-net") || box.hasAttribute("data-tip-what"))) return;
+    const form = box.form, net = form.elements.net, what = form.elements.what;
+    const list = form.elements.token, pick = net.selectedOptions[0];
+    // The coin is said as the network's own: PEP TEST, PEP or DOGE.
+    if (what.options[0]) what.options[0].textContent = (pick && pick.dataset.coin) || "coins";
+    list.hidden = what.value !== "token";
+    if (what.value !== "token") return;
+    list.textContent = "";
+    try {
+      if (!tipHeld) tipHeld = ((await (await fetch("/account/tokens")).json()).chains) || [];
+      const here = (tipHeld.find((c) => c.network === net.value) || {}).tokens || [];
+      for (const t of here.filter((t) => Number(t.balance) > 0)) {
+        const o = document.createElement("option");
+        o.value = t.property_id; o.dataset.name = t.name;
+        o.textContent = `${t.name} (${t.display})`;
+        list.appendChild(o);
+      }
+    } catch (err) { /* the send says why if it is tried */ }
+    if (!list.options.length) {
+      const o = document.createElement("option");
+      o.value = "";
+      o.textContent = `you hold no tokens on ${(pick && pick.dataset.label) || net.value}`;
+      list.appendChild(o);
+    }
+  });
+}
+
+/** Tip the post `txid` with what the form says. Null if the person said no. */
+export async function tip(held, form, txid, kinds, ask) {
+  const choice = (form.elements.net || {}).selectedOptions?.[0];
+  const network = choice ? choice.value : "";
+  const what = (form.elements.what || {}).value || "coin";
+  const amount = ((form.elements.amount || {}).value || "").trim();
+  const who = form.dataset.authorName || "whoever made this";
+  if (what === "token") {
+    const pick = form.elements.token.selectedOptions[0];
+    if (!pick || !pick.value) throw new Error("pick a token you hold");
+    const offer = await working(async () => {
+      const asked = await fetch("/account/token/send", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({property_id: Number(pick.value), amount, tip_of: txid,
+                              chain: network})});
+      const said = await asked.json();
+      if (!asked.ok) throw new Error(said.detail || "that token cannot be sent");
+      return said;
+    });
+    const shown = await checked(offer, held);
+    const ok = await ask(`Tip ${amount} ${pick.dataset.name}?`,
+      `${amount} ${pick.dataset.name} (${(choice && choice.dataset.label) || network}) go to ${who}, and then a small note `
+      + "on the post says it was a tip: two small transactions, network fee "
+      + `${shown.coinsOf(shown.fee)} for the send. It is a payment: it cannot be taken back.`,
+      "Send the tip");
+    if (!ok) return null;
+    const sent = await confirm(held, offer);
+    return await react(held, txid, kinds.tiptoken, sent.txid);
+  }
+  const offer = await offerReact(txid, kinds.tip, amount, network);
+  const shown = await checked(offer, held);
+  const coin = (choice && choice.dataset.coin) || "coins";
+  const ok = await ask("Send this tip?",
+    `Tip ${amount} ${coin} to ${who}. The network fee is `
+    + `${shown.coinsOf(shown.fee)}. It is a payment: it cannot be taken back.`, "Send the tip");
+  if (!ok) return null;
+  return await confirm(held, offer);
 }

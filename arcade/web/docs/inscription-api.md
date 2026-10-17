@@ -242,6 +242,21 @@ const set = await (await fetch('/r/collection/' + creator + '/' +
 | `GET /r/blockheight` | a number, or `null` if the node is not reachable |
 | `GET /r/blocktime` | UNIX seconds of the newest block, or `null` |
 
+### What is on its way
+
+`GET /r/pending/<address>` -> `{address, incoming: [...], outgoing: [...]}`: the
+pieces and tokens a transaction in the mempool is moving to or from an address,
+before its block. Each is `{txid, kind, from, to, why}` (`why` is `transfer`,
+`send`, `grant` or `swap`) with `inscription`, `number` and `name` for a piece,
+or `property_id`, `units`, `amount` and `name` for a token. It is read fresh and
+kept nowhere: a dropped transaction simply disappears from it.
+
+`/r/inscriptions/<address>?pending=1` adds what is arriving (`pending:
+"arriving"`) and marks what is leaving (`pending: "leaving"`);
+`/r/balances/<address>?pending=1` adds `arriving` and `leaving` units to each
+token. `owner` and `units` are still what the blocks say -- so a game can show a
+piece the moment it is collected, and say it is on its way.
+
 ### Balances and names
 
 `GET /r/balances/<address>`
@@ -278,6 +293,19 @@ issuer's text: read it as data, never as markup or code. `GET /r/tokens?ids=20,2
 answers up to 100 at once, which is enough to classify a whole wallet in one
 request; unknown ids are left out.
 
+`GET /r/holders?token=<id>` → `{ "holders": ["nAddr1…", …] }` — who holds that
+token now, largest holding first, addresses only. For the pieces of a
+collection, `GET /r/holders?creator=<address>&collection=<name>` answers who
+owns them. `?ids=<id>` is taken as `?token=<id>` (one id; several tokens at once
+is what `/r/tokens` is for).
+
+An empty list means **nobody holds it**, and nothing else. A call that names
+nobody, and a node that cannot look right now, come back as an error
+(`{ "error": … }`, status 404 / 503) rather than an empty list — treat an empty
+list as a fact about the token, and an error as "ask again", because a holders'
+list you read as empty is a list that removes everyone from the asset's group
+chat.
+
 ### Asking the wallet to send
 
 A page cannot spend. It can **ask**: file a request naming what should move
@@ -299,6 +327,7 @@ preflight is answered):
 | `from` | optional: which of the wallet's addresses pays. Left out, the wallet chooses |
 | `label` | optional: what your page calls itself, shown in quotes to the person |
 | `note` | optional: why, in a sentence, shown in quotes to the person |
+| `silent` | optional: `true` and the person is never shown a card. What a test chain lets a game do unasked -- a token its creator issued, or a piece its creator inscribed, sent back to that creator, from the page open as itself -- goes through; anything else fails at once with `this needs the player's say-so`. The same flag works on `claim` and `inscribe` messages |
 
 ```js
 const asked = await (await fetch('/r/send', {
@@ -321,6 +350,14 @@ const answer = await (await fetch('/r/send/' + asked.id)).json();
 A request nobody answers within an hour expires. What is approved is priced
 against the wallet as it is when the person looks, not when you asked; a
 balance that was there and is not by then fails then, not silently.
+
+What went through without a card is not announced to the player either: the
+page is told the outcome and the wallet shows it, and only what the person
+said yes to on a card gets a message. A game that settles as it is played --
+a thing sent back to its creator, a claim from a refereed pool, a save of its
+own data -- therefore stays quiet while it is played. A failure is still said
+out loud unless the page asked with `silent`, in which case the page hears it
+and deals with it.
 
 **On a public arcade,** the request goes to whoever is signed in and looking
 at your page, never to the node's own wallet. They see it on their own
@@ -594,6 +631,16 @@ shopkeeper in that wallet without anybody pressing anything, because the
 owner already said yes in writing when they inscribed the shop. The page
 never holds a key and cannot change a price.
 
+**Whose key signs it.** Every offer says, in `signed_by`. One made by a shop's
+own wallet says `"node"`: that wallet's key sits on the machine that made the
+offer, and its answer comes without anybody pressing anything, because the owner
+wrote the terms down when inscribing the shop. An offer or a leg that is waiting
+for **your** key says `"account"` — the node that handed it to you holds neither
+that key nor those coins, which is exactly why your browser is the one being
+asked to sign. Read the field rather than inferring it from the address that
+signs: `signed_from` is an index into `inputs`, not a person, and nothing hashes
+`signed_by` — it is told to you, not committed to.
+
 **Timing.** Every step but the buyer's own yes is a message on the chain, and
 a message is in a block or it is nowhere: on testnet a minute or several,
 twice, then the swap. Say so in the page rather than spin.
@@ -713,6 +760,43 @@ here to switch off.
 
 Useful for greeting a visitor by name (`/r/wallet` gives you *their* tag),
 showing whose shop a page belongs to, or crediting whoever made a piece.
+
+### What a name wrote, and what was written to it
+
+`GET /r/written/<tag>` — everything that name wrote itself, its posts and its
+comments together, newest first:
+
+```json
+{ "tag": "alice", "since": 1789400000,
+  "written": [ { "id": "94570f87…", "kind": "post", "author": "nAlice1…",
+                 "author_tag": "alice", "parent_id": "",
+                 "root_id": "94570f87…", "root_kind": "post",
+                 "text": "made a thing", "time": 1789431022,
+                 "url": "/feed?post=94570f87…" },
+               { "id": "1a61ddea…", "kind": "reply", "author": "nAlice1…",
+                 "author_tag": "alice", "parent_id": "d41ab2…",
+                 "root_id": "2ea169a4…", "root_kind": "mintpad",
+                 "text": "two of these left", "time": 0,
+                 "url": "/launches/2ea169a4…" } ] }
+```
+
+A post and a comment are different rows in different tables, and this reads both
+keyed on the author — which is why it is its own route rather than a flag on the
+profile page. `kind` says which each row was; `root_kind` says what a comment
+hangs on (`post`, `launch`, `mintpad`, `inscription`) and `url` is the page that
+draws it, a comment's pointing at the thread rather than at itself. Something
+still in the mempool has `time` 0 and is always included, so a page can show what
+it just did before the chain has it. `since` is unix seconds or ISO, and
+**two days back when absent** — deliberately a short window, because this is a
+"lately" question and a name's whole history is its profile page; a caller that
+wants more narrows `since`. `limit` up to 500. Likes and shares are not writing
+and are not here. `404` with `no such name` when nobody holds the name.
+
+The other direction is `GET /r/replies/<tag>`: every comment on what that name
+wrote, and every mention of it, same window, same paging, rows carrying `aimed`
+(`"reply"` or `"mention"`) instead of `kind`. So "what has @X written lately" and
+"what have people said about @X" are two calls, and neither one is the other by
+accident.
 
 ### Who is looking
 

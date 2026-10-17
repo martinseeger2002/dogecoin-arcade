@@ -22,6 +22,7 @@ offered to it, and it says so where it happens.
 """
 
 import inspect
+import re
 import time
 from types import SimpleNamespace
 
@@ -1182,6 +1183,16 @@ def test_the_page_says_spending_the_piece_is_the_only_cancel(client):
     assert "1 coin" in words, "the price a signature commits to"
 
 
+def _prose(html):
+    """The page as a person reads it: its text with the inline scripts taken out.
+
+    An assertion over a whole page that keeps the JavaScript goes red on a comment
+    in `base.html` -- the press handler says "the page's own handler is done" in a
+    line no browser ever shows -- which says nothing about what the page claims.
+    """
+    return " ".join(re.sub(r"<script\b.*?</script>", " ", html, flags=re.I | re.S).split())
+
+
 def test_a_page_that_could_not_ask_says_so_rather_than_that_a_piece_sold(client):
     """`piece_held` answers None for two different worlds, and only one of them
     is "spent". A page that reads the node being down as the piece being gone
@@ -1190,7 +1201,7 @@ def test_a_page_that_could_not_ask_says_so_rather_than_that_a_piece_sold(client)
     app, state = client
     row = _row(SELLER)
     state.listings.add(row)
-    words = " ".join(app.get("/listings").text.split())
+    words = _prose(app.get("/listings").text)
     assert "could not ask" in words
     assert "is done" not in words, "nothing was learned about this piece"
     assert state.listings.get(row["id"])["status"] == "open", \

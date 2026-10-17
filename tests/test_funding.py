@@ -199,6 +199,30 @@ def test_the_signatures_have_to_match_the_inputs(db):
     assert "signatures were needed" in str(refused.value)
 
 
+def test_an_offer_says_who_makes_its_signatures():
+    """The disclosure a tester asked for (S19), and the shape it has to keep.
+
+    An offer named the address that signs and left the reader to work out
+    whether that address is an account's or a node's -- which is a guess, and
+    the wrong guess is a tab signing over coins it does not hold. The guess is
+    what the field is for. What it must not be is `signed_from` as a string:
+    `coins.js` feeds that to `Number()` and walks the input list from it, so a
+    label there turns into NaN coins and an offer that checks nobody.
+    """
+    offer = funding.Unsigned(raw="", inputs=[{"txid": "aa" * 32, "vout": 0,
+                                              "value": 1, "address": "x"}],
+                             outputs=[])
+    leg = funding.Leg(raw="", inputs=[{"txid": "aa" * 32, "vout": 0, "value": 1,
+                                       "address": "x"}],
+                      outputs=[], sighashes=[], fee=0, pays="0.00000000", paid=0)
+    assert offer.as_json()["signed_by"] == "account", \
+        "an Unsigned is unsigned, and it is the reader's own key it waits for"
+    assert leg.as_json()["signed_by"] == "account", \
+        "a leg is signed by whoever made it, in their own tab"
+    assert isinstance(offer.as_json()["signed_from"], int), \
+        "the index stays an index; who signs is a second field beside it"
+
+
 def test_the_fee_offered_is_the_one_a_block_would_take(regtest, db):
     """The fee an account is shown has to be the fee a block asks for.
 

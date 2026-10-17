@@ -89,6 +89,15 @@ CREATE TABLE IF NOT EXISTS verdict (
 LOOK_SIZE = 768
 #: How long one question may take before the content is left "checking".
 TIMEOUT = 60
+#: How long a question asked while a page waits may take (2026-10-13: with the model
+#: away, every unjudged picture held a request thread for the whole TIMEOUT, and a page
+#: of NFTs took the site down). Past it the picture is "checking" and the worker asks.
+NOW_TIMEOUT = 8
+#: After a question fails, how long nothing waits on the model: pages get "checking" at
+#: once and only the worker keeps asking, so a model that is down costs nobody a wait.
+AWAY_SECONDS = 60
+#: Most pieces waiting for the worker; past it the newest are asked about later.
+QUEUE_MOST = 2000
 
 
 def digest_of(data: bytes | str) -> str:
@@ -112,7 +121,10 @@ class Screen:
             self.conn.execute("ALTER TABLE verdict ADD COLUMN prompt TEXT NOT NULL DEFAULT ''")
             self.conn.commit()
         self._lock = threading.Lock()
-        self._queue: dict[str, str] = {}          # digest -> words waiting for a verdict
+        #: digest -> what waits for a verdict: ("text", words) or ("image", type, bytes)
+        self._queue: dict[str, tuple] = {}
+        #: Until when the model counts as away (time.time()); see AWAY_SECONDS.
+        self._away_until = 0.0
         self._worker: threading.Thread | None = None
         #: The ledger indexes whose names the model is told about (state.screen()
         #: fills this in); empty means no names, as before.
@@ -223,9 +235,16 @@ class Screen:
 
     # --- asking ------------------------------------------------------------------
 
-    def _ask(self, content: Any) -> tuple[str, str] | None:
+    def away(self) -> bool:
+        """Whether a question failed lately, so nothing should wait on the model."""
+        return time.time() < self._away_until
+
+    def _ask(self, content: Any, timeout: float | None = None) -> tuple[str, str] | None:
         """One question to the model; None if it could not be asked or answered."""
         cfg = self.config or {}
+        wait = float(cfg.get("timeout", TIMEOUT))
+        if timeout is not None:
+            wait = min(wait, timeout)
         plain = {"model": cfg["model"], "temperature": 0, "max_tokens": 80,
                  "messages": [{"role": "system", "content": PROMPT},
                               {"role": "user", "content": content}]}
@@ -244,7 +263,7 @@ class Screen:
         def ask(body: dict) -> str:
             with urllib.request.urlopen(urllib.request.Request(
                     url, data=json.dumps(body).encode(), headers=headers),
-                    timeout=float(cfg.get("timeout", TIMEOUT))) as answer:
+                    timeout=wait) as answer:
                 return json.load(answer)["choices"][0]["message"]["content"]
 
         try:
@@ -259,8 +278,11 @@ class Screen:
                 self._vllm_fields = False
                 log.info("screening: %s refused vLLM's own fields; asking without them", url)
         except Exception as exc:                      # noqa: BLE001 -- the model is away
-            log.info("screening could not ask %s: %s", url, exc)
+            if not self.away():
+                log.info("screening could not ask %s: %s", url, exc)
+            self._away_until = time.time() + AWAY_SECONDS
             return None
+        self._away_until = 0.0
         found = re.search(r"\{.*\}", said or "", re.S)
         try:
             parsed = json.loads(found.group(0)) if found else {}
@@ -272,24 +294,35 @@ class Screen:
         return verdict, str(parsed.get("reason", ""))
 
     def check_image(self, content_type: str, body: bytes) -> str | None:
-        """The verdict for an image, asking now if it is not known. None = checking."""
+        """The verdict for an image, asking now if it is not known. None = checking:
+        the model is away or slow, and the worker asks in the background."""
         digest = digest_of(body)
         known = self.known(digest)
         if known or not self.enabled:
             return known
+        if self.away():
+            self._later(digest, ("image", content_type, body))
+            return None
         looked = _for_the_model(content_type, body)
         if looked is None:                            # not a picture a model can see
             return self.check_text(body.decode("utf-8", "replace")[:20000], now=True)
-        said = self._ask([{"type": "text", "text": "An image someone published:"},
-                          {"type": "image_url", "image_url": {"url": looked}}])
+        said = self._ask(self._image_question(looked), timeout=NOW_TIMEOUT)
         if said is None:
+            if self.away():                           # not answered: the worker asks
+                self._later(digest, ("image", content_type, body))
             return None
         self._keep(digest, "image", *said)
         return said[0]
 
+    @staticmethod
+    def _image_question(looked: str) -> list:
+        return [{"type": "text", "text": "An image someone published:"},
+                {"type": "image_url", "image_url": {"url": looked}}]
+
     def check_text(self, words: str, now: bool = False) -> str | None:
         """The verdict for some words. Known -> it; otherwise queued for the worker
-        (or asked at once with `now`), and None meanwhile = checking."""
+        (or asked at once with `now`, unless the model is away), and None meanwhile =
+        checking."""
         words = (words or "").strip()
         if not words:
             return OK
@@ -297,16 +330,21 @@ class Screen:
         known = self.known(digest)
         if known or not self.enabled:
             return known
-        if now:
-            said = self._ask(self._question(words))
-            if said is None:
-                return None
-            self._keep(digest, "text", *said)
-            return said[0]
-        with self._lock:
-            self._queue[digest] = words
-        self._wake()
+        if now and not self.away():
+            said = self._ask(self._question(words), timeout=NOW_TIMEOUT)
+            if said is not None:
+                self._keep(digest, "text", *said)
+                return said[0]
+        self._later(digest, ("text", words))
         return None
+
+    def _later(self, digest: str, item: tuple) -> None:
+        """Leave a piece for the worker to ask about."""
+        with self._lock:
+            if digest not in self._queue and len(self._queue) >= QUEUE_MOST:
+                return                                # asked about when next seen
+            self._queue[digest] = item
+        self._wake()
 
     # --- the background worker for words -------------------------------------------
 
@@ -321,12 +359,24 @@ class Screen:
             with self._lock:
                 if not self._queue:
                     return
-                digest, words = next(iter(self._queue.items()))
-            said = self._ask(self._question(words))
+                digest, item = next(iter(self._queue.items()))
+            said, kind = None, item[0]
+            if kind == "image":
+                looked = _for_the_model(item[1], item[2])
+                if looked is not None:
+                    said = self._ask(self._image_question(looked))
+                else:
+                    kind = "text"
+                    words = item[2].decode("utf-8", "replace")[:20000].strip()
+                    said = self._ask(self._question(words)) if words else (OK, "")
+            else:
+                said = self._ask(self._question(item[1]))
             with self._lock:
                 self._queue.pop(digest, None)
+                if said is None and self.away():
+                    self._queue[digest] = item       # to the back: asked again later
             if said is not None:
-                self._keep(digest, "text", *said)
+                self._keep(digest, kind, *said)
             else:
                 time.sleep(5)                          # the model is away: try again later
 

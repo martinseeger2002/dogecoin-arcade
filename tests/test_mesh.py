@@ -7,6 +7,7 @@ are shrunk (SUB_EVERY, IDLE, DIAL_EVERY) so a test takes about a second.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 import nacl.signing
@@ -22,7 +23,9 @@ NET = "test-net"
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
     monkeypatch.setattr(meshlib, "SUB_EVERY", 0.15)
+    monkeypatch.setattr(meshlib, "HERE_EVERY", 0.15)
     monkeypatch.setattr(meshlib, "IDLE", 1.0)
+    monkeypatch.setattr(meshlib, "LOCAL_GRACE", 1.0)
     monkeypatch.setattr(meshlib, "DIAL_EVERY", 0.05)
 
 
@@ -174,7 +177,7 @@ def test_a_message_crosses_a_node_that_is_not_in_the_room():
             # Each hears the other arrive, through b.
             assert (await drain(qa, "join")).member == "carol"
             assert (await drain(qc, "join")).member == "alice"
-            await until(lambda: "game1/town" in a.remote and "game1/town" in c.remote,
+            await until(lambda: meshlib.room_id("game1/town") in a.routes and meshlib.room_id("game1/town") in c.routes,
                         what="routes")
             await a.send("game1/town", "alice", b'{"x":1,"y":2}')
             got = await drain(qc, "message")
@@ -193,7 +196,8 @@ def test_payload_is_never_read_any_bytes_go():
         try:
             await a.join("g/r", "alice")
             qc = await c.join("g/r", "carol")
-            await until(lambda: "g/r" in a.remote, what="route")
+            await until(lambda: meshlib.room_id("g/r") in a.routes, what="route")
+            await drain(qc, "join")                   # carol hears that alice is there before she speaks
             blob = bytes(range(256)) * 2              # 512 bytes, not text, not JSON
             await a.send("g/r", "alice", blob)
             assert (await drain(qc, "message")).data == blob
@@ -230,7 +234,8 @@ def test_a_triangle_delivers_once():
                         what="triangle")
             await a.join("g/r", "alice")
             qc = await c.join("g/r", "carol")
-            await until(lambda: "g/r" in a.remote and "g/r" in c.remote, what="routes")
+            await until(lambda: meshlib.room_id("g/r") in a.routes and meshlib.room_id("g/r") in c.routes, what="routes")
+            await drain(qc, "join")
             for i in range(5):
                 await a.send("g/r", "alice", bytes([i]))
             got = []
@@ -330,7 +335,7 @@ def test_when_a_node_in_the_middle_goes_down_the_room_carries_on():
             qd = await d.join("g/r", "dave")
             keepers = [asyncio.get_running_loop().create_task(keep(a, "alice")),
                        asyncio.get_running_loop().create_task(keep(d, "dave"))]
-            await until(lambda: "g/r" in a.remote and "g/r" in d.remote, what="routes")
+            await until(lambda: meshlib.room_id("g/r") in a.routes and meshlib.room_id("g/r") in d.routes, what="routes")
             await b.stop()
             got = None
             end = time.monotonic() + 5
@@ -463,7 +468,7 @@ def test_only_members_the_vouch_accepts_are_seen_or_heard():
             await a.join("g/r", "guest", cred=None)
             qc = await c.join("g/r", "carol", cred={"proof": "ok:carol"})
             assert (await drain(qc, "join")).member == "alice"
-            await until(lambda: "g/r" in a.remote, what="route")
+            await until(lambda: meshlib.room_id("g/r") in a.routes, what="route")
             await a.send("g/r", "mallory", b"trust me")
             await a.send("g/r", "alice", b"hello")
             got = await drain(qc, "message")
@@ -537,4 +542,322 @@ def test_a_peer_dials_back_only_where_it_sees_the_asker():
             assert said == {"reached": False, "seen": []}
         finally:
             await stop(c, b, a)
+    run(go())
+
+
+# ------------------------------------------------------------------ meeting halfway over IPv6 (2026-10-12)
+# Two nodes behind routers that cannot be changed (Starlink): each knocks on the other's
+# IPv6 mesh port from its own, on the same beat, so each router sees an outgoing
+# connection and lets the other in. Loopback has no firewall, so these check the
+# parts that are ours: the shared dialer rule, both landing points, and old nodes.
+
+def mk6():
+    return MeshNode(nacl.signing.SigningKey.generate(), NET, listen_host="::1", listen_port=0)
+
+
+def test_a_connection_both_sides_dialled_agrees_on_roles_by_node_id():
+    """A simultaneous open: each side believes it dialled. The lower id takes the dialer's part."""
+    from arcade.mesh.link import handshake
+
+    async def go():
+        ka, kb = nacl.signing.SigningKey.generate(), nacl.signing.SigningKey.generate()
+        ida, idb = bytes(ka.verify_key).hex(), bytes(kb.verify_key).hex()
+        got = {}
+
+        async def far(reader, writer):
+            got["b"] = await handshake(reader, writer, kb, NET, True, None, initiator=idb < ida)
+
+        server = await asyncio.start_server(far, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        a = await handshake(reader, writer, ka, NET, True, None, initiator=ida < idb)
+        for _ in range(50):
+            if "b" in got:
+                break
+            await asyncio.sleep(0.02)
+        assert a.peer_id == idb and got["b"].peer_id == ida
+        await a.send({"t": "hello-from-a"})
+        header, _ = await got["b"].recv()
+        assert header["t"] == "hello-from-a"
+        await a.close(); await got["b"].close(); server.close(); await server.wait_closed()
+    run(go())
+
+
+def test_two_ipv6_nodes_meet_whichever_side_knocks_first():
+    """A meeting dial that lands on the far node's listener (its router let it in): the far
+    side sees it come from the near node's own mesh port and takes its part by the same rule."""
+    async def go():
+        for first in (0, 1):            # both id orders: the lower id dials, whoever knocked
+            a, b = await started(mk6(), mk6())
+            try:
+                a.add_address("::1", b.listen_port, b.node_id)
+                b.add_address("::1", a.listen_port, a.node_id)
+                near, far = (a, b) if first == 0 else (b, a)
+                near._spawn(near._meet(("::1", far.listen_port)))     # a met link runs until the node stops
+                for _ in range(100):
+                    if far.node_id in near.links and near.node_id in far.links:
+                        break
+                    await asyncio.sleep(0.02)
+                assert far.node_id in near.links and near.node_id in far.links
+            finally:
+                await stop(a, b)
+    run(go())
+
+
+def test_ipv6_peers_are_met_not_dialled_and_an_old_node_is_dialled_plainly():
+    """The ordinary dialer leaves IPv6 peers to the meeter. A node from before meetings always
+    takes the listener's part, so two failed meetings make it a plain dial, which links."""
+    async def go():
+        a, b = await started(mk6(), mk6())
+        try:
+            b._meets = lambda addr, entry: False          # b: an old node, never meets
+            a.add_address("::1", b.listen_port, b.node_id)
+            entry = a.addrs[("::1", b.listen_port)]
+            assert a._meets(("::1", b.listen_port), entry)
+            if a.node_id > b.node_id:                      # a takes the listener's part: both listen, it fails
+                entry["met_bad"] = 1                       # one failed meeting already (a second dial of the same
+                await a._meet(("::1", b.listen_port))      # port pair would wait out TCP's TIME_WAIT)
+                assert entry.get("plain") and b.node_id not in a.links
+            else:                                          # a dials by the rule: an old listener answers fine
+                a._spawn(a._meet(("::1", b.listen_port)))
+                for _ in range(100):
+                    if b.node_id in a.links:
+                        break
+                    await asyncio.sleep(0.02)
+                assert b.node_id in a.links and not entry.get("plain")
+                return
+            for _ in range(150):                           # the ordinary dialer now takes it
+                if b.node_id in a.links:
+                    break
+                await asyncio.sleep(0.02)
+            assert b.node_id in a.links
+        finally:
+            await stop(a, b)
+    run(go())
+
+
+def test_a_node_whose_ipv4_cannot_be_reached_announces_its_ipv6_to_be_met():
+    from arcade.mesh.service import MeshService
+
+    async def go():
+        svc = MeshService(NET, nacl.signing.SigningKey.generate(), listen_host="127.0.0.1", listen_port=0,
+                          observe=lambda: ["9.9.9.9:5000", "9.9.9.9:5001",
+                                           "[2a00:1450:4001:80b::200e]:3001", "[2a00:1450:4001:80b::200e]:3002"])
+        await svc.node.start()
+        try:
+            found = await svc.where_am_i()
+            assert svc.reachable is False, "nothing answers at the IPv4 address"
+            assert found == ("2a00:1450:4001:80b::200e", svc.node.listen_port)
+            assert svc.meet == svc.node.meet_from == "2a00:1450:4001:80b::200e"
+            assert svc.status()["meet"] == "2a00:1450:4001:80b::200e"
+        finally:
+            await svc.node.stop()
+    run(go())
+
+
+# ------------------------------------------------------------------ the fastest links win (2026-10-12)
+
+def test_a_link_knows_its_round_trip_time():
+    async def go():
+        a, b = await started(mk(), mk())
+        try:
+            a.add_address(*addr(b))
+            for _ in range(150):
+                if b.node_id in a.rtts() and a.rtts()[b.node_id] is not None:
+                    break
+                await asyncio.sleep(0.02)
+            assert a.rtts()[b.node_id] is not None and a.rtts()[b.node_id] < 500
+        finally:
+            await stop(a, b)
+    run(go())
+
+
+def test_a_faster_peer_replaces_the_slowest_link():
+    async def go():
+        a, b, c = await started(mk(target=1), mk(), mk())
+        try:
+            a.add_address(*addr(b))
+            for _ in range(100):
+                if b.node_id in a.links:
+                    break
+                await asyncio.sleep(0.02)
+            a.links[b.node_id].rtt = 0.5               # b is far away (half a second)
+            a.add_address(*addr(c))                    # c is a newcomer next door
+            dropped = await a.tune_once(settle=2.5)    # the trial links c and times it
+            assert dropped == b.node_id
+            assert c.node_id in a.links and b.node_id not in a.links
+            # And a trial that is no faster is let go, keeping what works.
+            a.links[c.node_id].rtt = 0.0001
+            a.addrs[addr(b)]["next"] = 0.0              # (a just dropped b: it would wait 30 s to dial it again)
+            dropped = await a.tune_once(settle=2.5)
+            assert dropped == b.node_id and c.node_id in a.links
+        finally:
+            await stop(a, b, c)
+    run(go())
+
+
+def test_a_node_takes_no_more_inbound_links_than_it_is_set_to():
+    async def go():
+        hub = MeshNode(nacl.signing.SigningKey.generate(), NET, listen_host="127.0.0.1", listen_port=0, max_inbound=2)
+        await hub.start()
+        spokes = [mk(listen=False, peers=[]) for _ in range(4)]
+        await started(*spokes)
+        try:
+            for s in spokes:
+                s.add_address("127.0.0.1", hub.listen_port, hub.node_id)
+            await asyncio.sleep(1.5)
+            assert sum(1 for l in hub.links.values() if not l.outbound) == 2
+        finally:
+            await stop(*spokes, hub)
+    run(go())
+
+
+def test_a_room_message_in_binary_comes_back_exactly_and_is_much_smaller():
+    """Binary pub frames (link.py): the dict out is the dict in, so the signature checks the same."""
+    from arcade.mesh.link import Link
+    key = nacl.signing.SigningKey.generate()
+    for extra in ({}, {"c": {"a": "nAbc", "x": 1791900000, "s": "H" + "y" * 87}}, {"d": ["0a1b2c3d", "ffee0011"]}):
+        h = {"t": "pub", "r": "ashvale/vale:19:3:4", "o": bytes(key.verify_key).hex(), "q": 1791812345678901,
+             "m": "nQ" + "x" * 32, "k": "msg", "hops": 3, **extra}
+        h["sig"] = key.sign(meshlib._canon(meshlib._signed_part(h)) + b"payload").signature.hex()
+        packed = Link.pack(h, b"payload")
+        back, blob = Link.unpack(packed)
+        assert back == h and blob == b"payload"
+        assert MeshNode._verify(back, blob)
+        as_json = len(json.dumps(h, separators=(",", ":"))) + 2 + 7
+        # The header shrinks to well under half; a certificate riding along is most of what is left.
+        assert len(packed) < as_json * (0.7 if "c" in h else 0.6), (len(packed), as_json)   # measured 52% and 64%
+
+
+# ------------------------------------------------------------------ links over WebSocket (2026-10-12)
+# A node nobody can dial opens a tunnel (a Cloudflare quick tunnel) to a local WebSocket port and
+# announces its wss:// address; other nodes dial that. Loopback stands in for the tunnel here.
+
+def test_two_nodes_link_over_websocket_and_a_room_works_across_it():
+    async def go():
+        far = MeshNode(nacl.signing.SigningKey.generate(), NET, listen_host="127.0.0.1", listen_port=None, ws_port=0)
+        near = mk(listen=False)
+        await started(far, near)
+        try:
+            near.add_address(f"ws://127.0.0.1:{far.ws_port}/mesh", 443, far.node_id)
+            await until(lambda: far.node_id in near.links and near.node_id in far.links, what="ws link")
+            qn = await near.join("g/r", "nina")
+            await far.join("g/r", "fred")
+            await drain(qn, "join")
+            await far.send("g/r", "fred", b"over the tunnel")
+            assert (await drain(qn, "message")).data == b"over the tunnel"
+            assert not any(h.startswith("ws") for h, _ in far.addrs), "nothing to learn about a tunnel peer's address"
+        finally:
+            await stop(near, far)
+    run(go())
+
+
+def test_websocket_addresses_are_checked():
+    from arcade.mesh import wsock
+    assert wsock.parse_url("wss://abc-def.trycloudflare.com") == ("abc-def.trycloudflare.com", 443, "/mesh", True)
+    assert wsock.parse_url("ws://127.0.0.1:9000/mesh") == ("127.0.0.1", 9000, "/mesh", False)
+    for bad in ("http://x.com", "wss://", "wss://a b", "wss://x.com/<script>", "javascript:alert(1)"):
+        with pytest.raises(ValueError):
+            wsock.parse_url(bad)
+
+
+# ------------------------------------------------------------------ Core through the mesh (2026-10-12)
+
+def test_core_peers_through_the_mesh_both_ways_and_only_to_the_core_port():
+    """Two stand-in Core nodes: a's Core dials the port its arcade opened for b, and the bytes reach
+    b's Core peer port, and the answer comes back. addnode is asked to add, and to remove on unlink."""
+    from arcade.mesh.corelink import CoreBridge
+
+    async def go():
+        heard = []
+
+        async def core_b(reader, writer):          # b's Core: echoes what it hears, upper-cased
+            try:
+                while data := await reader.read(100):
+                    heard.append(data)
+                    writer.write(data.upper()); await writer.drain()
+            except (ConnectionError, OSError):
+                pass
+            finally:
+                writer.close()
+        server_b = await asyncio.start_server(core_b, "127.0.0.1", 0)
+        asked = []
+        a, b = mk(), mk()
+        ba = CoreBridge({"test": 1}, lambda c, hp, op: asked.append((c, hp, op)))
+        bb = CoreBridge({"test": server_b.sockets[0].getsockname()[1], "main": 2}, None)
+        a.add_extension(ba); b.add_extension(bb)
+        await started(a, b)
+        try:
+            a.add_address(*addr(b))
+            await until(lambda: ba.listeners, what="a's arcade opens a Core port for b")
+            (peer, chain), (_, port) = next(iter(ba.listeners.items()))
+            assert peer == b.node_id and chain == "test", "only a chain both offer"
+            assert asked == [("test", f"127.0.0.1:{port}", "add")]
+            r, w = await asyncio.open_connection("127.0.0.1", port)      # a's Core dials it
+            w.write(b"version"); await w.drain()
+            assert await asyncio.wait_for(r.read(100), 5) == b"VERSION"
+            assert heard == [b"version"]
+            w.close(); await w.wait_closed()
+            await b.stop()                                               # the link goes
+            await until(lambda: not ba.listeners, what="the port closes with the link")
+            assert asked[-1] == ("test", f"127.0.0.1:{port}", "remove")
+        finally:
+            await a.stop()
+            server_b.close(); await server_b.wait_closed()
+            await asyncio.sleep(0.2)                  # let the closed sockets finish closing
+    run(go())
+
+
+def test_the_tunnel_carries_room_routes_to_the_web_app_and_nothing_else():
+    from arcade.mesh import wsock
+
+    async def go():
+        got = []
+
+        async def web(reader, writer):                     # the node's web app, standing in
+            head = await reader.readuntil(b"\r\n\r\n")
+            got.append(head.split(b"\r\n")[0].decode())
+            body = b'{"ok":true}'
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n" % len(body) + body)
+            await writer.drain(); writer.close()
+        web_srv = await asyncio.start_server(web, "127.0.0.1", 0)
+        async def mesh_handler(r, w): pass
+        ws_srv = await wsock.serve(mesh_handler, "127.0.0.1", 0, http_port=web_srv.sockets[0].getsockname()[1])
+        port = ws_srv.sockets[0].getsockname()[1]
+        try:
+            async def ask(line):
+                r, w = await asyncio.open_connection("127.0.0.1", port)
+                w.write(line.encode() + b"\r\nHost: x\r\nCF-Connecting-IP: 203.0.113.1\r\n\r\n"); await w.drain()
+                out = await asyncio.wait_for(r.read(), 5); w.close(); await w.wait_closed()
+                return out
+            assert b"200 OK" in await ask("GET /realtime/hello HTTP/1.1") and got == ["GET /realtime/hello HTTP/1.1"]
+            for line in ("GET /wallet HTTP/1.1", "GET / HTTP/1.1", "GET /realtime/../admin HTTP/1.1", "POST /send HTTP/1.1"):
+                assert b"404" in await ask(line), line
+            assert len(got) == 1, "nothing but /realtime/ reaches the web app"
+        finally:
+            ws_srv.close(); web_srv.close(); await ws_srv.wait_closed(); await web_srv.wait_closed()
+            await asyncio.sleep(0.1)
+    run(go())
+
+
+def test_a_local_member_keeps_its_seat_through_a_short_drop(monkeypatch):
+    """2026-10-13: a phone dropped every stream for a few seconds and lost its seat at IDLE;
+    one of this node's own members now keeps it for LOCAL_GRACE without a touch."""
+    import time as _time
+    monkeypatch.setattr(meshlib, "LOCAL_GRACE", 3.0)
+
+    async def go():
+        node = MeshNode(nacl.signing.SigningKey.generate(), NET, listen_host="127.0.0.1", listen_port=0)
+        await node.start()
+        try:
+            await node.join("plaza", "phone")
+            entry = node.local[("plaza", "phone")]
+            entry.touched = _time.monotonic() - 2.0          # past IDLE (1 s), within the grace
+            await node._expire_locals()
+            assert ("plaza", "phone") in node.local, "a short drop keeps the seat"
+            entry.touched = _time.monotonic() - 3.5          # past the grace
+            await node._expire_locals()
+            assert ("plaza", "phone") not in node.local, "gone for good after the grace"
+        finally:
+            await node.stop()
     run(go())

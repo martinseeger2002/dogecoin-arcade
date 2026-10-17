@@ -17,6 +17,8 @@
       <td>{{ run.name }}</td>
       <td>{{ run.chain }}</td>
       <td>{{ "{:,}".format(run.sent) }} of {{ "{:,}".format(run["items"]) }}
+        {% if run.skipped %}<span class="pill">{{ "{:,}".format(run.skipped) }}
+          already in the set</span>{% endif %}
         {% if run.refused %}<span class="pill bad">{{ "{:,}".format(run.refused) }}
           refused</span>{% endif %}</td>
       <td><span class="pill {{ 'ok' if run.status == 'done' else ('bad' if run.status == 'failed' else ('warn' if run.status == 'running' else '')) }}">{{ run.status }}</span></td>
@@ -31,10 +33,11 @@
 {% if not runs %}
 <div class="panel empty">
   <p>Nothing written down yet.</p>
-  <p class="muted" style="font-size:.86rem">A run starts when you upload a
+  <p class="muted" style="font-size:.86rem">A run starts when you choose a
     folder on the <a href="/me/nfts">wallet</a> page &mdash; the layout the Art
-    Engine leaves, <code>json/_metadata.json</code> and the pictures. Uploading
-    inscribes nothing; it only writes the run down here.</p>
+    Engine leaves, <code>json/_metadata.json</code> and the pictures. Choosing it
+    inscribes nothing and uploads nothing; it only writes the run down here, and
+    the pictures stay in your browser.</p>
 </div>
 {% endif %}
 

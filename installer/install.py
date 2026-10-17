@@ -82,7 +82,8 @@ class Coin:
     """
 
     def __init__(self, key, name, version, repo, binaries, prefix,
-                 signer, key_file, datadir_name, app_name, sums):
+                 signer, key_file, datadir_name, app_name, sums,
+                 networks=("mainnet", "testnet")):
         self.key = key                    # "pepecoin" / "dogecoin"
         self.name = name                  # shown to the user
         self.version = version
@@ -94,6 +95,13 @@ class Coin:
         self.datadir_name = datadir_name  # platform datadir leaf
         self.app_name = app_name          # macOS .app bundle
         self.sums = sums                  # pinned SHA-256 per asset
+        self.networks = tuple(networks)   # which nodes to run: Pepecoin both,
+                                          # Dogecoin mainnet only (2026-10-13)
+
+    def nodes(self, main_dir, test_dir):
+        """(label, datadir) for every node of this coin the arcade runs."""
+        return [(label, d) for label, d in (("mainnet", main_dir), ("testnet", test_dir))
+                if label in self.networks]
 
     @property
     def base_url(self):
@@ -158,6 +166,9 @@ DOGECOIN = Coin(
         "dogecoin-1.14.9-osx-unsigned.dmg":
             "c87c956834a87da8200274a097364c986ccca045d71ce92d0f7d407129d25a83",
     },
+    # The arcade's third network is Dogecoin MAINNET; its testnet is Pepecoin's
+    # (2026-10-13: "We don't want Dogecoin test net").
+    networks=("mainnet",),
 )
 
 COINS = {c.key: c for c in (PEPECOIN, DOGECOIN)}
@@ -195,37 +206,6 @@ def warn(text: str) -> None:
 
 def fail(text: str) -> None:
     raise InstallError(text)
-
-
-def choose_chain() -> list:
-    """Ask which chain to install a node for.
-
-    Asked rather than assumed, because the two chains are entirely separate
-    networks and installing the wrong one leaves a user with a node that can
-    never see their coins. `--coin` skips this for scripted installs.
-    """
-    print()
-    print("  Which chain do you want to use?")
-    print()
-    print("    1) Pepecoin   -- the default")
-    print("    2) Dogecoin")
-    print("    3) Both       -- two nodes, one application")
-    print()
-    print("  The application is identical on either. You can add the other later")
-    print("  by running this installer again.")
-    print()
-    while True:
-        try:
-            answer = input("  Choose 1, 2 or 3 [1]: ").strip().lower()
-        except EOFError:
-            answer = ""
-        if answer in ("", "1", "p", "pep", "pepe", "pepecoin"):
-            return [PEPECOIN]
-        if answer in ("2", "d", "doge", "dogecoin"):
-            return [DOGECOIN]
-        if answer in ("3", "b", "both"):
-            return [PEPECOIN, DOGECOIN]
-        print("  Please answer 1, 2 or 3.")
 
 
 # --- platform -----------------------------------------------------------------
@@ -640,7 +620,7 @@ def install_services_windows(target: Path, main_dir: Path, test_dir: Path, coin)
         return []
 
     installed = []
-    for label, datadir in (("mainnet", main_dir), ("testnet", test_dir)):
+    for label, datadir in coin.nodes(main_dir, test_dir):
         command = WINDOWS_TASK.format(label=f"{coin.key}-{label}", binary=binary, datadir=datadir)
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
         if result.returncode == 0:
@@ -693,8 +673,46 @@ ZMQ_BASE = {
 }
 
 
+def _settings(text: str) -> dict:
+    """key -> value for every setting line of a node config (comments skipped)."""
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith(("#", "[")) and "=" in line:
+            key, value = line.split("=", 1)
+            out.setdefault(key.strip(), value.strip())
+    return out
+
+
+def update_config(conf: Path, content: str, label: str) -> list:
+    """Add to an existing node config the settings the arcade needs and it lacks.
+
+    Nothing the person wrote is changed or removed: a setting they already have,
+    whatever its value, is theirs. What is missing is appended in one marked
+    block. The one exception is txindex on a node that already holds blocks:
+    turning it on there makes the node refuse to start until a -reindex, which
+    on mainnet takes days, so that one is said rather than done."""
+    have = _settings(conf.read_text())
+    wanted = _settings(content)
+    missing = [(k, v) for k, v in wanted.items() if k not in have]
+    if ("txindex", "1") in missing and (conf.parent / "blocks").exists():
+        missing.remove(("txindex", "1"))
+        warn(f"{conf} has no txindex=1, and the arcade needs it. Add it yourself and")
+        warn("  restart the node once with -reindex (a full rebuild; it takes a while).")
+    if not missing:
+        info(f"{label} config already has what the arcade needs: {conf}")
+        return []
+    with conf.open("a") as out:
+        out.write("\n# --- added by the DogecoinArcade installer ---\n")
+        for key, value in missing:
+            out.write(f"{key}={value}\n")
+    info(f"added {', '.join(k for k, _ in missing)} to {conf}")
+    info("  a node that is already running picks them up when it restarts")
+    return [k for k, _ in missing]
+
+
 def write_configs(main_dir: Path, test_dir: Path, coin) -> None:
-    for directory, label in ((main_dir, "mainnet"), (test_dir, "testnet")):
+    for label, directory in coin.nodes(main_dir, test_dir):
         base = ZMQ_BASE[(coin.key, label)]
         content = CONF_TEMPLATE.format(
             coin=coin.name,
@@ -706,7 +724,7 @@ def write_configs(main_dir: Path, test_dir: Path, coin) -> None:
         directory.mkdir(parents=True, exist_ok=True)
         conf = directory / f"{coin.key}.conf"
         if conf.exists():
-            info(f"{label} config already exists, leaving it alone: {conf}")
+            update_config(conf, content, label)
             continue
         conf.write_text(content)
         conf.chmod(0o600)
@@ -786,10 +804,8 @@ def install_services_macos(main_dir: Path, test_dir: Path, coin) -> list[str]:
     agents = Path.home() / "Library/LaunchAgents"
     agents.mkdir(parents=True, exist_ok=True)
     installed = []
-    for label, datadir, extra in (
-        ("mainnet", main_dir, ""),
-        ("testnet", test_dir, "<string>-testnet=1</string>"),
-    ):
+    for label, datadir in coin.nodes(main_dir, test_dir):
+        extra = "<string>-testnet=1</string>" if label == "testnet" else ""
         plist = agents / f"com.dogecoinarcade.{coin.key}-{label}.plist"
         plist.write_text(
             LAUNCHD_PLIST.format(label=f"{coin.key}-{label}", binary=binary, datadir=datadir, extra=extra)
@@ -890,15 +906,15 @@ def install_services(system: str, target: Path, main_dir: Path, test_dir: Path, 
 
     if system != "Linux" or not shutil.which("systemctl"):
         warn("no systemd here; start the nodes yourself:")
-        warn(f"  {target}/{coin.binaries[0]} -datadir={main_dir}")
-        warn(f"  {target}/{coin.binaries[0]} -datadir={test_dir}")
+        for _, datadir in coin.nodes(main_dir, test_dir):
+            warn(f"  {target}/{coin.binaries[0]} -datadir={datadir}")
         return []
 
     # A *user* unit needs no root at all.
     unit_dir = Path.home() / ".config/systemd/user"
     unit_dir.mkdir(parents=True, exist_ok=True)
     installed = []
-    for label, datadir in (("mainnet", main_dir), ("testnet", test_dir)):
+    for label, datadir in coin.nodes(main_dir, test_dir):
         name = f"{coin.binaries[0]}-{label}.service"
         (unit_dir / name).write_text(
             SYSTEMD_UNIT.format(label=f"{coin.name} {label}", binary=target / coin.binaries[0], datadir=datadir)
@@ -1721,7 +1737,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--update", action="store_true",
                         help="update an existing installation to the latest code")
     parser.add_argument("--skip-core", action="store_true",
-                        help="skip Pepecoin Core; install only the application")
+                        help="skip the coin nodes; install only the application")
     parser.add_argument("--force-core", action="store_true",
                         help="install our pinned Core even if one is already "
                              "installed or running")
@@ -1731,8 +1747,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="build the index from the chain instead of the latest bootstrap")
     parser.add_argument(
         "--coin", choices=["pepecoin", "dogecoin", "both"], default=None,
-        help="which chain to install a node for. Omit it and the installer asks. "
-             "The protocol is identical on both, so 'both' installs two nodes.",
+        help="for scripted or partial installs only: which coin's nodes to install. "
+             "Omitted, the installer installs both -- Pepecoin (mainnet and testnet) "
+             "and Dogecoin (mainnet), the arcade's three networks.",
     )
     args = parser.parse_args(argv)
 
@@ -1748,14 +1765,13 @@ def main(argv: list[str] | None = None) -> int:
     print("DogecoinArcade installer")
     print("=" * 58)
 
-    # Ask, unless told on the command line or running somewhere nobody can answer
-    # (a pipe, a CI job), where the historical default stands.
-    if args.coin:
-        coins = list(COINS.values()) if args.coin == "both" else [COINS[args.coin]]
-    elif args.skip_core or not sys.stdin.isatty():
-        coins = [PEPECOIN]
+    # Both, always, with no question (2026-10-13: "that option should be
+    # removed when installing because it should install both"): the arcade runs
+    # on testnet PEP, mainnet PEP and mainnet DOGE.
+    if args.coin and args.coin != "both":
+        coins = [COINS[args.coin]]
     else:
-        coins = choose_chain()
+        coins = [PEPECOIN, DOGECOIN]
     per_coin = 0 if args.skip_core else 2
     total = 4 + len(coins) * (per_coin + 2)
     n = 0
@@ -1839,7 +1855,8 @@ def main(argv: list[str] | None = None) -> int:
             n += 1
             step(n, total, f"Writing {coin.name} configuration")
             if args.dry_run:
-                info(f"would write {main_dir}/{coin.key}.conf and {test_dir}/{coin.key}.conf")
+                for _, datadir in coin.nodes(main_dir, test_dir):
+                    info(f"would write {datadir}/{coin.key}.conf")
             else:
                 write_configs(main_dir, test_dir, coin)
 

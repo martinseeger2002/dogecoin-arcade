@@ -116,7 +116,13 @@ def _json(payload: Any, status: int = 200) -> JSONResponse:
 
 
 def _missing(what: str) -> JSONResponse:
-    return _json({"error": what}, status=404)
+    """A 404 nobody may keep: an inscription asked for a moment before its block
+    is indexed is missing NOW and there a minute later. With no header of its
+    own, Cloudflare's edge (which caches /content/ since 2026-10-06) and every
+    browser applied the zone's 4-hour default, so a piece looked lost for hours."""
+    missing = _json({"error": what}, status=404)
+    missing.headers["Cache-Control"] = "no-store"
+    return missing
 
 
 #: A transaction id, and the reason a number cannot be mistaken for one.

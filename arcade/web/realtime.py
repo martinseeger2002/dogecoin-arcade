@@ -20,6 +20,15 @@ by the node's own wallet. A signed-in account joins as its address with a
 certificate its browser signed (the node checks it before using it, so a
 browser cannot join as somebody else). Anybody else joins as a guest.
 
+**Any node can be a player's way in** (2026-10-12, the operator: "I want the client to be able
+to access any one of the connected nodes as their game server"). A room is the same room on
+every node, so the viewer may carry a player through whichever node answers it fastest
+(`/realtime/nodes` lists them; _page_doors picks). Those calls come from another site, so
+the room routes say CORS yes -- they act only on a token or a certificate, never on a cookie,
+so another site gains nothing it could not get by joining itself. A player signed in
+elsewhere is still themselves here: their wallet signs THIS node's certificate (the words
+come from `hello.cert`) and join takes `address` + `sig` with no session at all.
+
 **Why the stream is async when every other route is not.** Every route in
 create_app runs in the thread pool, and a test holds them to it. An open
 stream is not a request that finishes: one per player per game, held for as
@@ -45,6 +54,8 @@ from ..mesh.service import GUEST, MESSAGE_MAGIC, cert_message
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 GAME = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+CORS_HEADERS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Max-Age": "600"}
 ROOM_MAX = 60
 HEARTBEAT = 4.0
 
@@ -63,6 +74,35 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
              check_csrf: Callable) -> None:
 
     tag_cache: dict[str, tuple[str, float]] = {}
+    # A game's service on this machine (arcade/service.py): it shows the node's
+    # service key instead of a form token, and is the operator. Never through
+    # the door: a public request with the key is just a request without a token.
+    from ..service import HEADER as SERVICE_HEADER, service_key
+    import secrets as _secrets
+    svc_key = service_key(state.home)
+
+    def form_ok(request: Request, body: dict) -> None:
+        shown = request.headers.get(SERVICE_HEADER, "")
+        if shown and svc_key and not account_view(request) and _secrets.compare_digest(shown, svc_key):
+            return
+        # A public request with no cookie at all has no ambient authority to forge: it is a
+        # guest, a certificate, or a token it was given (another node's viewer, cross-site).
+        if account_view(request) and not request.cookies:
+            return
+        check_csrf(str(body.get("csrf_token", "")))
+
+    @app.middleware("http")
+    async def realtime_cors(request: Request, call_next):
+        """The room routes, from any site (see the notes): never with credentials."""
+        path = request.url.path
+        if not path.startswith("/realtime/"):
+            return await call_next(request)
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=CORS_HEADERS)
+        response = await call_next(request)
+        for k, v in CORS_HEADERS.items():
+            response.headers[k] = v
+        return response
 
     def tag_of(address: str | None) -> str:
         if not address:
@@ -112,6 +152,9 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
         # play together with no peer at all, and peers come and go mid-game.
         out = {"ok": True, **svc.status(), "online": True,
                "who": {"kind": kind, "address": address or None, "tag": tag_of(address)}}
+        # The words a player signed in on ANOTHER node signs to be themselves here (see the notes).
+        out["cert"] = {"network": svc.network, "node": svc.node_id, "expires": svc.expiry(),
+                       "magic": MESSAGE_MAGIC}
         if kind == "account":
             expires = svc.expiry()
             chain = account_chain()
@@ -123,7 +166,7 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
 
     @app.post("/realtime/join")
     def realtime_join(request: Request, body: dict):
-        check_csrf(str(body.get("csrf_token", "")))
+        form_ok(request, body)
         try:
             svc = mesh()
             room = room_key(body.get("game"), body.get("room"))
@@ -143,6 +186,13 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
                 if not svc.check_cert(address, said):
                     raise MeshError("that signature does not prove this account's address")
                 cred, member = said, address
+            elif kind == "guest" and body.get("sig") and body.get("address"):
+                # Signed in on another node, playing through this one: the certificate is the proof.
+                claimed = str(body["address"])[:64]
+                said = {"a": claimed, "x": int(body.get("expires") or 0), "s": str(body["sig"])}
+                if not svc.check_cert(claimed, said):
+                    raise MeshError("that signature does not prove this address on this node")
+                cred, member = said, claimed
             if cred is None:
                 # A guest coming back after the node restarted (or after its
                 # stream dropped) keeps the name it had, so the other players
@@ -160,7 +210,7 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
 
     @app.post("/realtime/send")
     def realtime_send(request: Request, body: dict):
-        check_csrf(str(body.get("csrf_token", "")))
+        form_ok(request, body)
         try:
             if "b64" in body:
                 data = base64.b64decode(str(body["b64"]), validate=True)
@@ -175,7 +225,7 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
 
     @app.post("/realtime/leave")
     def realtime_leave(request: Request, body: dict):
-        check_csrf(str(body.get("csrf_token", "")))
+        form_ok(request, body)
         try:
             mesh().leave(str(body.get("token", "")))
         except MeshError:
@@ -217,6 +267,38 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
         return StreamingResponse(events(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-store",
                                           "X-Accel-Buffering": "no"})
+
+    @app.get("/realtime/nodes")
+    def realtime_nodes(request: Request):
+        """Ways into the mesh a browser can use (https): this node's own public names, the
+        tunnel addresses of nodes it knows, and arcade domains on the chain. The viewer
+        measures them and picks the quickest (_page_doors)."""
+        out, seen = [], set()
+
+        def add(base: str, node: str | None) -> None:
+            base = base.rstrip("/")
+            if base and base not in seen and base.startswith("https://") and len(out) < 50:
+                seen.add(base)
+                out.append({"base": base, "node": node})
+        try:
+            svc = mesh()
+        except MeshError:
+            return JSONResponse({"ok": True, "nodes": []})
+        if svc.tunnel_url:
+            add("https://" + svc.tunnel_url[len("wss://"):].rsplit("/mesh", 1)[0], svc.node_id)
+        now = time.time()
+        for (host, _port), e in sorted(svc.node.addrs.items(), key=lambda kv: -(kv[1].get("ok") or 0)):
+            if str(host).startswith("wss://") and e.get("id") and (e.get("id") in svc.node.links
+                                                                  or now - (e.get("ok") or 0) < 3600):
+                add("https://" + host[len("wss://"):].rsplit("/mesh", 1)[0], e["id"])
+        try:
+            if state.store_path.exists():
+                with state.store() as store:
+                    for row in store.instances(state.messaging.params.name)[:20]:
+                        add("https://" + str(row["domain"]), None)
+        except Exception:                          # noqa: BLE001 -- the directory is a nicety
+            pass
+        return JSONResponse({"ok": True, "self": svc.node_id, "nodes": out})
 
     @app.get("/r/realtime.js")
     def r_realtime_js():

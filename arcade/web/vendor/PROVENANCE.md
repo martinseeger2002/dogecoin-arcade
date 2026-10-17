@@ -6,7 +6,8 @@ that key theft is one compromised CDN away from. They are in the package,
 they ship in the wheel, and they are served from the node the page came
 from.
 
-They are the only third-party JavaScript in this application. Everything
+They, and the QR code encoder at the end of this file, are the only
+third-party JavaScript in this application. Everything
 else the browser does is `crypto.subtle` (see `templates/signin.js`).
 They are here because WebCrypto has none of what this needs:
 
@@ -121,3 +122,21 @@ tweetnacl went into the same folder as the hashes tarball, and for a few
 minutes it was impossible to say which file had come from which archive.
 Nothing wrong was copied, and only because the file in question exists in
 one of the two.
+
+## qrcode-generator 1.4.4 → `qrcode.js`
+
+    sha256  18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780
+    56,694 bytes, MIT, Kazuhiko Arase, https://github.com/kazuhikoarase/qrcode-generator
+
+The QR code the Wallet tab draws for an account's address (2026-10-08:
+"it should open up a pop-up of your QR code wallet address"). It is not
+cryptography, but it decides what a phone scanning the screen pays, so an
+encoder from somebody else's server would be one swap away from drawing a
+different address under the one printed beside it. No imports; it is a
+plain script that defines the global `qrcode`.
+
+Checked on 2026-10-08 the same three ways: fetched from **jsdelivr** and
+from **unpkg**, byte-identical; the npm registry's `dist.integrity`
+(`sha512-HM7yY8O2ilqhmULxGMpcHSF1EhJJ9yBj8gvDEuZ6M+KGJ0YY2hKpnXvRD+hZPLrDVck3ExIGhmPtSdcjC+guuw==`)
+matches the tarball's sha512, computed here; and the file inside the
+tarball is byte-identical to both. Untouched.

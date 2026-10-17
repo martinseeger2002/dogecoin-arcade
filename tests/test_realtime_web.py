@@ -34,6 +34,7 @@ def fake_verify(address, signature, message):
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
     monkeypatch.setattr(meshlib, "SUB_EVERY", 0.15)
+    monkeypatch.setattr(meshlib, "HERE_EVERY", 0.15)
     monkeypatch.setattr(meshlib, "DIAL_EVERY", 0.05)
 
 
@@ -346,3 +347,219 @@ def test_a_guest_coming_back_keeps_its_name_unless_somebody_holds_it(two_nodes):
     back = again(held)
     assert back["me"]["id"] == held, "the name is free again, so it comes back"
     assert again("not-a-guest-name")["me"]["id"].startswith("guest-")
+
+
+def test_one_player_in_two_tabs_gets_two_sessions_that_both_hear_and_outlive_each_other(two_nodes):
+    """ASHVALE and Ziibiing open in two tabs as the same account (2026-10-09): the
+    tabs shared one session, so each heard half of the room and either one leaving
+    took the other out with it -- they kicked each other off over and over and their
+    saves failed meanwhile. Each tab now has its own session and its own copy of every
+    event, and the player leaves the room only with its last tab."""
+    (ca, sa), (cb, sb) = two_nodes
+    svc = sa.mesh
+    one = svc.join("g1/town", "nTabPlayer", None)
+    two = svc.join("g1/town", "nTabPlayer", None)
+    assert one.token != two.token and one.queue is not two.queue
+    s1, s2 = Stream(ca, one.token), Stream(ca, two.token)
+    jb = join(cb, sb, room="town")
+    other = Stream(cb, jb["token"])
+    try:
+        cb.post("/realtime/send", json={"csrf_token": sb.csrf_token, "token": jb["token"], "data": "hello"})
+        for s in (s1, s2):
+            s.wait(lambda e: e["type"] == "message" and e.get("data") == "hello")
+        # The first tab closes: the second is still in the room and still hears.
+        svc.leave(one.token)
+        cb.post("/realtime/send", json={"csrf_token": sb.csrf_token, "token": jb["token"], "data": "still there"})
+        s2.wait(lambda e: e["type"] == "message" and e.get("data") == "still there")
+        assert svc.present("g1/town", "nTabPlayer")
+        # The last tab closes: now the player leaves the room.
+        svc.leave(two.token)
+        assert not svc.present("g1/town", "nTabPlayer")
+    finally:
+        s1.close(); s2.close(); other.close()
+
+
+# ------------------------------------------------------------------ a game's own service (2026-10-12)
+# "If anybody else wants to make a bank for their own game, they should be able to do it on
+# their own node": a program on the node's machine joins its game's rooms as the node's operator
+# with the node's service key (arcade/service.py), no browser and no form token.
+
+def test_a_service_on_the_node_joins_with_its_key_and_the_internet_cannot(two_nodes):
+    from arcade.service import HEADER, KEY_FILE, service_key
+    (ca, sa), _ = two_nodes
+    key = service_key(sa.home, make=False)
+    assert key and len(key) == 64, "the node made its service key when it started"
+    assert oct((sa.home / KEY_FILE).stat().st_mode & 0o777) == "0o600"
+    body = {"game": "mygame", "room": "bank"}
+    r = ca.post("/realtime/join", json=body, headers={HEADER: key})
+    assert r.status_code == 200 and r.json()["ok"], r.text
+    tok = r.json()["token"]
+    assert ca.post("/realtime/send", json={"token": tok, "data": "hi"}, headers={HEADER: key}).json() == {"ok": True}
+    assert ca.post("/realtime/join", json=body, headers={HEADER: "0" * 64}).status_code == 400, "a wrong key is no key"
+    assert ca.post("/realtime/join", json=body).status_code == 400, "no key and no form token"
+    # Through the door (an edge header): the key counts for nothing -- whoever it is joins as a
+    # stranger would (a guest; any node can be a player's way in now), never as the operator.
+    outside = {HEADER: key, "CF-Connecting-IP": "203.0.113.9"}
+    assert ca.get("/realtime/hello", headers=outside).json()["who"]["kind"] == "guest"
+    r = ca.post("/realtime/join", json=body, headers=outside)
+    assert r.status_code == 200 and r.json()["me"]["guest"], r.text
+    assert ca.get("/realtime/hello").json()["who"]["kind"] == "operator", "from the machine itself: the operator"
+
+
+def test_the_service_client_hears_a_player_and_answers(two_nodes):
+    import threading as th
+    from arcade.service import Room
+    (ca, sa), (cb, sb) = two_nodes
+    got = []
+    room = Room("mygame", "bank", node=str(ca.base_url), home=sa.home)
+    room.join()
+
+    def serve():
+        for ev in room.events(reconnect=False):
+            if ev["type"] == "message" and ev["member"]["id"] != room.me["id"]:
+                got.append(ev)
+                room.send({"t": "ack", "to": ev["member"]["id"]})
+                return
+    t = th.Thread(target=serve, daemon=True); t.start()
+    jb = join(cb, sb, room="bank", game="mygame")
+    player = Stream(cb, jb["token"])
+    try:
+        player.wait(lambda e: e["type"] == "join" and e["member"]["id"] == room.me["id"])
+        cb.post("/realtime/send", json={"csrf_token": sb.csrf_token, "token": jb["token"], "data": "deposit"})
+        ack = player.wait(lambda e: e["type"] == "message" and e["member"]["id"] == room.me["id"])
+        assert json.loads(ack["data"]) == {"t": "ack", "to": jb["me"]["id"]}
+        assert got and got[0]["data"] == "deposit"
+    finally:
+        player.close()
+        room.leave()
+
+
+def test_a_node_remembers_the_peers_it_reached_across_a_restart(tmp_path):
+    a = MeshService("arcade-test", nacl.signing.SigningKey.generate(), listen_host="127.0.0.1", listen_port=0).start()
+    keep = tmp_path / "mesh-peers.json"
+    b = MeshService("arcade-test", nacl.signing.SigningKey.generate(), listen_host="127.0.0.1", listen_port=0,
+                    peers=[("127.0.0.1", a.node.listen_port)], peers_file=keep).start()
+    try:
+        end = time.monotonic() + 5
+        while not b.node.links and time.monotonic() < end:
+            time.sleep(0.02)
+        assert b.node.links
+    finally:
+        b.stop()                                   # saves on the way out
+    rows = json.loads(keep.read_text())
+    assert [(r["h"], r["p"], r["id"]) for r in rows] == [("127.0.0.1", a.node.listen_port, a.node_id)]
+    # A fresh start with no --mesh-peer and no chain: it finds a from the file alone.
+    c = MeshService("arcade-test", nacl.signing.SigningKey.generate(), listen_host="127.0.0.1", listen_port=0,
+                    peers_file=keep).start()
+    try:
+        end = time.monotonic() + 5
+        while not c.node.links and time.monotonic() < end:
+            time.sleep(0.02)
+        assert a.node_id in c.node.links
+    finally:
+        c.stop(); a.stop()
+
+
+def test_a_tunnel_address_is_announced_and_kept_beside_the_ip_one(tmp_path):
+    """arcade-mesh-ws: a wss:// address, parsed by new nodes, skipped by old ones (different first
+    word), and the address book keeps the latest of EACH kind per node."""
+    from arcade.messaging.envelope import Header, TYPE_MESH
+    key = "ab" * 32
+    ws = meshannounce.build("wss://Sized-Agenda.trycloudflare.com/mesh", 443, key)
+    assert meshannounce.parse(ws) == {"host": "wss://Sized-Agenda.trycloudflare.com/mesh", "port": 443, "key": key}
+    for bad in ("ws://x.trycloudflare.com/mesh", "wss://x.trycloudflare.com/other", "wss://localhost/mesh"):
+        with pytest.raises(ValueError):
+            meshannounce.build(bad, 443, key)
+    assert b"arcade-mesh-ws " in ws
+    store = MessageStore(tmp_path / "m.sqlite")
+    store.add_mesh_announcement("t1", "test", "addr", "203.0.113.9", 8421, key, 10, 100)
+    store.add_mesh_announcement("t2", "test", "addr", "wss://a.trycloudflare.com/mesh", 443, key, 11, 101)
+    store.add_mesh_announcement("t3", "test", "addr", "wss://b.trycloudflare.com/mesh", 443, key, 12, 102)
+    hosts = sorted(r["host"] for r in store.mesh_peers("test"))
+    assert hosts == ["203.0.113.9", "wss://b.trycloudflare.com/mesh"]
+
+
+def test_the_tunnel_keeper_opens_and_announces_a_tunnel_and_keeps_it(tmp_path, monkeypatch):
+    """A stand-in cloudflared that prints a quick-tunnel address the way the real one does."""
+    from arcade.mesh import service as svclib
+    monkeypatch.setattr(svclib, "TUNNEL_FIRST", 0.1)
+    monkeypatch.setattr(svclib, "TUNNEL_EVERY", 0.3)
+    fake = tmp_path / "cloudflared"
+    fake.write_text("#!/bin/sh\necho 'INF |  https://quiet-river-test.trycloudflare.com  |'\nexec sleep 60\n")
+    fake.chmod(0o755)
+    told = []
+    svc = MeshService("arcade-test", nacl.signing.SigningKey.generate(), listen_host="127.0.0.1",
+                      listen_port=0, tunnel=str(fake), announce=lambda h, p: told.append((h, p))).start()
+    try:
+        assert svc.node.ws_port, "a tunnel needs the local WebSocket port"
+        end = time.monotonic() + 10
+        while not told and time.monotonic() < end:
+            time.sleep(0.05)
+        assert told == [("wss://quiet-river-test.trycloudflare.com/mesh", 443)]
+        assert svc.status()["tunnel"] == "wss://quiet-river-test.trycloudflare.com/mesh"
+        svc.reachable = True                     # an address proved: the tunnel stays, it is browsers' way in
+        time.sleep(1.0)
+        assert svc.status()["tunnel"] == "wss://quiet-river-test.trycloudflare.com/mesh" and len(told) == 1
+    finally:
+        svc.stop()
+
+
+# ------------------------------------------------------------------ any node as a player's way in (2026-10-12)
+
+def test_a_player_signed_in_elsewhere_plays_as_themselves_through_another_node(two_nodes):
+    """Another node's viewer, cross-site, no cookie: hello gives the certificate words, the player's
+    wallet signs them, and join takes the address + signature. CORS says yes to the room routes."""
+    (ca, sa), (cb, sb) = two_nodes
+    outside = {"Origin": "https://app.example", "CF-Connecting-IP": "203.0.113.7"}
+    pre = cb.options("/realtime/join", headers={**outside, "Access-Control-Request-Method": "POST"})
+    assert pre.status_code == 204 and pre.headers["access-control-allow-origin"] == "*"
+    hello = cb.get("/realtime/hello", headers=outside).json()
+    assert hello["who"]["kind"] == "guest" and hello["cert"]["node"] == sb.mesh.node_id
+    assert cb.get("/realtime/hello", headers=outside).headers["access-control-allow-origin"] == "*"
+    address = "nPlayerAddressFromNodeA0000000000x"
+    c = hello["cert"]
+    words = cert_message(c["network"], c["node"], address, c["expires"])
+    r = cb.post("/realtime/join", headers=outside, json={"game": "g1", "room": "town", "address": address,
+                                                        "sig": "good:" + words, "expires": c["expires"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["me"]["id"] == address and not r.json()["me"]["guest"]
+    bad = cb.post("/realtime/join", headers=outside, json={"game": "g1", "room": "town", "address": address,
+                                                          "sig": "good:someone else's words", "expires": c["expires"]})
+    assert bad.status_code == 400, "a signature over other words proves nothing"
+
+
+def test_the_nodes_list_offers_https_ways_in_only(two_nodes):
+    (ca, sa), _ = two_nodes
+    sa.mesh.node.add_address("wss://quick-fox.trycloudflare.com/mesh", 443, "cd" * 32)
+    sa.mesh.node.addrs[("wss://quick-fox.trycloudflare.com/mesh", 443)]["ok"] = time.time()
+    sa.mesh.node.add_address("203.0.113.5", 8421, "ef" * 32)
+    j = ca.get("/realtime/nodes").json()
+    assert j["ok"] and {"base": "https://quick-fox.trycloudflare.com", "node": "cd" * 32} in j["nodes"]
+    assert all(n["base"].startswith("https://") for n in j["nodes"]), "a page served over https cannot use http"
+
+
+def test_a_tunnel_announcement_that_fails_is_tried_again(tmp_path, monkeypatch):
+    """Live, 2026-10-12: the IPv6 and tunnel announcements went in the same second and the second
+    was refused (txn-mempool-conflict). Announcements now take turns, and a refused one is retried."""
+    from arcade.mesh import service as svclib
+    monkeypatch.setattr(svclib, "TUNNEL_FIRST", 0.1)
+    monkeypatch.setattr(svclib, "TUNNEL_EVERY", 0.2)
+    fake = tmp_path / "cloudflared"
+    fake.write_text("#!/bin/sh\necho 'INF |  https://second-try.trycloudflare.com  |'\nexec sleep 60\n")
+    fake.chmod(0o755)
+    calls = []
+
+    def announce(h, p):
+        calls.append(h)
+        if len(calls) == 1:
+            raise RuntimeError("sendrawtransaction: [-26] 258: txn-mempool-conflict")
+    svc = MeshService("arcade-test", nacl.signing.SigningKey.generate(), listen_host="127.0.0.1",
+                      listen_port=0, tunnel=str(fake), announce=announce).start()
+    try:
+        end = time.monotonic() + 10
+        while len(calls) < 2 and time.monotonic() < end:
+            time.sleep(0.05)
+        time.sleep(0.6)
+        assert calls == ["wss://second-try.trycloudflare.com/mesh"] * 2, "refused once, announced on the next round, then left alone"
+    finally:
+        svc.stop()

@@ -8,6 +8,7 @@ that pretends otherwise would be worse than one that says so.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import base64
 import dataclasses
 import datetime as dt
@@ -376,6 +377,16 @@ VIEW_COOKIE = "arcade_view"
 #: multiple wallets imported into the local web ui").
 OTHERS_COOKIE = "arcade_others"
 OTHERS_MOST = 5
+#: The chain this browser makes and browses things on, when it is an account's
+#: view (2026-10-09: "enable the ability for people to create tokens NFT's and NFT
+#: collections on main net. It should be an option on the create tab"). Per
+#: browser, never the node-wide `state.token_chain`, which is the operator's.
+CHAIN_COOKIE = "arcade_chain"
+_BROWSER_CHAIN: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
+    "arcade_browser_chain", default=None)
+#: The operator's fee on a mainnet creation, in thousandths of what it costs
+#: (`mainnet_create_fee_permille` in settings.json): 0.5%, the exchange's own cut.
+MAINNET_CREATE_FEE_PERMILLE = 5
 
 NAV = [
     ("/",             "Overview",     None,        True),
@@ -753,6 +764,14 @@ def create_app(state: AppState) -> FastAPI:
         return bool(account is not None and state.operator
                     and account.pubkey.lower() == state.operator)
 
+    def _node_player(request: Request) -> str:
+        """The node's own address when the node is the one playing: its own
+        machine, or its operator signed in from outside, with the node's view
+        (2026-10-05). "" for everybody else."""
+        if _account_view(request) or not _reads_the_plans(request):
+            return ""
+        return str(state.derived_address or "")
+
     def _reads_the_plans(request: Request) -> bool:
         """The operator's own machine, or the operator signed in from outside."""
         return not _public_request(request) or _is_operator(request)
@@ -994,6 +1013,13 @@ def create_app(state: AppState) -> FastAPI:
         """Mainnet node health. Read-only until a wallet is enabled there."""
         return state.ledger.status()
 
+    def _doge_status() -> dict[str, Any]:
+        """The Dogecoin node for the Wallet page: its health and how far its sync
+        has got. Empty when this machine runs no Dogecoin node."""
+        if state.doge is None:
+            return {"doge": None, "doge_sync": None}
+        return {"doge": state.doge.status(), "doge_sync": state.chain_sync(state.doge)}
+
     # --- overview -------------------------------------------------------------
 
     @app.get("/", response_class=HTMLResponse)
@@ -1048,7 +1074,7 @@ def create_app(state: AppState) -> FastAPI:
                     claiming = what[len("claim @"):]
                     break
         register = state.accounts()
-        return render(request, "overview.html", contact_code=code, announced=announced,
+        return render(request, "overview.html", **_doge_status(), contact_code=code, announced=announced,
                       seats_free=register.free(), seats_total=register.seats,
                       my_tag=my_tag, claiming=claiming,
                       my_address=state.derived_address,
@@ -2641,10 +2667,16 @@ def create_app(state: AppState) -> FastAPI:
         """Believe a token tip only when the chain says so (2026-09-27:
         "Tip a post with a token you hold ... and see it counted on the post").
 
-        A TIP_TOKEN act names a transaction; it counts when the token index has
+        A TIP_TOKEN act names a transaction; it counts when a token index has
         that transaction as a valid Simple Send (type 0) from the act's author
         to the post's author. Totals are kept per token and said in its own
-        units. One query for every claim on the page."""
+        units. One query per chain for every claim on the page.
+
+        On every token chain (2026-10-13: tip in "testnet or mainnet
+        token"): the note is always on the messaging chain, the send is on
+        whichever chain the token is, and there both people are the addresses
+        they published for it (`_pays_at`). A mainnet token is named with
+        "(mainnet)" so it never adds up with a testnet one of the same name."""
         every, stack = [], list(posts)
         while stack:
             post = stack.pop()
@@ -2654,24 +2686,32 @@ def create_app(state: AppState) -> FastAPI:
                   if re.fullmatch(r"[0-9a-f]{64}", c[0] or "")}
         if not wanted:
             return
-        try:
-            chain, index = _token_chain()
-            marks = ",".join("?" * len(wanted))
-            with contextlib.closing(index.open()) as db:
-                rows = {r["txid"]: r for r in db.conn.execute(
-                    f"SELECT txid, sender, reference, payload_hex FROM arcade_tx "
-                    f"WHERE valid = 1 AND message_type = 0 AND txid IN ({marks})",
-                    tuple(wanted))}
-        except Exception:
+        found: dict = {}          # send txid -> (chain, index, row)
+        marks = ",".join("?" * len(wanted))
+        for chain in state.token_chains:
+            try:
+                index = state.token_index(chain)
+                with contextlib.closing(index.open()) as db:
+                    for r in db.conn.execute(
+                            f"SELECT txid, sender, reference, payload_hex FROM arcade_tx "
+                            f"WHERE valid = 1 AND message_type = 0 AND txid IN ({marks})",
+                            tuple(wanted)):
+                        found.setdefault(r["txid"], (chain, index, r))
+            except Exception:
+                continue
+        if not found:
             return
         props: dict = {}
         for post in every:
             totals: dict = {}
             seen = set()
             for send, tipper in getattr(post, "token_claims", []):
-                row = rows.get(send)
-                if (row is None or send in seen or row["sender"] != tipper
-                        or row["reference"] != post.author):
+                got = found.get(send)
+                if got is None or send in seen:
+                    continue
+                chain, index, row = got
+                if (row["sender"] != _pays_at(tipper, chain)
+                        or row["reference"] != _pays_at(post.author, chain)):
                     continue
                 seen.add(send)
                 try:
@@ -2681,18 +2721,79 @@ def create_app(state: AppState) -> FastAPI:
                 pid = getattr(msg, "property_id", None)
                 if pid is None:
                     continue
-                totals[pid] = totals.get(pid, 0) + int(getattr(msg, "amount", 0))
+                key = (chain.network, pid)
+                totals[key] = totals.get(key, 0) + int(getattr(msg, "amount", 0))
+                props.setdefault(key, (chain, index))
             if totals:
                 said = {}
-                for pid, units in totals.items():
-                    if pid not in props:
-                        props[pid] = index.property(pid)
-                    prop = props[pid]
+                for key, units in totals.items():
+                    chain, index = props[key]
+                    prop = index.property(key[1])
                     if prop is None:
                         continue
-                    said[prop["name"]] = format_amount(units, prop["divisible"])
+                    name = prop["name"] + (" (Dogecoin)" if chain.is_doge else
+                                           " (mainnet)" if chain.is_mainnet else "")
+                    said[name] = format_amount(units, prop["divisible"])
                 post.token_tipped = said
                 post.tips += len(seen)
+
+    def _pays_at(author: str, chain) -> str:
+        """Where somebody on the feed takes payment on `chain`, or "".
+
+        A post's author is an address on the messaging chain. On any other
+        chain it is the address they PUBLISHED with their key (D-032), and
+        never a guess: an address nobody published is an address nobody
+        asked to be paid at, and on mainnet a wrong one is coins gone.
+        """
+        if not author:
+            return ""
+        if chain.network == state.messaging.network:
+            return author
+        with state.store() as store:
+            said = store.key_for(author)
+        if said is None or "other_address" not in said.keys():
+            return ""
+        other = str(said["other_address"] or "")
+        # On Dogecoin: the same key as their Pepecoin mainnet address.
+        return _doge_twin(other) if chain.is_doge else other
+
+    def _chain_menu(account_side: bool = False) -> list[dict[str, Any]]:
+        """Every chain, for a page to SHOW: its coin, its word, and whether it may
+        be picked yet. Dogecoin is in it from the start, grayed out with how far
+        its node has got, until the node has synced (2026-10-13). With
+        `account_side`, in the order an account's chains go: the tag chain first."""
+        chains = list(state.all_chains)
+        if account_side:
+            chains.sort(key=lambda c: (c is not _account_chain(), c.is_doge))
+        out = []
+        for c in chains:
+            sync = state.chain_sync(c)
+            out.append({"network": c.network, "mainnet": bool(c.is_mainnet),
+                        "doge": c.is_doge, "coin": c.params.coin, "net": c.net,
+                        "label": c.title, "family": c.family,
+                        "word": "mainnet" if c.is_mainnet else "testnet",
+                        "ready": bool(sync.get("ready")),
+                        "progress": round(100 * float(sync.get("progress") or 0), 1),
+                        "online": bool(sync.get("online"))})
+        return out
+
+    TEMPLATES.env.globals["chain_menu"] = _chain_menu
+
+    def _coin_of(where: Any) -> str:
+        """A chain's coin by its network name, or by the old mainnet bool."""
+        if isinstance(where, str) and where in NETWORKS:
+            return NETWORKS[where].coin
+        return "PEP" if where else "PEP TEST"
+
+    TEMPLATES.env.globals["coin_of"] = _coin_of
+
+    def _tip_chains() -> list[dict[str, Any]]:
+        """The chains a tip can be paid on, for the tip form: the tag chain
+        first (2026-10-13: "testnet PEP mainnet PEP and testnet or
+        mainnet token"), then Dogecoin -- shown grayed out until it syncs."""
+        return _chain_menu(account_side=True)
+
+    TEMPLATES.env.globals["tip_chains"] = _tip_chains
 
     def _frames_for(request: Request, drawable: dict[str, str]) -> dict[str, str]:
         """Where each HTML embed on a feed page loads from: the pages host, with
@@ -3103,10 +3204,69 @@ def create_app(state: AppState) -> FastAPI:
                              "claiming": claiming,
                              "face": _face_for(address),
                              **{k: v for k, v in _profile_of(address, waiting).items()
-                                if k in ("bio", "url")}},
+                                if k in ("bio", "url", "name", "mainnet")},
+                             **_profile_facts(chain, address)},
                       here=f"/u/{wanted}",
                       mine=mine, kinds=feedlib.BY_NAME, when=_when,
                       node=chain.status())
+
+    def _profile_facts(chain, address: str) -> dict[str, Any]:
+        """The rest of a profile's header (2026-10-08, the redesign the operator
+        approved): when they joined, how many posts, their games, and what
+        they hold by collection. Everything here is the chain's, read from
+        this node's indexes; a part that fails to read is left out rather
+        than taking the page down with it."""
+        out: dict[str, Any] = {"joined": 0, "joined_text": "", "posts": 0, "games": [],
+                               "collections": [], "pieces": 0, "hue": 0}
+        if not address:
+            return out
+        # A banner colour of their own, the same on every node: from the address.
+        out["hue"] = sum(address.encode()) % 360
+        try:
+            with state.store() as store:
+                out["joined"] = store.first_announced(address)
+                out["posts"] = store.feed_post_count(chain.network, address)
+            if out["joined"]:
+                out["joined_text"] = time.strftime("%b %Y", time.gmtime(out["joined"]))
+        except Exception:
+            pass
+        try:
+            _tchain, index = _token_chain()
+            every = _game_rows(index, newest=False)
+            mine = [r for r in every if r["creator"] == address]
+            if mine:
+                acts = _game_acts([r["txid"] for r in mine])
+                makers = _makers(address)
+                live = [r for r in gameslib.newest_per_game(mine)
+                        if not _game_removed(acts, r["txid"], makers)]
+                out["games"] = [{"txid": r["txid"], "name": r["game"]["name"],
+                                 "cover": r["game"].get("cover") or "",
+                                 "opens": _game_opens(index, r["creator"], r["txid"], r["game"]),
+                                 "version": r["game"].get("version") or ""} for r in live]
+            out["collections"] = index.collections_held(address)
+            out["pieces"] = sum(c["count"] for c in out["collections"])
+        except Exception:
+            pass
+        return out
+
+    @app.get("/u/{tag}/pieces")
+    def profile_pieces(tag: str, collection: str = "", offset: int = 0):
+        """One collection of what somebody holds, sixty at a time, for the
+        profile's Collections tab. Public, as the chain is: the same pieces
+        /u/{tag}/wallet lists, cut by collection ("" for the loose ones)."""
+        wanted = (tag or "").strip().lstrip("@").lower()
+        address, _claiming = _address_of_tag(wanted)
+        if not address:
+            return JSONResponse({"detail": f"nobody holds @{wanted} on this chain"},
+                                status_code=404)
+        _tchain, index = _token_chain()
+        rows = index.inscriptions(owner=address, collection=collection,
+                                  limit=61, offset=max(0, int(offset)))
+        return JSONResponse({
+            "pieces": [{"txid": r["txid"], "number": r["number"],
+                        "content_type": r["content_type"],
+                        "edition": r.get("edition")} for r in rows[:60]],
+            "more": len(rows) > 60})
 
     #: How many transactions a picture posted to the feed may take. A post
     #: should feel like a post: this is inscribed while the request waits,
@@ -3305,7 +3465,7 @@ def create_app(state: AppState) -> FastAPI:
         by accident is a page showing the profile from before the one this
         account just paid to publish.
         """
-        out = {"bio": "", "url": "", "pfp": "", "tag": "", "mainnet": ""}
+        out = {"bio": "", "url": "", "pfp": "", "tag": "", "mainnet": "", "name": ""}
         if not address:
             return out
         if waiting is _POOL:
@@ -3316,7 +3476,8 @@ def create_app(state: AppState) -> FastAPI:
                     out.update({"bio": row.get("bio", ""),
                                 "url": row.get("url", ""),
                                 "pfp": row.get("pfp", ""),
-                                "tag": row.get("tag", "")})
+                                "tag": row.get("tag", ""),
+                                "name": row.get("name", "") or ""})
                     break
         if not any((out["bio"], out["url"], out["pfp"])):
             try:
@@ -3328,7 +3489,8 @@ def create_app(state: AppState) -> FastAPI:
                 out.update({"bio": said["bio"] or "", "url": said["url"] or "",
                             "pfp": said["pfp"] or "",
                             "tag": said["tag"] or "",
-                            "mainnet": said["other_address"] or ""})
+                            "mainnet": said["other_address"] or "",
+                            "name": said["name"] or ""})
         return out
 
     @app.get("/u/{tag}/wallet", response_class=HTMLResponse)
@@ -3707,6 +3869,11 @@ def create_app(state: AppState) -> FastAPI:
     # --- wallet ---------------------------------------------------------------
 
     def _context(which: str):
+        # The node's own Dogecoin wallet too, once its node has synced (2026-10-13).
+        if which == "doge" and state.doge is not None:
+            if not state.chain_ready(state.doge):
+                raise ValueError("Dogecoin is not open yet: its node is still syncing")
+            return state.doge
         if which not in ("messaging", "ledger"):
             raise ValueError("unknown wallet")
         return state.messaging if which == "messaging" else state.ledger
@@ -3715,7 +3882,7 @@ def create_app(state: AppState) -> FastAPI:
     def wallet(request: Request):
         chain, _ = _token_chain()
         return render(request, "wallet.html", messaging=messaging_status(),
-                      ledger=ledger_status(), prepared=None, which=None, now=time.time(),
+                      ledger=ledger_status(), **_doge_status(), prepared=None, which=None, now=time.time(),
                       mining=_mining_json(), tab="coins", chain=chain,
                       other_chains=[c for c in state.token_chains if c is not chain])
 
@@ -3810,9 +3977,12 @@ def create_app(state: AppState) -> FastAPI:
                 own = _ledger_addresses(rpc)
                 home = state.home_address(chain)
                 coins, token, piece = _gather_senders(chain, rpc)
+                # The cross-chain book's exchange addresses hold deposits for
+                # other people and are never gathered (arcade/xchain_node.py).
+                keep = [state.setting(f"xchain:address:{which}") for which in ("testnet", "main")]
                 return gatherlib.walk_home(rpc, index, home, own, send_coins=coins,
                                            send_token=token, send_piece=piece,
-                                           limit=limit)
+                                           limit=limit, keep=[a for a in keep if a])
         finally:
             state.end_send()
 
@@ -3836,7 +4006,7 @@ def create_app(state: AppState) -> FastAPI:
             ctx = _context(which)
             sats = walletlib.parse_amount(amount)
             destination = _tag_address(state, destination,
-                                       mainnet=ctx.is_mainnet)
+                                       mainnet=ctx)
             with ctx.rpc() as rpc:
                 prepared = walletlib.prepare_send(rpc, destination, sats)
                 if confirmed == "yes":
@@ -3998,8 +4168,23 @@ def create_app(state: AppState) -> FastAPI:
     # as sending coins is, because on mainnet each one spends real coins and,
     # once a token exists, moves real value.
 
+    _funded_memo: dict = {}
+
     def _funded_addresses(rpc) -> list[dict[str, Any]]:
-        """Addresses with coins to pay a fee from, largest first."""
+        """Addresses with coins to pay a fee from, largest first. Remembered for
+        fifteen seconds and only while nothing has happened on this node
+        (`state.generation` moves with every send and every block)."""
+        creds = getattr(rpc, "_creds", None)
+        key = (getattr(creds, "host", ""), getattr(creds, "port", 0), state.generation)
+        held = _funded_memo.get(key)
+        if held and held[0] > time.time():
+            return [dict(r) for r in held[1]]
+        found = _funded_addresses_uncached(rpc)
+        _funded_memo.clear()
+        _funded_memo[key] = (time.time() + 15, [dict(r) for r in found])
+        return found
+
+    def _funded_addresses_uncached(rpc) -> list[dict[str, Any]]:
         sums: dict[str, int] = {}
         for utxo in rpc.call("listunspent", 0, 9_999_999):
             if utxo.get("address") and utxo.get("spendable", True):
@@ -4009,9 +4194,53 @@ def create_app(state: AppState) -> FastAPI:
                 for a, v in sorted(sums.items(), key=lambda kv: -kv[1])]
 
     def _token_chain() -> tuple[Any, Any]:
-        """The chain the Tokens page is on, and its index."""
+        """The chain the Tokens page is on, and its index.
+
+        For an account's view, the chain its own browser picked on the Create
+        tab (CHAIN_COOKIE, set for the request by `_per_browser_chain`);
+        otherwise the node's own choice.
+        """
+        wanted = _BROWSER_CHAIN.get()
+        if wanted:
+            for chain in state.token_chains:
+                if chain.network == wanted:
+                    return chain, state.token_index(chain)
         chain = state.token_chain
         return chain, state.token_index(chain)
+
+    async def _per_browser_chain(request: Request, call_next):
+        """Set the chain an account's browser picked, for this request only."""
+        wanted = request.cookies.get(CHAIN_COOKIE, "")
+        token = None
+        if wanted and any(c.network == wanted for c in state.token_chains):
+            try:
+                mine = _account_view(request)
+            except Exception:
+                mine = False
+            if mine:
+                token = _BROWSER_CHAIN.set(wanted)
+        try:
+            return await call_next(request)
+        finally:
+            if token is not None:
+                _BROWSER_CHAIN.reset(token)
+
+    app.middleware("http")(_per_browser_chain)
+
+    @app.get("/create/chain")
+    def create_chain(request: Request, to: str = "", back: str = "/create"):
+        """Pick the chain this browser creates on: Testnet or Mainnet."""
+        chosen = next((c for c in state.token_chains
+                       if to in (c.network, c.net, "doge" if c.is_doge else
+                                 "main" if c.is_mainnet else "test")), None)
+        where = back if back.startswith("/") and not back.startswith("//") else "/create"
+        answer = RedirectResponse(where, status_code=303)
+        if chosen is None and state.doge is not None and to in ("doge", "dogecoin"):
+            state.flash("Dogecoin is not open yet: its node is still syncing.", "err")
+        if chosen is not None:
+            answer.set_cookie(CHAIN_COOKIE, chosen.network, max_age=365 * 86400,
+                              samesite="lax", secure=_over_https(request), path="/")
+        return answer
 
     def _purses(holdings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """One row per token, not one per address.
@@ -4209,7 +4438,7 @@ def create_app(state: AppState) -> FastAPI:
     def create_page(request: Request):
         """One tab for making things (2026-09-27): NFTs, tokens, and
         the launchpad wizard, each a button to the page that does it."""
-        return render(request, "create.html")
+        return render(request, "create.html", chain=_token_chain()[0])
 
     @app.get("/nfts", response_class=HTMLResponse)
     def nfts_page(request: Request, page: int = 1):
@@ -4637,7 +4866,14 @@ def create_app(state: AppState) -> FastAPI:
             return _again("/inscriptions/collection",
                           error=str(exc), folder=folder)
 
-    def _save_upload(files: list[UploadFile]) -> Path:
+    # A folder can be bigger than one request may be: Cloudflare refuses a body over
+    # 100 MB, and a 6,480-picture collection is 112 MB (2026-10-08, "i cant get this
+    # to upload"). So the page sends it in batches into one upload, and starts the
+    # run from that upload. Which account an upload belongs to is kept here; a node
+    # restart forgets it, and the page then uploads again.
+    _uploads: dict[str, str] = {}
+
+    def _save_upload(files: list[UploadFile], root: Path | None = None) -> Path:
         """Lay uploaded files out the way HashLips does, by name.
 
         A browser sends a chosen folder as a flat list of files, so the
@@ -4645,9 +4881,10 @@ def create_app(state: AppState) -> FastAPI:
         under json/, pictures under images/. Anything else is not part of a
         build and is left out.
         """
-        root = _collection_upload_dir() / secrets.token_hex(4)
-        (root / "json").mkdir(parents=True)
-        (root / "images").mkdir()
+        if root is None:
+            root = _collection_upload_dir() / secrets.token_hex(4)
+        (root / "json").mkdir(parents=True, exist_ok=True)
+        (root / "images").mkdir(exist_ok=True)
         kept = 0
         for upload in files:
             name = Path(upload.filename or "").name
@@ -5171,6 +5408,61 @@ def create_app(state: AppState) -> FastAPI:
                       'Sensitive {l} &mdash; tap to show</button>'
                       '<template>{b}</template></span>').format(l=label, b=Markup(body))
 
+    # What a person is buying, at a glance (2026-10-06): which chain an asset
+    # lives on -- "an icon or indicator that an asset is on test net or on main net"
+    # -- and whether its issuer can mint more -- "whether it is a managed token or a
+    # fixed supply". Inline SVG, so no request and nothing the CSP has to allow.
+    _ICON_TEST = ('<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="none" '
+                  'stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">'
+                  '<path d="M6 1.5h4M6.5 1.5v4.2L2.6 12.6A1.3 1.3 0 0 0 3.8 14.5h8.4a1.3 1.3 0 0 0 '
+                  '1.2-1.9L9.5 5.7V1.5"/><path d="M4.3 10h7.4"/></svg>')
+    _ICON_MAIN = ('<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">'
+                  '<circle cx="8" cy="8" r="6.6" fill="currentColor"/><circle cx="8" cy="8" r="4" '
+                  'fill="none" stroke="var(--bg,#111)" stroke-width="1.4"/></svg>')
+    _ICON_FIXED = ('<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" fill="none" '
+                   'stroke="currentColor" stroke-width="1.7"><rect x="3" y="7" width="10" height="7.5" '
+                   'rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>')
+    _ICON_MANAGED = ('<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" fill="none" '
+                     'stroke="currentColor" stroke-width="1.8" stroke-linecap="round">'
+                     '<path d="M8 2.5v11M2.5 8h11"/></svg>')
+
+    def _net_badge(where: Any = None) -> Markup:
+        """TESTNET or MAINNET, with its icon. `where` is a chain, a network name, or
+        a bool meaning mainnet."""
+        # Dogecoin, by its chain or its network name (2026-10-13), in yellow.
+        if getattr(where, "is_doge", False) or where in ("doge", "dogecoin"):
+            return Markup('<span class="netbadge doge" title="Dogecoin mainnet: real DOGE">'
+                          '<b class="netl">D</b> MAIN</span>')
+        if isinstance(where, bool):
+            main = where
+        elif isinstance(where, str):
+            main = where.lower() in ("main", "mainnet")
+        else:
+            main = bool(getattr(where, "is_mainnet", False))
+        if main:
+            return Markup('<span class="netbadge main" title="Pepecoin mainnet: real PEP">'
+                          '<b class="netl">P</b> MAIN</span>')
+        # Which coin as well as which net (2026-10-13: "Wherever it says
+        # testnet or mainnet it should also indicate pep or doge ... an uppercase
+        # P or D in the correct color"): P blue, P green, D yellow.
+        return Markup('<span class="netbadge test" title="Pepecoin testnet: test assets, no '
+                      'guaranteed value; the chain can be reset"><b class="netl">P</b> TEST</span>')
+
+    def _supply_badge(prop: Any) -> Markup:
+        """Fixed supply, or managed (the issuer can mint more whenever it likes)."""
+        try:
+            managed = bool(prop["managed"]) if prop is not None else False
+        except (KeyError, IndexError, TypeError):
+            managed = bool(getattr(prop, "managed", False))
+        if managed:
+            return Markup('<span class="supplybadge managed" title="Managed supply: the issuer can '
+                          'create more of this token at any time, so the amount in existence can grow">'
+                          + _ICON_MANAGED + ' Managed</span>')
+        return Markup('<span class="supplybadge fixed" title="Fixed supply: every one of these tokens '
+                      'was created at issuance; nobody can make more">' + _ICON_FIXED + ' Fixed supply</span>')
+
+    TEMPLATES.env.globals["net_badge"] = _net_badge
+    TEMPLATES.env.globals["supply_badge"] = _supply_badge
     TEMPLATES.env.globals["wall"] = lambda text, label="name": _walled(
         str(text or ""), None, label)
 
@@ -5595,11 +5887,64 @@ def create_app(state: AppState) -> FastAPI:
                 owner=owner or None, creator=creator or None)})
 
     @app.get("/r/inscriptions/{address}")
-    def r_inscriptions_of(address: str, limit: int = 200, offset: int = 0):
-        rows = _content_index().inscriptions(owner=address, limit=limit,
-                                             offset=offset)
+    def r_inscriptions_of(address: str, limit: int = 200, offset: int = 0,
+                          pending: int = 0):
+        index = _content_index()
+        rows = index.inscriptions(owner=address, limit=limit, offset=offset)
         named = _tags_for([r["owner"] for r in rows] + [r["creator"] for r in rows])
-        return contentlib._json([contentlib.describe(row, named) for row in rows])
+        out = [contentlib.describe(row, named) for row in rows]
+        if pending:
+            # What the mempool is moving (2026-10-04): arriving pieces are added,
+            # leaving ones marked. The owner each row names is still the block's.
+            moves = _pending_of(address)
+            leaving = {m["inscription"] for m in moves["outgoing"] if m["kind"] == "inscription"}
+            for row in out:
+                if row.get("id") in leaving:
+                    row["pending"] = "leaving"
+            have = {row.get("id") for row in out}
+            for m in moves["incoming"]:
+                if m["kind"] != "inscription" or m["inscription"] in have:
+                    continue
+                got = index.inscription(m["inscription"])
+                if got is not None:
+                    have.add(m["inscription"])
+                    out.append({**contentlib.describe(got, named), "pending": "arriving",
+                                "pending_txid": m["txid"]})
+        return contentlib._json(out)
+
+    def _pending_of(address: str) -> dict:
+        """What the mempool is moving to and from one address, named for a page."""
+        index = _content_index()
+        moves = index.pending_moves()
+        incoming, outgoing = [], []
+        for m in moves:
+            if address not in (m["from"], m["to"]) or m["from"] == m["to"]:
+                continue
+            row = dict(m)
+            if m["kind"] == "inscription":
+                got = index.inscription(m["inscription"])
+                if got is not None:
+                    row["number"] = got["number"]
+                    j = got.get("json") if isinstance(got.get("json"), dict) else {}
+                    row["name"] = str(j.get("name") or "")[:80]
+            else:
+                prop = index.property(m["property_id"])
+                if prop is None:
+                    continue
+                row["name"] = prop["name"]
+                row["amount"] = format_amount(m["units"], prop["divisible"])
+            (incoming if m["to"] == address else outgoing).append(row)
+        return {"address": address, "incoming": incoming, "outgoing": outgoing}
+
+    @app.get("/r/pending/{address}")
+    def r_pending(address: str):
+        """Pieces and tokens on their way to and from one address, read from the
+        mempool (settle_now_design.md D, 2026-10-04). Gone if their transaction
+        is dropped; the ledger is never changed by any of it."""
+        try:
+            return contentlib._json(_pending_of(address))
+        except Exception:
+            return contentlib._json({"address": address, "incoming": [], "outgoing": []})
 
     @app.get("/r/collections")
     def r_collections(limit: int = 100, offset: int = 0, creator: str = ""):
@@ -5636,15 +5981,40 @@ def create_app(state: AppState) -> FastAPI:
         return contentlib._json(out)
 
     @app.get("/r/balances/{address}")
-    def r_balances(address: str):
+    def r_balances(address: str, pending: int = 0):
         """What one address holds. A list of addresses, because that is what
         `balances` takes -- handing it a string made one SQL placeholder per
-        CHARACTER and matched nothing, silently, for every address there is."""
+        CHARACTER and matched nothing, silently, for every address there is.
+
+        `pending=1` (2026-10-04) adds `arriving` and `leaving` units per token,
+        from the mempool, and a row for a token that is only arriving. `units`
+        is still what the blocks say."""
         try:
             held = _content_index().balances([address])
         except Exception:
             held = []
-        return contentlib._json([contentlib.holding(row) for row in held])
+        out = [contentlib.holding(row) for row in held]
+        if pending:
+            try:
+                moves = _pending_of(address)
+            except Exception:
+                moves = {"incoming": [], "outgoing": []}
+            by = {row["propertyid"]: row for row in out}
+            for key, side in (("arriving", "incoming"), ("leaving", "outgoing")):
+                for m in moves[side]:
+                    if m["kind"] != "token":
+                        continue
+                    row = by.get(m["property_id"])
+                    if row is None:
+                        prop = _content_index().property(m["property_id"])
+                        row = contentlib.holding({"property_id": m["property_id"],
+                                                  "name": prop["name"] if prop else "",
+                                                  "units": 0,
+                                                  "divisible": bool(prop and prop["divisible"])})
+                        by[m["property_id"]] = row
+                        out.append(row)
+                    row[key] = int(row.get(key, 0)) + int(m["units"])
+        return contentlib._json(out)
 
     def _token_json(prop: dict) -> dict:
         """A token as a page reads it: Omni's five issuance strings, who issued it,
@@ -5690,20 +6060,43 @@ def create_app(state: AppState) -> FastAPI:
         return contentlib._json(out)
 
     @app.get("/r/holders")
-    def r_holders(token: int = 0, creator: str = "", collection: str = ""):
+    def r_holders(token: int = 0, ids: str = "", creator: str = "",
+                  collection: str = ""):
         """Who holds a token, or any piece of a collection: addresses only.
 
         Public already -- the token page lists holders and every piece page its
         owner -- and asked for by the creator's browser, which keeps the
         holders' group chat in step with the chain (messaging.js
         tendHolderChats, 2026-09-25).
+
+        An empty list here means "nobody holds it", so it is answered only when
+        that is what the node knows. A call that named nobody was answered empty
+        like everything else (2026-10-05), which is the one reading that must not
+        be free: the creator's browser moves a holders' chat to a fresh key when
+        the list comes back without them in it. `ids` is taken as `token` because
+        that is how the token routes beside this one name their argument.
         """
         index = _content_index()
+        asked = [p.strip() for p in str(ids or "").split(",") if p.strip()]
+        if not token and asked:
+            if len(asked) > 1:
+                return contentlib._missing(
+                    "one token at a time here; /r/tokens?ids= answers several at once")
+            if not asked[0].isdigit():
+                return contentlib._missing(f"'{asked[0]}' is not a token id")
+            token = int(asked[0])
+        if not token and not (creator and collection):
+            if creator:
+                return contentlib._missing(
+                    "a collection needs its name too: "
+                    "?creator=<address>&collection=<name>")
+            return contentlib._missing(
+                "say whose holders to list: ?token=<id>, or "
+                "?creator=<address>&collection=<name>")
         try:
             if token:
-                rows = index.holders(int(token))
-                return contentlib._json({"holders": [r["address"] for r in rows]})
-            if creator and collection:
+                found = [r["address"] for r in index.holders(int(token))]
+            else:
                 owners: list[str] = []
                 for offset in range(0, 5000, 500):
                     page = index.collection_items(creator, collection, limit=500,
@@ -5711,10 +6104,11 @@ def create_app(state: AppState) -> FastAPI:
                     owners += [r["owner"] for r in page]
                     if len(page) < 500:
                         break
-                return contentlib._json({"holders": sorted(set(owners))})
+                found = sorted(set(owners))
         except Exception:
-            pass
-        return contentlib._json({"holders": []})
+            return contentlib._json({"error": "this node could not list holders"},
+                                    status=503)
+        return contentlib._json({"holders": found})
 
     @app.get("/r/tag/{name}")
     def r_tag(name: str):
@@ -5800,6 +6194,20 @@ def create_app(state: AppState) -> FastAPI:
         if page and page != held[2]:
             return ""                      # one page's ticket, not every page's
         return held[0]
+
+    def _viewer_page(request: Request, chain) -> str:
+        """The page whose ticket this request carries, when `_viewer_of` names a
+        reader: the inscription the reader has open, said by the viewer and not
+        by the page."""
+        from urllib.parse import parse_qs, urlparse
+        if not _viewer_of(request, chain):
+            return ""
+        ticket = request.query_params.get("v", "")
+        refer = request.headers.get("referer", "")
+        if refer:
+            ticket = ticket or (parse_qs(urlparse(refer).query).get("v") or [""])[0]
+        held = _viewer_tickets.get(ticket or "")
+        return str(held[2]) if held else ""
 
     def _wallet_answer(chain, index, addresses: list[str], spendable) -> dict:
         # One query for every address this wallet has, then summed per token:
@@ -6084,6 +6492,8 @@ def create_app(state: AppState) -> FastAPI:
         if state.public or doorlib.from_outside(request.headers, request.headers.get("host", ""),
                                                 state.public_hosts):
             return _ask_the_reader(request, chain, body)
+        if body.get("silent") is True:
+            return _node_silent_send(request, chain, body)
         try:
             filed = _file_request("page", body)
         except approvalslib.RequestError as exc:
@@ -6092,6 +6502,60 @@ def create_app(state: AppState) -> FastAPI:
             return contentlib._json({"error": f"could not file the request: {exc}"},
                                     status=503)
         return contentlib._json(filed, status=202)
+
+    def _node_silent_send(request: Request, chain, body: dict):
+        """A page asks the node's own wallet to send with {silent: true}: the node
+        is playing, so no card -- a game's own asset going back to the game is
+        sent at once, signed by the node's wallet; anything else fails at once
+        (2026-10-05). The rule is the one an account's tab applies: a test chain,
+        not coins, the page's own creator receiving, and a token that creator
+        issued or a piece that creator inscribed."""
+        from urllib.parse import urlparse
+        index = state.token_index(chain)
+        refer = urlparse(request.headers.get("referer", ""))
+        page = ""
+        if refer.path.startswith("/content/"):
+            page = refer.path[len("/content/"):].split("/")[0].split("?")[0]
+        page_row = index.inscription(page) if page else None
+        creator = page_row["creator"] if page_row else ""
+        kind = str(body.get("kind") or "")
+        try:
+            to = _tag_address(state, str(body.get("to") or ""), mainnet=chain)
+        except ValueError:
+            to = ""
+        own = False
+        if creator and to == creator and not chain.is_mainnet:
+            if kind == "token":
+                prop = index.property(int(body.get("propertyid") or 0))
+                own = bool(prop and prop.get("issuer") == creator)
+            elif kind == "inscription":
+                piece = index.inscription(contentlib._key(str(body.get("inscription") or "")))
+                own = bool(piece and piece["creator"] == creator)
+        try:
+            told = _file_request("page", body)
+        except approvalslib.RequestError as exc:
+            return contentlib._json({"error": str(exc)}, status=400)
+        queue = state.approvals
+        if not own:
+            queue.decide(told["id"], "failed", error="this needs the player's say-so")
+            return contentlib._json({**told, "status": "failed",
+                                     "error": "this needs the player's say-so"}, status=202)
+        try:
+            with chain.rpc() as rpc:
+                prepared = approvalslib.prepare(queue.get(told["id"]), rpc, chain.params, index,
+                                                _ledger_addresses(rpc))
+                if prepared.fee_coins > 0.05:
+                    raise approvalslib.RequestError("that would cost more than a game's own "
+                                                    "return may without asking")
+                sent = approvalslib.broadcast(rpc, prepared)
+        except Exception as exc:                          # noqa: BLE001
+            queue.decide(told["id"], "failed", error=str(exc))
+            return contentlib._json({**told, "status": "failed", "error": str(exc)}, status=202)
+        queue.decide(told["id"], "sent", txid=sent)
+        state.pending_tokens.append({"txid": sent, "what": prepared.what,
+                                     "at": time.time(), "network": chain.network})
+        state.bump_generation()
+        return contentlib._json({**told, "status": "sent", "txid": sent}, status=202)
 
     # The pages-host guard (the_door) sits outside this function and asks here.
     state.viewer_of = lambda request: _viewer_of(request, _token_chain()[0])
@@ -6112,13 +6576,31 @@ def create_app(state: AppState) -> FastAPI:
             return contentlib._json({"error": "sign in to PepecoinArcade and open this "
                                      "page there to be asked"}, status=403)
         kind = str(body.get("kind") or "")
-        if kind not in ("token", "coins"):
-            return contentlib._json({"error": "a page may ask for coins or a token"},
-                                    status=400)
+        if kind not in ("token", "coins", "inscription"):
+            return contentlib._json({"error": "a page may ask for coins, a token or an "
+                                     "inscription"}, status=400)
         to = str(body.get("to") or "").strip()
-        amount = str(body.get("amount") or "").strip()
+        amount = "1" if kind == "inscription" else str(body.get("amount") or "").strip()
         if not to or not amount:
             return contentlib._json({"error": "say who to pay and how much"}, status=400)
+        index = state.token_index(chain)
+        # Whose game it is, and whose these things are (the creator allowance,
+        # 2026-10-04): read here, from the index, so the reader's page can tell
+        # a game's own asset going back to the game from anything else.
+        page = _viewer_page(request, chain)
+        page_row = index.inscription(page) if page else None
+        piece = None
+        if kind == "inscription":
+            piece = index.inscription(contentlib._key(str(body.get("inscription") or "")))
+            if piece is None:
+                return contentlib._json({"error": "there is no such inscription"}, status=400)
+            if piece["owner"] != address:
+                return contentlib._json({"error": "that inscription is not yours to send"},
+                                        status=400)
+        try:
+            to_address = _tag_address(state, to, mainnet=chain)
+        except ValueError:
+            to_address = ""
         now = time.time()
         for rid, row in list(_page_sends.items()):
             if row["status"] == "pending" and now - row["created"] > PAGE_SEND_FOR:
@@ -6127,10 +6609,10 @@ def create_app(state: AppState) -> FastAPI:
                 _page_sends.pop(rid, None)
         waiting = [r for r in _page_sends.values()
                    if r["address"] == address and r["status"] == "pending"]
-        if len(waiting) >= 20:
+        if len(waiting) >= 20 and not _unlimited_address(address):
             return contentlib._json({"error": "twenty requests are already waiting"},
                                     status=429)
-        name = ""
+        name, issuer = "", ""
         if kind == "token":
             try:
                 prop = state.token_index(chain).property(int(body.get("propertyid") or 0))
@@ -6138,14 +6620,24 @@ def create_app(state: AppState) -> FastAPI:
                 prop = None
             if prop is None:
                 return contentlib._json({"error": "there is no such token"}, status=400)
-            name = prop["name"]
+            name, issuer = prop["name"], str(prop.get("issuer") or "")
+        if piece is not None:
+            name = f"#{piece['number']}" + (f" ({piece['json'].get('name')})"
+                                            if isinstance(piece.get("json"), dict)
+                                            and piece["json"].get("name") else "")
         rid = secrets.token_urlsafe(12)
         _page_sends[rid] = {
             "id": rid, "address": address, "network": chain.network, "kind": kind,
             "to": to[:120], "amount": amount[:40],
             "propertyid": int(body.get("propertyid") or 0) if kind == "token" else None,
             "name": name, "label": str(body.get("label") or "")[:60],
-            "note": str(body.get("note") or "")[:140], "page": "",
+            "note": str(body.get("note") or "")[:140], "page": page,
+            "creator": page_row["creator"] if page_row else "", "to_address": to_address,
+            "issuer": issuer, "inscription": piece["txid"] if piece else "",
+            "made_by": piece["creator"] if piece else "",
+            # A page that must never raise a card (2026-10-04): what the reader's
+            # tab cannot send unasked fails instead of asking.
+            "silent": body.get("silent") is True,
             "status": "pending", "txid": "", "error": "", "created": now}
         return contentlib._json(_page_send_told(_page_sends[rid]), status=202)
 
@@ -6170,8 +6662,10 @@ def create_app(state: AppState) -> FastAPI:
                 if r["address"] == address and r["status"] == "pending"
                 and now - r["created"] <= PAGE_SEND_FOR]
         return JSONResponse({"chain": chain.network, "requests": [
-            {k: r[k] for k in ("id", "kind", "to", "amount", "propertyid", "name",
-                               "label", "note")} for r in rows]},
+            {k: r.get(k, "") for k in ("id", "kind", "to", "amount", "propertyid", "name",
+                                       "label", "note", "page", "creator", "to_address",
+                                       "issuer", "inscription", "made_by", "silent")}
+            for r in rows]},
             headers={"Cache-Control": "no-store"})
 
     @app.post("/account/pagesends/answer")
@@ -6260,6 +6754,14 @@ def create_app(state: AppState) -> FastAPI:
         if row is None:
             return contentlib._missing("no such request")
         return contentlib._json(_described(row))
+
+    @app.get("/r/contacts.js")
+    def r_contacts_js():
+        """The contacts shim an inscribed page loads: arcade.contacts.list(), the
+        signed-in player's address book, read-only, asked once per game (2026-10-06)."""
+        body = (TEMPLATE_DIR / "contacts.js").read_text()
+        return Response(body, media_type="application/javascript",
+                        headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
 
     @app.get("/r/storage.js")
     def r_storage_js():
@@ -6704,7 +7206,7 @@ def create_app(state: AppState) -> FastAPI:
                             raise ValueError(f"nobody holds @{wanted}.")
                         destination = resolved
                     problem = _check_address(destination,
-                                             mainnet=chain.is_mainnet)
+                                             mainnet=chain)
                     if problem:
                         raise ValueError(problem)
 
@@ -6819,6 +7321,19 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "inscription_full.html", fullscreen=True, kind=kind, src=src,
                       txid=row["txid"], title=str(title)[:80], row=row, chain=chain,
                       viewer=viewer, back=f"/inscriptions/{row['txid']}/view")
+
+    @app.get("/inscriptions/{key}")
+    def inscription_bare(key: str):
+        """A piece's address without a page on the end: its page.
+
+        Linked as a bare /inscriptions/<id> from a profile's Collections tab, the
+        cross-chain market and an approval, and nothing answered it -- a friend's
+        piece opened "Not here" instead of the page where an offer is made
+        (2026-10-09). Anything already posted with that link works now too.
+        """
+        if not re.fullmatch(r"[0-9a-fA-F]{64}|[0-9]{1,12}", key or ""):
+            raise HTTPException(status_code=404, detail="no such piece")
+        return RedirectResponse(f"/inscriptions/{key}/view", status_code=307)
 
     @app.get("/inscriptions/{key}/view", response_class=HTMLResponse)
     def inscription_view(request: Request, key: str):
@@ -6990,7 +7505,18 @@ def create_app(state: AppState) -> FastAPI:
         # URL, since the frame itself carries no cookie.
         ticket = _viewer_ticket(here, chain.network, row["txid"]) \
             if viewer == "account" and here else ""
+        # Bids for this piece in mainnet PEP on the cross-chain book (2026-10-09:
+        # "I want to be able to offer pep main chain for a test net NFT"): the
+        # best few, so its holder sees them here and a buyer sees what stands.
+        x_bids = []
+        if _x_open() and not chain.is_mainnet:
+            try:
+                x_bids = [{"pep": b["left_pepe"] / COIN, "id": b["id"]}
+                          for b in state.xchain.book.book("nft", row["txid"])["buys"]][:5]
+            except Exception:
+                x_bids = []
         return render(request, "inscription_view.html", row=row, chain=chain,
+                      xchain_open=_x_open(), x_bids=x_bids,
                       my_offers=my_offers, swap_waiting=swap_waiting,
                       ticket=ticket,
                       listed=listed,
@@ -7266,10 +7792,10 @@ def create_app(state: AppState) -> FastAPI:
             raise tokenlib.TokenError("a recipient address is needed.")
         try:
             address = _tag_address(state, address,
-                                   mainnet=state.token_chain.is_mainnet)
+                                   mainnet=state.token_chain)
         except ValueError as exc:
             raise tokenlib.TokenError(str(exc)) from None
-        complaint = _check_address(address, mainnet=state.token_chain.is_mainnet)
+        complaint = _check_address(address, mainnet=state.token_chain)
         if complaint:
             raise tokenlib.TokenError(complaint)
         return address
@@ -8131,6 +8657,12 @@ def create_app(state: AppState) -> FastAPI:
     # implying an account does more than it does.
 
     SESSION_COOKIE = SESSION
+    # The session cookie is SameSite=Lax, not Strict (2026-10-08: "Sometimes
+    # when I open a game in Dogecoin arcade, I have to login two or three times"):
+    # with Strict, a game opened from a link in Discord, Telegram or an email loaded
+    # signed out and asked for a sign-in the account already had. Lax still keeps the
+    # cookie off every cross-site POST and every cross-site fetch, which is what
+    # Strict was protecting here; the admin cookie stays Strict.
 
     def _origin(request: Request) -> str:
         """What the browser thinks it is talking to, which is what gets signed.
@@ -8292,7 +8824,7 @@ def create_app(state: AppState) -> FastAPI:
         answer.set_cookie(
             SESSION_COOKIE, token,
             max_age=accountslib.SESSION_DAYS * 86400,
-            httponly=True, samesite="strict",
+            httponly=True, samesite="lax",
             # Secure only where the browser would keep it: marking a cookie
             # Secure on plain http means the browser drops it, and the
             # symptom is a login that appears to work and then does not.
@@ -8355,7 +8887,7 @@ def create_app(state: AppState) -> FastAPI:
         _set_others(answer, [t for t in ([now] if now and state.account_for(now) else [])
                              + [t for t in others if t != token]][:OTHERS_MOST])
         answer.set_cookie(SESSION_COOKIE, token, max_age=accountslib.SESSION_DAYS * 86400,
-                          httponly=True, samesite="strict", secure=_over_https(request))
+                          httponly=True, samesite="lax", secure=_over_https(request))
         answer.delete_cookie(VIEW_COOKIE)
         return answer
 
@@ -8380,6 +8912,15 @@ def create_app(state: AppState) -> FastAPI:
     #: it finds with the node's own wallet as the signer, and an account's run
     #: must never be signed by this node at all.
     _runs = accountrunslib.Runs(state.home / "accountruns.sqlite")
+    #: The digests already in a run's collection, kept while that run is going,
+    #: so a piece written down without a digest can be checked for being up
+    #: already without reading the index again for every piece. Keyed by run,
+    #: which is what makes it a fact rather than a stale cache: §6 lets an
+    #: account only one run at a time, and a collection only grows from its own
+    #: address, so while a run goes nothing else is adding to the set it is
+    #: reading. What a piece lands with is added here too, by `_set_landed`.
+    _set_pics: dict[str, set[str]] = {}
+    _SET_PIC_ROOM = 4         # runs remembered at once; a few hundred KB each
     #: Inscriptions too big for one transaction, and which of their transactions
     #: are still owed. Its own book again, for the same reason as the runs: the
     #: node's Runner resumes what the node's own wallet should finish, and this
@@ -8470,6 +9011,31 @@ def create_app(state: AppState) -> FastAPI:
             pass
         return frozenset(out)
 
+    # --- node-facilitated trades: OFF unless the operator turns them on --------------
+    #
+    # 2026-10-13: "I want an option in my operator node admin panel. That will
+    # ... enable node facilitated trades. ... trades are only available if they leave
+    # their tab open so that transaction building is complete on the client side
+    # solely. It needs to be 100% trustless ... But node facilitated trading should
+    # still be an option." So by default this node completes nobody's trade while
+    # they are away: it holds no pre-signed listing or bid for later, fills no
+    # standing order on a buyer's behalf, and takes custody of nothing (the
+    # cross-chain book). Trades that both people's tabs sign live -- and the chain's
+    # own order matching -- are untouched. `node_trades` in settings.json.
+
+    NODE_TRADES_OFF = ("This arcade trades only while both people are here, each "
+                       "signing in their own tab: it does not hold a signature to "
+                       "finish a trade for somebody who has gone. The operator can "
+                       "turn node-facilitated trades on in the admin panel.")
+
+    def _node_trades() -> bool:
+        return bool(state.setting("node_trades", False))
+
+    TEMPLATES.env.globals["node_trades"] = _node_trades
+
+    def _node_trades_refused():
+        return JSONResponse({"detail": NODE_TRADES_OFF, "node_trades": False}, status_code=403)
+
     def _account_chain():
         """The chain a tag lives on. Testnet, as tags always have been."""
         return state.messaging
@@ -8483,8 +9049,12 @@ def create_app(state: AppState) -> FastAPI:
         once here stops every caller having to.
         """
         out = [_account_chain()]
-        for chain in (state.ledger,):
+        for chain in (state.ledger, state.doge):
             if chain is not None and chain.network != _account_chain().network:
+                # Dogecoin only once its node has synced (2026-10-13): until
+                # then nothing may be paid, held or signed there.
+                if chain.is_doge and not state.chain_ready(chain):
+                    continue
                 out.append(chain)
         return tuple(out)
 
@@ -8500,9 +9070,11 @@ def create_app(state: AppState) -> FastAPI:
         if not wanted:
             return _account_chain()
         for chain in _account_chains():
-            if wanted in (chain.network, chain.label.lower(),
-                          "mainnet" if chain.is_mainnet else "testnet"):
+            if wanted in (chain.network, chain.label.lower(), chain.net,
+                          chain.params.label.lower()):
                 return chain
+        if state.doge is not None and wanted in ("doge", "dogecoin"):
+            raise ValueError("Dogecoin is not open here yet: its node is still syncing")
         raise ValueError(f"this node does not run {wanted}")
 
     def _chain_on(network: str):
@@ -8537,40 +9109,57 @@ def create_app(state: AppState) -> FastAPI:
     def _account_address(pubkey: str, chain) -> str:
         return str(state.setting(_address_key(pubkey, chain), "") or "")
 
-    def _real_coins_open(account) -> bool:
-        """Whether this account has asked to spend coins that are money.
+    def _words_backed_up(account) -> bool:
+        """Whether this account has typed its twelve words back on the Backup page.
 
-        §1b's opt-in. It is a setting and not a check, and the reason is
-        worth having in the file rather than in a comment somewhere else:
-        the node CANNOT verify that somebody wrote their twelve words down
-        without knowing the words, and a server that knows an account's
-        words is the one thing every other decision here exists to make
-        impossible. So the browser verifies them the only way that keeps
-        that true -- by deriving the account's own mainnet key out of the
-        words as typed and comparing it with the one already in use -- and
-        sends only the answer.
-
-        Which means this stops the person who never wrote the words down
-        from putting real money somewhere nothing can bring it back from,
-        and it stops nobody who is determined to be stopped. That is what
-        it is for. The page says so rather than showing a padlock.
+        Only a notice now. It used to gate every mainnet send (§1b); the operator,
+        2026-10-08, after an account of his own had real coins it could not
+        move: "don't require them to enter their 12 words in order to enable
+        main chain transactions, but allow them to back them up at their
+        leisure. If they don't back them up, that's on them give them a
+        notice." The node still cannot check the words without knowing them,
+        so the browser checks them against the account's own address and
+        sends only the answer (/account/mainnet); the pages that show the
+        notice ask this.
         """
         return str(state.setting(f"mainnet:{account.pubkey}", "") or "") == "yes"
-
-    def _real_coins_gate(account, chain) -> None:
-        """Refuse to spend real coins from an account that never opted in."""
-        if chain.is_mainnet and not _real_coins_open(account):
-            raise ValueError(
-                "those are real coins, and this account has not asked for "
-                "them. Type your twelve words back on the Backup page to "
-                "switch them on -- what this account can spend is only yours "
-                "for as long as you hold those words, and nothing here can "
-                "bring them back.")
 
     def _coinkey_key(pubkey: str, chain) -> str:
         if chain.network == _account_chain().network:
             return f"coinkey:{pubkey}"
         return f"coinkey:{chain.network}:{pubkey}"
+
+    def _unlimited_address(address: str) -> bool:
+        """Whether the operator exempted this address from the per-account limits
+        (settings.json `unlimited_accounts`: addresses or @tags, 2026-10-04 --
+        a game's own account that mints and pays continuously)."""
+        listed = state.setting("unlimited_accounts", []) or []
+        if not address or not isinstance(listed, list):
+            return False
+        for item in listed:
+            item = str(item or "").strip()
+            if item == address:
+                return True
+            if item and taglib.looks_like_a_tag(item):
+                for mainnet in (False, True):
+                    try:
+                        if _tag_address(state, item, mainnet=mainnet) == address:
+                            return True
+                    except ValueError:
+                        continue
+        return False
+
+    def _unlimited(account) -> bool:
+        """Whether an account is exempt: its address on any chain is listed."""
+        if not state.setting("unlimited_accounts"):
+            return False
+        for chain in [state.messaging, *state.token_chains]:
+            try:
+                if _unlimited_address(_account_address(account.pubkey, chain) or ""):
+                    return True
+            except Exception:                              # noqa: BLE001
+                continue
+        return False
 
     def _quota(account, kind: str, nbytes: int = 0, count: bool = True) -> None:
         """What this node lets one account do, checked where the work is done.
@@ -8610,6 +9199,8 @@ def create_app(state: AppState) -> FastAPI:
         spent -- and it buys no protection, because an offer only exists in the
         pile at all if some earlier ask paid for it.
         """
+        if _unlimited(account):
+            return                     # the operator lifted every limit for it
         if len(_offers.waiting(account.pubkey)) >= accountslib.OFFERS_WAITING:
             raise ValueError(
                 "this node is still waiting to hear about the other offers it "
@@ -8803,7 +9394,7 @@ def create_app(state: AppState) -> FastAPI:
             blob = said.get("blob")
             if not isinstance(blob, dict) or not blob.get("sealed"):
                 raise ValueError("that is not an encrypted wallet")
-            complaint = _check_address(address, mainnet=chain.is_mainnet)
+            complaint = _check_address(address, mainnet=chain)
             if complaint:
                 raise ValueError(complaint)
             register = state.accounts()
@@ -8827,7 +9418,7 @@ def create_app(state: AppState) -> FastAPI:
             elsewhere = str(said.get(f"address_{other.network}", "")).strip()
             if not elsewhere:
                 continue
-            if _check_address(elsewhere, mainnet=other.is_mainnet):
+            if _check_address(elsewhere, mainnet=other):
                 continue
             state.set_setting(_address_key(pubkey, other), elsewhere)
             their_key = str(said.get(f"coin_pubkey_{other.network}",
@@ -9037,7 +9628,7 @@ def create_app(state: AppState) -> FastAPI:
         if tokens:
             answer.set_cookie(OTHERS_COOKIE, ",".join(tokens),
                               max_age=accountslib.SESSION_DAYS * 86400,
-                              httponly=True, samesite="strict")
+                              httponly=True, samesite="lax")
         else:
             answer.delete_cookie(OTHERS_COOKIE)
 
@@ -9046,7 +9637,7 @@ def create_app(state: AppState) -> FastAPI:
         answer.set_cookie(
             SESSION_COOKIE, token,
             max_age=accountslib.SESSION_DAYS * 86400,
-            httponly=True, samesite="strict", secure=_over_https(request))
+            httponly=True, samesite="lax", secure=_over_https(request))
 
     @app.get("/account")
     def account_state(request: Request):
@@ -9057,7 +9648,7 @@ def create_app(state: AppState) -> FastAPI:
         about somebody else.
         """
         account = signed_in(request)
-        chains = [{"network": one.network, "label": one.label,
+        chains = [{"network": one.network, "label": one.label, "title": one.title,
                    "version": one.params.pubkeyhash_version,
                    "mainnet": bool(one.is_mainnet),
                    "tags": one is _account_chain()}
@@ -9140,11 +9731,10 @@ def create_app(state: AppState) -> FastAPI:
                    "mainnet": bool(one.is_mainnet),
                    "address": here, "balance": 0, "incoming": 0,
                    "watching": None, "tags": one.network == chain.network,
-                   # Not a secret and not a judgement: the page needs it to
-                   # put the twelve-words box in front of a send rather than
-                   # after it, where it would arrive too late to be read.
-                   "locked": bool(one.is_mainnet)
-                             and not _real_coins_open(account)}
+                   # Whether the words were ever typed back, for the notice
+                   # the Wallet tab shows beside real coins. Spends no longer
+                   # wait on it (2026-10-08).
+                   "backed_up": _words_backed_up(account)}
             if here:
                 try:
                     index = state.token_index(one)
@@ -9250,7 +9840,15 @@ def create_app(state: AppState) -> FastAPI:
         try:
             index = state.token_index(chain)
             for row in index.search_tags(wanted, limit=20):
-                out.append({"tag": row["tag"], "address": row["address"]})
+                found = {"tag": row["tag"], "address": row["address"], "name": "", "face": ""}
+                try:
+                    with state.store() as store:
+                        said = store.key_for(row["address"])
+                    found["name"] = (said["name"] or "") if said is not None else ""
+                    found["face"] = _face_for(row["address"])
+                except Exception:
+                    pass
+                out.append(found)
         except Exception:
             pass
         return JSONResponse({"matches": out})
@@ -9311,6 +9909,52 @@ def create_app(state: AppState) -> FastAPI:
                 } for row in held],
             })
         return JSONResponse({"chains": out})
+
+    def _nft_chain(account, chain: str):
+        picked = next((one for one in _account_chains()
+                       if one.network == chain), None) if chain else _account_chain()
+        address = _account_address(account.pubkey, picked) if picked else ""
+        return picked, address
+
+    @app.get("/account/nfts/collections")
+    def account_nft_collections(request: Request, chain: str = ""):
+        """What this account holds on one chain, grouped into collections.
+
+        The Wallet tab draws these first and the pieces of one only when it is
+        opened (2026-10-08: "Thumbnails for each collection and then when you
+        open a collection, it shows you the items in that collection").
+        """
+        account = _signed_in_account(request)
+        picked, address = _nft_chain(account, chain)
+        if picked is None:
+            return JSONResponse({"detail": f"no chain called {chain} here"}, status_code=404)
+        groups = []
+        if address:
+            try:
+                groups = state.token_index(picked).held_collections(address)
+            except Exception:
+                groups = []            # a chain this node has no index for
+        return JSONResponse({"chain": picked.network, "label": picked.label,
+                             "address": address, "collections": groups})
+
+    @app.get("/account/nfts/pieces")
+    def account_nft_pieces(request: Request, chain: str = "", collection: str = "",
+                           q: str = "", sort: str = "number", offset: int = 0,
+                           limit: int = 60):
+        """One page of the pieces this account holds in one collection."""
+        account = _signed_in_account(request)
+        picked, address = _nft_chain(account, chain)
+        if picked is None:
+            return JSONResponse({"detail": f"no chain called {chain} here"}, status_code=404)
+        rows, total = ([], 0)
+        if address:
+            try:
+                rows, total = state.token_index(picked).held_pieces(
+                    address, collection, q, sort, offset, limit)
+            except Exception:
+                rows, total = ([], 0)
+        return JSONResponse({"chain": picked.network, "collection": collection,
+                             "total": total, "offset": offset, "pieces": rows})
 
     @app.post("/account/inscribe")
     def account_inscribe(request: Request, payload: Any = Body(None)):
@@ -9384,6 +10028,8 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("there is nothing to inscribe")
             kind = media.standard_type(str(said.get("content_type") or ""),
                                        str(said.get("name") or "")) or "application/octet-stream"
+            if str(said.get("run") or ""):
+                return _inscribe_run_piece(account, chain, address, said, content, kind)
             return _inscribe_start(account, chain, address, said, content, kind)
         except (fundinglib.FundingError, inscriptionlib.InscriptionError,
                 ValueError) as exc:
@@ -9431,9 +10077,199 @@ def create_app(state: AppState) -> FastAPI:
         return (stream[:at], at, size,
                 [b[max(0, at - n * size):] for n, b in enumerate(bodies)])
 
+    def _operator_fee(chain, payer: str, cost: int) -> tuple[list, dict | None]:
+        """The operator's fee for one creation on mainnet: (outputs, said).
+
+        2026-10-09: "include a inscription fee for the operator", ".5% same
+        as our exchange fee". `mainnet_create_fee_permille` thousandths (default 5,
+        arcade/xchain.py's FEE_PERMILLE) of what the creation costs -- its network fee
+        and the coins in its data outputs, in satoshis (the plan's estimate is in
+        PEP, so converted where it is called) -- rounded up
+        to a whole satoshi, and never below the dust limit, because an output under
+        it cannot exist. Paid to the node's own mainnet address as one more output
+        of the first transaction, so the review in the tab reads it off the bytes
+        and names it on its own line. Testnet never pays it, nor does the operator
+        creating from its own address.
+        """
+        if not chain.is_mainnet:
+            return [], None
+        try:
+            permille = int(state.setting("mainnet_create_fee_permille",
+                                         MAINNET_CREATE_FEE_PERMILLE))
+        except (TypeError, ValueError):
+            permille = MAINNET_CREATE_FEE_PERMILLE
+        if permille <= 0:
+            return [], None
+        try:
+            to = state.home_address(state.ledger)
+        except Exception:
+            return [], None
+        if not to or to == payer:
+            return [], None
+        share = -(-max(0, int(cost)) * permille // 1000)
+        sats = max(share, fees.DUST_LIMIT)
+        return ([(sats, txbuild.p2pkh_script(to))],
+                {"address": to, "value": sats, "permille": permille,
+                 "minimum": fees.DUST_LIMIT, "at_minimum": share < fees.DUST_LIMIT})
+
+    def _set_pictures(run, chain, piece) -> set[str]:
+        """The digests this run's collection already holds, read once per run.
+
+        Only a run written down without digests asks (a piece that carries its
+        own is checked against that, which is stricter). The set is read the
+        first time such a piece's bytes arrive and kept under the run's id:
+        paging ten thousand index rows for every piece would cost more than the
+        inscription does, and a 6,480-piece run asks 6,480 times.
+
+        An index that will not answer gives an empty set and is NOT remembered,
+        so the next piece asks again. A run is never stopped by a question about
+        what is already up -- the worst a wrong "no" can do is offer a piece that
+        the account then pays for twice, which is what the offer's own review
+        says out loud before signing.
+        """
+        have = _set_pics.get(run["id"])
+        if have is not None:
+            return have
+        found: set[str] = set()
+        said = inscriptionlib.collection_of(piece["json"])
+        collection = (said[0] if said else "") or run["name"]
+        try:
+            index = state.token_index(chain)
+            for offset in range(0, 10000, 500):
+                page = index.collection_items(run["address"], collection,
+                                              limit=500, offset=offset)
+                found |= {row["sha256"] for row in page if row.get("sha256")}
+                if len(page) < 500:
+                    break
+        except Exception:                                 # noqa: BLE001 -- index away
+            return found
+        if len(_set_pics) >= _SET_PIC_ROOM:
+            _set_pics.pop(next(iter(_set_pics)))
+        _set_pics[run["id"]] = found
+        return found
+
+    def _set_landed(run_id: str, digest: str) -> None:
+        """A piece of a remembered run is going out: its picture is in the set
+        from now on, so a later piece with the same bytes is told so."""
+        have = _set_pics.get(run_id)
+        if have is not None:
+            have.add(digest)
+
+    def _inscribe_run_piece(account, chain, address: str, said: dict,
+                            content: bytes, kind: str):
+        """One piece of a collection run whose pictures live in the browser.
+
+        2026-10-11: a 6,480-picture folder (123 MB) never got past
+        the upload -- Cloudflare's 100 MB and 100-second limits sit in front
+        of this node -- and the node keeping everybody's pictures was never
+        the point. So the run is written down from the folder's names, sizes
+        and hashes (`/account/run/plan`), the pictures stay in the browser,
+        and each one comes here when its turn comes, exactly the way one file
+        does. What this adds to `_inscribe_start` is the run's bookkeeping:
+        the bytes must hash to what the run was written down with (a piece is
+        permanent, and the wrong file under the right name is the costly
+        kind of wrong), the inscription id is the one on the piece, so a
+        piece asked again lands the same piece and not a copy beside it, and
+        the broadcast marks the piece sent.
+
+        Charged once per piece, like `/account/run/piece`: a piece already
+        `sending` was charged when it was first asked for, and asking again
+        -- a reload, an expired offer -- is the same piece.
+
+        Since 2026-10-12 the run is usually written down WITHOUT the digests -- a
+        tab does not read six thousand pictures before its first piece goes out
+        (the operator: "keep track of the number inscribed and just continue on one at
+        a time"). So the digest is taken from the bytes that arrive and written
+        onto the piece, which makes every ask after the first exactly as strict
+        as the manifest used to be, and this is where the one thing the manifest
+        could see is now asked: whether this picture is in the collection
+        already. Piece by piece, from here -- see `_set_pictures`.
+        """
+        run = _runs.get(str(said.get("run") or ""))
+        if run is None:
+            raise ValueError("there is no run of that id")
+        if run["account"] != account.pubkey.lower():
+            raise ValueError("that run belongs to somebody else")
+        if run["network"] != chain.network:
+            raise ValueError(f"that run is on {run['network']}, not {chain.network}")
+        if run["folder"]:
+            raise ValueError("that run's pictures are on this node; ask for its pieces "
+                             "with /account/run/piece")
+        try:
+            edition = int(said.get("piece"))
+        except (TypeError, ValueError):
+            raise ValueError("which piece was not said") from None
+        piece = _runs.piece(run["id"], edition)
+        if piece is None:
+            raise ValueError("that run has no such piece")
+        if piece["status"] == "sent":
+            raise ValueError(f"{piece['name']} is already on the chain ({piece['txid']}). "
+                             "Nothing has been paid for twice.")
+        if piece["status"] == "failed":
+            raise ValueError(f"{piece['name']} was refused ({piece['error']}); retry the "
+                             "run's refused pieces first")
+        if piece["status"] == "skipped":
+            raise ValueError(f"{piece['name']}: that picture is in the collection "
+                             "already, so this run does not pay for it. The pieces "
+                             "after it are still here to ask for.")
+        digest = hashlib.sha256(content).hexdigest()
+        if piece.get("sha256"):
+            if digest != piece["sha256"]:
+                raise ValueError(f"those are not the bytes of {piece['name']} this run "
+                                 "was written down with ({piece['image']}, "
+                                 f"{int(piece['size']):,} bytes). A piece is permanent "
+                                 "and paid for, so the picture has to be the one the "
+                                 "run was made from. Nothing has been paid for.")
+        elif len(content) != int(piece["size"]):
+            # The only check left when the run was written down without hashing
+            # the folder -- and it catches the case that check was ever for: the
+            # folder chosen again being a different folder.
+            raise ValueError(f"{piece['name']} was written down at "
+                             f"{int(piece['size']):,} bytes and these are "
+                             f"{len(content):,}. The folder this run was made from "
+                             "is the one its pictures have to come out of. Nothing "
+                             "has been paid for.")
+        elif digest in _set_pictures(run, chain, piece):
+            # Not a refusal and not a piece: the picture is in the set already,
+            # under this number or another, and paying again joins nothing. This
+            # is where the 2026-09-25 rule ("a second copy joins nothing and
+            # costs again") lives now that the digests are not all known when the
+            # run is written down: asked piece by piece instead of all at once.
+            _runs.piece_skipped(run["id"], edition,
+                                "its picture is in the collection already")
+            run = _runs.get(run["id"])
+            return JSONResponse({"already": f"{piece['name']}: that picture is in "
+                                 f"{run['name']} already, so nothing is paid for it.",
+                                 "run": run["id"], "piece": edition,
+                                 "items": run["items"], "sent": run["sent"],
+                                 "skipped": run["skipped"], "chain": chain.network})
+        else:
+            # From the next ask of this piece, the check above is the strict one.
+            _runs.record_digest(run["id"], edition, digest)
+        if run["status"] == "stopped":
+            _runs.set_status(run["id"], "running")
+        answer = _inscribe_start(
+            account, chain, address,
+            {**said, "name": piece["name"], "json": piece["json"]}, content,
+            piece["content_type"] or kind,
+            tag=bytes.fromhex(piece["inscription_id"]),
+            on_sent=lambda txid, run_id=run["id"], n=edition, d=digest: (
+                _runs.record_piece(run_id, n, txid), _set_landed(run_id, d)),
+            charge=piece["status"] != "sending")
+        # After the offer and not before: a refusal (no coins, the hour used
+        # up) charged nothing, and the piece stays `pending` so the next ask
+        # is the first.
+        _runs.offer_piece(run["id"], edition)
+        return answer
+
     def _inscribe_start(account, chain, address: str, said: dict,
-                        content: bytes, kind: str):
+                        content: bytes, kind: str, tag: bytes | None = None,
+                        on_sent: Any = None, charge: bool = True):
         """The first transaction of an inscription: the piece, or the split.
+
+        `tag`, `on_sent` and `charge` are a collection run's (`_inscribe_run_piece`):
+        the inscription id the run wrote down for the piece, what to do with the
+        broadcast, and whether this ask is a new gesture or the same one again.
         """
         label = (str(said.get("name") or "").strip()[:60]
                  or kind.split(";")[0])
@@ -9442,14 +10278,16 @@ def create_app(state: AppState) -> FastAPI:
         if waiting is not None:
             return _inscribe_again(account, chain, address, waiting)
 
-        tag = secrets.token_bytes(8)
+        tag = tag or secrets.token_bytes(8)
         plan = inscribelib.plan(content, kind, str(said.get("json", "")),
                                 inscription_id=tag)
+        fee_out, fee_said = _operator_fee(chain, address,
+                                          int(round((plan.estimate.fee + plan.estimate.dust) * COIN)))
         if plan.chunks == 1:
             unsigned = _spend_now(
                 account, chain, address,
                 _class_c_or_b(chain, address, plan.payloads[0],
-                              _coin_pubkey(account.pubkey, chain)),
+                              _coin_pubkey(account.pubkey, chain)) + fee_out,
                 f"inscribe {label}")
             # A file this node already has an unsigned offer for is one
             # gesture asked twice -- the confirmation dismissed, the tab
@@ -9460,21 +10298,21 @@ def create_app(state: AppState) -> FastAPI:
             again = any(o.digest == digest
                         for o in _offers.waiting(account.pubkey)
                         if o.network == chain.network)
-            _quota(account, "inscribe", len(content), count=not again)
+            _quota(account, "inscribe", len(content), count=charge and not again)
             offer = _offers.add(account.pubkey, chain.network, unsigned,
-                                unsigned.what, digest=digest)
+                                unsigned.what, digest=digest, done=on_sent)
             return JSONResponse({"offer": offer.id, "bytes": plan.content_len,
                                  "chunks": 1, "chain": chain.network,
-                                 **unsigned.as_json()})
+                                 "operator_fee": fee_said, **unsigned.as_json()})
 
         manifest, at, chunk_len, contents = _how_it_is_split(plan)
         piece = inscribelib.piece_size(plan)
         unsigned = _spend_now(
             account, chain, address,
-            [(piece, txbuild.p2pkh_script(address))] * plan.chunks,
+            [(piece, txbuild.p2pkh_script(address))] * plan.chunks + fee_out,
             f"split into {plan.chunks:,} outputs, to inscribe {label} "
             f"in {plan.chunks:,} transactions")
-        _quota(account, "inscribe", len(content))
+        _quota(account, "inscribe", len(content), count=charge)
         job = _parts.create(
             account=account.pubkey, address=address, network=chain.network,
             name=label, content_type=plan.content_type, json_text=plan.json,
@@ -9491,7 +10329,8 @@ def create_app(state: AppState) -> FastAPI:
                              "chunks": plan.chunks,
                              "chunk_len": chunk_len,
                              "manifest_len": at, "sent": 0, "next": 0,
-                             "chain": chain.network, **unsigned.as_json()})
+                             "chain": chain.network, "operator_fee": fee_said,
+                             **unsigned.as_json()})
 
     @app.get("/account/inscribe/unfinished")
     def account_inscribe_unfinished(request: Request):
@@ -9788,12 +10627,35 @@ def create_app(state: AppState) -> FastAPI:
             f"{left:,}. A second copy joins nothing and costs again.")
         return out
 
+    @app.post("/account/run/upload")
+    def account_run_upload(request: Request, files: list[UploadFile] = File([]),
+                           upload: str = Form("")):
+        """One batch of a collection's files, into one upload (a new one when
+        `upload` is blank). Nothing is written down as a run and nothing is paid
+        for: `/account/run/start` with this `upload` does that."""
+        account = _signed_in_account(request)
+        if upload:
+            if not re.fullmatch(r"[0-9a-f]{8}", upload) or _uploads.get(upload) != account.pubkey.lower():
+                return JSONResponse({"detail": "that upload is not this account's (the node "
+                                     "may have restarted): choose the folder again"}, status_code=400)
+            root = _collection_upload_dir() / upload
+        else:
+            upload = secrets.token_hex(4)
+            root = _collection_upload_dir() / upload
+            _uploads[upload] = account.pubkey.lower()
+        try:
+            _save_upload(files, root)
+        except (ValueError, OSError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"upload": upload})
+
     @app.post("/account/run/start")
     def account_run_start(request: Request, files: list[UploadFile] = File([]),
                           name: str = Form(""), run_chain: str = Form(""),
                           max_supply: str = Form(""), numbering: str = Form("continue"),
                           description: str = Form(""), url: str = Form(""),
-                          artist: str = Form(""), icon: str = Form("")):
+                          artist: str = Form(""), icon: str = Form(""),
+                          upload: str = Form("")):
         """Write a collection down as this account's run. Nothing is inscribed.
 
         One upload, one run, and no transaction in it. The pieces are asked
@@ -9839,10 +10701,86 @@ def create_app(state: AppState) -> FastAPI:
                            "before starting another. Nothing has been paid "
                            "for."}, status_code=400)
         try:
-            build = collectionlib.read_build(
-                collectionlib.find_build(_save_upload(files)))
+            if upload:   # sent in batches to /account/run/upload first
+                if not re.fullmatch(r"[0-9a-f]{8}", upload) or _uploads.get(upload) != account.pubkey.lower():
+                    raise ValueError("that upload is not this account's (the node may have "
+                                     "restarted): choose the folder again")
+                folder = _collection_upload_dir() / upload
+            else:
+                folder = _save_upload(files)
+            build = collectionlib.read_build(collectionlib.find_build(folder))
         except (collectionlib.CollectionError, ValueError, OSError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
+        return _write_run(account, chain, address, build, str(build.folder),
+                          name=name, max_supply=max_supply, numbering=numbering,
+                          description=description, url=url, artist=artist, icon=icon)
+
+    @app.post("/account/run/plan")
+    def account_run_plan(request: Request, payload: Any = Body(None)):
+        """Write a collection down as this account's run from what the browser
+        read off the folder, and keep none of its pictures.
+
+        2026-10-11: the upload of a 6,480-picture folder never started
+        -- 123 MB through Cloudflare, whose request limit is 100 MB and whose
+        patience is 100 seconds -- and this node keeping a stranger's pictures
+        for ever was never wanted. So the browser sends the manifest: each
+        piece's JSON, its picture's name, size and SHA-256. That is a few
+        megabytes for the biggest set, and it is everything `read_build` would
+        have read off the disk except the bytes, which come one piece at a
+        time through `/account/inscribe` (`_inscribe_run_piece`), checked
+        against the hash written down here.
+
+        The same questions as `/account/run/start` and the same answers: one
+        run going at a time, what is on the chain already, the set's rules on
+        its #1. Only the folder is different, and it is blank.
+        """
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked({"chain": said.get("run_chain") or said.get("chain")})
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse(
+                {"detail": f"this account has no {chain.label.lower()} "
+                           f"address yet"}, status_code=400)
+        ahead = _runs.due(account.pubkey, chain.network)
+        if ahead is not None:
+            return JSONResponse(
+                {"detail": f"{ahead['name']} is still going, at {ahead['sent']} "
+                           f"of {ahead['items']} pieces. Finish it or stop it "
+                           "before starting another. Nothing has been paid "
+                           "for."}, status_code=400)
+        try:
+            build = collectionlib.build_from_manifest(said.get("items"))
+        except collectionlib.CollectionError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        words = {key: str(said.get(key) or "") for key in
+                 ("name", "max_supply", "numbering", "description", "url", "artist", "icon")}
+        words["numbering"] = words["numbering"] or "continue"
+        return _write_run(account, chain, address, build, "", **words)
+
+    def _write_run(account, chain, address: str, build, folder: str, *, name: str = "",
+                   max_supply: str = "", numbering: str = "continue",
+                   description: str = "", url: str = "", artist: str = "",
+                   icon: str = ""):
+        """The run book's entry for a build, after the questions both routes ask.
+
+        `folder` is where the pictures are on this node, or blank when they
+        are in the browser; a piece's digest is then the one the manifest
+        said, and otherwise it is read off the file.
+        """
+        def digest_of(item) -> str:
+            if getattr(item, "sha256", ""):
+                return item.sha256
+            if not folder:
+                # Written down from a folder this node never held, without its
+                # pictures being read (2026-10-12). There is nothing to read a
+                # digest off, and the answer to "is this one up already?" waits
+                # for the bytes -- `_inscribe_run_piece`.
+                return ""
+            return hashlib.sha256((build.folder / item.image).read_bytes()).hexdigest()
         # The set's rules are #1's (2026-09-25): a NEW collection writes
         # its details and its maximum supply (0 = unlimited) onto #1; a batch
         # added to one already on the chain from this address inherits them,
@@ -9872,9 +10810,15 @@ def create_app(state: AppState) -> FastAPI:
                         break
             except Exception:
                 have = set()
-            fresh = [item for item in build.items
-                     if hashlib.sha256((build.folder / item.image).read_bytes()
-                                       ).hexdigest() not in have]
+            # Three answers, not two: an item this node cannot digest (its
+            # pictures were never read here) is neither up nor new -- the
+            # question is asked when its bytes arrive, by
+            # `_inscribe_run_piece`, and a piece that turns out to be up is
+            # filed `skipped` and costs nothing.
+            known = [(item, digest_of(item)) for item in build.items]
+            fresh = [item for item, digest in known
+                     if not digest or digest not in have]
+            blind = sum(1 for _item, digest in known if not digest)
             if not fresh:
                 return JSONResponse({"detail": (
                     f"{build.collection} is already on this chain from this "
@@ -9889,6 +10833,15 @@ def create_app(state: AppState) -> FastAPI:
                     f"as the other {len(fresh):,}. A second copy joins nothing "
                     "and costs again.")
                 build = dataclasses.replace(build, items=fresh)
+            if blind:
+                # Said rather than left out: the page would otherwise promise a
+                # clean continuation, and the honest answer is that this node
+                # cannot see the pictures it is being asked to run.
+                repeat_note = (repeat_note + " " if repeat_note else "") + (
+                    f"{blind:,} of them cannot be compared with what is on the "
+                    "chain from here -- their pictures stay in your browser -- so "
+                    "each is checked when its turn comes, and one that is already "
+                    "in the collection is skipped and costs nothing.")
             cap = inscriptionlib.collection_details((cover or {}).get("json") or "").get("supply")
             if numbering != "keep":
                 build = collectionlib.renumbered(build, max(taken) + 1)
@@ -9936,7 +10889,8 @@ def create_app(state: AppState) -> FastAPI:
             run_id = _runs.create(account.pubkey, address, build,
                                   chain.network,
                                   name=name.strip()[:60] or build.collection,
-                                  floor=chain.params.activation_height)
+                                  floor=chain.params.activation_height,
+                                  folder=folder)
         except (collectionlib.CollectionError, accountrunslib.TooBig,
                 ValueError, OSError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
@@ -9974,6 +10928,7 @@ def create_app(state: AppState) -> FastAPI:
                                        "status": run["status"],
                                        "sending": run["sending"],
                                        "refused": run["failed_pieces"],
+                                       "skipped": run["skipped"],
                                        "note": run["note"],
                                        "next": run["next"],
                                        "chain": run["network"]}
@@ -10104,6 +11059,7 @@ def create_app(state: AppState) -> FastAPI:
                            "been paid for."}, status_code=400)
         folder = Path(run["folder"])
         _runs.delete(run["id"])
+        _set_pics.pop(run["id"], None)     # the run is gone; its remembered set goes with it
         uploads = _collection_upload_dir().resolve()
         if run["folder"] and folder.exists():
             try:
@@ -10172,6 +11128,21 @@ def create_app(state: AppState) -> FastAPI:
                                 status_code=403)
         chain = _chain_on(run["network"])
         piece = _runs.next_piece(run["id"])
+        if piece is not None and not run["folder"]:
+            # The pictures are in the browser (2026-10-11): nothing to build
+            # from here. The page is told which piece is next and what its
+            # bytes must hash to, and sends them to /account/inscribe with the
+            # run and piece named, which is where it is charged and marked.
+            if run["status"] == "stopped":
+                _runs.set_status(run["id"], "running")
+            return JSONResponse({"held": "browser", "run": run["id"], "piece": piece["edition"],
+                                 "items": run["items"], "sent": run["sent"],
+                                 "skipped": run["skipped"],
+                                 "name": piece["name"], "image": piece["image"],
+                                 "bytes": int(piece["size"]), "chunks": int(piece["chunks"] or 1),
+                                 "sha256": piece.get("sha256") or "",
+                                 "content_type": piece["content_type"],
+                                 "json": piece["json"], "chain": chain.network})
         if piece is None:
             if run["failed_pieces"]:
                 # Not finished. It is the run that stopped, not the work, and
@@ -10186,7 +11157,29 @@ def create_app(state: AppState) -> FastAPI:
                                "and it will be written down as only what is "
                                "still missing."}, status_code=400)
             return JSONResponse({"run": run["id"], "sent": run["sent"],
+                                 "skipped": run["skipped"],
                                  "items": run["items"], "finished": True})
+        if int(piece.get("chunks") or 1) > 1:
+            # More than one transaction (2026-10-08: never shrink a collection's
+            # pictures): the page takes this item's bytes from /account/run/item and
+            # sends it the way one big file goes -- a split, a block, its pieces,
+            # counted by accountparts -- then reports its first txid to
+            # /account/run/done. `sending` until then, so a closed tab comes back here.
+            if not (Path(run["folder"]) / piece["image"]).is_file():
+                _runs.piece_failed(run["id"], piece["edition"], "the picture is not in the build this node kept")
+                return JSONResponse({"detail": f"{piece['name']}: the picture is not in the "
+                                     "build this node kept. Nothing has been paid for."},
+                                    status_code=400)
+            if run["status"] == "stopped":
+                _runs.set_status(run["id"], "running")
+            _runs.offer_piece(run["id"], piece["edition"])
+            return JSONResponse({"big": True, "run": run["id"], "piece": piece["edition"],
+                                 "items": run["items"], "sent": run["sent"],
+                                 "skipped": run["skipped"],
+                                 "name": piece["name"], "bytes": int(piece["size"]),
+                                 "chunks": int(piece["chunks"]),
+                                 "content_type": piece["content_type"],
+                                 "json": piece["json"], "chain": chain.network})
         try:
             content = (Path(run["folder"]) / piece["image"]).read_bytes()
             plan = inscribelib.plan(content, piece["content_type"],
@@ -10204,9 +11197,11 @@ def create_app(state: AppState) -> FastAPI:
                            f"this node kept: {exc}. Nothing has been paid for, "
                            "and the pieces after it are still here to ask "
                            "for."}, status_code=400)
+        fee_out, fee_said = _operator_fee(chain, run["address"],
+                                          int(round((plan.estimate.fee + plan.estimate.dust) * COIN)))
         try:
             outputs = _class_c_or_b(chain, run["address"], plan.payloads[0],
-                                    _coin_pubkey(account.pubkey, chain))
+                                    _coin_pubkey(account.pubkey, chain)) + fee_out
             index = state.token_index(chain)
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build(
@@ -10253,8 +11248,58 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"offer": offer.id, "run": run["id"],
                              "piece": piece["edition"], "items": run["items"],
                              "sent": run["sent"], "name": piece["name"],
-                             "bytes": plan.content_len,
+                             "bytes": plan.content_len, "operator_fee": fee_said,
                              "chain": chain.network, **unsigned.as_json()})
+
+    def _own_run(request: Request, run_id: str):
+        account = _signed_in_account(request)
+        run = _runs.get(str(run_id or ""))
+        if run is None:
+            raise HTTPException(404, "there is no run of that id")
+        if run["account"] != account.pubkey.lower():
+            raise HTTPException(403, "that run belongs to somebody else")
+        return run
+
+    @app.get("/account/run/item")
+    def account_run_item(request: Request, run: str = "", edition: int = 0):
+        """The bytes of one item of this account's own run, exactly as uploaded --
+        for an item of more than one transaction, which the page sends the way
+        one big file goes. Only files the run lists, never an arbitrary path."""
+        row = _own_run(request, run)
+        piece = _runs.piece(row["id"], int(edition))
+        if piece is None:
+            raise HTTPException(404, "that run has no such item")
+        path = Path(row["folder"]) / piece["image"]
+        if not path.is_file() or Path(row["folder"]).resolve() not in path.resolve().parents:
+            raise HTTPException(404, "the picture is not in the build this node kept")
+        return Response(path.read_bytes(), media_type=piece["content_type"],
+                        headers={"Cache-Control": "no-store"})
+
+    @app.post("/account/run/done")
+    def account_run_done(request: Request, payload: Any = Body(None)):
+        """An item of more than one transaction is on the chain: its first
+        transaction (the one `/content` answers on) goes on its row, and the run
+        moves on. Only an item the page was handed as big, and only `sending`."""
+        said = payload if isinstance(payload, dict) else {}
+        row = _own_run(request, said.get("run", ""))
+        txid = str(said.get("txid", "")).lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", txid):
+            return JSONResponse({"detail": "that is not a transaction id"}, status_code=400)
+        try:
+            edition = int(said.get("piece"))
+        except (TypeError, ValueError):
+            return JSONResponse({"detail": "which item?"}, status_code=400)
+        piece = _runs.piece(row["id"], edition)
+        # A run whose pictures are in the browser reports every piece this way
+        # (2026-10-11); one this node holds the pictures of records its
+        # one-transaction pieces itself, as the offer is broadcast.
+        if piece is None or (row["folder"] and int(piece.get("chunks") or 1) < 2):
+            return JSONResponse({"detail": "that is not an item of more than one transaction"},
+                                status_code=400)
+        if piece["status"] == "sent":
+            return JSONResponse({"run": row["id"], "piece": edition, "sent": True})
+        _runs.record_piece(row["id"], edition, txid)
+        return JSONResponse({"run": row["id"], "piece": edition, "sent": True})
 
     @app.post("/account/nft/send")
     def account_nft_send(request: Request, payload: Any = Body(None)):
@@ -10290,7 +11335,7 @@ def create_app(state: AppState) -> FastAPI:
             if row["owner"] != address:
                 raise ValueError("that piece is not this account's to send")
             to, to_tag = _payee(said.get("to", ""), chain)
-            complaint = _check_address(to, mainnet=chain.is_mainnet)
+            complaint = _check_address(to, mainnet=chain)
             if complaint:
                 raise ValueError(complaint)
             if to == address:
@@ -10317,7 +11362,7 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         offer = _offers.add(account.pubkey, chain.network, unsigned,
                             unsigned.what)
-        return JSONResponse({"offer": offer.id, "to": to,
+        return JSONResponse({"offer": offer.id, "to": to, "to_tag": to_tag,
                              "number": row["number"], "chain": chain.network,
                              **unsigned.as_json()})
 
@@ -10414,6 +11459,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
+        presign = _node_trades()       # node-facilitated trades (2026-10-13)
         try:
             chain = _chain_asked(said)
         except ValueError as exc:
@@ -10472,11 +11518,17 @@ def create_app(state: AppState) -> FastAPI:
                 # is sent (/account/offer/bid-build): one coin is all an account
                 # needs to make an offer, and one coin is what stays reserved.
                 price_sats = int(take.amount) if take.kind == inscriptionlib.LEG_COINS else 0
-                swap_bytes = _ask_payload(row, take)
-                need = fundinglib.bid_need(swap_bytes, price_sats, row["owner"],
-                                           fees.MIN_FEE_PER_KB)
-                set_aside_at = len(outputs)
-                outputs = outputs + [(need, txbuild.p2pkh_script(address))]
+                # Only when this node may hold that half (node-facilitated trades,
+                # 2026-10-13). Off, the offer is the on-chain Offer alone and the
+                # trade is made live: the seller answers it while the buyer's tab
+                # finishes it.
+                need, set_aside_at = 0, None
+                if presign:
+                    swap_bytes = _ask_payload(row, take)
+                    need = fundinglib.bid_need(swap_bytes, price_sats, row["owner"],
+                                               fees.MIN_FEE_PER_KB)
+                    set_aside_at = len(outputs)
+                    outputs = outputs + [(need, txbuild.p2pkh_script(address))]
                 unsigned = fundinglib.build(
                     db, chain.params, address, outputs,
                     rate=fees.MIN_FEE_PER_KB, what=what,
@@ -10512,6 +11564,9 @@ def create_app(state: AppState) -> FastAPI:
         out = {"offer": offer.id, "what": what,
                "number": row["number"], "chain": chain.network,
                **unsigned.as_json()}
+        if not presign:
+            out["presigned"] = False
+            return JSONResponse(out)
         _bids.draft(draft=offer.id, network=chain.network, buyer=address,
                     account=account.pubkey, piece=row["txid"], seller=row["owner"],
                     take=terms, price_sats=price_sats,
@@ -10523,6 +11578,14 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/offer/bid-build")
     def account_offer_bid_build(request: Request, payload: Any = Body(None)):
+        if not _node_trades():
+            # A pre-signed bid is the buyer's signature, held by this node until the
+            # seller says yes. Off by default (2026-10-13).
+            _signed_in_account(request)
+            return _node_trades_refused()
+        return _account_offer_bid_build(request, payload)
+
+    def _account_offer_bid_build(request: Request, payload: Any = Body(None)):
         """The buyer's half, on the coin the offer set aside, once the offer is
         sent and its txid known. Returned for the tab to check and sign."""
         account = _signed_in_account(request)
@@ -10550,6 +11613,14 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/offer/bid")
     def account_offer_bid(request: Request, payload: Any = Body(None)):
+        if not _node_trades():
+            # A pre-signed bid is the buyer's signature, held by this node until the
+            # seller says yes. Off by default (2026-10-13).
+            _signed_in_account(request)
+            return _node_trades_refused()
+        return _account_offer_bid(request, payload)
+
+    def _account_offer_bid(request: Request, payload: Any = Body(None)):
         """The buyer's signatures over their half, kept beside the offer
         (arcade/bids.py), once the offer itself is broadcast. Checked by the
         only test that cannot be argued with at accept: the network."""
@@ -10626,6 +11697,67 @@ def create_app(state: AppState) -> FastAPI:
                 else:
                     coin["asked"] = now
         return sorted(memo["coins"].values(), key=lambda c: (c["txid"], c["vout"]))
+
+    @app.get("/account/activity")
+    def account_activity(request: Request, chain: str = "", before: int | None = None,
+                         limit: int = 50):
+        """What happened to this account's coins on one chain, newest first.
+
+        The Wallet tab's history (2026-10-08: "It needs to give feedback when
+        transactions are sent it should have a history"). Read from the
+        index's `activity` rows (arcade/utxos.py), which begin when this node
+        began watching the address -- `since` says where, so the page can say
+        the list starts there instead of implying an account had no past.
+        Only ever the signed-in account's own addresses.
+
+        A row's `other` is who a send went to; it is named where the chain
+        names it -- a @tag on the tag chain, or the mainnet address a holder
+        published with their key -- and left as an address otherwise.
+        """
+        account = _signed_in_account(request)
+        picked = next((one for one in _account_chains()
+                       if one.network == chain), None) if chain else _account_chain()
+        if picked is None:
+            return JSONResponse({"detail": f"no chain called {chain} here"},
+                                status_code=404)
+        address = _account_address(account.pubkey, picked)
+        said: dict[str, Any] = {"chain": picked.network, "label": picked.label,
+                                "address": address, "since": None, "tip": 0,
+                                "rows": [], "more": False}
+        if not address:
+            return JSONResponse(said)
+        limit = max(1, min(int(limit), 200))
+        index = state.token_index(picked)
+        with contextlib.closing(index.open()) as db:
+            said["since"] = utxoslib.since(db, address)
+            tip = db.conn.execute("SELECT MAX(height) FROM block").fetchone()
+            said["tip"] = int((tip and tip[0]) or 0)
+            rows = utxoslib.activity(db, [address], before, limit + 1)
+        said["more"] = len(rows) > limit
+        rows = rows[:limit]
+        names: dict[str, str] = {}
+        for row in rows:
+            other = row["other"]
+            if other and other not in names:
+                names[other] = _name_for_address(other, picked)
+            row["other_tag"] = names.get(other, "") if other else ""
+            row["confirmations"] = max(0, said["tip"] - row["height"] + 1)
+        said["rows"] = rows
+        return JSONResponse(said)
+
+    def _name_for_address(address: str, chain) -> str:
+        """The @tag behind an address, where the chain says one, else ""."""
+        try:
+            home = _account_chain()
+            if chain.network == home.network:
+                return state.token_index(home).tag_of(address) or ""
+            with state.store() as store:
+                row = store.conn.execute(
+                    "SELECT tag FROM key_announcement WHERE other_address = ? "
+                    "AND tag != '' ORDER BY height DESC LIMIT 1", (address,)).fetchone()
+            return str(row[0]) if row else ""
+        except Exception:                                # noqa: BLE001 -- a label, not a page
+            return ""
 
     @app.get("/account/dust")
     def account_dust(request: Request):
@@ -10906,6 +12038,8 @@ def create_app(state: AppState) -> FastAPI:
                               if o["address"] == address and o.get("pending"))
                 # And sends in the pool: the same tokens cannot also be sold.
                 resting += index.pending_sends(address, prop["property_id"])
+                # nor sold again on a token/token order that is still in the pool
+                resting += index.pending_pair_sales(address, prop["property_id"])
                 if held - resting < units:
                     raise tokenlib.TokenError(
                         f"this account holds "
@@ -11046,6 +12180,10 @@ def create_app(state: AppState) -> FastAPI:
         done = 0
         for s in _standing.open_on(chain.network):
             try:
+                if s["away"] and not _node_trades():
+                    # Filling for an absent buyer is the node trading on their
+                    # behalf. With the switch off it only tells them (2026-10-13).
+                    continue
                 if s["away"]:
                     if _fill_away(chain, index, s, taking):
                         done += 1
@@ -11101,6 +12239,9 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": "this account has no address on that chain"},
                                 status_code=400)
         away = bool(said.get("away"))
+        if away and not _node_trades():
+            # "Fill while I'm away" is the node trading for an absent buyer (2026-10-13).
+            return _node_trades_refused()
         try:
             index = state.token_index(chain)
             prop = index.property(int(said.get("property_id") or 0))
@@ -11910,7 +13051,6 @@ def create_app(state: AppState) -> FastAPI:
                         "moved. Ask for the answer again and sign that; a "
                         "signature over the old bytes would trade something you "
                         "never agreed to.")
-                _real_coins_gate(account, chain)
                 signatures = [str(x) for x in (said.get("signatures") or [])]
                 pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
                 if not pubkey:
@@ -11947,6 +13087,16 @@ def create_app(state: AppState) -> FastAPI:
                              "maker": offer["seller"], "to": to.hex(),
                              "swapv": swaplib.PROTOCOL,
                              "fee": unsigned.fee, "signed": True})
+
+    def _swap_payload(give: inscriptionlib.Leg, take: inscriptionlib.Leg) -> bytes:
+        """A trade's swap bytes for any leg given -- an NFT or a token -- in one
+        OP_RETURN, as `_ask_payload` writes them for a piece."""
+        from ..encoding import EncodingError, encode_class_c
+        body = inscriptionlib.Swap(give=give, take=take).encode()
+        try:
+            return encode_class_c(P.AnyData(data=body).encode())
+        except EncodingError as exc:
+            raise ValueError(f"{exc} A trade is written in one OP_RETURN.") from None
 
     def _ask_payload(row: dict, take: inscriptionlib.Leg) -> bytes:
         """What a listing writes at output 0: the trade the finished swap IS.
@@ -12105,6 +13255,8 @@ def create_app(state: AppState) -> FastAPI:
         `/account/buy`, which asks the chain and says so in words.
         """
         _sweep_book(chain)
+        if not _node_trades():
+            return None
         for row in state.listings.open_listings(chain.network):
             if _sold_piece(row) != piece:
                 continue
@@ -12247,6 +13399,15 @@ def create_app(state: AppState) -> FastAPI:
         return f"gives {give} and takes {take}"
 
     @app.post("/account/list")
+    def account_list_gate(request: Request, payload: Any = Body(None)):
+        """Refused before anything is signed when this node holds no waiting
+        listings (node-facilitated trades off, the default, 2026-10-13)."""
+        # (Prize pools file their lots through /account/pools/legs, not here.)
+        if not _node_trades():
+            _signed_in_account(request)
+            return _node_trades_refused()
+        return account_list(request, payload)
+
     def account_list(request: Request, payload: Any = Body(None)):
         """Show an account the leg it is about to sign, and stop there.
 
@@ -12616,8 +13777,7 @@ def create_app(state: AppState) -> FastAPI:
             count = int(said.get("count") or 0)
             if units <= 0 or not 1 <= count <= LOTS_AT_ONCE:
                 raise ValueError(f"a lot above zero, and between 1 and {LOTS_AT_ONCE} lots")
-            price = parse_amount(str(said.get("price", "")), True)
-            _above_dust(price, "price")
+            price = _pool_price(pool, said)
             claim_hash = str(said.get("claim_hash") or "").strip().lower()
             if not re.fullmatch(r"[0-9a-f]{64}", claim_hash):
                 raise ValueError("a pool needs the sha256 of its phrase")
@@ -12652,11 +13812,25 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         pool.update({"property_id": prop["property_id"], "lot": str(units), "count": count,
                      "price": price, "days": _listing_days(said), "bound": bound,
+                     "fee": "pool" if said.get("fee") == "pool" else "",
                      "claim_hash": claim_hash, "closed": False, "kind": "token",
                      "once": bool(said.get("once")), "first": 1})
         _save_pool(account, pool)
         offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
         return JSONResponse({"offer": offer.id, "chain": chain.network, **unsigned.as_json()})
+
+    def _pool_price(pool: dict, said: dict) -> int:
+        """A pool's price per lot. A pool that pays its own claims ("fee": "pool")
+        charges nothing and needs a referee: its lots' fees come out of its own
+        coins, so a claim made from the phrase alone would empty it for free."""
+        if said.get("fee") == "pool":
+            if not pool.get("referee"):
+                raise ValueError('a pool that pays its own claims ("fee": "pool") '
+                                 "needs a referee")
+            return 0
+        price = parse_amount(str(said.get("price", "")), True)
+        _above_dust(price, "price")
+        return price
 
     def _fund_nft_pool(account, chain, main: str, pool: dict, said: dict):
         """An NFT pool's funding: two coins a lot at the pool's address and no
@@ -12674,8 +13848,7 @@ def create_app(state: AppState) -> FastAPI:
                 pieces.append(row["txid"])
         if not 1 <= len(pieces) <= NFT_POOL_MOST:
             raise ValueError(f"a pool holds 1 to {NFT_POOL_MOST} pieces")
-        price = parse_amount(str(said.get("price", "")), True)
-        _above_dust(price, "price")
+        price = _pool_price(pool, said)
         claim_hash = str(said.get("claim_hash") or "").strip().lower()
         if not re.fullmatch(r"[0-9a-f]{64}", claim_hash):
             raise ValueError("a pool needs the sha256 of its phrase")
@@ -12695,6 +13868,7 @@ def create_app(state: AppState) -> FastAPI:
                 extra=_flights.change_for(account.pubkey, chain.network))
         _quota(account, "send")
         pool.update({"kind": "nft", "pieces": pieces, "count": count, "price": price,
+                     "fee": "pool" if said.get("fee") == "pool" else "",
                      "days": _listing_days(said), "bound": bound, "claim_hash": claim_hash,
                      "closed": False, "once": bool(said.get("once")), "first": 0,
                      "property_id": 0, "lot": "0"})
@@ -12838,7 +14012,8 @@ def create_app(state: AppState) -> FastAPI:
                     "price": int(p["price"]), "each": int(p["each"]),
                     "fund": str(p["fund"]).lower(), "game": str(p.get("game") or "").lower(),
                     "claim_hash": str(p["claim_hash"]).lower(), "height": r["block_height"],
-                    "referee": None, "redeem": ""}
+                    "referee": None, "redeem": "",
+                    "fee": "pool" if p.get("fee") == "pool" and p.get("referee") else ""}
                 if p.get("referee"):
                     # The address has to be the two-key one these three keys make,
                     # and the creator key has to be the inscriber's, or it is not a
@@ -12859,7 +14034,8 @@ def create_app(state: AppState) -> FastAPI:
                         else {"won": True},
                         "params": ref.get("params") if ref.get("params") is not None else {},
                         "seed_hours": refereelib.seed_seconds(ref) / 3600,
-                        "facts": _facts_spec(ref.get("facts")) if ref.get("facts") else {}}
+                        "facts": _facts_spec(ref.get("facts")) if ref.get("facts") else {},
+                        "session": ref.get("session") is True}
                     pools[r["txid"]]["redeem"] = redeem.hex()
             except (KeyError, TypeError, ValueError):
                 pools.pop(r["txid"], None)
@@ -12929,7 +14105,10 @@ def create_app(state: AppState) -> FastAPI:
         facts = _facts_spec(spec.get("facts"))
         return {"node": node, "pubkey": pubkey, "judge": row["txid"],
                 "require": require, "params": params, "seed_hours": hours,
-                **({"facts": facts} if facts else {})}
+                **({"facts": facts} if facts else {}),
+                # A pool that takes SESSION seeds (2026-10-04): paid many times
+                # from one seed, for what is new in the record each claim brings.
+                **({"session": True} if spec.get("session") is True else {})}
 
     def _facts_spec(raw: Any) -> dict:
         """What a judge is told the player holds (2026-09-30: an RPG whose levels
@@ -13007,17 +14186,18 @@ def create_app(state: AppState) -> FastAPI:
             raise refereelib.RefereeError(f"#{row['number']} is not JavaScript, so it cannot judge")
         return row
 
-    def _referee_seed(chain, key: str, address: str, game: str = "", judge: str = "") -> dict:
+    def _referee_seed(chain, key: str, address: str, game: str = "", judge: str = "",
+                      session: bool = False) -> dict:
         if judge:
             # A run that is only to be recorded, not paid (2026-09-30): its seed
             # is bound to the judge that will score it, and to this address.
             row = _judge_row(chain, judge)
-            complaint = _check_address(address, mainnet=chain.is_mainnet)
+            complaint = _check_address(address, mainnet=chain)
             if complaint:
                 raise refereelib.RefereeError(complaint)
             return _referee.issue_seed("judge:" + row["txid"], address)
         if game:
-            return _referee_game_seed(chain, game, address)
+            return _referee_game_seed(chain, game, address, session=session)
         pool = _chain_pool(chain, key)
         if pool is None or not pool.get("referee"):
             raise refereelib.RefereeError("this pool has no referee")
@@ -13026,7 +14206,7 @@ def create_app(state: AppState) -> FastAPI:
         refusal = _pool_refusal(chain, pool)
         if refusal:
             raise refereelib.RefereeError(refusal)
-        complaint = _check_address(address, mainnet=chain.is_mainnet)
+        complaint = _check_address(address, mainnet=chain)
         if complaint:
             raise refereelib.RefereeError(complaint)
         return _referee.issue_seed(pool["txid"], address,
@@ -13040,7 +14220,7 @@ def create_app(state: AppState) -> FastAPI:
                 if p["game"] == game and not p["deleted"] and p.get("referee")
                 and p["referee"]["pubkey"] == mine and not _pool_refusal(chain, p)]
 
-    def _referee_game_seed(chain, key: str, address: str) -> dict:
+    def _referee_game_seed(chain, key: str, address: str, session: bool = False) -> dict:
         """One seed for a play session that can pay several prizes: every refereed
         pool of the game takes it once (2026-09-30, a tester's RPG: XP from one
         pool, a drop from another, from the same run)."""
@@ -13048,15 +14228,22 @@ def create_app(state: AppState) -> FastAPI:
         if row is None:
             raise refereelib.RefereeError("there is no such game")
         pools = _refereed_pools_of(chain, row["txid"])
+        if session:
+            # A session seed (2026-10-04) is for the pools that take one: each pays
+            # it many times, for what is new in the record each claim brings.
+            pools = [p for p in pools if p["referee"].get("session")]
+            if not pools:
+                raise refereelib.RefereeError("this game has no pool that takes a session seed")
         if not pools:
             raise refereelib.RefereeError("this game has no refereed pool this node referees")
-        complaint = _check_address(address, mainnet=chain.is_mainnet)
+        complaint = _check_address(address, mainnet=chain)
         if complaint:
             raise refereelib.RefereeError(complaint)
         facts = {p["txid"]: _facts_of(chain, p["referee"], address)
                  for p in pools if p["referee"].get("facts")}
         seconds = max(refereelib.seed_seconds(p["referee"]) for p in pools)
-        said = _referee.issue_seed("", address, seconds, facts=facts or None, game=row["txid"])
+        said = _referee.issue_seed("", address, seconds, facts=facts or None, game=row["txid"],
+                                   session=session)
         return {**said, "pools": [p["txid"] for p in pools]}
 
     def _referee_sign(chain, key: str, n: int, raw: str, replay: Any) -> dict:
@@ -13080,7 +14267,10 @@ def create_app(state: AppState) -> FastAPI:
                                 or (seed.get("game") and seed["game"] == pool["game"])):
             raise refereelib.RefereeError("that seed was not issued for this pool")
         digest = _h.sha256(str(raw).encode()).hexdigest()
-        used = _referee.used_at(seed["seed"], pool["txid"])
+        session = bool(seed.get("session"))
+        if session and not ref.get("session"):
+            raise refereelib.RefereeError("this pool does not take session seeds")
+        used = "" if session else _referee.used_at(seed["seed"], pool["txid"])
         if used and used != digest:
             raise refereelib.RefereeError("that seed was used; a new run needs a new seed")
         seed["used"] = used
@@ -13095,7 +14285,7 @@ def create_app(state: AppState) -> FastAPI:
         with chain.rpc() as rpc:
             tx = rpc.call("decoderawtransaction", str(raw))
             vin, vout = tx.get("vin") or [], tx.get("vout") or []
-            if len(vin) < 3 or any(
+            if len(vin) < (2 if pool.get("fee") == "pool" else 3) or any(
                     (vin[i]["txid"], int(vin[i]["vout"])) != (leg.inputs[i]["txid"],
                                                               int(leg.inputs[i]["vout"]))
                     for i in range(2)):
@@ -13123,8 +14313,11 @@ def create_app(state: AppState) -> FastAPI:
                                                   "the player's")
         if pool.get("once") and claimer in _pool_claimers(chain, pool):
             raise refereelib.RefereeError("this wallet has already claimed from this prize pool")
-        if not seed["used"]:
-            _referee.pace(claimer)
+        if session:
+            verdict = _referee_session(chain, pool, ref, seed, n, digest, claimer, replay)
+        elif not seed["used"]:
+            if not _unlimited_address(claimer):
+                _referee.pace(claimer)
             found = state.token_index(chain).inscription_content(ref["judge"])
             if found is None:
                 raise refereelib.RefereeError("this node does not hold the pool's judge")
@@ -13155,6 +14348,51 @@ def create_app(state: AppState) -> FastAPI:
         sigs = [_referee.sign(fundinglib.sighash(raw_inputs, outputs, i, redeem)).hex()
                 for i in range(2)]
         return {"signatures": sigs, "verdict": verdict}
+
+    def _referee_session(chain, pool: dict, ref: dict, seed: dict, n: int, digest: str,
+                         claimer: str, replay: dict) -> dict:
+        """A claim on a SESSION seed (2026-10-04, "everything must settle right at
+        the time that it is done"): the record so far, which only ever grows.
+
+        It must continue the record this seed was last paid on -- the part already
+        accepted is a prefix of it, byte for byte -- so a run cannot be re-cut to
+        be paid twice. The judge is told where the new part starts (`since`), what
+        this seed has been paid and for what (`paid`, each with the paying pool's
+        params), and what it itself said about the accepted part (`prior`), and
+        answers about what is new. One claim of a session at a time."""
+        inputs = replay.get("inputs")
+        if not isinstance(inputs, list):
+            raise refereelib.RefereeError("a session's replay is the list of what happened, "
+                                          "all of it so far, sent with every claim")
+        with _referee.session_lock(seed["seed"]):
+            done = _referee.session_paid_for(seed["seed"], pool["txid"], n)
+            if done:
+                if done != digest:
+                    raise refereelib.RefereeError("that lot was already paid from this session")
+                return {"won": True, "again": True}
+            st = _referee.session_state(seed["seed"])
+            if len(inputs) < st["upto"] or refereelib.record_sha(inputs[:st["upto"]]) != st["sha"]:
+                raise refereelib.RefereeError("that replay does not continue this session's "
+                                              "last one: a session's record only grows")
+            if not _unlimited_address(claimer):
+                _referee.pace(claimer + " " + seed["seed"], refereelib.SESSION_JUDGED_PER_MINUTE)
+            found = state.token_index(chain).inscription_content(ref["judge"])
+            if found is None:
+                raise refereelib.RefereeError("this node does not hold the pool's judge")
+            source = found[1].decode("utf-8", "replace")
+            params = ref["params"]
+            params = {**(params if isinstance(params, dict) else {"params": params}),
+                      "claimer": claimer, "since": st["upto"],
+                      "paid": _referee.session_paid(seed["seed"]), "prior": st["prior"]}
+            if ref.get("facts"):
+                params["facts"] = refereelib.both(seed.get("facts"), _facts_of(chain, ref, claimer))
+            verdict = _referee.judge(source, seed["seed"], inputs, params)
+            short = refereelib.meets(verdict, ref["require"])
+            if short:
+                raise refereelib.RefereeError(short)
+            _referee.session_record(seed["seed"], pool["txid"], n, ref["params"], digest,
+                                    len(inputs), refereelib.record_sha(inputs), verdict)
+            return verdict
 
     def _referee_verdict(chain, pool: dict, n: int, raw: str, replay: Any) -> list[bytes]:
         """Ask the pool's referee -- this node, or the one it names -- to sign a claim."""
@@ -13350,7 +14588,7 @@ def create_app(state: AppState) -> FastAPI:
         if str(said.get("escrow") or address) != address:
             raise escrowlib.EscrowError("those facts make a different escrow")
         to = str(said.get("to") or "")
-        complaint = _check_address(to, mainnet=chain.is_mainnet)
+        complaint = _check_address(to, mainnet=chain)
         if complaint:
             raise escrowlib.EscrowError(complaint)
         held = _escrow_holdings(chain, address)
@@ -13881,7 +15119,8 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse(_referee_seed(chain, str(said.get("pool") or ""),
                                               str(said.get("address") or ""),
                                               game=str(said.get("game") or ""),
-                                              judge=str(said.get("judge") or "")))
+                                              judge=str(said.get("judge") or ""),
+                                              session=said.get("session") is True))
         except (ValueError, refereelib.RefereeError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
 
@@ -13899,12 +15138,14 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/referee/seed")
     def account_referee_seed(request: Request, payload: Any = Body(None)):
-        """A seed for the signed-in player's next run, from the pool's referee."""
-        account = _signed_in_account(request)
+        """A seed for the signed-in player's next run, from the pool's referee --
+        or the node's, when the node is the one playing (_node_player)."""
+        node = _node_player(request)
+        account = None if node else _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         try:
             chain = _chain_asked(said)
-            address = _account_address(account.pubkey, chain)
+            address = node or _account_address(account.pubkey, chain)
             if not address:
                 raise ValueError("this account has no address yet")
             if said.get("judge"):
@@ -13933,12 +15174,14 @@ def create_app(state: AppState) -> FastAPI:
                 raise refereelib.RefereeError("this pool has no referee" if not game
                                               else "this game has no refereed pool")
             node = _referee_node(pool)
+            session = bool(game) and said.get("session") is True
             if not node:
-                return JSONResponse(_referee_seed(chain, pool["txid"], address, game=game))
+                return JSONResponse(_referee_seed(chain, pool["txid"], address, game=game,
+                                                  session=session))
             try:
                 answer = requests.post(node + "/r/referee/seed", timeout=15, json={
                     "chain": chain.network, "pool": pool["txid"], "address": address,
-                    **({"game": game} if game else {})})
+                    **({"game": game} if game else {}), **({"session": True} if session else {})})
                 got = answer.json()
             except Exception:                             # noqa: BLE001
                 raise refereelib.RefereeError("this pool's referee did not answer; "
@@ -13983,7 +15226,13 @@ def create_app(state: AppState) -> FastAPI:
         """Lot `n` of a pool, rebuilt from its public JSON: the same bytes its
         creator's pool key signed."""
         from ..encoding import encode_class_c
-        if pool.get("kind") == "nft":
+        pays = POOL_PAYS if pool.get("fee") == "pool" else 0
+        if pool.get("kind") == "nft" and pays:
+            # A lot that pays its own claim hands its piece over outright: a
+            # transfer from the pool to the claimer's output, nothing to price.
+            naming = encode_class_c(P.AnyData(data=inscriptionlib.Transfer(
+                txid=bytes.fromhex(pool["pieces"][n])).encode()).encode())
+        elif pool.get("kind") == "nft":
             # One piece, sold for the pool's price: the swap a listing is.
             naming = _ask_payload({"txid": pool["pieces"][n]},
                                   inscriptionlib.Leg(inscriptionlib.LEG_COINS,
@@ -13998,7 +15247,8 @@ def create_app(state: AppState) -> FastAPI:
                 "address": pool["pool"]}
         return fundinglib.build_leg(chain.params, pool["pool"], piece, coins=pool["price"],
                                     rate=fees.MIN_FEE_PER_KB, payload=naming, coin=coin,
-                                    redeem=bytes.fromhex(pool.get("redeem") or ""))
+                                    redeem=bytes.fromhex(pool.get("redeem") or ""),
+                                    pool_pays=pays)
 
     def _pool_refusal(chain, pool: dict | None, page: str = "") -> str:
         if pool is None:
@@ -14040,9 +15290,10 @@ def create_app(state: AppState) -> FastAPI:
         """A pool as a page sees it: its terms and what is left. Never the phrase."""
         return {**{k: pool[k] for k in (
             "txid", "number", "creator", "kind", "pool", "index", "property_id", "lot",
-            "count", "price", "game", "deleted", "once", "name")},
+            "count", "price", "game", "deleted", "once", "name", "fee")},
             "referee": ({k: pool["referee"].get(k)
-                         for k in ("node", "judge", "require", "params", "seed_hours", "facts")}
+                         for k in ("node", "judge", "require", "params", "seed_hours", "facts",
+                                   "session")}
                         if pool.get("referee") else None),
             "pool_id": pool["txid"], "total": pool["count"],
             "what": _pool_what(chain, pool), "free": [] if refusal else free,
@@ -14098,7 +15349,7 @@ def create_app(state: AppState) -> FastAPI:
             shape = {"pool": pool["address"], "fund": fund, "each": SPLIT_EACH,
                      "property_id": int(pool["property_id"]), "lot": int(pool["lot"]),
                      "price": int(pool["price"]), "count": count,
-                     "redeem": pool.get("redeem") or ""}
+                     "redeem": pool.get("redeem") or "", "fee": pool.get("fee") or ""}
             prop = state.token_index(chain).property(shape["property_id"])
             legs = []
             for n in range(count):
@@ -14118,6 +15369,7 @@ def create_app(state: AppState) -> FastAPI:
                                            "game": pool.get("bound") or "",
                                            "claim_hash": pool["claim_hash"],
                                            "once": bool(pool.get("once")),
+                                           **({"fee": "pool"} if pool.get("fee") == "pool" else {}),
                                            **_referee_json(account, pool)}})
 
     #: Claims this node broadcast, by pool: who claimed, before their block.
@@ -14140,6 +15392,11 @@ def create_app(state: AppState) -> FastAPI:
 
         def signers(tx: dict) -> set:
             out = set()
+            if len(tx.get("vin") or []) == 2 and tx.get("vout"):
+                # A claim the pool paid for (fee "pool"): no coin of the
+                # claimer's in it, so the claimer is its last output's address.
+                last = (tx["vout"][-1].get("scriptPubKey") or {}).get("addresses") or []
+                out.update(str(a) for a in last[:1])
             for spent in (tx.get("vin") or [])[2:]:
                 asm = str((spent.get("scriptSig") or {}).get("asm") or "").split()
                 if len(asm) == 2 and len(asm[1]) == 66:
@@ -14200,7 +15457,8 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("that transaction did not fund this pool")
         shape = {"kind": "nft", "pool": pool["address"], "fund": fund, "each": SPLIT_EACH,
                  "pieces": list(pool["pieces"]), "price": int(pool["price"]),
-                 "count": count, "first": 0, "redeem": pool.get("redeem") or ""}
+                 "count": count, "first": 0, "redeem": pool.get("redeem") or "",
+                 "fee": pool.get("fee") or ""}
         legs = [{**_pool_leg(chain, shape, n).as_json(), "chain": chain.network,
                  "price": shape["price"]} for n in range(count)]
         return JSONResponse({"chain": chain.network, "legs": legs, "prizepool": {
@@ -14208,7 +15466,9 @@ def create_app(state: AppState) -> FastAPI:
             "pool": pool["address"], "index": int(pool["index"]), "pieces": shape["pieces"],
             "count": count, "price": shape["price"], "each": SPLIT_EACH, "fund": fund,
             "first": 0, "game": pool.get("bound") or "", "claim_hash": pool["claim_hash"],
-            "once": bool(pool.get("once")), **_referee_json(account, pool)}})
+            "once": bool(pool.get("once")),
+            **({"fee": "pool"} if pool.get("fee") == "pool" else {}),
+            **_referee_json(account, pool)}})
 
     def _close_nft_pool(account, chain, main: str, pool: dict, coins: list):
         """Close an NFT pool: each unclaimed piece goes home on its own lot's two
@@ -14265,14 +15525,29 @@ def create_app(state: AppState) -> FastAPI:
         if pool.get("once") and address in _pool_claimers(chain, pool):
             raise ValueError("this wallet has already claimed from this prize pool")
         leg = _pool_leg(chain, pool, n)
+        pays = POOL_PAYS if pool.get("fee") == "pool" else 0
         with chain.rpc() as rpc:
             listing = state.listings.register(
                 rpc, raw=leg.raw, signatures=[str(s) for s in (said.get("signatures") or [])],
                 pubkey=bytes.fromhex(pool["redeem"] or pool["pubkey"]), network=chain.network,
                 owner=pool["pool"], price=pool["price"], seconds=listingslib.ANSWERED_FOR,
-                record=False, claim_hash=pool["claim_hash"], bound=pool["game"])
+                record=False, claim_hash=pool["claim_hash"], bound=pool["game"],
+                pool_pays=pays)
         listing["parent"] = pool["creator"]
         listing["id"] = ""
+        if pays:
+            # The lot pays for itself: its own two coins in, its outputs, and
+            # the claimer's receiving output last -- where a token lot lands and
+            # an NFT transfer points. No coin of the claimer's, so nothing of
+            # theirs to sign; the referee's ALL signature fixes every output.
+            foreign, outputs = listingslib.leg_terms(listing)
+            outputs = list(outputs) + [(fees.DUST_LIMIT, txbuild.p2pkh_script(address))]
+            raw = txbuild.build_raw_tx([(c["txid"], int(c["vout"])) for c in foreign], outputs)
+            what = f"claim {_piece_called(chain, listing)}, its fee paid by the pool"
+            unsigned = fundinglib.Unsigned(raw=raw, inputs=[dict(c) for c in foreign],
+                                           outputs=outputs, fee=pays - fees.DUST_LIMIT,
+                                           what=what, signed_from=len(foreign))
+            return pool, listing, unsigned, what
         _, unsigned, what = _fill_terms(account, chain, address, listing)
         return pool, listing, unsigned, what
 
@@ -14330,7 +15605,6 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"detail": "this node would build a different "
                                      "transaction now; ask again"}, status_code=409)
             try:
-                _real_coins_gate(account, chain)
                 pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
                 if not pubkey or hash160(pubkey) != b58check_decode(address)[1]:
                     raise ValueError("that public key is not this account's")
@@ -14361,6 +15635,67 @@ def create_app(state: AppState) -> FastAPI:
                                  "piece": _piece_called(chain, listing)})
         finally:
             state.end_send(lane)
+            if piece_lane:
+                state.end_send(piece_lane)
+
+    @app.post("/account/prize/take")
+    def account_prize_take(request: Request, payload: Any = Body(None)):
+        """Claim a lot of a pool that pays its own claims ("fee": "pool",
+        2026-10-04: "everything must settle right at the time that it is done").
+
+        Nothing is shown and nothing is signed by the claimer: the lot's two
+        coins pay the block and the claimer's output, the pool's signatures came
+        sealed with the phrase, and the referee signs the whole transaction only
+        after the pool's judge passes the replay, so the prize can only go to the
+        wallet the seed was issued to. The account has to be signed in -- that
+        is what names the address -- and needs no unlocked key and no coins. The
+        node playing (_node_player) claims to its own address the same way."""
+        node = _node_player(request)
+        account = None if node else _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            address = node or _account_address(account.pubkey, chain)
+            if not address:
+                raise ValueError("this account has no address yet")
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        piece_lane = ""
+        try:
+            try:
+                pool, listing, unsigned, what = _prize_terms(account, chain, address, said)
+                if pool.get("fee") != "pool" or not pool.get("referee"):
+                    raise ValueError("this pool does not pay its own claims; claim it the "
+                                     "ordinary way")
+            except (fundinglib.FundingError, listingslib.ListingError, swaplib.SwapError,
+                    ValueError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            piece_lane, refusal = _claim_piece(chain, listing)
+            if refusal:
+                return JSONResponse({"detail": refusal}, status_code=409)
+            try:
+                referee_sigs = _referee_verdict(chain, pool, int(said.get("lot")),
+                                                unsigned.raw, said.get("replay"))
+                with chain.rpc() as rpc:
+                    raw = listingslib.paste_leg(rpc, listing, unsigned, [], b"",
+                                                referee_sigs=referee_sigs, pool_pays=True)
+                if account is not None:
+                    _quota(account, "claim")
+                with chain.rpc() as rpc:
+                    txid = rpc.call("sendrawtransaction", raw)
+            except (listingslib.ListingError, fundinglib.FundingError, swaplib.SwapError,
+                    AmountError, ValueError, refereelib.RefereeError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            except Exception as exc:
+                return JSONResponse({"detail": f"the node refused it: {exc}"}, status_code=409)
+            if pool["kind"] == "token":
+                _lots_flying.setdefault((chain.network, pool["pool"], pool["property_id"]),
+                                        {})[txid] = pool["lot"]
+            _pool_claims.setdefault(pool["txid"], set()).add(address)
+            state.bump_generation()
+            return JSONResponse({"txid": txid, "what": what, "chain": chain.network,
+                                 "piece": _piece_called(chain, listing)})
+        finally:
             if piece_lane:
                 state.end_send(piece_lane)
 
@@ -14496,6 +15831,14 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/list/sign")
     def account_list_sign(request: Request, payload: Any = Body(None)):
+        if not _node_trades():
+            # A listing waits for a buyer with the seller gone: the node would hold
+            # the seller's signature to finish it. Off by default (2026-10-13).
+            _signed_in_account(request)
+            return _node_trades_refused()
+        return _account_list_sign(request, payload)
+
+    def _account_list_sign(request: Request, payload: Any = Body(None)):
         """File the leg this browser signed, from its bytes and the chain alone.
 
         `Listings.register` is the whole of it: the piece's value comes from
@@ -14704,6 +16047,15 @@ def create_app(state: AppState) -> FastAPI:
             raise ValueError(refusal)
         return _fill_terms(account, chain, address, listing)
 
+    def _leg_follows_arrival(chain, index, listing: dict, piece: str) -> bool:
+        """Whether a leg sells a piece still on its way to its seller, and spends
+        the coin that very arrival pays the seller -- so the chain settles the
+        arrival first, or neither (2026-10-04)."""
+        coming = _arriving_output(chain, index, piece, listing["owner"])
+        return (coming is not None
+                and (listing["input"]["txid"], int(listing["input"]["vout"]))
+                == (coming["txid"], coming["vout"]))
+
     def _fill_terms(account, chain, address: str, listing: dict) -> tuple:
         """A leg's trade, and the transaction this account's signature completes.
 
@@ -14743,6 +16095,9 @@ def create_app(state: AppState) -> FastAPI:
         # listing of #25, three minutes before it went to @apple).
         sold = _sold_piece(listing)
         got = index.inscription(sold) if sold else None
+        if (sold and got is not None and got["owner"] != listing["owner"]
+                and _leg_follows_arrival(chain, index, listing, sold)):
+            got = {**got, "owner": listing["owner"]}      # arriving, and settled first
         if sold and (got is None or got["owner"] != listing["owner"]):
             if listing.get("id") and state.listings.get(str(listing["id"])):
                 state.listings.close(listing["id"], "moved")
@@ -14807,6 +16162,12 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/buy")
     def account_buy(request: Request, payload: Any = Body(None)):
+        if not _node_trades():
+            _signed_in_account(request)
+            return _node_trades_refused()
+        return _account_buy(request, payload)
+
+    def _account_buy(request: Request, payload: Any = Body(None)):
         """Show an account the transaction that fills somebody else's listing.
 
         Nothing is spent here, exactly as `/account/list` spends nothing: the
@@ -14908,7 +16269,6 @@ def create_app(state: AppState) -> FastAPI:
             if refusal:
                 return JSONResponse({"detail": refusal}, status_code=409)
             try:
-                _real_coins_gate(account, chain)
                 if str(said.get("raw") or "") != unsigned.raw:
                     return JSONResponse(
                         {"detail": "this node would build you a different "
@@ -15110,6 +16470,26 @@ def create_app(state: AppState) -> FastAPI:
     # /account/fill, naming the terms it agreed to (`expect`). Game-agnostic:
     # these routes know an inscription, a token and an amount, never a game.
 
+    def _arriving_output(chain, index, piece: str, address: str) -> dict | None:
+        """The coin a transaction in the mempool pays `address` while it moves
+        `piece` there, still unspent -- what a trade of an arriving piece spends
+        first, so the chain cannot settle the trade before the arrival. None when
+        the piece is not on its way to that address."""
+        move = next((m for m in index.pending_moves()
+                     if m["kind"] == "inscription" and m["inscription"] == piece
+                     and m["to"] == address), None)
+        if move is None:
+            return None
+        with chain.rpc() as rpc:
+            tx = rpc.call("getrawtransaction", move["txid"], 1)
+            for out in tx.get("vout") or []:
+                if (out.get("scriptPubKey") or {}).get("addresses") == [address]:
+                    n = int(out["n"])
+                    if rpc.call("gettxout", move["txid"], n, True):
+                        return {"txid": move["txid"], "vout": n, "address": address,
+                                "value": int(round(float(out["value"]) * COIN))}
+        return None
+
     def _trade_terms(account, said: dict) -> dict:
         """The trade a request describes, checked: this account gives the piece,
         the buyer can pay, and the buyer can be written to."""
@@ -15120,12 +16500,41 @@ def create_app(state: AppState) -> FastAPI:
         index = state.token_index(chain)
         give_spec = said.get("give") if isinstance(said.get("give"), dict) else {}
         take_spec = said.get("take") if isinstance(said.get("take"), dict) else {}
-        if "inscription" not in give_spec:
-            raise ValueError("the side that signs first gives an NFT: {\"inscription\": id}")
+        if "inscription" not in give_spec and "token" not in give_spec:
+            raise ValueError("the side that signs first gives an NFT or a token: "
+                             "{\"inscription\": id} or {\"token\": id, \"amount\": \"5\"}")
         give = swaplib.leg_of(give_spec, index)
         take = swaplib.leg_of(take_spec, index)
+        if give.kind == inscriptionlib.LEG_TOKEN:
+            # A token given (2026-10-04, token for token): held now, counting
+            # what is already leaving in the pool; the block checks it again.
+            room = index.balance(address, give.property_id) - index.pending_out(
+                address, give.property_id)
+            if room < give.amount:
+                raise swaplib.SwapError("this account does not hold that much of that "
+                                        "token, counting what is already on its way out")
+            buyer = str(said.get("buyer") or "")
+            if not buyer or buyer == address:
+                raise ValueError("a trade needs another player")
+            with chain.rpc() as rpc:
+                problem = swaplib.holds(index, rpc, buyer, take)
+            if problem:
+                raise swaplib.SwapError("the other player cannot pay "
+                                        f"{swaplib.describe_leg(swaplib.leg_json(take, index))}: "
+                                        f"{problem}")
+            price = int(take.amount) if take.kind == inscriptionlib.LEG_COINS else 0
+            return {"chain": chain, "address": address, "index": index, "row": None,
+                    "give": give, "take": take, "buyer": buyer, "to": _key_at(buyer),
+                    "price": price, "arriving": None,
+                    "what": (f"trade {swaplib.describe_leg(swaplib.leg_json(give, index))} for "
+                             f"{swaplib.describe_leg(swaplib.leg_json(take, index))}")}
         row = index.inscription(give.txid.hex())
-        if row is None or row["owner"] != address:
+        arriving = None
+        if row is not None and row["owner"] != address:
+            # On its way to this account (2026-10-04): tradeable now, as a child
+            # of the transaction bringing it.
+            arriving = _arriving_output(chain, index, row["txid"], address)
+        if row is None or (row["owner"] != address and arriving is None):
             raise swaplib.SwapError("that piece is not this account's to trade")
         buyer = str(said.get("buyer") or "")
         if not buyer or buyer == address:
@@ -15147,7 +16556,7 @@ def create_app(state: AppState) -> FastAPI:
                 f"{swaplib.describe_leg(swaplib.leg_json(take, index))}")
         return {"chain": chain, "address": address, "index": index, "row": row,
                 "give": give, "take": take, "buyer": buyer, "to": to,
-                "price": price, "what": what}
+                "price": price, "what": what, "arriving": arriving}
 
     @app.post("/account/trade/leg")
     def account_trade_leg(request: Request, payload: Any = Body(None)):
@@ -15175,6 +16584,12 @@ def create_app(state: AppState) -> FastAPI:
                     seen.add(key)
                     coins_here.append(c)
                 held = _smallest_two_first(coins_here)
+                if t["arriving"] is not None:
+                    # The arriving piece's own coin first: the trade spends it,
+                    # so it can only settle with or after the arrival.
+                    held = [t["arriving"]] + [c for c in held
+                                              if (c["txid"], int(c["vout"]))
+                                              != (t["arriving"]["txid"], t["arriving"]["vout"])][:1]
                 if len(held) < 2:
                     split = fundinglib.build(
                         db, chain.params, address,
@@ -15189,7 +16604,7 @@ def create_app(state: AppState) -> FastAPI:
                 leg = fundinglib.build_leg(
                     chain.params, address, held[0], coins=t["price"],
                     rate=fees.MIN_FEE_PER_KB, what=t["what"],
-                    payload=_ask_payload(t["row"], t["take"]), coin=held[1])
+                    payload=_swap_payload(t["give"], t["take"]), coin=held[1])
         except (fundinglib.FundingError, listingslib.ListingError,
                 swaplib.SwapError, inscriptionlib.InscriptionError,
                 tokenlib.TokenError, AmountError, ValueError) as exc:
@@ -15234,14 +16649,15 @@ def create_app(state: AppState) -> FastAPI:
             committed.append((listing["coin"]["txid"], listing["coin"]["vout"]))
         _flights.note_committed(account.pubkey, tuple(committed), network=chain.network)
         now = time.time()
-        state.offers.add_bid({
-            "id": secrets.token_hex(8), "network": chain.network,
-            "direction": "in", "inscription": t["row"]["txid"],
-            "number": t["row"]["number"], "owner": address, "buyer": t["buyer"],
-            "peer_pubkey": t["to"].hex(), "take": swaplib.leg_json(t["take"], index),
-            "note": "a trade in a game", "created": now,
-            "expires": now + ACCOUNT_ANSWER_HOLD,
-            "coins": [{"txid": tx, "vout": v} for tx, v in committed]})
+        if t["row"] is not None:
+            state.offers.add_bid({
+                "id": secrets.token_hex(8), "network": chain.network,
+                "direction": "in", "inscription": t["row"]["txid"],
+                "number": t["row"]["number"], "owner": address, "buyer": t["buyer"],
+                "peer_pubkey": t["to"].hex(), "take": swaplib.leg_json(t["take"], index),
+                "note": "a trade in a game", "created": now,
+                "expires": now + ACCOUNT_ANSWER_HOLD,
+                "coins": [{"txid": tx, "vout": v} for tx, v in committed]})
         state.bump_generation()
         return JSONResponse({
             "chain": chain.network, "ok": True, "buyer": t["buyer"],
@@ -15253,6 +16669,231 @@ def create_app(state: AppState) -> FastAPI:
                     "amount": format_amount(t["price"], True) if t["price"] else "0",
                     "take": swaplib.leg_json(t["take"], index),
                     "give": swaplib.leg_json(t["give"], index)}})
+
+    # --- a BUNDLE: several things each way, in one transaction (2026-10-04) ---------
+    #
+    # The proposer builds it: one coin of the other player's in front (so they sign,
+    # and the engine sees both parties), its own coins after, the bundle payload
+    # (Class B: it names both parties), any coin legs, and the fee, which the
+    # proposer pays. The proposer signs its inputs SIGHASH_ALL in its tab and hands
+    # the half-signed transaction to the other player sealed; that player's node
+    # reads the bundle back out of the bytes, checks it is what was agreed, and the
+    # player signs theirs and broadcasts. Nothing is kept between the two halves:
+    # the handoff carries everything, so the two players may be on different nodes.
+
+    def _bundle_legs(specs: Any, index) -> list:
+        if not isinstance(specs, list) or not 1 <= len(specs) <= inscriptionlib.BUNDLE_MOST:
+            raise ValueError(f"a bundle side is a list of 1 to {inscriptionlib.BUNDLE_MOST} "
+                             "things: {inscription}, {token, amount} or {coins}")
+        return [swaplib.leg_of(s if isinstance(s, dict) else {}, index) for s in specs]
+
+    def _bundle_holds(index, rpc, address: str, legs: list) -> str | None:
+        """Why `address` cannot give all of `legs`, or None. Token legs summed."""
+        seen, tokens = set(), {}
+        for leg in legs:
+            if leg.kind == inscriptionlib.LEG_INSCRIPTION:
+                if leg.txid in seen:
+                    return "one piece is named twice"
+                seen.add(leg.txid)
+                problem = swaplib.holds(index, rpc, address, leg)
+                if problem:
+                    return problem
+            elif leg.kind == inscriptionlib.LEG_TOKEN:
+                tokens[leg.property_id] = tokens.get(leg.property_id, 0) + leg.amount
+        for pid, total in tokens.items():
+            if index.balance(address, pid) - index.pending_out(address, pid) < total:
+                prop = index.property(pid)
+                return f"not enough {prop['name'] if prop else pid}"
+        return None
+
+    def _raw_address(address: str) -> bytes:
+        version, body = b58check_decode(address)
+        return bytes([version]) + body
+
+    @app.post("/account/bundle/build")
+    def account_bundle_build(request: Request, payload: Any = Body(None)):
+        """The proposer's half of a bundle: {chain, with, give: [...], get: [...]}
+        -> the transaction, with sighashes for this account's own inputs only."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+            if chain.params.bundles_from is None:
+                raise ValueError("this chain does not read bundles yet")
+            a = _account_address(account.pubkey, chain)
+            b = str(said.get("with") or "")
+            if not a or not b or a == b:
+                raise ValueError("a bundle needs this account and another player")
+            index = state.token_index(chain)
+            give = _bundle_legs(said.get("give"), index)
+            take = _bundle_legs(said.get("get"), index)
+            to_b = sum(l.amount for l in give if l.kind == inscriptionlib.LEG_COINS)
+            to_a = sum(l.amount for l in take if l.kind == inscriptionlib.LEG_COINS)
+            if to_a and to_b:
+                raise ValueError("a bundle pays coins one way only")
+            with chain.rpc() as rpc:
+                for who_, legs, whose in ((a, give, "you"), (b, take, "the other player")):
+                    problem = _bundle_holds(index, rpc, who_, legs)
+                    if problem:
+                        raise swaplib.SwapError(f"{whose} cannot give that: {problem}")
+            body = inscriptionlib.Bundle(a=_raw_address(a), b=_raw_address(b),
+                                         give=tuple(give), take=tuple(take)).encode()
+            payload_outputs = _class_c_or_b(chain, a, body,
+                                            coin_pubkey=_coin_pubkey(account.pubkey, chain))
+            with contextlib.closing(index.open()) as db:
+                theirs = sorted(utxoslib.unspent(db, b), key=lambda c: int(c["value"]))
+                need, picked = max(to_a, 1), []
+                for c in theirs:
+                    if sum(int(x["value"]) for x in picked) >= need:
+                        break
+                    picked.append(c)
+                if not picked or sum(int(x["value"]) for x in picked) < need:
+                    raise swaplib.SwapError("the other player needs a coin of their own to "
+                                            "sign this with" + (", and enough to pay it"
+                                                                if to_a else ""))
+                their_in = sum(int(x["value"]) for x in picked)
+                outputs = list(payload_outputs)
+                if to_a:
+                    outputs.append((to_a, txbuild.p2pkh_script(a)))
+                if to_b:
+                    outputs.append((to_b, txbuild.p2pkh_script(b)))
+                if their_in - to_a > 0:
+                    outputs.append((their_in - to_a, txbuild.p2pkh_script(b)))
+                foreign = [{"txid": c["txid"], "vout": int(c["vout"]), "value": int(c["value"]),
+                            "address": b} for c in picked]
+                unsigned = fundinglib.build_partial(
+                    db, chain.params, a, foreign, outputs, rate=fees.MIN_FEE_PER_KB,
+                    what="a trade of several things each way",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            # Class B is read with its SENDER's address, and the sender is whoever
+            # put in the most (omnicore.cpp's rule; ties to the smaller address).
+            # The bundle names its parties, so it does not care which one that is,
+            # but the bytes must be written with it: when it is the other player,
+            # write them again keyed to them. Same size, so the same coins.
+            mine_in = sum(int(c["value"]) for c in unsigned.inputs[len(foreign):])
+            sender = a if (mine_in > their_in or (mine_in == their_in and a < b)) else b
+            if sender != a:
+                keyed = _class_c_or_b(chain, sender, body,
+                                      coin_pubkey=_coin_pubkey(account.pubkey, chain))
+                outputs = keyed + outputs[len(payload_outputs):]
+                with contextlib.closing(index.open()) as db:
+                    unsigned = fundinglib.build_partial(
+                        db, chain.params, a, foreign, outputs, rate=fees.MIN_FEE_PER_KB,
+                        what="a trade of several things each way",
+                        exclude=_flights.spent_by(account.pubkey, chain.network),
+                        extra=_flights.change_for(account.pubkey, chain.network))
+                again = sum(int(c["value"]) for c in unsigned.inputs[len(foreign):])
+                if (again > their_in or (again == their_in and a < b)):
+                    raise swaplib.SwapError("this trade could not be written; ask again")
+            _quota(account, "trade")
+        except (fundinglib.FundingError, swaplib.SwapError, inscriptionlib.InscriptionError,
+                tokenlib.TokenError, AmountError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": chain.network, "a": a, "b": b,
+                             "seal_to": _key_at(b).hex(),
+                             "give": [swaplib.leg_json(l, index) for l in give],
+                             "get": [swaplib.leg_json(l, index) for l in take],
+                             **unsigned.as_json()})
+
+    def _bundle_terms(account, said: dict) -> dict:
+        """The other player's half: read the bundle back out of the bytes and check
+        it is what this account agreed to, from its own side."""
+        from ..indexer import PrevOutCache
+        from ..tx import extract
+        chain = _chain_asked(said)
+        me = _account_address(account.pubkey, chain)
+        hand = said.get("handoff") if isinstance(said.get("handoff"), dict) else {}
+        expect = said.get("expect") if isinstance(said.get("expect"), dict) else {}
+        raw = str(hand.get("raw") or "")
+        index = state.token_index(chain)
+        with chain.rpc() as rpc:
+            tx = rpc.call("decoderawtransaction", raw)
+            rtx = extract(tx, 0, 0, chain.params, PrevOutCache(rpc, chain.params).lookup)
+            parsed = inscriptionlib.parse(P.decode(rtx.payload).data) if rtx and rtx.payload else None
+            if not isinstance(parsed, inscriptionlib.Bundle):
+                raise ValueError("that is not a bundle")
+            a = b58check_encode(parsed.a[0], parsed.a[1:])
+            b = b58check_encode(parsed.b[0], parsed.b[1:])
+            if b != me or a != str(hand.get("a") or ""):
+                raise ValueError("that bundle is not between you and that player")
+            # From this account's side: what it gives is the bundle's `take`.
+            if (list(parsed.take) != _bundle_legs(expect.get("give"), index)
+                    or list(parsed.give) != _bundle_legs(expect.get("get"), index)):
+                raise swaplib.SwapError("that bundle is not the trade you agreed to")
+            problem = _bundle_holds(index, rpc, me, list(parsed.take))
+            if problem:
+                raise swaplib.SwapError(f"you cannot give that: {problem}")
+            inputs = []
+            for vin in tx.get("vin") or []:
+                prev = rpc.call("gettxout", vin["txid"], int(vin["vout"]), True)
+                if not prev:
+                    raise ValueError("a coin in that trade is spent already; ask for it again")
+                where = ((prev.get("scriptPubKey") or {}).get("addresses") or [""])[0]
+                inputs.append({"txid": vin["txid"], "vout": int(vin["vout"]),
+                               "value": int(round(float(prev["value"]) * COIN)), "address": where})
+        mine = [n for n, c in enumerate(inputs) if c["address"] == me]
+        if not mine or mine != list(range(len(mine))):
+            raise ValueError("that bundle does not put your coins first, as one is built")
+        if any(c["address"] != a for c in inputs[len(mine):]):
+            raise ValueError("that bundle spends coins of somebody else's")
+        outputs = [(int(round(float(o["value"]) * COIN)), bytes.fromhex(o["scriptPubKey"]["hex"]))
+                   for o in tx.get("vout") or []]
+        pays = sum(l.amount for l in parsed.take if l.kind == inscriptionlib.LEG_COINS)
+        if rtx.paid_to(me) < -pays:
+            raise swaplib.SwapError("that bundle takes more of your coins than the trade says")
+        script = txbuild.p2pkh_script(me)
+        hashes = [fundinglib.sighash(inputs, outputs, n, script).hex() for n in mine]
+        return {"chain": chain, "me": me, "a": a, "raw": raw, "inputs": inputs,
+                "outputs": outputs, "mine": len(mine), "hashes": hashes, "hand": hand,
+                "parsed": parsed, "index": index}
+
+    @app.post("/account/bundle/fill")
+    def account_bundle_fill(request: Request, payload: Any = Body(None)):
+        """{chain, handoff, expect: {give, get}} -> what this account signs."""
+        account = _signed_in_account(request)
+        try:
+            t = _bundle_terms(account, payload if isinstance(payload, dict) else {})
+        except (fundinglib.FundingError, swaplib.SwapError, inscriptionlib.InscriptionError,
+                ValueError, KeyError, TypeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"chain": t["chain"].network, "raw": t["raw"], "inputs": t["inputs"],
+                             "sighashes": t["hashes"], "signed_from": 0,
+                             "signed_to": t["mine"], "what": "a trade of several things each way"})
+
+    @app.post("/account/bundle/fill/sign")
+    def account_bundle_fill_sign(request: Request, payload: Any = Body(None)):
+        """Both halves pasted together, and the bundle sent."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            t = _bundle_terms(account, said)
+            pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+            if hash160(pubkey) != b58check_decode(t["me"])[1]:
+                raise ValueError("that public key is not this account's")
+            hand = t["hand"]
+            a_pub = bytes.fromhex(str(hand.get("a_pubkey") or ""))
+            if hash160(a_pub) != b58check_decode(t["a"])[1]:
+                raise ValueError("the other half was not signed by the other player's key")
+            mine = [bytes.fromhex(str(s)) for s in (said.get("signatures") or [])]
+            theirs = [bytes.fromhex(str(s)) for s in (hand.get("a_sigs") or [])]
+            if len(mine) != t["mine"] or len(theirs) != len(t["inputs"]) - t["mine"]:
+                raise ValueError("the signatures do not match the coins in that trade")
+            from ..txbuild import push
+            signed = [(c["txid"], c["vout"], push(sig) + push(key))
+                      for c, sig, key in zip(t["inputs"], mine + theirs,
+                                             [pubkey] * len(mine) + [a_pub] * len(theirs))]
+            raw = listingslib._serialise(signed, t["outputs"])
+            _quota(account, "trade")
+            with t["chain"].rpc() as rpc:
+                txid = rpc.call("sendrawtransaction", raw)
+        except (fundinglib.FundingError, swaplib.SwapError, inscriptionlib.InscriptionError,
+                ValueError, KeyError, TypeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:                          # noqa: BLE001
+            return JSONResponse({"detail": f"the node refused it: {exc}"}, status_code=409)
+        state.bump_generation()
+        return JSONResponse({"ok": True, "txid": txid, "chain": t["chain"].network})
 
     def _trade_expected(said: dict, listing: dict, chain, buyer: str) -> None:
         """When the buyer names the trade it agreed to (`expect`, from a game's
@@ -15376,7 +17017,6 @@ def create_app(state: AppState) -> FastAPI:
             if refusal:
                 return JSONResponse({"detail": refusal}, status_code=409)
             try:
-                _real_coins_gate(account, chain)
                 if str(said.get("raw") or "") != unsigned.raw:
                     return JSONResponse(
                         {"detail": "this node would build you a different "
@@ -15621,6 +17261,14 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/accept/complete")
     def account_accept_complete(request: Request, payload: Any = Body(None)):
+        if not _node_trades():
+            # A pre-signed bid is the buyer's signature, held by this node until the
+            # seller says yes. Off by default (2026-10-13).
+            _signed_in_account(request)
+            return _node_trades_refused()
+        return _account_accept_complete(request, payload)
+
+    def _account_accept_complete(request: Request, payload: Any = Body(None)):
         """The seller's one signature on a pre-signed offer's trade, pasted beside
         the buyer's, and the trade broadcast."""
         account = _signed_in_account(request)
@@ -15718,7 +17366,7 @@ def create_app(state: AppState) -> FastAPI:
             row = index.inscription(contentlib._key(str(said.get("piece", ""))))
             # A pre-signed offer: the buyer's half is already here, so Accept is
             # the trade itself (2026-09-27).
-            bid = _bids.get(ask["txid"])
+            bid = _bids.get(ask["txid"]) if _node_trades() else None
             if bid and bid["status"] == bidslib.OPEN \
                     and str(said.get("decision") or "") != "refuse":
                 return _accept_presigned(account, chain, address, row, bid, said)
@@ -16414,7 +18062,11 @@ def create_app(state: AppState) -> FastAPI:
                 # What it issues, even holding none: a managed token starts at
                 # zero, and its issuer has to be able to find it to grant any.
                 have = {row["property_id"] for row in held}
-                issued = [p for p in index.properties()
+                props = index.properties()
+                # Whether each is managed, so the Wallet can offer Manage on the
+                # ones this account issues (2026-10-08).
+                managed = {p["property_id"] for p in props if p.get("managed")}
+                issued = [p for p in props
                           if p["issuer"] == address and p["property_id"] not in have]
             except Exception:
                 continue
@@ -16429,6 +18081,7 @@ def create_app(state: AppState) -> FastAPI:
                     "issuer": row["issuer"], "divisible": row["divisible"],
                     "balance": row["balance"], "display": row["display"],
                     "issuer_is_me": row["issuer"] == address,
+                    "managed": row["property_id"] in managed,
                 } for row in held] + [{
                     "property_id": p["property_id"], "name": p["name"],
                     "issuer": p["issuer"], "divisible": p["divisible"],
@@ -16468,8 +18121,20 @@ def create_app(state: AppState) -> FastAPI:
             prop = index.property(property_id)
             if prop is None:
                 raise tokenlib.TokenError(f"there is no token {property_id}.")
-            to, to_tag = _payee(said.get("to", ""), chain)
-            complaint = _check_address(to, mainnet=chain.is_mainnet)
+            tip_of = str(said.get("tip_of", "") or "").strip().lower()
+            if tip_of:
+                # A token tip (2026-10-13: "testnet or mainnet token"):
+                # the post's author, at the address they published for this
+                # chain. Worked out here, so the page never has to know it.
+                if not re.fullmatch(r"[0-9a-f]{64}", tip_of):
+                    raise ValueError("that is not a transaction id")
+                to, to_tag = _pays_at(_feed_author_address(_account_chain(), tip_of), chain), ""
+                if not to:
+                    raise ValueError("there is nowhere to send it: whoever wrote that has "
+                                     f"not published a {chain.label.lower()} address")
+            else:
+                to, to_tag = _payee(said.get("to", ""), chain)
+            complaint = _check_address(to, mainnet=chain)
             if complaint:
                 raise ValueError(complaint)
             if to == address:
@@ -16520,7 +18185,10 @@ def create_app(state: AppState) -> FastAPI:
                     "waiting for its block. Nothing was sent.")
         offer = _offers.add(account.pubkey, chain.network, unsigned,
                             unsigned.what, check=still_here)
-        return JSONResponse({"offer": offer.id, "to": to,
+        # `amount` and `to_tag` so the page can check the offer is the send that
+        # was typed before it signs (the Wallet tab, 2026-10-08).
+        return JSONResponse({"offer": offer.id, "to": to, "to_tag": to_tag,
+                             "amount": amount, "divisible": bool(prop["divisible"]),
                              "property_id": property_id, "name": prop["name"],
                              "chain": chain.network, **unsigned.as_json()})
 
@@ -16592,13 +18260,22 @@ def create_app(state: AppState) -> FastAPI:
                                     _coin_pubkey(account.pubkey, chain),
                                     wrap=False)
             index = state.token_index(chain)
+            build = lambda outs: fundinglib.build(
+                db, chain.params, address, outs,
+                rate=fees.MIN_FEE_PER_KB,
+                what=f"create the token {name.strip()}",
+                exclude=_flights.spent_by(account.pubkey, chain.network),
+                extra=_flights.change_for(account.pubkey, chain.network))
+            fee_said = None
             with contextlib.closing(index.open()) as db:
-                unsigned = fundinglib.build(
-                    db, chain.params, address, outputs,
-                    rate=fees.MIN_FEE_PER_KB,
-                    what=f"create the token {name.strip()}",
-                    exclude=_flights.spent_by(account.pubkey, chain.network),
-                    extra=_flights.change_for(account.pubkey, chain.network))
+                unsigned = build(outputs)
+                # On mainnet the operator's 0.5% (`_operator_fee`) of what this
+                # costs, priced from the transaction just built, then built again
+                # with it as one more output after the token's own.
+                fee_out, fee_said = _operator_fee(
+                    chain, address, unsigned.fee + sum(v for v, _ in outputs))
+                if fee_out:
+                    unsigned = build(outputs + fee_out)
             _quota(account, "issue", len(body))
         except (tokenlib.TokenError, fundinglib.FundingError, AmountError,
                 ValueError) as exc:
@@ -16607,6 +18284,7 @@ def create_app(state: AppState) -> FastAPI:
                             unsigned.what)
         return JSONResponse({"offer": offer.id, "name": name.strip(),
                              "managed": managed, "chain": chain.network,
+                             "operator_fee": fee_said,
                              "class": ("B" if len(outputs) > 1 else "C"),
                              **unsigned.as_json()})
 
@@ -16656,7 +18334,7 @@ def create_app(state: AppState) -> FastAPI:
                 if action == "grant":
                     if str(said.get("to") or "").strip():
                         to, to_tag = _payee(said.get("to"), chain)
-                        complaint = _check_address(to, mainnet=chain.is_mainnet)
+                        complaint = _check_address(to, mainnet=chain)
                         if complaint:
                             raise ValueError(complaint)
                     if to == address:
@@ -16674,7 +18352,7 @@ def create_app(state: AppState) -> FastAPI:
                     what = f"revoke {shown} (they are destroyed)"
             elif action == "issuer":
                 to, to_tag = _payee(said.get("to"), chain)
-                complaint = _check_address(to, mainnet=chain.is_mainnet)
+                complaint = _check_address(to, mainnet=chain)
                 if complaint:
                     raise ValueError(complaint)
                 if to == address:
@@ -16725,7 +18403,7 @@ def create_app(state: AppState) -> FastAPI:
                                         account.pubkey, one)}
                                    for one in _account_chains()
                                    if one.is_mainnet],
-                      real_on=_real_coins_open(account))
+                      real_on=_words_backed_up(account))
 
     @app.get("/me/wallet", response_class=HTMLResponse)
     def my_wallet(request: Request):
@@ -16781,6 +18459,7 @@ def create_app(state: AppState) -> FastAPI:
                              "items": run["items"], "sent": run["sent"],
                              "status": run["status"],
                              "refused": run["failed_pieces"],
+                             "skipped": run["skipped"],
                              "next": run["next"],
                              "chain": labels.get(run["network"], run["network"])}
                             for run in mine])
@@ -16963,9 +18642,15 @@ def create_app(state: AppState) -> FastAPI:
                 "detail": "they have not published a messaging key, so "
                           "there is nowhere to send it. Ask them to publish "
                           "their tag -- it is one button."}, status_code=404)
+        # The published name and picture ride along (2026-10-08) so the
+        # address book can draw a face, kept with the entry when it is added:
+        # asked about the one person being added, not the whole book, which
+        # this node is never shown.
         return JSONResponse({"address": address, "tag": tag,
                              "key": bytes(said["pubkey"]).hex(),
-                             "fingerprint": said["fingerprint"]})
+                             "fingerprint": said["fingerprint"],
+                             "name": (said["name"] if "name" in said.keys() else "") or "",
+                             "face": _face_for(address)})
 
     @app.post("/account/write")
     def account_write(request: Request, payload: Any = Body(None)):
@@ -16988,7 +18673,7 @@ def create_app(state: AppState) -> FastAPI:
             if not sealed:
                 raise ValueError("there is nothing to send")
             to = str(said.get("to", "")).strip()
-            complaint = _check_address(to, mainnet=chain.is_mainnet)
+            complaint = _check_address(to, mainnet=chain)
             if complaint:
                 raise ValueError(complaint)
             # The envelope, as the scanner will read it back: a header
@@ -17078,11 +18763,17 @@ def create_app(state: AppState) -> FastAPI:
         """
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
-        chain = _account_chain()
+        # A tip may be paid on either chain (2026-10-13: "testnet PEP
+        # mainnet PEP"); every other reaction is a note on the tag chain.
+        try:
+            chain = (_chain_asked(said) if int(said.get("kind", 0) or 0) == feedlib.TIP
+                     else _account_chain())
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
         address = _account_address(account.pubkey, chain)
         if not address:
-            return JSONResponse({"detail": "this account has no address yet"},
-                                status_code=400)
+            return JSONResponse({"detail": f"this account has no {chain.label.lower()} "
+                                           f"address yet"}, status_code=400)
         try:
             target = str(said.get("txid", "")).strip().lower()
             if len(target) != 64 or not all(c in "0123456789abcdef"
@@ -17097,7 +18788,7 @@ def create_app(state: AppState) -> FastAPI:
             note = feedlib.build(kind, target, text)
 
             outputs = _class_c_or_b(chain, address, note,
-                                    _coin_pubkey(account.pubkey))
+                                    _coin_pubkey(account.pubkey, chain))
             paid = 0
             if kind == feedlib.TIP:
                 # A tip pays the post's author in the same transaction that
@@ -17107,11 +18798,12 @@ def create_app(state: AppState) -> FastAPI:
                 if amount <= 0:
                     raise ValueError("a tip of nothing is not a tip")
                 _above_dust(amount, "tip")
-                where = _feed_author_address(chain, target)
+                # The post is on the tag chain whichever chain pays for it.
+                where = _pays_at(_feed_author_address(_account_chain(), target), chain)
                 if not where:
                     raise ValueError(
                         "there is nowhere to send it: whoever wrote that has "
-                        "not published an address")
+                        f"not published a {chain.label.lower()} address")
                 outputs.append((amount, txbuild.p2pkh_script(where)))
                 paid = amount
 
@@ -17316,7 +19008,7 @@ def create_app(state: AppState) -> FastAPI:
             chain = _chain_asked(said)
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        complaint = _check_address(address, mainnet=chain.is_mainnet)
+        complaint = _check_address(address, mainnet=chain)
         if complaint:
             return JSONResponse({"detail": complaint}, status_code=400)
         state.set_setting(_address_key(account.pubkey, chain), address)
@@ -17335,7 +19027,7 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/account/mainnet")
     def account_mainnet(request: Request, payload: Any = Body(None)):
-        """Switch this account's real coins on, or report why it did not.
+        """Mark this account's twelve words as backed up, or say why not.
 
         The twelve words are NOT part of this request and never will be: a
         node that could check them is a node that knows them, which is the
@@ -17345,24 +19037,23 @@ def create_app(state: AppState) -> FastAPI:
         use -- which is a check that can only pass if the words are right --
         and sends the answer and nothing else.
 
-        What that does and does not buy is said here rather than implied by
-        a padlock: it stops the person who never wrote the words down from
-        moving money they could never recover, because the only way through
-        is to type the words and see them work. It does not stop a browser
-        that lies about the answer, and no design can, because the machine
-        holding the keys is the machine being asked. The words stay the
-        account's own backup; this is a speed bump with a sentence on it.
+        Until 2026-10-08 this also switched real coins on, and mainnet sends
+        were refused without it. Now it only takes away the notice that the
+        words were never backed up (`_words_backed_up`); an account spends
+        its own coins either way. The route keeps its name so a page that
+        was open across the change still reaches it.
         """
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         if not said.get("words_match"):
             return JSONResponse(
-                {"detail": "those are not your words, so nothing is switched "
-                           "on. Nothing was spent and nothing was changed -- "
-                           "check the order and the spelling and try again."},
+                {"detail": "those are not your words, so they are not marked "
+                           "as backed up. Nothing was spent and nothing was "
+                           "changed -- check the order and the spelling and try "
+                           "again."},
                 status_code=400)
         state.set_setting(f"mainnet:{account.pubkey}", "yes")
-        return JSONResponse({"mainnet": True,
+        return JSONResponse({"mainnet": True, "backed_up": True,
                              "chains": [one.network for one
                                         in _account_chains()
                                         if one.is_mainnet]})
@@ -17420,6 +19111,10 @@ def create_app(state: AppState) -> FastAPI:
     #: What one coin from a split is worth: enough to stand under a listing and
     #: never under the soft-dust limit.
     SPLIT_EACH = 5 * fees.DUST_LIMIT
+    #: What a lot of a pool with "fee": "pool" keeps back from the coins it
+    #: stands on to pay its own claim (2026-10-04, the operator: 0.02 a lot): the
+    #: claimer's receiving output and the block. The rest goes back to the pool.
+    POOL_PAYS = 2 * fees.DUST_LIMIT
 
     @app.get("/restore", response_class=HTMLResponse)
     def restore_page(request: Request):
@@ -17498,6 +19193,8 @@ def create_app(state: AppState) -> FastAPI:
         index = state.token_index(chain)
         state.listings.expire_due(chain.network)
         out = []
+        if not _node_trades():
+            return out          # an account mintpad is waiting listings (2026-10-13)
         for row in state.listings.open_listings(chain.network, limit=1000):
             if row["owner"] != creator:
                 continue
@@ -17533,7 +19230,11 @@ def create_app(state: AppState) -> FastAPI:
                 "open": not refusal and bool(free), "listing": None,
                 "lots_left": 0 if refusal else len(free), "free": [] if refusal else free,
                 "what": _lot_words(chain, (chained["property_id"], chained["lot"])),
-                "price": chained["price"]})
+                "price": chained["price"], "fee": chained.get("fee") or "",
+                # Whether a referee judges its claims: the viewer signs a game's
+                # own refereed claims without a card on a test chain (base.html).
+                "referee": ({k: chained["referee"].get(k) for k in ("node", "judge", "require")}
+                            if chained.get("referee") else None)})
         _sweep_book(chain)
         pool = [r for r in state.listings.open_listings(chain.network, limit=1000, claims=True)
                 if r.get("bound") == row["txid"] and r.get("claim_hash")]
@@ -18038,6 +19739,7 @@ def create_app(state: AppState) -> FastAPI:
         games = _games_ranked(request, sort)
         mine = _tag_of_whoever_is_asking(request) or {}
         return render(request, "games.html", chain=chain, games=games, sort=sort,
+                      kinds=feedlib.BY_NAME,
                       viewer="account" if _account_view(request) else "wallet",
                       mine_tag=mine.get("tag") or "", when=_when)
 
@@ -18154,7 +19856,7 @@ def create_app(state: AppState) -> FastAPI:
             # the ANSWER is shown: somebody paying @robin should see the
             # address their coins are going to before they sign.
             to, to_tag = _payee(said.get("to", ""), chain)
-            complaint = _check_address(to, mainnet=chain.is_mainnet)
+            complaint = _check_address(to, mainnet=chain)
             if complaint:
                 raise ValueError(complaint)
             # Coins to your own address are allowed: it is how one coin becomes
@@ -18281,21 +19983,7 @@ def create_app(state: AppState) -> FastAPI:
                            "once from one wallet spends the same coin twice."},
                 status_code=409)
         try:
-            # Real coins are refused HERE rather than in the eleven routes that
-            # build an offer, so that no route can forget to ask -- and looked
-            # up without consuming, for the same reason the lane is claimed
-            # before the offer is taken: a refusal that ate an offer sends the
-            # browser off to build the whole transaction again, and this one is
-            # followed by a trip to the Backup page and back.
             offered = str(said.get("offer", ""))
-            for pending in _offers.waiting(account.pubkey):
-                if pending.id != offered:
-                    continue
-                try:
-                    _real_coins_gate(account, _chain_on(pending.network))
-                except ValueError as exc:
-                    return JSONResponse({"detail": str(exc)}, status_code=400)
-                break
             try:
                 offer = _offers.take(offered, account.pubkey)
                 signatures = [str(x) for x in (said.get("signatures") or [])]
@@ -18466,7 +20154,7 @@ def create_app(state: AppState) -> FastAPI:
         answer.set_cookie(
             SESSION_COOKIE, token,
             max_age=accountslib.SESSION_DAYS * 86400,
-            httponly=True, samesite="strict", secure=_over_https(request))
+            httponly=True, samesite="lax", secure=_over_https(request))
         # The operator's password IS the admin password (arcade/admin.py): having
         # just proved it, the admin panel opens too, without asking twice.
         if account.pubkey.lower() == state.operator:
@@ -18608,8 +20296,19 @@ def create_app(state: AppState) -> FastAPI:
 
     def _admin_wallets() -> list[dict]:
         out = []
-        for which, ctx in (("messaging", state.messaging), ("ledger", state.ledger)):
-            row = {"which": which, "label": ctx.label, "network": ctx.network}
+        wallets = [("messaging", state.messaging), ("ledger", state.ledger)]
+        if state.doge is not None:
+            wallets.append(("doge", state.doge))
+        for which, ctx in wallets:
+            row = {"which": which, "label": ctx.title, "network": ctx.network,
+                   "net": ctx.net, "coin": ctx.params.coin}
+            sync = state.chain_sync(ctx)
+            if not sync.get("ready"):
+                # Dogecoin while it syncs (2026-10-13): shown, grayed out, and how far.
+                row.update(syncing=True, progress=round(100 * float(sync.get("progress") or 0), 1),
+                           blocks=sync.get("blocks", 0), headers=sync.get("headers", 0))
+                out.append(row)
+                continue
             try:
                 with ctx.rpc() as rpc:
                     got = walletlib.balance(rpc)
@@ -18662,10 +20361,39 @@ def create_app(state: AppState) -> FastAPI:
             "selling": {"auto_update": bool(state.setting("auto_update", True)),
                         "auto_sell": bool(state.setting("auto_sell", True)),
                         "auto_fill": bool(state.setting("auto_fill", True)),
+                        "node_trades": _node_trades(),
                         "trade_cut": state.setting("trade_cut")},
             "node": {"version": state.running_version,
                      "public_hosts": list(state.public_hosts)},
+            "xchain": _admin_xchain(),
         }, headers={"Cache-Control": "no-store"})
+
+    def _admin_xchain() -> dict:
+        """The mainnet PEPE swap (arcade/xchain.py) as the operator needs to see it:
+        whether it is open, where deposits go, whether the mainnet wallet covers what is
+        owed plus fees, and anything waiting or stuck (2026-10-06: "the option
+        to enable main net should be on the admin panel")."""
+        out: dict = {"enabled": _x_open(), "trust": XCHAIN_TRUST}
+        try:
+            book = state.xchain.book
+            owed = book.owed()
+            out["owed_pepe"] = owed.get(("main", "pepe", "pepe"), 0) / COIN
+            out["open_orders"] = sum(m["orders"] for m in book.markets())
+            pays = book.payouts()
+            out["waiting"] = sum(1 for p in pays if p["status"] in ("queued", "built"))
+            out["stuck"] = [{"id": p["id"], "error": p["error"]} for p in pays if p["status"] == "stuck"][:20]
+            out["latest_error"] = next((p["error"] for p in reversed(pays) if p["error"]), "")
+            with book._open() as conn:
+                out["fees_pepe"] = (conn.execute("SELECT COALESCE(SUM(fee),0) FROM xfill").fetchone()[0]) / COIN
+            if out["enabled"]:
+                out["addresses"] = {"testnet": state.xchain.address("testnet"),
+                                    "mainnet": state.xchain.address("main")}
+                with state.ledger.rpc() as rpc:
+                    out["main_balance"] = float(rpc.call("getbalance") or 0)
+                out["covered"] = out["main_balance"] >= out["owed_pepe"] + 0.1
+        except Exception as exc:
+            out["error"] = str(exc)[:200]
+        return out
 
     @app.post("/admin/api/seats")
     def admin_seats(request: Request, payload: Any = Body(None)):
@@ -18739,9 +20467,11 @@ def create_app(state: AppState) -> FastAPI:
                 text = str(said["faucet_daily"]).strip()
                 state.set_setting("faucet_daily",
                                   None if text in ("", "none") else walletlib.parse_amount(text))
-            for flag in ("auto_update", "auto_sell", "auto_fill"):
+            for flag in ("auto_update", "auto_sell", "auto_fill", "node_trades"):
                 if flag in said:
                     state.set_setting(flag, bool(said[flag]))
+            if "xchain_enabled" in said:      # the mainnet PEPE swap (arcade/xchain.py)
+                state.set_setting("xchain:enabled", bool(said["xchain_enabled"]))
             if "moderation" in said:
                 mod = said["moderation"] or {}
                 if mod.get("url") and mod.get("model"):
@@ -18796,7 +20526,7 @@ def create_app(state: AppState) -> FastAPI:
         try:
             ctx = _context(str(said.get("which", "")))
             sats = walletlib.parse_amount(str(said.get("amount", "")))
-            to = _tag_address(state, str(said.get("to", "")), mainnet=ctx.is_mainnet)
+            to = _tag_address(state, str(said.get("to", "")), mainnet=ctx)
             with ctx.rpc() as rpc:
                 prepared = walletlib.prepare_send(rpc, to, sats)
         except Exception as exc:                        # noqa: BLE001
@@ -19226,14 +20956,34 @@ def create_app(state: AppState) -> FastAPI:
         """
         return float(price) if divisible else float(price) / COIN
 
-    def _pairs(index, trades) -> list[dict[str, Any]]:
-        """Tokens against the coin, most traded first."""
+    def _spark(points: list) -> list[float]:
+        """The last two dozen trade prices, oldest first, for a market row's
+        sparkline (the Exchange redesign, 2026-10-09). Real trades only: a market
+        with fewer than two has no line to draw, and the row draws none."""
+        rows = sorted(points, key=lambda p: (p.get("when") or 0, p.get("height") or 0))[-24:]
+        prices = [float(p["price"]) for p in rows if p.get("price")]
+        return prices if len(prices) >= 2 else []
+
+    def _pairs(index, trades, xchain: bool = True) -> list[dict[str, Any]]:
+        """Tokens against the coin, most traded first.
+
+        `xchain=False` leaves out the cross-chain book's markets, for a caller
+        that lists them once beside every chain's own (`_pairs_by_net`).
+        """
         wanted = {p["property_id"]: p for p in _token_props(index)}
         faces = _faces_for(index, wanted.values())
+        # The mempool once for the whole table, not once per token: each
+        # `book()` asked the node for it, and the Tokens tab took over a
+        # second to answer (2026-10-11).
+        try:
+            pending = index.pending_orders()
+        except Exception:
+            pending = ([], set())
+        books = index.coin_books(limit=1, pending=pending)
         out = []
         for pid, prop in wanted.items():
             points = chartlib.token_prices(trades, pid, prop["divisible"])
-            book = index.book(pid, limit=1)
+            book = books.get(pid) or {"asks": [], "bids": []}
             if not points and not (book["asks"] or book["bids"]):
                 continue
             stats = chartlib.day(points)
@@ -19245,12 +20995,15 @@ def create_app(state: AppState) -> FastAPI:
             change, new = chartlib.table_move(points, stats["change"])
             out.append({
                 "property_id": pid, "name": prop["name"],
-                "divisible": prop["divisible"],
+                "divisible": prop["divisible"], "managed": prop.get("managed", 0),
+                "href": f"/exchange/pair/{pid}", "quote_label": None,
+                "all_trades": len(points),
+                "orders": len(book["asks"]) + len(book["bids"]),
                 "icon": faces[pid]["icon"], "about": faces[pid]["about"],
                 "last": stats["last"], "change": change, "new": new,
                 "high": stats["high"], "low": stats["low"],
                 "trades": stats["trades"], "volume": stats["volume"],
-                "coins": stats["coins"],
+                "coins": stats["coins"], "spark": _spark(points),
                 # In coins, like every other price in this row: the table prints
                 # the last price and the day's range beside these two, and one
                 # row cannot speak two units.
@@ -19259,10 +21012,204 @@ def create_app(state: AppState) -> FastAPI:
                 "bid": (_coins_each(book["bids"][0]["price"], prop["divisible"])
                         if book["bids"] else None),
             })
-        # The market people are actually trading, first -- a table of pairs
-        # is read from the top, and the top should be where the trading is.
-        out.sort(key=lambda p: (-p["coins"], -p["trades"], p["name"].lower()))
+        # Token/token pairs in the same list (2026-10-06: "Token token
+        # pairs should be listed in the exact same place as token test net
+        # pairs"), each priced in its own quote token.
+        out += _token_pair_markets(index, faces_for=_faces_for)
+        # and the cross-chain book's markets: an asset here against PEPE on mainnet
+        if xchain:
+            try:
+                out += _xchain_markets(index, faces_for=_faces_for)
+            except Exception:
+                log.debug("cross-chain markets unavailable", exc_info=True)
+        out.sort(key=_by_popularity)
         return out
+
+    def _by_popularity(p: dict[str, Any]) -> tuple:
+        """Most popular first (2026-10-06: "pairings should be sorted by
+        popularity"): the day's trades, then all the trades it has ever had,
+        then how many orders stand on it. Trades and not volume, because a
+        coin pair's volume and a token pair's are in different units."""
+        return (-(p["trades"] or 0), -p["all_trades"], -p["orders"], p["name"].lower())
+
+    #: The Tokens tab's chips (2026-10-13: "Add a mix, testnet only,
+    #: mainnet only, and cross chain only Sort buttons to the token exchange").
+    PAIR_SHOWS = ("mix", "testnet", "mainnet", "dogecoin", "cross")
+
+    def _pairs_by_net(chain, index, trades, show: str) -> list[dict[str, Any]]:
+        """The Tokens tab's rows for one chip: every indexed chain's own pairs
+        and the cross-chain book's, each row saying which it is.
+
+        `net` is testnet, mainnet or cross. `switch` names the chain a row's page
+        is on when that is not the chain this page is on, because a pair page
+        reads the browser's chain (`_token_chain`): the row has to switch it
+        before it opens, or the page opens the same number on the wrong chain.
+        """
+        rows: list[dict[str, Any]] = []
+        for c in state.token_chains:
+            net = c.net
+            if show not in ("mix", net):
+                continue
+            try:
+                here = c is chain
+                idx = index if here else state.token_index(c)
+                for row in _pairs(idx, trades if here else idx.trades(), xchain=False):
+                    row.update(net=net, mainnet=c.is_mainnet, chain_net=c.network,
+                               switch="" if here else c.network)
+                    rows.append(row)
+            except Exception:
+                log.debug("the %s pairs could not be read", net, exc_info=True)
+        if show in ("mix", "cross"):
+            # An asset on testnet against PEP on mainnet (`_x_asset` reads the
+            # messaging chain's index), whichever chain this page is on.
+            try:
+                for row in _xchain_markets(state.token_index(state.messaging),
+                                           faces_for=_faces_for):
+                    row.update(net="cross", mainnet=False, chain_net=state.messaging.network,
+                               switch="")
+                    rows.append(row)
+            except Exception:
+                log.debug("cross-chain markets unavailable", exc_info=True)
+        rows.sort(key=_by_popularity)
+        return rows
+
+    def _nets_shown(chain, show: str):
+        """(chain, its index, net word, switch) for every chain a chip shows;
+        `switch` as in `_pairs_by_net`."""
+        for c in state.token_chains:
+            net = c.net
+            if show in ("mix", net):
+                yield c, (state.token_index(chain) if c is chain else state.token_index(c)), \
+                    net, ("" if c is chain else c.network)
+
+    def _nfts_by_net(request: Request, chain, index, trades, show: str) -> tuple[list, list, dict]:
+        """The NFTs tab for one chip (2026-10-13: "NFT's should have the
+        same sort by network buttons as the tokens"): every chain's collections
+        and recent sales, each saying which chain it is, and the pieces sold on
+        the cross-chain book as `cross`. Cross chain only is those sales and the
+        collections a cross-chain market has a piece of."""
+        colls: list[dict] = []
+        sales: list[dict] = []
+        tags: dict[str, str] = {}
+        public = _account_view(request)
+        cross = show == "cross"
+        for c, idx, net, switch in _nets_shown(chain, "mix" if cross else show):
+            try:
+                tr = trades if c is chain else idx.trades()
+                got_colls = _market_collections(idx, c, tr, public=public)
+                got_sales = _recent_sales(idx, tr, limit=8, chain=c)
+            except Exception:
+                log.debug("the %s collections could not be read", net, exc_info=True)
+                continue
+            # Which collections a cross-chain market holds a piece of.
+            crossing: set = set()
+            if c.network == state.messaging.network:
+                try:
+                    for m in state.xchain.book.markets():
+                        if m["kind"] != "nft":
+                            continue
+                        row = idx.inscription(contentlib._key(str(m["asset"])))
+                        if row and row["collection"]:
+                            crossing.add((row["creator"], row["collection"]))
+                except Exception:
+                    crossing = set()
+            for x in got_colls:
+                x.update(net=net, mainnet=c.is_mainnet, chain_net=c.network, switch=switch,
+                         cross=(x["creator"], x["name"]) in crossing)
+            for x in got_sales:
+                # `mainnet` on a sale is the coin it was paid in.
+                was_cross = bool(x.get("mainnet")) and not c.is_mainnet
+                x.update(net="cross" if was_cross else net, switch=switch,
+                         chain_net="main" if was_cross else c.network,
+                         mainnet=bool(x.get("mainnet")) or c.is_mainnet)
+            if cross:
+                got_colls = [x for x in got_colls if x["cross"]]
+                got_sales = [x for x in got_sales if x["net"] == "cross"]
+            elif show != "mix":
+                got_sales = [x for x in got_sales if x["net"] == show]
+            colls += got_colls
+            sales += got_sales
+            try:
+                tags.update(_names_for(idx, [x["creator"] for x in got_colls]
+                                       + [x["seller"] for x in got_sales]
+                                       + [x["owner"] for x in got_sales]))
+            except Exception:
+                pass
+        colls.sort(key=lambda x: (-x["for_sale"], -x["offers"], -x["trades"], x["name"].lower()))
+        sales.sort(key=lambda x: -float(x.get("when") or 0))
+        return colls, sales[:8], tags
+
+    #: Launchpads have no cross-chain kind: each pad sells on its own chain.
+    PAD_SHOWS = ("mix", "testnet", "mainnet", "dogecoin")
+
+    def _xchain_markets(index, faces_for) -> list[dict[str, Any]]:
+        """Every cross-chain market with an order standing or a trade done, as a
+        row of the same table: the asset here, priced in mainnet PEPE."""
+        rows = []
+        day_ago = time.time() - 86400
+        for m in state.xchain.book.markets():
+            if m["kind"] == "nft":
+                # A piece is not a pair (2026-10-11: "These NFTs are in the
+                # token exchange list, they should be in the recently sold NFTs
+                # list"): its sales are the Market tab's Recently sold
+                # (`_xchain_nft_sales`), and a standing order on it is on the
+                # piece's own page.
+                continue
+            try:
+                a = _x_asset(m["kind"], m["asset"])
+            except ValueError:
+                continue
+            fills = state.xchain.book.fills(m["kind"], m["asset"], limit=5000)
+            unit = (lambda f: (f["amount"] / COIN) if a["divisible"] else f["amount"])
+            points = [{"when": f["created"], "height": 0, "txid": str(f["id"]),
+                       "price": (f["pepe"] / COIN) / unit(f), "size": unit(f)} for f in fills if f["amount"]]
+            stats = chartlib.day(points)
+            change, new = chartlib.table_move(points, stats["change"])
+            book = state.xchain.book.book(m["kind"], m["asset"])
+            scale = (COIN if a["divisible"] else 1) / COIN
+            face = faces_for(index, [a["prop"]])[a["prop"]["property_id"]] if a["prop"] else {"icon": None, "about": ""}
+            rows.append({
+                "property_id": a["asset"] if m["kind"] == "token" else "", "name": a["name"],
+                "divisible": a["divisible"], "managed": (a["prop"] or {}).get("managed", 0),
+                "href": f"/exchange/x/{m['kind']}/{m['asset']}", "quote_label": "PEP", "quote_main": True,
+                "icon": face["icon"], "about": face["about"],
+                "last": stats["last"], "change": change, "new": new, "high": stats["high"], "low": stats["low"],
+                "trades": sum(1 for f in fills if f["created"] >= day_ago), "volume": stats["volume"],
+                "coins": stats["coins"], "all_trades": len(fills), "orders": m["orders"],
+                "spark": _spark(points),
+                "ask": float(book["sells"][0]["price"]) * scale if book["sells"] else None,
+                "bid": float(book["buys"][0]["price"]) * scale if book["buys"] else None,
+            })
+        return rows
+
+    def _token_pair_markets(index, faces_for) -> list[dict[str, Any]]:
+        """Every token/token pair as a row of the markets table: BASE/QUOTE with
+        the lower property id as BASE, prices in QUOTE per BASE."""
+        rows = []
+        for a, b in index.token_pairs():
+            base, quote = index.property(a), index.property(b)
+            if base is None or quote is None:
+                continue
+            face = faces_for(index, [base])[a]
+            points = chartlib.pair_prices(index.pair_trades(a, b), base["divisible"], quote["divisible"])
+            book = index.pair_book(a, b)
+            scale = ((COIN if base["divisible"] else 1) / (COIN if quote["divisible"] else 1))
+            stats = chartlib.day(points)
+            change, new = chartlib.table_move(points, stats["change"])
+            rows.append({
+                "property_id": a, "name": base["name"], "divisible": base["divisible"],
+                "managed": base.get("managed", 0), "quote_managed": quote.get("managed", 0),
+                "href": f"/exchange/pairs/{a}/{b}", "quote_label": quote["name"], "quote_id": b,
+                "icon": face["icon"], "about": face["about"],
+                "last": stats["last"], "change": change, "new": new,
+                "high": stats["high"], "low": stats["low"],
+                "trades": stats["trades"], "volume": stats["volume"], "coins": stats["coins"],
+                "spark": _spark(points),
+                "all_trades": len(points), "orders": len(book["asks"]) + len(book["bids"]),
+                "ask": float(book["asks"][0]["price"]) * scale if book["asks"] else None,
+                "bid": float(book["bids"][0]["price"]) * scale if book["bids"] else None,
+            })
+        return rows
 
     def _token_props(index) -> list[dict[str, Any]]:
         try:
@@ -19418,7 +21365,10 @@ def create_app(state: AppState) -> FastAPI:
         # finish without waiting for anybody.
         try:
             _sweep_book(chain)
-            for row in state.listings.open_listings(chain.network, limit=1000):
+            # Waiting listings are node-held signatures: not prices here unless the
+            # operator turned node-facilitated trades on (2026-10-13).
+            for row in (state.listings.open_listings(chain.network, limit=1000)
+                        if _node_trades() else []):
                 piece = _sold_piece(row)
                 if not piece or (out.get(piece) or {}).get("kind") == "listing":
                     continue
@@ -19483,8 +21433,12 @@ def create_app(state: AppState) -> FastAPI:
                 "txid": trade["txid"]})
         return points
 
-    def _recent_sales(index, trades, limit: int = 12) -> list[dict[str, Any]]:
+    def _recent_sales(index, trades, limit: int = 12, chain=None) -> list[dict[str, Any]]:
         """The last NFTs to change hands, newest first.
+
+        With the pieces sold on the cross-chain book among them when `chain` is
+        the chain that book sells from -- a sale is a sale whichever coin paid
+        for it, and that one says so with a MAINNET badge on its price.
 
         Read from the swaps the chain holds, like everything else here: a
         sale is a transaction both sides signed, so there is no list to keep
@@ -19522,6 +21476,53 @@ def create_app(state: AppState) -> FastAPI:
                 "seller": trade["seller"], "swap": trade["txid"]})
             if len(out) >= limit:
                 break
+        if chain is not None and chain.network == getattr(state.messaging, "network", None):
+            out += _xchain_nft_sales(index, limit=limit)
+            out.sort(key=lambda sale: -float(sale.get("when") or 0))
+            del out[limit:]
+        return out
+
+    def _xchain_nft_sales(index, limit: int = 12) -> list[dict[str, Any]]:
+        """Pieces sold on the cross-chain book: a piece here for PEP on mainnet.
+
+        2026-10-11: "These NFTs are in the token exchange list, they
+        should be in the recently sold NFTs list." A piece is not a pair, so a
+        fill on it is a sale and goes where sales go, not into the pairs table
+        (`_xchain_markets` leaves `nft` markets out). The seller is the sell
+        order's mainnet address, which is where its PEP went; the `swap` is
+        blank because the fill is the book's and not a transaction of the
+        chain's.
+        """
+        out: list[dict[str, Any]] = []
+        try:
+            book = state.xchain.book
+            markets = [m for m in book.markets() if m["kind"] == "nft" and m["trades"]]
+        except Exception:
+            return out
+        for m in markets:
+            try:
+                row = index.inscription(contentlib._key(str(m["asset"])))
+            except Exception:
+                row = None
+            if row is None:
+                continue
+            data = _fromjson(row["json"]) or {}
+            for fill in book.fills("nft", m["asset"], limit=limit):
+                try:
+                    seller = book.get(fill["seller"]) or {}
+                except Exception:
+                    seller = {}
+                pep = f"{int(fill['pepe']) / COIN:,.8f}".rstrip("0").rstrip(".")
+                out.append({
+                    "txid": row["txid"], "number": row["number"],
+                    "name": (data.get("name") if isinstance(data, dict) else None)
+                            or f"Inscription #{row['number']}",
+                    "collection": row["collection"], "edition": row["edition"],
+                    "creator": row["creator"], "owner": row["owner"],
+                    "held": row["held"], "content_type": row["content_type"],
+                    "price": f"{pep} PEP", "mainnet": True,
+                    "when": fill["created"], "height": 0,
+                    "seller": seller.get("pay_main", ""), "swap": ""})
         return out
 
     def _drawable(index, txid: str) -> str:
@@ -19870,6 +21871,497 @@ def create_app(state: AppState) -> FastAPI:
                                    >= chain.params.fills_from),
                       height=index.indexed_height(),
                       tags=_tags_for([o["address"] for o in book["asks"] + book["bids"]]))
+
+    # --- token/token pairs (Params.token_pairs_from, 2026-10-06) ----------------
+    #
+    # The operator: "token to token pairs on the token exchange so that people can
+    # exchange one token for another token. Instead of only test net coins."
+    # A pair is BASE/QUOTE: an amount of BASE at a price in QUOTE per whole
+    # BASE. Both sides are ledger balances, so the engine matches a crossing
+    # order in its own block (state.Engine._pair_order): nobody has to be
+    # online to fill it, and a buy holds its QUOTE back exactly as a sell holds
+    # its BASE.
+
+    def _pairs_live(chain, index) -> None:
+        since = getattr(chain.params, "token_pairs_from", None)
+        if since is None:
+            raise tokenlib.TokenError(
+                f"token-for-token pairs are not switched on on {chain.label} yet.")
+        if (index.indexed_height() or 0) + 1 < since:
+            raise tokenlib.TokenError(
+                f"token-for-token pairs start at block {since:,} on {chain.label}; "
+                f"this node is at {index.indexed_height() or 0:,}.")
+
+    def _pair_props(index, base, quote):
+        b, q = index.property(int(base or 0)), index.property(int(quote or 0))
+        if b is None or q is None:
+            raise tokenlib.TokenError("a pair is two tokens this chain has.")
+        if b["property_id"] == q["property_id"]:
+            raise tokenlib.TokenError("a pair is two different tokens.")
+        return b, q
+
+    def _pair_message(index, base_prop, quote_prop, side, amount, price, address):
+        """(MetaDExTrade, what) for `side` ("buy" or "sell" BASE) of `amount`
+        BASE at `price` QUOTE per whole BASE. Two whole numbers go on the
+        chain and the price is their ratio, so a price that does not divide
+        even is refused rather than rounded into one nobody typed."""
+        if side not in ("buy", "sell"):
+            raise ValueError("an order buys or sells, and says which")
+        units = parse_amount(str(amount or ""), base_prop["divisible"])
+        each = parse_amount(str(price or ""), quote_prop["divisible"])
+        if units <= 0 or each <= 0:
+            raise tokenlib.TokenError("an amount and a price, both above zero.")
+        raw = units * each
+        scale = COIN if base_prop["divisible"] else 1
+        if raw % scale:
+            raise tokenlib.TokenError(
+                f"that price does not come out in whole units of "
+                f"{wall_plain(quote_prop['name'], 'the price token')}; change the "
+                f"price or the amount until it divides even.")
+        total = raw // scale
+        if total <= 0:
+            raise tokenlib.TokenError("that comes to less than one unit of the price token.")
+        sold, sold_amount = (base_prop, units) if side == "sell" else (quote_prop, total)
+        # what is already spoken for in the pool: sends, and other pair orders not mined yet
+        held = (index.balance(address, sold["property_id"]) - index.pending_sends(address, sold["property_id"])
+                - index.pending_pair_sales(address, sold["property_id"]))
+        if held < sold_amount:
+            raise tokenlib.TokenError(
+                f"{address} holds {format_amount(max(0, held), sold['divisible'])} "
+                f"{wall_plain(sold['name'], 'of it')}, not "
+                f"{format_amount(sold_amount, sold['divisible'])}. An order holds "
+                f"what it sells back from the block it lands in.")
+        if side == "sell":
+            message = P.MetaDExTrade(property_id_for_sale=base_prop["property_id"],
+                                     amount_for_sale=units,
+                                     property_id_desired=quote_prop["property_id"],
+                                     amount_desired=total)
+        else:
+            message = P.MetaDExTrade(property_id_for_sale=quote_prop["property_id"],
+                                     amount_for_sale=total,
+                                     property_id_desired=base_prop["property_id"],
+                                     amount_desired=units)
+        what = (f"{side} {format_amount(units, base_prop['divisible'])} "
+                f"{wall_plain(base_prop['name'], 'tokens')} for "
+                f"{format_amount(total, quote_prop['divisible'])} "
+                f"{wall_plain(quote_prop['name'], 'tokens')}")
+        return message, what
+
+    def _pair_cancel_message(base_prop, quote_prop, side):
+        if side not in ("buy", "sell"):
+            raise ValueError("a cancel names buys or sells")
+        sale, want = ((base_prop, quote_prop) if side == "sell" else (quote_prop, base_prop))
+        return P.MetaDExCancelPair(property_id_for_sale=sale["property_id"],
+                                   property_id_desired=want["property_id"])
+
+    @app.get("/exchange/pairs")
+    def exchange_pairs_open(base: str = "", quote: str = ""):
+        """The "open a pair" box: a token and what to trade it for -- another token
+        (a token/token pair), or the testnet coin (that token's coin market)."""
+        back = RedirectResponse("/exchange?tab=tokens", status_code=303)
+        if "main" in (base, quote):
+            other = quote if base == "main" else base
+            if not _x_open():
+                state.flash("Trading for mainnet Pepecoin is not open on this node.", "err")
+                return back
+            if other == "main":
+                state.flash("A pair is two different things: pick another one to trade it for.", "err")
+                return back
+            if other == "coin":
+                return RedirectResponse("/exchange/x/coin/coin", status_code=303)
+            try:
+                return RedirectResponse(f"/exchange/x/token/{int(other)}", status_code=303)
+            except ValueError:
+                return back
+        if base == quote:
+            state.flash("A pair is two different things: pick another one to trade it for.", "err")
+            return back
+        try:
+            if base == "coin":
+                return RedirectResponse(f"/exchange/pair/{int(quote)}", status_code=303)
+            if quote == "coin":
+                return RedirectResponse(f"/exchange/pair/{int(base)}", status_code=303)
+            return RedirectResponse(f"/exchange/pairs/{int(base)}/{int(quote)}", status_code=303)
+        except ValueError:
+            return back
+
+    @app.get("/exchange/pairs/{base}/{quote}", response_class=HTMLResponse)
+    def exchange_token_pair(request: Request, base: int, quote: int):
+        """BASE/QUOTE: its book, what traded, the chart, and the order form."""
+        chain, index = _token_chain()
+        base_prop, quote_prop = index.property(base), index.property(quote)
+        if base_prop is None or quote_prop is None or base == quote:
+            raise HTTPException(status_code=404, detail="a pair is two different tokens this node knows")
+        book = index.pair_book(base, quote)
+        done = index.pair_trades(base, quote)
+        points = chartlib.pair_prices(done, base_prop["divisible"], quote_prop["divisible"])
+        # ?tf= as on the coin pair page (15m / 1h / 4h / 1d); without it the
+        # timeframe that tells the history best (charts.pick_timeframe)
+        asked = request.query_params.get("tf", "")
+        frame = chartlib.timeframe(asked if asked in {t[0] for t in chartlib.TIMEFRAMES}
+                                   else chartlib.pick_timeframe(points))
+        scale = ((COIN if base_prop["divisible"] else 1) / (COIN if quote_prop["divisible"] else 1))
+        for row in book["asks"] + book["bids"]:
+            row["each"] = float(row["price"]) * scale
+            row["base_shown"] = format_amount(row["base"], base_prop["divisible"])
+            row["quote_shown"] = format_amount(row["quote"], quote_prop["divisible"])
+        public = _account_view(request)
+        viewer = "wallet"
+        if public:
+            viewer = "account" if signed_in(request) is not None else "nobody"
+        owned, account_address = set(), ""
+        try:
+            if viewer == "wallet":
+                with chain.rpc() as rpc:
+                    owned = set(_ledger_addresses(rpc))
+            elif viewer == "account":
+                account_address = _account_address(signed_in(request).pubkey, chain) or ""
+                owned = {account_address} if account_address else set()
+        except HTTPException:
+            raise
+        except Exception:
+            owned = set()
+        for row in book["asks"] + book["bids"]:
+            row["mine"] = row["address"] in owned
+        held_base = sum(index.balance(a, base) for a in owned)
+        held_quote = sum(index.balance(a, quote) for a in owned)
+        since = getattr(chain.params, "token_pairs_from", None)
+        return render(request, "pair_tokens.html", chain=chain, base=base_prop, quote=quote_prop,
+                      book=book, trades=[dict(t, base_shown=format_amount(t["base"], base_prop["divisible"]),
+                                              quote_shown=format_amount(t["quote"], quote_prop["divisible"]),
+                                              each=(t["quote"] / t["base"]) * scale if t["base"] else None)
+                                         for t in done[:20]],
+                      stats=chartlib.last_and_change(points),
+                      slots=chartlib.candles(points, buckets=frame[2], span=frame[1]),
+                      tf=frame[0], timeframes=[t[0] for t in chartlib.TIMEFRAMES],
+                      viewer=viewer, account_address=account_address,
+                      held_base=format_amount(held_base, base_prop["divisible"]),
+                      held_quote=format_amount(held_quote, quote_prop["divisible"]),
+                      live=since is not None and (index.indexed_height() or 0) + 1 >= since,
+                      since=since, height=index.indexed_height())
+
+    @app.post("/exchange/pair-order")
+    def place_pair_order(base: str = Form(""), quote: str = Form(""), side: str = Form("buy"),
+                         amount: str = Form(""), price: str = Form(""), csrf_token: str = Form("")):
+        """The node's own wallet puts an order on a token/token pair."""
+        check_csrf(csrf_token)
+        chain, index = _token_chain()
+        try:
+            _pairs_live(chain, index)
+            base_prop, quote_prop = _pair_props(index, base, quote)
+            with chain.rpc() as rpc:
+                home = state.home_address(chain)
+                message, what = _pair_message(index, base_prop, quote_prop, side, amount, price, home)
+                sender = tokenlib.TokenSender(rpc, chain.params)
+                txid = sender.broadcast(sender.prepare(home, message.encode()))
+            state.flash(f"Order sent in {txid}: {what}. It meets the book when its block "
+                        f"lands; what is not matched then stands until you cancel it.", "ok")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(f"/exchange/pairs/{base}/{quote}", status_code=303)
+
+    @app.post("/exchange/pair-order/cancel")
+    def cancel_pair_order(base: str = Form(""), quote: str = Form(""), side: str = Form("sell"),
+                          csrf_token: str = Form("")):
+        """The node's own wallet takes every buy (or every sell) it has on a pair off the book."""
+        check_csrf(csrf_token)
+        chain, index = _token_chain()
+        try:
+            base_prop, quote_prop = _pair_props(index, base, quote)
+            message = _pair_cancel_message(base_prop, quote_prop, side)
+            with chain.rpc() as rpc:
+                home = state.home_address(chain)
+                sender = tokenlib.TokenSender(rpc, chain.params)
+                txid = sender.broadcast(sender.prepare(home, message.encode()))
+            state.flash(f"Cancel sent in {txid}: your {side} orders on this pair come off the "
+                        f"book, and what they held comes back, when its block lands.", "ok")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(f"/exchange/pairs/{base}/{quote}", status_code=303)
+
+    def _account_pair_offer(request: Request, payload: Any, build):
+        """An account's pair order or cancel: built here, signed in its own tab
+        (the same road /account/order takes)."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = _account_address(account.pubkey, chain)
+        if not address:
+            return JSONResponse({"detail": f"this account has no {chain.label.lower()} address yet"},
+                                status_code=400)
+        try:
+            index = state.token_index(chain)
+            base_prop, quote_prop = _pair_props(index, said.get("base"), said.get("quote"))
+            message, what = build(chain, index, base_prop, quote_prop, said, address)
+            outputs = _class_c_or_b(chain, address, message.encode(),
+                                    _coin_pubkey(account.pubkey, chain), wrap=False)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build(
+                    db, chain.params, address, outputs, rate=fees.MIN_FEE_PER_KB, what=what,
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+            _quota(account, "trade")
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what)
+        return JSONResponse({"offer": offer.id, "what": what, "chain": chain.network,
+                             **unsigned.as_json()})
+
+    @app.post("/account/pair-order")
+    def account_pair_order(request: Request, payload: Any = Body(None)):
+        """An account's order on a token/token pair, for its own tab to sign."""
+        def build(chain, index, b, q, said, address):
+            _pairs_live(chain, index)
+            return _pair_message(index, b, q, str(said.get("side") or ""), said.get("amount"),
+                                 said.get("price"), address)
+        return _account_pair_offer(request, payload, build)
+
+    @app.post("/account/pair-order/cancel")
+    def account_pair_cancel(request: Request, payload: Any = Body(None)):
+        """An account takes every buy (or sell) it has on a pair off the book."""
+        def build(chain, index, b, q, said, address):
+            side = str(said.get("side") or "")
+            return (_pair_cancel_message(b, q, side),
+                    f"cancel your {side} orders on {wall_plain(b['name'], 'this')}/"
+                    f"{wall_plain(q['name'], 'that')}")
+        return _account_pair_offer(request, payload, build)
+
+    # --- the cross-chain book: testnet assets for mainnet Pepecoin (2026-10-06) ---
+    #
+    # The operator: "add a swap where you can exchange test net assets for main net
+    # Pepecoin" -> this node holds both sides while an order stands (xchain.py), so
+    # "nobody has to stay online" and trades "happen automatically once you place an
+    # order". Not trustless, and every page that offers it says so in those words.
+
+    XCHAIN_TRUST = ("Not trustless: this node's operator holds your deposit until it "
+                    "trades or you cancel, and pays both sides out. Only trade here if "
+                    "you trust the operator of this node.")
+
+    def _piece_name(piece: dict) -> str:
+        """What a piece is called, as a person would say it: the name in its
+        metadata ("Mithril platelegs #7"), or "" (2026-10-09: an offer has to show
+        what it is for, not only a number)."""
+        try:
+            said = json.loads(piece.get("json") or "{}")
+            return str(said.get("name") or "").strip()[:80] if isinstance(said, dict) else ""
+        except Exception:
+            return ""
+
+    def _x_open() -> bool:
+        # Custody of both sides' coins is the most node-facilitated trade there is:
+        # it needs the operator's node-trades switch as well as its own (2026-10-13).
+        return bool(state.setting("xchain:enabled")) and _node_trades()
+
+    def _x_asset(kind: str, asset: str) -> dict:
+        """What is being sold: its name, whether it divides, and how the page names it."""
+        index = state.token_index(state.messaging)
+        if kind == "token":
+            prop = index.property(int(asset))
+            if prop is None:
+                raise ValueError(f"there is no token {asset}")
+            return {"kind": kind, "asset": str(prop["property_id"]), "name": prop["name"],
+                    "divisible": bool(prop["divisible"]), "prop": prop}
+        if kind == "coin":
+            return {"kind": kind, "asset": "coin", "name": "Pepecoin (testnet)", "divisible": True,
+                    "prop": None}
+        if kind == "nft":
+            row = index.inscription(contentlib._key(str(asset)))
+            if row is None:
+                raise ValueError("no such inscription on this node")
+            return {"kind": kind, "asset": row["txid"], "name": f"inscription #{row['number']}",
+                    "divisible": False, "prop": None, "row": row}
+        raise ValueError("an asset is a token, testnet coin or NFT")
+
+    def _x_terms(a: dict, amount: str, price: str) -> tuple[int, int]:
+        """(raw units, total PEPE satoshis): `price` is PEPE per whole unit."""
+        units = 1 if a["kind"] == "nft" else parse_amount(str(amount or ""), a["divisible"])
+        each = parse_amount(str(price or ""), True)
+        if units <= 0 or each <= 0:
+            raise ValueError("an amount and a price, both above zero")
+        raw = units * each
+        scale = COIN if a["divisible"] else 1
+        if raw % scale:
+            raise ValueError("that price does not come out in whole satoshis of PEP; change "
+                             "the price or the amount until it divides even")
+        return units, raw // scale
+
+    @app.get("/exchange/x/{kind}/{asset}", response_class=HTMLResponse)
+    def exchange_xchain(request: Request, kind: str, asset: str):
+        """One cross-chain market: an asset on testnet against Pepecoin on mainnet."""
+        try:
+            a = _x_asset(kind, asset)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        book = state.xchain.book
+        rows = book.book(a["kind"], a["asset"])
+        scale = (COIN if a["divisible"] else 1) / COIN
+        shown = lambda units: format_amount(units, a["divisible"]) if a["kind"] != "nft" else "1"
+        for r in rows["sells"] + rows["buys"]:
+            r["each"] = float(r["price"]) * scale
+            r["units_shown"] = shown(r["left_amount"])
+        fills = book.fills(a["kind"], a["asset"], limit=40)
+        points = [{"when": f["created"], "height": 0, "txid": str(f["id"]),
+                   "price": (f["pepe"] / COIN) / ((f["amount"] / COIN) if a["divisible"] else f["amount"]),
+                   "size": (f["amount"] / COIN) if a["divisible"] else f["amount"]} for f in fills if f["amount"]]
+        asked = request.query_params.get("tf", "")
+        frame = chartlib.timeframe(asked if asked in {t[0] for t in chartlib.TIMEFRAMES}
+                                   else chartlib.pick_timeframe(points))
+        public = _account_view(request)
+        viewer = "wallet" if not public else ("account" if signed_in(request) is not None else "nobody")
+        owner = "node" if viewer == "wallet" else (signed_in(request).pubkey.lower() if viewer == "account" else "")
+        mine = [o for o in book.orders_of(owner) if o["kind"] == a["kind"] and o["asset"] == a["asset"]] if owner else []
+        for o in mine:
+            o["units_shown"] = shown(o["left_amount"] if o["status"] == "open" else o["amount"])
+            o["each"] = (o["pepe"] / COIN) / ((o["amount"] / COIN) if a["divisible"] else o["amount"])
+            # Where its deposit is, said on the order (2026-10-09: a sell that met a
+            # buy was cancelled at 4 of 6 confirmations because nothing said it was
+            # still on its way). Asked the same way the watcher asks.
+            o["waiting"] = ""
+            if o["status"] == "awaiting" and o.get("deposit_txid"):
+                try:
+                    o["waiting"] = state.xchain.check_deposit(o)[1]
+                except Exception:
+                    o["waiting"] = ""
+        held, holds_main = "", ""
+        if viewer == "account":
+            acct = signed_in(request)
+            held = _account_address(acct.pubkey, state.messaging) or ""
+            holds_main = _account_address(acct.pubkey, state.ledger) or ""
+        return render(request, "xchain.html", chain=state.messaging, main=state.ledger, a=a,
+                      book=rows, fills=[dict(f, units_shown=shown(f["amount"]),
+                                             each=(f["pepe"] / COIN) / ((f["amount"] / COIN) if a["divisible"] else f["amount"]))
+                                        for f in fills[:20]],
+                      stats=chartlib.last_and_change(points),
+                      slots=chartlib.candles(points, buckets=frame[2], span=frame[1]),
+                      tf=frame[0], timeframes=[t[0] for t in chartlib.TIMEFRAMES],
+                      viewer=viewer, mine=mine, trust=XCHAIN_TRUST, live=_x_open(), owner=owner,
+                      account_test=held, account_main=holds_main,
+                      fee_permille=__import__("arcade.xchain", fromlist=["FEE_PERMILLE"]).FEE_PERMILLE,
+                      addresses=({"testnet": state.xchain.address("testnet"),
+                                  "main": state.xchain.address("main")} if viewer == "wallet" and _x_open() else None))
+
+    @app.post("/exchange/x/order")
+    def xchain_node_order(kind: str = Form(""), asset: str = Form(""), side: str = Form(""),
+                          amount: str = Form(""), price: str = Form(""), csrf_token: str = Form("")):
+        """The node's own wallet trades on the cross-chain book: it deposits from its
+        home address on each chain and is paid back to them."""
+        check_csrf(csrf_token)
+        back = RedirectResponse(f"/exchange/x/{kind}/{asset}", status_code=303)
+        try:
+            if not _x_open():
+                raise ValueError("the cross-chain book is not open on this node")
+            a = _x_asset(kind, asset)
+            units, pepe = _x_terms(a, amount, price)
+            clerk, book = state.xchain, state.xchain.book
+            test_home, main_home = state.home_address(state.messaging), state.home_address(state.ledger)
+            order = book.place(owner="node", side=side, kind=a["kind"], asset=a["asset"], amount=units,
+                               pepe=pepe, pay_test=test_home, pay_main=main_home)
+            if side == "sell":
+                with state.messaging.rpc() as rpc:
+                    sender = tokenlib.TokenSender(rpc, state.messaging.params)
+                    if a["kind"] == "token":
+                        prepared = sender.prepare(test_home, tokenlib.send_payload(int(a["asset"]), units),
+                                                  clerk.address("testnet"))
+                        txid = sender.broadcast(prepared)
+                    elif a["kind"] == "nft":
+                        body = P.AnyData(data=inscriptionlib.Transfer(
+                            txid=bytes.fromhex(a["asset"])).encode()).encode()
+                        txid = sender.broadcast(sender.prepare(a["row"]["owner"], body, clerk.address("testnet")))
+                    else:
+                        txid = walletlib.broadcast(rpc, walletlib.prepare_send(rpc, clerk.address("testnet"), units))
+            else:
+                with state.ledger.rpc() as rpc:
+                    txid = walletlib.broadcast(rpc, walletlib.prepare_send(rpc, clerk.address("main"), pepe))
+            book.deposited(order["id"], txid)
+            state.flash(f"Order placed; its deposit is {txid}. It meets the book once the deposit has "
+                        f"its confirmations.", "ok")
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return back
+
+    @app.post("/exchange/x/cancel")
+    def xchain_node_cancel(order: str = Form(""), csrf_token: str = Form(""), back: str = Form("/exchange?tab=tokens")):
+        check_csrf(csrf_token)
+        try:
+            state.xchain.book.cancel(order, "node")
+            state.flash("Cancelled: what was left of it is on its way back.", "ok")
+        except Exception as exc:
+            state.flash(str(exc), "err")
+        return RedirectResponse(back if back.startswith("/exchange") else "/exchange?tab=tokens", status_code=303)
+
+    @app.post("/account/x/order")
+    def xchain_account_order(request: Request, payload: Any = Body(None)):
+        """An account's order: written down, then its deposit built for its own tab to
+        sign. A sell deposits the testnet asset; a buy deposits mainnet PEPE."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            if not _x_open():
+                raise ValueError("the cross-chain book is not open on this node")
+            a = _x_asset(str(said.get("kind") or ""), str(said.get("asset") or ""))
+            side = str(said.get("side") or "")
+            units, pepe = _x_terms(a, said.get("amount"), said.get("price"))
+            test_addr = _account_address(account.pubkey, state.messaging)
+            main_addr = _account_address(account.pubkey, state.ledger)
+            if not test_addr or not main_addr:
+                raise ValueError("this account needs an address on testnet and on mainnet: "
+                                 "open mainnet on the Backup page first")
+            clerk, book = state.xchain, state.xchain.book
+            chain = state.messaging if side == "sell" else state.ledger
+            address = test_addr if side == "sell" else main_addr
+            if side == "sell":
+                to = clerk.address("testnet")
+                index = state.token_index(chain)
+                if a["kind"] == "token":
+                    held = index.balance(address, int(a["asset"])) - index.pending_out(address, int(a["asset"]))
+                    if units > held:
+                        raise ValueError(f"this account holds {format_amount(max(0, held), a['divisible'])} "
+                                         f"of {a['name']}, not {format_amount(units, a['divisible'])}")
+                    outputs = _class_c_or_b(chain, address, tokenlib.send_payload(int(a["asset"]), units),
+                                            _coin_pubkey(account.pubkey, chain), wrap=False)
+                    outputs.append((sendermod.OUTPUT_VALUE, txbuild.p2pkh_script(to)))
+                elif a["kind"] == "nft":
+                    if a["row"]["owner"] != address:
+                        raise ValueError("that piece is not this account's to sell")
+                    outputs = _class_c_or_b(chain, address, inscriptionlib.Transfer(
+                        txid=bytes.fromhex(a["asset"])).encode(), _coin_pubkey(account.pubkey, chain))
+                    outputs.append((sendermod.OUTPUT_VALUE, txbuild.p2pkh_script(to)))
+                else:
+                    outputs = [(units, txbuild.p2pkh_script(to))]
+            elif side == "buy":
+                outputs = [(pepe, txbuild.p2pkh_script(clerk.address("main")))]
+            else:
+                raise ValueError("an order buys or sells")
+            what = (f"{side} {format_amount(units, a['divisible']) if a['kind'] != 'nft' else a['name']} "
+                    f"{a['name'] if a['kind'] != 'nft' else ''} for {format_amount(pepe, True)} mainnet PEP "
+                    f"(deposit to this node)").replace("  ", " ")
+            unsigned = _spend_now(account, chain, address, outputs, what)
+            order = book.place(owner=account.pubkey.lower(), side=side, kind=a["kind"], asset=a["asset"],
+                               amount=units, pepe=pepe, pay_test=test_addr, pay_main=main_addr)
+            _quota(account, "trade")
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        offer = _offers.add(account.pubkey, chain.network, unsigned, what,
+                            done=lambda txid, oid=order["id"]: state.xchain.book.deposited(oid, txid))
+        return JSONResponse({"offer": offer.id, "order": order["id"], "what": what, "chain": chain.network,
+                             "trust": XCHAIN_TRUST, **unsigned.as_json()})
+
+    @app.post("/account/x/cancel")
+    def xchain_account_cancel(request: Request, payload: Any = Body(None)):
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            done = state.xchain.book.cancel(str(said.get("order") or ""), account.pubkey.lower())
+        except Exception as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"cancelled": done["id"], "status": done["status"]})
 
     @app.post("/exchange/order")
     def place_order(request: Request, property_id: str = Form(""),
@@ -20520,6 +23012,8 @@ def create_app(state: AppState) -> FastAPI:
         thing as "spent" to a node that actually looked (arcade/listings.py).
         """
         groups, book_error = [], ""
+        if not _node_trades():
+            return groups, book_error
         for chain in state.token_chains:
             try:
                 # Looking is what keeps the book's idea of time current, the way
@@ -20580,25 +23074,32 @@ def create_app(state: AppState) -> FastAPI:
                       book_error=book_error)
 
     @app.get("/exchange", response_class=HTMLResponse)
-    def exchange(request: Request, tab: str = "mintpads", sort: str = "popular"):
+    def exchange(request: Request, tab: str = "tokens", sort: str = "popular",
+                 show: str = "mix", count: int = 0):
         """Everything for sale on this chain, and what has been offered to you.
 
         Four questions, four tabs: what somebody has offered for something of
         yours, which mintpads still have pieces, what tokens are being sold
         for, and which single NFTs are for sale.
         """
-        # Mintpads first (2026-09-28: Exchange "should open to the
-        # launchpads section"), and anything unknown lands there too.
-        tab = tab if tab in EXCHANGE_TABS else "mintpads"
+        # Tokens first (2026-10-11: "when they open the exchange tab,
+        # it should open to tokens instead of launchpads"; it opened on the
+        # mintpads from 2026-09-28), and anything unknown lands there too.
+        tab = tab if tab in EXCHANGE_TABS else "tokens"
         chain, index = _token_chain()
-        data: dict[str, Any] = {"tab": tab, "chain": chain, "node": chain.status(),
+        # Each tab reads only what it draws (2026-10-13: "Make sure each tab only
+        # loads what it needs to load and does lazy loading"). The node's status was read
+        # on every tab and drawn on none; the shops and pads only feed Launchpad; offers
+        # only the Offers tab, whose count the other tabs fetch after they show.
+        offers_tab, pads_tab = tab == "offers", tab == "mintpads"
+        data: dict[str, Any] = {"tab": tab, "chain": chain, "node": {},
                                 "other_chains": [c for c in state.token_chains
                                                  if c is not chain],
                                 "shops": [], "node_error": None, "owned": set(),
                                 "offers_in": [], "offers_out": [], "tags": {},
                                 "offer_history": [], "token_bids": []}
         try:
-            data["shops"] = _shop_listings(index, chain)
+            data["shops"] = _shop_listings(index, chain) if pads_tab else []
         except Exception as exc:
             data["node_error"] = f"the index could not be read: {exc}"
         # Whose pieces this page is about, which is the one question a
@@ -20613,7 +23114,7 @@ def create_app(state: AppState) -> FastAPI:
             looking = signed_in(request)
             here = _account_address(looking.pubkey, chain) if looking else ""
             data["owned"] = {here} if here else set()
-        else:
+        elif offers_tab or pads_tab:
             try:
                 with chain.rpc() as rpc:
                     data["owned"] = set(_ledger_addresses(rpc))
@@ -20636,9 +23137,12 @@ def create_app(state: AppState) -> FastAPI:
         # collection (2026-09-26).
         data["account_pads"] = []
         try:
+            if not pads_tab:
+                raise LookupError("not this tab")
             state.listings.expire_due(chain.network)
             pads: dict = {}
-            for row in state.listings.open_listings(chain.network, limit=1000):
+            for row in (state.listings.open_listings(chain.network, limit=1000)
+                        if _node_trades() else []):
                 piece = _sold_piece(row)
                 got = index.inscription(piece) if piece else None
                 if not got or not got.get("collection") or got["owner"] != row["owner"]:
@@ -20653,15 +23157,28 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             data["account_pads"] = []
         # And accounts' TOKEN mintpads, found by their inscriptions (a tester).
-        data["token_pads"] = _token_pads(index, limit=24)
+        data["token_pads"] = []          # never drawn on this page
         data["sort"] = "new" if sort == "new" else "popular"
         data["pads"], data["pad_frames"] = [], {}
         if tab == "mintpads":
-            data["pads"] = _pads_ranked(request, index, chain, data["sort"],
-                                        shops=[s for s in data["shops"]
-                                               if s["txid"] not in {p["txid"] for p in data["pads"]}])
+            # Pads from every chain the chip shows (2026-10-13: "Launchpads
+            # also need the ability to choose between the networks"), ranked
+            # together; a card from the other chain switches before it mints.
+            from .. import launchlist
+            data["show"] = show if show in PAD_SHOWS else "mix"
+            pads: list = []
+            for c, idx, net, switch in _nets_shown(chain, data["show"]):
+                try:
+                    shops = data["shops"] if c is chain else _shop_listings(idx, c)
+                    for pad in _pads_ranked(request, idx, c, data["sort"], shops=shops):
+                        pad.update(net=net, mainnet=c.is_mainnet, chain_net=c.network,
+                                   switch=switch)
+                        pads.append(pad)
+                except Exception:
+                    log.debug("the %s pads could not be read", net, exc_info=True)
+            data["pads"] = launchlist.rank(pads, data["sort"], int(time.time()))
             data["pad_frames"] = _frames_for(
-                request, {p["txid"]: "text/html" for p in data["pads"]})
+                request, {p["txid"]: "text/html" for p in data["pads"] if not p["switch"]})
             data["tags"].update(_tags_for([p["creator"] for p in data["pads"]]))
             # A collection pad that is only listings (never inscribed) has no
             # page to draw; it stays below the list, as it was.
@@ -20678,22 +23195,50 @@ def create_app(state: AppState) -> FastAPI:
         # What has actually traded, and what it went for. Read from the swaps
         # the chain holds, not from a book -- there is no book (D-039).
         try:
-            trades = index.trades()
+            trades = index.trades() if tab in ("tokens", "market") else []
         except Exception:
             trades = []
         if tab == "tokens":
             # Every token paired against the coin: the ones with a book and
             # the ones that have traded, last price and the day's move
             # (D-048). Clicking one opens its own page.
-            data["pairs"] = _pairs(index, trades)
+            data["show"] = show if show in PAIR_SHOWS else "mix"
+            data["pairs"] = _pairs_by_net(chain, index, trades, data["show"])
+            # The open-a-pair box (2026-10-06: "When creating a pair the
+            # drop-down should only list assets that you have in your wallet"):
+            # what this reader holds on one side, any token on the other.
+            data["held_tokens"], data["pair_viewer"] = [], "nobody"
+            data["xchain_open"] = _x_open()
+            try:
+                held_at: list[str] = []
+                if not _account_view(request):
+                    data["pair_viewer"] = "wallet"
+                    with chain.rpc() as rpc:
+                        held_at = list(_ledger_addresses(rpc))
+                elif signed_in(request) is not None:
+                    data["pair_viewer"] = "account"
+                    mine = _account_address(signed_in(request).pubkey, chain)
+                    held_at = [mine] if mine else []
+                held: dict[int, dict] = {}
+                for row in index.balances(held_at):
+                    if row["property_id"] not in held:
+                        prop = index.property(row["property_id"]) or {}
+                        held[row["property_id"]] = {"property_id": row["property_id"], "name": row["name"],
+                                                    "managed": prop.get("managed", 0)}
+                data["held_tokens"] = sorted(held.values(), key=lambda t: str(t["name"]).lower())
+            except HTTPException:
+                raise
+            except Exception:
+                data["held_tokens"] = []
         elif tab == "market":
             # A collection is a market of its own, and the marketplace is the
             # list of them -- the same table the Tokens tab draws for pairs.
             # Its chart belongs to the collection's own page, where the
             # pieces it prices are (D-096).
             try:
-                data["collections"] = _market_collections(
-                    index, chain, trades, public=_account_view(request))
+                data["show"] = show if show in PAIR_SHOWS else "mix"
+                data["collections"], data["sales"], named = _nfts_by_net(
+                    request, chain, index, trades, data["show"])
                 # Popular means traded, and traded recently: what a market
                 # is for is not the biggest set, it is the busy one. Falls
                 # back on what is for sale where nothing has traded at all,
@@ -20707,138 +23252,170 @@ def create_app(state: AppState) -> FastAPI:
                 # (2026-09-28). No piece-by-piece list of what is for
                 # sale: a piece is bought on its collection's own page, which
                 # is where its price, its neighbours and its Buy button are.
-                data["sales"] = _recent_sales(index, trades, limit=8)
-                data["tags"].update(_names_for(
-                    index, [c["creator"] for c in data["collections"]]
-                    + [s["seller"] for s in data["sales"]]
-                    + [s["owner"] for s in data["sales"]]))
+                data["tags"].update(named)
             except Exception as exc:
                 data["node_error"] = data["node_error"] or \
                     f"the collections could not be read: {exc}"
-        try:
-            # The mempool first, then the blocks, so an offer made a minute
-            # ago is here rather than in ten minutes' time. A transaction is
-            # in exactly one of the two, so there is nothing to dedupe -- but
-            # a block landing between the two reads could show one twice, and
-            # the txid settles it (D-058).
-            pending = index.pending_offers()
-            own = set(data["owned"])
-            data["offers_in"] = _merge_offers(
-                [o for o in pending if o["owner"] in own],
-                index.offers_on(sorted(data["owned"])))
-            data["offers_out"] = _merge_offers(
-                [o for o in pending if o["buyer"] in own],
-                index.offers_by(sorted(data["owned"])))
-            # Pre-signed offers that are done, withdrawn or spent are not offers.
-            marks = _bids.statuses([o["txid"] for o in data["offers_in"] + data["offers_out"]])
-            # Ended offers leave both lists at once, on both sides (the operator,
-            # 2026-09-28: "declined offers should be removed from both sides
-            # instantly"; "accepted offers should go directly into the history").
-            ended = _bids.ended([o["txid"] for o in data["offers_in"] + data["offers_out"]])
-            data["offers_in"] = [o for o in data["offers_in"] if o["txid"] not in ended]
-            data["offers_out"] = [o for o in data["offers_out"] if o["txid"] not in ended]
-            data["offer_history"] = []
-            # Buy orders on the tokens this account made (2026-09-28:
-            # "where does the creator of a token see if someone puts in an order
-            # to buy? ... on exchange>offers"): the chain's bids and the ones this
-            # node holds, best price first.
-            looker = signed_in(request) if data["viewer"] == "account" else None
-            declined_bids = set(state.setting(f"declined_bids:{looker.pubkey}", []) or []) \
-                if looker is not None else set()
-            if tab == "offers" and data["owned"]:
-                from fractions import Fraction
-                for prop in _token_props(index):
-                    if prop.get("issuer") not in data["owned"]:
-                        continue
-                    pid, whole = prop["property_id"], prop["divisible"]
-                    wants = [(Fraction(b["coins"], b["tokens"]), b["tokens"], b["address"], "",
-                              b["txid"])
-                             for b in index.book(pid)["bids"] if b.get("tokens")]
-                    wants += [(Fraction(s["coins"], s["units"]), s["left_units"], s["buyer"],
-                               "away" if s["away"] else "back", f"standing-{s['id']}")
-                              for s in _standing.open_on(chain.network, pid)]
-                    for price, units, buyer, mode, key in sorted(wants, key=lambda w: -w[0]):
-                        if buyer in data["owned"] or key in declined_bids:
-                            continue
-                        each = f"{_coins_each(price, whole):.8f}".rstrip("0").rstrip(".")
-                        data["token_bids"].append({
-                            "key": key,
-                            "property_id": pid, "name": prop["name"], "price": each,
-                            "amount": format_amount(units, whole), "buyer": buyer, "mode": mode})
-                data["tags"].update(_tags_for([b["buyer"] for b in data["token_bids"]]))
-            looking = signed_in(request) if data["viewer"] == "account" else None
-            if looking is not None:
-                for b in _bids.history(looking.pubkey, sorted(data["owned"]), chain.network):
-                    piece = index.inscription(b["piece"]) or {}
-                    mine = b["account"] == looking.pubkey
-                    try:
-                        price = swaplib.describe_leg(b["take"])
-                    except Exception:
-                        price = f"{b['price_sats'] / 100000000:g} coins"
-                    data["offer_history"].append({
-                        "txid": b["id"], "inscription": b["piece"], "mine": mine,
-                        "number": piece.get("number"), "collection": piece.get("collection"),
-                        "edition": piece.get("edition"), "price": price,
-                        "other": b["seller"] if mine else b["buyer"],
-                        "status": {"filled": "bought" if mine else "sold",
-                                   "declined": "declined", "withdrawn": "cancelled",
-                                   "stale": "expired"}.get(b["status"], b["status"]),
-                        "at": b["ended_at"]})
-                data["tags"].update(_tags_for([h["other"] for h in data["offer_history"]]))
+        if offers_tab:
             try:
-                swapping = index.pending_swaps()
-            except Exception:
-                swapping = {}
-            for entry in data["offers_in"] + data["offers_out"]:
-                entry["presigned"] = marks.get(entry["txid"]) == bidslib.OPEN
-                entry["busy"] = entry["inscription"] in swapping
-                entry["price"] = swaplib.describe_leg(_take_json(entry, index))
-                # The other half of the sentence an answer is confirmed with: not
-                # only what the offer pays, but what answering hands over.
-                entry["give"] = swaplib.describe_leg(swaplib.leg_json(
-                    swaplib.leg_of({"inscription": entry["inscription"]}, index),
-                    index))
-            # An offer already accepted is waiting for the buyer's wallet to
-            # sign, not waiting for a second Accept. Drawing the button again
-            # was how somebody pressed it twice and got told their own offer
-            # belonged to somebody else (D-049).
-            if data["viewer"] == "account":
-                # Not from `open_offers`, whatever the viewer: every row of that
-                # book is a signature THIS node made, and on a public copy this
-                # node has made nothing of the looking account's. What an account
-                # answered stands in the bid book instead, as a note with the
-                # direction its own offers never take -- a receipt of who was
-                # answered, which is also all the exclusivity behind an answer
-                # made of signatures rather than of coins this node can lock
-                # (D-182). It says nothing about whether the buyer ever signed,
-                # which is why the row waits out the note rather than reading
-                # "sold": the piece moving is the only news here, and the next
-                # page read is where that shows.
-                for entry in data["offers_in"]:
-                    note = _answer_standing(chain, entry["inscription"]) or {}
-                    same = note.get("buyer") == entry["buyer"]
-                    entry["accepted"] = bool(note and same)
-                    entry["held_for"] = "" if same else str(note.get("buyer") or "")
-                    entry["until"] = (_local_time(float(note["created"]), "day")
-                                      if note else "")
-            else:
-                standing = {}
-                for offer in state.offers.open_offers(chain.network):
-                    if offer["give"].get("kind") == "inscription":
-                        standing[offer["give"]["txid"]] = offer
-                for offer in state.offers.sold_offers(chain.network):
-                    if offer["give"].get("kind") == "inscription":
-                        standing.setdefault(offer["give"]["txid"], offer)
-                for entry in data["offers_in"]:
-                    held = standing.get(entry["inscription"])
-                    entry["accepted"] = bool(held and held["buyer"] == entry["buyer"])
-                    entry["held_for"] = held["buyer"] if held else ""
-                    entry["until"] = (_local_time(held["expires"], "time")
-                                      if held else "")
-                    entry["settled"] = bool(held and held.get("status") == "sent")
-                    entry["swap_txid"] = (held or {}).get("txid", "")
-        except Exception as exc:
-            data["node_error"] = data["node_error"] or str(exc)
+                # The mempool first, then the blocks, so an offer made a minute
+                # ago is here rather than in ten minutes' time. A transaction is
+                # in exactly one of the two, so there is nothing to dedupe -- but
+                # a block landing between the two reads could show one twice, and
+                # the txid settles it (D-058).
+                pending = index.pending_offers()
+                own = set(data["owned"])
+                data["offers_in"] = _merge_offers(
+                    [o for o in pending if o["owner"] in own],
+                    index.offers_on(sorted(data["owned"])))
+                data["offers_out"] = _merge_offers(
+                    [o for o in pending if o["buyer"] in own],
+                    index.offers_by(sorted(data["owned"])))
+                # Pre-signed offers that are done, withdrawn or spent are not offers.
+                marks = _bids.statuses([o["txid"] for o in data["offers_in"] + data["offers_out"]])
+                # Ended offers leave both lists at once, on both sides (the operator,
+                # 2026-09-28: "declined offers should be removed from both sides
+                # instantly"; "accepted offers should go directly into the history").
+                ended = _bids.ended([o["txid"] for o in data["offers_in"] + data["offers_out"]])
+                data["offers_in"] = [o for o in data["offers_in"] if o["txid"] not in ended]
+                data["offers_out"] = [o for o in data["offers_out"] if o["txid"] not in ended]
+                data["offer_history"] = []
+                # Offers in mainnet PEP on the cross-chain book (2026-10-09: "fix that
+                # offers bug" -- they showed on the piece page and nowhere here): bids
+                # on the pieces this wallet holds, and this wallet's own bids.
+                data["x_in"], data["x_out"] = [], []
+                if tab == "offers" and _x_open() and not chain.is_mainnet:
+                    xbook = state.xchain.book
+                    for m in xbook.markets():
+                        if m["kind"] != "nft" or not m["orders"]:
+                            continue
+                        piece = index.inscription(m["asset"]) or {}
+                        if piece.get("owner") not in data["owned"]:
+                            continue
+                        for b in xbook.book("nft", m["asset"])["buys"]:
+                            data["x_in"].append({"inscription": m["asset"], "number": piece.get("number"),
+                                                 "collection": piece.get("collection"),
+                                                 "edition": piece.get("edition"), "name": _piece_name(piece),
+                                                 "content_type": piece.get("content_type") or "",
+                                                 "pep": f"{b['left_pepe'] / COIN:.8f}".rstrip("0").rstrip(".")})
+                    x_owner = ("node" if data["viewer"] == "wallet" else
+                               signed_in(request).pubkey.lower() if data["viewer"] == "account" else "")
+                    for o in (xbook.orders_of(x_owner) if x_owner else []):
+                        if o["kind"] != "nft" or o["side"] != "buy" or o["status"] not in ("open", "awaiting"):
+                            continue
+                        piece = index.inscription(o["asset"]) or {}
+                        data["x_out"].append({"inscription": o["asset"], "number": piece.get("number"),
+                                              "collection": piece.get("collection"),
+                                              "edition": piece.get("edition"), "status": o["status"],
+                                              "name": _piece_name(piece),
+                                              "content_type": piece.get("content_type") or "",
+                                              "pep": f"{o['pepe'] / COIN:.8f}".rstrip("0").rstrip(".")})
+                # Buy orders on the tokens this account made (2026-09-28:
+                # "where does the creator of a token see if someone puts in an order
+                # to buy? ... on exchange>offers"): the chain's bids and the ones this
+                # node holds, best price first.
+                looker = signed_in(request) if data["viewer"] == "account" else None
+                declined_bids = set(state.setting(f"declined_bids:{looker.pubkey}", []) or []) \
+                    if looker is not None else set()
+                if tab == "offers" and data["owned"]:
+                    from fractions import Fraction
+                    for prop in _token_props(index):
+                        if prop.get("issuer") not in data["owned"]:
+                            continue
+                        pid, whole = prop["property_id"], prop["divisible"]
+                        wants = [(Fraction(b["coins"], b["tokens"]), b["tokens"], b["address"], "",
+                                  b["txid"])
+                                 for b in index.book(pid)["bids"] if b.get("tokens")]
+                        wants += [(Fraction(s["coins"], s["units"]), s["left_units"], s["buyer"],
+                                   "away" if s["away"] else "back", f"standing-{s['id']}")
+                                  for s in _standing.open_on(chain.network, pid)]
+                        for price, units, buyer, mode, key in sorted(wants, key=lambda w: -w[0]):
+                            if buyer in data["owned"] or key in declined_bids:
+                                continue
+                            each = f"{_coins_each(price, whole):.8f}".rstrip("0").rstrip(".")
+                            data["token_bids"].append({
+                                "key": key,
+                                "property_id": pid, "name": prop["name"], "price": each,
+                                "amount": format_amount(units, whole), "buyer": buyer, "mode": mode})
+                    data["tags"].update(_tags_for([b["buyer"] for b in data["token_bids"]]))
+                looking = signed_in(request) if data["viewer"] == "account" else None
+                if looking is not None:
+                    for b in _bids.history(looking.pubkey, sorted(data["owned"]), chain.network):
+                        piece = index.inscription(b["piece"]) or {}
+                        mine = b["account"] == looking.pubkey
+                        try:
+                            price = swaplib.describe_leg(b["take"])
+                        except Exception:
+                            price = f"{b['price_sats'] / 100000000:g} coins"
+                        data["offer_history"].append({
+                            "txid": b["id"], "inscription": b["piece"], "mine": mine,
+                            "number": piece.get("number"), "collection": piece.get("collection"),
+                            "edition": piece.get("edition"), "price": price,
+                            "other": b["seller"] if mine else b["buyer"],
+                            "status": {"filled": "bought" if mine else "sold",
+                                       "declined": "declined", "withdrawn": "cancelled",
+                                       "stale": "expired"}.get(b["status"], b["status"]),
+                            "at": b["ended_at"]})
+                    data["tags"].update(_tags_for([h["other"] for h in data["offer_history"]]))
+                try:
+                    swapping = index.pending_swaps()
+                except Exception:
+                    swapping = {}
+                for entry in data["offers_in"] + data["offers_out"]:
+                    entry["presigned"] = marks.get(entry["txid"]) == bidslib.OPEN
+                    entry["busy"] = entry["inscription"] in swapping
+                    entry["price"] = swaplib.describe_leg(_take_json(entry, index))
+                    # The other half of the sentence an answer is confirmed with: not
+                    # only what the offer pays, but what answering hands over.
+                    entry["give"] = swaplib.describe_leg(swaplib.leg_json(
+                        swaplib.leg_of({"inscription": entry["inscription"]}, index),
+                        index))
+                # An offer already accepted is waiting for the buyer's wallet to
+                # sign, not waiting for a second Accept. Drawing the button again
+                # was how somebody pressed it twice and got told their own offer
+                # belonged to somebody else (D-049).
+                if data["viewer"] == "account":
+                    # Not from `open_offers`, whatever the viewer: every row of that
+                    # book is a signature THIS node made, and on a public copy this
+                    # node has made nothing of the looking account's. What an account
+                    # answered stands in the bid book instead, as a note with the
+                    # direction its own offers never take -- a receipt of who was
+                    # answered, which is also all the exclusivity behind an answer
+                    # made of signatures rather than of coins this node can lock
+                    # (D-182). It says nothing about whether the buyer ever signed,
+                    # which is why the row waits out the note rather than reading
+                    # "sold": the piece moving is the only news here, and the next
+                    # page read is where that shows.
+                    for entry in data["offers_in"]:
+                        note = _answer_standing(chain, entry["inscription"]) or {}
+                        same = note.get("buyer") == entry["buyer"]
+                        entry["accepted"] = bool(note and same)
+                        entry["held_for"] = "" if same else str(note.get("buyer") or "")
+                        entry["until"] = (_local_time(float(note["created"]), "day")
+                                          if note else "")
+                else:
+                    standing = {}
+                    for offer in state.offers.open_offers(chain.network):
+                        if offer["give"].get("kind") == "inscription":
+                            standing[offer["give"]["txid"]] = offer
+                    for offer in state.offers.sold_offers(chain.network):
+                        if offer["give"].get("kind") == "inscription":
+                            standing.setdefault(offer["give"]["txid"], offer)
+                    for entry in data["offers_in"]:
+                        held = standing.get(entry["inscription"])
+                        entry["accepted"] = bool(held and held["buyer"] == entry["buyer"])
+                        entry["held_for"] = held["buyer"] if held else ""
+                        entry["until"] = (_local_time(held["expires"], "time")
+                                          if held else "")
+                        entry["settled"] = bool(held and held.get("status") == "sent")
+                        entry["swap_txid"] = (held or {}).get("txid", "")
+            except Exception as exc:
+                data["node_error"] = data["node_error"] or str(exc)
+        if count:
+            # The Offers tab's count, fetched by the other tabs after they show.
+            waiting = (len([o for o in data["offers_in"] if not o.get("settled")])
+                       + len(data.get("x_in") or []))
+            return JSONResponse({"waiting": waiting}, headers={"Cache-Control": "no-store"})
         return render(request, "exchange.html", when=_when,
                       mine_tag=(_tag_of_whoever_is_asking(request) or {}).get("tag") or "",
                       **data)
@@ -21053,7 +23630,33 @@ def _on_a_real_chain(address: str) -> bool:
     return version in _MAINNET_VERSIONS
 
 
-def _ledger_addresses(rpc) -> list[str]:
+#: (node) -> (until, addresses): _ledger_addresses for fifteen seconds (2026-10-05:
+#: about a tenth of a second, on most pages of the operator's wallet).
+_LEDGER_ADDRESSES: dict = {}
+
+
+def _ledger_addresses(rpc, fresh: bool = False) -> list[str]:
+    """Kept for fifteen seconds, unless `fresh` asks the node right now.
+
+    `fresh` is for a caller about to act on an address being missing. The kept
+    list cannot know about one the wallet made after it was written, and
+    `swap.make_offer` reads a missing address as "this wallet did not create
+    this shop, or no longer holds it". A page saying nothing about a new
+    address for a quarter minute is nothing; an order refused that way is
+    refused for good, since the order is consumed by the answer it gets.
+    Either way the node is asked, so what is kept afterwards is the newer list.
+    """
+    creds = getattr(rpc, "_creds", None)
+    key = (getattr(creds, "host", ""), getattr(creds, "port", 0))
+    held = None if fresh else _LEDGER_ADDRESSES.get(key)
+    if held and held[0] > time.time():
+        return list(held[1])
+    found = _ledger_addresses_uncached(rpc)
+    _LEDGER_ADDRESSES[key] = (time.time() + 15, list(found))
+    return found
+
+
+def _ledger_addresses_uncached(rpc) -> list[str]:
     """The addresses this wallet owns on a chain, funded or not.
 
     On a test chain, every address in the node's wallet was made by this
@@ -21114,7 +23717,26 @@ def _node_cut(state) -> dict:
     return {"bps": bps, "to": state.derived_address} if bps else {}
 
 
-def _tag_address(state, destination: str, *, mainnet: bool) -> str:
+def _doge_twin(address: str) -> str:
+    """The same key's address on Dogecoin, for a Pepecoin MAINNET address, else "".
+
+    An account's mainnet key is derived on BIP44 coin type 3 (coins.js
+    COIN_TYPE), which is Dogecoin's own, so its Dogecoin key IS its Pepecoin
+    mainnet key: same hash, Dogecoin's version byte. That is how a person who
+    published a Pepecoin mainnet address can be paid in DOGE without publishing
+    anything new (2026-10-13). A node's own wallet holds that key in its
+    Pepecoin wallet; DOGE sent there is spent by importing it into Dogecoin Core.
+    """
+    try:
+        version, payload = b58check_decode(address)
+    except Exception:
+        return ""
+    if version != NETWORKS["main"].pubkeyhash_version or len(payload) != 20:
+        return ""
+    return b58check_encode(NETWORKS["doge"].pubkeyhash_version, payload)
+
+
+def _tag_address(state, destination: str, *, mainnet) -> str:
     """An @tag turned into the address that holds it, or the text unchanged.
 
     Every send takes one of these now -- coins, tokens, grants, revokes, an
@@ -21133,8 +23755,15 @@ def _tag_address(state, destination: str, *, mainnet: bool) -> str:
     if not taglib.looks_like_a_tag(destination):
         return destination
     wanted = taglib.normalise(destination)
+    if getattr(mainnet, "is_doge", False):
+        # Tags are not claimed on Dogecoin: the holder's Pepecoin mainnet
+        # address, as the same key on Dogecoin (`_doge_twin`).
+        twin = _doge_twin(_tag_address(state, destination, mainnet=True))
+        if not twin:
+            raise ValueError(f"@{wanted} has no address this node can pay in DOGE.")
+        return twin
     for chain in state.token_chains:
-        if bool(chain.is_mainnet) != bool(mainnet):
+        if bool(chain.is_mainnet) != bool(mainnet) or chain.is_doge:
             continue
         try:
             found = state.token_index(chain).address_of(wanted)
@@ -21165,7 +23794,17 @@ def _check_address(address: str, *, mainnet: bool) -> str | None:
     now "is this an address on one of the two chains this arcade moves coins
     on", which is the only question a send can act on.
     """
-    wanted = (NETWORKS["main"],) if mainnet else (NETWORKS["test"], NETWORKS["regtest"])
+    # `mainnet` is a chain or a bool. A CHAIN is exact (2026-10-13): Dogecoin is
+    # a real-coin chain too, and "mainnet" alone would let a Pepecoin address
+    # through on a Dogecoin send. A bool keeps its old meaning, Pepecoin's.
+    network = getattr(mainnet, "network", None)
+    if network in ("test", "regtest"):
+        wanted = (NETWORKS["test"], NETWORKS["regtest"])
+    elif network:
+        wanted = (NETWORKS[network],)
+    else:
+        wanted = (NETWORKS["main"],) if mainnet else (NETWORKS["test"], NETWORKS["regtest"])
+    word = (getattr(mainnet, "label", "") or "").lower() or ("mainnet" if mainnet else "testnet")
     try:
         version, payload = b58check_decode(address)
     except HTTPException:
@@ -21179,8 +23818,9 @@ def _check_address(address: str, *, mainnet: bool) -> str | None:
     other = [p.name for p in NETWORKS.values()
              if version in (p.pubkeyhash_version, p.scripthash_version)]
     if other:
-        return (f"that is a {other[0]} address, not a "
-                f"{'mainnet' if mainnet else 'testnet'} one.")
+        named = "Dogecoin" if other[0] == "doge" else other[0]
+        return (f"that is a {named} address, not a "
+                f"{word} one.")
     return ("that address is not one this arcade can pay -- it belongs to a "
             "chain this node does not run, and coins sent there cannot come "
             "back.")

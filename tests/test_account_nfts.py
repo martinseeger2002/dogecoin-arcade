@@ -121,12 +121,10 @@ def test_the_page_is_there_and_in_the_account_menu(public):
     assert "<h1>Wallet</h1>" in body
     assert 'href="/me/nfts"' in body, "and is reachable from the menu"
     assert 'href="/me/wallet"' in body and 'href="/me/wallet/tokens"' in body
-    # It says what an account cannot do rather than leaving a missing
-    # button to be discovered. One piece is no longer that sentence -- a
-    # split carries what does not fit -- and neither is a whole collection.
-    # What is left is a run's own rule, which the folder panel says out
-    # loud: one transaction per item, and an item cannot be a piece more.
-    assert "one transaction per item, so the node refuses" in body
+    # It says what a run is rather than leaving it to be discovered: every
+    # picture goes up as it is (never shrunk, 2026-10-08), nothing is
+    # uploaded ahead and the pictures stay in the browser (2026-10-11).
+    assert "never shrunk" in body and "Nothing is uploaded ahead" in body
     assert "Run a collection" in body
 
 
@@ -147,7 +145,7 @@ def test_the_public_nfts_page_offers_the_account_s_inscribe(public):
     app.post("/account/address", json={"address": TEST}, headers=EDGE)
     body = app.get("/nfts", headers=EDGE).text
     assert 'id="inscribe-it"' in body and 'id="run-start"' in body
-    assert "/account/inscribe" in body and "/account/run/start" in body
+    assert "/account/inscribe" in body and "/account/run/plan" in body
     for refused in ('action="/inscriptions/create"',
                     'href="/inscriptions/collection"',
                     'href="/wallet/nfts"'):
@@ -162,11 +160,14 @@ def test_the_public_nfts_page_says_who_can_inscribe(public):
     app, _ = public
     body = app.get("/nfts", headers=EDGE).text
     assert 'id="inscribe-it"' not in body
-    assert "/account/inscribe" not in body
+    assert 'id="run-start"' not in body, \
+        "the controls are the promise; the route itself is in base.html's shared script now"
     for refused in ('action="/inscriptions/create"',
                     'href="/inscriptions/collection"'):
         assert refused not in body, f"{refused} is a route the door shuts"
-    assert "Sign in and open your wallet" in body
+    assert 'class="unlockbar"' in body and "Join free, or sign in" in body, \
+        "6380231 moved the sentence a visitor gets out of the pages and onto one bar"
+    assert "href=\"/join?next=/nfts\"" in body, "the bar has to bring them back here"
 
 
 def test_the_run_list_is_asked_the_way_the_route_is_built(client):
@@ -209,7 +210,7 @@ def test_the_inscribe_panels_are_one_file(client):
         assert '{% include "_account_inscribe.html" %}' in page, name
         assert "/account/inscribe" not in page, \
             f"{name} has its own copy of the inscribe offer"
-    for route in ("/account/inscribe", "/account/run/start",
+    for route in ("/account/inscribe", "/account/run/plan",
                   "/account/run/piece", "/account/run/stop"):
         assert route in shared, route
 
@@ -267,3 +268,49 @@ def test_taking_the_price_off_is_the_same_handshake(client):
     said = answer.json()["detail"]
     assert "only whoever holds" not in said
     assert "no such inscription" not in said
+
+
+def _in_collection(state, txid, collection, edition, name):
+    index = state.token_index(state.messaging)
+    with index.open() as db:
+        db.conn.execute("INSERT OR REPLACE INTO collection_item(txid, creator, collection, edition, name) "
+                        "VALUES(?,?,?,?,?)", (txid, TEST, collection, edition, name))
+        db.conn.commit()
+
+
+def test_the_wallet_tab_reads_collections_then_pages_one(client):
+    """2026-10-08: "we have collections that have thousands of items and we
+    need to be able to sort through our collections before we look at the
+    items in our collections". Grouped and counted by the node, then paged."""
+    app, state = client
+    _seat(app)
+    app.post("/account/address", json={"address": TEST})
+    for n in range(1, 6):
+        txid = f"{n:02x}" * 32
+        _inscribed(state, TEST, number=n, txid=txid)
+        if n <= 4:
+            _in_collection(state, txid, "Frogs", n, f"Frog #{n}")
+    chain = state.messaging.network
+    said = app.get(f"/account/nfts/collections?chain={chain}").json()
+    counts = {c["collection"]: c["count"] for c in said["collections"]}
+    assert counts == {"Frogs": 4, "": 1}, "and one in no collection"
+    frogs = next(c for c in said["collections"] if c["collection"] == "Frogs")
+    assert len(frogs["cover"]) == 4
+
+    page = app.get(f"/account/nfts/pieces?chain={chain}&collection=Frogs&limit=2").json()
+    assert page["total"] == 4 and [p["name"] for p in page["pieces"]] == ["Frog #1", "Frog #2"]
+    found = app.get(f"/account/nfts/pieces?chain={chain}&collection=Frogs&q=%233").json()
+    assert [p["name"] for p in found["pieces"]] == ["Frog #3"]
+    named = app.get(f"/account/nfts/pieces?chain={chain}&collection=Frogs&q=frog&sort=recent").json()
+    assert named["total"] == 4
+    loose = app.get(f"/account/nfts/pieces?chain={chain}&collection=").json()
+    assert [p["number"] for p in loose["pieces"]] == [5]
+
+
+def test_nobody_elses_pieces_are_in_the_collections(client):
+    app, state = client
+    _seat(app)
+    app.post("/account/address", json={"address": TEST})
+    _inscribed(state, SOMEBODY, number=9, txid="77" * 32)
+    said = app.get(f"/account/nfts/collections?chain={state.messaging.network}").json()
+    assert said["collections"] == []

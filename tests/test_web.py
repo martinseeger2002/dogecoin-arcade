@@ -197,8 +197,20 @@ def test_the_exchange_reads_the_chain_rather_than_a_list(client):
         body = app.get(f"/exchange?tab={tab}").text
         assert empty in body, tab
     offers = app.get("/exchange?tab=offers").text
-    assert "Offers for your NFTs" in offers and "Your offers" in offers
+    assert "Offers for your things" in offers and "Your offers" in offers   # the Exchange redesign, 2026-10-09
     assert "No offers yet." in offers, "said simply (2026-09-28)"
+
+
+def test_the_exchange_opens_on_tokens(client):
+    """2026-10-11: "when they open the exchange tab, it should open to
+    tokens instead of launchpads" (it opened on the mintpads from 2026-09-28).
+    A tab nobody has heard of lands there too."""
+    app, _ = client
+    for where in ("/exchange", "/exchange?tab=nonsense"):
+        body = app.get(where).text
+        assert 'href="/exchange?tab=tokens" aria-current="page"' in body, where
+        assert body.count('aria-current="page"') == 1, where
+        assert "No market has an order or a trade yet" in body, where
 
 
 # --- address book -------------------------------------------------------------
@@ -282,12 +294,16 @@ def test_an_address_from_a_chain_this_arcade_does_not_run_is_refused(client):
     assert doge_main.startswith("D")
 
     _save(app, state, name="Off this chain", mainnet_address=doge_main)
-    assert "chain this node does not run" in (state.notice or "")
+    # Refused either way; since Dogecoin became a chain of its own (2026-10-13) the
+    # refusal names it rather than calling it a chain this node does not run.
+    said = state.notice or ""
+    assert "chain this node does not run" in said or "a Dogecoin address, not a mainnet one" in said, said
     with state.store() as store:
         assert store.contacts() == []
 
     _save(app, state, name="Off this chain", testnet_address=doge_main)
-    assert "chain this node does not run" in (state.notice or "")
+    said = state.notice or ""
+    assert "chain this node does not run" in said or "a Dogecoin address, not a testnet one" in said, said
 
 
 def test_a_mistyped_address_is_refused(client):
@@ -2263,15 +2279,17 @@ def test_the_chain_tag_switches_tokens_between_mainnet_and_testnet(client, tmp_p
     app, state = client
     page = app.get("/tokens").text
     assert 'name="chain" value="main"' in page, "the tag offers the other chain"
-    assert '<button type="submit" class="tag testnet switch"' in page
+    # Every chain in one switch, the one shown marked (2026-10-13).
+    assert '<span class="tag testnet on" aria-current="true"' in page
+    assert '<button type="submit" class="tag mainnet switch" name="chain" value="main"' in page
     assert "Every fungible token on testnet" in page
 
     response = app.post("/tokens/chain", data={"chain": "main", "csrf_token": state.csrf_token},
                         follow_redirects=False)
     assert response.status_code == 303 and response.headers["location"] == "/tokens"
     page = app.get("/tokens").text
-    assert '<button type="submit" class="tag mainnet switch"' in page
-    assert 'name="chain" value="regtest"' in page
+    assert '<span class="tag mainnet on" aria-current="true"' in page
+    assert '<button type="submit" class="tag testnet switch" name="chain" value="regtest"' in page
     assert "Every fungible token on mainnet" in page
     assert (state.home / "tokens-chain").read_text().strip() == "main"
 
@@ -2876,6 +2894,70 @@ def test_the_package_s_own_diagnostics_reach_the_journal():
     assert "arcade.shopkeeper: the message store was rebuilt" in written
     assert "arcade.ledger: rebuilt inscription moves" in written, \
         "uvicorn's config must not take the package's own logging away"
+
+
+def test_a_restart_while_someone_is_in_a_room_stops_by_itself():
+    """The live service was KILLED rather than stopped at every restart for a
+    month -- 28 kills in thirty days, and every deploy on 2026-10-05 among them.
+    uvicorn waits for the requests still running before it exits, and a game
+    room's event stream is a request that never ends, so a restart during play
+    sat in systemd's stop timeout until systemd gave up and sent SIGKILL. The
+    careful shutdown in the lifespan -- the one that waits for a send in flight
+    so a restart cannot land in the middle of a wallet operation -- never got
+    its turn. (2026-10-05)
+
+    Asserted twice because the two halves fail apart from each other: the run at
+    the end of main() is the only place the live service sets this, and the
+    number only helps if it is a number well under the stop timeout. Every test
+    server in this suite already passes a timeout; that is why the bug was
+    invisible to the suite and obvious in the journal.
+    """
+    import asyncio
+    import socket
+    import threading
+
+    import uvicorn
+    from fastapi import FastAPI
+    from fastapi.responses import StreamingResponse
+
+    from arcade.web import __main__ as entry
+
+    assert "timeout_graceful_shutdown" in inspect.getsource(entry.main), \
+        "the real service gets this nowhere else"
+    assert 0 < entry.GRACEFUL_STOP < 90, \
+        "at or above the stop timeout this is the SIGKILL again"
+
+    app = FastAPI()
+
+    @app.get("/stream")
+    async def stream():
+        async def events():
+            yield "data: here\n\n"
+            while True:
+                await asyncio.sleep(0.2)
+        return StreamingResponse(events(), media_type="text/event-stream")
+
+    server = uvicorn.Server(uvicorn.Config(
+        app, host="127.0.0.1", port=0, log_level="error",
+        timeout_graceful_shutdown=entry.GRACEFUL_STOP))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    end = time.monotonic() + 10
+    while not server.started and time.monotonic() < end:
+        time.sleep(0.02)
+    port = server.servers[0].sockets[0].getsockname()[1]
+
+    held = socket.create_connection(("127.0.0.1", port), timeout=5)
+    held.sendall(b"GET /stream HTTP/1.1\r\nHost: x\r\n\r\n")
+    time.sleep(0.5)                       # the handler is inside the stream now
+    started = time.monotonic()
+    server.should_exit = True
+    thread.join(timeout=45)
+    held.close()
+    assert not thread.is_alive(), \
+        "the server is still waiting for a stream that will not end"
+    assert time.monotonic() - started < 30, \
+        "it stopped, but not fast enough to beat being killed"
 
 
 def test_a_tag_is_a_name(client):

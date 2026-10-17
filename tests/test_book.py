@@ -118,7 +118,10 @@ def test_what_cannot_be_an_order_is_refused(world):
         tx(5, ask(99, COIN, COIN), ALICE),
     ])
     assert "two different sides" in reason(db, 2)
-    assert "this chain's coin" in reason(db, 3)
+    # two tokens: a pair since Params.token_pairs_from (all of regtest), so it is
+    # refused here only for naming a token that does not exist; before that
+    # height it is "one side is this chain's coin" (tests/test_token_pairs.py)
+    assert "property 4 does not exist" in reason(db, 3)
     assert "out of range" in reason(db, 4)
     assert "property 99 does not exist" in reason(db, 5)
     assert book(db) == []

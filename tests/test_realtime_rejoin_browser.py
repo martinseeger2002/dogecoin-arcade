@@ -37,6 +37,7 @@ arcade.realtime.join('plaza', {game: 'rejoin-test'}).then(function (r) {
   r.on('join', function (p) { window.log.push({join: p.id}); });
   r.on('leave', function (p) { window.log.push({leave: p.id}); });
   r.on('closed', function (why) { window.log.push({closed: why}); });
+  r.on('rejoined', function (me) { window.log.push({rejoined: me && me.id}); });
 });
 </script>"""
 
@@ -124,6 +125,12 @@ def test_players_come_back_into_their_room_after_the_node_restarts(tmp_path, no_
         assert b.execute_script("return window.room.me.id") == ids["b"]
         assert not a.execute_script("return window.log.some(function (e) { return 'closed' in e; })"), \
             "the page is never told the room closed: it came back"
+        # 2026-10-13: and the game is told its own seat was taken again, so it can resend its
+        # state (the others saw it leave and come back).
+        assert a.execute_script("return window.log.some(function (e) { return e.rejoined === arguments[0]; })",
+                                ids["a"]) or a.execute_script(
+            "return window.log.filter(function (e) { return 'rejoined' in e; }).length") >= 1, \
+            a.execute_script("return window.log")
         room = next(iter(state.mesh.node.local))[0]
         assert sorted(m["member"] for m in state.mesh.members(room)) == sorted(ids.values()), \
             "the new node has both players, and nobody twice"

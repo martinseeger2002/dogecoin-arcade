@@ -73,7 +73,8 @@ def _holding_ours(rpc: Any, index: Any, home: str) -> list[str]:
     return mine
 
 
-def stray(rpc: Any, index: Any, home: str, own: list[str]) -> dict[str, list]:
+def stray(rpc: Any, index: Any, home: str, own: list[str],
+          keep: Any = ()) -> dict[str, list]:
     """What this wallet holds away from home, and what it would take to fetch.
 
     Read-only. `coins` are outputs worth moving, `tokens` are (address,
@@ -82,7 +83,13 @@ def stray(rpc: Any, index: Any, home: str, own: list[str]) -> dict[str, list]:
     """
     found: dict[str, list] = {"coins": [], "tokens": [], "pieces": [],
                               "needs_coins": []}
-    elsewhere = [a for a in own if a != home]
+    # `keep`: addresses that hold other people's things for a while and must
+    # never be walked home -- the cross-chain book's exchange address holds
+    # every deposit until its order trades or is cancelled (2026-10-09: a
+    # seller's 5 ASHVALE GOLD was gathered home four blocks after it arrived,
+    # and its refund then found the exchange address empty).
+    kept = set(keep or ())
+    elsewhere = [a for a in own if a != home and a not in kept]
     # Plus anywhere the ledger says this wallet's own things are sitting,
     # even on an address the arcade did not file under its own account: a
     # token this application sent to a receiving address it made before it
@@ -90,7 +97,7 @@ def stray(rpc: Any, index: Any, home: str, own: list[str]) -> dict[str, list]:
     # An address holding nothing but coins is NOT claimed this way -- coins
     # look the same whoever they belong to (D-046).
     elsewhere += [a for a in _holding_ours(rpc, index, home)
-                  if a not in elsewhere and a != home]
+                  if a not in elsewhere and a != home and a not in kept]
     if not elsewhere:
         return found
     # `listunspent` leaves out what the node has locked, which is how an
@@ -136,7 +143,7 @@ def stray(rpc: Any, index: Any, home: str, own: list[str]) -> dict[str, list]:
 
 def walk_home(rpc: Any, index: Any, home: str, own: list[str], *,
               send_coins: Any, send_token: Any, send_piece: Any,
-              limit: int = PER_PASS) -> list[str]:
+              limit: int = PER_PASS, keep: Any = ()) -> list[str]:
     """Move what is away from home, a few things at a time. Returns txids.
 
     The order is not arbitrary. Coins come first and seed the addresses that
@@ -146,7 +153,7 @@ def walk_home(rpc: Any, index: Any, home: str, own: list[str], *,
     sender's, the inscription sender's -- so this decides what moves and
     nothing about how.
     """
-    found = stray(rpc, index, home, own)
+    found = stray(rpc, index, home, own, keep=keep)
     done: list[str] = []
 
     for address in found["needs_coins"]:

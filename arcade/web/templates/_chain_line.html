@@ -1,0 +1,24 @@
+{# Which chain this page makes things on, said plainly, with the way to the other
+   (2026-10-09: creating on mainnet is an option on the Create tab). An account's
+   choice is its own browser's (CHAIN_COOKIE via /create/chain); on the node's own
+   machine the chain is the operator's switch, which this does not touch. #}
+{% macro line(chain, back) -%}
+{% set others = state.token_chains|reject("sameas", chain)|list %}
+<div class="chainline {{ 'is-main' if chain.is_mainnet }} net-{{ chain.net }}">
+  <span class="tag {{ chain.net }}">{{ chain.word }}</span>
+  <span>{% if chain.is_mainnet %}Real {{ chain.params.coin }}. Every transaction here shows its full cost, the operator's fee included, and waits for your yes.{% else %}PEP TEST: test coins, free to try and worth nothing.{% endif %}</span>
+  {% if public %}
+  {% for m in chain_menu() if m.network != chain.network %}
+  {% if m.ready %}<a href="/create/chain?to={{ m.network }}&amp;back={{ back|urlencode }}">Switch to <b class="netl {{ m.net }}">{{ 'D' if m.doge else 'P' }}</b> {{ m.word }}</a>
+  {% else %}<span class="chain-off" aria-disabled="true" title="{{ m.label }} opens when its node has synced ({{ m.progress }}% so far)">{{ m.label }}: syncing</span>{% endif %}
+  {% endfor %}
+  {% endif %}
+</div>
+<style>
+.chainline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:9px 12px;margin:0 0 14px;border-radius:12px;border:1px solid var(--line);font-size:.88rem}
+.chainline.is-main{border-color:var(--net-main);background:color-mix(in srgb,var(--net-main) 6%,transparent)}
+.chainline.net-dogecoin{border-color:var(--net-doge);background:color-mix(in srgb,var(--net-doge) 7%,transparent)}
+.chainline a:first-of-type{margin-left:auto}
+.chainline a{font-weight:700}
+</style>
+{%- endmacro %}

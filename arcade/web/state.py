@@ -147,7 +147,39 @@ class ChainContext:
 
     @property
     def is_mainnet(self) -> bool:
-        return self.network == "main"
+        """Real coins: Pepecoin mainnet AND Dogecoin (2026-10-13). Everything a
+        mainnet page does for safety -- the second confirmation, no faucet, the
+        words backed up -- Dogecoin needs as much."""
+        return self.network in ("main", "doge")
+
+    @property
+    def is_doge(self) -> bool:
+        return self.network == "doge"
+
+    @property
+    def family(self) -> str:
+        """Which coin: "PEP" or "DOGE"."""
+        return "DOGE" if self.is_doge else "PEP"
+
+    @property
+    def letter(self) -> str:
+        return "D" if self.is_doge else "P"
+
+    @property
+    def word(self) -> str:
+        return "main" if self.is_mainnet else "test"
+
+    @property
+    def title(self) -> str:
+        """One short name for every chain, said the same everywhere (2026-10-13:
+        "make it say only P test or P main or D main in all of the labels across the
+        site"): P test, P main, D main."""
+        return f"{self.letter} {self.word}"
+
+    @property
+    def net(self) -> str:
+        """The word a page files this chain under: testnet, mainnet or dogecoin."""
+        return "dogecoin" if self.is_doge else ("mainnet" if self.network == "main" else "testnet")
 
     def credentials(self):
         """Explicit configuration if given, otherwise go and find the node.
@@ -175,8 +207,22 @@ class ChainContext:
         verify_connected_chain(client, self.params)
         return client
 
+    #: How long one node's status is kept (2026-10-13: pages felt slow tab to tab; the
+    #: status is three RPC calls, one of them a wallet read off the disk, and a page
+    #: that shows it needs it to the block, not to the millisecond).
+    STATUS_SECONDS = 10.0
+
     def status(self) -> dict[str, Any]:
-        """Node health, or a plain explanation of why we cannot say."""
+        """Node health, or a plain explanation of why we cannot say (kept 10 s)."""
+        key = (self.network, str(self.conf or ""), str(self.datadir or ""))
+        kept = _STATUS_KEPT.get(key)
+        if kept and kept[0] > time.monotonic():
+            return dict(kept[1])
+        said = self._status()
+        _STATUS_KEPT[key] = (time.monotonic() + self.STATUS_SECONDS, dict(said))
+        return said
+
+    def _status(self) -> dict[str, Any]:
         try:
             with self.rpc() as rpc:
                 info = rpc.get_blockchain_info()
@@ -203,6 +249,10 @@ class ChainContext:
             return {"online": False, "error": str(exc)}
 
 
+#: ChainContext.status answers, by node, until they go stale.
+_STATUS_KEPT: dict = {}
+
+
 @dataclass
 class AppState:
     """Everything the UI needs, shared across requests."""
@@ -210,6 +260,11 @@ class AppState:
     home: Path
     messaging: ChainContext
     ledger: ChainContext
+    #: Dogecoin mainnet, the third network (2026-10-13), when this machine runs a
+    #: Dogecoin node. Shown on every page from the start, and only USED -- indexed,
+    #: offered, paid on -- once the node has synced (`chain_ready`).
+    doge: ChainContext | None = None
+    _sync: dict = field(default_factory=dict)
 
     identity: Identity | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -817,7 +872,7 @@ class AppState:
                 raise ValueError(f"the fee address {fee_address} has no coins to pay for this")
             prepared = sender.prepare(address, payload, change_address=address)
             txid = sender.broadcast(prepared)
-        return {"txid": txid, "host": meshannounce.clean_host(host),
+        return {"txid": txid, "host": meshannounce.clean_address(host),
                 "port": meshannounce.clean_port(port), "key": mesh_key}
 
     def announce_instance(self, domain: str) -> dict:
@@ -922,23 +977,53 @@ class AppState:
     #: wants to know what their wallet is doing without opening a database.
     SETTINGS_FILE = "settings.json"
 
+    #: One writer at a time: a read-modify-write that raced another lost its
+    #: update (2026-10-05).
+    _settings_lock = threading.Lock()
+
     def settings(self) -> dict:
+        """The settings, parsed once per change of the file (2026-10-05).
+
+        Read on every call before, and a page asks a hundred times: with an
+        address and a coin key per account the file is 200 KB, so /feed spent
+        half its time parsing it. The cache is keyed on the file's mtime and
+        size, so a change made by anything (the operator's page, a script, an
+        editor) is picked up on the next call. A copy is handed out, since
+        callers may change what they get."""
+        import json
+        path = self.home / self.SETTINGS_FILE
         try:
-            import json
-            return json.loads((self.home / self.SETTINGS_FILE).read_text())
-        except Exception:
+            st = path.stat()
+        except OSError:
             return {}
+        key = (st.st_mtime_ns, st.st_size)
+        cached = getattr(self, "_settings_cached", None)
+        if cached is None or cached[0] != key:
+            try:
+                cached = (key, json.loads(path.read_text()))
+            except Exception:
+                return dict(cached[1]) if cached else {}
+            self._settings_cached = cached
+        return dict(cached[1])
 
     def setting(self, name: str, default: Any = None) -> Any:
         value = self.settings().get(name)
         return default if value is None else value
 
     def set_setting(self, name: str, value: Any) -> None:
-        import json
-        data = self.settings()
-        data[name] = value
-        self.home.mkdir(parents=True, exist_ok=True)
-        (self.home / self.SETTINGS_FILE).write_text(json.dumps(data, sort_keys=True, indent=1))
+        """Written whole to a temporary file and renamed into place, under a
+        lock: a reader never sees half a file (which read as no settings at
+        all -- every quota and switch at its default for that request), and two
+        writers never lose each other's change."""
+        import json, os
+        with self._settings_lock:
+            data = self.settings()
+            data[name] = value
+            self.home.mkdir(parents=True, exist_ok=True)
+            path = self.home / self.SETTINGS_FILE
+            tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(data, sort_keys=True, indent=1))
+            os.replace(tmp, path)
 
     @property
     def key_path(self) -> Path:
@@ -995,11 +1080,63 @@ class AppState:
 
     @property
     def token_chains(self) -> list[ChainContext]:
-        """The chains tokens are indexed on: the ledger first, then testnet."""
+        """The chains tokens are indexed on: the ledger first, then testnet, then
+        Dogecoin once its node has synced. Everything that does real work loops
+        over this, so a chain still syncing is simply not here yet."""
         chains = [self.ledger]
         if self.messaging.network != self.ledger.network:
             chains.append(self.messaging)
+        if self.doge is not None and self.chain_ready(self.doge):
+            chains.append(self.doge)
         return chains
+
+    @property
+    def all_chains(self) -> list[ChainContext]:
+        """Every chain this node has, ready or not, for the pages to SHOW: a
+        picker draws Dogecoin grayed out while it syncs (2026-10-13: "Have
+        the Doge options grayed out until the node is fully synced")."""
+        chains = [self.ledger]
+        if self.messaging.network != self.ledger.network:
+            chains.append(self.messaging)
+        if self.doge is not None:
+            chains.append(self.doge)
+        return chains
+
+    #: How long a sync answer is kept. Pages ask on every draw; the node is asked
+    #: at most once a minute, from whichever request comes first.
+    SYNC_SECONDS = 60
+
+    def chain_sync(self, chain: ChainContext) -> dict:
+        """{ready, progress (0..1), blocks, headers, online} for one chain.
+
+        Pepecoin's two chains are always ready: they are what the arcade is. A
+        Dogecoin node is ready when it is out of its initial download, its blocks
+        have reached its headers and it says it is all but done -- a node that is
+        merely reachable is not one to take money on."""
+        if not chain.is_doge:
+            return {"ready": True, "progress": 1.0, "online": True}
+        now = time.time()
+        kept = self._sync.get(chain.network)
+        if kept and kept[0] > now:
+            return kept[1]
+        said = {"ready": False, "progress": 0.0, "online": False, "blocks": 0, "headers": 0}
+        try:
+            with chain.rpc() as rpc:
+                info = rpc.get_blockchain_info()
+            blocks, headers = int(info.get("blocks", 0)), int(info.get("headers", 0))
+            progress = float(info.get("verificationprogress", 0) or 0)
+            said = {"online": True, "blocks": blocks, "headers": headers,
+                    "progress": min(1.0, progress),
+                    "ready": (not info.get("initialblockdownload", True)
+                              and headers > 0 and headers - blocks <= 2
+                              and progress >= 0.9999)}
+        except Exception:
+            pass
+        self._sync[chain.network] = (now + self.SYNC_SECONDS, said)
+        return said
+
+    def chain_ready(self, chain: ChainContext) -> bool:
+        return bool(self.chain_sync(chain).get("ready"))
 
     @property
     def rpc_cookie_path(self) -> Path:
@@ -1014,7 +1151,7 @@ class AppState:
     def rpc_chain(self, which: str) -> "ChainContext | None":
         """The chain `/rpc/main` or `/rpc/test` speaks for, if it is indexed."""
         for chain in self.token_chains:
-            if which == ("main" if chain.is_mainnet else "test"):
+            if which == ("doge" if chain.is_doge else "main" if chain.is_mainnet else "test"):
                 return chain
         return None
 
@@ -1135,6 +1272,16 @@ class AppState:
             from ..nodetalk import Talk
             self._talk = Talk(self.home / "nodetalk.sqlite")
         return self._talk
+
+    @property
+    def xchain(self):
+        """The cross-chain book (arcade/xchain.py) and its clerk (xchain_node.py):
+        testnet assets for mainnet Pepecoin, held by this node while they stand."""
+        if getattr(self, "_xchain", None) is None:
+            from ..xchain import Book
+            from ..xchain_node import Clerk
+            self._xchain = Clerk(self, Book(self.home / "xchain.sqlite"))
+        return self._xchain
 
     @property
     def offers(self):

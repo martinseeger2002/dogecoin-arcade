@@ -58,17 +58,27 @@
          style="width:56px;height:56px;border-radius:8px;object-fit:cover;flex:none">
     <h3 style="margin:0" id="listing-what">Sell it</h3>
   </div>
+  {% if node_trades() %}
   <p class="muted" style="font-size:.86rem;margin:0 0 10px">
     Name your price. Anybody can buy it at that price, even when you are
     offline, for the next 30 days. Listing costs nothing. You can cancel it
     any time before it sells, and sending the piece away cancels it too.</p>
+  {% else %}
+  {# Node-facilitated trades are off (the default, 2026-10-13): a sale that waits for a
+     buyer while you are away would need this node to hold your signature. #}
+  <p class="msg info" style="font-size:.86rem;margin:0 0 10px">
+    This arcade trades only while both people are here. Somebody who wants this piece
+    makes an offer; you answer it from your tab, and the trade is signed in both
+    browsers &mdash; this node is trusted with nothing. (Selling while you are away is
+    switched off by this arcade's operator.)</p>
+  {% endif %}
   <div class="row">
     <div style="flex:1"><input autocomplete="off" id="list-price" class="mono"
       spellcheck="false" inputmode="decimal" placeholder="price"></div>
     <input autocomplete="off" id="list-token" class="mono" inputmode="numeric"
       placeholder="token # (blank = coins)" style="flex:0 0 150px"
       title="Leave blank to sell for coins, or give a token's number to sell for that token">
-    <button type="button" id="list-it">Sell</button>
+    <button type="button" id="list-it"{% if not node_trades() %} disabled title="Selling while you are away is off on this arcade"{% endif %}>Sell</button>
     <button type="button" class="ghost" id="list-cancel">Cancel</button>
   </div>
   {# A claim (2026-09-28): the same signed sale, hidden, and completed
@@ -554,7 +564,11 @@ async function draw() {
     const head = document.createElement("div");
     head.className = "chain-head";
     const title = document.createElement("h2");
-    title.textContent = chain.label;
+    // Which coin as well as which net (2026-10-13): the letter in its network color.
+    const netl = document.createElement("b");
+    netl.className = "netl " + (chain.network === "doge" ? "dogecoin" : chain.mainnet ? "mainnet" : "testnet");
+    netl.textContent = chain.network === "doge" ? "D" : "P";
+    title.replaceChildren(netl, " " + (chain.mainnet || chain.network === "doge" ? "main" : "test"));
     const where = document.createElement("span");
     where.className = "muted mono";
     where.style.fontSize = ".78rem";

@@ -1,9 +1,19 @@
 {% extends "base.html" %}
 {% import "_chart.html" as chart %}
+{% import "_exui.html" as ex %}
 {% block title %}{{ wall_text(summary.collection, 'A collection') }} · PepecoinArcade{% endblock %}
 {% block body %}
 {% import "_share_nft.html" as share %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
+{{ ex.style() }}
+<style>
+  /* the collection's numbers as a grid of four, as the redesign draws them */
+  .statbar{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:12px 0}
+  .statbar .stat{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+  @media (max-width:560px){.statbar{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+{% set coin_name = chain.params.coin %}
+<a class="back-link" href="/exchange?tab=market">&#8592; All collections</a>
 
 {% macro coins(sats) %}{{ "%.4f"|format(sats / 100000000) }}{% endmacro %}
 
@@ -12,7 +22,7 @@
     <img src="/content/{{ cover }}" alt="{{ wall_text(summary.collection, 'A collection') }} #1" loading="lazy">
   {% endif %}
   <div class="who">
-    <h1>{{ wall(summary.collection, 'collection name') }}</h1>
+    <h1>{{ wall(summary.collection, 'collection name') }} {{ net_badge(chain) }}</h1>
     <p class="muted" style="margin:0 0 6px">
       by  {{ summary.creator|who }}
       &middot; {{ chain.label }}
@@ -34,7 +44,7 @@
 
 <div class="statbar">
   <div class="stat"><b>{% if floor %}{{ coins(floor) }}{% else %}&mdash;{% endif %}</b>
-    <span>Floor &middot; coins</span></div>
+    <span>Floor &middot; {{ coin_name }}</span></div>
   <div class="stat"><b>{{ for_sale }}</b><span>For sale</span></div>
   <div class="stat"><b>{{ offered }}</b><span>Offers</span></div>
   <div class="stat"><b>{{ "{:,}".format(owners) }}</b><span>Owners</span></div>
@@ -48,15 +58,17 @@
     <span>{% if about.supply and summary.count >= about.supply %}Pieces &middot; complete
           {% elif about.supply %}Pieces{% else %}Pieces &middot; no limit{% endif %}</span></div>
   <div class="stat"><b>{% if traded %}{{ "%.2f"|format(volume) }}{% else %}&mdash;{% endif %}</b>
-    <span>Volume &middot; {{ traded }} sold</span></div>
+    <span>Volume &middot; {{ coin_name }} &middot; {{ traded }} sold</span></div>
 </div>
 
 {% if node_error %}<div class="msg err">{{ node_error }}</div>{% endif %}
 
 {% if prices %}
 <div class="panel" style="margin-bottom:16px">
-  {{ chart.headline(prices.stats, prices.unit) }}
-  {{ chart.candles(prices.slots, prices.unit) }}
+  {# The chart's unit is the coin, by its name (2026-10-08): PEP, or PEP TEST. #}
+  {% set unit = prices.unit|replace('Testnet coins', 'PEP TEST')|replace('Mainnet coins', 'PEP')|replace('coins', coin_name) %}
+  {{ chart.headline(prices.stats, unit) }}
+  {{ chart.candles(prices.slots, unit) }}
 </div>
 {% endif %}
 
@@ -81,7 +93,7 @@
       <td style="text-align:right;white-space:nowrap">
         {% if row.listing %}
           <span class="pill {{ '' if row.listing.pending else 'ok' }}">{{ 'listing sent' if row.listing.pending else 'for sale' }}</span>
-          <strong>{{ row.listing.price }}</strong>
+          <strong>{{ row.listing.price|replace(' coins', ' ' ~ coin_name) }}</strong>
         {% endif %}
         {% if account_view %}
           {# The two links below belong to the node's wallet. An account session
@@ -106,10 +118,19 @@
 {% endif %}
 
 <h2>The collection &mdash; for sale first, then by edition</h2>
+{# For sale only, and a sort, over the pieces on this page (the Exchange redesign,
+   2026-10-09); the pages themselves still come for sale first, then by edition. #}
+<div class="row" style="gap:8px;align-items:center;margin:0 0 10px;flex-wrap:wrap">
+  <span class="ex-modes" style="margin:0"><button type="button" id="only-sale" aria-pressed="false">For sale</button></span>
+  <select id="piece-sort" aria-label="Sort the pieces" style="width:auto;margin-left:auto">
+    <option value="">For sale first</option><option value="low">Price: low to high</option>
+    <option value="high">Price: high to low</option><option value="edition">Edition</option></select>
+</div>
 <div class="tiles">
   {% for row in rows %}
   {% set data = row.json|fromjson %}
-  <div class="tile">
+  <div class="tile" data-sale="{{ '1' if row.listing else '' }}" data-edition="{{ row.edition or 0 }}"
+       data-price="{{ (row.listing.price|string).split(' ')[0]|replace(',', '') if row.listing else '' }}" data-order="{{ loop.index0 }}">
     <a class="art" href="/inscriptions/{{ row.txid }}/view"
        title="{{ wall_text(summary.collection, 'A collection') }} #{{ row.edition }}"
        aria-label="{{ wall_text(summary.collection, 'A collection') }} #{{ row.edition }}"
@@ -125,7 +146,7 @@
         {%- if row.mine %} <strong>you</strong>
         {%- else %} {{ row.owner|who }}{% endif %}</div>
       <div class="price">
-        {%- if row.listing %}<strong>{{ row.listing.price }}</strong>
+        {%- if row.listing %}<strong>{{ row.listing.price|replace(' coins', ' ' ~ coin_name) }}</strong>
         {%- if row.listing.pending %} <span class="pill" title="broadcast, not yet in a block">pool</span>{% endif %}
         {%- else %}<span class="muted">not for sale</span>{% endif %}
         {%- if row.offers %} <span class="muted">&middot; {{ row.offers }} offer{{ '' if row.offers == 1 else 's' }}</span>{% endif %}</div>
@@ -141,10 +162,10 @@
           {% elif row.listing and row.listing.listing %}
             {# One press and the trade happens (2026-09-27). #}
             <button type="button" class="small" data-buy-listing="{{ row.listing.listing }}"
-                    data-piece="{{ wall_text(summary.collection) }} #{{ row.edition }}">Buy {{ row.listing.price }}</button>
+                    data-piece="{{ wall_text(summary.collection) }} #{{ row.edition }}">Buy {{ row.listing.price|replace(' coins', ' ' ~ coin_name) }}</button>
             <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
           {% elif row.listing %}
-            <a class="btn small" href="/inscriptions/{{ row.txid }}/view#for-sale">Buy {{ row.listing.price }}</a>
+            <a class="btn small" href="/inscriptions/{{ row.txid }}/view#for-sale">Buy {{ row.listing.price|replace(' coins', ' ' ~ coin_name) }}</a>
             <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
           {% else %}
             <a class="btn ghost small" href="/inscriptions/{{ row.txid }}/view#make-offer">Make offer</a>
@@ -169,7 +190,7 @@
               {% if row.listing.take.kind == 'token' %}
               <input type="hidden" name="property_id" value="{{ row.listing.take.propertyid }}">
               {% endif %}
-              <button type="submit" class="small">Buy for {{ row.listing.price }}</button>
+              <button type="submit" class="small">Buy for {{ row.listing.price|replace(' coins', ' ' ~ coin_name) }}</button>
             </form>
           {% elif row.listing %}
             <a class="btn small" href="/inscriptions/{{ row.listing.shop }}/view">Buy it</a>
@@ -185,7 +206,7 @@
                      placeholder="amount" style="flex:1 1 76px;min-width:0">
               <select autocomplete="off" name="kind" style="flex:1 1 90px"
                       onchange="var t=this.form.querySelector('[name=property_id]'); if(t) t.hidden = this.value !== 'token'">
-                <option value="coins">coins</option>
+                <option value="coins">{{ coin_name }}</option>
                 {% if tokens %}<option value="token">a token</option>{% endif %}
               </select>
               {% if tokens %}
@@ -208,6 +229,31 @@
 {% if not rows %}
   <div class="panel empty"><p>Nothing of this collection is indexed yet.</p></div>
 {% endif %}
+<script>
+(function () {
+  var bar = document.getElementById("piece-sort").parentNode;
+  var box = bar && bar.nextElementSibling, only = document.getElementById("only-sale"),
+      sort = document.getElementById("piece-sort");
+  if (!box) return;
+  var tiles = Array.prototype.slice.call(box.children);
+  function draw() {
+    var on = only.getAttribute("aria-pressed") === "true", how = sort.value;
+    var num = function (t, k) { var n = parseFloat(t.dataset[k]); return isNaN(n) ? null : n; };
+    tiles.slice().sort(function (a, b) {
+      if (how === "low" || how === "high") {
+        var pa = num(a, "price"), pb = num(b, "price");
+        if (pa === null && pb === null) return num(a, "order") - num(b, "order");
+        if (pa === null) return 1; if (pb === null) return -1;
+        return how === "low" ? pa - pb : pb - pa;
+      }
+      if (how === "edition") return num(a, "edition") - num(b, "edition");
+      return num(a, "order") - num(b, "order");
+    }).forEach(function (t) { t.hidden = on && !t.dataset.sale; box.append(t); });
+  }
+  only.onclick = function () { only.setAttribute("aria-pressed", String(only.getAttribute("aria-pressed") !== "true")); draw(); };
+  sort.onchange = draw;
+})();
+</script>
 
 {% if pages > 1 %}
 <nav class="pager">

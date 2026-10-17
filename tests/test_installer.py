@@ -546,7 +546,11 @@ def test_one_on_the_PATH_counts_too(tmp_path, monkeypatch):
 
 
 def test_nothing_installed_is_reported_as_nothing(tmp_path, monkeypatch):
+    # Only an empty folder is looked in: the box running this may have a real
+    # node in /usr/local/bin (the arcade's own test box does, since 2026-10-13).
     monkeypatch.setattr(install.shutil, "which", lambda name: None)
+    monkeypatch.setattr(install, "core_search_paths",
+                        lambda coin, target, system: [target / coin.binaries[0]])
     assert install.existing_core(install.DOGECOIN, tmp_path, "Linux") is None
 
 
@@ -817,3 +821,67 @@ def test_a_half_made_venv_is_made_again(fake_home, monkeypatch, tmp_path):
         pass                                   # the fake pip installs nothing importable
     assert made, "the venv was made again"
     assert (venv / "bin" / "pip").exists()
+
+
+# --- both coins, no question (2026-10-13) -------------------------------
+
+def _quiet_install(tmp_path, monkeypatch, seen):
+    monkeypatch.setattr(install, "existing_core", lambda coin, target, system: None)
+    monkeypatch.setattr(install, "running_core", lambda coin: None)
+    monkeypatch.setattr(install, "fetch_core", lambda workdir, asset, coin: Path("a"))
+    monkeypatch.setattr(install, "install_core", lambda *a, **k: None)
+    monkeypatch.setattr(install, "restart_running_nodes", lambda coin: [])
+    monkeypatch.setattr(install, "write_configs", lambda m, t, coin: seen.append(coin.key))
+    monkeypatch.setattr(install, "install_services", lambda *a, **k: [])
+    monkeypatch.setattr(install, "install_app", lambda dry: tmp_path / "venv")
+    monkeypatch.setattr(install, "install_web_service", lambda *a, **k: True)
+    monkeypatch.setattr(install, "write_launcher", lambda *a, **k: tmp_path / "x")
+    monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("the installer must not ask which chain"))
+
+
+def test_the_installer_installs_both_coins_without_asking(tmp_path, monkeypatch):
+    """2026-10-13: "that option should be removed when installing because
+    it should install both"."""
+    seen = []
+    _quiet_install(tmp_path, monkeypatch, seen)
+    monkeypatch.setattr(install.sys.stdin, "isatty", lambda: True, raising=False)
+    assert install.main(["--no-browser", "--no-bootstrap"]) == 0
+    assert seen == ["pepecoin", "dogecoin"]
+    assert not hasattr(install, "choose_chain")
+
+
+def test_dogecoin_runs_mainnet_only(tmp_path):
+    """2026-10-13: "We don't want Dogecoin test net"."""
+    main, test = tmp_path / "doge", tmp_path / "doge-testnet"
+    install.write_configs(main, test, install.DOGECOIN)
+    assert (main / "dogecoin.conf").exists() and not test.exists()
+    said = (main / "dogecoin.conf").read_text()
+    assert "txindex=1" in said and "zmqpubrawtx=tcp://127.0.0.1:28535" in said and "testnet=1" not in said
+    assert [l for l, _ in install.DOGECOIN.nodes(main, test)] == ["mainnet"]
+    assert [l for l, _ in install.PEPECOIN.nodes(main, test)] == ["mainnet", "testnet"]
+
+
+def test_an_existing_config_gets_what_the_arcade_needs_and_keeps_the_rest(tmp_path, capsys):
+    main, test = tmp_path / "doge", tmp_path / "doge-testnet"
+    main.mkdir()
+    conf = main / "dogecoin.conf"
+    conf.write_text("# mine\nserver=1\nrpcallowip=192.168.1.0/24\ndbcache=4000\n")
+    install.write_configs(main, test, install.DOGECOIN)
+    said = conf.read_text()
+    assert said.startswith("# mine\nserver=1\nrpcallowip=192.168.1.0/24\ndbcache=4000\n"), "nothing of theirs moves"
+    assert said.count("rpcallowip=") == 1 and said.count("server=") == 1 and said.count("dbcache=") == 1
+    for line in ("txindex=1", "zmqpubhashblock=tcp://127.0.0.1:28532", "zmqpubrawblock=tcp://127.0.0.1:28533"):
+        assert line in said, line
+    install.write_configs(main, test, install.DOGECOIN)
+    assert conf.read_text() == said, "a second run adds nothing"
+    assert "already has what the arcade needs" in capsys.readouterr().out
+
+
+def test_txindex_is_not_switched_on_under_a_synced_node(tmp_path, capsys):
+    """Turning txindex on where blocks exist stops the node until a -reindex."""
+    main = tmp_path / "doge"
+    (main / "blocks").mkdir(parents=True)
+    (main / "dogecoin.conf").write_text("server=1\n")
+    install.write_configs(main, tmp_path / "t", install.DOGECOIN)
+    assert "txindex" not in (main / "dogecoin.conf").read_text()
+    assert "-reindex" in capsys.readouterr().out

@@ -61,8 +61,10 @@ PUBLIC_PAGES = frozenset({
     "/tokens",
     "/nfts",
     "/create",
+    "/create/chain",          # which chain this browser creates on (a cookie, no spending)
     "/inscriptions",
     "/exchange",
+    "/exchange/pairs",            # the "open a pair" box: two token ids to a token/token pair's page
     "/games",                 # every inscribed game (arcade/games.py)
     "/account/escrows",       # an account's own escrows (needs a session)
     "/launch",
@@ -109,12 +111,16 @@ PUBLIC_PAGES = frozenset({
     "/account/mailbox",
     "/account/find",
     "/account/nfts",
+    "/account/nfts/collections",      # what this account holds, by collection
+    "/account/nfts/pieces",           # one page of one of those collections
     "/account/tokens",
     "/account/inscribe/unfinished",
     "/account/dust",                  # coins in this account's own payload outputs
+    "/account/activity",              # this account's own coin history (signed in)
     "/account/standing/fillable",     # this account's buy orders a sell order meets
     "/account/claimpools",            # this account's own prize pools, to withdraw
     "/account/pagesends",             # what pages have asked this account to send
+    "/account/run/item",              # one item of this account's own run, as uploaded
 })
 
 #: Prefixes a stranger may read. Everything under them is public, so each
@@ -136,6 +142,8 @@ PUBLIC_TREES = (
     "/exchange/collection/",
     "/mintpad/",              # an account's mintpad: pre-signed listings, read-only here
     "/exchange/pair/",
+    "/exchange/pairs/",       # a token/token pair's page (2026-10-06)
+    "/exchange/x/",           # a cross-chain market: a testnet asset for mainnet PEPE (2026-10-06)
 )
 
 #: Whole paths with something variable in the middle of them, where a tree
@@ -153,6 +161,8 @@ PUBLIC_SHAPES = (
     # One game's discussion: read-only, like the launch thread it is.
     re.compile(r"^/games/[0-9a-f]{64}$"),
     re.compile(r"^/inscriptions/(?:[0-9a-fA-F]{64}|[0-9]{1,12})/view$"),
+    # The bare address of a piece, which only forwards to /view (2026-10-09).
+    re.compile(r"^/inscriptions/(?:[0-9a-fA-F]{64}|[0-9]{1,12})$"),
     # The same piece filling the screen (2026-09-29): read-only, and the
     # frame in it is the same sandbox the piece page uses.
     re.compile(r"^/inscriptions/(?:[0-9a-fA-F]{64}|[0-9]{1,12})/full$"),
@@ -259,8 +269,12 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # how the account's own mintpad page looks (presentation only)
                "/account/mintpad", "/account/mintpad/inscribe", "/account/tokenpad/inscribe", "/account/mintpad/announce", "/account/mintpad/announced",
                "/account/claim", "/account/send", "/account/inscribe", "/account/inscribe/abandon",
-               "/account/run/start", "/account/run", "/account/run/piece",
+               "/account/run/start", "/account/run/plan", "/account/run", "/account/run/piece",
                "/account/run/stop",
+               # a folder bigger than one request, in batches; and an item of
+               # more than one transaction, sent the one-big-file way, reported
+               # done. None of the three broadcasts or spends anything.
+               "/account/run/upload", "/account/run/done",
                # the two ends of a run that stopped by itself: the refused
                # pieces put back in line, and a run this node has been keeping
                # pictures for forgotten for good. Neither broadcasts, and both
@@ -293,7 +307,9 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/pagesends/answer",
                # claiming one lot of a prize pool read off the chain: built here
                # from the pool's own inscription, signed in the claimer's tab.
-               "/account/prize", "/account/prize/sign",
+               "/account/prize", "/account/prize/sign", "/account/prize/take",
+               # a bundle: several things each way in one trade (2026-10-04)
+               "/account/bundle/build", "/account/bundle/fill", "/account/bundle/fill/sign",
                # a refereed pool (2026-09-29): a seed for the player's next run,
                # and the referee's own two, which other nodes call. A seed is a
                # random number; a signature comes only for a replay the judge
@@ -335,6 +351,13 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # with the reason in it, not a 404 that leaves them guessing
                # whether the route exists (S-work-3).
                "/account/order/list",
+               # token/token pairs (2026-10-06): the same as an order and a
+               # cancel above, one message and a fee from the account's own
+               # address, signed in its tab; the engine matches it in its block.
+               "/account/pair-order", "/account/pair-order/cancel",
+               # the cross-chain book (2026-10-06): the account's deposit, signed in
+               # its tab like any send, and a cancel of its own order
+               "/account/x/order", "/account/x/cancel",
                # and the one read that makes the book takeable by a tab: it
                # builds nothing and sends nothing, it only says which order the
                # queue chose, what it prices to, and which key the question has

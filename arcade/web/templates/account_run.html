@@ -7,11 +7,11 @@
 .run-note{font-size:.9rem;color:var(--muted);min-height:1.3em}
 </style>
 <h1>{{ wall(run.name, 'collection name') }}</h1>
-<p class="sub">Every piece of this was written down the moment you uploaded
+<p class="sub">Every piece of this was written down the moment you chose
   the folder, and goes on the chain one transaction at a time &mdash; each one
-  built by this node out of coins only you can spend, and signed here. Leave
-  the tab, close the laptop, restart the node: the run is still here, at the
-  piece it stopped on.</p>
+  built by this node out of coins only you can spend, and signed in your
+  browser. Leave the tab, close the laptop, restart the node: the run is still
+  here, at the piece it stopped on.</p>
 
 <p class="muted" id="shut" hidden style="font-size:.86rem">
   Your wallet is locked. Press Unlock at the top of the page, or just carry on: anything that needs your key asks for your password first.
@@ -29,10 +29,12 @@
     <span class="muted" style="margin-left:auto" id="run-next">
       {% if run.next %}next is {{ run.next }}.{% endif %}
       {% if run.refused %}{{ "{:,}".format(run.refused) }}
-        refused.{% endif %}</span>
+        refused.{% endif %}
+      {% if run.skipped %}{{ "{:,}".format(run.skipped) }}
+        already in the set, so not paid for.{% endif %}</span>
   </div>
   <div class="run-bar"><div class="run-fill" id="run-fill"
-       style="width:{{ (100 * run.sent / run["items"]) if run["items"] else 0 }}%"></div></div>
+       style="width:{{ (100 * (run.sent + run.skipped) / run["items"]) if run["items"] else 0 }}%"></div></div>
   {% if run.note %}<div class="run-note" id="run-note">{{ run.note }}</div>{% endif %}
   <table style="margin-top:12px">
     <tr><td class="muted" style="width:130px">Chain</td><td>{{ chain.label }}</td></tr>
@@ -42,12 +44,21 @@
         <td>about {{ "%.2f"|format(run.fee + run.dust) }} in all,
           {{ "%.2f"|format(run.fee) }} once the dust is swept back</td></tr>
     <tr><td class="muted">Pictures</td>
+        {% if run.folder %}
         <td class="muted">the folder you uploaded, which this node keeps to
           build the rest of the pieces from. Removing the run below takes them
-          off this machine with it.</td></tr>
+          off this machine with it.</td>
+        {% else %}
+        <td class="muted">in the browser you chose the folder in &mdash; this node
+          keeps none of them. The run goes on from the
+          <a href="/me/nfts">wallet page</a> there, one piece at a time; if that
+          browser has lost them, choose the folder again on that page.</td>
+        {% endif %}</tr>
   </table>
   <div class="row" style="margin-top:14px">
-    {% if run.next %}
+    {% if run.next and not run.folder %}
+      <a class="btn" href="/me/nfts">Carry on from the wallet page</a>
+    {% elif run.next %}
       <button type="button" id="run-piece">Inscribe {% if run.sent %}the next
         piece{% else %}the first piece{% endif %}</button>
     {% endif %}
@@ -75,6 +86,8 @@
       <td>{% if piece.status == 'sent' %}<span class="pill ok">sent</span>
           {% elif piece.status == 'failed' %}<span class="pill bad">refused</span>
             <span class="muted">{{ piece.error[:100] }}</span>
+          {% elif piece.status == 'skipped' %}<span class="pill">already in the set</span>
+            <span class="muted">nothing was paid for it</span>
           {% elif piece.status == 'sending' %}<span class="pill warn">out for a signature</span>
           {% else %}<span class="pill">waiting</span>{% endif %}</td>
       <td>{% if piece.txid in numbers %}
@@ -138,7 +151,7 @@ const piece = () => $("run-piece") && ($("run-piece").onclick = async () => {
     $("run-count").textContent = `${commas(offer.sent + 1)} of `
       + `${commas(offer.items)} pieces on the chain`;
     $("run-fill").style.width =
-      `${(100 * (offer.sent + 1) / offer.items).toFixed(1)}%`;
+      `${(100 * (offer.sent + 1 + Number(offer.skipped || 0)) / offer.items).toFixed(1)}%`;
     news(`Inscribed: ${out.txid.slice(0, 16)}… Piece ${offer.piece} of `
         + `${commas(offer.items)}. Its number appears when a block carries it.`);
     setTimeout(() => location.reload(), 4000);

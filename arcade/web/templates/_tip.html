@@ -1,0 +1,21 @@
+{# What a tip is paid in, shared by the feed and the Games tab. Three steps (the operator
+   2026-10-13: "The tip picker should start with a network picker and then have a coin or
+   token picker and then a token if token is selected"): the network (P test, P main, and
+   D main grayed until its node has synced), then its coin or a token, then which token.
+   `wallet.tipPicker()` keeps the coin's name and the token list in step with the network;
+   `wallet.tip()` sends whichever it is. #}
+{% macro tip_pay() %}
+{%- set chains = tip_chains() %}
+{%- set first = (chains|selectattr('ready')|list or chains)[0] %}
+<select name="net" data-tip-net aria-label="Network" style="flex:0 0 auto;width:auto">
+  {%- for c in chains %}
+  <option value="{{ c.network }}" data-coin="{{ c.coin }}" data-label="{{ c.label }}"
+          {%- if c.network == first.network %} selected{% endif %}{% if not c.ready %} disabled{% endif %}>{{ c.label }}{% if not c.ready %} &mdash; syncing {{ c.progress }}%{% endif %}</option>
+  {%- endfor %}
+</select>
+<select name="what" data-tip-what aria-label="Coins or a token" style="flex:0 0 auto;width:auto">
+  <option value="coin">{{ first.coin }}</option>
+  <option value="token">a token</option>
+</select>
+<select name="token" aria-label="Which token" hidden style="flex:1 1 140px;width:auto"></select>
+{%- endmacro %}

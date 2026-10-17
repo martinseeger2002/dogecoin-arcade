@@ -647,7 +647,7 @@ class OmniRpc:
     def _address(self, value: Any, what: str) -> str:
         from .app import _check_address
         address = _str(value, what).strip()
-        complaint = _check_address(address, mainnet=self.chain.is_mainnet)
+        complaint = _check_address(address, mainnet=self.chain)
         if complaint:
             raise RpcError(INVALID_ADDRESS, f"{what}: {complaint}")
         return address

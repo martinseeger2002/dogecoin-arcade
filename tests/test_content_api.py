@@ -125,6 +125,8 @@ def test_a_missing_inscription_is_a_404_not_an_error_page(client):
         response = app.get(path)
         assert response.status_code == 404
         assert response.json()["error"] == "no such inscription"
+        # missing NOW, perhaps there in a minute: no edge and no browser may keep it
+        assert response.headers.get("cache-control") == "no-store", path
 
 
 # --- what a wallet holds -------------------------------------------------------

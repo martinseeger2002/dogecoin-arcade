@@ -117,6 +117,14 @@ class Unsigned:
                        for i in self.inputs],
             "sighashes": self.sighashes,
             "signed_from": self.signed_from,
+            # Whose key makes the signatures this is waiting for -- the thing an
+            # offer used to leave unsaid while it named the address that signs
+            # (a tester). It is read off the type, never off `signed_from`,
+            # which is an index into `inputs` and stays one: an `Unsigned` is
+            # unsigned and waiting for the reader's own key, since the node that
+            # built it holds neither that key nor those coins. A node's own
+            # signature is announced by `swap.public`, and nothing hashes this.
+            "signed_by": "account",
             "fee": self.fee,
             "change": self.change,
             "what": self.what,
@@ -782,6 +790,12 @@ class Leg:
                         for value, script in self.outputs],
             "sighashes": self.sighashes,
             "sighash_type": self.sighash_type,
+            # The same disclosure an offer carries. A leg's signatures are made
+            # by whoever made the leg, in their own tab -- this node completes
+            # legs and never signs one -- so from here they are always the
+            # account's, and a reader should not have to infer it from there
+            # being a leg at all.
+            "signed_by": "account",
             "fee": self.fee,
             "pays": self.pays,
             "paid": self.paid,
@@ -844,7 +858,8 @@ def swap_fee(rate: int, payload_script: bytes = b"") -> int:
 
 def build_leg(params: Params, address: str, piece: dict, coins: int,
               rate: int, what: str = "", payload: bytes | None = None,
-              coin: dict | None = None, redeem: bytes = b"") -> Leg:
+              coin: dict | None = None, redeem: bytes = b"",
+              pool_pays: int = 0) -> Leg:
     """The transaction a seller signs to LIST: its own coins in, one payment
     out, and -- when it names the thing it is selling -- the bytes that say so.
 
@@ -933,6 +948,12 @@ def build_leg(params: Params, address: str, piece: dict, coins: int,
     fee = swap_fee(rate, payload_script)
     held = sum(spent["value"] for spent in inputs)
     paid = held + coins - fee
+    if pool_pays:
+        # A lot that pays its own claim (a prize pool with "fee": "pool",
+        # 2026-10-04): it keeps back `pool_pays` for the block and for the
+        # claimer's receiving output, which the referee's ALL signature fixes,
+        # so the claimer adds no coin of its own and reserves nothing to repay.
+        fee, paid = 0, held + coins - int(pool_pays)
     if paid <= 0:
         raise FundingError(
             f"the price ({coins} sats) does not cover what a block costs "

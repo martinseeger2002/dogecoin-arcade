@@ -114,6 +114,11 @@ class BlockWatcher:
                       # The public board's mainnet half needs its own scan, and
                       # a public-only scanner decrypts nothing (D-014).
                       lambda: self._check(self.state.ledger, public_only=True),
+                      # Dogecoin too, once its node has synced (2026-10-13): a tip
+                      # paid in DOGE is a note on the Dogecoin chain.
+                      lambda: (self._check(self.state.doge, public_only=True)
+                               if self.state.doge is not None
+                               and self.state.chain_ready(self.state.doge) else None),
                       self._sync_ledgers,
                       self._check_pending_offers,
                       self._check_pending_feed,
@@ -121,6 +126,7 @@ class BlockWatcher:
                       self._check_release_notices,
                       self._announce_release,
                       self._keep_shop,
+                      self._run_xchain,
                       self._import_listings,
                       self._walk_home):
             try:
@@ -189,6 +195,19 @@ class BlockWatcher:
                 log.debug("listing import on %s failed", chain.network, exc_info=True)
         if filed:
             self.state.bump_generation()
+
+    def _run_xchain(self) -> None:
+        """The cross-chain book (arcade/xchain_node.py): deposits that have their
+        confirmations open their orders, and what is owed is paid. Every 5 s (2026-10-09: a
+        deposit counts from the mempool, so a trade should not then wait 20 s);
+        only when this node has opened the book (a setting the operator turns on)."""
+        if not self.state.setting("xchain:enabled"):
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_xchain_at", 0.0) < 5.0:
+            return
+        self._xchain_at = now
+        self.state.xchain.tick()
 
     def _keep_shop(self) -> None:
         """Answer orders at this wallet's shops (arcade/shopkeeper.py).
@@ -443,6 +462,21 @@ class BlockWatcher:
         if now - self._update_checked < self.UPDATE_EVERY:
             return
         self._update_checked = now
+        # A source checkout (a developer's machine, or the one releases are published
+        # from) has nothing to fetch: its code is whatever is checked out. Comparing its
+        # commit with the published one always differs -- the published history is a
+        # filtered copy with commits of its own -- so every 15 minutes it "updated":
+        # nothing fetched, and then a restart of the interface, dropping every room and
+        # page on it (seen on the mini PC 2026-10-13, where only the restart's needing
+        # root saved it). Such a machine updates with git; this says so and stops.
+        try:
+            _, checkout, fetchable = update._layout()
+        except Exception:
+            checkout, fetchable = None, True
+        if not fetchable:
+            self._said("a source checkout: updated with git, not automatically",
+                       installed=update.current_revision(checkout) if checkout else None)
+            return
         if self.state.live_progress():
             return                      # a send is in flight; next time
         try:

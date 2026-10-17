@@ -85,16 +85,16 @@ def test_launches_is_folded_into_the_mintpads_tab(client):
     app, state = client
     index_with_a_collection(state.home)
     _a_pad(state.home)
-    assert f"/content/{PAD}" not in app.get("/exchange").text, \
+    assert f"/content/{PAD}" not in app.get("/exchange?tab=mintpads").text, \
         "nothing listed on it: a finished pad is off the list (2026-09-28)"
     _a_piece_on_the_pad(state, f"{1:064x}")
     moved = app.get("/launches?sort=new", follow_redirects=False)
     assert moved.status_code == 303
     assert moved.headers["location"] == "/exchange?tab=mintpads&sort=new"
-    page = app.get("/exchange").text
+    page = app.get("/exchange?tab=mintpads").text
     assert 'href="/launches"' not in page, "no Launches button"
     assert f'class="inscription-frame postmedia padframe" src="/content/{PAD}"' in page
-    assert "NFT mintpad" in page and "Doge Punks" in page
+    assert "NFT collection" in page and "Doge Punks" in page   # the Launchpad's tag (2026-10-09)
     assert f'action="/feed/{PAD}/like"' in page, "the like is aimed at the pad"
     assert 'href="/exchange?tab=mintpads&amp;sort=new"' in page
 
@@ -119,7 +119,7 @@ def test_the_launch_wizard_is_gone_and_its_address_goes_to_the_mintpad_wizard(cl
     """2026-09-26: no wizard for making tokens or collections (that is
     easy already); a mintpad wizard instead."""
     app, _ = client
-    ex = app.get("/exchange").text
+    ex = app.get("/exchange?tab=mintpads").text
     assert 'href="/launch"' not in ex
     moved = app.get("/launch", follow_redirects=False)
     assert moved.status_code == 303 and moved.headers["location"] == "/mintpad/new"

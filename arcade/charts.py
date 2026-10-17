@@ -88,6 +88,20 @@ def token_prices(trades: Iterable[dict], property_id: int,
     return out
 
 
+def pair_prices(trades: Iterable[dict], base_divisible: bool = True,
+                quote_divisible: bool = True) -> list[dict]:
+    """A token/token pair's trades (Ledger.pair_trades) as QUOTE per BASE, each
+    amount in its own token's units -- the same points token_prices draws."""
+    out = []
+    for t in trades:
+        b = t["base"] / COIN if base_divisible else float(t["base"])
+        q = t["quote"] / COIN if quote_divisible else float(t["quote"])
+        if b > 0:
+            out.append({"when": t["when"], "height": t["height"], "price": q / b,
+                        "size": b, "txid": t["txid"]})
+    return out
+
+
 #: Passed as `collection` to mean "the pieces that belong to no collection",
 #: which None cannot mean because None already means "every piece".
 STANDALONE = object()

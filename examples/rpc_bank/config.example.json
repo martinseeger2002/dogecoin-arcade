@@ -1,0 +1,17 @@
+{
+  "game": "mygame",
+  "room": "bank",
+  "network": "test",
+  "node": "https://your-arcade.example.com",
+  "key": "~/.mybank/bank.key",
+  "rpc_url": "http://127.0.0.1:44873",
+  "rpc_cookie": "~/.pepecoin-testnet/testnet3/.cookie",
+  "ledger": "~/.dogecoinarcade/test-ledger.sqlite",
+  "home": "~/.mybank",
+  "tokens": {"gold": 1001, "wood": 1002},
+  "per_day": 5000,
+  "hold_s": 45,
+  "per_minute": 40,
+  "batch_cap": 10000,
+  "sweep_below": 0.05
+}

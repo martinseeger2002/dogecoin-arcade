@@ -78,6 +78,15 @@ def seed_seconds(ref: dict) -> int:
     return int(min(hours, SEED_HOURS_MOST) * 3600)
 #: Replays one wallet may have judged in a minute.
 JUDGED_PER_MINUTE = 3
+#: ... and claims one SESSION seed may have judged in a minute (2026-10-04,
+#: the operator: a game claims each pickup as it happens).
+SESSION_JUDGED_PER_MINUTE = 30
+
+
+def record_sha(items: Any) -> str:
+    """The digest a session keeps of the record it has accepted so far."""
+    return hashlib.sha256(json.dumps(items, sort_keys=True, separators=(",", ":"))
+                          .encode()).hexdigest()
 
 
 class RefereeError(Exception):
@@ -130,6 +139,8 @@ class Referee:
         self._lock = threading.Lock()
         self._judged: dict[str, list[float]] = {}
         self._key = None
+        self._sessions: dict[str, threading.Lock] = {}
+        self._verdicts: dict[str, dict] = {}
 
     # The key is made on first use and kept beside the node's other files. It
     # is the one private key a node holds, and it signs nothing but claims its
@@ -177,6 +188,14 @@ class Referee:
             conn.execute("ALTER TABLE seed ADD COLUMN facts TEXT DEFAULT ''")
         if "game" not in columns:
             conn.execute("ALTER TABLE seed ADD COLUMN game TEXT DEFAULT ''")
+        if "session" not in columns:
+            conn.execute("ALTER TABLE seed ADD COLUMN session INTEGER DEFAULT 0")
+        # A session seed (2026-10-04): what it has been paid, and how far the
+        # record it was paid on goes.
+        conn.execute("CREATE TABLE IF NOT EXISTS session_pay (seed TEXT, pool TEXT, lot INTEGER, "
+                     "at REAL, params TEXT, claim TEXT, PRIMARY KEY (seed, pool, lot))")
+        conn.execute("CREATE TABLE IF NOT EXISTS session_state (seed TEXT PRIMARY KEY, "
+                     "upto INTEGER, sha TEXT, prior TEXT)")
         # A game's seed is spent once at EACH of its pools (2026-09-30: one play
         # session pays several prizes, each from its own pool).
         conn.execute("CREATE TABLE IF NOT EXISTS seed_use (seed TEXT, pool TEXT, used TEXT, "
@@ -184,7 +203,7 @@ class Referee:
         return conn
 
     def issue_seed(self, pool: str, address: str, seconds: int = SEED_SECONDS,
-                   facts: dict | None = None, game: str = "") -> dict:
+                   facts: dict | None = None, game: str = "", session: bool = False) -> dict:
         """A seed for one pool, or (with `game`, and `pool` empty) for every
         refereed pool of one game, each of which takes it once."""
         now = time.time()
@@ -197,19 +216,21 @@ class Referee:
                 raise RefereeError(f"this wallet already holds {SEEDS_OPEN} unused seeds "
                                    "for this pool; play one of them")
             seed = secrets.token_hex(32)
-            db.execute("INSERT INTO seed (seed, pool, address, issued, expires, facts, game) "
-                       "VALUES (?,?,?,?,?,?,?)", (seed, pool, address, now, now + seconds,
-                                                  json.dumps(facts) if facts else "", game))
+            db.execute("INSERT INTO seed (seed, pool, address, issued, expires, facts, game, "
+                       "session) VALUES (?,?,?,?,?,?,?,?)",
+                       (seed, pool, address, now, now + seconds,
+                        json.dumps(facts) if facts else "", game, 1 if session else 0))
         return {"seed": seed, "expires": int(now + seconds)}
 
     def seed_row(self, seed: str) -> dict | None:
         with closing(self._db()) as db:
-            row = db.execute("SELECT seed, pool, address, issued, expires, used, facts, game "
-                             "FROM seed WHERE seed=?", (str(seed),)).fetchone()
+            row = db.execute("SELECT seed, pool, address, issued, expires, used, facts, game, "
+                             "session FROM seed WHERE seed=?", (str(seed),)).fetchone()
         if row is None:
             return None
         out = dict(zip(("seed", "pool", "address", "issued", "expires", "used", "facts",
-                        "game"), row))
+                        "game", "session"), row))
+        out["session"] = bool(out["session"])
         out["facts"] = json.loads(out["facts"]) if out["facts"] else None
         return out
 
@@ -240,11 +261,49 @@ class Referee:
         with self._lock, closing(self._db()) as db, db:
             db.execute("UPDATE seed SET used='' WHERE seed=?", (seed,))
 
-    def pace(self, address: str) -> None:
+    # --- session seeds (2026-10-04) ------------------------------------------------
+
+    def session_lock(self, seed: str) -> threading.Lock:
+        """One claim of a session at a time: each one moves where the record stands."""
+        with self._lock:
+            return self._sessions.setdefault(str(seed), threading.Lock())
+
+    def session_state(self, seed: str) -> dict:
+        with closing(self._db()) as db:
+            row = db.execute("SELECT upto, sha, prior FROM session_state WHERE seed=?",
+                             (str(seed),)).fetchone()
+        if row is None:
+            return {"upto": 0, "sha": record_sha([]), "prior": None}
+        return {"upto": int(row[0]), "sha": row[1], "prior": json.loads(row[2]) if row[2] else None}
+
+    def session_paid(self, seed: str) -> list[dict]:
+        with closing(self._db()) as db:
+            rows = db.execute("SELECT pool, lot, at, params FROM session_pay WHERE seed=? "
+                              "ORDER BY at", (str(seed),)).fetchall()
+        return [{"pool": p, "lot": int(n), "at": int(at), "params": json.loads(q) if q else {}}
+                for p, n, at, q in rows]
+
+    def session_paid_for(self, seed: str, pool: str, lot: int) -> str:
+        """The claim a session already had signed for this lot, or ""."""
+        with closing(self._db()) as db:
+            row = db.execute("SELECT claim FROM session_pay WHERE seed=? AND pool=? AND lot=?",
+                             (str(seed), str(pool), int(lot))).fetchone()
+        return row[0] if row else ""
+
+    def session_record(self, seed: str, pool: str, lot: int, params: Any, claim: str,
+                       upto: int, sha: str, prior: Any) -> None:
+        with self._lock, closing(self._db()) as db, db:
+            db.execute("INSERT INTO session_pay (seed, pool, lot, at, params, claim) "
+                       "VALUES (?,?,?,?,?,?)", (str(seed), str(pool), int(lot), time.time(),
+                                                json.dumps(params), str(claim)))
+            db.execute("INSERT OR REPLACE INTO session_state (seed, upto, sha, prior) "
+                       "VALUES (?,?,?,?)", (str(seed), int(upto), str(sha), json.dumps(prior)))
+
+    def pace(self, address: str, most: int = JUDGED_PER_MINUTE) -> None:
         now = time.time()
         with self._lock:
             recent = [t for t in self._judged.get(address, []) if now - t < 60]
-            if len(recent) >= JUDGED_PER_MINUTE:
+            if len(recent) >= most:
                 raise RefereeError("that wallet has had its limit of replays judged this "
                                    "minute; try again in a moment")
             self._judged[address] = recent + [now]
@@ -252,8 +311,20 @@ class Referee:
     # --- the judge --------------------------------------------------------------------
 
     def judge(self, source: str, seed: str, inputs: Any, params: Any) -> dict:
-        """Run a judge in its own process, and read what it says."""
-        return run_judge(source, seed, inputs, params)
+        """Run a judge in its own process, and read what it says. A judge has no
+        clock and no randomness, so the same four things always get the same
+        verdict: one run sent to several pools with one judge is judged once."""
+        key = hashlib.sha256(json.dumps([source, seed, inputs, params], sort_keys=True,
+                                        separators=(",", ":"), default=str).encode()).hexdigest()
+        with self._lock:
+            if key in self._verdicts:
+                return dict(self._verdicts[key])
+        verdict = run_judge(source, seed, inputs, params)
+        with self._lock:
+            if len(self._verdicts) >= 256:
+                self._verdicts.pop(next(iter(self._verdicts)))
+            self._verdicts[key] = dict(verdict)
+        return verdict
 
 
 def run_judge(source: str, seed: str, inputs: Any, params: Any,

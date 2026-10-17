@@ -48,7 +48,7 @@ Then open:       http://127.0.0.1:8420
 | Flag | Effect |
 |---|---|
 | `--dry-run` | Show what would happen, change nothing |
-| `--coin pepecoin\|dogecoin\|both` | Choose the chain without being asked (default when not interactive: Pepecoin) |
+| `--coin pepecoin\|dogecoin` | Scripted or partial installs only: install just that coin's nodes. Without it the installer installs both, with no question |
 | `--skip-core` | Install only the application, not the node |
 | `--force-core` | Install the pinned Core even if one is already installed or running |
 | `--no-services` | Do not register services |
@@ -393,19 +393,38 @@ When generating the `rpcauth` line yourself, the HMAC uses the salt as the
 **raw ASCII of the hex string**, not decoded hex. Getting this wrong gives a
 silent authentication failure.
 
-## Dogecoin instead of Pepecoin
+## Dogecoin
 
-Choose Dogecoin at the installer's prompt or with `--coin dogecoin` (or
-`both`). The differences are data only:
+The installer always installs both coins, with no question: Pepecoin Core
+(a mainnet node and a testnet node) and Dogecoin Core (a mainnet node only).
+They are the arcade's three networks: testnet PEP, mainnet PEP and DOGE.
+There is no Dogecoin testnet node; the arcade's testnet is Pepecoin's.
 
 | | Pepecoin | Dogecoin |
 |---|---|---|
 | Core version | 1.1.0 (`pepecoinppc/pepecoin`) | 1.14.9 (`dogecoin/dogecoin`) |
 | Binaries | `pepecoind`, `pepecoin-cli`, `pepecoin-tx` | `dogecoind`, `dogecoin-cli`, `dogecoin-tx` |
 | Signing key | `david2278-key.pgp`, `18250EC92E527E9723E49116FD415169D2691927` (expired) | `patricklodder-key.pgp`, `DC6EF4A8BF9F1B1E4DE1EE522D3A345B98D0DC1F` (valid) |
-| Datadirs (Linux) | `~/.pepecoin`, `~/.pepecoin-testnet` | `~/.dogecoin`, `~/.dogecoin-testnet` |
-| ZMQ base port, mainnet / testnet | 28332 / 28432 | 28532 / 28632 |
-| Services | `pepecoind-mainnet`, `pepecoind-testnet` | `dogecoind-mainnet`, `dogecoind-testnet` |
+| Datadirs (Linux) | `~/.pepecoin`, `~/.pepecoin-testnet` | `~/.dogecoin` |
+| ZMQ base port | mainnet 28332, testnet 28432 | mainnet 28532 |
+| Services | `pepecoind-mainnet`, `pepecoind-testnet` | `dogecoind-mainnet` |
+
+The Dogecoin mainnet chain is large: its first sync takes much longer than
+Pepecoin's, and the arcade shows its progress.
+
+### A node you already run
+
+If a node's config file already exists, the installer adds the settings the
+arcade needs that it does not have (`server`, `txindex`, `rpcbind`,
+`rpcallowip`, the ZMQ lines), in one block marked
+`# --- added by the PepecoinArcade installer ---`. Nothing you wrote is
+changed or removed: a setting you already have, whatever its value, stays
+yours. A running node picks the additions up when it restarts.
+
+The one setting it will not add for you is `txindex=1` on a node that already
+holds blocks: switching it on there stops the node until it is restarted once
+with `-reindex`, a full rebuild. The installer says so; add it yourself when
+you are ready for that.
 
 ## Other platforms
 

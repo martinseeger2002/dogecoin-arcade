@@ -236,3 +236,27 @@ def test_at_one_price_the_oldest_is_first(index):
     assert order == ["cc", "bb", "aa", "c1"], (
         "cheapest first; then oldest first at the same price; the pool last "
         "because it is the newest of all")
+
+
+def test_every_book_at_once_is_every_book(index):
+    """The Exchange's table reads every token's book in one go (2026-10-11,
+    the Tokens tab took over a second: a book per token, and the node asked
+    for its pool each time). What coin_books says of a token is what book
+    says, pool and all, and the pool read it is handed is the only one."""
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT INTO book_order(txid,block_height,position,address,sale_property,"
+            "sale_amount,want_property,want_amount,reserved) VALUES(?,?,?,?,?,?,?,?,?)",
+            ("dd" * 32, 500, 0, OTHER, TOKEN, 1000_00000000, 0, 9_00000000, 1000_00000000))
+        db.conn.commit()
+    index.node.pool = {"c1" * 32: a_transaction("c1" * 32, an_ask(coins=8_00000000)),
+                       "c2" * 32: a_transaction("c2" * 32, a_bid())}
+    pending = index.pending_orders()
+    asked = len(index.node.asked)
+    books = index.coin_books(pending=pending)
+    assert list(books) == [TOKEN], "a token with no order has no book"
+    assert books[TOKEN] == index.book(TOKEN, pending=pending)
+    assert [a["txid"][:2] for a in books[TOKEN]["asks"]] == ["c1", "dd"]
+    assert [b["txid"][:2] for b in books[TOKEN]["bids"]] == ["c2"]
+    assert len(index.node.asked) == asked, "the pool read it was handed is the only one"
+    assert index.coin_books(limit=1, pending=pending)[TOKEN]["asks"] == books[TOKEN]["asks"][:1]

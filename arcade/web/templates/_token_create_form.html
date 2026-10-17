@@ -258,6 +258,9 @@ async function offer() {
       } catch (e) { trouble(String(e.message || e)); }
     };
     $("create-no").onclick = () => { $("create-confirm").hidden = true; };
+    // Mainnet: one prompt, wallet.js's, with every cost off the transaction's own
+    // bytes and the operator's fee on its own line (2026-10-09). Not this one too.
+    if ({{ (chain.is_mainnet or false)|tojson }}) $("create-yes").onclick();
   } catch (e) { trouble(String(e.message || e)); }
 }
 $("create-offer").onclick = offer;

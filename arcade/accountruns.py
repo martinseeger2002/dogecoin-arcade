@@ -22,19 +22,20 @@ question a request asks, and the answer is the same run the account started
 before it closed the tab. That is the whole resume story -- no thread to resume,
 and the same piece rebuilt identically when the offer it was offered has expired.
 
-One piece per item
-------------------
-`create` refuses a build with an item that needs more than one chunk rather than
-accepting it and failing forty pieces in. The reason is not that several
-transactions cannot go out in one pass -- they can, one block after a split that
-funds them, and `accountparts.py` now does exactly that for one big file. It is
-that a run is one transaction per item, which is the sentence the page gives and
-the shape the folder is laid out in, and
-an item spread over three transactions needs a countdown PER ITEM that this book
-does not have: a `piece` row holds one txid and one status, which is enough for
-an item and not enough for an item's third transaction. A collection that
-half-inscribes is worse than one that has not started, so the refusal happens at
-the review, before anything is paid for, naming the items.
+Items of more than one piece
+----------------------------
+A `piece` row is one ITEM, and it holds one txid and one status. An item that
+fits in one transaction is offered by `/account/run/piece` as before. An item
+that does not -- most real art: a 17 KB picture is three transactions -- used to
+be refused here, which pushed people into shrinking their pictures (the operator
+2026-10-08: "when inscribing a collection the files should never be
+compressed"). Now its row carries `chunks`, and the page sends that one item
+through the one-big-file path (`accountparts.py`: a split, a block, then its
+pieces), whose own book keeps the countdown per transaction that this one does
+not have. When the file is up, the page reports its first transaction and the
+row is `sent` like any other. Until then the row is `sending`, which
+`next_piece` puts first again, so a closed tab comes back to the same item and
+`accountparts.find()` continues the same file rather than starting it twice.
 
 Retention
 ---------
@@ -42,6 +43,22 @@ Retention
 account deletes the run. Nothing ages it out yet -- an operator should know that
 a finished run keeps its images forever. `delete` removes rows only: a directory
 that has no rule written for it is not a directory to remove here.
+
+Since 2026-10-11 the wallet page writes a run down WITHOUT uploading (the operator: the
+pictures stay in the browser, and go up one piece at a time through
+`/account/inscribe`, the way one file does). Such a run has `folder = ''`. Nothing
+of it is ever on this disk.
+
+Since 2026-10-12 its `sha256` starts blank unless the browser happened to have one
+(the operator, on a 6,480-picture collection: "instead of trying to process all of the
+files all at once in a very large collection it should just keep track of the
+number inscribed and just continue on one at a time"). Reading every picture to
+hash it before the first piece goes out was the last "all at once" left in the
+flow, and it is the one a phone cannot do. So the digest arrives with the piece and
+`record_digest` writes it down; `piece_skipped` files the one case that check found
+- a picture that is in the set already, which is not owed and must not be paid for
+twice. A run written down WITH digests behaves exactly as it did: same table, same
+statuses, one value filled in later.
 """
 
 from __future__ import annotations
@@ -98,6 +115,10 @@ CREATE TABLE IF NOT EXISTS piece (
     status       TEXT NOT NULL,
     txid         TEXT NOT NULL DEFAULT '',
     error        TEXT NOT NULL DEFAULT '',
+    -- how many transactions this item takes: 1 goes out as one offer, more
+    -- goes through the one-big-file path (see "Items of more than one piece")
+    chunks       INTEGER NOT NULL DEFAULT 1,
+    sha256       TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (run_id, edition)
 );
 CREATE INDEX IF NOT EXISTS piece_status_idx ON piece(run_id, status);
@@ -114,8 +135,13 @@ STATUSES = ("open", "running", "done", "failed", "stopped")
 
 #: What a piece is doing. `pending` has never been offered, `sending` has an
 #: offer out with no broadcast yet -- the difference is only so a page can say
-#: which one the account is being asked about.
-PIECE_STATUSES = ("pending", "sending", "sent", "failed")
+#: which one the account is being asked about. `skipped` is a piece whose
+#: picture turned out to be in the set already (a run written down from a folder
+#: whose pictures are up under other numbers): it is settled -- not owed, never
+#: offered again, nothing charged -- without being on the chain as ITSELF.
+#: `retry_failed` leaves it alone on purpose: putting it back in line is how a
+#: second copy of a picture gets paid for.
+PIECE_STATUSES = ("pending", "sending", "sent", "failed", "skipped")
 
 
 class TooBig(ValueError):
@@ -151,21 +177,16 @@ class Runs:
     # -- writing a run down --
 
     def create(self, account: str, address: str, build: Any, network: str,
-               name: str = "", floor: int | None = None) -> str:
+               name: str = "", floor: int | None = None,
+               folder: str | None = None) -> str:
         """Write the run and every piece, each with the id its tx will carry.
 
         Takes the same `Build` object `collections.read_build` returns; the only
-        fields read off it are `folder`, `collection`, and the five fields of
-        each item, so a run can be written from a folder or from a test.
+        fields read off it are `folder`, `collection`, and the fields of each
+        item, so a run can be written from a folder or from a test. `folder`
+        given (and blank) means the pictures are not here: they are in the
+        browser that wrote the run down (`build_from_manifest`).
         """
-        too_big = []
-        for item in build.items:
-            est = inscribelib.estimate(item.size, item.content_type, item.json)
-            if int(est.chunks) > 1:
-                too_big.append(item.name)
-        if too_big:
-            raise TooBig(too_big)
-
         fee = dust = 0.0
         run_id = secrets.token_hex(6)
         with self._open() as conn:
@@ -176,15 +197,18 @@ class Runs:
                 dust += est.dust
                 conn.execute(
                     "INSERT INTO piece (run_id, edition, name, image, content_type, "
-                    "size, json, inscription_id, status) VALUES (?,?,?,?,?,?,?,?,?)",
+                    "size, json, inscription_id, status, chunks, sha256) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (run_id, item.edition, item.name, item.image, item.content_type,
-                     item.size, item.json, secrets.token_bytes(8).hex(), "pending"))
+                     item.size, item.json, secrets.token_bytes(8).hex(), "pending",
+                     max(1, int(est.chunks)), getattr(item, "sha256", "") or ""))
             conn.execute(
                 "INSERT INTO run (id, created, network, account, address, name, "
                 "folder, status, items, fee, dust, floor) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (run_id, time.time(), network, account, address,
-                 name or build.collection, str(build.folder), "open",
+                 name or build.collection,
+                 str(build.folder) if folder is None else folder, "open",
                  len(build.items), round(fee, 8), round(dust, 8), floor))
             conn.execute("COMMIT")
         return run_id
@@ -266,6 +290,13 @@ class Runs:
                 "ORDER BY edition DESC LIMIT 1", (run_id,)).fetchone()
             return "" if row is None else row["txid"]
 
+    def piece(self, run_id: str, edition: int) -> dict | None:
+        """One item of a run, by edition."""
+        with self._open() as conn:
+            row = conn.execute("SELECT * FROM piece WHERE run_id = ? AND edition = ?",
+                               (run_id, int(edition))).fetchone()
+            return dict(row) if row else None
+
     def pieces(self, run_id: str, status: str | None = None,
                limit: int | None = None, offset: int = 0) -> list[dict]:
         """The pieces, lowest edition first, a page at a time when asked.
@@ -319,6 +350,33 @@ class Runs:
             conn.execute("UPDATE piece SET status = 'failed', error = ? "
                          "WHERE run_id = ? AND edition = ?", (error, run_id, edition))
             self._moved(conn, run_id)
+
+    def piece_skipped(self, run_id: str, edition: int, error: str) -> None:
+        """This piece's picture is in the set already, so it is not going out.
+
+        The answer only exists for a run whose pictures are in a browser and were
+        never hashed here: the node cannot know a picture is up until the bytes
+        arrive for it. `skipped` rather than `sent` because the piece is not on
+        the chain as ITSELF -- the copy that IS up stands under another number --
+        and a run that claims a piece it never paid for is the exact lie this
+        book is built to make impossible. Nothing is charged for it, which is
+        the whole point of finding out.
+        """
+        with self._open() as conn:
+            conn.execute("UPDATE piece SET status = 'skipped', error = ? "
+                         "WHERE run_id = ? AND edition = ?", (error, run_id, edition))
+            self._moved(conn, run_id)
+
+    def record_digest(self, run_id: str, edition: int, digest: str) -> None:
+        """The digest of a piece whose bytes have just arrived, once it is known.
+
+        Written only while the row is still blank, so a piece that came with a
+        digest in the manifest keeps the one it was written down with: that one
+        is what the browser promised before anything was paid for.
+        """
+        with self._open() as conn:
+            conn.execute("UPDATE piece SET sha256 = ? WHERE run_id = ? "
+                         "AND edition = ? AND sha256 = ''", (digest, run_id, edition))
 
     def retry_failed(self, run_id: str) -> int:
         """Failed pieces back to pending for a resume. Their inscription id is
@@ -412,13 +470,16 @@ class Runs:
 
 
 def _progress(conn: sqlite3.Connection, run_id: str) -> dict:
-    counts = {"pending": 0, "sending": 0, "sent": 0, "failed": 0}
+    counts = {"pending": 0, "sending": 0, "sent": 0, "failed": 0, "skipped": 0}
     for row in conn.execute(
             "SELECT status, COUNT(*) AS n FROM piece WHERE run_id = ? "
             "GROUP BY status", (run_id,)):
         counts[row["status"]] = row["n"]
     return {"sent": counts["sent"], "pending": counts["pending"],
             "sending": counts["sending"], "failed_pieces": counts["failed"],
+            # Settled without being paid for: the picture was in the set already.
+            # Counted apart from `sent` because those transactions do not exist.
+            "skipped": counts["skipped"],
             # What the next one is called, for the sentence on the page.
             "next": _next_label(conn, run_id)}
 

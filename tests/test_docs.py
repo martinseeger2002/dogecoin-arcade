@@ -125,7 +125,7 @@ def test_the_plans_are_for_the_operator_only(client, name):
     try:
         body = app.get("/docs").text
         assert f"/docs/{name}" not in body
-        assert "How DogecoinArcade works" in body, "the rest is still offered"
+        assert "How PepecoinArcade works" in body, "the rest is still offered"
         answer = app.get(f"/docs/{name}", follow_redirects=False)
         assert answer.status_code == 303 and answer.headers["location"] == "/docs"
     finally:

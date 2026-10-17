@@ -16,7 +16,7 @@
     var holder = {{ row.owner|tojson }}, maker = {{ row.creator|tojson }};
     var CHAIN = {network: "{{chain.network}}",
                  version: {{chain.params.pubkeyhash_version}}};
-    var doors = {storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
+    var doors = {contacts: 'viewer', storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
                  realtime: '/realtime/', escrow: '/r/escrow/', state: '/r/state/'};
 
     // Realtime rooms (arcade/web/realtime.py, templates/realtime.js): this page
@@ -27,7 +27,49 @@
     // address, proved once a day by a signature its key makes here; if the
     // wallet stays locked it plays as a guest rather than not at all.
     var rt = {};
-    function realtimeProof(hello){
+    // ANY NODE AS THE WAY IN (2026-10-12, the operator: "I want the client to be able to access any
+    // one of the connected nodes as their game server"). A room is the same room on every node,
+    // so this page may carry the player through whichever node answers fastest: it asks its own
+    // node for the ways in (/realtime/nodes, all https), times a hello to each and to itself, and
+    // keeps its own unless another is clearly quicker. The choice is kept ten minutes; a node
+    // that fails sends the player back to this one. Signed in here, the player is still
+    // themselves there: the wallet signs that node's certificate (hello.cert) instead.
+    var RT_PICK = 'arcade-rt-base-2';   // -2: picks made before 2026-10-12 17:00 could be this node's own tunnel
+    function realtimeTime(base){
+      var t0 = performance.now();
+      return Promise.race([
+        fetch(base + '/realtime/hello', {cache: 'no-store', credentials: 'omit'}).then(function(r){ return r.json(); })
+          .then(function(h){ return h && h.online ? performance.now() - t0 : Infinity; }),
+        new Promise(function(res){ setTimeout(function(){ res(Infinity); }, 3000); })
+      ]).catch(function(){ return Infinity; });
+    }
+    function realtimeBase(){
+      try {
+        var kept = JSON.parse(sessionStorage.getItem(RT_PICK) || 'null');
+        if (kept && Date.now() - kept.at < 600000) return Promise.resolve(kept.base);
+      } catch (err) {}
+      return fetch('/realtime/nodes', {cache: 'no-store'}).then(function(r){ return r.json(); })
+        .then(function(j){
+          // Never this node again by another road (its own tunnel): same rooms, one more hop (2026-10-12 live:
+          // players on .25 were carried through .25's own tunnel and lost their room streams there).
+          var bases = [''].concat(((j && j.nodes) || []).filter(function(n){ return n.node !== j.self; })
+            .map(function(n){ return n.base; })
+            .filter(function(b){ return b && b !== location.origin; }).slice(0, 12));
+          // two tries each (the first pays for a fresh TLS connection); the better counts
+          return Promise.all(bases.map(function(b){
+            return realtimeTime(b).then(function(a){ return realtimeTime(b).then(function(c){ return Math.min(a, c); }); });
+          })).then(function(ms){
+            var best = 0;
+            for (var i = 1; i < bases.length; i++) if (ms[i] < ms[best]) best = i;
+            var pick = (best && ms[best] < ms[0] * 0.8) ? bases[best] : '';
+            try { sessionStorage.setItem(RT_PICK, JSON.stringify({base: pick, at: Date.now(), ms: ms})); } catch (err) {}
+            return pick;
+          });
+        }).catch(function(){ return ''; });
+    }
+    function realtimeForget(){ try { sessionStorage.removeItem(RT_PICK); } catch (err) {} }
+    function realtimeProof(hello, base){
+      if (base) return realtimeProofThere(hello);
       if (!hello.sign || !hello.who || hello.who.kind !== 'account') return Promise.resolve(null);
       var slot = 'arcade-rt-cert:' + hello.sign.message;
       try {
@@ -50,26 +92,53 @@
         });
       }).catch(function(){ return null; });        // locked or refused: a guest
     }
-    function realtimePost(path, body){
-      body.csrf_token = csrf;
-      return fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
-                          body: JSON.stringify(body), keepalive: path === '/realtime/leave'})
+    // Another node: who the player is comes from THIS node's hello; the words to sign from that one's.
+    function realtimeProofThere(there){
+      if (!there.cert) return Promise.resolve(null);
+      return fetch('/realtime/hello', {cache: 'no-store'}).then(function(r){ return r.json(); }).then(function(own){
+        if (!own.sign || !own.who || own.who.kind !== 'account' || !own.who.address) return null;
+        var c = there.cert, words = 'arcade-realtime\n' + c.network + '\n' + c.node + '\n' + own.who.address + '\n' + c.expires;
+        return realtimeProof({sign: {message: words, expires: c.expires, magic: c.magic, chain: own.sign.chain},
+                              who: own.who}, '').then(function(p){ return p && {sig: p.sig, expires: p.expires, address: own.who.address}; });
+      }).catch(function(){ return null; });
+    }
+    function realtimePost(path, body, base){
+      base = base || '';
+      if (!base) body.csrf_token = csrf;          // this node's form token never goes to another node
+      return fetch(base + path, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                 credentials: base ? 'omit' : 'same-origin',
+                                 body: JSON.stringify(body), keepalive: path === '/realtime/leave'})
         .then(function(r){ return r.json(); });
     }
     // One way into a room, used for the first join and for every rejoin.
-    function realtimeConnect(name, game, guest){
-      return fetch('/realtime/hello', {cache: 'no-store'}).then(function(r){ return r.json(); })
+    function realtimeConnectAt(base, name, game, guest){
+      return fetch(base + '/realtime/hello', {cache: 'no-store', credentials: base ? 'omit' : 'same-origin'})
+        .then(function(r){ return r.json(); })
         .then(function(hello){
           if (!hello.online) return {ok: true, online: false, why: hello.why || 'this node is not on the mesh'};
-          return realtimeProof(hello).then(function(proof){
+          return realtimeProof(hello, base).then(function(proof){
             return realtimePost('/realtime/join', {game: game, room: name, guest: guest || '',
-                                sig: proof && proof.sig, expires: proof && proof.expires});
+                                sig: proof && proof.sig, expires: proof && proof.expires,
+                                address: proof && proof.address}, base);
           });
+        }).then(function(j){ if (j) j.base = base; return j; });
+    }
+    function realtimeConnect(name, game, guest){
+      return realtimeBase().then(function(base){
+        if (!base) return realtimeConnectAt('', name, game, guest);
+        return realtimeConnectAt(base, name, game, guest).then(function(j){
+          if (j && j.ok && j.token) return j;
+          throw new Error('that node said no');
+        }).catch(function(){                      // the chosen node failed: this one, and choose again later
+          realtimeForget();
+          return realtimeConnectAt('', name, game, guest);
         });
+      });
     }
     function realtimeOpen(name, frame, j, game){
-      var es = new EventSource('/realtime/stream?token=' + encodeURIComponent(j.token));
-      var h = rt[name] = {token: j.token, es: es, me: j.me, members: {}, game: game};
+      var base = j.base || '';
+      var es = new EventSource(base + '/realtime/stream?token=' + encodeURIComponent(j.token));
+      var h = rt[name] = {token: j.token, es: es, me: j.me, members: {}, game: game, base: base};
       (j.members || []).forEach(function(p){ h.members[p.id] = p; });
       es.onmessage = function(ev){
         if (rt[name] !== h) return;              // an old stream, replaced by a rejoin
@@ -109,11 +178,14 @@
         tries++;
         realtimeConnect(name, h.game, h.me && h.me.guest ? h.me.id : '').then(function(j){
           if (rt[name] !== h) {
-            if (j && j.token) realtimePost('/realtime/leave', {token: j.token}).catch(function(){});
+            if (j && j.token) realtimePost('/realtime/leave', {token: j.token}, j.base).catch(function(){});
             return;
           }
           if (!j || !j.ok || !j.online || !j.token) throw new Error('not yet');
           var before = h.members, now = realtimeOpen(name, frame, j, h.game);
+          // The page's own seat was replaced: say so, every time, so a game can send its
+          // state again -- the others saw this player leave and come back (2026-10-13).
+          frame.postMessage({arcade: 'realtime', event: {type: 'rejoined', room: name, member: now.me}}, '*');
           if (!h.me || now.me.id !== h.me.id) {
             frame.postMessage({arcade: 'realtime', event: {type: 'me', room: name, member: now.me}}, '*');
           }
@@ -152,7 +224,7 @@
       var held = rt[name];
       if (!held) { answer({ok: false, error: 'join the room first'}); return; }
       if (m.op === 'send') {
-        realtimePost('/realtime/send', {token: held.token, data: String(m.data || '')})
+        realtimePost('/realtime/send', {token: held.token, data: String(m.data || '')}, held.base)
           .then(function(j){
             if (!j.ok && /join again/.test(j.error || '')) realtimeRejoin(name, frame, held);
             answer(j.ok ? {ok: true} : {ok: false, error: j.error || 'refused'});
@@ -160,7 +232,7 @@
           .catch(function(){ answer({ok: false, error: 'the node did not answer'}); });
       } else if (m.op === 'leave') {
         held.es.close(); delete rt[name];
-        realtimePost('/realtime/leave', {token: held.token}).catch(function(){});
+        realtimePost('/realtime/leave', {token: held.token}, held.base).catch(function(){});
         answer({ok: true});
       } else {
         answer({ok: false, error: 'realtime ops are join, send and leave'});
@@ -177,9 +249,16 @@
     // neither does.
     var TRADE = '\u001farcade-trade:', trades = {}, tradeFrame = null;
     function nftSide(l){ return !!(l && l.inscription); }
-    function iSign(t){ return nftSide(t.give) && (t.role === 'proposer' || !nftSide(t.get)); }
+    // Who signs the leg: the side giving an NFT; when both do, the proposer; when
+    // neither does (token for token, 2026-10-04), the proposer.
+    function iSign(t){
+      if (t.bundle) return t.role === 'proposer';     // a bundle: the proposer builds and signs first
+      if (nftSide(t.give)) return t.role === 'proposer' || !nftSide(t.get);
+      return !nftSide(t.get) && t.role === 'proposer';
+    }
     function roomWith(id){ for (var k in rt) if (rt[k].members && rt[k].members[id]) return k; return ''; }
     function sideWords(l){
+      if (Array.isArray(l)) return Promise.all(l.map(sideWords)).then(function(w){ return w.join(', '); });
       if (!l) return Promise.resolve('nothing');
       if (l.inscription) return fetch('/r/inscription/' + encodeURIComponent(l.inscription))
         .then(function(r){ return r.ok ? r.json() : {}; })
@@ -200,7 +279,7 @@
       var h = rt[t.room];
       if (!h) return Promise.reject(new Error('you left the room this trade was in'));
       msg.id = t.id; msg.to = t.peer.id;
-      return realtimePost('/realtime/send', {token: h.token, data: TRADE + JSON.stringify(msg)})
+      return realtimePost('/realtime/send', {token: h.token, data: TRADE + JSON.stringify(msg)}, h.base)
         .then(function(j){ if (!j.ok) throw new Error(j.error || 'the room did not take it'); });
     }
     function tradeFail(t, err, quiet){
@@ -222,9 +301,16 @@
     async function tradeSign(t){
       try {
         var k = await tradeKeys('Sign your half of this trade.');
-        var r = await k.w.tradeLeg(k.keys, {chain: CHAIN.network, give: t.give,
-                                            take: t.get, buyer: t.peer.address});
-        var sealed = await k.w.sealTrade(k.keys, r.seal_to, {leg: r.leg});
+        var sealed;
+        if (t.bundle) {
+          var built = await k.w.bundleBuild(k.keys, {chain: CHAIN.network, with: t.peer.address,
+                                                     give: t.give, get: t.get});
+          sealed = await k.w.sealTrade(k.keys, built.seal_to, {bundle: built.handoff});
+        } else {
+          var r = await k.w.tradeLeg(k.keys, {chain: CHAIN.network, give: t.give,
+                                              take: t.get, buyer: t.peer.address});
+          sealed = await k.w.sealTrade(k.keys, r.seal_to, {leg: r.leg});
+        }
         var parts = sealed.match(/.{1,360}/g) || [];
         for (var i = 0; i < parts.length; i++) {
           await tradeSend(t, {t: 'leg', n: i, of: parts.length, part: parts[i]});
@@ -237,6 +323,20 @@
       try {
         var k = await tradeKeys('Finish this trade with your key.');
         var got = await k.w.openTrade(k.keys, t.parts.join(''));
+        if (t.bundle) {
+          var hand = got && got.bundle;
+          if (!hand || hand.a !== t.peer.address)
+            throw new Error('that trade is not from the player you are trading with');
+          var bexpect = {give: t.give, get: t.get};
+          var boffer = await k.w.bundleOffer(hand, bexpect, CHAIN.network);
+          var bshown = await k.w.checked(boffer, k.keys);
+          if (!(await tradeAsk(t, 'Finish the trade?', 'Finish'))) throw new Error('cancelled');
+          var bdone = await k.w.bundleFill(k.keys, hand, boffer, bexpect);
+          await tradeSend(t, {t: 'done', txid: bdone.txid}).catch(function(){});
+          tradeSay(t, 'broadcast', {txid: bdone.txid});
+          tradeWatch(t, bdone.txid);
+          return;
+        }
         var leg = got && got.leg;
         if (!leg || leg.seller !== t.peer.address)
           throw new Error('that leg is not from the player you are trading with');
@@ -256,8 +356,13 @@
     }
     function tradeWatch(t, txid){
       var until = Date.now() + 30 * 60 * 1000;
-      var nft = nftSide(t.give) ? t.give.inscription : t.get.inscription;
+      var nft = nftSide(t.give) ? t.give.inscription : nftSide(t.get) ? t.get.inscription : '';
       var owner = nftSide(t.give) ? t.peer.address : (rt[t.room] && rt[t.room].me.address);
+      if (t.bundle) {                                  // one piece of a bundle answers for all of it
+        var mineOut = (t.give || []).filter(nftSide)[0], theirsOut = (t.get || []).filter(nftSide)[0];
+        nft = mineOut ? mineOut.inscription : theirsOut ? theirsOut.inscription : '';
+        owner = mineOut ? t.peer.address : (rt[t.room] && rt[t.room].me.address);
+      }
       (function tick(){
         fetch('/r/tx/' + txid, {cache: 'no-store'}).then(function(r){ return r.ok ? r.json() : {}; })
           .then(function(j){
@@ -266,6 +371,8 @@
               if (Date.now() < until) setTimeout(tick, 10000);
               return;
             }
+            // Token for token: no piece to look at; its block is the answer.
+            if (!nft) return tradeSay(t, 'settled', {txid: txid});
             return fetch('/r/inscription/' + nft, {cache: 'no-store'})
               .then(function(r){ return r.ok ? r.json() : {}; })
               .then(function(row){
@@ -283,10 +390,23 @@
       var me = rt[room] && rt[room].me;
       if (!me || !msg || msg.to !== me.id || !from) return;     // not for this player
       var t = trades[msg.id];
+      if (msg.t === 'propose-part') {                  // a big bundle comes in parts
+        if (t || me.guest || from.guest) return;
+        var held = (tradeHeard.parts = tradeHeard.parts || {});
+        var got = held[msg.id] = held[msg.id] || [];
+        var pn = parseInt(msg.n, 10), pof = parseInt(msg.of, 10);
+        if (!(pof > 0 && pof <= 64 && pn >= 0 && pn < pof)) return;
+        got[pn] = String(msg.part || '');
+        for (var pi = 0; pi < pof; pi++) if (typeof got[pi] !== 'string') return;
+        delete held[msg.id];
+        try { msg = Object.assign(JSON.parse(got.join('')), {id: msg.id, t: 'propose'}); }
+        catch (err) { return; }
+      }
       if (msg.t === 'propose') {
         if (t || me.guest || from.guest) return;
         t = trades[msg.id] = {id: msg.id, role: 'responder', room: room, peer: from,
-                              give: msg.get, get: msg.give, parts: []};
+                              give: msg.get, get: msg.give, parts: [],
+                              bundle: Array.isArray(msg.give) || Array.isArray(msg.get)};
         tradeSay(t, 'incoming');
         return;
       }
@@ -323,8 +443,10 @@
             address = acct.address;
           }
           if (!address) throw new Error('sign in first: items belong to an account');
-          var pieces = await fetch('/r/inscriptions/' + address).then(function(r){ return r.json(); });
-          var balances = await fetch('/r/balances/' + address).then(function(r){ return r.json(); });
+          // What is on its way counts too (2026-10-04): an arriving piece can be
+          // traded now, and says so with `pending: "arriving"`.
+          var pieces = await fetch('/r/inscriptions/' + address + '?pending=1').then(function(r){ return r.json(); });
+          var balances = await fetch('/r/balances/' + address + '?pending=1').then(function(r){ return r.json(); });
           return answer({ok: true, address: address, inscriptions: pieces, balances: balances});
         }
         if (viewer !== 'account') throw new Error('trades are signed with an account’s own key: sign in as an account');
@@ -334,9 +456,12 @@
           var meNow = rt[room2].me, peer = rt[room2].members[peerId];
           if (meNow.guest || !meNow.address) throw new Error('sign in to trade');
           if (peer.guest || !peer.address) throw new Error('that player is a guest and cannot trade');
-          if (!nftSide(m.give) && !nftSide(m.get)) throw new Error('a trade needs an NFT on at least one side');
+          if (!m.give || !m.get) throw new Error('a trade needs something on each side');
+          var isBundle = Array.isArray(m.give) || Array.isArray(m.get);
           var t = {id: Math.random().toString(36).slice(2) + Date.now().toString(36),
-                   role: 'proposer', room: room2, peer: peer, give: m.give, get: m.get, parts: []};
+                   role: 'proposer', room: room2, peer: peer, parts: [], bundle: isBundle,
+                   give: isBundle ? [].concat(m.give) : m.give,
+                   get: isBundle ? [].concat(m.get) : m.get};
           // The signed half travels sealed to whoever finishes the trade, so that
           // player needs a published messaging key: said now, not after a yes.
           var reader = iSign(t) ? peer : meNow;
@@ -348,7 +473,16 @@
           }
           if (!(await tradeAsk(t, 'Offer this trade?', 'Offer'))) throw new Error('cancelled');
           trades[t.id] = t;
-          await tradeSend(t, {t: 'propose', give: t.give, get: t.get});
+          var said = JSON.stringify({give: t.give, get: t.get});
+          if (said.length <= 300) {
+            await tradeSend(t, {t: 'propose', give: t.give, get: t.get});
+          } else {                                     // a big bundle goes in parts
+            var bits = said.match(/.{1,300}/g) || [];
+            for (var bi = 0; bi < bits.length; bi++) {
+              await tradeSend(t, {t: 'propose-part', n: bi, of: bits.length, part: bits[bi]});
+              await new Promise(function(ok){ setTimeout(ok, 250); });
+            }
+          }
           tradeSay(t, 'proposed');
           return answer({ok: true, id: t.id});
         }
@@ -444,7 +578,7 @@
     window.addEventListener('pagehide', function(){
       for (var k in rt) {
         rt[k].es.close();
-        realtimePost('/realtime/leave', {token: rt[k].token}).catch(function(){});
+        realtimePost('/realtime/leave', {token: rt[k].token}, rt[k].base).catch(function(){});
       }
       rt = {};
     });
@@ -482,6 +616,33 @@
       });
     }
 
+    // arcade.contacts (2026-10-06, asked for by ASHVALE: the Atlas shows where your
+    // MUTUAL contacts are while they play). The address book of the account signed
+    // in here, read-only: [{address, tag}] -- nothing else of it. It lives only in
+    // this browser (D-137, D-155: a book on the node would be the list of everybody
+    // you know), so handing it to a page is the person's own decision, asked once
+    // per inscription and remembered in this browser; a "no" is remembered too.
+    // A guest, a node's own wallet view, or a refusal: [].
+    function contactsDoor(m, answer){
+      if ((m.op || 'list') !== 'list') { answer({ok: false, error: 'contacts are read-only: op is list'}); return; }
+      if (viewer !== 'account') { answer({ok: true, contacts: []}); return; }
+      var slot = 'arcade.contacts.allow:' + here, said = null;
+      try { said = localStorage.getItem(slot); } catch (err) {}
+      var asked = said === 'yes' ? Promise.resolve(true) : said === 'no' ? Promise.resolve(false)
+        : arcadeAsk('Let this game see your contacts?',
+            'It will get the names and addresses in your address book, and nothing else of it. '
+            + 'A game can send what it gets to its own server: only say yes to a game you trust. '
+            + 'This browser remembers your answer for this game.', 'Allow')
+          .then(function(yes){ try { localStorage.setItem(slot, yes ? 'yes' : 'no'); } catch (err) {} return !!yes; });
+      asked.then(function(yes){
+        if (!yes) { answer({ok: true, contacts: []}); return; }
+        return import('/messaging.js').then(function(mail){ return mail.book(); }).then(function(all){
+          answer({ok: true, contacts: (all || []).filter(function(c){ return c && c.address; })
+                  .map(function(c){ return {address: c.address, tag: c.tag || ''}; })});
+        });
+      }).catch(function(){ answer({ok: true, contacts: []}); });
+    }
+
     window.addEventListener('message', function(e){
       if (!sandbox || e.source !== sandbox.contentWindow) return;
       var m = e.data || {};
@@ -491,6 +652,7 @@
         e.source.postMessage(body, '*');   // an opaque origin cannot be named
       }
       if (m.arcade === 'realtime') { realtimeDoor(m, answer, e.source); return; }
+      if (m.arcade === 'contacts') { contactsDoor(m, answer); return; }
       if (m.arcade === 'escrow') { escrowDoor(m, answer); return; }
       if (m.arcade === 'state' && m.op === 'update') {
         // Game state (arcade.state): anybody asks, the game's judge decides, so

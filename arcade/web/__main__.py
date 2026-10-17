@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -23,6 +24,11 @@ from .state import AppState, ChainContext
 from .watcher import BlockWatcher
 
 DEFAULT_HOME = Path.home() / ".dogecoinarcade"
+
+#: Seconds a request that is still running is given to finish before a restart
+#: cancels it. The number is small on purpose; why it has to be there at all is
+#: at the run, at the end of main().
+GRACEFUL_STOP = 5.0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,6 +48,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="chain for tokens, NFTs and PEP")
     parser.add_argument("--ledger-datadir", help="mainnet datadir, to read its .cookie")
     parser.add_argument("--ledger-conf", help="mainnet config with rpcuser/rpcpassword")
+    # Dogecoin mainnet, the third network (2026-10-13). Found by itself at
+    # ~/.dogecoin/dogecoin.conf, which the installer writes; this names another.
+    parser.add_argument("--doge-conf", help="Dogecoin config with rpcuser/rpcpassword")
+    parser.add_argument("--doge-datadir", help="Dogecoin datadir, to read its .cookie")
+    parser.add_argument("--no-doge", action="store_true", help="run without Dogecoin")
     parser.add_argument("--port", type=int, default=8420)
     parser.add_argument(
         "--public", action="store_true",
@@ -73,6 +84,20 @@ def main(argv: list[str] | None = None) -> int:
              "Pepecoin peers see, checks the address really leads back to it, and "
              "announces it (again when it changes, and daily); nothing is announced "
              "if no port is forwarded. Paid for by the fee address")
+    parser.add_argument(
+        "--mesh-inbound", type=int, default=None, metavar="N",
+        help="how many other nodes may link to this one (32 by default; a server "
+             "that everyone can reach should take hundreds, e.g. 500)")
+    parser.add_argument(
+        "--mesh-tunnel", choices=["auto", "off"], default="auto",
+        help="when no address of this node can be proved, open a free Cloudflare quick "
+             "tunnel (cloudflared, if installed) and announce it, so every node can dial "
+             "this one; 'off' never does (auto by default)")
+    parser.add_argument(
+        "--mesh-core", choices=["on", "off"], default="on",
+        help="let this node's Pepecoin Core nodes peer with other arcades' Core nodes through "
+             "the mesh, so two nodes behind routers can still sync with each other "
+             "(at most 256 KB/s per link; on by default)")
     parser.add_argument(
         "--mesh-public-port", type=int, default=None, metavar="PORT",
         help="the port the router forwards to --mesh-port, if it is a different number")
@@ -127,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
             # rather than assumed here.
             can_spend=True,
         ),
+        doge=_doge_context(args),
     )
 
     # Bots authenticate to /rpc/main and /rpc/test with this file's contents.
@@ -138,6 +164,9 @@ def main(argv: list[str] | None = None) -> int:
     # Report what was found, so a silent misconfiguration is visible at startup
     # rather than as an empty panel later.
     from ..discovery import best
+    if state.doge is not None:
+        print(f"  {state.doge.label:8s} {state.doge.network:10s} "
+              f"{state.doge.conf or state.doge.datadir}  (shown grayed out until it has synced)")
     for context in (state.messaging, state.ledger):
         if context.datadir or context.conf:
             where = context.datadir or context.conf
@@ -196,7 +225,11 @@ def main(argv: list[str] | None = None) -> int:
                 state, listen_port=args.mesh_port or None,
                 peers=[host_port(p) for p in args.mesh_peer],
                 announce_at=host_port(args.mesh_announce) if args.mesh_announce else None,
-                public_port=args.mesh_public_port,
+                public_port=args.mesh_public_port, max_inbound=args.mesh_inbound,
+                tunnel=(shutil.which("cloudflared") or next((p for p in (os.path.expanduser("~/.local/bin/cloudflared"),)
+                                                             if os.path.exists(p)), None))
+                if args.mesh_tunnel == "auto" and args.mesh_port else None,
+                core=args.mesh_core == "on", web_port=args.port,
             ).start()
             print(f"  mesh node {state.mesh.node_id[:16]}"
                   + (f" listening on {args.mesh_port}" if args.mesh_port else " (dial-out only)"))
@@ -212,9 +245,37 @@ def main(argv: list[str] | None = None) -> int:
         print("  PUBLIC: only the feed, the collections and the chain are "
               "served; every form is refused")
     print(f"PepecoinArcade  ->  http://{args.host}:{args.port}")
-    uvicorn.run(create_app(state), host=args.host, port=args.port, log_level="warning")
+    # Without a timeout here uvicorn waits for every request to finish before it
+    # stops, and a game room's event stream is a request that never finishes --
+    # so a restart while anyone was playing ran into the stop timeout and the
+    # process was killed mid-request rather than shutting down. Whatever was
+    # being written was written by a killed process, not by the careful
+    # shutdown in the lifespan, which never got its turn.
+    uvicorn.run(create_app(state), host=args.host, port=args.port, log_level="warning",
+                timeout_graceful_shutdown=GRACEFUL_STOP)
     return 0
 
+
+
+def _doge_context(args) -> "ChainContext | None":
+    """The Dogecoin chain, when this machine runs a Dogecoin node: named on the
+    command line, or the installer's ~/.dogecoin/dogecoin.conf (or a datadir
+    with a readable .cookie). None when there is none -- the arcade then simply
+    has its two Pepecoin chains, as before."""
+    if args.no_doge:
+        return None
+    conf = Path(args.doge_conf).expanduser() if args.doge_conf else None
+    datadir = Path(args.doge_datadir).expanduser() if args.doge_datadir else None
+    if conf is None and datadir is None:
+        found = Path.home() / ".dogecoin" / "dogecoin.conf"
+        if found.exists():
+            conf = found
+        elif (Path.home() / ".dogecoin" / ".cookie").exists():
+            datadir = Path.home() / ".dogecoin"
+        else:
+            return None
+    return ChainContext(network="doge", role="ledger", label="Dogecoin",
+                        datadir=datadir, conf=conf, can_spend=True)
 
 if __name__ == "__main__":
     raise SystemExit(main())

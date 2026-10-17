@@ -5,11 +5,12 @@ follower it runs under. Until now nothing in the product ran either: the
 consensus code was exercised by the test suite and by nobody else. This module
 is the piece that puts them to work.
 
-One `LedgerIndex` per ledger chain. It owns nothing long-lived: every sync and
-every query opens its own connection to the index database, because sqlite
-connections are per-thread and the block watcher syncs on a thread of its own
-while requests read on theirs. WAL mode means the readers never block the
-writer.
+One `LedgerIndex` per ledger chain. It owns nothing long-lived itself: sqlite
+connections are per-thread, and the block watcher syncs on a thread of its
+own while requests read on theirs, so each THREAD keeps one connection to each
+index file and `open()` lends it out (D-193; until 2026-10-11 every call made a
+fresh one, and a page that opened the index sixty times paid for sixty). WAL
+mode means the readers never block the writer.
 
 Stopping is a feature
 ---------------------
@@ -26,6 +27,8 @@ from __future__ import annotations
 
 import logging
 import threading
+import sqlite3
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,6 +103,49 @@ _OFFERS_ON_IT = ("(SELECT COUNT(*) FROM nft_offer o "
                  "WHERE o.inscription = i.txid)")
 
 
+#: Index files whose tables this process has installed (LedgerIndex.open):
+#: (resolved path, inode), so a file rebuilt at the same path is installed again.
+_SCHEMA_INSTALLED: set[tuple[str, int | None]] = set()
+
+#: The connections THIS thread keeps, by index file (LedgerIndex.open).
+_THREAD = threading.local()
+
+#: How many index files one thread keeps a connection to. Two chains in a
+#: running node; a test session opens hundreds of temporary ones and must not
+#: hold them all.
+KEPT_PER_THREAD = 8
+
+
+class _Kept:
+    """One thread's connection to one index file, lent out by `open()`.
+
+    Walks and talks like the `Database` it wraps. `close()`, and leaving a
+    `with`, hand it back rather than closing it, so the next `open()` on this
+    thread gets the same connection. Opened inside another open on the same
+    thread it IS the same connection, which is what a reader inside a block's
+    transaction wants to see.
+    """
+
+    __slots__ = ("db", "inode", "depth")
+
+    def __init__(self, db: Database, inode: int | None):
+        self.db = db
+        self.inode = inode
+        self.depth = 0
+
+    def __getattr__(self, name: str):
+        return getattr(self.db, name)
+
+    def close(self) -> None:
+        self.depth = max(0, self.depth - 1)
+
+    def __enter__(self) -> "_Kept":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+
 class LedgerIndex:
     """The token index for one chain: sync it, ask it questions."""
 
@@ -124,14 +170,72 @@ class LedgerIndex:
     # --- storage --------------------------------------------------------------
 
     def open(self) -> Database:
-        """A fresh connection with the protocol tables installed.
+        """This thread's connection to the index, with the protocol tables
+        installed, to use in a `with`.
 
-        Per call, per thread: see the module docstring.
+        One per thread per file, kept between calls (D-193): see the module
+        docstring. It follows the FILE, not the path -- an index moved aside
+        and rebuilt (`_start_again`) is a new file, and the connection to the
+        old one is dropped the next time this thread asks. A transaction a
+        crashed caller left open is rolled back before the connection is
+        lent again, and a connection somebody closed outright is replaced.
+        The tables and their one-off migrations are installed once per
+        process for each file (2026-10-05): `install_schema` re-filed every
+        inscription's JSON on every open, and a page that opens the index
+        fifty times spent most of its time doing it.
         """
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        db = Database(self.path)
-        install_schema(db)
-        return db
+        key = str(self.path.resolve())
+        kept: dict[str, _Kept] | None = getattr(_THREAD, "kept", None)
+        if kept is None:
+            kept = _THREAD.kept = {}
+        try:
+            inode: int | None = os.stat(key).st_ino
+        except OSError:
+            inode = None
+        lease = kept.get(key)
+        if lease is not None:
+            stale = lease.inode != inode
+            if not stale and lease.depth == 0:
+                try:
+                    if lease.db.conn.in_transaction:
+                        log.warning("ledger %s: a transaction was left open; rolled back",
+                                    self.params.name)
+                        lease.db.conn.execute("ROLLBACK")
+                except sqlite3.ProgrammingError:      # closed outright by somebody
+                    stale = True
+            if stale:
+                kept.pop(key, None)
+                try:
+                    lease.db.conn.close()
+                except Exception:                     # noqa: BLE001 -- it is gone either way
+                    pass
+                lease = None
+        if lease is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            db = Database(self.path)
+            try:
+                inode = os.stat(key).st_ino
+            except OSError:
+                inode = None
+            # Per FILE, not per path: an index moved aside and rebuilt is a
+            # new file at the same path, and remembering the path alone left
+            # the new file without its tables ("no such table: watched" after
+            # a floor move, found by test_scan_floor on 2026-10-11).
+            if (key, inode) not in _SCHEMA_INSTALLED:
+                install_schema(db)
+                _SCHEMA_INSTALLED.add((key, inode))
+            lease = _Kept(db, inode)
+            # The one asked for last is the one kept longest.
+            for old_key in [k for k, v in kept.items() if v.depth == 0][:max(0, len(kept) + 1 - KEPT_PER_THREAD)]:
+                try:
+                    kept.pop(old_key).db.conn.close()
+                except Exception:                     # noqa: BLE001
+                    pass
+        else:
+            kept.pop(key, None)
+        kept[key] = lease
+        lease.depth += 1
+        return lease                                  # type: ignore[return-value]
 
     @property
     def enabled(self) -> bool:
@@ -446,9 +550,40 @@ class LedgerIndex:
 
     # --- inscriptions ---------------------------------------------------------
 
+    def collections_held(self, owner: str) -> list[dict]:
+        """What one address holds, by collection: the name, how many, the
+        newest block one arrived in, and up to four pictures for a cover.
+
+        The profile's Collections tab (2026-10-08: "we have collections that
+        have thousands of items and we need to be able to sort through our
+        collections before we look at the items"). Counted by the database,
+        so a holder of six thousand pieces costs one GROUP BY, not six
+        thousand rows. Pieces in no collection come back under "".
+        """
+        with self.open() as db:
+            rows = db.conn.execute(
+                "SELECT COALESCE(c.collection, '') AS collection, COUNT(*) AS n, "
+                "MAX(i.block_height) AS newest FROM inscription i "
+                "LEFT JOIN collection_item c ON c.txid = i.txid "
+                "WHERE i.owner = ? GROUP BY COALESCE(c.collection, '')", (owner,)).fetchall()
+            out = []
+            for r in rows:
+                covers = [x[0] for x in db.conn.execute(
+                    "SELECT i.txid FROM inscription i "
+                    "LEFT JOIN collection_item c ON c.txid = i.txid "
+                    "WHERE i.owner = ? AND COALESCE(c.collection, '') = ? "
+                    "AND i.content_type LIKE 'image/%' "
+                    "ORDER BY i.number DESC LIMIT 4", (owner, r["collection"]))]
+                out.append({"collection": r["collection"], "count": int(r["n"]),
+                            "newest": int(r["newest"] or 0), "covers": covers})
+        # Most pieces first, and the loose ones last whatever their number.
+        out.sort(key=lambda c: (c["collection"] == "", -c["count"], c["collection"].lower()))
+        return out
+
     def inscriptions(self, owner: str | None = None, creator: str | None = None,
                      limit: int = 100, after: int = -1,
-                     offset: int = 0, owners: list[str] | None = None) -> list[dict]:
+                     offset: int = 0, owners: list[str] | None = None,
+                     collection: str | None = None) -> list[dict]:
         """One page, newest first. Never the content: a listing of a hundred
         files would be a hundred files.
 
@@ -469,6 +604,9 @@ class LedgerIndex:
             args.extend(owners)
         if creator:
             where.append("i.creator = ?"); args.append(creator)
+        if collection is not None:
+            # "" is the pieces that belong to no collection (collections_held).
+            where.append("COALESCE(c.collection, '') = ?"); args.append(collection)
         if after >= 0:
             where.append("i.number > ?"); args.append(after)
         if where:
@@ -478,6 +616,59 @@ class LedgerIndex:
         args.append(max(0, offset))
         with self.open() as db:
             return [dict(row) for row in db.conn.execute(sql, args)]
+
+    def held_collections(self, owner: str, cover: int = 4) -> list[dict]:
+        """What `owner` holds, as collections: name, how many, newest height,
+        and the newest few pieces to draw a cover from.
+
+        The Wallet tab's NFTs (2026-10-08: "we have collections that have
+        thousands of items and we need to be able to sort through our
+        collections before we look at the items"), so it is one GROUP BY, not
+        every piece sent to the browser to be counted there. Pieces in no
+        collection come back as the collection "".
+        """
+        with self.open() as db:
+            groups = [dict(row) for row in db.conn.execute(
+                "SELECT COALESCE(c.collection, '') AS collection, COUNT(*) AS count, "
+                "MAX(i.block_height) AS latest "
+                "FROM inscription i LEFT JOIN collection_item c ON c.txid = i.txid "
+                "WHERE i.owner = ? GROUP BY COALESCE(c.collection, '')", (owner,))]
+            for group in groups:
+                group["cover"] = [dict(row) for row in db.conn.execute(
+                    "SELECT i.txid, i.content_type FROM inscription i "
+                    "LEFT JOIN collection_item c ON c.txid = i.txid "
+                    "WHERE i.owner = ? AND COALESCE(c.collection, '') = ? "
+                    "ORDER BY (i.content_type LIKE 'image/%') DESC, i.number DESC LIMIT ?",
+                    (owner, group["collection"], int(cover)))]
+        return groups
+
+    def held_pieces(self, owner: str, collection: str, query: str = "",
+                    sort: str = "number", offset: int = 0,
+                    limit: int = 60) -> tuple[list[dict], int]:
+        """One page of what `owner` holds in one collection ("" for none),
+        searched by #number/edition or by name, and how many match in all."""
+        where = ["i.owner = ?", "COALESCE(c.collection, '') = ?"]
+        args: list = [owner, collection]
+        text = (query or "").strip().lstrip("#")
+        if text.isdigit():
+            where.append("(CAST(c.edition AS TEXT) LIKE ? OR CAST(i.number AS TEXT) LIKE ?)")
+            args += [text + "%", text + "%"]
+        elif text:
+            where.append("COALESCE(c.name, '') LIKE ?")
+            args.append("%" + text.replace("%", "").replace("_", "") + "%")
+        order = {"recent": "i.block_height DESC, i.number DESC",
+                 "name": "COALESCE(c.name, '') COLLATE NOCASE, c.edition, i.number"
+                 }.get(sort, "COALESCE(c.edition, i.number), i.number")
+        clause = " WHERE " + " AND ".join(where)
+        join = " FROM inscription i LEFT JOIN collection_item c ON c.txid = i.txid"
+        with self.open() as db:
+            total = int(db.conn.execute("SELECT COUNT(*)" + join + clause, args).fetchone()[0])
+            rows = [dict(row) for row in db.conn.execute(
+                "SELECT i.txid, i.number, i.content_type, i.block_height, "
+                "c.edition, COALESCE(c.name, '') AS name" + join + clause
+                + f" ORDER BY {order} LIMIT ? OFFSET ?",
+                args + [max(1, min(int(limit), 200)), max(0, int(offset))])]
+        return rows, total
 
     #: A swap, as it sits in `arcade_tx`: the AnyData type, then INSC, then
     #: version 1 and kind 5 (inscriptions.KIND_SWAP). Matching on the prefix
@@ -492,6 +683,23 @@ class LedgerIndex:
         with no trade is a day with no trade, not a straight line to the next
         one (D-039).
         """
+        from . import inscriptions as I
+
+        # Trades change only when a block is indexed, and this reads the whole
+        # transaction table: kept per indexed tip (2026-10-05, the Exchange
+        # asked twice a load, a quarter of a second each). Kept at the
+        # largest limit and cut to size, because the Exchange asks for 500
+        # and the pair markets for 5000, and a memo keyed on the limit missed
+        # on every page (2026-10-11).
+        with self.open() as db:
+            tip = db.conn.execute("SELECT MAX(height) FROM block").fetchone()[0]
+        memo = getattr(self, "_trades_memo", None)
+        if not (memo and memo[0] == (tip, since_height)):
+            memo = ((tip, since_height), self._trades_uncached(5000, since_height))
+            self._trades_memo = memo
+        return list(memo[1][:max(1, min(limit, 5000))])
+
+    def _trades_uncached(self, limit: int, since_height: int) -> list[dict]:
         from . import inscriptions as I
 
         sql = ("SELECT a.txid, a.block_height, a.sender, a.payload_hex, b.time "
@@ -1118,8 +1326,13 @@ class LedgerIndex:
             return [dict(row) for row in db.conn.execute(sql, args)]
 
     def book(self, property_id: int, limit: int = 50,
-             pool: bool = True) -> dict[str, list[dict]]:
+             pool: bool = True, pending: tuple[list[dict], set[str]] | None = None,
+             ) -> dict[str, list[dict]]:
         """One pair's book: asks cheapest first, bids dearest first.
+
+        `pending` is a pool read already made (`pending_orders()`), for a
+        caller drawing many books at once: the Exchange's table asked the
+        node for its mempool once per token, 120 times a page (2026-10-11).
 
         Price is worked out from two integers and kept as a Fraction until
         the last moment, because a book sorted on floats puts orders in an
@@ -1133,17 +1346,47 @@ class LedgerIndex:
         built from blocks, and the reserve an order holds moves only when its
         block lands.
         """
-        from fractions import Fraction
-
         with self.open() as db:
             rows = [dict(r) for r in db.conn.execute(
-                "SELECT * FROM book_order WHERE sale_property = ? OR want_property = ?",
+                "SELECT * FROM book_order WHERE (sale_property = ? AND want_property = 0) "
+                "OR (want_property = ? AND sale_property = 0)",
                 (property_id, property_id))]
         if pool:
-            fresh, cancelled = self.pending_orders()
+            fresh, cancelled = pending if pending is not None else self.pending_orders()
             rows = [r for r in rows if r["txid"] not in cancelled]
             rows += [r for r in fresh
-                     if property_id in (r["sale_property"], r["want_property"])]
+                     if property_id in (r["sale_property"], r["want_property"])
+                     and 0 in (r["sale_property"], r["want_property"])]
+        return self._coin_book(rows, property_id, limit)
+
+    def coin_books(self, limit: int = 50, pool: bool = True,
+                   pending: tuple[list[dict], set[str]] | None = None,
+                   ) -> dict[int, dict[str, list[dict]]]:
+        """Every token's book against the coin at once, by property id: what
+        `book()` answers for one token, read in one query for the lot. For
+        the Exchange's table, which drew a book per token and opened the
+        index 120 times a page (2026-10-11). A token with no order has no
+        entry."""
+        with self.open() as db:
+            rows = [dict(r) for r in db.conn.execute(
+                "SELECT * FROM book_order WHERE sale_property = 0 OR want_property = 0")]
+        if pool:
+            fresh, cancelled = pending if pending is not None else self.pending_orders()
+            rows = [r for r in rows if r["txid"] not in cancelled]
+            rows += [r for r in fresh if 0 in (r["sale_property"], r["want_property"])]
+        by_token: dict[int, list[dict]] = {}
+        for row in rows:
+            pid = row["sale_property"] or row["want_property"]
+            if pid:
+                by_token.setdefault(pid, []).append(row)
+        return {pid: self._coin_book(mine, pid, limit) for pid, mine in by_token.items()}
+
+    @staticmethod
+    def _coin_book(rows: list[dict], property_id: int, limit: int) -> dict[str, list[dict]]:
+        """These coin-side orders of one token as its book: asks cheapest
+        first, bids dearest first, each with `tokens`, `coins` and `price`."""
+        from fractions import Fraction
+
         asks, bids = [], []
         for row in rows:
             selling_token = row["sale_property"] == property_id
@@ -1322,11 +1565,19 @@ class LedgerIndex:
             return None
 
         sale, want = msg.property_id_for_sale, msg.property_id_desired
-        if sale == want or 0 not in (sale, want):
+        if sale == want:
             return None
+        if 0 not in (sale, want):
+            # a token/token order (Params.token_pairs_from): shown from the pool
+            # like any other, one confirmation early (2026-10-06, the operator: "Can't
+            # the bid and ask orders be read from mempool?")
+            if getattr(self.params, "token_pairs_from", None) is None:
+                return None
+            if self.property(sale) is None or self.property(want) is None:
+                return None
         if not 0 < msg.amount_for_sale < 2 ** 63 or not 0 < msg.amount_desired < 2 ** 63:
             return None
-        if self.property(want if sale == 0 else sale) is None:
+        if 0 in (sale, want) and self.property(want if sale == 0 else sale) is None:
             return None
         return {**base, "cancels": "", "sale_property": sale,
                 "sale_amount": msg.amount_for_sale, "want_property": want,
@@ -1342,13 +1593,126 @@ class LedgerIndex:
         with self.open() as db:
             rows = db.conn.execute(
                 "SELECT DISTINCT CASE WHEN sale_property = 0 THEN want_property "
-                "ELSE sale_property END AS pid FROM book_order").fetchall()
+                "ELSE sale_property END AS pid FROM book_order "
+                "WHERE sale_property = 0 OR want_property = 0").fetchall()
         pairs = {int(r["pid"]) for r in rows if r["pid"]}
         if pool:
             fresh, _ = self.pending_orders()
             pairs |= {o["want_property"] if o["sale_property"] == 0
-                      else o["sale_property"] for o in fresh}
+                      else o["sale_property"] for o in fresh
+                      if 0 in (o["sale_property"], o["want_property"])}
         return sorted(p for p in pairs if p)
+
+    # --- token/token pairs (Params.token_pairs_from) -------------------------
+    #
+    # A pair is written BASE/QUOTE: what is bought and sold, and what it is
+    # priced in. Either way round is the same market -- an order selling LOGS
+    # for GOLD is an ask on LOGS/GOLD and a bid on GOLD/LOGS -- so every reader
+    # takes the two ids and answers in that orientation.
+
+    def pending_pair_sales(self, address: str, property_id: int) -> int:
+        """How much of a token this address has put on token/token orders that
+        are still in the pool: spoken for, though nothing is reserved until
+        their block lands, so a second order cannot sell the same tokens."""
+        fresh, _ = self.pending_orders()
+        return sum(o["sale_amount"] for o in fresh
+                   if o["address"] == address and o["sale_property"] == property_id
+                   and o["want_property"] != 0 and o["sale_property"] != 0)
+
+    def token_pairs(self, pool: bool = True) -> list[tuple[int, int]]:
+        """Every two-token market with an order on it (mined or in the pool) or
+        a trade in it, each once, lower property id first."""
+        extra = []
+        if pool:
+            fresh, _ = self.pending_orders()
+            extra = [{"a": o["sale_property"], "b": o["want_property"]} for o in fresh
+                     if o["sale_property"] and o["want_property"]]
+        with self.open() as db:
+            rows = db.conn.execute(
+                "SELECT sale_property AS a, want_property AS b FROM book_order "
+                "WHERE sale_property <> 0 AND want_property <> 0").fetchall()
+            try:
+                rows += db.conn.execute(
+                    "SELECT gave_property AS a, got_property AS b FROM pair_trade").fetchall()
+            except Exception:
+                pass                  # a ledger from before pairs
+        return sorted({(min(r["a"], r["b"]), max(r["a"], r["b"])) for r in list(rows) + extra})
+
+    def pair_book(self, base: int, quote: int, limit: int = 50,
+                  pool: bool = True) -> dict[str, list[dict]]:
+        """BASE/QUOTE's book. An ask sells BASE for QUOTE, a bid sells QUOTE for
+        BASE; each row carries `base` and `quote` amounts and `price` (QUOTE per
+        BASE, a Fraction of raw units). Asks cheapest first, bids dearest first,
+        then oldest.
+
+        `pool` adds what is broadcast and not mined yet, marked `pending`, after
+        the mined orders at its price, and drops what a pool cancel withdraws --
+        the coin book's rule (D-061). A pending order that crosses the mined
+        book is marked `crosses`: the engine will trade it when its block lands
+        rather than let it rest, so it is a price that is about to fill."""
+        from fractions import Fraction
+        with self.open() as db:
+            rows = [dict(r) for r in db.conn.execute(
+                "SELECT * FROM book_order WHERE (sale_property=? AND want_property=?) "
+                "OR (sale_property=? AND want_property=?)", (base, quote, quote, base))]
+        if pool:
+            fresh, cancelled = self.pending_orders()
+            rows = [r for r in rows if r["txid"] not in cancelled]
+            rows += [dict(o) for o in fresh
+                     if {o["sale_property"], o["want_property"]} == {base, quote}]
+        asks, bids = [], []
+        for r in rows:
+            if r["sale_property"] == base:
+                r["base"], r["quote"] = r["sale_amount"], r["want_amount"]
+                if r["base"]: asks.append(r)
+            else:
+                r["base"], r["quote"] = r["want_amount"], r["sale_amount"]
+                if r["base"]: bids.append(r)
+            if r["base"]:
+                r["price"] = Fraction(r["quote"], r["base"])
+        when = lambda r: (1, 0, 0) if r.get("pending") else (0, r["block_height"], r["position"])
+        asks.sort(key=lambda r: (r["price"], when(r)))
+        bids.sort(key=lambda r: (-r["price"], when(r)))
+        best_ask = next((r["price"] for r in asks if not r.get("pending")), None)
+        best_bid = next((r["price"] for r in bids if not r.get("pending")), None)
+        for r in asks:
+            r["crosses"] = bool(r.get("pending") and best_bid is not None and best_bid >= r["price"])
+        for r in bids:
+            r["crosses"] = bool(r.get("pending") and best_ask is not None and best_ask <= r["price"])
+        return {"asks": asks[:limit], "bids": bids[:limit]}
+
+    def pair_trades(self, base: int, quote: int, limit: int = 500) -> list[dict]:
+        """What traded on BASE/QUOTE, newest first: book matches (pair_trade)
+        and two-person token-for-token swaps alike, as {when, height, txid,
+        base, quote} raw amounts, `side` "buy" when the taker bought BASE."""
+        from . import inscriptions as I
+        out = []
+        with self.open() as db:
+            try:
+                rows = db.conn.execute(
+                    "SELECT t.*, b.time FROM pair_trade t JOIN block b ON b.height = t.block_height "
+                    "WHERE (t.gave_property=? AND t.got_property=?) OR (t.gave_property=? AND t.got_property=?)",
+                    (base, quote, quote, base)).fetchall()
+            except Exception:
+                rows = []
+        for r in rows:
+            buy = r["got_property"] == base
+            out.append({"when": r["time"], "height": r["block_height"], "txid": r["txid"],
+                        "base": r["got"] if buy else r["gave"], "quote": r["gave"] if buy else r["got"],
+                        "side": "buy" if buy else "sell", "taker": r["taker"], "maker": r["maker"]})
+        for t in self.trades(limit=5000):
+            g, k = t["give"], t["take"]
+            if g.kind != I.LEG_TOKEN or k.kind != I.LEG_TOKEN or not g.amount or not k.amount:
+                continue
+            if {g.property_id, k.property_id} != {base, quote}:
+                continue
+            sold_base = g.property_id == base
+            out.append({"when": t["when"], "height": t["height"], "txid": t["txid"],
+                        "base": g.amount if sold_base else k.amount,
+                        "quote": k.amount if sold_base else g.amount,
+                        "side": "sell" if sold_base else "buy", "taker": None, "maker": t["seller"]})
+        out.sort(key=lambda t: (t["height"], t["txid"]), reverse=True)
+        return out[:limit]
 
     def order(self, txid: str) -> dict | None:
         """One standing order, by the transaction that placed it.
@@ -1362,7 +1726,8 @@ class LedgerIndex:
                                   (str(txid),)).fetchone()
             return dict(row) if row else None
 
-    def orders_of(self, addresses: list[str], pool: bool = True) -> list[dict]:
+    def orders_of(self, addresses: list[str], pool: bool = True,
+                  pairs: bool = False) -> list[dict]:
         """This wallet's own standing orders, newest first.
 
         The pool first: an order you have just placed is yours whether or not
@@ -1376,11 +1741,16 @@ class LedgerIndex:
             mine = [dict(r) for r in db.conn.execute(
                 f"SELECT * FROM book_order WHERE address IN ({marks}) "
                 f"ORDER BY block_height DESC, position DESC", tuple(addresses))]
+        # Token/token orders (Params.token_pairs_from) have no coin side; every
+        # older reader of this list prices against the coin, so they are left
+        # out unless asked for: `pairs=True` gives ONLY those.
+        is_pair = lambda o: o["sale_property"] != 0 and o["want_property"] != 0
+        mine = [o for o in mine if is_pair(o) == pairs]
         if not pool:
             return mine
         fresh, cancelled = self.pending_orders()
         here = set(addresses)
-        return ([o for o in fresh if o["address"] in here]
+        return ([o for o in fresh if o["address"] in here and is_pair(o) == pairs]
                 + [o for o in mine if o["txid"] not in cancelled])
 
     def swaps_of(self, addresses: list[str], limit: int = 100) -> list[dict]:
@@ -1683,6 +2053,117 @@ class LedgerIndex:
             log.debug("mempool swaps unavailable: %s", exc)
             return {}
         return {piece: txid for txid, piece in self._pool_swaps.items() if piece}
+
+    def pending_moves(self, limit: int = 500) -> list[dict]:
+        """Pieces and tokens a transaction in the mempool is moving (2026-10-04,
+        "if somebody leaves the game, they should be able to just look in their
+        wallet and see what they collected"): transfers, token sends and grants,
+        and both legs of swaps, each as {txid, kind, from, to, why, ...}.
+
+        Read fresh, cached per transaction like `pending_offers`, never written
+        down: the ledger is built from blocks only, and a move that never
+        confirms leaves nothing behind. Checked as far as the pool can answer --
+        an inscription must exist and be the sender's now, a token must exist --
+        and no further: whether it lands is the block's to say, which is why
+        every page that shows these says "arriving", not "yours".
+        """
+        from . import inscriptions as I
+        from .indexer import PrevOutCache
+        from .tx import extract
+
+        try:
+            with self._rpc() as rpc:
+                ids = list(rpc.call("getrawmempool") or [])[:max(0, limit)]
+                known = getattr(self, "_pool_moves", {})
+                cache = PrevOutCache(rpc, self.params)
+                found: dict[str, list] = {}
+                for txid in ids:
+                    if txid in known:
+                        found[txid] = known[txid]
+                        continue
+                    try:
+                        tx = rpc.call("getrawtransaction", txid, True)
+                        rtx = extract(tx, 0, 0, self.params, cache.lookup)
+                        found[txid] = self._move_rows(rtx, I) if rtx else []
+                    except Exception:
+                        found[txid] = []
+                self._pool_moves = found
+        except Exception as exc:
+            log.debug("mempool moves unavailable: %s", exc)
+            return []
+        out = []
+        for rows in self._pool_moves.values():
+            for row in rows:
+                if row["kind"] == "inscription":
+                    # Still the sender's now: a move of something it no longer
+                    # holds is one the block will refuse.
+                    held = self.inscription(row["inscription"])
+                    if held is None or held["owner"] != row["from"]:
+                        continue
+                out.append(row)
+        return out
+
+    def _move_rows(self, rtx, I) -> list[dict]:
+        """One mempool transaction as the moves it makes, or [] when it makes none."""
+        if not rtx.payload:
+            return []
+        try:
+            parsed = P.decode(rtx.payload)
+        except (P.PayloadError, P.UnknownMessageType, P.OutOfScopeMessageType):
+            return []
+        base = {"txid": rtx.txid, "from": rtx.sender}
+        if isinstance(parsed, P.SimpleSend) and rtx.reference:
+            return [{**base, "kind": "token", "property_id": int(parsed.property_id),
+                     "units": int(parsed.amount), "to": rtx.reference, "why": "send"}]
+        if isinstance(parsed, P.Grant):
+            return [{**base, "kind": "token", "property_id": int(parsed.property_id),
+                     "units": int(parsed.amount), "to": rtx.reference or rtx.sender,
+                     "why": "grant"}]
+        data = getattr(parsed, "data", None)
+        if not data or not I.is_inscription(data):
+            return []
+        try:
+            item = I.parse(data)
+        except Exception:
+            return []
+        if isinstance(item, I.Transfer) and rtx.reference:
+            return [{**base, "kind": "inscription", "inscription": item.txid.hex(),
+                     "to": rtx.reference, "why": "transfer"}]
+        if isinstance(item, I.Bundle):
+            from .script import b58check_encode
+            a = b58check_encode(item.a[0], item.a[1:])
+            b = b58check_encode(item.b[0], item.b[1:])
+            rows = []
+            for legs, frm, to in ((item.give, a, b), (item.take, b, a)):
+                for leg in legs:
+                    if leg.kind == I.LEG_INSCRIPTION:
+                        rows.append({"txid": rtx.txid, "kind": "inscription",
+                                     "inscription": leg.txid.hex(), "from": frm, "to": to,
+                                     "why": "bundle"})
+                    elif leg.kind == I.LEG_TOKEN:
+                        rows.append({"txid": rtx.txid, "kind": "token",
+                                     "property_id": int(leg.property_id),
+                                     "units": int(leg.amount), "from": frm, "to": to,
+                                     "why": "bundle"})
+            return rows
+        if isinstance(item, I.Swap):
+            seller = rtx.sender
+            buyer = next((where for where, _ in getattr(rtx, "inputs", ())
+                          if where is not None and where != seller), None)
+            if buyer is None:
+                return []
+            rows = []
+            for leg, frm, to in ((item.give, seller, buyer), (item.take, buyer, seller)):
+                if leg.kind == I.LEG_INSCRIPTION:
+                    rows.append({"txid": rtx.txid, "kind": "inscription",
+                                 "inscription": leg.txid.hex(), "from": frm, "to": to,
+                                 "why": "swap"})
+                elif leg.kind == I.LEG_TOKEN:
+                    rows.append({"txid": rtx.txid, "kind": "token",
+                                 "property_id": int(leg.property_id), "units": int(leg.amount),
+                                 "from": frm, "to": to, "why": "swap"})
+            return rows
+        return []
 
     def _offer_row(self, rtx) -> dict | None:
         """One mempool transaction as an offer row, or None if it is not one."""

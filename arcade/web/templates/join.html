@@ -222,6 +222,17 @@ function say(text) {
 
 let phrase = "", asked = [];
 
+/* Signed in by the words: this tab keeps the wallet open, and a page that sent
+   somebody here (?next=) gets them back (2026-10-08: a game asked a words-only
+   account to sign in again every time -- the session was there, the open wallet
+   was not, and this page never sent them back). Only a path on this site. */
+async function arrived(answer, words) {
+  show(answer);
+  try { (await import("/wallet.js")).remember(signer.normalise(words)); } catch (e) {}
+  const next = new URLSearchParams(location.search).get("next") || "";
+  if (next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\")) location.href = next;
+}
+
 function show(answer) {
   $("doors").hidden = true;
   $("signed-in").hidden = false;
@@ -287,7 +298,7 @@ function wire() {
     }
     try {
       if ($("keep").checked) await signer.keep(phrase, $("password").value);
-      show(await signer.signIn(phrase, {join: true}));
+      await arrived(await signer.signIn(phrase, {join: true}), phrase);
     } catch (e) { say(String(e.message || e)); }
   };
 
@@ -301,7 +312,7 @@ function wire() {
   $("restore").onclick = async () => {
     say("");
     try {
-      show(await signer.signIn($("phrase").value, {join: true}));
+      await arrived(await signer.signIn($("phrase").value, {join: true}), $("phrase").value);
     } catch (e) { say(String(e.message || e)); }
   };
 
@@ -309,7 +320,7 @@ function wire() {
     say("");
     try {
       const words = await signer.unlock($("unlock-password").value);
-      show(await signer.signIn(words, {join: true}));
+      await arrived(await signer.signIn(words, {join: true}), words);
     } catch (e) { say(String(e.message || e)); }
   };
 

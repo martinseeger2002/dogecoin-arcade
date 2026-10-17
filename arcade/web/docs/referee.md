@@ -225,6 +225,32 @@ Every refereed pool of this page takes that seed **once each**, with the same
 replay; each pool's judge and `params` decide what it pays for. The pools must
 share a referee. The seed lasts as long as the longest `seed_hours` among them.
 
+### A session: one seed, a prize at every moment
+
+A game that pays as it is played -- a coin picked up, an item dropped -- asks
+for a SESSION seed once per play session, and claims each time something is
+earned:
+
+```js
+parent.postMessage({arcade: "seed", seq: 1, game: true, session: true}, "*");
+// answers {seed, expires, pools}: the game's pools that take a session seed
+```
+
+* A pool takes session seeds when its referee says `"session": true`. Pair it
+  with `"fee": "pool"` (see *Prize pools*) and the player is never asked.
+* Keep the run's record as a **list that only grows**, and send all of it with
+  every claim. A claim whose record does not continue the last one paid is
+  refused, so a run cannot be re-cut to be paid twice.
+* The judge is told `params.since` (where the new part of the record starts),
+  `params.paid` (every payment of this seed: `{pool, lot, at, params}`, with the
+  paying pool's own params) and `params.prior` (what it returned for the record
+  as last accepted, so it can carry on from there rather than replay a long
+  session). It answers about what is new: `won` while more was earned than paid.
+* A session seed lasts the longest `seed_hours` among the game's session pools
+  (2 to 4 hours suits a play session); ask for a new one when it expires. What
+  the player holds (`facts`) is read when the seed is issued.
+* Up to 30 claims a minute are judged per session.
+
 ### Claiming with the run
 
 When the player wins:
@@ -237,6 +263,13 @@ parent.postMessage({arcade: "claim", seq: 2, secret: "<phrase>",
 The player sees the arcade's claim card, which says the referee checks their
 run before it pays. The answers are those of any claim: `heard`, then
 `{ok, txid, piece}` or `{error}`.
+
+### When the pool pays for the claim
+
+A pool with `"fee": "pool"` (see *Prize pools*) needs nothing of the player but
+their run: the claim is made of the lot's own coins, so there is no card and no
+key to unlock, and the prize is in the player's wallet as soon as the block
+lands. Use it for prizes a game pays while it is being played.
 
 ### Refusals
 

@@ -870,7 +870,7 @@ def test_the_not_here_page_has_a_way_home_and_a_title(public):
     answer = app.get("/wallet/nfts", headers=LOCAL)
     assert answer.status_code in (403, 404)
     assert '<a href="/">Home</a>' in answer.text
-    assert "<title>" in answer.text and "· DogecoinArcade</title>" in answer.text
+    assert "<title>" in answer.text and "· PepecoinArcade</title>" in answer.text
 
 
 def test_the_address_book_finds_a_name_by_its_address(public):

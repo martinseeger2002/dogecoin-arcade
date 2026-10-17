@@ -395,3 +395,30 @@ def test_a_cloud_api_that_refuses_vllm_fields_is_asked_without_them(tmp_path):
         server.server_close()
     assert len(asked) == 3, "refused once, then asked plainly every time after"
     assert "chat_template_kwargs" not in asked[2]
+
+
+def test_a_model_that_is_away_keeps_nobody_waiting(tmp_path, model):
+    """2026-10-13: the model was down and every unjudged picture held a request for the
+    whole timeout, so a page of NFTs stopped the site. Once a question fails, pages get
+    "checking" at once, and the worker asks in the background until the model is back."""
+    screen = mod.Screen(tmp_path, {"url": "http://127.0.0.1:9/v1", "model": "m"})
+    assert screen.check_image("image/png", PICTURE) is None
+    assert screen.away()
+    started = time.time()
+    for colour in range(20):
+        assert screen.check_image("image/png", _png((colour, 1, 1))) is None
+        assert screen.check_text(f"post {colour}", now=True) is None
+    assert time.time() - started < 2, "nothing waited on a model that is away"
+    assert len(screen._queue) == 41
+    # The model comes back: the worker judges what waited, pictures included.
+    model.says = '{"verdict": "sensitive", "reason": "x"}'
+    screen.config["url"] = model.url
+    screen._away_until = 0.0
+    screen._wake()
+    deadline = time.time() + 20
+    while screen._queue and time.time() < deadline:
+        time.sleep(0.05)
+    assert not screen._queue
+    assert screen.check_image("image/png", PICTURE) == mod.SENSITIVE
+    assert screen.check_text("post 3") == mod.SENSITIVE
+    assert len(model.asked) == 41, "each asked once, by the worker"

@@ -143,20 +143,28 @@
    stays. Every page that carries the tag says which side of the door it is on.
    #}
 {% macro chain_switch(chain, others, csrf, back='', public=False) %}
-{% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
-{% set word = 'main' if chain.is_mainnet else 'test' %}
-{% if public %}
-{% elif others %}
+{# Every chain, in one order, the one being shown marked (2026-10-13, after a
+   one-button switch that named only the current chain read as "missing PEP main"):
+   P TEST, P MAIN, D MAIN. A chain still syncing is grayed out, with how far it has got. #}
+{% if not public %}
+<span class="chainswitch">
+{%- for c in chain_menu(account_side=True) %}
+{%- set short = 'test' if c.net == 'testnet' else 'main' %}
+{%- if c.network == chain.network %}
+<span class="tag {{ c.net }} on" aria-current="true" title="Showing {{ c.label }}">{{ short }}</span>
+{%- elif c.ready %}
 <form method="post" action="/tokens/chain" style="display:inline">
   <input type="hidden" name="csrf_token" value="{{ csrf }}">
-  {# Back to the page it was pressed on. Every chain-specific page carries
-     this now, and a switch that always landed on /tokens would answer a
-     question about the NFTs page by leaving it (D-135). #}
+  {# Back to the page it was pressed on (D-135). #}
   {% if back %}<input type="hidden" name="back" value="{{ back }}">{% endif %}
-  <button type="submit" class="tag {{ tag }} switch" name="chain" value="{{ others[0].network }}"
-          title="Switch to {{ others[0].label|lower }}">{{ word }}</button>
+  <button type="submit" class="tag {{ c.net }} switch" name="chain" value="{{ c.network }}"
+          title="Switch to {{ c.label }}">{{ short }}</button>
 </form>
-{% else %}
-<span class="tag {{ tag }}">{{ word }}</span>
+{%- else %}
+<span class="tag {{ c.net }} chain-off" aria-disabled="true"
+      title="{{ c.label }}: opens when its node has synced ({{ c.progress }}% so far)">{{ short }}</span>
+{%- endif %}
+{%- endfor %}
+</span>
 {% endif %}
 {% endmacro %}

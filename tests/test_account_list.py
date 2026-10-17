@@ -364,6 +364,8 @@ def test_a_leg_answered_to_one_account_completes_without_a_listing(shop):
     assert said["seller"] == seller_addr, "whose piece this is, from the leg"
     assert said["signed_from"] == 2, \
         "the piece and the coin under its second signature are the seller's"
+    assert said["signed_by"] == "account", \
+        "and it says whose key makes those signatures, not only from which input"
     assert {coin["address"] for coin in said["inputs"][2:]} == {buyer_addr}
     assert state.listings.open_listings("regtest") == [], "nothing advertised"
     assert rpc.call("getrawmempool") == [], "and nothing spent"

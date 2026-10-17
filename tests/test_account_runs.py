@@ -112,15 +112,16 @@ def test_a_failed_piece_comes_back_with_the_id_it_already_had(book):
     assert after["error"] == ""
 
 
-def test_a_build_that_needs_two_transactions_is_refused_before_it_is_written(tmp_path):
-    """The refusal is at the review, when nothing has been paid for, rather
-    than forty pieces into a run that cannot finish."""
-    home = tmp_path / "runs.sqlite"
-    book = accountruns.Runs(home)
-    with pytest.raises(accountruns.TooBig) as refused:
-        book.create("n1someone", "n1addr", _build(Path("/b"), items=2, size=30_000), "n")
-    assert "piece 1" in str(refused.value)
-    assert book.list() == []
+def test_an_item_of_more_than_one_transaction_is_written_down_with_its_count(tmp_path):
+    """Never shrunk (2026-10-08): a 30 KB picture is written down as it is, with the
+    number of transactions it takes, and the page sends it the one-big-file way."""
+    book = accountruns.Runs(tmp_path / "runs.sqlite")
+    run_id = book.create("n1someone", "n1addr", _build(Path("/b"), items=2, size=30_000), "n")
+    rows = book.pieces(run_id)
+    assert [r["chunks"] for r in rows] == [r["chunks"] for r in rows] and all(r["chunks"] > 1 for r in rows)
+    assert book.piece(run_id, 2)["edition"] == 2 and book.piece(run_id, 9) is None
+    small = book.create("n1other", "n1addr2", _build(Path("/c"), items=1), "n")
+    assert book.pieces(small)[0]["chunks"] == 1
 
 
 def test_the_book_does_not_move_a_status_it_was_not_allowed_to_move(book):

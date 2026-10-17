@@ -115,6 +115,7 @@ class Item:
     image: str           # path relative to the build folder
     content_type: str
     size: int
+    sha256: str = ""     # the picture's digest, when the picture is not here to read
 
 
 @dataclass
@@ -357,6 +358,96 @@ def read_build(folder: Path) -> Build:
             break
     return Build(folder=folder, items=items, collection=collection,
                  problems=problems)
+
+
+#: A run written down from a browser's reading of its folder: this many pieces
+#: at most in one manifest. A bound on one request's JSON, not on a collection,
+#: which can be added to run by run.
+MANIFEST_ITEMS = 20_000
+
+
+def build_from_manifest(entries: Any) -> Build:
+    """A build from what a browser read off a folder, without the pictures.
+
+    2026-10-11: the pictures stay in the browser that chose them and go
+    up one piece at a time, so this node never keeps a folder. What it needs to
+    write the run down is what `read_build` reads off the disk: each piece's
+    JSON, the name of its picture, its size (what it costs) and its SHA-256
+    (what the bytes must be when they arrive). The rules are `read_build`'s: an
+    edition from the entry, else from the name, else the position; off-chain
+    image pointers stripped. `folder` is blank, and that blank is what every
+    route reads as "the pictures are in the browser".
+
+    The digest is optional since 2026-10-12, and that is what makes a big folder
+    cheap: reading six thousand pictures to hash them, before any of them is on
+    the chain, is the same "all at once" the run was built to avoid. A run
+    written down without digests gets each one from the bytes that arrive for
+    that piece (`app._inscribe_run_piece`), so from the second ask of a piece
+    onwards the check is exactly as strict; what is not checked is the first
+    bytes of a piece ever offered, because there is nothing here to compare them
+    with. A digest that IS said is still enforced.
+    """
+    import re as _re
+    if not isinstance(entries, list) or not entries:
+        raise CollectionError("no items were sent: choose the folder again.")
+    if len(entries) > MANIFEST_ITEMS:
+        raise CollectionError(f"that is {len(entries):,} items, and one run takes at most "
+                              f"{MANIFEST_ITEMS:,}; run the rest as a second batch.")
+    items: list[Item] = []
+    seen: set[int] = set()
+    for n, said in enumerate(entries, 1):
+        if not isinstance(said, dict):
+            raise CollectionError(f"item {n} is not an object")
+        entry = said.get("json")
+        if isinstance(entry, str):
+            try:
+                entry = json.loads(entry)
+            except ValueError:
+                raise CollectionError(f"item {n}: its JSON does not parse") from None
+        if not isinstance(entry, dict):
+            raise CollectionError(f"item {n} has no JSON object")
+        image = str(said.get("image") or "")
+        if not image or "/" in image or "\\" in image or image.startswith("."):
+            raise CollectionError(f"item {n}: its picture's name is missing or is not a "
+                                  "plain file name")
+        if not image.lower().endswith(IMAGE_SUFFIXES):
+            raise CollectionError(f"{image} is not a picture this understands")
+        try:
+            size = int(said.get("size"))
+        except (TypeError, ValueError):
+            raise CollectionError(f"{image}: its size was not said") from None
+        if size <= 0:
+            raise CollectionError(f"{image} is empty")
+        # Said when this browser has already read the picture; blank when it has
+        # not, which is what lets a folder of six thousand be written down
+        # without the tab reading six thousand files first (2026-10-12:
+        # "instead of trying to process all of the files all at once ... keep
+        # track of the number inscribed and just continue on one at a time").
+        # The node fills it in from the bytes when that piece's turn comes.
+        digest = str(said.get("sha256") or "").lower()
+        if digest and not _re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise CollectionError(f"{image}: its SHA-256 is malformed")
+        edition = entry.get("edition")
+        if isinstance(edition, bool) or not isinstance(edition, int):
+            member = I.collection_of(compact(entry))
+            edition = member[1] if member and member[1] is not None else n
+        if edition in seen:
+            raise CollectionError(f"edition {edition} appears twice")
+        seen.add(edition)
+        name = entry.get("name") if isinstance(entry.get("name"), str) else f"#{edition}"
+        said_type = str(said.get("content_type") or "").split(";")[0].strip().lower()
+        kind = (said_type if said_type.startswith(("image/", "video/")) else
+                mimetypes.guess_type(image)[0] or "application/octet-stream")
+        items.append(Item(edition=edition, name=name, json=compact(strip_offchain(entry)),
+                          image=image, content_type=kind, size=size, sha256=digest))
+    items.sort(key=lambda item: item.edition)
+    collection = ""
+    for item in items:
+        member = I.collection_of(item.json)
+        if member:
+            collection = member[0]
+            break
+    return Build(folder=Path(""), items=items, collection=collection)
 
 
 def estimate_build(build: Build) -> dict[str, Any]:

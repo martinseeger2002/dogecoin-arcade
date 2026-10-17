@@ -12,7 +12,7 @@
 {% if error %}<div class="msg err">{{ error }}</div>{% endif %}
 
 {% if prepared %}
-  {% set mainnet = which == 'ledger' %}
+  {% set mainnet = which in ('ledger', 'doge') %}
   <h2>Confirm before sending</h2>
   <div class="panel" {% if mainnet %}style="border-color:var(--bad);border-width:2px"{% endif %}>
     {% if mainnet %}
@@ -50,10 +50,16 @@
   {{ chains.card(state.messaging, messaging, "Fees for encrypted messages.", None) }}
   {{ chains.card(state.ledger, ledger, "Tokens, NFTs and coins.",
                  "Wallet disabled on this node." if not ledger.wallet else "Holds real value.") }}
+  {% if doge %}
+  {# Dogecoin, the third network (2026-10-13): shown from the start, usable once synced. #}
+  {{ chains.card(state.doge, doge, "DOGE: tips, tokens, NFTs and coins.",
+                 "Holds real value." if doge_sync.ready else
+                 "Opens when its node has synced: " ~ ('%.1f' % (100 * (doge_sync.progress or 0))) ~ "% so far.") }}
+  {% endif %}
 </div>
 
 {% macro panel(which, ctx, status, tag) %}
-<h2>{{ ctx.label }} <span class="tag {{ tag }}">{{ 'test' if tag == 'testnet' else 'main' }}</span></h2>
+<h2><b class="netl {{ ctx.net }}">{{ ctx.letter }}</b> {{ ctx.word }} <span class="tag {{ 'dogecoin' if which == 'doge' else tag }}">{{ 'test' if tag == 'testnet' else 'main' }}</span></h2>
 <div class="panel">
   {% if not status.online %}
     <p class="muted">{{ status.error }}</p>
@@ -160,6 +166,20 @@
 {% endif %}
 
 {{ panel('ledger', state.ledger, ledger, 'mainnet') }}
+
+{% if doge %}
+{% if doge_sync.ready %}
+{{ panel('doge', state.doge, doge, 'mainnet') }}
+{% else %}
+<h2 class="chain-off"><b class="netl dogecoin">D</b> main <span class="tag dogecoin">main</span></h2>
+<div class="panel chain-off" aria-disabled="true">
+  <p style="margin:0">D main opens here when its node has finished syncing:
+    <strong>{{ '%.1f' % (100 * (doge_sync.progress or 0)) }}%</strong> so far
+    ({{ "{:,}".format(doge_sync.blocks or 0) }} of {{ "{:,}".format(doge_sync.headers or 0) }} blocks).
+    Until then nothing can be sent, held or shown on it.</p>
+</div>
+{% endif %}
+{% endif %}
 <h2>Fast sending <span class="tag testnet">test</span></h2>
 <div class="panel">
   <p>A long message or a file is sent as several linked transactions, and each one

@@ -67,7 +67,8 @@ def regtest():
     """One regtest node shared across the session -- starting it is slow."""
     node = RegtestNode()
     try:
-        node.start()
+        # A busy machine (a mainnet node syncing beside it) can take longer than a minute.
+        node.start(timeout=float(os.environ.get("ARCADE_REGTEST_TIMEOUT", "60")))
     except RuntimeError as exc:
         pytest.skip(f"regtest node unavailable: {exc}")
     yield node
@@ -178,3 +179,40 @@ def threadwatch(request):
                 print(f"threadwatch {request.node.name} <- {other.name} from {born}",
                       file=log)
     _orIGIN[0] = request.node.name
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "node_trades_default: run with node-facilitated trades at the "
+        "shipped default (off) instead of on")
+
+
+@pytest.fixture(autouse=True)
+def node_trades_on_unless_asked(monkeypatch, request):
+    """Node-facilitated trades are OFF by default since 2026-10-13 (the operator: trades
+    only while both tabs are open, unless the operator turns them on). Most tests
+    here are ABOUT those trades -- listings, held bids, away fills, the cross-chain
+    book -- so they run with the switch on, as on a node whose operator chose it.
+    A test of the default marks itself `node_trades_default`; a value a test saves
+    itself always wins."""
+    if request.node.get_closest_marker("node_trades_default"):
+        return
+    from arcade.web import state as statemod
+    real = statemod.AppState.setting
+
+    def setting(self, name, default=None):
+        if name == "node_trades" and default is False:
+            return real(self, name, True)
+        return real(self, name, default)
+
+    monkeypatch.setattr(statemod.AppState, "setting", setting)
+
+
+@pytest.fixture(autouse=True)
+def status_cache_starts_empty():
+    """ChainContext.status keeps an answer for 10 s (2026-10-13). A test that changes a
+    node and reads its status again must not see the answer an earlier test kept."""
+    from arcade.web import state as statemod
+    statemod._STATUS_KEPT.clear()
+    yield
+    statemod._STATUS_KEPT.clear()
