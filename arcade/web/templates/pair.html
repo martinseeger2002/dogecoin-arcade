@@ -34,7 +34,7 @@
      gets no number about somebody this page cannot see. #}
   {% if viewer == 'wallet' or account_address %}<span>You hold <b>{{ held }}</b></span>{% endif %}
 </div>
-{% if viewer != 'nobody' %}<p style="margin:-6px 0 12px;font-size:.84rem"><a href="/exchange/history">Your trade history &rarr;</a></p>{% endif %}
+{% if viewer != 'nobody' %}<p style="margin:-6px 0 12px;font-size:.84rem"><a href="/exchange/history?base={{ (chain.network ~ '-token-' ~ prop.property_id)|urlencode }}&amp;quote={{ (chain.network ~ '-coin')|urlencode }}">Trade history &rarr;</a></p>{% endif %}
 
 <div class="pairgrid">
   <div>

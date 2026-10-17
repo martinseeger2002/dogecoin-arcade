@@ -193,6 +193,13 @@ class OrderBook:
                             "inscription": row["inscription"], "network": row["network"]})
         return out
 
+    def lister_of(self, order_id: str) -> str:
+        """Who listed an order (expired or cancelled included): "" if it was never filed here."""
+        with self._open() as conn:
+            row = conn.execute("SELECT lister FROM trade_order WHERE id = ? ORDER BY rowid DESC LIMIT 1",
+                               (str(order_id),)).fetchone()
+        return row["lister"] if row else ""
+
     def tab_listers(self, now: float | None = None) -> set[str]:
         """Who has a standing order (the pool watch redraws the markets when any of them come or go)."""
         now = now or time.time()

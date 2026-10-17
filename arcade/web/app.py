@@ -703,6 +703,13 @@ def _above_dust(sats: int, what: str) -> None:
 
 def create_app(state: AppState) -> FastAPI:
     TEMPLATES._screen_of = state.screen          # the feed card's screen_text()
+    # The operator's own choice of face (admin panel, `brand` setting) when the service did not
+    # fix one with --brand / ARCADE_BRAND, which always wins (2026-10-17, SadFrog's side).
+    if not brandlib.FROM_ENV and state.setting("brand"):
+        try:
+            brandlib.use(str(state.setting("brand")))
+        except ValueError:
+            pass
     TEMPLATES.env.globals["brand"] = brandlib.current()   # this node's name, colours, icons (brand.py)
     # [Claude 2026-10-14] Inscriptions stay put: a wallet's ordinary sends never spend a coin carrying one (arcade/doginals.py).
     # Read from each chain by its own node (2026-10-15, "Remove Doge Soft API"): Doginals on Dogecoin, and the same ord
@@ -9047,6 +9054,13 @@ def create_app(state: AppState) -> FastAPI:
     def messaging_js():
         """Opening and sealing messages in the browser (templates/messaging_js.js)."""
         return Response((TEMPLATE_DIR / "messaging_js.js").read_text(),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+    @app.get("/qrscan.js")
+    def qrscan_js():
+        """Scanning a QR code with the camera (templates/qrscan.js; the reader is vendor/jsQR.js)."""
+        return Response((TEMPLATE_DIR / "qrscan.js").read_text(),
                         media_type="application/javascript",
                         headers={"Cache-Control": "no-store"})
 
@@ -21551,6 +21565,9 @@ def create_app(state: AppState) -> FastAPI:
             "xchain": _admin_xchain(),
             "swap_big": {k: v / COIN for k, v in _swap_big_lines().items()},
             "flags": _admin_flags(),
+            "chains": _admin_chains(),
+            "brand": {"current": brandlib.current().key, "locked": brandlib.FROM_ENV,
+                      "choices": [[b.key, b.name] for b in brandlib.BRANDS.values()]},
         }, headers={"Cache-Control": "no-store"})
 
     @app.get("/admin/api/swaps")
@@ -21702,6 +21719,31 @@ def create_app(state: AppState) -> FastAPI:
                         if sats <= 0:
                             raise ValueError("a big-swap line is more than nothing")
                         state.set_setting(f"swap_big:{network}", int(sats))
+            if "brand" in said and said["brand"] != brandlib.current().key:
+                # The face, at once and kept (brand.py). A face fixed by the service stays fixed.
+                if brandlib.FROM_ENV:
+                    raise ValueError("this node's face is set by --brand / ARCADE_BRAND in its "
+                                     "service; change it there")
+                chosen = brandlib.use(str(said["brand"]))
+                state.set_setting("brand", chosen.key)
+                TEMPLATES.env.globals["brand"] = chosen
+            if isinstance(said.get("chains"), dict):
+                # Which add-on chains this node hosts (arcade/chains.py). Litecoin applies at
+                # once (its node starts or stops); Dogecoin when the arcade restarts.
+                from .. import chains as chainlib, litecoin as ltclib
+                for key, want in said["chains"].items():
+                    if key not in chainlib.OPTIONAL:
+                        raise ValueError(f"no such chain: {key!r}")
+                    want = bool(want)
+                    if key == "ltc" and want != chainlib.hosted(state.settings(), "ltc"):
+                        if want and not ltclib.installed():
+                            raise ValueError("the Litecoin node is not installed on this machine")
+                        if ltclib.installed():
+                            try:
+                                ltclib.set_running(want)
+                            except RuntimeError as exc:
+                                raise ValueError(str(exc)) from exc
+                    state.set_setting(chainlib.setting_key(key), want)
             if "flags_broadcast" in said:     # content flags to every arcade (arcade/flags.py)
                 state.set_setting("flags:broadcast", bool(said["flags_broadcast"]))
             if "flags_follow" in said:        # whose content flags this arcade uses
@@ -21820,6 +21862,45 @@ def create_app(state: AppState) -> FastAPI:
         if "w" not in _tunnel_wizard:
             _tunnel_wizard["w"] = tunnellib.Wizard()
         return _tunnel_wizard["w"]
+
+    def _admin_chains() -> list:
+        from .. import chains as chainlib, litecoin as ltclib
+        return chainlib.overview(state.settings(), doge_running=state.doge is not None,
+                                 ltc=ltclib.status(), doge_available=chainlib.doge_node_present())
+
+    @app.post("/admin/api/restart")
+    def admin_restart(request: Request):
+        """Restart this arcade (its user service), so a chain switched on or off at start-up
+        takes effect. Only at the node machine itself."""
+        who = _admin_check(request, write=True)
+        if not who["local"]:
+            return JSONResponse({"detail": "the arcade is restarted at the node machine"},
+                                status_code=403)
+        from .. import chains as chainlib
+        ok, said = chainlib.restart_self()
+        return JSONResponse({"restarting": ok, "detail": said}, status_code=200 if ok else 409)
+
+    @app.get("/admin/api/litecoin")
+    def admin_litecoin(request: Request):
+        """The Litecoin node: installed, running, how far synced (arcade/litecoin.py)."""
+        _admin_check(request)
+        from .. import litecoin as ltclib
+        return JSONResponse(ltclib.status(), headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/litecoin")
+    def admin_litecoin_run(request: Request, payload: Any = Body(None)):
+        """Start or stop the Litecoin node's user service. Only at the node machine itself,
+        like the tunnel: it starts and stops a process there."""
+        who = _admin_check(request, write=True)
+        if not who["local"]:
+            return JSONResponse({"detail": "the Litecoin node is started at the node machine"},
+                                status_code=403)
+        from .. import litecoin as ltclib
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            return JSONResponse(ltclib.set_running(bool(said.get("run"))))
+        except RuntimeError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
 
     @app.get("/admin/api/tunnel")
     def admin_tunnel_status(request: Request):
@@ -23466,6 +23547,7 @@ def create_app(state: AppState) -> FastAPI:
         public = _account_view(request)
         viewer = "wallet" if not public else ("account" if signed_in(request) is not None else "nobody")
         rows: list[dict] = []
+        everyone: set[str] = set()
         for chain in state.token_chains:
             try:
                 if viewer == "wallet":
@@ -23480,6 +23562,7 @@ def create_app(state: AppState) -> FastAPI:
                 mine = set()
             if not mine:
                 continue
+            everyone |= mine
             index = state.token_index(chain)
             coin = chain.params.coin
 
@@ -23501,12 +23584,14 @@ def create_app(state: AppState) -> FastAPI:
             for t in takes:
                 sold = t["maker"] in mine
                 rows.append({"txid": t["txid"], "net": chain.network, "chain": chain, "when": t["time"],
+                             "keys": {f"{chain.network}-token-{t['property_id']}", f"{chain.network}-coin"},
                              "side": "sold" if sold else "bought", "what": token(t["property_id"], t["tokens"]),
                              "for": f"{t['coins'] / COIN:,.8f}".rstrip("0").rstrip(".") + f" {coin}",
                              "who": t["sender"] if sold else t["maker"]})
             for m in matches:
                 took = m["taker"] in mine
                 rows.append({"txid": m["txid"], "net": chain.network, "chain": chain, "when": m["time"],
+                             "keys": {f"{chain.network}-token-{m['gave_property']}", f"{chain.network}-token-{m['got_property']}"},
                              "side": "traded", "what": token(m["gave_property"] if took else m["got_property"],
                                                              m["gave"] if took else m["got"]),
                              "for": token(m["got_property"] if took else m["gave_property"], m["got"] if took else m["gave"]),
@@ -23518,12 +23603,44 @@ def create_app(state: AppState) -> FastAPI:
                         label = lambda leg: (f"{leg.amount / COIN:,.8f}".rstrip("0").rstrip(".") + f" {coin}"
                                              if leg.kind == I.LEG_COINS else token(leg.property_id, leg.amount)
                                              if leg.kind == I.LEG_TOKEN else "a piece")
+                        key = lambda leg: (f"{chain.network}-coin" if leg.kind == I.LEG_COINS else  # noqa: E731
+                                           f"{chain.network}-token-{leg.property_id}" if leg.kind == I.LEG_TOKEN
+                                           else f"{chain.network}-nft-{leg.txid.hex() if leg.txid else ''}")
                         rows.append({"txid": t["txid"], "net": chain.network, "chain": chain, "when": t["when"],
+                                     "keys": {key(g), key(k)},
                                      "side": "sold", "what": label(g), "for": label(k), "who": ""})
             except Exception:
                 pass
+        # Finished lock-script swaps (swap_history), each opening its own page.
+        for r in state.swap_history().of(everyone):
+            try:
+                b, q = _leg_info(r["base"]), _leg_info(r["quote"])
+            except ValueError:
+                continue
+            amt = lambda leg, n: ("1" if leg["kind"] in ("nft", "doginal") else format_amount(n, leg["divisible"])
+                                  if leg["kind"] == "token" else f"{n / COIN:,.8f}".rstrip("0").rstrip("."))  # noqa: E731
+            sold = r["seller"] in everyone
+            rows.append({"txid": r["id"], "net": b["network"], "chain": b["chain"], "when": r["at"],
+                         "keys": {r["base"], r["quote"]}, "side": "sold" if sold else "bought", "what": f"{amt(b, r['base_amount'])} {b['name']}",
+                         "for": f"{amt(q, r['quote_amount'])} {q['name']}", "who": r["buyer"] if sold else r["seller"],
+                         "href": f"/exchange/swap-trade/{r['id']}"})
+        # Opened from a market (its Trade history button): that market's trades only.
+        pair, pair_label, back = None, "", "/exchange?tab=tokens"
+        asked = (request.query_params.get("base", ""), request.query_params.get("quote", ""))
+        if all(asked):
+            pair = set(asked)
+            rows = [r for r in rows if r.get("keys") == pair]
+            try:
+                pb, pq = _leg_info(asked[0]), _leg_info(asked[1])
+                pair_label = f"{pb['name']}/{pq['name']}"
+                back = (f"/exchange/pair/{pb['asset']}" if pb["kind"] == "token" and pq["kind"] == "coin" and pb["network"] == pq["network"]
+                        else f"/exchange/pairs/{pb['asset']}/{pq['asset']}" if pb["kind"] == pq["kind"] == "token" and pb["network"] == pq["network"]
+                        else f"/exchange/swap/{asked[0]}/{asked[1]}")
+            except ValueError:
+                pass
         rows.sort(key=lambda r: -(r["when"] or 0))
-        return render(request, "trade_history.html", rows=rows[:300], viewer=viewer)
+        return render(request, "trade_history.html", rows=rows[:300], viewer=viewer, pair=list(asked) if pair else None,
+                      pair_label=pair_label, back=back)
 
     @app.get("/exchange/pairs/{base}/{quote}", response_class=HTMLResponse)
     def exchange_token_pair(request: Request, base: int, quote: int):
@@ -23881,13 +23998,29 @@ def create_app(state: AppState) -> FastAPI:
                             held_shown = f"{utxoslib.balance(db, address) / COIN:,.8f}".rstrip("0").rstrip(".")
             except Exception:
                 held_shown = None
-        frame = chartlib.timeframe(request.query_params.get("tf", "1d"))
+        # Its history (swap_history, 2026-10-17: "the recent trades didn't update and there is no
+        # chart"): every finished swap on this market, as the token/coin page draws its trades.
+        def units(leg: dict, n: int) -> float:
+            return 1.0 if leg["kind"] in ("nft", "doginal") else (n / COIN if leg["divisible"] else float(n))
+        points, recent = [], []
+        for r in state.swap_history().for_pair(b["key"], q["key"]):
+            size, paid = units(b, r["base_amount"]), units(q, r["quote_amount"])
+            if size > 0:
+                points.append({"when": r["at"], "height": 0, "txid": r["id"], "price": paid / size, "size": size})
+                recent.append({"id": r["id"], "price": paid / size, "size": size, "total": paid, "when": r["at"]})
+        day = chartlib.day(points)
+        if points:
+            last = points[0]["price"]
+        asked_tf = request.query_params.get("tf", "")
+        frame = chartlib.timeframe(asked_tf if asked_tf in {t[0] for t in chartlib.TIMEFRAMES}
+                                   else chartlib.pick_timeframe(points))
         best = asks[0]["price"] if (asks := book["asks"]) else (book["bids"][0]["price"] if book["bids"] else None)
         most = max([o["base_amount"] for o in book["asks"] + book["bids"]] or [1]) or 1
         for o in book["asks"] + book["bids"]:
             o["depth"] = round(100 * o["base_amount"] / most)
         return render(request, "swap_pair.html", b=b, q=q, here=here, quotes=quotes,
-                      face=face, held=held_shown, best=best, slots=[],
+                      face=face, held=held_shown, best=best, day=day, recent=recent[:20],
+                      slots=chartlib.candles(points, buckets=frame[2], span=frame[1]),
                       tf=frame[0], timeframes=[t[0] for t in chartlib.TIMEFRAMES],
                       held_url=f"/exchange/x/{b['kind']}/{b['asset']}?held=1",
                       b_form=_leg_form(b), q_form=_leg_form(q),
@@ -24814,6 +24947,75 @@ def create_app(state: AppState) -> FastAPI:
     def _tab_live(lister: str) -> bool:
         """A browser's listing stands only while its lister's page is open (order_presence)."""
         return state.order_presence().live(lister)
+
+    @app.post("/account/trade/done")
+    def account_trade_done(request: Request, payload: Any = Body(None)):
+        """A lock-script swap this page finished (wallet.js, when its state turns "done"): filed
+        for its market once both locks are on their chains (arcade/swap_history.py)."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            tid = str(said.get("id", ""))
+            if not re.fullmatch(r"tr-[0-9a-f]{16}", tid):
+                raise ValueError("a swap id")
+            sides = []
+            for name in ("give", "get"):
+                leg = said.get(name) if isinstance(said.get(name), dict) else {}
+                side = {"network": str(leg.get("network", "")), "kind": str(leg.get("kind") or "coin"),
+                        "asset": str(leg.get("asset") or ""), "amount": int(leg.get("amount") or 0)}
+                if side["network"] not in NETWORKS or side["amount"] <= 0:
+                    raise ValueError("each side names its chain and an amount")
+                sides.append(side)
+            give, get = sides
+            locks = {}
+            for name, side in (("my_lock", give), ("their_lock", get)):
+                txid = str(said.get(name, "")).lower()
+                if not re.fullmatch(r"[0-9a-f]{64}", txid):
+                    raise ValueError("both locks, by txid")
+                chain = next((c for c in state.token_chains if c.network == side["network"]), None)
+                if chain is None:
+                    raise ValueError("this node does not run that chain")
+                with chain.rpc() as rpc:
+                    rpc.call("getrawtransaction", txid)          # raises if the chain has no such lock
+                locks[name] = txid
+            me = _account_address(account.pubkey, _account_chain()) or ""
+            other = trade_orders_lister = ""
+            if said.get("role") == "initiator" and said.get("order"):
+                trade_orders_lister = state.trade_orders.lister_of(str(said["order"]))
+                other = trade_orders_lister
+            base, quote = trade_orders.base_first(give, get)
+            sold_base = base is give
+            state.swap_history().record(
+                tid, trade_orders.leg_key(base), trade_orders.leg_key(quote), base["amount"], quote["amount"],
+                seller=me if sold_base else other, buyer=other if sold_base else me,
+                lock_base=locks["my_lock"] if sold_base else locks["their_lock"],
+                lock_quote=locks["their_lock"] if sold_base else locks["my_lock"])
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        except Exception as exc:                            # noqa: BLE001 -- e.g. a lock not on its chain yet
+            return JSONResponse({"detail": f"not filed yet: {exc}"[:200]}, status_code=409)
+        state.bump_generation()
+        return JSONResponse({"ok": True})
+
+    @app.get("/exchange/swap-trade/{tid}", response_class=HTMLResponse)
+    def exchange_swap_trade(request: Request, tid: str):
+        """One finished lock-script swap: who sold, who bought, what each gave, and its two locks."""
+        row = state.swap_history().get(tid)
+        if row is None:
+            raise HTTPException(404, "no such swap here")
+        b, q = _leg_info(row["base"]), _leg_info(row["quote"])
+        amount = lambda leg, n: ("1" if leg["kind"] in ("nft", "doginal") else
+                                 format_amount(n, leg["divisible"]) if leg["kind"] == "token"
+                                 else f"{n / COIN:,.8f}".rstrip("0").rstrip("."))  # noqa: E731
+        fills = [{"seller": row["seller"], "buyer": row["buyer"],
+                  "sold": f"{amount(b, row['base_amount'])} {b['name']}",
+                  "paid": f"{amount(q, row['quote_amount'])} {q['name']}",
+                  "how": "A lock-script swap: both sides locked on their own chain, then each claimed the other's"}]
+        said = urllib.parse.urlsplit(request.headers.get("referer") or "")
+        back = (said.path + (f"?{said.query}" if said.query else "")) if said.path.startswith("/exchange") else "/exchange?tab=tokens"
+        return render(request, "trade.html", txid=row["lock_base"], chain=b["chain"], fills=fills, inputs=[],
+                      confirmations=0, when=row["at"], height=None, back=back,
+                      second={"txid": row["lock_quote"], "chain": q["chain"]})
 
     @app.post("/account/talk/relay")
     def talk_relay_send(request: Request, payload: Any = Body(None)):

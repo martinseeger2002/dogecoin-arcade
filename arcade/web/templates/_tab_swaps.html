@@ -40,9 +40,9 @@
       cancel.type = "button"; cancel.className = "ghost small"; cancel.textContent = "Cancel";
       cancel.dataset.mineId = o.id;
       cancel.addEventListener("click", async () => {
-        cancel.disabled = true;
-        try { await wallet.withdrawOrder(w, o.id); if (row) row.remove(); else cancel.remove(); drawOrders(w); }
-        catch (e) { cancel.disabled = false; alert(String(e.message || e)); }
+        cancel.disabled = true; cancel.textContent = "Cancelling\u2026"; step("withdrawing");
+        try { await wallet.withdrawOrder(w, o.id); if (row) row.remove(); else cancel.remove(); step("withdrawn"); drawOrders(w); }
+        catch (e) { cancel.disabled = false; cancel.textContent = "Cancel"; step("failed", e); alert(String(e.message || e)); }
       });
       take.replaceWith(cancel);
       return true;
@@ -90,9 +90,9 @@
         const out = document.createElement("button");
         out.type = "button"; out.className = "ghost small"; out.textContent = "Withdraw";
         out.addEventListener("click", async () => {
-          out.disabled = true;
-          try { await wallet.withdrawOrder(w, o.id); drawOrders(w); }
-          catch (e) { out.disabled = false; alert(String(e.message || e)); }
+          out.disabled = true; out.textContent = "Withdrawing\u2026"; step("withdrawing");
+          try { await wallet.withdrawOrder(w, o.id); step("withdrawn"); drawOrders(w); }
+          catch (e) { out.disabled = false; out.textContent = "Withdraw"; step("failed", e); alert(String(e.message || e)); }
         });
         row.append(what, out);
         return row;
@@ -135,20 +135,33 @@
         + "see it while an arcade page is open here. Whoever takes it locks first; yours then go into a "
         + "lock only they can claim, and come back to you if they never finish. "
         + wallet.swapFees(give, get) + " Saying yes approves locking yours when somebody takes it.", "List it");
-      if (!ok) return;
+      if (!ok) { step("cancelled"); return; }
       button.disabled = true;
+      step("listing");
       try {
         const w = await keys();
         if (!w) throw new Error("Unlock your wallet to trade.");
         await wallet.listOrder(w, give, get, {approved: true});
         if (globalThis.arcadeToast) arcadeToast("Listed. Keep an arcade page open with your wallet unlocked: every arcade shows your swap only while one is.");
+        step("listed");
         f.reset(); drawOrders(w);
-      } catch (e) { alert(String(e.message || e)); }
+      } catch (e) { step("failed", e); alert(String(e.message || e)); }
       finally { button.disabled = false; }
     });
     // What happened to the reader's swaps, said as it happens (2026-10-17: "there needs
     // to be some kind of notification that it happened"): a toast at each step, and on a market
     // page (#swap-progress) a card with the swaps still running or just finished.
+    // What a press is doing, said at once (2026-10-17: "As soon as buttons are pressed by
+    // users, they need to have clarity that the action that they took is taking place"): a toast,
+    // and an event the market's Buy/Sell box shows on its own button (swap_pair.html).
+    const PRESS = {asking: "Asking the seller's page to swap\u2026",
+                   asked: "Asked. The seller's page answers in seconds; each step pops up here.",
+                   listing: "Listing your swap\u2026", withdrawing: "Taking your swap off the book\u2026",
+                   withdrawn: "Your swap is off the book."};
+    function step(what, error) {
+      if (PRESS[what] && globalThis.arcadeToast) arcadeToast(PRESS[what]);
+      try { document.dispatchEvent(new CustomEvent("arcade:swap-step", {detail: {what, error: error ? String(error.message || error) : ""}})); } catch (e) {}
+    }
     const SAID = {proposed: "Swap asked: waiting for the seller's page to accept",
                   accepted: "Swap accepted: locking your side", locked: "Your side is locked: waiting for theirs, then it settles",
                   done: "Swap done", aborted: "Swap called off"};
@@ -187,12 +200,25 @@
       drawOrders(w);
       const every = wallet.myTrades(w).sort((a, b) => b.created - a.created);
       tell(every); progress(every);
-      const all = every.slice(0, 10);
+      // On a market's Trade history: that market's swaps only (2026-10-17).
+      const pair = globalThis.HISTORY_PAIR, lk = (l) => l.kind === "coin" || !l.kind ? `${l.network}-coin` : `${l.network}-${l.kind}-${l.asset}`;
+      const mine = pair ? every.filter((t) => new Set([lk(t.give), lk(t.get)]).size === 2
+                                            && [lk(t.give), lk(t.get)].every((k) => pair.includes(k))) : every;
+      const all = mine.slice(0, pair ? 50 : 10);
       box.hidden = !all.length;
       list.replaceChildren(...all.map((t) => {
-        const p = document.createElement("p");
-        p.className = "muted"; p.style.cssText = "font-size:.84rem;margin:3px 0";
-        p.textContent = `${amt(t.give)} for ${amt(t.get)} \u00b7 ${t.state} \u00b7 ${t.note || ""}`;
+        const p = document.createElement("div");
+        p.style.cssText = "display:flex;gap:8px;align-items:baseline;padding:5px 0;font-size:.88rem;border-bottom:1px solid var(--line)";
+        const pill = document.createElement("span");
+        pill.className = "ex-pill" + (t.state === "done" ? " done" : "");
+        pill.textContent = t.state === "proposed" ? "asked" : t.state === "aborted" ? "called off" : t.state;
+        const what = document.createElement("span");
+        what.innerHTML = "";
+        const head = document.createElement("b"); head.textContent = `${amt(t.give)} for ${amt(t.get)}`;
+        const note = document.createElement("small"); note.className = "muted"; note.style.display = "block";
+        note.textContent = [t.note || "", t.created ? new Date(t.created).toLocaleString() : ""].filter(Boolean).join(" \u00b7 ");
+        what.append(head, note);
+        p.append(pill, what);
         return p;
       }));
     }
@@ -234,15 +260,17 @@
         + "It is written on the chain (about 0.01 in fees) and other arcades see it while an arcade page "
         + "is open here; it settles through lock scripts on both chains. " + wallet.swapFees(give, get)
         + " Saying yes approves locking yours when somebody takes it.", "List it");
-      if (!ok) return;
+      if (!ok) { step("cancelled"); return; }
       button.disabled = true;
+      step("listing");
       try {
         const w = await keys();
         if (!w) throw new Error("Unlock your wallet to trade.");
         await wallet.listOrder(w, give, get, {approved: true});
         if (globalThis.arcadeToast) arcadeToast("Listed. Keep an arcade page open with your wallet unlocked: every arcade shows your swap only while one is.");
+        step("listed");
         f.reset(); drawOrders(w);
-      } catch (e) { alert(String(e.message || e)); }
+      } catch (e) { step("failed", e); alert(String(e.message || e)); }
       finally { button.disabled = false; }
     }));
     // The Exchange's one trade box (2026-10-15): "I want to buy/sell <amount> A at <price> B per A".
@@ -288,15 +316,19 @@
         + "chains in a few minutes: either both sides get paid, or both get their own coins back. "
         + wallet.swapFees(order.get, order.give) + " Saying yes approves locking yours; you are not asked "
         + "again. Your node finishes it even if you close this tab.", "Take it");
-      if (!ok) return;
+      if (!ok) { step("cancelled"); return; }
       b.disabled = true;
+      const was = b.textContent; b.textContent = "Asking\u2026";
+      step("asking");
       try {
         const w = await keys();
         if (!w) throw new Error("Unlock your wallet to trade.");
         await wallet.takeOrder(w, order, {approved: true});
+        b.textContent = "Asked";
+        step("asked");
         draw(w);
         wallet.kickTrades();
-      } catch (e) { b.disabled = false; alert(String(e.message || e)); }
+      } catch (e) { b.disabled = false; b.textContent = was; step("failed", e); alert(String(e.message || e)); }
     }));
     redraw();
     </script>

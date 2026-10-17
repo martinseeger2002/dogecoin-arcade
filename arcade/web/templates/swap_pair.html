@@ -36,17 +36,16 @@
   {{ ex.fav_button(fav_key(here)) }}
 </div>
 <div class="ex-price">
-  {%- if last is not none %}<b>{{ ex.px(last) }}</b><span class="unit">{{ qname }} {{ unit }}</span>
+  {%- if last is not none %}<b>{{ ex.px(last) }}</b><span class="unit">{{ qname }} {{ unit }}</span>{% if day.change is not none %}{{ ex.chg(day.change, day.new) }}{% endif %}
   {%- elif best is not none %}<b>{{ ex.px(best) }}</b><span class="unit">{{ qname }} {{ unit }}, {{ 'lowest ask' if asks else 'highest bid' }}</span>
   {%- else %}<b>&mdash;</b><span class="unit">no trades yet</span>{% endif %}
 </div>
 <div class="ex-stats">
-  <span>24h high <b>&mdash;</b></span>
-  <span>24h low <b>&mdash;</b></span>
-  <span>24h volume <b>0</b> {{ qname }}</span>
+  <span>24h high <b>{% if day.high is not none %}{{ ex.px(day.high) }}{% else %}&mdash;{% endif %}</b></span>
+  <span>24h low <b>{% if day.low is not none %}{{ ex.px(day.low) }}{% else %}&mdash;{% endif %}</b></span>
+  <span>24h volume <b>{{ "%.4f"|format(day.coins) }}</b> {{ qname }}</span>
   {% if held is not none %}<span>You hold <b>{{ held }}</b></span>{% endif %}
 </div>
-{% if viewer != 'nobody' %}<p style="margin:-6px 0 12px;font-size:.84rem"><a href="/exchange/history">Your trade history &rarr;</a></p>{% endif %}
 
 {% if b.kind == 'doginal' and q.network == 'doge' %}
 <p class="ex-note" style="margin:0 0 10px">Offers in DOGE live here. To sell it at a price you name, in one transaction,
@@ -93,10 +92,8 @@
         <button type="button" id="swap-go" class="ex-cta">Enter an amount</button>
       </div>
       <p class="msg err" id="swap-trouble" hidden></p>
-      <div id="swap-progress" class="ex-card" hidden style="margin:10px 0 0;padding:10px 12px">
-        <div class="ex-h" style="margin:0 0 4px">Your swaps</div><div data-list></div>
-        <p class="muted" style="font-size:.78rem;margin:4px 0 0">Every step pops up as it happens; all of them are in
-          <a href="/exchange/history">Trade history</a>.</p></div>
+      <a class="btn small ghost" style="margin:10px 0 0;display:inline-block"
+         href="/exchange/history?base={{ b.key|urlencode }}&amp;quote={{ q.key|urlencode }}">Trade history</a>
       <p class="ex-note">A swap settles on both chains at once: either both sides get paid, or both get their own back.
         Nobody holds anybody's coins, and each swap is taken whole: <b>Best price now</b> takes the best one as it stands;
         <b>Set my price</b> lists yours for anyone to take.</p>
@@ -129,7 +126,9 @@
           var mine = window.myOrderIds || new Set();
           var l = (side() === "buy" ? asks : bids).filter(function (o) { return !mine.has(o.id); });
           return l.length ? l[0] : null; };
+        var busy = null;
         var draw = function () {
+          if (busy) return;
           root.querySelectorAll(".ex-modes button").forEach(function (b) { b.setAttribute("aria-pressed", b.dataset.mode === mode ? "true" : "false"); });
           var o = mode === "best" ? best() : null, q = root.querySelector(".ex-quote"), go = $("swap-go");
           $("swap-amount-box").hidden = whole || mode === "best";
@@ -152,7 +151,17 @@
         root.querySelectorAll(".ex-modes button").forEach(function (b) { b.onclick = function () { mode = b.dataset.mode; draw(); }; });
         root.querySelectorAll('input[name="swap-side"]').forEach(function (r) { r.onchange = draw; });
         ["swap-amount", "swap-price"].forEach(function (id) { $(id).oninput = draw; });
+        // The press shows at once, and follows what _tab_swaps says it is doing (arcade:swap-step).
+        document.addEventListener("arcade:swap-step", function (e) {
+          var go = $("swap-go"), w = e.detail.what;
+          if (w === "asking") { busy = true; go.disabled = true; go.textContent = "Asking the seller\u2026"; }
+          else if (w === "listing") { busy = true; go.disabled = true; go.textContent = "Listing\u2026"; }
+          else if (w === "asked") { go.textContent = "Asked \u2713 \u2014 watch for the next step"; setTimeout(function () { busy = null; draw(); }, 6000); }
+          else if (w === "listed") { go.textContent = "Listed \u2713"; setTimeout(function () { busy = null; draw(); }, 4000); }
+          else { busy = null; draw(); }
+        });
         $("swap-go").onclick = function () {
+          if (busy) return;
           if (mode === "best") {
             var o = best(); if (!o) return;
             var btn = document.querySelector('[data-take-id="' + o.id + '"]');
@@ -264,7 +273,22 @@
     <div class="panel">
       <h3 style="margin:0 0 2px">Recent trades</h3>
       <p class="muted" style="font-size:.78rem;margin:0 0 6px">In {{ qname }}</p>
-      <p class="muted" style="margin:0">No swap has settled on this market yet.</p>
+      {% if recent %}
+      <table>
+        <tr class="muted" style="font-size:.74rem;text-transform:uppercase;letter-spacing:.06em">
+          <td>Price</td><td style="text-align:right">Amount</td>
+          <td style="text-align:right">{{ qname }}</td><td style="text-align:right">When</td></tr>
+        {% for t in recent %}
+        <tr class="tradelink" data-href="/exchange/swap-trade/{{ t.id }}" title="Who traded"><td class="mono"><a href="/exchange/swap-trade/{{ t.id }}" style="color:inherit">{{ "%.8f"|format(t.price) }}</a></td>
+            <td class="mono" style="text-align:right">{{ "{:,.8f}".format(t.size).rstrip('0').rstrip('.') }}</td>
+            <td class="mono muted" style="text-align:right">{{ "%.4f"|format(t.total) }}</td>
+            <td class="muted" style="text-align:right"><span data-when-short="{{ t.when }}"></span></td></tr>
+        {% endfor %}
+      </table>
+      <script>document.querySelectorAll("[data-when-short]").forEach(function (e) {
+        var d = new Date(Number(e.dataset.whenShort) * 1000);
+        e.textContent = d.toLocaleDateString(undefined, {month: "short", day: "numeric"}) + " " + d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}); });</script>
+      {% else %}<p class="muted" style="margin:0">No swap has settled on this market yet.</p>{% endif %}
     </div>
   </div>
 </div>

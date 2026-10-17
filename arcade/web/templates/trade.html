@@ -29,8 +29,9 @@
 {% endfor %}
 
 <div class="panel">
-  <h3 style="margin:0 0 6px">The transaction</h3>
-  <p class="mono" style="overflow-wrap:anywhere;margin:0 0 8px;font-size:.84rem">{{ txid }}</p>
+  <h3 style="margin:0 0 6px">{{ 'The locks' if second else 'The transaction' }}</h3>
+  <p class="mono" style="overflow-wrap:anywhere;margin:0 0 8px;font-size:.84rem">{{ txid }}{% if second %} {{ net_badge(chain) }}{% endif %}</p>
+  {% if second %}<p class="mono" style="overflow-wrap:anywhere;margin:0 0 8px;font-size:.84rem">{{ second.txid }} {{ net_badge(second.chain) }}</p>{% endif %}
   {% if inputs %}<p class="muted" style="font-size:.82rem;margin:0">Signed by
     {% for a in inputs|unique %}{{ a|who(20) }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
 </div>

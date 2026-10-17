@@ -36,7 +36,7 @@
   <span>24h volume <b>{{ "%.4f"|format(day.coins) }}</b> {{ qname }}</span>
   {% if viewer == 'wallet' or account_address %}<span>You hold <b>{{ held_base }}</b></span>{% endif %}
 </div>
-{% if viewer != 'nobody' %}<p style="margin:-6px 0 12px;font-size:.84rem"><a href="/exchange/history">Your trade history &rarr;</a></p>{% endif %}
+{% if viewer != 'nobody' %}<p style="margin:-6px 0 12px;font-size:.84rem"><a href="/exchange/history?base={{ (chain.network ~ '-token-' ~ base.property_id)|urlencode }}&amp;quote={{ (chain.network ~ '-token-' ~ quote.property_id)|urlencode }}">Trade history &rarr;</a></p>{% endif %}
 
 {% if not live %}
 <div class="panel"><p class="msg err" style="margin:0">Token-for-token pairs are

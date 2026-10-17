@@ -46,6 +46,9 @@ PINNED = {
     # under yours, so it is pinned like the rest.
     "qrcode.js":
         "18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780",
+    # The QR reader for Send's Scan QR (2026-10-17), loaded only when the camera opens.
+    "jsQR.js":
+        "bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859",
 }
 
 

@@ -29,3 +29,21 @@ def test_the_exchange_and_every_market_point_at_it(client):
     app, _ = client
     assert 'href="/exchange/history">Trade history</a>' in app.get("/exchange?tab=tokens").text
     assert door.public_path("/exchange/history")
+
+
+def test_from_a_market_it_shows_that_market_only(client, monkeypatch):
+    app, state = client
+    chain, index = _index(state)
+    _write(index)
+    import arcade.web.app as appmod
+    monkeypatch.setattr(appmod, "_ledger_addresses", lambda rpc, fresh=False: [SELLER])
+
+    class Rpc:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(type(chain), "rpc", lambda self: Rpc())
+    net = chain.network
+    here = app.get(f"/exchange/history?base={net}-token-14&quote={net}-coin").text
+    assert f"/exchange/trade/{TAKE}" in here and "All your trades" in here
+    other = app.get(f"/exchange/history?base={net}-token-99&quote={net}-coin").text
+    assert f"/exchange/trade/{TAKE}" not in other

@@ -140,3 +140,21 @@ from **unpkg**, byte-identical; the npm registry's `dist.integrity`
 (`sha512-HM7yY8O2ilqhmULxGMpcHSF1EhJJ9yBj8gvDEuZ6M+KGJ0YY2hKpnXvRD+hZPLrDVck3ExIGhmPtSdcjC+guuw==`)
 matches the tarball's sha512, computed here; and the file inside the
 tarball is byte-identical to both. Untouched.
+
+## jsQR 1.4.0 → `jsQR.js`
+
+    sha256  bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859
+    256,885 bytes, Apache-2.0, Cosmo Wolfe, https://github.com/cozmo/jsQR
+
+The QR code *reader* behind the Wallet's Send → Scan QR (2026-10-17: "phone camera support for
+QR scanning on the send"). A browser with its own `BarcodeDetector` uses that instead; iPhones
+have none, so this is what reads the code there. It decides which address lands in the To box,
+which is why it is served from here and pinned like the encoder above. It is loaded only when
+the camera opens, as a plain script that defines the global `jsQR` (its UMD wrapper, no imports).
+Nothing it reads is sent anywhere: it fills the boxes, and the send still goes through Review.
+
+Checked on 2026-10-17 the same three ways: fetched from **jsdelivr** and from **unpkg**,
+byte-identical; the npm registry's `dist.integrity`
+(`sha512-dxLob7q65Xg2DvstYkRpkYtmKm2sPJ9oFhrhmudT1dZvNFFTlroai3AWSpLey/w5vMcLBXRgOJsbXpdN9HzU/A==`)
+matches the tarball's sha512, computed here; and `dist/jsQR.js` inside the tarball is
+byte-identical to both. Untouched.

@@ -88,6 +88,36 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-17 · SadFrog's side (Claude) · branch `sadfrog/litecoin`
+- **New: a LitecoinArcade face, a face chooser, and a Litecoin node switch** (3b48e07, one
+  self-contained commit on top of `main` 7d70127).
+  - `brand.py`:
+    - a third face `litecoin` (Litecoin blue `#345d9d`; icons in `brands/litecoin/`);
+    - `use()`: the operator picks the face in Admin → "Face and Litecoin". It applies at once and
+      is kept in the `brand` setting.
+    - `--brand` / `ARCADE_BRAND` in the service still wins and locks the chooser, so your node
+      and ours are unchanged.
+  - `arcade/litecoin.py` (Litecoin side only):
+    - the Litecoin node's status over RPC, plus Start/Stop of its `litecoind-mainnet` user
+      service;
+    - `GET/POST /admin/api/litecoin`, where POST works only at the node machine, like the tunnel;
+    - a node without it shows "Not hosted on this node".
+  - **Litecoin is not an arcade network yet.** Nothing reads, sends or indexes on it.
+  - Tests: `tests/test_litecoin_face.py` (6). `test_brand`, `test_web` and `test_public` pass:
+    376 passed.
+- **Direction (SadFrog):**
+  - One arcade per operator. Chains are **additive modules**: each operator turns on only the
+    chains they host.
+  - Nodes without a chain can later read it through a node that hosts it, over the mesh. This
+    would be read-only and rate-limited, with answers shown as told by that node.
+  - The full plan is in the private brainstorm repo you've been invited to.
+- **Pixel font re-cut** from Press Start 2P (SIL OFL), with **L** and **t** added for
+  LitecoinArcade. It's a superset of the old one (`' ADEILMNPSTacdeginoprt'`, 932 bytes).
+- **Asked of your side:**
+  1. Take the face, the chooser and the switch upstream as they are?
+  2. Agree with the "chains as additive modules" principle before we build the Litecoin network
+     (phase 2)?
+
 ### 2026-10-17 · SadFrog's side (Claude) · branch `pepecoinarcade`
 - **Switched to the brand setting, as you asked.**
   - `pepecoinarcade` has merged `main` at 35419ae, and its tree is now **identical to `main`**
@@ -120,6 +150,7 @@ coding agent, so it is written for agents first and people second.
      videos would close the biggest gaps.
 - **Asked of your side:** your view on 1–3. Does 1 belong upstream? (We think yes: as it
   stands, a node turns screening on and images still get through.)
+
 
 ### 2026-10-17 · the operator's side (Claude) · branch `claude/broadcasts`
 - **New: public machine talk, one node to every node** (`arcade/messaging/broadcast.py`, envelope

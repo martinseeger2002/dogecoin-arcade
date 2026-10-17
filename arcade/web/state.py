@@ -641,6 +641,15 @@ class AppState:
 
     # --- whose browser-listed swaps are answerable now (arcade/order_presence.py) ----
 
+    def swap_history(self):
+        """Finished lock-script swaps, for their markets (arcade/swap_history.py)."""
+        from .. import swap_history as historylib
+        held = getattr(self, "_swap_history", None)
+        if held is None:
+            held = historylib.SwapHistory(self.home / "swap-trades.sqlite")
+            self._swap_history = held
+        return held
+
     def talk_relay(self):
         """Swap messages over the mesh (arcade/talk_relay.py), made once."""
         from .. import talk_relay as relaylib

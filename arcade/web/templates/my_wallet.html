@@ -189,6 +189,13 @@ a.wl-act:hover{text-decoration:none}
 .wl-sheet h2 .wl-x{font-size:1.4rem}
 .wl-sheet label.l{display:block;font-size:.78rem;font-weight:650;color:var(--muted);margin:14px 0 6px}
 .wl-field{position:relative}
+/* Scan a QR code into Send (2026-10-17: "phone camera support for QR scanning on the send"). */
+.wl-tohead{display:flex;align-items:center;justify-content:space-between}
+.wl-scan{font-size:.8rem;font-weight:700;padding:4px 12px;border-radius:999px;background:var(--code);color:var(--fg);box-shadow:none;border:1px solid var(--line)}
+.wl-scanbox{position:fixed;inset:0;z-index:1000;background:#000d;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px}
+.wl-scanbox video{width:min(92vw,420px);aspect-ratio:1;object-fit:cover;border-radius:16px;background:#111;box-shadow:0 0 0 3px var(--accent)}
+.wl-scanbox p{color:#eee;margin:0;text-align:center;max-width:420px;font-size:.9rem}
+.wl-scanbox .row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 .wl-field input{width:100%;font-size:16px}
 .wl-sugg{position:absolute;left:0;right:0;top:calc(100% + 4px);background:var(--panel);border:1px solid var(--line);
   border-radius:12px;box-shadow:var(--shadow);z-index:5;overflow:hidden}
@@ -280,6 +287,7 @@ drawDust();
 </script>
 
 <script type="module">
+import {scanQR, parseQR} from "/qrscan.js";
 import * as wallet from "/wallet.js";
 import * as mail from "/messaging.js";
 
@@ -705,6 +713,9 @@ async function copyText(text) {
  */
 
 const ADDRESSY = /^[1-9A-HJ-NP-Za-km-z]{26,35}$/;
+
+/* Scan QR on Send (2026-10-17): templates/qrscan.js. */
+
 const TAGGY = /^@?[a-z0-9_]{1,32}$/i;
 
 async function people() {
@@ -800,6 +811,9 @@ async function step1(s, d) {
     body.append(row);
   }
   const lt = el("label", "l", "To"); lt.htmlFor = "send-to";
+  const scan = el("button", "wl-scan", "\u{1F4F7} Scan QR"); scan.type = "button";
+  scan.title = "Scan an address with the camera";
+  const tohead = el("div", "wl-tohead"); tohead.append(lt, scan);
   const field = el("div", "wl-field");
   const to = el("input"); to.id = "send-to"; to.autocomplete = "off"; to.spellcheck = false;
   to.setAttribute("autocapitalize", "off");
@@ -816,7 +830,19 @@ async function step1(s, d) {
   const avail = el("div", "wl-note");
   const problem = el("div", "msg err"); problem.hidden = true; problem.style.marginTop = "12px";
   const go = el("button", "wl-go", "Review"); go.type = "button";
-  body.append(lt, field, toNote, la, arow, avail, problem, go);
+  body.append(tohead, field, toNote, la, arow, avail, problem, go);
+  scan.onclick = async () => {
+    const text = await scanQR();
+    if (!text) return;
+    const got = parseQR(text);
+    const doge = c.network === "doge";
+    if (got.coin && (got.coin.startsWith("doge") !== doge))
+      toast(`That code asks for ${got.coin.startsWith("doge") ? "Dogecoin" : "Pepecoin"}: switch coins at the top first.`);
+    to.value = got.to;
+    if (got.amount && !single) amount.value = got.amount;
+    check();
+    (got.amount || single ? go : amount).focus();
+  };
   const single = what.kind === "nft" || what.kind === "doginal";
   if (single) { la.hidden = true; arow.hidden = true; avail.hidden = true; }
 

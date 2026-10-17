@@ -3046,6 +3046,11 @@ async function tradePass() {
     const w = await opened(runnerChain);
     if (!w) return;                       // locked: nothing can be signed, nothing to do
     if (myOrders(w).length) await answerProposals(w).catch(() => {});
+    // A finished swap goes into its market's history (swap_history): Recent trades, the chart.
+    for (const t of myTrades(w)) {
+      if (t.state === "done" && !t.reported && (t.reportTries || 0) < 20 && t.myLock && t.theirLock)
+        await reportDone(w, t).catch(() => {});
+    }
     for (const t of myTrades(w)) {
       if (t.state === "done" || t.state === "aborted") continue;
       try { await tradeTick(w, t.id); }
@@ -3056,6 +3061,20 @@ async function tradePass() {
     }
     try { globalThis.dispatchEvent(new CustomEvent("arcade:trades")); } catch (e) {}
   } finally { runnerBusy = false; }
+}
+
+/** Tell this node a swap finished, for its market's Recent trades and chart (swap_history). */
+async function reportDone(wallet, t) {
+  const side = (l) => ({network: l.network, kind: l.kind || "coin", asset: String(l.asset || ""), amount: Number(l.amount)});
+  const r = await fetch("/account/trade/done", {method: "POST", credentials: "same-origin",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id: t.id, role: t.role, order: t.order || "", give: side(t.give), get: side(t.get),
+                          my_lock: t.myLock.txid, their_lock: t.theirLock.txid})});
+  const kept = tradesOf(wallet)[t.id];
+  if (!kept) return;
+  if (r.ok) kept.reported = true;
+  else kept.reportTries = (kept.reportTries || 0) + (r.status === 409 ? 0.25 : 1);   // a lock not seen yet: patient
+  keepTrade(wallet, kept);
 }
 
 //: How long a take waits for the lister's page to accept before it is called off (nothing locked).
