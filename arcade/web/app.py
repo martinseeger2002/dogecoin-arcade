@@ -21565,6 +21565,7 @@ def create_app(state: AppState) -> FastAPI:
             "xchain": _admin_xchain(),
             "swap_big": {k: v / COIN for k, v in _swap_big_lines().items()},
             "flags": _admin_flags(),
+            "chains": _admin_chains(),
             "brand": {"current": brandlib.current().key, "locked": brandlib.FROM_ENV,
                       "choices": [[b.key, b.name] for b in brandlib.BRANDS.values()]},
         }, headers={"Cache-Control": "no-store"})
@@ -21726,6 +21727,23 @@ def create_app(state: AppState) -> FastAPI:
                 chosen = brandlib.use(str(said["brand"]))
                 state.set_setting("brand", chosen.key)
                 TEMPLATES.env.globals["brand"] = chosen
+            if isinstance(said.get("chains"), dict):
+                # Which add-on chains this node hosts (arcade/chains.py). Litecoin applies at
+                # once (its node starts or stops); Dogecoin when the arcade restarts.
+                from .. import chains as chainlib, litecoin as ltclib
+                for key, want in said["chains"].items():
+                    if key not in chainlib.OPTIONAL:
+                        raise ValueError(f"no such chain: {key!r}")
+                    want = bool(want)
+                    if key == "ltc" and want != chainlib.hosted(state.settings(), "ltc"):
+                        if want and not ltclib.installed():
+                            raise ValueError("the Litecoin node is not installed on this machine")
+                        if ltclib.installed():
+                            try:
+                                ltclib.set_running(want)
+                            except RuntimeError as exc:
+                                raise ValueError(str(exc)) from exc
+                    state.set_setting(chainlib.setting_key(key), want)
             if "flags_broadcast" in said:     # content flags to every arcade (arcade/flags.py)
                 state.set_setting("flags:broadcast", bool(said["flags_broadcast"]))
             if "flags_follow" in said:        # whose content flags this arcade uses
@@ -21844,6 +21862,23 @@ def create_app(state: AppState) -> FastAPI:
         if "w" not in _tunnel_wizard:
             _tunnel_wizard["w"] = tunnellib.Wizard()
         return _tunnel_wizard["w"]
+
+    def _admin_chains() -> list:
+        from .. import chains as chainlib, litecoin as ltclib
+        return chainlib.overview(state.settings(), doge_running=state.doge is not None,
+                                 ltc=ltclib.status(), doge_available=chainlib.doge_node_present())
+
+    @app.post("/admin/api/restart")
+    def admin_restart(request: Request):
+        """Restart this arcade (its user service), so a chain switched on or off at start-up
+        takes effect. Only at the node machine itself."""
+        who = _admin_check(request, write=True)
+        if not who["local"]:
+            return JSONResponse({"detail": "the arcade is restarted at the node machine"},
+                                status_code=403)
+        from .. import chains as chainlib
+        ok, said = chainlib.restart_self()
+        return JSONResponse({"restarting": ok, "detail": said}, status_code=200 if ok else 409)
 
     @app.get("/admin/api/litecoin")
     def admin_litecoin(request: Request):

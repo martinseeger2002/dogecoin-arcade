@@ -270,6 +270,10 @@ def _doge_context(args) -> "ChainContext | None":
     has its two Pepecoin chains, as before."""
     if args.no_doge:
         return None
+    from .. import chains as chainlib           # the operator's switch (Admin -> Face and chains)
+    if not chainlib.hosted(chainlib.read_settings(args.home), "doge"):
+        print("  Dogecoin  switched off in the admin panel (chains:doge)")
+        return None
     conf = Path(args.doge_conf).expanduser() if args.doge_conf else None
     datadir = Path(args.doge_datadir).expanduser() if args.doge_datadir else None
     if conf is None and datadir is None:
