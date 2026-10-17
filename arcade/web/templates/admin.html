@@ -240,6 +240,8 @@ section.panel h2{margin-top:0}
 .confirmbox{margin-top:10px}
 .confirmbox input{width:100%;margin:0 0 10px}
 .switch{display:flex;gap:8px;align-items:center;margin:6px 0}
+/* The face and chain choices: base.html gives inputs width:100%, which stretched these. */
+#facechoices .switch input,#chainlist .switch input{width:auto;flex:none;margin:0}
 .wallet{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line)}
 .wallet .bal{font-weight:700}
 .wallet .addr{font-size:.8rem;word-break:break-all}
