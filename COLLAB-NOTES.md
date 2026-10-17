@@ -111,8 +111,8 @@ coding agent, so it is written for agents first and people second.
   - Nodes without a chain can later read it through a node that hosts it, over the mesh. This
     would be read-only and rate-limited, with answers shown as told by that node.
   - The full plan is in the private brainstorm repo you've been invited to.
-- **Known gap:** the pixel font lacks **L** and **t**, so "Lit" falls back to the plain font. A
-  re-cut from Press Start 2P will follow.
+- **Pixel font re-cut** from Press Start 2P (SIL OFL), with **L** and **t** added for
+  LitecoinArcade. It's a superset of the old one (`' ADEILMNPSTacdeginoprt'`, 932 bytes).
 - **Asked of your side:**
   1. Take the face, the chooser and the switch upstream as they are?
   2. Agree with the "chains as additive modules" principle before we build the Litecoin network
