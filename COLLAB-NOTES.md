@@ -88,6 +88,47 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-17 (later) · SadFrog's side (Claude) · branch `sadfrog/litecoin` (rebased on `main` 54e2c3e)
+- **Phase 2: Litecoin on a real chain.** It's proven on a regtest litecoind 0.21.3 with
+  `-acceptnonstdtxn=0`, so mainnet relay rules apply. `tests/test_litecoin_chain.py` (7):
+  - **Class B:** the arcade's own inscription round-trips on Litecoin unchanged. Bare multisig plus
+    an 80-byte OP_RETURN relays.
+  - **Doginals format on Litecoin** (`arcade/ltc_ord.py`, Litecoin side only): it's written, then
+    read and traced by the **unchanged** `doginals.py`, then moved to a new owner.
+  - **Swaps:** PEP↔LTC lock-script swaps complete and refund. A Litecoin inscription is traded for
+    PEP and lands on the buyer's coin, first litoshi.
+- **Shared-code changes, for your review.** All of these leave Pepecoin and Dogecoin unchanged:
+  - `txbuild.SCRIPTHASH_VERSIONS` gets 50, 5 and 58. Without them, a Litecoin `M`/`Q` address got a
+    pubkey-hash script, and the coins would have been lost.
+  - `Params.min_fee_per_kb`: the default is 1_000_000, as before, and Litecoin's is 10_000. 0.01/kB
+    is over litecoind's `-maxtxfee` for a Class B transaction.
+    - `fees.fund` names a non-default rate from the first try, because mainnet litecoind has
+      `fallbackfee=0`.
+    - `MessageSender.prepare`/`send` pass their chain's rate. The Messenger's estimates are
+      untouched, since it is testnet-only.
+  - `rpc.RpcClient.call`:
+    - `signrawtransaction` falls back to `signrawtransactionwithwallet`, because 0.21 removed the
+      former.
+    - `validateaddress` gains `ismine` and related fields from `getaddressinfo`.
+    - Both only fire on a node without the old forms.
+  - `config.LITECOIN`: versions 48/50, and genesis checked against mainnet. It is **not in
+    `NETWORKS`**; its floor is the tip on the day it's switched on.
+  - `regtest.LitecoinRegtestNode`: it creates a wallet and uses legacy addresses and P2SH
+    version 58.
+- **Disclaimers:**
+  - `docs/litecoin.md`, on the Docs tab: Taproot compatibility and cross-chain exchanging.
+  - A short form in Admin → "Face and chains".
+  - `ltc_ord.TAPROOT_NOTE` and `litecoin.CROSS_CHAIN_NOTE`, for the wallet and Exchange screens.
+- **Learned on the chain:** the node wallet's ordinary sends carried an earlier inscription into a
+  new one. Litecoin needs the same inscription guard Pepecoin and Dogecoin have before it's switched
+  on. That's next, with the wallet and Exchange wiring.
+- **FYI:** on `main` 54e2c3e here, these fail without our changes:
+  - `test_escrow.py::test_after_unlock_the_owner_alone_takes_it_back`;
+  - `test_escrow.py::test_in_out_by_the_referee_and_back_to_the_owner_only_after_unlock`;
+  - `test_web.py::test_the_send_route_does_not_hold_the_event_loop`.
+- **Asked of your side:** review the shared-code changes above. `SCRIPTHASH_VERSIONS` matters for
+  any P2SH address, so it's worth taking upstream on its own.
+
 ### 2026-10-17 · SadFrog's side (Claude) · branch `sadfrog/litecoin`
 - **New: a LitecoinArcade face, a face chooser, and a Litecoin node switch** (3b48e07, one
   self-contained commit on top of `main` 7d70127).
