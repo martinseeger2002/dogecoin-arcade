@@ -73,7 +73,7 @@
       setTimeout(function () {
         if (waiting[message.seq]) {
           delete waiting[message.seq];
-          reject(new Error('no wallet is listening: open this page in a PepecoinArcade viewer'));
+          reject(new Error('no wallet is listening: open this page in a DogecoinArcade viewer'));
         }
       }, wait || 60000);
       window.parent.postMessage(message, '*');

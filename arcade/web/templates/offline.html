@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Offline · PepecoinArcade</title>
+<title>Offline · {{ brand.name }}</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
 <style>
-:root{--bg:#f4f8f1;--fg:#14200f;--muted:#5a6a52;--accent:#2f8f3a}
-@media (prefers-color-scheme:dark){:root{--bg:#0d140e;--fg:#e4efe0;--muted:#8ea486}}
+:root{--bg:{{ brand.light_bg }};--fg:{{ brand.light_fg }};--muted:{{ brand.muted }};--accent:{{ brand.accent }}}
+@media (prefers-color-scheme:dark){:root{--bg:{{ brand.dark_bg }};--fg:{{ brand.dark_fg }};--muted:{{ brand.dark_muted }}}}
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
   background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,sans-serif;
   padding:24px;box-sizing:border-box;text-align:center}

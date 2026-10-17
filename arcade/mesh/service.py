@@ -503,6 +503,14 @@ class MeshService:
 
     # ---------------------------------------------------------------- the web side
 
+    def online(self, node_id: str) -> bool:
+        """Whether a node is on the mesh right now (its heartbeat, or a direct link).
+        Read from the web thread: a dict lookup, no call into the mesh loop."""
+        try:
+            return bool(self.node.online(str(node_id)))
+        except Exception:
+            return False
+
     def status(self) -> dict:
         links = len(self.node.links)
         return {"linked": links > 0, "node": self.node_id, "network": self.network,

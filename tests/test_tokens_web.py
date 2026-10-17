@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from arcade.config import NETWORKS
 from arcade.rpc import RpcClient
 from arcade.script import b58check_encode, hash160
+from arcade.web import app as app_module
 from arcade.web.app import create_app
 from arcade.web.state import AppState, ChainContext
 from arcade.web.watcher import BlockWatcher
@@ -42,6 +43,11 @@ class RegtestContext(ChainContext):
 @pytest.fixture
 def web(tmp_path, chain):
     node, alice, bob = chain
+    # The wallet's address list is kept for fifteen seconds per node, process
+    # wide, and the regtest node is the session's: a module that ran just before
+    # on this worker left a list without the addresses `chain` just made, and
+    # the issuer's "you" pill went missing. A fresh test starts from the node.
+    app_module._LEDGER_ADDRESSES.clear()
     ledger = RegtestContext(network="regtest", role="ledger", label="Testnet",
                             node=node, activation=node.rpc.get_block_count() + 1,
                             marker=node.rpc.call("getnewaddress"))
@@ -62,6 +68,12 @@ def shown(page: str, label: str) -> str:
     match = re.search(rf'<td class="muted"[^>]*>{label}</td>\s*<td[^>]*>(?:<strong>)?([^<\n]+)', page)
     assert match, f"{label!r} is not on the confirm page"
     return match.group(1).strip()
+
+
+def _without_scripts(page: str) -> str:
+    """The page as a reader sees it: inline <script> blocks carry the shell's own
+    satoshi constants (AUTO_INSCRIBE_MOST = 200000000), which no price says."""
+    return re.sub(r"<script\b.*?</script>", "", page, flags=re.S | re.I)
 
 
 def test_two_prices_that_overlap_are_said_as_a_trade_and_not_a_sign(web):
@@ -204,7 +216,7 @@ def test_create_confirm_broadcast_and_read_back(web):
     assert 'class="pill ok">you</span>' in detail, "the issuer is in this wallet"
     assert "create (fixed supply)" in detail
     assert "Issuer controls" in detail
-    assert f'href="/exchange/pair/{prop['property_id']}">Trade Web Token</a>' in detail, \
+    assert f'href="/exchange/pair/{prop["property_id"]}">Trade Web Token</a>' in detail, \
         "a token's page is a way into its market (tester-e5, 2026-09-27)"
     assert app.get("/tokens/999").status_code == 404
 
@@ -857,7 +869,8 @@ def test_an_indivisible_price_is_read_in_coins_and_not_in_satoshis(web):
         r'<div class="obrow (?:ask|bid)[^>]*>\s*<span class="obprice mono">([^<]*)</span>', body)]
     assert prices == ["2", "1"], \
         f"each row priced in the coins somebody typed, and the page said {prices}"
-    assert "200000000" not in body and "100000000" not in body, \
+    shown_text = _without_scripts(body)
+    assert "200000000" not in shown_text and "100000000" not in shown_text, \
         "the satoshi figure appears nowhere, neither in a row nor in the spread"
     assert 'Best ask <strong class="mono">2</strong>' in body, "and the best prices, in coins"
 
@@ -912,16 +925,20 @@ def test_the_pair_page_says_one_price_for_an_indivisible_trade(web, monkeypatch)
     monkeypatch.setattr(index, "trades", lambda *a, **k: [sold])
 
     def tick(page: str, label: str) -> str:
-        """What one of the figures above the chart says, tags off."""
-        for value, span in _r.findall(
-                r'<div class="tick"><b[^>]*>(.*?)</b>\s*<span>(.*?)</span>',
-                page, _r.S):
-            if span.startswith(label):
-                return _r.sub(r"<[^>]+>", "", value).strip()
-        raise AssertionError(f"no {label!r} tick on the page")
+        """What one of the figures above the chart says, tags off: the big last
+        price, or one of the `24h ...` figures in the stats line under it."""
+        if label == "Last":
+            found = _r.search(r'<div class="ex-price">\s*<b[^>]*>(.*?)</b>', page, _r.S)
+        else:
+            found = _r.search(r'<div class="ex-stats">.*?<span>' + _r.escape(label)
+                              + r'\s*<b[^>]*>(.*?)</b>', page, _r.S)
+        if not found:
+            raise AssertionError(f"no {label!r} tick on the page")
+        return _r.sub(r"<[^>]+>", "", found.group(1)).strip()
 
     body = app.get(f"/exchange/pair/{pid}").text
-    assert tick(body, "Last") == "2.00000000", \
+    # Prices print without trailing zeros since the one-look exchange (4aa18aa).
+    assert tick(body, "Last") == "2.0", \
         "the last price is coins per token, and this said satoshis per token"
     assert tick(body, "24h volume") == "4.0000", "and four coins changed hands"
     row = _r.search(r'<div class="obrow ask[^>]*>\s*<span class="obprice mono">([^<]*)</span>', body)
@@ -931,12 +948,16 @@ def test_the_pair_page_says_one_price_for_an_indivisible_trade(web, monkeypatch)
     sold_row = _r.findall(r'<td class="mono">2\.00000000</td>\s*'
                           r'<td class="mono"[^>]*>([^<]*)</td>', body)
     assert sold_row == ["2"], f"what traded was two tokens, the page said {sold_row}"
-    assert "200000000" not in body and "0.00000002" not in body
+    shown_text = _without_scripts(body)
+    assert "200000000" not in shown_text and "0.00000002" not in shown_text
 
-    table = app.get("/exchange?tab=tokens").text
+    table = _without_scripts(app.get("/exchange?tab=tokens").text)
     assert "200000000" not in table, "no market row says eight zeros for two"
-    # The list prints prices without trailing zeros (2026-09-28).
-    assert "<strong>2.0</strong>" in table, "its last price and its best ask, both in coins"
+    # The list prints prices without trailing zeros (2026-09-28), one price a row
+    # since the one-look exchange (4aa18aa): the last trade, in coins.
+    listed = _r.findall(r'<span class="ex-px">\s*([^<]*)', table)
+    assert [p.strip() for p in listed] == ["2.0"], \
+        f"its last price, in coins, and the market list said {listed}"
 
 
 def test_a_sensitive_name_is_walled_on_the_pair_page_as_it_is_on_the_token_page(web,

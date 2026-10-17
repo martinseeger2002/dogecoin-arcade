@@ -57,6 +57,7 @@ PUBLIC_PAGES = frozenset({
     "/feed",
     "/guide",
     "/docs",
+    "/affiliates",            # who the arcade works with (2026-10-15)
     "/collections",
     "/tokens",
     "/nfts",
@@ -67,6 +68,8 @@ PUBLIC_PAGES = frozenset({
     "/exchange/pairs",            # the "open a pair" box: two token ids to a token/token pair's page
     "/games",                 # every inscribed game (arcade/games.py)
     "/account/escrows",       # an account's own escrows (needs a session)
+    "/account/doginals",      # this account's own Doginals on Dogecoin, to list (needs a session)
+    "/doginals/listings",     # Doginals listed for DOGE (the Exchange's Doginals tab)
     "/launch",
     "/launches",
     "/mintpad/new",
@@ -116,6 +119,7 @@ PUBLIC_PAGES = frozenset({
     "/account/tokens",
     "/account/inscribe/unfinished",
     "/account/dust",                  # coins in this account's own payload outputs
+    "/account/coins",                 # this account's own coins on one chain (the Doginals check)
     "/account/activity",              # this account's own coin history (signed in)
     "/account/standing/fillable",     # this account's buy orders a sell order meets
     "/account/claimpools",            # this account's own prize pools, to withdraw
@@ -144,6 +148,9 @@ PUBLIC_TREES = (
     "/exchange/pair/",
     "/exchange/pairs/",       # a token/token pair's page (2026-10-06)
     "/exchange/x/",           # a cross-chain market: a testnet asset for mainnet PEPE (2026-10-06)
+    "/account/doginal-tx/",   # the Wallet's Doginals check, asked by the node for the account's own coins (2026-10-15)
+    "/exchange/swap/",        # every cross-chain market, through lock scripts (2026-10-15)
+    "/exchange/coins/",       # a coin pair: redirects to its swap market
 )
 
 #: Whole paths with something variable in the middle of them, where a tree
@@ -219,6 +226,9 @@ LINKED_FROM_PUBLIC = ("/content/", "/collections", "/feed", "/u/", "/docs",
 #: equally correct; it is named so that nobody reads that 405 as the door having
 #: opened something. (the door census, 2026-09-27)
 PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
+               # a tab's own lock-script trades (2026-10-13)
+               "/account/trade/spend", "/account/trade/spend/sign", "/account/trade/facts",
+               "/account/trade/lock", "/account/trade/watch",
                # game rooms over the mesh (realtime.py): each acts only on the
                # caller's own token, and an account joins only as the address
                # its own browser signed for
@@ -283,6 +293,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # only one whose word removes them.
                "/account/run/retry", "/account/run/delete",
                "/account/nft/send", "/account/nft/sell",
+               # one Doginal on purpose: the only send that spends a coin carrying one
+               "/account/doginal/send",
                # an offer on somebody else's piece: one OP_RETURN saying what
                # this account would pay, funded from its own address and
                # signed in its own tab. This node broadcasts it and reserves
@@ -327,6 +339,10 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # this path, and an account that made the listing is refused at
                # both halves.
                "/account/buy", "/account/buy/sign",
+               # Doginals for DOGE (arcade/doginal_market.py, [Claude 2026-10-15]): the same build-sign
+               # pairs, for a listing whose seller signs one input and a buyer who completes it here.
+               "/account/doginals/list", "/account/doginals/list/sign",
+               "/account/doginals/buy", "/account/doginals/buy/sign", "/account/doginals/cancel",
                "/account/fill", "/account/fill/sign", "/account/fill/check",
                # the pair that answers one of those offers with the piece: the
                # first shows the leg at the buyer's price, the second checks the

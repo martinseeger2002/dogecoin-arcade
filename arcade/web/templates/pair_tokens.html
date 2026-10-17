@@ -2,7 +2,7 @@
 {% import "_chart.html" as chart %}
 {% import "_exui.html" as ex %}
 {% set bname = wall_text(base.name, 'a token') %}{% set qname = wall_text(quote.name, 'a token') %}
-{% block title %}{{ bname }}/{{ qname }} · Exchange · PepecoinArcade{% endblock %}
+{% block title %}{{ bname }}/{{ qname }} · Exchange · {{ brand.name }}{% endblock %}
 {% block body %}
 {# A token/token pair (Params.token_pairs_from, 2026-10-06). BASE/QUOTE: an amount
    of BASE at a price in QUOTE per whole BASE. Both sides are ledger balances, so

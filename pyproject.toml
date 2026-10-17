@@ -75,7 +75,8 @@ packages = ["arcade", "arcade.messaging", "arcade.web"]
 # leaving it out does not degrade anything: the application does not start.
 "arcade" = ["bip39-english.txt"]
 "arcade.web" = ["templates/*.html", "templates/*.js", "templates/*.md",
-                "templates/*.png", "docs/*.md", "docs/*/*.md",
+                "templates/*.png", "templates/brands/*/*.png",
+                "docs/*.md", "docs/*/*.md",
                 "vendor/*.js", "vendor/*/*.js", "vendor/*.md"]
 
 [tool.pytest.ini_options]

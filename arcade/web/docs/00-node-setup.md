@@ -1,6 +1,6 @@
 # Node setup
 
-This page explains what a PepecoinArcade node is made of, what the installer
+This page explains what a DogecoinArcade node is made of, what the installer
 does, and how to do the same thing by hand. If you just want a working node,
 the installer is the quickest route; the manual steps are here so you can see
 exactly what ends up on your machine, or reproduce it on a system the
@@ -8,16 +8,16 @@ installer does not handle.
 
 ## What a node is
 
-A PepecoinArcade node is three things running on one machine:
+A DogecoinArcade node is three things running on one machine:
 
 | Part | What it does |
 |---|---|
 | **Pepecoin Core, mainnet** | The ledger: tokens, NFTs, inscriptions and coins |
 | **Pepecoin Core, testnet** | The Messenger's chain (messaging is testnet-only) |
-| **PepecoinArcade** | The indexer and web interface, served at `http://127.0.0.1:8420` |
+| **DogecoinArcade** | The indexer and web interface, served at `http://127.0.0.1:8420` |
 
 Pepecoin is a Dogecoin Core fork (Scrypt proof of work, AuxPoW merged mining
-since block 42,000). The protocol PepecoinArcade uses is identical on
+since block 42,000). The protocol DogecoinArcade uses is identical on
 Dogecoin, so the installer can set up a Dogecoin node instead of, or as well
 as, a Pepecoin one. Everything below uses Pepecoin; the Dogecoin differences
 are listed at the end.
@@ -83,7 +83,7 @@ as `--update`; it also accepts `--dry-run` and `--check`.
    overwritten.
 6. **Registers both nodes as user services** that start at login and keep
    running after logout.
-7. **Installs PepecoinArcade** into its own virtual environment under
+7. **Installs DogecoinArcade** into its own virtual environment under
    `~/.dogecoinarcade`.
 8. **Fetches the latest index bootstrap** for each chain, so a new node starts
    near the chain tip instead of indexing from block zero.
@@ -191,7 +191,7 @@ Create `~/.config/systemd/user/pepecoind-mainnet.service`:
 
 ```ini
 [Unit]
-Description=Pepecoin mainnet Core for PepecoinArcade
+Description=Pepecoin mainnet Core for DogecoinArcade
 After=network-online.target
 Wants=network-online.target
 
@@ -281,7 +281,7 @@ Create `~/.config/systemd/user/arcade-web.service`:
 
 ```ini
 [Unit]
-Description=PepecoinArcade web interface
+Description=DogecoinArcade web interface
 After=network-online.target
 Wants=network-online.target
 
@@ -417,7 +417,7 @@ Pepecoin's, and the arcade shows its progress.
 If a node's config file already exists, the installer adds the settings the
 arcade needs that it does not have (`server`, `txindex`, `rpcbind`,
 `rpcallowip`, the ZMQ lines), in one block marked
-`# --- added by the PepecoinArcade installer ---`. Nothing you wrote is
+`# --- added by the DogecoinArcade installer ---`. Nothing you wrote is
 changed or removed: a setting you already have, whatever its value, stays
 yours. A running node picks the additions up when it restarts.
 
@@ -430,6 +430,6 @@ you are ready for that.
 
 | | Linux | macOS | Windows |
 |---|---|---|---|
-| Binaries | `~/.local/bin` | `/Applications/Pepecoin-Qt.app` (copied from the `.dmg`) | `%LOCALAPPDATA%\PepecoinArcade\bin` |
+| Binaries | `~/.local/bin` | `/Applications/Pepecoin-Qt.app` (copied from the `.dmg`) | `%LOCALAPPDATA%\DogecoinArcade\bin` |
 | Datadirs | `~/.pepecoin`, `~/.pepecoin-testnet` | `~/Library/Application Support/Pepecoin`, `...Pepecoin-testnet` | `%APPDATA%\Pepecoin`, `%APPDATA%\Pepecoin-testnet` |
 | Services | systemd user units | launchd agents | logon tasks, or Startup-folder entries |

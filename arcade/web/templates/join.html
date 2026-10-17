@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Join · PepecoinArcade{% endblock %}
+{% block title %}Join · {{ brand.name }}{% endblock %}
 {% block body %}
 <h1>Join this arcade</h1>
 <p class="sub">
@@ -228,7 +228,14 @@ let phrase = "", asked = [];
    was not, and this page never sent them back). Only a path on this site. */
 async function arrived(answer, words) {
   show(answer);
-  try { (await import("/wallet.js")).remember(signer.normalise(words)); } catch (e) {}
+  try {
+    const wallet = await import("/wallet.js");
+    wallet.remember(signer.normalise(words));
+    // The addresses these words hold, told now as the password sign-in tells
+    // them: until the node knows one, its own machine draws the node's wallet
+    // and not this account's (_account_view).
+    await wallet.tellTheNode(await wallet.opened(ARCADE_CHAIN));
+  } catch (e) {}
   const next = new URLSearchParams(location.search).get("next") || "";
   if (next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\")) location.href = next;
 }

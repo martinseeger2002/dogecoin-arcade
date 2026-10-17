@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_token_confirm.html" as tk %}
-{% block title %}{{ wall_text(prop.name, 'A token') }} · Tokens · PepecoinArcade{% endblock %}
+{% block title %}{{ wall_text(prop.name, 'A token') }} · Tokens · {{ brand.name }}{% endblock %}
 {% block body %}
 {% set tag = 'mainnet' if chain.is_mainnet else 'testnet' %}
 <p class="muted" style="margin:0 0 6px;font-size:.86rem"><a href="/tokens">&larr; Tokens</a></p>

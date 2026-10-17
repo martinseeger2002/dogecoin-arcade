@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_tip.html" as tipui with context %}
-{% block title %}Games · PepecoinArcade{% endblock %}
+{% block title %}Games · {{ brand.name }}{% endblock %}
 {% block body %}
 {# Every inscribed game on the chain (arcade/games.py): a page whose JSON says
    {"game": ...}. Ranked like the mintpads -- Popular is what people said about
@@ -9,7 +9,7 @@
    the feed. An account's tab signs its own (script below). #}
 {% set acts = viewer == 'wallet' or (mine_tag) %}
 <h1 style="margin-bottom:4px">Games</h1>
-<p class="sub" style="margin-top:0">Games people have inscribed on {{ chain.label|lower }}.
+<p class="sub" style="margin-top:0">Games people have inscribed on any chain.
   Press Play to open one full screen.</p>
 
 <div class="row" style="gap:8px;margin:0 0 12px;flex-wrap:wrap;align-items:center">
@@ -44,7 +44,7 @@
 <p class="msg" id="games-news" hidden></p>
 
 {% if not games %}
-<div class="panel empty"><p>No games are on {{ chain.label|lower }} yet.</p>
+<div class="panel empty"><p>No games are on any chain yet.</p>
   <p class="muted" style="font-size:.86rem">Be the first: inscribe an HTML page with a
     <code>game</code> in its JSON.</p></div>
 {% endif %}
@@ -62,7 +62,8 @@
   <div class="gamebody">
     <div style="margin:0 0 4px"><strong style="font-size:1.05rem">{{ wall(g.name, 'name') }}</strong>
       {% if g.multiplayer %}<span class="pill">multiplayer</span>{% endif %}
-      {% if g.genre %}<span class="pill">{{ g.genre }}</span>{% endif %}</div>
+      {% if g.genre %}<span class="pill">{{ g.genre }}</span>{% endif %}
+      {% if it.net %}<span class="netbadge {{ {'test': 'test', 'main': 'main', 'doge': 'doge'}.get(it.net, 'test') }}">{{ it.netlabel }}</span>{% endif %}</div>
     <div class="muted" style="font-size:.84rem">by {{ it.creator|who }}
       &middot; {{ when(it.time) if it.time else 'just now' }}
       {%- if g.version %} &middot; v{{ g.version }}{% endif %}

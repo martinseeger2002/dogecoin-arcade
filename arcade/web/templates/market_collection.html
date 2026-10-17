@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "_chart.html" as chart %}
 {% import "_exui.html" as ex %}
-{% block title %}{{ wall_text(summary.collection, 'A collection') }} · PepecoinArcade{% endblock %}
+{% block title %}{{ wall_text(summary.collection, 'A collection') }} · {{ brand.name }}{% endblock %}
 {% block body %}
 {% import "_share_nft.html" as share %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>

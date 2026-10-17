@@ -3,7 +3,7 @@
 A prize pool is how a game, a puzzle or any other page pays out tokens, or
 NFTs, to whoever wins, without its owner being there. A pool is an inscription: you
 make one by inscribing a short piece of JSON, and delete it by inscribing
-another. Every PepecoinArcade node reads pools from the chain, so a pool pays
+another. Every DogecoinArcade node reads pools from the chain, so a pool pays
 out through any node, and all nodes agree on what is left.
 
 ## What a pool is

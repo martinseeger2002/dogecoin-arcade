@@ -46,7 +46,7 @@ DOCS = Path(__file__).parent / "docs"
 #: named here is still served -- it goes at the end under its own file name
 #: -- so adding one to `docs/` is enough to publish it.
 ORDER = (
-    ("how-it-works.md", "How PepecoinArcade works",
+    ("how-it-works.md", "How DogecoinArcade works",
      "What it is, what lives on the chain, and what your browser and a node each do."),
     ("features.md", "What it does", "Every part of the application, in one page."),
     ("prize-pools.md", "Prize pools",
@@ -59,6 +59,8 @@ ORDER = (
      "Put a game on the Games tab: the JSON that lists it, versions, tips and launchers."),
     ("multiplayer.md", "Multiplayer and trades",
      "Rooms where players meet in your game, and trades between them: arcade.realtime and arcade.swap.trade."),
+    ("swaps.md", "Swaps between chains: how a trade works here",
+     "Trade PEP for DOGE and more with anyone, trustlessly: lock scripts, two minutes, nothing held."),
     ("escrow.md", "Escrow: holding players' items for your game",
      "Put a player's NFTs and tokens at stake: your judge decides who gets them, the player can always take them back after the unlock time."),
     ("game-state.md", "Game state: a game's own record on each NFT",

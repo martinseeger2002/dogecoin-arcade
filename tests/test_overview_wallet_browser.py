@@ -211,7 +211,8 @@ def test_backup_page_explains_and_can_fetch_the_blob(browser, served, signed_in)
                 "return document.body.dataset.backupReady === 'yes'"):
             break
         time.sleep(0.25)
-    assert "There is nothing else" in browser.page_source
+    # The page's lead since 2026-10-08, when the words became showable again.
+    assert "The words are the wallet" in browser.page_source
     assert "message history" in browser.page_source
     assert "address book" in browser.page_source
     button = browser.find_element(By.ID, "download")

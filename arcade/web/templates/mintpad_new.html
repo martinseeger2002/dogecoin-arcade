@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_chain_line.html" as cl with context %}
-{% block title %}New mintpad · PepecoinArcade{% endblock %}
+{% block title %}New mintpad · {{ brand.name }}{% endblock %}
 {% block body %}
 {# The mintpad wizard (2026-09-26: "should be really easy ... you would just
    select from one of your collections"). An account's mintpad is its own collection
@@ -157,8 +157,8 @@
   background:repeating-linear-gradient(90deg,#c9a227 0 22px,transparent 22px 26px)}
 .mpprev-arcade{background:#120f1c;box-shadow:inset 0 0 0 3px #c9a227}.mpprev-arcade b{background:#e0282e}
 .mpprev-lottery{background:radial-gradient(#3a2b5c,#07060c)}
-.mpprev-lottery i{box-shadow:0 0 0 2px #7be04f,0 0 12px #7be04f;background:#43e8ff}
-.mpprev-lottery b{background:linear-gradient(90deg,#7be04f,#ff5fa2)}
+.mpprev-lottery i{box-shadow:0 0 0 2px #ffc83d,0 0 12px #ffc83d;background:#43e8ff}
+.mpprev-lottery b{background:linear-gradient(90deg,#ffc83d,#ff5fa2)}
 .mpprev-neon{background:#0b0418;box-shadow:inset 0 0 0 2px #ff2bd6,inset 0 0 14px #ff2bd6}
 .mpprev-neon i{box-shadow:0 0 10px #22e1ff;background:#22e1ff}.mpprev-neon b{background:#ff2bd6;box-shadow:0 0 8px #ff2bd6}
 .mpprev-polaroid{background:#efe6d6}.mpprev-polaroid i{background:#fff;border:3px solid #fff;border-bottom-width:8px;
@@ -168,7 +168,7 @@
 .mpprev-terminal b{background:#000;border:1px solid #39ff6a;border-radius:0}
 .mpprev-minimal{background:#fff;box-shadow:inset 0 0 0 1px #e7e5df}.mpprev-minimal i{background:#ccc;border-radius:2px}
 .mpprev-minimal b{background:#111}
-.mpprev-coin i{width:34px;height:34px;margin-left:-17px;top:10px;border-radius:50%;background:#2f8f3a;box-shadow:0 0 0 3px #7be04f}
+.mpprev-coin i{width:34px;height:34px;margin-left:-17px;top:10px;border-radius:50%;background:#d9a520;box-shadow:0 0 0 3px #f5c542}
 .mpprev-coin b{background:#f5c542}
 .mpprev-ticker{background:linear-gradient(#000 0 14px,var(--code) 14px)}.mpprev-ticker i{top:24px}
 .mpprev-ticker b{background:#7dffb0}

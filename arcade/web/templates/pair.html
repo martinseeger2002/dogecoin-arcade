@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "_chart.html" as chart %}
 {% import "_exui.html" as ex %}
-{% block title %}{{ wall_text(prop.name, 'A token') }}/{{ chain.params.coin }} · Exchange · PepecoinArcade{% endblock %}
+{% block title %}{{ wall_text(prop.name, 'A token') }}/{{ chain.params.coin }} · Exchange · {{ brand.name }}{% endblock %}
 {% block body %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
 <a class="back-link" href="/exchange?tab=tokens">&#8592; All markets</a>

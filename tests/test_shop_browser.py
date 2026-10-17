@@ -288,11 +288,22 @@ def shop(browser, served):
     # unanswered as far as everyone can see. Ordinary sends make an answer
     # readable -- one per answer, since the change of the first may land
     # elsewhere.
+    #
+    # Every later `sendtoaddress` here is paid from the same wallet, and its coin
+    # selection may take exactly these coins (on a deep regtest chain the
+    # coinbase rewards are small, so a 3.0 coin is an attractive pick): the
+    # buy then found the answerer holding only coinbase, "a message cannot be
+    # funded from". So they are locked until this fixture's sends are done.
     answerer = funded_address(daemon.rpc, prefer=state.derived_address)
+    held = []
     for _ in range(2):
-        daemon.rpc.call("sendtoaddress", answerer, 3.0)
+        sent = daemon.rpc.call("sendtoaddress", answerer, 3.0)
+        held += [{"txid": sent, "vout": out["n"]} for out in
+                 daemon.rpc.call("getrawtransaction", sent, True)["vout"]
+                 if answerer in (out["scriptPubKey"].get("addresses") or [])]
+        daemon.rpc.call("lockunspent", False, held)
         _answered(state, daemon)
-    assert funded_address(daemon.rpc, prefer=state.derived_address) == answerer
+    assert len(held) == 2, held
 
     # A shopkeeper's first pass parks its cursor: whatever was in the inbox
     # before there was a shopkeeper was not an order to it.
@@ -320,6 +331,8 @@ def shop(browser, served):
     with contextlib.closing(index.open()) as db:
         assert len(utxos.unspent(db, made["address"])) >= 2, \
             "two outputs, or the buy is refused before anything is paid for"
+    daemon.rpc.call("lockunspent", True, held)
+    assert funded_address(daemon.rpc, prefer=state.derived_address) == answerer
 
     return {"base": base, "state": state, "daemon": daemon, "shop": shop_txid,
             "piece": piece, "keeper": keeper, **made}

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_chains.html" as chains %}
-{% block title %}Overview · PepecoinArcade{% endblock %}
+{% block title %}Overview · {{ brand.name }}{% endblock %}
 {% block body %}
 <h1>Overview</h1>
 <p class="sub" style="margin-top:-4px">Seats, limits, the node's coins and every switch
@@ -304,7 +304,7 @@
         of sending something. A release
         is signed with a key that is not on the website, and this copy carries
         the public half &mdash; so an update that was not published by
-        PepecoinArcade is refused rather than installed, and one older than what
+        DogecoinArcade is refused rather than installed, and one older than what
         you already have is refused too. Uncheck this and nothing is installed
         without you running <code>dogecoinarcade-update</code>.</span></span>
     </label>

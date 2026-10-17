@@ -256,6 +256,12 @@ ANNOUNCE_TAG_PFP = 0x04
 ANNOUNCE_TAG_BIO = 0x05
 ANNOUNCE_TAG_URL = 0x06
 
+#: The same person's Dogecoin address, as its 20-byte hash160 (2026-10-15: "when we broadcast our test net and
+#: Pepe main net addresses. We also broadcast our Doge address so that others can send us Doge via our @tag"). Always
+#: the LAST section: a reader stops at the first byte it does not know, so an older reader still gets everything before
+#: it. A reader puts Dogecoin's version byte back.
+ANNOUNCE_TAG_DOGE = 0x07
+
 #: What each may say. A bio is a sentence or two; a link is a link.
 MAX_ANNOUNCE_BIO = 160
 MAX_ANNOUNCE_URL = 120
@@ -288,7 +294,7 @@ MAX_ANNOUNCE_NAME_CLASS_B = 64
 def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
                            name: str = "", other_hash160: bytes = b"",
                            tag: str = "", pfp: str | bytes = b"",
-                           bio: str = "", url: str = "") -> bytes:
+                           bio: str = "", url: str = "", doge_hash160: bytes = b"") -> bytes:
     """Header + X25519 public key, optionally saying whose key it is.
 
     The bare form is 38 bytes and is what earlier versions publish. The tail adds
@@ -357,6 +363,10 @@ def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
                 f"{what} is limited to {ceiling} bytes; this one is "
                 f"{len(encoded)}")
         out += bytes([kind, len(encoded)]) + encoded
+    if doge_hash160:
+        if len(doge_hash160) != 20:
+            raise EnvelopeError(f"the Dogecoin address hash must be 20 bytes, got {len(doge_hash160)}")
+        out += bytes([ANNOUNCE_TAG_DOGE]) + doge_hash160
     return out
 
 
@@ -403,7 +413,7 @@ def parse_announced_extras(payload: bytes) -> dict:
     understood up to that point is kept.
     """
     found = {"hash160": b"", "name": "", "other_hash160": b"", "tag": "",
-             "pfp": "", "bio": "", "url": ""}
+             "pfp": "", "bio": "", "url": "", "doge_hash160": b""}
     at = KEY_ANNOUNCE_HEADER_LEN + 32
     if len(payload) <= at or payload[at] != ANNOUNCE_TAG_IDENTITY:
         return found              # bare announcement, or NUL padding
@@ -423,11 +433,11 @@ def parse_announced_extras(payload: bytes) -> dict:
         at = at + 22 + length
         while at < len(payload):
             kind = payload[at]
-            if kind == ANNOUNCE_TAG_OTHER_CHAIN:
+            if kind in (ANNOUNCE_TAG_OTHER_CHAIN, ANNOUNCE_TAG_DOGE):
                 other = payload[at + 1 : at + 21]
                 if len(other) != 20:
                     break
-                found["other_hash160"] = other
+                found["other_hash160" if kind == ANNOUNCE_TAG_OTHER_CHAIN else "doge_hash160"] = other
                 at += 21
             elif kind == ANNOUNCE_TAG_PFP:
                 piece = payload[at + 1 : at + 33]

@@ -674,7 +674,9 @@ def test_a_link_knows_its_round_trip_time():
 
 def test_a_faster_peer_replaces_the_slowest_link():
     async def go():
-        a, b, c = await started(mk(target=1), mk(), mk())
+        # b and c dial nobody: a dropped b would otherwise dial a straight back
+        # (it learned a's address from the link), and come back as an inbound link.
+        a, b, c = await started(mk(target=1), mk(target=0), mk(target=0))
         try:
             a.add_address(*addr(b))
             for _ in range(100):

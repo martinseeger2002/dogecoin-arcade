@@ -95,14 +95,20 @@ def _serving(pid: int, datadir: str) -> bool:
 
 
 def reap_leftovers(older_than: float = 7200.0,
-                   live: dict[str, int] | None = None) -> str:
+                   live: dict[str, int] | None = None,
+                   starting: float = 600.0) -> str:
     """Reclaim what an interrupted run left behind, and say what came away.
 
     `stop` removes the datadir, so a directory still sitting here belongs to a
     run that never reached its teardown -- ctrl-C, a killed pytest, a machine
     that rebooted mid-suite. A directory with no process of ours behind it is
-    leftover, full stop: it is only disk, and six of them is a suite whose
-    timing depends on what else is running.
+    leftover: it is only disk, and six of them is a suite whose timing depends
+    on what else is running. Unless it is younger than `starting` -- a node
+    makes its datadir when it is built and names it to a daemon only when it is
+    started, and every xdist worker sweeps as its session begins, so a sweep
+    that took a fresh directory with no daemon behind it for debris deleted a
+    sibling worker's node out from under it (the node then refused to start, or
+    wrote its chain into the working directory).
 
     A *process* is a different thing, so it is only old enough to stop once its
     datadir predates a whole suite. Two runs can share this box and one must not
@@ -123,7 +129,10 @@ def reap_leftovers(older_than: float = 7200.0,
         if made.st_uid != os.getuid() or not path.is_dir():
             continue
         pid = running.get(str(path))
-        if pid is None or now - made.st_ctime > older_than:
+        if pid is None:
+            if now - made.st_mtime > starting:
+                targets.append((path, pid))
+        elif now - made.st_ctime > older_than:
             targets.append((path, pid))
     stopped = 0
     for path, pid in targets:

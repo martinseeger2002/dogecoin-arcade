@@ -5,6 +5,10 @@ A game asks for a seed, a take and a key as it starts. Each caller that found no
 wallet used to draw its own card or sheet on top of the last; now the ones that arrive
 while one is open wait for it and share its answer. The node and helpers are
 `test_page_doors_browser.py`'s.
+
+The scripts set the page's globals as `window.X = ...`: Firefox runs WebDriver
+scripts in a sandbox whose bare assignments never reach the page (Firefox 156
+kept `ARCADE_ME = 'someone'` to itself and the page still saw nobody signed in).
 """
 
 import pathlib
@@ -24,9 +28,9 @@ def test_three_key_requests_at_once_open_one_password_sheet(browser, served):
     browser.get(f"{base}/")
     got = browser.execute_async_script("""
         const done = arguments[0];
-        ARCADE_ME = 'someone';                      // signed in, wallet not open
+        window.ARCADE_ME = 'someone';                      // signed in, wallet not open
         let sheets = 0;
-        arcadeUnlockSheet = () => { sheets++; return new Promise((r) => setTimeout(() => r({opened: true}), 300)); };
+        window.arcadeUnlockSheet = () => { sheets++; return new Promise((r) => setTimeout(() => r({opened: true}), 300)); };
         Promise.all([arcadeKeys(null, 'a'), arcadeKeys(null, 'b'), arcadeKeys(null, 'c')])
           .then((keys) => done({sheets, same: keys.every((k) => k && k.opened)}),
                 (e) => done({error: String(e.message || e)}));""")
@@ -39,9 +43,9 @@ def test_a_closed_sheet_asks_again_the_next_time(browser, served):
     browser.get(f"{base}/")
     got = browser.execute_async_script("""
         const done = arguments[0];
-        ARCADE_ME = 'someone';
+        window.ARCADE_ME = 'someone';
         let sheets = 0;
-        arcadeUnlockSheet = () => { sheets++; return Promise.resolve(null); };   // closed without a password
+        window.arcadeUnlockSheet = () => { sheets++; return Promise.resolve(null); };   // closed without a password
         const fail = (p) => p.then(() => 'opened', (e) => String(e.message || e));
         Promise.all([fail(arcadeKeys(null, 'a')), fail(arcadeKeys(null, 'b'))])
           .then((first) => fail(arcadeKeys(null, 'c')).then((second) => done({sheets, first, second})));""")
@@ -54,9 +58,9 @@ def test_three_requests_signed_out_show_one_sign_in_card(browser, served):
     browser.get(f"{base}/")
     got = browser.execute_async_script("""
         const done = arguments[0];
-        ARCADE_ME = '';
+        window.ARCADE_ME = '';
         let cards = 0;
-        arcadeAsk = () => { cards++; return new Promise((r) => setTimeout(() => r(false), 300)); };
+        window.arcadeAsk = () => { cards++; return new Promise((r) => setTimeout(() => r(false), 300)); };
         Promise.all([arcadeSignIn('a'), arcadeSignIn('b'), arcadeSignIn('c')])
           .then(() => done({cards}), (e) => done({error: String(e.message || e)}));""")
     assert got == {"cards": 1}, got

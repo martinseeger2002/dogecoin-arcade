@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}#{{ row.number }} · PepecoinArcade{% endblock %}
+{% block title %}#{{ row.number }} · {{ brand.name }}{% endblock %}
 {% block body %}
 {% import "_share_nft.html" as share %}
 <div class="row" style="align-items:baseline">
@@ -189,10 +189,11 @@
     <a class="btn ghost small" href="/content/{{ row.txid }}">Content</a>
     <a class="btn ghost small" href="/r/inscription/{{ row.txid }}">JSON</a>
     <a class="btn ghost small" href="/r/metadata/{{ row.txid }}">Metadata</a>
-    {% if xchain_open and not chain.is_mainnet %}
-    {# the cross-chain book (2026-10-06): this piece for Pepecoin on mainnet #}
+    {% if not chain.is_mainnet %}
+    {# this piece for Pepecoin on mainnet, through lock scripts (2026-10-15; the node-held
+       book of 2026-10-06 before that) #}
     <a class="btn ghost small" href="/exchange/x/nft/{{ row.txid }}"
-       title="Buy or sell it for mainnet PEP, held by this node while it trades">For mainnet PEP {{ net_badge(true) }}</a>
+       title="Swap it for mainnet PEP through lock scripts: nobody holds either side">For mainnet PEP {{ net_badge(true) }}</a>
     {% endif %}
     {% if mine %}
       {% if sale and sale.kind == 'ask' %}
@@ -602,7 +603,7 @@
   <p style="margin:0 0 10px">The best is <strong>{{ "%.8f"|format(xbest)|trim('0')|trim('.') }} PEP</strong>
     (real coins){% if x_bids|length > 1 %}, from {{ x_bids|length }} offers{% endif %}. This node holds
     the buyer's PEP; sell into it and the PEP is paid to your mainnet address when your piece arrives.</p>
-  <a class="btn" href="/exchange/x/nft/{{ row.txid }}?side=sell&amp;price={{ "%.8f"|format(xbest)|trim('0')|trim('.') }}#x-form">Sell it for {{ "%.8f"|format(xbest)|trim('0')|trim('.') }} PEP</a>
+  <a class="btn" href="/exchange/x/nft/{{ row.txid }}?held=1&amp;side=sell&amp;price={{ "%.8f"|format(xbest)|trim('0')|trim('.') }}#x-form">Sell it for {{ "%.8f"|format(xbest)|trim('0')|trim('.') }} PEP</a>
 </div>
 {% endif %}
 {% endif %}
@@ -610,12 +611,12 @@
 
 {% if not mine and not mine_account %}
 <h2 id="make-offer">Make an offer</h2>
-{% if xchain_open and not chain.is_mainnet %}
+{% if not chain.is_mainnet %}
 <div class="panel" style="margin-bottom:12px">
   <h3 style="margin:0 0 6px">Offer real PEP {{ net_badge(true) }} for this testnet piece</h3>
-  <p class="muted" style="margin:0 0 10px;font-size:.88rem">Your mainnet PEP is held by this node, not by
-    the piece's holder, until they sell it to you; cancel any time before and it comes back. The node takes
-    0.5%.{% if x_bids %} The best offer standing is {{ "%.8f"|format(x_bids[0].pep)|trim('0')|trim('.') }} PEP.{% endif %}</p>
+  <p class="muted" style="margin:0 0 10px;font-size:.88rem">Settled through lock scripts on both chains:
+    your PEP is locked so only the piece's holder can claim it, and only by handing you the piece; if they
+    never do, it comes back to you by itself.</p>
   <a class="btn" href="/exchange/x/nft/{{ row.txid }}?side=buy#x-form">Offer mainnet PEP</a>
 </div>
 <h3 style="margin:14px 0 6px">Or offer PEP TEST {{ net_badge(false) }}</h3>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Tip {{ ('@' ~ wall_text(tag, 'someone')) if tag else 'a post' }} · PepecoinArcade{% endblock %}
+{% block title %}Tip {{ ('@' ~ wall_text(tag, 'someone')) if tag else 'a post' }} · {{ brand.name }}{% endblock %}
 {% block body %}
 <h1>Tip {% if tag %}<a href="/u/{{ tag }}">{{ wall('@' ~ tag) }}</a>{% else %}this {{ post['what'] }}{% endif %}</h1>
 <p class="sub">One transaction: the coins move and the same transaction says

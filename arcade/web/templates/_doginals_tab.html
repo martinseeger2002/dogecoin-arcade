@@ -1,0 +1,217 @@
+{# Doginals for DOGE (2026-10-14: "I want doginals to be incorporated into the exchange on its own separate tab.
+   So people can list doginals for doge."). [Claude 2026-10-15] The listings are arcade/doginal_market.py's: the seller
+   signs its inscribed coin over its price, the buyer completes one transaction in its own tab. Shown only while each
+   coin is unspent. Previews come from the Doginal source (doginals.content_url), not from this node's /content/. #}
+<style>
+.dg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+.dg-card{background:var(--panel);border-radius:12px;padding:10px;box-shadow:var(--shadow);min-width:0}
+.dg-art{display:block;width:100%;aspect-ratio:1;object-fit:contain;background:var(--code);border-radius:8px;image-rendering:pixelated}
+.dg-id{font-size:.72rem;color:var(--muted);word-break:break-all;margin:6px 0 2px}
+.dg-px{font-weight:700}
+.dg-note{font-size:.78rem;margin-top:4px}
+</style>
+{% if not doge_ready %}
+  <div class="panel empty"><p>Doginals open here when this arcade's Dogecoin node has synced.</p></div>
+{% else %}
+  <p class="sub">Doginals listed for DOGE. The seller signs the coin that carries the Doginal over the price; the buyer
+    pays and receives it in one transaction, checked in the buyer's own browser.</p>
+  {% if not node_trades() %}
+  <div class="msg">Listing and buying Doginals is off on this arcade: a listing waits for its buyer with the seller
+    gone, which is a node-facilitated trade, and the operator has not turned those on.</div>
+  {% endif %}
+
+  {% if doginals %}
+  <div class="ex-h">For sale</div>
+  <div class="dg-grid" id="dg-listings">
+    {% for d in doginals %}
+    <div class="dg-card" data-listing="{{ d.id }}">
+      {# A sandboxed frame: a Doginal is often a page drawing itself from other inscriptions (read off the chain, 2026-10-15). #}
+      <iframe class="dg-art" src="{{ d.content }}" title="Doginal {{ d.inscription[:12] }}" loading="lazy"
+              sandbox="allow-scripts" style="border:0;aspect-ratio:1;width:100%;pointer-events:none"></iframe>
+      <div class="dg-id mono" title="{{ d.inscription }}">{{ d.inscription[:16] }}…{{ d.inscription[-4:] }}</div>
+      <div class="dg-px">{{ d.price_text }}</div>
+      <div class="muted" style="font-size:.78rem">from {% if doge_me and d.seller == doge_me %}<strong>you</strong>{% else %}{{ d.seller|who }}{% endif %}</div>
+      {% if viewer == 'account' and node_trades() %}
+        {% if doge_me and d.seller == doge_me %}
+        <button type="button" class="ghost small" data-dg-cancel="{{ d.id }}">Take it back</button>
+        {% else %}
+        <button type="button" class="small" data-dg-buy="{{ d.id }}" data-price="{{ d.price }}">Buy</button>
+        {% endif %}
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="panel empty"><p>No Doginals are listed yet.</p></div>
+  {% endif %}
+
+  {% if viewer == 'account' and node_trades() %}
+  <div class="ex-h">Your Doginals</div>
+  <p class="muted" style="font-size:.86rem">The Doginals on your Dogecoin address. A coin carrying exactly one, at its
+    start, can be listed.</p>
+  <button type="button" class="ghost small" id="dg-mine-load">Show my Doginals</button>
+  <div class="dg-grid" id="dg-mine" style="margin-top:10px"></div>
+  {% endif %}
+
+  {% if viewer == 'account' %}
+  <script type="module">
+  const CHAIN = {network: "doge", version: {{ doge_version }}};
+  const post = async (path, body) => {
+    const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"},
+                                 credentials: "same-origin", body: JSON.stringify({chain: "doge", ...body})});
+    const said = await r.json();
+    if (!r.ok) throw new Error(said.detail || "the node would not do that");
+    return said;
+  };
+  const keysHere = async () => {
+    const wallet = await import("/wallet.js");
+    const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+    return {wallet, held, keys: wallet.keysOn(held, CHAIN.network)};
+  };
+  const coins = await import("/coins.js");
+  const doge = (sats) => `${Number(sats) / 1e8} DOGE`;
+  const note = (el, text, bad) => {
+    let n = el.parentNode.querySelector(":scope > .dg-note");
+    if (!n) { n = document.createElement("div"); n.className = "dg-note muted"; el.after(n); }
+    n.textContent = text; n.style.color = bad ? "var(--bad)" : "";
+  };
+
+  // A plain send the node built (the prepare split, or taking a listing back): checked and signed as any send.
+  async function send(offer, title, words, go) {
+    const {wallet, held} = await keysHere();
+    const shown = await wallet.checked(offer, held);
+    if (!await arcadeAsk(title, `${words} ${shown.says}`, go)) return false;
+    await wallet.confirm(held, offer);
+    return true;
+  }
+
+  document.addEventListener("click", async (event) => {
+    const buy = event.target.closest && event.target.closest("[data-dg-buy]");
+    const cancel = event.target.closest && event.target.closest("[data-dg-cancel]");
+    const list = event.target.closest && event.target.closest("[data-dg-list]");
+    const button = buy || cancel || list;
+    if (!button) return;
+    event.preventDefault();
+    button.disabled = true;
+    try {
+      if (buy) {
+        const offer = await post("/account/doginals/buy", {listing: buy.dataset.dgBuy});
+        if (offer.prepare) {
+          if (await send(offer, "First, two small coins",
+                         "Buying a Doginal puts two small coins of yours in front of the seller's, and they come "
+                         + "straight back to you. This splits them off:", "Split them off")) {
+            note(buy, "Two small coins are on their way. Press Buy again once their block lands.");
+          }
+        } else {
+          const {keys} = await keysHere();
+          const shown = await coins.verifyDoginalBuy(offer, keys);
+          const ok = await arcadeAsk(`Buy this Doginal for ${doge(offer.price)}?`,
+            `${doge(offer.price)} to the seller, ${shown.coinsOf(shown.fee)} DOGE in fees. The Doginal and the `
+            + "coins move in one transaction, checked in this browser.", `Buy it for ${doge(offer.price)}`);
+          if (ok) {
+            const signatures = [];
+            for (const h of shown.hashes) signatures.push(coins.hex(await coins.signInput(keys.key, coins.unhex(h))));
+            await post("/account/doginals/buy/sign", {listing: offer.listing, raw: offer.raw, signatures,
+                                                      pubkey: coins.hex(keys.pubkey)});
+            arcadeToast("You bought the Doginal. It's yours when its block lands.");
+          }
+        }
+      } else if (cancel) {
+        const offer = await post("/account/doginals/cancel", {listing: cancel.dataset.dgCancel});
+        if (await send(offer, "Take this listing back?",
+                       "The Doginal moves to your own address, which is what ends the signature you gave:",
+                       "Take it back")) {
+          arcadeToast("Taken back: the listing ends when its block lands.");
+        }
+      } else {
+        const card = list.closest(".dg-card");
+        const amount = card.querySelector("input").value.trim();
+        const ask = await post("/account/doginals/list", {txid: list.dataset.txid, vout: Number(list.dataset.vout),
+                                                          inscription: list.dataset.dgList, amount});
+        const {keys} = await keysHere();
+        const digest = await coins.verifyDoginalAsk(ask, keys);
+        if (await arcadeAsk(`List this Doginal for ${doge(ask.price)}?`,
+              "Your signature lets anybody buy it for that price, paid to your own address, until the coin "
+              + "moves. Taking it back is a small send of the Doginal to yourself.", "List it")) {
+          const signature = coins.hex(await coins.signInput(keys.key, digest, coins.SINGLE_ANYONECANPAY));
+          await post("/account/doginals/list/sign", {txid: ask.coin.txid, vout: ask.coin.vout,
+                                                     inscription: ask.inscription, amount, signature,
+                                                     pubkey: coins.hex(keys.pubkey)});
+          note(list, `Listed for ${doge(ask.price)}.`);
+        }
+      }
+    } catch (e) {
+      note(button, String(e.message || e), true);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  const load = document.getElementById("dg-mine-load");
+  if (load) load.addEventListener("click", async () => {
+    const box = document.getElementById("dg-mine");
+    box.textContent = "Asking which of your coins carry Doginals…";
+    try {
+      const r = await fetch("/account/doginals", {credentials: "same-origin"});
+      const said = await r.json();
+      if (!r.ok) throw new Error(said.detail || "could not ask");
+      box.textContent = "";
+      if (!said.doginals.length) { box.textContent = "No Doginals on your Dogecoin address."; return; }
+      // A swap needs Dogecoin besides the Doginal (its lock's fee and reserve); a DOGE listing here costs the seller nothing.
+      let swapShort = false, needText = "";
+      try {
+        const acct = await (await fetch("/account", {cache: "no-store"})).json();
+        const d = (acct.chains || []).find((c) => c.network === "doge");
+        if (d && Number(d.spendable || 0) < Number(d.doginal_lock_need || 0)) {
+          swapShort = true;
+          needText = `Needs about ${(d.doginal_lock_need / 1e8).toFixed(8).replace(/\.?0+$/, "")} DOGE besides the Doginal for the network fee`;
+        }
+      } catch (e) { /* left enabled; the swap itself says why if it cannot pay */ }
+      for (const d of said.doginals) {
+        const card = document.createElement("div");
+        card.className = "dg-card";
+        const id = (d.inscriptions || [])[0] || "";
+        if (d.content) {
+          // A sandboxed frame, not an <img>: a Doginal is often a page that draws itself from other inscriptions
+          // (2026-10-15: Anti Doginal Dogs), read from the chain by this node at /content/<id>.
+          const art = Object.assign(document.createElement("iframe"), {className: "dg-art", src: d.content,
+                                                                        title: "Doginal", loading: "lazy"});
+          art.setAttribute("sandbox", "allow-scripts");
+          art.style.cssText = "border:0;aspect-ratio:1;width:100%;pointer-events:none";
+          card.append(art);
+        }
+        const label = Object.assign(document.createElement("div"), {className: "dg-id mono",
+          textContent: d.unknown ? `${d.txid.slice(0, 16)}…:${d.vout} (could not be read from the chain yet)` : id});
+        card.append(label);
+        if (d.listing) {
+          card.append(Object.assign(document.createElement("div"), {className: "muted", textContent: "Listed"}));
+        } else if (d.listable) {
+          const input = Object.assign(document.createElement("input"), {type: "text", inputMode: "decimal",
+                                                                        placeholder: "Price in DOGE"});
+          input.setAttribute("aria-label", "Price in DOGE");
+          const go = Object.assign(document.createElement("button"), {type: "button", className: "small",
+                                                                      textContent: "List"});
+          Object.assign(go.dataset, {dgList: id, txid: d.txid, vout: String(d.vout)});
+          // Or for any other coin or token, through lock scripts (2026-10-15: "list for any of the coins and any
+          // of the tokens that they possess"): its swap market, where the price is picked.
+          const other = Object.assign(document.createElement("a"), {className: "small",
+            href: `/exchange/swap/doge-doginal-${encodeURIComponent(id)}/main-coin`,
+            textContent: "Price in another coin or token"});
+          if (swapShort) {
+            other.removeAttribute("href"); other.setAttribute("aria-disabled", "true");
+            other.style.cssText = "opacity:.45"; other.title = needText;
+          }
+          card.append(input, go, other);
+        } else if (!d.unknown) {
+          card.append(Object.assign(document.createElement("div"), {className: "muted dg-note",
+            textContent: "Not listable here: this coin carries more than one Doginal, or one away from its start."}));
+        }
+        box.append(card);
+      }
+    } catch (e) {
+      box.textContent = String(e.message || e);
+    }
+  });
+  </script>
+  {% endif %}
+{% endif %}

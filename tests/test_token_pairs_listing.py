@@ -62,20 +62,28 @@ def test_opening_a_pair_offers_only_what_you_hold_and_the_two_coins(client, monk
     for ch in {id(state.messaging): state.messaging, **{id(c): c for c in getattr(state, "chains", {}).values()}}.values():
         monkeypatch.setattr(ch, "rpc", fake_rpc)
     page = app.get("/exchange?tab=tokens").text
-    assert "You have" in page
-    for side in (page[page.index("You have"):page.index("Trade it for")], page[page.index("Trade it for"):]):
+    # One trade box (2026-10-15): "I want to buy/sell <amount> <A> at <price> <B> per <A>".
+    assert 'id="pair-base"' in page and 'id="pair-quote"' in page
+    for side in (page[page.index('id="pair-base"'):], page[page.index('id="pair-quote"'):]):
         side = side[:side.index("</select>")]
         assert "GOLD (#8)" in side, "what this wallet holds"
         assert "LOGS (#7)" not in side and "ORE (#9)" not in side, "and nothing it does not"
-        assert 'value="coin"' in side and 'value="main" disabled' in side, "plus both Pepecoins"
+        # Every chain's coin, open (2026-10-15: one way for every pair, cross-chain included).
+        assert 'value="regtest-coin"' in side and 'value="main-coin"' in side, "plus both Pepecoins"
 
 
-def test_the_testnet_coin_opens_the_tokens_coin_market(client):
+def test_the_testnet_coin_opens_the_tokens_coin_market(client, monkeypatch):
     app, state = client
+    import arcade.ledger as L
+    monkeypatch.setattr(L.LedgerIndex, "property", lambda self, pid: {
+        "property_id": int(pid), "name": f"T{pid}", "divisible": True} if int(pid) in (8, 9) else None)
     assert app.get("/exchange/pairs?base=8&quote=coin", follow_redirects=False).headers["location"] == "/exchange/pair/8"
     assert app.get("/exchange/pairs?base=coin&quote=8", follow_redirects=False).headers["location"] == "/exchange/pair/8"
     assert app.get("/exchange/pairs?base=8&quote=9", follow_redirects=False).headers["location"] == "/exchange/pairs/8/9"
-    assert app.get("/exchange/pairs?base=8&quote=main", follow_redirects=False).headers["location"].startswith("/exchange?tab=tokens")
+    assert app.get("/exchange/pairs?base=8&quote=main", follow_redirects=False).headers["location"] \
+        == "/exchange/swap/regtest-token-8/main-coin", "mainnet PEP is a swap market (2026-10-15)"
+    assert app.get("/exchange/pairs?base=7&quote=coin", follow_redirects=False).headers["location"] \
+        .startswith("/exchange?tab=tokens"), "a token this node does not know opens nothing"
 
 
 def test_a_pair_of_one_token_is_sent_back_to_pick_again(client):

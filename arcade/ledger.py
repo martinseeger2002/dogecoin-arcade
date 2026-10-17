@@ -691,11 +691,15 @@ class LedgerIndex:
         # largest limit and cut to size, because the Exchange asks for 500
         # and the pair markets for 5000, and a memo keyed on the limit missed
         # on every page (2026-10-11).
+        # Keyed on the newest transaction row as well (2026-10-14): a block's row is written before its transactions, so a
+        # page asking in between memoised "no trades" for that tip and kept saying it after the trade was read
+        # (test_account_order, a full run under load).
         with self.open() as db:
             tip = db.conn.execute("SELECT MAX(height) FROM block").fetchone()[0]
+            last = db.conn.execute("SELECT MAX(rowid) FROM arcade_tx").fetchone()[0]
         memo = getattr(self, "_trades_memo", None)
-        if not (memo and memo[0] == (tip, since_height)):
-            memo = ((tip, since_height), self._trades_uncached(5000, since_height))
+        if not (memo and memo[0] == (tip, last, since_height)):
+            memo = ((tip, last, since_height), self._trades_uncached(5000, since_height))
             self._trades_memo = memo
         return list(memo[1][:max(1, min(limit, 5000))])
 

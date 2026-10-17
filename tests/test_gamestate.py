@@ -102,7 +102,11 @@ def test_a_game_writes_state_and_nobody_else_can(node):
 
     # Somebody else's record, at a far higher number: not the game's, so nothing.
     _publish_as(state, rpc, _funded(rpc), "weartest", [[PIECE, 99, {"c": 100}]])
-    # The publisher's own older record, sent again: older, so nothing.
+    # The publisher's own older record, sent again: older, so nothing. (Topped up first: the app's own two updates spend
+    # through the node wallet, which may take the publisher's coin and leave its change elsewhere - depending on what
+    # earlier tests on this worker left in the shared regtest wallet.)
+    rpc.call("sendtoaddress", publisher, 5)
+    rpc.call("generate", 1)
     _publish_as(state, rpc, publisher, "weartest", [[PIECE, 1, {"c": 90}]])
     # A second creator claiming the family name, with a publisher of its own.
     rogue = _funded(rpc)

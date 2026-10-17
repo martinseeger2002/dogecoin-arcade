@@ -10,6 +10,7 @@ one.
 
 import json
 import pathlib
+import re
 import sys
 import time
 
@@ -352,7 +353,9 @@ def test_your_own_pieces_offer_to_be_listed_rather_than_offered_for(
 
     body = app.get("/exchange/collection/nMe/Doge%20Punks").text
     assert f"/exchange/sell/{PIECES[0]}" in body, "your own piece can be listed"
-    assert "Make offer" not in body, "and cannot be offered for by you"
+    # As a button's label: the shared order-ticket script (ex.style) spells
+    # "Make offer of" in its source on every exchange page.
+    assert ">Make offer<" not in body, "and cannot be offered for by you"
     assert "<strong>you</strong>" in body
 
 
@@ -492,13 +495,20 @@ def price(home, piece, sats=500000000, seller=CREATOR, height=500, position=0,
     db.close()
 
 
+def priced_at(body, coins):
+    """Whether the page shows a price of `coins` PEP -- a card's "5 PEP" or a
+    collection row's "5.0000 <small>PEP</small>". Not "5 coins": that is in
+    base.html's own script comments on every page, and a price says its coin."""
+    return re.search(rf"(?<![\d.]){coins}(?:\.0+)? (?:<small>)?PEP", body) is not None
+
+
 def test_an_ask_is_read_from_the_chain_and_shown_as_a_price(client):
     app, state = client
     index_with_a_collection(state.home)
     price(state.home, PIECES[1], sats=500000000)
 
     body = app.get("/exchange/collection/nMe/Doge%20Punks").text
-    assert "5 coins" in body, "what the holder wants for it"
+    assert priced_at(body, 5), "what the holder wants for it"
     assert "For sale" in body
     tiles = grid(body)
     assert tiles.index(PIECES[1]) < tiles.index(PIECES[0]), "priced pieces first"
@@ -511,8 +521,8 @@ def test_the_newest_price_is_the_one_that_counts(client):
     price(state.home, PIECES[1], sats=200000000, height=501)
 
     body = app.get("/exchange/collection/nMe/Doge%20Punks").text
-    assert "2 coins" in body
-    assert "5 coins" not in body, "a new ask replaces the old one"
+    assert priced_at(body, 2)
+    assert not priced_at(body, 5), "a new ask replaces the old one"
 
 
 def test_a_withdrawn_price_is_not_a_price(client):
@@ -522,7 +532,7 @@ def test_a_withdrawn_price_is_not_a_price(client):
     price(state.home, PIECES[1], sats=0, kind=0, height=501)   # take it off
 
     body = app.get("/exchange?tab=market").text
-    assert "5 coins" not in body
+    assert not priced_at(body, 5)
     assert "For sale now" not in body
 
 
@@ -540,7 +550,7 @@ def test_a_piece_that_has_moved_takes_its_price_with_it(client):
     db.conn.commit()
     db.close()
 
-    assert "5 coins" not in app.get("/exchange?tab=market").text
+    assert not priced_at(app.get("/exchange?tab=market").text, 5)
 
 
 def test_the_marketplace_sends_a_buyer_to_the_collection(client):

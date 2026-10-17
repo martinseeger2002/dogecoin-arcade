@@ -97,6 +97,11 @@ def served(tmp_path_factory, regtest):
                                          label="Mainnet",
                                          datadir=pathlib.Path("/nonexistent")))
     (home / "tokens-chain").write_text("regtest\n")
+    # Selling while away is a listing the node holds, and that is off unless
+    # The operator turns it on (2026-10-13). conftest's switch is per test and
+    # this page is loaded once for the module, before any test's switch is on,
+    # so the node here is one whose operator turned it on.
+    state.set_setting("node_trades", True)
     regtest.rpc.call("generate", 120)
 
     port = _free_port()
@@ -723,11 +728,10 @@ def test_choosing_a_size_for_an_inscription_can_be_undone(browser, seller):
 MAKE_A_FOLDER = """
 const done = arguments[0];
 const input = document.getElementById('build');
-// Firefox will not take a directory from a script, and the node rebuilds the
-// layout from the NAMES alone (`app._save_upload` keeps `Path(name).name` and
-// routes on the suffix), so a flat list of correctly-named files is the same
-// build to it. Stripping the folder attribute is how the live acceptance
-// driver sends one, too.
+// Firefox will not take a directory from a script, and a run is written down
+// from the NAMES alone (a picture is matched to its JSON by stem), so a flat
+// list of correctly-named files is the same build to it. Stripping the folder
+// attribute is how the live acceptance driver sends one, too.
 input.removeAttribute('webkitdirectory');
 input.removeAttribute('directory');
 input.multiple = true;
@@ -740,15 +744,9 @@ const sizes = {};
 let left = 3;
 function picture(n) {
   const c = document.createElement('canvas');
-  // 64x64 of REAL noise, which is the only picture that satisfies the two
-  // things this test needs at once. A run puts one item in one transaction and
-  // an item cannot be more than one piece (7,628 bytes), so the folder has to
-  // be over that as it stands and under it once re-encoded -- and a JPEG of
-  // random pixels is a few kilobytes while its PNG is some fifteen, because
-  // PNG has nothing to say about randomness. (A periodic pattern, which is what
-  // `(i * 7) % 255` is, PNGs to almost nothing: a 48x48 tile of it is 1.3 KB
-  // and there would be no choice left to test.) A phone photograph is over a
-  // piece at every size this page offers, which is the other step's problem.
+  // 64x64 of REAL noise: its PNG is some fifteen kilobytes, because PNG has
+  // nothing to say about randomness, and its JPEG a few. So a picture that was
+  // shrunk on the way would show in the size the run writes down.
   c.width = 64; c.height = 64;
   const g = c.getContext('2d');
   const img = g.createImageData(c.width, c.height);
@@ -787,64 +785,51 @@ def _uploads(state):
     return {one.parent for one in (state.home / "collections").glob("*/images")}
 
 
-def test_a_folder_goes_up_at_the_size_chosen(browser, seller):
-    """The collection box converts on the way up, and the build still reads.
+def test_a_folder_goes_up_exactly_as_it_is(browser, seller):
+    """The collection box offers no sizes, and the run carries the files as
+    they are.
 
-    Two halves, and the second is the one that could break quietly: the sizes
-    are measured here rather than swapped into the input, so a converted
-    picture arrives with a new suffix. A build is keyed by the STEM of its
-    pictures (`collections.read_build`), so `1.jpg` is still item 1 -- and if
-    that ever stopped being true, this upload would come back as "no image for
-    edition 1" rather than inscribe forty small pictures.
+    Two of the operator's decisions, both of which replaced what this test used to
+    check (sizes to choose, and the folder converted on its way to the node):
+    a collection's files are never compressed (2026-10-08), and nothing is
+    uploaded -- the run is written down from what this tab read off the folder,
+    each picture's name, size and JSON, and the pictures stay in the browser
+    (2026-10-11, D-191). A build is keyed by the STEM of its pictures, so the
+    metadata's `images/1.png` is still item 1.
     """
     browser, base, state, node, made, piece = seller
+    from arcade import accountruns
     browser.set_script_timeout(180)
+    # The trouble row still holds the refusal the listing tests asked for, and
+    # `_wait` reads any line in it as this test going wrong.
+    browser.execute_script("const t = document.getElementById('trouble');"
+                           "t.textContent = ''; t.hidden = true;")
     originals = browser.execute_async_script(MAKE_A_FOLDER)
-    assert all(one > 7628 for one in originals.values()), \
-        f"this art would go up as it stands, so the choice decides nothing: {originals}"
     before = _uploads(state)
 
-    folder = _sizes(browser, READ_THE_FOLDER)
-    assert [label.split()[0] for label in folder["labels"]] == \
-        ["Large", "Medium", "Small"], folder["labels"]
-    assert folder["chosen"] == ["Medium"], folder["labels"]
-    for label in folder["labels"]:
-        assert "·" in label, label
-    assert "pieces" in folder["labels"][0], folder["labels"]
-    assert "in dust and fees" in folder["says"], folder["says"]
-
-    # Large is not the same number under a different label. At that size these
-    # items are each more than a piece, and a run cannot carry an item that is
-    # more than a piece -- so the page says it here, rather than letting the
-    # node say it one upload later.
-    browser.execute_script("""
-        [...document.querySelectorAll('#build-sizes button')]
-          .filter(b => b.textContent.indexOf('Large') === 0)[0].click();""")
-    time.sleep(0.4)
-    large = browser.execute_script(READ_THE_FOLDER)
-    assert "more than a piece" in large["says"], large["says"]
-
-    browser.execute_script("""
-        [...document.querySelectorAll('#build-sizes button')]
-          .filter(b => b.textContent.indexOf('Small') === 0)[0].click();""")
-    time.sleep(0.4)
+    _wait(browser, lambda d: "in dust and fees" in _show(d, "picked-build-text"))
+    said = _show(browser, "picked-build-text")
+    assert "exactly as they are" in said and "never shrunk" in said, said
+    assert _show(browser, "build-sizes", "hidden") is True, "no sizes to choose"
+    assert browser.execute_script(READ_THE_FOLDER)["labels"] == []
 
     _click(browser, "run-start")
-    _wait(browser, lambda d: "Written down" in _show(d, "news"))
-    news = _show(browser, "news")
-    assert "3 items" in news, news
+    _wait(browser, lambda d: "Written down" in _show(d, "run-note"))
+    note = _show(browser, "run-note")
+    assert "3 items" in note, note
 
-    (saved,) = _uploads(state) - before
-    names = sorted(p.name for p in (saved / "images").iterdir())
-    assert names == ["1.jpg", "2.jpg", "3.jpg"], names
-    assert (saved / "json" / "_metadata.json").is_file()
-    small = sum(p.stat().st_size for p in (saved / "images").iterdir())
-    assert small < sum(originals.values()) / 2, \
-        f"the folder went up at {small} against {sum(originals.values())}"
+    assert _uploads(state) == before, "nothing went up to the node"
+    run = accountruns.Runs(state.home / "accountruns.sqlite").list(
+        network="regtest")[0]
+    assert run["folder"] == "", "the pictures are in the browser, not here"
+    pieces = accountruns.Runs(state.home / "accountruns.sqlite").pieces(run["id"])
+    assert {p["image"]: p["size"] for p in pieces} == \
+        {f"{n}.png": size for n, size in originals.items()}, \
+        "each picture is written down at the size it is on the disk"
 
 
-def test_a_folder_of_nothing_to_re_encode_is_offered_no_sizes(browser, seller):
-    """Three buttons that all did the same thing would be a lie about it."""
+def test_a_folder_with_no_pictures_is_offered_no_sizes(browser, seller):
+    """Buttons for nothing would be a lie about it."""
     browser, base, state, node, made, piece = seller
     browser.set_script_timeout(60)
     browser.execute_async_script("""
@@ -867,7 +852,7 @@ def test_a_folder_of_nothing_to_re_encode_is_offered_no_sizes(browser, seller):
                            "t.textContent = ''; t.hidden = true;")
     _wait(browser, lambda d: _show(d, "picked-build", "hidden") is False)
     said = _show(browser, "picked-build-text")
-    assert "nothing here to re-encode" in said, said
+    assert "not one of them a picture" in said, said
     assert _show(browser, "build-sizes", "hidden") is True, "buttons for nothing"
 
 

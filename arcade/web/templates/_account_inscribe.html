@@ -1223,7 +1223,7 @@ function wizEntries() {
     const entry = {name: `${name} #${edition}`, description, image: p.name, edition};
     const traits = wizTraitsFor(p, edition);
     if (traits.length) entry.attributes = traits;
-    entry.compiler = "PepecoinArcade JSON wizard";
+    entry.compiler = "DogecoinArcade JSON wizard";
     out.push(entry);
   }
   return out.sort((a, b) => (a.edition || 0) - (b.edition || 0));
@@ -1272,7 +1272,7 @@ $("wiz-make").onclick = async () => {
   const name = $("wiz-name").value.trim();
   if (!name) { say("give the collection a name first"); return; }
   const all = wizEntries();
-  const fresh = all.filter((e) => e.compiler === "PepecoinArcade JSON wizard").length;
+  const fresh = all.filter((e) => e.compiler === "DogecoinArcade JSON wizard").length;
   const withTraits = all.filter((e) => Array.isArray(e.attributes) && e.attributes.length).length;
   // Asked before anything is written (the operator: "they should be prompted before the wizard
   // ... will create a JSON").

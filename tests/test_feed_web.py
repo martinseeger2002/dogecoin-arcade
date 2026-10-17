@@ -425,7 +425,10 @@ def test_a_profile_wallet_shows_what_they_hold_not_what_you_hold(client):
 
     body = " ".join(app.get("/u/them/wallet").text.split())
     assert "85.10" in body, "their coins, from the index"
-    assert "Grepples</a> <span class=\"muted\">804</span>" in body, body[body.find("Grepples"):][:200]
+    # One token per row, each a link to its own page on its own chain (2026-10-15).
+    net = state.messaging.network
+    assert (f'<a class="pw-token" href="/tokens/9?chain={net}"> <span class="pw-name">Grepples</span> '
+            '<span class="pw-amt">804</span> </a>') in body, body[body.find("Grepples") - 200:][:400]
     assert "@them's wallet" in body
     assert THEM in body, "their address, not this wallet's"
     assert f"/content/{piece}" in body, "and what they hold"
@@ -609,3 +612,20 @@ def test_a_cursor_the_feed_cannot_read_is_refused_not_restarted(client):
     assert app.get("/feed?before=").status_code == 200, "empty is page one"
     assert app.get("/feed?sort=new&before=44").status_code == 200
     assert app.get("/feed?before=44@0.06@1790469609").status_code == 200
+
+
+def test_a_token_link_opens_the_token_on_the_chain_it_names(client, monkeypatch):
+    """/tokens/<id>?chain=<network>: the page reads that chain, whatever this browser is on (2026-10-15)."""
+    app, state = client
+    seen = []
+    import arcade.ledger as L
+    real = L.LedgerIndex.property
+
+    def spy(self, pid):
+        seen.append(str(self.path))
+        return real(self, pid)
+    monkeypatch.setattr(L.LedgerIndex, "property", spy)
+    for chain in state.token_chains:
+        seen.clear()
+        app.get(f"/tokens/9?chain={chain.network}")
+        assert seen and all(f"{chain.network}-ledger" in p for p in seen[:1]), (chain.network, seen[:2])

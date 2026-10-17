@@ -2,7 +2,7 @@
 {% import "_chart.html" as chart %}
 {% import "_exui.html" as ex %}
 {% set aname = wall_text(a.name, 'an asset') %}
-{% block title %}{{ aname }}/PEP (mainnet) · Exchange · PepecoinArcade{% endblock %}
+{% block title %}{{ aname }}/PEP (mainnet) · Exchange · {{ brand.name }}{% endblock %}
 {% block body %}
 {# One cross-chain market (arcade/xchain.py, 2026-10-06): an asset on testnet against
    Pepecoin on mainnet, held and paid out by this node. In the Exchange's one look
@@ -151,7 +151,7 @@
     {% if viewer == 'account' %}<button type="button" class="secondary small" data-x-cancel="{{ o.id }}" data-x-waiting="{{ 'yes' if o.status == 'awaiting' else '' }}">Cancel</button>
     {% else %}<form method="post" action="/exchange/x/cancel" style="margin:0">
       <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="order" value="{{ o.id }}">
-      <input type="hidden" name="back" value="/exchange/x/{{ a.kind }}/{{ a.asset }}">
+      <input type="hidden" name="back" value="/exchange/x/{{ a.kind }}/{{ a.asset }}?held=1">
       <button type="submit" class="secondary small">Cancel</button></form>{% endif %}
   {% endif %}</span>
 </div>

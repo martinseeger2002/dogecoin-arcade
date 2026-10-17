@@ -216,3 +216,15 @@ def status_cache_starts_empty():
     statemod._STATUS_KEPT.clear()
     yield
     statemod._STATUS_KEPT.clear()
+
+
+@pytest.fixture(autouse=True)
+def ledger_addresses_start_empty():
+    """`_ledger_addresses` keeps a wallet's addresses for 15 s, keyed by the node's
+    host and port -- and every fake node here has neither, so they all share one
+    key. A test whose wallet holds nothing must not see the addresses an earlier
+    test's wallet held."""
+    from arcade.web import app as appmod
+    appmod._LEDGER_ADDRESSES.clear()
+    yield
+    appmod._LEDGER_ADDRESSES.clear()

@@ -1,4 +1,4 @@
-# PepecoinArcade — what it does
+# DogecoinArcade — what it does
 
 Everything the application can do, what each thing costs, and what it
 deliberately does not do. Written against the code; where a number appears it
@@ -8,7 +8,7 @@ was measured rather than estimated.
 
 ## The shape of it
 
-PepecoinArcade is a **sidecar**: it runs beside Pepecoin Core on your own
+DogecoinArcade is a **sidecar**: it runs beside Pepecoin Core on your own
 machine and reads the chain the node already has. It never
 holds your keys — the node's wallet does — and it never asks for a passphrase.
 Everything it knows, it learned by replaying blocks, which means two
@@ -174,7 +174,7 @@ An Omni-style token ledger, indexed from the chain.
   including other people's — not just the ones this wallet made.
 * **One name, one token.** A name already issued on that chain is refused —
   first claim wins, in chain order. Names are compared folded (lower case,
-  letters and digits only), so *Pepecoin Arcade*, *dogecoin arcade* and
+  letters and digits only), so *Dogecoin Arcade*, *dogecoin arcade* and
   *Dogecoin-Arcade* are the same name and the rule cannot be stepped around
   with the space bar. The wallet checks before it builds anything, the
   mempool included — and the node's mempool, not just this wallet's memory:
@@ -666,7 +666,7 @@ without its owner being there. The Prize pools guide has the details.
   the tokens into the pool's own address, signs the lots, seals them with the
   phrase and inscribes the pool. Another inscription deletes it and brings the
   unclaimed tokens back.
-* **Every node reads it.** A pool pays out through any PepecoinArcade node,
+* **Every node reads it.** A pool pays out through any DogecoinArcade node,
   and the chain decides between two claims of one lot, so nothing is claimed
   twice.
 * **Tied to your game**, if you name one: it pays only while you hold the

@@ -1,6 +1,6 @@
-# How PepecoinArcade works
+# How DogecoinArcade works
 
-PepecoinArcade is a social network, messenger, token exchange and NFT arcade
+DogecoinArcade is a social network, messenger, token exchange and NFT arcade
 that keeps everything that matters on a public blockchain. There is no
 company database behind it: posts, names, tokens, NFTs and trades are
 transactions, and any node that reads the same chain arrives at the same
@@ -28,7 +28,7 @@ A node is one machine running three things:
 
 * **Pepecoin Core, mainnet**: the ledger.
 * **Pepecoin Core, testnet**: the messenger's chain.
-* **PepecoinArcade itself**: an indexer that replays blocks into a local
+* **DogecoinArcade itself**: an indexer that replays blocks into a local
   database, and a web interface at `http://127.0.0.1:8420`.
 
 The indexer holds no authority. It computes what the chain says. A node can

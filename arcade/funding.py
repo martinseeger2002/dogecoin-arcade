@@ -131,6 +131,26 @@ class Unsigned:
         }
 
 
+#: Set by the app when this node has Dogecoin (arcade/doginals.Doginals): choose() never hands out a coin carrying a Doginal
+#: to an ordinary send. GUARD_APPLIES says which addresses it watches (Dogecoin's, version 30: "D...").
+GUARD = None
+GUARD_APPLIES = lambda address: str(address).startswith("D")   # noqa: E731
+#: More guards, each (applies(address), guard): the same chain reading for Pepecoin MAINNET, where ord envelopes sit on small
+#: coins too (2026-10-15: "do the same for small .01 pep txs. Not made by the Arcade" -- the arcade's own coins are
+#: vouched clean when it broadcasts them, doginals.vouch_broadcast).
+GUARDS: list = []
+
+
+def guard_for(address: str):
+    """The inscription guard that watches `address`, or None."""
+    if GUARD is not None and GUARD_APPLIES(address):
+        return GUARD
+    for applies, guard in GUARDS:
+        if applies(address):
+            return guard
+    return None
+
+
 def choose(db, address: str, target: int, exclude=frozenset(),
            extra: list | None = None) -> list[dict]:
     """Coins for `address` worth at least `target`.
@@ -151,6 +171,9 @@ def choose(db, address: str, target: int, exclude=frozenset(),
     listed = utxos.unspent(db, address)
     available = [u for u in listed
                  if (u["txid"], u["vout"]) not in exclude]
+    guard = guard_for(address)       # coins carrying an inscription stay put (arcade/doginals.py): Dogecoin and PEP mainnet
+    if guard is not None:
+        available = guard.spendable(available)
     # An `extra` coin the index also lists is the same coin twice. Once a block
     # has read a change output it stands in both places at once -- the note this
     # node made of it, and the row the scanner wrote -- and until the note ages
@@ -973,3 +996,62 @@ def build_leg(params: Params, address: str, piece: dict, coins: int,
     return Leg(raw=raw, inputs=inputs, outputs=outputs, sighashes=digests,
                fee=fee, pays=address, paid=paid, payload=payload, what=what,
                redeem=bytes(redeem))
+
+
+def build_doginal_send(db, params: Params, address: str, coin: dict, inscription: str, to: str,
+                       rate: int, exclude=frozenset(), extra: list | None = None) -> Unsigned:
+    """Send one Doginal on purpose (2026-10-14), the way ord-dogecoin's wallet does it
+    (src/subcommand/wallet/transaction_builder.rs): the inscribed coin is input 0 and its WHOLE value goes to the recipient
+    as output 0, so the inscription's first koinu is the recipient output's first koinu; the fee comes from other, clean
+    coins (GUARD.spendable) added after it; change last, back to the sender. Refused unless the chain says this coin holds
+    exactly this inscription at offset 0 -- a coin with two inscriptions, or one sitting further in, would need an
+    alignment output first, and sending it plainly could hand the wrong piece away or burn it to fees."""
+    return _doginal_first(db, address, coin, inscription, p2pkh_script(to), [], rate, exclude, extra,
+                          what=f"send Doginal {inscription} to {to}")
+
+
+def build_doginal_lock(db, params: Params, address: str, coin: dict, inscription: str, lock_script: bytes,
+                       reserve: int, rate: int, exclude=frozenset(), extra: list | None = None) -> Unsigned:
+    """A Doginal into a swap's lock ([Claude 2026-10-15]; the operator: "use the atomic swap feature we have to trade doginals").
+    The send above with the lock as recipient: the inscribed coin input 0 and whole to the lock as output 0 (the inscription
+    at offset 0 of the lock), then `reserve` clean coin to the SAME lock as output 1 -- what pays the claim or the refund
+    later without touching the Doginal's own koinu (htlc.doginal_out) -- then change. Every coin after input 0 is clean."""
+    return _doginal_first(db, address, coin, inscription, bytes(lock_script), [(int(reserve), bytes(lock_script))],
+                          rate, exclude, extra, what=f"lock Doginal {inscription} for a swap")
+
+
+def _doginal_first(db, address: str, coin: dict, inscription: str, first: bytes, more: list, rate: int,
+                   exclude, extra, what: str) -> Unsigned:
+    """The inscribed coin as input 0, whole to `first` as output 0; `more` outputs after it; clean coins pay for them and
+    the fee; change last."""
+    if GUARD is None:
+        raise FundingError("Doginals are not checked on this node: nothing that carries one is sent")
+    from .doginals import exactly
+    bad = exactly(GUARD.held(coin["txid"]).get(int(coin["vout"])), inscription)
+    if bad:
+        raise FundingError(bad)
+    if not any((u["txid"], u["vout"]) == (coin["txid"], int(coin["vout"])) for u in utxos.unspent(db, address)) \
+            and not any((c["txid"], c["vout"]) == (coin["txid"], int(coin["vout"])) for c in (extra or [])):
+        raise FundingError("that coin is not this address's to spend")
+    piece = (int(coin["value"]), first)
+    paid = [piece] + list(more)
+    owed = sum(v for v, _ in more)
+    keep_out = set(exclude) | {(coin["txid"], int(coin["vout"]))}
+    fee = price(2, paid, rate, change=True)
+    fees_in = choose(db, address, owed + fee, exclude=keep_out, extra=extra)
+    fee = price(1 + len(fees_in), paid, rate, change=True)
+    if sum(c["value"] for c in fees_in) < owed + fee:
+        fees_in = choose(db, address, owed + fee, exclude=keep_out, extra=extra)
+        fee = price(1 + len(fees_in), paid, rate, change=True)
+    chosen = [dict(coin, vout=int(coin["vout"]))] + fees_in
+    change = sum(c["value"] for c in fees_in) - owed - fee
+    outputs = list(paid)
+    if change >= fees.DUST_LIMIT:
+        outputs.append((change, p2pkh_script(address)))
+    else:
+        fee += max(0, change)
+        change = 0
+    raw = build_raw_tx([(c["txid"], c["vout"]) for c in chosen], outputs)
+    script = p2pkh_script(address)
+    hashes = [sighash(chosen, outputs, n, script).hex() for n in range(len(chosen))]
+    return Unsigned(raw=raw, inputs=chosen, outputs=outputs, sighashes=hashes, fee=fee, change=change, what=what)

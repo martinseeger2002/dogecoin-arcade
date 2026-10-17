@@ -105,8 +105,18 @@ def stray(rpc: Any, index: Any, home: str, own: list[str],
     # gather never sees it, so it can never sweep the thing a sale is about
     # to spend.
     coins_at: dict[str, int] = {}
+    # Coins this wallet only WATCHES (a watch-only address: it holds no key) are counted too, and their address is no
+    # stray of ours: nothing on it can move from here. 2026-10-15: the ASHVALE publish key's address is watched on the
+    # test node; gather took it for its own, never saw it "able to pay" (its coins are spendable=false), and sent it a
+    # 3-coin fee to travel with every pass -- ~800 a day, 5,700 coins, and every wallet call on the node slowed with them.
+    watched: set[str] = set()
+    held_at: dict[str, int] = {}
     for utxo in rpc.call("listunspent", 1, 9_999_999) or []:
         address = utxo.get("address")
+        if address in elsewhere:
+            held_at[address] = held_at.get(address, 0) + int(round(float(utxo["amount"]) * COIN))
+            if not utxo.get("spendable", True):
+                watched.add(address)
         if address in elsewhere and utxo.get("spendable", True):
             sats = int(round(float(utxo["amount"]) * COIN))
             coins_at[address] = coins_at.get(address, 0) + sats
@@ -130,9 +140,28 @@ def stray(rpc: Any, index: Any, home: str, own: list[str],
             found["pieces"].extend(index.inscriptions(owner=address, limit=50))
         except Exception:
             pass
+    if watched:
+        found["tokens"] = [t for t in found["tokens"] if t["address"] not in watched]
+        found["pieces"] = [p for p in found["pieces"] if p["owner"] not in watched]
+        found["coins"] = [c for c in found["coins"] if c["address"] not in watched]
     waiting = {t["address"] for t in found["tokens"]}
     waiting |= {row["owner"] for row in found["pieces"]}
-    found["needs_coins"] = sorted(a for a in waiting if a not in funded)
+    # Seeded only when it holds too little of ANY coin (a seed that has landed, spendable or not, is not sent again)
+    # and only when this wallet can sign for it -- asked of the node for these few, not for every address.
+    needs, cannot = [], set()
+    for address in sorted(a for a in waiting if a not in funded):
+        try:
+            ours = bool(rpc.call("validateaddress", address).get("ismine"))
+        except Exception:
+            ours = False
+        if not ours:
+            cannot.add(address)             # no key here: what it holds can never move from this wallet
+        elif held_at.get(address, 0) < CAN_PAY:
+            needs.append(address)
+    if cannot:
+        found["tokens"] = [t for t in found["tokens"] if t["address"] not in cannot]
+        found["pieces"] = [p for p in found["pieces"] if p["owner"] not in cannot]
+    found["needs_coins"] = needs
     # Coins are swept only off an address with nothing left on it. Otherwise
     # the pass that seeded an address so its token could travel would sweep
     # the seed back on the next one, and the two would take turns for ever

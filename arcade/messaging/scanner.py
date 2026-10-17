@@ -482,6 +482,11 @@ class Scanner:
                     other = self.params.other_pubkeyhash_version
                     if other is not None:
                         other_address = b58check_encode(other, extras["other_hash160"])
+                # [Claude 2026-10-15] Their Dogecoin address, when they published one: Dogecoin's own version byte.
+                doge_address = ""
+                if extras.get("doge_hash160"):
+                    from ..config import NETWORKS as _NETS
+                    doge_address = b58check_encode(_NETS["doge"].pubkeyhash_version, extras["doge_hash160"])
                 address = atx.sender
                 if claimed_hash:
                     address = b58check_encode(self.params.pubkeyhash_version,
@@ -511,7 +516,7 @@ class Scanner:
                     block_time, stated=bool(claimed_hash), name=claimed_name,
                     tag=claimed_tag, other_address=other_address,
                     pfp=extras.get("pfp", ""), bio=extras.get("bio", ""),
-                    url=extras.get("url", ""),
+                    url=extras.get("url", ""), doge_address=doge_address,
                 )
                 result.announcements += 1
                 continue

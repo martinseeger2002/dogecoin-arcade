@@ -21,11 +21,14 @@ def test_the_market_page_says_it_is_not_trustless_and_starts_closed(client, monk
     import arcade.ledger as L
     monkeypatch.setattr(L.LedgerIndex, "property", lambda self, pid: {"property_id": 59, "name": "LOGS",
                                                                       "divisible": True, "managed": 0})
-    page = app.get("/exchange/x/token/59").text
+    page = app.get("/exchange/x/token/59?held=1").text
     assert "Not trustless" in page and "trust the operator" in page
     assert "not open on this node" in page and "MAIN</span>" in page and "TEST</span>" in page
+    # The market itself is lock scripts (2026-10-15): open, and never "held by this node".
+    swaps = app.get("/exchange/x/token/59").text
+    assert "Lock scripts" in swaps and "Not trustless" not in swaps and "MAIN</span>" in swaps
     assert app.get("/exchange/pairs?base=59&quote=main", follow_redirects=False).headers["location"] \
-        .startswith("/exchange?tab=tokens"), "the mainnet choice waits for the book to open"
+        == "/exchange/swap/regtest-token-59/main-coin", "the mainnet choice needs no switch"
 
 
 def test_the_operator_opens_the_book_and_its_markets_join_the_list(client, monkeypatch):
@@ -35,27 +38,31 @@ def test_the_operator_opens_the_book_and_its_markets_join_the_list(client, monke
                                                                       "divisible": True, "managed": 0})
     monkeypatch.setattr(type(state.xchain), "address", lambda self, which: f"n{which}Exchange")
     from test_admin import LOCAL, WRITE
-    page = app.get("/exchange/x/token/59").text
-    assert "admin panel" in page, "the market page sends the operator to the admin panel"
+    page = app.get("/exchange/x/token/59?held=1").text
+    assert "admin panel" in page, "the held page sends the operator to the admin panel"
     said = app.post("/admin/api/settings", headers={**LOCAL, **WRITE}, json={"xchain_enabled": True})
     assert said.status_code == 200, said.text
     assert state.setting("xchain:enabled")
     status = app.get("/admin/api/state", headers=LOCAL).json()["xchain"]
     assert status["enabled"] and status["addresses"]["mainnet"] == "nmainExchange"
     assert "Not trustless" in status["trust"]
-    assert app.get("/exchange/pairs?base=59&quote=main", follow_redirects=False).headers["location"] == "/exchange/x/token/59"
-    assert app.get("/exchange/pairs?base=coin&quote=main", follow_redirects=False).headers["location"] == "/exchange/x/coin/coin"
+    assert app.get("/exchange/pairs?base=59&quote=main", follow_redirects=False).headers["location"] \
+        == "/exchange/swap/regtest-token-59/main-coin"
+    assert app.get("/exchange/pairs?base=coin&quote=main", follow_redirects=False).headers["location"] \
+        == "/exchange/swap/regtest-coin/main-coin"
     book = state.xchain.book
     o = book.place(owner="x", side="sell", kind="token", asset="59", amount=10 * COIN, pepe=5 * COIN,
                    pay_test="nT", pay_main="PM")
     book.deposited(o["id"], "dep1")
     book.count_deposit(o["id"])
     listing = app.get("/exchange?tab=tokens").text
-    assert "/exchange/x/token/59" in listing, "an open market is a row of the one table"
-    row = listing[listing.index("/exchange/x/token/59"):][:2500]
+    assert "/exchange/swap/regtest-token-59/main-coin" in listing, "an open market is a row of the one table"
+    row = listing[listing.index("/exchange/swap/regtest-token-59/main-coin"):][:2500]
     assert "MAIN</span>" in row and "PEP" in row
-    market = app.get("/exchange/x/token/59").text
+    market = app.get("/exchange/x/token/59?held=1").text
     assert "0.5" in market and "Not trustless" in market
+    swaps = app.get("/exchange/x/token/59").text
+    assert "Lock scripts" in swaps and "Manage it there" not in swaps, "the operator's node placed nothing"
 
 
 def test_a_piece_sold_for_mainnet_pep_is_a_sale_not_a_pair(client, monkeypatch):

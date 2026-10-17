@@ -3,21 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1{% if fullscreen %},maximum-scale=1,viewport-fit=cover{% endif %}">
-<title>{% block title %}PepecoinArcade{% endblock %}</title>
+<title>{% block title %}{{ brand.name }}{% endblock %}</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#faf8f4" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#141310" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="{{ brand.light_bg }}" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="{{ brand.dark_bg }}" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Arcade">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <style>
 :root{
-  --bg:#f4f8f1; --panel:#fbfdf9; --fg:#14200f; --muted:#5a6a52; --line:#d6e3cd;
-  --accent:#2f8f3a; --accent-fg:#fff; --ok:#1f7a5c; --warn:#a8620a; --bad:#a83232;
-  --code:#e9f2e3;
+  --bg:#faf8f4; --panel:#fffdf9; --fg:#1b1a17; --muted:#6b665c; --line:#e2ddd3;
+  --accent:#b8860b; --accent-fg:#fff; --ok:#2d7a4f; --warn:#a8620a; --bad:#a83232;
+  --code:#f2eee6;
   /* Sent bubbles get their own colour rather than the app accent: a chat reads
      as a chat largely because outgoing messages are a distinct, saturated
      block, and the amber accent is too close to the page ground to do that. */
@@ -32,9 +32,9 @@
    a white overflow strip under a table in dark mode (filming, 2026-09-25) */
 @media (prefers-color-scheme:dark){
   :root{
-    --bg:#0d140e; --panel:#131c14; --fg:#e4efe0; --muted:#8ea486; --line:#223024;
-    --accent:#5fcb5a; --accent-fg:#0d140e; --ok:#4cc29a; --warn:#d99a3e; --bad:#e07070;
-    --code:#162017;
+    --bg:#141310; --panel:#1a1815; --fg:#ece8e0; --muted:#9b948a; --line:#2c2a25;
+    --accent:#d9a520; --accent-fg:#141310; --ok:#5bbd85; --warn:#d99a3e; --bad:#e07070;
+    --code:#1d1b17;
     --sent:#0b84ff; --sent-fg:#fff;
   }
 }
@@ -670,10 +670,10 @@ form.composer button[type=submit]{background:var(--sent);border-color:var(--sent
 /* ── The look, 2026-09-25 (the operator): the same feel as the dogecoinarcade.com homepage.
    Only presentation lives here, after everything above, so it can be read or removed as
    one piece. The pixel face is Press Start 2P (SIL OFL 1.1), subset to the letters of the
-   brand (re-subset for PepecoinArcade, adding P and p) and the network tags and embedded, so no page asks a font server for anything. */
+   brand (the letters of every face in brand.py; recut by SadFrog 2026-10-17) and the network tags and embedded, so no page asks a font server for anything. */
 @font-face{font-family:"Arcade Pixel";font-display:swap;
   src:url(data:font/woff2;base64,d09GMgABAAAAAAOIAAwAAAAACRQAAAM4AAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHCoGYACBFBEICogghXUBNgIkAywLLAAEIAWECgcgG+oGURQQo/gygZchkpXdGyJBQYQaWGeLPypem+b1O917IpBHLHwlHv5/rd33ZzHTLNrIKpW8DckkDrlCotEm0di0wMbahkok7kimHt8E05CozUpETXNSnC9Yzoc2su6w9TJzpKL1eP7XAriNnfV1qPKjIPjGn01oIJD85J/0AHHJovu/ObV3KTsAlH01qsbXmCY/hV++pjwAsFOILm9KTgEJxXZ2FWrKTk3aLq9eRskU8V8VqDXJRbnX6M3Aek+ct+Cghn8AKGR5vKogvaQVgP3p1biESPygwpIa/sjuyaQOH8OOWQ5ZHkUAAek7yzFMhYQM7VQC7dSe0c9Opd6wsrq2gZEZAoMj2Dv+g6E12qdTBcVt/+f/L19v76xRYUIoYDAh/mkCHQCzwCCIZRAHAKAAIEmiFCWXAHl0m1994I6Yzz0v+iHHhAPGs3vU63Of2YjQFygxOwNW6ItwdlXBdIJhd2HPnMq3JhhQEKhYPmqcFZ4FdoIQLE6tm6PlCQbIzHSWalghVc9iqSwKhSH8rBCMgdLCPgGQHAV3fB15MzF7xZDEebxQra6xkm4UTw4dMYWU3bz0o3C5p00lCWxCu90iibeIuwr0Mm53HeMueGdvVND7f1l0IrlsWTKyIPOh25ZoDZMeX9bMeHRzGDJTLAdpFubk0P2RPUcFJwBkUJJZi+BNC315D9cp01Tcnkg4tBikwZLLe1pMTExS6bbK+GfOizTC6rGcG/91hECQoj+FQjz/nhIbtB+82+Y1QU04+WpDoZzAP4thyn4QYt09Brl+QgABIJAx+e5ubVv76S3L4WMKS2J98bdyfzSoX6qSQPC3ZxgtNwgLxth6gN3lGA8VVdyuQ4rZOF1AEm9AlVMqUajBJ4ZI6PePJI1KkcxGqCMF81GJVOiN7aArTcfLrp29hyMBh3eGIkLCItAMj4FGjhgnJ2jqjHDkKyOmtyOiRGm9sotAXikd3e53oezQHkqeMnmLEZUS4LHVzQfdCK5DaJLwYcbRFYOGGoAESwOEzY2d2Vnvg4E0S5wLWVuKCgitC1lV61xelw2Sr6A6wY/9vKDtDsyioseS8FBHMP3BpJRUlnT/twoAAA==) format("woff2")}
-:root{--shadow:0 1px 2px rgba(12,40,16,.05),0 4px 14px rgba(12,40,16,.06);--radius:14px}
+:root{--shadow:0 1px 2px rgba(40,30,10,.05),0 4px 14px rgba(40,30,10,.06);--radius:14px}
 @media (prefers-color-scheme:dark){:root{--shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.22)}}
 body{font-size:16px;-webkit-font-smoothing:antialiased}
 /* Always there (2026-09-26: "the navigation bar at the top needs to be always
@@ -689,7 +689,7 @@ h1{font-size:1.75rem;letter-spacing:-.025em;font-weight:720}
 .panel,.stat,.chaincard,.tile,.card{border-radius:var(--radius);box-shadow:var(--shadow)}
 .panel{padding:20px}
 .tile{transition:transform .12s ease,box-shadow .12s ease}
-.tile:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(12,40,16,.06),0 10px 24px rgba(12,40,16,.1)}
+.tile:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(40,30,10,.06),0 10px 24px rgba(40,30,10,.1)}
 button,.btn{border-radius:11px;padding:10px 18px;font-weight:620;box-shadow:var(--shadow);
   transition:filter .12s ease,transform .06s ease}
 button:active,.btn:active{transform:translateY(1px)}
@@ -715,6 +715,7 @@ ol.words{column-gap:1.4em}
 @media(max-width:640px){header nav{-webkit-mask-image:linear-gradient(90deg,#000 82%,transparent);
   mask-image:linear-gradient(90deg,#000 82%,transparent)}}
 </style>
+{% if brand.css %}<style>/* this node's face (arcade/web/brand.py) */{{ brand.css | safe }}</style>{% endif %}
 </head>
 {# Every page is live. The counter lives on the body rather than in an
    element each page has to remember to add: eight templates had one and the
@@ -722,7 +723,7 @@ ol.words{column-gap:1.4em}
 <body{% if embed %} class="embed"{% elif fullscreen %} class="fullscreen"{% endif %} data-generation="{{ state.generation }}">
 {% if not embed %}
 <header><div class="bar">
-  <span class="brand">PepecoinArcade</span>
+  <span class="brand">{{ brand.name }}</span>
   <nav>
   {%- for href, label, chain, built in nav %}
     {%- if built %}
@@ -1454,7 +1455,7 @@ document.addEventListener("click", async (event) => {
   <code>{{ state.installed_version }}</code> is installed. Pages are drawn from
   the new version but acted on by the old one, so <strong>some buttons will do
   nothing at all</strong> rather than reporting an error. Restart
-  PepecoinArcade to use what is installed.
+  {{ brand.name }} to use what is installed.
 </div>
 {% endif %}
 {% if notice %}<div class="msg {{ notice_kind }}">{{ notice }}</div>{% endif %}
@@ -2067,21 +2068,28 @@ function arcadeSignIn(why){
   return _arcadeSignInOpen;
 }
 
+// Callers that ask at once share the looking as well as the sheet: each lookup asks
+// the other tabs and waits up to ~2 s for none to answer, so two callers' waits
+// ended on separate timers, and a sheet closed between them was cleared before the
+// second caller came to it -- which then drew a sheet of its own.
 async function arcadeKeys(chain, why){
   var w = await import('/wallet.js');
-  var keys = await w.opened(chain || ARCADE_CHAIN);
-  if (keys) return keys;
-  if (!ARCADE_ME) {
+  if (!_arcadeUnlockOpen) {
+    _arcadeUnlockOpen = (async function(){
+      var keys = await w.opened(chain || ARCADE_CHAIN);
+      if (keys) return {keys: keys, chain: chain || ARCADE_CHAIN};
+      if (!ARCADE_ME) return {signIn: true};
+      return {opened: await arcadeUnlockSheet(why || 'This needs your key.')};
+    })().finally(function(){ _arcadeUnlockOpen = null; });
+  }
+  var got = await _arcadeUnlockOpen;
+  if (got.keys) return got.chain === (chain || ARCADE_CHAIN) ? got.keys : await w.opened(chain || ARCADE_CHAIN);
+  if (got.signIn) {
     arcadeSignIn(why);
     throw new Error('Sign in first: this action needs your wallet.');
   }
-  if (!_arcadeUnlockOpen) {
-    _arcadeUnlockOpen = Promise.resolve(arcadeUnlockSheet(why || 'This needs your key.'))
-      .finally(function(){ _arcadeUnlockOpen = null; });
-  }
-  var opened = await _arcadeUnlockOpen;
-  if (!opened) throw new Error('Unlock your wallet to do that.');
-  return chain ? await w.opened(chain) : opened;
+  if (!got.opened) throw new Error('Unlock your wallet to do that.');
+  return chain ? await w.opened(chain) : got.opened;
 }
 
 // Every field has a name a screen reader can say (a tester, 2026-09-26: 78
@@ -2610,15 +2618,19 @@ window.arcadeBlocked = (function () {
   const first = (said.chains || [])[0] || {};
   const coins = Number(first.spendable ?? (Number(first.balance || 0) + Number(first.incoming || 0)));
   if (!(coins > 0) || document.body.dataset.working) return;
-  if (!said.tag && !said.claiming && said.name) {
-    try { await wallet.claim(keys); } catch (e) { return; }
-  }
-  if (!said.announced && !said.announcing) {
-    const mail = await import("/messaging.js");
-    const me = await mail.identity(keys.phrase);
-    try { await mail.announce(keys, me, said.tag || said.name || ""); }
-    catch (e) { try { sessionStorage.removeItem(LAST); } catch (x) {} }
-  }
+  // One spend at a time in this browser (wallet.spending): a swap proposed in the same
+  // second picked the same coin and the node refused one of them (2026-10-13).
+  await wallet.spending(async () => {
+    if (!said.tag && !said.claiming && said.name) {
+      try { await wallet.claim(keys); } catch (e) { return; }
+    }
+    if (!said.announced && !said.announcing) {
+      const mail = await import("/messaging.js");
+      const me = await mail.identity(keys.phrase);
+      try { await mail.announce(keys, me, said.tag || said.name || ""); }
+      catch (e) { try { sessionStorage.removeItem(LAST); } catch (x) {} }
+    }
+  });
 })().catch(() => {});
 </script>
 {% endif %}
@@ -2698,7 +2710,7 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
       'box-shadow:0 8px 28px rgba(0,0,0,.28);font-size:.95rem;line-height:1.4';
     card.innerHTML = '<div style="display:flex;gap:12px;align-items:flex-start">' +
       '<img src="/icon-192.png" alt="" width="44" height="44" style="border-radius:10px;flex:none">' +
-      '<div style="flex:1"><b>Add PepecoinArcade to your home screen</b>' +
+      '<div style="flex:1"><b>Add {{ brand.name }} to your home screen</b>' +
       '<div style="color:var(--muted);margin-top:4px">It opens full screen like an app, with nothing to download.</div>' +
       '<div class="a2hs-how" style="margin-top:8px"></div></div></div>' +
       '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">' +
@@ -2825,6 +2837,13 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
     main.insertBefore(bar, main.firstChild);
   }).catch(function () {});
 })();
+</script>
+<script type="module">
+// Trades run on every arcade page, background tabs too (2026-10-13): one tab at a
+// time runs them (wallet.js startTradeRunner). Nothing happens for a locked wallet.
+if (typeof ARCADE_SIGNED !== "undefined" && (ARCADE_SIGNED || ARCADE_ME)) {
+  import("/wallet.js").then((w) => w.startTradeRunner(ARCADE_CHAIN)).catch(() => {});
+}
 </script>
 </body>
 </html>

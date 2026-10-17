@@ -71,3 +71,57 @@ def _asks(pc, game, ticket, sword, stranger_piece, maddr, paddr):
     bare = pc.post("/r/send", json={"kind": "inscription", "inscription": sword, "to": maddr},
                    headers={"host": "pages.example", "cf-ray": "abc"})
     assert bare.status_code == 403, bare.text
+
+
+def _claimed(who, state, rpc, secret, pubkey, tag: str) -> str:
+    """A name this account took on the chain, as the chain keeps it."""
+    offered = who.post("/account/claim", json={"tag": tag})
+    assert offered.status_code == 200, offered.text
+    assert _signed(who, secret, pubkey, offered.json()).status_code == 200
+    _settled(state, rpc)
+    return tag
+
+
+def test_a_game_that_names_its_creator_instead_of_paying_the_address_is_still_its_own(node):
+    """A game pays its own creator by @name, because that is what a game knows:
+    ASHVALE sends GOLD back to "@ashvale" (the arcade, 2026-10-16: "the arcade
+    never auto-signs ASHVALE's own GOLD sends ... this is why players' pack+chest
+    no longer match their wallets"). The allowance is decided from addresses --
+    the reader's tab compares the row's `to_address` with its `creator` -- so a
+    name in the ask has to be filed as the address the chain gives for it. It
+    was filed empty instead, which reads as "not the creator's": every send the
+    game made raised a card, or, being `silent`, failed at once. Nothing in the
+    file above noticed, because every ask there names an address."""
+    app, state, rpc = node
+    maker = _seated(app, state, rpc, 200)
+    player = _seated(app, state, rpc, 201)
+    mc, msecret, mpub, maddr = maker
+    pc, _psecret, _ppub, paddr = player
+    game = _inscribed(mc, state, rpc, msecret, mpub, "<p>a game</p>")
+    sword = _inscribed(mc, state, rpc, msecret, mpub, "a sword of this game")
+    name = _claimed(mc, state, rpc, msecret, mpub, "ashgamewhole")
+    assert state.token_index(state.token_chain).address_of(name) == maddr, "the chain says so"
+
+    sent = mc.post("/account/nft/send", json={"piece": sword, "to": paddr})
+    assert sent.status_code == 200, sent.text
+    assert _signed(mc, msecret, mpub, sent.json()).status_code == 200
+    _settled(state, rpc)
+
+    ticket = _ticket(pc, game)
+    state.set_setting("pages_host", "pages.example")
+    was, state.public = state.public, True
+    try:
+        ref = {"host": "pages.example", "cf-ray": "abc",
+               "referer": f"https://pages.example/content/{game}?v={ticket}"}
+        back = pc.post("/r/send", headers=ref,
+                       json={"kind": "inscription", "inscription": sword,
+                             "to": f"@{name}", "label": "a game", "silent": True})
+        assert back.status_code == 202, back.text
+        asked = pc.get("/account/pagesends").json()["requests"][0]
+        assert asked["to"] == f"@{name}", "what the page said is what it shows"
+        assert asked["to_address"] == maddr == asked["creator"], \
+            "a name is a name FOR an address, and the allowance reads addresses"
+        assert asked["made_by"] == maddr and asked["silent"] is True
+    finally:
+        state.public = was
+        state.set_setting("pages_host", None)

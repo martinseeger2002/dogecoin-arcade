@@ -444,8 +444,14 @@ def test_the_piece_page_offers_an_account_its_own_form(node):
     assert "Make an offer" not in page and "Offered for it" in page, \
         "whoever holds it is not asked to pay a fee to ask their own wallet"
 
+    # The operator's own copy is the node's wallet: on its own machine a
+    # signed-in account with a wallet of its own is drawn as that account
+    # (2026-09-30, `_account_view`) until the menu switches to "Node wallet".
     state.public = False
-    page = pair["holder"][0].get(f"/inscriptions/{piece}/view").text
+    holder = pair["holder"][0]
+    holder.cookies.set("arcade_view", "node")
+    page = holder.get(f"/inscriptions/{piece}/view").text
+    holder.cookies.delete("arcade_view")
     assert 'action="/exchange/offer"' in page, \
         "the operator's own copy still offers its own form"
 

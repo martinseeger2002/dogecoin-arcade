@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}@{{ wall_text(tag, 'someone') }}'s wallet · PepecoinArcade{% endblock %}
+{% block title %}@{{ wall_text(tag, 'someone') }}'s wallet · {{ brand.name }}{% endblock %}
 {% block body %}
 
 <div class="row" style="align-items:center;gap:12px">
@@ -25,6 +25,29 @@
   Nothing here is private &mdash; a chain is public, and this page only looks
   up what anybody could.</p>
 
+<style>
+.pw-tokens{display:flex;flex-direction:column;margin-top:6px;border-top:1px solid var(--line)}
+.pw-token{display:flex;justify-content:space-between;gap:12px;padding:9px 2px;border-bottom:1px solid var(--line);text-decoration:none}
+.pw-token .pw-name{text-align:left;min-width:0;overflow-wrap:anywhere}
+.pw-ords{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+.pw-ord{display:flex;flex-direction:column;gap:6px}
+.pw-token .pw-amt{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+</style>
+{# Every coin they hold, one row each, the name left and the balance right like the tokens (2026-10-15). #}
+{% if coins %}
+<div class="panel" style="margin-bottom:16px">
+  <h2 style="margin:0">Coins</h2>
+  <div class="pw-tokens">
+    {% for c in coins %}
+    <div class="pw-token">
+      <span class="pw-name">{{ net_badge(c.chain.network) }} {{ c.coin }}</span>
+      <span class="pw-amt">{% if c.balance is not none %}{{ "{:,.2f}".format(c.balance) }}
+        {%- elif not c.address %}no address published{% else %}not readable here yet{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 {% for held in holdings %}
 <div class="panel" style="margin-bottom:16px">
   <div class="row" style="align-items:baseline">
@@ -34,18 +57,36 @@
   </div>
 
   <table style="margin-top:10px">
-    <tr><td class="muted" style="width:120px">Coins</td>
-        <td>{% if held.coins is not none %}{{ "{:,.2f}".format(held.coins) }}
-          {%- else %}<span class="muted">this node cannot see that wallet's
-          coins</span>{% endif %}</td></tr>
-    <tr><td class="muted">Tokens</td>
-        <td>{% if held.tokens %}
-          {% for row in held.tokens %}
-            <a href="/tokens/{{ row['property_id'] }}">{% if row['name'] %}{{ wall(row['name']) }}{% else %}#{{ row['property_id'] }}{% endif %}</a>
-            <span class="muted">{{ row['display'] }}</span>{{ "," if not loop.last }}
-          {% endfor %}
-        {% else %}<span class="muted">none</span>{% endif %}</td></tr>
+    <tr><td class="muted" style="width:120px">Tokens</td>
+        <td>{% if not held.tokens %}<span class="muted">none</span>{% endif %}</td></tr>
   </table>
+  {# One token per row, down the left, each a link to its own page on its own chain (2026-10-15). #}
+  {% if held.tokens %}
+  <div class="pw-tokens">
+    {% for row in held.tokens %}
+    <a class="pw-token" href="/tokens/{{ row['property_id'] }}?chain={{ held.chain.network }}">
+      <span class="pw-name">{% if row['name'] %}{{ wall(row['name']) }}{% else %}#{{ row['property_id'] }}{% endif %}</span>
+      <span class="pw-amt">{{ row['display'] }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# Their Doginals (Dogecoin) and ord inscriptions (PEP mainnet), read from the chain by this node, each with a way to
+     make an offer (2026-10-15: "We should be able to see doginals in others wallets. To make offers"). #}
+  {% if held.ords %}
+  <h3 style="margin:14px 0 8px;font-size:.95rem">{{ 'Doginals' if held.chain.is_doge else 'Ord inscriptions' }}</h3>
+  <div class="pw-ords">
+    {% for o in held.ords %}
+    <div class="pw-ord" data-ord="{{ o.id }}">
+      <iframe src="/content/{{ o.id }}" title="{{ o.id }}" loading="lazy" sandbox="allow-scripts"
+              style="border:0;width:100%;aspect-ratio:1;display:block;pointer-events:none;border-radius:8px"></iframe>
+      <div class="mono muted" style="font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ o.id }}">{{ o.id }}</div>
+      {% if o.market %}<a class="btn small" href="{{ o.market }}">Make an offer</a>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   {% if held.pieces %}
   <h3 style="margin:14px 0 8px;font-size:.95rem">Inscriptions</h3>

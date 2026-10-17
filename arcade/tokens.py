@@ -237,8 +237,11 @@ class TokenSender:
     # --- building -------------------------------------------------------------
 
     def prepare(self, sender: str, payload: bytes, reference: str | None = None,
-                ) -> PreparedTokenTx:
-        """Build, fund and sign one token transaction. Does NOT broadcast."""
+                reference_value: int = OUTPUT_VALUE) -> PreparedTokenTx:
+        """Build, fund and sign one token transaction. Does NOT broadcast.
+
+        `reference_value` is what the recipient's output carries: more than dust when
+        that output must pay for something later -- a lock's way out (trade.LOCK_RESERVE)."""
         if reference is not None and reference == sender:
             # Legal, and the reference rule would resolve it as change anyway;
             # refusing is clearer than a send-to-self that shows as no send.
@@ -260,7 +263,7 @@ class TokenSender:
             for group in encode_class_b(sender, pubkey, payload):
                 outputs.append((OUTPUT_VALUE, multisig_script(list(group.keys), group.required)))
         if reference is not None:
-            outputs.append((OUTPUT_VALUE, p2pkh_script(reference)))
+            outputs.append((max(int(reference_value), OUTPUT_VALUE), p2pkh_script(reference)))
 
         needed = sum(value for value, _ in outputs) + COIN        # outputs + fee headroom
         try:

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Admin · PepecoinArcade{% endblock %}
+{% block title %}Admin · {{ brand.name }}{% endblock %}
 {% block body %}
 <div class="adminhead">
   <h1 style="margin:0">Admin</h1>
@@ -85,7 +85,8 @@
     open, built and signed in their own browsers, so this node is trusted with nothing.
     <strong>On:</strong> this node also holds pre-signed listings and bids to finish later,
     fills &ldquo;while I'm away&rdquo; buy orders, and may run the custodial mainnet PEP swap
-    below &mdash; convenient, but people then trust this node to finish their trades.</p>
+    below &mdash; convenient, but people then trust this node to finish their trades.
+    Lock-script swaps between chains are trustless either way (see <a href="#swaps">Lock-script swaps</a>).</p>
   <h3 style="margin-bottom:6px">Content screening</h3>
   <p class="muted" style="margin-top:0">A model (vLLM, or any OpenAI-compatible server that
     reads images) looks at pictures and posts before this arcade shows them.
@@ -114,6 +115,21 @@
   <div id="xchainstate" class="muted" style="font-size:.86rem;margin:8px 0"></div>
   <p class="muted" style="font-size:.8rem">Keep 1 to 2 PEP of your own in the mainnet wallet for network fees:
     a payout waits rather than spend what is held for somebody else. Saved with <em>Save switches</em>.</p>
+</section>
+
+<section class="panel" id="swaps">
+  <h2>Lock-script swaps</h2>
+  <p class="muted" style="margin-top:0">Swaps between two chains (PEP for DOGE and the like), settled by
+    lock scripts: <strong>trustless</strong> -- nobody holds anybody's coins. People's tabs hand this node
+    their own pre-signed claims and refunds so a swap finishes with the tab closed; it can only send
+    those, paying the person who signed them. A swap waits 1 confirmation, or 3 when it is big:</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+    <label style="margin:0">Big from <input autocomplete="off" id="swapbigmain" inputmode="decimal" style="width:130px"> PEP</label>
+    <label style="margin:0">or <input autocomplete="off" id="swapbigdoge" inputmode="decimal" style="width:110px"> DOGE</label>
+    <button type="button" class="small" id="saveswapbig">Save</button>
+  </div>
+  <h3 style="margin:14px 0 6px">Now <span class="muted" id="swapcounts" style="font-weight:500;font-size:.86rem"></span></h3>
+  <div id="swaplist" class="muted" style="font-size:.84rem">Loading&hellip;</div>
 </section>
 
 {% if local %}
@@ -320,6 +336,7 @@ section.panel h2{margin-top:0}
     $('faucet_topoff').checked = d.faucet.topoff !== false;
     $('faucet_mine').checked = d.faucet.mine !== false;
     ['auto_update', 'auto_sell', 'auto_fill', 'node_trades'].forEach(function (k) { $(k).checked = !!d.selling[k]; });
+    if (d.swap_big) { $('swapbigmain').value = d.swap_big.main; $('swapbigdoge').value = d.swap_big.doge; }
     // the mainnet PEP swap: its switch and how it stands
     var x = d.xchain || {}, xs = $('xchainstate');
     $('xchain_enabled').checked = !!x.enabled;
@@ -378,6 +395,35 @@ section.panel h2{margin-top:0}
                                  faucet_mine: $('faucet_mine').checked})
       .then(function () { say('Faucet saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
+  $('saveswapbig').onclick = function () {
+    call('/admin/api/settings', {swap_big: {main: $('swapbigmain').value, doge: $('swapbigdoge').value}})
+      .then(function () { say('Big-swap lines saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+  function loadSwaps() {
+    fetch('/admin/api/swaps', {headers: {'Accept': 'application/json'}}).then(function (r) { return r.json(); })
+      .then(function (d) {
+        var c = d.counts || {};
+        $('swapcounts').textContent = '\u00b7 ' + (c.waiting || 0) + ' held, ' + (c.sent || 0) + ' sent, '
+          + (c.spent || 0) + ' finished, ' + (c.expired || 0) + ' expired';
+        var box = $('swaplist'); box.textContent = '';
+        var when = function (t) { return t ? new Date(t * 1000).toLocaleString() : ''; };
+        (d.own || []).forEach(function (t) {
+          var p = document.createElement('p'); p.style.margin = '3px 0';
+          p.textContent = 'This node: ' + (t.error || (t.give + ' for ' + t.get + ' \u00b7 ' + t.role + ' \u00b7 '
+            + t.state + ' \u00b7 ' + (t.note || '') + ' \u00b7 refund from ' + when(t.refund_at)));
+          box.appendChild(p);
+        });
+        (d.held || []).filter(function (j) { return j.status === 'waiting' || j.status === 'sent'; }).forEach(function (j) {
+          var p = document.createElement('p'); p.style.margin = '3px 0';
+          p.textContent = j.account + ': ' + j.kind + ' on ' + j.network + ' \u00b7 ' + j.status
+            + (j.due ? ' \u00b7 ' + (j.kind === 'refund' ? 'from ' : 'until ') + when(j.due) : '')
+            + (j.note ? ' \u00b7 ' + j.note : '');
+          box.appendChild(p);
+        });
+        if (!box.childNodes.length) box.textContent = 'No swaps in progress.';
+      }).catch(function () { $('swaplist').textContent = 'Could not read the swaps.'; });
+  }
+  loadSwaps(); setInterval(loadSwaps, 15000);
   $('saveswitches').onclick = function () {
     call('/admin/api/settings', {auto_update: $('auto_update').checked, auto_sell: $('auto_sell').checked,
       auto_fill: $('auto_fill').checked, node_trades: $('node_trades').checked,

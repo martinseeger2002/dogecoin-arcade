@@ -1,4 +1,4 @@
-// arcade.node -- this page talking to another PepecoinArcade node.
+// arcade.node -- this page talking to another DogecoinArcade node.
 //
 // An inscribed page can load nothing from outside the machine it runs on.
 // What it can do is send a node-to-node message -- sealed to the other
@@ -39,7 +39,7 @@
       setTimeout(function () {
         if (waiting[message.seq]) {
           delete waiting[message.seq];
-          reject(new Error('no wallet is listening: open this page in a PepecoinArcade viewer'));
+          reject(new Error('no wallet is listening: open this page in a DogecoinArcade viewer'));
         }
       }, 60000);   // a send waits for the node to build and broadcast
       window.parent.postMessage(message, '*');

@@ -287,11 +287,19 @@ def test_a_plain_send_returns_change_to_the_address_that_paid(regtest):
     identity = regtest.rpc.call("getnewaddress")
     regtest.rpc.call("sendtoaddress", identity, 900)
     regtest.generate(1)
-    # Every other output in this wallet is a small one, so the node's coin
-    # selection reaches for the 900 whichever way it leans.
+    # Only the 900 is offered: every other coin is locked while the send is
+    # built (a regtest node shared with earlier tests on this worker can hold
+    # big coins of its own, and the node would reach for one of those).
     payee = regtest.rpc.call("getnewaddress")
-
-    prepared = walletlib.prepare_send(regtest.rpc, payee, 500 * walletlib.COIN)
+    others = [{"txid": u["txid"], "vout": u["vout"]} for u in regtest.rpc.call("listunspent", 0)
+              if u["address"] != identity]
+    if others:
+        regtest.rpc.call("lockunspent", False, others)
+    try:
+        prepared = walletlib.prepare_send(regtest.rpc, payee, 500 * walletlib.COIN)
+    finally:
+        if others:
+            regtest.rpc.call("lockunspent", True, others)
     spent = {(v["txid"], v["vout"]) for v in prepared.decoded["vin"]}
     mine = {(u["txid"], u["vout"]): u for u in regtest.rpc.call("listunspent", 0)}
     assert any(mine[o]["address"] == identity for o in spent), "the 900 was spent"

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_token_confirm.html" as tk %}
-{% block title %}Price {{ wall_text(name, 'a piece') }} · PepecoinArcade{% endblock %}
+{% block title %}Price {{ wall_text(name, 'a piece') }} · {{ brand.name }}{% endblock %}
 {% block body %}
 <h1>Put a price on it</h1>
 <p class="sub">An ask: one transaction saying what you want for this piece.

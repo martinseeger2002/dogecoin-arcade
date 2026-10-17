@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% import "_exui.html" as ex %}
+{% set bname = wall_text(b.name, 'an asset') %}
+{% set qname = wall_text(q.name, 'an asset') %}
+{% set unit = 'for it' if b.kind in ('nft', 'doginal') else 'each' %}
+{% block title %}{{ bname }}/{{ qname }} · Exchange · {{ brand.name }}{% endblock %}
+{% block body %}
+{# Every cross-chain market (2026-10-15: "I want all pairs to be established the same
+   way ... Every doge/pep and doge/test pep and pep/test and tokens"): a coin, token or piece on
+   one chain priced in a coin or token on another, out of the swaps every arcade lists. Nobody
+   holds anything: each swap is taken whole and settled through lock scripts on both chains
+   (arcade/trade.py). Was coin_pair.html (PEP/DOGE, 2026-10-13) and asset_pair.html. #}
+{{ ex.style() }}
+<style>
+.cp-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:720px){.cp-grid{grid-template-columns:1fr}}
+.cp-form{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
+.cp-form input{width:110px;flex:0 0 auto}
+.cp-px{font-variant-numeric:tabular-nums;font-weight:700}
+.cp-ask{color:var(--bad)}.cp-bid{color:var(--ok)}
+</style>
+<a class="back-link" href="/exchange?tab=tokens">&#8592; All markets</a>
+
+<div class="ex-hero">
+  <span class="ex-tic" style="width:46px;height:46px">{{ (bname or '?')[:1]|upper }}</span>
+  <div style="min-width:0">
+    <h1>{{ wall(b.name, 'token name') }}<span class="muted" style="font-weight:600"> / {{ wall(q.name, 'token name') }}</span></h1>
+    <div class="muted" style="font-size:.78rem">
+      {% if b.kind == 'token' %}#{{ b.asset }} {{ supply_badge(b.prop) }} &middot; <a href="/tokens/{{ b.asset }}">token page</a> &middot;
+      {% elif b.kind == 'nft' %}<a href="/inscriptions/{{ b.asset }}">{{ bname }}</a> &middot;
+      {% elif b.kind == 'doginal' %}<a href="{{ doginal_content(b.asset) }}" target="_blank" rel="noopener">{{ bname }}</a> &middot;{% endif %}
+      {{ net_badge(b.network) }} {{ bname }} priced in {{ net_badge(q.network) }} {{ qname }}</div>
+  </div>
+</div>
+<div class="ex-price">
+  {%- if asks %}<b>{{ ex.px(asks[0].price) }}</b><span class="unit">{{ qname }} {{ unit }}, lowest ask</span>
+  {%- elif bids %}<b>{{ ex.px(bids[0].price) }}</b><span class="unit">{{ qname }} {{ unit }}, highest bid</span>
+  {%- elif last is not none %}<b>{{ ex.px(last) }}</b><span class="unit">{{ qname }}, last trade</span>
+  {%- else %}<b>&mdash;</b><span class="unit">nobody is offering a swap yet</span>{% endif %}
+</div>
+{% if quotes and b.kind in ('nft', 'doginal', 'token') %}
+{# Price it in anything (2026-10-15): every coin, and every token this reader holds. #}
+<div class="ex-card" style="padding:10px 12px">
+  <div class="muted" style="font-size:.82rem;margin-bottom:6px">Price {{ 'it' if b.kind != 'token' else bname }} in</div>
+  <div class="row" style="gap:6px;flex-wrap:wrap">
+    {% for o in quotes %}
+    <a class="btn small {{ '' if o.on else 'ghost' }}" href="/exchange/pairs?base={{ b.key|urlencode }}&amp;quote={{ o.key|urlencode }}"
+       {% if o.on %}aria-current="true"{% endif %}>{{ o.label }}</a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% if b.kind == 'doginal' and q.network == 'doge' %}
+{# Offers in DOGE (2026-10-15): bids here settle through two locks on Dogecoin. Selling at a price you name is
+   one transaction on the Doginals tab. #}
+<p class="ex-note" style="margin:0 0 8px">Offers in DOGE live here. To sell it at a price you name, in one transaction,
+  <a href="/exchange?tab=doginals">list it on the Doginals tab</a>.</p>
+{% endif %}
+<p class="ex-note" style="margin:0 0 12px"><span class="ex-pill done">Lock scripts</span>
+  Each swap settles on both chains at once: either both sides get paid, or both get their own back.
+  Nobody holds anybody's coins, tokens or pieces, and each swap is taken whole.</p>
+
+{% if held_open %}
+<div class="ex-card"><p class="muted" style="margin:0">You still have an order on the node-held book for this asset.
+  <a href="{{ held_url }}">Manage it there</a> (cancel to get your deposit back).</p></div>
+{% endif %}
+
+{% if not open_here %}
+<div class="ex-card"><p class="msg err" style="margin:0">This node does not run both chains yet{% if b.network == 'doge' or q.network == 'doge' %} -- Dogecoin is still catching up{% endif %}.
+  The market opens here when it has.</p></div>
+{% endif %}
+
+<div class="cp-grid" id="swap-pair">
+  {% for side_, rows, word in (('ask', asks, 'Selling ' ~ bname), ('bid', bids, 'Buying ' ~ bname)) %}
+  <div class="ex-card">
+    <div class="ex-h" style="margin-top:0">{{ word }}</div>
+    {% if rows %}
+    <table class="ex-table">
+      {% for o in rows %}
+      <tr>
+        <td><span class="cp-px cp-{{ side_ }}">{{ ex.px(o.price) }}</span><br><small class="muted">{{ qname }} {{ unit }}</small></td>
+        <td>{% if b.kind not in ('nft', 'doginal') %}{{ o.base_shown }} {{ bname }}<br>{% endif %}<small class="muted">for {{ o.quote_shown }} {{ qname }} &middot; {{ o.lister|who }}</small></td>
+        <td style="text-align:right">
+          {% if can_trade_orders %}
+          <form method="post" action="/exchange/trade-orders/take" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="back" value="{{ here }}">
+            <input type="hidden" name="order" value="{{ o.id }}"><input type="hidden" name="lister" value="{{ o.lister }}">
+            <button type="submit" class="small">{{ 'Buy' if side_ == 'ask' else 'Sell' }}</button></form>
+          {% elif viewer == 'account' and open_here %}
+          <button type="button" class="small" data-take-order="{{ o|tojson|forceescape }}">{{ 'Buy' if side_ == 'ask' else 'Sell' }}</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="muted" style="margin:0">{{ 'Nobody is selling ' ~ bname ~ ' for ' ~ qname if side_ == 'ask' else 'Nobody is buying ' ~ bname ~ ' with ' ~ qname }} right now.</p>
+    {% endif %}
+
+    {% if open_here and viewer == 'account' and can_list_orders %}
+    <form class="cp-form" id="{{ 'x-form' if (side or 'buy') == ('sell' if side_ == 'ask' else 'buy') else '' }}"
+          data-pair-side="{{ 'sell' if side_ == 'ask' else 'buy' }}" data-base="{{ b.network }}" data-quote="{{ q.network }}"
+          data-base-kind="{{ b.kind }}" data-base-asset="{{ b.asset }}" data-base-div="{{ '1' if b.divisible else '0' }}"
+          data-base-label="{{ bname }}"
+          data-quote-kind="{{ q.kind }}" data-quote-asset="{{ q.asset }}" data-quote-div="{{ '1' if q.divisible else '0' }}"
+          data-quote-label="{{ qname }}">
+      <span class="muted" style="font-size:.84rem">{{ 'Sell' if side_ == 'ask' else 'Buy' }}</span>
+      {% if b.kind not in ('nft', 'doginal') %}
+      <input name="amount" inputmode="decimal" placeholder="{{ bname }}" autocomplete="off">
+      <span class="muted" style="font-size:.84rem">at</span>
+      <input name="price" inputmode="decimal" placeholder="{{ qname }} each" autocomplete="off">
+      {% else %}
+      <input type="hidden" name="amount" value="1">
+      <span class="muted" style="font-size:.84rem">it for</span>
+      <input name="price" inputmode="decimal" placeholder="{{ qname }}" autocomplete="off">
+      {% endif %}
+      <button type="submit" class="small">{{ 'List sale' if side_ == 'ask' else 'List bid' }}</button>
+    </form>
+    {% elif open_here and can_trade_orders %}
+    {# The operator's node, in the same words as everybody's (2026-10-15): an amount of the base
+       at a price in the quote each (trade_order_place). #}
+    <form class="cp-form" method="post" action="/exchange/trade-orders/place">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="side" value="{{ 'sell' if side_ == 'ask' else 'buy' }}">
+      <input type="hidden" name="base" value="{{ b.key }}"><input type="hidden" name="quote" value="{{ q.key }}">
+      <span class="muted" style="font-size:.84rem">{{ 'Sell' if side_ == 'ask' else 'Buy' }}</span>
+      {% if b.kind not in ('nft', 'doginal') %}
+      <input name="amount" inputmode="decimal" placeholder="{{ bname }}" autocomplete="off">
+      <span class="muted" style="font-size:.84rem">at</span>
+      <input name="price" inputmode="decimal" placeholder="{{ qname }} each" autocomplete="off">
+      {% else %}
+      <input type="hidden" name="amount" value="1">
+      <span class="muted" style="font-size:.84rem">it for</span>
+      <input name="price" inputmode="decimal" placeholder="{{ qname }}" autocomplete="off">
+      {% endif %}
+      <button type="submit" class="small">{{ 'List sale' if side_ == 'ask' else 'List bid' }}</button>
+    </form>
+    {% elif viewer == 'nobody' %}
+    <p class="muted" style="font-size:.84rem;margin:10px 0 0">Sign in to trade.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+{% if can_trade_orders and my_pair_orders %}
+<div class="ex-card">
+  <div class="ex-h" style="margin-top:0">This node's {{ bname }}/{{ qname }} swaps</div>
+  {% for o in my_pair_orders %}
+  <div class="row" style="gap:8px;align-items:center;padding:4px 0">
+    <span style="flex:1">{{ o.give_label }} for {{ o.get_label }}</span>
+    <form method="post" action="/exchange/trade-orders/withdraw" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="order" value="{{ o.id }}">
+      <input type="hidden" name="back" value="{{ here }}">
+      <button type="submit" class="ghost small">Withdraw</button></form>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if viewer == 'account' and b.kind == 'doginal' %}
+{# Giving a Doginal needs Dogecoin besides it: the lock's fee and the reserve that moves it out again (2026-10-15:
+   "Those buttons should be grayed out unless they have a balance of Dogecoin on top of their asset"). #}
+<p class="ex-note dg-need" id="dg-need" hidden></p>
+<script>
+(async () => {
+  try {
+    const said = await (await fetch("/account", {cache: "no-store"})).json();
+    const d = (said.chains || []).find((c) => c.network === "doge");
+    if (!d) return;
+    const free = Number(d.spendable || 0), need = Number(d.doginal_lock_need || 0);
+    if (free >= need) return;
+    const coins = (k) => (k / 1e8).toFixed(8).replace(/\.?0+$/, "");
+    const note = document.getElementById("dg-need");
+    note.hidden = false;
+    note.textContent = `To sell this Doginal through a swap you need about ${coins(need)} DOGE besides it, for the network `
+      + `fee and the coin that moves it out of the lock. Your wallet has ${coins(free)} DOGE to spend.`;
+    document.querySelectorAll('form[data-pair-side="sell"] button, .cp-bid ~ * [data-take-order], [data-take-order]').forEach((b) => {
+      const row = b.closest("tr");
+      if (b.closest('form[data-pair-side="sell"]') || (row && row.querySelector(".cp-bid"))) {
+        b.disabled = true; b.title = "Needs Dogecoin besides the Doginal for the network fee";
+      }
+    });
+  } catch (e) { /* the buttons stay as they were; the send itself says why if it cannot pay */ }
+})();
+</script>
+{% endif %}
+{% if viewer == 'account' %}
+<div class="ex-card">{% include "_tab_swaps.html" %}
+  <p class="muted" style="font-size:.8rem;margin:8px 0 0">A swap takes a few minutes. Once your side is
+    locked, your node finishes it with transactions you signed here -- you can close the page; if the other side
+    never pays, yours comes back by itself within two hours. <a href="/docs/swaps.md">How a swap works</a></p>
+</div>
+{% endif %}
+{% endblock %}

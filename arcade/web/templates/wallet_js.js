@@ -2335,3 +2335,710 @@ export async function tip(held, form, txid, kinds, ask) {
   if (!ok) return null;
   return await confirm(held, offer);
 }
+
+/* --- a tab's own lock-script trades (trustless-trading-plan.md, phase 2) -------------
+ *
+ * 2026-10-13: trades "only available if they leave their tab open so that
+ * transaction building is complete on the client side solely ... 100% trustless with
+ * lock scripts". The lock is built in this tab (coins.htlcRedeem) and funded with an
+ * ordinary send to its address; spending it -- a claim with the secret, a refund after
+ * the time -- is asked of the node unsigned (/account/trade/spend), read here, signed
+ * here over a digest worked out here from the lock's own script, and only then handed
+ * back to be put in place and broadcast (/account/trade/spend/sign).
+ */
+
+/** Claim (`kind` "claim", with `secret` hex) or refund one lock coin to this account. */
+/** A lock spend built by the node and checked and signed HERE: [node's answer, signature]. */
+async function signLockSpend(wallet, {chain, redeem, txid, vout, kind, secret, leg, presign = false}) {
+    const what = legWhat(leg);
+    const asked = await fetch("/account/trade/spend", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({chain, redeem, txid, vout, kind, leg: what}),
+    });
+    const said = await asked.json();
+    if (!asked.ok) throw new Error(said.detail || "that lock cannot be spent now");
+    const keys = keysOn(wallet, said.chain || chain);
+    const lock = coins.htlcParse(unhex(redeem));
+    if (!lock) throw new Error("that is not a lock script. Nothing was signed.");
+    const me = coinsHex(keys.pubkey);
+    if (kind === "claim" && coinsHex(lock.claimer) !== me) throw new Error("that lock pays somebody else. Nothing was signed.");
+    if (kind === "refund" && coinsHex(lock.refunder) !== me) throw new Error("that lock refunds somebody else. Nothing was signed.");
+    // The secret is not signed (it goes in the input script); a held claim may not know it yet.
+    if (kind === "claim" && !(presign && !secret)) {
+      const hashed = coinsHex(await coins.sha256Of(unhex(secret)));
+      if (hashed !== coinsHex(lock.secretHash)) throw new Error("that secret does not open this lock. Nothing was signed.");
+    }
+    const tx = coins.parseTx(said.raw);
+    // A Doginal comes out with two inputs, both under this lock: the Doginal (output 0 of the lock's
+    // transaction) first and whole, then its reserve (output 1), spent whole as the fee (htlc.doginal_out).
+    const dg = what.kind === "doginal";
+    const wanted = dg ? [[txid, 0], [txid, 1]] : [[txid, Number(vout)]];
+    if (tx.inputs.length !== wanted.length || tx.inputs.some((x, i) => x.txid !== wanted[i][0] || x.vout !== wanted[i][1]))
+      throw new Error("the node asked to spend a different coin. Nothing was signed.");
+    const mine = coins.p2pkh(await coins.hash160(keys.pubkey));
+    const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+    // A coin comes out to this account alone. A token or NFT comes out by one OP_RETURN,
+    // what is left of the lock's coin back into the lock, and this account LAST -- the
+    // ledger's recipient (escrow.move_out).
+    const lockScript = await coins.htlcScript(unhex(redeem));
+    const fine = (o) => same(o.script, mine)
+      || (what.kind !== "coin" && !dg && (o.script[0] === 0x6a || same(o.script, lockScript)));
+    if (!tx.outputs.length || !tx.outputs.every(fine) || !same(tx.outputs[tx.outputs.length - 1].script, mine)
+        || (dg && tx.outputs.length !== 1)
+        || (what.kind !== "coin" && !dg && tx.outputs.filter((o) => o.script[0] === 0x6a).length !== 1))
+      throw new Error("that spend pays somebody else. Nothing was signed.");
+    if (kind === "refund" && tx.locktime !== lock.locktime)
+      throw new Error("a refund must carry the lock's own time. Nothing was signed.");
+    // One signature per input, each over a digest worked out HERE from the lock's own script.
+    const asked2 = said.sighashes || [said.sighash];
+    if (asked2.length !== tx.inputs.length)
+      throw new Error("the node asked for a different number of signatures. Nothing was signed.");
+    const signatures = [];
+    for (let i = 0; i < tx.inputs.length; i++) {
+      const digest = coinsHex(await coins.sighashAll(tx, i, unhex(redeem)));
+      if (digest !== String(asked2[i]).toLowerCase())
+        throw new Error("the node asked for a signature over different bytes. Nothing was signed.");
+      signatures.push(coinsHex(await coins.signInput(keys.key, unhex(digest))));
+    }
+    return [said, signatures];
+}
+
+export async function tradeSpend(wallet, {chain, redeem, txid, vout, kind, secret, leg}) {
+  return working(async () => {
+    const [said, signatures] = await signLockSpend(wallet, {chain, redeem, txid, vout, kind, secret, leg});
+    const back = await fetch("/account/trade/spend/sign", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({chain: said.chain, redeem, raw: said.raw, signature: signatures[0], signatures, kind,
+                            secret: kind === "claim" ? secret : ""}),
+    });
+    const done = await back.json();
+    if (!back.ok) throw new Error(done.detail || "the node would not send it");
+    return done;                                  // {ok, txid}
+  });
+}
+
+/** Hand this node a pre-signed claim or refund (2026-10-13): it finishes the swap if
+ *  this tab is closed. Same checks as tradeSpend; the node adds only the secret, and only
+ *  sends at the right moment (arcade/trade_watch.py). Claims need no secret here when
+ *  `secret_lock` says where it will show up (this account's own lock, once claimed). */
+export async function tradePresign(wallet, {chain, redeem, txid, vout, kind, secret, leg, secret_lock,
+                                            min_conf, not_after, trade}) {
+  const [said, signatures] = await signLockSpend(wallet, {chain, redeem, txid, vout, kind,
+                                                           secret: secret || "", leg, presign: true});
+  const asked = await fetch("/account/trade/watch", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({chain: said.chain, redeem, txid, vout, kind, raw: said.raw, signature: signatures[0], signatures,
+                          secret: secret || "", secret_lock: secret_lock || null,
+                          min_conf: min_conf || 0, not_after: not_after || 0, trade: trade || ""}),
+  });
+  const done = await asked.json();
+  if (!asked.ok) throw new Error(done.detail || "the node would not hold it");
+  return done;
+}
+
+/** A lock as its chain shows it (null if not there yet). */
+export async function tradeFacts(chain, txid, vout, leg = null, redeem = null) {
+  if (!txid) return null;
+  const asked = await fetch("/account/trade/facts", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({chain, txid, vout, leg: legWhat(leg), redeem: redeem ? coinsHex(redeem) : ""}),
+  });
+  const said = await asked.json();
+  if (!asked.ok) throw new Error(said.detail || "the node could not read that lock");
+  return said.seen;
+}
+
+/** What moves in a leg, as the node's trade routes take it: {kind, asset, amount}. */
+function legWhat(leg) {
+  return leg ? {kind: leg.kind || "coin", asset: leg.asset || "", amount: leg.amount} : {kind: "coin", asset: "", amount: 0};
+}
+
+/* The trade state machine: arcade/trade.py's next_step, rule for rule (tests compare
+ * them). Pure: what the chains show in, the one thing to do next out. */
+export const TRADE = {
+  LOCK_SECONDS: {mainnet: 2 * 3600, testnet: 2 * 3600},
+  CONFIRMATIONS: 1, CONFIRMATIONS_BIG: 3,
+  BIG: {main: 1_000_000 * 100_000_000, doge: 1_000 * 100_000_000},
+  CLAIM_MARGIN: 20 * 60, LOCK_MARGIN: 30 * 60,
+  LOCK_RESERVE: 2_000_000,          // htlc.SPEND_FEE + htlc.DUST (trade.LOCK_RESERVE)
+};
+const tierOf = (leg) => (leg.network === "main" || leg.network === "doge") ? "mainnet" : "testnet";
+
+/** 1, or 3 when a mainnet coin leg is at or above its line (trade.confirmations_for). */
+export function confirmationsFor(give, get, big = TRADE.BIG) {
+  for (const leg of [give, get]) {
+    const line = big[leg.network];
+    if (leg.kind === "coin" && tierOf(leg) === "mainnet" && line && leg.amount >= Number(line)) return TRADE.CONFIRMATIONS_BIG;
+  }
+  return TRADE.CONFIRMATIONS;
+}
+
+/** {initiatorLocktime, responderLocktime} for a trade starting now (trade.plan_locktimes). */
+export function planLocktimes(give, get, now) {
+  const tier = (tierOf(give) === "mainnet" || tierOf(get) === "mainnet") ? "mainnet" : "testnet";
+  return {t1: Math.floor(now) + TRADE.LOCK_SECONDS[tier],
+          t2: Math.floor(now) + Math.floor(TRADE.LOCK_SECONDS[tier] / 2)};
+}
+
+/** Is `seen` exactly the lock the terms say? "" if so, else why not (trade.check_lock). */
+export async function checkLock(trade, seen, theirs) {
+  const leg = theirs ? trade.get : trade.give;
+  const redeem = theirs ? trade.theirRedeem : trade.myRedeem;
+  const script = coinsHex(await coins.htlcScript(redeem));
+  if (seen.script_hex !== script) return "that lock's script is not the one agreed (hash, keys or lock time differ)";
+  if (leg.kind === "doginal" && (seen.vout !== 0 || !seen.asset_ok))
+    return "that lock does not hold the agreed Doginal at the start of output 0, with its reserve beside it";
+  if (seen.value < lockValue(leg)) {
+    if (leg.kind === "coin") return `that lock holds ${seen.value}, less than the ${leg.amount} agreed`;
+    return "that lock holds too little coin to move its token or NFT out again";
+  }
+  if (leg.kind !== "coin" && !seen.asset_ok) return "the ledger does not show the agreed token or NFT at that lock";
+  return "";
+}
+
+/** The coin a lock output for `leg` must hold (trade.lock_value): the amount for coin,
+ *  else the reserve that pays for moving the token or NFT out again. */
+export function lockValue(leg) {
+  // A Doginal's lock output holds its own coin, whatever that is worth (trade.lock_value).
+  if (leg.kind === "doginal") return 1;
+  return leg.kind === "coin" ? leg.amount : TRADE.LOCK_RESERVE;
+}
+
+/** [step, why]: "lock" | "wait" | "claim" | "refund" | "done" | "abort" (trade.next_step).
+ *  `trade` = {role, give, get, secret?, secretHash, t1, t2, myRedeem, theirRedeem}. */
+export async function nextTradeStep(trade, facts, now) {
+  const need = trade.need || confirmationsFor(trade.give, trade.get);
+  const mine = facts.mine, theirs = facts.theirs;
+  const myTime = trade.role === "initiator" ? trade.t1 : trade.t2;
+  const theirTime = trade.role === "initiator" ? trade.t2 : trade.t1;
+  if (theirs && theirs.spent_by_me) return ["done", "I claimed their lock"];
+  if (mine && mine.spent_by_me) return ["done", "my lock came back to me (refunded)"];
+  if (theirs && !theirs.spent_by_script_sig) {
+    const bad = await checkLock(trade, theirs, true);
+    if (bad) {
+      if (mine && !mine.spent_by_script_sig)
+        return now >= myTime ? ["refund", bad] : ["wait", bad + "; waiting to refund mine"];
+      return ["abort", bad];
+    }
+  }
+  if (trade.role === "initiator") {
+    if (!mine) return ["lock", "I lock first"];
+    if (!theirs || theirs.confirmations < need) {
+      if (now >= myTime) return ["refund", "the other side never locked; my lock time has passed"];
+      return ["wait", "waiting for the other lock to confirm"];
+    }
+    if (theirs.spent_by_script_sig) return [now < myTime ? "wait" : "refund", "their lock went back to them"];
+    if (now < theirTime - TRADE.CLAIM_MARGIN) return ["claim", "their lock is confirmed and agreed: claim it (this reveals the secret)"];
+    if (now >= myTime) return ["refund", "too late to claim safely; my lock time has passed"];
+    return ["wait", "too close to their lock time to claim safely; waiting to refund"];
+  }
+  if (!theirs || theirs.confirmations < need) {
+    if (mine && now >= myTime) return ["refund", "my lock time has passed"];
+    return ["wait", "waiting for the initiator's lock to confirm"];
+  }
+  if (!mine) {
+    if (now >= theirTime - TRADE.LOCK_MARGIN || now >= trade.t2 - TRADE.LOCK_MARGIN)
+      return ["abort", "too little time left to lock safely"];
+    return ["lock", "their lock is confirmed and agreed: lock mine"];
+  }
+  if (mine.spent_by_script_sig && !mine.spent_by_me) {
+    const secret = await secretFromScriptSig(unhex(mine.spent_by_script_sig), trade.myRedeem);
+    if (!secret) return ["wait", "my lock was spent without the secret?"];
+    trade.secret = coinsHex(secret);
+    if (now < theirTime) return ["claim", "the secret is on the chain: claim their lock"];
+    return ["abort", "the secret came too late to claim their lock"];
+  }
+  if (now >= myTime) return ["refund", "the initiator never claimed; my lock time has passed"];
+  return ["wait", "waiting for the initiator to claim (that reveals the secret)"];
+}
+
+/** The secret a claim revealed (htlc.secret_from_script_sig): sig, secret, OP_1, script. */
+export async function secretFromScriptSig(scriptSig, redeem) {
+  const pushes = [];
+  let at = 0;
+  while (at < scriptSig.length) {
+    const op = scriptSig[at++];
+    if (op === 0x00 || op === 0x51) { pushes.push(new Uint8Array([op])); continue; }
+    let n;
+    if (op >= 1 && op <= 75) n = op;
+    else if (op === 0x4c) n = scriptSig[at++];
+    else if (op === 0x4d) { n = scriptSig[at] | (scriptSig[at + 1] << 8); at += 2; }
+    else return null;
+    pushes.push(scriptSig.slice(at, at + n));
+    at += n;
+  }
+  if (pushes.length !== 4 || pushes[2].length !== 1 || pushes[2][0] !== 0x51) return null;
+  if (coinsHex(pushes[3]) !== coinsHex(redeem)) return null;
+  const lock = coins.htlcParse(redeem);
+  const secret = pushes[1];
+  if (!lock || secret.length !== 32) return null;
+  if (coinsHex(await coins.sha256Of(secret)) !== coinsHex(lock.secretHash)) return null;
+  return secret;
+}
+
+/* --- the tab trader: one trade, run while this tab is open -----------------------
+ *
+ * Steps travel over the PEP testnet Messenger (2026-10-13: "Can't we use the Pepe
+ * coin test net node to node communication protocol?"): sealed HERE to the other trader's
+ * key (messaging.js sealForProgram), carried by this node as one testnet transaction
+ * (/account/talk), answers opened HERE (programAnswers). Every move is nextTradeStep on
+ * what the chains show. The trade -- the secret included -- is kept in this browser, so a
+ * tab closed mid-trade can still claim or refund when it is opened again.
+ */
+
+/** Run `fn` while holding this browser's one spending lock (a Web Lock, so other tabs wait
+ *  too): two spends built at once pick the same coin, and the node refuses the second
+ *  (txn-mempool-conflict). Not re-entrant -- never call it from inside itself. */
+export async function spending(fn) {
+  if (!(globalThis.navigator && navigator.locks)) return fn();
+  return navigator.locks.request("arcade-spend", () => fn());
+}
+
+const TRADES = "arcade-trades";
+//: A lock's address on each chain: P2SH version bytes (arcade/config.py). The node's own
+//: word (/account chains[].p2sh) wins: a chain standing in for another has its own.
+const P2SH_VERSION = {main: 22, doge: 22, test: 196, regtest: 196};
+let p2shKnown = null;
+async function p2shOf(network) {
+  if (!p2shKnown) {
+    try {
+      const said = await (await fetch("/account")).json();
+      p2shKnown = Object.fromEntries((said.chains || []).filter((c) => c.p2sh != null).map((c) => [c.network, c.p2sh]));
+    } catch (e) { p2shKnown = {}; }
+  }
+  return p2shKnown[network] ?? P2SH_VERSION[network];
+}
+
+function tradesOf(wallet) {
+  try { return JSON.parse(localStorage.getItem(`${TRADES}:${wallet.pubkey}`) || "{}"); }
+  catch (e) { return {}; }
+}
+function keepTrade(wallet, trade) {
+  const all = tradesOf(wallet);
+  all[trade.id] = trade;
+  try { localStorage.setItem(`${TRADES}:${wallet.pubkey}`, JSON.stringify(all)); } catch (e) {}
+}
+export function myTrades(wallet) {
+  return Object.values(tradesOf(wallet));
+}
+
+/** One trade step, sealed in this tab to `toKey` (hex, a messaging key), carried by this node. */
+export async function tradeSay(wallet, toKey, body) {
+  return spending(() => _tradeSay(wallet, toKey, body));
+}
+
+async function _tradeSay(wallet, toKey, body) {
+  const {mail, me} = await messenger(wallet);
+  const asked = await fetch("/account/talk", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({op: "ask", to: toKey}),
+  });
+  const said = await asked.json();
+  if (!asked.ok) throw new Error(said.detail || "the node could not address that");
+  const talked = await fetch("/account/talk", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({op: "send", to: said.seal_to,
+                          sealed: mail.sealForProgram(me, said.seal_to, said.stamp, body)}),
+  });
+  const carrier = await talked.json();
+  if (!talked.ok) throw new Error(carrier.detail || "the node could not carry it");
+  return signOffer(wallet, carrier);
+}
+
+/** Trade steps sealed to this tab since `after`: {answers: [{json, sender}], cursor}. */
+export async function tradeHeard(wallet, after) {
+  const {mail, me} = await messenger(wallet);
+  const got = await mail.programAnswers(me, after);
+  return {cursor: got.cursor,
+          answers: got.answers.filter((a) => a.json && a.json.t === "trade" && a.json.v === 1)};
+}
+
+const coinsText = (sats) => (Number(sats) / 1e8).toFixed(8).replace(/\.?0+$/, "");
+
+/** Take an order (trade_orders.py) as the initiator: secret made here, terms proposed. */
+/** What a swap costs in network fees, in words, from the side of whoever gives `give` and
+ *  gets `get` -- shown before anything is signed. A lock costs about one minimum fee (0.01);
+ *  a coin claimed out of a lock pays its own fee (0.01 comes off it); a token or NFT goes
+ *  into its lock with 0.02 that pays its way out (trade.LOCK_RESERVE). */
+export function swapFees(give, get) {
+  const coin = (n) => n === "doge" ? "DOGE" : n === "main" ? "PEP" : "PEP TEST";
+  const parts = [`about 0.01 ${coin(give.network)} to lock yours`];
+  if (give.kind && give.kind !== "coin") parts.push(`0.02 ${coin(give.network)} that goes in with it to pay for moving it out`);
+  if (!get.kind || get.kind === "coin") parts.push(`0.01 ${coin(get.network)} comes off what you receive`);
+  return "Network fees: " + parts.join("; ") + ".";
+}
+
+export async function takeOrder(wallet, order, options = {}) {
+  const mineOn = (network) => coinsHex(keysOn(wallet, network).pubkey);
+  const give = {network: order.get.network, kind: order.get.kind, asset: order.get.asset || "",
+                amount: order.get.amount,
+                giver_key: mineOn(order.get.network), taker_key: order.take_key || order.trade_key};
+  const get = {network: order.give.network, kind: order.give.kind, asset: order.give.asset || "",
+               amount: order.give.amount,
+               giver_key: order.trade_key, taker_key: mineOn(order.give.network)};
+  const secret = crypto.getRandomValues(new Uint8Array(32));
+  const secretHash = await coins.sha256Of(secret);
+  const {t1, t2} = planLocktimes(give, get, Date.now() / 1000);
+  const id = "tr-" + coinsHex(crypto.getRandomValues(new Uint8Array(8)));
+  const trade = {id, role: "initiator", order: order.id, peer: order.msg_key, give, get,
+                 secret: coinsHex(secret), secretHash: coinsHex(secretHash), t1, t2,
+                 myLock: null, theirLock: null, agreed: false, cancelled: false,
+                 state: "proposed", note: "proposed; waiting for the other side to accept",
+                 cursor: 0, created: Date.now(), need: confirmationsFor(give, get, await swapBig()),
+                 // Said yes to in the Take dialog, which showed the amounts and fees: the lock is
+                 // not asked about again (real coins included -- 2026-10-13).
+                 approved: !!options.approved};
+  keepTrade(wallet, trade);
+  try {
+    await tradeSay(wallet, order.msg_key, {t: "trade", v: 1, id, step: "propose", order: order.id,
+                                           give, get, secret_hash: trade.secretHash, t1, t2});
+  } catch (e) {
+    // Nothing was locked: a proposal that never went out leaves no trade behind.
+    const all = tradesOf(wallet);
+    delete all[id];
+    try { localStorage.setItem(`${TRADES}:${wallet.pubkey}`, JSON.stringify(all)); } catch (x) {}
+    throw e;
+  }
+  return trade;
+}
+
+//: The node's "big swap" lines (/account swap_big): above one, a swap waits 3 confirmations.
+let bigKnown = null;
+async function swapBig() {
+  if (!bigKnown) {
+    try { bigKnown = (await (await fetch("/account")).json()).swap_big || TRADE.BIG; }
+    catch (e) { bigKnown = TRADE.BIG; }
+  }
+  return bigKnown;
+}
+
+async function redeemsOf(trade) {
+  const h = unhex(trade.secretHash);
+  const myTime = trade.role === "initiator" ? trade.t1 : trade.t2;
+  const theirTime = trade.role === "initiator" ? trade.t2 : trade.t1;
+  return {
+    myRedeem: coins.htlcRedeem(h, unhex(trade.give.taker_key), unhex(trade.give.giver_key), myTime),
+    theirRedeem: coins.htlcRedeem(h, unhex(trade.get.taker_key), unhex(trade.get.giver_key), theirTime),
+  };
+}
+
+async function sayAccept(wallet, trade) {
+  await tradeSay(wallet, trade.peer, {t: "trade", v: 1, id: trade.id, step: "accept"});
+  const kept = tradesOf(wallet)[trade.id] || trade;
+  kept.acceptSent = true;
+  keepTrade(wallet, kept);
+}
+
+/** One pass of one trade: read answers, read the chains, take the one safe step. */
+export async function tradeTick(wallet, id) {
+  let trade = tradesOf(wallet)[id];
+  if (!trade || trade.state === "done" || trade.state === "aborted") return trade;
+  if (trade.acceptSent === false && !trade.myLock) {
+    await sayAccept(wallet, trade);
+    trade = tradesOf(wallet)[id];
+  }
+  const heard = await tradeHeard(wallet, trade.cursor);
+  trade.cursor = heard.cursor;
+  for (const a of heard.answers) {
+    if (a.json.id !== trade.id || a.sender !== trade.peer) continue;
+    if (a.json.step === "accept") trade.agreed = true;
+    else if (a.json.step === "locked") trade.theirLock = {txid: a.json.txid, vout: a.json.vout};
+    else if (a.json.step === "cancel") trade.cancelled = true;
+  }
+  if (trade.cancelled && !trade.myLock) {
+    trade.state = "aborted"; trade.note = "the other side walked away; nothing was locked";
+    keepTrade(wallet, trade); return trade;
+  }
+  if (!trade.agreed) { keepTrade(wallet, trade); return trade; }
+  const {myRedeem, theirRedeem} = await redeemsOf(trade);
+  const facts = {
+    mine: trade.myLock ? await tradeFacts(trade.give.network, trade.myLock.txid, trade.myLock.vout,
+                                          trade.give, myRedeem) : null,
+    theirs: trade.theirLock ? await tradeFacts(trade.get.network, trade.theirLock.txid, trade.theirLock.vout,
+                                               trade.get, theirRedeem) : null,
+  };
+  const now = Math.floor(Date.now() / 1000);
+  const view = {...trade, myRedeem, theirRedeem};
+  const [step, why] = await nextTradeStep(view, facts, now);
+  if (view.secret && !trade.secret) trade.secret = view.secret;
+  trade.note = why;
+  if (step === "lock") {
+    const address = await coins.htlcAddress(myRedeem, await p2shOf(trade.give.network));
+    const sent = await spending(async () => {
+    let offer;
+    if (trade.give.kind === "coin") offer = await offerSend(address, coinsText(trade.give.amount), trade.give.network);
+    else {
+      // A token or NFT: the node builds it (payload, then the lock with the coin that pays
+      // its way out, last); this tab checks and signs it like any other offer.
+      const asked = await fetch("/account/trade/lock", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({chain: trade.give.network, redeem: coinsHex(myRedeem), leg: legWhat(trade.give)}),
+      });
+      offer = await asked.json();
+      if (!asked.ok) throw new Error(offer.detail || "the node could not build that lock");
+      if (offer.lock !== address) throw new Error("the node built a different lock. Nothing was signed.");
+    }
+    // Approved in the Take or List dialog (amounts and fees shown there): not asked again.
+    return confirm(wallet, offer, trade.approved ? {reviewed: true} : null);
+    });
+    const script = coinsHex(await coins.htlcScript(myRedeem));
+    // A Doginal's lock is output 0 (its reserve output 1, under the same script).
+    let vout = trade.give.kind === "doginal" ? 0 : -1;
+    for (let n = 0; n < 4 && vout < 0; n++) {
+      const seen = await tradeFacts(trade.give.network, sent.txid, n).catch(() => null);
+      if (seen && seen.script_hex === script && seen.value < lockValue(trade.give)) continue;
+      if (seen && seen.script_hex === script) vout = n;
+    }
+    trade.myLock = {txid: sent.txid, vout: Math.max(0, vout)};
+    keepTrade(wallet, trade);
+    await tradeSay(wallet, trade.peer, {t: "trade", v: 1, id: trade.id, step: "locked",
+                                        network: trade.give.network, txid: sent.txid, vout: trade.myLock.vout});
+  } else if (step === "claim") {
+    const done = await tradeSpend(wallet, {chain: trade.get.network, redeem: coinsHex(theirRedeem),
+      txid: trade.theirLock.txid, vout: trade.theirLock.vout, kind: "claim", secret: trade.secret, leg: trade.get});
+    await tradeSay(wallet, trade.peer, {t: "trade", v: 1, id: trade.id, step: "claimed",
+                                        network: trade.get.network, txid: done.txid});
+  } else if (step === "refund") {
+    const done = await tradeSpend(wallet, {chain: trade.give.network, redeem: coinsHex(myRedeem),
+      txid: trade.myLock.txid, vout: trade.myLock.vout, kind: "refund", leg: trade.give});
+    await tradeSay(wallet, trade.peer, {t: "trade", v: 1, id: trade.id, step: "refunded",
+                                        network: trade.give.network, txid: done.txid});
+  } else if (step === "done") trade.state = "done";
+  else if (step === "abort") trade.state = "aborted";
+  else trade.state = trade.myLock ? "locked" : "accepted";
+  keepTrade(wallet, trade);
+  if (trade.state !== "done" && trade.state !== "aborted") {
+    await holdSpends(wallet, trade, view, facts).catch((e) => { trade.holdNote = String(e.message || e); });
+    keepTrade(wallet, trade);
+  }
+  return {...trade, step};
+}
+
+/** Give this node what it needs to finish the swap with the tab closed (trade_watch.py):
+ *  the refund of my lock, and my claim of theirs -- each signed here, once. */
+async function holdSpends(wallet, trade, view, facts) {
+  const hex = coinsHex;
+  if (trade.myLock && !trade.heldRefund) {
+    await tradePresign(wallet, {chain: trade.give.network, redeem: hex(view.myRedeem), txid: trade.myLock.txid,
+                                vout: trade.myLock.vout, kind: "refund", leg: trade.give, trade: trade.id});
+    trade.heldRefund = true;
+  }
+  if (trade.heldClaim || !trade.theirLock || !facts.theirs || facts.theirs.spent_by_script_sig) return;
+  if (await checkLock(view, facts.theirs, true)) return;            // not the lock agreed: never
+  const theirTime = trade.role === "initiator" ? trade.t2 : trade.t1;
+  const base = {chain: trade.get.network, redeem: hex(view.theirRedeem), txid: trade.theirLock.txid,
+                vout: trade.theirLock.vout, kind: "claim", leg: trade.get, trade: trade.id};
+  const need = trade.need || confirmationsFor(trade.give, trade.get);
+  if (trade.role === "initiator") {
+    // A token or NFT is only known to be in the lock once the ledger has read it confirmed;
+    // claiming an empty one would hand over the secret for nothing.
+    if (trade.get.kind !== "coin" && !(facts.theirs.confirmations >= need && facts.theirs.asset_ok)) return;
+    await tradePresign(wallet, {...base, secret: trade.secret, min_conf: need,
+                                not_after: theirTime - TRADE.CLAIM_MARGIN});
+  } else {
+    if (!trade.myLock) return;
+    await tradePresign(wallet, {...base, not_after: theirTime,
+      secret_lock: {network: trade.give.network, txid: trade.myLock.txid, vout: trade.myLock.vout,
+                    redeem: hex(view.myRedeem)}});
+  }
+  trade.heldClaim = true;
+}
+
+
+/* --- a tab LISTING its own swaps --------------------------------------------------
+ *
+ * The order is inscribed from this account (an order batch, trade_orders.py) naming its
+ * keys -- one per chain, which is what `take_key` is for -- its messaging key, and this
+ * node, so other arcades show it while this node is online. A tab's order lives an hour
+ * and is posted again while the tab stays open: a closed tab's swaps leave by themselves.
+ * Proposals are answered HERE, and only exactly this order's terms are accepted.
+ */
+
+const MY_ORDERS = "arcade-my-orders";
+export const TAB_ORDER_LIFE = 3600;
+const TAB_REPOST = 45 * 60 * 1000;
+
+function myOrdersOf(wallet) {
+  try { return JSON.parse(localStorage.getItem(`${MY_ORDERS}:${wallet.pubkey}`) || "{\"orders\":{},\"cancels\":[],\"posted\":0,\"cursor\":0}"); }
+  catch (e) { return {orders: {}, cancels: [], posted: 0, cursor: 0}; }
+}
+function keepMyOrders(wallet, book) {
+  try { localStorage.setItem(`${MY_ORDERS}:${wallet.pubkey}`, JSON.stringify(book)); } catch (e) {}
+}
+export function myOrders(wallet) {
+  return Object.values(myOrdersOf(wallet).orders);
+}
+
+//: One post at a time from this tab: the page's tick re-posting while a List or Withdraw
+//: is posting would spend the same coins twice (txn-mempool-conflict).
+let posting = Promise.resolve();
+
+/** The order batch for this tab's listed swaps, inscribed from this account. */
+export function postMyOrders(wallet) {
+  const run = posting.then(() => spending(() => postNow(wallet)));
+  posting = run.catch(() => {});
+  return run;
+}
+
+async function postNow(wallet) {
+  const book = myOrdersOf(wallet);
+  const {me} = await messenger(wallet);
+  const acct = await (await fetch("/account")).json();
+  if (!acct.mesh_node) throw new Error("this node is not on the mesh, so no other arcade would see the swap");
+  const tags = (acct.chains || []).find((c) => c.tags) || {};
+  const now = Math.floor(Date.now() / 1000);
+  const orders = Object.values(book.orders).map((o) => ({
+    id: o.id, give: o.give, get: o.get, trade_key: o.trade_key, take_key: o.take_key,
+    msg_key: coinsHex(me.publicKey || me.public || me.pub), node: acct.mesh_node,
+    expires: now + TAB_ORDER_LIFE}));
+  const body = new TextEncoder().encode(JSON.stringify({arcade: "orders", v: 1, orders, cancels: book.cancels || []}));
+  let b64 = "";
+  for (let i = 0; i < body.length; i += 0x8000) b64 += String.fromCharCode(...body.subarray(i, i + 0x8000));
+  const asked = await fetch("/account/inscribe", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({content: btoa(b64), content_type: "application/vnd.arcade.orders+json",
+                          json: "", chain: tags.network || ""}),
+  });
+  const offer = await asked.json();
+  if (!asked.ok) throw new Error(offer.detail || "the swap could not be posted");
+  if (offer.part) throw new Error("too many swaps for one inscription; withdraw some");
+  const sent = await confirm(wallet, offer);
+  // Read again: the cursor, or another listing, may have moved while this was posting.
+  const now2 = myOrdersOf(wallet);
+  now2.posted = Date.now();
+  now2.cancels = (now2.cancels || []).filter((c) => !(book.cancels || []).includes(c));
+  keepMyOrders(wallet, now2);
+  return sent;
+}
+
+/** List a swap from this tab: give `give` {network, kind?, asset?, amount}, get `get` (coin, token or NFT). */
+export async function listOrder(wallet, give, get, options = {}) {
+  const book = myOrdersOf(wallet);
+  const id = "ord-" + coinsHex(crypto.getRandomValues(new Uint8Array(8)));
+  const side = (s) => ({network: s.network, kind: s.kind || "coin", asset: String(s.asset || ""),
+                        amount: s.kind === "nft" ? 1 : Math.round(Number(s.amount))});
+  book.orders[id] = {id, give: side(give), get: side(get), labels: [give.label || "", get.label || ""],
+                     approved: !!options.approved,
+                     trade_key: coinsHex(keysOn(wallet, give.network).pubkey),
+                     take_key: coinsHex(keysOn(wallet, get.network).pubkey)};
+  keepMyOrders(wallet, book);
+  await postMyOrders(wallet);
+  return book.orders[id];
+}
+
+export async function withdrawOrder(wallet, id) {
+  const book = myOrdersOf(wallet);
+  delete book.orders[id];
+  book.cancels = [...new Set([...(book.cancels || []), id])];
+  keepMyOrders(wallet, book);
+  await postMyOrders(wallet);
+}
+
+/** Answer proposals against this tab's orders: exactly the order's terms are accepted (and
+ *  traded as the responder), anything else is cancelled. Re-posts the orders when due. */
+export async function answerProposals(wallet) {
+  const book = myOrdersOf(wallet);
+  const heard = await tradeHeard(wallet, book.cursor);
+  book.cursor = heard.cursor;
+  keepMyOrders(wallet, book);
+  const trades = tradesOf(wallet);
+  const now = Math.floor(Date.now() / 1000);
+  for (const a of heard.answers) {
+    const p = a.json;
+    if (p.step !== "propose" || trades[p.id]) continue;
+    const mine = book.orders[p.order];
+    const fits = mine && p.get && p.give
+      && p.get.network === mine.give.network && p.get.kind === mine.give.kind
+      && (p.get.asset || "") === mine.give.asset && p.get.amount === mine.give.amount
+      && p.get.giver_key === mine.trade_key
+      && p.give.network === mine.get.network && p.give.kind === mine.get.kind
+      && (p.give.asset || "") === mine.get.asset && p.give.amount >= mine.get.amount
+      && p.give.taker_key === mine.take_key
+      && Number.isInteger(p.t1) && Number.isInteger(p.t2) && p.t2 < p.t1
+      && p.t2 - TRADE.LOCK_MARGIN > now && /^[0-9a-f]{64}$/.test(p.secret_hash || "");
+    if (!fits) {
+      await tradeSay(wallet, a.sender, {t: "trade", v: 1, id: p.id, step: "cancel",
+                                        reason: mine ? "those are not this swap's terms" : "no such swap here"});
+      continue;
+    }
+    const trade = {id: p.id, role: "responder", order: p.order, peer: a.sender, give: p.get, get: p.give,
+                   secret: "", secretHash: p.secret_hash, t1: p.t1, t2: p.t2, myLock: null, theirLock: null,
+                   agreed: true, acceptSent: false, cancelled: false, state: "accepted",
+                   note: "accepted; waiting for their lock", cursor: book.cursor, created: Date.now(),
+                   need: confirmationsFor(p.get, p.give, await swapBig()),
+                   approved: !!mine.approved};      // approved when it was listed
+    keepTrade(wallet, trade);
+    // Kept BEFORE it is said, and said again by tradeTick until it goes: an accept that
+    // failed to send must not leave the other side waiting for ever.
+    await sayAccept(wallet, trade).catch(() => {});
+  }
+  // Again only what has gone out before: a new listing posts itself (listOrder).
+  const again = myOrdersOf(wallet);
+  if (Object.keys(again.orders).length && again.posted && Date.now() - again.posted > TAB_REPOST)
+    await postMyOrders(wallet);
+}
+
+
+/* --- the trade runner: every arcade page, background tabs too ---------------------------
+ *
+ * 2026-10-13: "The trade loop should be ran on every arcade page ... and even if
+ * the tab is in the background, it should continue to run." base.html starts this on every
+ * page. One tab in the browser runs it at a time -- a Web Lock, held for as long as the tab
+ * lives, so when that tab closes the next arcade tab takes over -- and its beat comes from a
+ * worker's timer: a background page's own timers are slowed to once a minute (Chrome's
+ * intensive throttling), a dedicated worker's are not, and the worker's beat reaches the
+ * page as a message, not a timer. Each beat: answer proposals to this tab's listings,
+ * re-post them when due, and take the next safe step of every open trade.
+ * Pages that show trades listen for "arcade:trades" (this tab) and "storage" (another tab).
+ */
+
+export const TRADE_BEAT = 8000;
+const RUNNER_LOCK = "arcade-trade-runner";
+let runnerChain = null, runnerBusy = false, runnerStarted = false;
+const kicks = (() => { try { return new BroadcastChannel("arcade-trade-kick"); } catch (e) { return null; } })();
+
+async function tradePass() {
+  if (runnerBusy || !runnerChain) return;
+  runnerBusy = true;
+  try {
+    const w = await opened(runnerChain);
+    if (!w) return;                       // locked: nothing can be signed, nothing to do
+    if (myOrders(w).length) await answerProposals(w).catch(() => {});
+    for (const t of myTrades(w)) {
+      if (t.state === "done" || t.state === "aborted") continue;
+      try { await tradeTick(w, t.id); }
+      catch (e) {
+        const kept = tradesOf(w)[t.id];
+        if (kept) { kept.note = String(e.message || e); keepTrade(w, kept); }
+      }
+    }
+    try { globalThis.dispatchEvent(new CustomEvent("arcade:trades")); } catch (e) {}
+  } finally { runnerBusy = false; }
+}
+
+/** Start the runner in this tab (it waits its turn behind any other arcade tab running it). */
+export function startTradeRunner(chain, beat = TRADE_BEAT) {
+  if (runnerStarted) return;
+  runnerStarted = true;
+  runnerChain = chain;
+  const run = async () => {
+    let worker = null;
+    try {
+      const src = `setInterval(() => postMessage(0), ${Number(beat)});`;
+      worker = new Worker(URL.createObjectURL(new Blob([src], {type: "text/javascript"})));
+      worker.onmessage = () => { tradePass(); };
+    } catch (e) { setInterval(tradePass, beat); }
+    if (kicks) kicks.onmessage = () => { tradePass(); };
+    globalThis.__arcadeTradeRunner = true;
+    tradePass();
+    await new Promise(() => {});          // the lock is this tab's until it closes
+  };
+  if (globalThis.navigator && navigator.locks) navigator.locks.request(RUNNER_LOCK, run).catch(() => {});
+  else run();
+}
+
+/** Run a pass now: in this tab if it is the runner, else in whichever tab is. */
+export function kickTrades() {
+  if (globalThis.__arcadeTradeRunner) tradePass();
+  else if (kicks) kicks.postMessage("kick");
+}

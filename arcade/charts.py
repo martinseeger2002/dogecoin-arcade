@@ -210,7 +210,12 @@ def candles(points: Iterable[dict], buckets: int = DEFAULT_BUCKETS,
     and cannot accidentally say "the price was flat".
     """
     now = time.time() if now is None else now
-    end = (int(now) // span + 1) * span
+    points = list(points)
+    # A block may carry a time ahead of this clock (consensus allows two hours; a regtest chain mined fast runs further
+    # ahead): the window ends at the newest trade if that is later, or that trade would fall off the right edge and the
+    # chart would say "No trades yet" with one on the chain (2026-10-14, test_account_order in a full run).
+    newest = max((int(p["when"] or 0) for p in points), default=0)
+    end = (int(max(now, newest)) // span + 1) * span
     start = end - buckets * span
     slots: list[dict] = [{"start": start + n * span, "span": span,
                           "open": None, "high": None, "low": None,

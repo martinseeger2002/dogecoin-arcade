@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ wall_text(summary.collection, 'A collection') }} · PepecoinArcade{% endblock %}
+{% block title %}{{ wall_text(summary.collection, 'A collection') }} · {{ brand.name }}{% endblock %}
 {% block body %}
 {% import "_share_nft.html" as share %}
 <h1>{{ wall(summary.collection, 'collection name') }}</h1>

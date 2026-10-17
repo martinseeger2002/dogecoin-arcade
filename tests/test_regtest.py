@@ -34,19 +34,44 @@ def daemon(datadir):
     The `-datadir=` argument is the entire basis on which a process is allowed to
     be stopped, so it has to be in the argv of something that stays up. Python
     keeps whatever follows `-c` as `sys.argv` instead of trying to read it.
+
+    Handed back only once /proc says so: for the first moments after `Popen`
+    returns, the child's cmdline reads empty, and a sweep that looked then saw
+    no daemon at all and stopped nothing.
     """
-    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)",
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)",
                              f"-datadir={datadir}"])
+    for _ in range(200):
+        if R._serving(proc.pid, str(datadir)):
+            break
+        time.sleep(0.01)
+    return proc
 
 
 def test_a_datadir_with_nothing_behind_it_goes(tmp_path, monkeypatch):
     gone = datadir(tmp_path, monkeypatch, "leftover")
+    when = time.time() - 3600
+    os.utime(gone, (when, when))
     other = tmp_path / "pytest-of-robin"            # nobody's node, and no prefix
     other.mkdir()
     said = R.reap_leftovers(live={})
     assert not gone.exists(), said
     assert other.exists(), "a directory without the prefix is not this sweep's business"
     assert "1 datadir(s)" in said, said
+
+
+def test_a_fresh_datadir_with_nothing_behind_it_yet_stays(tmp_path, monkeypatch):
+    """A node built and not yet started, most likely in a sibling xdist worker.
+
+    `RegtestNode` makes its datadir when it is built and names it to a daemon
+    only on `start`, and every worker sweeps as its own session begins. Taken
+    for debris, the directory went from under the node: it refused to start
+    ("data directory does not exist") or wrote its chain into the cwd.
+    """
+    path = datadir(tmp_path, monkeypatch, "starting")
+    said = R.reap_leftovers(live={})
+    assert path.exists(), said
+    assert "0 datadir(s)" in said, said
 
 
 def test_a_daemon_older_than_a_suite_is_stopped_with_its_data(tmp_path, monkeypatch):

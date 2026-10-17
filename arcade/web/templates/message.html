@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Message · PepecoinArcade{% endblock %}
+{% block title %}Message · {{ brand.name }}{% endblock %}
 {% block body %}
 {% if not message %}
   <h1>Not found</h1><p class="sub">No message with that id.</p>

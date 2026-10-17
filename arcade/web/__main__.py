@@ -19,6 +19,7 @@ from pathlib import Path
 import uvicorn
 
 from ..config import MESSAGING_NETWORKS
+from . import brand as brandlib
 from .app import create_app
 from .state import AppState, ChainContext
 from .watcher import BlockWatcher
@@ -53,6 +54,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--doge-conf", help="Dogecoin config with rpcuser/rpcpassword")
     parser.add_argument("--doge-datadir", help="Dogecoin datadir, to read its .cookie")
     parser.add_argument("--no-doge", action="store_true", help="run without Dogecoin")
+    parser.add_argument("--brand", choices=sorted(brandlib.BRANDS),
+                        help="the face this node shows (name, colours, icons): "
+                             "dogecoin (default) or pepecoin; ARCADE_BRAND works too")
     parser.add_argument("--port", type=int, default=8420)
     parser.add_argument(
         "--public", action="store_true",
@@ -106,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
         choices=["debug", "info", "warning", "error"],
         help="how much this writes to the journal; info by default")
     args = parser.parse_args(argv)
+    if args.brand:   # before create_app, which reads it (brand.py)
+        os.environ["ARCADE_BRAND"] = args.brand
 
     # Nothing configured logging at all, so the root logger sat at its default
     # WARNING and every log.info in the package went nowhere -- two dozen
@@ -244,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
         # day put a wallet on a public address.
         print("  PUBLIC: only the feed, the collections and the chain are "
               "served; every form is refused")
-    print(f"PepecoinArcade  ->  http://{args.host}:{args.port}")
+    print(f"{brandlib.current().name}  ->  http://{args.host}:{args.port}")
     # Without a timeout here uvicorn waits for every request to finish before it
     # stops, and a game room's event stream is a request that never finishes --
     # so a restart while anyone was playing ran into the stop timeout and the

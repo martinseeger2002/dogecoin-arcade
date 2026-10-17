@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Affiliates · {{ brand.name }}{% endblock %}
+{% block body %}
+{# Who the arcade works with (2026-10-15: an Affiliates tab between the Exchange and
+   the Docs; antidoginaldogs.com -- Doge Soft removed the same day). The list is app.py AFFILIATES. #}
+<style>
+.aff-list{display:grid;gap:12px;max-width:640px}
+.aff-card{display:block;text-decoration:none;color:inherit;padding:16px 18px}
+.aff-card strong{display:block;font-size:1.05rem;color:var(--accent)}
+.aff-card .about{display:block;margin-top:6px;font-size:.9rem;color:var(--muted)}
+.aff-card .where{display:block;margin-top:8px;font-size:.8rem;color:var(--muted)}
+</style>
+<h1>Affiliates</h1>
+<p class="sub">Projects this arcade works with. Each link opens their own site.</p>
+
+<div class="aff-list">
+  {% for a in affiliates %}
+  <a class="panel aff-card" href="{{ a.url }}" target="_blank" rel="noopener">
+    <strong>{{ a.name }}</strong>
+    <span class="about">{{ a.about }}</span>
+    <span class="where">{{ a.url|replace('https://', '') }} &#8599;</span>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

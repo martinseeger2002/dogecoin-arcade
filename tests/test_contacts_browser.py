@@ -46,9 +46,20 @@ def served(tmp_path_factory):
     from pathlib import Path
     from arcade.web.app import create_app
     from arcade.web.state import AppState, ChainContext
+    from arcade.db import Database
+    from arcade.state import install_schema
 
+    home = tmp_path_factory.mktemp("contacts")
+    # @robin claimed on the chain: a profile draws its Save button only for a
+    # name somebody holds, and removing is done from there.
+    db = Database(home / "regtest-ledger.sqlite")
+    install_schema(db)
+    db.conn.execute("INSERT INTO tag(tag,address,claimed_txid,block_height,position) "
+                    "VALUES('robin','nrobinAddress',?,100,0)", ("aa" * 32,))
+    db.conn.commit()
+    db.close()
     state = AppState(
-        home=tmp_path_factory.mktemp("contacts"),
+        home=home,
         messaging=ChainContext(network="regtest", role="messaging",
                                label="Testnet", datadir=Path("/nonexistent")),
         ledger=ChainContext(network="main", role="ledger", label="Mainnet",
@@ -114,12 +125,15 @@ def _signed_in(browser, base):
     phrase = seed.generate()
     # Signed in AND the wallet open in this tab, which is what somebody who
     # just made an account has: signing in opens it, and it stays open from
-    # page to page until the tab is closed.
+    # page to page until the tab is closed. Its addresses told to the node,
+    # as the join page does, so pages draw the account and not the node.
     answer = browser.execute_async_script("""
         const done = arguments[1];
         Promise.all([import("/signin.js"), import("/wallet.js")])
           .then(([s, w]) => s.signIn(arguments[0], {join: true})
-                             .then(() => { w.remember(arguments[0]); }))
+                             .then(() => { w.remember(arguments[0]); })
+                             .then(() => w.opened(ARCADE_CHAIN))
+                             .then((keys) => w.tellTheNode(keys)))
           .then(() => done(true), e => done(String(e.message || e)));""",
         phrase)
     assert answer is True, answer
@@ -279,9 +293,12 @@ def test_the_book_is_in_the_browser_and_not_on_the_node(browser, served):
         };
         open.onerror = () => done(["error"]);""")
     assert stored == ["robin"]
-    # The node's own files say nothing about it.
+    # The node's own files say nothing about it. The chain's index names
+    # @robin for its claim (the fixture's), which is not a contact.
+    claims = state.ledger_index_path(state.messaging).name
     hits = [p for p in state.home.rglob("*")
-            if p.is_file() and b"robin" in p.read_bytes()]
+            if p.is_file() and not p.name.startswith(claims)
+            and b"robin" in p.read_bytes()]
     assert not hits, f"the node wrote a contact down: {hits}"
 
 
@@ -324,6 +341,12 @@ def test_removing_somebody_removes_them(browser, served):
         yes = browser.find_elements(By.CSS_SELECTOR, ".askcard button")
         if yes:
             yes[0].click()
+            break
+        time.sleep(0.25)
+    # Gone from the book once the button says so again; leaving sooner can
+    # cut the removal off mid-write.
+    for _ in range(40):
+        if "+ Save" in browser.find_element(By.ID, "save-them").text:
             break
         time.sleep(0.25)
     _book_page(browser, base)

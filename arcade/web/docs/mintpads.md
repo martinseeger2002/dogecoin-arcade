@@ -107,7 +107,7 @@ The wallet answers with messages carrying the same `arcade` and `seq`:
   anything else is a reason to show them.
 
 If no `heard` arrives within about four seconds, the page is not open inside
-the arcade: say "Open this mintpad on PepecoinArcade to mint from it."
+the arcade: say "Open this mintpad on DogecoinArcade to mint from it."
 
 A page shown in a post can ask for the room it needs:
 `parent.postMessage({arcade: "size", height: 640}, "*")`.

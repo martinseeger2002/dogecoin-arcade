@@ -654,8 +654,12 @@ def test_what_is_away_from_home_is_found_and_walked_back():
             self.unspent = unspent
 
         def call(self, method, *args):
+            if method == "validateaddress":
+                return {"ismine": args[0] not in self.watched}
             assert method == "listunspent"
             return self.unspent
+
+        watched: set = set()
 
     own = ["nHome", "nElse", "nBroke"]
     index = Index()
@@ -1099,3 +1103,39 @@ def test_the_exchange_address_is_never_walked_home():
                      send_coins=lambda *a, **k: sent.append(a),
                      send_token=lambda *a: sent.append(a), send_piece=lambda *a: sent.append(a))
     assert sent == [], "nothing leaves the exchange address"
+
+
+def test_a_watched_address_is_never_seeded_swept_or_walked():
+    """2026-10-15: the test node WATCHES the ASHVALE publish key's address (no key). Gather took it for its own, never
+    saw it able to pay (its coins are spendable=false) and sent it a fee to travel with every pass -- ~800 a day."""
+    from arcade import gather
+
+    class Index:
+        def token_holders(self):
+            return [{"address": "nWatched"}, {"address": "nTokenOnly"}]
+
+        def balances(self, addresses):
+            return [{"address": a, "property_id": 26, "name": "GOLD", "balance": 5, "display": "5"}
+                    for a in addresses if a in ("nWatched", "nTokenOnly")]
+
+        def inscriptions(self, owner=None, limit=50, **k):
+            return []
+
+    class Node:
+        def call(self, method, *args):
+            if method == "validateaddress":
+                return {"ismine": args[0] != "nTokenOnly"} if args[0] != "nWatched" else {"ismine": False}
+            if method == "listunspent":
+                return [{"address": "nWatched", "txid": "77" * 32, "vout": n, "amount": 3.0, "spendable": False}
+                        for n in range(4)]
+            raise AssertionError(method)
+
+    found = gather.stray(Node(), Index(), "nHome", ["nHome", "nWatched", "nTokenOnly"])
+    assert "nWatched" not in found["needs_coins"], "it holds coins already: no fee, ever again"
+    assert all(t["address"] != "nWatched" for t in found["tokens"]), "nothing on it can move from here"
+    assert found["needs_coins"] == [], "and an address this wallet cannot sign for is never seeded either"
+    sent = []
+    gather.walk_home(Node(), Index(), "nHome", ["nHome", "nWatched", "nTokenOnly"],
+                     send_coins=lambda *a, **k: sent.append(a) or "t", send_token=lambda *a: sent.append(a) or "t",
+                     send_piece=lambda *a: sent.append(a) or "t")
+    assert sent == [], "a pass sends nothing for them"

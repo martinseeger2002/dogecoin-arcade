@@ -123,10 +123,14 @@ def test_the_page_offers_numbers_and_a_way_to_jump(client):
     assert app.get("/inscriptions").status_code == 200
     assert app.get("/inscriptions?page=7").status_code == 200
 
-    source = pathlib.Path("arcade/web/templates/inscriptions.html").read_text()
+    # The pager is one macro shared with /tokens (_pager.html), drawn here for /nfts.
+    page = pathlib.Path("arcade/web/templates/inscriptions.html").read_text()
+    assert '{% from "_pager.html" import pager %}' in page
+    assert 'pager(page, pages, "/nfts")' in page
+    source = pathlib.Path("arcade/web/templates/_pager.html").read_text()
     assert "macro pager" in source
     assert 'name="page"' in source, "a box to jump with"
-    assert "/nfts?page={{ pages }}" in source, "and a way to the last one"
+    assert "{{ base }}?page={{ pages }}" in source, "and a way to the last one"
     assert "{% if pages > 1 %}" in source, "and nothing at all when there is one"
 
 
@@ -138,4 +142,8 @@ def test_the_feed_offers_a_way_back_through_older_posts(client):
     source = __import__("pathlib").Path(
         "arcade/web/templates/feed.html").read_text()
     assert "before=" in source, "a way to the older ones"
-    assert app.get("/feed?before=5").status_code == 200
+    # Each order has its own cursor (feed_page): New's is a bare id, Popular's
+    # (the default) `id@score@asof`, and one from the other order is refused.
+    assert app.get("/feed?sort=new&before=5").status_code == 200
+    assert app.get("/feed?before=5@1.5@1700000000").status_code == 200
+    assert app.get("/feed?before=5").status_code == 400

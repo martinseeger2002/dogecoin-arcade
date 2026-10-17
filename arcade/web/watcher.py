@@ -64,6 +64,10 @@ GATHER_EVERY = 2
 #: minutes. The next poll continues from the cursor.
 BLOCKS_PER_PASS = 500
 
+#: The shop's standing passes (sell at the asking price, fill what crosses) when no new block
+#: has come: a safety net, since a block is what gives them anything new to do.
+SHOP_EVERY = 60.0
+
 
 class BlockWatcher:
     """Scans each chain when its tip moves, on a daemon thread."""
@@ -128,6 +132,9 @@ class BlockWatcher:
                       self._keep_shop,
                       self._run_xchain,
                       self._import_listings,
+                      self._import_orders,
+                      self._run_trader,
+                      self._run_watch,
                       self._walk_home):
             try:
                 phase()
@@ -136,6 +143,8 @@ class BlockWatcher:
                 log.warning("watcher: %s failed", name, exc_info=True)
 
     _shopkeeper = None
+    _shop_tip: int | None = None        # the tip the shop's standing passes last ran at
+    _shop_at = float("-inf")
     _gathered_at = 0
 
     #: Mempool transactions already read, per chain. Kept on the watcher so
@@ -180,6 +189,47 @@ class BlockWatcher:
 
     _listings_at = 0.0
 
+    def _import_orders(self) -> None:
+        """Trade orders inscribed on the chain (arcade/trade_orders.py), filed here so the
+        Exchange can show them while their node is online. Every 30 s."""
+        from .. import trade_orders
+        if time.time() - getattr(self, "_orders_at", 0.0) < 30:
+            return
+        self._orders_at = time.time()
+        for chain in self.state.token_chains:
+            try:
+                trade_orders.import_announced(self.state.trade_orders, self.state.token_index(chain),
+                                              chain.network)
+            except Exception:
+                log.debug("order import on %s failed", chain.network, exc_info=True)
+
+    def _run_watch(self) -> None:
+        """Accounts' pre-signed swap claims and refunds (arcade/trade_watch.py), every 15 s:
+        what lets a swap finish with its tabs closed. Not behind node_trades -- it only ever
+        sends what an account signed itself, paying that account."""
+        if time.time() - getattr(self, "_watch_at", 0.0) < 15:
+            return
+        self._watch_at = time.time()
+        for job, said in self.state.trade_watch.tick(self.state.chain_rpc_for):
+            log.info("swap watch: %s %s", job, said)
+
+    def _run_trader(self) -> None:
+        """This node's own lock-script trades, every 15 s -- only while the operator has
+        node-facilitated trades on (the trader checks the switch itself)."""
+        if not self.state.setting("node_trades", False):
+            return
+        if time.time() - getattr(self, "_trader_at", 0.0) < 15:
+            return
+        self._trader_at = time.time()
+        trader = self.state.node_trader
+        try:
+            trader.tick()
+            mesh = getattr(self.state, "mesh", None)
+            if mesh is not None and trader.post_due():
+                trader.post(mesh.node_id)
+        except Exception:
+            log.warning("node trader pass failed", exc_info=True)
+
     def _import_listings(self) -> None:
         """Listings other nodes' sellers put on the chain, filed here too, so a
         mintpad inscription sells on every node (arcade/listing_announce.py)."""
@@ -222,8 +272,20 @@ class BlockWatcher:
         if self._shopkeeper is None:
             from ..shopkeeper import Shopkeeper
             self._shopkeeper = Shopkeeper(self.state)
-        if self._shopkeeper.tick():
+        acted = self._shopkeeper.tick()
+        if acted:
             self.state.bump_generation()
+        # The two passes below read only what a block made true (an offer in a block, a
+        # book the ledger index holds), so they run when the chain's tip moves, after the
+        # shop acted, or once a minute in case a pass failed -- not every five seconds.
+        # Each asks the node for this wallet's addresses, and on a test wallet of tens of
+        # thousands of transactions that held the node's lock for seconds at a time, so
+        # every page that asked the node anything waited (the slow Wallet tab, 2026-10-15).
+        tip = self.state.ledger_tips.get(self.state.messaging.network)
+        now = time.monotonic()
+        if not acted and tip == self._shop_tip and now - self._shop_at < SHOP_EVERY:
+            return
+        self._shop_tip, self._shop_at = tip, now
         # And what this wallet has already promised in public: an offer that
         # meets a standing ask is a sale the owner agreed to when they said
         # the price (D-101).

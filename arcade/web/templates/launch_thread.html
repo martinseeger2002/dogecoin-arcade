@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ wall_text(launch.name, 'A launch') }} · {{ 'Games' if launch.kind == 'game' else 'Launches' }} · PepecoinArcade{% endblock %}
+{% block title %}{{ wall_text(launch.name, 'A launch') }} · {{ 'Games' if launch.kind == 'game' else 'Launches' }} · {{ brand.name }}{% endblock %}
 {% block body %}
 {# One launch's whole discussion (2026-09-27): every comment, and the
    replies to each, the way the feed shows a thread. Anyone can read it; an

@@ -154,4 +154,5 @@ def test_the_browser_derives_a_different_key_on_each_chain():
     assert "keysOn(wallet, offer.chain" in wallet, \
         "the signer picks its key by the offer's chain"
     coins = pathlib.Path("arcade/web/templates/coins.js").read_text()
-    assert "COIN_TYPE = {main: 3, test: 1, regtest: 1}" in coins
+    # Dogecoin (the third network) is SLIP-44's own 3, the one Pepecoin borrows.
+    assert "COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3}" in coins

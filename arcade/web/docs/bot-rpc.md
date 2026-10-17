@@ -1,6 +1,6 @@
 # Bot RPC — Omni Core's methods, for scripts
 
-PepecoinArcade serves a JSON-RPC endpoint for programs: airdrop bots, faucets,
+DogecoinArcade serves a JSON-RPC endpoint for programs: airdrop bots, faucets,
 leaderboards, anything that reads token balances or moves tokens without a
 person clicking. It speaks in [Omni Core's method
 names](https://github.com/OmniLayer/omnicore/blob/master/src/omnicore/doc/rpc-api.md),
@@ -16,7 +16,7 @@ so anyone who has scripted against Omni knows it already. The code is
 | Auth | HTTP basic auth with the contents of `~/.dogecoinarcade/rpc.cookie` (`__cookie__:<secret>`, mode 0600, rewritten at every start of arcade-web) |
 | Body | `{"id": 1, "method": "omni_getbalance", "params": ["nAddress", 3]}` — positional or named params, batches as a list |
 | Answer | `{"result": ..., "error": null, "id": 1}`; on failure `error` is `{"code", "message"}` in bitcoind's codes (`src/rpc/protocol.h`): -32601 unknown method, -32602 wrong arguments, -8 bad value, -5 bad address, -4 not this wallet's address |
-| Shell | `arcade-rpc omni_listproperties`, `arcade-rpc -main omni_getinfo` — reads the cookie for you; testnet unless `-main`. The installer puts it beside `dogecoinarcade` (`~/.local/bin`, or `%LOCALAPPDATA%\PepecoinArcade\bin` on Windows); `dogecoinarcade-update` adds it to an existing installation |
+| Shell | `arcade-rpc omni_listproperties`, `arcade-rpc -main omni_getinfo` — reads the cookie for you; testnet unless `-main`. The installer puts it beside `dogecoinarcade` (`~/.local/bin`, or `%LOCALAPPDATA%\DogecoinArcade\bin` on Windows); `dogecoinarcade-update` adds it to an existing installation |
 
 Nothing listens anywhere but loopback, and the cookie is the whole key: a
 browser tab cannot present it, so this endpoint is out of reach of the

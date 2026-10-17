@@ -49,7 +49,7 @@ def test_mix_lists_both_chains_and_the_cross_chain_book(client, monkeypatch):
         assert f"{label}</a>" in page, label
     assert 'href="/exchange?tab=tokens" aria-current="true">Mix' in page, "Mix is the default"
     assert sorted(set(_nets(page))) == ["cross", "mainnet", "testnet"], _nets(page)
-    assert "/exchange/x/token/59" in page
+    assert "/exchange/swap/regtest-token-59/main-coin" in page
 
 
 def test_each_chip_shows_only_its_own_markets(client, monkeypatch):
@@ -59,8 +59,8 @@ def test_each_chip_shows_only_its_own_markets(client, monkeypatch):
         assert set(_nets(page)) == {show}, (show, _nets(page))
         assert f'show={show}" aria-current="true"' in page, show
     cross = app.get("/exchange?tab=tokens&show=cross").text
-    assert "/exchange/x/token/59" in cross and "/exchange/pairs/7/8" not in cross
-    assert "/exchange/x/token/59" not in app.get("/exchange?tab=tokens&show=mainnet").text
+    assert "/exchange/swap/regtest-token-59/main-coin" in cross and "/exchange/pairs/7/8" not in cross
+    assert "/exchange/swap/regtest-token-59/main-coin" not in app.get("/exchange?tab=tokens&show=mainnet").text
     assert set(_nets(app.get("/exchange?tab=tokens&show=nonsense").text)) == {"cross", "mainnet", "testnet"}, \
         "an unknown chip is the mix"
 

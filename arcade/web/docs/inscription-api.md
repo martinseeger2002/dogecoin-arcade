@@ -491,7 +491,7 @@ chain, which is where storage was never going to help it.
 ### Talking to another node
 
 Your page cannot fetch anything off the machine it runs on (§2). What it can
-do is send a **node-to-node message** — sealed to another PepecoinArcade
+do is send a **node-to-node message** — sealed to another DogecoinArcade
 node's key, sent as the wallet you are running in, carried on the chain —
 and read what that node sends back. The shop's own node, the game's table,
 a bot that fills orders: give the page that node's public key or contact

@@ -161,23 +161,33 @@ def _press(driver, label, timeout=60):
     raise AssertionError(f"no {label!r} card appeared")
 
 
-def test_two_players_trade_an_nft_for_a_token_inside_a_game(world):
+@pytest.fixture(scope="module")
+def met(world):
+    """Both players signed up, in the game page, and in its room together.
+
+    Here rather than in whichever test runs first: the second test used to
+    find the room the first one had joined, and alone it found none."""
     base, state, node, a, b = world
     alice = _signed_up(a, base, state, node, "alicetrades")
     bob = _signed_up(b, base, state, node, "bobtrades")
     _settled(state, node.rpc)          # the claims mined, and their keys read
     _inscribe(state, GAME, 900, alice, "text/html; charset=utf-8", PAGE,
               {"game": {"name": "Trade Test"}})
-    _inscribe(state, PIECE, 901, alice, "text/plain", b"a sword")
-    pid = _token(state, property_id=140, name="Gold")
-    _balance(state, bob, pid, 100 * COIN)
-
     _in_game(a, base)
     _in_game(b, base)
     for driver, other in ((a, bob), (b, alice)):
         _wait(driver, f"return window.room && window.room.online && "
                       f"window.room.members().some(p => p.id === '{other}')",
               "the other player in the room")
+    return world + (alice, bob)
+
+
+def test_two_players_trade_an_nft_for_a_token_inside_a_game(met):
+    base, state, node, a, b, alice, bob = met
+    _inscribe(state, PIECE, 901, alice, "text/plain", b"a sword")
+    pid = _token(state, property_id=140, name="Gold")
+    _balance(state, bob, pid, 100 * COIN)
+    a.execute_script("window.log = []"); b.execute_script("window.log = []")
 
     a.set_script_timeout(30)
     a.execute_script(
@@ -210,10 +220,9 @@ def test_two_players_trade_an_nft_for_a_token_inside_a_game(world):
     assert int(index.balance(bob, pid)) == 75 * COIN
 
 
-def test_an_nft_for_an_nft_and_a_trade_said_no_to(world):
+def test_an_nft_for_an_nft_and_a_trade_said_no_to(met):
     """Both sides an NFT (the proposer signs), then an offer the other declines."""
-    base, state, node, a, b = world
-    alice, bob = a.execute_script("return window.room.me.id"), b.execute_script("return window.room.me.id")
+    base, state, node, a, b, alice, bob = met
     mine, theirs = "f0" * 32, "f1" * 32
     _inscribe(state, mine, 910, alice, "text/plain", b"a shield")
     _inscribe(state, theirs, 911, bob, "text/plain", b"a helmet")

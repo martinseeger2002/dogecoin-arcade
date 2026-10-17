@@ -220,6 +220,27 @@ def doors(browser, served):
     assert "error" not in made, made
     daemon.rpc.call("sendtoaddress", made["address"], 3.0)
     _opened(state, daemon)
+    # Finish setting the account up as signup does -- the name claimed, the
+    # messaging key published -- and mine both. Left undone, the first page this
+    # browser opens does it in the background (base.html's key check), and two
+    # spends the tests never asked for land in the mempool of whichever test
+    # happens to open a page first: under xdist that was the owner door's, which
+    # reads an empty mempool as proof that nothing was spent.
+    finished = browser.execute_async_script("""
+        const done = arguments[1];
+        (async () => {
+          try {
+            const keys = await window.w.opened(
+              {network: "regtest", version: arguments[0]});
+            if (!keys) throw new Error("no open key in this tab");
+            const claimed = await window.w.claim(keys);
+            const me = await window.m.identity(keys.phrase);
+            const announced = await window.m.announce(keys, me, "doortester");
+            done({claimed: claimed.txid, announced: announced.txid});
+          } catch (e) { done({error: String(e.message || e)}); }
+        })();""", state.messaging.params.pubkeyhash_version)
+    assert "error" not in finished, finished
+    _opened(state, daemon)
 
     node_key = state.ensure_identity().public_bytes.hex()
     # The page goes up the way an account puts anything on the chain: it asks

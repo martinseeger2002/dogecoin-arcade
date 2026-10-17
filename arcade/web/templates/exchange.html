@@ -2,7 +2,7 @@
 {% import "_chains.html" as chains %}
 {% import "_token_confirm.html" as tk %}
 {% import "_exui.html" as ex %}
-{% block title %}Exchange · PepecoinArcade{% endblock %}
+{% block title %}Exchange · {{ brand.name }}{% endblock %}
 {% block body %}
 {% macro tabs(current) %}
 <div id="live" data-generation="{{ state.generation }}" class="live"></div>
@@ -14,6 +14,13 @@
   <a class="{{ 'on' if current == 'tokens' }}" href="/exchange?tab=tokens"{% if current == 'tokens' %} aria-current="page"{% endif %}>Tokens</a>
   <a class="{{ 'on' if current == 'market' }}" href="/exchange?tab=market"{% if current == 'market' %} aria-current="page"{% endif %}>NFTs</a>
   <a class="{{ 'on' if current == 'mintpads' }}" href="/exchange?tab=mintpads"{% if current == 'mintpads' %} aria-current="page"{% endif %}>Launchpad</a>
+  {# Doginals for DOGE on a tab of their own (2026-10-14), grayed out while Dogecoin syncs. #}
+  {%- set dg = (chain_menu()|selectattr('doge')|list or [none])[0] %}
+  {%- if dg and dg.ready %}
+  <a class="{{ 'on' if current == 'doginals' }}" href="/exchange?tab=doginals"{% if current == 'doginals' %} aria-current="page"{% endif %}>Doginals</a>
+  {%- elif dg %}
+  <span class="chain-off" aria-disabled="true" title="Doginals open when the Dogecoin node has synced ({{ dg.progress }}% so far)">Doginals</span>
+  {%- endif %}
   <a id="ex-offers-tab" class="{{ 'on' if current == 'offers' }}" href="/exchange?tab=offers"{% if current == 'offers' %} aria-current="page"{% endif %}>Offers
     {%- if waiting_offers %}<span class="nav-count" aria-label="{{ waiting_offers }} waiting">{{ waiting_offers if waiting_offers < 100 else '99+' }}</span>{% endif %}</a>
 </nav>
@@ -298,7 +305,7 @@ document.addEventListener('click', function (ev) {
       {{ xthumb(b) }}
       <div class="oftext">Somebody offers <strong>{{ b.pep }} PEP</strong> {{ net_badge(true) }} for your {{ xpiece(b) }}
         <div class="muted" style="font-size:.8rem">Real coins, held by this node until you sell. It takes 0.5%.</div></div>
-      <div class="ofdo"><a class="btn small" href="/exchange/x/nft/{{ b.inscription }}?side=sell&amp;price={{ b.pep }}#x-form">Sell for {{ b.pep }} PEP</a></div>
+      <div class="ofdo"><a class="btn small" href="/exchange/x/nft/{{ b.inscription }}?held=1&amp;side=sell&amp;price={{ b.pep }}#x-form">Sell for {{ b.pep }} PEP</a></div>
     </div>
     {% endfor %}
   </div>
@@ -313,7 +320,7 @@ document.addEventListener('click', function (ev) {
       <div class="oftext">You offer <strong>{{ b.pep }} PEP</strong> {{ net_badge(true) }} for {{ xpiece(b) }}
         <div style="margin-top:3px">{% if b.status == 'awaiting' %}<span class="ex-pill wait">Checking deposit</span>
           {% else %}<span class="ex-pill open">Waiting for the owner</span>{% endif %}</div></div>
-      <div class="ofdo"><a class="btn ghost small" href="/exchange/x/nft/{{ b.inscription }}">Manage</a></div>
+      <div class="ofdo"><a class="btn ghost small" href="/exchange/x/nft/{{ b.inscription }}?held=1">Manage</a></div>
     </div>
     {% endfor %}
   </div>
@@ -422,6 +429,8 @@ document.addEventListener('click', function (ev) {
   </div>
   {% endif %}
 
+{% elif tab == 'doginals' %}
+{% include "_doginals_tab.html" %}
 {% elif tab == 'mintpads' %}
   {# Every mintpad, NFT and token alike, drawn as the feed draws it and ranked
      like the old Launches list (2026-09-28). The buttons are the feed's
@@ -614,7 +623,7 @@ document.addEventListener('click', function (ev) {
       {%- else %}<span class="ex-tic" style="background:hsl({{ ((p.property_id|string|length * 97 + (p.name|length) * 31) % 360) }} 45% 42%)">{{ (wall_text(p.name, '?') or '?')[:1]|upper }}</span>{% endif %}
       {# Each row still says which chain and what supply (2026-10-06): the badges, small. #}
       <span class="ex-mid"><b>{{ wall(p.name, 'token name') }}<span class="muted" style="font-weight:500">/{% if p.quote_label %}{{ wall(p.quote_label, 'token name') }}{% else %}{{ coin_name }}{% endif %}</span></b>
-        <small>{{ net_badge(p.chain_net or p.mainnet) }}{% if p.quote_main %}<span class="muted">/</span>{{ net_badge(true) }}{% endif %}{% if p.property_id %}{{ supply_badge(p) }}{% endif %}
+        <small>{{ net_badge(p.chain_net or p.mainnet) }}{% if p.quote_net %}<span class="muted">/</span>{{ net_badge(p.quote_net) }}{% elif p.quote_main %}<span class="muted">/</span>{{ net_badge(true) }}{% endif %}{% if p.property_id %}{{ supply_badge(p) }}{% endif %}
           {#- The whole description, behind its wall (a verdict is kept per text): CSS cuts it short. -#}
           {%- if p.coins %} {{ p.trades }} trade{{ '' if p.trades == 1 else 's' }} today{% elif p.bid or p.ask %} {{ p.orders }} order{{ '' if p.orders == 1 else 's' }}{% endif %}
           {%- if p.about %}<span class="about" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ wall(p.about, 'description') }}</span>{% endif %}</small></span>
@@ -652,31 +661,111 @@ document.addEventListener('click', function (ev) {
 
   {# Token/token pairs (Params.token_pairs_from, 2026-10-06): one token priced in
      another, matched by the chain itself when two orders cross. #}
-  <div class="ex-card" style="margin-top:18px">
-    <h3 style="margin:0 0 4px">Start a market</h3>
-    <p class="muted" style="font-size:.84rem;margin:0 0 12px">Pick a token you hold and what you want for it.
-      Once it has an order, it is listed above with the rest.</p>
-    {% if pair_viewer == 'nobody' %}
-    <p class="muted" style="margin:0">Sign in to open a pair with a token you hold.</p>
-    {% elif not held_tokens %}
-    <p class="muted" style="margin:0">Your wallet holds no tokens yet. A pair starts from one you have.</p>
-    {% else %}
-    {# Only what this reader holds, plus the two coins (2026-10-06: "both drop downs
-       should only show tokens that you own plus test net plus main net Pepecoin. That way
-       the list isn't 1 million items long"). #}
-    {% macro pair_options(selected_first) -%}
-      {%- for t in held_tokens %}<option value="{{ t.property_id }}"{% if selected_first and loop.first %} selected{% endif %}>{{ wall_text(t.name, 'token') }} (#{{ t.property_id }}){{ ' · managed' if t.managed }}</option>{% endfor %}
-      <option value="coin"{% if not selected_first %} selected{% endif %}>Pepecoin, testnet (PEP TEST)</option>
-      {% if xchain_open %}<option value="main">Pepecoin, mainnet (PEP): held by this node while it trades</option>
-      {% else %}<option value="main" disabled>Pepecoin, mainnet (PEP): not open on this node</option>{% endif %}
-    {%- endmacro %}
-    <form method="get" action="/exchange/pairs" style="margin:0">
-      <div class="ex-box"><label for="pair-base">You have</label>
-        <select id="pair-base" name="base" style="width:100%;margin-top:4px">{{ pair_options(true) }}</select></div>
-      <div class="ex-box"><label for="pair-quote">Trade it for</label>
-        <select id="pair-quote" name="quote" style="width:100%;margin-top:4px">{{ pair_options(false) }}</select></div>
-      <button type="submit" class="ex-cta">Open the market</button>
+  {# One trade box (2026-10-15: the swaps card and Start a market "are going to be
+     combined ... it also should show more information like the price per asset priced in the
+     other asset ... I want 1000 <token/coinA> at <N values> <token/coinB> per <token/coinA>").
+     Any coin, or a token or piece you hold, on any chain, for any other: both on one chain open
+     that chain's own market (instant, one transaction); two chains list a swap, settled by lock
+     scripts. Below it, the swaps every arcade lists, each with its price. #}
+  {% set trades_here = (viewer == 'account' and can_list_orders) or can_trade_orders %}
+  <div class="ex-card" id="trade-orders" style="margin-top:18px">
+    <h3 style="margin:0 0 4px">Trade any pair</h3>
+    <p class="muted" style="font-size:.84rem;margin:0 0 12px">Both on one chain: that chain's own market, settled
+      instantly in one transaction. On two chains: a swap settled by lock scripts on both -- either both sides get
+      paid or both get their own back, and nobody holds anybody's coins. <a href="/docs/swaps.md">How a swap works</a></p>
+    {% if public or viewer == 'account' %}<form id="start-market" method="get" action="/exchange/pairs" style="margin:0"{% if viewer == 'account' and can_list_orders %} data-account-trade{% endif %}>
+    {% else %}<form id="start-market" method="post" action="/exchange/trade-orders/place" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">{% endif %}
+      <div class="ex-seg" role="radiogroup" aria-label="Buy or sell" style="margin-bottom:10px">
+        <label><input type="radio" name="side" value="buy" checked><span>I want to buy (bid)</span></label>
+        <label><input type="radio" name="side" value="sell"><span>I want to sell (ask)</span></label>
+      </div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">
+        <input name="amount" inputmode="decimal" placeholder="1000" autocomplete="off" style="width:96px;flex:0 0 auto" aria-label="How many">
+        <select id="pair-base" name="base" style="flex:1 1 150px;min-width:0" aria-label="Of what">
+          {%- for o in pair_choices or [] %}<option value="{{ o.key }}" data-net="{{ o.net }}" data-kind="{{ o.kind }}" data-div="{{ 1 if o.divisible else 0 }}" data-name="{{ o.name }}"{% if loop.first and o.kind != 'coin' %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+        </select>
+        <input name="token" inputmode="numeric" placeholder="token #" autocomplete="off" hidden style="width:96px;flex:0 0 auto" aria-label="Token number">
+      </div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px">
+        <span class="muted" style="font-size:.9rem">at</span>
+        <input name="price" inputmode="decimal" placeholder="price" autocomplete="off" style="width:96px;flex:0 0 auto" aria-label="Price">
+        <select id="pair-quote" name="quote" style="flex:1 1 150px;min-width:0" aria-label="Priced in">
+          {%- for o in pair_choices or [] if o.kind not in ('nft', 'other') %}<option value="{{ o.key }}" data-net="{{ o.net }}" data-kind="{{ o.kind }}" data-div="{{ 1 if o.divisible else 0 }}" data-name="{{ o.name }}"{% if loop.index == 2 %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+        </select>
+        <span class="muted" style="font-size:.9rem">per <b id="pair-per">each</b></span>
+      </div>
+      <p class="muted" id="pair-sum" style="font-size:.84rem;margin:8px 0 0" aria-live="polite"></p>
+      <button type="submit" class="ex-cta" id="pair-go" style="margin-top:10px">{{ 'Place order' if trades_here else 'Open the market' }}</button>
     </form>
+    {% if pair_viewer == 'nobody' %}<p class="muted" style="font-size:.8rem;margin:8px 0 0">Sign in to trade, and to see your own tokens and pieces here.</p>{% endif %}
+    <script>
+    (function () {
+      var f = document.getElementById('start-market'); if (!f) return;
+      var trades = {{ 'true' if trades_here else 'false' }};
+      function pick(sel) { var o = sel.selectedOptions[0]; return o ? o.dataset : {}; }
+      function draw() {
+        var a = pick(f.base), b = pick(f.quote), n = Number(f.amount.value), p = Number(f.price.value);
+        var nft = a.kind === 'nft', other = a.kind === 'other';
+        f.amount.hidden = nft; if (nft) f.amount.value = '1';
+        f.token.hidden = !other;
+        document.getElementById('pair-per').textContent = nft ? 'it' : other ? ('token #' + (f.token.value || '…')) : (a.name || 'each');
+        var same = a.net && a.net === b.net, sum = document.getElementById('pair-sum'), go = document.getElementById('pair-go');
+        go.textContent = same || !trades ? 'Open the market' : 'Place order';
+        if (same) { sum.textContent = 'One chain: this opens its own market, where it trades instantly.'; return; }
+        if (n > 0 && p > 0) {
+          var total = +(n * p).toPrecision(12);
+          var buying = f.side.value === 'buy';
+          sum.textContent = (buying ? 'You pay ' : 'You get ') + total + ' ' + (b.name || '') + (buying ? ' for ' : ' for ')
+            + (nft ? a.name : n + ' ' + (a.name || '')) + ', through lock scripts on both chains.';
+        } else sum.textContent = trades ? 'Fill in how many and the price each.' : '';
+      }
+      ['input', 'change'].forEach(function (e) { f.addEventListener(e, draw); });
+      draw();
+    })();
+    </script>
+
+    <div class="ex-h" style="margin-top:16px">Swaps listed now</div>
+    {% for o in trade_orders %}
+    <div class="row" style="gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line)">
+      <span style="flex:1">{{ net_badge(o['give'].network) }} <strong>{{ o.give_label }}</strong>
+        for {{ net_badge(o['get'].network) }} <strong>{{ o.get_label }}</strong>
+        {% if o.price_text %}<br><small><b>{{ o.price_text }}</b></small>{% endif %}
+        <small class="muted">&middot; by {{ o.lister|who }}{% if o.market %} &middot; <a href="{{ o.market }}">market</a>{% endif %}</small></span>
+      {% if can_trade_orders %}
+      <form method="post" action="/exchange/trade-orders/take" style="margin:0">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <input type="hidden" name="order" value="{{ o.id }}"><input type="hidden" name="lister" value="{{ o.lister }}">
+        <button type="submit" class="small">Take</button></form>
+      {% elif viewer == 'account' %}
+      <button type="button" class="small" data-take-order="{{ o|tojson|forceescape }}">Take</button>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% if not trade_orders %}<p class="muted" style="margin:0 0 8px">No arcade is offering a swap right now.</p>{% endif %}
+    {% if viewer == 'account' %}
+    {# A tab's own swaps (2026-10-13): run here while this tab is open, settled by the locks. #}
+    {% include "_tab_swaps.html" %}
+    {% endif %}
+    {% if can_trade_orders %}
+    {% if my_trade_orders %}
+    <div class="ex-h" style="margin-top:10px">This node's swaps</div>
+    {% for o in my_trade_orders %}
+    <div class="row" style="gap:8px;align-items:center;padding:4px 0">
+      <span style="flex:1">{{ net_badge(o['give'].network) }} {{ o.give_label }}
+        for {{ net_badge(o['get'].network) }} {{ o.get_label }}</span>
+      <form method="post" action="/exchange/trade-orders/withdraw" style="margin:0">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="order" value="{{ o.id }}">
+        <button type="submit" class="ghost small">Withdraw</button></form>
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% if my_trades %}
+    <div class="ex-h" style="margin-top:10px">In progress</div>
+    {% for t in my_trades %}
+    <p class="muted" style="font-size:.82rem;margin:2px 0">{{ t.give }} for {{ t.get }} &middot; {{ t.role }} &middot; {{ t.note or t.state }}</p>
+    {% endfor %}
+    {% endif %}
     {% endif %}
   </div>
 
