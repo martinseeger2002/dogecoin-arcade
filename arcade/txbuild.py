@@ -38,7 +38,9 @@ def push(data: bytes) -> bytes:
 #: The script-hash version bytes of the chains an arcade pays (config.py:
 #: Pepecoin mainnet 22, its testnet and the regtest 196). None of them is also a
 #: pubkey-hash version on those chains, so the byte alone says which script.
-SCRIPTHASH_VERSIONS = frozenset({22, 196})
+#: Litecoin (2026-10-17): 50 ("M") and its legacy 5 ("3") on mainnet, 58 ("Q") on regtest -- without
+#: them an M-address got a pubkey-hash script and the coins were lost.
+SCRIPTHASH_VERSIONS = frozenset({22, 196, 50, 5, 58})
 
 
 def p2pkh_script(address: str) -> bytes:

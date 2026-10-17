@@ -165,6 +165,10 @@ class Params:
     #: slate for everyone at once, and lowering it asks every installation to
     #: rescan. Set per network because the chains are unrelated.
     messaging_start_height: int = 0
+    #: The fee rate this chain's transactions pay, in base units per kB of virtual size. Pepecoin and
+    #: Dogecoin relay at COIN/100 (policy.h RECOMMENDED_MIN_TX_FEE); Litecoin relays at 1/1000 of that,
+    #: and 0.01 LTC/kB is over its own -maxtxfee for a Class B transaction (2026-10-17).
+    min_fee_per_kb: int = 1_000_000
 
     #: Where @names (tag claims, and the messaging keys that go with them) are
     #: read from, when that is EARLIER than the floor (2026-09-25: names
@@ -392,6 +396,29 @@ DOGECOIN = dataclasses.replace(
     coin="DOGE",
     label="Dogecoin",
     genesis="1a91e3dace36e2be3bf030a65679fe821aa1d6ef92e7c9902eb318182c355691",
+)
+
+# Litecoin MAINNET (SadFrog's side, 2026-10-17; LITECOIN-PLAN phase 2). An add-on chain an operator
+# hosts or not (arcade/chains.py). Same shape as Dogecoin: Pepecoin's feature heights, its own ports,
+# address versions (L... 48, M... 50) and genesis. Verified on a regtest litecoind 0.21.3: bare
+# multisig plus an 80-byte OP_RETURN relays with -acceptnonstdtxn=0, so the Class B layer carries
+# over unchanged. NOT in NETWORKS yet: the floor is the tip on the day it is switched on (the D-004
+# margin, as Dogecoin's was), and until then nothing reads Litecoin.
+LITECOIN = dataclasses.replace(
+    MAINNET,
+    name="ltc",
+    rpc_port=9332,
+    p2p_port=9333,
+    activation_height=None,
+    messaging_start_height=0,   # set with the floor, on the day it is switched on
+    pubkeyhash_version=48,      # addresses start with "L"
+    scripthash_version=50,      # "M" (the legacy "3", version 5, is read as P2SH too: txbuild)
+    other_pubkeyhash_version=113,
+    marker_address=None,
+    coin="LTC",
+    label="Litecoin",
+    min_fee_per_kb=10_000,      # 0.0001 LTC/kB: ten times Litecoin 0.21's minimum relay fee
+    genesis="12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2",
 )
 
 NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN)}

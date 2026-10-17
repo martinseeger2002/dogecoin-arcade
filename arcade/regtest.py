@@ -377,3 +377,35 @@ class RegtestNode:
 
     def __exit__(self, *exc: object) -> None:
         self.stop()
+
+
+class LitecoinRegtestNode(RegtestNode):
+    """A throwaway regtest litecoind 0.21 (SadFrog's side, 2026-10-17; LITECOIN-PLAN phase 2).
+
+    Differences from the Pepecoin node, each seen on a real litecoind 0.21.3:
+    * it starts with no wallet, so one is created;
+    * its addresses default to bech32 (rltc1...), and the arcade pays and signs legacy
+      P2PKH and P2SH, so the wallet is told to hand out legacy ones;
+    * `generate` is gone (generatetoaddress only -- RegtestNode.generate falls back);
+    * regtest P2SH addresses use version 58 ("Q"), pubkey-hash ones 111 like Pepecoin's.
+    """
+
+    def __init__(self, require_standard: bool = True, extra_args: tuple[str, ...] = (),
+                 allow_peers: bool = False):
+        super().__init__(binary="litecoind", cli="litecoin-cli", require_standard=require_standard,
+                         extra_args=("-addresstype=legacy", "-changetype=legacy", *extra_args),
+                         allow_peers=allow_peers)
+
+    @property
+    def params(self) -> Params:
+        from .config import LITECOIN
+        return dataclasses.replace(
+            REGTEST, rpc_port=self.rpc_port, p2p_port=self.p2p_port,
+            scripthash_version=58, coin=LITECOIN.coin, label="Litecoin regtest",
+            min_fee_per_kb=LITECOIN.min_fee_per_kb)
+
+    def start(self, timeout: float = 60.0) -> "LitecoinRegtestNode":
+        super().start(timeout)
+        if not self.rpc.call("listwallets"):
+            self.rpc.call("createwallet", "arcade")
+        return self

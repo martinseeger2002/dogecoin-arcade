@@ -327,7 +327,8 @@ class MessageSender:
         inputs = self._select_inputs(address, needed)
 
         raw = build_raw_tx(inputs, outputs)
-        funded = fees.fund(self.rpc, raw, {"changeAddress": address})
+        funded = fees.fund(self.rpc, raw, {"changeAddress": address},
+                           per_kb=self.params.min_fee_per_kb)
         if not funded or "hex" not in funded:
             raise SendError("could not fund the split")
         signed = self.rpc.call("signrawtransaction", funded["hex"])
@@ -780,7 +781,8 @@ class MessageSender:
         # sender. It also keeps the messaging identity's funds in one place.
         # (fundrawtransaction options, rpcwallet.cpp:2791.)
         funded = fees.fund(self.rpc, raw,
-                           {"changeAddress": change_address or sender_address})
+                           {"changeAddress": change_address or sender_address},
+                           per_kb=self.params.min_fee_per_kb)
         if not funded or "hex" not in funded:
             raise SendError("fundrawtransaction failed; is the wallet funded?")
         fee_sats = int(round(float(funded.get("fee", 0)) * COIN))

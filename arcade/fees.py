@@ -137,6 +137,11 @@ def fund(rpc: Any, raw_hex: str, options: dict | None = None,
     `changepos`), plus `sigops` and `vsize` for the record.
     """
     opts = dict(options or {})
+    if per_kb != MIN_FEE_PER_KB and "feeRate" not in opts:
+        # A chain with its own rate (Litecoin, 2026-10-17) names it from the first try: its node's
+        # default may be off (mainnet fallbackfee=0) or set for another chain. Pepecoin's path is
+        # unchanged.
+        opts["feeRate"] = per_kb / COIN
     funded = rpc.call("fundrawtransaction", raw_hex, opts) if opts \
         else rpc.call("fundrawtransaction", raw_hex)
     for _ in range(5):

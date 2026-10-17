@@ -76,11 +76,24 @@ class RpcClient:
         elif method == "sendrawtransaction":
             global BROADCAST_EPOCH
             BROADCAST_EPOCH += 1
+        if method == "signrawtransaction" and getattr(self, "_modern_signing", False) and len(params) == 1:
+            method = "signrawtransactionwithwallet"
         payload = {"jsonrpc": "1.0", "id": next(self._ids), "method": method, "params": list(params)}
         data = self._post(payload)
         if data.get("error"):
             err = data["error"]
+            # Newer Cores (Litecoin 0.21, 2026-10-17) removed `signrawtransaction`; the wallet-only
+            # form takes the same single argument. Learned once per client, then asked directly.
+            if (err.get("code") == -32601 and method == "signrawtransaction" and len(params) == 1):
+                self._modern_signing = True
+                return self.call("signrawtransaction", *params)
             raise RpcError(err.get("code", -1), err.get("message", ""), method)
+        if (method == "validateaddress" and isinstance(data.get("result"), dict)
+                and data["result"].get("isvalid") and "ismine" not in data["result"] and params):
+            # Litecoin 0.21 moved ownership to getaddressinfo; callers read .get("ismine") here.
+            info = self.call("getaddressinfo", params[0]) or {}
+            data["result"].update({k: info[k] for k in ("ismine", "iswatchonly", "pubkey",
+                                                         "iscompressed", "isscript") if k in info})
         if method == "sendrawtransaction" and AFTER_BROADCAST is not None and params:
             try:
                 AFTER_BROADCAST(str(params[0]), str(data.get("result") or ""))
