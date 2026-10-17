@@ -52,6 +52,18 @@
   <div class="msg err" id="words-trouble" hidden style="margin-top:10px"></div>
   <div id="words-shown" hidden style="margin-top:12px">
     <ol class="words phrase" id="words-list" style="margin:0;padding:12px 12px 12px 2.6em;columns:2;column-gap:2.6em;font-size:1rem"></ol>
+    {# 2026-10-17 (SadFrog's side): the Litecoin key on its own, for other Litecoin wallets. #}
+    <div id="ltc-key-box" style="margin-top:12px">
+      <p style="margin:0 0 4px"><b>Your Litecoin key, for other Litecoin wallets</b></p>
+      <code id="ltc-key" style="word-break:break-all;display:block;padding:8px 10px"></code>
+      <p class="muted" style="margin:6px 0 0;font-size:.86rem">Your twelve words make <b>one key</b> for
+        Pepecoin, Dogecoin and Litecoin alike, on the derivation path <code>m/44'/3'/0'/0/0</code>. Here, the
+        words recover all three. Most Litecoin wallets look on a different path (<code>m/44'/2'/&hellip;</code>),
+        so typing these words into one of them shows an empty wallet. That is normal: your LTC is not lost.
+        To use it elsewhere, import this key instead (Litecoin Core: <code>importprivkey</code>; Electrum-LTC:
+        <i>Import Litecoin addresses or private keys</i>), or choose the custom path <code>m/44'/3'/0'</code>
+        where a wallet allows it. Anyone with this key can spend your Litecoin: never paste it into a website.</p>
+    </div>
     <p style="margin:10px 0 0">
       <button type="button" class="btn ghost small" id="hide-words">Hide them</button></p>
   </div>
@@ -194,7 +206,7 @@ if (turn) turn.onclick = async () => {
  * to enter the password a second time to view the 12 words"). The words are
  * never sent anywhere; they go into the page and out again with Hide. */
 const shown = $("words-shown"), list = $("words-list");
-const hideWords = () => { list.replaceChildren(); shown.hidden = true; };
+const hideWords = () => { list.replaceChildren(); $("ltc-key").textContent = ""; shown.hidden = true; };
 $("hide-words").onclick = hideWords;
 addEventListener("pagehide", hideWords);
 $("show-words").onclick = async () => {
@@ -232,6 +244,13 @@ $("show-words").onclick = async () => {
         throw new Error("that wallet opened, but its words are not this account's.");
     }
     $("words-pw").value = "";
+    {
+      // The Litecoin key on its own (coin type 3: the same key as Pepecoin and Dogecoin here).
+      const coins = await import("/coins.js");
+      const signin = await import("/signin.js");
+      const ltc = await coins.coinKey(await signin.toSeed(phrase), "ltc");
+      $("ltc-key").textContent = await coins.wif(ltc.key, coins.LTC_WIF);
+    }
     for (const word of phrase.trim().split(/\s+/)) {
       const li = document.createElement("li");
       li.textContent = word;

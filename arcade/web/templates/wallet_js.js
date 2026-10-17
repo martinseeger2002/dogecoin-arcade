@@ -2657,7 +2657,7 @@ export async function spending(fn) {
 const TRADES = "arcade-trades";
 //: A lock's address on each chain: P2SH version bytes (arcade/config.py). The node's own
 //: word (/account chains[].p2sh) wins: a chain standing in for another has its own.
-const P2SH_VERSION = {main: 22, doge: 22, test: 196, regtest: 196};
+const P2SH_VERSION = {main: 22, doge: 22, ltc: 50, test: 196, regtest: 196};   // ltc: "M" (2026-10-17)
 let p2shKnown = null;
 async function p2shOf(network) {
   if (!p2shKnown) {

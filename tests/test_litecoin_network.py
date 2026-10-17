@@ -101,3 +101,71 @@ def test_litecoin_coins_are_guarded_like_the_others(app_state, monkeypatch):
     assert funding.guard_for(PEP_MAIN) is not None and funding.guard_for(PEP_MAIN) is not ltc_guard, \
         "Pepecoin keeps its own guard"
     assert funding.guard_for(DOGE) is None, "no Dogecoin node here, so no Dogecoin guard"
+
+
+# --- the wallet: one key for PEP, DOGE and LTC (2026-10-17, SadFrog's choice) -------------------
+
+def test_a_litecoin_address_is_the_pepecoin_keys_twin():
+    from arcade.script import b58check_decode
+    from arcade.web.app import _ltc_twin
+    twin = _ltc_twin(PEP_MAIN)
+    assert twin.startswith("L") and b58check_decode(twin) == (48, bytes(range(20)))
+    assert _ltc_twin(DOGE) == "" and _ltc_twin("not an address") == "", "only a Pepecoin mainnet key"
+
+
+def test_litecoin_joins_the_accounts_chains_only_once_synced(client, monkeypatch):
+    app, state = client
+    _with_ltc(state, monkeypatch, ready=False)
+    chains = app.get("/account", headers={"Accept": "application/json"})
+    names = [c.get("network") for c in (chains.json().get("chains") or [])] if chains.status_code == 200 else []
+    assert "ltc" not in names, "nothing may be paid, held or signed there while it syncs"
+
+
+def test_an_at_tag_pays_their_twin_on_litecoin(app_state, monkeypatch):
+    from arcade.web import app as applib
+    ltc = _with_ltc(app_state, monkeypatch, ready=True)
+    monkeypatch.setattr(applib.taglib, "looks_like_a_tag", lambda d: d.startswith("@"))
+    monkeypatch.setattr(applib.taglib, "normalise", lambda d: d.lstrip("@"))
+    real = applib._tag_address
+    monkeypatch.setattr(applib, "_tag_address",
+                        lambda state, d, *, mainnet: PEP_MAIN if mainnet is True else real(state, d, mainnet=mainnet))
+    assert applib._tag_address(app_state, "@frog", mainnet=ltc) == applib._ltc_twin(PEP_MAIN)
+
+
+def test_the_backup_page_explains_the_path_and_hands_out_the_litecoin_key():
+    from arcade.web.app import TEMPLATE_DIR
+    page = (TEMPLATE_DIR / "my_backup.html").read_text()
+    for said in ("Your Litecoin key, for other Litecoin wallets", "m/44'/3'/0'/0/0", "m/44'/2'/",
+                 "importprivkey", "never paste it into a website", "coins.wif(ltc.key, coins.LTC_WIF)"):
+        assert said in page, said
+    coins = (TEMPLATE_DIR / "coins.js").read_text()
+    assert "ltc: 3" in coins and "LTC_WIF = 0xb0" in coins
+
+
+def test_the_browser_derives_the_same_key_and_a_wif_that_decodes_to_it(tmp_path):
+    """The real coins.js, run in Node: Litecoin's key is the Pepecoin mainnet key; its WIF (0xB0,
+    compressed, "T...") decodes to that key; its L-address is that key's (checked in Python)."""
+    import shutil, subprocess
+    if shutil.which("node") is None:
+        import pytest
+        pytest.skip("node is not installed here")
+    from arcade.web.app import TEMPLATE_DIR
+    from arcade.script import b58check_decode, b58check_encode, hash160
+    from test_funding import _pubkey
+    web = TEMPLATE_DIR.parent
+    shutil.copytree(web / "vendor", tmp_path / "vendor")
+    (tmp_path / "package.json").write_text('{"type":"module"}')
+    (tmp_path / "coins.js").write_text((TEMPLATE_DIR / "coins.js").read_text().replace('"/vendor/', '"./vendor/'))
+    (tmp_path / "run.js").write_text('''import * as coins from "./coins.js";
+const seed = new Uint8Array(64).map((_, i) => (i * 7 + 3) & 255);
+const ltc = await coins.coinKey(seed, "ltc"), pep = await coins.coinKey(seed, "main");
+const hex = (b) => Buffer.from(b).toString("hex");
+console.log(JSON.stringify({same: hex(ltc.key) === hex(pep.key), key: hex(ltc.key),
+  wif: await coins.wif(ltc.key, coins.LTC_WIF), ltc: await coins.address(ltc.pubkey, 48)}));''')
+    said = json.loads(subprocess.run(["node", "run.js"], cwd=tmp_path, capture_output=True, text=True,
+                                     timeout=60, check=True).stdout)
+    assert said["same"], "one key for PEP and LTC"
+    version, body = b58check_decode(said["wif"])
+    assert version == 0xB0 and body[32:] == b"\x01" and said["wif"].startswith("T")
+    assert body[:32].hex() == said["key"]
+    assert b58check_encode(48, hash160(_pubkey(int.from_bytes(body[:32], "big")))) == said["ltc"]

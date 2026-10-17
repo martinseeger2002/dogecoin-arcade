@@ -2895,6 +2895,8 @@ def create_app(state: AppState) -> FastAPI:
         if chain.is_doge:
             published = str(said["doge_address"] or "") if "doge_address" in said.keys() else ""
             return published or _doge_twin(other)
+        if chain.is_ltc:                         # Litecoin: the same key as their Pepecoin mainnet one
+            return _ltc_twin(other)
         return other
 
     def _chain_menu(account_side: bool = False) -> list[dict[str, Any]]:
@@ -3707,7 +3709,8 @@ def create_app(state: AppState) -> FastAPI:
             # Their address on each chain: the tag's own on the messaging chain, the published mainnet one, and their
             # Dogecoin one (published, or their mainnet key's twin) -- 2026-10-15.
             where = address if context.network == state.messaging.network \
-                else profile.get("doge", "") if context.is_doge else profile.get("mainnet", "")
+                else profile.get("doge", "") if context.is_doge \
+                else _ltc_twin(profile.get("mainnet", "")) if context.is_ltc else profile.get("mainnet", "")
             row = {"chain": context, "coin": context.params.coin, "address": where, "balance": None}
             if where and context in state.token_chains:
                 try:
@@ -3718,7 +3721,8 @@ def create_app(state: AppState) -> FastAPI:
             coins.append(row)
         for context in state.token_chains:
             where = address if context.network == state.messaging.network \
-                else profile.get("doge", "") if context.is_doge else profile.get("mainnet", "")
+                else profile.get("doge", "") if context.is_doge \
+                else _ltc_twin(profile.get("mainnet", "")) if context.is_ltc else profile.get("mainnet", "")
             if not where:
                 continue
             entry: dict[str, Any] = {"chain": context, "address": where,
@@ -9475,7 +9479,7 @@ def create_app(state: AppState) -> FastAPI:
         once here stops every caller having to.
         """
         out = [_account_chain()]
-        for chain in (state.ledger, state.doge):
+        for chain in (state.ledger, state.doge, getattr(state, "ltc", None)):
             if chain is not None and chain.network != _account_chain().network:
                 # Dogecoin only once its node has synced (2026-10-13): until
                 # then nothing may be paid, held or signed there.
@@ -21240,6 +21244,9 @@ def create_app(state: AppState) -> FastAPI:
             # -- never the Pepecoin address itself, which is not a Dogecoin address.
             published = str(said["doge_address"] or "") if said is not None and "doge_address" in said.keys() else ""
             other = published or (_doge_twin(other) if other else "")
+        elif chain.is_ltc:
+            # LTC to an @tag (2026-10-17): their Pepecoin mainnet key's twin on Litecoin.
+            other = _ltc_twin(other) if other else ""
         if not other:
             raise ValueError(
                 f"@{tag} has not published a {chain.label.lower()} address, "
@@ -26570,6 +26577,17 @@ def _doge_twin(address: str) -> str:
     return b58check_encode(NETWORKS["doge"].pubkeyhash_version, payload)
 
 
+def _ltc_twin(address: str) -> str:
+    """The same key's address on Litecoin, for a Pepecoin MAINNET address, else "" (2026-10-17,
+    SadFrog's choice): coins.js derives Litecoin on coin type 3 too, so an account's Litecoin key IS
+    its Pepecoin mainnet key, with Litecoin's version byte ("L..."). The backup page hands out the
+    key itself for other Litecoin wallets, which look on coin type 2."""
+    twin = _doge_twin(address)
+    if not twin:
+        return ""
+    return b58check_encode(NETWORKS["ltc"].pubkeyhash_version, b58check_decode(twin)[1])
+
+
 def _tag_address(state, destination: str, *, mainnet) -> str:
     """An @tag turned into the address that holds it, or the text unchanged.
 
@@ -26589,6 +26607,12 @@ def _tag_address(state, destination: str, *, mainnet) -> str:
     if not taglib.looks_like_a_tag(destination):
         return destination
     wanted = taglib.normalise(destination)
+    if getattr(mainnet, "is_ltc", False):
+        # Nor on Litecoin (2026-10-17): the same key, Litecoin's version byte (`_ltc_twin`).
+        twin = _ltc_twin(_tag_address(state, destination, mainnet=True))
+        if not twin:
+            raise ValueError(f"@{wanted} has no address this node can pay in LTC.")
+        return twin
     if getattr(mainnet, "is_doge", False):
         # Tags are not claimed on Dogecoin: the holder's Pepecoin mainnet
         # address, as the same key on Dogecoin (`_doge_twin`).

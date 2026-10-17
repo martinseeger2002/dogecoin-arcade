@@ -95,7 +95,7 @@ export function scanQR() {
 export function parseQR(text) {
   const t = String(text || "").trim();
   const link = t.match(/^([a-z]+):(?:\/\/)?([^?]+)(?:\?(.*))?$/i);
-  if (link && /^(pepecoin|pep|dogecoin|doge)$/i.test(link[1])) {
+  if (link && /^(pepecoin|pep|dogecoin|doge|litecoin|ltc)$/i.test(link[1])) {   // litecoin: 2026-10-17
     const q = new URLSearchParams(link[3] || "");
     return {to: decodeURIComponent(link[2]), amount: q.get("amount") || "", coin: link[1].toLowerCase()};
   }

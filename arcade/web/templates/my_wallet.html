@@ -300,9 +300,11 @@ const $ = (id) => document.getElementById(id);
  * 'P test' 'P main' 'D main' like in the other pages"): the coin's letter in its color. */
 const netButton = (one, cls) => {
   const doge = one.network === "doge" || one.doge;
+  const ltc = one.network === "ltc" || one.ltc;              // Litecoin (2026-10-17)
   const b = el("button", cls);
-  const letter = el("b", "netl " + (doge ? "dogecoin" : one.mainnet ? "mainnet" : "testnet"), doge ? "D" : "P");
-  b.append(letter, " " + (one.mainnet || doge ? "main" : "test"));
+  const letter = el("b", "netl " + (doge ? "dogecoin" : ltc ? "litecoin" : one.mainnet ? "mainnet" : "testnet"),
+                    doge ? "D" : ltc ? "L" : "P");
+  b.append(letter, " " + (one.mainnet || doge || ltc ? "main" : "test"));
   b.title = one.title || one.label || "";
   return b;
 };
@@ -340,7 +342,7 @@ let said = {chains: []}, net = null, keys = null, tab = "activity";
  * send receive and balance at the top of your wallet should be in that token").
  * Send and Receive follow it; the network fee is still paid in PEP. */
 let asset = null;
-const coinOf = (c) => !c ? "PEP TEST" : c.network === "doge" ? "DOGE" : c.mainnet ? "PEP" : "PEP TEST";
+const coinOf = (c) => !c ? "PEP TEST" : c.network === "doge" ? "DOGE" : c.network === "ltc" ? "LTC" : c.mainnet ? "PEP" : "PEP TEST";
 const COIN = () => coinOf(chainNow());
 // Chains this node has that are not open yet: Dogecoin while it syncs (2026-10-13).
 const WAITING = {{ chain_menu(account_side=True)|rejectattr("ready")|list|tojson }};
@@ -402,7 +404,7 @@ function drawHead() {
   if (c.incoming) bits.push(["in", `${coinsOf(c.incoming)} arriving`]);
   if (c.leaving) bits.push(["out", `${coinsOf(c.leaving)} leaving`]);
   // Coins carrying an inscription are held, not spendable (2026-10-15): said beside the number they are left out of.
-  if (c.inscribed) bits.push(["out", `${coinsOf(c.inscribed)} held in ${c.network === "doge" ? "Doginals" : c.network === "main" ? "Pepinals" : "inscriptions"}`]);
+  if (c.inscribed) bits.push(["out", `${coinsOf(c.inscribed)} held in ${c.network === "doge" ? "Doginals" : c.network === "ltc" ? "Litecoin inscriptions" : c.network === "main" ? "Pepinals" : "inscriptions"}`]);
   if (asset) {
     const page = el("a", "", `Token #${asset.property_id}`);
     page.href = `/tokens/${asset.property_id}?chain=${encodeURIComponent(c.network)}`;
@@ -850,9 +852,12 @@ async function step1(s, d) {
     const text = await scanQR();
     if (!text) return;
     const got = parseQR(text);
-    const doge = c.network === "doge";
-    if (got.coin && (got.coin.startsWith("doge") !== doge))
-      toast(`That code asks for ${got.coin.startsWith("doge") ? "Dogecoin" : "Pepecoin"}: switch coins at the top first.`);
+    // Which coin a payment code names, against the one picked (Litecoin: "litecoin:" / "ltc:", 2026-10-17).
+    const family = (s) => s.startsWith("doge") ? "doge" : (s.startsWith("lite") || s.startsWith("ltc")) ? "ltc" : "pep";
+    const named = {doge: "Dogecoin", ltc: "Litecoin", pep: "Pepecoin"};
+    const here = c.network === "doge" ? "doge" : c.network === "ltc" ? "ltc" : "pep";
+    if (got.coin && family(got.coin) !== here)
+      toast(`That code asks for ${named[family(got.coin)]}: switch coins at the top first.`);
     to.value = got.to;
     if (got.amount && !single) amount.value = got.amount;
     check();

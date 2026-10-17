@@ -172,7 +172,21 @@ export async function address(pubkey, version) {
 
 //: SLIP-44 registers 3 for Dogecoin and 1 for every test chain. Pepecoin
 //: has no registration of its own, so it follows the family it forked.
-export const COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3};
+//: Litecoin (2026-10-17, SadFrog's choice) uses 3 as well, NOT its own registered 2: one key for
+//: PEP, DOGE and LTC, so the arcade's words recover all three here. Other Litecoin wallets look on
+//: m/44'/2'/..., which is why the backup page also hands out the key itself (`wif`).
+export const COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3, ltc: 3};
+
+//: Litecoin's private-key text prefix (WIF, 0xB0: keys starting with "T"), for importing elsewhere.
+export const LTC_WIF = 0xb0;
+
+/** A private key as Wallet Import Format text, for a compressed public key. */
+export async function wif(key, version) {
+  const body = new Uint8Array(key.length + 1);
+  body.set(key);
+  body[key.length] = 0x01;                       // the public key is compressed
+  return base58check(version, body);
+}
 
 export function coinPath(network, index = 0) {
   const coin = COIN_TYPE[network] ?? 1;
