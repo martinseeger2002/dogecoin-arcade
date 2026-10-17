@@ -767,6 +767,22 @@ def create_app(state: AppState) -> FastAPI:
             fundinglib.GUARDS = [(_on_pep_main, _pep)]
             fundinglib.GUARD_BY_NET["main"] = _pep
             _guards.append(_pep)
+        if getattr(state, "ltc", None) is not None:
+            # Litecoin (2026-10-17, SadFrog's side): the same guard, reading Doginals-format envelopes
+            # (arcade/ltc_ord.py) through the Litecoin node. On regtest a node's wallet carried an
+            # earlier inscription into a new one before this existed (tests/test_litecoin_chain.py).
+            # Taproot inscriptions sent to a legacy Litecoin address are not seen by it (a witness
+            # adapter is a later, Litecoin-only step; docs/litecoin.md says so).
+            _ltc = _doginals.Doginals(Path(state.home) / "ltc-inscriptions.sqlite", rpc_factory=state.ltc.rpc)
+            _ltc_versions = {state.ltc.params.pubkeyhash_version, state.ltc.params.scripthash_version, 5}
+
+            def _on_ltc(address: str, _v=frozenset(_ltc_versions)) -> bool:
+                try:
+                    return b58check_decode(str(address))[0] in _v
+                except Exception:
+                    return False
+            fundinglib.GUARDS = [*fundinglib.GUARDS, (_on_ltc, _ltc)]
+            _guards.append(_ltc)
         # What this arcade itself broadcasts from clean coins is clean too: its token dust is spendable at once instead of
         # being read like any small coin (2026-10-15).
         if _guards:
@@ -1118,9 +1134,12 @@ def create_app(state: AppState) -> FastAPI:
     def _doge_status() -> dict[str, Any]:
         """The Dogecoin node for the Wallet page: its health and how far its sync
         has got. Empty when this machine runs no Dogecoin node."""
-        if state.doge is None:
-            return {"doge": None, "doge_sync": None}
-        return {"doge": state.doge.status(), "doge_sync": state.chain_sync(state.doge)}
+        out: dict[str, Any] = {"doge": None, "doge_sync": None, "ltc": None, "ltc_sync": None}
+        if state.doge is not None:
+            out.update(doge=state.doge.status(), doge_sync=state.chain_sync(state.doge))
+        if getattr(state, "ltc", None) is not None:          # Litecoin, when hosted (2026-10-17)
+            out.update(ltc=state.ltc.status(), ltc_sync=state.chain_sync(state.ltc))
+        return out
 
     # --- overview -------------------------------------------------------------
 
@@ -2849,7 +2868,7 @@ def create_app(state: AppState) -> FastAPI:
                     prop = index.property(key[1])
                     if prop is None:
                         continue
-                    name = prop["name"] + (" (Dogecoin)" if chain.is_doge else
+                    name = prop["name"] + (" (Dogecoin)" if chain.is_doge else " (Litecoin)" if chain.is_ltc else
                                            " (mainnet)" if chain.is_mainnet else "")
                     said[name] = format_amount(units, prop["divisible"])
                 post.token_tipped = said
@@ -2885,12 +2904,13 @@ def create_app(state: AppState) -> FastAPI:
         `account_side`, in the order an account's chains go: the tag chain first."""
         chains = list(state.all_chains)
         if account_side:
-            chains.sort(key=lambda c: (c is not _account_chain(), c.is_doge))
+            chains.sort(key=lambda c: (c is not _account_chain(), c.is_addon, c.is_ltc))
         out = []
         for c in chains:
             sync = state.chain_sync(c)
             out.append({"network": c.network, "mainnet": bool(c.is_mainnet),
-                        "doge": c.is_doge, "coin": c.params.coin, "net": c.net,
+                        "doge": c.is_doge, "ltc": c.is_ltc, "addon": c.is_addon,
+                        "coin": c.params.coin, "net": c.net,
                         "label": c.title, "family": c.family,
                         "word": "mainnet" if c.is_mainnet else "testnet",
                         "ready": bool(sync.get("ready")),
@@ -4431,7 +4451,7 @@ def create_app(state: AppState) -> FastAPI:
     def create_chain(request: Request, to: str = "", back: str = "/create"):
         """Pick the chain this browser creates on: Testnet or Mainnet."""
         chosen = next((c for c in state.token_chains
-                       if to in (c.network, c.net, "doge" if c.is_doge else
+                       if to in (c.network, c.net, c.network if c.is_addon else
                                  "main" if c.is_mainnet else "test")), None)
         where = back if back.startswith("/") and not back.startswith("//") else "/create"
         answer = RedirectResponse(where, status_code=303)
@@ -5630,6 +5650,9 @@ def create_app(state: AppState) -> FastAPI:
         """TESTNET or MAINNET, with its icon. `where` is a chain, a network name, or
         a bool meaning mainnet."""
         # Dogecoin, by its chain or its network name (2026-10-13), in yellow.
+        if getattr(where, "is_ltc", False) or where in ("ltc", "litecoin"):
+            return Markup('<span class="netbadge ltc" title="Litecoin mainnet: real LTC">'
+                          '<b class="netl">L</b> MAIN</span>')
         if getattr(where, "is_doge", False) or where in ("doge", "dogecoin"):
             return Markup('<span class="netbadge doge" title="Dogecoin mainnet: real DOGE">'
                           '<b class="netl">D</b> MAIN</span>')
@@ -9456,7 +9479,7 @@ def create_app(state: AppState) -> FastAPI:
             if chain is not None and chain.network != _account_chain().network:
                 # Dogecoin only once its node has synced (2026-10-13): until
                 # then nothing may be paid, held or signed there.
-                if chain.is_doge and not state.chain_ready(chain):
+                if chain.is_addon and not state.chain_ready(chain):
                     continue
                 out.append(chain)
         return tuple(out)
@@ -11902,7 +11925,7 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:                          # noqa: BLE001 -- a node still catching up
             return JSONResponse({"detail": f"this node cannot read those coins yet: {exc}"}, status_code=503)
         return JSONResponse({"chain": one.network, "address": _account_address(account.pubkey, one),
-                             "doge": bool(one.is_doge), "coins": coins})
+                             "doge": bool(one.is_doge), "ltc": bool(one.is_ltc), "coins": coins})
 
     @app.get("/account/doginal-tx/{txid}")
     def account_doginal_tx(request: Request, txid: str, chain: str = "doge"):
@@ -21966,7 +21989,8 @@ def create_app(state: AppState) -> FastAPI:
     def _admin_chains() -> list:
         from .. import chains as chainlib, litecoin as ltclib
         return chainlib.overview(state.settings(), doge_running=state.doge is not None,
-                                 ltc=ltclib.status(), doge_available=chainlib.doge_node_present())
+                                 ltc=ltclib.status(), doge_available=chainlib.doge_node_present(),
+                                 ltc_attached=getattr(state, "ltc", None) is not None)
 
     @app.post("/admin/api/restart")
     def admin_restart(request: Request):
@@ -26583,7 +26607,7 @@ def _tag_address(state, destination: str, *, mainnet) -> str:
     # wallets, and every test passed because each one asked to an address).
     family = bool(getattr(mainnet, "is_mainnet", mainnet))
     for chain in state.token_chains:
-        if bool(chain.is_mainnet) != family or chain.is_doge:
+        if bool(chain.is_mainnet) != family or chain.is_addon:
             continue
         try:
             found = state.token_index(chain).address_of(wanted)

@@ -402,15 +402,19 @@ DOGECOIN = dataclasses.replace(
 # hosts or not (arcade/chains.py). Same shape as Dogecoin: Pepecoin's feature heights, its own ports,
 # address versions (L... 48, M... 50) and genesis. Verified on a regtest litecoind 0.21.3: bare
 # multisig plus an 80-byte OP_RETURN relays with -acceptnonstdtxn=0, so the Class B layer carries
-# over unchanged. NOT in NETWORKS yet: the floor is the tip on the day it is switched on (the D-004
-# margin, as Dogecoin's was), and until then nothing reads Litecoin.
+# over unchanged.
+#
+# The floor (2026-10-17): the network tip at 16:20 UTC that day was 3,196,698 (a public explorer;
+# this node still syncing), rounded up to 3,198,000 -- about two days ahead at 2.5-minute blocks --
+# so nothing that existed before the arcade read Litecoin can be read as an arcade transaction
+# (the D-004 margin, as Dogecoin's floor was set).
 LITECOIN = dataclasses.replace(
     MAINNET,
     name="ltc",
     rpc_port=9332,
     p2p_port=9333,
-    activation_height=None,
-    messaging_start_height=0,   # set with the floor, on the day it is switched on
+    activation_height=3_198_000,
+    messaging_start_height=3_198_000,
     pubkeyhash_version=48,      # addresses start with "L"
     scripthash_version=50,      # "M" (the legacy "3", version 5, is read as P2SH too: txbuild)
     other_pubkeyhash_version=113,
@@ -421,7 +425,7 @@ LITECOIN = dataclasses.replace(
     genesis="12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2",
 )
 
-NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN)}
+NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN, LITECOIN)}
 
 #: Networks on which the Messenger may operate. Testnet only, permanently
 #: (docs/DECISIONS.md D-010). Enforced in code, not configuration.
@@ -555,6 +559,7 @@ CHAIN_NAMES = {
     "main": "main", "test": "test", "regtest": "regtest",
     # A Dogecoin node calls its mainnet "main" too; `genesis` tells them apart.
     "doge": "main",
+    "ltc": "main",       # and so does Litecoin's
 }
 
 

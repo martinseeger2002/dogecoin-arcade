@@ -9,7 +9,7 @@
   <span>{% if chain.is_mainnet %}Real {{ chain.params.coin }}. Every transaction here shows its full cost, the operator's fee included, and waits for your yes.{% else %}PEP TEST: test coins, free to try and worth nothing.{% endif %}</span>
   {% if public %}
   {% for m in chain_menu() if m.network != chain.network %}
-  {% if m.ready %}<a href="/create/chain?to={{ m.network }}&amp;back={{ back|urlencode }}">Switch to <b class="netl {{ m.net }}">{{ 'D' if m.doge else 'P' }}</b> {{ m.word }}</a>
+  {% if m.ready %}<a href="/create/chain?to={{ m.network }}&amp;back={{ back|urlencode }}">Switch to <b class="netl {{ m.net }}">{{ 'D' if m.doge else ('L' if m.ltc else 'P') }}</b> {{ m.word }}</a>
   {% else %}<span class="chain-off" aria-disabled="true" title="{{ m.label }} opens when its node has synced ({{ m.progress }}% so far)">{{ m.label }}: syncing</span>{% endif %}
   {% endfor %}
   {% endif %}

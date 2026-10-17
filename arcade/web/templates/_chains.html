@@ -27,7 +27,7 @@
     <pre style="font-size:.78rem;margin:4px 0 0;white-space:pre-wrap;background:transparent;
                 border:0;padding:0;color:var(--muted)">{{ status.error }}</pre>
     <p class="muted" style="font-size:.8rem;margin:8px 0 0">
-      Start the node, or pass <code>--{{ 'doge-conf' if ctx.is_doge else ('msg' if ctx.role == 'messaging' else 'ledger') ~ '-datadir' }}</code>.
+      Start the node, or pass <code>--{{ 'doge-conf' if ctx.is_doge else ('ltc-conf' if ctx.is_ltc else ('msg' if ctx.role == 'messaging' else 'ledger') ~ '-datadir') }}</code>.
     </p>
   {% endif %}
   {% if note %}<p class="muted" style="font-size:.8rem;margin:10px 0 0">{{ note }}</p>{% endif %}

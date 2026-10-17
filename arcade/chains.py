@@ -76,7 +76,7 @@ def restart_self(unit: str = "arcade-web") -> tuple[bool, str]:
 
 
 def overview(settings: dict, doge_running: bool, ltc: dict | None,
-             doge_available: bool = True) -> list[dict[str, Any]]:
+             doge_available: bool = True, ltc_attached: bool | None = None) -> list[dict[str, Any]]:
     """Every chain for the admin panel: required or optional, hosted or not, and whether
     what runs now matches the choice (a Dogecoin change waits for a restart)."""
     out: list[dict[str, Any]] = [{"key": k, "label": label, "required": True, "hosted": True,
@@ -98,5 +98,11 @@ def overview(settings: dict, doge_running: bool, ltc: dict | None,
         # still runs, or one switched on whose node is there to be found.
         row["restart_needed"] = applies == "restart" and (
             (running and not want) or (want and not running and row.get("installed", True)))
+        if key == "ltc" and ltc_attached is not None:
+            # Its node starts and stops at once, but the arcade reads Litecoin as a network from
+            # start-up (web/__main__._ltc_context): a change there waits for a restart too.
+            row["network"] = ltc_attached
+            if want != ltc_attached and (not want or row.get("installed", False)):
+                row["restart_needed"] = True
         out.append(row)
     return out

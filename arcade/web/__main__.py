@@ -54,6 +54,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--doge-conf", help="Dogecoin config with rpcuser/rpcpassword")
     parser.add_argument("--doge-datadir", help="Dogecoin datadir, to read its .cookie")
     parser.add_argument("--no-doge", action="store_true", help="run without Dogecoin")
+    parser.add_argument("--ltc-conf", help="Litecoin config with rpcuser/rpcpassword")
+    parser.add_argument("--ltc-datadir", help="Litecoin datadir, to read its .cookie")
+    parser.add_argument("--no-ltc", action="store_true", help="run without Litecoin")
     parser.add_argument("--brand", choices=sorted(brandlib.BRANDS),
                         help="the face this node shows (name, colours, icons): "
                              "dogecoin (default) or pepecoin; ARCADE_BRAND works too")
@@ -159,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             can_spend=True,
         ),
         doge=_doge_context(args),
+        ltc=_ltc_context(args),
     )
 
     # Bots authenticate to /rpc/main and /rpc/test with this file's contents.
@@ -173,6 +177,9 @@ def main(argv: list[str] | None = None) -> int:
     if state.doge is not None:
         print(f"  {state.doge.label:8s} {state.doge.network:10s} "
               f"{state.doge.conf or state.doge.datadir}  (shown grayed out until it has synced)")
+    if state.ltc is not None:
+        print(f"  {state.ltc.label:8s} {state.ltc.network:10s} "
+              f"{state.ltc.conf or state.ltc.datadir}  (shown grayed out until it has synced)")
     for context in (state.messaging, state.ledger):
         if context.datadir or context.conf:
             where = context.datadir or context.conf
@@ -291,6 +298,30 @@ def _doge_context(args) -> "ChainContext | None":
             return None
     return ChainContext(network="doge", role="ledger", label="Dogecoin",
                         datadir=datadir, conf=conf, can_spend=True)
+
+def _ltc_context(args) -> "ChainContext | None":
+    """The Litecoin chain (SadFrog's side, 2026-10-17), when the operator hosts it (Admin ->
+    "Face and chains", chains:ltc) and this machine runs its node: named on the command line, or
+    ~/.litecoin/litecoin.conf, or a datadir with a readable .cookie. Read at start-up, as Dogecoin
+    is, so switching the network on or off takes effect when the arcade restarts."""
+    if getattr(args, "no_ltc", False):
+        return None
+    from .. import chains as chainlib
+    if not chainlib.hosted(chainlib.read_settings(args.home), "ltc"):
+        return None
+    conf = Path(args.ltc_conf).expanduser() if getattr(args, "ltc_conf", None) else None
+    datadir = Path(args.ltc_datadir).expanduser() if getattr(args, "ltc_datadir", None) else None
+    if conf is None and datadir is None:
+        found = Path.home() / ".litecoin" / "litecoin.conf"
+        if found.exists():
+            conf = found
+        elif (Path.home() / ".litecoin" / ".cookie").exists():
+            datadir = Path.home() / ".litecoin"
+        else:
+            return None
+    return ChainContext(network="ltc", role="ledger", label="Litecoin",
+                        datadir=datadir, conf=conf, can_spend=True)
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
