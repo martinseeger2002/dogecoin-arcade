@@ -46,7 +46,7 @@ DOCS = Path(__file__).parent / "docs"
 #: named here is still served -- it goes at the end under its own file name
 #: -- so adding one to `docs/` is enough to publish it.
 ORDER = (
-    ("how-it-works.md", "How DogecoinArcade works",
+    ("how-it-works.md", "How PepecoinArcade works",
      "What it is, what lives on the chain, and what your browser and a node each do."),
     ("features.md", "What it does", "Every part of the application, in one page."),
     ("prize-pools.md", "Prize pools",

@@ -424,7 +424,7 @@ ACCOUNT_NAV = [
 
 LOCKED_PAGE = """<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>%(title)s · DogecoinArcade</title>
+<title>%(title)s · PepecoinArcade</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;
 place-items:center;min-height:100vh;background:#12131a;color:#e8e8ea}
 div{max-width:26rem;padding:2rem;text-align:center}
@@ -701,7 +701,7 @@ def create_app(state: AppState) -> FastAPI:
                   "offer to finish the rest when it starts again.",
                   file=sys.stderr, flush=True)
 
-    app = FastAPI(title="DogecoinArcade", docs_url=None, redoc_url=None,
+    app = FastAPI(title="PepecoinArcade", docs_url=None, redoc_url=None,
                   lifespan=_lifespan)
     app.middleware("http")(the_door(state))
     app.middleware("http")(_sandbox_names_its_host)
@@ -6109,7 +6109,7 @@ def create_app(state: AppState) -> FastAPI:
     def _ask_the_reader(request: Request, chain, body: dict):
         address = _viewer_of(request, chain)
         if not address:
-            return contentlib._json({"error": "sign in to DogecoinArcade and open this "
+            return contentlib._json({"error": "sign in to PepecoinArcade and open this "
                                      "page there to be asked"}, status=403)
         kind = str(body.get("kind") or "")
         if kind not in ("token", "coins"):
@@ -7852,7 +7852,7 @@ def create_app(state: AppState) -> FastAPI:
     @app.get("/manifest.webmanifest")
     def web_manifest():
         return JSONResponse({
-            "name": "DogecoinArcade", "short_name": "Arcade",
+            "name": "PepecoinArcade", "short_name": "Arcade",
             "description": "Messages, a feed, tokens and art on Pepecoin.",
             "id": "/", "start_url": "/", "scope": "/", "display": "standalone",
             "background_color": "#faf8f4", "theme_color": "#1b1a17",
@@ -21190,7 +21190,7 @@ def _check_address(address: str, *, mainnet: bool) -> str | None:
 #: something has already gone wrong, so it should not depend on page state.
 REFUSED_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Not accepted \u00b7 DogecoinArcade</title>
+<title>Not accepted \u00b7 PepecoinArcade</title>
 <style>
 body{{margin:0;background:#141310;color:#ece8e0;
   font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}}
@@ -21201,7 +21201,7 @@ a{{color:#d9a520}}
 </style></head><body><main>
 <h1>That was not accepted</h1>
 <p>{detail}</p>
-<p><a href="/">Back to DogecoinArcade</a></p>
+<p><a href="/">Back to PepecoinArcade</a></p>
 </main></body></html>"""
 
 

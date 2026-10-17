@@ -9,7 +9,7 @@
   on, so the wall is the collection itself.
 -->
 <style>
-  :root { color-scheme: dark; --gold:#ffc83d; --pink:#ff5fa2; --cyan:#43e8ff;
+  :root { color-scheme: dark; --gold:#7be04f; --pink:#ff5fa2; --cyan:#43e8ff;
           --ink:#07060c; --card:rgba(12,10,22,.78); }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--ink); color:#f4f1ff;
@@ -46,7 +46,7 @@
   /* the reel: a window onto a strip of %%MANY%% that runs until one is yours */
   .reel { position:relative; width:220px; height:220px; margin:0 auto 14px; border-radius:22px;
           overflow:hidden; background:#110d22;
-          box-shadow:0 0 0 3px var(--gold), 0 0 0 7px rgba(255,200,61,.18), 0 0 40px rgba(255,200,61,.35); }
+          box-shadow:0 0 0 3px var(--gold), 0 0 0 7px rgba(123,224,79,.18), 0 0 40px rgba(123,224,79,.35); }
   .reel::before, .reel::after { content:""; position:absolute; left:0; right:0; height:34%; z-index:2; pointer-events:none; }
   .reel::before { top:0; background:linear-gradient(#110d22,transparent); }
   .reel::after { bottom:0; background:linear-gradient(transparent,#110d22); }
@@ -250,7 +250,7 @@
         shop = null; $('foot').textContent = e.message;
       }) : Promise.resolve().then(function () {
         shop = null;
-        $('foot').textContent = 'Open this mintpad in a DogecoinArcade wallet to mint.';
+        $('foot').textContent = 'Open this mintpad in a PepecoinArcade wallet to mint.';
       })
     ]).then(draw);
   }

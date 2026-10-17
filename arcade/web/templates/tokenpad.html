@@ -6,7 +6,7 @@
      %%TOKEN%% for a price; this page is the counter. The icon is another
      inscription, fetched from the node this is opened on. -->
 <style>
-  :root { color-scheme:dark; --gold:#ffc83d; --pink:#ff5fa2; --cyan:#43e8ff; }
+  :root { color-scheme:dark; --gold:#7be04f; --pink:#ff5fa2; --cyan:#43e8ff; }
   * { box-sizing:border-box; }
   html,body { margin:0; min-height:100%; background:#07060c; color:#f4f1ff;
               font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
@@ -16,7 +16,7 @@
           box-shadow:0 30px 80px rgba(0,0,0,.6); }
   .art { width:96px; height:96px; margin:0 auto 12px; border-radius:50%;
          background:#110d22 center/cover no-repeat; image-rendering:pixelated;
-         box-shadow:0 0 0 3px var(--gold),0 0 40px rgba(255,200,61,.3); }
+         box-shadow:0 0 0 3px var(--gold),0 0 40px rgba(123,224,79,.3); }
   h1 { margin:0 0 2px; font-size:1.7rem; letter-spacing:-.02em; color:var(--gold); }
   .sub { margin:0 0 16px; color:rgba(244,241,255,.62); font-size:.88rem; }
   .deal { font-size:1.15rem; margin:0 0 4px; }
@@ -69,7 +69,7 @@
                    !shop.ready || shop.mine;
     btn.textContent = busy ? 'Buying…' : 'Buy a lot';
     $('foot').textContent =
-      !inWallet ? 'Open this in a DogecoinArcade wallet to buy.'
+      !inWallet ? 'Open this in a PepecoinArcade wallet to buy.'
       : !shop ? ''
       : !shop.ready ? 'This chain reads swaps from block ' + shop.from + '; it is at ' + shop.height + '.'
       : !shop.open ? 'This launchpad is closed: whoever wrote it no longer holds it.'

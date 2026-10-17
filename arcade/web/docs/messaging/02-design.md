@@ -1,6 +1,6 @@
 # Messaging design
 
-This page describes how DogecoinArcade messages are built: identity keys, the
+This page describes how PepecoinArcade messages are built: identity keys, the
 on-chain records, the encryption envelope, sizing and cost, delivery, and
 exactly what the chain reveals. The node side is in [01-node.md](01-node.md).
 
@@ -9,7 +9,7 @@ construction in §3 has its failure modes covered by tests.
 
 ## 0. Context
 
-The Messenger is part of DogecoinArcade and is **testnet-only, permanently**,
+The Messenger is part of PepecoinArcade and is **testnet-only, permanently**,
 enforced in code by `require_messaging_network()`. It still designs to
 **mainnet** standardness limits: testnet sets `fRequireStandard = false`
 (`chainparams.cpp:108`), so a format that only worked there would be silently

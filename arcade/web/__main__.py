@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         # day put a wallet on a public address.
         print("  PUBLIC: only the feed, the collections and the chain are "
               "served; every form is refused")
-    print(f"DogecoinArcade  ->  http://{args.host}:{args.port}")
+    print(f"PepecoinArcade  ->  http://{args.host}:{args.port}")
     uvicorn.run(create_app(state), host=args.host, port=args.port, log_level="warning")
     return 0
 

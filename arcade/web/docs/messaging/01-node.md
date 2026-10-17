@@ -215,4 +215,4 @@ Each of these is handled by the installer:
 |---|---|---|
 | Service manager | systemd user units | logon tasks (no systemd) |
 | Default datadir | `~/.pepecoin`, `~/.pepecoin-testnet` | `%APPDATA%\Pepecoin`, `%APPDATA%\Pepecoin-testnet` |
-| Binary location | `~/.local/bin` | `%LOCALAPPDATA%\DogecoinArcade\bin` |
+| Binary location | `~/.local/bin` | `%LOCALAPPDATA%\PepecoinArcade\bin` |

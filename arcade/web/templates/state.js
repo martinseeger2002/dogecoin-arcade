@@ -29,7 +29,7 @@
       setTimeout(function () {
         if (waiting[message.seq]) {
           delete waiting[message.seq];
-          reject(new Error('no viewer is listening: open this page in a DogecoinArcade viewer'));
+          reject(new Error('no viewer is listening: open this page in a PepecoinArcade viewer'));
         }
       }, 120000);
       window.parent.postMessage(message, '*');

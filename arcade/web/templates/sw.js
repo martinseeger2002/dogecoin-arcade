@@ -1,4 +1,4 @@
-// DogecoinArcade's service worker (revision {{ revision }}).
+// PepecoinArcade's service worker (revision {{ revision }}).
 //
 // Two jobs and no more. It keeps ONE page, /offline, for when the node cannot be
 // reached. And it shows a notification when a push arrives for the Messenger.
