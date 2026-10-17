@@ -88,5 +88,5 @@ def test_starting_and_stopping_queue_the_service(monkeypatch, tmp_path):
     monkeypatch.setattr(ltclib, "_systemctl", fake)
     ltclib.set_running(True)
     ltclib.set_running(False)
-    assert ("--no-block", "start", ltclib.UNIT) in calls
-    assert ("--no-block", "stop", ltclib.UNIT) in calls
+    assert ("--no-block", "enable", "--now", ltclib.UNIT) in calls, "hosting survives a reboot"
+    assert ("--no-block", "disable", "--now", ltclib.UNIT) in calls

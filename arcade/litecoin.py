@@ -92,7 +92,8 @@ def set_running(on: bool) -> dict:
     queued (--no-block) and the panel watches the service say "deactivating"."""
     if not installed():
         raise RuntimeError(f"{UNIT} is not installed on this machine")
-    said = _systemctl("--no-block", "start" if on else "stop", UNIT)
+    # `enable --now` / `disable --now`: hosting Litecoin also survives a reboot.
+    said = _systemctl("--no-block", "enable" if on else "disable", "--now", UNIT)
     if said.returncode != 0:
         raise RuntimeError((said.stderr or said.stdout).strip()[:200] or "systemctl refused")
     return status()

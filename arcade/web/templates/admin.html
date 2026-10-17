@@ -14,17 +14,20 @@
 
 {# 2026-10-17 (SadFrog's side): this node's face, and the Litecoin node's switch (arcade/litecoin.py). #}
 <section class="panel" id="face">
-  <h2>Face and Litecoin</h2>
+  <h2>Face and chains</h2>
   <p class="muted" style="margin-top:0">The name, colours and icons this arcade shows. Only the look changes: every face
     is the same network.</p>
   <div id="facechoices" style="display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 10px"></div>
   <p class="muted" id="facesaid" hidden></p>
   <button type="button" class="small" id="saveface">Use this face</button>
-  <h3 style="margin:20px 0 6px;font-size:1rem">Litecoin node</h3>
-  <p class="muted" style="margin:0 0 8px">Litecoin is being added to this arcade. For now this is the node that will
-    carry it: watch it sync, and start or stop it.</p>
-  <p id="ltcline">Checking&hellip;</p>
-  <button type="button" class="small" id="ltcrun" hidden></button>
+  <h3 style="margin:20px 0 6px;font-size:1rem">Chains this node hosts</h3>
+  <p class="muted" style="margin:0 0 8px">Pepecoin mainnet and testnet are the arcade itself. Every other chain is an
+    add-on: host only the ones whose nodes you run.</p>
+  <div id="chainlist" style="display:flex;flex-direction:column;gap:6px;margin:6px 0 10px"></div>
+  <button type="button" class="small" id="savechains">Save chains</button>
+  <button type="button" class="small ghost" id="restartarcade" hidden>Restart the arcade now</button>
+  <p class="muted" id="chainsaid" hidden></p>
+  <p class="muted" style="margin:14px 0 0">Litecoin node: <span id="ltcline">checking&hellip;</span></p>
 </section>
 
 <section class="panel">
@@ -433,7 +436,7 @@ section.panel h2{margin-top:0}
   function load() {
     return fetch('/admin/api/state', {credentials: 'same-origin', cache: 'no-store'})
       .then(function (r) { if (r.status === 401) location.href = '/admin/login'; return r.json(); })
-      .then(function (j) { data = j; draw(); drawFace(); })
+      .then(function (j) { data = j; draw(); drawFace(); drawChains(); })
       .catch(function (e) { say('Could not load: ' + e.message, 'err'); });
   }
 
@@ -459,8 +462,8 @@ section.panel h2{margin-top:0}
       .then(function () { location.reload(); }).catch(function (e) { say(e.message, 'err'); });
   };
   function drawLtc(s) {
-    var line = $('ltcline'), btn = $('ltcrun');
-    if (!s.installed) { line.textContent = 'Not hosted on this node. Litecoin is optional: a node hosts it by installing the ' + s.unit + ' service.'; btn.hidden = true; return; }
+    var line = $('ltcline');
+    if (!s.installed) { line.textContent = 'not hosted on this node. Litecoin is optional: a node hosts it by installing the ' + s.unit + ' service.'; return; }
     var up = s.service === 'active' || s.service === 'activating';
     var text = 'Service ' + s.service;
     if (s.answering) {
@@ -469,19 +472,47 @@ section.panel h2{margin-top:0}
         + ' \u00b7 ' + s.peers + ' peers \u00b7 ' + s.version;
     } else if (up) { text += ' \u00b7 ' + (s.note || 'starting'); }
     line.textContent = text;
-    btn.hidden = false; btn.disabled = s.service === 'deactivating';
-    btn.textContent = up ? 'Stop the Litecoin node' : 'Start the Litecoin node';
-    btn.dataset.run = up ? '' : '1';
   }
   function loadLtc() {
     fetch('/admin/api/litecoin', {credentials: 'same-origin', cache: 'no-store'})
       .then(function (r) { return r.json(); }).then(drawLtc)
       .catch(function () { $('ltcline').textContent = 'Could not ask about the Litecoin node.'; });
   }
-  $('ltcrun').onclick = function () {
-    var run = !!this.dataset.run; this.disabled = true;
-    call('/admin/api/litecoin', {run: run}).then(drawLtc)
-      .catch(function (e) { say(e.message, 'err'); }).then(function () { setTimeout(loadLtc, 2000); });
+  function drawChains() {
+    var list = (data && data.chains) || [], box = $('chainlist'), restart = false;
+    box.textContent = '';
+    list.forEach(function (c) {
+      var l = document.createElement('label'); l.className = 'switch';
+      var i = document.createElement('input'); i.type = 'checkbox'; i.dataset.chain = c.key;
+      i.checked = c.hosted; i.disabled = c.required;
+      var note = c.required ? 'always: it is the arcade itself'
+        : c.applies === 'restart' ? 'applies when the arcade restarts' : 'starts or stops its node at once';
+      if (!c.required && c.installed === false) note += ' \u00b7 no node on this machine';
+      if (!c.required) note += ' \u00b7 ' + (c.running ? 'running' : 'not running');
+      l.appendChild(i); l.appendChild(document.createTextNode(' ' + c.label + ' '));
+      var m = document.createElement('span'); m.className = 'muted'; m.style.fontSize = '.84rem';
+      m.textContent = '(' + note + ')'; l.appendChild(m); box.appendChild(l);
+      if (c.restart_needed) restart = true;
+    });
+    $('restartarcade').hidden = !restart;
+    $('chainsaid').hidden = !restart;
+    $('chainsaid').textContent = restart ? 'A chain was switched on or off: it takes effect when the arcade restarts.' : '';
+  }
+  $('savechains').onclick = function () {
+    var chains = {};
+    document.querySelectorAll('#chainlist input[data-chain]').forEach(function (i) {
+      if (!i.disabled) chains[i.dataset.chain] = i.checked;
+    });
+    call('/admin/api/settings', {chains: chains})
+      .then(function () { say('Chains saved.'); load(); setTimeout(loadLtc, 2000); })
+      .catch(function (e) { say(e.message, 'err'); load(); });
+  };
+  $('restartarcade').onclick = function () {
+    this.disabled = true;
+    call('/admin/api/restart', {}).then(function () {
+      say('Restarting\u2026 the page reloads in a few seconds.');
+      setTimeout(function () { location.reload(); }, 9000);
+    }).catch(function (e) { say(e.message, 'err'); $('restartarcade').disabled = false; });
   };
   loadLtc(); setInterval(loadLtc, 10000);
 
