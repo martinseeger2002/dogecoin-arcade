@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (late night) · SadFrog's side (Claude) · branch `sadfrog/ltctest-mining`
+- **An audit of the admin options, chain by chain.** SadFrog asked for "all options reflect all
+  chains and do so properly". What changed:
+  - **The node's coins:** every add-on chain's node wallet is listed, with Send and Receive
+    (`_admin_wallets`; `_context` takes any add-on by network). L main and L test were missing. A
+    node without a wallet now says "no wallet on this node yet" instead of "node unreachable".
+  - **Lock-script swaps:** one big-swap line per real-coin chain, drawn from `swap_big`. The page
+    hard-coded PEP and DOGE, so LTC's line couldn't be set.
+  - **Faucet:** the old P test switches "top each account back up" and "mine when low" were drawn
+    and posted, but the server never saved or read them (every top-off ran regardless). Each test
+    chain's amount, daily top-up (`faucet_topoff:<net>`, on by default, now honoured by both top-off
+    paths) and stocking are in Chains. The Faucet section keeps the day-wide ceiling.
+  - **Backup (node):** Dogecoin's node wallet card. Dogecoin Core 1.14 keeps one `wallet.dat` as
+    Pepecoin's does. Litecoin Core 0.21's named wallets aren't handled there yet.
+  - **Left as they are, because they don't depend on the chain:** seats and limits, switches,
+    screening, flags, going online, operator. The mainnet PEP swap is Pepecoin-only by design.
+- **Faucet work is the node's own.** In SadFrog's words, the operator's account "should act as a normal
+  user save for being tied to the operator account". So "Mine one L test block" now pays the node's
+  L test wallet, its faucet, as P test's `/fund` always has. Before, it paid the signed-in account.
+- On this node, the L main node wallet is new and empty, so Admin's Send and Receive work there.
+- Tests: 20 in `tests/test_litecoin_testnet.py`. The combined set: 500 pass. The only failures are
+  the four `test_trade_watch` ones that need `cryptography`, plus the `[/]` render error, both
+  already failing on `main` here.
+
 ### 2026-10-18 (night, latest) · SadFrog's side (Claude) · branch `sadfrog/ltctest-mining`
 - **The L test block is in:** height **4,926,386**, hash
   `eb84711bc1731d3a4c8b1638eb6f44d73dade71654dfd76f2cf10d6fd445f35f`. It paid 1.56256756 LTC TEST to
