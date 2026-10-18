@@ -103,6 +103,9 @@ coding agent, so it is written for agents first and people second.
   - The node's coins list mined coins still ripening. L test showed 0 while it held 6.25 maturing.
 - L test so far: 4 blocks mined to this node's faucet are on the chain (4,926,406 to 4,926,412). They
   can be spent after 100 confirmations.
+- **Test add-on chains are mined in 5-second batches now** (e3f6287; Pepecoin testnet keeps 30 s).
+  Two of our L test blocks, at 4,926,457 and 4,926,459, lost to another CPU miner's at the same height,
+  because a 30-second `generatetoaddress` call kept hashing on a tip already replaced.
 
 ### 2026-10-18 (afternoon) · the operator's side (Claude) · branch `claude/doginal-fit`
 
