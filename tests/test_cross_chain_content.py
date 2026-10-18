@@ -111,3 +111,21 @@ def test_the_games_tab_shows_every_chains_games(client, monkeypatch, tmp_path):
     page = test_client.get("/games").text
     assert "Testnet Quest" in page and "Doge Dash" in page, "both chains' games are listed"
     assert "Dogecoin" in page and "on any chain" in page
+
+
+def test_a_game_on_another_chain_opens_there_for_an_account(client, monkeypatch):
+    """2026-10-18: a new account, its browser on another chain, pressed ASHVALE (a PEP testnet game) and was sent away.
+    The browser now switches to the piece's chain and comes back to it, full screen or its page."""
+    test_client, state = client
+    _here, doge = _two_chains(state, monkeypatch)
+    state.set_setting("public_hosts", ["node.dogecoinarcade.com"])
+    try:
+        edge = {"host": "node.dogecoinarcade.com", "cf-ray": "abc-LHR"}
+        for end in ("full", "view"):
+            went = test_client.get(f"/inscriptions/{TX_DOGE}/{end}", headers=edge, follow_redirects=False)
+            assert went.status_code == 303, went.text
+            assert went.headers["location"] == f"/create/chain?to=doge&back=/inscriptions/{TX_DOGE}/{end}"
+        missing = test_client.get(f"/inscriptions/{'ee' * 32}/full", headers=edge, follow_redirects=False)
+        assert "/create/chain" not in missing.headers.get("location", ""), "a piece on no chain is still missing"
+    finally:
+        state.set_setting("public_hosts", [])

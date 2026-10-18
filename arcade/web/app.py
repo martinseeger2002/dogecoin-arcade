@@ -6106,6 +6106,16 @@ def create_app(state: AppState) -> FastAPI:
                 out.append((other, ix))
         return out
 
+    def _on_other_chain(request: Request, key: str, here: str):
+        """A piece on another chain than the one this browser is on, opened there (2026-10-18: a new account, its
+        browser on mainnet, pressed ASHVALE -- a testnet game -- and was sent away from it). An account's browser
+        switches chain first, so the wallet and saves around the piece are that chain's; the operator's own page has
+        no per-browser chain to switch. None when no other chain holds it."""
+        other, _ix = _chain_of(key)
+        if other is _token_chain()[0] or not _account_view(request):
+            return None
+        return RedirectResponse(f"/create/chain?to={other.network}&back={urllib.parse.quote(here)}", status_code=303)
+
     def _chain_of(key: Any) -> tuple[Any, Any]:
         """The chain that holds this inscription, and its index (2026-10-14: "Any inscription should be able to call
         any inscription cross chain"). The viewer's own chain first; a txid it does not hold is looked for on every other
@@ -7891,6 +7901,9 @@ def create_app(state: AppState) -> FastAPI:
         chain, index = _token_chain()
         row = index.inscription(contentlib._key(key))
         if row is None:
+            elsewhere = _on_other_chain(request, key, f"/inscriptions/{key}/full")
+            if elsewhere is not None:
+                return elsewhere
             return RedirectResponse("/inscriptions", status_code=303)
         ctype = str(row.get("content_type") or row.get("contenttype") or "")
         data = _fromjson(row.get("json")) or {}
@@ -7937,6 +7950,9 @@ def create_app(state: AppState) -> FastAPI:
         chain, index = _token_chain()
         row = index.inscription(contentlib._key(key))
         if row is None:
+            elsewhere = _on_other_chain(request, key, f"/inscriptions/{key}/view")
+            if elsewhere is not None:
+                return elsewhere
             state.flash("no such inscription", "err")
             return RedirectResponse("/inscriptions", status_code=303)
         # The frame is addressed to the pages' own hostname when the operator
