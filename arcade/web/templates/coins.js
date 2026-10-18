@@ -180,6 +180,11 @@ export const COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3, ltc: 3};
 //: Litecoin's private-key text prefix (WIF, 0xB0: keys starting with "T"), for importing elsewhere.
 export const LTC_WIF = 0xb0;
 
+//: Every chain's private-key text prefix (2026-10-18), each checked against that chain's own Core with
+//: `signmessagewithprivkey`: Pepecoin mainnet shares Dogecoin's 0x9E (keys start "Q"), both testnets
+//: of the Dogecoin family 0xF1, Litecoin 0xB0 ("T") and Litecoin testnet 0xEF ("c").
+export const WIF = {main: 0x9e, doge: 0x9e, ltc: LTC_WIF, test: 0xf1, regtest: 0xf1, ltctest: 0xef};
+
 /** A private key as Wallet Import Format text, for a compressed public key. */
 export async function wif(key, version) {
   const body = new Uint8Array(key.length + 1);

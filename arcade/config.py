@@ -476,10 +476,12 @@ LITECOIN = dataclasses.replace(
 # Litecoin mainnet's Params with testnet4's ports, address versions (m/n... 111, Q... 58) and genesis,
 # its node's chain in testnet4/. Keys on coin type 1, as every test chain (coins.js COIN_TYPE), so an
 # account's L test key is its Pepecoin testnet key.
-# The floor (2026-10-18 01:00 UTC): a peer's tip was 4,926,272, rounded up to 4,927,000 -- about a day
-# ahead at 2.5-minute blocks (often less: testnet's min-difficulty blocks come faster), the D-004
-# margin as on L main. This node was syncing from block 0 then.
-LTC_TESTNET_FLOOR = 4_927_000
+# The floor: first 4,927,000 (2026-10-18 01:00 UTC, a peer's tip 4,926,272 rounded up), then lowered
+# the same day to 4,926,300, just under the tip of 4,926,38x, at SadFrog's word: "lower the floor" so
+# the arcade's first L test block, CPU-mined to an account that day, is read. Nothing arcade-made
+# existed on Litecoin testnet below it, and this network's blocks come about every 5-6 minutes
+# (min-difficulty blocks after each 5-minute gap), so 4,927,000 was two days away.
+LTC_TESTNET_FLOOR = 4_926_300
 
 LITECOIN_TESTNET = dataclasses.replace(
     LITECOIN,

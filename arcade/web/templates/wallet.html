@@ -127,7 +127,7 @@
     {% endif %}</p>
   {% if mining.mining %}
   <div class="msg info" id="mining" style="margin:0 0 8px">
-    <strong>Mining a block on this machine&hellip;</strong>
+    <strong>Mining a block on this machine&hellip;</strong>{% if mining.chain and mining.chain != 'P test' %} ({{ mining.chain }}){% endif %}
     <span id="mining-so-far"></span>
     This page refreshes itself when one is found.</div>
   <form method="post" action="/fund/stop">
@@ -179,6 +179,31 @@
     Until then nothing can be sent, held or shown on it.</p>
 </div>
 {% endif %}
+{% endif %}
+{% if ltc_test_mine %}
+{# Litecoin testnet, "L test" (2026-10-18, SadFrog's side): one block mined here, paid to the signed-in account. #}
+<h2 id="ltctest-mine"><b class="netl litecoin">L</b> test <span class="tag litecoin">test</span></h2>
+<div class="panel">
+  {% if not ltc_test_mine.ready %}
+  <p style="margin:0" class="muted">L test opens here when its node has finished syncing.</p>
+  {% elif not ltc_test_mine.signed_in %}
+  <p style="margin:0">Sign in to mine an L test block: the block pays your account.</p>
+  {% elif not ltc_test_mine.operator %}
+  <p style="margin:0" class="muted">Only this node&rsquo;s operator mines L test blocks here.</p>
+  {% else %}
+  <p style="margin:0 0 8px">Litecoin testnet blocks come when somebody mines one. This mines one block on this
+    machine and pays it to your account&rsquo;s L test address
+    <code style="word-break:break-all">{{ ltc_test_mine.address }}</code>. A block pays about 1.56 LTC TEST,
+    spendable after 100 more blocks (Litecoin&rsquo;s rule for mined coins); test coins, worth nothing.</p>
+  {% if mining.mining %}
+  <p class="muted" style="margin:0">Mining a {{ mining.chain }} block now; see above.</p>
+  {% else %}
+  <form method="post" action="/fund/ltctest">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit">Mine one L test block</button>
+  </form>
+  {% endif %}
+  {% endif %}
+</div>
 {% endif %}
 <h2>Fast sending <span class="tag testnet">test</span></h2>
 <div class="panel">

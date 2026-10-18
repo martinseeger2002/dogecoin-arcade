@@ -64,6 +64,17 @@
         <i>Import Litecoin addresses or private keys</i>), or choose the custom path <code>m/44'/3'/0'</code>
         where a wallet allows it. Anyone with this key can spend your Litecoin: never paste it into a website.</p>
     </div>
+    {# 2026-10-18 (SadFrog's side): every chain's key, to open the same coins in that chain's own Core. #}
+    <div id="chain-keys-box" style="margin-top:12px">
+      <p style="margin:0 0 4px"><b>Your keys for each chain's own wallet</b></p>
+      <dl id="chain-keys" style="margin:0"></dl>
+      <p class="muted" style="margin:6px 0 0;font-size:.86rem">The same twelve words, as each chain's Core
+        wallet reads a key. Mainnet (Pepecoin and Dogecoin share one key and one text) is coin type 3; the test
+        chains are coin type 1. In that chain's Core: <code>importprivkey "KEY" "arcade" true</code> (Litecoin Core
+        0.21 needs a legacy wallet: <code>createwallet arcade false false "" false false</code>; add
+        <code>-testnet</code> for a test chain). Anyone with a mainnet key can spend those coins: never paste one
+        into a website.</p>
+    </div>
     <p style="margin:10px 0 0">
       <button type="button" class="btn ghost small" id="hide-words">Hide them</button></p>
   </div>
@@ -206,7 +217,8 @@ if (turn) turn.onclick = async () => {
  * to enter the password a second time to view the 12 words"). The words are
  * never sent anywhere; they go into the page and out again with Hide. */
 const shown = $("words-shown"), list = $("words-list");
-const hideWords = () => { list.replaceChildren(); $("ltc-key").textContent = ""; shown.hidden = true; };
+const hideWords = () => { list.replaceChildren(); $("ltc-key").textContent = "";
+                          $("chain-keys").replaceChildren(); shown.hidden = true; };
 $("hide-words").onclick = hideWords;
 addEventListener("pagehide", hideWords);
 $("show-words").onclick = async () => {
@@ -250,6 +262,20 @@ $("show-words").onclick = async () => {
       const signin = await import("/signin.js");
       const ltc = await coins.coinKey(await signin.toSeed(phrase), "ltc");
       $("ltc-key").textContent = await coins.wif(ltc.key, coins.LTC_WIF);
+      // Every chain's key (2026-10-18): what each chain's own Core imports.
+      const seed = await signin.toSeed(phrase);
+      for (const [label, network] of [["Pepecoin and Dogecoin mainnet", "main"], ["Litecoin mainnet", "ltc"],
+                                      ["Pepecoin testnet", "test"], ["Litecoin testnet", "ltctest"]]) {
+        const one = await coins.coinKey(seed, network);
+        const dt = document.createElement("dt"), dd = document.createElement("dd");
+        dt.textContent = label;
+        const code = document.createElement("code");
+        code.style.cssText = "word-break:break-all;display:block;padding:6px 10px";
+        code.textContent = await coins.wif(one.key, coins.WIF[network]);
+        dd.style.margin = "2px 0 8px";
+        dd.append(code);
+        $("chain-keys").append(dt, dd);
+      }
     }
     for (const word of phrase.trim().split(/\s+/)) {
       const li = document.createElement("li");

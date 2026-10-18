@@ -4128,7 +4128,7 @@ def create_app(state: AppState) -> FastAPI:
         chain, _ = _token_chain()
         return render(request, "wallet.html", messaging=messaging_status(),
                       ledger=ledger_status(), **_doge_status(), prepared=None, which=None, now=time.time(),
-                      mining=_mining_json(), tab="coins", chain=chain,
+                      mining=_mining_json(), ltc_test_mine=_ltc_test_mine(request), tab="coins", chain=chain,
                       other_chains=[c for c in state.token_chains if c is not chain])
 
     @app.get("/wallet/tokens", response_class=HTMLResponse)
@@ -4351,8 +4351,76 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(f"Mining failed: {exc}", "err")
         return RedirectResponse("/wallet", status_code=303)
 
-    def _mine_one(address: str) -> None:
-        """The thread behind /fund: one block, counting as it goes, then a notice."""
+    def _ltc_test_address(pubkey: str) -> str:
+        """An account's L test address: the one its browser gave, else its Pepecoin testnet key's
+        twin (both test chains derive on coin type 1). "" when this node has no L test."""
+        chain = getattr(state, "ltc_test", None)
+        if chain is None or not pubkey:
+            return ""
+        return _account_address(pubkey, chain) or _ltc_test_twin(_account_address(pubkey, _account_chain()))
+
+    def _ltc_test_mine(request: Request) -> dict[str, Any] | None:
+        """What the Wallet page's L test mining panel needs, or None when this node has no L test."""
+        chain = getattr(state, "ltc_test", None)
+        if chain is None:
+            return None
+        account = signed_in(request)
+        return {"ready": bool(state.chain_ready(chain)), "signed_in": account is not None,
+                "operator": _mines_here(request),
+                "address": _ltc_test_address(account.pubkey) if account is not None else ""}
+
+    def _mines_here(request: Request) -> bool:
+        """Only the operator's account mines to itself (2026-10-18, SadFrog: "only for the admin's
+        account, just like before on the other chains"): the operator signed in, or, on a node that
+        names no operator yet, whoever is at the node's own machine. Never the public door."""
+        if signed_in(request) is None:
+            return False
+        if state.operator:
+            return _is_operator(request)
+        return not _public_request(request)
+
+    @app.post("/fund/ltctest")
+    def fund_ltc_test(request: Request, csrf_token: str = Form("")):
+        """Mine one Litecoin TESTNET block to the signed-in account (2026-10-18, SadFrog's side:
+        "mine on my account"). The same thread and stop as /fund; the reward is the account's own,
+        on its L test key, and ripens over 100 blocks (Litecoin's coinbase maturity)."""
+        try:
+            check_csrf(csrf_token)
+            chain = getattr(state, "ltc_test", None)
+            if chain is None:
+                raise ValueError("this node does not run Litecoin testnet")
+            if not state.chain_ready(chain):
+                raise ValueError("Litecoin testnet is not open yet: its node is still syncing")
+            account = signed_in(request)
+            if account is None:
+                raise ValueError("sign in first: the block pays your account")
+            if not _mines_here(request):
+                raise ValueError("only this node's operator mines L test blocks here")
+            address = _ltc_test_address(account.pubkey)
+            if not address:
+                raise ValueError("this node does not know your L test address yet")
+            if state.mining is not None:
+                state.flash("Already mining a block; it will say when one is found.")
+                return RedirectResponse("/wallet", status_code=303)
+            with chain.rpc() as rpc:
+                expected = Miner(rpc, chain.params).expected_hashes()      # refuses real coins
+            state.mining = {"started": time.time(), "address": address, "tries": 0, "rate": 0.0,
+                            "expected": expected, "stop": False, "chain": chain.title}
+            # Said before the thread starts: the notice is one slot, and a block found at once
+            # would otherwise have its "Mined" overwritten by this.
+            state.flash(f"Mining one L test block to {address}. The page will say when it is found.")
+            threading.Thread(target=_mine_one, args=(address, chain), name="arcade-mine",
+                             daemon=True).start()
+        except HTTPException:
+            raise          # a rejected form is a 400, not an error page
+        except Exception as exc:
+            state.flash(f"Mining failed: {exc}", "err")
+        return RedirectResponse("/wallet", status_code=303)
+
+    def _mine_one(address: str, chain=None) -> None:
+        """The thread behind /fund: one block, counting as it goes, then a notice.
+        `chain` is the messaging chain unless said (L test: /fund/ltctest)."""
+        chain = chain or state.messaging
         def progress(tries: int, rate: float) -> None:
             if state.mining:
                 state.mining.update(tries=tries, rate=rate)
@@ -4361,11 +4429,15 @@ def create_app(state: AppState) -> FastAPI:
             return bool(state.mining and state.mining.get("stop"))
 
         try:
-            with state.messaging.rpc() as rpc:
-                miner = Miner(rpc, state.messaging.params)
+            with chain.rpc() as rpc:
+                miner = Miner(rpc, chain.params)
                 block = miner.mine_one(address, on_progress=progress, stop=stopped)
                 tries = (state.mining or {}).get("tries", 0)
-                if block:
+                if block and chain is not state.messaging:
+                    log.info("mined %s block %s to %s", chain.title, block, address)
+                    state.flash(f"Mined {chain.title} block {block[:16]}… to {address}. Its coins can be "
+                                f"spent after 100 more blocks.", "ok")
+                elif block:
                     state.flash(f"Mined block {block[:16]}… to {address}. "
                                 f"{miner.status().describe()}.", "ok")
                 elif stopped():
@@ -4404,7 +4476,7 @@ def create_app(state: AppState) -> FastAPI:
                 "expected": int(mining.get("expected", 0)),
                 # At the rate seen so far; 0 until the first batch is in.
                 "expected_seconds": int(mining["expected"] / rate) if rate else 0,
-                "stopping": bool(mining.get("stop"))}
+                "stopping": bool(mining.get("stop")), "chain": mining.get("chain") or "P test"}
 
     # --- tokens ---------------------------------------------------------------
     # Shown for one chain at a time: mainnet, the ledger (D-012), or testnet,

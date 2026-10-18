@@ -162,3 +162,109 @@ def test_the_chain_switch_says_test_for_l_test(client, monkeypatch):
     assert 'title="Switch to L test">test<' in page, "L test's net is litecoin, but it is a test chain"
     assert '>main<' not in page.split('title="Switch to L test"')[1][:10]
 
+
+
+# --- mining one L test block to an account (2026-10-18, SadFrog's side: "mine on my account") -----
+
+def test_the_miner_mines_test_add_ons_and_never_real_coins():
+    from arcade.messaging.miner import Miner
+    Miner(None, NETWORKS["ltctest"])
+    Miner(None, NETWORKS["regtest"])
+    for real in ("main", "doge", "ltc"):
+        try:
+            Miner(None, NETWORKS[real])
+        except config.MainnetRefused:
+            continue
+        raise AssertionError(f"would mine on {real}")
+
+
+def _signed_in_as(state, monkeypatch, pubkey: str):
+    import types
+    real = state.accounts
+
+    class Accounts:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def session(self, cookie):
+            return types.SimpleNamespace(pubkey=pubkey, tag="frog", name="frog")
+    monkeypatch.setattr(state, "accounts", lambda: Accounts(real()))
+
+
+def test_one_l_test_block_is_mined_to_the_signed_in_account(client, monkeypatch):
+    import contextlib
+    import time
+    app, state = client
+    t = _with_ltc_test(state, monkeypatch, ready=True)
+    monkeypatch.setattr(type(state), "chain_ready", lambda self, chain: True)
+    pubkey = "02" + "11" * 32
+    state.set_setting(f"address:{pubkey}", PEP_TEST)          # their tag chain's address
+    calls = []
+
+    class Rpc:
+        def call(self, method, *args):
+            calls.append((method, *args))
+            if method == "getdifficulty":
+                return 0.000244
+            if method == "generatetoaddress":
+                return ["ab" * 32]
+            raise AssertionError(method)
+
+    @contextlib.contextmanager
+    def rpc():
+        yield Rpc()
+    monkeypatch.setattr(t, "rpc", rpc)
+
+    assert app.post("/fund/ltctest", data={"csrf_token": state.csrf_token}, follow_redirects=False).status_code == 303
+    assert state.mining is None and not any(c[0] == "generatetoaddress" for c in calls), "nobody signed in"
+
+    _signed_in_as(state, monkeypatch, pubkey)
+    state.set_setting("operator", "02" + "22" * 32)                  # somebody else runs this node
+    assert "Only this node" in app.get("/wallet").text
+    app.post("/fund/ltctest", data={"csrf_token": state.csrf_token}, follow_redirects=False)
+    assert state.mining is None and not any(c[0] == "generatetoaddress" for c in calls), "not the operator"
+
+    state.set_setting("operator", pubkey)
+    from arcade.web.app import _ltc_test_twin
+    page = app.get("/wallet").text
+    assert "Mine one L test block" in page and _ltc_test_twin(PEP_TEST) in page
+    app.post("/fund/ltctest", data={"csrf_token": state.csrf_token}, follow_redirects=False)
+    for _ in range(100):
+        if state.mining is None:
+            break
+        time.sleep(0.05)
+    mined = [c for c in calls if c[0] == "generatetoaddress"]
+    assert mined and mined[0][2] == _ltc_test_twin(PEP_TEST), "the reward is the account's, on its L test key"
+    assert "Mined L test block abababababababab" in app.get("/wallet").text
+
+
+def test_every_chains_key_is_handed_out_in_its_own_text(tmp_path):
+    """The real coins.js, run in Node: each chain's WIF prefix is the one that chain's Core accepted
+    (checked with signmessagewithprivkey, 2026-10-18), and L test's key is the Pepecoin testnet key."""
+    import shutil
+    import pytest
+    from arcade.web.app import TEMPLATE_DIR
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed here")
+    page = (TEMPLATE_DIR / "my_backup.html").read_text()
+    assert 'id="chain-keys"' in page and "coins.WIF[network]" in page
+    shutil.copytree(TEMPLATE_DIR.parent / "vendor", tmp_path / "vendor")
+    (tmp_path / "package.json").write_text('{"type":"module"}')
+    (tmp_path / "coins.js").write_text((TEMPLATE_DIR / "coins.js").read_text().replace('"/vendor/', '"./vendor/'))
+    (tmp_path / "run.js").write_text('''import * as coins from "./coins.js";
+const seed = new Uint8Array(64).fill(7);
+const out = {};
+for (const n of ["main", "doge", "ltc", "test", "ltctest"]) {
+  const k = await coins.coinKey(seed, n);
+  out[n] = {wif: await coins.wif(k.key, coins.WIF[n]), pub: Array.from(k.pubkey).join(",")};
+}
+console.log(JSON.stringify(out));''')
+    said = json.loads(subprocess.run(["node", "run.js"], cwd=tmp_path, capture_output=True, text=True,
+                                     check=True).stdout)
+    versions = {n: b58check_decode(v["wif"])[0] for n, v in said.items()}
+    assert versions == {"main": 158, "doge": 158, "ltc": 176, "test": 241, "ltctest": 239}
+    assert said["main"]["pub"] == said["doge"]["pub"] == said["ltc"]["pub"], "one mainnet key"
+    assert said["ltctest"]["pub"] == said["test"]["pub"] != said["main"]["pub"], "L test is the testnet key"

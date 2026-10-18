@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from ..config import Params, require_messaging_network
+from ..config import MESSAGING_NETWORKS, MainnetRefused, Params, require_messaging_network
 from ..rpc import RpcClient, RpcError
 
 log = logging.getLogger(__name__)
@@ -98,8 +98,12 @@ class Miner:
 
     def __init__(self, rpc: RpcClient, params: Params):
         # Belt and braces over the CLI's own check. Mining on mainnet would be
-        # both futile and a waste of someone's electricity.
-        require_messaging_network(params)
+        # both futile and a waste of someone's electricity. A test add-on chain
+        # (Litecoin testnet, 2026-10-18) may be mined too; never one with real coins.
+        if getattr(params, "real_coins", False):
+            raise MainnetRefused(f"mining is for test chains; refusing {params.name!r}")
+        if not (params.name in MESSAGING_NETWORKS or getattr(params, "addon", False)):
+            require_messaging_network(params)
         self.rpc = rpc
         self.params = params
 
