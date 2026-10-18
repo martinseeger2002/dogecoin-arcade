@@ -2265,6 +2265,11 @@ def create_app(state: AppState) -> FastAPI:
     imports: dict[str, Any] = {}
 
     def _chain_for(which: str):
+        # Dogecoin's node wallet too (2026-10-18): Dogecoin Core 1.14 keeps one wallet.dat as
+        # Pepecoin's does, so saving, importing and switching work the same way. Litecoin Core 0.21
+        # keeps named wallets loaded over RPC instead, which this page does not do yet.
+        if which == "doge" and state.doge is not None:
+            return state.doge
         chain = state.ledger if which == "ledger" else state.messaging
         if which not in ("ledger", "messaging"):
             raise ValueError("unknown chain")
@@ -2272,7 +2277,10 @@ def create_app(state: AppState) -> FastAPI:
 
     def _chain_cards() -> list[dict[str, Any]]:
         cards = []
-        for which, chain in (("messaging", state.messaging), ("ledger", state.ledger)):
+        chains = [("messaging", state.messaging), ("ledger", state.ledger)]
+        if state.doge is not None and state.chain_ready(state.doge):
+            chains.append(("doge", state.doge))
+        for which, chain in chains:
             card: dict[str, Any] = {
                 "which": which, "label": chain.label, "network": chain.network,
                 "is_mainnet": chain.is_mainnet, "online": False, "wallet": None,

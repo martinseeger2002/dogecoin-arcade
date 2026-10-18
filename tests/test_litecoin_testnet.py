@@ -388,3 +388,21 @@ def test_a_test_chains_daily_top_up_can_be_switched_off(client, monkeypatch):
     assert said.status_code == 200 and state.faucet_topoff(t) is False
     state.keep_faucets()
     assert not any(c[0] == "sendtoaddress" for c in rpc.calls)
+
+
+def test_the_backup_page_has_dogecoins_node_wallet_too(client, monkeypatch, tmp_path):
+    import contextlib
+    from arcade import backup
+    from arcade.web.state import ChainContext
+    app, state = client
+    doge = ChainContext(network="doge", role="ledger", label="Dogecoin", datadir=tmp_path)
+
+    @contextlib.contextmanager
+    def rpc():
+        yield object()
+    monkeypatch.setattr(doge, "rpc", rpc)
+    monkeypatch.setattr(state, "doge", doge, raising=False)
+    monkeypatch.setattr(type(state), "chain_ready", lambda self, chain: True)
+    monkeypatch.setattr(backup, "wallet_summary", lambda rpc: {"balance": 0, "addresses": 0, "keys": 0})
+    page = app.get("/backup", headers=LOCAL).text
+    assert "/backup/doge/" in page, "Dogecoin's node wallet: save, switch, make new"
