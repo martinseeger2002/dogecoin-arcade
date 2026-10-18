@@ -148,3 +148,17 @@ def test_its_service_is_its_own(monkeypatch, tmp_path):
     ltclib.set_running(True, "ltctest")
     assert ("--no-block", "enable", "--now", "litecoind-testnet") in calls
     assert not any(ltclib.UNIT in c for c in calls), "L main's node is never touched"
+
+
+def test_the_chain_switch_says_test_for_l_test(client, monkeypatch):
+    app, state = client
+    _with_ltc_test(state, monkeypatch, ready=True)
+    # An imported macro keeps the globals of its first render, an earlier test's app's chain_menu
+    # (one app per process outside the tests), so this page is drawn from fresh templates.
+    from arcade.web.app import TEMPLATES
+    if TEMPLATES.env.cache is not None:
+        TEMPLATES.env.cache.clear()
+    page = app.get("/wallet").text
+    assert 'title="Switch to L test">test<' in page, "L test's net is litecoin, but it is a test chain"
+    assert '>main<' not in page.split('title="Switch to L test"')[1][:10]
+

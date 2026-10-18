@@ -149,7 +149,7 @@
 {% if not public %}
 <span class="chainswitch">
 {%- for c in chain_menu(account_side=True) %}
-{%- set short = 'test' if c.net == 'testnet' else 'main' %}
+{%- set short = 'main' if c.mainnet else 'test' %}  {# by the flag, not the net: L test's net is "litecoin" #}
 {%- if c.network == chain.network %}
 <span class="tag {{ c.net }} on" aria-current="true" title="Showing {{ c.label }}">{{ short }}</span>
 {%- elif c.ready %}
