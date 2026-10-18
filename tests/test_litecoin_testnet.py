@@ -159,8 +159,11 @@ def test_the_chain_switch_says_test_for_l_test(client, monkeypatch):
     if TEMPLATES.env.cache is not None:
         TEMPLATES.env.cache.clear()
     page = app.get("/wallet").text
-    assert 'title="Switch to L test">test<' in page, "L test's net is litecoin, but it is a test chain"
-    assert '>main<' not in page.split('title="Switch to L test"')[1][:10]
+    # Drawn as its coin since 2026-10-18 (the operator: "Use the icons ... rather than text badges"): L test's own, the
+    # purple one, never L main's.
+    after = page.split('title="Switch to L test"')[1][:200]
+    assert 'src="/coin-ltctest.png" alt="LTC TEST"' in after, "L test's net is litecoin, but it is a test chain"
+    assert 'coin-ltc.png' not in after
 
 
 

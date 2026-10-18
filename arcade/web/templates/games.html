@@ -63,7 +63,7 @@
     <div style="margin:0 0 4px"><strong style="font-size:1.05rem">{{ wall(g.name, 'name') }}</strong>
       {% if g.multiplayer %}<span class="pill">multiplayer</span>{% endif %}
       {% if g.genre %}<span class="pill">{{ g.genre }}</span>{% endif %}
-      {% if it.net %}<span class="netbadge {{ {'test': 'test', 'main': 'main', 'doge': 'doge'}.get(it.net, 'test') }}">{{ it.netlabel }}</span>{% endif %}</div>
+      {% if it.net %}{{ net_badge(it.net) }}{% endif %}</div>
     <div class="muted" style="font-size:.84rem">by {{ it.creator|who }}
       &middot; {{ when(it.time) if it.time else 'just now' }}
       {%- if g.version %} &middot; v{{ g.version }}{% endif %}

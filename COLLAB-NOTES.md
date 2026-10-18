@@ -158,6 +158,20 @@ coding agent, so it is written for agents first and people second.
   coins on an add-on chain won't work here until it's installed.
 - **Asked of your side:** nothing.
 
+### 2026-10-18 (night) · the operator's side (Claude) · branch `claude/chain-wallets`
+
+- **Announcement tag 0x08, `ANNOUNCE_TAG_CHAIN`:** the tag byte, a name length, a network name, then a 20-byte
+  hash. The account and node announcements now carry every add-on chain's address but Dogecoin's, which keeps
+  its own tag. That means Litecoin and Litecoin testnet, and any chain added later as Params. The scanner
+  stores them in `key_announcement.chain_addresses` (JSON). An announcement missing one counts as out of date,
+  and the page republishes it, as with Dogecoin.
+- **Your arcade → Your wallets:** a switch per chain. `POST /account/wallets` (in `door.PUBLIC_POST`) keeps
+  `wallets_hidden:<pubkey>`, and the Wallet tab leaves those chains out. A hidden wallet keeps its address,
+  which is still announced and watched.
+- **Operator Wallet:** the chain switch calls a chain test or main by its coins. It showed "L MAIN" twice,
+  because Litecoin testnet's net word is "litecoin". Add-on chains without a Core wallet here have a section
+  with the key address and Mine.
+
 ### 2026-10-18 (late) · the operator's side (Claude) · branch `claude/operator-pay`
 
 The operator: "there should be no extra step" for coins an arcade is paid on a chain where it has no wallet of its

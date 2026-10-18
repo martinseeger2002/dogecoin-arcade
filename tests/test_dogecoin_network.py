@@ -47,7 +47,7 @@ def test_a_syncing_dogecoin_is_shown_and_never_used(client, monkeypatch):
         "shown on the pages, kept out of everything that does work"
     assert doge.is_mainnet and doge.net == "dogecoin"
     page = app.get("/exchange?tab=tokens").text
-    chip = re.search(r'<span class="ex-chip chain-off"[^>]*><b class="netl dogecoin">D</b> main</span>', page)
+    chip = re.search(r'<span class="ex-chip chain-off"[^>]*><span class="netbadge icon"[^>]*><img class="neticon" src="/coin-doge.png"', page)
     assert chip and "42.3% so far" in chip.group(0), "grayed out, with how far it has got"
     assert "show=dogecoin" not in page
     for tab in ("market", "mintpads"):
@@ -60,7 +60,7 @@ def test_a_synced_dogecoin_opens(client, monkeypatch):
     doge = _with_doge(state, monkeypatch, ready=True)
     assert doge in state.token_chains
     page = app.get("/exchange?tab=tokens").text
-    assert 'href="/exchange?tab=tokens&show=dogecoin"' in page and "<b class=\"netl dogecoin\">D</b> main</a>" in page
+    assert 'href="/exchange?tab=tokens&show=dogecoin"' in page and 'src="/coin-doge.png" alt="DOGE"></span></a>' in page
 
 
 def test_the_tip_picker_grays_dogecoin_until_it_syncs(client, monkeypatch):
@@ -114,13 +114,14 @@ def test_every_network_word_says_which_coin(client, monkeypatch):
     _with_doge(state, monkeypatch, ready=True)
     from arcade.web.app import TEMPLATES
     badge = TEMPLATES.env.globals["net_badge"]
-    assert '<b class="netl">P</b> TEST<' in badge(False)
-    assert '<b class="netl">P</b> MAIN<' in badge(True)
-    assert 'netbadge doge' in badge("doge") and '<b class="netl">D</b> MAIN<' in badge(state.doge)
+    # As the chain's coin now (2026-10-18: "Use the icons ... rather than text badges"), named on hover.
+    assert 'src="/coin-pep-test.png" alt="PEP TEST"' in badge(False) and "Pepecoin testnet" in badge(False)
+    assert 'src="/coin-pep.png" alt="PEP"' in badge(True)
+    assert 'src="/coin-doge.png"' in badge("doge") and 'src="/coin-doge.png"' in badge(state.doge)
     page = app.get("/exchange?tab=tokens").text
     assert '.tag.testnet::before,.tag.mainnet::before{content:"P"' in page
     assert '.tag.dogecoin::before{content:"D"' in page
-    assert '<b class="netl testnet">P</b> test</a>' in page and '<b class="netl mainnet">P</b> main</a>' in page
+    assert 'alt="PEP TEST"></span></a>' in page and 'alt="PEP"></span></a>' in page
 
 
 def test_one_naming_convention(client, monkeypatch):

@@ -177,6 +177,8 @@ PUBLIC_TREES = (
 #: Nothing is disclosed on the page itself: `inscription_view` reads this
 #: node's wallet only when it is the operator's own copy of the page.
 PUBLIC_SHAPES = (
+    # Every chain's coin icon (2026-10-18: Litecoin's two joined PEP's and DOGE's); the route serves only files there.
+    re.compile(r"^/coin-[a-z0-9-]{2,24}\.png$"),
     # One game's discussion: read-only, like the launch thread it is.
     re.compile(r"^/games/[0-9a-f]{64}$"),
     # A game's own front door: its sign-up, or the game itself once signed in.
@@ -240,6 +242,8 @@ LINKED_FROM_PUBLIC = ("/content/", "/collections", "/feed", "/u/", "/docs",
 #: equally correct; it is named so that nobody reads that 405 as the door having
 #: opened something. (the door census, 2026-09-27)
 PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
+               # which chains' wallets an account's Wallet tab shows (2026-10-18)
+               "/account/wallets",
                # a tab's own lock-script trades (2026-10-13)
                "/account/trade/spend", "/account/trade/spend/sign", "/account/trade/facts",
                "/account/trade/lock", "/account/trade/watch",

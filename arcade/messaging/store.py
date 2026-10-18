@@ -436,6 +436,8 @@ class MessageStore:
         ("key_announcement", "tag", "TEXT NOT NULL DEFAULT ''"),
         ("key_announcement", "other_address", "TEXT NOT NULL DEFAULT ''"),
         ("key_announcement", "doge_address", "TEXT NOT NULL DEFAULT ''"),   # 2026-10-15: published Dogecoin address
+        # 2026-10-18: every other chain's published address, as JSON {network: address}
+        ("key_announcement", "chain_addresses", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_name", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_type", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_data", "BLOB"),
@@ -895,7 +897,7 @@ class MessageStore:
         self, txid: str, address: str, pubkey: bytes, fingerprint: str,
         height: int, block_time: int, stated: bool = False, name: str = "",
         tag: str = "", other_address: str = "", pfp: str = "",
-        bio: str = "", url: str = "", doge_address: str = "",
+        bio: str = "", url: str = "", doge_address: str = "", chain_addresses: str = "",
     ) -> None:
         """Record an announcement.
 
@@ -908,8 +910,8 @@ class MessageStore:
         self.conn.execute(
             "INSERT INTO key_announcement"
             "(txid,address,pubkey,fingerprint,height,block_time,seen_at,stated,name,"
-            "tag,other_address,pfp,bio,url,doge_address) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "tag,other_address,pfp,bio,url,doge_address,chain_addresses) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             # A longer name replaces a shorter one, so a rescan repairs a name an
             # older parser had cut. INSERT OR IGNORE meant the truncation was
             # permanent in the reader's store however often it was rescanned.
@@ -943,6 +945,9 @@ class MessageStore:
             "  doge_address=CASE WHEN excluded.doge_address <> '' "
             "                    THEN excluded.doge_address "
             "                    ELSE key_announcement.doge_address END, "
+            "  chain_addresses=CASE WHEN excluded.chain_addresses <> '' "
+            "                       THEN excluded.chain_addresses "
+            "                       ELSE key_announcement.chain_addresses END, "
             # A picture cleared is a picture cleared: unlike the fields above,
             # an empty one from a NEWER announcement is a person taking their
             # face down, and must not be read as an older parser seeing
@@ -954,7 +959,7 @@ class MessageStore:
             "  pfp=excluded.pfp, bio=excluded.bio, url=excluded.url",
             (txid, address, pubkey, fingerprint, height, block_time,
              int(time.time()), 1 if stated else 0, name, tag, other_address,
-             pfp, bio, url, doge_address),
+             pfp, bio, url, doge_address, chain_addresses),
         )
 
     def superseded_addresses(self, pubkey: bytes) -> list[str]:

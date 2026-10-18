@@ -149,20 +149,24 @@
 {% if not public %}
 <span class="chainswitch">
 {%- for c in chain_menu(account_side=True) %}
-{%- set short = 'main' if c.mainnet else 'test' %}  {# by the flag, not the net: L test's net is "litecoin" #}
+{%- set short = 'main' if c.mainnet else 'test' %}{# by the chain's coins, not its word: Litecoin testnet's is "litecoin" (2026-10-18) #}
+{#- Each chain as its coin when it has one (2026-10-18: "Use the icons ... rather than text badges"). -#}
+{%- set ic = coin_icon(c.network) %}
+{%- set face %}{% if ic %}<img class="neticon" src="{{ ic }}" alt="{{ c.coin }}">{% else %}{{ short }}{% endif %}{% endset %}
+{%- set kind = 'iconic' if ic else c.net %}
 {%- if c.network == chain.network %}
-<span class="tag {{ c.net }} on" aria-current="true" title="Showing {{ c.label }}">{{ short }}</span>
+<span class="tag {{ kind }} on" aria-current="true" title="Showing {{ c.label }}">{{ face }}</span>
 {%- elif c.ready %}
 <form method="post" action="/tokens/chain" style="display:inline">
   <input type="hidden" name="csrf_token" value="{{ csrf }}">
   {# Back to the page it was pressed on (D-135). #}
   {% if back %}<input type="hidden" name="back" value="{{ back }}">{% endif %}
-  <button type="submit" class="tag {{ c.net }} switch" name="chain" value="{{ c.network }}"
-          title="Switch to {{ c.label }}">{{ short }}</button>
+  <button type="submit" class="tag {{ kind }} switch" name="chain" value="{{ c.network }}"
+          title="Switch to {{ c.label }}" aria-label="Switch to {{ c.label }}">{{ face }}</button>
 </form>
 {%- else %}
-<span class="tag {{ c.net }} chain-off" aria-disabled="true"
-      title="{{ c.label }}: opens when its node has synced ({{ c.progress }}% so far)">{{ short }}</span>
+<span class="tag {{ kind }} chain-off" aria-disabled="true"
+      title="{{ c.label }}: opens when its node has synced ({{ c.progress }}% so far)">{{ face }}</span>
 {%- endif %}
 {%- endfor %}
 </span>

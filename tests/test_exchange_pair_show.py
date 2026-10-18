@@ -45,7 +45,7 @@ def _nets(page: str) -> list[str]:
 def test_mix_lists_both_chains_and_the_cross_chain_book(client, monkeypatch):
     app, state = _markets(client, monkeypatch)
     page = app.get("/exchange?tab=tokens").text
-    for label in ("Mix", "</b> test", "</b> main", "Cross chain only"):
+    for label in ("Mix", 'alt="PEP TEST"></span>', 'alt="PEP"></span>', "Cross chain only"):
         assert f"{label}</a>" in page, label
     assert 'href="/exchange?tab=tokens" aria-current="true">Mix' in page, "Mix is the default"
     assert sorted(set(_nets(page))) == ["cross", "mainnet", "testnet"], _nets(page)
@@ -97,7 +97,7 @@ def test_the_nfts_tab_has_the_same_chips(client, monkeypatch):
     network buttons as the tokens"."""
     app, state = _collections(client, monkeypatch)
     page = app.get("/exchange?tab=market").text
-    for label in ("Mix", "</b> test", "</b> main", "Cross chain only"):
+    for label in ("Mix", 'alt="PEP TEST"></span>', 'alt="PEP"></span>', "Cross chain only"):
         assert f"{label}</a>" in page, label
     nets = re.findall(r'class="ex-mrow"[^>]*data-net="(\w+)"', page)
     assert {"testnet", "mainnet"} <= set(nets), nets
@@ -119,7 +119,7 @@ def test_the_launchpad_tab_chooses_a_network_too(client):
     networks". No pad sells across chains, so there is no cross-chain chip."""
     app, state = client
     page = app.get("/exchange?tab=mintpads").text
-    for label in ("Mix", "</b> test", "</b> main"):
+    for label in ("Mix", 'alt="PEP TEST"></span>', 'alt="PEP"></span>'):
         assert f"{label}</a>" in page, label
     assert "Cross chain only</a>" not in page
     latest = app.get("/exchange?tab=mintpads&sort=new&show=mainnet").text

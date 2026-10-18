@@ -501,6 +501,13 @@ class Scanner:
                 if extras.get("doge_hash160"):
                     from ..config import NETWORKS as _NETS
                     doge_address = b58check_encode(_NETS["doge"].pubkeyhash_version, extras["doge_hash160"])
+                # 2026-10-18: every other chain's address they published (ANNOUNCE_TAG_CHAIN), each with its own
+                # chain's version byte; one this version does not know is left for a newer reader's rescan.
+                chain_addresses = {}
+                for net, h160 in (extras.get("chains") or {}).items():
+                    from ..config import NETWORKS as _NETS
+                    if net in _NETS:
+                        chain_addresses[net] = b58check_encode(_NETS[net].pubkeyhash_version, h160)
                 address = atx.sender
                 if claimed_hash:
                     address = b58check_encode(self.params.pubkeyhash_version,
@@ -531,6 +538,7 @@ class Scanner:
                     tag=claimed_tag, other_address=other_address,
                     pfp=extras.get("pfp", ""), bio=extras.get("bio", ""),
                     url=extras.get("url", ""), doge_address=doge_address,
+                    chain_addresses=json.dumps(chain_addresses, sort_keys=True) if chain_addresses else "",
                 )
                 result.announcements += 1
                 continue

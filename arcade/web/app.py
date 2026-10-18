@@ -4174,7 +4174,7 @@ def create_app(state: AppState) -> FastAPI:
                 state.identity.public_bytes, home_hash, "",
                 other_hash160=other_hash, tag=tag, pfp=face,
                 bio=str(state.setting("bio", "") or ""),
-                url=str(state.setting("url", "") or ""), doge_hash160=doge_hash)
+                url=str(state.setting("url", "") or ""), doge_hash160=doge_hash, chains=_node_chain_hashes())
             # A long name will not fit one OP_RETURN, so it goes as Class B --
             # a couple of dust outputs rather than none. Better than publishing
             # half a name, permanently, for the cheaper fee.
@@ -4237,12 +4237,32 @@ def create_app(state: AppState) -> FastAPI:
             raise ValueError("unknown wallet")
         return state.messaging if which == "messaging" else state.ledger
 
+    def _keyed_wallets() -> list[dict[str, Any]]:
+        """The node's coins on each add-on chain it has no Core wallet for (keywallet.py), for the Wallet page:
+        balance, address, and whether this machine's CPU may mine there (2026-10-18: "no way to mine Test
+        LTC" from the operator's Wallet)."""
+        out = []
+        for ctx in list(getattr(state, "addons", None) or []):
+            if not ctx.borrowed:
+                continue                                  # a Core here has its own wallet and its own section
+            row = {"network": ctx.network, "title": ctx.title, "letter": ctx.letter, "net": ctx.net,
+                   "word": ctx.word, "coin": ctx.params.coin, "mainnet": bool(ctx.is_mainnet),
+                   "borrowed": bool(ctx.borrowed), "minable": not ctx.params.real_coins
+                   and ctx.params.auxpow_chain_id is None, "ready": state.chain_ready(ctx)}
+            try:
+                row.update(keywalletlib.balance(state, ctx))
+            except Exception as exc:                     # noqa: BLE001
+                row["error"] = str(exc)[:200]
+            out.append(row)
+        return out
+
     @app.get("/wallet", response_class=HTMLResponse)
     def wallet(request: Request):
         chain, _ = _token_chain()
         return render(request, "wallet.html", messaging=messaging_status(),
                       ledger=ledger_status(), **_doge_status(), prepared=None, which=None, now=time.time(),
                       mining=_mining_json(), ltc_test_mine=_ltc_test_mine(request), tab="coins", chain=chain,
+                      keyed=_keyed_wallets(),
                       other_chains=[c for c in state.token_chains if c is not chain])
 
     @app.get("/wallet/tokens", response_class=HTMLResponse)
@@ -4701,6 +4721,12 @@ def create_app(state: AppState) -> FastAPI:
                 mine = False
             if mine:
                 return wanted
+        # The page API a game's frame calls carries no cookie, so it reads the node's own chain -- the operator's
+        # view. With that view on an add-on chain (2026-10-18: L main tapped in the operator's Wallet), ASHVALE read
+        # @apple's GOLD and gear from the Litecoin index and showed an empty pack. A page is read on the tag chain
+        # unless its own chain is asked for; the operator's view of the Tokens page moves nothing a page reads.
+        if request.url.path.startswith("/r/") and not wanted and state.token_chain.is_addon:
+            return state.messaging.network
         return None
 
     app.add_middleware(_BrowserChain, pick=_per_browser_chain)
@@ -5908,33 +5934,33 @@ def create_app(state: AppState) -> FastAPI:
                      'stroke="currentColor" stroke-width="1.8" stroke-linecap="round">'
                      '<path d="M8 2.5v11M2.5 8h11"/></svg>')
 
+    def _badge_network(where: Any) -> str:
+        """The network a badge is for: a chain, a network name, a chain's word, or a bool meaning Pepecoin mainnet."""
+        if isinstance(where, bool) or where is None:
+            return "main" if where else "test"
+        if not isinstance(where, str):
+            return str(getattr(where, "network", "") or ("main" if getattr(where, "is_mainnet", False) else "test"))
+        w = where.lower()
+        return {"mainnet": "main", "testnet": "test", "dogecoin": "doge", "litecoin": "ltc"}.get(w, w)
+
     def _net_badge(where: Any = None) -> Markup:
-        """TESTNET or MAINNET, with its icon. `where` is a chain, a network name, or
-        a bool meaning mainnet."""
-        # Dogecoin, by its chain or its network name (2026-10-13), in yellow.
-        if getattr(where, "is_ltc_test", False) or where == "ltctest":
-            return Markup('<span class="netbadge ltc" title="Litecoin testnet: test LTC, worth nothing">'
-                          '<b class="netl">L</b> TEST</span>')
-        if getattr(where, "is_ltc", False) or where in ("ltc", "litecoin"):
-            return Markup('<span class="netbadge ltc" title="Litecoin mainnet: real LTC">'
-                          '<b class="netl">L</b> MAIN</span>')
-        if getattr(where, "is_doge", False) or where in ("doge", "dogecoin"):
-            return Markup('<span class="netbadge doge" title="Dogecoin mainnet: real DOGE">'
-                          '<b class="netl">D</b> MAIN</span>')
-        if isinstance(where, bool):
-            main = where
-        elif isinstance(where, str):
-            main = where.lower() in ("main", "mainnet")
-        else:
-            main = bool(getattr(where, "is_mainnet", False))
-        if main:
-            return Markup('<span class="netbadge main" title="Pepecoin mainnet: real PEP">'
-                          '<b class="netl">P</b> MAIN</span>')
-        # Which coin as well as which net (2026-10-13: "Wherever it says
-        # testnet or mainnet it should also indicate pep or doge ... an uppercase
-        # P or D in the correct color"): P blue, P green, D yellow.
-        return Markup('<span class="netbadge test" title="Pepecoin testnet: test assets, no '
-                      'guaranteed value; the chain can be reset"><b class="netl">P</b> TEST</span>')
+        """Which chain, as that chain's own coin (2026-10-18: "Use the icons in these places rather than text
+        badges"): the coin icon, named in full on hover and to a screen reader. A chain with no icon yet keeps the
+        lettered badge (2026-10-13: P blue, P green, D yellow)."""
+        net = _badge_network(where)
+        params = NETWORKS.get(net)
+        if params is None:
+            net, params = "test", NETWORKS["test"]
+        real = params.real_coins
+        title = f"{params.label}: {'real ' + params.coin if real else 'test coins, worth nothing'}"
+        src = _coin_icon(net)
+        if src:
+            return Markup(f'<span class="netbadge icon" title="{html.escape(title)}">'
+                          f'<img class="neticon" src="{src}" alt="{html.escape(params.coin)}"></span>')
+        kind = "main" if real and params.family == "PEP" else ("test" if params.family == "PEP" else
+                                                               str(params.family or "").lower())
+        return Markup(f'<span class="netbadge {html.escape(kind)}" title="{html.escape(title)}">'
+                      f'<b class="netl">{html.escape(params.letter or "?")}</b> {"MAIN" if real else "TEST"}</span>')
 
     def _supply_badge(prop: Any) -> Markup:
         """Fixed supply, or managed (the issuer can mint more whenever it likes)."""
@@ -6122,6 +6148,26 @@ def create_app(state: AppState) -> FastAPI:
 
     def _content_index():
         _, index = _token_chain()
+        return index
+
+    def _address_index(address: str):
+        """The index of the chain an address belongs to, by its version byte: the viewer's chain when it is that
+        chain's (two chains can share a version: Pepecoin and Litecoin testnet both write "n..."), else the first
+        chain whose it is, the tag chain before the add-ons. The viewer's index when the address is nobody's."""
+        chain, index = _token_chain()
+        try:
+            version = b58check_decode(str(address))[0]
+        except Exception:                                  # noqa: BLE001
+            return index
+
+        def ours(c) -> bool:
+            p = c.params
+            return version in (p.pubkeyhash_version, p.scripthash_version)
+        if ours(chain):
+            return index
+        for other in [state.messaging] + list(state.token_chains):
+            if ours(other):
+                return state.token_index(other)
         return index
 
     def _other_indexes() -> list[tuple[Any, Any]]:
@@ -6608,7 +6654,7 @@ def create_app(state: AppState) -> FastAPI:
         from the mempool, and a row for a token that is only arriving. `units`
         is still what the blocks say."""
         try:
-            held = _content_index().balances([address])
+            held = _address_index(address).balances([address])
         except Exception:
             held = []
         out = [contentlib.holding(row) for row in held]
@@ -9001,12 +9047,28 @@ def create_app(state: AppState) -> FastAPI:
 
     # The coins' own faces on market icons (2026-10-17: "We have both the Pepecoin and Dogecoin icons in the race
     # condition game"): the racer's art, served as files so a page of fifty markets fetches each once.
-    @app.get("/coin-pep.png")
-    @app.get("/coin-pep-test.png")
-    @app.get("/coin-doge.png")
-    def coin_icon(request: Request):
-        return Response((TEMPLATE_DIR / request.url.path.lstrip("/")).read_bytes(), media_type="image/png",
+    # Litecoin's from the racer too, and its testnet coin turned purple like PEP TEST's (2026-10-18: the PEP/LTC
+    # order showed the PEP TEST frog for LTC). A chain's icon is coin-<network>.png when there is one, so a chain added
+    # as Params gets its face by adding the file; the first three keep the names pages already use.
+    @app.get("/coin-{name}.png")
+    def coin_icon(name: str):
+        if not re.fullmatch(r"[a-z0-9-]{2,24}", name or "") or not (TEMPLATE_DIR / f"coin-{name}.png").is_file():
+            raise HTTPException(404, "no such coin")
+        return Response((TEMPLATE_DIR / f"coin-{name}.png").read_bytes(), media_type="image/png",
                         headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+    _COIN_FILES = {"main": "pep", "test": "pep-test", "regtest": "pep-test"}
+
+    def _coin_icon(net: Any) -> str:
+        """The icon URL for a chain's coin by its network name ('' when it has none); the old bool means PEP/PEP TEST."""
+        if isinstance(net, bool) or net is None:
+            net = "main" if net else "test"
+        name = _COIN_FILES.get(str(net), str(net))
+        return f"/coin-{name}.png" if (TEMPLATE_DIR / f"coin-{name}.png").is_file() else ""
+
+    TEMPLATES.env.globals["coin_icon"] = _coin_icon
+    # {network: icon} for pages that draw chains in script (the Wallet's chain picker, 2026-10-18).
+    TEMPLATES.env.globals["coin_icons"] = lambda: {n: _coin_icon(n) for n in NETWORKS if _coin_icon(n)}
 
     @app.get("/icon-32.png")
     @app.get("/icon-180.png")
@@ -9846,6 +9908,49 @@ def create_app(state: AppState) -> FastAPI:
         main = next((c for c in state.all_chains if c.network == "main"), None)
         return _doge_twin(_account_address(pubkey, main)) if main is not None else ""
 
+    def _account_any_address(pubkey: str, chain) -> str:
+        """An account's address on any chain: the one its browser gave, else the same key's -- a real-coin chain shares
+        its Pepecoin mainnet key, a test-coin chain its testnet key (coins.js: coin types 3 and 1), so it is that
+        address's hash under this chain's version byte. "" when neither is known."""
+        said = _account_address(pubkey, chain)
+        if said:
+            return said
+        sibling = next((c for c in state.all_chains
+                        if c.network == ("main" if chain.params.real_coins else _account_chain().network)), None)
+        base = _account_address(pubkey, sibling) if sibling is not None else ""
+        try:
+            return b58check_encode(chain.params.pubkeyhash_version, b58check_decode(base)[1]) if base else ""
+        except Exception:                                  # noqa: BLE001
+            return ""
+
+    def _account_chain_hashes(pubkey: str) -> dict[str, bytes]:
+        """Every add-on chain's address but Dogecoin's (it has a section of its own) for an announcement (the operator
+        2026-10-18: broadcast all the wallet addresses, not only Pepecoin's two and Dogecoin's), shown in the
+        Wallet or not -- a hidden wallet still has its address, and can still be paid."""
+        out = {}
+        for chain in list(getattr(state, "addons", None) or []):
+            if chain.is_doge:
+                continue
+            address = _account_any_address(pubkey, chain)
+            if address:
+                try:
+                    out[chain.network] = b58check_decode(address)[1]
+                except Exception:                          # noqa: BLE001
+                    continue
+        return out
+
+    def _node_chain_hashes() -> dict[str, bytes]:
+        """The same for this node's own announcement: where it is paid on each add-on chain (state.payout_address)."""
+        out = {}
+        for chain in list(getattr(state, "addons", None) or []):
+            if chain.is_doge:
+                continue
+            try:
+                out[chain.network] = b58check_decode(state.payout_address(chain))[1]
+            except Exception:                              # noqa: BLE001
+                continue
+        return out
+
     def _account_doge_hash(pubkey: str) -> bytes:
         """Its 20-byte hash for the announcement (2026-10-15: broadcast the Doge address too), or b""."""
         address = _account_doge_address(pubkey)
@@ -10594,10 +10699,22 @@ def create_app(state: AppState) -> FastAPI:
                     # time anyone logs in that hasn't broadcasted their doge coin address ... it is automatically
                     # broadcast").
                     wants_doge = bool(_account_doge_address(account.pubkey))
+                    # And every other chain's address (2026-10-18, Litecoin's two first): an announcement without one
+                    # this node now has is out of date the same way, and the same check publishes it again.
+                    wants_chains = set(_account_chain_hashes(account.pubkey))
 
                     def _complete(row) -> bool:
-                        return row is not None and (not wants_doge or (
-                            "doge_address" in row.keys() and bool(row["doge_address"])))
+                        if row is None or (wants_doge and not (
+                                "doge_address" in row.keys() and bool(row["doge_address"]))):
+                            return False
+                        if not wants_chains:
+                            return True
+                        try:
+                            have = set(json.loads(row["chain_addresses"] or "{}")) if "chain_addresses" in row.keys() \
+                                else set()
+                        except ValueError:
+                            have = set()
+                        return wants_chains <= have
                     said["announced"] = _complete(store.confirmed_key_for(address))
                     # Not the same question and not the same answer: the key is
                     # out, the block has not come. Nothing spends on it and no
@@ -10606,10 +10723,9 @@ def create_app(state: AppState) -> FastAPI:
                     # On its way: ANY announcement for this address that is complete, mined or still in the pool (a
                     # pool row sorts under the older mined one in key_for, so asking only that would publish again
                     # every ten minutes until the block came).
-                    if wants_doge:
-                        said["announcing"] = store.conn.execute(
-                            "SELECT 1 FROM key_announcement WHERE address=? AND doge_address <> '' LIMIT 1",
-                            (address,)).fetchone() is not None
+                    if wants_doge or wants_chains:
+                        said["announcing"] = any(_complete(row) for row in store.conn.execute(
+                            "SELECT * FROM key_announcement WHERE address=?", (address,)).fetchall())
                     else:
                         said["announcing"] = store.key_for(address) is not None
                 profile = _profile_of(address)
@@ -10625,7 +10741,7 @@ def create_app(state: AppState) -> FastAPI:
         said["chains"] = []
         for one in _account_chains():
             here = _account_address(account.pubkey, one)
-            row = {"network": one.network, "label": one.label,
+            row = {"network": one.network, "label": one.label, "coin": one.params.coin,
                    "version": one.params.pubkeyhash_version,
                    "p2sh": one.params.scripthash_version,
                    "mainnet": bool(one.is_mainnet),
@@ -10683,7 +10799,7 @@ def create_app(state: AppState) -> FastAPI:
             return _to_join(request)
         chain = _account_chain()
         register = state.accounts()
-        return render(request, "me.html", chain=chain,
+        return render(request, "me.html", chain=chain, hidden=_wallets_hidden(account.pubkey),
                       me_tag=(_tag_of_whoever_is_asking(request).get("tag") or ""),
                       node=chain.status(), when=_when,
                       messaging=messaging_status(), ledger=ledger_status(),
@@ -12818,8 +12934,12 @@ def create_app(state: AppState) -> FastAPI:
         index = state.token_index(picked)
         with contextlib.closing(index.open()) as db:
             said["since"] = utxoslib.since(db, address)
-            tip = db.conn.execute("SELECT MAX(height) FROM block").fetchone()
-            said["tip"] = int((tip and tip[0]) or 0)
+            tip = db.conn.execute("SELECT MIN(height), MAX(height) FROM block").fetchone()
+            said["tip"] = int((tip and tip[1]) or 0)
+            # A watch filed before the index had a block (2026-10-18: @apple's L main said "starts at block 0") is
+            # read back from the index's first block, which is where its history really starts.
+            if said["since"] is not None and tip and tip[0] is not None and said["since"] < int(tip[0]):
+                said["since"] = int(tip[0])
             rows = utxoslib.activity(db, [address], before, limit + 1)
         said["more"] = len(rows) > limit
         rows = rows[:limit]
@@ -20416,9 +20536,35 @@ def create_app(state: AppState) -> FastAPI:
         `/me/wallet/tokens`; NFTs is `/me/nfts`, built first because
         the operator asked for it first -- the tab bar links all three.
         """
-        if signed_in(request) is None:
+        account = signed_in(request)
+        if account is None:
             return _to_join(request)
-        return render(request, "my_wallet.html", chain=_account_chain())
+        return render(request, "my_wallet.html", chain=_account_chain(), hidden=_wallets_hidden(account.pubkey))
+
+    def _wallets_hidden(pubkey: str) -> list[str]:
+        """The chains an account keeps out of its Wallet tab (2026-10-18: "enable or disable any of the chain
+        wallets ... they still should get the Wallet addresses assigned, but it just won't be visible")."""
+        said = state.setting(f"wallets_hidden:{pubkey}", []) or []
+        return [n for n in said if isinstance(n, str) and n in NETWORKS]
+
+    @app.post("/account/wallets")
+    def account_wallets(request: Request, payload: Any = Body(None)):
+        """Show or hide one chain's wallet in this account's Wallet tab. Only what is SHOWN: the address stays, is
+        still announced, is still watched, and coins sent to it still arrive. At least one wallet stays shown."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        net = str(said.get("network", ""))
+        if not any(c.network == net for c in state.all_chains):
+            return JSONResponse({"detail": "no such chain here"}, status_code=400)
+        hidden = set(_wallets_hidden(account.pubkey))
+        if said.get("shown"):
+            hidden.discard(net)
+        else:
+            hidden.add(net)
+        if not [c for c in state.all_chains if c.network not in hidden]:
+            return JSONResponse({"detail": "keep at least one wallet shown"}, status_code=400)
+        state.set_setting(f"wallets_hidden:{account.pubkey}", sorted(hidden))
+        return JSONResponse({"hidden": sorted(hidden)})
 
     @app.get("/me/wallet/tokens", response_class=HTMLResponse)
     def my_wallet_tokens(request: Request):
@@ -20868,7 +21014,8 @@ def create_app(state: AppState) -> FastAPI:
                     break
             body = envelopelib.build_key_announcement(
                 key, hash160=our_hash, tag=tag, other_hash160=other,
-                pfp=pfp, bio=bio, url=url, doge_hash160=_account_doge_hash(account.pubkey))
+                pfp=pfp, bio=bio, url=url, doge_hash160=_account_doge_hash(account.pubkey),
+                chains=_account_chain_hashes(account.pubkey))
             index = state.token_index(chain)
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build(

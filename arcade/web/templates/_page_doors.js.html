@@ -138,7 +138,7 @@
     function realtimeOpen(name, frame, j, game){
       var base = j.base || '';
       var es = new EventSource(base + '/realtime/stream?token=' + encodeURIComponent(j.token));
-      var h = rt[name] = {token: j.token, es: es, me: j.me, members: {}, game: game, base: base};
+      var h = rt[name] = {token: j.token, es: es, me: j.me, members: {}, game: game, base: base, frame: frame};
       (j.members || []).forEach(function(p){ h.members[p.id] = p; });
       es.onmessage = function(ev){
         if (rt[name] !== h) return;              // an old stream, replaced by a rejoin
@@ -159,9 +159,34 @@
       // of this token): take a seat again rather than leave the game deaf.
       es.addEventListener('closed', function(){ realtimeRejoin(name, frame, h); });
       es.onerror = function(){ if (es.readyState === 2) realtimeRejoin(name, frame, h); };
+      // A stream that went silent without closing (2026-10-18, the operator: ASHVALE "really flaky" -- a phone that slept,
+      // a network that changed, a proxy that dropped the line): the node says "ping" every few seconds when the room
+      // is quiet, so nothing at all for REALTIME_DEAD ms means the line is dead, and the seat is taken again.
+      h.heard = Date.now();
+      es.addEventListener('ping', function(){ h.heard = Date.now(); });
+      var hear = es.onmessage;
+      es.onmessage = function(ev){ h.heard = Date.now(); return hear(ev); };
+      es.onopen = function(){ h.heard = Date.now(); };
+      h.watch = setInterval(function(){
+        if (rt[name] !== h) { clearInterval(h.watch); return; }
+        if (Date.now() - h.heard > REALTIME_DEAD) realtimeRejoin(name, frame, h);
+      }, 5000);
       tradeFrame = frame;
       return h;
     }
+    var REALTIME_DEAD = 15000;
+    // Back on the network, or back on this tab after the phone slept: every room still held is checked at once
+    // rather than after the next silence.
+    function realtimeWake(){
+      for (var k in rt) {
+        var held = rt[k];
+        if (!held) continue;
+        if (held.rejoining && held.again) { clearTimeout(held.retry); held.again(); }   // waiting out a retry: now
+        else if (Date.now() - held.heard > 6000) realtimeRejoin(k, held.frame, held);
+      }
+    }
+    window.addEventListener('online', realtimeWake);
+    document.addEventListener('visibilitychange', function(){ if (!document.hidden) realtimeWake(); });
     // 2026-10-02: every restart of a node (a merge restarts it) dropped every
     // room on it without a word: the stream came back to a node that no longer
     // knew its token, the browser gave up on it, and players sat in a room
@@ -172,11 +197,18 @@
       if (rt[name] !== h || h.rejoining) return;
       h.rejoining = true;
       try { h.es.close(); } catch (err) {}
+      clearInterval(h.watch);
+      frame.postMessage({arcade: 'realtime', event: {type: 'reconnecting', room: name}}, '*');
       var tries = 0;
-      (function again(){
+      // A line that went silent may still hold its seat on the node: give it up first, so the same guest name is
+      // free to take again (a seat the node already let go answers "unknown", which is as good).
+      var letGo = realtimePost('/realtime/leave', {token: h.token}, h.base).catch(function(){});
+      (h.again = function again(){
         if (rt[name] !== h) return;              // left in the meantime
         tries++;
-        realtimeConnect(name, h.game, h.me && h.me.guest ? h.me.id : '').then(function(j){
+        Promise.resolve(letGo).then(function(){
+          return realtimeConnect(name, h.game, h.me && h.me.guest ? h.me.id : '');
+        }).then(function(j){
           if (rt[name] !== h) {
             if (j && j.token) realtimePost('/realtime/leave', {token: j.token}, j.base).catch(function(){});
             return;
@@ -197,13 +229,10 @@
           }
         }).catch(function(){
           if (rt[name] !== h) return;
-          if (tries >= 40) {                     // about ten minutes: say so, and stop
-            delete rt[name];
-            frame.postMessage({arcade: 'realtime', event: {type: 'closed', room: name,
-                               why: 'lost the connection to the node'}}, '*');
-            return;
-          }
-          setTimeout(again, Math.min(15000, 1000 * tries));
+          // Never given up on while the game is open (2026-10-18): it once stopped after ten minutes, and a player
+          // whose network came back later sat in a dead room. Every 15 s at most, and at once when the network or
+          // the tab comes back (realtimeWake).
+          h.retry = setTimeout(again, Math.min(15000, 1000 * tries));
         });
       })();
     }
@@ -229,7 +258,10 @@
             if (!j.ok && /join again/.test(j.error || '')) realtimeRejoin(name, frame, held);
             answer(j.ok ? {ok: true} : {ok: false, error: j.error || 'refused'});
           })
-          .catch(function(){ answer({ok: false, error: 'the node did not answer'}); });
+          .catch(function(){
+            realtimeRejoin(name, frame, held);   // the line is down: take the seat again (2026-10-18)
+            answer({ok: false, error: 'the node did not answer'});
+          });
       } else if (m.op === 'leave') {
         held.es.close(); delete rt[name];
         realtimePost('/realtime/leave', {token: held.token}, held.base).catch(function(){});

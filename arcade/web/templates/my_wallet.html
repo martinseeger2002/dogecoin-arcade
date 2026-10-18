@@ -87,6 +87,11 @@
 .wl-seg button{padding:5px 12px;border-radius:999px;font-size:.8rem;font-weight:650;color:var(--muted);
   background:none;box-shadow:none;border:0}
 .wl-seg button[aria-pressed="true"]{background:var(--panel);color:var(--fg);box-shadow:var(--shadow)}
+/* A chain as its coin (2026-10-18): the picked one full colour and ringed, the others dimmed. */
+.wl-seg button.neticon-btn{padding:6px 10px;display:flex;align-items:center;justify-content:center}
+.wl-seg button.neticon-btn .neticon{width:30px;height:30px;opacity:.55;transition:opacity .15s}
+.wl-seg button.neticon-btn[aria-pressed="true"] .neticon{opacity:1;box-shadow:0 0 0 2px var(--accent,#d4a72c)}
+.wl-seg button.neticon-btn.chain-off .neticon{opacity:.25;filter:grayscale(1)}
 .wl-bal{margin:12px 0 0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .wl-bal b{font-size:2.4rem;font-weight:750;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.1}
 .wl-bal span{font-weight:650;color:var(--muted)}
@@ -298,7 +303,19 @@ import * as mail from "/messaging.js";
 const $ = (id) => document.getElementById(id);
 /* A network's button, said the way every page says it (2026-10-13: "Should say
  * 'P test' 'P main' 'D main' like in the other pages"): the coin's letter in its color. */
+// Each chain as its coin (2026-10-18: "Use the icons ... rather than text badges").
+const COIN_ICONS = {{ coin_icons()|tojson }};
 const netButton = (one, cls) => {
+  const icon = COIN_ICONS[one.network];
+  if (icon) {
+    const b = el("button", (cls ? cls + " " : "") + "neticon-btn");
+    const img = el("img", "neticon");
+    img.src = icon; img.alt = one.coin || one.label || one.network;
+    b.append(img);
+    b.title = one.title || one.label || "";
+    b.setAttribute("aria-label", one.title || one.label || one.network);
+    return b;
+  }
   const doge = one.network === "doge" || one.doge;
   const ltctest = one.network === "ltctest" || one.ltctest;  // Litecoin testnet, "L test"
   const ltc = one.network === "ltc" || one.ltc || ltctest;   // Litecoin (2026-10-17)
@@ -343,10 +360,13 @@ let said = {chains: []}, net = null, keys = null, tab = "activity";
  * send receive and balance at the top of your wallet should be in that token").
  * Send and Receive follow it; the network fee is still paid in PEP. */
 let asset = null;
-const coinOf = (c) => !c ? "PEP TEST" : c.network === "doge" ? "DOGE" : c.network === "ltc" ? "LTC" : c.network === "ltctest" ? "LTC TEST" : c.mainnet ? "PEP" : "PEP TEST";
+// The chain's coin as the node names it (Params.coin), so a chain added later is named right too.
+const coinOf = (c) => !c ? "PEP TEST" : c.coin ? c.coin : c.network === "doge" ? "DOGE" : c.network === "ltc" ? "LTC" : c.network === "ltctest" ? "LTC TEST" : c.mainnet ? "PEP" : "PEP TEST";
 const COIN = () => coinOf(chainNow());
 // Chains this node has that are not open yet: Dogecoin while it syncs (2026-10-13).
-const WAITING = {{ chain_menu(account_side=True)|rejectattr("ready")|list|tojson }};
+// Wallets this account hides (Your arcade -> Your wallets, 2026-10-18): kept, announced and watched, not shown.
+const HIDDEN = {{ (hidden or [])|tojson }};
+const WAITING = {{ chain_menu(account_side=True)|rejectattr("ready")|list|tojson }}.filter((c) => !HIDDEN.includes(c.network));
 /** A token amount in its own units: divisible ones have 8 places, the rest are whole. */
 const tokenAmt = (raw, t) => t && t.divisible ? coinsOf(raw) : Number(raw || 0).toLocaleString();
 /** Raw units from what was typed, by the digits: 8 places for a divisible token, whole otherwise. */
@@ -355,7 +375,7 @@ function rawOf(text, t) {
   return /^\d+$/.test(String(text).trim()) ? Number(String(text).trim()) : null;
 }
 
-const chains = () => (said.chains || []).filter((c) => c.address);
+const chains = () => (said.chains || []).filter((c) => c.address && !HIDDEN.includes(c.network));
 const chainNow = () => chains().find((c) => c.network === net) || chains()[0] || null;
 const mine = (address) => (said.chains || []).some((c) => c.address && c.address === address);
 
@@ -1668,8 +1688,9 @@ async function drawPending() {
   const rows = [];
   // Coins on their way, from anybody, on every chain (2026-10-17).
   for (const c of ((me && me.chains) || [])) {
+    // The chain's own coin (2026-10-18: L main's arriving LTC was called PEP).
     if (Number(c.arriving || 0) > 0) rows.push(["arriving", {kind: "coin", amount: Number(c.arriving) / 1e8,
-                                                              name: c.network === "doge" ? "DOGE" : c.mainnet ? "PEP" : "test PEP"}]);
+                                                              name: coinOf(c)}]);
   }
   for (const address of addresses) {
     let said = null;

@@ -173,6 +173,9 @@ a.chain-off,button.chain-off,span.chain-off.ex-chip{pointer-events:none}
 .netbadge,.supplybadge{display:inline-flex;align-items:center;gap:3px;font-size:.6rem;font-weight:700;
   letter-spacing:.05em;padding:1px 6px;border-radius:999px;vertical-align:2px;white-space:nowrap;
   line-height:1.6;margin-left:4px}
+/* A chain as its coin (2026-10-18): the icon alone, the name on hover. */
+.netbadge.icon{padding:0;background:none;vertical-align:-4px}
+.neticon{width:18px;height:18px;border-radius:50%;display:block;object-fit:cover}
 .netbadge.test{background:color-mix(in srgb,var(--net-test) 20%,transparent);color:var(--net-test)}
 .netbadge.main{background:color-mix(in srgb,var(--net-main) 22%,transparent);color:var(--net-main)}
 .netbadge.doge{background:color-mix(in srgb,var(--net-doge) 24%,transparent);color:var(--net-doge)}
@@ -197,6 +200,11 @@ button.tag.switch:hover{filter:brightness(.85)}
 /* the form carries style="display:inline", so only !important reaches it */
 .chainswitch form{display:inline-flex!important;align-items:center;height:1.3rem;line-height:1}
 .chainswitch button.tag.switch{opacity:.75;cursor:pointer}
+/* A chain as its coin (2026-10-18): no pill, the picked one ringed. */
+.chainswitch .tag.iconic{padding:0;height:auto;background:none;border:0}
+.chainswitch .tag.iconic .neticon{width:26px;height:26px}
+.chainswitch .tag.iconic.on .neticon{box-shadow:0 0 0 2px var(--accent,#d4a72c)}
+.chainswitch .tag.iconic.chain-off .neticon{opacity:.3;filter:grayscale(1)}
 .chainswitch button.tag.switch:hover{opacity:1}
 .chainswitch button.tag.switch:hover{opacity:1}
 .chainbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px}

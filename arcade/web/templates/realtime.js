@@ -81,12 +81,12 @@
     this.me = said.me || null;
     this.why = said.why || '';
     this._members = {};
-    this._on = {message: [], join: [], leave: [], closed: [], rejoined: []};
+    this._on = {message: [], join: [], leave: [], closed: [], rejoined: [], reconnecting: []};
     var self = this;
     (said.members || []).forEach(function (p) { self._members[p.id] = p; });
   }
   Room.prototype.on = function (type, fn) {
-    if (!this._on[type]) throw new Error('events are: message, join, leave, closed, rejoined');
+    if (!this._on[type]) throw new Error('events are: message, join, leave, closed, rejoined, reconnecting');
     this._on[type].push(fn);
     return this;
   };
@@ -117,6 +117,9 @@
     // This page's own seat was taken again (its connection dropped for longer than the
     // node waits): the others saw it leave and come back, so send your state again.
     else if (ev.type === 'rejoined') { this.me = p || this.me; this.online = true; this._emit('rejoined', this.me); }
+    // The line dropped and the page is taking the seat again by itself, for as long as it takes (2026-10-18):
+    // a game can say "reconnecting"; 'rejoined' follows when it is back.
+    else if (ev.type === 'reconnecting') { this.online = false; this._emit('reconnecting'); }
     else if (ev.type === 'message') {
       var data = ev.data;
       if (typeof data === 'string') { try { data = JSON.parse(data); } catch (err) {} }
@@ -167,7 +170,7 @@
     this.where = {};            // player id -> {cell key: true}
     this.players = {};          // player id -> player
     this.online = false; this.me = null; this.here = null;
-    this._on = {message: [], join: [], leave: [], closed: [], rejoined: []};
+    this._on = {message: [], join: [], leave: [], closed: [], rejoined: [], reconnecting: []};
   }
   Area.prototype.on = Room.prototype.on;
   Area.prototype._emit = Room.prototype._emit;
@@ -197,6 +200,8 @@
     room.on('leave', function (p) { if (self.rooms[key] === room) self._seen(key, p, false); });
     room.on('message', function (data, p) { if (self.rooms[key] === room) self._emit('message', data, p, key); });
     room.on('closed', function (why) { if (self.rooms[key] === room) { delete self.rooms[key]; self._emit('closed', why); } });
+    room.on('reconnecting', function () { if (self.rooms[key] === room) self._emit('reconnecting', key); });
+    room.on('rejoined', function (me) { if (self.rooms[key] === room) self._emit('rejoined', me, key); });
   };
   Area.prototype.move = function (x, y) {
     var self = this, want = this.wanted(x, y), jobs = [];

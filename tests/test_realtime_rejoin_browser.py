@@ -140,3 +140,37 @@ def test_players_come_back_into_their_room_after_the_node_restarts(tmp_path, no_
                 d.quit()
         server.stop()
         state.mesh.stop()
+
+
+def test_a_stream_gone_silent_is_noticed_and_the_seat_taken_again(tmp_path, no_nodes, monkeypatch):
+    """2026-10-18, the operator: ASHVALE "really flaky", "the client side auto reconnect if it loses connection". A stream
+    can die without closing -- a phone that slept, a network that changed, a proxy that dropped the line -- and the
+    browser never says so. The node pings a quiet room; a page that hears nothing at all for REALTIME_DEAD takes its
+    seat again, telling the game 'reconnecting' and then 'rejoined', as the same player."""
+    from arcade.web import realtime as rtmod
+    from arcade.web.app import create_app
+
+    state = make_state(tmp_path, "node")
+    state.mesh = _mesh()
+    page = PAGE.replace(b"r.on('rejoined'", b"r.on('reconnecting', function () { window.log.push({reconnecting: 1}); });\n  r.on('rejoined'")
+    _inscribe(state, GAME, 1, "n" + "G" * 33, "text/html", page)
+    app = create_app(state)
+    port = _free_port()
+    base = f"http://127.0.0.1:{port}"
+    server = Server(app, port)
+    a = None
+    try:
+        a = browsers.launch()
+        _in_game(a, base)
+        me = _wait(a, "return window.room && window.room.online && window.room.me.id", "in the room")
+        monkeypatch.setattr(rtmod, "HEARTBEAT", 3600.0)        # the line stays open and says nothing
+        # The stream already waiting keeps its old heartbeat once; the next wait is silent.
+        _wait(a, "return window.log.some(function (e) { return e.reconnecting; })", "reconnecting", timeout=60)
+        _wait(a, "return window.log.some(function (e) { return 'rejoined' in e; })", "rejoined", timeout=60)
+        assert a.execute_script("return window.room.me.id") == me, "the same player"
+        assert not a.execute_script("return window.log.some(function (e) { return 'closed' in e; })")
+    finally:
+        if a is not None:
+            a.quit()
+        server.stop()
+        state.mesh.stop()

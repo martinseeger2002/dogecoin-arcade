@@ -185,6 +185,35 @@
   </div>
 </div>
 
+{# 2026-10-18: any chain's wallet on or off in the Wallet tab. Off hides it only: the address is still yours,
+   still announced with your name, and coins sent there still arrive. #}
+<div class="panel" style="margin-top:14px" id="wallet-chains">
+  <h2 style="margin-top:0">Your wallets</h2>
+  <p class="muted" style="margin:0 0 10px;font-size:.88rem">Which chains show in your Wallet tab. A hidden wallet keeps
+    its address: it is still published with your name, and coins sent to it still arrive.</p>
+  {% for c in chain_menu(account_side=True) %}
+  <label style="display:flex;flex-direction:row;gap:10px;align-items:center;margin:0 0 8px;cursor:pointer">
+    <input type="checkbox" class="wallet-chain" style="width:auto;flex:none;margin:0" data-network="{{ c.network }}" {{ '' if c.network in (hidden or []) else 'checked' }}>
+    <span>{{ net_badge(c.network) }} {{ c.coin }}{% if not c.ready %} <span class="muted small">(not open yet)</span>{% endif %}</span>
+  </label>
+  {% endfor %}
+  <p class="muted small" id="wallet-chains-said" style="margin:6px 0 0"></p>
+  <script>
+  (function () {
+    var said = document.getElementById('wallet-chains-said');
+    document.querySelectorAll('.wallet-chain').forEach(function (box) {
+      box.onchange = function () {
+        fetch('/account/wallets', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                                   body: JSON.stringify({network: box.dataset.network, shown: box.checked})})
+          .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); })
+          .then(function () { said.textContent = 'Saved.'; })
+          .catch(function (e) { box.checked = !box.checked; said.textContent = e.message; });
+      };
+    });
+  })();
+  </script>
+</div>
+
 <div class="panel" style="margin-top:14px">
   <h2 style="margin-top:0">Your usage</h2>
 <div id="room" hidden>

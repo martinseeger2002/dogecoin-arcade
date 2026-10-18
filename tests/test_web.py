@@ -2281,16 +2281,16 @@ def test_the_chain_tag_switches_tokens_between_mainnet_and_testnet(client, tmp_p
     page = app.get("/tokens").text
     assert 'name="chain" value="main"' in page, "the tag offers the other chain"
     # Every chain in one switch, the one shown marked (2026-10-13).
-    assert '<span class="tag testnet on" aria-current="true"' in page
-    assert '<button type="submit" class="tag mainnet switch" name="chain" value="main"' in page
+    assert '<span class="tag iconic on" aria-current="true"' in page
+    assert '<button type="submit" class="tag iconic switch" name="chain" value="main"' in page
     assert "Every fungible token on testnet" in page
 
     response = app.post("/tokens/chain", data={"chain": "main", "csrf_token": state.csrf_token},
                         follow_redirects=False)
     assert response.status_code == 303 and response.headers["location"] == "/tokens"
     page = app.get("/tokens").text
-    assert '<span class="tag mainnet on" aria-current="true"' in page
-    assert '<button type="submit" class="tag testnet switch" name="chain" value="regtest"' in page
+    assert '<span class="tag iconic on" aria-current="true" title="Showing P main"' in page
+    assert '<button type="submit" class="tag iconic switch" name="chain" value="regtest"' in page
     assert "Every fungible token on mainnet" in page
     assert (state.home / "tokens-chain").read_text().strip() == "main"
 

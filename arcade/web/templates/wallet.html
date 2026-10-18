@@ -167,6 +167,70 @@
 
 {{ panel('ledger', state.ledger, ledger, 'mainnet') }}
 
+{# The node's coins on each add-on chain it has no Core wallet for -- Litecoin, borrowed or not -- held at its own
+   key's address there and signed by this arcade (keywallet.py), and mined here on a test-coin chain with this
+   machine's CPU (blockminer.py). 2026-10-18. #}
+{% for k in (keyed or []) %}
+<h2><b class="netl {{ k.net }}">{{ k.letter }}</b> {{ k.word }} <span class="tag {{ k.net }}">{{ 'main' if k.mainnet else 'test' }}</span></h2>
+<div class="panel">
+  {% if not k.ready %}
+    <p class="muted">Opens when {{ 'a linked arcade sharing its Core answers' if k.borrowed else 'its node has synced' }}.</p>
+  {% elif k.error %}
+    <p class="muted">{{ k.error }}</p>
+  {% else %}
+    <div class="kv"><span class="k">Balance</span><span class="v">{{ k.spendable }} {{ k.coin }}</span></div>
+    <div class="kv"><span class="k">Address</span><span class="v mono" style="overflow-wrap:anywhere">{{ k.address }}</span></div>
+    <p class="muted" style="font-size:.84rem">This arcade's own key on {{ k.title }}{{ ', borrowed from a linked arcade' if k.borrowed else '' }}.
+      Sent from <a href="/admin">Admin &rarr; The node's coins</a>, signed here: no other wallet needed.</p>
+    {% if k.minable %}
+    <div class="row keyedmine" data-net="{{ k.network }}" data-address="{{ k.address }}" style="gap:8px;align-items:center;flex-wrap:wrap">
+      <button type="button" class="small" data-go>Mine {{ k.coin }}</button>
+      <button type="button" class="small ghost" data-stop hidden>Stop mining</button>
+      <span class="muted" data-said style="font-size:.86rem"></span>
+    </div>
+    {% endif %}
+  {% endif %}
+</div>
+{% endfor %}
+{% if (keyed or [])|selectattr("minable")|list %}
+<script>
+/* Mining on this machine's CPU, the same miner as Admin -> Chains (blockminer.py). */
+(function () {
+  function post(body) {
+    return fetch('/admin/api/mine', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'}, body: JSON.stringify(body)})
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); });
+  }
+  function draw(m) {
+    document.querySelectorAll('.keyedmine').forEach(function (row) {
+      var mine = m.running && m.net === row.dataset.net, other = m.running && !mine;
+      row.querySelector('[data-go]').hidden = !!m.running;
+      row.querySelector('[data-stop]').hidden = !mine;
+      var said = [];
+      if (mine) said.push((m.rate || 0).toLocaleString() + ' hashes a second at block ' + (m.height || 0).toLocaleString());
+      if (other) said.push('Mining ' + m.net + ' now; stop it to mine this.');
+      if (m.net === row.dataset.net && m.blocks) said.push(m.blocks + ' found');
+      if (mine && m.share_to) said.push(m.percent + '% of each block to the arcade sharing its Core');
+      if (m.net === row.dataset.net && m.note) said.push(m.note);
+      row.querySelector('[data-said]').textContent = said.join(' \u00b7 ');
+    });
+  }
+  function look() {
+    fetch('/admin/api/mine', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); })
+      .then(function (m) { draw(m); if (m.running) setTimeout(look, 3000); }).catch(function () {});
+  }
+  document.querySelectorAll('.keyedmine').forEach(function (row) {
+    row.querySelector('[data-go]').onclick = function () {
+      post({net: row.dataset.net, address: row.dataset.address}).then(look)
+        .catch(function (e) { row.querySelector('[data-said]').textContent = e.message; });
+    };
+    row.querySelector('[data-stop]').onclick = function () { post({stop: true}).then(look); };
+  });
+  look();
+})();
+</script>
+{% endif %}
+
 {% if doge %}
 {% if doge_sync.ready %}
 {{ panel('doge', state.doge, doge, 'mainnet') }}

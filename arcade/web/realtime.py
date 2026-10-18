@@ -260,7 +260,10 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
                     return
                 svc.touch(token)                    # still connected, so still here
                 if ev is None:
-                    yield ": still here\n\n"
+                    # A named event, not a comment (2026-10-18, ASHVALE dropping): a browser never shows a comment to
+                    # the page, so a stream that went quiet and one that died looked the same. A page that does not
+                    # listen for "ping" ignores it.
+                    yield "event: ping\ndata: {}\n\n"
                 else:
                     yield "data: " + event_json(ev) + "\n\n"
 

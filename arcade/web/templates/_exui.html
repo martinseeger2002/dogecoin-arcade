@@ -350,7 +350,11 @@ window.arcadeFavs = window.arcadeFavs || (function () {
 {#- A coin's own face (2026-10-17: "the test net icon I think should differ from the main net icon"): the green
     frog on Pepecoin mainnet, the purple one on testnet, the Dogecoin D. -#}
 {% macro coin_img(net, cls) -%}
-<img class="{{ cls }}" src="/coin-{{ 'doge' if net == 'doge' else ('pep' if net == 'main' else 'pep-test') }}.png" alt="{{ 'DOGE' if net == 'doge' else ('PEP' if net == 'main' else 'PEP TEST') }}" loading="lazy">
+{#- Every chain's own coin (2026-10-18: Litecoin showed the PEP TEST frog): coin_icon(network), and the chain's letter
+    on its colour when a chain has no picture yet. -#}
+{%- set src = coin_icon(net) -%}
+{%- if src -%}<img class="{{ cls }}" src="{{ src }}" alt="{{ coin_of(net) }}" loading="lazy">
+{%- else -%}<span class="{{ cls }}" style="background:#8a7a4a">{{ (coin_of(net) or '?')[:1] }}</span>{%- endif -%}
 {%- endmacro %}
 {% macro side_disc(side, cls) -%}
 {%- if side and side.coin -%}
