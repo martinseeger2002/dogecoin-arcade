@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
 
-from arcade import funding                                         # noqa: E402
+from arcade import config, funding                                 # noqa: E402
 from arcade.config import NETWORKS                               # noqa: E402
 from arcade.script import b58check_encode                        # noqa: E402
 
@@ -39,7 +39,7 @@ def test_litecoin_is_a_network_of_its_own():
     ltc = NETWORKS["ltc"]
     assert ltc.coin == "LTC" and ltc.label == "Litecoin"
     assert (ltc.pubkeyhash_version, ltc.scripthash_version) == (48, 50)
-    assert ltc.activation_height == ltc.messaging_start_height == 3_198_000
+    assert ltc.activation_height == ltc.messaging_start_height == config.LTC_MAINNET_FLOOR == 3_197_300
     assert ltc.genesis == "12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2"
     assert ltc.marker.startswith("L"), "its own Class B marker, from MARKER_SEED"
     assert ltc.min_fee_per_kb == 10_000 and NETWORKS["main"].min_fee_per_kb == 1_000_000

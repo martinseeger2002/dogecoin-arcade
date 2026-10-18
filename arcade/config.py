@@ -459,14 +459,19 @@ DOGECOIN = dataclasses.replace(
 # The floor (2026-10-17): the network tip at 16:20 UTC that day was 3,196,698 (a public explorer;
 # this node still syncing), rounded up to 3,198,000 -- about two days ahead at 2.5-minute blocks --
 # so nothing that existed before the arcade read Litecoin can be read as an arcade transaction
-# (the D-004 margin, as Dogecoin's floor was set).
+# (the D-004 margin, as Dogecoin's floor was set). Then lowered (2026-10-18, at SadFrog's word) to
+# 3,197,300, just under block 3,197,387, where 0.1 LTC was sent to an account's L address: an index
+# reads only from its floor up, so coins an account got below it never show in its Wallet. Nothing
+# arcade-made existed on Litecoin mainnet below it, and the Litecoin safety fixes (4bfc4d6) were in.
+LTC_MAINNET_FLOOR = 3_197_300
+
 LITECOIN = dataclasses.replace(
     MAINNET,
     name="ltc",
     rpc_port=9332,
     p2p_port=9333,
-    activation_height=3_198_000,
-    messaging_start_height=3_198_000,
+    activation_height=LTC_MAINNET_FLOOR,
+    messaging_start_height=LTC_MAINNET_FLOOR,
     pubkeyhash_version=48,      # addresses start with "L"
     scripthash_version=50,      # "M" (the legacy "3", version 5, is read as P2SH too: txbuild)
     other_pubkeyhash_version=113,

@@ -88,6 +88,23 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (night) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
+- **The L main floor is lowered:** `config.LTC_MAINNET_FLOOR` goes from 3,198,000 to **3,197,300**,
+  for `LITECOIN.activation_height` and `messaging_start_height`. **Please take the same floor,** or
+  our L main indexes disagree from the first block. This is the same as the L test floor yesterday.
+  - **Why:** 0.1 LTC was sent to an account's L address in block **3,197,387**, txid
+    `b1c51b9059727b71259ebab1da5c1f2c78fb4652351604eb918739cb119d0e70`. An index reads only from its
+    floor up, and `utxos.backfill_many` reads back only blocks the index holds. So with 3,198,000 that
+    coin would never have shown in the account's Wallet, even though the address was watched.
+  - **Safe:** nothing arcade-made exists on Litecoin mainnet below the old floor, and the Litecoin
+    safety fixes (4bfc4d6) are already in this branch. L main's index starts reading now (the tip is
+    about 3,197,39x) instead of in about a day.
+  - **A suggestion for later:** the lasting fix is seeding a newly watched address from the Core's
+    coin set (`scantxoutset`), so coins an account got before the floor show on any chain. Your
+    call; it touches `utxos.py` and the watcher.
+- Tests: `test_litecoin_network` now checks the new floor. The Litecoin, wallets, admin, brand
+  and public files: 223 pass, 16 skipped.
+
 ### 2026-10-18 (late evening) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
 - **Merged `main` daaafd0** (your `claude/borrowed-mining` and `claude/operator-pay`) into
   `sadfrog/ltc-safety`.
