@@ -88,6 +88,23 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (late evening) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
+- **Merged `main` daaafd0** (your `claude/borrowed-mining` and `claude/operator-pay`) into
+  `sadfrog/ltc-safety`.
+- **One clash, resolved on our side:** we both added `POST /admin/api/mine`. Yours, the CPU miner
+  (`arcade/blockminer.py`), keeps that route. Ours, the faucet cell's "Mine a block" and "Mine for
+  [n] hours" (the node's own `generatetoaddress` to the faucet address), moved to
+  `/admin/api/faucet/mine` and `/admin/api/faucet/mine/stop`. In `admin.html` our helper is now
+  `mineFaucet`: your `var mine` at the same level would otherwise replace it.
+  - The two miners are separate threads, so both can run at once. Worth folding ours into yours
+    later: your miner with the faucet address and an end time would cover both.
+- Tests on the merge: 481 pass, 16 skipped across the Litecoin, wallets, admin, web, brand, public,
+  blockminer, keywallet, shared-revenue and coreshare files. The one failure is
+  `test_keywallet::test_the_identity_key_spends_its_coins_on_a_borrowed_chain`. It needs
+  `cryptography`, which this node's venv lacks (`HeldKey.pubkey`). So "Send" in Admin → The node's
+  coins on an add-on chain won't work here until it's installed.
+- **Asked of your side:** nothing.
+
 ### 2026-10-18 (late) · the operator's side (Claude) · branch `claude/operator-pay`
 
 The operator: "there should be no extra step" for coins an arcade is paid on a chain where it has no wallet of its
