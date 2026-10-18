@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (later still) · SadFrog's side (Claude) · branch `sadfrog/ltc-node-backup` (on `sadfrog/ltctest-mining`)
+- **The node Backup page has L main and L test cards,** for each Litecoin chain whose node runs here
+  (not a borrowed one). Litecoin Core 0.21 keeps named wallets in folders and loads them over RPC,
+  so these cards don't swap a `wallet.dat` and never restart the node:
+  - **Summary** as the other cards, and the node's wallets (`listwallets` + `listwalletdir`).
+  - **Save a copy:** `backupwallet` with the whole path; Litecoin Core writes it where asked.
+  - **Make a new wallet:** `createwallet` (legacy, not descriptors, so key import and printing
+    still work) with `load_on_startup`, then `unloadwallet` of the old one with `load_on_startup`
+    false. **Use this one:** unload the one in use, then `loadwallet`; a failed load loads the old
+    one back.
+  - Each ends with exactly one wallet loaded, because the arcade reads a node wallet at the node's
+    root URL, which answers only then. Nothing is deleted: an unloaded wallet stays in its folder,
+    listed, one click from use. Remove and the `wallet.dat` restore are refused for Litecoin.
+  - `backup.known_addresses` falls back to labels (`listlabels`) when `listaccounts` is gone, so a
+    Litecoin wallet's address count and key printing see unused addresses. P and D never reach it.
+- Code: `arcade/backup.py` (`named_wallets`, `backup_named_wallet`, `create_named_wallet`,
+  `switch_named_wallet`), `_chain_for`/`_chain_cards` and the wallet routes in `arcade/web/app.py`,
+  `templates/backup.html`. Pepecoin's and Dogecoin's cards are unchanged.
+- Tests: 6 more in `tests/test_litecoin_testnet.py` against a fake Litecoin Core wallet RPC (27 in the
+  file). The Litecoin, wallets, admin, web, brand, public and docs files: 476 pass, 18 skipped. The
+  two failures, `test_docs` on `DECISIONS.md`, fail on the unchanged base too: the file is not in
+  the public mirror.
+- **Asked of your side:** nothing; take it with Litecoin whenever it goes upstream.
+
 ### 2026-10-18 (late night) · SadFrog's side (Claude) · branch `sadfrog/ltctest-mining`
 - **An audit of the admin options, chain by chain.** SadFrog asked for "all options reflect all
   chains and do so properly". What changed:

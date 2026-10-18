@@ -177,7 +177,13 @@ def _known_addresses(rpc: RpcClient) -> list[str]:
             for addr in rpc.call("getaddressesbyaccount", account) or []:
                 add(addr)
     except Exception:
-        pass
+        # Litecoin Core 0.21 has labels in place of accounts.
+        try:
+            for label in rpc.call("listlabels") or []:
+                for addr in rpc.call("getaddressesbylabel", label) or {}:
+                    add(addr)
+        except Exception:
+            pass
     return found
 
 
@@ -590,3 +596,132 @@ def remove_wallet(datadir: Path, network: str, name: str) -> dict[str, Any]:
     destination = removed_dir / f"{name}-{time.strftime('%Y-%m-%d-%H%M%S')}.dat"
     shutil.move(str(source), destination)
     return {"removed": name, "moved_to": str(destination)}
+
+
+# --- named wallets (Litecoin Core 0.21) ---------------------------------------
+#
+# Litecoin Core is newer than the nodes above: each wallet is a folder under the
+# data directory's `wallets/`, and wallets are made, loaded and unloaded over RPC
+# with no restart. The arcade reads a node wallet at the node's root URL, which
+# answers only while exactly one wallet is loaded, so every change here ends with
+# one loaded: the new one in, the old one out. Each keeps `load_on_startup` in
+# step, so a restart brings back the same one. Nothing is ever deleted: an
+# unloaded wallet stays in its folder, listed below, one click from use again.
+
+def named_wallets(rpc: RpcClient) -> list[WalletEntry]:
+    """Every wallet the node knows, loaded ones first (`listwallets`, `listwalletdir`)."""
+    loaded = [str(name) for name in (rpc.call("listwallets") or [])]
+    entries = [WalletEntry(name=name, active=True) for name in loaded]
+    try:
+        on_disk = (rpc.call("listwalletdir") or {}).get("wallets") or []
+    except Exception:
+        on_disk = []
+    for item in on_disk:
+        name = str(item.get("name", "")) if isinstance(item, dict) else ""
+        if name not in loaded and all(entry.name != name for entry in entries):
+            entries.append(WalletEntry(name=name, active=False))
+    return entries
+
+
+def backup_named_wallet(rpc: RpcClient, destination: Path) -> Path:
+    """`backupwallet` of the loaded wallet, written by the node where it is asked.
+
+    Unlike the nodes above, Litecoin Core takes the whole path and writes there.
+    """
+    destination = Path(destination).expanduser()
+    if destination.is_dir() or not destination.suffix:
+        destination.mkdir(parents=True, exist_ok=True)
+        try:
+            name = str((rpc.call("getwalletinfo") or {}).get("walletname") or "wallet")
+        except Exception:
+            name = "wallet"
+        destination = destination / f"{name}-{time.strftime('%Y-%m-%d-%H%M%S')}.dat"
+    else:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        rpc.call("backupwallet", str(destination))
+    except Exception as exc:
+        raise BackupError(f"the node could not write a backup: {exc}") from exc
+    if not destination.exists():
+        raise BackupError(
+            f"the node reported success but no backup appeared at {destination}. "
+            f"If the node runs as another user, it may not be able to write there.")
+    return destination
+
+
+def _forget_addresses(rpc: RpcClient) -> None:
+    creds = getattr(rpc, "_creds", None)
+    _KNOWN.pop((getattr(creds, "host", ""), getattr(creds, "port", 0)), None)
+
+
+def create_named_wallet(rpc_factory, name: str) -> dict[str, Any]:
+    """Make a new empty wallet and use it; the one in use is unloaded, never deleted.
+
+    A legacy wallet (not descriptors), as the arcade's node wallets are: the key
+    import and printing here use `importprivkey` and `dumpprivkey`.
+    """
+    name = (name or "").strip()
+    if not _NAME_OK.match(name):
+        raise BackupError(
+            "a wallet name may use letters, numbers, spaces, hyphens and "
+            "underscores, must start with a letter or number, and can be at most "
+            "41 characters.")
+    with rpc_factory() as rpc:
+        known = named_wallets(rpc)
+        if name.lower() in {entry.name.lower() for entry in known}:
+            raise BackupError(f"there is already a wallet called {name!r}.")
+        before = [entry.name for entry in known if entry.active]
+        try:
+            rpc.call("createwallet", name, False, False, "", False, False, True)
+        except Exception as exc:
+            raise BackupError(f"the node could not make that wallet: {exc}") from exc
+        try:
+            for old in before:
+                rpc.call("unloadwallet", old, False)
+        except Exception as exc:
+            # Two loaded would leave the arcade unable to read either; put the old one back alone.
+            for old in before:
+                try:
+                    rpc.call("loadwallet", old, True)
+                except Exception:
+                    pass
+            try:
+                rpc.call("unloadwallet", name, False)
+            except Exception:
+                pass
+            raise BackupError(
+                f"{name} was made, but the wallet in use could not be put aside, so it "
+                f"stays in use. {name} is kept in the node's wallets folder. ({exc})") from exc
+        _forget_addresses(rpc)
+    return {"created": name, "previous": before}
+
+
+def switch_named_wallet(rpc_factory, name: str) -> dict[str, Any]:
+    """Use another of the node's wallets: unload the one in use, then load this one.
+
+    If the load fails, the one that was in use is loaded again.
+    """
+    name = (name or "").strip() if name else ""
+    with rpc_factory() as rpc:
+        known = named_wallets(rpc)
+        if all(entry.name != name for entry in known):
+            raise BackupError(f"there is no wallet called {name!r} on this node.")
+        before = [entry.name for entry in known if entry.active]
+        if before == [name]:
+            raise BackupError(f"{name or 'the default wallet'} is already the wallet in use.")
+        for old in before:
+            if old != name:
+                rpc.call("unloadwallet", old, False)
+        if name not in before:
+            try:
+                rpc.call("loadwallet", name, True)
+            except Exception as exc:
+                for old in before:
+                    try:
+                        rpc.call("loadwallet", old, True)
+                    except Exception:
+                        pass
+                raise BackupError(f"the node could not load {name}, so the wallet in use "
+                                  f"is unchanged: {exc}") from exc
+        _forget_addresses(rpc)
+    return {"now_using": name, "previous": [old for old in before if old != name]}

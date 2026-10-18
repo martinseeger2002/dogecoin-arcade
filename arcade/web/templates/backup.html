@@ -36,12 +36,18 @@
     <table class="wallets">
       {% for w in c.wallets %}
       <tr class="{{ 'active' if w.active }}">
-        <td><strong>{{ w.name }}</strong>
+        <td><strong>{{ w.name or 'default' }}</strong>
           {% if w.active %}<span class="pill ok">in use</span>{% endif %}</td>
         <td class="muted" style="font-size:.82rem">
-          {{ "{:,}".format(w.size) }} bytes</td>
+          {% if not c.named %}{{ "{:,}".format(w.size) }} bytes{% endif %}</td>
         <td style="text-align:right">
-          {% if not w.active and c.can_switch %}
+          {% if not w.active and c.can_switch and c.named %}
+          <form method="post" action="/backup/{{ c.which }}/wallet/switch" style="display:inline"
+                onsubmit="return confirm('Switch to {{ w.name or 'default' }}? The node puts the wallet in use aside and loads this one, with no restart.')">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}">
+            <input type="hidden" name="name" value="{{ w.name }}">
+            <button class="ghost small" type="submit">Use this one</button></form>
+          {% elif not w.active and c.can_switch %}
           <form method="post" action="/backup/{{ c.which }}/wallet/switch" style="display:inline"
                 onsubmit="return confirm('Switch to {{ w.name }}? The node restarts, and {{ c.label|lower }} will use that wallet from then on.')">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -65,10 +71,17 @@
         <div style="flex:1"><input autocomplete="off" name="name" placeholder="Name for a new wallet, e.g. savings"></div>
         <button type="submit">Make a new wallet</button>
       </div>
+      {% if c.named %}
+      <p class="muted" style="font-size:.84rem;margin:9px 0 0">
+        One wallet is in use at a time; the rest wait here, each in its own folder
+        in the node's <code>wallets</code> folder. The node loads and unloads them
+        without a restart, and keeps the one in use after one. Nothing is deleted.</p>
+      {% else %}
       <p class="muted" style="font-size:.84rem;margin:9px 0 0">
         One wallet is in use at a time; the rest wait here. Switching restarts the
         node, which takes a few seconds. Removing a wallet moves the file aside
         rather than deleting it &mdash; a wallet can hold coins nothing else records.</p>
+      {% endif %}
     </form>
     {% else %}
     <p class="muted" style="font-size:.85rem">
@@ -134,6 +147,7 @@
       </form>
     </div>
 
+    {% if not c.named %}
     <details style="margin-top:20px">
       <summary class="muted" style="cursor:pointer;font-size:.9rem">
         Restore a whole wallet.dat &mdash; replaces the wallet in use</summary>
@@ -159,6 +173,7 @@
         </form>
       </div>
     </details>
+    {% endif %}
   {% endif %}
 </div>
 {% endfor %}

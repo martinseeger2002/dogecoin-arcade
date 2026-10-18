@@ -406,3 +406,170 @@ def test_the_backup_page_has_dogecoins_node_wallet_too(client, monkeypatch, tmp_
     monkeypatch.setattr(backup, "wallet_summary", lambda rpc: {"balance": 0, "addresses": 0, "keys": 0})
     page = app.get("/backup", headers=LOCAL).text
     assert "/backup/doge/" in page, "Dogecoin's node wallet: save, switch, make new"
+
+
+class _NamedWalletRpc:
+    """Litecoin Core 0.21's wallet RPCs, as far as the Backup page uses them: wallets live in folders,
+    loaded and unloaded by name, and `load_on_startup` is kept in settings."""
+
+    def __init__(self, folder, loaded=("arcade",), on_disk=("arcade", "old"), fail_load=()):
+        self.folder = folder
+        self.loaded = list(loaded)
+        self.on_disk = list(on_disk)
+        self.startup = set(loaded)
+        self.fail_load = set(fail_load)
+        self.calls = []
+
+    def call(self, method, *args):
+        self.calls.append((method, *args))
+        if method == "listwallets":
+            return list(self.loaded)
+        if method == "listwalletdir":
+            return {"wallets": [{"name": n} for n in self.on_disk]}
+        if method == "getwalletinfo":
+            if len(self.loaded) != 1:
+                raise RuntimeError("Wallet file not specified (must request wallet RPC through "
+                                   "/wallet/<filename> uri-path).")
+            return {"walletname": self.loaded[0], "balance": 0.5, "txcount": 2}
+        if method == "createwallet":
+            name, startup = args[0], args[6]
+            assert args[5] is False, "a legacy wallet, for importprivkey and dumpprivkey"
+            self.on_disk.append(name)
+            self.loaded.append(name)
+            if startup:
+                self.startup.add(name)
+            return {"name": name, "warning": ""}
+        if method == "loadwallet":
+            if args[0] in self.fail_load:
+                raise RuntimeError("Wallet file verification failed.")
+            if args[0] in self.loaded:
+                raise RuntimeError("Wallet is already loaded.")
+            self.loaded.append(args[0])
+            if args[1]:
+                self.startup.add(args[0])
+            return {"name": args[0], "warning": ""}
+        if method == "unloadwallet":
+            self.loaded.remove(args[0])
+            if args[1] is False:
+                self.startup.discard(args[0])
+            return {"warning": ""}
+        if method == "backupwallet":
+            pathlib.Path(args[0]).write_bytes(b"\x00" * 16)
+            return None
+        if method in ("listaddressgroupings", "listlabels"):
+            return []
+        raise RuntimeError(f"Method not found: {method}")
+
+
+def _litecoin_nodes(state, monkeypatch, tmp_path, **kw):
+    import contextlib
+    from arcade import backup
+    from arcade.web.state import ChainContext
+    backup._KNOWN.clear()
+    nodes = {}
+    for which, label in (("ltc", "Litecoin"), ("ltctest", "Litecoin testnet")):
+        chain = ChainContext(network=which, role="ledger", label=label, datadir=tmp_path / which)
+        rpc = _NamedWalletRpc(tmp_path, **kw)
+
+        @contextlib.contextmanager
+        def connect(rpc=rpc):
+            yield rpc
+        monkeypatch.setattr(chain, "rpc", connect)
+        monkeypatch.setattr(state, "ltc" if which == "ltc" else "ltc_test", chain, raising=False)
+        nodes[which] = rpc
+    monkeypatch.setattr(type(state), "chain_ready", lambda self, chain: True)
+    return nodes
+
+
+def test_the_backup_page_has_both_litecoin_node_wallets(client, monkeypatch, tmp_path):
+    import contextlib
+    app, state = client
+    _litecoin_nodes(state, monkeypatch, tmp_path)
+
+    class Pepecoin:
+        def call(self, method, *args):
+            return {"balance": 1} if method == "getwalletinfo" else []
+
+    @contextlib.contextmanager
+    def pepecoin():
+        yield Pepecoin()
+    monkeypatch.setattr(state.messaging, "rpc", pepecoin)
+    page = app.get("/backup", headers=LOCAL).text
+    for which in ("ltc", "ltctest"):
+        assert f"/backup/{which}/save" in page and f"/backup/{which}/wallet/new" in page
+        assert f"/backup/{which}/wallet/switch" in page, "the wallet not in use: Use this one"
+        assert f"/backup/{which}/wallet/remove" not in page, "nothing to remove: unloaded is put aside"
+        assert f"/backup/{which}/restore" not in page, "a Litecoin wallet is a folder, not a wallet.dat"
+    assert "/backup/messaging/restore" in page, "Pepecoin's card is as before"
+
+
+def test_a_borrowed_litecoin_has_no_backup_card(client, monkeypatch, tmp_path):
+    app, state = client
+    _litecoin_nodes(state, monkeypatch, tmp_path)
+    monkeypatch.setattr(state.ltc, "borrowed", True)
+    page = app.get("/backup", headers=LOCAL).text
+    assert "/backup/ltc/" not in page and "/backup/ltctest/" in page
+    app.post("/backup/ltc/save", data={"csrf_token": state.csrf_token}, follow_redirects=False)
+    assert "unknown chain" in (state.notice or "")
+
+
+def test_a_litecoin_wallet_is_saved_by_the_node_where_asked(client, monkeypatch, tmp_path):
+    app, state = client
+    nodes = _litecoin_nodes(state, monkeypatch, tmp_path)
+    folder = tmp_path / "copies"
+    app.post("/backup/ltctest/save", data={"csrf_token": state.csrf_token, "folder": str(folder)},
+             follow_redirects=False)
+    [written] = list(folder.iterdir())
+    assert written.name.startswith("arcade-") and written.suffix == ".dat", "named for the wallet"
+    assert ("backupwallet", str(written)) in nodes["ltctest"].calls, "the whole path, to the node"
+    assert "Saved a copy" in (state.notice or "")
+
+
+def test_a_new_litecoin_wallet_is_made_and_the_old_one_put_aside(client, monkeypatch, tmp_path):
+    app, state = client
+    nodes = _litecoin_nodes(state, monkeypatch, tmp_path)
+    rpc = nodes["ltc"]
+    app.post("/backup/ltc/wallet/new", data={"csrf_token": state.csrf_token, "name": "savings"},
+             follow_redirects=False)
+    assert rpc.loaded == ["savings"], "one loaded, so the arcade reads it at the node's root"
+    assert rpc.startup == {"savings"}, "and a restart brings back the same one"
+    assert "arcade" in rpc.on_disk, "the old one is unloaded, never deleted"
+    made = [c[0] for c in rpc.calls if c[0] in ("createwallet", "unloadwallet")]
+    assert made == ["createwallet", "unloadwallet"]
+    assert "savings" in (state.notice or "") and "not deleted" in state.notice
+    assert nodes["ltctest"].loaded == ["arcade"], "L test's node is its own"
+    app.post("/backup/ltc/wallet/new", data={"csrf_token": state.csrf_token, "name": "Arcade"},
+             follow_redirects=False)
+    assert "already a wallet" in (state.notice or "") and rpc.loaded == ["savings"]
+
+
+def test_use_this_one_unloads_then_loads_and_keeps_the_old_one_if_it_cannot(client, monkeypatch, tmp_path):
+    app, state = client
+    nodes = _litecoin_nodes(state, monkeypatch, tmp_path, fail_load=("broken",),
+                            on_disk=("arcade", "old", "broken"))
+    rpc = nodes["ltctest"]
+    app.post("/backup/ltctest/wallet/switch", data={"csrf_token": state.csrf_token, "name": "old"},
+             follow_redirects=False)
+    assert rpc.loaded == ["old"] and rpc.startup == {"old"}
+    moved = [c for c in rpc.calls if c[0] in ("loadwallet", "unloadwallet")]
+    assert moved == [("unloadwallet", "arcade", False), ("loadwallet", "old", True)]
+    assert "Now using old" in (state.notice or "")
+    app.post("/backup/ltctest/wallet/switch", data={"csrf_token": state.csrf_token, "name": "broken"},
+             follow_redirects=False)
+    assert rpc.loaded == ["old"] and rpc.startup == {"old"}, "a failed load puts the old one back"
+    assert "unchanged" in (state.notice or "")
+    app.post("/backup/ltctest/wallet/switch", data={"csrf_token": state.csrf_token, "name": "nope"},
+             follow_redirects=False)
+    assert "no wallet called" in (state.notice or "")
+
+
+def test_litecoin_wallets_are_never_removed_or_overwritten_here(client, monkeypatch, tmp_path):
+    app, state = client
+    nodes = _litecoin_nodes(state, monkeypatch, tmp_path)
+    app.post("/backup/ltc/wallet/remove", data={"csrf_token": state.csrf_token, "name": "old"},
+             follow_redirects=False)
+    assert "put aside" in (state.notice or "")
+    app.post("/backup/ltc/restore", data={"csrf_token": state.csrf_token, "understand": "yes",
+                                          "source": str(tmp_path / "x.dat")}, follow_redirects=False)
+    assert "folder of its own" in (state.notice or "")
+    assert [c[0] for c in nodes["ltc"].calls if c[0] not in ("listwallets", "listwalletdir")] == []

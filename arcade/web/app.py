@@ -2267,9 +2267,13 @@ def create_app(state: AppState) -> FastAPI:
     def _chain_for(which: str):
         # Dogecoin's node wallet too (2026-10-18): Dogecoin Core 1.14 keeps one wallet.dat as
         # Pepecoin's does, so saving, importing and switching work the same way. Litecoin Core 0.21
-        # keeps named wallets loaded over RPC instead, which this page does not do yet.
+        # keeps named wallets loaded over RPC instead (backup.named_wallets and the rest), L main
+        # and L test both, when their node runs here.
         if which == "doge" and state.doge is not None:
             return state.doge
+        litecoin = {"ltc": state.ltc, "ltctest": state.ltc_test}.get(which)
+        if litecoin is not None and not litecoin.borrowed:
+            return litecoin
         chain = state.ledger if which == "ledger" else state.messaging
         if which not in ("ledger", "messaging"):
             raise ValueError("unknown chain")
@@ -2280,18 +2284,25 @@ def create_app(state: AppState) -> FastAPI:
         chains = [("messaging", state.messaging), ("ledger", state.ledger)]
         if state.doge is not None and state.chain_ready(state.doge):
             chains.append(("doge", state.doge))
+        for which, chain in (("ltc", state.ltc), ("ltctest", state.ltc_test)):
+            if chain is not None and not chain.borrowed and state.chain_ready(chain):
+                chains.append((which, chain))
         for which, chain in chains:
+            named = chain.is_litecoin
             card: dict[str, Any] = {
                 "which": which, "label": chain.label, "network": chain.network,
                 "is_mainnet": chain.is_mainnet, "online": False, "wallet": None,
                 "wallet_file": None, "job": imports.get(which),
-                "wallets": [], "can_switch": False,
+                "wallets": [], "can_switch": False, "named": named,
             }
             try:
                 with chain.rpc() as rpc:
                     card["wallet"] = backup.wallet_summary(rpc)
                     card["online"] = True
-                if chain.datadir:
+                    if named:
+                        card["wallets"] = backup.named_wallets(rpc)
+                        card["can_switch"] = True
+                if chain.datadir and not named:
                     path = backup.wallet_path(chain.datadir, chain.network)
                     card["wallet_file"] = str(path)
                     card["wallet_readable"] = os.access(path, os.R_OK)
@@ -2318,8 +2329,11 @@ def create_app(state: AppState) -> FastAPI:
             target = Path(folder.strip()).expanduser() if folder.strip() \
                 else backup.default_backup_dir()
             with chain.rpc() as rpc:
-                written = backup.backup_wallet(rpc, target, datadir=chain.datadir,
-                                               network=chain.network)
+                if chain.is_litecoin:
+                    written = backup.backup_named_wallet(rpc, target)
+                else:
+                    written = backup.backup_wallet(rpc, target, datadir=chain.datadir,
+                                                   network=chain.network)
             state.flash(f"Saved a copy of the {chain.label.lower()} wallet to {written}. "
                         f"Keep it somewhere other than this computer.", "ok")
         except HTTPException:
@@ -2391,6 +2405,10 @@ def create_app(state: AppState) -> FastAPI:
                     "tick the box to confirm you want to replace the wallet that "
                     "is in use")
             chain = _chain_for(which)
+            if chain.is_litecoin:
+                raise ValueError(
+                    "Litecoin Core keeps each wallet in a folder of its own. Put the "
+                    "wallet's folder in the node's wallets folder, then pick it on this page")
             if not chain.datadir:
                 raise ValueError(
                     "this application does not know where that node keeps its "
@@ -2426,6 +2444,15 @@ def create_app(state: AppState) -> FastAPI:
         try:
             check_csrf(csrf_token)
             chain = _chain_for(which)
+            if chain.is_litecoin:
+                result = backup.create_named_wallet(chain.rpc, name)
+                previous = ", ".join(n or "the default wallet" for n in result["previous"])
+                state.flash(
+                    f"Now using a new empty wallet called {result['created']}. "
+                    + (f"{previous} is put aside, not deleted: it stays in the node's "
+                       f"wallets folder and can be used again from this page."
+                       if previous else ""), "ok")
+                return RedirectResponse("/backup", status_code=303)
             if not chain.datadir:
                 raise ValueError("this application does not know where that node "
                                  "keeps its files")
@@ -2454,6 +2481,11 @@ def create_app(state: AppState) -> FastAPI:
         try:
             check_csrf(csrf_token)
             chain = _chain_for(which)
+            if chain.is_litecoin:
+                result = backup.switch_named_wallet(chain.rpc, name)
+                state.flash(f"Now using {result['now_using'] or 'the default wallet'}. The "
+                            f"one before is put aside, not deleted.", "ok")
+                return RedirectResponse("/backup", status_code=303)
             if not chain.datadir:
                 raise ValueError("this application does not know where that node "
                                  "keeps its files")
@@ -2483,6 +2515,9 @@ def create_app(state: AppState) -> FastAPI:
         try:
             check_csrf(csrf_token)
             chain = _chain_for(which)
+            if chain.is_litecoin:
+                raise ValueError("a Litecoin wallet that is not in use is already put "
+                                 "aside: it stays in its folder, unloaded")
             if not chain.datadir:
                 raise ValueError("this application does not know where that node "
                                  "keeps its files")
