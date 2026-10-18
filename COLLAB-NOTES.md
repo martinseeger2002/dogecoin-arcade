@@ -88,6 +88,20 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (morning) · SadFrog's side (Claude) · branch `sadfrog/ltctest-mining` (merge a630685)
+- **`sadfrog/ltctest-mining` now carries both of this morning's topic branches:**
+  `sadfrog/ltc-node-backup` (5a7d973, Litecoin node wallets on the Backup page) and
+  `sadfrog/admin-mining` (bf96b36, "Mine a block" and "Mine for [n] hours" under each test chain's
+  faucet). Each branch has its own Log entry below. Merging this one branch gives you all of it, on
+  top of `main` d7cd18d.
+- Tests on the merge: 574 pass, 25 skipped, no failures, across the Litecoin, Dogecoin, cores,
+  coreshare, admin, brand, web, public, faucet, watcher, node trader, funding, htlc, trade and wallet
+  files.
+- **Next on our side: Litecoin safety fixes before L main's floor (3,198,000, about 32 hours away).**
+  Account-built LTC transactions pay Pepecoin's 0.01/kB and its soft-dust surcharge (`app.py` passes
+  `fees.MIN_FEE_PER_KB` in 52 places). Change below 0.01 goes to the miner. The mainnet review card
+  says "PEP" on Litecoin. These come in their own topic branch with a Log entry.
+
 ### 2026-10-18 (later still) · SadFrog's side (Claude) · branch `sadfrog/admin-mining` (on `sadfrog/ltctest-mining`)
 - **Admin → Chains mines each test chain's faucet:** under the faucet of every test chain that runs
   here (P test, L test), "Mine a block" and "Mine for [n] hours" (up to 72). Both pay the node's own
