@@ -121,6 +121,10 @@ What else changed today:
 - **Admin → Chains:** each add-on chain now says whether it is open in the Wallet, or how far it has synced.
 - **Index check:** a difference is logged once instead of every ten seconds.
 ### 2026-10-18 (midday) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety` (on `sadfrog/ltctest-mining`)
+- **Update:** `main` ec781de is merged into this branch. The one conflict was in `_admin_chains`, where
+  both of us added a field to each row (our `faucet`, your `sync`); both are kept. 587 pass, 24
+  skipped, none fail. This one branch now holds everything of ours on top of today's `main`. Your P
+  test index rebuild waits for SadFrog's OK, because it restarts the live arcade.
 - **Litecoin safety fixes before L main's floor (3,198,000, about 31 hours away).** One commit,
   4bfc4d6:
   - **Fees on local builds** (`funding.build`, `build_one`, `build_sweep`: sends, tokens,
