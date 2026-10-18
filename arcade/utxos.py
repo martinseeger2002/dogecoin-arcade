@@ -34,6 +34,7 @@ from __future__ import annotations
 from typing import Any
 
 from .db import register_journalled_table
+from .rpc import RpcError
 from .script import OutputType, parse_output
 
 SCHEMA = """
@@ -147,6 +148,57 @@ def backfill_many(index, rpc, params, addresses: set[str], start: int, end: int)
                 "INSERT OR IGNORE INTO utxo (txid, vout, address, value, height) "
                 "VALUES (?,?,?,?,?)", (txid, vout, address, value, height))
             filed += 1
+    return filed
+
+
+#: How long one `scantxoutset` may take: it reads the node's whole coin set from disk, about four minutes
+#: for Litecoin mainnet's 54 million coins on this node's hard disk (2026-10-18).
+SCAN_SECONDS = 1200.0
+
+
+def seed_from_core(index, rpc, params, addresses: set[str], upto: int) -> int | None:
+    """The coins these addresses hold now, from the Core's own coin set (`scantxoutset`), at any height
+    up to `upto` (2026-10-18). An index reads only from its floor up, so coins an address got below it
+    were never filed: 0.1 LTC sent to an account in block 3,197,387 against an L main floor of
+    3,198,000. This asks the Core what the address holds instead of reading blocks.
+
+    `upto` is the index's height now, with the addresses already watched. A coin above it is filed by
+    the index when it reads that block. A coin at or below it that the index already holds is left as
+    it is; one spent since is not in the Core's set, so it is not filed; one spent later is taken out
+    when the index reads the spend. Filed like `backfill_many`'s rows, with no history rows.
+
+    Returns how many coins it filed, or None when this Core has no `scantxoutset` (Pepecoin and
+    Dogecoin Core 1.14 do not; Litecoin Core 0.21 does). Then the caller reads blocks instead.
+    """
+    addresses = set(addresses)
+    if not addresses:
+        return 0
+    held = getattr(rpc, "_timeout", None)
+    if held is not None:
+        rpc._timeout = max(held, SCAN_SECONDS)
+    try:
+        said = rpc.call("scantxoutset", "start", [f"addr({a})" for a in sorted(addresses)]) or {}
+    except RpcError as exc:
+        if exc.code == -32601:                       # method not found
+            return None
+        raise
+    finally:
+        if held is not None:
+            rpc._timeout = held
+    filed = 0
+    with index.open() as db:
+        for coin in said.get("unspents") or []:
+            height = int(coin.get("height") or 0)
+            value = int(round(float(coin.get("amount", 0)) * 100_000_000))
+            if height <= 0 or height > int(upto) or value <= 0:
+                continue
+            parsed = parse_output(str(coin.get("scriptPubKey", "")), 0, params)
+            if parsed.type not in SPENDABLE or parsed.address not in addresses:
+                continue
+            cur = db.conn.execute(
+                "INSERT OR IGNORE INTO utxo (txid, vout, address, value, height) VALUES (?,?,?,?,?)",
+                (str(coin["txid"]), int(coin["vout"]), parsed.address, value, height))
+            filed += cur.rowcount
     return filed
 
 

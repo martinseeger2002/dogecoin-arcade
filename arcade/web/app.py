@@ -10393,7 +10393,13 @@ def create_app(state: AppState) -> FastAPI:
             def run(chain=chain, address=address, key=key, start=start, end=end, index=index):
                 try:
                     with chain.rpc() as rpc:
-                        filed = utxoslib.backfill(index, rpc, chain.params, address, start, end)
+                        # The Core's coin set first (2026-10-18): coins below the floor too. A Core without
+                        # `scantxoutset` (Pepecoin, Dogecoin) or a borrowed one reads the blocks instead.
+                        filed = None if chain.borrowed else \
+                            utxoslib.seed_from_core(index, rpc, chain.params, {address},
+                                                    index.indexed_height() or 0)
+                        if filed is None:
+                            filed = utxoslib.backfill(index, rpc, chain.params, address, start, end)
                     state.set_setting(key, filed)
                     state.bump_generation()
                     log.info("backfill: %s held %d coins before this node watched it",

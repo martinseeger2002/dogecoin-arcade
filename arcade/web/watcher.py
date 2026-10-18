@@ -338,9 +338,14 @@ class BlockWatcher:
         if mine:
             wanted.setdefault(mine, "node")
         index = self.state.token_index(chain)
+        # Once per chain (2026-10-18): the addresses watched before the Core's coin set was asked, read back
+        # from it too, so coins they got below the floor show. Then `utxo_seeded:<net>` says it is done.
+        seeded_key = f"utxo_seeded:{chain.network}"
         with contextlib.closing(index.open()) as db:
             fresh = sorted(set(wanted) - utxoslib.watching(db))
-            if not fresh:
+            again = [] if self.state.setting(seeded_key) or chain.borrowed else \
+                sorted(utxoslib.watching(db) - set(fresh))
+            if not fresh and not again:
                 return
             tip = index.indexed_height() or 0
             for address in fresh:
@@ -354,8 +359,21 @@ class BlockWatcher:
             backfilling.add(chain.network)
             try:
                 with chain.rpc() as rpc:
-                    filed = utxoslib.backfill_many(index, rpc, chain.params, set(fresh), int(first or tip), tip)
-                log.info("%s read-back filed %d coins for %d accounts", chain.params.label, filed, len(fresh))
+                    # What the Core's coin set says each address holds, at any height (a coin below the floor
+                    # too); a Core without `scantxoutset`, or a borrowed one, reads the blocks this index holds.
+                    filed = None
+                    if not chain.borrowed:
+                        try:
+                            filed = utxoslib.seed_from_core(index, rpc, chain.params, set(fresh) | set(again), tip)
+                            if again:
+                                self.state.set_setting(seeded_key, "no scantxoutset" if filed is None else "done")
+                        except Exception:                      # noqa: BLE001 -- a scan already running: next pass
+                            log.warning("%s coin-set read-back failed", chain.params.label, exc_info=True)
+                    if filed is None and fresh:
+                        filed = utxoslib.backfill_many(index, rpc, chain.params, set(fresh), int(first or tip), tip)
+                filed = filed or 0
+                log.info("%s read-back filed %d coins for %d accounts", chain.params.label, filed,
+                         len(fresh) + len(again))
                 if filed:
                     self.state.bump_generation()
             except Exception:                                  # noqa: BLE001

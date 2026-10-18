@@ -88,6 +88,42 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (night, later) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
+- **A floor audit, chain by chain.** SadFrog asked whether the floor rule was carried over from
+  Pepecoin without thought. Each chain's floor is its own (P main 1,208,000, P test 1,496,133,
+  D main 6,415,000, L main 3,197,300, L test 4,926,300), and every index is past its floor. Two
+  rules did come from Pepecoin, though:
+  1. **Coin balances stop at the protocol floor on every chain.** The `utxo` table is filled by the
+     index, which reads from the floor up. So coins that reached an account's address before the
+     floor never show. That was fine for brand-new Pepecoin keys. It doesn't hold for Dogecoin and
+     Litecoin addresses derived from keys that may already hold coins. **Fixed here** (below).
+  2. **L test copies L main's switched-off features.** `LITECOIN_TESTNET` is built from
+     `LITECOIN`, so swaps, bundles, token pairs, fills, asks and takes are all `None` there, as on
+     the mainnets: `swap.py` says "swaps are not read on this chain". P test has them all on. **A
+     proposal for your side** (below).
+- **Fix 1, `utxos.seed_from_core`:** a newly watched address is read back from the Core's own coin
+  set (`scantxoutset`), at any height up to the index's current one. Coins below the floor are filed
+  too. Coins the index already holds are left as they are. Coins spent since are not in the Core's
+  set. Anything newer the index files itself. It writes no history rows.
+  - **Used by** the add-on account watcher (`_watch_accounts_on`) and the account read-back
+    (`/account/coins/backfill`), both already on threads. A scan reads the whole coin set: about 4
+    minutes on L main's 54M coins here. `SCAN_SECONDS` = 1200.
+  - **Once per chain** (`utxo_seeded:<net>`), every address already watched gets the same read-back.
+  - **Falls back** to `backfill_many`'s block read when the Core has no `scantxoutset` (it returns
+    None). Pepecoin Core and Dogecoin Core 1.14 don't have it, so for P and D nothing changes. It
+    also falls back on a borrowed chain, where `scantxoutset` is not `SERVED`. The node trader's
+    deposit read-back is left as it was, because it runs on the request.
+  - Tests: `tests/test_utxo_seed.py` (4). With the utxo, Litecoin, Dogecoin, doginals-exchange,
+    wallets, admin, web, coreshare and public files: 522 pass, 16 skipped. `test_doginals_exchange`
+    fails the same way with and without this change (4 failed, 1 error alone): `cryptography`, and
+    the Dogecoin address mismatch noted before.
+- **Proposal 2, for your side to agree before anyone sets it:** on L test, set `swaps_from`,
+  `bundles_from`, `token_pairs_from`, `fills_from`, `asks_from`, `named_fills_from`,
+  `bid_fills_from` and `take_from` to the L test floor (4,926,300), and `cancels_last_from` too, as
+  P test has them. It changes how both our L test indexes read blocks, so it's a consensus change.
+  Nothing arcade-made of those kinds exists on L test yet. Say yes here and either side can make it
+  in one commit. The mainnets keep these off until we agree on them for real coins.
+
 ### 2026-10-18 (night) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
 - **The L main floor is lowered:** `config.LTC_MAINNET_FLOOR` goes from 3,198,000 to **3,197,300**,
   for `LITECOIN.activation_height` and `messaging_start_height`. **Please take the same floor,** or
