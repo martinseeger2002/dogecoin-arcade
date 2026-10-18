@@ -578,63 +578,76 @@ def test_litecoin_wallets_are_never_removed_or_overwritten_here(client, monkeypa
     assert [c[0] for c in nodes["ltc"].calls if c[0] not in ("listwallets", "listwalletdir")] == []
 
 
-# --- mining from Admin -> Chains (2026-10-18, SadFrog: "add the mine a block button, and add a mine
-#     for x amount of hours button on the admin panel") --------------------------------------------
+# --- mining from Admin -> Chains: one panel, the CPU miner (arcade/blockminer.py), with an end time and the
+#     faucet as payee folded in from the faucet buttons it replaced (2026-10-18, SadFrog's side) -----------
 
-def _until_idle(state, seconds=5.0):
+def _cpu_miner(monkeypatch):
+    """blockminer.mine, recorded: it runs until its `stop()` says so, as the real one does."""
+    import time
+    from arcade import blockminer
+    ran = {}
+
+    def mine(call, params, address, *, share_to, workers, stop, progress, on_found):
+        ran.update(net=params.name, address=address, workers=workers)
+        deadline = time.time() + 5
+        while not stop() and time.time() < deadline:
+            time.sleep(0.01)
+        ran["stopped"] = stop()
+        return progress
+    monkeypatch.setattr(blockminer, "mine", mine)
+    return ran
+
+
+def _panel_idle(app, seconds=5.0):
     import time
     deadline = time.time() + seconds
-    while state.mining is not None and time.time() < deadline:
+    while time.time() < deadline:
+        said = app.get("/admin/api/mine", headers=LOCAL).json()
+        if not said["running"]:
+            return said
         time.sleep(0.02)
-    assert state.mining is None, "the mining thread ended"
+    raise AssertionError("the miner never stopped")
 
 
-def test_admin_mines_one_test_block_to_the_faucet(client, monkeypatch):
-    app, state = client
-    _t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
-    assert "mineControls" in app.get("/admin", headers=LOCAL).text
-    said = app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest"})
-    assert said.status_code == 200 and said.json()["until"] is None, said.text
-    _until_idle(state)
-    mined = [c for c in rpc.calls if c[0] == "generatetoaddress"]
-    assert len(mined) == 1 and mined[0][2] == LTC_TEST, "one block, to the node's faucet"
-    assert "Mined L test block" in (state.notice or "")
-
-
-def test_admin_mines_for_hours_and_stops_at_the_time_or_when_told(client, monkeypatch):
+def test_the_panel_mines_to_this_chains_faucet_for_a_number_of_hours(client, monkeypatch):
     import time
     app, state = client
-    _t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
-    said = app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 0.0002})
-    assert said.status_code == 200 and said.json()["until"] > time.time() - 1
-    _until_idle(state)
-    found = len([c for c in rpc.calls if c[0] == "generatetoaddress"])
-    assert found > 1, "block after block until the time is up"
-    assert f"Done mining L test: {found} blocks" in (state.notice or "")
-
-    app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 2})
-    mining = app.get("/admin/api/state", headers=LOCAL).json()["chains"]["mining"]
-    assert mining["mining"] and mining["net"] == "ltctest" and mining["until"] > time.time() + 7000
-    busy = app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest"})
-    assert busy.status_code == 409, "one mining thread"
-    assert app.post("/admin/api/faucet/mine/stop", headers={**LOCAL, **WRITE}).status_code == 200
-    _until_idle(state)
-    assert "Stopped mining L test" in (state.notice or "")
-
-
-def test_admin_mining_refuses_real_coins_and_too_many_hours(client, monkeypatch):
-    app, state = client
     _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
-    for body in ({"net": "ltc"}, {"net": "main"}, {"net": "doge"}, {"net": "ltctest", "hours": 73},
-                 {"net": "ltctest", "hours": -1}, {"net": "ltctest", "hours": "lots"}):
-        said = app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json=body)
-        assert said.status_code == 400, body
-    assert state.mining is None
+    ran = _cpu_miner(monkeypatch)
+    listed = {c["net"]: c for c in app.get("/admin/api/mine", headers=LOCAL).json()["chains"]}
+    assert listed["ltctest"]["faucet"] is True, "its Core runs here, so its faucet can be paid"
+    said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE},
+                    json={"net": "ltctest", "pay": "faucet", "hours": 0.0002})
+    assert said.status_code == 200, said.text
+    assert said.json()["until"] > time.time() - 1 and said.json()["faucet"] is True
+    done = _panel_idle(app)
+    assert ran["address"] == LTC_TEST == state.setting("faucet_address:ltctest"), "the node's faucet"
+    assert ran["stopped"] is True, "it ended at its time, with nobody pressing Stop"
+    assert done["until"] and done["faucet"]
+    page = app.get("/admin", headers=LOCAL).text
+    assert 'id="minehours"' in page and 'id="minefaucet"' in page
 
 
-def test_admin_says_how_the_last_mining_run_ended_and_whether_its_block_stuck(client, monkeypatch):
-    """2026-10-18: a block found and lost to another miner's, with the row simply going back to its
-    buttons, read as "the button does nothing"."""
+def test_the_panel_refuses_too_many_hours_and_a_faucet_on_a_borrowed_chain(client, monkeypatch):
+    app, state = client
+    t, _rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
+    _cpu_miner(monkeypatch)
+    for body in ({"net": "ltctest", "hours": 73}, {"net": "ltctest", "hours": -1},
+                 {"net": "ltctest", "hours": "lots"}):
+        said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json=body)
+        assert said.status_code == 400 and "72 hours" in said.json()["detail"], body
+    monkeypatch.setattr(t, "borrowed", True)
+    said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "pay": "faucet"})
+    assert said.status_code == 400 and "borrowed" in said.json()["detail"]
+    assert not app.get("/admin/api/mine", headers=LOCAL).json()["running"]
+    gone = app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest"})
+    assert gone.status_code in (404, 405), "the faucet buttons' own route is retired"
+    assert "mineFaucet" not in app.get("/admin", headers=LOCAL).text
+
+
+def test_the_faucet_row_says_how_the_node_s_last_run_ended_and_whether_its_block_stuck(client, monkeypatch):
+    """The node's own one-block miner still runs for the Wallet page's buttons and "Auto-mine when low"; its row
+    says how its last run ended (a block found and lost to another miner's looked as if nothing happened)."""
     import time
     app, state = client
     t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 6.25})
@@ -643,17 +656,11 @@ def test_admin_says_how_the_last_mining_run_ended_and_whether_its_block_stuck(cl
 
     def call(method, *args):
         if method == "getblockheader":
-            rpc.calls.append((method, *args))
             return {"height": 4_926_457, **fate}
         return real(method, *args)
     monkeypatch.setattr(rpc, "call", call)
-    said = app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 0})
-    assert said.status_code == 200, said.text
-    for _ in range(100):
-        if state.mining is None:
-            break
-        time.sleep(0.05)
-    assert state.last_mined["outcome"] == "found" and state.last_mined["blocks"] == ["cd" * 32]
+    monkeypatch.setattr(state, "last_mined", {"net": "ltctest", "chain": "L test", "ended": time.time(),
+                                              "outcome": "found", "blocks": ["cd" * 32]}, raising=False)
     rows = {r["net"]: r for r in app.get("/admin/api/state", headers=LOCAL).json()["chains"]["rows"]}
     last = rows["ltctest"]["faucet"]["last"]
     assert last["blocks"][0]["confirmations"] == -1 and last["blocks"][0]["height"] == 4_926_457
@@ -661,7 +668,27 @@ def test_admin_says_how_the_last_mining_run_ended_and_whether_its_block_stuck(cl
     rows = {r["net"]: r for r in app.get("/admin/api/state", headers=LOCAL).json()["chains"]["rows"]}
     assert rows["ltctest"]["faucet"]["last"]["blocks"][0]["confirmations"] == 12
     page = app.get("/admin", headers=LOCAL).text
-    assert "lost to another miner" in page and "mined, ripening" in page and "minesaid" in page
+    assert "lost to another miner" in page and "mined, ripening" in page
+
+
+def test_a_chain_whose_core_runs_here_has_one_node_wallet_card(client, monkeypatch):
+    """2026-10-18: L main and L test were listed twice in Admin -> The node's coins, once for their Core wallet
+    and once for the node key's address there. The key card is for a chain with no Core here, or one that holds
+    coins."""
+    from arcade import keywallet
+    app, state = client
+    t, _rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
+    held = {"balance": "0.00000000", "spendable": "0.00000000", "address": "n18SPfLDEkP6LWdZwjdRKj2ryUT7btMUA6"}
+    monkeypatch.setattr(keywallet, "balance", lambda state, chain: dict(held))
+
+    def cards():
+        return [w for w in app.get("/admin/api/state", headers=LOCAL).json()["wallets"] if w["network"] == "ltctest"]
+    assert [bool(w.get("keyed")) for w in cards()] == [False], "its Core wallet only"
+    held.update(balance="0.50000000", spendable="0.50000000")
+    assert [bool(w.get("keyed")) for w in cards()] == [False, True], "a key address with coins is never hidden"
+    held.update(balance="0.00000000", spendable="0.00000000")
+    monkeypatch.setattr(t, "borrowed", True)
+    assert any(w.get("keyed") for w in cards()), "a borrowed chain's coins are the key's"
 
 
 def test_a_test_add_on_chain_is_mined_in_short_batches_so_a_new_tip_is_taken_up_quickly():

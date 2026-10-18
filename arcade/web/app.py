@@ -4505,19 +4505,17 @@ def create_app(state: AppState) -> FastAPI:
             return _is_operator(request)
         return not _public_request(request)
 
-    def _start_mining(address: str, chain, why: str = "", until: float | None = None) -> bool:
+    def _start_mining(address: str, chain, why: str = "") -> bool:
         """Start the one mining thread (the Wallet page's progress and Stop follow it) on `chain`,
-        or False when it is already mining. `why` names it in the page's line ("faucet"). With
-        `until` (a time), it mines block after block until then (Admin -> Chains, 2026-10-18)."""
+        or False when it is already mining. `why` names it in the page's line ("faucet")."""
         if state.mining is not None:
             return False
         with chain.rpc() as rpc:
             expected = Miner(rpc, chain.params).expected_hashes()          # refuses real coins
         state.mining = {"started": time.time(), "address": address, "tries": 0, "rate": 0.0,
                         "expected": expected, "stop": False, "net": chain.network,
-                        "until": until, "blocks": 0,
                         "chain": chain.title + (f" {why}" if why else "")}
-        threading.Thread(target=_mine_one, args=(address, chain, until), name="arcade-mine",
+        threading.Thread(target=_mine_one, args=(address, chain), name="arcade-mine",
                          daemon=True).start()
         return True
 
@@ -4571,10 +4569,9 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(f"Mining failed: {exc}", "err")
         return RedirectResponse("/wallet", status_code=303)
 
-    def _mine_one(address: str, chain=None, until: float | None = None) -> None:
+    def _mine_one(address: str, chain=None) -> None:
         """The thread behind /fund: one block, counting as it goes, then a notice.
-        `chain` is the messaging chain unless said (L test: /fund/ltctest). With `until`, blocks one
-        after another until that time or Stop, then one notice of how many."""
+        `chain` is the messaging chain unless said (L test: /fund/ltctest)."""
         chain = chain or state.messaging
         # How this run ended, kept for Admin -> Chains (2026-10-18: a block found and lost to another
         # miner's, or a run that ended while nobody watched, left the row looking as if nothing happened).
@@ -4586,29 +4583,11 @@ def create_app(state: AppState) -> FastAPI:
                 state.mining.update(tries=tries, rate=rate)
 
         def stopped() -> bool:
-            return bool(state.mining and state.mining.get("stop")) or \
-                (until is not None and time.time() >= until)
+            return bool(state.mining and state.mining.get("stop"))
 
         try:
             with chain.rpc() as rpc:
                 miner = Miner(rpc, chain.params)
-                if until is not None:
-                    found = 0
-                    while not stopped():
-                        block = miner.mine_one(address, on_progress=progress, stop=stopped)
-                        if block:
-                            found_blocks.append(block)
-                            found += 1
-                            if state.mining:
-                                state.mining.update(blocks=found, tries=0)
-                            log.info("mined %s block %d of a timed run to %s", chain.title, found, address)
-                            state.bump_generation()
-                    how = "Stopped" if state.mining and state.mining.get("stop") else "Done"
-                    outcome = "found" if found else ("stopped" if how == "Stopped" else "none")
-                    state.flash(f"{how} mining {chain.title}: {found} block{'' if found == 1 else 's'} to "
-                                f"{address}." + (" Their coins can be spent after 100 more blocks."
-                                                 if found else ""), "ok" if found else "info")
-                    return
                 block = miner.mine_one(address, on_progress=progress, stop=stopped)
                 tries = (state.mining or {}).get("tries", 0)
                 if block:
@@ -4657,7 +4636,6 @@ def create_app(state: AppState) -> FastAPI:
         rate = float(mining.get("rate") or 0)
         return {"mining": True, "seconds": int(time.time() - mining["started"]),
                 "net": mining.get("net") or state.messaging.network,
-                "until": mining.get("until"), "blocks": int(mining.get("blocks") or 0),
                 "tries": int(mining.get("tries", 0)), "rate": int(rate),
                 "expected": int(mining.get("expected", 0)),
                 # At the rate seen so far; 0 until the first batch is in.
@@ -22532,15 +22510,19 @@ def create_app(state: AppState) -> FastAPI:
         # Every add-on chain: the node's own key address there, where it is paid with no Core wallet of its own
         # -- a sharer's tenth, fees on a borrowed chain, mined coins -- and spent from here, signed by this
         # arcade with that key (keywallet.py; 2026-10-18: "there should be no extra step").
+        # A chain whose Core runs here has its own wallet card above, so its key card is shown only when that
+        # address holds coins (2026-10-18, SadFrog: L main and L test were listed twice), as the Wallet page does.
         for ctx in list(getattr(state, "addons", None) or []):
-            if ctx is state.doge and not ctx.borrowed:
-                continue                                 # its own Core wallet, above
             row = {"which": f"key:{ctx.network}", "label": ctx.title, "network": ctx.network, "net": ctx.net,
                    "coin": ctx.params.coin, "keyed": True}
             try:
                 row.update(keywalletlib.balance(state, ctx))
             except Exception as exc:                    # noqa: BLE001
+                if not ctx.borrowed:
+                    continue
                 row["error"] = str(exc)[:200]
+            if not ctx.borrowed and not float(row.get("balance") or 0):
+                continue
             out.append(row)
         return out
 
@@ -22933,51 +22915,6 @@ def create_app(state: AppState) -> FastAPI:
         running = {r["net"]: r["now"] for r in _admin_chains()["rows"]}
         return JSONResponse({"ok": True, "restart": any(modes[n] != running.get(n) for n in modes)})
 
-    #: The longest timed run Admin -> Chains starts: three days.
-    MINE_HOURS_MAX = 72
-
-    @app.post("/admin/api/faucet/mine")
-    def admin_faucet_mine(request: Request, payload: Any = Body(None)):
-        """Mine a test chain that runs here to its faucet, the node's own wallet (2026-10-18, SadFrog:
-        "add the mine a block button, and add a mine for x amount of hours button on the admin panel"):
-        one block, or {"hours": n} of blocks one after another. The one mining thread, so the Wallet
-        page shows it too, and Stop is /admin/api/faucet/mine/stop. The node's own
-        `generatetoaddress`; the operator's CPU miner (arcade/blockminer.py) is /admin/api/mine. Never a chain with real coins."""
-        _admin_check(request, write=True)
-        said = payload if isinstance(payload, dict) else {}
-        net = str(said.get("net") or "")
-        if _admin_faucet_row(net) is None:
-            return JSONResponse({"detail": "mining here is for a test chain that runs on this node"},
-                                status_code=400)
-        chain = state.messaging if net == state.messaging.network else state.addon(net)
-        if not state.chain_ready(chain):
-            return JSONResponse({"detail": f"{chain.title} is still syncing"}, status_code=400)
-        try:
-            hours = float(said.get("hours") or 0)
-        except (TypeError, ValueError):
-            hours = -1
-        if not 0 <= hours <= MINE_HOURS_MAX:
-            return JSONResponse({"detail": f"mine for up to {MINE_HOURS_MAX} hours"}, status_code=400)
-        if state.mining is not None:
-            return JSONResponse({"detail": f"already mining {state.mining.get('chain') or 'a block'}; "
-                                           f"stop it first"}, status_code=409)
-        try:
-            address = _faucet_address(chain)
-            until = time.time() + hours * 3600 if hours else None
-            if not _start_mining(address, chain, "faucet", until=until):
-                return JSONResponse({"detail": "already mining; stop it first"}, status_code=409)
-        except Exception as exc:                          # noqa: BLE001 -- a node away, a refusal
-            return JSONResponse({"detail": f"could not mine: {exc}"}, status_code=400)
-        return JSONResponse({"ok": True, "address": address, "until": until})
-
-    @app.post("/admin/api/faucet/mine/stop")
-    def admin_faucet_mine_stop(request: Request):
-        """Stop the mining thread after the batch the node is hashing now."""
-        _admin_check(request, write=True)
-        if state.mining is not None:
-            state.mining["stop"] = True
-        return JSONResponse({"ok": True, "mining": state.mining is not None})
-
     # --- mining test coins on this machine's CPU (arcade/blockminer.py, 2026-10-18) ---------------
     _cpu_mining: dict[str, Any] = {}
 
@@ -22989,23 +22926,32 @@ def create_app(state: AppState) -> FastAPI:
         if not m:
             return {"running": False}
         p = m["progress"]
+        # Each block found, with what became of it: on the chain, or lost to another miner's (2026-10-18).
+        found = [dict(f, confirmations=_block_fate(m["chain"], f["hash"])["confirmations"]) for f in p.found[-5:]]
         return {"running": m["thread"].is_alive(), "net": m["net"], "address": m["address"], "workers": m["workers"],
                 "tries": p.tries, "rate": round(p.rate), "height": p.height, "bits": p.bits, "note": p.note,
-                "found": p.found[-5:], "blocks": len(p.found), "seconds": int(time.time() - p.started),
+                "found": found, "blocks": len(p.found), "seconds": int(time.time() - p.started),
+                "until": m.get("until"), "faucet": bool(m.get("faucet")),
                 "share_to": _work_share(m["chain"])}
+
+    #: The longest run with an end time the panel starts: three days (2026-10-18). Blank runs until stopped.
+    MINE_HOURS_MAX = 72
 
     @app.get("/admin/api/mine")
     def admin_mine_status(request: Request):
         _admin_check(request)
+        # "faucet": whether this chain's faucet can be paid -- a Core wallet here keeps its coins.
         chains = [{"net": c.network, "label": c.label, "address": state.payout_address(c),
-                   "borrowed": bool(c.borrowed)} for c in state.all_chains if _minable(c)]
+                   "borrowed": bool(c.borrowed), "faucet": not c.borrowed} for c in state.all_chains if _minable(c)]
         return JSONResponse({**_mining_status(), "chains": chains, "cpus": os.cpu_count() or 1,
                              "percent": SHARER_PERCENT, "operator": bool(state.operator)})
 
     @app.post("/admin/api/mine")
     def admin_mine(request: Request, payload: Any = Body(None)):
-        """Mine a test-coin chain on this machine's CPU until stopped. A borrowed chain's sharer is paid a
-        tenth of each block in its coinbase."""
+        """Mine a test-coin chain on this machine's CPU until stopped, or for {"hours": n}. A borrowed chain's
+        sharer is paid a tenth of each block in its coinbase. {"pay": "faucet"} pays this chain's faucet, the
+        node's own Core wallet (2026-10-18: one set of mining controls, with the faucet buttons' end time and
+        payee folded in)."""
         from .. import blockminer
         _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
@@ -23019,7 +22965,22 @@ def create_app(state: AppState) -> FastAPI:
         if not _minable(chain):
             return JSONResponse({"detail": "only a test-coin chain that is not merge-mined is mined here"},
                                 status_code=400)
-        address = str(said.get("address") or state.payout_address(chain)).strip()
+        try:
+            hours = float(said.get("hours") or 0)
+        except (TypeError, ValueError):
+            hours = -1
+        if not 0 <= hours <= MINE_HOURS_MAX:
+            return JSONResponse({"detail": f"mine for up to {MINE_HOURS_MAX} hours, or leave it blank"},
+                                status_code=400)
+        until = time.time() + hours * 3600 if hours else None
+        to_faucet = said.get("pay") == "faucet"
+        if to_faucet and chain.borrowed:
+            return JSONResponse({"detail": "a borrowed chain has no faucet wallet here"}, status_code=400)
+        try:
+            address = _faucet_address(chain) if to_faucet else \
+                str(said.get("address") or state.payout_address(chain)).strip()
+        except Exception as exc:                           # noqa: BLE001 -- the Core wallet away
+            return JSONResponse({"detail": f"could not get the faucet address: {exc}"}, status_code=400)
         try:
             blockminer.output_script(address, chain.params)
         except Exception as exc:                           # noqa: BLE001
@@ -23039,12 +23000,14 @@ def create_app(state: AppState) -> FastAPI:
         def run() -> None:
             try:
                 blockminer.mine(call, chain.params, address, share_to=lambda: _work_share(chain), workers=workers,
-                                stop=lambda: bool(_cpu_mining.get("stop")), progress=progress, on_found=found)
+                                stop=lambda: bool(_cpu_mining.get("stop")) or bool(until and time.time() >= until),
+                                progress=progress, on_found=found)
             except Exception as exc:                       # noqa: BLE001 -- said in the panel
                 progress.note = str(exc)[:300]
                 log.warning("mining %s stopped: %s", chain.network, exc)
         _cpu_mining.clear()
         _cpu_mining.update(net=chain.network, chain=chain, address=address, workers=workers, progress=progress,
+                           until=until, faucet=to_faucet,
                            stop=False, thread=threading.Thread(target=run, name="arcade-cpu-miner", daemon=True))
         _cpu_mining["thread"].start()
         return JSONResponse({"ok": True, **_mining_status()})

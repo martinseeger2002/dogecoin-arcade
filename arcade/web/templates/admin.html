@@ -106,6 +106,11 @@
     <select id="minenet" aria-label="Chain to mine"></select>
     <input autocomplete="off" id="mineaddr" style="flex:1;min-width:220px" placeholder="address the reward goes to" aria-label="Reward address">
     <input autocomplete="off" id="mineworkers" style="width:70px" inputmode="numeric" aria-label="CPU workers" title="CPU workers">
+    <label class="muted" style="display:flex;gap:4px;align-items:center;font-size:.86rem">for
+      <input autocomplete="off" id="minehours" style="width:64px" inputmode="decimal" placeholder="&infin;"
+             aria-label="Hours to mine, blank until stopped" title="Hours, up to 72; blank mines until stopped"> hours</label>
+    <label class="muted" style="display:flex;gap:4px;align-items:center;font-size:.86rem" id="minefaucetl">
+      <input type="checkbox" id="minefaucet" style="width:auto"> pay this chain&rsquo;s faucet</label>
     <button type="button" class="small" id="minego">Mine</button>
     <button type="button" class="small ghost" id="minestop" hidden>Stop</button>
   </div>
@@ -585,43 +590,16 @@ section.panel h2{margin-top:0}
     td.appendChild(mineControls(r, f, mining));
     return td;
   }
-  // Mine to this chain's faucet (2026-10-18, SadFrog's side): one block, or blocks for a number of
-  // hours. One mining thread for the whole node, so while it runs every chain shows what it is doing.
-  var mineTimer = null;
+  // What the node's own one-block miner is doing on this chain (the Wallet page's buttons, or "Auto-mine when
+  // low"), and how its last run ended. Mining by hand is the "Mine test coins" panel below (2026-10-18).
   function mineControls(r, f, mining) {
     var box = document.createElement('div'); box.className = 'minebox'; box.style.marginTop = '6px';
-    if (mining.mining) {
-      if (mining.net === r.net) {
-        var bits = [mining.until ? 'Mining until ' + new Date(mining.until * 1000).toLocaleString()
-                                 : 'Mining one block'];
-        if (mining.until) bits.push(mining.blocks + ' block' + (mining.blocks === 1 ? '' : 's') + ' so far');
-        if (mining.rate) bits.push(Number(mining.rate).toLocaleString() + ' hashes/s');
-        box.appendChild(text('div', bits.join(' \u00b7 ') + (mining.stopping ? ' \u00b7 stopping' : '')));
-        var stop = document.createElement('button'); stop.className = 'ghost small'; stop.textContent = 'Stop mining';
-        stop.disabled = !!mining.stopping;
-        stop.onclick = function () {
-          call('/admin/api/faucet/mine/stop', {}).then(load).catch(function (e) { say(e.message, 'err'); });
-        };
-        box.appendChild(stop);
-      } else {
-        box.appendChild(text('div', 'Mining ' + (mining.chain || 'another chain') + ' now', 'muted'));
-      }
-      if (!mineTimer) mineTimer = setTimeout(function () { mineTimer = null; load(); }, 15000);
-      return box;
+    if (mining.mining && mining.net === r.net) {
+      box.appendChild(text('div', 'Mining a block to this faucet now' + (mining.rate ? ', ' +
+        Number(mining.rate).toLocaleString() + ' hashes/s' : '') + '. Stop it on the Wallet page.', 'muted'));
+    } else if (f.last) {
+      box.appendChild(text('div', lastMined(f.last), 'muted'));
     }
-    if (!f.ready) return box;
-    if (f.last) box.appendChild(text('div', lastMined(f.last), 'muted'));
-    var one = document.createElement('button'); one.className = 'ghost small'; one.textContent = 'Mine a block';
-    one.onclick = function () { mineFaucet(r.net, 0); };
-    var hours = document.createElement('input'); hours.type = 'number'; hours.min = '0.25'; hours.max = '72';
-    hours.step = '0.25'; hours.value = '1'; hours.style.width = '5em';
-    hours.setAttribute('aria-label', r.title + ' hours to mine');
-    var timed = document.createElement('button'); timed.className = 'ghost small'; timed.textContent = 'Mine for';
-    timed.onclick = function () { mineFaucet(r.net, Number(hours.value || 0)); };
-    box.append(one, ' ', timed, ' ', hours, ' hours');
-    var note = text('div', '', 'muted minesaid'); box.appendChild(note);
-    one.dataset.net = timed.dataset.net = r.net;
-    box.appendChild(text('div', 'Pays this node\u2019s faucet. Mined coins can be spent after 100 blocks.', 'muted'));
     return box;
   }
   // How the last run on this chain ended, in words: each block found, and whether it is still on the chain.
@@ -637,23 +615,6 @@ section.panel h2{margin-top:0}
     if (l.outcome === 'stopped') return 'Last run, ended ' + when + ': stopped before finding a block.';
     if (l.outcome === 'none') return 'Last run, ended ' + when + ': no block found.';
     return 'Last run, ended ' + when + ': ' + l.outcome;
-  }
-  function mineFaucet(net, hours) {
-    if (hours < 0 || hours > 72) { say('Mine for up to 72 hours.', 'err'); return; }
-    // Said in the row too: the page-top notice is out of sight down here (2026-10-18).
-    var buttons = document.querySelectorAll('.minebox button[data-net="' + net + '"]');
-    buttons.forEach(function (b) { b.disabled = true; });
-    var note = buttons.length ? buttons[0].parentNode.querySelector('.minesaid') : null;
-    if (note) note.textContent = 'Starting\u2026';
-    call('/admin/api/faucet/mine', {net: net, hours: hours}).then(function (j) {
-      say(j.until ? 'Mining to ' + j.address + ' until ' + new Date(j.until * 1000).toLocaleString() + '.'
-                  : 'Mining one block to ' + j.address + '.', 'ok');
-      load();
-    }).catch(function (e) {
-      say(e.message, 'err');
-      if (note) note.textContent = 'Could not start: ' + e.message;
-      buttons.forEach(function (b) { b.disabled = false; });
-    });
   }
   $('savecores').onclick = function () {
     var modes = {}, share = {}, faucet = {};
@@ -691,6 +652,17 @@ section.panel h2{margin-top:0}
       sel.onchange = function () {
         var c = (mine.chains || []).find(function (x) { return x.net === sel.value; });
         $('mineaddr').value = c ? c.address : '';
+        $('minefaucetl').hidden = !(c && c.faucet);
+        if (!(c && c.faucet)) $('minefaucet').checked = false;
+        $('minefaucet').onchange();
+      };
+      $('minefaucet').onchange = function () {
+        $('mineaddr').disabled = $('minefaucet').checked || !!(mine && mine.running);
+        if ($('minefaucet').checked) $('mineaddr').value = 'this chain\u2019s faucet (the node\u2019s Core wallet)';
+        else if ($('mineaddr').value.indexOf('faucet') >= 0) {
+          var c = (mine.chains || []).find(function (x) { return x.net === sel.value; });
+          $('mineaddr').value = c ? c.address : '';
+        }
       };
       if (m.running && m.net) sel.value = m.net;
       sel.onchange();
@@ -699,16 +671,23 @@ section.panel h2{margin-top:0}
       $('mineworkers').title = 'CPU workers, of ' + m.cpus;
     }
     $('minego').hidden = !!m.running; $('minestop').hidden = !m.running;
-    sel.disabled = $('mineaddr').disabled = $('mineworkers').disabled = !!m.running;
+    sel.disabled = $('mineworkers').disabled = $('minehours').disabled = $('minefaucet').disabled = !!m.running;
+    $('mineaddr').disabled = !!m.running || $('minefaucet').checked;
     if (!(m.chains || []).length) { $('minesaid').textContent = 'No test-coin chain here that can be mined this way.'; return; }
     var bits = [];
-    if (m.running) bits.push('Mining ' + m.net + ' at ' + (m.rate || 0).toLocaleString() + ' hashes a second, block '
-                             + (m.height || 0).toLocaleString() + ', ' + (m.tries || 0).toLocaleString() + ' tried');
+    if (m.running) bits.push('Mining ' + m.net + (m.faucet ? ' to its faucet' : '') + ' at ' + (m.rate || 0).toLocaleString()
+                             + ' hashes a second, block ' + (m.height || 0).toLocaleString() + ', '
+                             + (m.tries || 0).toLocaleString() + ' tried'
+                             + (m.until ? ', until ' + new Date(m.until * 1000).toLocaleString() : ''));
     else if (m.net) bits.push('Stopped.');
     if (m.share_to) bits.push(m.percent + '% of each block to ' + m.share_to);
     if (m.blocks) bits.push(m.blocks + ' block' + (m.blocks > 1 ? 's' : '') + ' found: ' + (m.found || []).map(function (f) {
-      return (f.height || 0).toLocaleString() + ' ' + (f.result === 'accepted' ? 'accepted' : 'refused (' + f.result + ')');
-    }).join(', '));
+      var at = (f.height || 0).toLocaleString() + ' ';
+      if (f.result !== 'accepted') return at + 'refused (' + f.result + ')';
+      if (f.confirmations == null) return at + 'accepted';
+      return at + (f.confirmations < 0 ? 'lost to another miner\u2019s block'
+                                       : 'on the chain, ' + f.confirmations + ' confirmation' + (f.confirmations === 1 ? '' : 's'));
+    }).join(', ') + '. Mined coins can be spent after 100 blocks.');
     if (m.note) bits.push(m.note);
     // Where an arcade is paid on a chain with no wallet of its own here (state.payout_address, 2026-10-18).
     bits.push(m.operator ? 'Mined coins, a sharer\u2019s tenth and fees on borrowed chains go to the operator account\u2019s Wallet.'
@@ -720,8 +699,11 @@ section.panel h2{margin-top:0}
       .then(function (r) { return r.json(); }).then(drawMine).catch(function () {});
   }
   $('minego').onclick = function () {
-    call('/admin/api/mine', {net: $('minenet').value, address: $('mineaddr').value.trim(),
-                             workers: parseInt($('mineworkers').value, 10) || 0})
+    var hours = $('minehours').value.trim();
+    if (hours && !(Number(hours) > 0 && Number(hours) <= 72)) { say('Mine for up to 72 hours, or leave it blank.', 'err'); return; }
+    var body = {net: $('minenet').value, workers: parseInt($('mineworkers').value, 10) || 0, hours: Number(hours || 0)};
+    if ($('minefaucet').checked) body.pay = 'faucet'; else body.address = $('mineaddr').value.trim();
+    call('/admin/api/mine', body)
       .then(loadMine).catch(function (e) { say(e.message, 'err'); });
   };
   $('minestop').onclick = function () {

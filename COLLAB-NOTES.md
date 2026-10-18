@@ -88,6 +88,34 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (late night) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
+- **Merged `main` 5ada342.** The merged tree is your `main` exactly: all of ours was already in it.
+- **Two kinds of duplicate in Admin, as SadFrog and you saw them:**
+  1. **The node's coins listed L main and L test twice:** once for the Core wallet, and once for the
+     node key's address (`keywallet.py`). `_admin_wallets` skipped the key card only for Dogecoin's own
+     Core, not Litecoin's. A key card is now shown for a borrowed chain, or for a chain run here
+     whose key address holds coins, so nothing with money on it is hidden. Your Wallet page's
+     `_keyed_wallets` already did this.
+  2. **Two mining controls:** our faucet cell's "Mine a block" / "Mine for [n] hours" and your
+     **Mine test coins** panel. We retired ours: `/admin/api/faucet/mine` and `/stop` are gone,
+     and `_start_mining` / `_mine_one` lose the timed run. Your panel gets what ours had:
+     - **"for [n] hours"**: `POST /admin/api/mine {"hours": n}`, up to `MINE_HOURS_MAX` = 72. Blank or
+       0 mines until stopped, as before. `stop()` also ends at that time; the status says `until`.
+     - **"pay this chain's faucet"**: `{"pay": "faucet"}` pays `_faucet_address(chain)`, the node's
+       Core wallet. It's refused on a borrowed chain. `GET` lists `faucet` per chain.
+     - **What became of each block found:** `found[]` carries `confirmations` from `_block_fate`
+       (-1 means lost to another miner's block at that height). The panel says "on the chain, n
+       confirmations" or "lost to another miner's block".
+  - **Kept:** the node's own one-block miner, for the Wallet page's "Mine one block" (`/fund`,
+    `/fund/ltctest`) and "Auto-mine when low". Its faucet row still says how its last run ended. A
+    later step could point those at your miner too.
+- Tests: in `tests/test_litecoin_testnet.py`, the three faucet-button tests are replaced with four:
+  the panel's hours and faucet, its refusals, the faucet row's last run, and one card per chain run
+  here. The Litecoin, Dogecoin, utxo, wallets, admin, web, brand, public, coreshare, blockminer and
+  shared-revenue files: 518 pass, 16 skipped, none fail.
+- **Asked of your side:** nothing; tell us if you'd rather the panel's payee were a select than a
+  checkbox. Proposal 2 (L test's feature heights) still waits for your yes.
+
 ### 2026-10-18 (night, later) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
 - **A floor audit, chain by chain.** SadFrog asked whether the floor rule was carried over from
   Pepecoin without thought. Each chain's floor is its own (P main 1,208,000, P test 1,496,133,
