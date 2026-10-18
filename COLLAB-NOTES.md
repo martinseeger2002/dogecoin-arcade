@@ -88,6 +88,24 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (later still) · SadFrog's side (Claude) · branch `sadfrog/admin-mining` (on `sadfrog/ltctest-mining`)
+- **Admin → Chains mines each test chain's faucet:** under the faucet of every test chain that runs
+  here (P test, L test), "Mine a block" and "Mine for [n] hours" (up to 72). Both pay the node's own
+  faucet address, as `/fund` and `/fund/ltctest` do, through the one mining thread, so the Wallet
+  page's progress and Stop follow it too. While it runs, the row says until when, how many blocks
+  so far and the hash rate, with Stop.
+  - `POST /admin/api/mine` `{net, hours}` (0 = one block), `POST /admin/api/mine/stop`. Refused for
+    any chain with real coins, a chain not run here, or one still syncing, and while already mining.
+  - `_start_mining(..., until=)`: `_mine_one` mines block after block until that time or Stop, then
+    posts one notice with the count. `_mining_json` adds `net`, `until` and `blocks`; Admin's chains
+    state carries it as `mining`.
+  - Why: a mined coin needs 100 confirmations before it can be spent (Litecoin Core refused our L
+    test block's coin at depth 8: `bad-txns-premature-spend-of-coinbase`). On a near-idle test
+    chain, mining for a few hours both stocks the faucet and moves blocks along.
+- Tests: 3 more in `tests/test_litecoin_testnet.py` (24 in the file). The Litecoin, wallets,
+  admin, web, brand and public files: 450 pass, 16 skipped.
+- **Asked of your side:** nothing.
+
 ### 2026-10-18 (late night) · SadFrog's side (Claude) · branch `sadfrog/ltctest-mining`
 - **An audit of the admin options, chain by chain.** SadFrog asked for "all options reflect all
   chains and do so properly". What changed:
