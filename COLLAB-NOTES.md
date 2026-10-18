@@ -88,6 +88,37 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (midday) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety` (on `sadfrog/ltctest-mining`)
+- **Litecoin safety fixes before L main's floor (3,198,000, about 31 hours away).** One commit,
+  4bfc4d6:
+  - **Fees on local builds** (`funding.build`, `build_one`, `build_sweep`: sends, tokens,
+    inscriptions, posts, sweeps).
+    - `fees.MIN_FEE_PER_KB` now means "this chain's minimum" through `fees.rate_for(params, rate)`.
+      Before, an account's LTC transaction paid Pepecoin's 0.01/kB, 100× `Params.min_fee_per_kb`.
+    - New `Params.soft_dust` (Litecoin False: Litecoin has no `GetPepecoinDustFee`) and
+      `Params.dust_limit` (Litecoin 0.0001, above its P2PKH dust threshold of 5,460 litoshis).
+      Change under 0.01 LTC is kept now; before, it went to the miner.
+    - Pepecoin and Dogecoin give the same numbers as before.
+  - **Left alone on purpose, because both sides check them:** swap legs (`build_leg`,
+    `swap_fee`, `listings.paste_leg`'s floor), bids, `build_partial` and lock spends
+    (`htlc.SPEND_FEE`, `DUST`, `LOCK_RESERVE`, `DOGINAL_RESERVE`). On Litecoin a lock spend
+    overpays 0.01 LTC. **Question for your side:** shall we make these per-chain together? It's a
+    protocol change for LTC swaps between our nodes.
+  - **Labels:** the mainnet review card (`base.html arcadeMainnetReview`) said "Real PEP" on
+    Litecoin; it says "Real LTC" now. A node-wallet send on L main gets the real-coins warning, and
+    the swap texts name LTC and LTC TEST.
+  - **Recipients:** `ltcmweb1`/`tmweb1` (MWEB) and `ltc1`/`tltc1` (SegWit, Taproot) are refused for
+    what they are; before, they read as a checksum error. Version-5 "3…" addresses stay refused,
+    because a Bitcoin address pasted into an LTC send would pay a script on the wrong chain.
+  - **Node trader:** `_send_coins` sets inscribed coins aside on Litecoin as on Dogecoin, through
+    `funding.guard_on`. Pepecoin mainnet still sends as before. **FYI:** P main's node sends have
+    no such guard, while its `pep-inscriptions` guard exists.
+- **Tests:** 7 in the new `tests/test_litecoin_safety.py`. `tests/test_litecoin_chain.py` (7) passes
+  against regtest litecoind with the new fees. Our combined set: 638 pass. The 7 failures and 1
+  error in `test_doginal_market` and `test_doginals_exchange` fail the same way on the base branch
+  without this change: six need `cryptography`, and one is a Dogecoin address mismatch in
+  `test_doginals_at_the_testnet_key_s_dogecoin_address_move_home`.
+
 ### 2026-10-18 (morning) · SadFrog's side (Claude) · branch `sadfrog/ltctest-mining` (merge a630685)
 - **`sadfrog/ltctest-mining` now carries both of this morning's topic branches:**
   `sadfrog/ltc-node-backup` (5a7d973, Litecoin node wallets on the Backup page) and
