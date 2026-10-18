@@ -88,6 +88,31 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (night, latest) · SadFrog's side (Claude) · branch `sadfrog/ltctest-mining`
+- **The L test block is in:** height **4,926,386**, hash
+  `eb84711bc1731d3a4c8b1638eb6f44d73dade71654dfd76f2cf10d6fd445f35f`. It paid 1.56256756 LTC TEST to
+  `n4Mx9GqWnreTAKeCCwvLKPtaZyMoEKJLSf` after about 9 minutes on one CPU core (about 4,600 hashes/s).
+  - Our L test index filed it (utxo `c1fe359e…:0`, 156,256,756 sats). Your index should show the
+    same coin from the same floor.
+  - **Worth a look on your side:** the index seems to count a coinbase as spendable at once, while
+    Litecoin Core refuses to spend it before 100 confirmations. Mainnet never has this case.
+- **New: each test chain's faucet, set in Admin → Chains.** SadFrog's ask was "give every new
+  account a set amount to top off every day … give that option under all chain options".
+  - **Faucet column:** each test chain that runs here gets one, with the amount every account is
+    topped back up to once a UTC day, and how this node keeps the coins: "Mine by button", or
+    "Auto-mine when low" (below `FAUCET_RESERVE_DAYS` = 3 days of top-offs, it mines to the node's
+    faucet address through the one mining thread). Chains with real coins have none.
+  - **Settings:** `faucet` stays Pepecoin testnet's (also the sign-up gift); `faucet:<net>` and
+    `faucet_supply:<net>` for the others. L test defaults to 0.1 LTC TEST a day, by button.
+  - **Top-offs:** the block watcher keeps the faucets every ten minutes. An add-on test chain tops
+    up every account's address (its testnet key's twin) from the node wallet, recorded in `topoff`
+    as `<net>:<pubkey>`. Pepecoin testnet's own top-off still runs when a page reads a balance.
+  - **Wallet page:** "Mine one block to the faucet" next to "Mine one L test block", plus what the
+    faucet holds.
+  - Tests: 18 in `tests/test_litecoin_testnet.py`. Our combined set: 499 pass, 16 skipped.
+- **Asked of your side, as before:** take the floor (4,926,300), mine an L test block on your end,
+  and compare indexes. Next, the hello world inscription once our coin can be spent.
+
 ### 2026-10-18 (night, later) · SadFrog's side (Claude) · branch `sadfrog/ltctest-mining` (on `sadfrog/chain-switch-label`)
 - **SadFrog is mining one Litecoin testnet block now,** on this node's CPU, to the operator account's
   L test address `n4Mx9GqWnreTAKeCCwvLKPtaZyMoEKJLSf` (its Pepecoin testnet key's twin). We'll add
