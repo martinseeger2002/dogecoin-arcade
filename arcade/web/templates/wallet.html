@@ -198,9 +198,21 @@
   {% if mining.mining %}
   <p class="muted" style="margin:0">Mining a {{ mining.chain }} block now; see above.</p>
   {% else %}
-  <form method="post" action="/fund/ltctest">
+  <form method="post" action="/fund/ltctest" style="display:inline">
     <input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit">Mine one L test block</button>
   </form>
+  <form method="post" action="/fund/ltctest" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="to" value="faucet">
+    <button type="submit" class="ghost">Mine one block to the faucet</button>
+  </form>
+  {% endif %}
+  {% set f = ltc_test_mine.faucet %}
+  {% if f %}
+  <p class="muted" style="font-size:.86rem;margin:10px 0 0">Faucet: every account is topped back up to
+    <b>{{ f.amount }} {{ f.coin }}</b> once a day, from this node&rsquo;s wallet, which holds
+    {{ f.balance if f.balance is not none else '?' }}{% if f.immature %} (+{{ f.immature }} ripening){% endif %}.
+    {{ 'It mines here by itself when it runs low.' if f.supply == 'auto' else 'Mine to it with the button when it runs low.' }}
+    Set both in Admin &rarr; Chains.</p>
   {% endif %}
   {% endif %}
 </div>

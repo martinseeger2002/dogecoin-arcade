@@ -195,6 +195,7 @@ class BlockWatcher:
                       self._run_trader,
                       self._scan_collections,
                       self._watch_doge_accounts,
+                      self._keep_faucets,
                       self._run_watch,
                       self._walk_home):
             try:
@@ -304,6 +305,14 @@ class BlockWatcher:
             if chain.network in backfilling or not self.state.chain_ready(chain):
                 continue
             self._watch_accounts_on(chain, backfilling)
+
+    def _keep_faucets(self) -> None:
+        """Every test chain's faucet, every ten minutes (the app's `keep_faucets`, 2026-10-18)."""
+        keep = getattr(self.state, "keep_faucets", None)
+        if keep is None or time.time() - getattr(self, "_faucets_at", 0.0) < 600:
+            return
+        self._faucets_at = time.time()
+        keep()
 
     def _watch_accounts_on(self, chain, backfilling: set) -> None:
         from .. import utxos as utxoslib

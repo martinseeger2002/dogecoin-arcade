@@ -800,6 +800,37 @@ class AppState:
                       # real. Off by default, and capped far lower when on.
                       real_coins=bool(self.setting("faucet_real_coins", False)))
 
+    #: How a test chain's faucet is stocked (Admin -> Chains, 2026-10-18): mined by the operator's
+    #: button, or mined here automatically whenever it holds less than a few days of top-offs.
+    FAUCET_SUPPLIES = ("button", "auto")
+
+    #: An add-on test chain's daily top-off when the operator has not set one: 0.1 LTC TEST is a
+    #: day of token mints, sends and small inscriptions at 0.0001 LTC per kB.
+    FAUCET_ADDON_DEFAULT = 10_000_000
+
+    def faucet_conf(self, chain) -> tuple[int, str]:
+        """(daily top-off in sats, supply) for one chain: what each account is brought back up to once
+        a UTC day, and how the node keeps the coins to do it. The messaging chain keeps its old
+        `faucet` setting (also the sign-up gift); an add-on test chain has `faucet:<net>`. A chain
+        with real coins has none here: (0, "button")."""
+        supply = str(self.setting(f"faucet_supply:{chain.network}", "button") or "button")
+        if supply not in self.FAUCET_SUPPLIES:
+            supply = "button"
+        if getattr(chain.params, "real_coins", False):
+            return 0, "button"
+        if chain.network == self.messaging.network:
+            from ..faucet import GIFT
+            gift = self.setting("faucet")
+            return (GIFT if gift is None else int(gift)), supply
+        gift = self.setting(f"faucet:{chain.network}")
+        return (self.FAUCET_ADDON_DEFAULT if gift is None else int(gift)), supply
+
+    def addon_faucet(self, chain):
+        """The record of what an add-on test chain's faucet has topped up, at its own amount. Its
+        rows are keyed `<net>:<pubkey>`, so a day's Pepecoin top-off and a day's L test one are two."""
+        from ..faucet import Faucet
+        return Faucet(self.accounts(), gift=self.faucet_conf(chain)[0], ceiling=None)
+
     def credentials(self):
         """The operator's username and password, if one has been set."""
         from ..accounts import Credentials

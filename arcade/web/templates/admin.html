@@ -84,7 +84,7 @@
     must too. <b>Share</b> (on unless you untick it) lets other arcades use a Core that runs here: they can
     read blocks and the mempool and send transactions people signed, never touch this node's wallet.</p>
   <div class="tablewrap"><table class="admintable">
-    <thead><tr><th>Chain</th><th>Core</th><th>Share</th><th>Now</th></tr></thead>
+    <thead><tr><th>Chain</th><th>Core</th><th>Share</th><th>Faucet</th><th>Now</th></tr></thead>
     <tbody id="chainrows"></tbody>
   </table></div>
   <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
@@ -488,6 +488,7 @@ section.panel h2{margin-top:0}
       var box = document.createElement('input'); box.type = 'checkbox'; box.className = 'coreshare';
       box.dataset.net = r.net; box.checked = !!r.share; box.disabled = r.now !== 'here';
       sh.appendChild(box); tr.appendChild(sh);
+      tr.appendChild(faucetCell(r));
       var m = r.mesh || {}, bits = [];
       if (r.now === 'borrow') bits.push(m.sharers ? 'borrowed from ' + m.sharers + ' arcade' + (m.sharers > 1 ? 's' : '')
                                          : 'no sharing arcade linked yet');
@@ -504,7 +505,7 @@ section.panel h2{margin-top:0}
     var un = c.unknown || [];
     if (un.length) {
       var tr2 = document.createElement('tr');
-      var td2 = document.createElement('td'); td2.colSpan = 4; td2.className = 'muted';
+      var td2 = document.createElement('td'); td2.colSpan = 5; td2.className = 'muted';
       td2.textContent = 'Also shared by linked arcades, needing a newer version of this arcade: '
         + un.map(function (u) { return u[0] + ' (' + u[1] + ')'; }).join(', ');
       tr2.appendChild(td2); tb.appendChild(tr2);
@@ -532,11 +533,37 @@ section.panel h2{margin-top:0}
     });
     if (!ix.childNodes.length) ix.textContent = c.mesh ? 'Not linked to another arcade yet.' : 'The mesh is off on this arcade.';
   }
+  // A test chain's faucet (2026-10-18, SadFrog's side): what every account is topped back up to once a
+  // day, and how this node keeps the coins for it. Chains with real coins have none.
+  var SUPPLY_WORDS = {button: 'Mine by button', auto: 'Auto-mine when low'};
+  function faucetCell(r) {
+    var td = document.createElement('td'), f = r.faucet;
+    if (!f) { td.className = 'muted'; td.textContent = '\u2014'; td.title = 'Test chains that run here only'; return td; }
+    var amt = document.createElement('input'); amt.type = 'number'; amt.min = '0'; amt.step = 'any';
+    amt.className = 'faucetamt'; amt.dataset.net = r.net; amt.value = f.amount; amt.style.width = '7em';
+    amt.setAttribute('aria-label', r.title + ' daily top-off');
+    var sel = document.createElement('select'); sel.className = 'faucetsupply'; sel.dataset.net = r.net;
+    ['button', 'auto'].forEach(function (k) {
+      var o = document.createElement('option'); o.value = k; o.textContent = SUPPLY_WORDS[k];
+      o.selected = f.supply === k; sel.appendChild(o);
+    });
+    var line = document.createElement('div');
+    line.append(amt, ' ' + f.coin + ' a day ');
+    td.append(line, sel);
+    var held = f.balance == null ? 'wallet not readable' : 'holds ' + Number(f.balance).toLocaleString() +
+      (f.immature ? ' (+' + Number(f.immature).toLocaleString() + ' ripening)' : '');
+    td.appendChild(text('div', held + (f.sign_up_gift ? ' \u00b7 also the sign-up gift' : '') + (f.ready ? '' : ' \u00b7 node syncing'), 'muted'));
+    return td;
+  }
   $('savecores').onclick = function () {
-    var modes = {}, share = {};
+    var modes = {}, share = {}, faucet = {};
     document.querySelectorAll('.coremode').forEach(function (s) { modes[s.dataset.net] = s.value; });
     document.querySelectorAll('.coreshare').forEach(function (b) { share[b.dataset.net] = b.checked; });
-    call('/admin/api/cores', {modes: modes, share: share}).then(function (j) {
+    document.querySelectorAll('.faucetamt').forEach(function (i) {
+      (faucet[i.dataset.net] = faucet[i.dataset.net] || {}).amount = Number(i.value || 0); });
+    document.querySelectorAll('.faucetsupply').forEach(function (s) {
+      (faucet[s.dataset.net] = faucet[s.dataset.net] || {}).supply = s.value; });
+    call('/admin/api/cores', {modes: modes, share: share, faucet: faucet}).then(function (j) {
       $('coresaid').textContent = j.restart ? 'Saved. Which Cores run here changes when the arcade restarts.' : 'Saved.';
       $('restartnow').hidden = !(j.restart && LOCAL && data && data.chains && data.chains.restart);
       load();

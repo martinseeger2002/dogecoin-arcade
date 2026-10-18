@@ -268,3 +268,96 @@ console.log(JSON.stringify(out));''')
     assert versions == {"main": 158, "doge": 158, "ltc": 176, "test": 241, "ltctest": 239}
     assert said["main"]["pub"] == said["doge"]["pub"] == said["ltc"]["pub"], "one mainnet key"
     assert said["ltctest"]["pub"] == said["test"]["pub"] != said["main"]["pub"], "L test is the testnet key"
+
+
+# --- each test chain's faucet, set in Admin -> Chains (2026-10-18, SadFrog's side: "give every new
+#     account a set amount to top off every day ... give that option under all chain options") -------
+
+LOCAL = {"host": "127.0.0.1:8420"}
+WRITE = {"x-arcade-admin": "1"}
+
+
+class _FaucetRpc:
+    """An L test node: a wallet that pays, and blocks found at once."""
+
+    def __init__(self):
+        self.calls = []
+
+    def call(self, method, *args):
+        self.calls.append((method, *args))
+        return {"getdifficulty": 0.000244, "generatetoaddress": ["cd" * 32], "sendtoaddress": "ef" * 32,
+                "getnewaddress": LTC_TEST}.get(method)
+
+
+def _l_test_node(state, monkeypatch, wallet=None):
+    import contextlib
+    t = _with_ltc_test(state, monkeypatch, ready=True)
+    monkeypatch.setattr(type(state), "chain_ready", lambda self, chain: True)
+    rpc = _FaucetRpc()
+
+    @contextlib.contextmanager
+    def connect():
+        yield rpc
+    monkeypatch.setattr(t, "rpc", connect)
+    monkeypatch.setattr(t, "status", lambda: {"online": True, "wallet": wallet})
+    return t, rpc
+
+
+def test_each_test_chain_has_its_own_faucet_and_real_coins_have_none(app_state, monkeypatch):
+    from arcade.faucet import GIFT
+    from arcade.web.state import ChainContext
+    t = _with_ltc_test(app_state, monkeypatch, ready=True)
+    assert app_state.faucet_conf(app_state.messaging) == (GIFT, "button"), "P test keeps its own"
+    assert app_state.faucet_conf(t) == (10_000_000, "button"), "0.1 LTC TEST a day until set"
+    app_state.set_setting("faucet:ltctest", 25_000_000)
+    app_state.set_setting("faucet_supply:ltctest", "auto")
+    assert app_state.faucet_conf(t) == (25_000_000, "auto")
+    for real in ("ltc", "doge", "main"):
+        assert app_state.faucet_conf(ChainContext(network=real, role="ledger", label=real))[0] == 0
+
+
+def test_admin_sets_a_test_chains_faucet_and_refuses_one_on_real_coins(client, monkeypatch):
+    app, state = client
+    _l_test_node(state, monkeypatch, wallet={"balance": 1.5, "immature": 0.0})
+    rows = {r["net"]: r for r in app.get("/admin/api/state", headers=LOCAL).json()["chains"]["rows"]}
+    assert rows["ltctest"]["faucet"]["amount"] == 0.1 and rows["ltctest"]["faucet"]["coin"] == "LTC TEST"
+    assert rows["main"]["faucet"] is None, "real coins: no faucet"
+    said = app.post("/admin/api/cores", headers={**LOCAL, **WRITE},
+                    json={"faucet": {"ltctest": {"amount": 0.25, "supply": "auto"}}})
+    assert said.status_code == 200, said.text
+    assert state.setting("faucet:ltctest") == 25_000_000 and state.setting("faucet_supply:ltctest") == "auto"
+    bad = app.post("/admin/api/cores", headers={**LOCAL, **WRITE}, json={"faucet": {"main": {"amount": 1}}})
+    assert bad.status_code == 400 and state.setting("faucet:main") is None
+    assert "faucetCell" in app.get("/admin", headers=LOCAL).text
+
+
+def test_every_account_is_topped_up_once_a_day_on_l_test(client, monkeypatch):
+    from arcade.web.app import _ltc_test_twin
+    _app, state = client
+    t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 5.0, "immature": 0.0})
+    state.set_setting("address:" + "02" + "33" * 32, PEP_TEST)
+    state.keep_faucets()
+    sent = [c for c in rpc.calls if c[0] == "sendtoaddress"]
+    assert sent == [("sendtoaddress", _ltc_test_twin(PEP_TEST), 0.1)], "its testnet key's twin, up to 0.1"
+    state.keep_faucets()
+    assert len([c for c in rpc.calls if c[0] == "sendtoaddress"]) == 1, "once a UTC day"
+    assert not any(c[0] == "generatetoaddress" for c in rpc.calls), "stocked by button: nothing mined"
+
+
+def test_an_auto_faucet_mines_here_when_it_runs_low(client, monkeypatch):
+    import time
+    _app, state = client
+    t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
+    state.set_setting("faucet_supply:ltctest", "auto")
+    state.set_setting("faucet:ltctest", 0)                     # nobody topped up: only the stock matters
+    state.keep_faucets()
+    assert not any(c[0] == "generatetoaddress" for c in rpc.calls), "a faucet of 0 is off"
+    state.set_setting("faucet:ltctest", 10_000_000)
+    state.keep_faucets()
+    for _ in range(100):
+        if state.mining is None:
+            break
+        time.sleep(0.05)
+    mined = [c for c in rpc.calls if c[0] == "generatetoaddress"]
+    assert mined and mined[0][2] == LTC_TEST, "to the node's own faucet address"
+    assert state.setting("faucet_address:ltctest") == LTC_TEST, "made once and kept"
