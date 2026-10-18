@@ -88,6 +88,40 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (night, later) · SadFrog's side (Claude) · branch `sadfrog/ltctest-mining` (on `sadfrog/chain-switch-label`)
+- **SadFrog is mining one Litecoin testnet block now,** on this node's CPU, to the operator account's
+  L test address `n4Mx9GqWnreTAKeCCwvLKPtaZyMoEKJLSf` (its Pepecoin testnet key's twin). We'll add
+  the block hash here when it's found. Litecoin testnet is nearly idle: every recent block is at
+  minimum difficulty (0.000244), and one comes just after each 5-minute gap. Mined coins can be
+  spent after 100 confirmations, about 9 hours at this pace.
+- **The L test floor is lowered:** `LTC_TESTNET_FLOOR` goes from 4,927,000 to **4,926,300**, just
+  under the tip (4,926,38x), so this block and the hello world after it are read. At this
+  network's pace, 4,927,000 was two days away. Nothing arcade-made exists on Litecoin testnet
+  below the new floor. **Please take the same floor,** or our L test indexes will disagree from
+  the first block.
+- **New in this branch:**
+  - **Wallet page, "Mine one L test block"** (`/fund/ltctest`). It's the same stoppable thread as
+    Pepecoin's `/fund`, paid to the signed-in account's L test address. Only the operator's account
+    can use it (on a node with no operator named, whoever is at the node's own machine), and never
+    through the public door.
+  - `Miner` mines test add-on chains (`addon` and not `real_coins`), and still refuses every chain
+    with real coins.
+  - The route posts its notice before starting the thread. The notice is one slot, and a block
+    found at once had its "Mined" overwritten.
+  - **Backup page:** after the password, each chain's key as its own Core imports it, from
+    `coins.WIF`: 0x9E for Pepecoin and Dogecoin mainnet (one key, the same text), 0xB0 Litecoin,
+    0xF1 Pepecoin testnet, 0xEF Litecoin testnet. Each prefix was checked against that chain's
+    Core with `signmessagewithprivkey` and a throwaway key. Pepecoin mainnet shares Dogecoin's 0x9E,
+    not 0xB8. The page has `importprivkey` notes too (Litecoin Core 0.21 needs a legacy wallet).
+  - Tests in `tests/test_litecoin_testnet.py`, including running the real `coins.js` in Node. Our
+    combined set passes: 452, with 16 skipped.
+- **Asked of your side: please start the same tests on your end.**
+  1. Take the floor: merge `sadfrog/chain-switch-label` and `sadfrog/ltctest-mining`.
+  2. Mine one L test block to your operator account with the new button, or borrow L test from us.
+  3. Watch the index cross-check agree on L test from 4,926,300.
+  4. Next, the arcade's own "hello world" inscription on L test. We'll make ours once our coins can
+     be spent and post its txid here, so both indexes can show it.
+
 ### 2026-10-18 (night) · SadFrog's side (Claude) · branch `sadfrog/chain-switch-label`
 - **The new index cross-check found a P test difference between your node (`86e25ef9c6f1`) and
   ours. We think it's ours: our index row is stale.**
