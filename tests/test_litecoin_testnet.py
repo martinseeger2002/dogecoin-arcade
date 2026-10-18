@@ -573,3 +573,57 @@ def test_litecoin_wallets_are_never_removed_or_overwritten_here(client, monkeypa
                                           "source": str(tmp_path / "x.dat")}, follow_redirects=False)
     assert "folder of its own" in (state.notice or "")
     assert [c[0] for c in nodes["ltc"].calls if c[0] not in ("listwallets", "listwalletdir")] == []
+
+
+# --- mining from Admin -> Chains (2026-10-18, SadFrog: "add the mine a block button, and add a mine
+#     for x amount of hours button on the admin panel") --------------------------------------------
+
+def _until_idle(state, seconds=5.0):
+    import time
+    deadline = time.time() + seconds
+    while state.mining is not None and time.time() < deadline:
+        time.sleep(0.02)
+    assert state.mining is None, "the mining thread ended"
+
+
+def test_admin_mines_one_test_block_to_the_faucet(client, monkeypatch):
+    app, state = client
+    _t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
+    assert "mineControls" in app.get("/admin", headers=LOCAL).text
+    said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest"})
+    assert said.status_code == 200 and said.json()["until"] is None, said.text
+    _until_idle(state)
+    mined = [c for c in rpc.calls if c[0] == "generatetoaddress"]
+    assert len(mined) == 1 and mined[0][2] == LTC_TEST, "one block, to the node's faucet"
+    assert "Mined L test block" in (state.notice or "")
+
+
+def test_admin_mines_for_hours_and_stops_at_the_time_or_when_told(client, monkeypatch):
+    import time
+    app, state = client
+    _t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
+    said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 0.0002})
+    assert said.status_code == 200 and said.json()["until"] > time.time() - 1
+    _until_idle(state)
+    found = len([c for c in rpc.calls if c[0] == "generatetoaddress"])
+    assert found > 1, "block after block until the time is up"
+    assert f"Done mining L test: {found} blocks" in (state.notice or "")
+
+    app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 2})
+    mining = app.get("/admin/api/state", headers=LOCAL).json()["chains"]["mining"]
+    assert mining["mining"] and mining["net"] == "ltctest" and mining["until"] > time.time() + 7000
+    busy = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest"})
+    assert busy.status_code == 409, "one mining thread"
+    assert app.post("/admin/api/mine/stop", headers={**LOCAL, **WRITE}).status_code == 200
+    _until_idle(state)
+    assert "Stopped mining L test" in (state.notice or "")
+
+
+def test_admin_mining_refuses_real_coins_and_too_many_hours(client, monkeypatch):
+    app, state = client
+    _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
+    for body in ({"net": "ltc"}, {"net": "main"}, {"net": "doge"}, {"net": "ltctest", "hours": 73},
+                 {"net": "ltctest", "hours": -1}, {"net": "ltctest", "hours": "lots"}):
+        said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json=body)
+        assert said.status_code == 400, body
+    assert state.mining is None

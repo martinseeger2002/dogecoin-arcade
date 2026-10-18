@@ -492,7 +492,7 @@ section.panel h2{margin-top:0}
       var box = document.createElement('input'); box.type = 'checkbox'; box.className = 'coreshare';
       box.dataset.net = r.net; box.checked = !!r.share; box.disabled = r.now !== 'here';
       sh.appendChild(box); tr.appendChild(sh);
-      tr.appendChild(faucetCell(r));
+      tr.appendChild(faucetCell(r, c.mining || {}));
       var m = r.mesh || {}, bits = [];
       if (r.now === 'borrow') bits.push(m.sharers ? 'borrowed from ' + m.sharers + ' arcade' + (m.sharers > 1 ? 's' : '')
                                          : 'no sharing arcade linked yet');
@@ -540,7 +540,7 @@ section.panel h2{margin-top:0}
   // A test chain's faucet (2026-10-18, SadFrog's side): what every account is topped back up to once a
   // day, and how this node keeps the coins for it. Chains with real coins have none.
   var SUPPLY_WORDS = {button: 'Mine by button', auto: 'Auto-mine when low'};
-  function faucetCell(r) {
+  function faucetCell(r, mining) {
     var td = document.createElement('td'), f = r.faucet;
     if (!f) { td.className = 'muted'; td.textContent = '\u2014'; td.title = 'Test chains that run here only'; return td; }
     var amt = document.createElement('input'); amt.type = 'number'; amt.min = '0'; amt.step = 'any';
@@ -561,7 +561,52 @@ section.panel h2{margin-top:0}
     var held = f.balance == null ? 'wallet not readable' : 'holds ' + Number(f.balance).toLocaleString() +
       (f.immature ? ' (+' + Number(f.immature).toLocaleString() + ' ripening)' : '');
     td.appendChild(text('div', held + (f.sign_up_gift ? ' \u00b7 also the sign-up gift' : '') + (f.ready ? '' : ' \u00b7 node syncing'), 'muted'));
+    td.appendChild(mineControls(r, f, mining));
     return td;
+  }
+  // Mine to this chain's faucet (2026-10-18, SadFrog's side): one block, or blocks for a number of
+  // hours. One mining thread for the whole node, so while it runs every chain shows what it is doing.
+  var mineTimer = null;
+  function mineControls(r, f, mining) {
+    var box = document.createElement('div'); box.className = 'minebox'; box.style.marginTop = '6px';
+    if (mining.mining) {
+      if (mining.net === r.net) {
+        var bits = [mining.until ? 'Mining until ' + new Date(mining.until * 1000).toLocaleString()
+                                 : 'Mining one block'];
+        if (mining.until) bits.push(mining.blocks + ' block' + (mining.blocks === 1 ? '' : 's') + ' so far');
+        if (mining.rate) bits.push(Number(mining.rate).toLocaleString() + ' hashes/s');
+        box.appendChild(text('div', bits.join(' \u00b7 ') + (mining.stopping ? ' \u00b7 stopping' : '')));
+        var stop = document.createElement('button'); stop.className = 'ghost small'; stop.textContent = 'Stop mining';
+        stop.disabled = !!mining.stopping;
+        stop.onclick = function () {
+          call('/admin/api/mine/stop', {}).then(load).catch(function (e) { say(e.message, 'err'); });
+        };
+        box.appendChild(stop);
+      } else {
+        box.appendChild(text('div', 'Mining ' + (mining.chain || 'another chain') + ' now', 'muted'));
+      }
+      if (!mineTimer) mineTimer = setTimeout(function () { mineTimer = null; load(); }, 15000);
+      return box;
+    }
+    if (!f.ready) return box;
+    var one = document.createElement('button'); one.className = 'ghost small'; one.textContent = 'Mine a block';
+    one.onclick = function () { mine(r.net, 0); };
+    var hours = document.createElement('input'); hours.type = 'number'; hours.min = '0.25'; hours.max = '72';
+    hours.step = '0.25'; hours.value = '1'; hours.style.width = '5em';
+    hours.setAttribute('aria-label', r.title + ' hours to mine');
+    var timed = document.createElement('button'); timed.className = 'ghost small'; timed.textContent = 'Mine for';
+    timed.onclick = function () { mine(r.net, Number(hours.value || 0)); };
+    box.append(one, ' ', timed, ' ', hours, ' hours');
+    box.appendChild(text('div', 'Pays this node\u2019s faucet. Mined coins can be spent after 100 blocks.', 'muted'));
+    return box;
+  }
+  function mine(net, hours) {
+    if (hours < 0 || hours > 72) { say('Mine for up to 72 hours.', 'err'); return; }
+    call('/admin/api/mine', {net: net, hours: hours}).then(function (j) {
+      say(j.until ? 'Mining to ' + j.address + ' until ' + new Date(j.until * 1000).toLocaleString() + '.'
+                  : 'Mining one block to ' + j.address + '.', 'ok');
+      load();
+    }).catch(function (e) { say(e.message, 'err'); });
   }
   $('savecores').onclick = function () {
     var modes = {}, share = {}, faucet = {};
