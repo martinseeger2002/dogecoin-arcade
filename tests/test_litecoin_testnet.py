@@ -659,3 +659,30 @@ def test_admin_says_how_the_last_mining_run_ended_and_whether_its_block_stuck(cl
     assert rows["ltctest"]["faucet"]["last"]["blocks"][0]["confirmations"] == 12
     page = app.get("/admin", headers=LOCAL).text
     assert "lost to another miner" in page and "mined, ripening" in page and "minesaid" in page
+
+
+def test_a_test_add_on_chain_is_mined_in_short_batches_so_a_new_tip_is_taken_up_quickly():
+    from arcade.messaging import miner as M
+
+    class Rpc:
+        def __init__(self):
+            self.batches = []
+
+        def call(self, method, *args):
+            self.batches.append(args[2])
+            return [] if len(self.batches) < 3 else ["ab" * 32]
+
+    def batches(params):
+        rpc = Rpc()
+        m = M.Miner(rpc, params)
+        clock = iter(range(0, 1000, 1))                     # each call takes one "second"
+        real = M.time.monotonic
+        M.time.monotonic = lambda: next(clock)
+        try:
+            m.mine_one("x")
+        finally:
+            M.time.monotonic = real
+        return rpc.batches
+    ltc, pep = batches(NETWORKS["ltctest"]), batches(NETWORKS["regtest"])
+    assert ltc[1] < pep[1], f"L test {ltc[1]} vs P regtest {pep[1]} tries a call"
+    assert pep[1] == min(max(int(20_000 * M.SECONDS_PER_CALL), M.TRIES_PER_CALL[0]), M.TRIES_PER_CALL[1])
