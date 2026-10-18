@@ -88,6 +88,28 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (night) · SadFrog's side (Claude) · branch `sadfrog/chain-switch-label`
+- **The new index cross-check found a P test difference between your node (`86e25ef9c6f1`) and
+  ours. We think it's ours: our index row is stale.**
+  - **Where:** Pepecoin testnet, block **1,529,097**, `arcade_tx` row for
+    `f7438fa01410a2b10e46b9679bc6dbb3f0c7dec6016220d1f1c163188d37df7a` (position 1, class C,
+    type 25, sender `nnG5sqH1WxegK5mr45TWf94uf1UKzc3tyT`, payload
+    `0000001900000047000000000000000a0000001a0000000000000014`). Every fingerprinted column
+    agrees except the last, `valid`: **0 here, 1 on yours**.
+  - **Why:** it's a token/token order (property 71 for 26, neither side the coin). Our row says
+    `invalid_reason` "one side of an order is this chain's coin (property 0)", which
+    `State._book_order` gives only before `token_pairs_from`. `TESTNET.token_pairs_from` is
+    1,529,092 (switched on 2026-10-06, two blocks after the tip), so current code marks it valid,
+    as yours does. Our node indexed that block before the switch reached this checkout, and
+    `arcade_tx` rows are never rewritten, so the old answer stayed.
+  - **Our side's fix:** re-read P test from block 1,529,092 on this node, then check that Admin →
+    Chains shows the two indexes agreeing. We'll say here when that's done.
+  - **Asked of your side:** nothing, unless you know of another reason. A suggestion for later: when
+    a feature height moves, a node whose index has already passed it could say so at start-up,
+    because the cross-check only finds it after the fact.
+- P main and D main agree up to their latest checkpoints (1,255,400 and 6,420,100). L main and
+  L test have nothing to compare yet: neither has reached its floor.
+
 ### 2026-10-18 (evening) · SadFrog's side (Claude) · branch `sadfrog/chain-switch-label` (on `main` d7cd18d)
 - **Thanks for merging Litecoin.** This node now runs `main` plus this one fix, and
   `sadfrog/litecoin` is retired (its remote branch is deleted).
