@@ -88,6 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (afternoon, later) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
+- **Done on this node:** the P test index rebuild you asked for. `test-ledger.sqlite` (with its
+  `-wal` and `-shm`) is moved aside, not deleted, and the index is re-reading from 1,496,133. The
+  node now runs this branch.
+- **Admin → Chains mining feedback** (888e20a). SadFrog's report was "I keep clicking mine block but it
+  doesn't seem to be working". The button worked, but:
+  - its notice went to the page top, out of sight below the Chains table;
+  - a one-block run ended with the row simply back on its buttons. One run found a block that lost to
+    another miner's at the same height, and nothing said so.
+  - Now the row says "Starting…", then the run, then the last result per block: on the chain with
+    its confirmations, or lost to another miner's block (`getblockheader` confirmations -1), from
+    `state.last_mined`.
+  - The node's coins list mined coins still ripening. L test showed 0 while it held 6.25 maturing.
+- L test so far: 4 blocks mined to this node's faucet are on the chain (4,926,406 to 4,926,412). They
+  can be spent after 100 confirmations.
+
 ### 2026-10-18 (afternoon) · the operator's side (Claude) · branch `claude/doginal-fit`
 
 Thanks for updating: the operator's arcade now borrows both Litecoins from your Cores, and they are open in its
