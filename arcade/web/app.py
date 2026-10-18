@@ -21693,6 +21693,43 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(404, "no such game")
         return launch_thread(request, txid)
 
+    @app.get("/play/{which}", response_class=HTMLResponse)
+    def game_door(request: Request, which: str):
+        """A game's own front door (SadFrog, 2026-10-17): the sign-up in the game's
+        colours and words, for somebody who came from the game's site to play it.
+
+        `which` is a card's txid, or the name or `family` a game's cards share
+        (/play/ashvale), so the link on a game's site keeps working across every
+        card its maker inscribes. Signed in already, it is just the game; anybody
+        else, the node's own machine included, gets the sign-up, as /join does. The
+        account it makes is the same account /join makes, by the same wallet.js.
+        """
+        wanted = (which or "").strip().lower()
+        found = None
+        if re.fullmatch(r"[0-9a-f]{64}", wanted):
+            row = _game_by_txid(wanted)
+            if row:
+                found = {"txid": wanted, "game": row["game"]}
+        elif re.fullmatch(r"[a-z0-9._-]{1,64}", wanted):  # lowered above
+            for item in _games_ranked(request, "new"):
+                g = item["game"]
+                if wanted in ((g.get("family") or "").lower(), gameslib.slug(g["name"])):
+                    found = item
+                    break
+        if found is None:
+            raise HTTPException(404, "no such game")
+        game = found["game"]
+        opens = f"/inscriptions/{game.get('opens') or found['txid']}/full"
+        if signed_in(request) is not None:
+            return RedirectResponse(opens, status_code=303)
+        register = state.accounts()
+        return render(request, "game_door.html", chain=_account_chain(), game=game,
+                      card=found["txid"], opens=opens, skin=gameslib.door_skin(game),
+                      notice=gameslib.door_notice(game),
+                      seats=register.seats, free=register.free(),
+                      secure_enough=secure_context(request),
+                      why_not=WHY_NOT_SECURE)
+
     def _mintpad_inscription(chain, creator: str, name: str) -> str:
         """The newest inscription that is this collection's mintpad, by its JSON,
         inscribed by the seller: '' when there is none yet."""

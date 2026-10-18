@@ -179,6 +179,8 @@ PUBLIC_TREES = (
 PUBLIC_SHAPES = (
     # One game's discussion: read-only, like the launch thread it is.
     re.compile(r"^/games/[0-9a-f]{64}$"),
+    # A game's own front door: its sign-up, or the game itself once signed in.
+    re.compile(r"^/play/[A-Za-z0-9._-]{1,64}$"),
     re.compile(r"^/inscriptions/(?:[0-9a-fA-F]{64}|[0-9]{1,12})/view$"),
     # The bare address of a piece, which only forwards to /view (2026-10-09).
     re.compile(r"^/inscriptions/(?:[0-9a-fA-F]{64}|[0-9]{1,12})$"),

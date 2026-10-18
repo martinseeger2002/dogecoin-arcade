@@ -99,3 +99,47 @@ def newest_per_game(rows: list[dict]) -> list[dict]:
         seen.add(key)
         out.append(row)
     return out
+
+
+def slug(name: Any) -> str:
+    """A game's name as it is typed in a link: "Ghost Fleet" -> "ghost-fleet"."""
+    return re.sub(r"[^a-z0-9]+", "-", str(name or "").casefold()).strip("-")
+
+
+#: The colours a game's front door (/play/<game>) is drawn in, by `family`.
+#: A game with none here gets DOOR_DEFAULT; its name and cover still make it
+#: the game's own page rather than the arcade's.
+DOOR_DEFAULT = {"bg": "#16171c", "panel": "#22242c", "fg": "#ecebe6",
+                "muted": "#a3a19a", "line": "#3a3d48", "accent": "#d9a520",
+                "accent_fg": "#1b1a17", "title": "#f2d27a",
+                "font": "Georgia, 'Times New Roman', serif"}
+DOOR_SKINS = {
+    # Ashvale: dark stone, wood and parchment, like its own site
+    "ashvale": {"bg": "#1b1813", "panel": "#d9c8a0", "fg": "#2b1d0e",
+                "muted": "#5a4426", "line": "#b9a173", "accent": "#3f7a2a",
+                "accent_fg": "#fff6d8", "title": "#f2c35a",
+                "font": "'Crimson Text', Georgia, serif"},
+}
+
+
+#: What a game's maker wants said on its front door before anybody signs up, by
+#: `family`: plain text, one paragraph per entry.
+DOOR_NOTICES = {
+    "ashvale": [
+        "Every Ashvale asset, including items, gear and GOLD, lives on a test network "
+        "and has no monetary value.",
+        "Some of these assets can be exchanged for assets on other chains. Any value that "
+        "anyone places on them is their own, and Ashvale and its makers take no "
+        "responsibility for it.",
+        "We are not responsible for lost items or assets for any reason, including bugs, "
+        "glitches, outages or mistakes on our side. Play for fun.",
+    ],
+}
+
+
+def door_notice(game: dict) -> list[str]:
+    return DOOR_NOTICES.get(str(game.get("family") or "").lower(), [])
+
+
+def door_skin(game: dict) -> dict:
+    return DOOR_SKINS.get(str(game.get("family") or "").lower(), DOOR_DEFAULT)

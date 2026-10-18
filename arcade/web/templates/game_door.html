@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Play {{ game.name }}</title>
+{% if game.cover %}<link rel="icon" href="/content/{{ game.cover }}">{% else %}<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">{% endif %}
+<meta name="theme-color" content="{{ skin.bg }}">
+<style>
+/* game_door.html: a game's own front door (/play/<game>). The same account as
+   /join, made by the same wallet.js, in the game's colours (arcade/games.py
+   DOOR_SKINS) and without the arcade's menus: somebody who came to play is
+   asked for a name and a password, and the rest is said where it matters. */
+:root{
+  --bg:{{ skin.bg }}; --panel:{{ skin.panel }}; --fg:{{ skin.fg }}; --muted:{{ skin.muted }};
+  --line:{{ skin.line }}; --accent:{{ skin.accent }}; --accent-fg:{{ skin.accent_fg }};
+  --title:{{ skin.title }}; --ok:#2d7a4f; --warn:#a8620a; --bad:#a83232;
+}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--fg);
+  font:17px/1.5 {{ skin.font }};
+  background-image:radial-gradient(ellipse at 50% 0,rgba(255,220,140,.10),transparent 60%)}
+.door{max-width:520px;margin:0 auto;padding:28px 16px 40px}
+.head{text-align:center;margin-bottom:18px}
+.head img{width:96px;height:96px;object-fit:contain;border-radius:12px;display:block;margin:0 auto 10px}
+.head h1{margin:0;font-size:clamp(34px,9vw,52px);letter-spacing:.06em;text-transform:uppercase;
+  color:var(--title);text-shadow:2px 2px 0 #000,0 0 18px rgba(0,0,0,.4)}
+.head p{margin:4px 0 0;color:var(--title);opacity:.8}
+.panel{background:var(--panel);border:3px solid #0d0905;border-radius:6px;padding:20px 20px 18px;
+  box-shadow:inset 0 0 0 1px var(--line),0 8px 24px rgba(0,0,0,.6);margin-bottom:16px}
+.panel h2{margin:0 0 12px;font-size:22px}
+label{display:block;font-weight:600;margin-bottom:2px}
+.tagrow{display:flex;align-items:center;gap:6px}
+.tagrow .at{font-size:1.1rem;color:var(--muted)}
+input[type=text],input[type=password]{width:100%;padding:10px 12px;margin:4px 0;font:inherit;
+  border:2px solid var(--line);border-radius:6px;background:rgba(255,255,255,.55);color:#1b1a17}
+.field{margin-bottom:14px}
+.small{font-size:.86rem;margin:2px 0 0;color:var(--muted)}
+.go{display:block;width:100%;padding:12px;font-family:inherit;font-weight:700;font-size:20px;line-height:1.2;cursor:pointer;
+  color:var(--accent-fg);background:var(--accent);border:3px solid #0d0905;border-radius:6px;
+  box-shadow:inset 0 0 0 2px rgba(255,255,255,.18),0 3px 0 #0d0905;text-shadow:1px 1px 0 rgba(0,0,0,.5)}
+.go:disabled{opacity:.55;cursor:default}
+.go.quiet{font-size:17px;padding:9px}
+.switch{text-align:center;margin:14px 0 0}
+.switch a,.foot a,.panel a{color:inherit}
+.msg{background:#3a1515;color:#ffd9d9;border-radius:6px;padding:10px 12px;margin-bottom:16px}
+.words{columns:3;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;
+  background:rgba(255,255,255,.55);border:2px solid var(--line);border-radius:6px;padding:12px 12px 12px 36px;margin:12px 0}
+.words li{break-inside:avoid;padding:2px 0}
+.rule{border-left:3px solid var(--warn);padding-left:10px;margin:12px 0;font-size:.92rem}
+.steps{margin:6px 0 0;padding-left:18px;font-size:.9rem}
+.steps span{color:var(--muted)}
+.keepit{display:flex;align-items:center;gap:8px;margin:12px 0;font-weight:400}
+.notice{border-color:#5a1d10;background:#efe2c2}
+.notice h2{font-size:18px;color:#6b2c0b;margin-bottom:6px}
+.notice p{margin:0 0 6px;font-size:.9rem}
+.notice p:last-child{margin:0}
+.foot{color:var(--title);opacity:.75;font-size:.85rem;text-align:center;margin-top:22px}
+@media (max-width:420px){.words{columns:2}}
+</style>
+</head>
+<body>
+<div class="door">
+  <div class="head">
+    {% if game.cover %}<img src="/content/{{ game.cover }}" alt="">{% endif %}
+    <h1>{{ game.name }}</h1>
+    <p>Pick a name and a password, and you are in.</p>
+  </div>
+
+  {% if not secure_enough %}<div class="msg">{{ why_not }}</div>{% endif %}
+  {% if free <= 0 %}<div class="msg">This server is full right now: all {{ seats }} places are taken.
+    Please try again later.</div>{% endif %}
+
+  <div id="forms" {% if not secure_enough or free <= 0 %}hidden{% endif %}>
+    <div class="panel" id="make-panel">
+      <h2>Make your account</h2>
+      <div class="field">
+        <label for="tag">Your name</label>
+        <div class="tagrow"><span class="at">@</span>
+          <input type="text" id="tag" autocomplete="username" autocapitalize="off"
+                 spellcheck="false" placeholder="yourname"></div>
+        <p class="small" id="tag-said">Lower case letters, digits and underscores. Other players see this name.</p>
+      </div>
+      <div class="field">
+        <label for="pw">Password</label>
+        <input type="password" id="pw" autocomplete="new-password" placeholder="twelve characters or more">
+        <p class="small">It is the only key to your account, and <strong>nobody can reset it</strong>:
+          not us, not anybody. Anyone can try guesses against it, so make it long.</p>
+        <p class="small" id="pw-says"></p>
+      </div>
+      <button class="go" id="make">Play {{ game.name }}</button>
+      <p class="switch small"><a href="#" id="to-in">I already have an account</a></p>
+    </div>
+
+    <div class="panel" id="in-panel" hidden>
+      <h2>Welcome back</h2>
+      <div class="tagrow"><span class="at">@</span>
+        <input type="text" id="in-tag" autocomplete="username" autocapitalize="off"
+               spellcheck="false" placeholder="yourname"></div>
+      <input type="password" id="in-pw" autocomplete="current-password" placeholder="password">
+      <button class="go quiet" id="enter" style="margin-top:8px">Sign in</button>
+      <p class="switch small"><a href="#" id="to-make">Make a new account</a>
+        &middot; <a href="/restore">Forgot your password?</a>
+        &middot; <a href="/join?next={{ opens|urlencode }}">Other ways to sign in</a></p>
+    </div>
+  </div>
+
+  <div class="panel" id="written" hidden>
+    <h2>Your twelve recovery words</h2>
+    <p>If you ever forget your password, these words are the only way back into your
+      account. Write them on paper now. This is the only time they are shown.</p>
+    <ol class="words" id="words"></ol>
+    <p class="rule">Nobody from {{ game.name }} will ever ask for these words: not in a message,
+      not in the game, not to check anything. The one page that takes them is
+      <strong>Restore</strong>, behind &ldquo;Forgot your password?&rdquo;, and it never sends them anywhere.</p>
+    <p id="gift" class="small" hidden></p>
+    <p class="small" style="margin-top:10px"><strong>Getting your account ready</strong> (this carries on while you write)</p>
+    <ul class="steps">
+      <li id="step-coins">starting funds &mdash; <span>waiting</span></li>
+      <li id="step-name">your name &mdash; <span>waiting</span></li>
+      <li id="step-key">your mailbox, so players can write to you &mdash; <span>waiting</span></li>
+    </ul>
+    <p class="small" id="setup-note">You can go in before this finishes.</p>
+    <label class="keepit"><input type="checkbox" id="kept"> I have written them down</label>
+    <button class="go" id="done" disabled>Enter {{ game.name }}</button>
+  </div>
+
+  <div class="msg" id="trouble" hidden></div>
+
+  {% if notice %}
+  <div class="panel notice" id="notice">
+    <h2>Please read before you play</h2>
+    {% for line in notice %}<p>{{ line }}</p>{% endfor %}
+  </div>
+  {% endif %}
+
+  <p class="foot">{{ game.name }} runs on {{ brand.name }}. The same account plays every game there,
+    and what you earn in game is yours to keep or trade.
+    <a href="/">Learn more</a></p>
+</div>
+
+<script type="module">
+import * as wallet from "/wallet.js";
+
+const $ = (id) => document.getElementById(id);
+const say = (text) => { $("trouble").textContent = text; $("trouble").hidden = !text; };
+const NEXT = {{ opens|tojson }};
+const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
+
+function wire() {
+  let asking = null;
+  $("tag").oninput = () => {
+    clearTimeout(asking);
+    asking = setTimeout(async () => {
+      const wanted = $("tag").value.trim();
+      if (!wanted) { $("tag-said").textContent = ""; return; }
+      const said = await wallet.available(wanted);
+      $("tag-said").textContent = said.free ? `@${said.tag} is free` : (said.detail || "that name cannot be used");
+      $("tag-said").style.color = said.free ? "var(--ok)" : "var(--bad)";
+    }, 300);
+  };
+  $("pw").oninput = () => {
+    const said = wallet.strength($("pw").value);
+    $("pw-says").textContent = said.says;
+    $("pw-says").style.color = said.ok ? "var(--ok)" : said.level === "instantly" ? "var(--bad)" : "var(--warn)";
+  };
+  const show = (signIn) => (e) => {
+    e.preventDefault(); say("");
+    $("make-panel").hidden = signIn; $("in-panel").hidden = !signIn;
+  };
+  $("to-in").onclick = show(true);
+  $("to-make").onclick = show(false);
+
+  $("make").onclick = async () => {
+    say("");
+    $("make").disabled = true;
+    try {
+      const made = await wallet.signUp($("tag").value.trim(), $("pw").value, CHAIN);
+      const list = $("words");
+      list.innerHTML = "";
+      for (const word of made.wallet.phrase.split(" ")) {
+        const item = document.createElement("li");
+        item.textContent = word;
+        list.appendChild(item);
+      }
+      if (made.given) {
+        $("gift").hidden = false;
+        $("gift").textContent = "You have been given some starting funds. They arrive in a minute or two.";
+      }
+      $("forms").hidden = true;
+      $("written").hidden = false;
+      window.scrollTo(0, 0);
+      setUp(made).catch(() => {});
+    } catch (e) {
+      say(String(e.message || e));
+    } finally {
+      $("make").disabled = false;
+    }
+  };
+
+  async function setUp(made) {
+    const mail = await import("/messaging.js");
+    const identity = await mail.identity(made.wallet.phrase);
+    const shown = {coins: $("step-coins"), name: $("step-name"), key: $("step-key")};
+    const out = await wallet.setUp(made.wallet, identity, made.tag, {
+      onStep: ({what, how}) => {
+        const row = shown[what];
+        if (row) row.querySelector("span").textContent = how;
+      },
+      faucetRefusal: made.no_coins,
+    });
+    $("setup-note").textContent = out.trouble.length
+      ? out.trouble.join("; ") + ". It finishes by itself next time you sign in."
+      : `Done. Players can find you as @${made.tag}.`;
+    $("setup-note").style.color = out.trouble.length ? "var(--warn)" : "var(--ok)";
+  }
+
+  $("kept").onchange = () => { $("done").disabled = !$("kept").checked; };
+  $("done").onclick = () => { location.href = NEXT; };
+
+  $("enter").onclick = async () => {
+    const button = $("enter");
+    if (button.disabled) return;
+    button.disabled = true;
+    const was = button.textContent;
+    button.textContent = "Opening your account…";
+    say("");
+    try {
+      await wallet.signIn($("in-tag").value.trim(), $("in-pw").value, CHAIN);
+      button.textContent = "Signed in ✓";
+      location.href = NEXT;
+    } catch (e) {
+      button.disabled = false;
+      button.textContent = was;
+      say(String(e.message || e));
+    }
+  };
+}
+
+if (typeof crypto !== "undefined" && crypto.subtle) {
+  try {
+    wire();
+    document.body.dataset.signupReady = "yes";
+  } catch (e) {
+    say("This page's own script stopped: " + String(e.message || e));
+  }
+}
+</script>
+</body>
+</html>
