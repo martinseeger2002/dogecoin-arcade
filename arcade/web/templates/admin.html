@@ -101,18 +101,16 @@
 
 <section class="panel">
   <h2>Faucet</h2>
-  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
-    <label class="muted" for="faucetgift">Each new account gets</label>
-    <input autocomplete="off" id="faucetgift" style="width:120px" inputmode="decimal"> <span class="muted">test coins (0 = off)</span>
-  </div>
+  {# 2026-10-18: each test chain's amount, daily top-up and stocking are in Chains (its Faucet
+     column). The sign-up gift is P test's amount. What stays here is the one day-wide ceiling. #}
+  <p class="muted" style="margin-top:0">Each test chain&rsquo;s faucet &mdash; what every account is
+    topped back up to once a day, and how this node keeps the coins for it &mdash; is in
+    <a href="#chains">Chains</a>, in its Faucet column. P test&rsquo;s amount is also what each new
+    account gets when it signs up. Chains with real coins have no faucet.</p>
   <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
-    <label class="muted" for="faucetdaily">At most, per day, in all</label>
+    <label class="muted" for="faucetdaily">P test sign-up gifts and top-ups, at most per day in all</label>
     <input autocomplete="off" id="faucetdaily" style="width:160px" placeholder="no limit"> <span class="muted">(empty = no limit)</span>
   </div>
-  <label class="switch"><input type="checkbox" id="faucet_topoff"> Every day, top each
-    account back up to that amount (testnet only; only the shortfall is sent)</label>
-  <label class="switch"><input type="checkbox" id="faucet_mine"> Mine testnet blocks to the node's
-    wallet by itself when it runs low (under 20 gifts, counting coins still maturing)</label>
   <button type="button" class="small" id="savefaucet" style="margin-top:10px">Save faucet</button>
 </section>
 
@@ -187,8 +185,7 @@
     those, paying the person who signed them. A swap acts on a lock as soon as it is in the mempool; one
     at or above these lines waits for 1 confirmation (2026-10-17):</p>
   <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
-    <label style="margin:0">Big from <input autocomplete="off" id="swapbigmain" inputmode="decimal" style="width:130px"> PEP</label>
-    <label style="margin:0">or <input autocomplete="off" id="swapbigdoge" inputmode="decimal" style="width:110px"> DOGE</label>
+    <span id="swapbiglines" class="row" style="gap:8px;flex-wrap:wrap;align-items:center"></span>
     <button type="button" class="small" id="saveswapbig">Save</button>
   </div>
   <h3 style="margin:14px 0 6px">Now <span class="muted" id="swapcounts" style="font-weight:500;font-size:.86rem"></span></h3>
@@ -382,7 +379,7 @@ section.panel h2{margin-top:0}
       }
       var left = document.createElement('div');
       left.appendChild(text('div', w.label + (w.coin ? ' · ' + w.coin : ''), 'muted'));
-      left.appendChild(text('div', w.error ? 'node unreachable' :
+      left.appendChild(text('div', w.error ? (/wallet/i.test(w.error) ? 'no wallet on this node yet' : 'node unreachable') :
         Number(w.spendable).toLocaleString() + (w.unconfirmed && Number(w.unconfirmed) ?
           '  (+' + Number(w.unconfirmed).toLocaleString() + ' on its way)' : ''), 'bal'));
       row.appendChild(left);
@@ -402,12 +399,19 @@ section.panel h2{margin-top:0}
     drawChains(d.chains || {});
 
     // faucet + switches
-    $('faucetgift').value = coins(d.faucet.gift);
     $('faucetdaily').value = d.faucet.daily ? coins(d.faucet.daily) : '';
-    $('faucet_topoff').checked = d.faucet.topoff !== false;
-    $('faucet_mine').checked = d.faucet.mine !== false;
     ['auto_update', 'auto_sell', 'auto_fill', 'node_trades'].forEach(function (k) { $(k).checked = !!d.selling[k]; });
-    if (d.swap_big) { $('swapbigmain').value = d.swap_big.main; $('swapbigdoge').value = d.swap_big.doge; }
+    // One line per real-coin chain the swaps know (2026-10-18: LTC too), drawn from the setting itself.
+    if (d.swap_big) {
+      var lines = $('swapbiglines'); lines.textContent = '';
+      Object.keys(d.swap_big).forEach(function (net, i) {
+        var lab = document.createElement('label'); lab.style.margin = '0';
+        var inp = document.createElement('input'); inp.autocomplete = 'off'; inp.inputMode = 'decimal';
+        inp.className = 'swapbig'; inp.dataset.net = net; inp.style.width = '120px'; inp.value = d.swap_big[net];
+        lab.append((i ? 'or ' : 'Big from '), inp, ' ' + ({main: 'PEP', doge: 'DOGE', ltc: 'LTC'}[net] || net));
+        lines.appendChild(lab);
+      });
+    }
     // the mainnet PEP swap: its switch and how it stands
     var x = d.xchain || {}, xs = $('xchainstate');
     $('xchain_enabled').checked = !!x.enabled;
@@ -549,7 +553,11 @@ section.panel h2{margin-top:0}
     });
     var line = document.createElement('div');
     line.append(amt, ' ' + f.coin + ' a day ');
-    td.append(line, sel);
+    var top = document.createElement('input'); top.type = 'checkbox'; top.className = 'faucettopoff';
+    top.dataset.net = r.net; top.checked = f.topoff !== false; top.style.width = 'auto';
+    var topl = document.createElement('label'); topl.className = 'muted'; topl.style.display = 'block';
+    topl.append(top, ' top every account up daily');
+    td.append(line, topl, sel);
     var held = f.balance == null ? 'wallet not readable' : 'holds ' + Number(f.balance).toLocaleString() +
       (f.immature ? ' (+' + Number(f.immature).toLocaleString() + ' ripening)' : '');
     td.appendChild(text('div', held + (f.sign_up_gift ? ' \u00b7 also the sign-up gift' : '') + (f.ready ? '' : ' \u00b7 node syncing'), 'muted'));
@@ -563,6 +571,8 @@ section.panel h2{margin-top:0}
       (faucet[i.dataset.net] = faucet[i.dataset.net] || {}).amount = Number(i.value || 0); });
     document.querySelectorAll('.faucetsupply').forEach(function (s) {
       (faucet[s.dataset.net] = faucet[s.dataset.net] || {}).supply = s.value; });
+    document.querySelectorAll('.faucettopoff').forEach(function (b) {
+      (faucet[b.dataset.net] = faucet[b.dataset.net] || {}).topoff = b.checked; });
     call('/admin/api/cores', {modes: modes, share: share, faucet: faucet}).then(function (j) {
       $('coresaid').textContent = j.restart ? 'Saved. Which Cores run here changes when the arcade restarts.' : 'Saved.';
       $('restartnow').hidden = !(j.restart && LOCAL && data && data.chains && data.chains.restart);
@@ -637,13 +647,13 @@ section.panel h2{margin-top:0}
       .then(function () { say('Limits saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
   $('savefaucet').onclick = function () {
-    call('/admin/api/settings', {faucet_gift: $('faucetgift').value, faucet_daily: $('faucetdaily').value,
-                                 faucet_topoff: $('faucet_topoff').checked,
-                                 faucet_mine: $('faucet_mine').checked})
+    call('/admin/api/settings', {faucet_daily: $('faucetdaily').value})
       .then(function () { say('Faucet saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
   $('saveswapbig').onclick = function () {
-    call('/admin/api/settings', {swap_big: {main: $('swapbigmain').value, doge: $('swapbigdoge').value}})
+    var big = {};
+    document.querySelectorAll('.swapbig').forEach(function (i) { big[i.dataset.net] = i.value; });
+    call('/admin/api/settings', {swap_big: big})
       .then(function () { say('Big-swap lines saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
   function loadSwaps() {

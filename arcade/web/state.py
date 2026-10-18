@@ -825,6 +825,12 @@ class AppState:
         gift = self.setting(f"faucet:{chain.network}")
         return (self.FAUCET_ADDON_DEFAULT if gift is None else int(gift)), supply
 
+    def faucet_topoff(self, chain) -> bool:
+        """Whether a test chain's faucet tops every account back up once a day (Admin -> Chains; on
+        unless the operator unticks it). The old one-chain switch for this was drawn but never
+        saved or read: every top-off ran regardless (found 2026-10-18)."""
+        return bool(self.setting(f"faucet_topoff:{chain.network}", True))
+
     def addon_faucet(self, chain):
         """The record of what an add-on test chain's faucet has topped up, at its own amount. Its
         rows are keyed `<net>:<pubkey>`, so a day's Pepecoin top-off and a day's L test one are two."""

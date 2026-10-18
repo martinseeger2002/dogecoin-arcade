@@ -194,7 +194,7 @@ def _signed_in_as(state, monkeypatch, pubkey: str):
     monkeypatch.setattr(state, "accounts", lambda: Accounts(real()))
 
 
-def test_one_l_test_block_is_mined_to_the_signed_in_account(client, monkeypatch):
+def test_one_l_test_block_is_mined_to_the_nodes_faucet_by_the_operator_only(client, monkeypatch):
     import contextlib
     import time
     app, state = client
@@ -211,6 +211,8 @@ def test_one_l_test_block_is_mined_to_the_signed_in_account(client, monkeypatch)
                 return 0.000244
             if method == "generatetoaddress":
                 return ["ab" * 32]
+            if method == "getnewaddress":
+                return LTC_TEST                          # the node's own L test wallet
             raise AssertionError(method)
 
     @contextlib.contextmanager
@@ -230,14 +232,15 @@ def test_one_l_test_block_is_mined_to_the_signed_in_account(client, monkeypatch)
     state.set_setting("operator", pubkey)
     from arcade.web.app import _ltc_test_twin
     page = app.get("/wallet").text
-    assert "Mine one L test block" in page and _ltc_test_twin(PEP_TEST) in page
+    assert "Mine one L test block" in page and _ltc_test_twin(PEP_TEST) not in page
     app.post("/fund/ltctest", data={"csrf_token": state.csrf_token}, follow_redirects=False)
     for _ in range(100):
         if state.mining is None:
             break
         time.sleep(0.05)
     mined = [c for c in calls if c[0] == "generatetoaddress"]
-    assert mined and mined[0][2] == _ltc_test_twin(PEP_TEST), "the reward is the account's, on its L test key"
+    assert mined and mined[0][2] == LTC_TEST, "the node's faucet, never the operator's own account"
+    assert state.setting("faucet_address:ltctest") == LTC_TEST
     assert "Mined L test block abababababababab" in app.get("/wallet").text
 
 
@@ -361,3 +364,27 @@ def test_an_auto_faucet_mines_here_when_it_runs_low(client, monkeypatch):
     mined = [c for c in rpc.calls if c[0] == "generatetoaddress"]
     assert mined and mined[0][2] == LTC_TEST, "to the node's own faucet address"
     assert state.setting("faucet_address:ltctest") == LTC_TEST, "made once and kept"
+
+
+def test_admin_lists_every_chains_node_wallet_and_big_swap_line(client, monkeypatch):
+    app, state = client
+    t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
+    from arcade.web import app as applib
+    monkeypatch.setattr(applib.walletlib, "balance",
+                        lambda rpc: {"spendable": 1, "immature": 0, "unconfirmed": 0})
+    d = app.get("/admin/api/state", headers=LOCAL).json()
+    assert "ltctest" in [w["which"] for w in d["wallets"]], "L test's node wallet is listed"
+    assert set(d["swap_big"]) >= {"main", "doge", "ltc"}
+    page = app.get("/admin", headers=LOCAL).text
+    assert "swapbiglines" in page and "swapbigdoge" not in page, "drawn from the setting, every chain"
+    assert 'id="faucet_mine"' not in page and 'id="faucet_topoff"' not in page, "no switch that does nothing"
+
+
+def test_a_test_chains_daily_top_up_can_be_switched_off(client, monkeypatch):
+    app, state = client
+    t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 5.0, "immature": 0.0})
+    state.set_setting("address:" + "02" + "44" * 32, PEP_TEST)
+    said = app.post("/admin/api/cores", headers={**LOCAL, **WRITE}, json={"faucet": {"ltctest": {"topoff": False}}})
+    assert said.status_code == 200 and state.faucet_topoff(t) is False
+    state.keep_faucets()
+    assert not any(c[0] == "sendtoaddress" for c in rpc.calls)

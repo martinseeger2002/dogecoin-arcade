@@ -4114,11 +4114,13 @@ def create_app(state: AppState) -> FastAPI:
     # --- wallet ---------------------------------------------------------------
 
     def _context(which: str):
-        # The node's own Dogecoin wallet too, once its node has synced (2026-10-13).
-        if which == "doge" and state.doge is not None:
-            if not state.chain_ready(state.doge):
-                raise ValueError("Dogecoin is not open yet: its node is still syncing")
-            return state.doge
+        # The node's own Dogecoin wallet too, once its node has synced (2026-10-13); and every other
+        # add-on chain's by its network name (2026-10-18: L main, L test).
+        addon = state.addon(which) if which not in ("messaging", "ledger") else None
+        if addon is not None:
+            if not state.chain_ready(addon):
+                raise ValueError(f"{addon.label} is not open yet: its node is still syncing")
+            return addon
         if which not in ("messaging", "ledger"):
             raise ValueError("unknown wallet")
         return state.messaging if which == "messaging" else state.ledger
@@ -4351,14 +4353,6 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(f"Mining failed: {exc}", "err")
         return RedirectResponse("/wallet", status_code=303)
 
-    def _ltc_test_address(pubkey: str) -> str:
-        """An account's L test address: the one its browser gave, else its Pepecoin testnet key's
-        twin (both test chains derive on coin type 1). "" when this node has no L test."""
-        chain = getattr(state, "ltc_test", None)
-        if chain is None or not pubkey:
-            return ""
-        return _account_address(pubkey, chain) or _ltc_test_twin(_account_address(pubkey, _account_chain()))
-
     def _ltc_test_mine(request: Request) -> dict[str, Any] | None:
         """What the Wallet page's L test mining panel needs, or None when this node has no L test."""
         chain = getattr(state, "ltc_test", None)
@@ -4367,7 +4361,7 @@ def create_app(state: AppState) -> FastAPI:
         account = signed_in(request)
         return {"ready": bool(state.chain_ready(chain)), "signed_in": account is not None,
                 "operator": _mines_here(request), "faucet": _admin_faucet_row(chain.network),
-                "address": _ltc_test_address(account.pubkey) if account is not None else ""}
+                "address": str(state.setting(f"faucet_address:{chain.network}", "") or "")}
 
     def _mines_here(request: Request) -> bool:
         """Only the operator's account mines to itself (2026-10-18, SadFrog: "only for the admin's
@@ -4410,10 +4404,11 @@ def create_app(state: AppState) -> FastAPI:
         return kept
 
     @app.post("/fund/ltctest")
-    def fund_ltc_test(request: Request, csrf_token: str = Form(""), to: str = Form("me")):
-        """Mine one Litecoin TESTNET block to the signed-in account (2026-10-18, SadFrog's side:
-        "mine on my account"). The same thread and stop as /fund; the reward is the account's own,
-        on its L test key, and ripens over 100 blocks (Litecoin's coinbase maturity)."""
+    def fund_ltc_test(request: Request, csrf_token: str = Form("")):
+        """Mine one Litecoin TESTNET block to this node's own wallet, its faucet: the same thread and
+        stop as /fund, which has always mined Pepecoin testnet to the node. First it paid the signed-in
+        account; then (2026-10-18, SadFrog) the operator's account is "a normal user save for being
+        tied to the operator account", and faucet work is the node's. Ripens over 100 blocks."""
         try:
             check_csrf(csrf_token)
             chain = getattr(state, "ltc_test", None)
@@ -4426,18 +4421,15 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("sign in first: the block pays your account")
             if not _mines_here(request):
                 raise ValueError("only this node's operator mines L test blocks here")
-            # To the account, or to this node's faucet wallet (2026-10-18: the daily top-offs).
-            address = _faucet_address(chain) if to == "faucet" else _ltc_test_address(account.pubkey)
-            if not address:
-                raise ValueError("this node does not know your L test address yet")
             if state.mining is not None:
                 state.flash("Already mining a block; it will say when one is found.")
                 return RedirectResponse("/wallet", status_code=303)
+            address = _faucet_address(chain)
             # Said before the thread starts: the notice is one slot, and a block found at once
             # would otherwise have its "Mined" overwritten by this.
-            state.flash(f"Mining one L test block to {'the faucet, ' if to == 'faucet' else ''}{address}. "
+            state.flash(f"Mining one L test block to this node's faucet, {address}. "
                         f"The page will say when it is found.")
-            if not _start_mining(address, chain, "faucet" if to == "faucet" else ""):
+            if not _start_mining(address, chain, "faucet"):
                 state.flash("Already mining a block; it will say when one is found.")
         except HTTPException:
             raise          # a rejected form is a 400, not an error page
@@ -9932,8 +9924,8 @@ def create_app(state: AppState) -> FastAPI:
         account's balance tops it back up to the gift, once a UTC day, testnet
         only, in the background so the page never waits on the wallet."""
         chain = _account_chain()
-        if chain.is_mainnet or spendable >= int(state.setting("faucet", faucetlib.GIFT)
-                                                or faucetlib.GIFT) \
+        if chain.is_mainnet or not state.faucet_topoff(chain) \
+                or spendable >= int(state.setting("faucet", faucetlib.GIFT) or faucetlib.GIFT) \
                 or pubkey in _topping:
             return
         _topping.add(pubkey)
@@ -9991,7 +9983,7 @@ def create_app(state: AppState) -> FastAPI:
             amount, supply = state.faucet_conf(chain)
             if amount <= 0:
                 continue
-            if chain.network != state.messaging.network:
+            if chain.network != state.messaging.network and state.faucet_topoff(chain):
                 _top_off_accounts(chain, keys)
             if supply == "auto":
                 _stock_faucet(chain, amount, len(keys))
@@ -22107,8 +22099,8 @@ def create_app(state: AppState) -> FastAPI:
     def _admin_wallets() -> list[dict]:
         out = []
         wallets = [("messaging", state.messaging), ("ledger", state.ledger)]
-        if state.doge is not None:
-            wallets.append(("doge", state.doge))
+        # Every add-on chain's node wallet, Dogecoin's first as before (2026-10-18: L main, L test).
+        wallets += [(c.network, c) for c in getattr(state, "addons", [])]
         for which, ctx in wallets:
             row = {"which": which, "label": ctx.title, "network": ctx.network,
                    "net": ctx.net, "coin": ctx.params.coin}
@@ -22446,6 +22438,7 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:                                  # noqa: BLE001 -- a node away
             pass
         return {"amount": amount / 100_000_000, "coin": params.coin, "supply": supply,
+                "topoff": state.faucet_topoff(chain),
                 "ready": bool(state.chain_ready(chain)),
                 "balance": wallet.get("balance"), "immature": wallet.get("immature"),
                 "sign_up_gift": net == state.messaging.network}
@@ -22461,6 +22454,8 @@ def create_app(state: AppState) -> FastAPI:
                     raise ValueError(f"{net}: the daily amount is between 0 and 1,000,000 coins")
                 sats = int(round(amount * 100_000_000))
                 state.set_setting("faucet" if net == state.messaging.network else f"faucet:{net}", sats)
+            if "topoff" in conf:
+                state.set_setting(f"faucet_topoff:{net}", bool(conf["topoff"]))
             if "supply" in conf:
                 supply = str(conf["supply"])
                 if supply not in state.FAUCET_SUPPLIES:

@@ -187,23 +187,20 @@
   {% if not ltc_test_mine.ready %}
   <p style="margin:0" class="muted">L test opens here when its node has finished syncing.</p>
   {% elif not ltc_test_mine.signed_in %}
-  <p style="margin:0">Sign in to mine an L test block: the block pays your account.</p>
+  <p style="margin:0">Sign in as this node&rsquo;s operator to mine an L test block.</p>
   {% elif not ltc_test_mine.operator %}
   <p style="margin:0" class="muted">Only this node&rsquo;s operator mines L test blocks here.</p>
   {% else %}
   <p style="margin:0 0 8px">Litecoin testnet blocks come when somebody mines one. This mines one block on this
-    machine and pays it to your account&rsquo;s L test address
-    <code style="word-break:break-all">{{ ltc_test_mine.address }}</code>. A block pays about 1.56 LTC TEST,
-    spendable after 100 more blocks (Litecoin&rsquo;s rule for mined coins); test coins, worth nothing.</p>
+    machine and pays it to this node&rsquo;s own wallet, the L test faucet{% if ltc_test_mine.address %}
+    (<code style="word-break:break-all">{{ ltc_test_mine.address }}</code>){% endif %}, which tops every
+    account up. A block pays about 1.56 LTC TEST, spendable after 100 more blocks (Litecoin&rsquo;s rule
+    for mined coins); test coins, worth nothing.</p>
   {% if mining.mining %}
   <p class="muted" style="margin:0">Mining a {{ mining.chain }} block now; see above.</p>
   {% else %}
-  <form method="post" action="/fund/ltctest" style="display:inline">
+  <form method="post" action="/fund/ltctest">
     <input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit">Mine one L test block</button>
-  </form>
-  <form method="post" action="/fund/ltctest" style="display:inline">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="to" value="faucet">
-    <button type="submit" class="ghost">Mine one block to the faucet</button>
   </form>
   {% endif %}
   {% set f = ltc_test_mine.faucet %}
