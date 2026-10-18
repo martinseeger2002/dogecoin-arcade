@@ -552,11 +552,13 @@ export function endMainnetApproval() {
 /** What a transaction costs, by kind, from its own bytes. */
 export function mainnetCosts(offer, shown) {
   const opAddr = offer.operator_fee && offer.operator_fee.address;
+  // On a borrowed chain a tenth of the fee goes to the arcade whose Core it is (2026-10-18): the same fee line.
+  const shareAddr = offer.operator_fee && offer.operator_fee.sharer && offer.operator_fee.sharer.address;
   let operator = 0, data = 0, others = 0;
   for (const p of shown.pays || []) {
     if (p.mine) continue;
     if (p.bytes !== undefined) data += Number(p.value);
-    else if (opAddr && p.to === opAddr) operator += Number(p.value);
+    else if ((opAddr && p.to === opAddr) || (shareAddr && p.to === shareAddr)) operator += Number(p.value);
     else others += Number(p.value);
   }
   const network = Number(shown.fee || 0);

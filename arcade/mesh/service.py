@@ -755,6 +755,14 @@ def shared_cores(state):
                 with chain.rpc() as rpc:
                     best = rpc.call("getbestblockhash")
                     nets[chain.network] = {"h": int(rpc.call("getblockheader", best, True)["height"]), "b": best}
+                # Where those who use it pay its tenth: the operator account's address there, which its Wallet
+                # spends (state.payout_address).
+                try:
+                    pay = state.payout_address(chain)
+                except Exception:                          # noqa: BLE001 -- offered without one this minute
+                    pay = ""
+                if pay:
+                    nets[chain.network]["p"] = pay
             except Exception:                              # noqa: BLE001 -- not shared until it answers
                 continue
         return nets

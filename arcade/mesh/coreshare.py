@@ -51,6 +51,12 @@ SERVED = frozenset({
     "getrawtransaction", "getrawmempool", "getmempoolentry", "getmempoolinfo", "gettxout", "getdifficulty",
     "sendrawtransaction", "estimatefee", "estimatesmartfee", "verifymessage", "getnetworkinfo",
 })
+#: Work for a miner, and its answer (2026-10-18: mine testnet LTC with another arcade's Core). Answered
+#: only for a chain of test coins (`may_mine`), and no more often than MINE_EVERY seconds per borrower and call:
+#: a template is built from the sharer's mempool and a submitted block is checked whole, both real work.
+MINED = frozenset({"getblocktemplate", "submitblock"})
+MINE_EVERY = {"getblocktemplate": 2.0, "submitblock": 1.0}
+
 #: Fields of getnetworkinfo a borrower may see (the relay fee); the rest describes the sharer's machine.
 NETWORKINFO_FIELDS = ("version", "subversion", "protocolversion", "relayfee", "incrementalfee")
 
@@ -64,6 +70,12 @@ MAX_ASKED = 8 * 1024 * 1024  # bytes of one batch of calls (a signed transaction
 POOL_SECONDS = 2.0           # how often a sharer reads its mempool for new transactions
 POOL_KEEP = 20_000           # transactions a borrower keeps per chain
 REQUEST_SECONDS = 60.0
+
+def _test_coins(net: str) -> bool:
+    from ..config import NETWORKS
+    params = NETWORKS.get(net)
+    return params is not None and not params.real_coins
+
 
 #: The CoreShare of the running mesh, for ChainContext.rpc() (set by mesh.service.for_state).
 CURRENT: "CoreShare | None" = None
@@ -102,8 +114,10 @@ class CoreShare:
 
     def __init__(self, serve: Callable[[str, list], list] | None, shared: Callable[[], dict],
                  borrowing: set[str] | frozenset[str] = frozenset(), rate: float = RATE,
-                 pool_seconds: float = POOL_SECONDS):
+                 pool_seconds: float = POOL_SECONDS, may_mine: Callable[[str], bool] | None = None):
         self.serve, self.shared, self.borrowing = serve, shared, set(borrowing)
+        self.may_mine = may_mine or _test_coins
+        self._mined_at: dict[tuple[str, str], float] = {}     # (peer, method) -> when it was last answered
         self.rate, self.pool_seconds = rate, pool_seconds
         self.node = None
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -169,8 +183,10 @@ class CoreShare:
             got = self.shared() or {}
         except Exception:                                      # noqa: BLE001 -- shares nothing this minute
             return {}
-        return {str(n): {"h": int(v.get("h", 0)), "b": str(v.get("b", ""))} for n, v in got.items()
-                if isinstance(v, dict)}
+        # "p": where this arcade is paid its tenth by those who use its Core (2026-10-18).
+        return {str(n): {"h": int(v.get("h", 0)), "b": str(v.get("b", "")),
+                         **({"p": str(v["p"])[:100]} if v.get("p") else {})}
+                for n, v in got.items() if isinstance(v, dict)}
 
     async def on_frame(self, link, header: dict, blob: bytes) -> None:
         op = header.get("op")
@@ -234,14 +250,25 @@ class CoreShare:
     async def _answer(self, link, rid: int, net: str, calls: list) -> None:
         peer = link.peer_id
         try:
-            refused = {i for i, (m, _) in enumerate(calls) if m not in SERVED}
+            now = time.monotonic()
+            refused = {}
+            for i, (m, _) in enumerate(calls):
+                if m in MINED:
+                    if not self.may_mine(net):
+                        refused[i] = f"{m} is answered for test coins only"
+                    elif now - self._mined_at.get((peer, m), -1e9) < MINE_EVERY[m]:
+                        refused[i] = f"{m} asked too often; once every {MINE_EVERY[m]:g} s"
+                    else:
+                        self._mined_at[(peer, m)] = now
+                elif m not in SERVED:
+                    refused[i] = f"a shared Core does not answer {m}"
             asked = [c for i, c in enumerate(calls) if i not in refused]
             async with self._core:
                 got = await asyncio.to_thread(self.serve, net, asked) if asked else []
             answers, it = [], iter(got)
             for i, (method, _) in enumerate(calls):
                 if i in refused:
-                    answers.append({"e": [-32601, f"a shared Core does not answer {method}"]})
+                    answers.append({"e": [-32601, refused[i]]})
                 else:
                     one = next(it)
                     if "r" in one:
@@ -405,6 +432,15 @@ class CoreShare:
             fut.cancel()
             raise RpcTransportError(f"no arcade sharing {net} answered in time") from exc
 
+    def payee(self, net: str, valid: Callable[[str], bool] = lambda a: True) -> str | None:
+        """The address the arcade whose Core this one uses for `net` is paid at: the sharer asked first, or the
+        next one that names an address `valid` accepts. None when none names one."""
+        for peer in self.sharers(net):
+            address = str(self.offers.get(peer, {}).get(net, {}).get("p") or "")
+            if address and valid(address):
+                return address
+        return None
+
     def tips(self, net: str) -> dict[str, dict]:
         """What each linked sharer of `net` says its tip is."""
         return {p: dict(nets[net]) for p, nets in self.offers.items()
@@ -535,7 +571,8 @@ class BorrowedRpc(RpcClient):
 
     def _local(self, method: str, params: list) -> Any:
         """An answer that needs nobody, or _ASK."""
-        if method not in SERVED and method not in ("decoderawtransaction", "validateaddress", "getconnectioncount"):
+        if method not in SERVED and method not in MINED and method not in (
+                "decoderawtransaction", "validateaddress", "getconnectioncount"):
             raise RpcError(-32601, "Method not found (" + WALLET_HINT.format(label=self._params.label) + ")")
         if method == "getconnectioncount":
             return len(self._share.sharers(self.net))

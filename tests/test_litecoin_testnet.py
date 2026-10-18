@@ -590,7 +590,7 @@ def test_admin_mines_one_test_block_to_the_faucet(client, monkeypatch):
     app, state = client
     _t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
     assert "mineControls" in app.get("/admin", headers=LOCAL).text
-    said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest"})
+    said = app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest"})
     assert said.status_code == 200 and said.json()["until"] is None, said.text
     _until_idle(state)
     mined = [c for c in rpc.calls if c[0] == "generatetoaddress"]
@@ -602,19 +602,19 @@ def test_admin_mines_for_hours_and_stops_at_the_time_or_when_told(client, monkey
     import time
     app, state = client
     _t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
-    said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 0.0002})
+    said = app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 0.0002})
     assert said.status_code == 200 and said.json()["until"] > time.time() - 1
     _until_idle(state)
     found = len([c for c in rpc.calls if c[0] == "generatetoaddress"])
     assert found > 1, "block after block until the time is up"
     assert f"Done mining L test: {found} blocks" in (state.notice or "")
 
-    app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 2})
+    app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 2})
     mining = app.get("/admin/api/state", headers=LOCAL).json()["chains"]["mining"]
     assert mining["mining"] and mining["net"] == "ltctest" and mining["until"] > time.time() + 7000
-    busy = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest"})
+    busy = app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest"})
     assert busy.status_code == 409, "one mining thread"
-    assert app.post("/admin/api/mine/stop", headers={**LOCAL, **WRITE}).status_code == 200
+    assert app.post("/admin/api/faucet/mine/stop", headers={**LOCAL, **WRITE}).status_code == 200
     _until_idle(state)
     assert "Stopped mining L test" in (state.notice or "")
 
@@ -624,7 +624,7 @@ def test_admin_mining_refuses_real_coins_and_too_many_hours(client, monkeypatch)
     _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
     for body in ({"net": "ltc"}, {"net": "main"}, {"net": "doge"}, {"net": "ltctest", "hours": 73},
                  {"net": "ltctest", "hours": -1}, {"net": "ltctest", "hours": "lots"}):
-        said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json=body)
+        said = app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json=body)
         assert said.status_code == 400, body
     assert state.mining is None
 
@@ -644,7 +644,7 @@ def test_admin_says_how_the_last_mining_run_ended_and_whether_its_block_stuck(cl
             return {"height": 4_926_457, **fate}
         return real(method, *args)
     monkeypatch.setattr(rpc, "call", call)
-    said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 0})
+    said = app.post("/admin/api/faucet/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 0})
     assert said.status_code == 200, said.text
     for _ in range(100):
         if state.mining is None:

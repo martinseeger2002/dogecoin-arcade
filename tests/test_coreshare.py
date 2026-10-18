@@ -409,3 +409,31 @@ def test_a_litecoin_peg_in_is_proved_and_a_wholly_mweb_one_is_unreadable_not_a_l
         rawchain.read_tx(bytes.fromhex(raw), txid)
     with pytest.raises(rawchain.RawError):
         rawchain.read_tx(bytes.fromhex(said["pegin"][1]), txid)
+
+
+def test_mining_is_shared_for_test_coins_only_not_too_often_and_the_sharer_names_its_pay_address():
+    """2026-10-18 (the operator: mine testnet LTC with sadfrog's Core; a tenth of the revenue to the sharer): a sharer
+    answers getblocktemplate and submitblock for a test-coin chain only, at most once every MINE_EVERY seconds per
+    borrower, and its offer names the address a borrower pays its tenth to."""
+    pay = "nnG5sqH1WxegK5mr45TWf94uf1UKzc3tyT"
+
+    async def go():
+        a, b = mk(), mk()
+        tips = {n: {"h": 1, "b": "00" * 32, "p": pay} for n in ("doge", "ltctest")}
+        sa = CoreShare(lambda net, calls: [{"r": {"net": net}} for _ in calls], lambda: tips)
+        sb = CoreShare(None, lambda: {}, borrowing={"doge", "ltctest"})
+        a.add_extension(sa); b.add_extension(sb)
+        await started(a, b)
+        try:
+            await _linked((b, a))
+            await until(lambda: sb.sharers("ltctest") and sb.sharers("doge"), what="offers")
+            assert sb.payee("ltctest") == pay and sb.payee("ltctest", lambda x: False) is None
+            got = await asyncio.to_thread(sb.call, "ltctest", [("getblocktemplate", [{}])])
+            assert got[0] == {"r": {"net": "ltctest"}}
+            again = await asyncio.to_thread(sb.call, "ltctest", [("getblocktemplate", [{}])])
+            assert "too often" in again[0]["e"][1]
+            real = await asyncio.to_thread(sb.call, "doge", [("submitblock", ["00"])])
+            assert "test coins only" in real[0]["e"][1]
+        finally:
+            await a.stop(); await b.stop()
+    run(go())

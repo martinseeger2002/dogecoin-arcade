@@ -329,6 +329,14 @@ class BlockWatcher:
                 wanted[b58check_encode(chain.params.pubkeyhash_version, b58check_decode(value)[1])] = pubkey
             except Exception:                                  # noqa: BLE001 -- a stored address that does not decode
                 continue
+        # The node's own key address there: where it is paid on a chain with no Core wallet of its own (a
+        # sharer's tenth, fees, mined coins), spent from Admin -> The node's coins (keywallet.py, 2026-10-18).
+        try:
+            mine = self.state.key_address(chain)
+        except Exception:                                      # noqa: BLE001
+            mine = ""
+        if mine:
+            wanted.setdefault(mine, "node")
         index = self.state.token_index(chain)
         with contextlib.closing(index.open()) as db:
             fresh = sorted(set(wanted) - utxoslib.watching(db))

@@ -1622,8 +1622,59 @@ class AppState:
             found = self.derived_address
             if found:
                 return found
+        if getattr(chain, "borrowed", False):
+            # A borrowed chain has no Core wallet here to keep an address (2026-10-18: its operator fee was
+            # silently not taken): where this arcade is paid on it, which spends without an extra step.
+            found = self.payout_address(chain)
+            if found:
+                return found
         with chain.rpc() as rpc:
             return str(rpc.call("getaccountaddress", "arcade-identity"))
+
+    def payout_address(self, chain: Any) -> str:
+        """Where this arcade is paid on `chain` when no Core wallet of its own there holds an address: a sharer's
+        tenth, its fees on a borrowed chain, the coins it mines (2026-10-18: "there should be no extra
+        step"). The operator account's own address on that chain, so the coins arrive in that account's Wallet
+        and are spent from it like any others -- the one its browser gave, else the same key's address worked
+        out as the Wallet derives it (a real-coin chain shares the account's Pepecoin mainnet key, a test-coin
+        chain its testnet key). With no operator account named: the Core wallet's address where the chain runs
+        here, and only then the identity key's (key_address), which needs that key brought into a wallet."""
+        from ..script import b58check_decode, b58check_encode
+        pubkey = self.operator
+        if pubkey:
+            said = str(self.setting(self._address_setting(pubkey, chain.network), "") or "")
+            if said:
+                return said
+            sibling = "main" if chain.params.real_coins else self.messaging.network
+            base = str(self.setting(self._address_setting(pubkey, sibling), "") or "")
+            if base:
+                try:
+                    return b58check_encode(chain.params.pubkeyhash_version, b58check_decode(base)[1])
+                except Exception:                              # noqa: BLE001
+                    pass
+        if chain.network == self.messaging.network and self.derived_address:
+            return self.derived_address
+        if not getattr(chain, "borrowed", False):
+            try:
+                with chain.rpc() as rpc:
+                    return str(rpc.call("getaccountaddress", "arcade-identity"))
+            except Exception:                                  # noqa: BLE001 -- a Core without accounts
+                pass
+        # Its identity key's address there, which Admin -> The node's coins spends (keywallet.py).
+        return self.key_address(chain)
+
+    def _address_setting(self, pubkey: str, network: str) -> str:
+        """The settings key an account's address on a chain is kept under (app._address_key)."""
+        return f"address:{pubkey}" if network == self.messaging.network else f"address:{network}:{pubkey}"
+
+    def key_address(self, chain: Any) -> str:
+        """This arcade's identity key as an address on `chain` ("" before it has one): where it is paid on a
+        chain whose Core wallet it does not have -- a borrowed chain, or its tenth as a sharer (2026-10-18)."""
+        from ..script import b58check_decode, b58check_encode
+        derived = self.derived_address
+        if not derived:
+            return ""
+        return b58check_encode(chain.params.pubkeyhash_version, b58check_decode(derived)[1])
 
     def use_derived_identity(self, address: str) -> Identity:
         """Adopt the identity that belongs to `address`, and remember which.
