@@ -29,7 +29,7 @@
     {% for d in doginals %}
     <div class="dg-card" data-listing="{{ d.id }}">
       {# A sandboxed frame: a Doginal is often a page drawing itself from other inscriptions (read off the chain, 2026-10-15). #}
-      <iframe class="dg-art" {{ 'data-src' if in_collection else 'src' }}="{{ d.content }}" title="{{ W }} {{ d.inscription[:12] }}"{% if not in_collection %} loading="lazy"{% endif %}
+      <iframe class="dg-art" {{ 'data-src' if in_collection else 'src' }}="{{ d.frame or d.content }}" title="{{ W }} {{ d.inscription[:12] }}"{% if not in_collection %} loading="lazy"{% endif %}
               sandbox="allow-scripts" style="border:0;aspect-ratio:1;width:100%;pointer-events:none"></iframe>
       <div class="dg-id mono" title="{{ d.inscription }}">{{ d.inscription[:16] }}…{{ d.inscription[-4:] }}</div>
       <div class="dg-px">{{ d.price_text }}</div>
@@ -180,7 +180,7 @@
         if (d.content) {
           // A sandboxed frame, not an <img>: a Doginal is often a page that draws itself from other inscriptions
           // (2026-10-15: Anti Doginal Dogs), read from the chain by this node at /content/<id>.
-          const art = Object.assign(document.createElement("iframe"), {className: "dg-art", src: d.content,
+          const art = Object.assign(document.createElement("iframe"), {className: "dg-art", src: d.frame || d.content,
                                                                         title: W, loading: "lazy"});
           art.setAttribute("sandbox", "allow-scripts");
           art.style.cssText = "border:0;aspect-ratio:1;width:100%;pointer-events:none";

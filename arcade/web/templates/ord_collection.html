@@ -21,7 +21,7 @@
 .oc-pages{display:flex;gap:8px;align-items:center;justify-content:center;margin:14px 0}
 </style>
 <div class="oc-head">
-  {% if coll.cover %}<iframe class="oc-cover" data-src="{{ doginal_content(coll.cover) }}" title="" sandbox="allow-scripts" scrolling="no" style="border:0;pointer-events:none"></iframe>{% endif %}
+  {% if coll.cover %}<iframe class="oc-cover" data-src="{{ doginal_frame(coll.cover) }}" title="" sandbox="allow-scripts" scrolling="no" style="border:0;pointer-events:none"></iframe>{% endif %}
   <div style="min-width:0">
     <h1 style="margin:0">{{ coll.name }}</h1>
     <div class="muted" style="font-size:.84rem">{{ net_badge(net) }} {{ word }}s on {{ 'Dogecoin' if net == 'doge' else 'Pepecoin' }}
@@ -51,7 +51,7 @@
   {% for p in pieces %}
   <a class="oc-card" href="{{ p.offer }}" title="{{ p.id }}">
     {#- A sandboxed frame: ord inscriptions are often pages that draw themselves. -#}
-    <iframe data-src="{{ p.content }}" title="{{ coll.name }} #{{ p.number }}" sandbox="allow-scripts" scrolling="no" tabindex="-1"></iframe>
+    <iframe data-src="{{ p.frame }}" title="{{ coll.name }} #{{ p.number }}" sandbox="allow-scripts" scrolling="no" tabindex="-1"></iframe>
     <div class="n">#{{ p.number }}{% if p.listing %} <span style="float:right;font-weight:700">{{ ex.px(p.listing.price / 100000000) }} {{ coin }}</span>{% endif %}</div>
     <div class="t">{{ p.traits.values()|join(' · ') }}</div>
   </a>

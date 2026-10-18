@@ -500,6 +500,11 @@ section.panel h2{margin-top:0}
       if (r.now === 'off') bits.push(m.sharers ? 'off \u00b7 ' + m.sharers + ' linked arcade' + (m.sharers > 1 ? 's share' : ' shares') + ' it'
                                                : 'off \u00b7 no linked arcade shares it yet');
       if (r.now === 'borrow' && r.work !== 'checked') bits.push('blocks checked; proof of work is the sharer\u2019s word');
+      var sy = r.sync;
+      if (sy) bits.push(sy.ready ? 'open in the Wallet'
+                        : !sy.online ? 'not answering yet: closed in the Wallet'
+                        : 'syncing ' + (100 * (sy.progress || 0)).toFixed(1) + '% (block ' + (sy.blocks || 0).toLocaleString()
+                          + ' of ' + (sy.headers || 0).toLocaleString() + '): closed in the Wallet until done');
       if (m.sharing) bits.push('shared' + (m.borrowers ? ', ' + m.borrowers + ' borrowing' : ''));
       if (m.disagree) bits.push('SHARERS DISAGREE about the chain tip');
       if (r.chosen !== r.now) bits.push('becomes \u201c' + CORE_WORDS[r.chosen].toLowerCase() + '\u201d at the next restart');

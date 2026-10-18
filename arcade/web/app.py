@@ -701,6 +701,14 @@ def _above_dust(sats: int, what: str) -> None:
                          f"and nobody would relay it")
 
 
+#: How many of an account's payload transactions one /account/dust reads from the node; the rest on later asks.
+DUST_READS = 200
+
+#: When a request counts as stalled, and how often the stacks of a stall are logged (_request_timer).
+STALL_AFTER = 45
+STALL_EVERY = 120
+
+
 def _request_timer():
     """What the node spends its time answering (2026-10-17: 150 % CPU after the 1.5 s swap pace): per path, how many
     requests and how many seconds, logged once a minute when anything was asked. Outside create_app, like the door: the
@@ -709,11 +717,37 @@ def _request_timer():
     _req_lock = threading.Lock()
     _req_last = [time.time()]
 
+    # A request still running after STALL_AFTER seconds (2026-10-18: /exchange stopped answering at 0 % CPU and nothing
+    # said why): every thread's stack goes to the log, at most once per STALL_EVERY, so the next stall names its cause.
+    _in_flight: dict[int, tuple[str, float]] = {}
+    _stall_said = [0.0]
+
+    def _stall_watch():
+        while True:
+            time.sleep(15)
+            with _req_lock:
+                stuck = [(path, time.perf_counter() - at) for path, at in _in_flight.values()
+                         if time.perf_counter() - at > STALL_AFTER]
+            if not stuck or time.time() - _stall_said[0] < STALL_EVERY:
+                continue
+            _stall_said[0] = time.time()
+            import traceback
+            names = {t.ident: t.name for t in threading.enumerate()}
+            stacks = "\n".join(f"--- thread {names.get(ident, ident)}\n" + "".join(traceback.format_stack(frame)[-12:])
+                                for ident, frame in sys._current_frames().items())
+            log.warning("requests stalled: %s\n%s", "; ".join(f"{p} {s:.0f}s" for p, s in stuck[:8]), stacks)
+
+    threading.Thread(target=_stall_watch, name="stall-watch", daemon=True).start()
+
     async def _req_timer(request: Request, call_next):
         started = time.perf_counter()
+        with _req_lock:
+            _in_flight[id(request)] = (request.url.path, started)
         try:
             return await call_next(request)
         finally:
+            with _req_lock:
+                _in_flight.pop(id(request), None)
             parts = request.url.path.split("/")[:4]
             key = "/".join(p if len(p) < 24 else "*" for p in parts)
             with _req_lock:
@@ -2989,6 +3023,8 @@ def create_app(state: AppState) -> FastAPI:
     # An inscription's content: this arcade's own /content/<id>, read from the chain (arcade/doginals.py), 2026-10-15.
     TEMPLATES.env.globals["doginal_content"] = lambda inscription: __import__(
         "arcade.doginals", fromlist=["content_url"]).content_url(str(inscription))
+    TEMPLATES.env.globals["doginal_frame"] = lambda inscription: __import__(
+        "arcade.doginals", fromlist=["frame_url"]).frame_url(str(inscription))
 
     def _tip_chains() -> list[dict[str, Any]]:
         """The chains a tip can be paid on, for the tip form: the tag chain
@@ -6126,6 +6162,21 @@ def create_app(state: AppState) -> FastAPI:
     def inscription_content(key: str, download: int = 0, reveal: int = 0, v: str = ""):
         return _with_viewer_shim(_inscription_content(key, download, reveal),
                                  "" if download else v)
+
+    @app.get("/content/{key}/fit")
+    def inscription_fit(key: str):
+        """An inscription for a card's frame (2026-10-18): a picture is drawn scaled into the frame, whole -- a frame
+        shows an image document at its own size, so a 1000 px Doginal showed one corner of its background -- and
+        anything else (a page that draws itself, which sizes itself to the frame) is sent on to /content/<id>."""
+        answer = _inscription_content(key)
+        kind = str(answer.headers.get("content-type", ""))     # a screened notice is a picture too
+        if not kind.startswith("image/"):
+            return RedirectResponse(f"/content/{quote(key)}", status_code=307)
+        page = ('<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:transparent}'
+                'img{display:block;width:100%;height:100%;object-fit:contain;image-rendering:pixelated}</style>'
+                f'<img src="/content/{html.escape(quote(key))}" alt="">')
+        return Response(page, media_type="text/html",
+                        headers={**contentlib.CONTENT_HEADERS, "Cache-Control": "public, max-age=86400"})
 
     def _chain_inscription(key: str):
         """An ord inscription (a Doginal, or one on Pepecoin mainnet) this arcade's own index does not hold, read from the
@@ -12575,6 +12626,7 @@ def create_app(state: AppState) -> FastAPI:
     #: Per (network, address): the Class B transactions already read, and the
     #: payload outputs among them still unspent, with when each was last asked.
     _dust_memo: dict[tuple[str, str], dict] = {}
+    _dust_busy: dict[tuple[str, str], threading.Lock] = {}
 
     def _payload_dust(chain, address: str) -> list[dict]:
         """This account's own Class B payload outputs that are still unspent.
@@ -12586,17 +12638,52 @@ def create_app(state: AppState) -> FastAPI:
         -- at most hourly per output, since only this account's key can spend
         them and a sweep here drops them at once."""
         from ..script import OutputType, parse_output
-        memo = _dust_memo.setdefault((chain.network, address), {"read": set(), "coins": {}})
+        memo = _dust_memo.get((chain.network, address)) or _dust_load(chain.network, address)
+        _dust_memo[(chain.network, address)] = memo
+        # One reader per address (2026-10-18: two Wallet tabs read the same 12,000 transactions side by side, 140 s,
+        # and every other page waited on the node behind them): the second asker gets what is known so far.
+        busy = _dust_busy.setdefault((chain.network, address), threading.Lock())
+        if not busy.acquire(blocking=False):
+            return sorted(memo["coins"].values(), key=lambda c: (c["txid"], c["vout"]))
+        try:
+            return _payload_dust_read(chain, address, memo)
+        finally:
+            busy.release()
+
+    def _dust_path(network: str, address: str) -> Path:
+        return Path(state.home) / "dust" / f"{network}-{address}.json"
+
+    def _dust_load(network: str, address: str) -> dict:
+        """What was read before this start (2026-10-18: kept in memory only, every restart read an account's whole
+        history again)."""
+        try:
+            said = json.loads(_dust_path(network, address).read_text())
+            return {"read": set(said.get("read") or []),
+                    "coins": {(c["txid"], int(c["vout"])): c for c in said.get("coins") or []}}
+        except (OSError, ValueError, KeyError, TypeError):
+            return {"read": set(), "coins": {}}
+
+    def _dust_save(network: str, address: str, memo: dict) -> None:
+        path = _dust_path(network, address)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"read": sorted(memo["read"]), "coins": list(memo["coins"].values())}))
+            tmp.replace(path)
+        except OSError as exc:
+            log.info("dust memo not kept: %s", exc)
+
+    def _payload_dust_read(chain, address: str, memo: dict) -> list[dict]:
+        from ..script import OutputType, parse_output
         index = state.token_index(chain)
         with contextlib.closing(index.open()) as db:
             txids = [r[0] for r in db.conn.execute(
                 "SELECT txid FROM arcade_tx WHERE sender=? AND encoding_class='B'", (address,))]
         mine = b58check_decode(address)[1]
         now = time.time()
+        fresh = [t for t in txids if t not in memo["read"]][-DUST_READS:]     # newest first to be counted
         with chain.rpc() as rpc:
-            for txid in txids:
-                if txid in memo["read"]:
-                    continue
+            for txid in fresh:
                 try:
                     tx = rpc.call("getrawtransaction", txid, 1)
                 except Exception:
@@ -12623,6 +12710,7 @@ def create_app(state: AppState) -> FastAPI:
                     memo["coins"].pop(key, None)
                 else:
                     coin["asked"] = now
+        _dust_save(chain.network, address, memo)
         return sorted(memo["coins"].values(), key=lambda c: (c["txid"], c["vout"]))
 
     @app.get("/account/activity")
@@ -17644,6 +17732,7 @@ def create_app(state: AppState) -> FastAPI:
     def _doginal_row(chain, row: dict) -> dict:
         from .. import doginals as doginalslib
         return {**doginal_marketlib.public(row), "content": doginalslib.content_url(row["inscription"]),
+                "frame": doginalslib.frame_url(row["inscription"]),
                 "price_text": f"{int(row['price']) / COIN:g} {NETWORKS[chain.network].coin}",
                 "seller_tag": _tags_for([row["seller"]]).get(row["seller"], "")}
 
@@ -17807,6 +17896,7 @@ def create_app(state: AppState) -> FastAPI:
         other = "main" if net == "doge" else "doge"
         for p in pieces:
             p["content"] = doginalslib.content_url(p["id"])
+            p["frame"] = doginalslib.frame_url(p["id"])
             p["offer"] = f"/exchange/swap/{net}-doginal-{quote(p['id'])}/{other}-coin"
             p["listing"] = price_of.get(p["id"])
         looking = signed_in(request) if _account_view(request) else None
@@ -17858,6 +17948,7 @@ def create_app(state: AppState) -> FastAPI:
             out.append({"txid": c["txid"], "vout": int(c["vout"]), "value": int(c["value"]),
                         "inscriptions": [i.get("id") for i in on], "listable": ok,
                         "content": doginalslib.content_url(str(on[0].get("id"))),
+                        "frame": doginalslib.frame_url(str(on[0].get("id"))),
                         "listing": listed.get((c["txid"], int(c["vout"])), "")})
         return JSONResponse({"chain": chain.network, "address": address, "doginals": out},
                             headers={"Cache-Control": "no-store"})
@@ -22481,6 +22572,12 @@ def create_app(state: AppState) -> FastAPI:
         for row in rows:
             row["index"] = index.get(row["net"], {})
             row["faucet"] = _admin_faucet_row(row["net"])
+            # Whether the Wallet and the markets offer it yet (2026-10-18: Litecoin borrowed, and still grey with
+            # nothing to say why): the same reading they use, the sharer's getblockchaininfo.
+            chain = state.addon(row["net"])
+            if chain is not None and row["now"] != coreslib.OFF:
+                sync = state.chain_sync(chain)
+                row["sync"] = {k: sync.get(k) for k in ("ready", "progress", "blocks", "headers", "online")}
         # Chains other arcades share that this arcade's version does not know yet (a newer chain).
         unknown = sorted((net, s.get("sharers", 0)) for net, s in status.items()
                          if net not in NETWORKS and s.get("sharers"))

@@ -149,7 +149,7 @@ def test_the_wallet_finds_its_doginal_asks_once_and_sends_it_to_review(browser, 
     text = browser.execute_script('return document.getElementById("doginals").textContent')
     assert "Doginals" in text and INS in text and "Read from the chain" in text
     src = browser.execute_script(f'return document.querySelector("#doginals [data-doginal=\\"{INS}\\"] iframe").src')
-    assert src == f"{base}/content/{INS}", "this arcade's own /content, read off the chain"
+    assert src == f"{base}/content/{INS}/fit", "this arcade's own /content, read off the chain, fitted to the frame"
     assert len(browser.find_elements(By.CSS_SELECTOR, "#doginals [data-doginal]")) == 1, "the clean coin is not one"
     assert sorted(set(asked)) == sorted([T1, T3])
     count = len(asked)

@@ -38,3 +38,18 @@ def test_nothing_to_sweep_is_said_plainly(node):
     assert who.get("/account/dust").json()["chains"] == []
     tried = who.post("/account/dust/sweep", json={})
     assert tried.status_code == 400 and "nothing to sweep" in tried.json()["detail"]
+
+
+def test_what_was_read_is_kept_on_disk_and_not_read_again(node, monkeypatch):
+    """2026-10-18: an account with 12,000 payload transactions was read again after every restart, twice at once,
+    140 s with every other page waiting on the node. What was read is kept on disk and not asked of the node again."""
+    app, state, rpc = node
+    who, secret, pubkey, address = _seated(app, state, rpc, 60)
+    _inscribed(who, state, rpc, secret, pubkey, "a longer piece " * 60)
+    first = who.get("/account/dust").json()["chains"]
+    assert first and list((pathlib.Path(state.home) / "dust").glob("*.json")), "kept on disk"
+    asked = []
+    real = rpc.call
+    monkeypatch.setattr(rpc, "call", lambda m, *a: (asked.append(m), real(m, *a))[1])
+    again = who.get("/account/dust").json()["chains"]
+    assert again == first and "getrawtransaction" not in asked, "nothing read twice"

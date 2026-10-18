@@ -185,7 +185,11 @@ class IndexCheck:
                 ours_rows = [r[:ROW_CHARS] for r in (await asyncio.to_thread(fp.rows, first))[:MAX_ROWS]]
                 result.update(differs_at=first, ours=ours_rows, theirs=theirs_rows,
                               agree_upto=first - 1 if first > fp.floor else None)
-                log.warning("indexcheck: %s's %s index differs from this one at block %d", peer[:12], net, first)
+                # Said once per difference (2026-10-18: the same block was logged every ten seconds); the admin
+                # page shows it for as long as it lasts.
+                was = self.results.get(net, {}).get(peer, {}).get("differs_at")
+                if was != first:
+                    log.warning("indexcheck: %s's %s index differs from this one at block %d", peer[:12], net, first)
             if mine.get("h") == theirs.get("h") and mine.get("s") and theirs.get("s"):
                 result["state"] = "same" if mine["s"] == theirs["s"] else "differs"
         except (asyncio.CancelledError, ConnectionError):

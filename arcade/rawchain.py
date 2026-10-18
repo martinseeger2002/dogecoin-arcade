@@ -33,6 +33,11 @@ class RawError(ValueError):
     """Bytes that are not what they were said to be."""
 
 
+class Unreadable(RawError):
+    """Bytes that may well be honest but that this reader cannot prove (2026-10-18: a Litecoin transaction that is
+    wholly MWEB, whose id is its kernel's). Said as an error, and not held against whoever sent them."""
+
+
 def sha256d(data: bytes) -> bytes:
     return hashlib.sha256(hashlib.sha256(data).digest()).digest()
 
@@ -250,7 +255,7 @@ class Tx:
 FLAG_WITNESS, FLAG_MWEB = 0x01, 0x08
 
 
-def _read_tx(r: _Reader) -> Tx:
+def _read_tx(r: _Reader, alone: bool = False) -> Tx:
     start = r.at
     version = r.i32()
     flags = 0
@@ -279,10 +284,13 @@ def _read_tx(r: _Reader) -> Tx:
         for i in ins:
             i["witness"] = [r.blob() for _ in range(r.varint())]
     if flags & FLAG_MWEB:
-        # Its MWEB part, an optional: 0 when there is none (the HogEx in every MWEB block). One that is
-        # there cannot be read here, so such a transaction is refused rather than half read.
+        # Its MWEB part, an optional: 0 when there is none (the HogEx in every MWEB block). One that is there
+        # (a peg-in, 2026-10-18) is not read: a transaction alone ends with its locktime, so the part is passed
+        # over whole, and the id is still proved by the ordinary part. Inside a block its end cannot be found.
         if r.take(1) != b"\x00":
-            raise RawError("a transaction with an MWEB part, which this arcade does not read")
+            if not alone:
+                raise Unreadable("a transaction with an MWEB part inside a block")
+            r.at = len(r.data) - 4
     locktime_bytes = r.take(4)
     raw = r.data[start:r.at]
     stripped = r.data[start:start + 4] + r.data[body_start:body_end] + locktime_bytes
@@ -293,9 +301,11 @@ def _read_tx(r: _Reader) -> Tx:
 def read_tx(raw: bytes, txid: str | None = None) -> Tx:
     """A raw transaction, read whole; with `txid`, proved to be that transaction."""
     r = _Reader(raw)
-    tx = _read_tx(r)
+    tx = _read_tx(r, alone=True)
     if r.at != len(raw):
         raise RawError("bytes left over after the transaction")
+    if txid is not None and tx.txid != txid and not tx.vin and not tx.vout and len(raw) > 10 and raw[5] & FLAG_MWEB:
+        raise Unreadable(f"{txid} is wholly MWEB: its id is its kernel's, which this arcade does not read")
     if txid is not None and tx.txid != txid:
         raise RawError(f"the transaction sent as {txid} hashes to {tx.txid}")
     return tx

@@ -1378,7 +1378,7 @@ async function dgAsk(net, txid) {
 function doginalPic(g) {
   const box = el("span", "wl-dgpic");
   const frame = el("iframe");
-  frame.src = `/content/${encodeURIComponent(g.id)}`;
+  frame.src = `/content/${encodeURIComponent(g.id)}/fit`;   // a picture scaled to the frame (2026-10-18)
   frame.loading = "lazy"; frame.title = g.id;
   frame.setAttribute("sandbox", "allow-scripts");
   frame.setAttribute("scrolling", "no");

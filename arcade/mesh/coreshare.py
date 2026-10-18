@@ -515,6 +515,9 @@ class BorrowedRpc(RpcClient):
                     continue
                 try:
                     result = self._check(method, params, [p.get("r") for p in parts])
+                except rawchain.Unreadable as exc:            # honest as far as anyone can tell: not a failure
+                    out[i] = {"id": rid, "result": None, "error": {"code": -5, "message": str(exc)}}
+                    continue
                 except rawchain.RawError as exc:
                     log.warning("coreshare: %s's answer to %s failed its check: %s", peer[:12], method, exc)
                     caught = True

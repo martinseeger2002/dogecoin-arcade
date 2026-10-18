@@ -41,6 +41,14 @@ def content_url(inscription: str) -> str:
     return f"/content/{inscription}"
 
 
+def frame_url(inscription: str) -> str:
+    """What a card's frame shows: this arcade's /content/<id>/fit, which draws a picture scaled to the frame (2026-10-18,
+    Doginal Dogs are 1000 px PNGs: framed as they are, a card showed only their top-left corner of background), and
+    any other content as it is. An outside content server's URL is used unchanged."""
+    url = content_url(inscription)
+    return url + "/fit" if url.startswith("/content/") else url
+
+
 class Unknown(Exception):
     """The chain (or the ord-style server) could not be read just now."""
 

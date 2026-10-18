@@ -333,8 +333,10 @@ def test_a_real_litecoin_block_with_segwit_and_its_hogex_reads_and_carries_its_w
         rawchain.read_block(raw + b"\x01", mweb=False)
     hogex = next(t for t in block.txs if t.raw[4:6] == b"\x00\x08")
     assert rawchain.read_tx(hogex.raw, hogex.txid).txid == hogex.txid
-    with pytest.raises(rawchain.RawError, match="MWEB part"):
-        rawchain.read_tx(hogex.raw[:-5] + b"\x01" + hogex.raw[-4:])
+    with_part = hogex.raw[:-5] + b"\x01" + hogex.raw[-4:]
+    assert rawchain.read_tx(with_part, hogex.txid).txid == hogex.txid, "alone, an MWEB part is passed over"
+    with pytest.raises(rawchain.Unreadable, match="MWEB part"):
+        rawchain._read_tx(rawchain._Reader(with_part + b"next"))
     seg = next(t for t in block.txs if t.raw[4:6] == b"\x00\x01")
     outs = [o["scriptPubKey"] for o in seg.verbose(NETWORKS["ltc"])["vout"]]
     assert any(o["type"].startswith("witness_") and o["addresses"][0].startswith("ltc1") for o in outs) or outs
@@ -389,3 +391,21 @@ def test_litecoin_borrowed_through_the_mesh_reads_as_litecoin_core_prints_it():
             finally:
                 await a.stop(); await b.stop()
         run(go())
+
+
+def test_a_litecoin_peg_in_is_proved_and_a_wholly_mweb_one_is_unreadable_not_a_lie():
+    """2026-10-18: every Litecoin transaction with an MWEB part failed its check, and the honest sharer was counted
+    as a liar for each. A peg-in (made on regtest litecoind 0.21.5.8) is proved by its ordinary part; one wholly MWEB
+    has its kernel's id, which is said to be unreadable -- an error, never held against the sharer."""
+    import gzip
+    import json
+    from arcade import rawchain
+    said = json.load(gzip.open(Path(__file__).parent / "data" / "rawchain" / "ltc-mweb-tx.json.gz", "rt"))
+    txid, raw = said["pegin"]
+    tx = rawchain.read_tx(bytes.fromhex(raw), txid)
+    assert tx.txid == txid and tx.vin and tx.vout
+    txid, raw = said["mwebonly"]
+    with pytest.raises(rawchain.Unreadable):
+        rawchain.read_tx(bytes.fromhex(raw), txid)
+    with pytest.raises(rawchain.RawError):
+        rawchain.read_tx(bytes.fromhex(said["pegin"][1]), txid)

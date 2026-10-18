@@ -928,7 +928,7 @@ document.addEventListener('click', function (ev) {
     <a class="ex-mrow" href="{{ o.href }}" data-net="mainnet" data-market="{{ o.name|lower }}"
        data-fav-key="{{ o.href }}" data-vol="0" data-orders="{{ o.for_sale }}">
       {%- if o.word %}
-      {{ ex.pair_icon({'src': doginal_content(o.cover) if o.cover else '', 'letter': o.name[:1]|upper, 'net': o.net}, {'coin': o.net}) }}
+      {{ ex.pair_icon({'src': doginal_frame(o.cover) if o.cover else '', 'letter': o.name[:1]|upper, 'net': o.net}, {'coin': o.net}) }}
       <span class="ex-mid"><b class="ex-name"><span class="ex-name-in">{{ o.name }}</span></b>
         <small>{{ net_badge(o.net) }} {{ "{:,}".format(o.count) }} {{ o.word }}s{% if o.for_sale %} &middot; {{ o.for_sale }} for sale{% endif %}</small></span>
       {%- else %}
