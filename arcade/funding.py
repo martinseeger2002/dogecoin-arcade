@@ -207,7 +207,7 @@ def choose(db, address: str, target: int, exclude=frozenset(),
         f"{target / 100_000_000:.8f} needed, at this address.")
 
 
-def price(inputs: int, outputs: list, rate: int, change: bool = False) -> int:
+def price(inputs: int, outputs: list, rate: int, change: bool = False, params=None) -> int:
     """Satoshis that get a transaction with these outputs into a block.
 
     Priced on the mempool's *virtual* size, because that is the number a
@@ -235,7 +235,9 @@ def price(inputs: int, outputs: list, rate: int, change: bool = False) -> int:
     if change:
         raw += BYTES_PER_CHANGE
         sigops += 1
-    return fees.fee_for(raw, sigops, rate) + fees.soft_dust_fee(outputs)
+    # The soft-dust fee is the Dogecoin family's; a chain without it (Litecoin) adds nothing.
+    soft = fees.soft_dust_fee(outputs) if getattr(params, "soft_dust", True) else 0
+    return fees.fee_for(raw, sigops, rate) + soft
 
 
 def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
@@ -327,21 +329,22 @@ def build(db, params: Params, address: str, payload_outputs: list,
     payload would be unreadable by everyone (docs/multi-user.md §3).
     """
     spend = sum(value for value, _ in payload_outputs)
+    rate = fees.rate_for(params, rate)              # this chain's own minimum (2026-10-18)
     # Priced as though there will be a payment back to the sender, since
     # that is what the finished transaction carries whenever anything is left
     # over. The guess picks the coins; the fee is recomputed once their count
     # is known. Told to the caller as the number it actually is.
-    guess = price(1, payload_outputs, rate, change=True)
+    guess = price(1, payload_outputs, rate, change=True, params=params)
     chosen = choose(db, address, spend + guess, exclude=exclude, extra=extra)
-    fee = price(len(chosen), payload_outputs, rate, change=True)
+    fee = price(len(chosen), payload_outputs, rate, change=True, params=params)
     if sum(c["value"] for c in chosen) < spend + fee:
         chosen = choose(db, address, spend + fee, exclude=exclude, extra=extra)
-        fee = price(len(chosen), payload_outputs, rate, change=True)
+        fee = price(len(chosen), payload_outputs, rate, change=True, params=params)
 
     total = sum(c["value"] for c in chosen)
     change = total - spend - fee
     outputs = list(payload_outputs)
-    if change >= max(dust, fees.DUST_LIMIT):
+    if change >= max(dust, fees.dust_limit(params)):
         outputs.append((change, p2pkh_script(address)))
     else:
         # Too small to be worth an output: it goes to the miner rather than
@@ -389,7 +392,8 @@ def build_one(params: Params, address: str, coin: dict,
              "address": str(coin.get("address") or address)}
 
     spend = sum(value for value, _ in payload_outputs)
-    fee = price(1, payload_outputs, rate, change=True)
+    rate = fees.rate_for(params, rate)              # this chain's own minimum (2026-10-18)
+    fee = price(1, payload_outputs, rate, change=True, params=params)
     if value < spend + fee:
         raise FundingError(
             f"that piece costs {spend + fee} and the output meant to pay for it "
@@ -397,7 +401,7 @@ def build_one(params: Params, address: str, coin: dict,
 
     change = value - spend - fee
     outputs = list(payload_outputs)
-    if change >= max(dust, fees.DUST_LIMIT):
+    if change >= max(dust, fees.dust_limit(params)):
         # Back to the sender, as always: a Class B payload's obfuscation is
         # seeded with the largest input, and a piece whose change wandered off
         # would be read as somebody else's and never indexed.
@@ -434,15 +438,16 @@ def build_sweep(db, params: Params, address: str, coins: list[dict], rate: int,
         raise FundingError("there is nothing to spend")
     taken = {(c["txid"], c["vout"]) for c in given}
     total = sum(c["value"] for c in given)
-    fee = price(len(given), [], rate, change=True)
-    if total - fee < fees.DUST_LIMIT:
-        more = choose(db, address, fee + fees.DUST_LIMIT - total + price(1, [], rate),
+    rate, least = fees.rate_for(params, rate), fees.dust_limit(params)     # this chain's own (2026-10-18)
+    fee = price(len(given), [], rate, change=True, params=params)
+    if total - fee < least:
+        more = choose(db, address, fee + least - total + price(1, [], rate, params=params),
                       exclude=frozenset(exclude) | taken, extra=extra)
         given += [dict(c, address=address) for c in more]
         total = sum(c["value"] for c in given)
-        fee = price(len(given), [], rate, change=True)
+        fee = price(len(given), [], rate, change=True, params=params)
     change = total - fee
-    if change < fees.DUST_LIMIT:
+    if change < least:
         raise FundingError("this account does not hold enough to pay the fee")
     outputs = [(change, p2pkh_script(address))]
     raw = build_raw_tx([(c["txid"], c["vout"]) for c in given], outputs)

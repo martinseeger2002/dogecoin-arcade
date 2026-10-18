@@ -402,7 +402,8 @@ class LitecoinRegtestNode(RegtestNode):
         return dataclasses.replace(
             REGTEST, rpc_port=self.rpc_port, p2p_port=self.p2p_port,
             scripthash_version=58, coin=LITECOIN.coin, label="Litecoin regtest",
-            min_fee_per_kb=LITECOIN.min_fee_per_kb, bech32_hrp="rltc", mweb=True, family="LTC", letter="L")
+            min_fee_per_kb=LITECOIN.min_fee_per_kb, soft_dust=LITECOIN.soft_dust,
+            dust_limit=LITECOIN.dust_limit, bech32_hrp="rltc", mweb=True, family="LTC", letter="L")
 
     def start(self, timeout: float = 60.0) -> "LitecoinRegtestNode":
         super().start(timeout)

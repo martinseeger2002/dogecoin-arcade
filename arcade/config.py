@@ -170,6 +170,15 @@ class Params:
     #: and 0.01 LTC/kB is over its own -maxtxfee for a Class B transaction (2026-10-17).
     min_fee_per_kb: int = 1_000_000
 
+    #: Whether relay charges the soft-dust fee again for every output under `dust_limit` (Pepecoin
+    #: and Dogecoin: GetPepecoinDustFee). Litecoin has no such fee: Bitcoin-style, an output under
+    #: its dust threshold is simply not relayed, so nothing is added (2026-10-18).
+    soft_dust: bool = True
+    #: The least change worth an output of its own; below it the change goes to the miner. 0.01
+    #: on the Dogecoin family (the soft-dust line); 0.0001 LTC on Litecoin, above its P2PKH dust
+    #: threshold of 5,460 litoshis at the 0.0003 LTC/kB dustrelayfee (2026-10-18).
+    dust_limit: int = 1_000_000
+
     #: Where @names (tag claims, and the messaging keys that go with them) are
     #: read from, when that is EARLIER than the floor (2026-09-25: names
     #: survive a floor move). Moving the floor raises `activation_height` and the
@@ -465,6 +474,7 @@ LITECOIN = dataclasses.replace(
     coin="LTC",
     label="Litecoin",
     min_fee_per_kb=10_000,      # 0.0001 LTC/kB: ten times Litecoin 0.21's minimum relay fee
+    soft_dust=False, dust_limit=10_000,     # no soft-dust fee; change from 0.0001 LTC
     genesis="12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2",
     auxpow_chain_id=None,       # scrypt, mined on its own (it is the PARENT Dogecoin merge-mines with)
     addon=True, node_dir=".litecoin", node_conf="litecoin.conf",

@@ -2783,7 +2783,9 @@ const coinsText = (sats) => (Number(sats) / 1e8).toFixed(8).replace(/\.?0+$/, ""
  *  a coin claimed out of a lock pays its own fee (0.01 comes off it); a token or NFT goes
  *  into its lock with 0.02 that pays its way out (trade.LOCK_RESERVE). */
 export function swapFees(give, get) {
-  const coin = (n) => n === "doge" ? "DOGE" : n === "main" ? "PEP" : "PEP TEST";
+  // LTC and LTC TEST too (2026-10-18: Litecoin's legs read "PEP TEST").
+  const coin = (n) => n === "doge" ? "DOGE" : n === "main" ? "PEP" : n === "ltc" ? "LTC"
+    : n === "ltctest" ? "LTC TEST" : "PEP TEST";
   const parts = [`about 0.01 ${coin(give.network)} to lock yours`];
   if (give.kind && give.kind !== "coin") parts.push(`0.02 ${coin(give.network)} that goes in with it to pay for moving it out`);
   if (!get.kind || get.kind === "coin") parts.push(`0.01 ${coin(get.network)} comes off what you receive`);
@@ -3309,7 +3311,8 @@ export async function fundsReader() {
       const c = (acct.chains || []).find((x) => x.network === give.network);
       if (!c) return "";
       const kind = give.kind || "coin";
-      const coin = give.network === "doge" ? "DOGE" : give.network === "main" ? "PEP" : "PEP TEST";
+      const coin = give.network === "doge" ? "DOGE" : give.network === "main" ? "PEP"
+        : give.network === "ltc" ? "LTC" : give.network === "ltctest" ? "LTC TEST" : "PEP TEST";
       if (kind === "token") {
         if (toks === null) {
           try { toks = await (await fetch("/account/tokens", {cache: "no-store"})).json(); } catch (e) { toks = {}; }

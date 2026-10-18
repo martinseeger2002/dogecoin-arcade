@@ -27393,6 +27393,17 @@ def _check_address(address: str, *, mainnet: bool) -> str | None:
     else:
         wanted = (NETWORKS["main"],) if mainnet else (NETWORKS["test"], NETWORKS["regtest"])
     word = (getattr(mainnet, "label", "") or "").lower() or ("mainnet" if mainnet else "testnet")
+    # Litecoin's other address kinds, said for what they are (2026-10-18; they read as "the checksum
+    # does not match" before). MWEB first: its prefix also starts like a bech32 one.
+    lowered = (address or "").strip().lower()
+    if lowered.startswith(("ltcmweb1", "tmweb1")):
+        return ("that is a Litecoin MWEB (private) address. This arcade cannot pay one: coins sent "
+                "there could not be seen or spent from here. Ask for an L… or M… address.")
+    for params in NETWORKS.values():
+        hrp = getattr(params, "bech32_hrp", None)
+        if hrp and lowered.startswith(hrp + "1"):
+            return (f"that is a {params.label} SegWit or Taproot address ({hrp}1…). This arcade pays "
+                    f"{params.label}'s legacy addresses for now; ask for one of those.")
     try:
         version, payload = b58check_decode(address)
     except HTTPException:

@@ -638,10 +638,17 @@ class NodeTrader:
         send may not use (doginals.spendable: inscribed, or small and not vouched for) is locked
         in the wallet for the one send and let go after; a coin already locked stays locked."""
         from . import funding
-        guard = self._doginals or funding.GUARD
-        if network != "doge" or guard is None:
-            # Off Dogecoin there is nothing to set aside; a node that checks no Doginals sends as it always did
-            # (the app sets the guard whenever it runs Dogecoin, so a live node always has one).
+        # Litecoin too (2026-10-18): its inscriptions are Doginals-format and its guard is the app's
+        # (funding.GUARD_BY_NET), and a sendtoaddress there spent an inscribed coin on regtest.
+        if network == "doge":
+            guard = self._doginals or funding.GUARD
+        elif network in ("ltc", "ltctest"):
+            guard = funding.guard_on(network)
+        else:
+            guard = None
+        if guard is None:
+            # Elsewhere there is nothing to set aside; a node that checks no inscriptions sends as it always did
+            # (the app sets the guard whenever it runs Dogecoin or Litecoin, so a live node always has one).
             return rpc.call("sendtoaddress", address, amount / COIN)
         coins = [{"txid": u["txid"], "vout": int(u["vout"]), "value": round(float(u["amount"]) * COIN)}
                  for u in rpc.call("listunspent", 0)]

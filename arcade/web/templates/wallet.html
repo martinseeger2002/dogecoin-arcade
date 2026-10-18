@@ -12,7 +12,7 @@
 {% if error %}<div class="msg err">{{ error }}</div>{% endif %}
 
 {% if prepared %}
-  {% set mainnet = which in ('ledger', 'doge') %}
+  {% set mainnet = which in ('ledger', 'doge', 'ltc') %}
   <h2>Confirm before sending</h2>
   <div class="panel" {% if mainnet %}style="border-color:var(--bad);border-width:2px"{% endif %}>
     {% if mainnet %}

@@ -47,6 +47,21 @@ MIN_FEE_PER_KB = COIN // 100
 #: coin paying a 0.00235 fee left 0.00765 of change, and seven posts stuck.
 DUST_LIMIT = COIN // 100
 
+def rate_for(params, rate: int) -> int:
+    """`rate` on the chain `params` describes: MIN_FEE_PER_KB, which every caller passes, means
+    "this chain's minimum" (Params.min_fee_per_kb); any other rate is the caller's own. Litecoin's
+    minimum is 1/100 of Pepecoin's, and sending at Pepecoin's on Litecoin overpaid 100 times
+    (2026-10-18). The same number on Pepecoin and Dogecoin, so nothing changes there."""
+    if params is not None and rate == MIN_FEE_PER_KB:
+        return int(getattr(params, "min_fee_per_kb", MIN_FEE_PER_KB))
+    return rate
+
+
+def dust_limit(params) -> int:
+    """The least change worth an output on the chain `params` describes (Params.dust_limit)."""
+    return int(getattr(params, "dust_limit", DUST_LIMIT)) if params is not None else DUST_LIMIT
+
+
 def soft_dust_fee(outputs) -> int:
     """What Pepecoin adds to the fee for outputs below the soft dust limit.
 

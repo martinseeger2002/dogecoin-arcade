@@ -1861,8 +1861,10 @@ function arcadeAsk(title, detail, yes = "Yes"){
 // read off the transaction's own bytes; a collection run calls it once with the
 // whole run's estimate (`costs.count`, `costs.estimate`). One button.
 function arcadeMainnetReview(costs){
-  // DOGE on Dogecoin, PEP on Pepecoin mainnet (2026-10-13): `costs.chain` says which.
-  var doge = costs.chain === 'doge', coin = doge ? ' DOGE' : ' PEP';
+  // DOGE on Dogecoin, PEP on Pepecoin mainnet (2026-10-13), LTC on Litecoin (2026-10-18: it said
+  // "Real PEP" there): `costs.chain` says which.
+  var doge = costs.chain === 'doge', ltc = costs.chain === 'ltc';
+  var coin = doge ? ' DOGE' : ltc ? ' LTC' : ' PEP';
   var pep = function(sats){ return (Number(sats || 0) / 1e8).toLocaleString(undefined,
     {minimumFractionDigits: 2, maximumFractionDigits: 8}) + coin; };
   return new Promise(function(answer){
@@ -1871,6 +1873,7 @@ function arcadeMainnetReview(costs){
     card.setAttribute('role', 'dialog'); card.setAttribute('aria-modal', 'true');
     var h = document.createElement('h3');
     h.innerHTML = doge ? '<span class="tag dogecoin">dogecoin</span> Real DOGE'
+                : ltc ? '<span class="tag litecoin">litecoin</span> Real LTC'
                        : '<span class="tag mainnet">mainnet</span> Real PEP';
     var what = document.createElement('p'); what.className = 'muted';
     what.textContent = costs.label ? costs.label : costs.count
