@@ -365,6 +365,8 @@ class AppState:
     #: the page shows instead, and what stops a second press from starting
     #: a second miner (D-025).
     mining: dict | None = None
+    #: How the last mining run ended, for Admin -> Chains (net, chain, ended, outcome, blocks).
+    last_mined: dict | None = None
 
     #: Incremented whenever a scan finds something a page would show. Open pages
     #: poll this and refresh when it moves; a block with nothing in it for us

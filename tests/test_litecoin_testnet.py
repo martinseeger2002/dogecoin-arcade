@@ -627,3 +627,35 @@ def test_admin_mining_refuses_real_coins_and_too_many_hours(client, monkeypatch)
         said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json=body)
         assert said.status_code == 400, body
     assert state.mining is None
+
+
+def test_admin_says_how_the_last_mining_run_ended_and_whether_its_block_stuck(client, monkeypatch):
+    """2026-10-18: a block found and lost to another miner's, with the row simply going back to its
+    buttons, read as "the button does nothing"."""
+    import time
+    app, state = client
+    t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 6.25})
+    fate = {"confirmations": -1}
+    real = rpc.call
+
+    def call(method, *args):
+        if method == "getblockheader":
+            rpc.calls.append((method, *args))
+            return {"height": 4_926_457, **fate}
+        return real(method, *args)
+    monkeypatch.setattr(rpc, "call", call)
+    said = app.post("/admin/api/mine", headers={**LOCAL, **WRITE}, json={"net": "ltctest", "hours": 0})
+    assert said.status_code == 200, said.text
+    for _ in range(100):
+        if state.mining is None:
+            break
+        time.sleep(0.05)
+    assert state.last_mined["outcome"] == "found" and state.last_mined["blocks"] == ["cd" * 32]
+    rows = {r["net"]: r for r in app.get("/admin/api/state", headers=LOCAL).json()["chains"]["rows"]}
+    last = rows["ltctest"]["faucet"]["last"]
+    assert last["blocks"][0]["confirmations"] == -1 and last["blocks"][0]["height"] == 4_926_457
+    fate["confirmations"] = 12
+    rows = {r["net"]: r for r in app.get("/admin/api/state", headers=LOCAL).json()["chains"]["rows"]}
+    assert rows["ltctest"]["faucet"]["last"]["blocks"][0]["confirmations"] == 12
+    page = app.get("/admin", headers=LOCAL).text
+    assert "lost to another miner" in page and "mined, ripening" in page and "minesaid" in page

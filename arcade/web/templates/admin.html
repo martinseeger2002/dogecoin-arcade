@@ -381,7 +381,10 @@ section.panel h2{margin-top:0}
       left.appendChild(text('div', w.label + (w.coin ? ' · ' + w.coin : ''), 'muted'));
       left.appendChild(text('div', w.error ? (/wallet/i.test(w.error) ? 'no wallet on this node yet' : 'node unreachable') :
         Number(w.spendable).toLocaleString() + (w.unconfirmed && Number(w.unconfirmed) ?
-          '  (+' + Number(w.unconfirmed).toLocaleString() + ' on its way)' : ''), 'bal'));
+          '  (+' + Number(w.unconfirmed).toLocaleString() + ' on its way)' : '') +
+        // Mined coins wait 100 blocks (240 on Pepecoin) before they can be spent (2026-10-18: L test read
+        // 0 with four blocks' coins in it).
+        (w.immature && Number(w.immature) ? '  (+' + Number(w.immature).toLocaleString() + ' mined, ripening)' : ''), 'bal'));
       row.appendChild(left);
       var recv = text('button', 'Receive address', 'ghost small');
       var addr = text('div', '', 'addr mono');
@@ -594,6 +597,7 @@ section.panel h2{margin-top:0}
       return box;
     }
     if (!f.ready) return box;
+    if (f.last) box.appendChild(text('div', lastMined(f.last), 'muted'));
     var one = document.createElement('button'); one.className = 'ghost small'; one.textContent = 'Mine a block';
     one.onclick = function () { mine(r.net, 0); };
     var hours = document.createElement('input'); hours.type = 'number'; hours.min = '0.25'; hours.max = '72';
@@ -602,16 +606,41 @@ section.panel h2{margin-top:0}
     var timed = document.createElement('button'); timed.className = 'ghost small'; timed.textContent = 'Mine for';
     timed.onclick = function () { mine(r.net, Number(hours.value || 0)); };
     box.append(one, ' ', timed, ' ', hours, ' hours');
+    var note = text('div', '', 'muted minesaid'); box.appendChild(note);
+    one.dataset.net = timed.dataset.net = r.net;
     box.appendChild(text('div', 'Pays this node\u2019s faucet. Mined coins can be spent after 100 blocks.', 'muted'));
     return box;
   }
+  // How the last run on this chain ended, in words: each block found, and whether it is still on the chain.
+  function lastMined(l) {
+    var when = new Date(l.ended * 1000).toLocaleTimeString();
+    var blocks = (l.blocks || []).map(function (b) {
+      var id = b.hash.slice(0, 12) + '\u2026' + (b.height ? ' (height ' + Number(b.height).toLocaleString() + ')' : '');
+      if (b.confirmations == null) return id;
+      return b.confirmations < 0 ? id + ': lost to another miner\u2019s block at that height'
+                                 : id + ': on the chain, ' + b.confirmations + ' confirmation' + (b.confirmations === 1 ? '' : 's');
+    });
+    if (blocks.length) return 'Last run, ended ' + when + ': found ' + blocks.join('; ') + '.';
+    if (l.outcome === 'stopped') return 'Last run, ended ' + when + ': stopped before finding a block.';
+    if (l.outcome === 'none') return 'Last run, ended ' + when + ': no block found.';
+    return 'Last run, ended ' + when + ': ' + l.outcome;
+  }
   function mine(net, hours) {
     if (hours < 0 || hours > 72) { say('Mine for up to 72 hours.', 'err'); return; }
+    // Said in the row too: the page-top notice is out of sight down here (2026-10-18).
+    var buttons = document.querySelectorAll('.minebox button[data-net="' + net + '"]');
+    buttons.forEach(function (b) { b.disabled = true; });
+    var note = buttons.length ? buttons[0].parentNode.querySelector('.minesaid') : null;
+    if (note) note.textContent = 'Starting\u2026';
     call('/admin/api/mine', {net: net, hours: hours}).then(function (j) {
       say(j.until ? 'Mining to ' + j.address + ' until ' + new Date(j.until * 1000).toLocaleString() + '.'
                   : 'Mining one block to ' + j.address + '.', 'ok');
       load();
-    }).catch(function (e) { say(e.message, 'err'); });
+    }).catch(function (e) {
+      say(e.message, 'err');
+      if (note) note.textContent = 'Could not start: ' + e.message;
+      buttons.forEach(function (b) { b.disabled = false; });
+    });
   }
   $('savecores').onclick = function () {
     var modes = {}, share = {}, faucet = {};

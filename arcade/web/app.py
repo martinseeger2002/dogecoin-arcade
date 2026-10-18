@@ -4523,6 +4523,11 @@ def create_app(state: AppState) -> FastAPI:
         `chain` is the messaging chain unless said (L test: /fund/ltctest). With `until`, blocks one
         after another until that time or Stop, then one notice of how many."""
         chain = chain or state.messaging
+        # How this run ended, kept for Admin -> Chains (2026-10-18: a block found and lost to another
+        # miner's, or a run that ended while nobody watched, left the row looking as if nothing happened).
+        found_blocks: list[str] = []
+        outcome = "failed"
+
         def progress(tries: int, rate: float) -> None:
             if state.mining:
                 state.mining.update(tries=tries, rate=rate)
@@ -4537,19 +4542,25 @@ def create_app(state: AppState) -> FastAPI:
                 if until is not None:
                     found = 0
                     while not stopped():
-                        if miner.mine_one(address, on_progress=progress, stop=stopped):
+                        block = miner.mine_one(address, on_progress=progress, stop=stopped)
+                        if block:
+                            found_blocks.append(block)
                             found += 1
                             if state.mining:
                                 state.mining.update(blocks=found, tries=0)
                             log.info("mined %s block %d of a timed run to %s", chain.title, found, address)
                             state.bump_generation()
                     how = "Stopped" if state.mining and state.mining.get("stop") else "Done"
+                    outcome = "found" if found else ("stopped" if how == "Stopped" else "none")
                     state.flash(f"{how} mining {chain.title}: {found} block{'' if found == 1 else 's'} to "
                                 f"{address}." + (" Their coins can be spent after 100 more blocks."
                                                  if found else ""), "ok" if found else "info")
                     return
                 block = miner.mine_one(address, on_progress=progress, stop=stopped)
                 tries = (state.mining or {}).get("tries", 0)
+                if block:
+                    found_blocks.append(block)
+                outcome = "found" if block else ("stopped" if stopped() else "none")
                 if block and chain is not state.messaging:
                     log.info("mined %s block %s to %s", chain.title, block, address)
                     state.flash(f"Mined {chain.title} block {block[:16]}… to {address}. Its coins can be "
@@ -4562,8 +4573,11 @@ def create_app(state: AppState) -> FastAPI:
                 else:
                     state.flash(f"No block in {tries:,} hashes; press it again.", "err")
         except Exception as exc:
+            outcome = f"failed: {str(exc)[:160]}"
             state.flash(f"Mining failed: {exc}", "err")
         finally:
+            state.last_mined = {"net": chain.network, "chain": chain.title, "ended": time.time(),
+                                "outcome": outcome, "blocks": list(found_blocks)}
             state.mining = None
             state.bump_generation()
 
@@ -22634,11 +22648,26 @@ def create_app(state: AppState) -> FastAPI:
             wallet = (chain.status() or {}).get("wallet") or {}
         except Exception:                                  # noqa: BLE001 -- a node away
             pass
+        last = getattr(state, "last_mined", None)
+        if last and last.get("net") == net:
+            last = dict(last, blocks=[_block_fate(chain, b) for b in last.get("blocks", [])[-5:]])
+        else:
+            last = None
         return {"amount": amount / 100_000_000, "coin": params.coin, "supply": supply,
-                "topoff": state.faucet_topoff(chain),
+                "topoff": state.faucet_topoff(chain), "last": last,
                 "ready": bool(state.chain_ready(chain)),
                 "balance": wallet.get("balance"), "immature": wallet.get("immature"),
                 "sign_up_gift": net == state.messaging.network}
+
+    def _block_fate(chain, block: str) -> dict:
+        """A mined block as the node sees it now: on the chain with its confirmations, or lost to another
+        miner's block at the same height (confirmations -1), or unknown when the node cannot be asked."""
+        try:
+            with chain.rpc() as rpc:
+                head = rpc.call("getblockheader", block)
+            return {"hash": block, "height": head.get("height"), "confirmations": head.get("confirmations")}
+        except Exception:                                  # noqa: BLE001 -- a node away
+            return {"hash": block, "height": None, "confirmations": None}
 
     def _save_faucets(said: dict) -> None:
         """{net: {amount: coins, supply: "button" | "auto"}} from Admin -> Chains. Test chains only."""
