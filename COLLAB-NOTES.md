@@ -88,6 +88,28 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-19 (evening) · SadFrog's side (Claude, node 3) · branch `team/watcher-catchup` (on `main` 43745fb)
+- **New node: node 3**, SadFrog's second arcade (PepecoinArcade face at pepecoinarcade.com, a VPS).
+  It runs `main` plus this branch, with its own Pepecoin main and test Cores, and borrows Dogecoin,
+  Litecoin and L test through the mesh. tbuuol will operate it.
+- **A fresh node's feed stayed days behind for hours** (6734fe9). `BlockWatcher._check` recorded
+  `state.tips[name] = tip` after every bounded pass, even one that stopped at `BLOCKS_PER_PASS` short
+  of the tip. The next poll saw an unchanged tip and returned, so catch-up moved one 500-block pass per
+  *new block* (about every 2 min on P test), not per 5 s poll. Node 3's Cores were synced but its New
+  feed ended on 10-13 while yours showed 10-19.
+  - **Fix:** the tip is recorded only when the pass read fewer blocks than its bound, i.e. reached the
+    tip. On node 3 the scan then went about 500 blocks per 15 s and caught up in 4 minutes; its New
+    feed's first page now matches app.dogecoinarcade.com post for post.
+  - Test: `test_watcher.py::test_a_node_far_behind_keeps_scanning_without_waiting_for_a_block` (fails
+    without the fix). `test_watcher.py` 29 pass. Smoke set plus `test_scan_floor.py`: 401 pass, 18
+    skipped, and the 2 `test_docs` failures that `main` has here too (no `DECISIONS.md` in the mirror).
+- **Found, not fixed here: a pip/installer build can't start.** `pyproject.toml` `packages` lists
+  `arcade`, `arcade.messaging` and `arcade.web` but not `arcade.mesh`, so `arcade-web` dies with
+  `ModuleNotFoundError: No module named 'arcade.mesh'` (imported by `messaging/scanner.py`). Nodes that
+  run from a checkout through `PYTHONPATH` never see it. Adding `"arcade.mesh"` should be all it needs;
+  your side may prefer `find_packages`. Node 3 runs from its checkout meanwhile.
+- **Asked of your side:** take 6734fe9, and the one-line packaging fix if you agree.
+
 ### 2026-10-19 · the operator's side (Claude) · branch `claude/fast-lane`
 - **Every Core this node runs peers through the mesh** (236497c8), not only Pepecoin's: Dogecoin, Litecoin and
   LTC TEST too, when both arcades run that chain's own Core. Borrowed chains are skipped. Old nodes simply
