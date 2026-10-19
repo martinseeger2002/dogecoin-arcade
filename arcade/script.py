@@ -265,3 +265,173 @@ def output_type(script, params: Params) -> "OutputType | None":
     except ValueError:          # not hex at all: the node said something odd
         return None
 
+
+
+# --- bech32 and segwit addresses (BIP173 / BIP350) ---------------------------
+#
+# Added for the Electrum-style Litecoin paths (2026-10-19, tbuuol's side): the
+# arcade's legacy P2PKH address stays as it is, and three more are derived
+# beside it the way other wallets do -- legacy (m/44'), P2SH-nested segwit
+# (m/49') and native segwit (m/84'). This module owns the ENCODING half so the
+# indexer can recognise segwit outputs and the backup page can show the
+# addresses; the KEY derivation stays in the browser (coins.js), where the
+# curve is, exactly as the legacy coin keys already do.
+#
+# The implementation is BIP173's own reference, kept close to it on purpose so
+# it can be read against the standard. `tests/test_segwit_addr.py` holds it to
+# the published bitcoin vectors (bc1/tb1), which fix the checksum and the
+# 8-to-5-bit packing; the Litecoin HRPs ("ltc", "tltc") are the same algorithm
+# with a different prefix fed into that same checksum.
+
+BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+#: The constant the checksum is built to. 1 is bech32 (witness v0, BIP173);
+#: 0x2bc830a3 is bech32m (witness v1+, BIP350). A v0 program decoded under the
+#: bech32m constant -- or the reverse -- fails, which is the whole point of the
+#: two constants, so a Taproot address is never read as a P2WPKH one.
+BECH32_CONST = 1
+BECH32M_CONST = 0x2BC830A3
+
+
+def _bech32_polymod(values: list[int]) -> int:
+    generator = [0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3]
+    chk = 1
+    for value in values:
+        top = chk >> 25
+        chk = ((chk & 0x1FFFFFF) << 5) ^ value
+        for i in range(5):
+            chk ^= generator[i] if ((top >> i) & 1) else 0
+    return chk
+
+
+def _bech32_hrp_expand(hrp: str) -> list[int]:
+    return [ord(x) >> 5 for x in hrp] + [0] + [ord(x) & 31 for x in hrp]
+
+
+def _bech32_create_checksum(hrp: str, data: list[int], const: int) -> list[int]:
+    values = _bech32_hrp_expand(hrp) + data
+    polymod = _bech32_polymod(values + [0, 0, 0, 0, 0, 0]) ^ const
+    return [(polymod >> 5 * (5 - i)) & 31 for i in range(6)]
+
+
+def _bech32_verify_checksum(hrp: str, data: list[int]) -> int | None:
+    """Which spec (BECH32_CONST or BECH32M_CONST) this string checks under, or
+    None if it checks under neither."""
+    check = _bech32_polymod(_bech32_hrp_expand(hrp) + data)
+    if check == BECH32_CONST:
+        return BECH32_CONST
+    if check == BECH32M_CONST:
+        return BECH32M_CONST
+    return None
+
+
+def bech32_encode(hrp: str, data: list[int], const: int = BECH32_CONST) -> str:
+    """hrp + '1' + the data (5-bit groups) + a six-symbol checksum."""
+    combined = data + _bech32_create_checksum(hrp, data, const)
+    return hrp + "1" + "".join(BECH32_CHARSET[d] for d in combined)
+
+
+def bech32_decode(bech: str) -> tuple[str | None, list[int] | None, int | None]:
+    """(hrp, 5-bit data, spec const), or (None, None, None). Mixed case, a
+    missing separator, an out-of-range symbol or a bad checksum all refuse."""
+    if any(ord(x) < 33 or ord(x) > 126 for x in bech):
+        return (None, None, None)
+    if bech.lower() != bech and bech.upper() != bech:
+        return (None, None, None)
+    bech = bech.lower()
+    pos = bech.rfind("1")
+    if pos < 1 or pos + 7 > len(bech) or len(bech) > 90:
+        return (None, None, None)
+    if not all(x in BECH32_CHARSET for x in bech[pos + 1:]):
+        return (None, None, None)
+    hrp = bech[:pos]
+    data = [BECH32_CHARSET.find(x) for x in bech[pos + 1:]]
+    const = _bech32_verify_checksum(hrp, data)
+    if const is None:
+        return (None, None, None)
+    return (hrp, data[:-6], const)
+
+
+def convertbits(data, frombits: int, tobits: int, pad: bool = True) -> list[int] | None:
+    """Repack a byte string into groups of `tobits` bits (BIP173). Used to turn
+    a witness program's 8-bit bytes into the 5-bit symbols bech32 carries."""
+    acc = 0
+    bits = 0
+    ret: list[int] = []
+    maxv = (1 << tobits) - 1
+    max_acc = (1 << (frombits + tobits - 1)) - 1
+    for value in data:
+        if value < 0 or (value >> frombits):
+            return None
+        acc = ((acc << frombits) | value) & max_acc
+        bits += frombits
+        while bits >= tobits:
+            bits -= tobits
+            ret.append((acc >> bits) & maxv)
+    if pad:
+        if bits:
+            ret.append((acc << (tobits - bits)) & maxv)
+    elif bits >= frombits or ((acc << (tobits - bits)) & maxv):
+        return None
+    return ret
+
+
+def segwit_encode(hrp: str, witver: int, program: bytes) -> str:
+    """The segwit address for a witness version and program. Version 0 is
+    bech32; version 1 and up is bech32m (BIP350)."""
+    const = BECH32_CONST if witver == 0 else BECH32M_CONST
+    five = convertbits(program, 8, 5)
+    if five is None:
+        raise ScriptError("cannot pack that witness program")
+    return bech32_encode(hrp, [witver] + five, const)
+
+
+def segwit_decode(hrp: str, addr: str) -> tuple[int | None, bytes | None]:
+    """(witness version, program) for a segwit address under this HRP, or
+    (None, None). Enforces the version/spec pairing and the length rules."""
+    got_hrp, data, const = bech32_decode(addr)
+    if got_hrp != hrp or data is None or len(data) < 1:
+        return (None, None)
+    decoded = convertbits(data[1:], 5, 8, False)
+    if decoded is None or len(decoded) < 2 or len(decoded) > 40:
+        return (None, None)
+    witver = data[0]
+    if witver > 16:
+        return (None, None)
+    if witver == 0 and len(decoded) not in (20, 32):
+        return (None, None)
+    want = BECH32_CONST if witver == 0 else BECH32M_CONST
+    if const != want:
+        return (None, None)
+    return (witver, bytes(decoded))
+
+
+# --- segwit scriptPubKeys and the three address kinds -------------------------
+
+
+def p2wpkh_script(keyhash: bytes) -> bytes:
+    """A native-segwit v0 output: OP_0 <20-byte hash160 of the pubkey>."""
+    if len(keyhash) != 20:
+        raise ScriptError("a P2WPKH program is a 20-byte hash")
+    return bytes([OP_0, 20]) + keyhash
+
+
+def p2sh_p2wpkh_redeem(keyhash: bytes) -> bytes:
+    """The redeemScript a P2SH-nested segwit output commits to: the P2WPKH
+    program itself (0x00 0x14 <20>). The address is this script's P2SH."""
+    return p2wpkh_script(keyhash)
+
+
+def p2wpkh_address(params: "Params", keyhash: bytes) -> str:
+    """The native-segwit (bech32) address for a key hash, e.g. ltc1q... /
+    tltc1q.... Refuses on a chain with no bech32 HRP."""
+    if not params.bech32_hrp:
+        raise ScriptError(f"{params.name} has no bech32 prefix")
+    return segwit_encode(params.bech32_hrp, 0, keyhash)
+
+
+def p2sh_p2wpkh_address(params: "Params", keyhash: bytes) -> str:
+    """The P2SH-nested-segwit address for a key hash: base58check of the
+    script hash, in this chain's script-hash version (M... on LTC, Q/2... on
+    LTC testnet). Opens in any wallet that speaks BIP49."""
+    return b58check_encode(params.scripthash_version, hash160(p2sh_p2wpkh_redeem(keyhash)))

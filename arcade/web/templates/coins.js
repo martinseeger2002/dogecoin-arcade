@@ -1291,3 +1291,144 @@ export async function verifyDoginalBuy(buy, keys) {
   const coinsOf = (sats) => (Number(sats) / 100000000).toFixed(8);
   return {tx, hashes, fee: Number(taken - paid), coinsOf};
 }
+
+/* --- Electrum-style Litecoin paths: legacy, P2SH-segwit, native segwit ------
+ *
+ * 2026-10-19 (tbuuol's side). The arcade's own coin key stays exactly where it
+ * was -- `coinPath`/`coinKey` above, m/44'/<coin>'/0'/0/i, legacy P2PKH. These
+ * are THREE MORE derivations beside it, the ones other wallets use, so a
+ * person can open the same Litecoin-testnet words in Electrum-LTC or Litecoin
+ * Core and find their coins:
+ *
+ *   legacy        m/44'/<coin>'/0'/0/i   P2PKH   (same shape as the arcade's)
+ *   P2SH-segwit   m/49'/<coin>'/0'/0/i   P2SH wrapping a P2WPKH   (BIP49)
+ *   native segwit m/84'/<coin>'/0'/0/i   P2WPKH, bech32           (BIP84)
+ *
+ * <coin> is the arcade's COIN_TYPE (1 for every test chain, so Litecoin
+ * testnet is coin type 1 here -- NOT its registered 2). The ENCODING below
+ * mirrors arcade/script.py byte for byte; tests/test_coins_browser.py holds
+ * the two to each other, and tests/test_segwit_addr.py holds the Python side
+ * to the BIP173/BIP350 vectors.
+ */
+
+const PURPOSE = {legacy: 44, p2shSegwit: 49, nativeSegwit: 84};
+
+export function purposePath(purpose, network, index = 0) {
+  const coin = COIN_TYPE[network] ?? 1;
+  return [purpose + HARDENED, coin + HARDENED, 0 + HARDENED, 0, index];
+}
+
+export async function legacyKey(seed, network, index = 0) {
+  const node = await derive(seed, purposePath(PURPOSE.legacy, network, index));
+  return {key: node.key, pubkey: publicKey(node.key)};
+}
+
+export async function p2shSegwitKey(seed, network, index = 0) {
+  const node = await derive(seed, purposePath(PURPOSE.p2shSegwit, network, index));
+  return {key: node.key, pubkey: publicKey(node.key)};
+}
+
+export async function nativeSegwitKey(seed, network, index = 0) {
+  const node = await derive(seed, purposePath(PURPOSE.nativeSegwit, network, index));
+  return {key: node.key, pubkey: publicKey(node.key)};
+}
+
+/* --- bech32 (BIP173) and bech32m (BIP350) -------------------------------- */
+
+const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+const BECH32_CONST = 1;
+const BECH32M_CONST = 0x2bc830a3;
+
+function bech32Polymod(values) {
+  const gen = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  let chk = 1;
+  for (const v of values) {
+    const top = chk >> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) chk ^= ((top >> i) & 1) ? gen[i] : 0;
+  }
+  return chk >>> 0;
+}
+
+function bech32HrpExpand(hrp) {
+  const out = [];
+  for (const c of hrp) out.push(c.charCodeAt(0) >> 5);
+  out.push(0);
+  for (const c of hrp) out.push(c.charCodeAt(0) & 31);
+  return out;
+}
+
+function bech32Checksum(hrp, data, cnst) {
+  const values = bech32HrpExpand(hrp).concat(data, [0, 0, 0, 0, 0, 0]);
+  const polymod = (bech32Polymod(values) ^ cnst) >>> 0;
+  const out = [];
+  for (let i = 0; i < 6; i++) out.push((polymod >> (5 * (5 - i))) & 31);
+  return out;
+}
+
+export function bech32Encode(hrp, data, cnst = BECH32_CONST) {
+  const combined = data.concat(bech32Checksum(hrp, data, cnst));
+  return hrp + "1" + combined.map((d) => BECH32_CHARSET[d]).join("");
+}
+
+/** Repack bytes into 5-bit groups (BIP173). Returns null on an invalid pack. */
+function convertbits(data, from, to, pad) {
+  let acc = 0, bits = 0;
+  const ret = [], maxv = (1 << to) - 1, maxAcc = (1 << (from + to - 1)) - 1;
+  for (const value of data) {
+    if (value < 0 || (value >> from)) return null;
+    acc = ((acc << from) | value) & maxAcc;
+    bits += from;
+    while (bits >= to) { bits -= to; ret.push((acc >> bits) & maxv); }
+  }
+  if (pad) { if (bits) ret.push((acc << (to - bits)) & maxv); }
+  else if (bits >= from || ((acc << (to - bits)) & maxv)) return null;
+  return ret;
+}
+
+/** The segwit address for a witness version and program (v0 bech32, v1+ bech32m). */
+export function segwitEncode(hrp, witver, program) {
+  const five = convertbits([...program], 8, 5, true);
+  if (five === null) throw new Error("cannot pack that witness program");
+  return bech32Encode(hrp, [witver].concat(five), witver === 0 ? BECH32_CONST : BECH32M_CONST);
+}
+
+/* --- segwit scripts and the three address kinds -------------------------- */
+
+/** OP_0 <20-byte key hash>: a native-segwit v0 output. */
+export function p2wpkhScript(keyhash) {
+  if (keyhash.length !== 20) throw new Error("a P2WPKH program is a 20-byte hash");
+  return new Uint8Array([0x00, 0x14, ...keyhash]);
+}
+
+/** The native-segwit (bech32) address for a public key: ltc1q... / tltc1q.... */
+export async function p2wpkhAddress(pubkey, hrp) {
+  return segwitEncode(hrp, 0, await hash160(pubkey));
+}
+
+/** The P2SH-nested-segwit address for a public key: base58check of the
+ *  hash160 of the P2WPKH program, in the chain's script-hash version. */
+export async function p2shSegwitAddress(pubkey, scripthashVersion) {
+  const redeem = p2wpkhScript(await hash160(pubkey));
+  return base58check(scripthashVersion, await hash160(redeem));
+}
+
+/** Every Electrum-style identity for one chain and index: the address of each
+ *  kind and the private key behind it as WIF, for opening the same words in
+ *  another wallet. `v` carries the chain's version bytes and bech32 prefix. */
+export async function electrumWallet(seed, network, v, index = 0) {
+  const legacy = await legacyKey(seed, network, index);
+  const nested = await p2shSegwitKey(seed, network, index);
+  const native = await nativeSegwitKey(seed, network, index);
+  return {
+    legacy: {path: `m/44'/${COIN_TYPE[network] ?? 1}'/0'/0/${index}`,
+             address: await address(legacy.pubkey, v.pubkeyhash),
+             wif: await wif(legacy.key, v.wif)},
+    p2shSegwit: {path: `m/49'/${COIN_TYPE[network] ?? 1}'/0'/0/${index}`,
+             address: await p2shSegwitAddress(nested.pubkey, v.scripthash),
+             wif: await wif(nested.key, v.wif)},
+    nativeSegwit: {path: `m/84'/${COIN_TYPE[network] ?? 1}'/0'/0/${index}`,
+             address: await p2wpkhAddress(native.pubkey, v.bech32Hrp),
+             wif: await wif(native.key, v.wif)},
+  };
+}
