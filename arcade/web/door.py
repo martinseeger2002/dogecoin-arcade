@@ -129,6 +129,7 @@ PUBLIC_PAGES = frozenset({
     "/account/orders/delegated",      # where this account's node-filled orders stand (2026-10-17)
     "/account/talk/inbox",            # sealed swap messages the mesh brought this page (talk_relay)
     "/account/activity",              # this account's own coin history (signed in)
+    "/account/chain-stats",           # each chain's node operators and numbers, for Your wallets (2026-10-18)
     "/account/standing/fillable",     # this account's buy orders a sell order meets
     "/account/claimpools",            # this account's own prize pools, to withdraw
     "/account/pagesends",             # what pages have asked this account to send

@@ -190,15 +190,53 @@
 <div class="panel" style="margin-top:14px" id="wallet-chains">
   <h2 style="margin-top:0">Your wallets</h2>
   <p class="muted" style="margin:0 0 10px;font-size:.88rem">Which chains show in your Wallet tab. A hidden wallet keeps
-    its address: it is still published with your name, and coins sent to it still arrive.</p>
+    its address: it is still published with your name, and coins sent to it still arrive. Under each chain: how many
+    node operators run it, and how its chain stands.</p>
   {% for c in chain_menu(account_side=True) %}
   <label style="display:flex;flex-direction:row;gap:10px;align-items:center;margin:0 0 8px;cursor:pointer">
     <input type="checkbox" class="wallet-chain" style="width:auto;flex:none;margin:0" data-network="{{ c.network }}" {{ '' if c.network in (hidden or []) else 'checked' }}>
     <span>{{ net_badge(c.network) }} {{ c.coin }}{% if not c.ready %} <span class="muted small">(not open yet)</span>{% endif %}</span>
   </label>
+  {# 2026-10-18: each chain's node operators and numbers, filled from /account/chain-stats. #}
+  <div class="chain-stats muted small" data-network="{{ c.network }}" style="display:flex;flex-wrap:wrap;gap:4px 14px;margin:-4px 0 12px 28px">
+    <span>Loading the chain&rsquo;s numbers&hellip;</span></div>
   {% endfor %}
   <p class="muted small" id="wallet-chains-said" style="margin:6px 0 0"></p>
   <script>
+  (function () {
+    function num(n) { return Number(n).toLocaleString(); }
+    function stat(k, v, tip) {
+      var s = document.createElement('span');
+      if (tip) s.title = tip;
+      var b = document.createElement('b'); b.textContent = v;
+      s.append(k + ' ', b);
+      return s;
+    }
+    fetch('/account/chain-stats', {credentials: 'same-origin'})
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (all) {
+        document.querySelectorAll('.chain-stats').forEach(function (row) {
+          var c = all[row.dataset.network] || {};
+          var bits = [stat('Node operators', num(c.operators || 0),
+                           'Arcades this one can see running this chain\'s node: this one when it runs its own, and each linked arcade that shares it')];
+          if (c.online) {
+            bits.push(stat('Height', num(c.blocks)));
+            bits.push(stat('Status', c.synced ? 'synced' : 'syncing ' + c.progress + '%'));
+            if (c.mempool != null) bits.push(stat('Waiting txs', num(c.mempool), 'Transactions in the mempool, not in a block yet'));
+            if (c.difficulty != null) bits.push(stat('Difficulty', c.difficulty >= 1 ? num(Math.round(c.difficulty)) : Number(c.difficulty.toPrecision(2)).toString()));
+            if (c.peers != null) bits.push(stat('Peers', num(c.peers), 'Other nodes of this chain the arcade\'s node is connected to'));
+          } else {
+            bits.push(stat('Status', 'node not answering'));
+          }
+          bits.push(stat('Here', c.here ? 'own node' : 'borrowed node',
+                         c.here ? 'This arcade runs this chain\'s node itself' : 'This arcade reads this chain through another arcade\'s node, over the mesh'));
+          row.replaceChildren.apply(row, bits);
+        });
+      })
+      .catch(function () {
+        document.querySelectorAll('.chain-stats').forEach(function (row) { row.remove(); });
+      });
+  })();
   (function () {
     var said = document.getElementById('wallet-chains-said');
     document.querySelectorAll('.wallet-chain').forEach(function (box) {

@@ -52,6 +52,20 @@ def test_a_wallet_hidden_is_kept_out_of_the_wallet_tab_but_its_address_stays(cli
     assert 'id="wallet-chains"' in me and f'data-network="{net}"' in me
 
 
+def test_each_chain_says_its_node_operators_and_numbers(client):
+    from test_me_page import _seat
+    app, state = client
+    assert app.get("/account/chain-stats").status_code == 403, "signed in only"
+    _seat(app)
+    assert 'class="chain-stats' in app.get("/me").text
+    said = app.get("/account/chain-stats").json()
+    assert set(said) == {c.network for c in state.all_chains}
+    for net, row in said.items():
+        assert row["here"] is True and row["operators"] >= 1, "a chain run here counts this arcade"
+        assert {"online", "operators", "here"} <= set(row)
+    assert "/account/chain-stats" in door.PUBLIC_PAGES, "a public arcade lets the route through"
+
+
 def test_hiding_one_of_several(client, monkeypatch):
     from test_me_page import _seat
     from test_dogecoin_network import _with_doge

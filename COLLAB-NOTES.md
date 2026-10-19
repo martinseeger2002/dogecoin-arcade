@@ -88,6 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (night, last) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
+- **Each chain's numbers in Your arcade -> Your wallets** (SadFrog: each chain there should show "a node
+  operator count and other relevant statistics"). Under each chain's checkbox, one line: node operators,
+  height, synced or syncing %, waiting txs (mempool), difficulty, Core peers (only for a chain run here),
+  and whether this arcade runs its own node or borrows one.
+  - **Node operators** are the arcades this one can see running that chain's Core: itself when it runs one,
+    plus each linked arcade whose Core-share offer names that chain (`CoreShare.tips`). On the messaging chain,
+    every linked arcade counts, because every arcade runs it. Arcades that run a Core but don't share it, or
+    that aren't linked, aren't counted. A real mesh-wide count would need the offer (or the hello) to name the
+    chains an arcade runs, not just the ones it shares. Tell us if you want that and how you'd frame it.
+  - `GET /account/chain-stats` (signed in, in `door.PUBLIC_PAGES`) answers `{net: {operators, here, online,
+    blocks, headers, progress, synced, mempool, difficulty, peers}}`, kept 15 s. Each RPC is read on its own, so
+    one failing call leaves out only its own number. If the fetch fails, the panel drops the lines.
+- Files: `arcade/web/app.py` (`_chain_stats`), `arcade/web/door.py`, `arcade/web/templates/me.html`,
+  `tests/test_chain_wallets.py` (+1). Chain wallets, me page and public tests: 153 pass, 16 skipped.
+- **Asked of your side:** nothing.
 ### 2026-10-18 (late night) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
 - **Merged `main` 5ada342.** The merged tree is your `main` exactly: all of ours was already in it.
 - **Two kinds of duplicate in Admin, as SadFrog and you saw them:**

@@ -20544,6 +20544,60 @@ def create_app(state: AppState) -> FastAPI:
         state.set_setting(f"wallets_hidden:{account.pubkey}", sorted(hidden))
         return JSONResponse({"hidden": sorted(hidden)})
 
+    _chain_stats_kept: dict = {}
+
+    def _chain_stats(chain) -> dict:
+        """One chain's numbers for Your arcade -> Your wallets (2026-10-18: "each blockchain should have a node
+        operator count and other relevant statistics"). Operators are the arcades this one can see running that
+        chain's Core: itself when it runs one, and each linked arcade that shares it (every arcade runs the
+        messaging chain, so there every linked arcade counts). Kept 15 s; each read on its own, so a node that
+        does not answer one call still gives the rest."""
+        kept = _chain_stats_kept.get(chain.network)
+        if kept and kept[0] > time.monotonic():
+            return kept[1]
+        mesh = state.mesh
+        node = getattr(mesh, "node", None)
+        share = getattr(mesh, "coreshare", None)
+        links = len(getattr(node, "links", None) or {})
+        here = not chain.borrowed
+        if chain.network == state.messaging.network:
+            others = links
+        else:
+            try:
+                others = len(share.tips(chain.network)) if share else 0
+            except Exception:                              # noqa: BLE001 -- the mesh mid-change
+                others = 0
+        said: dict[str, Any] = {"operators": others + (1 if here else 0), "here": here, "online": False}
+        try:
+            with chain.rpc() as rpc:
+                info = rpc.get_blockchain_info()
+                blocks, headers = int(info.get("blocks", 0)), int(info.get("headers", 0))
+                said.update(online=True, blocks=blocks, headers=headers,
+                            progress=round(100 * min(1.0, float(info.get("verificationprogress", 0) or 0)), 2),
+                            synced=headers > 0 and headers - blocks <= 2 and not info.get("initialblockdownload"))
+                for key, call in (("mempool", "getmempoolinfo"), ("difficulty", "getdifficulty")):
+                    try:
+                        got = rpc.call(call)
+                        said[key] = int(got.get("size", 0)) if key == "mempool" else float(
+                            got.get("proof-of-work", 0) if isinstance(got, dict) else got)
+                    except Exception:                      # noqa: BLE001 -- shown as a dash
+                        pass
+                if here:
+                    try:
+                        said["peers"] = int(rpc.call("getconnectioncount"))
+                    except Exception:                      # noqa: BLE001
+                        pass
+        except Exception:                                  # noqa: BLE001 -- the node away: operators still said
+            pass
+        _chain_stats_kept[chain.network] = (time.monotonic() + 15, said)
+        return said
+
+    @app.get("/account/chain-stats")
+    def account_chain_stats(request: Request):
+        """Every chain's numbers for the Your wallets panel, by network."""
+        _signed_in_account(request)
+        return JSONResponse({c.network: _chain_stats(c) for c in state.all_chains})
+
     @app.get("/me/wallet/tokens", response_class=HTMLResponse)
     def my_wallet_tokens(request: Request):
         """The Tokens tab: what this account's addresses hold, and a form
