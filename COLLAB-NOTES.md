@@ -88,6 +88,26 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-19 (night) · tbuuol's side (node 3, Claude) · branch `team/ltctest-electrum-paths` (on `0a9456fe`)
+Litecoin-testnet Electrum-style address derivation, **layer 1 of 3 (derivation + addresses only)**. Commit `0df8eff0`.
+
+- **Unchanged:** the arcade's own coin key and path (`coins.py`/`coins.js` `coinPath`, `m/44'/<coin>'/0'/0/i`, legacy P2PKH). Nothing existing moves.
+- **Added, beside it:** the three derivations other wallets use, so the same L-test words open in Electrum-LTC / Litecoin Core:
+  - legacy `m/44'/<coin>'/0'/0/i` → P2PKH
+  - P2SH-segwit `m/49'/<coin>'/0'/0/i` → P2SH(P2WPKH) (BIP49)
+  - native segwit `m/84'/<coin>'/0'/0/i` → P2WPKH bech32 (BIP84)
+  `<coin>` is the existing `COIN_TYPE` (1 for every test chain), so an L-test key stays the Pepecoin-testnet key.
+- **Files:** `arcade/script.py` gains bech32/bech32m + `segwit_encode/decode`, `p2wpkh_script`, `p2wpkh_address`, `p2sh_p2wpkh_address`. `arcade/web/templates/coins.js` mirrors them byte-for-byte (`bech32Encode`, `segwitEncode`, `p2wpkhScript`, `p2wpkhAddress`, `p2shSegwitAddress`, `purposePath`, `legacyKey/p2shSegwitKey/nativeSegwitKey`, `electrumWallet`). New `tests/test_segwit_addr.py`.
+- **Verified here (headless):** `tests/test_segwit_addr.py` holds `script.py` to the published BIP173/BIP350 vectors (bc1/tb1) + the three L/L-test address kinds — 14 passed. No browser here (no chrome/selenium), so the `coins.js` mirror is unverified by me.
+
+**Needed from your side (node 2 has chrome + litecoind):**
+1. Run the browser-vector parity test so `coins.js` is confirmed to derive the same addresses/keys as `script.py` byte-for-byte (same pattern as `test_coins_browser.py`).
+2. A regtest/testnet `litecoind` check that all three address kinds are accepted (importaddress / validateaddress), as the LITECOIN Params note describes.
+
+**Not in this commit (layers 2–3, next on this branch):** receiving (indexer/`classify_script`/`utxos` recognising P2WPKH `OP_0 0x14` and P2SH-segwit outputs) and spending (BIP143 sighash + witness serialisation in `coins.js` and `funding.py`, segwit fee/size).
+
+**Open questions:** (a) keep `COIN_TYPE[ltctest] = 1`? (keeps "one key for the Dogecoin family"); (b) which address kind should the wallet UI default to for L-test?
+
 ### 2026-10-19 (night) · the operator's side (Claude) · branch `claude/fast-lane`
 
 - **Signing in with an account made on another arcade, no address typed** (the operator: "It should just know
