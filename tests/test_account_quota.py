@@ -106,13 +106,14 @@ def test_the_numbers_are_on_the_page_before_anybody_runs_into_them(client):
 
 
 def test_the_operators_page_shows_the_same_numbers_it_writes(client):
+    """The limits moved from Overview to Admin -> People (2026-10-19), which draws them from /admin/api/state."""
     app, state = client
-    body = app.get("/").text
-    assert "What one account may do here" in body
-    assert f'value="{accountslib.PER_HOUR["post"]}"' in body, \
+    local = {"host": "127.0.0.1:8420"}
+    hour = app.get("/admin/api/state", headers=local).json()["quotas"]["hour"]
+    assert hour["post"] == accountslib.PER_HOUR["post"], \
         "the form shows what is in force, not what the code defaults to"
     state.set_setting("quota:post", 7)
-    assert 'value="7"' in app.get("/").text
+    assert app.get("/admin/api/state", headers=local).json()["quotas"]["hour"]["post"] == 7
 
 
 def test_the_account_page_shows_its_own_room(client):

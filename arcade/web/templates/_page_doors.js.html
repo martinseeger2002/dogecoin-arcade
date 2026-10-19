@@ -14,6 +14,17 @@
     var here = {{ row.txid|tojson }}, csrf = {{ csrf|tojson }};
     var viewer = {{ viewer|tojson }};
     var holder = {{ row.owner|tojson }}, maker = {{ row.creator|tojson }};
+    var makerName = {{ (('@' ~ name_of(row.creator)) if name_of(row.creator) else '')|tojson }};
+    var gameName = {{ game_name(row.json)|tojson }};
+    // Wallet access for THIS page (base.html, WALLET ACCESS, PER GAME): asked for once, with the publisher named,
+    // before any door that uses the key -- trades, escrow, shops, signing. Joining rooms as yourself is not one.
+    function gameKeys(chain, why){
+      if (arcadeGameAllowed(here)) return arcadeKeys(chain, why);
+      return arcadeAccessAsk(here, gameName, makerName, maker).then(function(yes){
+        if (!yes) throw new Error('Wallet access is off for this game. Check its publisher, then turn it on on its card or when it asks.');
+        return arcadeKeys(chain, why);
+      });
+    }
     var CHAIN = {network: "{{chain.network}}",
                  version: {{chain.params.pubkeyhash_version}}};
     var doors = {contacts: 'viewer', storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
@@ -135,18 +146,27 @@
         });
       });
     }
-    function realtimeOpen(name, frame, j, game){
+    function realtimeOpen(name, frame, j, game, fast){
       var base = j.base || '';
       var es = new EventSource(base + '/realtime/stream?token=' + encodeURIComponent(j.token));
-      var h = rt[name] = {token: j.token, es: es, me: j.me, members: {}, game: game, base: base, frame: frame};
+      var h = rt[name] = {token: j.token, es: es, me: j.me, members: {}, game: game, base: base, frame: frame,
+                          wantFast: !!fast};
       (j.members || []).forEach(function(p){ h.members[p.id] = p; });
+      if (fast) fastStart(name, h);
       es.onmessage = function(ev){
         if (rt[name] !== h) return;              // an old stream, replaced by a rejoin
         var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
         d.room = name;
         if (d.member) {
-          if (d.type === 'join') h.members[d.member.id] = d.member;
-          if (d.type === 'leave') delete h.members[d.member.id];
+          if (d.type === 'join') { h.members[d.member.id] = d.member; fastMeet(name, h, d.member); }
+          if (d.type === 'leave') {
+            delete h.members[d.member.id];
+            if (h.fast && h.fast.peers[d.member.id]) { fastDrop(h, d.member.id); fastSay(name, h, d.member, 'gone'); }
+          }
+        }
+        if (d.type === 'message' && typeof d.data === 'string' && d.data.indexOf(RTC) === 0) {
+          rtcHeard(name, h, d.member, d.data.slice(RTC.length));
+          return;                 // the fast lane's own talk: never the page's
         }
         if (d.type === 'message' && typeof d.data === 'string'
             && d.data.indexOf(TRADE) === 0) {
@@ -196,6 +216,7 @@
     function realtimeRejoin(name, frame, h){
       if (rt[name] !== h || h.rejoining) return;
       h.rejoining = true;
+      fastStop(h);                                // the new seat connects again from scratch
       try { h.es.close(); } catch (err) {}
       clearInterval(h.watch);
       frame.postMessage({arcade: 'realtime', event: {type: 'reconnecting', room: name}}, '*');
@@ -214,7 +235,7 @@
             return;
           }
           if (!j || !j.ok || !j.online || !j.token) throw new Error('not yet');
-          var before = h.members, now = realtimeOpen(name, frame, j, h.game);
+          var before = h.members, now = realtimeOpen(name, frame, j, h.game, h.wantFast);
           // The page's own seat was replaced: say so, every time, so a game can send its
           // state again -- the others saw this player leave and come back (2026-10-13).
           frame.postMessage({arcade: 'realtime', event: {type: 'rejoined', room: name, member: now.me}}, '*');
@@ -236,6 +257,221 @@
         });
       })();
     }
+    // THE FAST LANE (2026-10-18, docs/hosting-plan.md section 6; the operator: a 4 v 4 shooter "browser to browser").
+    // A room joined with {fast: true} also connects every pair of players directly over WebRTC data channels:
+    // unordered with no resends for positions (a lost one is skipped, never waited for), and an ordered reliable
+    // channel beside it. The connections live HERE, in the viewer, not in the sandboxed game, which can still reach
+    // nothing but this page; the game hears {type: 'fast'} and {type: 'peer'} events. Signaling rides the room
+    // as hidden messages (like trades): the player with the lower id offers, each side sends ONE compact
+    // description with all its candidates (no trickle), so a pair costs two room messages and fits the room's
+    // size and rate limits on every node, old ones included. STUN comes from /realtime/ice (nodes first, then a
+    // public one); there is no relay unless the game's builder pays for one, so a pair that cannot connect
+    // directly carries that link over the room instead, as often as the room allows (state 'room').
+    var RTC = '\u001farcade-rtc:', FAST_WAIT = 12000, FAST_MAX = 16384, FAST_PEERS = 15, RTC_PIECE = 300;
+    var fastIce = null;
+    function fastServers(){
+      if (!fastIce) fastIce = fetch('/realtime/ice', {cache: 'no-store'}).then(function(r){ return r.json(); })
+        .then(function(j){ return (j && j.iceServers) || []; })
+        .catch(function(){ fastIce = null; return []; });
+      return fastIce;
+    }
+    function fastStart(name, h){
+      if (typeof RTCPeerConnection !== 'function') return;     // no WebRTC here: the room carries everything
+      h.fast = {peers: {}, out: [], parts: {}, latest: null, reliable: [], k: 0};
+      for (var id in h.members) fastMeet(name, h, h.members[id]);
+    }
+    function fastStop(h){
+      if (!h || !h.fast) return;
+      for (var id in h.fast.peers) fastDrop(h, id, true);
+      clearInterval(h.fast.pump);
+      h.fast = null;
+    }
+    function fastSay(name, h, p, state){
+      var peer = h.fast && h.fast.peers[p.id];
+      if (peer) { if (peer.state === state) return; peer.state = state; }
+      h.frame.postMessage({arcade: 'realtime', event: {type: 'peer', room: name, member: p, state: state}}, '*');
+    }
+    function fastMeet(name, h, p){
+      if (!h.fast || !h.me || p.id === h.me.id || h.fast.peers[p.id]) return;
+      if (Object.keys(h.fast.peers).length >= FAST_PEERS) return;
+      var peer = h.fast.peers[p.id] = {p: p, state: '', tries: 0};
+      fastSay(name, h, p, 'connecting');
+      if (h.me.id < p.id) fastOffer(name, h, peer);
+      peer.timer = setTimeout(function(){ fastFallback(name, h, peer); }, FAST_WAIT);
+    }
+    function fastDrop(h, id, quiet){
+      var peer = h.fast && h.fast.peers[id];
+      if (!peer) return;
+      clearTimeout(peer.timer);
+      try { if (peer.pc) peer.pc.close(); } catch (err) {}
+      delete h.fast.peers[id];
+    }
+    function fastFallback(name, h, peer){
+      if (!h.fast || h.fast.peers[peer.p.id] !== peer || peer.state === 'direct') return;
+      fastSay(name, h, peer.p, 'room');
+      fastPump(name, h);
+    }
+    function fastPc(name, h, peer){
+      return fastServers().then(function(servers){
+        if (!h.fast || h.fast.peers[peer.p.id] !== peer) throw new Error('gone');
+        try { if (peer.pc) peer.pc.close(); } catch (err) {}
+        var pc = peer.pc = new RTCPeerConnection({iceServers: servers});
+        peer.u = pc.createDataChannel('u', {negotiated: true, id: 0, ordered: false, maxRetransmits: 0});
+        peer.r = pc.createDataChannel('r', {negotiated: true, id: 1, ordered: true});
+        [peer.u, peer.r].forEach(function(dc){
+          dc.onopen = function(){
+            if (peer.pc !== pc) return;
+            clearTimeout(peer.timer);
+            fastSay(name, h, peer.p, 'direct');
+          };
+          dc.onmessage = function(ev){ fastHeard(name, h, peer.p, ev.data); };
+        });
+        pc.onconnectionstatechange = function(){
+          if (peer.pc !== pc || !h.fast || h.fast.peers[peer.p.id] !== peer) return;
+          if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+            fastSay(name, h, peer.p, 'room');
+            // The lower id tries again a few times (a network change, a phone that slept); meanwhile the room.
+            if (h.me.id < peer.p.id && peer.tries < 3) setTimeout(function(){
+              if (h.fast && h.fast.peers[peer.p.id] === peer) fastOffer(name, h, peer);
+            }, 2000 * peer.tries);
+          }
+        };
+        return pc;
+      });
+    }
+    function fastGathered(pc){
+      return new Promise(function(done){
+        if (pc.iceGatheringState === 'complete') return done();
+        var t = setTimeout(done, 2500);
+        pc.addEventListener('icegatheringstatechange', function(){
+          if (pc.iceGatheringState === 'complete') { clearTimeout(t); done(); }
+        });
+      });
+    }
+    // The description boiled down to what the other side needs (a full one is about 1 KB, the room takes 512 B):
+    // ICE user and password, the DTLS fingerprint and role, and the UDP candidates.
+    function sdpPack(sdp, kind){
+      var out = {t: kind, c: []};
+      sdp.split(/\r?\n/).forEach(function(l){
+        var m;
+        if ((m = /^a=ice-ufrag:(.+)$/.exec(l))) out.u = m[1];
+        else if ((m = /^a=ice-pwd:(.+)$/.exec(l))) out.p = m[1];
+        else if ((m = /^a=fingerprint:sha-256 (.+)$/i.exec(l))) out.f = m[1].replace(/:/g, '');
+        else if ((m = /^a=setup:(\w+)$/.exec(l))) out.s = m[1];
+        else if ((m = /^a=candidate:\S+ 1 udp \d+ (\S+) (\d+) typ (host|srflx|prflx|relay)/i.exec(l))
+                 && out.c.length < 8) out.c.push(m[1] + ' ' + m[2] + ' ' + m[3][0]);
+      });
+      return out;
+    }
+    function sdpUnpack(o){
+      var types = {h: ['host', 2130706431], s: ['srflx', 1694498815], p: ['prflx', 1862270975], r: ['relay', 16777215]};
+      var fp = String(o.f || '').toUpperCase().match(/../g) || [];
+      var lines = ['v=0', 'o=- ' + Date.now() + ' 2 IN IP4 127.0.0.1', 's=-', 't=0 0', 'a=group:BUNDLE 0',
+                   'a=msid-semantic: WMS', 'm=application 9 UDP/DTLS/SCTP webrtc-datachannel', 'c=IN IP4 0.0.0.0',
+                   'a=ice-ufrag:' + o.u, 'a=ice-pwd:' + o.p, 'a=fingerprint:sha-256 ' + fp.join(':'),
+                   'a=setup:' + o.s, 'a=mid:0', 'a=sctp-port:5000', 'a=max-message-size:262144'];
+      (o.c || []).forEach(function(c, i){
+        var f = String(c).split(' '), t = types[f[2]] || types.h;
+        lines.push('a=candidate:' + (i + 1) + ' 1 udp ' + (t[1] - i) + ' ' + f[0] + ' ' + f[1] + ' typ ' + t[0]
+                   + (t[0] === 'host' ? '' : ' raddr 0.0.0.0 rport 0'));
+      });
+      lines.push('a=end-of-candidates');
+      return {type: o.t === 'o' ? 'offer' : 'answer', sdp: lines.join('\r\n') + '\r\n'};
+    }
+    function fastOffer(name, h, peer){
+      peer.tries++;
+      fastPc(name, h, peer).then(function(pc){
+        return pc.createOffer().then(function(d){ return pc.setLocalDescription(d); })
+          .then(function(){ return fastGathered(pc); })
+          .then(function(){ if (peer.pc === pc) fastSignal(name, h, peer.p.id, sdpPack(pc.localDescription.sdp, 'o')); });
+      }).catch(function(){});
+    }
+    function fastAnswer(name, h, p, o){
+      var peer = h.fast.peers[p.id];
+      if (!peer) { fastMeet(name, h, p); peer = h.fast.peers[p.id]; }
+      if (!peer) return;
+      fastPc(name, h, peer).then(function(pc){
+        return pc.setRemoteDescription(sdpUnpack(o))
+          .then(function(){ return pc.createAnswer(); })
+          .then(function(d){ return pc.setLocalDescription(d); })
+          .then(function(){ return fastGathered(pc); })
+          .then(function(){ if (peer.pc === pc) fastSignal(name, h, p.id, sdpPack(pc.localDescription.sdp, 'a')); });
+      }).catch(function(){});
+    }
+    function fastSignal(name, h, to, body){
+      var text = JSON.stringify(body), k = (++h.fast.k).toString(36), n = Math.ceil(text.length / RTC_PIECE);
+      for (var i = 0; i < n; i++) {
+        h.fast.out.push({to: to, k: k, i: i, n: n, d: text.slice(i * RTC_PIECE, (i + 1) * RTC_PIECE)});
+      }
+      fastPump(name, h);
+    }
+    // Everything the fast lane says in the room goes out at most three a second, so it never pushes the game's
+    // own room messages over the node's limit (five a second): signaling first, then what a 'room' link carries
+    // -- the reliable ones in order, and of the rest only the latest.
+    function fastPump(name, h){
+      if (!h.fast || h.fast.pump) return;
+      h.fast.pump = setInterval(function(){
+        if (!h.fast || rt[name] !== h) return;
+        var msg = h.fast.out.shift();
+        if (!msg && fastViaRoom(h)) {
+          if (h.fast.reliable.length) msg = {f: 1, r: 1, d: h.fast.reliable.shift()};
+          else if (h.fast.latest != null) { msg = {f: 1, d: h.fast.latest}; h.fast.latest = null; }
+        }
+        if (!msg) {
+          if (!fastViaRoom(h)) { clearInterval(h.fast.pump); h.fast.pump = null; }
+          return;
+        }
+        realtimePost('/realtime/send', {token: h.token, data: RTC + JSON.stringify(msg)}, h.base).catch(function(){});
+      }, 340);
+    }
+    function fastViaRoom(h){
+      for (var id in h.fast.peers) if (h.fast.peers[id].state === 'room') return true;
+      return false;
+    }
+    function fastHeard(name, h, p, data){
+      h.frame.postMessage({arcade: 'realtime', event: {type: 'fast', room: name, member: p, data: data}}, '*');
+    }
+    // A hidden fast-lane message heard in the room.
+    function rtcHeard(name, h, p, text){
+      var msg; try { msg = JSON.parse(text); } catch (err) { return; }
+      if (!h.fast || !p || !h.me || p.id === h.me.id) return;
+      if (msg.f) {                               // fast data carried by the room: only for those without a link
+        var peer = h.fast.peers[p.id];
+        if (peer && peer.state === 'direct') return;
+        if (typeof msg.d === 'string') fastHeard(name, h, p, msg.d);
+        return;
+      }
+      if (msg.to !== h.me.id || typeof msg.d !== 'string') return;
+      var key = p.id + '/' + msg.k, got = h.fast.parts[key] || (h.fast.parts[key] = []);
+      got[msg.i | 0] = msg.d;
+      var n = msg.n | 0;
+      if (n < 1 || n > 8) { delete h.fast.parts[key]; return; }
+      for (var i = 0; i < n; i++) if (got[i] == null) return;
+      delete h.fast.parts[key];
+      var o; try { o = JSON.parse(got.join('')); } catch (err) { return; }
+      if (o.t === 'o') fastAnswer(name, h, p, o);
+      else if (o.t === 'a') {
+        var pr = h.fast.peers[p.id];
+        if (pr && pr.pc && pr.pc.signalingState === 'have-local-offer') pr.pc.setRemoteDescription(sdpUnpack(o)).catch(function(){});
+      }
+    }
+    // The game's fast.send: to every peer directly, and through the room to those without a link.
+    function fastSend(h, m){
+      if (!h.fast) return;
+      var data = String(m.data == null ? '' : m.data);
+      if (data.length > FAST_MAX) return;
+      var reliable = !!m.reliable, viaRoom = false;
+      for (var id in h.fast.peers) {
+        var peer = h.fast.peers[id], dc = reliable ? peer.r : peer.u;
+        if (peer.state === 'direct' && dc && dc.readyState === 'open') {
+          try { dc.send(data); } catch (err) {}
+        } else if (peer.state === 'room') viaRoom = true;
+      }
+      if (viaRoom && data.length <= 400) {
+        if (reliable) { if (h.fast.reliable.length < 50) h.fast.reliable.push(data); }
+        else h.fast.latest = data;
+      }
+    }
     function realtimeDoor(m, answer, frame){
       var name = String(m.room || '');
       if (m.op === 'join') {
@@ -243,14 +479,15 @@
         realtimeConnect(name, game, '').then(function(j){
           if (j.ok && j.online === false && !j.token) { answer(j); return; }
           if (!j.ok) { answer({ok: false, error: j.error || 'refused'}); return; }
-          var h = realtimeOpen(name, frame, j, game);
-          answer({ok: true, online: true, me: h.me, members: j.members});
+          var h = realtimeOpen(name, frame, j, game, !!m.fast);
+          answer({ok: true, online: true, me: h.me, members: j.members, fast: !!h.fast});
         }).catch(function(err){
           answer({ok: false, error: String((err && err.message) || err || 'refused')});
         });
         return;
       }
       var held = rt[name];
+      if (m.op === 'fast') { if (held) fastSend(held, m); return; }   // many a second: never answered
       if (!held) { answer({ok: false, error: 'join the room first'}); return; }
       if (m.op === 'send') {
         realtimePost('/realtime/send', {token: held.token, data: String(m.data || '')}, held.base)
@@ -263,6 +500,7 @@
             answer({ok: false, error: 'the node did not answer'});
           });
       } else if (m.op === 'leave') {
+        fastStop(held);
         held.es.close(); delete rt[name];
         realtimePost('/realtime/leave', {token: held.token}, held.base).catch(function(){});
         answer({ok: true});
@@ -321,7 +559,7 @@
     }
     function tradeKeys(why){
       return import('/wallet.js').then(function(w){
-        return arcadeKeys(CHAIN, why).then(function(keys){ return {w: w, keys: keys}; });
+        return gameKeys(CHAIN, why).then(function(keys){ return {w: w, keys: keys}; });
       });
     }
     function tradeAsk(t, title, button){
@@ -642,7 +880,7 @@
     // its copy, whoever happens to be looking at it.
     function shopByKey(m){
       return import('/wallet.js').then(function(w){
-        return arcadeKeys(CHAIN, 'This shop needs your wallet to trade.').then(function(wallet){
+        return gameKeys(CHAIN, 'This shop needs your wallet to trade.').then(function(wallet){
           return w.shopDoor(wallet, here, m);
         });
       });
@@ -707,7 +945,7 @@
           if (!needKey) return doIt(w, null);
           // The page asked for something only the key can do: open the unlock
           // sheet in place if the wallet is locked, and carry on after.
-          return arcadeKeys(CHAIN, 'This page is asking your wallet to sign something.')
+          return gameKeys(CHAIN, 'This page is asking your wallet to sign something.')
             .then(function(wallet){ return doIt(w, wallet); });
         }).then(function(r){ answer(Object.assign({ok: true}, r)); })
           .catch(function(err){

@@ -189,10 +189,33 @@ def _pushes(script: bytes) -> list[bytes]:
     return out
 
 
-def pay_out(coin: dict, to: str, fee: int = SPEND_FEE) -> tuple[list[dict], list[tuple[int, bytes]]]:
-    """Coins out of a lock: the whole coin, less the fee, to one address."""
-    value = int(coin["value"]) - int(fee)
-    if value < DUST:
+#: About the size of a claim or a refund (one lock input with its secret or none, one output): 309 bytes measured.
+SPEND_BYTES = 400
+
+
+def spend_fee(params: Any = None) -> int:
+    """What taking a coin out of a lock pays the network on that chain. The Dogecoin family keeps the 0.01 it has
+    always paid (its soft-dust rules); a chain without them (Litecoin) pays its own rate for a spend's size, at least
+    its dust line. 2026-10-18: a 0.01 LTC lock could never be claimed -- 0.01 off it left nothing -- and a PEP for
+    LTC swap's seller lost the race to a refund (claimed by hand, fa7143d5...)."""
+    if params is None or getattr(params, "soft_dust", True):
+        return SPEND_FEE
+    return max(int(params.dust_limit), -(-SPEND_BYTES * int(params.min_fee_per_kb) // 1000))
+
+
+def dust_of(params: Any = None) -> int:
+    """The least a payout out of a lock may be on that chain."""
+    if params is None or getattr(params, "soft_dust", True):
+        return DUST
+    return int(params.dust_limit)
+
+
+def pay_out(coin: dict, to: str, fee: int | None = None,
+            params: Any = None) -> tuple[list[dict], list[tuple[int, bytes]]]:
+    """Coins out of a lock: the whole coin, less the fee, to one address. `params`: the lock's chain, for its own
+    fee and dust line (spend_fee)."""
+    value = int(coin["value"]) - int(spend_fee(params) if fee is None else fee)
+    if value < dust_of(params):
         raise HtlcError("the lock holds too little to pay for its own spend")
     return ([{"txid": coin["txid"], "vout": int(coin["vout"])}],
             [(value, p2pkh_script(to))])

@@ -209,6 +209,7 @@ document.addEventListener('click', function (ev) {
           <form method="post" action="/exchange/offers/{{ b.txid }}" style="margin:0">
             <input type="hidden" name="csrf_token" value="{{ csrf }}">
             <button type="submit" name="decision" value="accept" class="small">Accept</button>
+            <button type="submit" name="decision" value="decline" class="ghost small">Decline</button>
           </form>
         {% endif %}
       </div>
@@ -854,6 +855,10 @@ document.addEventListener('click', function (ev) {
     </div>
     {% endfor %}
     {% if not trade_orders %}<p class="muted" style="margin:0 0 8px">No arcade is offering a swap right now.</p>{% endif %}
+    {% if viewer != 'account' and viewer != 'nobody' and not can_trade_orders %}
+    <p class="muted" style="margin:6px 0 0;font-size:.84rem">This node's own wallet lists and takes swaps once
+      <a href="/admin#trading">Node-facilitated trades</a> is on (Admin &rarr; Trading).</p>
+    {% endif %}
     {% if viewer == 'account' %}
     {# A tab's own swaps (2026-10-13): run here while this tab is open, settled by the locks; shown on
        Trade history (2026-10-17), so only their machinery is here. #}

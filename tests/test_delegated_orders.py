@@ -212,3 +212,59 @@ def test_a_filled_delegated_order_leaves_its_sellers_page(world, monkeypatch):
         assert tab.evaluate("async (net) => w.syncDelegated(await w.opened(net))", net) is True
         assert tab.evaluate("async (net) => w.myOrders(await w.opened(net)).length", net) == 0, "gone from the page"
         browser.close()
+
+
+def test_a_taken_order_never_goes_back_on_the_book(world, monkeypatch):
+    """2026-10-18, the operator: "the order remained in the orderbook, even after it was even half fulfilled" -- "It
+    should've been removed as soon as it was taken". A PEP for LTC order's PEP was claimed by the taker, the seller's
+    node could not claim the LTC (htlc's fee then), gave up when the taker's refund time came, and put the order back
+    on the book with nothing behind it. Once the seller's side is locked the order is taken: it is withdrawn, and what
+    comes back to the deposit goes back to the seller."""
+    from arcade import htlc as H
+    base, a, b, pep, dg = world
+    seller_node = a.node_trader
+    seller_node.enabled = lambda: False
+    secret = f"{secrets.randbelow(2 ** 250) + 1:064x}"
+    held = HeldKey(secret)
+    deposit = b58check_encode(a.doge.params.pubkeyhash_version, hash160(held.pubkey))
+    payout = pep.call("getnewaddress")
+    dg.call("sendtoaddress", deposit, 2.2)
+    _mine(dg)
+    _catch_up(a)
+    key = seller_node.delegate("order-taken", {"network": "doge", "kind": "coin", "amount": 2 * COIN},
+                               {"network": "regtest", "kind": "coin", "amount": 3 * COIN},
+                               secret, {"doge": deposit}, {"regtest": payout}, owner="seller")
+    from arcade import trade_courier
+    trade_courier.mesh_inbox(a)
+    real_way_out = seller_node._way_out
+
+    def cannot_claim(coin, leg, redeem, chain, to=""):
+        if leg.network == "regtest":                                 # the seller's claim of the taker's PEP
+            raise H.HtlcError("the lock holds too little to pay for its own spend")
+        return real_way_out(coin, leg, redeem, chain, to)
+    monkeypatch.setattr(seller_node, "_way_out", cannot_claim)
+    give = b.leg("regtest", 3 * COIN, key)
+    get = T.Leg("doge", "coin", "", 2 * COIN, key.hex(), b.key.pubkey.hex())
+    trade = b.propose(a.identity.public_bytes, "order-taken", give, get)
+    for _ in range(40):
+        for t in (b, seller_node):
+            _scan(t)
+            _catch_up(t.state)
+            try:
+                t.tick()
+            except H.HtlcError:
+                pass
+        _mine(pep, dg)
+        if b.book.get(trade.id).state == "done":
+            break
+    assert b.book.get(trade.id).state == "done", "the taker took the seller's DOGE"
+    mine = seller_node.book.get(trade.id)
+    for t in (mine.initiator_locktime + 60, mine.initiator_locktime + 120):
+        _scan(seller_node)
+        try:
+            seller_node.tick(now=t)
+        except H.HtlcError:
+            pass
+    assert seller_node.book.get(trade.id).state == "aborted"
+    assert "order-taken" not in [o["id"] for o in seller_node.standing()], "taken: never back on the book"
+    assert seller_node.delegated("order-taken")["state"] in ("releasing", "returned")

@@ -340,6 +340,7 @@ def shop(browser, served):
 
 def _shop_view(browser, shop):
     """The shop page as a stranger's browser sees it, and its sandboxed frame."""
+    browsers.allow_wallet(browser, shop['base'], shop['shop'])
     browser.get(f"{shop['base']}/inscriptions/{shop['shop']}/view")
     frames = browser.find_elements(By.CSS_SELECTOR, "iframe.inscription-frame")
     assert frames, "the shop is an HTML inscription and it drew no frame"

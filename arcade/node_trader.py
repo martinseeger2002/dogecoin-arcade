@@ -727,7 +727,7 @@ class NodeTrader:
         token/NFT moved out by the lock's own reserve."""
         to = to or self._address(leg.network)
         if leg.kind == "coin":
-            return H.pay_out(coin, to)
+            return H.pay_out(coin, to, params=chain.params)
         if leg.kind == "doginal":
             return H.doginal_out(coin, {"txid": coin["txid"], "vout": 1, "value": coin["reserve"]}, to)
         return H.move_out(coin, H.address_of(redeem, chain.params), T.move_data(leg), to)
@@ -821,8 +821,23 @@ class NodeTrader:
                     "refunded", trade.id, network=trade.give.network, txid=txid))
             elif step in (T.DONE, T.ABORT):
                 trade.state = "done" if step == T.DONE else "aborted"
-                if held and step == T.ABORT:
-                    self._taking(held["order_id"], False)
+                if held and step == T.ABORT and not mine:
+                    self._taking(held["order_id"], False)       # nothing of the seller's left the deposit
+                elif held and step == T.ABORT:
+                    # The seller's side was locked, so the order was taken: it never stands again (2026-10-18,
+                    # The operator: "It should've been removed as soon as it was taken" -- a PEP for LTC order went back on
+                    # the book after its PEP had been claimed). Whatever comes back to the deposit (a refund) goes
+                    # back to the seller, as after a fill.
+                    with self._db() as conn:
+                        conn.execute("UPDATE delegated SET state='releasing' WHERE order_id=?", (held["order_id"],))
+                        conn.execute("INSERT OR IGNORE INTO meta(k, v) VALUES(?, ?)",
+                                     (f"since:{held['order_id']}", str(time.time())))
+                    self.withdraw(held["order_id"])
+                    try:
+                        self.state.trade_orders.cancel_id(held["order_id"])
+                        self.state.bump_generation()
+                    except Exception:                      # noqa: BLE001 -- a node without the order book
+                        pass
                 if held and step == T.DONE:
                     # Taken whole: the order is filled, off this node's book, and answers no one else.
                     with self._db() as conn:

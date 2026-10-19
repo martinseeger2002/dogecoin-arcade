@@ -109,6 +109,7 @@ def test_a_player_escrows_things_the_judge_releases_and_the_wallet_takes_back(wo
     from arcade.web import app as appmod
     real = time.time
     monkeypatch.setattr(appmod.time, "time", lambda: real() - 3 * 3600)
+    browsers.allow_wallet(driver, base, GAME)
     driver.get(f"{base}/inscriptions/{GAME}/full")
     driver.switch_to.frame(driver.find_element(By.CSS_SELECTOR, ".inscription-frame"))
     opened = _run(driver, "return await arcade.escrow.open({hours: 1});")

@@ -233,3 +233,22 @@ def test_a_swap_nobody_finishes_refunds_both_sides(regtest, doge):
     doge_rpc.call("generate", 1)
     assert pep_rpc.call("gettxout", s["a_coin"]["txid"], 0) is None
     assert doge_rpc.call("gettxout", s["b_coin"]["txid"], 0) is None
+
+
+def test_a_small_litecoin_lock_pays_out_at_litecoins_own_fee():
+    """2026-10-18: a PEP for LTC swap locked 0.01 LTC; the claim took the Dogecoin family's 0.01 off it, left
+    nothing, and was refused every 3 s for two hours until the buyer could refund -- the seller's LTC was claimed by
+    hand (fa7143d5...). Litecoin pays its own rate for a spend's size, at least its dust line; Pepecoin is
+    unchanged."""
+    from arcade.config import NETWORKS
+    ltc, pep = NETWORKS["ltc"], NETWORKS["main"]
+    coin = {"txid": "38" * 32, "vout": 0, "value": 1_000_000}               # 0.01 LTC
+    to = "LXGBZA2ULegTTWkh6bfUbssNKxP23EgGVC"
+    inputs, outputs = H.pay_out(coin, to, params=ltc)
+    assert outputs[0][0] == 1_000_000 - H.spend_fee(ltc) and H.spend_fee(ltc) <= 20_000, outputs
+    assert H.spend_fee(ltc) >= ltc.dust_limit and H.spend_fee(ltc) * 1000 // H.SPEND_BYTES >= ltc.min_fee_per_kb
+    assert H.spend_fee(pep) == H.SPEND_FEE == 1_000_000 and H.dust_of(pep) == H.DUST, "Pepecoin as it was"
+    with pytest.raises(H.HtlcError):
+        H.pay_out({**coin, "value": 1_000_000}, "PewhJb8x6769brR6kWgpBaUqSSMCUPx7qm", params=pep)
+    with pytest.raises(H.HtlcError):
+        H.pay_out({**coin, "value": 15_000}, to, params=ltc)

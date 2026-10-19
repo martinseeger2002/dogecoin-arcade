@@ -161,3 +161,20 @@ def test_the_operator_posts_an_nft_from_its_home_address(client, monkeypatch):
         give_network=f"nft:regtest:{'b8' * 32}", give_amount="1", get_network="main", get_amount="20",
         csrf_token=state.csrf_token), follow_redirects=False)
     assert len(state.node_trader.standing()) == 1, "an NFT the node does not hold is refused"
+
+
+@pytest.mark.node_trades_default
+def test_the_operator_sees_the_orders_its_own_accounts_listed(client, monkeypatch):
+    """2026-10-19: "orders from the order book are not showing up in the token exchange pages" on the
+    operator's side. The operator's book dropped every order filed on its own node -- which is every order its own
+    accounts list -- so it only ever saw other arcades'. Only the node's own standing orders are left out (they are
+    "This node's swaps"), and with node-facilitated trades off the page says how to take them."""
+    app, state = client
+    mesh = _Mesh({_Mesh.node_id})
+    monkeypatch.setattr(state, "mesh", mesh, raising=False)
+    _file(state, oid="order-local", node=_Mesh.node_id)
+    page = app.get("/exchange?tab=tokens").text
+    assert "No arcade is offering a swap right now" not in page
+    assert "Node-facilitated trades" in page and 'href="/admin#trading"' in page
+    book = app.get("/exchange/swap/regtest-coin/main-coin").text
+    assert "Swaps open here when this node runs both chains" not in book or "Node-facilitated trades" in book

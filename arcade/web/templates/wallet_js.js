@@ -2788,9 +2788,11 @@ export function swapFees(give, get) {
   // LTC and LTC TEST too (2026-10-18: Litecoin's legs read "PEP TEST").
   const coin = (n) => n === "doge" ? "DOGE" : n === "main" ? "PEP" : n === "ltc" ? "LTC"
     : n === "ltctest" ? "LTC TEST" : "PEP TEST";
-  const parts = [`about 0.01 ${coin(give.network)} to lock yours`];
+  // Litecoin pays its own rate (htlc.spend_fee, 2026-10-18): about 0.0001 LTC, not the Dogecoin family's 0.01.
+  const fee = (n) => n === "ltc" || n === "ltctest" ? "0.0001" : "0.01";
+  const parts = [`about ${fee(give.network)} ${coin(give.network)} to lock yours`];
   if (give.kind && give.kind !== "coin") parts.push(`0.02 ${coin(give.network)} that goes in with it to pay for moving it out`);
-  if (!get.kind || get.kind === "coin") parts.push(`0.01 ${coin(get.network)} comes off what you receive`);
+  if (!get.kind || get.kind === "coin") parts.push(`${fee(get.network)} ${coin(get.network)} comes off what you receive`);
   return "Network fees: " + parts.join("; ") + ".";
 }
 

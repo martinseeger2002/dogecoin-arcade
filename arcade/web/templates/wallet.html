@@ -1,13 +1,17 @@
 {% extends "base.html" %}
 {% import "_chains.html" as chains %}
 {% import "_wallettabs.html" as wt %}
-{% import "_token_confirm.html" as tk %}
 {% block title %}Wallet · {{ brand.name }}{% endblock %}
 {% block body %}
-<h1>Wallet {{ tk.chain_switch(chain, other_chains, csrf, "/wallet", public) }}</h1>
+<h1>Wallet</h1>
 {{ wt.tabs('coins') }}
 <p class="sub">Coins, one wallet per chain. Testnet coins pay message fees;
   mainnet coins are real.</p>
+{# The chain picker (2026-10-19: "the wallet on the operator side doesn't allow you to change coin types"),
+   the same control as the account's wallet (my_wallet.html #nets): one chain's section at a time, by its label,
+   kept in the URL as ?net=. Without scripts every section shows. Not the node-global token chain switch
+   (/tokens/chain), which moved every non-account page of the node at once. #}
+<div class="wl-seg" role="group" aria-label="Network" id="nets" hidden></div>
 
 {% if error %}<div class="msg err">{{ error }}</div>{% endif %}
 
@@ -111,6 +115,7 @@
 </div>
 {% endmacro %}
 
+<section class="wchain" data-label="{{ state.messaging.letter }} {{ state.messaging.word }}" data-which="messaging">
 {{ panel('messaging', state.messaging, messaging, 'testnet') }}
 
 {% if messaging.online and messaging.funding %}
@@ -164,13 +169,39 @@
   {% endif %}
 </div>
 {% endif %}
+<h2>Fast sending <span class="tag testnet">test</span></h2>
+<div class="panel">
+  <p>A long message or a file is sent as several linked transactions, and each one
+     waits for the previous to confirm &mdash; because there is a single output to
+     spend and each transaction has to use the change from the last.</p>
+  <p>Splitting that output into many small ones removes the waiting entirely: each
+     transaction funds itself. Measured on this chain, a 40&nbsp;KB file went from
+     about four minutes to two seconds.</p>
+  <form method="post" action="/wallet/split">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div class="row">
+      <div style="flex:0 0 90px"><input autocomplete="off" name="pieces" value="30" inputmode="numeric"></div>
+      <span class="muted">pieces of</span>
+      <div style="flex:0 0 110px"><input autocomplete="off" name="each" value="10" inputmode="decimal"></div>
+      <button type="submit" class="ghost">Split for fast sending</button>
+    </div>
+  </form>
+  <p class="muted" style="font-size:.85rem;margin:11px 0 0">
+    One transaction, and the coins stay yours &mdash; they stay on the same address,
+    which they must, because a message is encoded against the address that sends
+    it. It takes effect once the split confirms, about a block.</p>
+</div>
+</section>
 
+<section class="wchain" data-label="{{ state.ledger.letter }} {{ state.ledger.word }}" data-which="ledger">
 {{ panel('ledger', state.ledger, ledger, 'mainnet') }}
+</section>
 
 {# The node's coins on each add-on chain it has no Core wallet for -- Litecoin, borrowed or not -- held at its own
    key's address there and signed by this arcade (keywallet.py), and mined here on a test-coin chain with this
    machine's CPU (blockminer.py). 2026-10-18. #}
 {% for k in (keyed or []) %}
+<section class="wchain" data-label="{{ k.letter }} {{ k.word }}" data-which="key:{{ k.network }}">
 <h2><b class="netl {{ k.net }}">{{ k.letter }}</b> {{ k.word }} <span class="tag {{ k.net }}">{{ 'main' if k.mainnet else 'test' }}</span></h2>
 <div class="panel">
   {% if not k.ready %}
@@ -180,8 +211,24 @@
   {% else %}
     <div class="kv"><span class="k">Balance</span><span class="v">{{ k.spendable }} {{ k.coin }}</span></div>
     <div class="kv"><span class="k">Address</span><span class="v mono" style="overflow-wrap:anywhere">{{ k.address }}</span></div>
-    <p class="muted" style="font-size:.84rem">This arcade's own key on {{ k.title }}{{ ', borrowed from a linked arcade' if k.borrowed else '' }}.
-      Sent from <a href="/admin">Admin &rarr; The node's coins</a>, signed here: no other wallet needed.</p>
+    <p class="muted" style="font-size:.84rem">This arcade's own key on {{ k.title }}{{ ', borrowed from a linked arcade' if k.borrowed else '' }},
+      signed here: no other wallet needed.</p>
+    {# Sent from here as from Admin -> Coins & chains (/admin/api/send), the fee shown first. #}
+    <form class="keyedsend" data-which="key:{{ k.network }}" style="margin:10px 0 12px">
+      <div class="field"><label>Send to</label>
+        <input autocomplete="off" name="to" placeholder="@name or address on {{ k.title }}"></div>
+      <div class="field"><label>Amount</label>
+        <input autocomplete="off" name="amount" placeholder="0.00000000" inputmode="decimal"></div>
+      <button type="submit" {% if k.mainnet %}class="danger"{% endif %}>{{ 'Review real payment' if k.mainnet else 'Review payment' }}</button>
+      <div class="msg" data-said hidden style="margin-top:10px"></div>
+      <div data-confirm hidden style="margin-top:10px">
+        <p data-text style="margin:0 0 8px"></p>
+        <input type="password" name="password" placeholder="admin password" autocomplete="current-password" hidden style="max-width:240px">
+        <div class="row" style="gap:8px;margin-top:8px">
+          <button type="button" data-go {% if k.mainnet %}class="danger"{% endif %}>{{ 'Send real coins' if k.mainnet else 'Send' }}</button>
+          <button type="button" class="ghost" data-cancel>Cancel</button></div>
+      </div>
+    </form>
     {% if k.minable %}
     <div class="row keyedmine" data-net="{{ k.network }}" data-address="{{ k.address }}" style="gap:8px;align-items:center;flex-wrap:wrap">
       <button type="button" class="small" data-go>Mine {{ k.coin }}</button>
@@ -191,6 +238,7 @@
     {% endif %}
   {% endif %}
 </div>
+</section>
 {% endfor %}
 {% if (keyed or [])|selectattr("minable")|list %}
 <script>
@@ -232,6 +280,7 @@
 {% endif %}
 
 {% if doge %}
+<section class="wchain" data-label="{{ state.doge.letter }} {{ state.doge.word }}" data-which="doge">
 {% if doge_sync.ready %}
 {{ panel('doge', state.doge, doge, 'mainnet') }}
 {% else %}
@@ -243,8 +292,10 @@
     Until then nothing can be sent, held or shown on it.</p>
 </div>
 {% endif %}
+</section>
 {% endif %}
 {% if ltc_test_mine %}
+<section class="wchain" data-label="L test" data-which="ltc_test">
 {# Litecoin testnet, "L test" (2026-10-18, SadFrog's side): one block mined here, paid to the signed-in account. #}
 <h2 id="ltctest-mine"><b class="netl litecoin">L</b> test <span class="tag litecoin">test</span></h2>
 <div class="panel">
@@ -277,28 +328,74 @@
   {% endif %}
   {% endif %}
 </div>
+</section>
 {% endif %}
-<h2>Fast sending <span class="tag testnet">test</span></h2>
-<div class="panel">
-  <p>A long message or a file is sent as several linked transactions, and each one
-     waits for the previous to confirm &mdash; because there is a single output to
-     spend and each transaction has to use the change from the last.</p>
-  <p>Splitting that output into many small ones removes the waiting entirely: each
-     transaction funds itself. Measured on this chain, a 40&nbsp;KB file went from
-     about four minutes to two seconds.</p>
-  <form method="post" action="/wallet/split">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}">
-    <div class="row">
-      <div style="flex:0 0 90px"><input autocomplete="off" name="pieces" value="30" inputmode="numeric"></div>
-      <span class="muted">pieces of</span>
-      <div style="flex:0 0 110px"><input autocomplete="off" name="each" value="10" inputmode="decimal"></div>
-      <button type="submit" class="ghost">Split for fast sending</button>
-    </div>
-  </form>
-  <p class="muted" style="font-size:.85rem;margin:11px 0 0">
-    One transaction, and the coins stay yours &mdash; they stay on the same address,
-    which they must, because a message is encoded against the address that sends
-    it. It takes effect once the split confirms, about a block.</p>
-</div>
 
+<style>
+#nets{margin:4px 0 16px;width:max-content;max-width:100%;flex-wrap:wrap;display:flex;background:var(--code);border-radius:999px;padding:3px}
+#nets[hidden]{display:none}
+#nets button{padding:5px 12px;border-radius:999px;font-size:.8rem;font-weight:650;color:var(--muted);background:none;border:0;box-shadow:none}
+#nets button[aria-pressed="true"]{background:var(--panel);color:var(--fg);box-shadow:var(--shadow)}
+</style>
+<script>
+(function () {
+  /* The chain picker: one chain's sections at a time, grouped by label. */
+  var secs = Array.prototype.slice.call(document.querySelectorAll('section.wchain'));
+  var labels = [];
+  secs.forEach(function (s) { if (labels.indexOf(s.dataset.label) < 0) labels.push(s.dataset.label); });
+  if (labels.length < 2) return;
+  var bar = document.getElementById('nets');
+  var url = new URL(location.href);
+  var want = url.searchParams.get('net');
+  {% if which %}var sent = secs.filter(function (s) { return s.dataset.which === {{ which|tojson }}; })[0];
+  if (sent) want = sent.dataset.label;{% endif %}
+  if (labels.indexOf(want) < 0) want = labels[0];
+  function show(label, keep) {
+    secs.forEach(function (s) { s.hidden = s.dataset.label !== label; });
+    bar.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.label === label)); });
+    if (keep) { url.searchParams.set('net', label); history.replaceState(null, '', url); }
+  }
+  labels.forEach(function (l) {
+    var b = document.createElement('button'); b.type = 'button'; b.textContent = l; b.dataset.label = l;
+    b.onclick = function () { show(l, true); }; bar.appendChild(b);
+  });
+  bar.hidden = false; show(want, false);
+})();
+(function () {
+  /* Sends on the chains signed by this arcade's own key: prepare, show the fee, confirm (the Admin send API). */
+  function call(path, body) {
+    return fetch(path, {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'}, body: JSON.stringify(body || {})})
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) { var e = new Error(j.detail || ('refused (' + r.status + ')')); e.status = r.status; throw e; }
+        return j; }); });
+  }
+  document.querySelectorAll('form.keyedsend').forEach(function (f) {
+    var said = f.querySelector('[data-said]'), box = f.querySelector('[data-confirm]'), pw = f.elements.password, ticket = null;
+    function say(t, kind) { said.textContent = t; said.className = 'msg ' + (kind || 'ok'); said.hidden = !t; }
+    f.onsubmit = function (ev) {
+      ev.preventDefault(); say('');
+      call('/admin/api/send', {which: f.dataset.which, to: f.elements.to.value.trim(), amount: f.elements.amount.value.trim()})
+        .then(function (j) {
+          ticket = j.ticket;
+          box.querySelector('[data-text]').textContent = 'Send ' + j.amount + ' on ' + j.network + ' to ' + j.to +
+            ', with a fee of ' + j.fee + '? This cannot be undone.';
+          box.hidden = false;
+        }).catch(function (e) { say(e.message, 'err'); });
+    };
+    box.querySelector('[data-cancel]').onclick = function () { ticket = null; box.hidden = true; };
+    box.querySelector('[data-go]').onclick = function () {
+      var body = {ticket: ticket};
+      if (!pw.hidden) body.password = pw.value;
+      call('/admin/api/send/confirm', body).then(function (j) {
+        box.hidden = true; ticket = null; f.elements.amount.value = ''; pw.value = '';
+        say('Sent. Transaction ' + j.txid);
+      }).catch(function (e) {
+        if (e.status === 403 && pw.hidden) { pw.hidden = false; pw.focus(); say('Type the admin password to send from outside the node machine.', 'info'); return; }
+        say(e.message, 'err');
+      });
+    };
+  });
+})();
+</script>
 {% endblock %}

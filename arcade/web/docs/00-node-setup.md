@@ -330,6 +330,7 @@ pepecoin-cli -datadir=$HOME/.pepecoin-testnet getblockchaininfo
 | ZMQ hashblock / rawblock / rawtx | 28332 / 28333 / 28335 | 28432 / 28433 / 28435 |
 | Web interface | 8420 (both chains, one application) | |
 | Realtime mesh (TCP) | 8421 (one port for both chains) | |
+| STUN for fast games (UDP) | 3478 | |
 
 ## The realtime mesh
 
@@ -359,6 +360,23 @@ An announcement is a small transaction paid from the node's fee address.
 | `--mesh-public-port N` | the port the router forwards, if it is not the same number |
 | `--mesh-peer IP:PORT` | link to a node directly, such as one on the same network, which the chain cannot carry; may be repeated |
 | `--mesh-announce IP:PORT` | announce this address instead of working it out |
+| `--mesh-core on/off` | let this node's Cores (Pepecoin, and Dogecoin and Litecoin when it runs them) peer with other arcades' through the mesh, so two nodes behind routers still sync with each other (on by default) |
+| `--stun-port N` | UDP port of this node's STUN server (default 3478); `0` runs none |
+
+**STUN for fast games.** Fast games connect players' browsers directly to each
+other (the fast lane, see the multiplayer guide). Before they can, each browser
+asks a STUN server what address the internet sees it at. Every node runs one on
+UDP **3478**. Another node checks that it can reach yours before it is offered to
+any browser, so forwarding the port is optional:
+
+```bash
+sudo ufw allow 3478/udp
+```
+
+A STUN server only tells a browser its own address. It carries no game traffic
+and keeps nothing. When no node's STUN is known, browsers use a public one
+(Cloudflare's). To turn that off, set `"realtime_public_stun": false` in the
+node's settings.
 
 The web interface prints the node's mesh id when it starts, and says whether it
 is listening.

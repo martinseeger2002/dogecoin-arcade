@@ -238,9 +238,12 @@ def test_the_wallet_names_litecoin_testnet_test_and_mines_it_here(client, monkey
     from arcade.web import app as appmod
     appmod.TEMPLATES.env.cache.clear()
     page = app.get("/wallet").text
-    switch = page.split('class="chainswitch"', 1)[1].split("</h1>", 1)[0]
-    assert switch.count('title="Switch to L main"') + switch.count("Showing L main") <= 1
-    assert 'L test' in switch and 'src="/coin-ltctest.png" alt="LTC TEST"' in switch.split("L test", 1)[1][:200]
+    # Since 2026-10-19 the Wallet's chains are picked by the page's own picker (one section per chain label), not the
+    # node-global token chain switch, which moved every non-account page of the node at once.
+    assert 'class="chainswitch"' not in page.split("</h1>", 1)[0]
+    assert 'data-label="L test"' in page and page.count('data-label="L main"') == 1, \
+        "one picker button each (L test's key section and its Mine section share one label)"
+    assert 'class="keyedsend" data-which="key:ltctest"' in page, "sent from the Wallet, not only from Admin"
     assert "addr-ltctest" in page and 'data-net="ltctest"' in page, "mined here"
     assert 'data-net="ltc"' not in page, "real coins are never mined"
 

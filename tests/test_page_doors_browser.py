@@ -283,8 +283,12 @@ def doors(browser, served):
             "node": node_key, **made}
 
 
-def _view(browser, doors):
-    """Open the page the way a reader does, and return its sandboxed frame."""
+def _view(browser, doors, allow=True):
+    """Open the page the way a reader does, and return its sandboxed frame. `allow`: with wallet access already
+    turned on for it, as on its card."""
+    browsers.allow_wallet(browser, doors['base'], *([doors['page']] if allow else []))
+    if not allow:            # the browser is shared: forget what an earlier test allowed
+        browser.execute_script("localStorage.removeItem('arcade.wallet.allow:' + arguments[0])", doors['page'])
     browser.get(f"{doors['base']}/inscriptions/{doors['page']}/view")
     frames = browser.find_elements(By.CSS_SELECTOR, "iframe.inscription-frame")
     assert frames, "the page is an HTML inscription and it drew no frame"
@@ -367,9 +371,25 @@ def test_a_page_speaks_under_the_accounts_own_key(browser, doors):
     messaging key, not the address that paid: speech and payment are two
     different keys, which is the whole point of the account's key."""
     state, daemon = doors["state"], doors["daemon"]
-    frame = _view(browser, doors)
+    frame = _view(browser, doors, allow=False)
 
+    # 2026-10-18 (the operator: a lookalike game "could drain their wallet"): wallet access is off for a page until the
+    # player allows it, told who published it. The first door that needs the key asks.
     _click(browser, frame, "i")
+    browser.switch_to.default_content()
+    sheet = None
+    for _ in range(240):
+        cards = [c for c in browser.find_elements(By.CSS_SELECTOR, ".askcard") if c.is_displayed()]
+        if cards and "Allow this game to use your wallet?" in cards[0].text:
+            sheet = cards[0]
+            break
+        time.sleep(0.25)
+    assert sheet is not None, "the page asked for the key and nobody asked the player: " + str(browser.execute_script(
+        "return [...document.querySelectorAll('.askcard, .askcard-back, dialog, [role=dialog]')].map(e => e.className + ':' + e.innerText.slice(0, 120))"))
+    assert "Check that this is the game" in sheet.text and "published by" in sheet.text, sheet.text
+    next(b for b in sheet.find_elements(By.TAG_NAME, "button") if b.text == "Allow wallet access").click()
+    assert browser.execute_script("return localStorage.getItem('arcade.wallet.allow:' + arguments[0])",
+                                  doors["page"]) == "yes", "remembered for this page"
     who = _settled(browser, frame, "nid")
     assert "error" not in who, who
     assert who["network"] == "regtest"

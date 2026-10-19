@@ -740,7 +740,7 @@ ol.words{column-gap:1.4em}
   {%- for href, label, chain, built in nav %}
     {%- if built %}
     {%- set waiting = {'/approvals': approvals_waiting, '/messages': unread_messages,
-                       '/me/notifications': notif_count, '/me/messages': mail_count,
+                       '/me/notifications': notif_count, '/notifications': notif_count, '/me/messages': mail_count,
                        '/feed': unread_board, '/exchange': offers_waiting}.get(href) %}
     <a class="{{ 'on' if path == href or (href == '/create' and (path in ('/nfts', '/tokens', '/mintpad/new') or path.startswith('/tokens/'))) else '' }}" href="{{ href }}">{{ label
       }}{% if waiting %}<span class="nav-count">{{ waiting if waiting < 100 else '99+' }}</span>{% endif %}</a>
@@ -2090,6 +2090,33 @@ function arcadeSignIn(why){
 // the other tabs and waits up to ~2 s for none to answer, so two callers' waits
 // ended on separate timers, and a sheet closed between them was cleared before the
 // second caller came to it -- which then drew a sheet of its own.
+// WALLET ACCESS, PER GAME (2026-10-18: "somebody can make a clone of Ashvale ... spelt slightly different
+// with two L's ... it could drain their wallet. Each game card should have an allow Wallet access switch with the
+// warning to verify the publisher's @handle"). Off for every game until the player turns it on, on the game's card
+// or when the game first asks; kept in this browser, per game page. Without it a game can still be played and
+// join rooms as you (that signature proves who you are and moves nothing), but it cannot ask your wallet to
+// trade, pay, put things in escrow or sign.
+var ARCADE_ACCESS = 'arcade.wallet.allow:';
+function arcadeGameAllowed(id){ try { return localStorage.getItem(ARCADE_ACCESS + id) === 'yes'; } catch (e) { return false; } }
+function arcadeGameAllow(id, on){
+  try { if (on) localStorage.setItem(ARCADE_ACCESS + id, 'yes'); else localStorage.removeItem(ARCADE_ACCESS + id); } catch (e) {}
+  document.dispatchEvent(new CustomEvent('arcade:access', {detail: {id: id, on: !!on}}));
+}
+function arcadeAccessWords(game, publisher, address){
+  return '“' + (game || 'This game') + '” is published by ' + (publisher || 'an account with no @name')
+    + (address ? ' (' + address + ')' : '') + '. Check that this is the game’s real publisher before you allow it: '
+    + 'anybody can publish a copy of a game under a lookalike name, and a game with wallet access can ask your wallet '
+    + 'to trade, pay and sign. You can turn it off again on the game’s card.';
+}
+function arcadeAccessAsk(id, game, publisher, address){
+  return arcadeAsk('Allow this game to use your wallet?', arcadeAccessWords(game, publisher, address), 'Allow wallet access')
+    .then(function(yes){ if (yes) arcadeGameAllow(id, true); return !!yes; });
+}
+// Whether the wallet is open in this browser now (the card shows it beside the switch).
+function arcadeWalletOpen(){
+  return import('/wallet.js').then(function(w){ return w.opened(ARCADE_CHAIN); }).then(function(k){ return !!k; }).catch(function(){ return false; });
+}
+
 async function arcadeKeys(chain, why){
   var w = await import('/wallet.js');
   if (!_arcadeUnlockOpen) {

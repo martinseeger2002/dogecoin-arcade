@@ -427,6 +427,8 @@ NAV = [
     # Every inscribed game (arcade/games.py), where an account's sits.
     ("/games",        "Games",        "mainnet",   True),
     ("/messages",     "Messages",     "testnet",   True),
+    # Likes, replies, sales and swaps to the node's own address, as an account has (2026-10-19).
+    ("/notifications", "Notifications", None,     True),
     ("/feed",         "Feed",         "testnet",   True),
     ("/contacts",     "Address book", None,        True),
     ("/backup",       "Backup",       None,        True),
@@ -1220,6 +1222,29 @@ def create_app(state: AppState) -> FastAPI:
 
     # --- overview -------------------------------------------------------------
 
+    def _arcades_running() -> dict:
+        """How many OTHER arcades are running (2026-10-19: Overview "should show how many other Dogecoin
+        arcades are running"): linked to this one now, reached in the last hour, or announced on the chain in the
+        last day -- each arcade once, by its mesh key."""
+        mesh = getattr(state, "mesh", None)
+        live, me, linked = set(), "", 0
+        if mesh is not None and getattr(mesh, "loop", None) is not None:
+            me = mesh.node_id
+            links = set(dict(mesh.node.links))
+            linked = len(links)
+            now = time.time()
+            live = links | {e.get("id") for e in list(mesh.node.addrs.values())
+                            if e.get("id") and now - float(e.get("ok") or 0) < 3600}
+        try:
+            with state.store() as store:
+                live |= {str(r["mesh_key"]) for r in store.mesh_peers(state.messaging.network,
+                                                                      since=int(time.time()) - 86400)}
+        except Exception:                                 # noqa: BLE001 -- the count is a nicety
+            pass
+        live.discard(me)
+        live.discard(None)
+        return {"running": len(live), "linked": linked}
+
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
         # On a public instance the front page is the SPLASH, not the
@@ -1286,7 +1311,8 @@ def create_app(state: AppState) -> FastAPI:
                       release_key=releaselib.PUBLIC_KEY,
                       quota=accountslib.limits(state.settings()),
                       quota_labels=accountslib.LABELS,
-                      messaging=messaging_status(), ledger=ledger_status(), stats=stats)
+                      messaging=messaging_status(), ledger=ledger_status(), stats=stats,
+                      arcades=_arcades_running())
 
     @app.post("/settings/updates")
     def set_auto_update(request: Request, csrf_token: str = Form(""),
@@ -6000,6 +6026,8 @@ def create_app(state: AppState) -> FastAPI:
     TEMPLATES.env.filters["who"] = _who
     TEMPLATES.env.filters["who_text"] = _who_text
     TEMPLATES.env.globals["name_of"] = _name_of
+    # A game page's own name, from its JSON, for the wallet access sheet (_page_doors; 2026-10-18).
+    TEMPLATES.env.globals["game_name"] = lambda text: (gameslib.parse(text) or {}).get("name", "") if text else ""
 
     def _fav_key(href: str, net: str = "") -> str:
         """A market's favorite key: its address, and for a one-chain market its chain too
@@ -9256,9 +9284,41 @@ def create_app(state: AppState) -> FastAPI:
         return dict(got) if isinstance(got, dict) else {}
 
     def _notif_events(account) -> list:
-        from .. import notify
         chain = _account_chain()
-        me = _account_address(account.pubkey, chain)
+        owners = {a for a in (_account_address(account.pubkey, c)
+                              for c in _account_chains()) if a}
+        return _notif_events_of(me=_account_address(account.pubkey, chain), owners=owners,
+                                mine_there={a for a in (_account_address(account.pubkey, _token_chain()[0]),) if a},
+                                arrivals_of=account.pubkey,
+                                operator=bool(state.operator and account.pubkey.lower() == state.operator),
+                                seen=_notif_seen(account.pubkey))
+
+    def _node_owners() -> set:
+        """Every address the node's own wallet answers for, on each chain it runs (for its Notifications)."""
+        out = {a for a in (state.derived_address,) if a}
+        for c in (state.ledger, state.doge):
+            if c is None or c is state.messaging:
+                continue
+            try:
+                with c.rpc() as rpc:
+                    out |= set(_ledger_addresses(rpc))
+            except Exception:                              # noqa: BLE001 -- a chain offline names nothing
+                pass
+        return out
+
+    def _node_notif_events() -> list:
+        """The operator's own Notifications (2026-10-19: the operator's tabs should match the client's).
+        The same events as an account's, for the node's own addresses; its encrypted messages stay on Messages,
+        which counts them itself."""
+        owners = _node_owners()
+        return _notif_events_of(me=state.derived_address or "", owners=owners, mine_there=owners, arrivals_of=None,
+                                operator=True, seen=_notif_seen("node"))
+
+    def _notif_events_of(me: str, owners: set, mine_there: set, arrivals_of: str | None, operator: bool,
+                         seen: dict) -> list:
+        from .. import notify
+        from ..cardwatch import FLAGGED as cwlib_FLAGGED
+        chain = _account_chain()
         events: list = []
         try:
             with state.store() as store:
@@ -9272,7 +9332,7 @@ def create_app(state: AppState) -> FastAPI:
                            if e.extra.get("txid") not in told]
         except Exception as exc:                          # noqa: BLE001
             log.info("notifications: feed: %s", exc)
-        push = state.push() if hasattr(state, "push") else None
+        push = state.push() if hasattr(state, "push") and arrivals_of else None
         if push is not None:
             def _token_name(pid: str) -> str:
                 try:
@@ -9280,18 +9340,14 @@ def create_app(state: AppState) -> FastAPI:
                     return prop["name"] if prop else ""
                 except Exception:
                     return ""
-            events += notify.message_events(push.arrivals(account.pubkey), _token_name)
-        owners = {a for a in (_account_address(account.pubkey, c)
-                              for c in _account_chains()) if a}
+            events += notify.message_events(push.arrivals(arrivals_of), _token_name)
         try:
             with state.listings._open() as conn:
                 events += notify.sale_events(conn, owners)
         except Exception as exc:                          # noqa: BLE001
             log.info("notifications: sales: %s", exc)
-        mine_there: set = set()
         try:
             tchain, index = _token_chain()
-            mine_there = {a for a in (_account_address(account.pubkey, tchain),) if a}
             rows = index.swaps_of(sorted(mine_there | owners))
             paid = {}
             if rows:
@@ -9322,7 +9378,16 @@ def create_app(state: AppState) -> FastAPI:
                                              mine_there | owners, _said)
         except Exception as exc:                          # noqa: BLE001
             log.info("notifications: lock swaps: %s", exc)
-        return notify.merge(events, _notif_seen(account.pubkey))
+        if operator:
+            # Game cards the card watch hid, for the operator to look at (2026-10-18).
+            try:
+                for r in _cardwatch().rows((cwlib_FLAGGED,)):
+                    events.append(notify.Event(source="cardwatch", seq=int(r["seq"]), kind="hid a game card",
+                                               actor=r["creator"], target=r["txid"], at=int(r["at"] or 0),
+                                               text=f"“{r['name']}” looks like “{r['like_name']}”: {r['why']}"))
+            except Exception as exc:                      # noqa: BLE001
+                log.info("notifications: card watch: %s", exc)
+        return notify.merge(events, seen)
 
     def _swap_amount(leg: dict, n: int) -> str:
         """'1,000 GOLD', '1.14 DOGE', '1 Skull #7': a lock-script swap leg as people say it."""
@@ -9331,9 +9396,12 @@ def create_app(state: AppState) -> FastAPI:
         return f"{amount} {leg['name']}"
 
     def _account_counts(request: Request) -> dict:
-        """The red counts for an account's tabs; nothing for anybody else."""
+        """The red counts for an account's tabs, or for the operator's Notifications."""
         if not _account_view(request):
-            return {}
+            try:
+                return {"notif_count": sum(1 for e in _node_notif_events() if e.unread)}
+            except Exception:                             # noqa: BLE001 -- never break a page
+                return {}
         account = signed_in(request)
         if account is None:
             return {}
@@ -9351,13 +9419,23 @@ def create_app(state: AppState) -> FastAPI:
     #: lazy loading as well because the list is getting quite long").
     NOTIFS_PER_PAGE = 30
 
+    @app.get("/notifications", response_class=HTMLResponse)
+    def node_notifications(request: Request, page: int = 1):
+        """The operator's Notifications: the node's own address's likes, replies, mentions, sales and swaps, and the
+        game cards the card watch hid. An account has /me/notifications."""
+        if _account_view(request):
+            return RedirectResponse("/me/notifications", status_code=303)
+        return _notifications_page(request, _node_notif_events(), "node", page)
+
     @app.get("/me/notifications", response_class=HTMLResponse)
     def my_notifications(request: Request, page: int = 1):
         account = signed_in(request)
         if account is None:
             return _to_join(request)
+        return _notifications_page(request, _notif_events(account), account.pubkey, page)
+
+    def _notifications_page(request: Request, events: list, seen_key: str, page: int):
         from .. import notify
-        events = _notif_events(account)
         chain = _account_chain()
         index = state.token_index(chain)
         names: dict[str, str] = {}
@@ -9370,9 +9448,9 @@ def create_app(state: AppState) -> FastAPI:
         # Looked at: everything on the page is read now, the Messages count
         # included -- written before the page is drawn, so its own tab shows no
         # count, while the rows still say which of them were new.
-        seen = notify.seen_now(events, _notif_seen(account.pubkey))
+        seen = notify.seen_now(events, _notif_seen(seen_key))
         seen["message_tab"] = max(int(seen.get("message_tab", 0)), int(seen.get("message", 0)))
-        state.set_setting(f"notif_seen:{account.pubkey}", seen)
+        state.set_setting(f"notif_seen:{seen_key}", seen)
         every = notify.grouped(events)
         # A page at a time, newest first: the next is fetched as the reader
         # scrolls to the foot of this one, and faces are looked up only for
@@ -16034,7 +16112,7 @@ def create_app(state: AppState) -> FastAPI:
                 inputs, outputs = htlclib.doginal_out(
                     coin, {"txid": txid, "vout": 1, "value": int(round(float(beside["value"]) * COIN))}, owner)
             elif leg.kind == "coin":
-                inputs, outputs = htlclib.pay_out(coin, owner)
+                inputs, outputs = htlclib.pay_out(coin, owner, params=chain.params)
             else:
                 # The token or NFT moved out by the lock's own reserve, to this account.
                 inputs, outputs = htlclib.move_out(coin, htlclib.address_of(redeem, chain.params),
@@ -21850,9 +21928,58 @@ def create_app(state: AppState) -> FastAPI:
         return any(int(a["kind"]) == feedlib.DELETE and a.get("target") == txid
                    and a.get("author") in makers for a in acts)
 
+    def _cardwatch():
+        held = getattr(state, "_cardwatch", None)
+        if held is None:
+            from .. import cardwatch as cwlib
+            held = state._cardwatch = cwlib.CardWatch(
+                Path(state.home) / "cardwatch.sqlite",
+                model=lambda: state.setting("cardwatch_model") or state.setting("moderation"),
+                trusted=lambda: set(state.setting("cardwatch_trusted") or []))
+        return held
+
+    def _cards_hidden() -> set:
+        try:
+            return _cardwatch().hidden()
+        except Exception as exc:                          # noqa: BLE001 -- never break the Games tab
+            log.info("card watch: %s", exc)
+            return set()
+
+    def _cards_now() -> list[dict]:
+        """Every game card on every chain, every version, for the card watch."""
+        chain, index = _token_chain()
+        out = []
+        for c, ix in [(chain, index)] + _other_indexes():
+            try:
+                rows = _game_rows(ix, limit=5000, newest=False)
+            except Exception:
+                continue
+            for r in rows:
+                g = r["game"]
+                out.append({"txid": r["txid"], "net": c.network, "creator": r["creator"], "height": r["block_height"],
+                            "name": g.get("name", ""), "family": g.get("family", ""), "cover": g.get("cover", ""),
+                            "description": g.get("description", ""), "genre": g.get("genre", ""),
+                            "publisher": ("@" + _name_of(r["creator"])) if _name_of(r["creator"]) else r["creator"]})
+        return out
+
+    def _cardwatch_loop():
+        from .. import cardwatch as cwlib
+        time.sleep(20)
+        while True:
+            try:
+                _cardwatch().check(_cards_now())
+            except Exception:                             # noqa: BLE001 -- looked at again next time
+                log.exception("card watch")
+            time.sleep(cwlib.EVERY)
+
+    if not getattr(state, "no_background", False) and "PYTEST_CURRENT_TEST" not in os.environ:
+        threading.Thread(target=_cardwatch_loop, name="card-watch", daemon=True).start()
+
     def _game_by_txid(txid: str) -> dict | None:
         """The game an inscription on the Games tab's chain is, or None."""
         if not re.fullmatch(r"[0-9a-f]{64}", str(txid or "")):
+            return None
+        if txid in _cards_hidden():
             return None
         chain, index = _chain_of(txid)   # a game on any chain (2026-10-14)
         try:
@@ -21894,6 +22021,10 @@ def create_app(state: AppState) -> FastAPI:
             for r in got:
                 r["_chain"], r["_ix"] = c, ix
             every += got
+        # Cards the card watch hid (arcade/cardwatch.py, 2026-10-18: lookalikes of somebody else's game stay
+        # off the tab until the operator looks).
+        hidden = _cards_hidden()
+        every = [r for r in every if r["txid"] not in hidden]
         acts = _game_acts([r["txid"] for r in every])
         makers = {c: _makers(c) for c in {r["creator"] for r in every}}
         for r in every:
@@ -22507,7 +22638,9 @@ def create_app(state: AppState) -> FastAPI:
                 return RedirectResponse("/admin/login", status_code=303)
             return render(request, "admin_login.html", reason=str(exc.detail),
                           signed_in=signed_in(request) is not None, need_account=True)
-        return render(request, "admin.html", local=who["local"])
+        return render(request, "admin.html", local=who["local"], update_status=state.update_status, when=_when,
+                      update_every=watcherlib.BlockWatcher.UPDATE_EVERY, release_key=releaselib.PUBLIC_KEY,
+                      trade_cut=swaplib.cut_bps(state.setting("trade_cut", TRADE_CUT)) / 100)
 
     @app.get("/admin/login", response_class=HTMLResponse)
     def admin_login_page(request: Request):
@@ -22802,6 +22935,22 @@ def create_app(state: AppState) -> FastAPI:
             for flag in ("auto_update", "auto_sell", "auto_fill", "node_trades"):
                 if flag in said:
                     state.set_setting(flag, bool(said[flag]))
+            # Moved here from Overview (2026-10-19, the operator: "the overview page needs to be re-organized"): extra
+            # room for sale (the /settings/quotas form's boost fields) and this node's cut of trades (/settings/cut).
+            if isinstance(said.get("boost"), dict):
+                b = said["boost"]
+                price = str(b.get("price") or "").strip()
+                asset = int(b.get("asset") or 0)
+                if asset < 0:
+                    raise ValueError("a boost is paid in coins (0) or a token's number")
+                if price:
+                    parse_amount(price, True)
+                state.set_setting("boost:price", price)
+                state.set_setting("boost:asset", asset)
+                state.set_setting("boost:bytes", max(1, int(b.get("bytes") or accountslib.BYTES_PER_DAY)))
+                state.set_setting("boost:days", max(1, int(b.get("days") or 30)))
+            if "trade_cut" in said:
+                state.set_setting("trade_cut", _percent(said["trade_cut"], "The cut on trades"))
             if isinstance(said.get("swap_big"), dict):
                 # Where a swap waits 1 confirmation instead of none (2026-10-17; was 3 instead of 1, 2026-10-13: "1,
                 # more for big trades"): a mainnet coin leg at or above this, in whole coins.
@@ -23079,6 +23228,76 @@ def create_app(state: AppState) -> FastAPI:
         import signal
         threading.Timer(1.0, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
         return JSONResponse({"ok": True})
+
+    @app.get("/admin/api/mesh")
+    def admin_mesh(request: Request):
+        """The mesh for Admin -> Network (2026-10-19): links, how the node is reached, its tunnel, the STUN it offers
+        and knows (mesh/stun.py), and its Cores peering through the mesh (mesh/corelink.py); and each chain's sync,
+        for Overview's Needs you."""
+        _admin_check(request)
+        chains = []
+        for c in state.all_chains:
+            try:
+                sync = state.chain_sync(c) if hasattr(state, "chain_sync") else {}
+            except Exception:                              # noqa: BLE001
+                sync = {}
+            if sync and not sync.get("ready", True):
+                chains.append({"network": c.network, "label": c.label, "syncing": True,
+                               "progress": round(100 * float(sync.get("progress") or 0), 1)})
+        mesh = getattr(state, "mesh", None)
+        if mesh is None or getattr(mesh, "loop", None) is None:
+            return JSONResponse({"ok": False, "detail": "this node is not on the mesh", "chains": chains,
+                                 "arcades": _arcades_running()})
+        out = {"ok": True, **mesh.status(), "chains": chains, "arcades": _arcades_running()}
+        stun = getattr(mesh, "stun", None)
+        out["stun_mine"] = [f"{h}:{p}" for h, p in stun.mine()] if stun is not None else []
+        out["stun_known"] = len(stun.known()) if stun is not None else 0
+        return JSONResponse(out)
+
+    @app.get("/admin/api/cards")
+    def admin_cards(request: Request):
+        """The card watch's flags (arcade/cardwatch.py): hidden ones first, then cleared."""
+        _admin_check(request)
+        rows = _cardwatch().rows()
+        for r in rows:
+            r["publisher"] = _name_of(r["creator"]) or ""
+            r["like_publisher"] = _name_of(r["like_creator"] or "") or ""
+        return JSONResponse({"ok": True, "rows": rows, "trusted": state.setting("cardwatch_trusted") or [],
+                             "model": bool(state.setting("cardwatch_model") or state.setting("moderation"))})
+
+    @app.post("/admin/api/cards")
+    def admin_cards_decide(request: Request, payload: Any = Body(None)):
+        """Clear a hidden card (back on the Games tab), keep it hidden for good (confirmed), or set the trusted
+        publishers: {txid, status} or {trusted: [address or @name ...]}."""
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        if "trusted" in said:
+            got = []
+            for t in said.get("trusted") or []:
+                t = str(t).strip()
+                if not t:
+                    continue
+                if not t.startswith("@"):
+                    got.append(t)
+                    continue
+                found = []
+                for main in (False, True):                # a name's address on each Pepecoin chain
+                    try:
+                        a = _tag_address(state, t, mainnet=main)
+                    except Exception:                     # noqa: BLE001
+                        a = ""
+                    if a and a != t:
+                        found.append(a)
+                if not found:
+                    return JSONResponse({"detail": f"no such name: {t}"}, status_code=400)
+                got += found
+            state.set_setting("cardwatch_trusted", sorted(set(got)))
+            return JSONResponse({"ok": True, "trusted": state.setting("cardwatch_trusted")})
+        try:
+            done = _cardwatch().decide(str(said.get("txid", "")), str(said.get("status", "")))
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"ok": done})
 
     @app.post("/admin/api/moderation/test")
     def admin_moderation_test(request: Request, payload: Any = Body(None)):
@@ -26083,6 +26302,23 @@ def create_app(state: AppState) -> FastAPI:
                         "no such offer on anything of yours -- it may have been "
                         "made for a piece that has since moved")
                 found = standing[0]
+                if decision == "decline":
+                    # Decline, as an account can (2026-10-19: the operator's tabs should match the client's):
+                    # gone from both lists at once, and the buyer's node told, as a courtesy that may fail.
+                    bid = _bids.get(offer_txid)
+                    if bid and bid["status"] == bidslib.OPEN:
+                        _bids.close(offer_txid, "declined")
+                    else:
+                        _bids.end(offer_txid, "declined")
+                    try:
+                        _page_send(found["inscription"], chain, _key_at(found["buyer"]),
+                                   json.dumps({"swap": "bid", "swapv": swaplib.PROTOCOL, "id": offer_txid,
+                                               "ok": False, "error": "refused"}).encode())
+                    except Exception:                      # noqa: BLE001 -- the decline stands; the note is a courtesy
+                        pass
+                    state.flash("Declined. The offer stays on the chain until their block is spent, so nothing here "
+                                "stops them asking again.", "ok")
+                    return RedirectResponse("/exchange?tab=offers", status_code=303)
                 # The buyer has to be reachable for this to finish: the
                 # seller's half goes back to them as a message. The wallet
                 # refuses to MAKE an offer without a published key for the
@@ -26793,8 +27029,16 @@ def create_app(state: AppState) -> FastAPI:
                 out["trade_orders"] = [{**o, "mine": o["lister"] in own}
                                        for o in state.trade_orders.visible(_online, tab_live=_tab_live, browser=_browser_lister)]
             else:
-                out["trade_orders"] = [o for o in state.trade_orders.visible(_online, tab_live=_tab_live, browser=_browser_lister)
-                                       if o["node"] != mine]
+                # Every order but this node's own standing ones, which are listed apart as "This node's swaps"
+                # (2026-10-19: orders from the order book were not showing on the operator's exchange pages --
+                # dropping every order filed on this node also dropped all of its own accounts' orders).
+                try:
+                    standing = {o["id"] for o in state.node_trader.standing()}
+                except Exception:                          # noqa: BLE001 -- no node trader: nothing of its own
+                    standing = set()
+                out["trade_orders"] = [{**o, "mine": False}
+                                       for o in state.trade_orders.visible(_online, tab_live=_tab_live, browser=_browser_lister)
+                                       if o.get("id") not in standing]
             if not _account_view(request) and _node_trades():
                 trader = state.node_trader
                 out["can_trade_orders"] = True

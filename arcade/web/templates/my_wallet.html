@@ -314,6 +314,7 @@ const netButton = (one, cls) => {
     b.append(img);
     b.title = one.title || one.label || "";
     b.setAttribute("aria-label", one.title || one.label || one.network);
+    b.dataset.net = one.network || "";
     return b;
   }
   const doge = one.network === "doge" || one.doge;

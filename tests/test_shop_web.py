@@ -224,7 +224,7 @@ def test_a_node_says_what_it_takes_of_a_trade(client):
     assert saved.status_code == 303, saved.text
     assert _node_cut(state) == {"bps": 250, "to": state.derived_address}
     assert state.notice_kind == "ok"
-    page = app.get("/").text
+    page = app.get("/admin", headers={"host": "127.0.0.1:8420"}).text      # in Admin -> Trading since 2026-10-19
     assert "trades made here" in page and 'value="2.5"' in page
 
     for said, why in (("-1", "below zero"), ("120", "above 100"),

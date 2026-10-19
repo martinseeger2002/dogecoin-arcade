@@ -205,6 +205,9 @@ class MeshService:
         self.core = None                        # corelink.CoreBridge, when Core rides the mesh
         self.coreshare = None                   # coreshare.CoreShare: Cores shared with, and borrowed from, other arcades
         self.indexcheck = None                  # indexcheck.IndexCheck: indexes compared with other arcades'
+        self.stun = None                        # stun.StunShare: STUN addresses for the fast lane, this node's and others'
+        self.stun_port: int | None = None       # this node's own STUN server (UDP), or None
+        self._stun_transports: list = []
         self.tunnel_url: str | None = None
         self._tunnel_said: str | None = None    # the tunnel address last announced successfully
         self._announcing = threading.Lock()     # one announcement at a time: two at once spend the same coin
@@ -260,6 +263,8 @@ class MeshService:
             self._call(self._tunnel_stop(), timeout=15)
         except Exception:                              # noqa: BLE001
             pass
+        for t in self._stun_transports:
+            self.loop.call_soon_threadsafe(t.close)
         try:
             self._call(self.node.stop(), timeout=10)
         finally:
@@ -276,6 +281,19 @@ class MeshService:
             self.node._spawn(self._announcer())
         if self.tunnel_cmd and self.node.ws_port:
             self.node._spawn(self._tunneler())
+        if self.stun_port:
+            self.node._spawn(self._stun_server())
+
+    async def _stun_server(self) -> None:
+        from . import stun
+        try:
+            self._stun_transports = await stun.serve(port=self.stun_port)
+            log.info("mesh: STUN on UDP %s", self.stun_port)
+        except OSError as exc:
+            log.warning("mesh: STUN not started on UDP %s: %s", self.stun_port, exc)
+            self.stun_port = None
+            if self.stun is not None:
+                self.stun.hosts = None
 
     def _call(self, coro, timeout: float = 5.0):
         """Run a coroutine on the mesh's loop from any other thread, and wait."""
@@ -640,7 +658,7 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
               announce_at: tuple[str, int] | None = None,
               public_port: int | None = None, max_inbound: int | None = None,
               tunnel: str | None = None, core: bool = True,
-              web_port: int | None = None) -> MeshService:
+              web_port: int | None = None, stun_port: int | None = None) -> MeshService:
     """A MeshService wired to an arcade node: its key in the arcade's home, its
     peers from the messaging chain's index, and players checked by the
     messaging chain's Core -- the chain the @tags live on, so a player's
@@ -683,9 +701,13 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
         peers_file=Path(state.home) / "mesh-peers.json", max_inbound=max_inbound,
         tunnel=tunnel, web_port=web_port)
     if core:
-        # Core to Core through the mesh (corelink.py): each chain's own peer port, and its addnode.
+        # Core to Core through the mesh (corelink.py): each chain's own peer port, and its addnode. Every chain whose
+        # Core runs here -- Pepecoin main and test, and Dogecoin, Litecoin and LTC TEST when this node runs them
+        # (2026-10-19, the operator: "The same way that the Pepe coin shares IP or tunnel ... the same thing should happen
+        # for the rest of the chains"). Only chains both arcades offer are bridged, so an older node is simply not
+        # offered the new ones.
         from .corelink import CoreBridge
-        by_name = {"main": state.ledger, "test": state.messaging}
+        by_name = {c.network: c for c in state.all_chains}
         chains = {}
         for name, chain in by_name.items():
             if getattr(chain, "borrowed", False):          # no Core here to peer with
@@ -717,6 +739,17 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
     service.node.add_extension(service.indexcheck)
     from . import coreshare
     coreshare.CURRENT = service.coreshare
+    # STUN for the WebRTC fast lane (stun.py): served here when asked for, proved by other nodes before it is
+    # offered, and every node learns the others' (realtime.py /realtime/ice).
+    from .stun import StunShare
+    service.stun_port = stun_port
+
+    def own_hosts() -> list[str]:
+        last = service.last_announced or {}
+        v6 = service.meet or (own_ipv6() if stun_port else None)
+        return [h for h in (last.get("host"), v6) if h]
+    service.stun = StunShare(own_hosts if stun_port else None, port=stun_port or 3478)
+    service.node.add_extension(service.stun)
     return service
 
 

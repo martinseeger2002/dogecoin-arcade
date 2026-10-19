@@ -281,7 +281,12 @@
       <p class="muted" style="margin:0">Sign in to trade.</p>
       {% else %}
       <h3 style="margin:0 0 6px">Buy and sell {{ bname }}</h3>
+      {% if open_here and not can_trade_orders %}
+      <p class="muted" style="margin:0">This node's own wallet lists and takes swaps once
+        <a href="/admin#trading">Node-facilitated trades</a> is on (Admin &rarr; Trading).</p>
+      {% else %}
       <p class="muted" style="margin:0">Swaps open here when this node runs both chains.</p>
+      {% endif %}
       {% endif %}
     </div>
 

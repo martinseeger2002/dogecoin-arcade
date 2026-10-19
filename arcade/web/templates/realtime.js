@@ -42,6 +42,23 @@
 // within `view` of where you stand (the rooms 'world@3,-1' and so on) and hear
 // those, and you say things only in your own. Somebody on the far side of town
 // costs you nothing. Keep `view` below `cell` and you are in at most four cells.
+//
+// THE FAST LANE (2026-10-18), for action games of up to about 8 players:
+//
+//   arcade.realtime.join('match-1', {fast: true}).then(function (room) {
+//     room.fast.on('message', function (data, p) { moveTank(p, data); });
+//     room.fast.on('peer', function (p, state) { ... });  // 'connecting', 'direct', 'room' or 'gone'
+//     setInterval(function () { room.fast.send({x: x, y: y, yaw: yaw}); }, 33);  // 30 a second
+//     room.fast.send({kill: victimId}, {reliable: true});   // in order, never lost
+//   });
+//
+// Players are connected to each other directly, browser to browser (WebRTC), so nothing waits on a node.
+// fast.send() goes to every other player in the room. Plain sends are unordered and never resent: a lost one is
+// skipped, which is what a position wants. {reliable: true} sends arrive, in order. Up to 16 KB a message.
+// A pair of players who cannot connect directly (both behind strict routers, and the game's builder has not
+// leased a relay) is in state 'room': their sends go through the room at about three a second, reliable ones in
+// order and of the rest only the latest, so the game keeps working, slower, for those two. `room.fast` is null
+// where the viewer has no WebRTC: use room.send then.
 (function () {
   if (window.arcade && window.arcade.realtime) return;
   var seq = 0, waiting = {}, rooms = {};
@@ -84,7 +101,31 @@
     this._on = {message: [], join: [], leave: [], closed: [], rejoined: [], reconnecting: []};
     var self = this;
     (said.members || []).forEach(function (p) { self._members[p.id] = p; });
+    this.fast = said.fast ? new Fast(this) : null;
   }
+
+  function Fast(room) {
+    this.room = room;
+    this._peers = {};
+    this._on = {message: [], peer: []};
+  }
+  Fast.prototype.on = function (type, fn) {
+    if (!this._on[type]) throw new Error('fast lane events are: message, peer');
+    this._on[type].push(fn);
+    return this;
+  };
+  Fast.prototype.send = function (value, options) {
+    var text = typeof value === 'string' ? value : JSON.stringify(value);
+    window.parent.postMessage({arcade: 'realtime', seq: 0, op: 'fast', room: this.room.name, data: text,
+                               reliable: !!(options && options.reliable)}, '*');
+  };
+  // {player id: 'connecting' | 'direct' | 'room'}
+  Fast.prototype.peers = function () {
+    var out = {};
+    for (var k in this._peers) out[k] = this._peers[k];
+    return out;
+  };
+  Fast.prototype._emit = function (type, a, b) { Room.prototype._emit.call(this, type, a, b); };
   Room.prototype.on = function (type, fn) {
     if (!this._on[type]) throw new Error('events are: message, join, leave, closed, rejoined, reconnecting');
     this._on[type].push(fn);
@@ -120,6 +161,15 @@
     // The line dropped and the page is taking the seat again by itself, for as long as it takes (2026-10-18):
     // a game can say "reconnecting"; 'rejoined' follows when it is back.
     else if (ev.type === 'reconnecting') { this.online = false; this._emit('reconnecting'); }
+    else if (ev.type === 'fast' && this.fast) {
+      var said = ev.data;
+      if (typeof said === 'string') { try { said = JSON.parse(said); } catch (err) {} }
+      this.fast._emit('message', said, p);
+    }
+    else if (ev.type === 'peer' && this.fast) {
+      if (ev.state === 'gone') delete this.fast._peers[p.id]; else this.fast._peers[p.id] = ev.state;
+      this.fast._emit('peer', p, ev.state);
+    }
     else if (ev.type === 'message') {
       var data = ev.data;
       if (typeof data === 'string') { try { data = JSON.parse(data); } catch (err) {} }
@@ -133,7 +183,7 @@
   // its family instead (its registry's id, say) and every version shares rooms.
   function joinOne(name, options) {
     if (rooms[name]) return Promise.resolve(rooms[name]);
-    return ask({op: 'join', room: name, game: options.game || ''}).then(function (said) {
+    return ask({op: 'join', room: name, game: options.game || '', fast: !!options.fast}).then(function (said) {
       var room = new Room(name, said);
       if (room.online) rooms[name] = room;
       return room;

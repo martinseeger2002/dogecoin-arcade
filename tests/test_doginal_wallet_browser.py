@@ -126,7 +126,8 @@ def _open_doginals(browser, base):
             break
         time.sleep(0.25)
     browser.find_element(By.ID, "tab-nfts").click()
-    doge = [b for b in browser.find_elements(By.CSS_SELECTOR, "#nets button") if b.text.strip().startswith("D")]
+    doge = [b for b in browser.find_elements(By.CSS_SELECTOR, "#nets button")
+            if b.get_attribute("data-net") == "doge" or b.text.strip().startswith("D")]   # an icon since 2026-10-18
     assert doge, "the Dogecoin button"
     doge[0].click()
 

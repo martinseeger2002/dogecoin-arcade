@@ -52,3 +52,11 @@ def launch(*arguments: str) -> webdriver.Firefox:
         return webdriver.Firefox(options=options, service=service)
     except Exception as exc:                      # no firefox, no geckodriver
         pytest.skip(f"no usable browser: {exc}. {HOW}")
+
+
+def allow_wallet(driver, base: str, *pages: str) -> None:
+    """Turn wallet access on for these game pages in this browser, as a player does on the game's card
+    (base.html, WALLET ACCESS, PER GAME, 2026-10-18): kept in the node's own localStorage, per page."""
+    driver.get(f"{base}/r/realtime.js")
+    driver.execute_script("for (const i of arguments[0]) localStorage.setItem('arcade.wallet.allow:' + i, 'yes');",
+                          list(pages))

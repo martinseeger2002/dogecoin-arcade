@@ -73,6 +73,14 @@
 
     <div class="row lacts" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
       <a class="btn small" target="_blank" rel="noopener" href="/inscriptions/{{ g.opens or it.txid }}/full">Play</a>
+      {# Wallet access, per game (2026-10-18; base.html WALLET ACCESS, PER GAME): off until the player turns it
+         on after checking the publisher, beside whether the wallet is open in this browser now. #}
+      <label class="gameaccess" title="Let this game ask your wallet to trade, pay and sign"
+             style="display:inline-flex;align-items:center;gap:5px;margin:0;font-size:.85rem;cursor:pointer;white-space:nowrap"
+             data-access="{{ g.opens or it.txid }}" data-game="{{ g.name }}"
+             data-publisher="{{ ('@' ~ name_of(it.creator)) if name_of(it.creator) else '' }}"
+             data-address="{{ it.creator }}"><input type="checkbox" style="margin:0;width:auto"> Wallet access</label>
+      <span class="pill walletlock" data-walletlock>&#128274; wallet locked</span>
       {% if acts %}
       <form method="post" action="/feed/{{ it.txid }}/{{ 'unlike' if it.liked else 'like' }}" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
@@ -151,6 +159,36 @@
   .gamebody{flex:1;min-width:0}
   @media(max-width:560px){.gamecard{flex-direction:column}.gamecover{flex:none;width:100%;aspect-ratio:16/9}}
 </style>
+
+<script>
+/* The cards' wallet access switches and the wallet's lock status (base.html, WALLET ACCESS, PER GAME). */
+(function () {
+  function draw() {
+    document.querySelectorAll('.gameaccess').forEach(function (l) {
+      l.querySelector('input').checked = arcadeGameAllowed(l.dataset.access);
+    });
+  }
+  function lock() {
+    arcadeWalletOpen().then(function (open) {
+      document.querySelectorAll('[data-walletlock]').forEach(function (p) {
+        p.textContent = open ? '\u{1F513} wallet unlocked' : '\u{1F512} wallet locked';
+        p.title = open ? 'Your wallet is open in this browser: a game with wallet access can ask it to sign'
+                       : 'Your wallet is locked: nothing can sign until you unlock it';
+      });
+    });
+  }
+  document.addEventListener('change', function (e) {
+    var l = e.target.closest && e.target.closest('.gameaccess'); if (!l) return;
+    var box = e.target;
+    if (!box.checked) { arcadeGameAllow(l.dataset.access, false); return; }
+    box.checked = false;
+    arcadeAccessAsk(l.dataset.access, l.dataset.game, l.dataset.publisher, l.dataset.address).then(draw);
+  });
+  document.addEventListener('arcade:access', draw);
+  document.addEventListener('arcade:unlocked', lock);
+  draw(); lock();
+})();
+</script>
 
 {% if viewer == 'account' and mine_tag %}
 <script type="module">

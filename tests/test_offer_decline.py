@@ -31,3 +31,11 @@ def test_a_declined_offer_leaves_both_sides_at_once(node):
                 and f'data-withdraw="{offer}"' not in page, "gone from the active lists"
     finally:
         state.public = False
+
+
+def test_the_operator_may_decline_too(node):
+    """2026-10-19: the operator's tabs should match the client's; Offers had Accept only for the operator."""
+    app, state, rpc = node
+    said = app.post("/exchange/offers/" + "ab" * 32, data={"csrf_token": state.csrf_token, "decision": "decline"},
+                    follow_redirects=False)
+    assert said.status_code == 303 and state.notice_kind == "err" and "no such offer" in state.notice

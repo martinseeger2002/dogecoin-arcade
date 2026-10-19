@@ -82,6 +82,28 @@ address that inscribed the card sees the button, and only its removal counts.
   It still plays from its own link; it is just no longer listed.
 * To list the game again, inscribe a new version with the same name.
 
+## Wallet access, and lookalike games
+
+A game can ask a player's wallet to trade, pay, put things in escrow or sign. Anybody can inscribe a game,
+including a copy of yours under a lookalike name (an extra letter, a digit for a letter), so **no game gets
+wallet access until the player turns it on**:
+
+* Every card on the Games tab has a **Wallet access** switch, off until the player turns it on, next to
+  whether their wallet is unlocked in that browser. Turning it on names the game's publisher (its @name and
+  address) and asks the player to check that it is the real one.
+* A game that asks for the wallet while its switch is off gets the same question, once. Saying no leaves
+  the game running without the wallet.
+* Without access a game still plays, saves (`arcade.storage`) and joins rooms as the player
+  (`arcade.realtime`): that signature only proves who the player is and moves nothing.
+
+The switch belongs to the page Play opens (`play`, or the card itself), and the player's browser keeps it.
+
+**Lookalike cards are hidden.** Each arcade checks new cards against the games already listed. A card by a
+different publisher with a name that reads the same once the lookalike letters are taken out, or with the same
+cover, goes to the operator's model; if it looks made to be mistaken for the other game, it is left off the
+Games tab and its `/play` link until the operator has looked. The first publisher of a name counts as the real
+one, unless the operator trusts another. Pick a name of your own and nothing here affects you.
+
 ## How the tab ranks games
 
 * **Popular** weighs what people said: likes, minus dislikes, plus half a point

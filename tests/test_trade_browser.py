@@ -129,6 +129,7 @@ def _inscribe(state, txid, number, owner, content_type, content, said=None):
 
 
 def _in_game(driver, base):
+    browsers.allow_wallet(driver, base, GAME)
     driver.get(f"{base}/inscriptions/{GAME}/full")
     frame = driver.find_element(By.CSS_SELECTOR, ".inscription-frame")
     driver.switch_to.frame(frame)

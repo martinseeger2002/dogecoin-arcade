@@ -23,10 +23,10 @@ def test_the_market_page_says_it_is_not_trustless_and_starts_closed(client, monk
                                                                       "divisible": True, "managed": 0})
     page = app.get("/exchange/x/token/59?held=1").text
     assert "Not trustless" in page and "trust the operator" in page
-    assert "not open on this node" in page and "MAIN</span>" in page and "TEST</span>" in page
+    assert "not open on this node" in page and "real PEP\"" in page and "worth nothing\"" in page
     # The market itself is lock scripts (2026-10-15): open, and never "held by this node".
     swaps = app.get("/exchange/x/token/59").text
-    assert "Lock scripts" in swaps and "Not trustless" not in swaps and "MAIN</span>" in swaps
+    assert "Lock scripts" in swaps and "Not trustless" not in swaps and "real PEP\"" in swaps
     assert app.get("/exchange/pairs?base=59&quote=main", follow_redirects=False).headers["location"] \
         == "/exchange/swap/regtest-token-59/main-coin", "the mainnet choice needs no switch"
 
@@ -58,7 +58,7 @@ def test_the_operator_opens_the_book_and_its_markets_join_the_list(client, monke
     listing = app.get("/exchange?tab=tokens").text
     assert "/exchange/swap/regtest-token-59/main-coin" in listing, "an open market is a row of the one table"
     row = listing[listing.index("/exchange/swap/regtest-token-59/main-coin"):][:2500]
-    assert "MAIN</span>" in row and "PEP" in row
+    assert "real PEP\"" in row and "PEP" in row
     market = app.get("/exchange/x/token/59?held=1").text
     assert "0.5" in market and "Not trustless" in market
     swaps = app.get("/exchange/x/token/59").text
@@ -93,5 +93,5 @@ def test_a_piece_sold_for_mainnet_pep_is_a_sale_not_a_pair(client, monkeypatch):
     market = app.get("/exchange?tab=market").text
     assert "Recently sold" in market, "the sale is on the Market tab"
     sold = market[market.index("Recently sold"):][:4000]
-    assert "Doge Punk #7" in sold and "100 PEP" in sold and "MAIN</span>" in sold, sold
+    assert "Doge Punk #7" in sold and "100 PEP" in sold and "real PEP\"" in sold, sold
     assert "PSellerMain" in sold, "the seller is the order's mainnet address"

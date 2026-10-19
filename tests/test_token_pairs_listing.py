@@ -131,7 +131,7 @@ def test_every_market_row_says_its_chain_and_its_supply(client, monkeypatch):
     monkeypatch.setattr(L.LedgerIndex, "property", lambda self, pid: props.get(pid) or real_property(self, pid))
     page = app.get("/exchange?tab=tokens").text
     row = page[page.index("/exchange/pairs/7/8"):][:3000]
-    assert "netbadge" in row and ("TEST</span>" in row or "MAIN</span>" in row) and "<svg" in row
+    assert "netbadge" in row and ("worth nothing\"" in row or "real PEP\"" in row) and "<svg" in row
     assert "supplybadge managed" in row, "LOGS can be minted at will, and the row says so"
     pair = app.get("/exchange/pairs/7/8").text
     assert "supplybadge managed" in pair and "supplybadge fixed" in pair, "both tokens of the pair, each its own"
@@ -141,7 +141,7 @@ def test_the_badges_read_their_inputs_the_way_pages_hand_them_over(client):
     from arcade.web import app as W                                   # noqa: F401
     from arcade.web.app import TEMPLATES
     net, supply = TEMPLATES.env.globals["net_badge"], TEMPLATES.env.globals["supply_badge"]
-    assert "MAIN</span>" in net(True) and "MAIN</span>" in net("main") and "TEST</span>" in net("test")
-    assert "TEST</span>" in net(None), "anything unknown is the safe reading: not real money"
+    assert "real PEP\"" in net(True) and "real PEP\"" in net("main") and "worth nothing\"" in net("test")
+    assert "worth nothing\"" in net(None), "anything unknown is the safe reading: not real money"
     assert "Fixed supply" in supply({"managed": 0}) and "Managed" in supply({"managed": 1})
     assert "Fixed supply" in supply({}), "an issuance that never said managed is fixed"

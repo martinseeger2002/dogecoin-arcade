@@ -275,3 +275,20 @@ def test_notifications_come_a_page_at_a_time(public, monkeypatch):
     third = app.get("/me/notifications?page=3").text
     assert third.count('class="nrow') == 10 and 'id="npage"' in third
     assert 'href="?page=4"' not in third
+
+
+def test_the_operator_has_notifications_too(client, monkeypatch):
+    """2026-10-19: the operator's tabs should match the client's, and the operator had no Notifications:
+    likes and replies to the node's own address were never said. /notifications is the node's, with the same red
+    count until it is looked at; an account still has its own at /me/notifications."""
+    app, state = client
+    node = "nNodeCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+    monkeypatch.setattr(type(state), "derived_address", property(lambda self: node))
+    a_post(state, "d" * 64, text="the node's post", sender=node)
+    an_act(state, "8" * 64, feed.LIKE, "d" * 64, author=THEM)
+    page = app.get("/").text
+    assert 'href="/notifications">Notifications<span class="nav-count">1</span>' in page
+    seen = app.get("/notifications").text
+    assert "liked your post" in seen and "nrow new" in seen
+    assert 'Notifications<span class="nav-count">' not in app.get("/").text
+    assert 'href="/notifications"' not in app.get("/me", headers=EDGE).text, "not an account's tab"

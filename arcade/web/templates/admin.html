@@ -6,53 +6,42 @@
   <span class="pill {{ 'ok' if local else 'warn' }}">{{ 'at the node machine' if local else 'remote' }}</span>
   {% if not local %}<button type="button" class="ghost small" id="adminout">Lock the panel</button>{% endif %}
 </div>
-<p class="sub" style="margin-top:4px">Everything this node's operator runs: seats, what each
-  may do, the node's own coins, and the switches.</p>
+<p class="sub" style="margin-top:4px">Everything this node's operator runs, in six tabs.</p>
 <p class="msg" id="said" hidden></p>
 
+<nav class="admintabs" role="tablist">
+  <button type="button" role="tab" data-tab="overview">Overview</button>
+  <button type="button" role="tab" data-tab="coins">Coins &amp; chains</button>
+  <button type="button" role="tab" data-tab="trading">Trading</button>
+  <button type="button" role="tab" data-tab="safety">Safety</button>
+  <button type="button" role="tab" data-tab="network">Network</button>
+  <button type="button" role="tab" data-tab="people">People &amp; brand</button>
+</nav>
+
+<div class="admintab" data-tab="overview" aria-label="Overview">
 <div class="cards" id="cards"></div>
-
-{# 2026-10-17 (SadFrog's side): this node's face, and the Litecoin nodes on this machine (arcade/litecoin.py).
-   Which chains run here, are borrowed or are off is Admin -> Chains (arcade/cores.py, 2026-10-18). #}
-<section class="panel" id="face">
-  <h2>Face</h2>
-  <p class="muted" style="margin-top:0">The name, colours and icons this arcade shows. Only the look changes: every face
-    is the same network.</p>
-  <div id="facechoices" style="display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 10px"></div>
-  <p class="muted" id="facesaid" hidden></p>
-  <button type="button" class="small" id="saveface">Use this face</button>
-  <p class="muted" style="margin:14px 0 0">Which chains run here, are borrowed or are off: <a href="#chains">Chains</a>.</p>
-  <p class="muted" style="margin:14px 0 0">Litecoin node: <span id="ltcline">checking&hellip;</span></p>
-  <p class="muted" style="margin:4px 0 0">Litecoin testnet node: <span id="ltctestline">checking&hellip;</span></p>
-  <p class="muted" style="margin:8px 0 0;font-size:.84rem">Before switching Litecoin on for people:
-    inscriptions made here use the Doginals format, which Litecoin&rsquo;s Taproot ordinals sites do not
-    show, and this arcade cannot yet move inscriptions on Taproot (ltc1p&hellip;) addresses. Cross-chain
-    swaps cost a fee on each chain and refund only after their lock time.
-    <a href="/docs/litecoin.md">Litecoin on this arcade</a> says it in full.</p>
+<section class="panel" id="needs">
+  <p style="margin:0 0 10px;font-weight:600" id="arcadesline"></p>
+  <h2>Needs you</h2>
+  <div id="needlist" class="muted">Looking&hellip;</div>
+</section>
+<section class="panel" id="nodeswitch">
+  <h2>This node</h2>
+  <p class="muted" style="margin:0 0 6px;font-size:.84rem">
+  {% if update_status %}Updates last checked {{ when(update_status.at) }}: <strong>{{ update_status.what }}</strong>
+    {%- if update_status.installed %}, running <code class="mono">{{ update_status.installed[:7] }}</code>{% endif %}
+    {%- if update_status.published and update_status.published != update_status.installed %}, published <code class="mono">{{ update_status.published[:7] }}</code>{% endif %}.
+    {%- if update_status.error %}<br><span style="color:var(--bad)">{{ update_status.error }}</span>{% endif %}
+  {% else %}Updates not checked since this interface started; it looks every {{ update_every // 60 }} minutes, and a
+    source checkout never updates itself.{% endif %}
+    Releases are signed with key <code class="mono">{{ release_key[:16] }}&hellip;</code>, pinned in this installation.</p>
+  <label class="switch"><input type="checkbox" id="auto_update"> Install updates by itself</label>
+  <button type="button" class="small saveswitches">Save switches</button>
 </section>
 
-<section class="panel">
-  <h2>Seats</h2>
-  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
-    <label for="seats" class="muted">Seats on this node</label>
-    <input autocomplete="off" id="seats" type="number" min="1" max="10000" style="width:110px">
-    <button type="button" class="small" id="saveseats">Save</button>
-    <span class="muted" id="seatline"></span>
-  </div>
-  <div class="tablewrap"><table class="admintable">
-    <thead><tr><th>Account</th><th>Joined</th><th>Last seen</th><th></th></tr></thead>
-    <tbody id="accounts"></tbody>
-  </table></div>
-</section>
+</div>
 
-<section class="panel">
-  <h2>What each seat may do</h2>
-  <p class="muted" style="margin-top:0">Per account, per hour (bytes: per day). 0 closes that
-    action. Changes apply to the next thing anybody does.</p>
-  <div class="quotagrid" id="quotas"></div>
-  <button type="button" class="small" id="savequotas">Save limits</button>
-</section>
-
+<div class="admintab" data-tab="coins" aria-label="Coins & chains">
 <section class="panel">
   <h2>The node's coins</h2>
   <div id="wallets"></div>
@@ -115,6 +104,14 @@
     <button type="button" class="small ghost" id="minestop" hidden>Stop</button>
   </div>
   <div id="minesaid" class="muted" style="font-size:.86rem;margin-top:6px"></div>
+  <h3 style="margin:14px 0 6px">Litecoin nodes on this machine</h3>
+  <p class="muted" style="margin:4px 0 0">Litecoin node: <span id="ltcline">checking&hellip;</span></p>
+  <p class="muted" style="margin:4px 0 0">Litecoin testnet node: <span id="ltctestline">checking&hellip;</span></p>
+  <p class="muted" style="margin:8px 0 0;font-size:.84rem">Before switching Litecoin on for people:
+    inscriptions made here use the Doginals format, which Litecoin&rsquo;s Taproot ordinals sites do not
+    show, and this arcade cannot yet move inscriptions on Taproot (ltc1p&hellip;) addresses. Cross-chain
+    swaps cost a fee on each chain and refund only after their lock time.
+    <a href="/docs/litecoin.md">Litecoin on this arcade</a> says it in full.</p>
 </section>
 
 <section class="panel">
@@ -123,7 +120,7 @@
      column). The sign-up gift is P test's amount. What stays here is the one day-wide ceiling. #}
   <p class="muted" style="margin-top:0">Each test chain&rsquo;s faucet &mdash; what every account is
     topped back up to once a day, and how this node keeps the coins for it &mdash; is in
-    <a href="#chains">Chains</a>, in its Faucet column. P test&rsquo;s amount is also what each new
+    <a href="#coins">Chains</a>, in its Faucet column. P test&rsquo;s amount is also what each new
     account gets when it signs up. Chains with real coins have no faucet.</p>
   <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
     <label class="muted" for="faucetdaily">P test sign-up gifts and top-ups, at most per day in all</label>
@@ -132,9 +129,18 @@
   <button type="button" class="small" id="savefaucet" style="margin-top:10px">Save faucet</button>
 </section>
 
-<section class="panel">
-  <h2>Switches</h2>
-  <label class="switch"><input type="checkbox" id="auto_update"> Install updates by itself</label>
+</div>
+
+<div class="admintab" data-tab="trading" aria-label="Trading">
+<section class="panel" id="tradeswitches">
+  <h2>Trading switches</h2>
+  <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+    <label for="tradecut" class="muted">Your cut of trades made here, per cent</label>
+    <input autocomplete="off" id="tradecut" type="number" min="0" max="100" step="0.1" style="width:90px" value="{{ '%g'|format(trade_cut) }}">
+  </div>
+  <p class="muted" style="margin:0 0 10px;font-size:.84rem">What this node takes of a trade it made the offer for (a sale
+    from your shop, a fill of your order, an offer you accepted), paid by the buyer on top of the price and named in
+    the offer. Zero asks nothing of anybody.</p>
   <label class="switch"><input type="checkbox" id="auto_sell"> Sell listed pieces automatically</label>
   <label class="switch"><input type="checkbox" id="auto_fill"> Fill exchange orders automatically</label>
   {# Off by default (2026-10-13): trades only while both people's tabs are open,
@@ -146,41 +152,8 @@
     <strong>On:</strong> this node also holds pre-signed listings and bids to finish later,
     fills &ldquo;while I'm away&rdquo; buy orders, and may run the custodial mainnet PEP swap
     below &mdash; convenient, but people then trust this node to finish their trades.
-    Lock-script swaps between chains are trustless either way (see <a href="#swaps">Lock-script swaps</a>).</p>
-  <h3 style="margin-bottom:6px">Content screening</h3>
-  <p class="muted" style="margin-top:0">A model (vLLM, or any OpenAI-compatible server that
-    reads images) looks at pictures and posts before this arcade shows them.
-    <strong>Leave the address empty and nothing is screened</strong>: everything shows.</p>
-  <div class="row" style="gap:8px;flex-wrap:wrap">
-    <input autocomplete="off" id="modurl" placeholder="http://host:port/v1" style="flex:2;min-width:200px">
-    <input autocomplete="off" id="modmodel" placeholder="model name" style="flex:1;min-width:140px">
-    <input autocomplete="new-password" type="password" id="modkey"
-           placeholder="access token (optional)" style="flex:1;min-width:160px">
-    <button type="button" class="small ghost" id="modtest">Test</button>
-  </div>
-  <label class="switch" id="modclearrow" hidden><input type="checkbox" id="modclear">
-    Remove the saved access token</label>
-  <p class="muted" id="modsaid"></p>
-  {# 2026-10-17: what this arcade's model flags, told to every arcade (arcade/flags.py). #}
-  <label class="switch"><input type="checkbox" id="flags_broadcast"> Broadcast this arcade&rsquo;s
-    sensitive-material flags to every arcade</label>
-  <p class="muted" style="margin:-4px 0 10px 28px;font-size:.84rem" id="flagsline">
-    Each picture or post your model flags goes out as a public message every arcade reads: only
-    its fingerprint and the verdict, never the content. Flags are gathered and sent together, a
-    testnet transaction at a time, from this node&rsquo;s fee address. Other operators choose
-    whether to use them.</p>
-  <p class="muted" id="pushline"></p>
-  <button type="button" class="small" id="saveswitches">Save switches</button>
-</section>
-
-<section class="panel" id="flags">
-  <h2>Sensitive-material flags from other arcades</h2>
-  <p class="muted" style="margin-top:0">Arcades that broadcast what their own screening flagged.
-    Turn one on and what it flags is covered here too (sensitive) or hidden (illegal), even with
-    your own screening off. Their flags can only make this arcade stricter, and anything you
-    clear yourself stays cleared.</p>
-  <div id="flaglist"><p class="muted">No arcade has broadcast flags yet.</p></div>
-  <button type="button" class="small" id="saveflags">Save</button>
+    Lock-script swaps between chains are trustless either way (see <a href="#trading">Lock-script swaps</a>).</p>
+  <button type="button" class="small saveswitches">Save switches</button>
 </section>
 
 <section class="panel" id="xchain">
@@ -210,6 +183,63 @@
   <div id="swaplist" class="muted" style="font-size:.84rem">Loading&hellip;</div>
 </section>
 
+</div>
+
+<div class="admintab" data-tab="safety" aria-label="Safety">
+<section class="panel" id="screening">
+  <h2>Content screening</h2>
+  <p class="muted" style="margin-top:0">A model (vLLM, or any OpenAI-compatible server that
+    reads images) looks at pictures and posts before this arcade shows them.
+    <strong>Leave the address empty and nothing is screened</strong>: everything shows.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap">
+    <input autocomplete="off" id="modurl" placeholder="http://host:port/v1" style="flex:2;min-width:200px">
+    <input autocomplete="off" id="modmodel" placeholder="model name" style="flex:1;min-width:140px">
+    <input autocomplete="new-password" type="password" id="modkey"
+           placeholder="access token (optional)" style="flex:1;min-width:160px">
+    <button type="button" class="small ghost" id="modtest">Test</button>
+  </div>
+  <label class="switch" id="modclearrow" hidden><input type="checkbox" id="modclear">
+    Remove the saved access token</label>
+  <p class="muted" id="modsaid"></p>
+  {# 2026-10-17: what this arcade's model flags, told to every arcade (arcade/flags.py). #}
+  <label class="switch"><input type="checkbox" id="flags_broadcast"> Broadcast this arcade&rsquo;s
+    sensitive-material flags to every arcade</label>
+  <p class="muted" style="margin:-4px 0 10px 28px;font-size:.84rem" id="flagsline">
+    Each picture or post your model flags goes out as a public message every arcade reads: only
+    its fingerprint and the verdict, never the content. Flags are gathered and sent together, a
+    testnet transaction at a time, from this node&rsquo;s fee address. Other operators choose
+    whether to use them.</p>
+  <p class="muted" id="pushline"></p>
+  <button type="button" class="small saveswitches">Save switches</button>
+</section>
+
+<section class="panel" id="gamecards">
+  <h2>Game cards</h2>
+  <p class="muted" style="margin-top:0">A new game card that looks like somebody else&rsquo;s game (a lookalike name,
+    the same cover) is hidden from the Games tab until you look at it, and you get a notification. Your screening
+    model judges the close ones; without one, a close lookalike is hidden on its own. The first to publish a name is
+    taken as the real one, and trusted publishers are never hidden.</p>
+  <div id="cardrows" class="muted">Nothing hidden.</div>
+  <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px">
+    <input autocomplete="off" id="cardtrusted" placeholder="trusted publishers: @ashvale, @pip, or addresses" style="flex:1;min-width:260px">
+    <button type="button" class="small ghost" id="cardtrustsave">Save trusted</button>
+  </div>
+  <p class="muted" id="cardsaid"></p>
+</section>
+
+<section class="panel" id="flags">
+  <h2>Sensitive-material flags from other arcades</h2>
+  <p class="muted" style="margin-top:0">Arcades that broadcast what their own screening flagged.
+    Turn one on and what it flags is covered here too (sensitive) or hidden (illegal), even with
+    your own screening off. Their flags can only make this arcade stricter, and anything you
+    clear yourself stays cleared.</p>
+  <div id="flaglist"><p class="muted">No arcade has broadcast flags yet.</p></div>
+  <button type="button" class="small" id="saveflags">Save</button>
+</section>
+
+</div>
+
+<div class="admintab" data-tab="network" aria-label="Network">
 {% if local %}
 <section class="panel" id="tunnel">
   <h2>Put this arcade online</h2>
@@ -244,6 +274,47 @@
 </section>
 {% endif %}
 
+<section class="panel" id="mesh">
+  <h2>Mesh</h2>
+  <p class="muted" style="margin-top:0">Other arcades this node is linked to, how it can be reached, the STUN it
+    offers browsers for fast games, and which of its Cores peer with other arcades&rsquo; through the mesh.</p>
+  <div id="meshinfo" class="muted" style="font-size:.88rem">Loading&hellip;</div>
+</section>
+
+</div>
+
+<div class="admintab" data-tab="people" aria-label="People & brand">
+<section class="panel">
+  <h2>Seats</h2>
+  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+    <label for="seats" class="muted">Seats on this node</label>
+    <input autocomplete="off" id="seats" type="number" min="1" max="10000" style="width:110px">
+    <button type="button" class="small" id="saveseats">Save</button>
+    <span class="muted" id="seatline"></span>
+  </div>
+  <div class="tablewrap"><table class="admintable">
+    <thead><tr><th>Account</th><th>Joined</th><th>Last seen</th><th></th></tr></thead>
+    <tbody id="accounts"></tbody>
+  </table></div>
+</section>
+
+<section class="panel">
+  <h2>What each seat may do</h2>
+  <p class="muted" style="margin-top:0">Per account, per hour (bytes: per day). 0 closes that
+    action. Changes apply to the next thing anybody does.</p>
+  <div class="quotagrid" id="quotas"></div>
+  <h3 style="margin:14px 0 6px">Sell extra room</h3>
+  <p class="muted" style="margin-top:0;font-size:.84rem">Accounts can pay this node for more bytes a day, in coins or a
+    token you choose. An empty price sells nothing.</p>
+  <div class="quotagrid">
+    <label>Extra bytes a day <input autocomplete="off" id="boostbytes" type="number" min="1000" step="1000" value="{{ state.setting('boost:bytes', 250000) }}"></label>
+    <label>For how many days <input autocomplete="off" id="boostdays" type="number" min="1" step="1" value="{{ state.setting('boost:days', 30) }}"></label>
+    <label>Price <input autocomplete="off" id="boostprice" inputmode="decimal" placeholder="not for sale" value="{{ state.setting('boost:price', '') }}"></label>
+    <label>Paid in (0 = coins, or a token's number) <input autocomplete="off" id="boostasset" type="number" min="0" step="1" value="{{ state.setting('boost:asset', 0) }}"></label>
+  </div>
+  <button type="button" class="small" id="savequotas">Save limits</button>
+</section>
+
 <section class="panel">
   <h2>Operator &amp; remote access</h2>
   <p id="opline" style="margin-top:0"></p>
@@ -260,6 +331,21 @@
   <p class="muted">The operator account and the admin password are changed at the node machine.</p>
   {% endif %}
 </section>
+
+{# 2026-10-17 (SadFrog's side): this node's face, and the Litecoin nodes on this machine (arcade/litecoin.py).
+   Which chains run here, are borrowed or are off is Admin -> Chains (arcade/cores.py, 2026-10-18). #}
+<section class="panel" id="face">
+  <h2>Face</h2>
+  <p class="muted" style="margin-top:0">The name, colours and icons this arcade shows. Only the look changes: every face
+    is the same network.</p>
+  <div id="facechoices" style="display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 10px"></div>
+  <p class="muted" id="facesaid" hidden></p>
+  <button type="button" class="small" id="saveface">Use this face</button>
+  <p class="muted" style="margin:14px 0 0">Which chains run here, are borrowed or are off: <a href="#coins">Coins &amp; chains</a>.</p>
+</section>
+
+</div>
+
 
 <style>
 .adminhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -294,6 +380,14 @@ section.panel h2{margin-top:0}
 .idx-rows{font-size:.76rem;white-space:pre-wrap;word-break:break-all;max-height:180px;overflow:auto;background:var(--code);padding:6px;border-radius:6px}
 .tunsteps li{line-height:2.2}
 .tunsteps button{margin-left:6px}
+/* Tabs (2026-10-19, the operator: "the admin panel page needs to be cleaned up and re-organized") */
+.admintabs{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 4px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.admintabs button{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:999px;padding:6px 14px;font-weight:600}
+.admintabs button.on{background:var(--accent, #b8860b);border-color:var(--accent, #b8860b);color:#fff}
+.admintab{display:none}.admintab.on{display:block}
+/* base.html gives every input width:100%, which stretched each switch's checkbox across its panel */
+.switch input[type=checkbox]{width:auto;flex:none;margin:0}
+#needlist div,#meshinfo div{padding:3px 0}
 </style>
 
 <script>
@@ -712,6 +806,44 @@ section.panel h2{margin-top:0}
   loadMine();
   setInterval(function () { if (!document.hidden && mine && mine.running) loadMine(); }, 3000);
 
+  // --- the card watch (arcade/cardwatch.py, 2026-10-18) ---
+  function loadCards() {
+    return fetch('/admin/api/cards', {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.json(); }).then(function (d) {
+        var box = $('cardrows'); box.replaceChildren();
+        $('cardtrusted').value = (d.trusted || []).join(', ');
+        $('cardsaid').textContent = d.model ? 'Close lookalikes are judged by your screening model.'
+                                            : 'No screening model is set: every close lookalike is hidden for you to judge.';
+        if (!(d.rows || []).length) { box.textContent = 'Nothing hidden.'; return; }
+        (d.rows || []).forEach(function (r) {
+          var row = document.createElement('div'); row.className = 'row'; row.style.cssText = 'gap:8px;align-items:center;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--line, #8883)';
+          var t = document.createElement('div'); t.style.flex = '1'; t.style.minWidth = '240px';
+          var who = r.publisher ? '@' + r.publisher : String(r.creator || '').slice(0, 10) + '\u2026';
+          var like = r.like_publisher ? '@' + r.like_publisher : String(r.like_creator || '').slice(0, 10) + '\u2026';
+          t.innerHTML = '<b></b> by <span></span> looks like <b></b> by <span></span><br><small class="muted"></small>';
+          var f = t.querySelectorAll('b, span, small');
+          f[0].textContent = r.name; f[1].textContent = who; f[2].textContent = r.like_name || '?'; f[3].textContent = like;
+          f[4].textContent = (r.status === 'flagged' ? 'Hidden, waiting for you' : r.status === 'confirmed' ? 'Kept hidden' : 'Cleared: on the Games tab')
+                             + ' \u00b7 ' + (r.why || '') + ' \u00b7 ' + (r.by === 'model' ? 'judged by the model' : 'lookalike name');
+          var open = document.createElement('a'); open.href = '/inscriptions/' + r.txid + '/view'; open.textContent = 'Look'; open.className = 'small';
+          row.append(t, open);
+          [['cleared', 'Clear (show it)'], ['confirmed', 'Keep hidden']].forEach(function (b) {
+            if (r.status === b[0]) return;
+            var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'small' + (b[0] === 'cleared' ? ' ghost' : '');
+            btn.textContent = b[1];
+            btn.onclick = function () { call('/admin/api/cards', {txid: r.txid, status: b[0]}).then(loadCards).catch(function (e) { say(e.message, 'err'); }); };
+            row.append(btn);
+          });
+          box.append(row);
+        });
+      }).catch(function () {});
+  }
+  $('cardtrustsave').onclick = function () {
+    call('/admin/api/cards', {trusted: $('cardtrusted').value.split(/[\s,]+/).filter(Boolean)})
+      .then(loadCards).then(function () { say('Trusted publishers saved.', 'ok'); }).catch(function (e) { say(e.message, 'err'); });
+  };
+  loadCards();
+
   function load() {
     return fetch('/admin/api/state', {credentials: 'same-origin', cache: 'no-store'})
       .then(function (r) { if (r.status === 401) location.href = '/admin/login'; return r.json(); })
@@ -770,6 +902,10 @@ section.panel h2{margin-top:0}
     var hour = {};
     document.querySelectorAll('#quotas input[data-kind]').forEach(function (i) { hour[i.dataset.kind] = i.value; });
     call('/admin/api/quotas', {hour: hour, bytes: $('quotabytes').value})
+      .then(function () {
+        return call('/admin/api/settings', {boost: {bytes: $('boostbytes').value, days: $('boostdays').value,
+                                                    price: $('boostprice').value.trim(), asset: $('boostasset').value}});
+      })
       .then(function () { say('Limits saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
   $('savefaucet').onclick = function () {
@@ -807,8 +943,61 @@ section.panel h2{margin-top:0}
       }).catch(function () { $('swaplist').textContent = 'Could not read the swaps.'; });
   }
   loadSwaps(); setInterval(loadSwaps, 15000);
-  $('saveswitches').onclick = function () {
-    call('/admin/api/settings', {auto_update: $('auto_update').checked, auto_sell: $('auto_sell').checked,
+  document.querySelectorAll('.saveswitches').forEach(function (b) { b.onclick = saveSwitches; });
+
+  // --- tabs: the tab is in the address (#trading), and an old link to a panel (#chains, #swaps, #gamecards)
+  // opens the tab that holds it and scrolls there.
+  function showTab(hash) {
+    var want = (hash || '').replace(/^#/, ''), tab = want && document.querySelector('.admintab[data-tab="' + want + '"]'), el = null;
+    if (!tab && want === 'cards') want = 'gamecards';
+    if (!tab && want) { el = document.getElementById(want); tab = el && el.closest('.admintab'); }
+    tab = tab || document.querySelector('.admintab[data-tab="overview"]');
+    document.querySelectorAll('.admintab').forEach(function (t) { t.classList.toggle('on', t === tab); });
+    document.querySelectorAll('.admintabs button').forEach(function (b) { b.classList.toggle('on', b.dataset.tab === tab.dataset.tab); });
+    if (el) setTimeout(function () { el.scrollIntoView({block: 'start'}); }, 50);
+  }
+  document.querySelectorAll('.admintabs button').forEach(function (b) {
+    b.onclick = function () { history.replaceState(null, '', '#' + b.dataset.tab); showTab(b.dataset.tab); };
+  });
+  window.addEventListener('hashchange', function () { showTab(location.hash); });
+  showTab(location.hash);
+
+  // --- Overview: what needs the operator, and Network: the mesh (2026-10-19)
+  function loadNeeds() {
+    Promise.all([
+      fetch('/admin/api/cards', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); }).catch(function () { return {}; }),
+      fetch('/admin/api/mesh', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); }).catch(function () { return {}; })
+    ]).then(function (got) {
+      var cards = got[0] || {}, mesh = got[1] || {}, box = $('needlist'), lines = [];
+      var hidden = (cards.rows || []).filter(function (r) { return r.status === 'flagged'; });
+      var ar = mesh.arcades || {}, arc = $('arcadesline');
+      if (arc) arc.textContent = (ar.running || 0) + ' other arcade' + (ar.running === 1 ? '' : 's') + ' running, '
+                                 + (ar.linked || 0) + ' linked to this one.';
+      if (hidden.length) lines.push(['gamecards', hidden.length + ' game card' + (hidden.length > 1 ? 's' : '') + ' hidden, waiting for you to look']);
+      if (mesh.ok && !mesh.linked) lines.push(['mesh', 'This node is not linked to any other arcade']);
+      (mesh.chains || []).forEach(function (c) { if (c.syncing) lines.push(['coins', c.label + ' is still syncing (' + c.progress + '%)']); });
+      drawMesh(mesh);
+      box.replaceChildren();
+      if (!lines.length) { box.textContent = 'Nothing. Everything here is running.'; return; }
+      lines.forEach(function (l) { var d = document.createElement('div'), a = document.createElement('a'); a.href = '#' + l[0]; a.textContent = l[1]; d.append('\u2022 ', a); box.append(d); });
+    });
+  }
+  function drawMesh(m) {
+    var box = $('meshinfo'); if (!box) return;
+    if (!m || !m.ok) { box.textContent = (m && m.detail) || 'This node is not on the mesh.'; return; }
+    var rows = [
+      ['Linked arcades', m.peers + ' (' + m.known + ' known)' + (m.rtt_ms && m.rtt_ms.length ? ', fastest ' + m.rtt_ms[0] + ' ms' : '')],
+      ['Reached at', m.announced && m.announced.host ? m.announced.host + ':' + m.announced.port : (m.meet ? 'IPv6 meetings at ' + m.meet : 'not reachable directly')],
+      ['Tunnel', m.tunnel || 'none'],
+      ['STUN for fast games', (m.stun_mine && m.stun_mine.length ? 'offered at ' + m.stun_mine.join(', ') : 'not proved reachable yet')
+        + ' \u00b7 ' + (m.stun_known || 0) + ' known on the mesh'],
+      ['Cores peering through the mesh', Object.keys(m.core || {}).length ? Object.keys(m.core).map(function (c) { return c + ' ' + m.core[c].length; }).join(', ') : 'off']];
+    box.replaceChildren();
+    rows.forEach(function (r) { var d = document.createElement('div'), b = document.createElement('b'); b.textContent = r[0] + ': '; d.append(b, r[1]); box.append(d); });
+  }
+  loadNeeds(); setInterval(function () { if (!document.hidden) loadNeeds(); }, 30000);
+  function saveSwitches() {
+    call('/admin/api/settings', {trade_cut: $('tradecut').value, auto_update: $('auto_update').checked, auto_sell: $('auto_sell').checked,
       auto_fill: $('auto_fill').checked, node_trades: $('node_trades').checked,
       xchain_enabled: $('xchain_enabled').checked,
       flags_broadcast: $('flags_broadcast').checked,

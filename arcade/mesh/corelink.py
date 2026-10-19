@@ -1,4 +1,5 @@
-"""Core to Core through the mesh: a node's Pepecoin Core peers with another arcade's Core over their mesh link.
+"""Core to Core through the mesh: a node's Cores peer with another arcade's over their mesh link -- Pepecoin main and
+test, and Dogecoin, Litecoin and LTC TEST wherever both arcades run that chain's Core (2026-10-19).
 
 2026-10-12 (the operator: "Can't we tunnel the core ports through the arcade?"). Two Core nodes
 behind routers that cannot be opened (carrier NAT, Starlink) can never connect to each other:
@@ -11,7 +12,7 @@ IPv6 meeting, or through a tunnel -- so Core rides inside that link:
 * What Core sends there crosses the mesh link as "cs" frames (a stream id, then the bytes)
   to the other arcade, which connects to ITS Core's own peer port on 127.0.0.1 and passes
   the bytes on. Both ways, until either side closes.
-* Only to the Core peer port of a chain both sides name ("main", "test"): a peer can never
+* Only to the Core peer port of a chain both sides name ("main", "test", "doge", "ltc", "ltctest"): a peer can never
   ask this node to connect anywhere else.
 * Bulk never starves a game: the bytes go in small chunks (CHUNK), each its own frame, so a
   room message waits at most one chunk; and each link carries at most RATE bytes a second

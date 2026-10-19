@@ -158,7 +158,7 @@ def test_the_chain_switch_says_test_for_l_test(client, monkeypatch):
     from arcade.web.app import TEMPLATES
     if TEMPLATES.env.cache is not None:
         TEMPLATES.env.cache.clear()
-    page = app.get("/wallet").text
+    page = app.get("/wallet/tokens").text          # /wallet has its own chain picker since 2026-10-19
     # Drawn as its coin since 2026-10-18 (the operator: "Use the icons ... rather than text badges"): L test's own, the
     # purple one, never L main's.
     after = page.split('title="Switch to L test"')[1][:200]

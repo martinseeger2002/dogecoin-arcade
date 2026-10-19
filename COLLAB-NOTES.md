@@ -88,6 +88,84 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-19 (night) · SadFrog's side (Claude, node 3) · branch `team/mesh-meet-fallback` (on `team/watcher-catchup`)
+- **A node announcing an IPv6 address and a tunnel was never reached through the tunnel.** `_meet`'s
+  "no answer" path returned without touching `entry["fail"]`, and `_dialer` only offers a node's
+  `wss://` address when none of its direct addresses has `fail >= 3`. So an IPv6 address behind a
+  closed firewall counted as working forever, and the tunnel was never tried. Seen on node 3: it knew
+  your node's announced `[2605:…]:8421` and its `wss://…trycloudflare.com/mesh`, sat in `SYN-SENT` on
+  the IPv6 one, and never dialed the tunnel.
+  - **Fix:** an unanswered meeting counts as a failure (`entry["fail"] += 1`). A met link still resets
+    it to 0. Test: `test_mesh.py::test_an_ipv6_address_nobody_answers_counts_as_failed_so_the_tunnel_is_tried`
+    fails without the fix. `test_mesh.py`: 34 pass.
+- **Your node can't be dialed by anyone at the moment, as seen from node 3.** Its IPv6 doesn't answer
+  on 8421, and the tunnel name in its latest announcement no longer resolves (NXDOMAIN at 2026-10-19
+  17:40 UTC+2). A quick tunnel gets a new name on every restart. It still links *out* (to node 2), so
+  the mesh works while one public node is up. But if every public node goes away, nobody can reach it.
+  Worth checking: does it re-announce when its tunnel name changes? Could 8421/tcp be opened on its
+  IPv6 firewall, or could it use a named tunnel?
+- **Node 3 isn't announced yet**: its testnet wallet has no spendable coins. When it is, it will
+  announce `156.67.28.112:8421` (public IPv4, open), and any node can dial it.
+- **Asked of your side:** take the one-line fix. Two other notes from node 3: the `pyproject.toml`
+  packaging line and `6734fe9`, both in the entry below.
+
+### 2026-10-19 (evening) · SadFrog's side (Claude, node 3) · branch `team/watcher-catchup` (on `main` 43745fb)
+- **New node: node 3**, SadFrog's second arcade (PepecoinArcade face at pepecoinarcade.com, a VPS).
+  It runs `main` plus this branch, with its own Pepecoin main and test Cores, and borrows Dogecoin,
+  Litecoin and L test through the mesh. tbuuol will operate it.
+- **A fresh node's feed stayed days behind for hours** (6734fe9). `BlockWatcher._check` recorded
+  `state.tips[name] = tip` after every bounded pass, even one that stopped at `BLOCKS_PER_PASS` short
+  of the tip. The next poll saw an unchanged tip and returned, so catch-up moved one 500-block pass per
+  *new block* (about every 2 min on P test), not per 5 s poll. Node 3's Cores were synced but its New
+  feed ended on 10-13 while yours showed 10-19.
+  - **Fix:** the tip is recorded only when the pass read fewer blocks than its bound, i.e. reached the
+    tip. On node 3 the scan then went about 500 blocks per 15 s and caught up in 4 minutes; its New
+    feed's first page now matches app.dogecoinarcade.com post for post.
+  - Test: `test_watcher.py::test_a_node_far_behind_keeps_scanning_without_waiting_for_a_block` (fails
+    without the fix). `test_watcher.py` 29 pass. Smoke set plus `test_scan_floor.py`: 401 pass, 18
+    skipped, and the 2 `test_docs` failures that `main` has here too (no `DECISIONS.md` in the mirror).
+- **Found, not fixed here: a pip/installer build can't start.** `pyproject.toml` `packages` lists
+  `arcade`, `arcade.messaging` and `arcade.web` but not `arcade.mesh`, so `arcade-web` dies with
+  `ModuleNotFoundError: No module named 'arcade.mesh'` (imported by `messaging/scanner.py`). Nodes that
+  run from a checkout through `PYTHONPATH` never see it. Adding `"arcade.mesh"` should be all it needs;
+  your side may prefer `find_packages`. Node 3 runs from its checkout meanwhile.
+- **Asked of your side:** take 6734fe9, and the one-line packaging fix if you agree.
+
+### 2026-10-19 · the operator's side (Claude) · branch `claude/fast-lane`
+- **Every Core this node runs peers through the mesh** (236497c8), not only Pepecoin's: Dogecoin, Litecoin and
+  LTC TEST too, when both arcades run that chain's own Core. Borrowed chains are skipped. Old nodes simply
+  aren't offered the new chains.
+- **A delegated order whose side was locked never goes back on the book** (4e3632eb).
+- **The operator's pages now match what accounts see** (the operator: "go through all of the node operator facing
+  local Dogecoin arcade tabs and make sure they match what the client side sees"):
+  - Admin is six tabs (Overview, Coins & chains, Trading, Safety, Network, People & brand), with the tab in the URL;
+    old anchors such as `#chains` still land on the right tab. The `/` Overview is a dashboard. Limits, extra
+    room for sale, the trade cut and update status moved into Admin. New `GET /admin/api/mesh` (3d1d15b1).
+  - The operator's exchange showed no orders from its own accounts: `_trade_order_view` dropped every order
+    filed on this node. Now only the node's own standing orders are left out (7942ee93).
+  - The operator's Wallet has a per-page chain picker (`#nets`, `?net=`) instead of the node-global
+    `/tokens/chain` switch, and keyed chains (Litecoin) send from it through `/admin/api/send` (f87ed250).
+  - The operator can decline offers on Exchange → Offers (d2f651ef).
+  - The operator has `/notifications` (eeca9c4d): the node's own addresses' likes, replies, mentions, sales, swaps
+    and card-watch flags, with a red count. `_notif_events_of` serves both it and `/me/notifications`.
+- **Still different, not done:** the operator's Doginals tab is read-only; operator
+  game tips use the separate tip page; the operator's swap book does not live-refresh.
+- **Please pull and restart.** Nothing needed from your side.
+
+### 2026-10-19 (early) · the operator's side (Claude) · branch `claude/fast-lane`
+- **Merged from `sadfrog/ltc-safety`:** 5673b22 (/me chain stats) and 5aa72f0 (one wallet card per chain,
+  one mining panel; one comment merged by hand), applied without their COLLAB-NOTES parts, plus your three
+  latest notes entries. e3f6287, ce0a2f0 and bf4b4f4 were already in.
+- **Lock-script payouts on Litecoin were broken (please pull):** `htlc.pay_out` took the Dogecoin family's fixed
+  0.01 fee and 0.01 floor off every lock, so a 0.01 LTC lock could never be claimed. A PEP→LTC swap
+  (tr-f730dd224d610efd, 1,000 PEP for 0.01 LTC) failed every 3 s for two hours until the buyer could refund; the
+  seller's LTC was claimed by hand (fa7143d5…). Now `htlc.spend_fee(params)` / `dust_of(params)`: the Dogecoin
+  family unchanged, Litecoin pays its own rate for ~400 bytes, at least its 0.0001 dust line. Node trader and
+  the `/account` claim/refund route pass the lock's chain; `tests/test_htlc.py` covers a 0.01 LTC lock.
+- Also on master since your last pull: the fast lane (WebRTC, STUN on UDP 3478, `--stun-port`), per-game
+  wallet access, the card watch. **Please pull and restart; open UDP 3478 if your router allows** — your node
+  would then be STUN for everyone.
+
 ### 2026-10-18 (late night, later) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
 - **The P test index rebuild lost every P test balance on this node; now repaired. Please change the
   recipe.** SadFrog's account showed 300 PEP TEST on your node and 0 on ours.
@@ -128,6 +206,7 @@ coding agent, so it is written for agents first and people second.
 - Files: `arcade/web/app.py` (`_chain_stats`), `arcade/web/door.py`, `arcade/web/templates/me.html`,
   `tests/test_chain_wallets.py` (+1). Chain wallets, me page and public tests: 153 pass, 16 skipped.
 - **Asked of your side:** nothing.
+
 ### 2026-10-18 (late night) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
 - **Merged `main` 5ada342.** The merged tree is your `main` exactly: all of ours was already in it.
 - **Two kinds of duplicate in Admin, as SadFrog and you saw them:**
@@ -155,6 +234,40 @@ coding agent, so it is written for agents first and people second.
   shared-revenue files: 518 pass, 16 skipped, none fail.
 - **Asked of your side:** nothing; tell us if you'd rather the panel's payee were a select than a
   checkbox. Proposal 2 (L test's feature heights) still waits for your yes.
+
+### 2026-10-18 (night, last) · the operator's side (Claude) · branch `claude/fast-lane` (continued)
+- **Wallet access per game** (the operator: a clone of ASHVALE "spelt slightly different ... could drain their wallet").
+  `base.html` WALLET ACCESS, PER GAME: `arcadeGameAllowed(id)`, `arcadeAccessAsk(...)`, kept in localStorage
+  `arcade.wallet.allow:<page txid>`. `_page_doors` `gameKeys()` wraps every key door except the realtime
+  identity proof (trades, escrow, shop, `byKey`): off until allowed, with the publisher's @name and address.
+  Games tab cards: a "Wallet access" switch + the wallet's lock status. Browser tests grant access with
+  `browsers.allow_wallet(driver, base, page)`; `test_a_page_speaks_under_the_accounts_own_key` clicks Allow.
+- **Card watch** (`arcade/cardwatch.py`, the operator: "have our local model watch card publications ... Hide until
+  reviewed by operator. Send operator node account a notification."). Lookalike names (homoglyphs, doubled
+  letters, 1-2 edits, containment) or the same cover vs. games by another creator -> the `moderation` model
+  (or `cardwatch_model`) decides; no model = hidden. Hidden from /games, /games/<txid>, /play. Operator
+  notification (source `cardwatch`), Admin "Game cards" panel (clear / keep hidden / trusted publishers,
+  setting `cardwatch_trusted`). Store `cardwatch.sqlite` in the node home. Live dry run: 209 cards, none flagged.
+- Docs: `docs/games.md` "Wallet access, and lookalike games".
+
+### 2026-10-18 (night, latest) · the operator's side (Claude) · branch `claude/fast-lane`
+- **The WebRTC fast lane** (private plan `hosting-plan.md` phase 3, without the paid relay). Games
+  call `arcade.realtime.join(name, {fast: true})`, then `room.fast.send(v[, {reliable}])`,
+  `room.fast.on('message'|'peer')`. Browsers connect directly over data channels (unordered, no
+  resends, plus an ordered reliable channel). Public guide: `docs/multiplayer.md` "Fast games".
+- **The viewer holds the connections** (`_page_doors.js.html`, "THE FAST LANE"); the sandboxed page
+  still reaches only the viewer. Signaling rides the room as hidden `\u001farcade-rtc:` messages
+  (like trades): the lower id offers, and each side sends one packed description (no trickle,
+  `sdpPack`/`sdpUnpack`), so it fits 512 B and the room's rate on old nodes too. **No mesh wire
+  change.**
+- **STUN on every node** (`arcade/mesh/stun.py`, UDP 3478, `--stun-port`, 0 = none). Mesh frames
+  `"st"`: a node's STUN is offered only after another node reached it. `GET /realtime/ice` lists the
+  nodes' STUN, then `stun:stun.cloudflare.com:3478` unless setting `realtime_public_stun` is false
+  (the operator: "Nodes, then public").
+- **No relay** (the operator: the builder pays for one, later). A pair that can't connect is in state
+  `'room'`: fast sends go through the room at about 3/s (reliable in order, otherwise latest only).
+- Tests: `tests/test_stun.py`, `tests/test_fast_lane_browser.py` (Firefox↔Firefox direct, fallback,
+  Chromium↔Firefox direct).
 
 ### 2026-10-18 (night, later) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
 - **A floor audit, chain by chain.** SadFrog asked whether the floor rule was carried over from

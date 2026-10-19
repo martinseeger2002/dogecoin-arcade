@@ -636,6 +636,29 @@ def test_ipv6_peers_are_met_not_dialled_and_an_old_node_is_dialled_plainly():
     run(go())
 
 
+def test_an_ipv6_address_nobody_answers_counts_as_failed_so_the_tunnel_is_tried():
+    """A node announcing an IPv6 address behind a closed firewall and a tunnel: the meetings go
+    unanswered, and each must count as a failure, or the dialer (which tries a node's wss:// only
+    when none of its direct addresses has failed three times) never tries the tunnel."""
+    async def go():
+        a, b = await started(mk6(), mk6())
+        try:
+            port = b.listen_port
+            await stop(b)                                   # nothing listens there now: no answer
+            a.add_address("::1", port, b.node_id)
+            entry = a.addrs[("::1", port)]
+            assert a._meets(("::1", port), entry)
+            for _ in range(3):
+                await a._meet(("::1", port))
+            assert entry["fail"] >= 3 and b.node_id not in a.links
+            have = {e["id"] for ad, e in a.addrs.items()
+                    if not meshlib.is_ws(ad[0]) and e["id"] and e["fail"] < 3}
+            assert b.node_id not in have                    # so its wss:// address is now a choice
+        finally:
+            await stop(a)
+    run(go())
+
+
 def test_a_node_whose_ipv4_cannot_be_reached_announces_its_ipv6_to_be_met():
     from arcade.mesh.service import MeshService
 
@@ -863,3 +886,25 @@ def test_a_local_member_keeps_its_seat_through_a_short_drop(monkeypatch):
         finally:
             await node.stop()
     run(go())
+
+
+def test_every_chain_whose_core_runs_here_is_offered_over_the_mesh(tmp_path):
+    """2026-10-19, the operator: "The same way that the Pepe coin shares IP or tunnel so that other arcades can add it to
+    their peer list on their core the same thing should happen for the rest of the chains." Dogecoin and Litecoin
+    run here are bridged like Pepecoin; a borrowed chain (no Core here) is not."""
+    import pathlib as _p
+
+    from arcade.config import NETWORKS
+    from arcade.mesh.service import for_state
+    from arcade.web.state import AppState, ChainContext
+    chain = lambda net, **k: ChainContext(network=net, role="ledger", label=net, datadir=_p.Path("/nonexistent"), **k)
+    state = AppState(home=tmp_path, messaging=chain("test"), ledger=chain("main"))
+    state.doge = chain("doge")
+    state.ltc = chain("ltc")
+    state.ltc.borrowed = True
+    svc = for_state(state, listen_port=None)
+    try:
+        assert svc.core.chains == {"main": NETWORKS["main"].p2p_port, "test": NETWORKS["test"].p2p_port,
+                                   "doge": NETWORKS["doge"].p2p_port}, svc.core.chains
+    finally:
+        svc.stop()

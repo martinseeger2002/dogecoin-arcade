@@ -58,6 +58,8 @@ CORS_HEADERS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Method
                 "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Max-Age": "600"}
 ROOM_MAX = 60
 HEARTBEAT = 4.0
+PUBLIC_STUN = "stun:stun.cloudflare.com:3478"   # after the nodes' own, unless the operator says not (realtime_ice)
+MAX_ICE_NODES = 4                               # more STUN servers only slow a browser's gathering
 
 
 def room_key(game: Any, room: Any) -> str:
@@ -302,6 +304,23 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
         except Exception:                          # noqa: BLE001 -- the directory is a nicety
             pass
         return JSONResponse({"ok": True, "self": svc.node_id, "nodes": out})
+
+    @app.get("/realtime/ice")
+    def realtime_ice(request: Request):
+        """The STUN servers a browser should use for the fast lane (2026-10-18, the operator: "Nodes, then public"):
+        every arcade node's STUN that another node has proved reachable (mesh/stun.py), then a public one unless
+        the operator turned that off (setting realtime_public_stun). Never a relay: a relay is a paid lease."""
+        servers = []
+        try:
+            share = getattr(mesh(), "stun", None)
+        except MeshError:
+            share = None
+        for host, port in (share.known() if share is not None else [])[:MAX_ICE_NODES]:
+            servers.append({"urls": f"stun:[{host}]:{port}" if ":" in host else f"stun:{host}:{port}"})
+        if state.settings().get("realtime_public_stun", True) is not False:
+            servers.append({"urls": PUBLIC_STUN})
+        return JSONResponse({"ok": True, "iceServers": servers},
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/r/realtime.js")
     def r_realtime_js():

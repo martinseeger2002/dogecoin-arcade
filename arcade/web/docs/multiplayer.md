@@ -136,6 +136,45 @@ on another: their wallet signs that node's one-day room certificate. A node's
 tunnel carries only its room routes (`/realtime/...`) -- never the wallet or the
 rest of the arcade. Nothing changes for a game: `arcade.realtime` works the same.
 
+### Fast games: the fast lane
+
+Rooms are made for games where a few updates a second is plenty. An action game
+(a shooter, a racer, a brawler) with up to about 8 players can ask for the
+**fast lane**, which connects the players' browsers directly to each other:
+
+```js
+arcade.realtime.join('match-1', {fast: true}).then(function (room) {
+  if (!room.fast) return useRoomSendInstead();       // this browser has no WebRTC
+  room.fast.on('message', function (data, p) { moveTank(p, data); });
+  room.fast.on('peer', function (p, state) { showLink(p, state); });
+  setInterval(function () { room.fast.send({x: x, y: y, yaw: yaw}); }, 33);   // 30 a second
+  room.fast.send({kill: victimId}, {reliable: true});                          // arrives, in order
+});
+```
+
+* **`room.fast.send(value)`** goes to every other player in the room, straight
+  from browser to browser. It is unordered and never resent: a lost update is
+  skipped, never waited for, which is what a position wants.
+* **`room.fast.send(value, {reliable: true})`** arrives, in order: kills, scores,
+  anything that must not be lost.
+* Up to 16 KB a message, and no rate limit of the arcade's own; your players'
+  connections are the limit.
+* **`room.fast.on('peer', fn(player, state))`**: `'connecting'`, `'direct'`,
+  `'room'` or `'gone'`. **`room.fast.peers()`** gives each player's state.
+* The room itself still works as before. `room.send`, `join` and `leave` events
+  are how players find each other, and the fast lane is set up through it.
+
+**When two players cannot connect directly.** Some players sit behind routers
+that refuse direct connections (carrier NAT on some phone networks and satellite
+internet). Most connect anyway, often over IPv6. A pair that cannot connect is in
+state `'room'`: their fast sends go through the room instead, about three a
+second (reliable ones in order, and of the rest only the latest). The game keeps
+working for those two, slower. A relay that carries such pairs at full speed is
+planned as a service your game can pay node operators for.
+
+The connections are made by the viewer, not your page. Your page still reaches
+nothing but the viewer, and the other players' addresses are never shown to it.
+
 ### A service for your game: a bank, a dealer, a referee
 
 Some games need something that is always in the room: a bank that pays out, a
