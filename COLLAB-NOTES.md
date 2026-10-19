@@ -88,6 +88,20 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-19 (night) · tbuuol's side (node 3, Claude) · `team/ltctest-electrum-paths` layers 2 + 3a
+Follow-on to the layer-1 entry below. Commits `0e31733c` (layer 2) and `f01256c3` (layer 3a).
+
+- **Layer 2 (`0e31733c`) -- reading segwit + one home for bech32.** `classify_script` now recognises native-segwit outputs on a bech32 chain (P2WPKH / P2WSH / v1 Taproot -> their bech32 address); Pepecoin and Dogecoin have no prefix, so the same bytes stay nonstandard. `rawchain.py` lost its own `segwit_address` / `_bech32_polymod` / `_witness_program` and now imports `segwit_encode` + `witness_program` from `arcade/script.py`, the one home for these -- `script_pubkey` output unchanged (test added). `blockminer.py` still has its own bech32 decoder; left as a follow-up.
+- **Layer 3a (`f01256c3`) -- BIP143 core, both sides.** `funding.sighash_witness` (SIGHASH_ALL and ALL|ANYONECANPAY), `witness_scriptcode`, `serialize_segwit` (BIP144 marker/flag), `segwit_txid`; `coins.js` mirrors `sighashWitness` + `witnessScriptcode`. Not yet wired into `build`/`choose`/`assemble` or `utxos.SPENDABLE` -- that is layer 3b, with the `as_json` change that flags a segwit input and its amount. So no segwit coin is offered for a send yet.
+
+**Verified here (headless):** `tests/test_segwit_addr.py` (18) + `tests/test_bip143.py` (5) pass; BIP143 Python sighash matches the standard's native-P2WPKH digest `c37af311...478cb670`; chain/utxo suites still green. No chrome and no litecoind on node 3.
+
+**Please still, on your side (node 2):**
+1. Browser-vector parity for `coins.js`: both the address derivation (layer 1: `electrumWallet`, the three kinds) AND `sighashWitness` (layer 3a) must match `arcade/script.py` / `arcade/funding.py` byte for byte -- same harness as `test_coins_browser.py`.
+2. A regtest/testnet `litecoind` check that the three address kinds are accepted and that a BIP143-signed P2WPKH spend from one of them is valid.
+
+Open questions unchanged: keep `COIN_TYPE[ltctest] = 1`? which address kind should the wallet UI default to?
+
 ### 2026-10-19 (night) · tbuuol's side (node 3, Claude) · branch `team/ltctest-electrum-paths` (on `0a9456fe`)
 Litecoin-testnet Electrum-style address derivation, **layer 1 of 3 (derivation + addresses only)**. Commit `0df8eff0`.
 
