@@ -1432,3 +1432,51 @@ export async function electrumWallet(seed, network, v, index = 0) {
              wif: await wif(native.key, v.wif)},
   };
 }
+
+/* --- BIP143: the digest a segwit v0 input signs -------------------------
+ *
+ * 2026-10-19 (tbuuol's side), layer 3a. The mirror of arcade/funding.py's
+ * `sighash_witness`, byte for byte -- tests/test_bip143.py holds the Python
+ * side to BIP143's own native-P2WPKH number, and the browser-vector test on
+ * node 2 holds this to the Python side. Unlike `sighashAll`, this commits to
+ * the AMOUNT of the coin being spent, so a signature cannot be moved onto a
+ * coin of a different size. Only SIGHASH_ALL and ALL|ANYONECANPAY, as the
+ * node builds.
+ */
+
+/** The BIP143 scriptCode of a P2WPKH input (and of a P2SH-nested one): the
+ *  ordinary P2PKH script of the 20-byte key hash. */
+export function witnessScriptcode(keyhash) {
+  if (keyhash.length !== 20) throw new Error("a P2WPKH scriptCode is a 20-byte hash");
+  return new Uint8Array([0x76, 0xa9, 0x14, ...keyhash, 0x88, 0xac]);
+}
+
+/** The 32 bytes input `index` signs under BIP143. `tx` is a `parseTx` result;
+ *  `amount` is the value (in sats) of the coin being spent. */
+export async function sighashWitness(tx, index, scriptCode, amount, sighashType = 1) {
+  if (sighashType !== 1 && sighashType !== 0x81) {
+    throw new Error("a segwit input here signs SIGHASH_ALL or ALL|ANYONECANPAY, "
+      + `not ${sighashType}. Nothing was signed.`);
+  }
+  const anyone = (sighashType & 0x80) !== 0;
+  const outpoint = (i) => join([unhex(i.txid).reverse(), writeLE(i.vout, 4)]);
+  const sequence = (i) => writeLE(i.sequence === undefined ? 0xffffffffn : BigInt(i.sequence), 4);
+  const zero = new Uint8Array(32);
+
+  const hashPrevouts = anyone ? zero : await hash256(join(tx.inputs.map(outpoint)));
+  const hashSequence = anyone ? zero : await hash256(join(tx.inputs.map(sequence)));
+  const outs = [];
+  for (const out of tx.outputs) {
+    outs.push(writeLE(out.value, 8), sizeOf(BigInt(out.script.length)), out.script);
+  }
+  const hashOutputs = await hash256(join(outs));
+
+  const input = tx.inputs[index];
+  const preimage = join([
+    writeLE(tx.version, 4), hashPrevouts, hashSequence,
+    outpoint(input), sizeOf(BigInt(scriptCode.length)), scriptCode,
+    writeLE(BigInt(amount), 8), sequence(input), hashOutputs,
+    writeLE(tx.locktime, 4), writeLE(BigInt(sighashType), 4),
+  ]);
+  return hash256(preimage);
+}

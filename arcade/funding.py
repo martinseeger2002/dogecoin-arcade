@@ -1068,3 +1068,125 @@ def _doginal_first(db, address: str, coin: dict, inscription: str, first: bytes,
     script = p2pkh_script(address)
     hashes = [sighash(chosen, outputs, n, script).hex() for n in range(len(chosen))]
     return Unsigned(raw=raw, inputs=chosen, outputs=outputs, sighashes=hashes, fee=fee, change=change, what=what)
+
+
+# --- segwit v0 spending: BIP143 sighash and witness serialisation ------------
+#
+# 2026-10-19 (tbuuol's side), layer 3a. The legacy `sighash` above does not
+# commit to the amount being spent; BIP143 does, and a segwit input can be
+# signed no other way. This is the node's half for a segwit input: the digest
+# the browser signs, and the serialisation that carries the signature in the
+# witness instead of the scriptSig.
+#
+# Held to BIP143's own worked example (the native-P2WPKH vector) in
+# tests/test_bip143.py, byte for byte -- the same way the legacy sighash is
+# settled against pepecoind. The browser mirror is coins.js `sighashWitness`.
+# Only SIGHASH_ALL and ALL|ANYONECANPAY are built, as above; a type this does
+# not mean to implement is refused rather than computed.
+
+
+def _dsha256(data: bytes) -> bytes:
+    return hashlib.sha256(hashlib.sha256(data).digest()).digest()
+
+
+def witness_scriptcode(keyhash: bytes) -> bytes:
+    """The BIP143 scriptCode of a P2WPKH input (and of a P2SH-nested one): the
+    ordinary P2PKH script of the 20-byte key hash. Not length-prefixed; the
+    preimage adds the length."""
+    if len(keyhash) != 20:
+        raise FundingError("a P2WPKH scriptCode is built from a 20-byte hash")
+    return bytes([0x76, 0xA9, 0x14]) + keyhash + bytes([0x88, 0xAC])
+
+
+def sighash_witness(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
+                    index: int, script_code: bytes, amount: int,
+                    version: int = 1, locktime: int = 0,
+                    sighash_type: int = SIGHASH_ALL) -> bytes:
+    """The 32 bytes a segwit v0 input must sign (BIP143).
+
+    Unlike the legacy preimage this commits to `amount` (the value of the coin
+    being spent), which is why every segwit input needs its value known and
+    why a signature cannot be lifted onto a coin of a different size.
+    """
+    if sighash_type not in (SIGHASH_ALL, ALL_ANYONECANPAY):
+        raise FundingError(
+            f"this builds a segwit sighash for SIGHASH_ALL and "
+            f"ALL|ANYONECANPAY, not for {sighash_type:#04x}")
+    anyone = bool(sighash_type & SIGHASH_ANYONECANPAY)
+
+    def outpoint(coin: dict) -> bytes:
+        return bytes.fromhex(coin["txid"])[::-1] + int(coin["vout"]).to_bytes(4, "little")
+
+    def sequence(coin: dict) -> bytes:
+        return int(coin.get("sequence", 0xFFFFFFFF)).to_bytes(4, "little")
+
+    zero = b"\x00" * 32
+    hash_prevouts = zero if anyone else _dsha256(b"".join(outpoint(c) for c in raw_inputs))
+    # SIGHASH_ALL (and its ANYONECANPAY form only when not ANYONECANPAY) commits
+    # to every sequence; ANYONECANPAY commits to none.
+    hash_sequence = zero if anyone else _dsha256(b"".join(sequence(c) for c in raw_inputs))
+    serialised_outputs = b"".join(
+        (value & 0xFFFFFFFFFFFFFFFF).to_bytes(8, "little") + varint(len(spk)) + spk
+        for value, spk in outputs)
+    hash_outputs = _dsha256(serialised_outputs)
+
+    this = raw_inputs[index]
+    pre = version.to_bytes(4, "little")
+    pre += hash_prevouts + hash_sequence
+    pre += outpoint(this)
+    pre += varint(len(script_code)) + script_code
+    pre += int(amount).to_bytes(8, "little")
+    pre += sequence(this)
+    pre += hash_outputs
+    pre += locktime.to_bytes(4, "little")
+    pre += sighash_type.to_bytes(4, "little")
+    return _dsha256(pre)
+
+
+def _witness_stack(items: list[bytes]) -> bytes:
+    out = varint(len(items))
+    for item in items:
+        out += varint(len(item)) + item
+    return out
+
+
+def serialize_segwit(inputs: list[dict], outputs: list[tuple[int, bytes]],
+                     locktime: int = 0, version: int = 1) -> str:
+    """A finished transaction, with a witness section when any input carries
+    one (BIP144 marker 0x00 and flag 0x01). Each input: `txid`, `vout`,
+    optional `script_sig` (bytes; empty for native segwit, the pushed
+    redeemScript for a P2SH-nested one), optional `sequence`, and optional
+    `witness` (a list of byte items). With no witness anywhere this is the same
+    bytes as the legacy serialisation."""
+    has_witness = any(coin.get("witness") for coin in inputs)
+    raw = version.to_bytes(4, "little")
+    if has_witness:
+        raw += b"\x00\x01"                       # marker, flag
+    raw += varint(len(inputs))
+    for coin in inputs:
+        script_sig = coin.get("script_sig") or b""
+        if isinstance(script_sig, str):
+            script_sig = bytes.fromhex(script_sig)
+        raw += bytes.fromhex(coin["txid"])[::-1]
+        raw += int(coin["vout"]).to_bytes(4, "little")
+        raw += varint(len(script_sig)) + script_sig
+        raw += int(coin.get("sequence", 0xFFFFFFFF)).to_bytes(4, "little")
+    raw += varint(len(outputs))
+    for value, spk in outputs:
+        raw += int(value).to_bytes(8, "little") + varint(len(spk)) + spk
+    if has_witness:
+        for coin in inputs:
+            raw += _witness_stack(coin.get("witness") or [])
+    raw += locktime.to_bytes(4, "little")
+    return raw.hex()
+
+
+def segwit_txid(inputs: list[dict], outputs: list[tuple[int, bytes]],
+                locktime: int = 0, version: int = 1) -> str:
+    """The txid (not the wtxid): double-SHA of the serialisation with the
+    witness and the marker/flag stripped, in display (reversed) order."""
+    stripped = [{"txid": c["txid"], "vout": c["vout"],
+                 "script_sig": c.get("script_sig") or b"",
+                 "sequence": c.get("sequence", 0xFFFFFFFF)} for c in inputs]
+    raw = bytes.fromhex(serialize_segwit(stripped, outputs, locktime, version))
+    return _dsha256(raw)[::-1].hex()
