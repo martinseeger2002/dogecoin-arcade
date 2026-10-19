@@ -10575,6 +10575,26 @@ def create_app(state: AppState) -> FastAPI:
                             "from": start, "to": end})
         return JSONResponse({"started": started})
 
+    #: Arcades whose accounts a stranger may bring here from the public sign-in page, when
+    #: the operator names none (`import_from` in settings.json). The one the page suggests.
+    IMPORT_FROM_DEFAULT = ("https://app.dogecoinarcade.com",)
+
+    def _import_from() -> tuple[str, ...]:
+        """The arcades the public sign-in page may fetch an account from, as https origins."""
+        said = state.setting("import_from", None)
+        if said is None:
+            said = IMPORT_FROM_DEFAULT
+        if isinstance(said, str):
+            said = [said]
+        out = []
+        for one in said:
+            one = str(one or "").strip().rstrip("/").lower()
+            if one and "://" not in one:
+                one = "https://" + one
+            if re.fullmatch(r"https://[a-z0-9.\-]+(:\d+)?", one):
+                out.append(one)
+        return tuple(out)
+
     @app.get("/signin-import")
     def signin_import(request: Request, node: str = "", tag: str = ""):
         """An account's encrypted wallet from ANOTHER arcade, for this browser to
@@ -10584,24 +10604,44 @@ def create_app(state: AppState) -> FastAPI:
         The other node hands its `/signin/{tag}` answer to anybody; this only
         fetches it for a browser that cannot fetch across origins. The password
         never comes here, and neither do the words: the blob is opened in the
-        tab. From the machine itself only, so a public node is not a way to
-        make requests to wherever a stranger names.
+        tab.
+
+        From the machine itself, any arcade. From outside (2026-10-19, SadFrog: an
+        account made on node 1 should sign in on node 3 "in the normal signin
+        options"), only an arcade the operator lists in `import_from`, over https:
+        a public node must not be a way to make requests to wherever a stranger
+        names, its own loopback services included.
         """
-        if _from_outside(request):
-            return JSONResponse({"detail": "bringing an account from another arcade is "
-                                           "done on the machine this node runs on"},
-                                status_code=403)
+        outside = _from_outside(request)
         node = str(node or "").strip().rstrip("/")
         if node and "://" not in node:
             node = "https://" + node
         if not re.fullmatch(r"https?://[A-Za-z0-9.\-]+(:\d+)?", node):
             return JSONResponse({"detail": "that is not an arcade's address, like "
                                            "https://app.dogecoinarcade.com"}, status_code=400)
+        if outside:
+            allowed = _import_from()
+            if node.lower() not in allowed:
+                listed = ", ".join(allowed) if allowed else "none"
+                return JSONResponse(
+                    {"detail": "this arcade brings accounts only from the arcades its "
+                               f"operator lists ({listed}). From another one, sign in with "
+                               "the file its Backup page saves.", "allowed": list(allowed)},
+                    status_code=403)
+            register = state.accounts()
+            who = (request.client.host if request.client else "")
+            now = int(time.time())
+            if register._rate_limited(f"import:{who}", now):
+                return JSONResponse({"detail": "too many in a row. Wait a few minutes."},
+                                    status_code=429)
+            register._attempt(f"import:{who}", now)
         name = str(tag or "").strip().lstrip("@")
         if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,40}", name):
             return JSONResponse({"detail": "that is not a name"}, status_code=400)
         try:
-            answer = requests.get(f"{node}/signin/{urllib.parse.quote(name)}", timeout=15)
+            # Not followed from outside: a listed arcade's redirect could name anywhere.
+            answer = requests.get(f"{node}/signin/{urllib.parse.quote(name)}", timeout=15,
+                                  allow_redirects=not outside)
             said = answer.json()
         except Exception:                                   # noqa: BLE001
             return JSONResponse({"detail": f"{node} did not answer"}, status_code=502)

@@ -102,6 +102,9 @@ PUBLIC_PAGES = frozenset({
     # allowlist that opens a whole subtree opens whatever is put in it
     # later, and this is the subtree a stranger is invited into.
     "/auth/challenge",
+    # An account from another arcade, for the sign-in page (2026-10-19). Its handler
+    # fetches only from arcades the operator lists (`import_from`) when asked from outside.
+    "/signin-import",
     "/auth/who",
     "/auth/door",
     "/me",

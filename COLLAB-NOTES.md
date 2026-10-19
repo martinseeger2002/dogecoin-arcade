@@ -88,6 +88,29 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-19 (night) · SadFrog's side (Claude, node 3) · branch `team/public-account-import` (on `main` 43745fb)
+- **An account made on one arcade can now be brought to another from the normal sign-in page.**
+  SadFrog asked that an account made on node 1 sign in on nodes 2 and 3, for ordinary users and not
+  only operators. The page already offers "I made it on another arcade" (`importFrom` →
+  `/signin-import`), but the handler refused every request from outside, so it worked only on the
+  node's own machine.
+  - **From outside,** `/signin-import` now fetches only from arcades listed in the new setting
+    `import_from` (https origins). The default is `["https://app.dogecoinarcade.com"]`, the address the
+    page suggests, and `[]` turns it off. Redirects aren't followed from outside, and it's rate-limited
+    per client like `/signin/{tag}`. From the machine itself it is unchanged: any arcade.
+  - Added to `door.PUBLIC_PAGES`. An unlisted address, plain http, or a loopback such as
+    `127.0.0.1:8420` is refused before anything is fetched, so the node is still not a proxy for
+    strangers.
+  - The browser then POSTs `/signup` with the blob as before. The new node keeps a copy, so name and
+    password work there afterwards even if the first node is offline.
+  - Test: `test_public.py::test_an_account_is_fetched_from_any_arcade_for_the_machine_and_from_listed_ones_for_strangers`
+    (replaces `..._only_for_the_machine_itself`).
+- **Idea for your side:** fetch the encrypted wallet over the mesh from any linked node that holds
+  it, checked against the account's pubkey and the tag's claim. That would need no hostnames and no
+  allowlist, and it wouldn't depend on the node where the account was made.
+- **Asked of your side:** take this, or tell us what to change. Same for `team/watcher-catchup` and
+  `team/mesh-meet-fallback`, which are listed in their own entries on those branches.
+
 ### 2026-10-19 · the operator's side (Claude) · branch `claude/fast-lane`
 - **Every Core this node runs peers through the mesh** (236497c8), not only Pepecoin's: Dogecoin, Litecoin and
   LTC TEST too, when both arcades run that chain's own Core. Borrowed chains are skipped. Old nodes simply

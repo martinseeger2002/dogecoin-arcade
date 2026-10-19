@@ -1270,7 +1270,8 @@ def test_a_password_operator_hands_the_node_to_an_account_with_its_password(name
         "the same username and password open the new operator"
 
 
-def test_an_account_is_fetched_from_another_arcade_only_for_the_machine_itself(named, monkeypatch):
+def test_an_account_is_fetched_from_any_arcade_for_the_machine_and_from_listed_ones_for_strangers(
+        named, monkeypatch):
     app, state = named
     import requests as _requests
 
@@ -1282,15 +1283,38 @@ def test_an_account_is_fetched_from_another_arcade_only_for_the_machine_itself(n
                     "blob": {"sealed": "00", "salt": "00", "iterations": 1, "nonce": "00"}}
 
     asked = []
-    monkeypatch.setattr(_requests, "get", lambda url, **k: asked.append(url) or Answer())
+    monkeypatch.setattr(_requests, "get",
+                        lambda url, **k: asked.append((url, k.get("allow_redirects", True))) or Answer())
     got = app.get("/signin-import?node=app.dogecoinarcade.com&tag=@friend", headers=LOCAL)
     assert got.status_code == 200, got.text
-    assert asked == ["https://app.dogecoinarcade.com/signin/friend"]
+    assert asked == [("https://app.dogecoinarcade.com/signin/friend", True)]
     assert got.json()["blob"]["sealed"] == "00" and got.json()["tag"] == "friend"
-    assert app.get("/signin-import?node=app.dogecoinarcade.com&tag=friend",
-                   headers=EDGE).status_code in (403, 404), "not a proxy for strangers"
     assert app.get("/signin-import?node=file:///etc&tag=friend",
                    headers=LOCAL).status_code == 400
+
+    # A stranger, from the public sign-in page: the arcade the page suggests, by default,
+    # and its redirects are not followed.
+    asked.clear()
+    got = app.get("/signin-import?node=https://app.dogecoinarcade.com&tag=friend", headers=EDGE)
+    assert got.status_code == 200, got.text
+    assert asked == [("https://app.dogecoinarcade.com/signin/friend", False)]
+    # Anywhere else is refused before anything is fetched: not a proxy for strangers.
+    asked.clear()
+    for elsewhere in ("evil.example", "http://app.dogecoinarcade.com", "http://127.0.0.1:2019",
+                      "127.0.0.1:8420"):
+        refused = app.get(f"/signin-import?node={elsewhere}&tag=friend", headers=EDGE)
+        assert refused.status_code == 403, (elsewhere, refused.text)
+    assert asked == []
+    # The operator names the arcades (`import_from`), and then only those.
+    state.set_setting("import_from", ["pepecoinarcade.com"])
+    assert app.get("/signin-import?node=app.dogecoinarcade.com&tag=friend",
+                   headers=EDGE).status_code == 403
+    assert app.get("/signin-import?node=pepecoinarcade.com&tag=friend",
+                   headers=EDGE).status_code == 200
+    assert asked == [("https://pepecoinarcade.com/signin/friend", False)]
+    state.set_setting("import_from", [])
+    assert app.get("/signin-import?node=pepecoinarcade.com&tag=friend",
+                   headers=EDGE).status_code == 403, "an empty list turns it off"
 
 
 # --- the node's own machine, signed in as an account (2026-09-30) -------------
