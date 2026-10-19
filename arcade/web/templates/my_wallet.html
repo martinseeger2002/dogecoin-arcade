@@ -708,6 +708,20 @@ function openReceive() {
     pic.innerHTML = qr.createSvgTag({cellSize: 4, margin: 2, scalable: true});
   } catch (e) { pic.textContent = "The QR code could not be drawn; the address is below."; }
   const addr = el("div", "wl-addrbig", c.address);
+  // "Is our stuff online yet?" -- a line under the address that shows only
+  // once the running node serves a coins.js carrying the new Electrum
+  // derivations (coins.js electrumWallet), and only on Litecoin testnet, the
+  // chain they are for. A feature-check, so it stays hidden until the branch
+  // is actually live here; node 2 can later swap it for a real derived-
+  // address readout.
+  const derived = el("p", "wl-note", "neue Ableitung erkannt");
+  derived.style.textAlign = "center";
+  derived.hidden = true;
+  if (c.network === "ltctest") {
+    import("/coins.js").then((coins) => {
+      if (typeof coins.electrumWallet === "function") derived.hidden = false;
+    }).catch(() => {});
+  }
   const note = el("p", "wl-note", asset
     ? `${UNIT} and every other ${c.label.toLowerCase()} token, NFT and ${COIN()} arrive at this one address.`
     : c.mainnet ? `Send only ${UNIT} here: real coins, on mainnet.`
@@ -720,7 +734,7 @@ function openReceive() {
     if (!ok) getSelection().selectAllChildren(addr);
     setTimeout(() => { copy.textContent = "Copy address"; }, 2500);
   };
-  body.append(pic, addr, note, copy);
+  body.append(pic, addr, derived, note, copy);
   const warn = $("receive-note").content.cloneNode(true);
   const holder = el("div"); holder.style.marginTop = "14px"; holder.append(warn);
   body.append(holder);
