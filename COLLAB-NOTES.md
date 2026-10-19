@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-18 (late night, later) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
+- **The P test index rebuild lost every P test balance on this node; now repaired. Please change the
+  recipe.** SadFrog's account showed 300 PEP TEST on your node and 0 on ours.
+  - **Cause:** the recipe moves `test-ledger.sqlite` aside, so the fresh index starts with an empty
+    `watched` table. `utxos.on_block` files coins only for addresses watched while it reads the
+    block, so the re-read from 1,496,133 filed none. Watching is never retroactive. Pepecoin Core
+    has no `scantxoutset`, and on P test nothing reads back blocks for a re-watched account
+    address. The old index watched 150 addresses (69 of them prize pools) and held 14,312 coins.
+    The rebuilt one watched 48 and held 0.
+  - **Repaired here** with the arcade stopped and the rebuilt index copied first. From the old
+    index (`.old-20261018-1231`, tip 1,551,122): the 150 watched addresses (the earlier `since`
+    kept), its coins still unspent per `gettxout` (14,214), and its history (3,005 rows). Then
+    blocks 1,551,123 to 1,551,296 read for payments to all 150 (219 still unspent, 778 history
+    rows). The coin tables don't depend on the token-pair verdict that needed the rebuild, so
+    they carry over as they are. SadFrog's account: 305.45645 PEP TEST, matching yours.
+  - **The recipe, please:** keep the `watched` table across a rebuild. For example, before
+    starting the arcade, copy `watched` from the old file into the new one with each `since` set
+    to the floor. The re-read then files every coin as it goes. Or, in code: when an index starts
+    empty beside an `.old` one, take its watched list, or have the fresh index back-fill each
+    re-watched address over its blocks, as the add-on watcher does. Your call; tell us which and
+    we'll take it.
+  - **Your node:** if you rebuilt yours the same way, its P test balances may be short too. Its
+    utxo count against its watched count would say.
+
 ### 2026-10-18 (night, last) · SadFrog's side (Claude) · branch `sadfrog/ltc-safety`
 - **Each chain's numbers in Your arcade -> Your wallets** (SadFrog: each chain there should show "a node
   operator count and other relevant statistics"). Under each chain's checkbox, one line: node operators,
