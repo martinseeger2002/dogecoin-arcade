@@ -411,6 +411,38 @@ def test_the_tip_is_only_marked_seen_once_a_scan_has_reached_it():
     assert scan < mark, "the tip is recorded before the scan that justifies it"
 
 
+def test_a_node_far_behind_keeps_scanning_without_waiting_for_a_block(monkeypatch):
+    """A pass is bounded; one that stopped at its bound has not reached the
+    tip. Recording the tip anyway made a fresh node read one pass per NEW
+    block, so its feed sat days behind for hours (node 3, 2026-10-19)."""
+    from arcade.web.watcher import BLOCKS_PER_PASS
+
+    left = [BLOCKS_PER_PASS, BLOCKS_PER_PASS, 7]      # blocks each pass reads
+    passes = []
+
+    class Bounded:
+        def __init__(self, *a, **k):
+            pass
+
+        def scan(self, max_blocks=0):
+            class R:
+                opened = announcements = group_posts = 0
+            R.blocks = left.pop(0) if left else 0
+            passes.append(R.blocks)
+            return R()
+
+    state = FakeState(FakeChain(tip=100), FakeChain("main", tip=5))
+    state.store = lambda: _NullStore()
+    monkeypatch.setattr("arcade.web.watcher.Scanner", Bounded)
+    watcher = BlockWatcher(state)
+    for _ in range(5):                 # the tip never moves
+        watcher._check(state.messaging, public_only=False)
+
+    assert passes == [BLOCKS_PER_PASS, BLOCKS_PER_PASS, 7], \
+        "a pass that stopped short must be followed by another at the same tip"
+    assert state.tips["regtest"] == 100
+
+
 # --- how far along a long send is ----------------------------------------------
 # A picture is dozens of transactions. A split wallet funds each from its own
 # output, so they are independent and the miner takes them in whatever order it

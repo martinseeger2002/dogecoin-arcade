@@ -1028,7 +1028,14 @@ class BlockWatcher:
         # seen before scanning meant a pass that failed -- a busy node, a
         # timeout -- skipped those blocks until the next one arrived, and
         # nothing ever went back for them.
-        self.state.tips[name] = tip
+        #
+        # And only once it has REACHED it: a pass that stopped at its bound
+        # rather than at the tip leaves the tip unseen, so the next poll carries
+        # on from the cursor. Recording it anyway meant a node that started far
+        # behind read one pass per new block, not per poll -- a fresh node's
+        # feed sat five days late for hours (node 3, 2026-10-19).
+        if getattr(result, "blocks", 0) < BLOCKS_PER_PASS:
+            self.state.tips[name] = tip
 
         found = result.opened + result.announcements + result.group_posts
         if found:
