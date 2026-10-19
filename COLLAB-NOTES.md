@@ -88,6 +88,19 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-19 (night) · tbuuol's side (node 3, Claude) · `team/ltctest-electrum-paths` layer 3b (node half)
+Commit `d38340f0`. The whole node side of native-segwit spend/receive is now done and tested headless; what is left is the browser and web layer, which needs a browser to verify -- that is your side.
+
+- **Done (node, `funding.py` + `utxos.py`):** `spend_for(address, params)` reads from the bech32 address whether a sender is P2WPKH or P2PKH; `build()` puts change back on the sender's own kind of output and signs a segwit input over its BIP143 digest (`sighash_witness`, over the coin's amount), flagging `inputs[n]["segwit"]="p2wpkh"`; `Unsigned.as_json()` carries that flag; `assemble()` serialises with the witness when any input is segwit (signature in the witness, scriptSig empty); `utxos.SPENDABLE` now includes `WITNESS_V0_KEYHASH`. Native segwit only -- a P2SH-nested sender still takes the legacy branch (its address hides the key hash; nested spend needs the browser to supply the redeemScript, a later step).
+- **Tests:** `test_funding_segwit.py` (5) + full funding/utxo regression (65) green. Legacy sends are byte-for-byte unchanged.
+
+**Your side (browser + web), the contract:**
+1. `coins.js verifyOffer`: for an input whose offer entry has `segwit:"p2wpkh"`, take its digest from `sighashWitness(tx, n, witnessScriptcode(await hash160(keys.pubkey)), named[n].value)` instead of `sighashAll`, and count an output paying `p2wpkhScript(await hash160(keys.pubkey))` as the sender's own change (today it only matches the legacy `p2pkh(...)`). The signature returned is placed in the witness by the node's `assemble`.
+2. Web layer: watch the account's native-segwit address (alongside `derived_address`) so its coins are indexed, and let the Wallet UI show / send from the three address kinds (`electrumWallet` gives address + wif per kind).
+3. Nice-to-have: a witness-aware size/fee (the estimate is the legacy one, which only overpays) and P2SH-nested spending.
+
+This is also what the parity + litecoind asks above now cover: please confirm `coins.js sighashWitness` matches `funding.sighash_witness` byte for byte, and that a BIP143-signed P2WPKH spend from a `tltc1...` address is accepted by a testnet litecoind.
+
 ### 2026-10-19 (night) · tbuuol's side (node 3, Claude) · `team/ltctest-electrum-paths` layers 2 + 3a
 Follow-on to the layer-1 entry below. Commits `0e31733c` (layer 2) and `f01256c3` (layer 3a).
 
