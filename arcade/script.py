@@ -40,6 +40,10 @@ class OutputType(Enum):
     MULTISIG = "multisig"
     NULL_DATA = "nulldata"
     PUBKEY = "pubkey"
+    WITNESS_V0_KEYHASH = "witness_v0_keyhash"
+    WITNESS_V0_SCRIPTHASH = "witness_v0_scripthash"
+    WITNESS_V1_TAPROOT = "witness_v1_taproot"
+    WITNESS_UNKNOWN = "witness_unknown"
 
 
 class ScriptError(Exception):
@@ -198,6 +202,26 @@ def classify_script(script: bytes, params: Params) -> tuple[OutputType, str | No
             (),
             0,
         )
+
+    # Native segwit, only where the chain has a bech32 prefix (Litecoin and
+    # its testnet; Pepecoin and Dogecoin have none, so their outputs never read
+    # as witness): OP_0/OP_1..OP_16 then one 2-40 byte push, nothing else. The
+    # P2SH-nested form is an ordinary P2SH output and is already caught above.
+    if params.bech32_hrp:
+        program = witness_program(script)
+        if program is not None:
+            version, prog = program
+            if version == 0 and len(prog) == 20:
+                kind = OutputType.WITNESS_V0_KEYHASH
+            elif version == 0 and len(prog) == 32:
+                kind = OutputType.WITNESS_V0_SCRIPTHASH
+            elif version == 1 and len(prog) == 32:
+                kind = OutputType.WITNESS_V1_TAPROOT
+            else:
+                kind = OutputType.WITNESS_UNKNOWN
+            has_address = kind is not OutputType.WITNESS_UNKNOWN or version
+            addr = segwit_encode(params.bech32_hrp, version, prog) if has_address else None
+            return kind, addr, None, (), 0
 
     # OP_RETURN <data>
     if n >= 1 and script[0] == OP_RETURN:
@@ -435,3 +459,14 @@ def p2sh_p2wpkh_address(params: "Params", keyhash: bytes) -> str:
     script hash, in this chain's script-hash version (M... on LTC, Q/2... on
     LTC testnet). Opens in any wallet that speaks BIP49."""
     return b58check_encode(params.scripthash_version, hash160(p2sh_p2wpkh_redeem(keyhash)))
+
+
+def witness_program(script: bytes) -> "tuple[int, bytes] | None":
+    """A segwit output's (version, program), or None. OP_0 (version 0) or
+    OP_1..OP_16 (versions 1-16), then a single 2-40 byte push that is the whole
+    rest of the script -- the same shape rawchain's reader used before this
+    module became the one home for it."""
+    if (4 <= len(script) <= 42 and (script[0] == 0 or OP_1 <= script[0] <= OP_16)
+            and script[1] == len(script) - 2):
+        return (0 if script[0] == 0 else script[0] - 0x50), script[2:]
+    return None

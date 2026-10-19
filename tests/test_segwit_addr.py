@@ -113,3 +113,40 @@ def test_nested_p2sh_segwit_is_the_scripthash_of_the_witness_program():
 def test_litecoin_mainnet_nested_address_starts_with_M():
     # scripthash_version 50 encodes to a leading "M" on Litecoin mainnet.
     assert script.p2sh_p2wpkh_address(LITECOIN, KEYHASH)[0] == "M"
+
+
+# --- classify_script recognises segwit outputs (layer 2) ---------------------
+
+from arcade import rawchain                                           # noqa: E402
+from arcade.config import DOGECOIN                                    # noqa: E402
+
+
+def test_classify_recognises_native_segwit_on_ltctest():
+    spk = script.p2wpkh_script(KEYHASH)
+    kind, addr, _, _, _ = script.classify_script(spk, LITECOIN_TESTNET)
+    assert kind is script.OutputType.WITNESS_V0_KEYHASH
+    assert addr == script.p2wpkh_address(LITECOIN_TESTNET, KEYHASH)
+
+
+def test_classify_recognises_p2wsh():
+    spk = bytes([0x00, 0x20]) + P2WSH_PROGRAM
+    kind, addr, _, _, _ = script.classify_script(spk, LITECOIN_TESTNET)
+    assert kind is script.OutputType.WITNESS_V0_SCRIPTHASH
+    assert addr == script.segwit_encode("tltc", 0, P2WSH_PROGRAM)
+
+
+def test_a_chain_without_bech32_never_reads_a_witness_output():
+    # Dogecoin and Pepecoin have no segwit: the same bytes must stay nonstandard
+    # so the indexer never files a coin at an address those chains cannot make.
+    spk = script.p2wpkh_script(KEYHASH)
+    kind, addr, _, _, _ = script.classify_script(spk, DOGECOIN)
+    assert kind is script.OutputType.NONSTANDARD and addr is None
+
+
+def test_rawchain_script_pubkey_agrees_with_classify():
+    # rawchain used to carry its own bech32; it now reads script.py's. Its
+    # Core-style output must be unchanged.
+    spk = script.p2wpkh_script(KEYHASH)
+    said = rawchain.script_pubkey(spk, LITECOIN_TESTNET)
+    assert said["type"] == "witness_v0_keyhash"
+    assert said["addresses"] == [script.p2wpkh_address(LITECOIN_TESTNET, KEYHASH)]
