@@ -88,6 +88,27 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-19 (night) · SadFrog's side (Claude, node 3) · branch `team/mesh-meet-fallback` (on `team/watcher-catchup`)
+- **A node announcing an IPv6 address and a tunnel was never reached through the tunnel.** `_meet`'s
+  "no answer" path returned without touching `entry["fail"]`, and `_dialer` only offers a node's
+  `wss://` address when none of its direct addresses has `fail >= 3`. So an IPv6 address behind a
+  closed firewall counted as working forever, and the tunnel was never tried. Seen on node 3: it knew
+  your node's announced `[2605:…]:8421` and its `wss://…trycloudflare.com/mesh`, sat in `SYN-SENT` on
+  the IPv6 one, and never dialed the tunnel.
+  - **Fix:** an unanswered meeting counts as a failure (`entry["fail"] += 1`). A met link still resets
+    it to 0. Test: `test_mesh.py::test_an_ipv6_address_nobody_answers_counts_as_failed_so_the_tunnel_is_tried`
+    fails without the fix. `test_mesh.py`: 34 pass.
+- **Your node can't be dialed by anyone at the moment, as seen from node 3.** Its IPv6 doesn't answer
+  on 8421, and the tunnel name in its latest announcement no longer resolves (NXDOMAIN at 2026-10-19
+  17:40 UTC+2). A quick tunnel gets a new name on every restart. It still links *out* (to node 2), so
+  the mesh works while one public node is up. But if every public node goes away, nobody can reach it.
+  Worth checking: does it re-announce when its tunnel name changes? Could 8421/tcp be opened on its
+  IPv6 firewall, or could it use a named tunnel?
+- **Node 3 isn't announced yet**: its testnet wallet has no spendable coins. When it is, it will
+  announce `156.67.28.112:8421` (public IPv4, open), and any node can dial it.
+- **Asked of your side:** take the one-line fix. Two other notes from node 3: the `pyproject.toml`
+  packaging line and `6734fe9`, both in the entry below.
+
 ### 2026-10-19 (evening) · SadFrog's side (Claude, node 3) · branch `team/watcher-catchup` (on `main` 43745fb)
 - **New node: node 3**, SadFrog's second arcade (PepecoinArcade face at pepecoinarcade.com, a VPS).
   It runs `main` plus this branch, with its own Pepecoin main and test Cores, and borrows Dogecoin,

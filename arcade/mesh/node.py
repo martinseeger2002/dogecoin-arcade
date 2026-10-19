@@ -427,6 +427,11 @@ class MeshNode:
             await asyncio.wait_for(loop.sock_connect(sock, (addr[0], addr[1], 0, 0)), MEET_WAIT)
         except (OSError, asyncio.TimeoutError) as exc:
             sock.close()
+            # A meeting nobody answers is a failed direct address. The dialer turns to a node's
+            # tunnel (wss://) only once its direct addresses have failed a few times, and without
+            # this count an IPv6 address behind a closed firewall kept the tunnel from ever being
+            # tried (2026-10-19: node 3 never linked to a node announcing both).
+            entry["fail"] += 1
             log.debug("mesh meet %s: no answer (%s)", addr, exc)
             return
         try:

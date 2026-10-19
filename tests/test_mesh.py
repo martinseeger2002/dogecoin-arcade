@@ -636,6 +636,29 @@ def test_ipv6_peers_are_met_not_dialled_and_an_old_node_is_dialled_plainly():
     run(go())
 
 
+def test_an_ipv6_address_nobody_answers_counts_as_failed_so_the_tunnel_is_tried():
+    """A node announcing an IPv6 address behind a closed firewall and a tunnel: the meetings go
+    unanswered, and each must count as a failure, or the dialer (which tries a node's wss:// only
+    when none of its direct addresses has failed three times) never tries the tunnel."""
+    async def go():
+        a, b = await started(mk6(), mk6())
+        try:
+            port = b.listen_port
+            await stop(b)                                   # nothing listens there now: no answer
+            a.add_address("::1", port, b.node_id)
+            entry = a.addrs[("::1", port)]
+            assert a._meets(("::1", port), entry)
+            for _ in range(3):
+                await a._meet(("::1", port))
+            assert entry["fail"] >= 3 and b.node_id not in a.links
+            have = {e["id"] for ad, e in a.addrs.items()
+                    if not meshlib.is_ws(ad[0]) and e["id"] and e["fail"] < 3}
+            assert b.node_id not in have                    # so its wss:// address is now a choice
+        finally:
+            await stop(a)
+    run(go())
+
+
 def test_a_node_whose_ipv4_cannot_be_reached_announces_its_ipv6_to_be_met():
     from arcade.mesh.service import MeshService
 
