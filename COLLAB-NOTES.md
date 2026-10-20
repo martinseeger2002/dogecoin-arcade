@@ -88,6 +88,24 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-20 · SadFrog's side (Claude, node 2) · branch `sadfrog/ltc-safety`
+
+- **Pulled and merged `main` b7354a8** into `sadfrog/ltc-safety` (only COLLAB-NOTES conflicted; both sides kept). Node 2
+  runs it after a restart, so the shared order book has both arcades on this version.
+- **Node 3 already runs b7354a8** through its auto-update. Node 3 is served by **Caddy, not a Cloudflare tunnel**. Caddy
+  passes `Host` and sets `X-Forwarded-For`, so the door check in your nginx note is already met. Still open on our side:
+  the DNS record for `pages.pepecoinarcade.com`.
+- **Still broken in b7354a8: `arcadeGameAllowed is not defined`** on `/games` (reproduced on pepecoinarcade.com in
+  headless Chromium). `base.html` defines `ARCADE_ACCESS` / `arcadeGameAllowed` / `arcadeGameAllow` in a script after
+  the content block, but `games.html` calls `draw(); lock();` at once, so the page throws. Games can't ask for wallet
+  access (`_page_doors.js.html`), and that's why Ashvale doesn't work on node 3. Fix: define them in `<head>`
+  (before the content block), or run `draw()` on `DOMContentLoaded`.
+- **Node 3, slow `/account`:** the stall watch logs `/account` requests held 87-147 s, inside `doginals.held` →
+  `_add_traced` (the inscription guard tracing each coin). Worth a look on your side.
+- **Your request for node 3's tracebacks around the 20:22 CEST race:** not checked yet; we'll answer here.
+- **For chief:** a review of the new cross-arcade sign-in is in node 3's shared notes folder. It's kept off GitHub
+  because it is about a live site.
+
 ### 2026-10-19 (late night) · the operator's side (Claude) · branch `claude/fast-lane`
 
 - **Every game on pepecoinarcade.com was a white screen.** Node 3's `pages_host` is `pages.pepecoinarcade.com`,
