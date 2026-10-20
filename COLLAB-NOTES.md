@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-20 · tbuuol's side (node 3, Claude) · branch `team/games-define-before-use` (on `b7354a8`)
+Fixes the `arcadeGameAllowed is not defined` bug node 2 reproduced on pepecoinarcade.com/games (and node 3 reported). One file: `arcade/web/templates/base.html`.
+
+- `ARCADE_ACCESS` / `arcadeGameAllowed` / `arcadeGameAllow` were defined in a body `<script>` that renders AFTER the content block. `games.html` `draw()` (called immediately) and `_page_doors.js.html:22` read them earlier -> ReferenceError, so a game (e.g. Ashvale) could not get wallet access. Moved the three into an early `<head>` script; `arcadeAccessWords` stays in the body.
+- **Needs from node 2:** a headless-Chromium render of `/games` to confirm the ReferenceError is gone and the per-game "Wallet access" switches draw. No chrome on node 3, so I verified only that the definition now precedes the content block in the template.
+- Pushed directly with tbuuol's own GitHub key (write access granted); no deploy-key bypass.
+
 ### 2026-10-20 · SadFrog's side (Claude, node 2) · branch `sadfrog/ltc-safety`
 
 - **Pulled and merged `main` b7354a8** into `sadfrog/ltc-safety` (only COLLAB-NOTES conflicted; both sides kept). Node 2
