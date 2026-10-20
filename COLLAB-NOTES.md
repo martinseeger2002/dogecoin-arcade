@@ -88,6 +88,38 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-20 · tbuuol's side (Claude) · branch `team/p2sh-segwit-kind` (on master 462ec1b): P2SH (Nested SegWit) on the Wallet card
+
+tbuuol: the L test address-type drop-down should read **Legacy, P2SH (Nested SegWit), Native SegWit**, in that order.
+- `wallet_js.js` `ADDRESS_KINDS.ltctest` gains `{id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 58,
+  path: "m/49'/1'/0'/0/0"}` between the two; `kindKey()` derives it with `coins.p2shSegwitKey` / `p2shSegwitAddress`
+  (Q... on L test) and marks the keys `nested`. Legacy's row now says its path too (unchanged: m/44'/1'/0'/0/0 =
+  `coinPath`, the same path Electrum-LTC's BIP44 legacy uses on testnet).
+- `coins.js verifyOffer`: an input flagged `segwit: "p2sh-p2wpkh"` signs the same BIP143 digest as native; change on
+  the own P2SH script counts as own; a nested own address reads payees in `keys.version` (as bech32 does).
+- Server: `/account/segwit/register|balance` and `/account/send` `from` take either kind (`_segwit_kind`). A nested
+  address hides its key hash, so its FIRST register carries `pubkey`; the node checks the address is that key's
+  P2SH-P2WPKH and keeps the hash (`segwit_keyhash:<pubkey>:<net>`). One address per kind per account and chain
+  (native keeps `segwit_watch:<pubkey>:<net>`, nested is `segwit_watch:p2sh-p2wpkh:<pubkey>:<net>`). Test chains only.
+- `funding.spend_for(address, params, keyhash)` / `build(..., keyhash=)`: kind `p2sh-p2wpkh`, change back to the same
+  P2SH; `assemble` puts `push(0014<keyhash>)` in the scriptSig and `[sig, pubkey]` in the witness.
+- **Paying TO every kind** (tbuuol: "yesterday you could only send to Legacy"). Before this, a Q... recipient was built
+  right but the browser's review said "20 bytes written to the chain", and a tltc1... recipient was read as a @name
+  ("a tag is at most 24 characters"). Now, on the COIN send only (`/account/send`):
+  - `_looks_like_an_address` takes a bech32 address (longer than any tag) as an address.
+  - `_check_address(..., segwit_ok=True)` lets native segwit v0 (P2WPKH and P2WSH) through on a test chain, for that
+    chain's own prefix. Taproot is refused by name. Every other send (tokens, NFTs, ...) keeps the old refusal.
+  - `_pay_script` builds `OP_0 <program>` for it; base58 stays `txbuild.p2pkh_script` (P2PKH or P2SH by version).
+  - `coins.js verifyOffer` says a P2SH output as its Q.../M... address and a P2WPKH one as tltc1.../ltc1..., on the
+    Litecoin chains (`LTC_KINDS`), whatever kind the sender is. Elsewhere a P2SH output keeps its old words (pools, swaps).
+  - `my_wallet.html` `ADDRESSY` takes a bech32 address, so Review can be pressed for one.
+- Tests: new `tests/test_p2sh_segwit.py` (15), including all 3 senders x 4 recipients (legacy, P2SH, P2WPKH, P2WSH).
+  Segwit/funding/bip143/coins_browser suites and the smoke set pass.
+- **Needs from node 2 (browser + litecoind):** the JS is untested here (no node/chrome on this machine). Please run the
+  round on L test: pick P2SH in the drop-down, it registers and shows a Q... address; fund it; then send from each of
+  the three kinds to a legacy, a Q... and a tltc1q... address, check the review names each recipient, and confirm
+  litecoind accepts and mines all nine.
+
 ### 2026-10-20 · the operator's side · branch claude/ord-tab: an ord index per chain, Admin -> Ords, other operators
 
 The operator: "Another tab for Ords and indexing index percentage for each of the chains. And controls to enable ord in
