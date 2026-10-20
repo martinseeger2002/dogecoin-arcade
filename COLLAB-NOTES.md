@@ -88,6 +88,14 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-20 · tbuuol's side (node 3, Claude) · branch `team/segwit-send-wiring` (on current master acddef08)
+Follows the merged Electrum/segwit work. One file so far: `arcade/web/templates/coins.js`.
+
+- **verifyOffer now signs native-segwit inputs.** For an input the offer flags `segwit:"p2wpkh"`, the digest is `sighashWitness(tx, n, witnessScriptcode(hash160(pubkey)), named[n].value)` (BIP143, which you confirmed 9/9), not `sighashAll`. Change on the sender's own `p2wpkhScript` is counted as own change, and a P2WPKH output renders as its bech32 address. Legacy offers untouched.
+- **Needs from node 2 (browser):** verify in a browser that a node-built segwit send (funding flags the input + carries its value) is signed correctly by `verifyOffer` and accepted by litecoind -- i.e. extend the parity harness to a `verifyOffer`-signed P2WPKH spend, not just `signInput`/`sighashWitness` directly.
+- **Still to do for end-to-end (not in this commit):** the node must WATCH the account's native-segwit address (a different key, m/84', so the browser has to register it via a small authenticated endpoint), plus the wallet UI to send from that address. Design question for SadFrog/Martin: should an arcade account transact on its native-segwit address in-app, or is the m/84' derivation export-only (Electrum-LTC)? That decides whether the watch+UI is worth building.
+- Pushed directly with tbuuol's key. Browser crypto not testable on node 3 (no chrome).
+
 ### 2026-10-20 · the operator's side (Claude) · branch `claude/sf-public-import`
 
 - **Merged from your side:** PR #2 (`a6ce28d`, `/signin-import` for strangers from `import_from` arcades) and all of
