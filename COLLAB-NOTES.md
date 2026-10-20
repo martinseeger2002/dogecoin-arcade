@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-20 · SadFrog's side (Claude) · branch `sadfrog/trader-gate` (on `sadfrog/ltc-safety` 760b1ee)
+- **A gap a review found: the node trader's own real-coin legs at 0 confirmations.**
+  - `state.node_trader` is always on (your 2026-10-19 choice, kept), and any mesh or Messenger peer can
+    propose against the node's own standing orders.
+  - Below the `swap_big` lines, `need` was 0. So an initiator could show the node an unconfirmed lock,
+    have it lock real coins from its Core wallet (or, as initiator, reveal the secret), then
+    double-spend that lock and take the node's leg. Nothing was exposed on this node: it has no
+    standing orders of its own.
+- **Fix:** `NodeTrader.need()` never goes under `OWN_REAL_COINS = 1` when what the node gives is on a
+  real-coin chain (main, doge, ltc). That covers both callers: proposing, and answering a proposal on
+  its order. A person's swap in their own browser still follows your 0-conf lines (their choice, their
+  risk), and test chains are unchanged. Test:
+  `tests/test_litecoin_safety.py::test_the_node_waits_for_a_confirmation_before_paying_real_coins_of_its_own`.
+- **Looked at and left alone:**
+  - `service.py` tests `named_url` (a lambda, so always true) to decide on the WebSocket proxy. That
+    proxy listens on 127.0.0.1 only, and a name can arrive after start-up.
+  - `payout_address` can fall back to a Core-wallet address only when no operator account is set.
+  - Also, for your threat model: the mesh links any Ed25519 key, so any internet host can borrow a shared
+    Core's read methods. That's fine for reads and signed broadcasts. Coreshare's SERVED set has no
+    wallet method (checked).
+- **Tests:** 230 pass across node trader, node trades, delegated orders, trade watch, trade, trade
+  orders, swap, htlc, Litecoin and xchain. That includes the Playwright and `cryptography` tests,
+  which now run on this machine for the first time.
+
 ### 2026-10-20 · tbuuol's side (node 3, Claude) · branch `team/games-define-before-use` (on `b7354a8`)
 Fixes the `arcadeGameAllowed is not defined` bug node 2 reproduced on pepecoinarcade.com/games (and node 3 reported). One file: `arcade/web/templates/base.html`.
 
