@@ -76,7 +76,7 @@ from .. import txbuild
 from ..messaging import sender as sendermod
 from .. import state as statelib
 from ..messaging import contact, content, group
-from ..script import b58check_decode, b58check_encode, hash160
+from ..script import b58check_decode, b58check_encode, hash160, segwit_decode
 from ..messaging.derive import DerivationError, derive_identity
 from ..messaging.envelope import (
     MAX_ANNOUNCE_NAME, MAX_ANNOUNCE_NAME_CLASS_B,
@@ -23178,14 +23178,44 @@ def create_app(state: AppState) -> FastAPI:
                       prices=sorted({r["price"] for r in rows}),
                       signed_in=signed_in(request) is not None)
 
+    def _segwit_kind(chain, addr: str) -> str | None:
+        """"p2wpkh" (native, m/84') or "p2sh-p2wpkh" (nested, m/49') for an
+        address of that shape on this chain, else None. Nested segwit is only
+        offered where native segwit is (a chain with a bech32 prefix)."""
+        from ..script import segwit_decode
+        hrp = getattr(chain.params, "bech32_hrp", "")
+        if not hrp or not addr:
+            return None
+        ver, prog = segwit_decode(hrp, addr)
+        if ver == 0 and prog is not None and len(prog) == 20:
+            return "p2wpkh"
+        try:
+            version, payload = b58check_decode(addr)
+        except Exception:
+            return None
+        if version == chain.params.scripthash_version and len(payload) == 20:
+            return "p2sh-p2wpkh"
+        return None
+
+    def _segwit_setting(account, chain, kind: str) -> str:
+        """Where this account's registered address of that kind is kept: one per
+        kind per account per chain. The native one keeps its first name."""
+        if kind == "p2wpkh":
+            return f"segwit_watch:{account.pubkey}:{chain.network}"
+        return f"segwit_watch:{kind}:{account.pubkey}:{chain.network}"
+
     @app.post("/account/segwit/register")
     def account_segwit_register(request: Request, payload: Any = Body(None)):
-        """A signed-in account registers its native-segwit (m/84') address so the
-        node WATCHES it. That key is the browser's -- not derivable from the
-        account's identity key -- so the browser is what tells the node. Watching
-        only: the node can later build an UNSIGNED send from this address, but
-        only the holder of the key can sign it, so accepting an address here
-        moves nothing and is safe."""
+        """A signed-in account registers its native-segwit (m/84') or
+        P2SH-nested segwit (m/49') address so the node WATCHES it. That key is
+        the browser's -- not derivable from the account's identity key -- so the
+        browser is what tells the node. Watching only: the node can later build
+        an UNSIGNED send from this address, but only the holder of the key can
+        sign it, so accepting an address here moves nothing and is safe.
+
+        A nested address hides its key hash, so the first registration of one
+        carries `pubkey`: the node checks the address is that key's
+        P2SH-P2WPKH and keeps the key hash to build sends from it."""
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         try:
@@ -23194,32 +23224,45 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         if getattr(chain.params, "real_coins", False):
             return JSONResponse(
-                {"detail": "native segwit is on test chains only for now"},
+                {"detail": "segwit is on test chains only for now"},
                 status_code=400)
-        from ..script import segwit_decode
         addr = str(said.get("address") or "").strip()
-        hrp = getattr(chain.params, "bech32_hrp", "")
-        ver, prog = (segwit_decode(hrp, addr) if hrp else (None, None))
-        if ver != 0 or prog is None or len(prog) != 20:
+        kind = _segwit_kind(chain, addr)
+        if kind is None:
             return JSONResponse(
-                {"detail": "that is not a native-segwit address for this chain"},
+                {"detail": "that is not a segwit address for this chain"},
                 status_code=400)
-        # One native-segwit address per account per chain, so a signed-in
+        # One address of each kind per account per chain, so a signed-in
         # account cannot grow the watch list with many addresses (node 2).
-        key = f"segwit_watch:{account.pubkey}:{chain.network}"
+        key = _segwit_setting(account, chain, kind)
         prior = state.setting(key)
         if prior and prior != addr:
             return JSONResponse(
                 {"detail": "this account already registered a different segwit "
                            "address on this chain"}, status_code=409)
+        if kind == "p2sh-p2wpkh" and not prior:
+            from ..script import p2sh_p2wpkh_address
+            try:
+                pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+            except ValueError:
+                pubkey = b""
+            if len(pubkey) != 33 or p2sh_p2wpkh_address(
+                    chain.params, hash160(pubkey)) != addr:
+                return JSONResponse(
+                    {"detail": "a P2SH-segwit address is registered with the "
+                               "public key it was made from"}, status_code=400)
+            state.set_setting(f"segwit_keyhash:{account.pubkey}:{chain.network}",
+                              hash160(pubkey).hex())
         state.set_setting(key, addr)
-        _watch(addr, "account segwit (m/84')", chain)
-        return JSONResponse({"ok": True, "watching": addr, "chain": chain.network})
+        _watch(addr, "account segwit (m/84')" if kind == "p2wpkh"
+               else "account segwit (m/49')", chain)
+        return JSONResponse({"ok": True, "watching": addr, "kind": kind,
+                             "chain": chain.network})
 
     @app.get("/account/segwit/balance")
     def account_segwit_balance(request: Request, address: str = "", network: str = ""):
-        """The balance the node sees at a registered native-segwit address, for
-        the wallet's SegWit panel. Public on-chain info; signed-in to keep it to
+        """The balance the node sees at a registered segwit address (native or
+        P2SH-nested), for the Wallet card's address type. Public on-chain info; signed-in to keep it to
         the app. 0 until the index has read a block paying it (watch is not
         retroactive), so register first and fund after."""
         _signed_in_account(request)
@@ -23229,15 +23272,12 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         if getattr(chain.params, "real_coins", False):
             return JSONResponse(
-                {"detail": "native segwit is on test chains only for now"},
+                {"detail": "segwit is on test chains only for now"},
                 status_code=400)
-        from ..script import segwit_decode
         addr = (address or "").strip()
-        hrp = getattr(chain.params, "bech32_hrp", "")
-        ver, prog = (segwit_decode(hrp, addr) if hrp else (None, None))
-        if ver != 0 or prog is None or len(prog) != 20:
+        if _segwit_kind(chain, addr) is None:
             return JSONResponse(
-                {"detail": "that is not a native-segwit address for this chain"},
+                {"detail": "that is not a segwit address for this chain"},
                 status_code=400)
         index = state.token_index(chain)
         with contextlib.closing(index.open()) as db:
@@ -23266,35 +23306,37 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse(
                 {"detail": f"this account has no {chain.label.lower()} "
                            f"address yet"}, status_code=400)
-        # Send from the account's native-segwit (m/84') address when the
-        # browser names it (said["from"]): that key is the browser's, so
-        # building from it is harmless (only its holder can sign), and
-        # funding.spend_for flags the inputs segwit. bech32-v0 for this chain only.
+        # Send from the account's native-segwit (m/84') or P2SH-nested (m/49')
+        # address when the browser names it (said["from"]): that key is the
+        # browser's, so building from it is harmless (only its holder can sign),
+        # and funding.spend_for flags the inputs segwit. This chain's only.
         want_from = str(said.get("from") or "").strip()
+        keyhash = None
         if want_from:
-            from ..script import segwit_decode
-            hrp = getattr(chain.params, "bech32_hrp", "")
-            ver, prog = (segwit_decode(hrp, want_from) if hrp else (None, None))
-            if ver != 0 or prog is None or len(prog) != 20:
+            kind = _segwit_kind(chain, want_from)
+            if kind is None:
                 return JSONResponse(
-                    {"detail": "that is not a native-segwit address for this chain"},
+                    {"detail": "that is not a segwit address for this chain"},
                     status_code=400)
             if getattr(chain.params, "real_coins", False):
                 return JSONResponse(
-                    {"detail": "native segwit is on test chains only for now"},
+                    {"detail": "segwit is on test chains only for now"},
                     status_code=400)
             # Only the address this account registered, never somebody else's.
-            if state.setting(f"segwit_watch:{account.pubkey}:{chain.network}") != want_from:
+            if state.setting(_segwit_setting(account, chain, kind)) != want_from:
                 return JSONResponse(
                     {"detail": "register this segwit address on the Wallet page first"},
                     status_code=400)
+            if kind == "p2sh-p2wpkh":
+                keyhash = bytes.fromhex(state.setting(
+                    f"segwit_keyhash:{account.pubkey}:{chain.network}") or "")
             address = want_from
         try:
             # A @tag is a name for an address, so it is resolved here and
             # the ANSWER is shown: somebody paying @robin should see the
             # address their coins are going to before they sign.
             to, to_tag = _payee(said.get("to", ""), chain)
-            complaint = _check_address(to, mainnet=chain)
+            complaint = _check_address(to, mainnet=chain, segwit_ok=True)
             if complaint:
                 raise ValueError(complaint)
             # Coins to your own address are allowed: it is how one coin becomes
@@ -23309,12 +23351,13 @@ def create_app(state: AppState) -> FastAPI:
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build(
                     db, chain.params, address,
-                    [(amount, txbuild.p2pkh_script(to))],
+                    [(amount, _pay_script(to, chain))],
                     rate=fees.MIN_FEE_PER_KB,
                     what=(f"send {format_amount(amount, True)} "
                           f"{chain.label.lower()} to {to}"),
                     exclude=_flights.spent_by(account.pubkey, chain.network),
-                    extra=_flights.change_for(account.pubkey, chain.network))
+                    extra=_flights.change_for(account.pubkey, chain.network),
+                    keyhash=keyhash)
             _quota(account, "send")
         except (taglib.TagError, fundinglib.FundingError, AmountError,
                 ValueError) as exc:
@@ -23408,12 +23451,31 @@ def create_app(state: AppState) -> FastAPI:
 
     def _looks_like_an_address(text: str) -> bool:
         """Address or name? Decided by shape, and only to choose which
-        complaint to make -- both are checked properly afterwards."""
+        complaint to make -- both are checked properly afterwards. A bech32
+        address (2026-10-20) is longer than any tag can be, so a tag that
+        happens to start like "tltc1" stays a tag."""
+        lowered = text.lower()
+        if len(text) > taglib.MAX_LENGTH and any(
+                p.bech32_hrp and lowered.startswith(p.bech32_hrp + "1")
+                for p in NETWORKS.values()):
+            return True
         try:
             b58check_decode(text)
             return True
         except Exception:
             return False
+
+    def _pay_script(to: str, chain) -> bytes:
+        """The output that pays `to` on this chain: native segwit v0 for a bech32
+        address (2026-10-20; `_check_address(..., segwit_ok=True)` let it through),
+        else P2PKH or P2SH by its version byte (txbuild)."""
+        hrp = getattr(chain.params, "bech32_hrp", "")
+        if hrp and to.lower().startswith(hrp + "1"):
+            version, program = segwit_decode(hrp, to.lower())
+            if version != 0:
+                raise ValueError("that is not a native SegWit address for this chain")
+            return bytes([0x00, len(program)]) + program
+        return txbuild.p2pkh_script(to)
 
     @app.post("/account/sign")
     def account_sign(request: Request, payload: Any = Body(None)):
@@ -29334,7 +29396,7 @@ def _tag_address(state, destination: str, *, mainnet) -> str:
         f"the claim yet. A tag is claimed from the Address book.")
 
 
-def _check_address(address: str, *, mainnet: bool) -> str | None:
+def _check_address(address: str, *, mainnet: bool, segwit_ok: bool = False) -> str | None:
     """Return a human-readable complaint about `address`, or None if it is fine.
 
     An address carries its chain in the version byte, so a mainnet address pasted
@@ -29373,6 +29435,17 @@ def _check_address(address: str, *, mainnet: bool) -> str | None:
     for params in NETWORKS.values():
         hrp = getattr(params, "bech32_hrp", None)
         if hrp and lowered.startswith(hrp + "1"):
+            # A coin send on a test chain pays native segwit v0 (2026-10-20, tbuuol): `segwit_ok`
+            # is that caller saying it builds the output (`_pay_script`). Taproot is not paid yet.
+            if (segwit_ok and not getattr(params, "real_coins", False)
+                    and params.name in {p.name for p in wanted}):
+                version, program = segwit_decode(hrp, lowered)
+                if version == 0:
+                    return None
+                if version is None:
+                    return "that does not look like an address (the checksum does not match)."
+                return (f"that is a {params.label} Taproot address ({hrp}1p…). This arcade pays legacy, "
+                        "P2SH and native SegWit addresses for now; ask for one of those.")
             return (f"that is a {params.label} SegWit or Taproot address ({hrp}1…). This arcade pays "
                     f"{params.label}'s legacy addresses for now; ask for one of those.")
     try:

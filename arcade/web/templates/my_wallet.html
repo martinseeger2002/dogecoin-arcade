@@ -406,27 +406,30 @@ function kindNow() {
   return k && k !== ks[0] ? k : null;
 }
 const kindSpot = (c, k) => `arcade.wallet.kindaddr:${said.pubkey || said.name || ""}:${c.network}:${k.id}`;
-/** That kind's address: derived when the wallet is open, else as last seen in this browser. */
+/** That kind's address: derived when the wallet is open, else as last seen in this browser.
+ *  `pubkey` (hex) only when derived: a P2SH address is registered with it, the first time. */
 async function kindAddress(c, k) {
   const open = keys || await wallet.opened(c.network).catch(() => null);
   if (open && open.seed) {
-    const address = wallet.keysOn(await wallet.asKind(open, c.network, k.id), c.network).address;
-    keep(kindSpot(c, k), address);
-    return address;
+    const mine = wallet.keysOn(await wallet.asKind(open, c.network, k.id), c.network);
+    keep(kindSpot(c, k), mine.address);
+    return {address: mine.address, pubkey: [...mine.pubkey].map((b) => b.toString(16).padStart(2, "0")).join("")};
   }
-  return kept(kindSpot(c, k), "");
+  return {address: kept(kindSpot(c, k), ""), pubkey: ""};
 }
 async function loadKind(c, k) {
   const spot = `${c.network}:${k.id}`;
   const seen = kindSeen[spot] || (kindSeen[spot] = {address: "", balance: null, at: 0});
   if (Date.now() - seen.at < 15000) return;
   seen.at = Date.now();
-  seen.address = await kindAddress(c, k);
+  const derived = await kindAddress(c, k);
+  seen.address = derived.address;
   if (!seen.address) { drawHead(); return; }
   try {
     // the node watches it once told (one address of each kind per account and chain)
     await fetch("/account/segwit/register", {method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({address: seen.address, chain: c.network})});
+      body: JSON.stringify({address: seen.address, chain: c.network,
+                            ...(derived.pubkey ? {pubkey: derived.pubkey} : {})})});
     const r = await fetch(`/account/segwit/balance?network=${encodeURIComponent(c.network)}`
                           + `&address=${encodeURIComponent(seen.address)}`, {cache: "no-store"});
     const b = await r.json();
@@ -842,7 +845,8 @@ async function copyText(text) {
  * to what caused it, instead of in a box somewhere behind it.
  */
 
-const ADDRESSY = /^[1-9A-HJ-NP-Za-km-z]{26,35}$/;
+// base58, or a native SegWit (bech32) address (2026-10-20: L test pays tltc1q...)
+const ADDRESSY = /^(?:[1-9A-HJ-NP-Za-km-z]{26,35}|[a-z]{1,4}1[02-9ac-hj-np-z]{38,58}|[A-Z]{1,4}1[02-9AC-HJ-NP-Z]{38,58})$/;
 
 /* Scan QR on Send (2026-10-17): templates/qrscan.js. */
 

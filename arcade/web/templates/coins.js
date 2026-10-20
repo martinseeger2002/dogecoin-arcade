@@ -185,6 +185,10 @@ export const LTC_WIF = 0xb0;
 //: of the Dogecoin family 0xF1, Litecoin 0xB0 ("T") and Litecoin testnet 0xEF ("c").
 export const WIF = {main: 0x9e, doge: 0x9e, ltc: LTC_WIF, test: 0xf1, regtest: 0xf1, ltctest: 0xef};
 
+//: Litecoin's other address kinds, for saying who a send pays (2026-10-20, tbuuol: L test pays P2SH and
+//: native SegWit). The script-hash version (config.py `scripthash_version`) and the bech32 prefix.
+export const LTC_KINDS = {ltc: {scripthash: 50, hrp: "ltc"}, ltctest: {scripthash: 58, hrp: "tltc"}};
+
 /** A private key as Wallet Import Format text, for a compressed public key. */
 export async function wif(key, version) {
   const body = new Uint8Array(key.length + 1);
@@ -676,6 +680,8 @@ export async function verifyOffer(offer, keys) {
 
   const mine = p2pkh(await hash160(keys.pubkey));
   const mineSegwit = p2wpkhScript(await hash160(keys.pubkey));
+  // P2SH-nested segwit (BIP49): OP_HASH160 <hash160 of the P2WPKH program> OP_EQUAL
+  const mineNested = new Uint8Array([0xa9, 0x14, ...await hash160(mineSegwit), 0x87]);
   const own = keys.address || await address(keys.pubkey, keys.version);
   const hashes = [];
   for (let n = from; n < to; n++) {
@@ -706,7 +712,10 @@ export async function verifyOffer(offer, keys) {
     // signs the BIP143 digest, not the legacy one. Its coin was already checked
     // to be this key's (named[n].address === own) above.
     let derived;
-    if (named[n].segwit === "p2wpkh") {
+    // A P2SH-nested one signs the very same digest: its scriptCode is the same
+    // P2PKH of the key hash (BIP143), only the scriptSig differs, and the node
+    // puts that in.
+    if (named[n].segwit === "p2wpkh" || named[n].segwit === "p2sh-p2wpkh") {
       derived = hex(await sighashWitness(tx, n,
         witnessScriptcode(await hash160(keys.pubkey)),
         BigInt(String(named[n].value || 0))));
@@ -726,13 +735,16 @@ export async function verifyOffer(offer, keys) {
   // repeats the node's numbers proves nothing.
   // A bech32 own address has no base58 version byte: use the one the caller
   // gives (keys.version) when own is bech32 (node 2 found+tested this).
-  const version = /^[a-z]+1[02-9ac-hj-np-z]+$/.test(own) ? keys.version : unbase58(own)[0];
+  // A nested-segwit own address is base58 too, but in the script-hash version,
+  // so it says the same (keys.nested, from wallet_js kindKey).
+  const version = keys.nested || /^[a-z]+1[02-9ac-hj-np-z]+$/.test(own) ? keys.version : unbase58(own)[0];
+  const ltc = LTC_KINDS[keys.network || offer.chain] || null;
   let paid = 0n, change = 0n;
   const pays = [];
   for (const out of tx.outputs) {
     paid += out.value;
     const script = out.script;
-    if (SAME(script, mine) || SAME(script, mineSegwit)) {
+    if (SAME(script, mine) || SAME(script, mineSegwit) || SAME(script, mineNested)) {
       change += out.value;
       pays.push({to: own, value: Number(out.value), mine: true});
     } else if (script.length === 25 && script[0] === 0x76 && script[1] === 0xa9
@@ -742,8 +754,14 @@ export async function verifyOffer(offer, keys) {
     } else if (script.length === 22 && script[0] === 0x00 && script[1] === 0x14) {
       // A native-segwit (P2WPKH) output: show the bech32 address when the hrp
       // can be read off this key's own address, else say it is a segwit output.
-      const hrp = /^[a-z]+1/.test(own) ? own.slice(0, own.lastIndexOf("1")) : "";
+      const hrp = ltc ? ltc.hrp : /^[a-z]+1/.test(own) ? own.slice(0, own.lastIndexOf("1")) : "";
       pays.push({to: hrp ? segwitEncode(hrp, 0, script.slice(2, 22)) : "a segwit address",
+                 value: Number(out.value), mine: false});
+    } else if (ltc && script.length === 23 && script[0] === 0xa9 && script[1] === 0x14
+               && script[22] === 0x87) {
+      // Somebody's P2SH address (Q... on L test, M... on Litecoin): a payment, said as one. Litecoin
+      // only: on the other chains a P2SH output is a pool's or a swap's, and those keep their words.
+      pays.push({to: await base58check(ltc.scripthash, script.slice(2, 22)),
                  value: Number(out.value), mine: false});
     } else {
       pays.push({bytes: payloadBytes(script), value: Number(out.value),
@@ -757,7 +775,8 @@ export async function verifyOffer(offer, keys) {
   if (from > 0 && first && first.length === 20
       && MARKER.every((b, n) => first[n] === b) && first[6] === 0 && first[7] === 0
       && !SAME(tx.outputs[tx.outputs.length - 1].script, mine)
-      && !SAME(tx.outputs[tx.outputs.length - 1].script, mineSegwit)) {
+      && !SAME(tx.outputs[tx.outputs.length - 1].script, mineSegwit)
+      && !SAME(tx.outputs[tx.outputs.length - 1].script, mineNested)) {
     throw new Error("that transaction sends tokens and does not end on an output "
       + "of yours, so they would go to somebody else. Nothing was signed.");
   }

@@ -164,11 +164,13 @@ export async function everyChain(wallet, chains) {
  * to change: the card lists them, Receive shows that kind's address, and a coin
  * send is built from it and signed with its key. The first row is the chain's
  * ordinary address. A chain with one kind shows no drop-down.
- * Native segwit is test chains only until it has had a real-money review.
+ * Segwit is test chains only until it has had a real-money review.
+ * The order is the menu's (2026-10-20, tbuuol): Legacy, P2SH, Native SegWit.
  */
 export const ADDRESS_KINDS = {
   ltctest: [
-    {id: "legacy", label: "Legacy"},
+    {id: "legacy", label: "Legacy", path: "m/44'/1'/0'/0/0"},
+    {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 58, path: "m/49'/1'/0'/0/0"},
     {id: "p2wpkh", label: "Native SegWit", hrp: "tltc", path: "m/84'/1'/0'/0/0"},
   ],
 };
@@ -181,6 +183,13 @@ async function kindKey(wallet, network, kind) {
     const seg = await coins.nativeSegwitKey(wallet.seed, network, 0);
     return {...base, key: seg.key, pubkey: seg.pubkey,
             address: await coins.p2wpkhAddress(seg.pubkey, kind.hrp)};
+  }
+  if (kind.id === "p2sh-p2wpkh") {
+    // BIP49: the key at m/49', its P2WPKH program wrapped in P2SH. `version`
+    // stays the chain's pubkeyhash, for reading who a send pays (verifyOffer).
+    const seg = await coins.p2shSegwitKey(wallet.seed, network, 0);
+    return {...base, key: seg.key, pubkey: seg.pubkey, nested: true,
+            address: await coins.p2shSegwitAddress(seg.pubkey, kind.scripthash)};
   }
   throw new Error(`this wallet cannot make a ${kind.label} address yet`);
 }
