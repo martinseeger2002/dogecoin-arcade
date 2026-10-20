@@ -39,11 +39,13 @@ def test_a_name_made_on_another_arcade_is_found_there_by_itself(tmp_path, no_nod
 
     asked = []
 
-    def get(url, timeout=0, headers=None):
+    def get(url, timeout=0, headers=None, **kwargs):
+        assert kwargs.get("allow_redirects") is False, "another arcade's redirect is never followed"
         asked.append(url)
         assert url.startswith("https://home.example.com/signin/wanderer") and "here=1" in url
         return Answer(home_client.get(url.replace("https://home.example.com", "")))
     monkeypatch.setattr(appmod.requests, "get", get)
+    monkeypatch.setattr(appmod, "_host_is_public", lambda host: True)   # home.example.com, as if it resolved
 
     said = here_client.get("/signin/wanderer").json()
     assert said["elsewhere"] is True and said["from"] == "https://home.example.com" and said["blob"] == BLOB
@@ -77,7 +79,8 @@ def test_an_accounts_coins_come_from_its_arcade_and_are_checked_here(tmp_path, n
 
         def json(self):
             return home_client.get("/signin/wanderer/coins").json()
-    monkeypatch.setattr(appmod.requests, "get", lambda url, timeout=0, headers=None: Answer())
+    monkeypatch.setattr(appmod.requests, "get", lambda url, timeout=0, headers=None, **kwargs: Answer())
+    monkeypatch.setattr(appmod, "_host_is_public", lambda host: True)
 
     class Rpc:                                  # this arcade's own chain: aa is real, bb is spent, cc is not theirs
         def __enter__(self):

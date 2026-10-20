@@ -13,6 +13,7 @@ import base64
 import dataclasses
 import datetime as dt
 import hashlib
+import ipaddress
 import json
 import logging
 import math
@@ -21,6 +22,7 @@ import threading
 import time
 import html
 import secrets
+import socket
 import sqlite3
 import urllib.parse
 import shutil
@@ -10984,6 +10986,15 @@ def create_app(state: AppState) -> FastAPI:
             complaint = _check_address(address, mainnet=chain)
             if complaint:
                 raise ValueError(complaint)
+            # A name the chain says another address holds is not filed here: this arcade would then serve a
+            # stranger's sealed wallet under it, and its owner could no longer sign in here (node 2's review,
+            # 2026-10-20). A node still reading the chain says nothing, as /signup/<tag> does.
+            try:
+                owner = state.token_index(chain).address_of(wanted) or ""
+            except Exception:                 # noqa: BLE001 -- no index yet
+                owner = ""
+            if owner and owner != address:
+                raise ValueError(f"@{wanted} is claimed on the chain by another address")
             register = state.accounts()
             register.join(pubkey)         # a seat, and it may say there is none
             state.vault().put(wanted, pubkey, address, json.dumps(blob))
@@ -11172,7 +11183,7 @@ def create_app(state: AppState) -> FastAPI:
         found = None
         for host in _arcade_hosts():
             try:
-                r = requests.get(f"https://{host}/signin/{urllib.parse.quote(tag)}/activity", timeout=6,
+                r = _ask_arcade(f"https://{host}/signin/{urllib.parse.quote(tag)}/activity", timeout=6,
                                  params={"chain": chain.network, "before": before, "limit": limit},
                                  headers={"User-Agent": "arcade-node"})
                 said = r.json() if r.status_code == 200 else None
@@ -11220,7 +11231,7 @@ def create_app(state: AppState) -> FastAPI:
                 try:
                     for host in _arcade_hosts():
                         try:
-                            r = requests.get(f"https://{host}/signin/{urllib.parse.quote(tag)}/coins", timeout=8,
+                            r = _ask_arcade(f"https://{host}/signin/{urllib.parse.quote(tag)}/coins", timeout=8,
                                              headers={"User-Agent": "arcade-node"})
                             if r.status_code != 200:
                                 continue
@@ -11278,7 +11289,7 @@ def create_app(state: AppState) -> FastAPI:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         def ask(host: str) -> dict | None:
-            got = requests.get(f"https://{host}/signin/{urllib.parse.quote(name)}?here=1", timeout=8,
+            got = _ask_arcade(f"https://{host}/signin/{urllib.parse.quote(name)}?here=1", timeout=8,
                                headers={"User-Agent": "arcade-node"})
             said = got.json() if got.status_code == 200 else None
             blob = said.get("blob") if isinstance(said, dict) else None
@@ -29378,6 +29389,32 @@ async def _mesh_bridge(state, socket) -> None:
 _COINS_ASKED: dict[tuple[str, str], tuple[float, Any]] = {}
 
 
+def _host_is_public(host: str) -> bool:
+    """Does every address this name resolves to belong to the public internet?
+
+    The arcades this one asks for an account (`_arcade_hosts`) come from announcements, which anybody can make. A
+    name that resolves to 127.0.0.1, the LAN or a cloud metadata address would have this node fetch from itself or
+    its neighbours on a stranger's say-so (node 3's review, 2026-10-20). A name that does not resolve is not asked."""
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):
+        return False
+    found = {info[4][0].split("%", 1)[0] for info in infos}
+    try:
+        return bool(found) and all(ipaddress.ip_address(a).is_global for a in found)
+    except ValueError:
+        return False
+
+
+def _ask_arcade(url: str, **kwargs):
+    """GET from another arcade: only a public address, and never a redirect. A redirect would undo the check above
+    (a 302 to http://127.0.0.1:8420/...), so a 3xx is the answer and the caller, wanting a 200, takes nothing."""
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if not _host_is_public(host):
+        raise requests.ConnectionError(f"{host} is not a public address; not asked")
+    return requests.get(url, allow_redirects=False, **kwargs)
+
+
 def _coins_from(state, source: str, tag: str, chain, address: str) -> int | None:
     """An account's coins on `chain` as the arcade it came from knows them, each checked against this arcade's
     own chain and filed; how many, or None when that arcade could not say (the blocks are read instead)."""
@@ -29386,7 +29423,7 @@ def _coins_from(state, source: str, tag: str, chain, address: str) -> int | None
         # One question per arcade for every chain (a minute's keep): five in a row tripped nobody's limit yet, but
         # the answer is the same for all of them.
         try:
-            got = requests.get(f"{source}/signin/{urllib.parse.quote(tag)}/coins", timeout=15,
+            got = _ask_arcade(f"{source}/signin/{urllib.parse.quote(tag)}/coins", timeout=15,
                                headers={"User-Agent": "arcade-node"})
             kept = (time.time(), got.json().get("chains") if got.status_code == 200 else None)
         except Exception:                               # noqa: BLE001

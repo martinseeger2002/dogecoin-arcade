@@ -205,6 +205,12 @@ async def _proxy(head: bytes, reader, writer, http_port: int) -> None:
     ride along, so the web app's door sees a request from outside and treats it as one."""
     lines = head.decode("latin-1").split("\r\n")
     kept = [l for l in lines[1:] if l and not l.lower().startswith(("connection:", "keep-alive:"))]
+    # Who really asked. Without an edge in front (a node whose mesh port is open itself), nothing else says so, and
+    # the web app saw 127.0.0.1 with whatever Host the caller chose: a local request (node 3's review, 2026-10-20).
+    # A forwarded request is an outside one to the door (door.EDGE_HEADERS).
+    peer = writer.get_extra_info("peername")
+    if peer and not any(l.lower().startswith("x-forwarded-for:") for l in kept):
+        kept.append(f"X-Forwarded-For: {peer[0]}")
     length = next((int(l.split(":", 1)[1]) for l in kept if l.lower().startswith("content-length:")), 0)
     try:
         body = await asyncio.wait_for(reader.readexactly(min(length, 64 * 1024)), 15) if length else b""
