@@ -106,3 +106,24 @@ def test_the_node_trader_sets_inscribed_litecoin_coins_aside(monkeypatch):
     calls.clear()
     trader._send_coins(Rpc(), "main", b58check_encode(56, HASH), 50_000_000)
     assert [c[0] for c in calls] == ["sendtoaddress"], "Pepecoin mainnet sends as it always did"
+
+
+def test_the_node_waits_for_a_confirmation_before_paying_real_coins_of_its_own():
+    """2026-10-20 review: at 0 confirmations an initiator could show the node an unconfirmed lock, have it
+    lock its own coins, then double-spend theirs. A person's small swap may still go at 0 (the operator's
+    swap_big lines); the node's own real-coin leg never does."""
+    from arcade import node_trader as NT
+    from arcade import trade as T
+
+    class State:
+        def setting(self, key, default=None):
+            return default
+
+    trader = NT.NodeTrader.__new__(NT.NodeTrader)
+    trader.state = State()
+    small = lambda net: T.Leg(net, "coin", "", 1_000_000, "02" + "11" * 32, "02" + "22" * 32)   # 0.01
+    for net in ("main", "doge", "ltc"):
+        assert T.confirmations_for(small(net), small("test")) == 0, "a person's small swap: as before"
+        assert trader.need(small(net), small("test")) == 1, f"the node's own {net}: one confirmation"
+    assert trader.need(small("test"), small("ltctest")) == 0, "test coins: as before"
+    assert trader.need(small("test"), small("ltc")) == 0, "the node GETS real coins: its own risk is test coins"
