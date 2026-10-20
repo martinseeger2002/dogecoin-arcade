@@ -1734,5 +1734,87 @@ async function drawPending() {
 drawPending();
 document.addEventListener("arcade:changed", () => { drawPending().catch(() => {}); });
 </script>
+<!-- Native-SegWit (m/84') panel: receive on and send from the account's bech32
+     address, in-app. Self-contained: its own module scope, uses coins.js
+     directly + the account's seed, wrapped in try/catch so a failure only
+     hides the panel. Backend: /account/segwit/register (watch),
+     /account/segwit/balance, and /account/send with from=the bech32 address. -->
+<div id="sw-panel" hidden style="margin-top:18px;border-top:1px solid var(--wl-edge,#2b3c31);padding-top:14px">
+  <h2 style="margin:0 0 4px;font-size:1rem">Native SegWit <span style="font-size:.7rem;opacity:.7">(test)</span></h2>
+  <p class="wl-since" id="sw-sub" style="margin:0 0 8px"></p>
+  <div class="wl-addrbig" id="sw-addr" style="font-size:.8rem;word-break:break-all"></div>
+  <p id="sw-bal" style="margin:8px 0;font-weight:600">Balance: …</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <input id="sw-to" placeholder="to (an L-test address)" autocomplete="off"
+           style="flex:1;min-width:180px;box-sizing:border-box">
+    <input id="sw-amt" placeholder="amount" inputmode="decimal" style="width:110px;box-sizing:border-box">
+    <button type="button" class="wl-go" id="sw-send">Send</button>
+  </div>
+  <p id="sw-msg" class="wl-since" style="margin-top:8px;word-break:break-all"></p>
+</div>
+<script type="module">
+(async () => {
+  const HRP = {ltctest: "tltc", ltc: "ltc"};
+  const $ = (id) => document.getElementById(id);
+  const panel = $("sw-panel");
+  let coins, wallet;
+  try { coins = await import("/coins.js"); wallet = await import("/wallet.js"); }
+  catch (e) { return; }
+  const say = (m) => { const n = $("sw-msg"); if (n) n.textContent = m || ""; };
+  try {
+    const acct = await (await fetch("/account")).json();
+    const chain = (acct.chains || []).find((c) => HRP[c.network]);
+    if (!chain) return;                               // no bech32 chain on this node
+    const w = await wallet.opened(chain.network);
+    if (!w || !w.seed) return;                        // locked, or not this account
+    const hrp = HRP[chain.network];
+    const seg = await coins.nativeSegwitKey(w.seed, chain.network, 0);
+    const addr = await coins.p2wpkhAddress(seg.pubkey, hrp);
+    const unit = chain.coin || chain.label || "";
+    $("sw-addr").textContent = addr;
+    $("sw-sub").textContent = chain.label + " · m/84'/1'/0'/0/0 · receive at this address, or send below";
+    panel.hidden = false;
+
+    const refresh = async () => {
+      try {
+        await fetch("/account/segwit/register", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({address: addr, chain: chain.network})});
+        const r = await fetch("/account/segwit/balance?network=" + encodeURIComponent(chain.network)
+                              + "&address=" + encodeURIComponent(addr));
+        const b = await r.json();
+        $("sw-bal").textContent = "Balance: " + (Number(b.balance || 0) / 1e8).toFixed(8) + " " + unit;
+      } catch (e) { $("sw-bal").textContent = "Balance: —"; }
+    };
+    await refresh();
+
+    $("sw-send").onclick = async () => {
+      const to = $("sw-to").value.trim(), amount = $("sw-amt").value.trim();
+      if (!to || !amount) { say("Enter a to-address and an amount."); return; }
+      $("sw-send").disabled = true; say("Building…");
+      try {
+        const offer = await (await fetch("/account/send", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({from: addr, to: to, amount: amount, chain: chain.network})})).json();
+        if (offer.detail) { say(offer.detail); return; }
+        // Sign with the m/84' key; its bech32 address is `own`, so pass the
+        // chain's base58 version for the payee display (verifyOffer uses it).
+        const keys = {key: seg.key, pubkey: seg.pubkey, address: addr, version: chain.version};
+        const shown = await coins.verifyOffer(offer, keys);
+        say("Signing… " + shown.says);
+        const sigs = [];
+        for (const h of shown.hashes) sigs.push(coins.hex(await coins.signInput(seg.key, coins.unhex(h))));
+        const done = await (await fetch("/account/sign", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({offer: offer.offer, signatures: sigs, pubkey: coins.hex(seg.pubkey)})})).json();
+        if (done.txid) { say("Sent: " + done.txid); $("sw-to").value = ""; $("sw-amt").value = ""; await refresh(); }
+        else say(done.detail || "The node refused it.");
+      } catch (e) { say(String((e && e.message) || e)); }
+      finally { $("sw-send").disabled = false; }
+    };
+  } catch (e) { /* leave the panel hidden */ }
+})();
+</script>
+
 {% endif %}
 {% endblock %}

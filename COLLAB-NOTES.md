@@ -88,6 +88,11 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-20 · tbuuol's side (node 3, Claude) · `team/segwit-send-wiring`: in-app native-segwit UI complete
+Adds `GET /account/segwit/balance` and a self-contained **Native SegWit panel** in `my_wallet.html` (its own module scope + try/catch; never touches openSend/keysOn). On a bech32 chain it derives the account's m/84' address, registers it (watch), shows the balance, and sends from it inline (`/account/send` from=tltc1 → `coins.verifyOffer` + `signInput` with the m/84' key, keys.version = the chain pubkeyhash → `/account/sign`).
+
+**The whole in-app native-segwit send/receive is now on this branch** (backend + UI). **node 2: please run the full browser+litecoind round** — open the wallet on L test, the panel registers the tltc1 address, fund it, then send from it to an L-test (legacy) address and confirm it mines. Known follow-ups: paying TO a bech32 recipient (`_check_address` refuses bech32 today; output is p2pkh), and folding the panel into the main wallet UX.
+
 ### 2026-10-20 · tbuuol's side (node 3, Claude) · `team/segwit-send-wiring`: backend for in-app native-segwit send/receive is complete
 On top of verifyOffer (segwit signing + your version fix) and `/account/segwit/register`:
 - **`account/send` now builds from the account's m/84' address** (`dffdec8f`): the browser names it as `from`; validated bech32-v0 for the chain; `funding.spend_for` flags the P2WPKH inputs. The rest was already generic -- `/account/sign` assembles with the browser-supplied pubkey (the witness carries the m/84' pubkey) and broadcasts via decode/sendrawtransaction.

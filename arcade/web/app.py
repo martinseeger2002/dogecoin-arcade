@@ -23100,6 +23100,32 @@ def create_app(state: AppState) -> FastAPI:
         _watch(addr, "account segwit (m/84')", chain)
         return JSONResponse({"ok": True, "watching": addr, "chain": chain.network})
 
+    @app.get("/account/segwit/balance")
+    def account_segwit_balance(request: Request, address: str = "", network: str = ""):
+        """The balance the node sees at a registered native-segwit address, for
+        the wallet's SegWit panel. Public on-chain info; signed-in to keep it to
+        the app. 0 until the index has read a block paying it (watch is not
+        retroactive), so register first and fund after."""
+        _signed_in_account(request)
+        try:
+            chain = _chain_asked({"chain": network} if network else {})
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        from ..script import segwit_decode
+        addr = (address or "").strip()
+        hrp = getattr(chain.params, "bech32_hrp", "")
+        ver, prog = (segwit_decode(hrp, addr) if hrp else (None, None))
+        if ver != 0 or prog is None or len(prog) != 20:
+            return JSONResponse(
+                {"detail": "that is not a native-segwit address for this chain"},
+                status_code=400)
+        index = state.token_index(chain)
+        with contextlib.closing(index.open()) as db:
+            bal = utxoslib.balance(db, addr)
+            watched = addr in utxoslib.watching(db)
+        return JSONResponse({"address": addr, "chain": chain.network,
+                             "balance": bal, "watched": watched})
+
     @app.post("/account/send")
     def account_send(request: Request, payload: Any = Body(None)):
         """Offer to send coins. Nothing is broadcast here.
