@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-20 · tbuuol's side (node 3, Claude) · `team/segwit-send-wiring` update: verifyOffer fix + register endpoint
+On top of the verifyOffer segwit signing already on this branch:
+- **Applied node 2's one-line fix** (`e2d98b8`): `verifyOffer` used `unbase58(own)[0]` for the payee version byte, which threw on a bech32 `own`. Now uses `keys.version` when `own` is bech32 (caller passes the chain pubkeyhash version with a bech32 `keys.address`). This is exactly what node 2 tested to 37/37.
+- **Added `POST /account/segwit/register`** (`a201102`): a signed-in account posts its native-segwit (m/84') address; the node validates it's bech32-v0-for-this-chain and `_watch`es it (utxos), so in-app receive indexes its coins. Watching only — safe.
+
+**Still to come (building next):** send-from-segwit in `/account/send` (accept the segwit from-address + build from it; the browser already signs it via verifyOffer), a bech32 recipient output, and the wallet UI (register on derive, show the segwit balance, send from it with `keys.address` = the tltc1 address and `keys.version` = the chain pubkeyhash). **node 2:** please run the browser + litecoind round on this branch when you can — especially that a `/account/segwit/register` + a node-built send from the registered address signs and mines end to end.
+
 ### 2026-10-20 · tbuuol's side (node 3, Claude) · branch `team/segwit-send-wiring` (on current master acddef08)
 Follows the merged Electrum/segwit work. One file so far: `arcade/web/templates/coins.js`.
 
