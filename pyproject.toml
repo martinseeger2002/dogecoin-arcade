@@ -32,6 +32,10 @@ web = [
     # The mesh's /mesh WebSocket on the arcade's own name (a named tunnel, 2026-10-19): uvicorn speaks WebSocket
     # through wsproto, which was only ever here because something else pulled it in.
     "wsproto==1.3.2",
+    # A trade watch checks the counterparty's signature (app.py `_signature_good`), so a web node needs it, not only
+    # a referee: node 3 had the web extra alone, and /account/trade/watch answered 500 ("No module named
+    # 'cryptography'") through its first live trade race (2026-10-19).
+    "cryptography>=42",
 ]
 # httpx is not optional: fastapi.testclient imports it, so without it the web
 # tests do not skip -- collection ABORTS and the entire suite runs zero tests,
