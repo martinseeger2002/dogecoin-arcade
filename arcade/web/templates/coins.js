@@ -675,6 +675,7 @@ export async function verifyOffer(offer, keys) {
   }
 
   const mine = p2pkh(await hash160(keys.pubkey));
+  const mineSegwit = p2wpkhScript(await hash160(keys.pubkey));
   const own = keys.address || await address(keys.pubkey, keys.version);
   const hashes = [];
   for (let n = from; n < to; n++) {
@@ -701,7 +702,17 @@ export async function verifyOffer(offer, keys) {
           + "Nothing was signed.");
       }
     }
-    const derived = hex(await sighashAll(tx, n, spent));
+    // A native-segwit input (the node flags it, and its value is committed to)
+    // signs the BIP143 digest, not the legacy one. Its coin was already checked
+    // to be this key's (named[n].address === own) above.
+    let derived;
+    if (named[n].segwit === "p2wpkh") {
+      derived = hex(await sighashWitness(tx, n,
+        witnessScriptcode(await hash160(keys.pubkey)),
+        BigInt(String(named[n].value || 0))));
+    } else {
+      derived = hex(await sighashAll(tx, n, spent));
+    }
     if (derived !== asked[n - from]) {
       throw new Error("those signatures were asked for over different bytes "
         + `than this transaction -- what this browser worked out for input ${n} `
@@ -719,12 +730,18 @@ export async function verifyOffer(offer, keys) {
   for (const out of tx.outputs) {
     paid += out.value;
     const script = out.script;
-    if (SAME(script, mine)) {
+    if (SAME(script, mine) || SAME(script, mineSegwit)) {
       change += out.value;
       pays.push({to: own, value: Number(out.value), mine: true});
     } else if (script.length === 25 && script[0] === 0x76 && script[1] === 0xa9
                && script[23] === 0x88 && script[24] === 0xac) {
       pays.push({to: await base58check(version, script.slice(3, 23)),
+                 value: Number(out.value), mine: false});
+    } else if (script.length === 22 && script[0] === 0x00 && script[1] === 0x14) {
+      // A native-segwit (P2WPKH) output: show the bech32 address when the hrp
+      // can be read off this key's own address, else say it is a segwit output.
+      const hrp = /^[a-z]+1/.test(own) ? own.slice(0, own.lastIndexOf("1")) : "";
+      pays.push({to: hrp ? segwitEncode(hrp, 0, script.slice(2, 22)) : "a segwit address",
                  value: Number(out.value), mine: false});
     } else {
       pays.push({bytes: payloadBytes(script), value: Number(out.value),
@@ -737,7 +754,8 @@ export async function verifyOffer(offer, keys) {
   const first = tx.outputs.length ? opreturnData(tx.outputs[0].script) : null;
   if (from > 0 && first && first.length === 20
       && MARKER.every((b, n) => first[n] === b) && first[6] === 0 && first[7] === 0
-      && !SAME(tx.outputs[tx.outputs.length - 1].script, mine)) {
+      && !SAME(tx.outputs[tx.outputs.length - 1].script, mine)
+      && !SAME(tx.outputs[tx.outputs.length - 1].script, mineSegwit)) {
     throw new Error("that transaction sends tokens and does not end on an output "
       + "of yours, so they would go to somebody else. Nothing was signed.");
   }
