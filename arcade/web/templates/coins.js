@@ -724,7 +724,9 @@ export async function verifyOffer(offer, keys) {
   // Everything below is what to SAY about it, and it is said from the
   // parsed transaction. `offer.fee` is never read: a confirmation that
   // repeats the node's numbers proves nothing.
-  const version = unbase58(own)[0];
+  // A bech32 own address has no base58 version byte: use the one the caller
+  // gives (keys.version) when own is bech32 (node 2 found+tested this).
+  const version = /^[a-z]+1[02-9ac-hj-np-z]+$/.test(own) ? keys.version : unbase58(own)[0];
   let paid = 0n, change = 0n;
   const pays = [];
   for (const out of tx.outputs) {
