@@ -23075,6 +23075,31 @@ def create_app(state: AppState) -> FastAPI:
                       prices=sorted({r["price"] for r in rows}),
                       signed_in=signed_in(request) is not None)
 
+    @app.post("/account/segwit/register")
+    def account_segwit_register(request: Request, payload: Any = Body(None)):
+        """A signed-in account registers its native-segwit (m/84') address so the
+        node WATCHES it. That key is the browser's -- not derivable from the
+        account's identity key -- so the browser is what tells the node. Watching
+        only: the node can later build an UNSIGNED send from this address, but
+        only the holder of the key can sign it, so accepting an address here
+        moves nothing and is safe."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        from ..script import segwit_decode
+        addr = str(said.get("address") or "").strip()
+        hrp = getattr(chain.params, "bech32_hrp", "")
+        ver, prog = (segwit_decode(hrp, addr) if hrp else (None, None))
+        if ver != 0 or prog is None or len(prog) != 20:
+            return JSONResponse(
+                {"detail": "that is not a native-segwit address for this chain"},
+                status_code=400)
+        _watch(addr, "account segwit (m/84')", chain)
+        return JSONResponse({"ok": True, "watching": addr, "chain": chain.network})
+
     @app.post("/account/send")
     def account_send(request: Request, payload: Any = Body(None)):
         """Offer to send coins. Nothing is broadcast here.
