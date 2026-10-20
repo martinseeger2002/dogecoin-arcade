@@ -23089,6 +23089,10 @@ def create_app(state: AppState) -> FastAPI:
             chain = _chain_asked(said)
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
+        if getattr(chain.params, "real_coins", False):
+            return JSONResponse(
+                {"detail": "native segwit is on test chains only for now"},
+                status_code=400)
         from ..script import segwit_decode
         addr = str(said.get("address") or "").strip()
         hrp = getattr(chain.params, "bech32_hrp", "")
@@ -23097,6 +23101,15 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse(
                 {"detail": "that is not a native-segwit address for this chain"},
                 status_code=400)
+        # One native-segwit address per account per chain, so a signed-in
+        # account cannot grow the watch list with many addresses (node 2).
+        key = f"segwit_watch:{account.pubkey}:{chain.network}"
+        prior = state.setting(key)
+        if prior and prior != addr:
+            return JSONResponse(
+                {"detail": "this account already registered a different segwit "
+                           "address on this chain"}, status_code=409)
+        state.set_setting(key, addr)
         _watch(addr, "account segwit (m/84')", chain)
         return JSONResponse({"ok": True, "watching": addr, "chain": chain.network})
 
@@ -23111,6 +23124,10 @@ def create_app(state: AppState) -> FastAPI:
             chain = _chain_asked({"chain": network} if network else {})
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
+        if getattr(chain.params, "real_coins", False):
+            return JSONResponse(
+                {"detail": "native segwit is on test chains only for now"},
+                status_code=400)
         from ..script import segwit_decode
         addr = (address or "").strip()
         hrp = getattr(chain.params, "bech32_hrp", "")
@@ -23158,6 +23175,10 @@ def create_app(state: AppState) -> FastAPI:
             if ver != 0 or prog is None or len(prog) != 20:
                 return JSONResponse(
                     {"detail": "that is not a native-segwit address for this chain"},
+                    status_code=400)
+            if getattr(chain.params, "real_coins", False):
+                return JSONResponse(
+                    {"detail": "native segwit is on test chains only for now"},
                     status_code=400)
             address = want_from
         try:

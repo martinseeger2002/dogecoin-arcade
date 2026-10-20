@@ -1747,14 +1747,14 @@ document.addEventListener("arcade:changed", () => { drawPending().catch(() => {}
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <input id="sw-to" placeholder="to (an L-test address)" autocomplete="off"
            style="flex:1;min-width:180px;box-sizing:border-box">
-    <input id="sw-amt" placeholder="amount" inputmode="decimal" style="width:110px;box-sizing:border-box">
+    <input id="sw-amt" placeholder="amount" inputmode="decimal" autocomplete="off" style="width:110px;box-sizing:border-box">
     <button type="button" class="wl-go" id="sw-send">Send</button>
   </div>
   <p id="sw-msg" class="wl-since" style="margin-top:8px;word-break:break-all"></p>
 </div>
 <script type="module">
 (async () => {
-  const HRP = {ltctest: "tltc", ltc: "ltc"};
+  const HRP = {ltctest: "tltc"};  // L test only for now (node 2: real-money review before L main)
   const $ = (id) => document.getElementById(id);
   const panel = $("sw-panel");
   let coins, wallet;
