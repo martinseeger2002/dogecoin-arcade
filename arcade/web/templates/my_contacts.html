@@ -24,7 +24,7 @@
   <div class="row" style="gap:8px;margin-top:8px">
     <button type="button" class="btn small" id="claim" hidden>Claim my name</button>
     <button type="button" class="btn small" id="announce" hidden>Publish my key</button>
-    <a class="muted" href="/me" id="shut" hidden style="font-size:.84rem">Open your wallet to publish</a>
+    <a class="muted" href="{{ '/' if node_side else '/me' }}" id="shut" hidden style="font-size:.84rem">Open your wallet to publish</a>
     <span class="pill warn" id="published" hidden>not published</span>
   </div>
 </div>
@@ -81,8 +81,10 @@
   </div>
 </div>
 
-<p class="muted bookfoot">Your address book is kept in this browser and follows
-  your account encrypted. This node can't read it.</p>
+{% if node_side %}<p class="muted bookfoot">The node's address book, kept on this machine. Contact codes and the chain
+  scan are on <a href="/contacts/more">the full address book</a>.</p>
+{% else %}<p class="muted bookfoot">Your address book is kept in this browser and follows
+  your account encrypted. This node can't read it.</p>{% endif %}
 
 <script src="/vendor/qrcode.js"></script>
 <style>
@@ -145,9 +147,11 @@ button.mecard{min-height:0;display:flex;align-items:center;gap:12px;width:100%;t
 .bookfoot{font-size:.8rem;text-align:center;margin:22px 0 0}
 </style>
 
+{% if node_side %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
 <script type="module">
-import * as wallet from "/wallet.js";
-import * as mail from "/messaging.js";
+{# The operator's Address book is this page over the node's contacts (2026-10-19; node-mail.js). #}
+import * as wallet from "{{ '/node-wallet.js' if node_side else '/wallet.js' }}";
+import * as mail from "{{ '/node-mail.js' if node_side else '/messaging.js' }}";
 
 const $ = (id) => document.getElementById(id);
 const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
@@ -217,7 +221,7 @@ async function acting(what, done) {
   } catch (e) { say(String(e.message || e)); }
 }
 
-$("claim").onclick = () => acting(
+$("claim").onclick = {{ 'true' if node_side else 'false' }} ? () => { location.href = "/#claim-panel"; } : () => acting(
   () => wallet.claim(keys), (r) => `Claiming it: ${r.txid.slice(0, 16)}…`);
 $("announce").onclick = () => acting(
   () => mail.announce(keys, me), () => "Your key is on its way to the chain.");
@@ -244,13 +248,13 @@ function personRow(entry) {
   quick.className = "quick";
   const write = document.createElement("a");
   write.className = "q-msg" + (entry.key ? "" : " off");
-  write.href = `/me/messages?to=${encodeURIComponent(entry.tag)}`;
+  write.href = `{{ '/messages' if node_side else '/me/messages' }}?to=${encodeURIComponent(entry.tag)}`;
   write.title = entry.key ? `Message @${entry.tag}` : `@${entry.tag} has not published a key yet`;
   write.setAttribute("aria-label", write.title);
   write.textContent = "✉";
   const pay = document.createElement("a");
   pay.className = "q-pay";
-  pay.href = `/me/wallet?to=${encodeURIComponent("@" + entry.tag)}`;
+  pay.href = `{{ '/wallet' if node_side else '/me/wallet' }}?to=${encodeURIComponent("@" + entry.tag)}`;
   pay.title = `Pay @${entry.tag}`; pay.setAttribute("aria-label", pay.title);
   pay.textContent = "↑";
   quick.append(write, pay);

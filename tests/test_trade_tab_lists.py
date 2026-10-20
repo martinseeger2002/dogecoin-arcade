@@ -190,7 +190,12 @@ def test_a_tab_lists_a_token_and_another_node_takes_it(world, monkeypatch):
     assert b.book.get(trade).state == "done", seen[-6:]
     assert seen[-1][0] == "done", seen[-6:]
     index = b.state.token_index(b.state.messaging)
-    index.sync()
+    # "done" can come while B's claim still waits for its block (a loaded machine): mine until the ledger reads it.
+    for _ in range(10):
+        _mine(pep, dg)
+        index.sync()
+        if int(index.balance(b._address("regtest"), pid)) == 40 * COIN:
+            break
     assert int(index.balance(b._address("regtest"), pid)) == 40 * COIN, "B holds the Gold"
     assert int(index.balance(made, pid)) == 60 * COIN
 

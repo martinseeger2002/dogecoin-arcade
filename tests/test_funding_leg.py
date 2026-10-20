@@ -255,8 +255,10 @@ def test_a_leg_signed_before_the_buyer_existed_unlocks_the_coin(regtest, db):
     # The buyer is the node's own wallet, so its half can be signed here and
     # the finished transaction needs no key that this test should not hold.
     buyer = rpc.call("getnewaddress")
-    theirs = [u for u in rpc.call("listunspent", 1, 9999999)
-              if u["address"] != seller and not u.get("spend")][0]
+    # The biggest coin, not the first: the regtest wallet is shared with the other tests on this worker, and the
+    # first can be a small change output (the buyer's change came out negative under -n 8, 2026-10-19).
+    theirs = max((u for u in rpc.call("listunspent", 1, 9999999)
+                  if u["address"] != seller and not u.get("spend")), key=lambda u: u["amount"])
     theirs_value = int(round(theirs["amount"] * COIN))
     # Chosen so the whole fee is exactly what the leg reserved: the buyer puts
     # in the price and nothing else, and its change is the remainder.
@@ -306,8 +308,10 @@ def test_a_leg_whose_payment_was_changed_after_signing_is_refused(regtest, db):
                    funding.SINGLE_ANYONECANPAY)
 
     buyer = rpc.call("getnewaddress")
-    theirs = [u for u in rpc.call("listunspent", 1, 9999999)
-              if u["address"] != seller and not u.get("spend")][0]
+    # The biggest coin, not the first: the regtest wallet is shared with the other tests on this worker, and the
+    # first can be a small change output (the buyer's change came out negative under -n 8, 2026-10-19).
+    theirs = max((u for u in rpc.call("listunspent", 1, 9999999)
+                  if u["address"] != seller and not u.get("spend")), key=lambda u: u["amount"])
     theirs_value = int(round(theirs["amount"] * COIN))
     # The fee stays exactly what it was in the passing test: the only thing
     # wrong with this transaction is the signature.
@@ -387,8 +391,10 @@ def _buyer_side(rpc, seller: str, price: int, extra: int) -> tuple[str, dict, in
     nothing in these tests can fail for a reason other than a signature.
     """
     buyer = rpc.call("getnewaddress")
-    theirs = [u for u in rpc.call("listunspent", 1, 9999999)
-              if u["address"] != seller and not u.get("spend")][0]
+    # The biggest coin, not the first: the regtest wallet is shared with the other tests on this worker, and the
+    # first can be a small change output (the buyer's change came out negative under -n 8, 2026-10-19).
+    theirs = max((u for u in rpc.call("listunspent", 1, 9999999)
+                  if u["address"] != seller and not u.get("spend")), key=lambda u: u["amount"])
     back = int(round(theirs["amount"] * COIN)) - price - extra
     assert back > 546, "the buyer's change has to be an output worth making"
     return buyer, theirs, back

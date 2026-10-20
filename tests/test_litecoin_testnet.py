@@ -117,7 +117,7 @@ def test_l_test_runs_here_when_its_node_is_there_and_finds_its_folder(tmp_path, 
     from arcade.web import __main__ as launcher
     monkeypatch.setenv("HOME", str(tmp_path))
     args = argparse.Namespace(no_ltctest=False, ltctest_conf=None, ltctest_datadir=None, home=str(tmp_path))
-    assert launcher._addon_context(args, NETWORKS["ltctest"], "") is None, "no node here, no choice: off"
+    assert launcher._addon_context(args, NETWORKS["ltctest"], "").borrowed, "no node here, no choice: borrowed (2026-10-19)"
     (tmp_path / ".litecoin-testnet").mkdir()
     (tmp_path / ".litecoin-testnet" / "litecoin.conf").write_text("testnet=1\n")
     ctx = launcher._addon_context(args, NETWORKS["ltctest"], "")
@@ -228,13 +228,13 @@ def test_one_l_test_block_is_mined_to_the_nodes_faucet_by_the_operator_only(clie
 
     _signed_in_as(state, monkeypatch, pubkey)
     state.set_setting("operator", "02" + "22" * 32)                  # somebody else runs this node
-    assert "Only this node" in app.get("/wallet").text
+    assert "Only this node" in app.get("/wallet/tools").text
     app.post("/fund/ltctest", data={"csrf_token": state.csrf_token}, follow_redirects=False)
     assert state.mining is None and not any(c[0] == "generatetoaddress" for c in calls), "not the operator"
 
     state.set_setting("operator", pubkey)
     from arcade.web.app import _ltc_test_twin
-    page = app.get("/wallet").text
+    page = app.get("/wallet/tools").text
     assert "Mine one L test block" in page and _ltc_test_twin(PEP_TEST) not in page
     app.post("/fund/ltctest", data={"csrf_token": state.csrf_token}, follow_redirects=False)
     for _ in range(100):
@@ -244,7 +244,7 @@ def test_one_l_test_block_is_mined_to_the_nodes_faucet_by_the_operator_only(clie
     mined = [c for c in calls if c[0] == "generatetoaddress"]
     assert mined and mined[0][2] == LTC_TEST, "the node's faucet, never the operator's own account"
     assert state.setting("faucet_address:ltctest") == LTC_TEST
-    assert "Mined L test block abababababababab" in app.get("/wallet").text
+    assert "Mined L test block abababababababab" in app.get("/wallet/tools").text
 
 
 def test_every_chains_key_is_handed_out_in_its_own_text(tmp_path):

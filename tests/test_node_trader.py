@@ -135,6 +135,27 @@ def test_a_proposal_against_no_order_is_cancelled_and_costs_nothing(market):
     assert b.book.get(trade.id) is None, "B never took it on"
 
 
+def test_the_first_taker_wins_and_a_second_is_refused(market):
+    """2026-10-19: "no two users can fill the same order". B accepts A's first proposal; A's second, on the
+    same order while the first swap runs, is refused, and the order is off B's book until the swap ends."""
+    a, b, pep, dg = market
+    b.stand("order-once", {"network": "doge", "kind": "coin", "amount": 2 * COIN},
+            {"network": "regtest", "kind": "coin", "amount": 3 * COIN})
+    give = a.leg("regtest", 3 * COIN, b.key.pubkey)
+    get = T.Leg("doge", "coin", "", 2 * COIN, b.key.pubkey.hex(), a.key.pubkey.hex())
+    first = a.propose(b.state.identity.public_bytes, "order-once", give, get)
+    second = a.propose(b.state.identity.public_bytes, "order-once", give, get)
+    for _ in range(3):
+        for t in (a, b):
+            _scan(t)
+            t.tick()
+        _mine(pep)
+    assert b.book.get(first.id) is not None, "the first is taken on"
+    assert b.book.get(second.id) is None, "the second is refused"
+    assert a.book.get(second.id).state == "aborted"
+    assert b._being_taken("order-once")
+
+
 def test_the_switch_off_means_the_node_does_nothing(market):
     a, b, pep, dg = market
     b.enabled = lambda: False

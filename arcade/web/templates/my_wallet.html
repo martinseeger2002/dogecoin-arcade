@@ -15,7 +15,7 @@
 <div class="row" style="align-items:baseline;gap:10px">
   <h1 style="margin:0">Wallet</h1>
   {# Backup lives here now, not as a tab (2026-09-27). #}
-  <a class="btn ghost small" href="/me/backup" style="margin-left:auto">Back up your wallet</a>
+  <a class="btn ghost small" href="{{ '/backup' if node_side else '/me/backup' }}" style="margin-left:auto">Back up your wallet</a>
 </div>
 
 <p class="muted" id="shut" hidden style="font-size:.86rem;margin:10px 0 0">
@@ -247,6 +247,7 @@ a.wl-act:hover{text-decoration:none}
 </style>
 <script src="/vendor/qrcode.js"></script>
 
+{% if not node_side %}
 <script type="module">
 import * as wallet from "/wallet.js";
 const coinsOf = (n) => (n / 100000000).toLocaleString(undefined,
@@ -294,11 +295,15 @@ async function drawDust() {
 }
 drawDust();
 </script>
+{% endif %}
 
 <script type="module">
 import {scanQR, parseQR} from "/qrscan.js";
-import * as wallet from "/wallet.js";
+{# The operator's Wallet is this page with node_side on (2026-10-19): the node's wallets answer, node-wallet.js signs. #}
+import * as wallet from "{{ '/node-wallet.js' if node_side else '/wallet.js' }}";
 import * as mail from "/messaging.js";
+const API = {{ ('/node/wallet' if node_side else '/account')|tojson }};
+const NODE_SIDE = {{ 'true' if node_side else 'false' }};
 
 const $ = (id) => document.getElementById(id);
 /* A network's button, said the way every page says it (2026-10-13: "Should say
@@ -427,6 +432,8 @@ function drawHead() {
   const arriving = Number(c.incoming || 0) + Number(c.arriving || 0);
   if (arriving) bits.push(["in", `${coinsOf(arriving)} arriving`]);
   if (c.leaving) bits.push(["out", `${coinsOf(c.leaving)} leaving`]);
+  // Set aside for this account's offers and orders, on this arcade or another (2026-10-19): not leaving, not to spend.
+  if (c.held) bits.push(["out", `${coinsOf(c.held)} held for your offers`]);
   // Coins carrying an inscription are held, not spendable (2026-10-15): said beside the number they are left out of.
   if (c.inscribed) bits.push(["out", `${coinsOf(c.inscribed)} held in ${c.network === "doge" ? "Doginals" : (c.network === "ltc" || c.network === "ltctest") ? "Litecoin inscriptions" : c.network === "main" ? "Pepinals" : "inscriptions"}`]);
   if (asset) {
@@ -505,7 +512,7 @@ async function loadActivity(older = false) {
   if (!c) { $("panel-activity").replaceChildren(el("div", "wl-empty", "No address yet, so nothing has happened.")); return; }
   if (act.net !== c.network) older = false;
   const before = older && act.rows.length ? `&before=${act.rows[act.rows.length - 1].height}` : "";
-  const answer = await fetch(`/account/activity?chain=${encodeURIComponent(c.network)}${before}`, {cache: "no-store"});
+  const answer = await fetch(`${API}/activity?chain=${encodeURIComponent(c.network)}${before}`, {cache: "no-store"});
   const got = await answer.json();
   if (!answer.ok) throw new Error(got.detail || "the node would not say");
   if (!older) act = {net: c.network, rows: [], since: null, tip: 0, more: false};
@@ -805,9 +812,9 @@ async function offerFor(what, to, amount, network) {
     return offer;
   }
   const [route, body] = what.kind === "token"
-    ? ["/account/token/send", {property_id: what.property_id, to, amount, chain: network}]
-    : ["/account/nft/send", {piece: what.piece.txid, to, chain: network}];
-  const asked = await fetch(route, {method: "POST", headers: {"Content-Type": "application/json"},
+    ? [`${API}/token/send`, {property_id: what.property_id, to, amount, chain: network}]
+    : [`${API}/nft/send`, {piece: what.piece.txid, to, chain: network}];
+  const asked = await fetch(route, {method: "POST", headers: {"Content-Type": "application/json"{% if node_side %}, "X-Arcade-Admin": "1"{% endif %}},
                                     body: JSON.stringify(body)});
   const offer = await asked.json();
   if (!asked.ok) throw new Error(offer.detail || "that cannot be sent");
@@ -979,7 +986,7 @@ async function step1(s, d) {
     d.to = typedTo; d.amount = single ? "1" : typedAmount;
     go.disabled = true; go.textContent = "Checking…";
     try {
-      if (!keys) keys = await arcadeKeys(TAGCHAIN);
+      if (!keys) keys = NODE_SIDE ? await wallet.opened() : await arcadeKeys(TAGCHAIN);
       const offer = await offerFor(what, typedTo, typedAmount, c.network);
       const wrong = mismatch(offer, typedTo, typedAmount, what);
       if (wrong) throw new Error(wrong);
@@ -1060,7 +1067,8 @@ function step2(s, d, offer, read, typed) {
     w.append(el("strong", "", c.mainnet ? "Real coins. " : "Final. "), "A send can't be taken back. Check the name and the address.");
     body.append(w);
   }
-  body.append(el("p", "wl-note", "Worked out in this browser from the transaction's own bytes."));
+  body.append(el("p", "wl-note", NODE_SIDE ? "Built and signed by this node's own wallet; nothing goes until you press Send."
+                                           : "Worked out in this browser from the transaction's own bytes."));
   const go = el("button", "wl-go", `Send ${sayWhat(what, amount)}`); go.type = "button";
   const problem = el("div", "msg err"); problem.hidden = true; problem.style.marginTop = "12px";
   body.append(problem);
@@ -1080,7 +1088,7 @@ async function step3(s, d, offer, read) {
   const body = s.set("Sending…");
   const list = el("ul", "wl-steps");
   const one = el("li", "now"), two = el("li");
-  one.append(el("span", "wl-dot"), "Signing in this browser and sending");
+  one.append(el("span", "wl-dot"), NODE_SIDE ? "Sending from this node's wallet" : "Signing in this browser and sending");
   two.append(el("span", "wl-dot"), "Taken by the network");
   list.append(one, two);
   body.append(list, el("p", "wl-note", "Keep this open for a moment."));
@@ -1163,7 +1171,7 @@ async function drawTokens() {
   const box = $("panel-tokens");
   if (!tokens) {
     box.replaceChildren(el("div", "wl-empty", "Reading your tokens…"));
-    tokens = await (await fetch("/account/tokens", {cache: "no-store"})).json();
+    tokens = await (await fetch(`${API}/tokens`, {cache: "no-store"})).json();
   }
   const c = chainNow();
   const here = ((tokens.chains || []).find((x) => x.network === (c && c.network)) || {}).tokens || [];
@@ -1251,7 +1259,7 @@ async function drawNfts() {
   if (nft.open != null) return drawCollection();
   if (!nft.colls) {
     box.replaceChildren(el("div", "wl-empty", "Reading what you hold…"));
-    const answer = await fetch(`/account/nfts/collections?chain=${encodeURIComponent(c.network)}`, {cache: "no-store"});
+    const answer = await fetch(`${API}/nfts/collections?chain=${encodeURIComponent(c.network)}`, {cache: "no-store"});
     const got = await answer.json();
     if (!answer.ok) throw new Error(got.detail || "the node would not say");
     nft.colls = got.collections || [];
@@ -1326,7 +1334,7 @@ async function drawCollection() {
   box.append(back, head, tools, count, grid, more);
   const load = async (append) => {
     const offset = append ? nft.pieces.length : 0;
-    const answer = await fetch(`/account/nfts/pieces?chain=${encodeURIComponent(c.network)}`
+    const answer = await fetch(`${API}/nfts/pieces?chain=${encodeURIComponent(c.network)}`
       + `&collection=${encodeURIComponent(nft.open)}&q=${encodeURIComponent(nft.iq)}`
       + `&sort=${nft.isort}&offset=${offset}&limit=60`, {cache: "no-store"});
     const got = await answer.json();
@@ -1480,7 +1488,7 @@ async function strayDoginals(box) {
 async function drawDoginals() {
   const box = $("doginals");
   const c = chainNow();
-  if (tab !== "nfts" || !c || (c.network !== "doge" && c.network !== "main")) { box.hidden = true; return; }
+  if (NODE_SIDE || tab !== "nfts" || !c || (c.network !== "doge" && c.network !== "main")) { box.hidden = true; return; }
   box.hidden = false;
   const doge = c.network === "doge";
   if (dg.net !== c.network) dg = {net: c.network, coins: null, answers: {}, failed: 0, asking: false};
@@ -1606,6 +1614,9 @@ async function refresh() {
 
 keys = await wallet.opened(TAGCHAIN);
 $("shut").hidden = !!keys;
+// A read-back of this account's coins cut short (a restart) is finished on a Wallet visit; done chains cost nothing.
+if (!NODE_SIDE) fetch("/account/coins/backfill", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                  body: "{}"}).catch(() => {});
 said = await wallet.state();
 net = kept(NET, null);
 if (!chains().some((c) => c.network === net)) {
@@ -1636,6 +1647,7 @@ setInterval(() => {
   }
 }, 20000);
 </script>
+{% if not node_side %}
 <script type="module">
 import * as wallet from "/wallet.js";
 async function drawEscrows() {
@@ -1722,4 +1734,5 @@ async function drawPending() {
 drawPending();
 document.addEventListener("arcade:changed", () => { drawPending().catch(() => {}); });
 </script>
+{% endif %}
 {% endblock %}

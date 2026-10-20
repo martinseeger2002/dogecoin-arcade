@@ -33,7 +33,7 @@ from typing import Any
 
 from markupsafe import Markup
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (
     HTMLResponse, JSONResponse, RedirectResponse, Response,
@@ -1259,6 +1259,25 @@ def create_app(state: AppState) -> FastAPI:
             # ?next=, so they end on the feed too; the feed shows a stranger
             # the Join bar, and /me is one tap away in the nav.
             return RedirectResponse("/feed", status_code=303)
+        # The accounts' "Your arcade", about the node's own identity (2026-10-19: "Everything should look
+        # the same as it looks on the client side on the operator side"). The old dashboard is /overview.
+        if not state.unlocked:
+            try:
+                state.ensure_identity()
+            except Exception:                              # noqa: BLE001 -- the page says nobody yet
+                pass
+        chain = _account_chain()
+        register = state.accounts()
+        return render(request, "me.html", chain=chain, hidden=_wallets_hidden("node"), node_side=True,
+                      me_tag=state.my_tag() or "", node=chain.status(), when=_when,
+                      messaging=messaging_status(), ledger=ledger_status(),
+                      seats_free=register.free(), seats_total=register.seats)
+
+    @app.get("/overview", response_class=HTMLResponse)
+    def overview_dashboard(request: Request):
+        """The node's dashboard Overview was (chain cards, counts, contact code, scan)."""
+        if _account_view(request):
+            return RedirectResponse("/feed", status_code=303)
         stats = {}
         if state.store_path.exists():
             with state.store() as store:
@@ -1609,6 +1628,16 @@ def create_app(state: AppState) -> FastAPI:
         threading.Thread(target=work, name="arcade-post", daemon=True).start()
 
     @app.get("/messages", response_class=HTMLResponse)
+    def messages_page(request: Request):
+        # The accounts' Messenger, over the node's own opened messages (2026-10-19). The old one is /messages/more.
+        if not state.unlocked:
+            try:
+                state.ensure_identity()
+            except Exception:                              # noqa: BLE001 -- the page says so
+                pass
+        return render(request, "my_messages.html", chain=_account_chain(), when=_when, node_side=True)
+
+    @app.get("/messages/more", response_class=HTMLResponse)
     def messages(request: Request):
         # Any visit to the messenger is the reload the progress bubble asked
         # for, so a finished send has nothing left to report.
@@ -1652,7 +1681,7 @@ def create_app(state: AppState) -> FastAPI:
             except HTTPException:
                 raise          # a rejected form is a 400, not an error page
             except ValueError:
-                return RedirectResponse("/messages", status_code=303)
+                return RedirectResponse("/messages/more", status_code=303)
             with state.store() as store:
                 threads = store.conversations(state.identity.fingerprint)
                 items = _with_attachments(store,
@@ -1705,7 +1734,7 @@ def create_app(state: AppState) -> FastAPI:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(str(exc), "err")
-            return RedirectResponse("/messages", status_code=303)
+            return RedirectResponse("/messages/more", status_code=303)
 
     @app.post("/messages/{peer_hex}/name")
     def rename_contact(request: Request, peer_hex: str, name: str = Form(""),
@@ -2116,7 +2145,13 @@ def create_app(state: AppState) -> FastAPI:
     # while the identity is locked, because it holds no secrets.
 
     @app.get("/contacts", response_class=HTMLResponse)
-    def contacts_page(request: Request, edit: int | None = None, find: str = ""):
+    def contacts_page(request: Request):
+        # The accounts' Address book, over the node's contacts (2026-10-19). The old page is /contacts/more.
+        return render(request, "my_contacts.html", chain=_account_chain(), node_side=True)
+
+    @app.get("/contacts/more", response_class=HTMLResponse)
+    def contacts_more(request: Request, edit: int | None = None, find: str = ""):
+        """The node's older Address book: contact codes, the chain scan, notes by hand."""
         return _contacts_view(request, edit, find=find)
 
     def _contacts_view(request: Request, edit: int | None = None, find: str = "",
@@ -2238,13 +2273,13 @@ def create_app(state: AppState) -> FastAPI:
             raise          # a rejected form is a 400, not an error page
         except ValueError as exc:
             state.flash(str(exc), "err")
-            return RedirectResponse("/contacts", status_code=303)
+            return RedirectResponse("/contacts/more", status_code=303)
         name = name.strip()
         testnet_address = testnet_address.strip()
         mainnet_address = mainnet_address.strip()
         if not name:
             state.flash("Give the contact a name.", "err")
-            return RedirectResponse("/contacts", status_code=303)
+            return RedirectResponse("/contacts/more", status_code=303)
 
         # Reject an address that belongs to the wrong chain now, rather than
         # letting it sit in the book until someone pays it.
@@ -2262,12 +2297,12 @@ def create_app(state: AppState) -> FastAPI:
                     value = _tag_address(state, value, mainnet=want_mainnet)
                 except ValueError as exc:
                     state.flash(f"{label} address: {exc}", "err")
-                    return RedirectResponse("/contacts", status_code=303)
+                    return RedirectResponse("/contacts/more", status_code=303)
                 resolved[want_mainnet] = value
                 problem = _check_address(value, mainnet=want_mainnet)
                 if problem:
                     state.flash(f"{label} address: {problem}", "err")
-                    return RedirectResponse("/contacts", status_code=303)
+                    return RedirectResponse("/contacts/more", status_code=303)
         testnet_address = resolved.get(False, testnet_address)
         mainnet_address = resolved.get(True, mainnet_address)
 
@@ -2296,7 +2331,7 @@ def create_app(state: AppState) -> FastAPI:
                     "could check. Ask them to publish one from their own "
                     "address book -- one button, and then they can be added "
                     "by searching for it.", "err")
-                return RedirectResponse("/contacts", status_code=303)
+                return RedirectResponse("/contacts/more", status_code=303)
 
         # What the tag itself says: a published announcement carries the
         # key and the OTHER chain's address beside the name, so adding
@@ -2318,12 +2353,12 @@ def create_app(state: AppState) -> FastAPI:
                 raise          # a rejected form is a 400, not an error page
             except Exception as exc:
                 state.flash(f"Contact code: {exc}", "err")
-                return RedirectResponse("/contacts", status_code=303)
+                return RedirectResponse("/contacts/more", status_code=303)
             if network != state.messaging.network:
                 state.flash(
                     f"That contact code is for {network}, but the Messenger runs "
                     f"on {state.messaging.network}.", "err")
-                return RedirectResponse("/contacts", status_code=303)
+                return RedirectResponse("/contacts/more", status_code=303)
 
         with state.store() as store:
             store.save_contact(
@@ -2331,7 +2366,7 @@ def create_app(state: AppState) -> FastAPI:
                 pubkey=pubkey, name=name, testnet_address=testnet_address,
                 mainnet_address=mainnet_address, notes=notes.strip())
         state.flash(f"Saved {wall_plain(name, 'that contact')}.", "ok")
-        return RedirectResponse("/contacts", status_code=303)
+        return RedirectResponse("/contacts/more", status_code=303)
 
     @app.post("/contacts/{contact_id}/delete")
     def delete_contact(request: Request, contact_id: int, csrf_token: str = Form("")):
@@ -2341,12 +2376,12 @@ def create_app(state: AppState) -> FastAPI:
             raise          # a rejected form is a 400, not an error page
         except ValueError as exc:
             state.flash(str(exc), "err")
-            return RedirectResponse("/contacts", status_code=303)
+            return RedirectResponse("/contacts/more", status_code=303)
         with state.store() as store:
             row = store.contact_by_id(contact_id)
             store.delete_contact(contact_id)
         state.flash(f"Removed {row['name'] if row else 'the contact'}.", "ok")
-        return RedirectResponse("/contacts", status_code=303)
+        return RedirectResponse("/contacts/more", status_code=303)
 
     # --- backup and restore ---------------------------------------------------
     # The whole security model in one page: the wallet is the only thing a user
@@ -2641,7 +2676,7 @@ def create_app(state: AppState) -> FastAPI:
             row = store.attachment_for(message_id)
         if row is None:
             state.flash("That file is not here.", "err")
-            return RedirectResponse("/messages", status_code=303)
+            return RedirectResponse("/messages/more", status_code=303)
         name = _safe_filename(row["name"])
         return Response(
             content=bytes(row["data"]),
@@ -3071,6 +3106,10 @@ def create_app(state: AppState) -> FastAPI:
         return out
 
     TEMPLATES.env.globals["chain_menu"] = _chain_menu
+    # An imported macro template is cached with a copy of the globals of the app that first rendered it; a second
+    # app in the same process (the tests) would draw the first one's chains. One app per process in production.
+    if TEMPLATES.env.cache is not None:
+        TEMPLATES.env.cache.clear()
 
     def _coin_of(where: Any) -> str:
         """A chain's coin by its network name, or by the old mainnet bool."""
@@ -3660,7 +3699,7 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception as exc:
             state.flash(str(exc), "err")
-            return RedirectResponse("/contacts", status_code=303)
+            return RedirectResponse("/contacts/more", status_code=303)
         # The same announcement the Publish button makes, with the tag left
         # exactly as it is: `publish_key` reads the picture itself.
         return publish_key(request, csrf_token=csrf_token, confirmed="yes",
@@ -3931,7 +3970,7 @@ def create_app(state: AppState) -> FastAPI:
             raise
         except Exception as exc:
             state.flash(str(exc), "err")
-            return RedirectResponse("/contacts", status_code=303)
+            return RedirectResponse("/contacts/more", status_code=303)
         return publish_key(request, csrf_token=csrf_token, confirmed="yes",
                            say_tag=(_my_tag()["tag"] or None))
 
@@ -3964,7 +4003,11 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/feed/{txid}/tip")
     def tip_send(request: Request, txid: str, network: str = Form(""),
-                 amount: str = Form(""), csrf_token: str = Form("")):
+                 amount: str = Form(""), csrf_token: str = Form(""), net: str = Form(""),
+                 what: str = Form("coin"), token: str = Form(""), back: str = Form("")):
+        # The inline tip form the accounts have (2026-10-19, for the operator too): `net`, then coins or `token`.
+        network = net or network
+        back = back if back.startswith("/") and not back.startswith("//") else "/feed"
         try:
             check_csrf(csrf_token)
             row = _feed_thing(state.messaging.network, txid)
@@ -3982,16 +4025,30 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError(
                     "they have not published an address on that chain, so "
                     "there is nowhere to send it")
-            sats = parse_amount(amount, True)
-            txid_out = state.send_tip(network, txid, where, sats)
+            if what == "token":
+                # A token from the node's own addresses, then the note on the post that says it was a tip
+                # (feed.TIP_TOKEN, what wallet.tip does for an account).
+                index = state.token_index(context)
+                prop, units = _amount_for(index, int(token or 0), amount)
+                with context.rpc() as rpc:
+                    parts = _send_parts(rpc, index, prop, units, avoid=where)
+                    if len(parts) != 1:
+                        raise ValueError(f"the node holds that much {prop['name']} only across several addresses")
+                    sender = tokenlib.TokenSender(rpc, context.params)
+                    sent = sender.broadcast(sender.prepare(parts[0][0],
+                                                           tokenlib.send_payload(prop["property_id"], units), where))
+                txid_out = state.send_feed_act(feedlib.TIP_TOKEN, txid, sent)
+            else:
+                sats = parse_amount(amount, True)
+                txid_out = state.send_tip(network, txid, where, sats)
             state.flash(f"Tipped. {txid_out} is on its way, and the post shows "
                         f"it once its block lands.", "ok")
         except HTTPException:
             raise
         except Exception as exc:
             state.flash(str(exc), "err")
-            return RedirectResponse(f"/feed/{txid}/tip", status_code=303)
-        return RedirectResponse("/feed", status_code=303)
+            return RedirectResponse(back if net else f"/feed/{txid}/tip", status_code=303)
+        return RedirectResponse(back, status_code=303)
 
     @app.post("/feed/{txid}/{doing}")
     def feed_act(request: Request, txid: str, doing: str,
@@ -4060,7 +4117,7 @@ def create_app(state: AppState) -> FastAPI:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Scan failed: {exc}", "err")
-        return RedirectResponse("/contacts", status_code=303)
+        return RedirectResponse("/contacts/more", status_code=303)
 
     @app.post("/contacts/add-published")
     def add_published(request: Request, pubkey: str = Form(""),
@@ -4092,7 +4149,7 @@ def create_app(state: AppState) -> FastAPI:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Could not add that: {exc}", "err")
-        return RedirectResponse("/contacts", status_code=303)
+        return RedirectResponse("/contacts/more", status_code=303)
 
     @app.post("/publish", response_class=HTMLResponse)
     def publish_identity(request: Request, tag: str = Form(""),
@@ -4282,8 +4339,478 @@ def create_app(state: AppState) -> FastAPI:
             out.append(row)
         return out
 
+    # --- the node's Wallet, drawn by the account's own page (my_wallet.html) ------------------------------------
+    # 2026-10-19: "the wallet should look the same as the wall looks on the client side. Everything should look
+    # the same as it looks on the client side on the operator side." The operator's /wallet is my_wallet.html with
+    # node_side on: the same page, reading these instead of /account/*, and sending through the node's own wallets
+    # (node-wallet.js stands in for wallet.js) -- the chain's Core wallet here, or the identity key on a borrowed chain.
+
+    def _node_side(request: Request) -> None:
+        if _account_view(request):
+            raise HTTPException(403, "the node's wallet is the operator's")
+
+    def _node_wallets() -> list[tuple[Any, str]]:
+        """Each chain the node holds coins on, with its `which` for /admin/api/send: the Core wallet here, or
+        `key:<net>` on a borrowed add-on chain. Chains still syncing are left out (the page shows them waiting)."""
+        out: list[tuple[Any, str]] = []
+        for ctx in [state.messaging, state.ledger] + list(getattr(state, "addons", None) or []):
+            if ctx is None or any(c.network == ctx.network for c, _ in out) or not state.chain_ready(ctx):
+                continue
+            if getattr(ctx, "borrowed", False):
+                out.append((ctx, f"key:{ctx.network}"))
+            else:
+                out.append((ctx, "messaging" if ctx is state.messaging else "ledger" if ctx is state.ledger
+                            else ctx.network))
+        return out
+
+    def _node_wallet(network: str) -> tuple[Any, str]:
+        found = next(((c, w) for c, w in _node_wallets() if c.network == network), None)
+        if found is None:
+            raise HTTPException(404, f"no wallet on {network} here")
+        return found
+
+    def _node_address(ctx, which: str) -> str:
+        """The one address the page shows for a chain (its card, Receive): the identity's on the messaging chain,
+        the Core wallet's kept "arcade-identity" address elsewhere, the identity key's on a borrowed chain."""
+        if which.startswith("key:"):
+            return state.key_address(ctx)
+        if ctx is state.messaging and state.derived_address:
+            return state.derived_address
+        with ctx.rpc() as rpc:
+            return str(rpc.call("getaccountaddress", "arcade-identity"))
+
+    def _node_addresses(ctx, which: str) -> list[str]:
+        if which.startswith("key:"):
+            return [a for a in [state.key_address(ctx)] if a]
+        return _own_addresses(ctx)
+
+    @app.get("/node/wallet/state")
+    def node_wallet_state(request: Request):
+        """What /account says of an account's chains, said of the node's wallets."""
+        _node_side(request)
+        chains = []
+        for ctx, which in _node_wallets():
+            row: dict[str, Any] = {"network": ctx.network, "label": ctx.label, "title": ctx.title,
+                                   "coin": ctx.params.coin, "mainnet": bool(ctx.is_mainnet),
+                                   "version": ctx.params.pubkeyhash_version, "which": which,
+                                   "doge": bool(ctx.is_doge), "ltc": bool(ctx.is_ltc),
+                                   "ltctest": bool(ctx.is_ltc_test)}
+            try:
+                row["address"] = _node_address(ctx, which)
+                if which.startswith("key:"):
+                    got = keywalletlib.balance(state, ctx)
+                    sats = int(round(float(got.get("balance") or 0) * 1e8))
+                    row.update(balance=sats, spendable=sats)
+                else:
+                    with ctx.rpc() as rpc:
+                        got = walletlib.balance(rpc)
+                    row.update(balance=int(got["spendable"] * COIN), spendable=int(got["spendable"] * COIN),
+                               arriving=max(0, int(got["unconfirmed"] * COIN)),
+                               leaving=max(0, -int(got["unconfirmed"] * COIN)),
+                               immature=int(got["immature"] * COIN))
+            except Exception as exc:                        # noqa: BLE001 -- a node away: shown, without a balance
+                row.setdefault("address", "")
+                row["error"] = str(exc)[:200]
+            chains.append(row)
+        return JSONResponse({"pubkey": None, "node": True, "chains": chains, **_node_identity()})
+
+    def _node_identity() -> dict[str, Any]:
+        """What /account says of who an account is, said of the node (the Overview drawn as an account's "Your
+        arcade", 2026-10-19): its @tag, its address, whether its key is out, its published profile, its contact code."""
+        out: dict[str, Any] = {"tag": "", "name": "", "claiming": "", "address": "", "announced": False,
+                               "announcing": False, "profile": {"pfp": "", "bio": "", "url": ""}, "contact": "",
+                               "identity": ""}
+        try:
+            if not state.unlocked:
+                state.ensure_identity()
+        except Exception:                                   # noqa: BLE001 -- said as nobody yet
+            return out
+        me = state.derived_address or ""
+        out.update(tag=state.my_tag() or "", address=me, identity=state.identity.public_bytes.hex(),
+                   contact=contact.encode(state.messaging.network, state.identity.public_bytes))
+        out["name"] = out["tag"]
+        if not out["tag"]:
+            for item in reversed(state.pending_tokens):
+                what = str(item.get("what") or "")
+                if item.get("network") == state.messaging.network and what.startswith("claim @"):
+                    out["claiming"] = out["name"] = what[len("claim @"):]
+                    break
+        if me and state.store_path.exists():
+            with state.store() as store:
+                out["announced"] = store.confirmed_key_for(me) is not None
+                out["announcing"] = store.key_for(me) is not None
+            try:
+                profile = _profile_of(me)
+                out["profile"] = {k: str(profile.get(k) or "") for k in ("pfp", "bio", "url")}
+            except Exception:                               # noqa: BLE001
+                pass
+        return out
+
+    # --- the node's Messenger, in the shape an account's inbox has (messaging.js inbox(); 2026-10-19) -------------
+    # The node opened its own messages already (the scanner, with its identity); the page is the accounts' Messenger,
+    # drawn from these "letters": both sides of every conversation, the body as the content bytes parseBody reads.
+
+    @app.get("/node/mail/letters")
+    def node_mail_letters(request: Request):
+        _node_side(request)
+        if not state.unlocked:
+            state.ensure_identity()
+        fp = state.identity.fingerprint
+        out: list[dict[str, Any]] = []
+        with state.store() as store:
+            sent_txids = {r["txid"] for r in store.conn.execute("SELECT txid FROM sent WHERE sender_fp=?", (fp,))}
+            for r in store.conn.execute(
+                    "SELECT id, sender_pubkey, sender_addr, body, block_time, read_at, first_txid, height "
+                    "FROM message WHERE recipient_fp=?", (fp,)):
+                if r["first_txid"] in sent_txids:
+                    continue
+                out.append({"id": f"m{r['id']}", "peer": bytes(r["sender_pubkey"]).hex(), "mine": False,
+                            "when": int(r["block_time"] or 0), "body": bytes(r["body"] or b"").hex(),
+                            "from_address": r["sender_addr"] or "", "txid": r["first_txid"] or "",
+                            "height": r["height"] or 0, "unread": r["read_at"] is None})
+            for r in store.conn.execute(
+                    "SELECT id, recipient_key, recipient_addr, body, created, txid, height FROM sent "
+                    "WHERE sender_fp=?", (fp,)):
+                out.append({"id": f"s{r['id']}", "peer": bytes(r["recipient_key"]).hex(), "mine": True,
+                            "when": int(r["created"] or 0), "body": bytes(r["body"] or b"").hex(),
+                            "to_address": r["recipient_addr"] or "", "txid": r["txid"] or "",
+                            "height": r["height"] or 0})
+        return JSONResponse({"me": state.identity.public_bytes.hex(), "letters": out})
+
+    @app.post("/node/mail/read")
+    def node_mail_read(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        peer = str((payload or {}).get("peer", ""))
+        if not re.fullmatch(r"[0-9a-f]{64}", peer):
+            return JSONResponse({"detail": "name the conversation"}, status_code=400)
+        with state.store() as store:
+            store.conn.execute("UPDATE message SET read_at=? WHERE recipient_fp=? AND sender_pubkey=? "
+                               "AND read_at IS NULL", (int(time.time()), state.identity.fingerprint,
+                                                       bytes.fromhex(peer)))
+        return JSONResponse({"read": True})
+
+    # --- the node's Address book, in the shape an account's book has (messaging.js book(); 2026-10-19) ---------------
+
+    def _node_book_entry(row) -> dict[str, Any]:
+        address = row["testnet_address"] or row["address"] or ""
+        tag = ""
+        try:
+            tag = state.token_index(_account_chain()).tag_of(address) or "" if address else ""
+        except Exception:                                   # noqa: BLE001
+            pass
+        favs = set(state.setting("contacts_fav:node", []) or [])
+        return {"id": row["id"], "tag": tag or row["name"] or (address[:10] if address else f"contact {row['id']}"),
+                "claimed": bool(tag), "name": row["name"] or "", "address": address,
+                "key": bytes(row["pubkey"]).hex() if row["pubkey"] else "", "note": row["notes"] or "",
+                "fav": row["id"] in favs, "face": _face_for(address) if address else "",
+                "added": int(row["added"] or 0) * 1000}
+
+    def _node_contact(tag: str):
+        wanted = str(tag or "").lstrip("@").lower()
+        with state.store() as store:
+            for row in store.contacts():
+                if _node_book_entry(row)["tag"].lower() == wanted:
+                    return row
+        raise HTTPException(404, f"@{wanted} is not in the address book")
+
+    @app.get("/node/contacts")
+    def node_contacts(request: Request):
+        _node_side(request)
+        with state.store() as store:
+            rows = store.contacts()
+        return JSONResponse({"book": [_node_book_entry(r) for r in rows]})
+
+    @app.post("/node/contacts/add")
+    def node_contacts_add(request: Request, payload: Any = Body(None)):
+        """Add somebody by @name: their address and published key, as the chain says them now."""
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        found = account_who(request, str(said.get("tag", "")))
+        them = json.loads(found.body)
+        if found.status_code != 200:
+            return JSONResponse({"detail": them.get("detail", "nobody by that name")}, status_code=found.status_code)
+        with state.store() as store:
+            other = store.key_for(them["address"])
+            cid = store.save_contact(pubkey=bytes.fromhex(them["key"]), name=them["tag"],
+                                     testnet_address=them["address"],
+                                     mainnet_address=(other["other_address"] or "") if other is not None
+                                     and "other_address" in other.keys() else "")
+            row = store.contact_by_id(cid)
+        return JSONResponse(_node_book_entry(row))
+
+    @app.post("/node/contacts/update")
+    def node_contacts_update(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        row = _node_contact(str(said.get("tag", "")))
+        if "fav" in said:
+            favs = [i for i in (state.setting("contacts_fav:node", []) or []) if i != row["id"]]
+            state.set_setting("contacts_fav:node", favs + ([row["id"]] if said["fav"] else []))
+        if "note" in said:
+            with state.store() as store:
+                store.save_contact(contact_id=row["id"], name=row["name"], testnet_address=row["testnet_address"],
+                                   mainnet_address=row["mainnet_address"], notes=str(said["note"])[:500])
+        with state.store() as store:
+            return JSONResponse(_node_book_entry(store.contact_by_id(row["id"])))
+
+    @app.post("/node/contacts/remove")
+    def node_contacts_remove(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        row = _node_contact(str(said.get("tag", "")))
+        with state.store() as store:
+            store.delete_contact(row["id"])
+        return JSONResponse({"removed": True})
+
+    @app.get("/node/me/nfts")
+    def node_me_nfts(request: Request):
+        """/account/nfts for the node's face picker: the pieces its addresses hold, by chain."""
+        _node_side(request)
+        out = []
+        for ctx, which in _node_wallets():
+            token_ctx = next((c for c in state.token_chains if c.network == ctx.network), None)
+            if token_ctx is None or which.startswith("key:"):
+                continue
+            try:
+                pieces = state.token_index(token_ctx).inscriptions(
+                    pieces_only=True, owners=_node_addresses(ctx, which), limit=200)
+            except Exception:                               # noqa: BLE001
+                pieces = []
+            out.append({"network": ctx.network, "pieces": pieces})
+        return JSONResponse({"chains": out})
+
+    @app.get("/node/wallet/activity")
+    def node_wallet_activity(request: Request, chain: str = "", before: int | None = None, limit: int = 50):
+        """A chain's history in /account/activity's rows: the Core wallet's own transactions, or what the index
+        filed for the identity key's address on a borrowed chain."""
+        _node_side(request)
+        ctx, which = _node_wallet(chain or state.messaging.network)
+        limit = max(1, min(int(limit), 200))
+        address = _node_address(ctx, which)
+        said: dict[str, Any] = {"chain": ctx.network, "label": ctx.label, "address": address, "since": None,
+                                "tip": 0, "rows": [], "more": False}
+        if which.startswith("key:"):
+            index = state.token_index(ctx)
+            with contextlib.closing(index.open()) as db:
+                said["since"] = utxoslib.since(db, address)
+                tip = db.conn.execute("SELECT MAX(height) FROM block").fetchone()
+                said["tip"] = int((tip and tip[0]) or 0)
+                rows = utxoslib.activity(db, [address], before, limit + 1)
+            for r in rows:
+                r["confirmations"] = max(0, said["tip"] - r["height"] + 1)
+        else:
+            with ctx.rpc() as rpc:
+                tip = int(rpc.get_block_count())
+                listed = rpc.call("listtransactions", "*", 1000, 0, True) or []
+            said["tip"] = tip
+            by: dict[str, dict[str, Any]] = {}
+            for t in listed:
+                if t.get("category") == "orphan" or int(t.get("confirmations", 0)) < 0:
+                    continue
+                txid = str(t.get("txid", ""))
+                conf = int(t.get("confirmations", 0))
+                r = by.setdefault(txid, {"txid": txid, "height": tip - conf + 1 if conf else tip + 1,
+                                         "time": int(t.get("blocktime") or t.get("time") or 0), "received": 0,
+                                         "spent": 0, "net": 0, "fee": 0, "other": "", "confirmations": conf})
+                sats = int(round(float(t.get("amount", 0)) * 1e8))
+                if sats >= 0:
+                    r["received"] += sats
+                else:
+                    r["spent"] += -sats
+                    r["other"] = r["other"] or str(t.get("address", ""))
+                if t.get("fee") is not None and not r["fee"]:
+                    r["fee"] = abs(int(round(float(t["fee"]) * 1e8)))
+            rows = sorted(by.values(), key=lambda r: (-r["height"], r["txid"]))
+            for r in rows:
+                r["spent"] += r["fee"]
+                r["net"] = r["received"] - r["spent"]
+            if before is not None:
+                rows = [r for r in rows if r["height"] < int(before)]
+            rows = rows[:limit + 1]
+        said["more"] = len(rows) > limit
+        rows = rows[:limit]
+        names: dict[str, str] = {}
+        for r in rows:
+            other = r.get("other") or ""
+            if other and other not in names:
+                names[other] = _name_for_address(other, ctx)
+            r["other_tag"] = names.get(other, "") if other else ""
+        said["rows"] = rows
+        return JSONResponse(said)
+
+    @app.get("/node/wallet/tokens")
+    def node_wallet_tokens(request: Request):
+        """/account/tokens for the node: what its addresses hold on each chain."""
+        _node_side(request)
+        out: list[dict[str, Any]] = []
+        for ctx, which in _node_wallets():
+            ctx = next((c for c in state.token_chains if c.network == ctx.network), None) or ctx
+            if not any(c is ctx for c in state.token_chains):
+                continue
+            try:
+                addresses = _node_addresses(ctx, which)
+                index = state.token_index(ctx)
+                held = index.balances(addresses)
+                mine = set(addresses)
+                managed = {p["property_id"] for p in index.properties() if p.get("managed")}
+            except Exception:                                # noqa: BLE001 -- a chain with no index here
+                continue
+            out.append({"network": ctx.network, "label": ctx.label, "mainnet": bool(ctx.is_mainnet),
+                        "address": _node_address(ctx, which),
+                        "tokens": [{"property_id": r["property_id"], "name": r["name"],
+                                    "sensitive": bool(_verdict_of(r["name"] or "")), "issuer": r["issuer"],
+                                    "divisible": r["divisible"], "balance": r["balance"], "display": r["display"],
+                                    "issuer_is_me": r["issuer"] in mine, "managed": r["property_id"] in managed}
+                                   for r in held]})
+        return JSONResponse({"chains": out})
+
+    @app.get("/node/wallet/nfts/collections")
+    def node_wallet_nft_collections(request: Request, chain: str = ""):
+        _node_side(request)
+        ctx, which = _node_wallet(chain or state.messaging.network)
+        ctx = next((c for c in state.token_chains if c.network == ctx.network), None) or ctx
+        groups: list = []
+        try:
+            index = state.token_index(ctx)
+            for address in _node_addresses(ctx, which):
+                groups += index.held_collections(address)
+        except Exception:                                    # noqa: BLE001
+            groups = []
+        merged: dict[str, dict] = {}
+        for g in groups:
+            key = str(g.get("collection", ""))
+            if key in merged:
+                merged[key]["count"] = merged[key].get("count", 0) + g.get("count", 0)
+            else:
+                merged[key] = dict(g)
+        return JSONResponse({"chain": ctx.network, "label": ctx.label, "address": _node_address(ctx, which),
+                             "collections": list(merged.values())})
+
+    @app.get("/node/wallet/nfts/pieces")
+    def node_wallet_nft_pieces(request: Request, chain: str = "", collection: str = "", q: str = "",
+                               sort: str = "number", offset: int = 0, limit: int = 60):
+        _node_side(request)
+        ctx, which = _node_wallet(chain or state.messaging.network)
+        ctx = next((c for c in state.token_chains if c.network == ctx.network), None) or ctx
+        rows: list = []
+        try:
+            index = state.token_index(ctx)
+            for address in _node_addresses(ctx, which):
+                got, _total = index.held_pieces(address, collection, q, sort, 0, 100000)
+                rows += got
+        except Exception:                                    # noqa: BLE001
+            rows = []
+        return JSONResponse({"chain": ctx.network, "collection": collection, "total": len(rows), "offset": offset,
+                             "pieces": rows[offset:offset + max(1, min(int(limit), 200))]})
+
+    @app.post("/node/wallet/send")
+    def node_wallet_send(request: Request, payload: Any = Body(None)):
+        """An offer the way /account/send makes one -- who, how much, the fee -- built and signed by the node's own
+        wallet and held under a ticket until /admin/api/send/confirm (password from outside, as there)."""
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            ctx, which = _node_wallet(str(said.get("chain", "")))
+            sats = walletlib.parse_amount(str(said.get("amount", "")))
+            typed = str(said.get("to", "")).strip()
+            to = _tag_address(state, typed, mainnet=ctx)
+            if which.startswith("key:"):
+                prepared = keywalletlib.prepare(state, ctx, to, sats)
+            else:
+                with ctx.rpc() as rpc:
+                    prepared = walletlib.prepare_send(rpc, to, sats)
+        except HTTPException:
+            raise
+        except Exception as exc:                            # noqa: BLE001
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        ticket = secrets.token_urlsafe(16)
+        now = time.time()
+        for key in [k for k, v in _admin_prepared.items() if now - v[0] > 600]:
+            _admin_prepared.pop(key, None)
+        _admin_prepared[ticket] = (now, which, prepared)
+        tag = typed.lstrip("@").lower() if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{26,35}", typed) else ""
+        return JSONResponse({"ticket": ticket, "chain": ctx.network, "to": to, "to_tag": tag,
+                             "amount": sats, "fee": int(prepared.fee_sats)})
+
+    def _node_ticket(which: str, prepared) -> str:
+        ticket = secrets.token_urlsafe(16)
+        now = time.time()
+        for key in [k for k, v in _admin_prepared.items() if now - v[0] > 600]:
+            _admin_prepared.pop(key, None)
+        _admin_prepared[ticket] = (now, which, prepared)
+        return ticket
+
+    def _node_token_chain(network: str):
+        ctx, which = _node_wallet(network)
+        token_ctx = next((c for c in state.token_chains if c.network == ctx.network), None)
+        if which.startswith("key:") or token_ctx is None:
+            raise ValueError(f"tokens and NFTs on {ctx.label} are sent from a Core wallet here")
+        return token_ctx
+
+    @app.post("/node/wallet/token/send")
+    def node_wallet_token_send(request: Request, payload: Any = Body(None)):
+        """/account/token/send for the node: the token comes out of whichever of its addresses holds enough."""
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            ctx = _node_token_chain(str(said.get("chain", "")))
+            index = state.token_index(ctx)
+            prop, units = _amount_for(index, int(said.get("property_id") or 0), str(said.get("amount", "")))
+            typed = str(said.get("to", "")).strip()
+            to = _tag_address(state, typed, mainnet=ctx)
+            with ctx.rpc() as rpc:
+                parts = _send_parts(rpc, index, prop, units, avoid=to)
+                if len(parts) != 1:
+                    raise ValueError("that much is held across several addresses; send it in smaller amounts")
+                prepared = tokenlib.TokenSender(rpc, ctx.params).prepare(
+                    parts[0][0], tokenlib.send_payload(prop["property_id"], units), to)
+            prepared.what = f"{format_amount(units, prop['divisible'])} {prop['name']}"
+        except HTTPException:
+            raise
+        except Exception as exc:                            # noqa: BLE001
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        tag = typed.lstrip("@").lower() if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{26,35}", typed) else ""
+        return JSONResponse({"ticket": _node_ticket(f"tok:{ctx.network}", prepared), "chain": ctx.network,
+                             "to": to, "to_tag": tag, "amount": units, "property_id": prop["property_id"],
+                             "fee": int(prepared.fee_sats)})
+
+    @app.post("/node/wallet/nft/send")
+    def node_wallet_nft_send(request: Request, payload: Any = Body(None)):
+        """/account/nft/send for the node: one piece one of its addresses holds."""
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            ctx = _node_token_chain(str(said.get("chain", "")))
+            index = state.token_index(ctx)
+            row = index.inscription(contentlib._key(str(said.get("piece", ""))))
+            if row is None:
+                raise ValueError("no such piece")
+            typed = str(said.get("to", "")).strip()
+            to = _tag_address(state, typed, mainnet=ctx)
+            with ctx.rpc() as rpc:
+                if row["owner"] not in _ledger_addresses(rpc):
+                    raise ValueError("this piece is not the node's to send")
+                payload_bytes = P.AnyData(data=inscriptionlib.Transfer(
+                    txid=bytes.fromhex(row["txid"])).encode()).encode()
+                prepared = tokenlib.TokenSender(rpc, ctx.params).prepare(row["owner"], payload_bytes, to)
+            prepared.what = f"inscription #{row['number']}"
+        except HTTPException:
+            raise
+        except Exception as exc:                            # noqa: BLE001
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        tag = typed.lstrip("@").lower() if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{26,35}", typed) else ""
+        return JSONResponse({"ticket": _node_ticket(f"tok:{ctx.network}", prepared), "chain": ctx.network,
+                             "to": to, "to_tag": tag, "number": row["number"], "amount": 1,
+                             "fee": int(prepared.fee_sats)})
+
     @app.get("/wallet", response_class=HTMLResponse)
     def wallet(request: Request):
+        # The accounts' Wallet page, answered by the node's wallets (2026-10-19, see _node_wallets).
+        return render(request, "my_wallet.html", chain=_account_chain(), hidden=_wallets_hidden("node"), node_side=True)
+
+    @app.get("/wallet/tools", response_class=HTMLResponse)
+    def wallet_tools(request: Request):
+        """The node's older Wallet page: mining a test block, fast sending, each chain's Core status."""
         chain, _ = _token_chain()
         return render(request, "wallet.html", messaging=messaging_status(),
                       ledger=ledger_status(), **_doge_status(), prepared=None, which=None, now=time.time(),
@@ -4323,7 +4850,7 @@ def create_app(state: AppState) -> FastAPI:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(str(exc), "err")
-        return RedirectResponse("/wallet", status_code=303)
+        return RedirectResponse("/wallet/tools", status_code=303)
 
     def _gather_senders(chain, rpc):
         """The three ways a thing travels home, for gather.walk_home."""
@@ -4423,7 +4950,7 @@ def create_app(state: AppState) -> FastAPI:
             error = str(exc)
 
         if txid:
-            return RedirectResponse("/wallet", status_code=303)
+            return RedirectResponse("/wallet/tools", status_code=303)
         return _again("/wallet", prepared=prepared, which=which,
                       error=error, destination=destination, amount=amount)
 
@@ -4470,7 +4997,7 @@ def create_app(state: AppState) -> FastAPI:
             state.flash(str(exc), "err")
         except Exception as exc:
             state.flash(f"Could not split: {exc}", "err")
-        return RedirectResponse("/wallet", status_code=303)
+        return RedirectResponse("/wallet/tools", status_code=303)
 
     @app.post("/fund")
     def fund(request: Request, csrf_token: str = Form("")):
@@ -4494,7 +5021,7 @@ def create_app(state: AppState) -> FastAPI:
             check_csrf(csrf_token)
             if state.mining is not None:
                 state.flash("Already mining a block; it will say when one is found.")
-                return RedirectResponse("/wallet", status_code=303)
+                return RedirectResponse("/wallet/tools", status_code=303)
             with state.messaging.rpc() as rpc:
                 miner = Miner(rpc, state.messaging.params)      # refuses mainnet
                 address = state.derived_address or rpc.call("getnewaddress")
@@ -4509,7 +5036,7 @@ def create_app(state: AppState) -> FastAPI:
             raise          # a rejected form is a 400, not an error page
         except (MiningError, Exception) as exc:
             state.flash(f"Mining failed: {exc}", "err")
-        return RedirectResponse("/wallet", status_code=303)
+        return RedirectResponse("/wallet/tools", status_code=303)
 
     def _ltc_test_mine(request: Request) -> dict[str, Any] | None:
         """What the Wallet page's L test mining panel needs, or None when this node has no L test."""
@@ -4581,7 +5108,7 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("only this node's operator mines L test blocks here")
             if state.mining is not None:
                 state.flash("Already mining a block; it will say when one is found.")
-                return RedirectResponse("/wallet", status_code=303)
+                return RedirectResponse("/wallet/tools", status_code=303)
             address = _faucet_address(chain)
             # Said before the thread starts: the notice is one slot, and a block found at once
             # would otherwise have its "Mined" overwritten by this.
@@ -4593,7 +5120,7 @@ def create_app(state: AppState) -> FastAPI:
             raise          # a rejected form is a 400, not an error page
         except Exception as exc:
             state.flash(f"Mining failed: {exc}", "err")
-        return RedirectResponse("/wallet", status_code=303)
+        return RedirectResponse("/wallet/tools", status_code=303)
 
     def _mine_one(address: str, chain=None) -> None:
         """The thread behind /fund: one block, counting as it goes, then a notice.
@@ -4648,7 +5175,7 @@ def create_app(state: AppState) -> FastAPI:
         else:
             state.mining["stop"] = True
             state.flash("Stopping: the node finishes the batch it is on (under a minute).")
-        return RedirectResponse("/wallet", status_code=303)
+        return RedirectResponse("/wallet/tools", status_code=303)
 
     @app.get("/wallet/mining")
     def wallet_mining():
@@ -4749,7 +5276,13 @@ def create_app(state: AppState) -> FastAPI:
             state.flash("Litecoin is not open yet: its node is still syncing.", "err")
         if chosen is None and getattr(state, "ltc_test", None) is not None and to == "ltctest":
             state.flash("Litecoin testnet is not open yet: its node is still syncing.", "err")
-        if chosen is not None:
+        if chosen is not None and not _account_view(request):
+            # The operator's Create picks the node's token chain, with the same cards an account has (2026-10-19).
+            try:
+                state.switch_token_chain(chosen.network)
+            except ValueError as exc:
+                state.flash(str(exc), "err")
+        elif chosen is not None:
             answer.set_cookie(CHAIN_COOKIE, chosen.network, max_age=365 * 86400,
                               samesite="lax", secure=_over_https(request), path="/")
         return answer
@@ -9560,6 +10093,20 @@ def create_app(state: AppState) -> FastAPI:
                         media_type="application/javascript",
                         headers={"Cache-Control": "no-store"})
 
+    @app.get("/node-wallet.js")
+    def node_wallet_js():
+        """The node's wallet behind the accounts' Wallet page (templates/node_wallet_js.js, 2026-10-19)."""
+        return Response((TEMPLATE_DIR / "node_wallet_js.js").read_text(),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+    @app.get("/node-mail.js")
+    def node_mail_js():
+        """The node's identity behind the accounts' Your arcade page (templates/node_mail_js.js, 2026-10-19)."""
+        return Response((TEMPLATE_DIR / "node_mail_js.js").read_text(),
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-store"})
+
     @app.get("/messaging.js")
     def messaging_js():
         """Opening and sealing messages in the browser (templates/messaging_js.js)."""
@@ -9806,10 +10353,15 @@ def create_app(state: AppState) -> FastAPI:
     # The coins a standing offer is signed over are spent on nothing else: every
     # funding choice reads `spent_by`, so the reservation lives in one place.
     _flights_spent_by = _flights.spent_by
+
+    def _reserved_here(pubkey: str, network: str) -> frozenset:
+        """Coins this arcade holds for an account's offers, standing orders, listings and runs: not spent, set aside."""
+        return (_bids.reserved(pubkey, network) | _standing.reserved(pubkey, network) | _parts.reserved(network)
+                | _answered_coins(network) | _listed_coins(network))
+
     _flights.spent_by = lambda pubkey, network="": (
-        _flights_spent_by(pubkey, network) | _bids.reserved(pubkey, network)
-        | _standing.reserved(pubkey, network) | _parts.reserved(network)
-        | _answered_coins(network) | _listed_coins(network))
+        _flights_spent_by(pubkey, network) | _reserved_here(pubkey, network)
+        | _held_elsewhere(pubkey, network))
 
     def _listed_coins(network: str) -> frozenset:
         """The coins every open listing is signed over, read from the listings
@@ -10203,9 +10755,18 @@ def create_app(state: AppState) -> FastAPI:
         """Satoshis the index still lists for this address that a transaction in
         the pool has already spent (this node's flights, and the node's own
         mempool -- `Flights(pool=...)`). Neither gone nor spendable: leaving."""
-        spent = _flights.spent_by(pubkey, network)
+        spent = _flights_spent_by(pubkey, network)
         return sum(coin["value"] for coin in utxoslib.unspent(db, address)
                    if (coin["txid"], coin["vout"]) in spent)
+
+    def _held(pubkey: str, network: str, db, address: str) -> int:
+        """Satoshis set aside for this account's offers and orders, here or on another arcade it is held on
+        (2026-10-19: @apple read 11.22 "leaving" on app.dogecoinarcade.com -- three standing buy orders and two
+        pre-signed offers -- and the same coins as spendable on pepecoinarcade.com). Not leaving, not spendable."""
+        spent = _flights_spent_by(pubkey, network)
+        held = _reserved_here(pubkey, network) | _held_elsewhere(pubkey, network)
+        return sum(coin["value"] for coin in utxoslib.unspent(db, address)
+                   if (coin["txid"], coin["vout"]) in held and (coin["txid"], coin["vout"]) not in spent)
 
     def _inscribed(db, address: str) -> int:
         """Satoshis of this address's coins that carry an inscription (a Doginal, or one on Pepecoin mainnet) or could
@@ -10250,6 +10811,7 @@ def create_app(state: AppState) -> FastAPI:
         what is leaving under it."""
         row["spendable"] = max(0, int(row.get("balance") or 0)
                                - int(row.get("leaving") or 0)
+                               - int(row.get("held") or 0)
                                - int(row.get("inscribed") or 0)
                                + int(row.get("incoming") or 0))
 
@@ -10518,22 +11080,254 @@ def create_app(state: AppState) -> FastAPI:
         register._attempt(f"vault:{who}", now)
         found = state.vault().get(tag)
         if found is None:
+            # Made on another arcade (2026-10-19: "I shouldn't have to enter a URL for the other Arcade. It
+            # should just know automatically"): asked of the arcades this one knows, for the browser to open and
+            # file here. Not when another arcade is asking (`?here=1`), so two arcades never ask each other round.
+            if request.query_params.get("here") != "1":
+                elsewhere = _vault_elsewhere(tag)
+                if elsewhere is not None:
+                    return JSONResponse(elsewhere)
             return JSONResponse({"detail": "no wallet here by that name"},
                                 status_code=404)
         return JSONResponse({"tag": found["tag"], "pubkey": found["pubkey"],
                              "address": found["address"],
                              "blob": json.loads(found["blob"])})
 
+    #: What other arcades ask of this one about an account (its coins, what it holds, its history): its own allowance,
+    #: apart from sign-in's 20 in 5 minutes, which an arcade asking for all of its signed-in accounts would use up.
+    PEER_DATA_ASKS = 300
+
+    def _peer_data_limited(request: Request) -> bool:
+        register = state.accounts()
+        who = f"peerdata:{request.client.host if request.client else ''}"
+        now = int(time.time())
+        count = register.conn.execute("SELECT COUNT(*) FROM attempt WHERE who = ? AND at > ?",
+                                      (who, now - accountslib.ATTEMPT_WINDOW)).fetchone()[0]
+        if count >= PEER_DATA_ASKS:
+            return True
+        register._attempt(who, now)
+        return False
+
+    @app.get("/signin/{tag}/coins")
+    def signin_coins(request: Request, tag: str):
+        """The coins this arcade knows an account's addresses hold, chain by chain, for an arcade the account has
+        just been brought to (2026-10-19: "can't it get the information it needs from another arcade?"):
+        that arcade checks each one against its own chain (gettxout) instead of reading every block from its floor.
+        What any chain says to anybody; only for an account this arcade holds."""
+        if _peer_data_limited(request):
+            return JSONResponse({"detail": "too many in a row. Wait a few minutes."}, status_code=429)
+        found = state.vault().get(tag)
+        if found is None:
+            return JSONResponse({"detail": "no wallet here by that name"}, status_code=404)
+        out: dict[str, Any] = {}
+        for chain in _account_chains():
+            address = _account_address(found["pubkey"], chain)
+            if not address:
+                continue
+            try:
+                index = state.token_index(chain)
+                with contextlib.closing(index.open()) as db:
+                    coins = utxoslib.unspent(db, address)
+                    since = utxoslib.since(db, address)
+            except Exception:                               # noqa: BLE001 -- a chain with no index here
+                continue
+            mine = {(c["txid"], c["vout"]) for c in coins}
+            held = sorted(o for o in _reserved_here(found["pubkey"], chain.network) if o in mine)
+            out[chain.network] = {"address": address, "since": since,
+                                  "coins": [{k: c[k] for k in ("txid", "vout", "value", "height")} for c in coins],
+                                  "held": [list(o) for o in held]}
+        return JSONResponse({"tag": found["tag"], "chains": out})
+
+    @app.get("/signin/{tag}/activity")
+    def signin_activity(request: Request, tag: str, chain: str = "", before: int | None = None, limit: int = 50):
+        """An account's history on one chain as this arcade's index has it, for an arcade it was brought to whose
+        own history of it starts later (2026-10-19: "history from one isn't showing on the other"). What any
+        chain says to anybody; only for an account this arcade holds."""
+        if _peer_data_limited(request):
+            return JSONResponse({"detail": "too many in a row. Wait a few minutes."}, status_code=429)
+        found = state.vault().get(tag)
+        picked = next((c for c in _account_chains() if c.network == chain), None)
+        if found is None or picked is None:
+            return JSONResponse({"detail": "no such account or chain here"}, status_code=404)
+        address = _account_address(found["pubkey"], picked)
+        if not address:
+            return JSONResponse({"detail": "no address on that chain"}, status_code=404)
+        limit = max(1, min(int(limit), 200))
+        index = state.token_index(picked)
+        with contextlib.closing(index.open()) as db:
+            since = utxoslib.since(db, address)
+            rows = utxoslib.activity(db, [address], before, limit + 1)
+        return JSONResponse({"address": address, "since": since, "more": len(rows) > limit, "rows": rows[:limit]})
+
+    _history_kept: dict[tuple, tuple[float, dict | None]] = {}
+    _history_seen: set = set()
+
+    def _history_elsewhere(tag: str, chain, address: str, before: int, limit: int) -> dict | None:
+        """Older history of an account from the arcade(s) that have it: the first known arcade answering for the same
+        address. On a chain this arcade runs, each transaction is checked to be on it; kept a minute per page."""
+        key = (tag, chain.network, before, limit)
+        kept = _history_kept.get(key)
+        if kept and time.time() - kept[0] < 60:
+            return kept[1]
+        found = None
+        for host in _arcade_hosts():
+            try:
+                r = requests.get(f"https://{host}/signin/{urllib.parse.quote(tag)}/activity", timeout=6,
+                                 params={"chain": chain.network, "before": before, "limit": limit},
+                                 headers={"User-Agent": "arcade-node"})
+                said = r.json() if r.status_code == 200 else None
+            except Exception:                               # noqa: BLE001
+                continue
+            if isinstance(said, dict) and said.get("address") == address and said.get("rows"):
+                found = said
+                break
+        if found and not getattr(chain, "borrowed", False):
+            kept_rows = []
+            with chain.rpc() as rpc:
+                for row in found["rows"]:
+                    txid = str(row.get("txid") or "")
+                    if txid not in _history_seen:
+                        try:
+                            if int((rpc.call("getrawtransaction", txid, 1) or {}).get("confirmations", 0)) < 1:
+                                continue
+                        except Exception:                   # noqa: BLE001 -- not on this chain: left out
+                            continue
+                        _history_seen.add(txid)
+                    kept_rows.append(row)
+            found = {**found, "rows": kept_rows}
+        _history_kept[key] = (time.time(), found)
+        return found
+
+    _held_kept: dict[str, tuple[float, dict]] = {}       # tag -> (asked at, {network: frozenset of outpoints})
+    _held_asking: set = set()
+
+    def _held_elsewhere(pubkey: str, network: str) -> frozenset:
+        """Coins other arcades hold for this account's offers and orders (their /signin/<name>/coins `held`), so this
+        arcade neither spends them nor counts them spendable. Never waited for: asked on a thread at most once a
+        minute, and what was last heard is used meanwhile."""
+        try:
+            tag = (state.vault().by_pubkey(pubkey) or {}).get("tag") or ""
+        except Exception:                                   # noqa: BLE001
+            tag = ""
+        if not tag:
+            return frozenset()
+        kept = _held_kept.get(tag)
+        if (kept is None or time.time() - kept[0] > 60) and tag not in _held_asking:
+            _held_asking.add(tag)
+
+            def ask():
+                got: dict[str, set] = {}
+                try:
+                    for host in _arcade_hosts():
+                        try:
+                            r = requests.get(f"https://{host}/signin/{urllib.parse.quote(tag)}/coins", timeout=8,
+                                             headers={"User-Agent": "arcade-node"})
+                            if r.status_code != 200:
+                                continue
+                            for net, row in (r.json().get("chains") or {}).items():
+                                got.setdefault(net, set()).update(
+                                    (str(o[0]), int(o[1])) for o in (row.get("held") or []) if len(o) == 2)
+                        except Exception:                   # noqa: BLE001 -- that arcade did not answer
+                            continue
+                    _held_kept[tag] = (time.time(), {n: frozenset(v) for n, v in got.items()})
+                finally:
+                    _held_asking.discard(tag)
+            threading.Thread(target=ask, name=f"held {tag}", daemon=True).start()
+        return (kept[1].get(network) if kept else None) or frozenset()
+
+    _elsewhere_kept: dict[str, tuple[float, dict | None]] = {}
+
+    def _arcade_hosts() -> list[str]:
+        """The other arcades this one knows, as https bases: the domains they announce (instance announcements),
+        and the wss:// addresses their meshes announce -- a named domain, or a quick tunnel, which passes
+        /signin/<name> on to its web app (mesh/wsock.py)."""
+        mine = {h.lower() for h in (state.public_hosts or ())}
+        out: list[str] = []
+        try:
+            with state.store() as store:
+                for row in store.instances(state.messaging.network):
+                    out.append(str(row["domain"] or ""))
+                for row in store.mesh_peers(state.messaging.network, since=int(time.time()) - 3 * 86400):
+                    host = str(row["host"] or "")
+                    if host.startswith("wss://"):
+                        out.append(host[len("wss://"):].split("/", 1)[0].split(":", 1)[0])
+        except Exception:                                   # noqa: BLE001 -- nothing known yet
+            pass
+        seen, hosts = set(), []
+        for h in out:
+            h = h.strip().lower()
+            if h and h not in seen and h not in mine and re.fullmatch(r"[a-z0-9.\-]+\.[a-z]{2,}", h):
+                seen.add(h)
+                hosts.append(h)
+        return hosts[:16]
+
+    def _vault_elsewhere(tag: str) -> dict | None:
+        """An account's sealed wallet from whichever known arcade holds it, or None. When the chain says who holds
+        the @name, only that address's wallet is taken; either way the browser opens it with the password, so a
+        wrong one opens nothing. Kept a few minutes, so a sign-in page is not a way to make many requests."""
+        name = str(tag or "").strip().lstrip("@").lower()
+        if not re.fullmatch(r"[a-z0-9_.\-]{1,40}", name):
+            return None
+        kept = _elsewhere_kept.get(name)
+        if kept and time.time() - kept[0] < (600 if kept[1] else 60):
+            return kept[1]
+        try:
+            owner = state.token_index(_account_chain()).address_of(name) or ""
+        except Exception:                                   # noqa: BLE001
+            owner = ""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def ask(host: str) -> dict | None:
+            got = requests.get(f"https://{host}/signin/{urllib.parse.quote(name)}?here=1", timeout=8,
+                               headers={"User-Agent": "arcade-node"})
+            said = got.json() if got.status_code == 200 else None
+            blob = said.get("blob") if isinstance(said, dict) else None
+            if not isinstance(blob, dict) or not blob.get("sealed"):
+                return None
+            if owner and str(said.get("address") or "") != owner:
+                return None
+            return {"tag": str(said.get("tag") or name), "pubkey": str(said.get("pubkey") or ""),
+                    "address": str(said.get("address") or ""), "blob": blob, "from": f"https://{host}",
+                    "elsewhere": True}
+
+        found = None
+        hosts = _arcade_hosts()
+        if hosts:
+            with ThreadPoolExecutor(max_workers=min(8, len(hosts))) as pool:
+                for job in as_completed([pool.submit(ask, h) for h in hosts]):
+                    try:
+                        found = job.result()
+                    except Exception:                       # noqa: BLE001 -- that arcade did not answer
+                        found = None
+                    if found:
+                        break
+        _elsewhere_kept[name] = (time.time(), found)
+        return found
+
     #: Addresses whose past coins are being read right now (utxos.backfill).
     _backfilling: set = set()
 
     @app.post("/account/coins/backfill")
-    def account_coins_backfill(request: Request):
+    def account_coins_backfill(request: Request, payload: Any = Body(None)):
         """Find the coins an account already held before this node watched it --
         for an account brought here from another arcade or a backup file, whose
         coins all arrived elsewhere. Once per address; in the background; from
         each chain's shared floor to where this node started watching."""
         account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        # The arcade the account was just brought from (wallet.js bringHere): asked for the coins first, one of the
+        # arcades this one knows and nothing a browser names freely.
+        source = str(said.get("from") or "").rstrip("/")
+        if source and source.removeprefix("https://") not in _arcade_hosts():
+            source = ""
+        # Remembered, so a read-back cut short (a restart: 2026-10-19, the operator's balances read zero on
+        # pepecoinarcade.com but for Litecoin) is finished from the same arcade at the next sign-in or Wallet visit.
+        if source:
+            state.set_setting(f"came_from:{account.pubkey}", source)
+        else:
+            source = str(state.setting(f"came_from:{account.pubkey}", "") or "")
+        sources = [source] if source else [f"https://{h}" for h in _arcade_hosts()]
+        mine = state.vault().by_pubkey(account.pubkey) or {}
         started = []
         for chain in _account_chains():
             address = _account_address(account.pubkey, chain)
@@ -10553,6 +11347,13 @@ def create_app(state: AppState) -> FastAPI:
 
             def run(chain=chain, address=address, key=key, start=start, end=end, index=index):
                 try:
+                    for asked in (sources if mine.get("tag") else []):
+                        filed = _coins_from(state, asked, mine["tag"], chain, address)
+                        if filed is not None:
+                            state.set_setting(key, filed)
+                            state.bump_generation()
+                            log.info("backfill: %s holds %d coins, as %s knew them", address, filed, asked)
+                            return
                     with chain.rpc() as rpc:
                         # The Core's coin set first (2026-10-18): coins below the floor too. A Core without
                         # `scantxoutset` (Pepecoin, Dogecoin) or a borrowed one reads the blocks instead.
@@ -10738,6 +11539,7 @@ def create_app(state: AppState) -> FastAPI:
                     said["arriving"] = _arriving(account.pubkey, chain.network, db, address)
                     said["leaving"] = _leaving(account.pubkey, chain.network,
                                                db, address)
+                    said["held"] = _held(account.pubkey, chain.network, db, address)
                     said["inscribed"] = _inscribed(db, address)
                     _spendable(said)
                 _top_off_later(account.pubkey, address, int(said.get("spendable") or 0))
@@ -10818,6 +11620,7 @@ def create_app(state: AppState) -> FastAPI:
                         row["arriving"] = _arriving(account.pubkey, one.network, db, here)
                         row["leaving"] = _leaving(account.pubkey, one.network,
                                                   db, here)
+                        row["held"] = _held(account.pubkey, one.network, db, here)
                         row["inscribed"] = _inscribed(db, here)
                     if _ord_chain(one):
                         row.update(_doginal_needs())
@@ -10897,7 +11700,8 @@ def create_app(state: AppState) -> FastAPI:
         same way: from the index, so a name in somebody's book is a name
         that exists on the chain rather than one they typed.
         """
-        _signed_in_account(request)
+        if _account_view(request):                         # the node's Address book asks too (2026-10-19)
+            _signed_in_account(request)
         raw = (q or "").strip()
         wanted = raw.lstrip("@").lower()
         if not wanted:
@@ -12999,6 +13803,18 @@ def create_app(state: AppState) -> FastAPI:
             rows = utxoslib.activity(db, [address], before, limit + 1)
         said["more"] = len(rows) > limit
         rows = rows[:limit]
+        # What happened before this arcade followed the address, from the arcade that did (2026-10-19).
+        if not said["more"] and said["since"] is not None and len(rows) < limit:
+            tag = (state.vault().by_pubkey(account.pubkey) or {}).get("tag") or ""
+            older = _history_elsewhere(tag, picked, address,
+                                       min([said["since"]] + [r["height"] for r in rows] + ([before] if before else [])),
+                                       limit - len(rows)) if tag else None
+            if older:
+                have = {r["txid"] for r in rows}
+                rows += [{**r, "from": "elsewhere"} for r in older["rows"] if r.get("txid") not in have]
+                said["more"] = bool(older.get("more"))
+                if older.get("since") is not None:
+                    said["since"] = min(said["since"], int(older["since"]))
         names: dict[str, str] = {}
         for row in rows:
             other = row["other"]
@@ -13116,7 +13932,22 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": "this account has no address on that chain"},
                                 status_code=400)
         try:
-            coins = _payload_dust(chain, address)[:fundinglib.DUST_SWEEP_MAX]
+            coins = _payload_dust(chain, address)
+            # Each asked again now (2026-10-19: a sweep from another arcade's tab had spent some of these, the list
+            # here asks hourly, and the node refused the sweep: bad-txns-inputs-spent). Spent ones leave the list.
+            memo = _dust_memo.get((chain.network, address), {"coins": {}})
+            live = []
+            with chain.rpc() as rpc:
+                for coin in coins:
+                    if len(live) >= fundinglib.DUST_SWEEP_MAX:
+                        break
+                    if rpc.call("gettxout", coin["txid"], coin["vout"], True) is None:
+                        memo["coins"].pop((coin["txid"], coin["vout"]), None)
+                    else:
+                        live.append(coin)
+            if coins and not live:
+                raise ValueError("there is nothing left to sweep: those outputs are already back")
+            coins = live
             unsigned = fundinglib.build_dust_sweep(
                 address, coins, rate=fees.MIN_FEE_PER_KB,
                 what=f"sweep {len(coins)} message and file outputs back to your wallet")
@@ -13138,12 +13969,16 @@ def create_app(state: AppState) -> FastAPI:
         """Take a buy order on one of your tokens off YOUR Offers list (the operator,
         2026-09-28: decline it, "but the order remain on the books"). Nothing is
         broadcast and the order is untouched: anybody may still sell into it."""
-        account = _signed_in_account(request)
+        if signed_in(request) is not None or _account_view(request):
+            who = _signed_in_account(request).pubkey
+        else:
+            _admin_check(request, write=True)          # the operator's own Offers list (2026-10-19)
+            who = "node"
         said = payload if isinstance(payload, dict) else {}
         key = str(said.get("key") or "").strip()
         if not re.fullmatch(r"[0-9a-f]{64}|standing-[0-9a-f]{8,64}", key):
             return JSONResponse({"detail": "name the buy order"}, status_code=400)
-        name = f"declined_bids:{account.pubkey}"
+        name = f"declined_bids:{who}"
         kept = [k for k in (state.setting(name, []) or []) if k != key][-499:] + [key]
         state.set_setting(name, kept)
         return JSONResponse({"declined": key})
@@ -20607,19 +21442,24 @@ def create_app(state: AppState) -> FastAPI:
     def account_wallets(request: Request, payload: Any = Body(None)):
         """Show or hide one chain's wallet in this account's Wallet tab. Only what is SHOWN: the address stays, is
         still announced, is still watched, and coins sent to it still arrive. At least one wallet stays shown."""
-        account = _signed_in_account(request)
+        signed = signed_in(request)
+        if signed is not None or _account_view(request):
+            whose = _signed_in_account(request).pubkey
+        else:
+            _admin_check(request, write=True)              # the node's own Wallet (2026-10-19)
+            whose = "node"
         said = payload if isinstance(payload, dict) else {}
         net = str(said.get("network", ""))
         if not any(c.network == net for c in state.all_chains):
             return JSONResponse({"detail": "no such chain here"}, status_code=400)
-        hidden = set(_wallets_hidden(account.pubkey))
+        hidden = set(_wallets_hidden(whose))
         if said.get("shown"):
             hidden.discard(net)
         else:
             hidden.add(net)
         if not [c for c in state.all_chains if c.network not in hidden]:
             return JSONResponse({"detail": "keep at least one wallet shown"}, status_code=400)
-        state.set_setting(f"wallets_hidden:{account.pubkey}", sorted(hidden))
+        state.set_setting(f"wallets_hidden:{whose}", sorted(hidden))
         return JSONResponse({"hidden": sorted(hidden)})
 
     _chain_stats_kept: dict = {}
@@ -20673,7 +21513,8 @@ def create_app(state: AppState) -> FastAPI:
     @app.get("/account/chain-stats")
     def account_chain_stats(request: Request):
         """Every chain's numbers for the Your wallets panel, by network."""
-        _signed_in_account(request)
+        if _account_view(request):
+            _signed_in_account(request)
         return JSONResponse({c.network: _chain_stats(c) for c in state.all_chains})
 
     @app.get("/me/wallet/tokens", response_class=HTMLResponse)
@@ -20875,7 +21716,8 @@ def create_app(state: AppState) -> FastAPI:
         published no key cannot be written to, and this says so rather than
         letting a message be sealed to nothing.
         """
-        _signed_in_account(request)
+        if _account_view(request):                         # the node's Address book asks too (2026-10-19)
+            _signed_in_account(request)
         chain = _account_chain()
         wanted = (name or "").strip().lstrip("@")
         address, tag = "", ""
@@ -22676,7 +23518,9 @@ def create_app(state: AppState) -> FastAPI:
         out = []
         wallets = [("messaging", state.messaging), ("ledger", state.ledger)]
         # Every add-on chain's node wallet, Dogecoin's first as before (2026-10-18: L main, L test).
-        wallets += [(c.network, c) for c in getattr(state, "addons", [])]
+        # A borrowed chain has no Core wallet here (a sharer answers no wallet calls), so it gets only its key card
+        # below -- not an "offline" card besides it (2026-10-19).
+        wallets += [(c.network, c) for c in getattr(state, "addons", []) if not c.borrowed]
         for which, ctx in wallets:
             row = {"which": which, "label": ctx.title, "network": ctx.network,
                    "net": ctx.net, "coin": ctx.params.coin}
@@ -23229,6 +24073,12 @@ def create_app(state: AppState) -> FastAPI:
         threading.Timer(1.0, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
         return JSONResponse({"ok": True})
 
+    @app.websocket("/mesh")
+    def mesh_socket(socket: WebSocket):
+        """The mesh on this arcade's own name (2026-10-19: a named tunnel through our domain, a quick one
+        only without a domain): _mesh_bridge, below create_app (a coroutine FastAPI awaits; nothing in here may)."""
+        return _mesh_bridge(state, socket)
+
     @app.get("/admin/api/mesh")
     def admin_mesh(request: Request):
         """The mesh for Admin -> Network (2026-10-19): links, how the node is reached, its tunnel, the STUN it offers
@@ -23365,7 +24215,14 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": "that send has expired -- prepare it again"},
                                 status_code=400)
         try:
-            if held[1].startswith("key:"):
+            if held[1].startswith("tok:"):
+                # A token or NFT send from the node's Wallet page (/node/wallet/token|nft/send).
+                ctx = _node_wallet(held[1].split(":", 1)[1])[0]
+                with ctx.rpc() as rpc:
+                    txid = tokenlib.TokenSender(rpc, ctx.params).broadcast(held[2])
+                state.pending_tokens.append({"txid": txid, "what": getattr(held[2], "what", "send"),
+                                             "at": time.time(), "network": ctx.network})
+            elif held[1].startswith("key:"):
                 txid = keywalletlib.broadcast(_keyed_context(held[1]), held[2])
             else:
                 with _context(held[1]).rpc() as rpc:
@@ -26963,10 +27820,27 @@ def create_app(state: AppState) -> FastAPI:
             got = []
         return JSONResponse({"orders": got}, headers={"Cache-Control": "no-store"})
 
+    @app.post("/account/orders/taking")
+    def orders_taking(request: Request, payload: Any = Body(None)):
+        """A swap on this account's listed order is under way (or fell through), said by the page answering it: off
+        (or back on) this node's book at once, and every other arcade's through the book room (book_relay.py;
+        2026-10-19: "no two users can fill the same order"). Only the account's own orders."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        oid = str(said.get("id") or "")
+        if not re.fullmatch(r"ord-[0-9a-f]{16}", oid):
+            return JSONResponse({"detail": "name the order"}, status_code=400)
+        mine = {a for a in (_account_address(account.pubkey, c) for c in _account_chains()) if a}
+        if state.trade_orders.lister_of(oid) not in mine:
+            return JSONResponse({"detail": "not this account's order"}, status_code=403)
+        state.trade_orders.set_taking(oid, bool(said.get("taking")))
+        state.bump_generation()
+        return JSONResponse({"id": oid, "taking": bool(said.get("taking"))})
+
     @app.post("/account/orders/cancel")
     def orders_cancel(request: Request, payload: Any = Body(None)):
-        """This account withdrew these swaps: off this node's book now (the cancel batch it inscribes
-        takes them off every other arcade's when its block lands). Only the account's own orders."""
+        """This account withdrew these swaps: off this node's book now, and every other arcade's through the book
+        room (book_relay.py). Only the account's own orders."""
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         ids = [str(i) for i in (said.get("ids") or []) if isinstance(i, str) and re.fullmatch(r"ord-[0-9a-f]{16}", i)][:50]
@@ -27029,22 +27903,23 @@ def create_app(state: AppState) -> FastAPI:
                 out["trade_orders"] = [{**o, "mine": o["lister"] in own}
                                        for o in state.trade_orders.visible(_online, tab_live=_tab_live, browser=_browser_lister)]
             else:
-                # Every order but this node's own standing ones, which are listed apart as "This node's swaps"
-                # (2026-10-19: orders from the order book were not showing on the operator's exchange pages --
-                # dropping every order filed on this node also dropped all of its own accounts' orders).
+                # The same book every account and every arcade sees (2026-10-19: "it should be the same
+                # orderbook as every other client and operator sees"), this node's own standing orders in it, marked
+                # its own, with Cancel.
                 try:
-                    standing = {o["id"] for o in state.node_trader.standing()}
+                    standing = {o["id"] for o in state.node_trader.standing(own=True)}
                 except Exception:                          # noqa: BLE001 -- no node trader: nothing of its own
                     standing = set()
-                out["trade_orders"] = [{**o, "mine": False}
-                                       for o in state.trade_orders.visible(_online, tab_live=_tab_live, browser=_browser_lister)
-                                       if o.get("id") not in standing]
-            if not _account_view(request) and _node_trades():
+                out["trade_orders"] = [{**o, "mine": o.get("id") in standing}
+                                       for o in state.trade_orders.visible(_online, tab_live=_tab_live, browser=_browser_lister)]
+            # The operator's own swaps whatever the node-facilitated trades switch says (2026-10-19: that
+            # switch "should be for clients coming through the Web portal").
+            if not _account_view(request):
                 trader = state.node_trader
                 out["can_trade_orders"] = True
                 out["my_trade_orders"] = [{**o, "give_label": _side_label(o["give"]),
                                            "get_label": _side_label(o["get"])}
-                                          for o in trader.standing()]
+                                          for o in trader.standing(own=True)]
                 out["my_trades"] = [{"id": t.id, "role": t.role, "state": t.state, "note": t.note,
                                      "give": M_leg_text(t.give), "get": M_leg_text(t.get)}
                                     for t in trader.book.open_trades()]
@@ -27174,8 +28049,6 @@ def create_app(state: AppState) -> FastAPI:
         node is online."""
         check_csrf(csrf_token)
         try:
-            if not _node_trades():
-                raise ValueError(NODE_TRADES_OFF)
             give, get = _coin_side(give_network, give_amount), _coin_side(get_network, get_amount, holding=False)
             if give["network"] == get["network"]:
                 where = (f" -- its market is /exchange/pair/{give['asset']}" if give["kind"] == "token" else "")
@@ -27248,8 +28121,6 @@ def create_app(state: AppState) -> FastAPI:
         if a["network"] == b["network"] and not trade_orders.one_chain_offer(a, b):
             return _open_pair(request, base, quote, may_switch=True)
         try:
-            if not _node_trades():
-                raise ValueError(NODE_TRADES_OFF)
             give, get = _price_terms(side, a, b, amount, price)
             # What the node gives comes from its home address: it must hold it (a coin is checked
             # when it locks); what it gets need not be held yet.
@@ -27293,8 +28164,6 @@ def create_app(state: AppState) -> FastAPI:
         Messenger, then both sides settle through lock scripts (arcade/trade.py)."""
         check_csrf(csrf_token)
         try:
-            if not _node_trades():
-                raise ValueError(NODE_TRADES_OFF)
             found = next((o for o in state.trade_orders.visible(_online, tab_live=_tab_live, browser=_browser_lister)
                           if o["id"] == order and o["lister"] == lister), None)
             if found is None:
@@ -27623,8 +28492,8 @@ def create_app(state: AppState) -> FastAPI:
                 # to buy? ... on exchange>offers"): the chain's bids and the ones this
                 # node holds, best price first.
                 looker = signed_in(request) if data["viewer"] == "account" else None
-                declined_bids = set(state.setting(f"declined_bids:{looker.pubkey}", []) or []) \
-                    if looker is not None else set()
+                # The node's own list is "declined_bids:node" (2026-10-19: its Decline posted to the account route).
+                declined_bids = set(state.setting(f"declined_bids:{looker.pubkey if looker else 'node'}", []) or [])
                 if tab == "offers" and data["owned"]:
                     from fractions import Fraction
                     for prop in _token_props(index):
@@ -28275,3 +29144,88 @@ def _local_time(ts: Any, style: str = "full") -> Markup:
 
 
 TEMPLATES.env.globals["local_time"] = _local_time
+
+
+async def _mesh_bridge(state, socket) -> None:
+    """The mesh on this arcade's own name (2026-10-19: a named tunnel through our domain, a quick one
+    only without a domain). A node dials wss://<public name>/mesh -- announced by mesh/service.py `own_name` --
+    and this passes the link to the mesh's own WebSocket port here, message for message. It carries the mesh
+    handshake and frames unchanged: ciphertext between two node keys, nothing this app reads."""
+    import asyncio
+    from ..mesh import wsock
+    svc = getattr(state, "mesh", None)
+    port = getattr(getattr(svc, "node", None), "ws_port", None)
+    if not port:
+        await socket.close(code=1013)
+        return
+    await socket.accept()
+    try:
+        reader, writer = await wsock.connect(f"ws://127.0.0.1:{port}/mesh", timeout=10)
+    except Exception:                                   # noqa: BLE001 -- the mesh is not up
+        await socket.close(code=1011)
+        return
+
+    async def inward():
+        while True:
+            data = await socket.receive_bytes()
+            writer.write(data)
+            await writer.drain()
+
+    async def outward():
+        while True:
+            await socket.send_bytes(await reader.sock.recv())
+
+    tasks = [asyncio.ensure_future(inward()), asyncio.ensure_future(outward())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in tasks:
+            t.cancel()
+        writer.close()
+        try:
+            await socket.close()
+        except Exception:                               # noqa: BLE001 -- already gone
+            pass
+
+
+_COINS_ASKED: dict[tuple[str, str], tuple[float, Any]] = {}
+
+
+def _coins_from(state, source: str, tag: str, chain, address: str) -> int | None:
+    """An account's coins on `chain` as the arcade it came from knows them, each checked against this arcade's
+    own chain and filed; how many, or None when that arcade could not say (the blocks are read instead)."""
+    kept = _COINS_ASKED.get((source, tag))
+    if kept is None or time.time() - kept[0] > 60:
+        # One question per arcade for every chain (a minute's keep): five in a row tripped nobody's limit yet, but
+        # the answer is the same for all of them.
+        try:
+            got = requests.get(f"{source}/signin/{urllib.parse.quote(tag)}/coins", timeout=15,
+                               headers={"User-Agent": "arcade-node"})
+            kept = (time.time(), got.json().get("chains") if got.status_code == 200 else None)
+        except Exception:                               # noqa: BLE001
+            kept = (time.time(), None)
+        _COINS_ASKED[(source, tag)] = kept
+    said = (kept[1] or {}).get(chain.network) if isinstance(kept[1], dict) else None
+    if not isinstance(said, dict) or said.get("address") != address:
+        return None
+    filed = 0
+    index = state.token_index(chain)
+    with chain.rpc() as rpc, index.open() as db:
+        for coin in (said.get("coins") or [])[:5000]:
+            try:
+                txid, vout = str(coin["txid"]).lower(), int(coin["vout"])
+                out = rpc.call("gettxout", txid, vout, False)
+            except Exception:                           # noqa: BLE001 -- not this chain's word: left out
+                continue
+            if not out or int(out.get("confirmations", 0)) < 1:
+                continue
+            spk = out.get("scriptPubKey") or {}
+            owners = spk.get("addresses") or ([spk["address"]] if spk.get("address") else [])
+            if address not in owners:
+                continue
+            value = int(round(float(out.get("value", 0)) * 100_000_000))
+            height = int(rpc.get_block_count()) - int(out["confirmations"]) + 1
+            db.conn.execute("INSERT OR IGNORE INTO utxo (txid, vout, address, value, height) VALUES (?,?,?,?,?)",
+                            (txid, vout, address, value, height))
+            filed += 1
+    return filed

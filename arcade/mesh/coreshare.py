@@ -70,6 +70,7 @@ MAX_ASKED = 8 * 1024 * 1024  # bytes of one batch of calls (a signed transaction
 POOL_SECONDS = 2.0           # how often a sharer reads its mempool for new transactions
 POOL_KEEP = 20_000           # transactions a borrower keeps per chain
 REQUEST_SECONDS = 60.0
+FAILING = 3                  # recent failures before a sharer goes behind the ones that answer, whatever its ping
 
 def _test_coins(net: str) -> bool:
     from ..config import NETWORKS
@@ -377,13 +378,16 @@ class CoreShare:
                 w["fut"].set_exception(RpcTransportError(f"an answer that is not JSON: {exc}"))
 
     def sharers(self, net: str) -> list[str]:
-        """Linked arcades sharing `net`, the quickest and least failing first."""
+        """Linked arcades sharing `net`: the fastest ping first among those answering (2026-10-19: "whichever
+        node has the fastest ping should be the one that that arcade uses"), then any failing lately. One failure
+        no longer sends a fast sharer behind a slow one for good -- it was never asked again, so never recovered."""
         if self.node is None:
             return []
         rtts = self.node.rtts()
         peers = [p for p, nets in self.offers.items() if net in nets and p in self.node.links]
-        return sorted(peers, key=lambda p: (self.failures.get(p, 0),
-                                            rtts.get(p) if rtts.get(p) is not None else 9e9))
+        return sorted(peers, key=lambda p: (self.failures.get(p, 0) >= FAILING,
+                                            rtts.get(p) if rtts.get(p) is not None else 9e9,
+                                            self.failures.get(p, 0)))
 
     async def request(self, net: str, calls: list, timeout: float = REQUEST_SECONDS,
                       avoid: frozenset = frozenset()) -> tuple[str, list]:

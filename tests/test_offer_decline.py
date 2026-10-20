@@ -39,3 +39,12 @@ def test_the_operator_may_decline_too(node):
     said = app.post("/exchange/offers/" + "ab" * 32, data={"csrf_token": state.csrf_token, "decision": "decline"},
                     follow_redirects=False)
     assert said.status_code == 303 and state.notice_kind == "err" and "no such offer" in state.notice
+
+
+def test_the_operator_declines_a_buy_order_on_its_token(node):
+    """The audit of 2026-10-19: "Buy orders on your tokens -> Decline" posted to the account route, which refused the
+    operator. The node keeps its own list."""
+    app, state, rpc = node
+    key = "cd" * 32
+    said = app.post("/account/token-bid/decline", json={"key": key}, headers={"X-Arcade-Admin": "1"})
+    assert said.status_code == 200 and key in state.setting("declined_bids:node", [])

@@ -5,7 +5,9 @@
 {% block title %}Exchange · {{ brand.name }}{% endblock %}
 {% block body %}
 {% macro tabs(current) %}
-<div id="live" data-generation="{{ state.generation }}" class="live"></div>
+{# The swap book redraws at the market pace (2026-10-19: "Books should be updated as instantaneously as
+   possible"). #}
+<div id="live" data-generation="{{ state.generation }}" class="live"{% if current == 'tokens' %} data-live-fast{% endif %}></div>
 {# The markets first, then what is yours (the Exchange redesign, 2026-10-09). #}
 {# Tokens, NFTs, Launchpad (the mintpads, by the name people know them by), and
    Offers with a count of what waits for an answer (the Exchange redesign, 2026-10-09). #}
@@ -410,7 +412,7 @@ document.addEventListener('click', function (ev) {
     if (!b) return;
     b.disabled = true;
     var r = await fetch("/account/token-bid/decline", {method: "POST",
-      headers: {"Content-Type": "application/json"}, body: JSON.stringify({key: b.dataset.bidDecline})});
+      headers: {"Content-Type": "application/json"{% if viewer != 'account' %}, "X-Arcade-Admin": "1"{% endif %}}, body: JSON.stringify({key: b.dataset.bidDecline})});
     if (r.ok) { var row = b.closest(".offerrow"); if (row) row.remove(); } else { b.disabled = false; }
   });
   </script>
@@ -842,7 +844,13 @@ document.addEventListener('click', function (ev) {
         for {{ net_badge(o['get'].network) }} <strong>{{ o.get_label }}</strong>
         {% if o.price_text %}<br><small><b>{{ o.price_text }}</b></small>{% endif %}
         <small class="muted">&middot; by {{ o.lister|who }}{% if o.market %} &middot; <a href="{{ o.market }}">market</a>{% endif %}</small></span>
-      {% if can_trade_orders %}
+      {% if o.mine and viewer != 'account' %}
+      {# The node's own order, in the same book everybody sees (2026-10-19). #}
+      <form method="post" action="/exchange/trade-orders/withdraw" style="margin:0">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="back" value="{{ here }}">
+        <input type="hidden" name="order" value="{{ o.id }}">
+        <button type="submit" class="ghost small">Cancel</button></form>
+      {% elif can_trade_orders %}
       <form method="post" action="/exchange/trade-orders/take" style="margin:0">
         <input type="hidden" name="csrf_token" value="{{ csrf }}">
         <input type="hidden" name="order" value="{{ o.id }}"><input type="hidden" name="lister" value="{{ o.lister }}">
@@ -863,6 +871,8 @@ document.addEventListener('click', function (ev) {
     {# A tab's own swaps (2026-10-13): run here while this tab is open, settled by the locks; shown on
        Trade history (2026-10-17), so only their machinery is here. #}
     <div hidden>{% include "_tab_swaps.html" %}</div>
+    {% endif %}
+    {% if viewer != 'nobody' %}
     <p style="margin:6px 0 0;font-size:.84rem"><a href="/exchange/history">Your swaps and trade history &rarr;</a></p>
     {% endif %}
     {% if can_trade_orders %}

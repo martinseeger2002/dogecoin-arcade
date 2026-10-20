@@ -265,7 +265,7 @@ def test_the_browser_half_is_served_and_derives_the_same_path(client):
 
 def test_the_overview_shows_the_seat_count_and_links_to_the_splash(client):
     app, _ = client
-    body = app.get("/").text
+    body = app.get("/overview").text
     assert "Seats open" in body and 'href="/join"' in body
 
 

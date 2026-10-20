@@ -310,22 +310,28 @@ def test_coming_back_signed_in_shows_the_account_not_the_doors(browser, served):
     assert "error" not in answer, answer
 
     _ready(browser, base)
+    # Read in one script call, not element by element: the page redraws itself (its live refresh) and an element
+    # found a moment before can be stale by the time it is asked about (a loaded machine, 2026-10-19).
+    look = """const shown = (id) => { const e = document.getElementById(id); return !!e && !!e.offsetParent; };
+        const key = document.getElementById("who-key");
+        return {signedIn: shown("signed-in"), doors: shown("doors"), key: key ? key.textContent : ""};"""
+    said = {}
     for _ in range(40):
-        if browser.find_element(By.ID, "signed-in").is_displayed():
+        said = browser.execute_script(look)
+        if said["signedIn"]:
             break
         time.sleep(0.25)
-    assert browser.find_element(By.ID, "signed-in").is_displayed()
-    assert not browser.find_element(By.ID, "doors").is_displayed()
-    assert seed.login_pubkey(phrase)[:16] in \
-        browser.find_element(By.ID, "who-key").text
+    assert said["signedIn"] and not said["doors"], said
+    assert seed.login_pubkey(phrase)[:16] in said["key"]
 
     before = state.accounts().free()
-    browser.find_element(By.ID, "signout").click()
+    browser.execute_script("document.getElementById('signout').click()")
     for _ in range(40):
-        if browser.find_element(By.ID, "doors").is_displayed():
+        said = browser.execute_script(look)
+        if said["doors"]:
             break
         time.sleep(0.25)
-    assert browser.find_element(By.ID, "doors").is_displayed()
+    assert said["doors"], said
     # Signing out of a node is not giving up the seat: the words still open
     # it, and the seat is still theirs until it goes idle.
     assert state.accounts().free() == before

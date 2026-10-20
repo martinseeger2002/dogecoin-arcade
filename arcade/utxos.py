@@ -31,6 +31,8 @@ out when the build fails.
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any
 
 from .db import register_journalled_table
@@ -119,14 +121,29 @@ def backfill(index, rpc, params, address: str, start: int, end: int) -> int:
     return backfill_many(index, rpc, params, {address}, start, end)
 
 
+#: One read-back at a time, in the whole process, and at a pace (2026-10-19: an account brought to pepecoinarcade.com
+#: started five at once -- 55,000 P test blocks, 49,000 P main, 7,000 Dogecoin over the mesh -- and the arcade's pages
+#: stopped answering for everybody until they were done).
+_BACKFILL_ONE = threading.Lock()
+#: Time slept per block, as a share of the time the block took: 1.5 keeps a read-back to about 40% of one core.
+BACKFILL_REST = 1.5
+
+
 def backfill_many(index, rpc, params, addresses: set[str], start: int, end: int) -> int:
     """`backfill` for several addresses in ONE pass over the blocks (2026-10-17: every account's Dogecoin address at
-    once, which read block by block per address would be thousands of reads each)."""
+    once, which read block by block per address would be thousands of reads each). One pass at a time, paced, so
+    the arcade's own pages keep answering while it runs."""
     addresses = set(addresses)
     if not addresses:
         return 0
+    with _BACKFILL_ONE:
+        return _backfill_many(index, rpc, params, addresses, start, end)
+
+
+def _backfill_many(index, rpc, params, addresses: set[str], start: int, end: int) -> int:
     found = []
     for height in range(int(start), int(end) + 1):
+        took = time.perf_counter()
         block = rpc.get_block(rpc.get_block_hash(height), 2)
         for tx in block.get("tx") or []:
             if not isinstance(tx, dict):
@@ -139,6 +156,8 @@ def backfill_many(index, rpc, params, addresses: set[str], start: int, end: int)
                 if parsed.type in SPENDABLE and parsed.address in addresses:
                     found.append((tx["txid"], int(out.get("n", 0)), parsed.address,
                                   int(round(float(out.get("value", 0)) * 100_000_000)), height))
+        if BACKFILL_REST:
+            time.sleep(min(1.0, (time.perf_counter() - took) * BACKFILL_REST))
     filed = 0
     with index.open() as db:
         for txid, vout, address, value, height in found:

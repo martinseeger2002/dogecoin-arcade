@@ -145,7 +145,7 @@
         Share {{ p.shares or '' }}</button></form>
     {% endif %}
 
-    {% if acts %}
+    {% if acts or not public %}
     {# The one of these that costs something gets the amount box the
        operator's own tip page has. The form is unchanged on purpose —
        `/feed/<txid>/tip` is the route, it is simply not one the door opens
@@ -1282,7 +1282,7 @@ new MutationObserver((changes) => {
   requestAnimationFrame(() => { queued = false; sift(); });
 }).observe(document.querySelector("main") || document.body, {childList: true, subtree: true});
 </script>
-{% if public and mine and mine.tag %}
+{% if (public and mine and mine.tag) or not public %}
 {# @-names as you type (2026-09-28): only the names in THIS person's
    own address book, which lives in their browser (messaging.js book()), so
    the node never sees the list and never suggests a stranger. Works in the
@@ -1303,7 +1303,8 @@ let names = null;
 async function book() {
   if (names) return names;
   try {
-    const mail = await import("/messaging.js");
+    // The operator's names come from the node's own address book (2026-10-19).
+    const mail = await import({{ ('/messaging.js' if public else '/node-mail.js')|tojson }});
     names = [...new Set((await mail.book()).map((e) => String(e.tag || "").toLowerCase())
                                            .filter(Boolean))].sort();
   } catch (e) { names = []; }
@@ -1391,5 +1392,9 @@ document.addEventListener("focusout", (e) => { if (e.target === field) setTimeou
 </script>
 <style>.feedpost.focused{box-shadow:0 0 0 2px var(--accent);animation:focusfade 3s ease-out 1}
 @keyframes focusfade{0%{background:color-mix(in srgb,var(--accent) 22%,var(--panel))}100%{background:var(--panel)}}</style>
+{% endif %}
+{% if not public %}
+{# The operator's tip form posts to the node (tip_send); this only fills its token list from the node's wallet. #}
+<script type="module">import {tipPicker} from "/wallet.js"; tipPicker(document, "/node/wallet/tokens");</script>
 {% endif %}
 {% endblock %}

@@ -135,8 +135,12 @@ def test_the_node_never_sees_the_password_or_the_words(loaded):
     assert set(blob) == {"kdf", "iterations", "salt", "nonce", "sealed"}
     assert blob["iterations"] >= 600000
     assert "a long enough password" not in row["blob"]
+    # Whole words: "era" is in "iterations" and a short word can sit inside the hex, neither of them a leak
+    # (2026-10-19, a phrase with "era" failed this).
+    import re as _re
     for word in said["phrase"].split():
-        assert word not in row["blob"], "a word of the phrase is in the blob"
+        assert not _re.search(rf"(?<![a-z]){_re.escape(word)}(?![a-z])", row["blob"]), \
+            "a word of the phrase is in the blob"
 
     raw = (home / "accounts.sqlite").read_bytes()
     assert b"a long enough password" not in raw

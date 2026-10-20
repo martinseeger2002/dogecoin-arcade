@@ -161,12 +161,15 @@ def test_a_stranger_still_gets_the_public_tabs(public):
 
 
 def test_the_operator_still_gets_everything(client):
-    """On the machine itself, nothing has changed."""
+    """On the machine itself every operator page is still in the menu; since 2026-10-19 its Overview is the accounts'
+    Your arcade, about the node (the operator: "Everything should look the same as it looks on the client side"), and the
+    old dashboard is /overview."""
     app, _ = client
     body = app.get("/").text
-    for theirs in ("/wallet", "/messages", "/contacts", "/backup"):
+    for theirs in ("/wallet", "/messages", "/contacts", "/backup", "/admin"):
         assert f'href="{theirs}"' in body, theirs
-    assert "Your arcade" not in body
+    assert "Your arcade" in body and '"/node-mail.js"' in body
+    assert app.get("/overview").status_code == 200
 
 
 def test_every_account_tab_is_one_the_door_allows(client):

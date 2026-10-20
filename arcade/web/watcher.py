@@ -112,9 +112,14 @@ class BlockWatcher:
             except Exception:
                 log.debug("talk relay failed", exc_info=True)
             try:
+                self.state.book_relay().tick()       # one swap book across arcades (book_relay.py, 2026-10-19)
+            except Exception:
+                log.debug("book relay failed", exc_info=True)
+            try:
                 # The node's own messaging key stays reachable on the mesh while it holds delegated orders (2026-10-17:
                 # a taker was told "the seller's page is not open" between two slow trader passes).
-                if self.state.node_trader.has_delegated():
+                trader = self.state.node_trader
+                if trader.has_delegated() or trader.standing():          # its own listed swaps too (2026-10-19)
                     self.state.talk_relay().hold(self.state.ensure_identity().public_bytes.hex())
             except Exception:
                 log.debug("holding the node's own talk rooms failed", exc_info=True)
@@ -123,6 +128,10 @@ class BlockWatcher:
             except Exception:
                 log.debug("pool coins failed", exc_info=True)
             self._run_trader()                       # delegated orders: every couple of seconds, not every pass of the slow loop
+            try:
+                self._run_watch()                    # swap claims at a page's pace (2026-10-19)
+            except Exception:
+                log.debug("swap watch failed", exc_info=True)
             self._stop.wait(POOL_SECONDS)
 
     #: How often each chain's mempool is read for coins on their way to an address (arcade/pool_coins.py).
@@ -266,14 +275,30 @@ class BlockWatcher:
                 log.debug("order import on %s failed", chain.network, exc_info=True)
 
     def _run_watch(self) -> None:
-        """Accounts' pre-signed swap claims and refunds (arcade/trade_watch.py), every 15 s:
-        what lets a swap finish with its tabs closed. Not behind node_trades -- it only ever
-        sends what an account signed itself, paying that account."""
-        if time.time() - getattr(self, "_watch_at", 0.0) < 15:
+        """Accounts' pre-signed swap claims and refunds (arcade/trade_watch.py): what lets a swap finish with its
+        tabs closed. Not behind node_trades -- it only ever sends what an account signed itself, paying that
+        account. Claims at a page's busy pace, 1.5 s (2026-10-19: order completions as fast as a client's
+        tab finishes them); refunds, which wait hours for their locktime, every 15 s."""
+        lock = self.__dict__.setdefault("_watch_lock", threading.Lock())
+        if not lock.acquire(blocking=False):
+            return                                   # the other loop is in a pass already
+        try:
+            self._watch_pass()
+        finally:
+            lock.release()
+
+    def _watch_pass(self) -> None:
+        now = time.time()
+        if now - getattr(self, "_watch_at", 0.0) >= 15:
+            self._watch_at = self._claims_at = now
+            said = self.state.trade_watch.tick(self.state.chain_rpc_for)
+        elif now - getattr(self, "_claims_at", 0.0) >= 1.5:
+            self._claims_at = now
+            said = self.state.trade_watch.tick(self.state.chain_rpc_for, claims_only=True)
+        else:
             return
-        self._watch_at = time.time()
-        for job, said in self.state.trade_watch.tick(self.state.chain_rpc_for):
-            log.info("swap watch: %s %s", job, said)
+        for job, what in said:
+            log.info("swap watch: %s %s", job, what)
 
     def _scan_collections(self) -> None:
         """Collections described by an inscription (2026-10-17: they appear "with no manual step"): every
@@ -384,20 +409,20 @@ class BlockWatcher:
         threading.Thread(target=back, name=f"arcade-{chain.network}-backfill", daemon=True).start()
 
     def _run_trader(self) -> None:
-        """This node's own lock-script trades, every 15 s -- only while the operator has
-        node-facilitated trades on (the trader checks the switch itself)."""
-        on = self.state.setting("node_trades", False)
+        """This node's own lock-script trades, every 15 s, whatever the node-facilitated trades switch says: that
+        switch is for clients through the web portal, not the operator's own trading (2026-10-19)."""
+        on = True
         trader = self.state.node_trader
         # A seller's delegated orders run whatever the switch (2026-10-17: orders "filled without the
         # counterparty being on Arcade"), every 2 s: the node must stay on the mesh (talk_relay ALIVE_FOR 12 s) and
         # answer a taker as fast as a page would.
+        # The pace a client's page keeps (wallet.js TRADE_BEAT_BUSY 1.5 s with a swap listed or running, TRADE_BEAT
+        # 8 s otherwise; 2026-10-19), for the node's own swaps and its clients' delegated orders alike.
         try:
-            delegated = trader.has_delegated()
+            busy = trader.has_delegated() or bool(trader.standing()) or bool(trader.book.open_trades())
         except Exception:                                  # noqa: BLE001
-            delegated = False
-        if not on and not delegated:
-            return
-        if time.time() - getattr(self, "_trader_at", 0.0) < (2 if delegated else 15):
+            busy = False
+        if time.time() - getattr(self, "_trader_at", 0.0) < (1.5 if busy else 8):
             return
         lock = self.__dict__.setdefault("_trader_lock", threading.Lock())
         if not lock.acquire(blocking=False):

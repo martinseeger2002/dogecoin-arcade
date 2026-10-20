@@ -319,6 +319,11 @@ def _addon_context(args, params, mode: str = "") -> "ChainContext | None":
             conf, datadir = home / params.node_conf, home
         elif cookie.exists():
             datadir = home
+        elif mode == "":
+            # No node of its own here and no choice made: borrowed from an arcade that shares it (2026-10-19:
+            # "Using borrowed nodes should be on by default"). Admin -> Chains still turns it off or runs it here.
+            return ChainContext(network=params.name, role="ledger", label=params.label, can_spend=True,
+                                borrowed=True)
         else:
             return None
     return ChainContext(network=params.name, role="ledger", label=params.label,

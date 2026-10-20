@@ -55,7 +55,10 @@ def test_a_wallet_hidden_is_kept_out_of_the_wallet_tab_but_its_address_stays(cli
 def test_each_chain_says_its_node_operators_and_numbers(client):
     from test_me_page import _seat
     app, state = client
-    assert app.get("/account/chain-stats").status_code == 403, "signed in only"
+    state.public = True
+    assert app.get("/account/chain-stats").status_code == 403, "signed in only, through the door"
+    state.public = False                                     # the operator's own Overview reads them too (2026-10-19)
+    assert app.get("/account/chain-stats").status_code == 200
     _seat(app)
     assert 'class="chain-stats' in app.get("/me").text
     said = app.get("/account/chain-stats").json()

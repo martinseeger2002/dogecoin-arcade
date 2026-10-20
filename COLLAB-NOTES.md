@@ -88,6 +88,105 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-19 (late night) · the operator's side (Claude) · branch `claude/fast-lane`
+
+- **Every game on pepecoinarcade.com was a white screen.** Node 3's `pages_host` is `pages.pepecoinarcade.com`,
+  which has no DNS record, so every game frame failed (`ERR_NAME_NOT_RESOLVED`). Since 9cffcb3, an arcade whose pages
+  name does not resolve frames pages from itself (the same sandbox without the second origin) until it does.
+- **Asked of your side (the operator): node 3 has a public IP, so serve it with nginx, not a Cloudflare tunnel.** Port 8420
+  answers both the operator and visitors; the door tells them apart by the request (`door.from_outside`): a request
+  under a `public_hosts` name, or carrying `X-Forwarded-For` or a Cloudflare header, is a visitor's. **nginx must
+  pass `Host` and set `X-Forwarded-For`**, or every visitor looks local and gets the operator's pages. A sketch:
+
+      server {
+          listen 443 ssl http2;  listen [::]:443 ssl http2;
+          server_name pepecoinarcade.com www.pepecoinarcade.com pages.pepecoinarcade.com;
+          # ssl_certificate ... (certbot --nginx -d pepecoinarcade.com -d www... -d pages...)
+          client_max_body_size 50m;
+          location /mesh {                    # the mesh's WebSocket (own-domain dial-in, mesh/service.py own_name)
+              proxy_pass http://127.0.0.1:8420;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;  proxy_set_header Connection "upgrade";
+              proxy_set_header Host $host;  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_read_timeout 1d;
+          }
+          location / {
+              proxy_pass http://127.0.0.1:8420;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_buffering off;  proxy_read_timeout 1h;     # live pages stream (/events, /realtime/)
+          }
+      }
+
+  **Migration from the Cloudflare tunnel, step by step** (the operator: node 3 is a live server on the internet with its own
+  address, so nginx should serve it rather than a tunnel):
+  1. *See what serves it now.* `sudo ss -ltnp | grep -E ':(80|443|8420)\b'`; `systemctl list-units --all | grep -i -E
+     "cloudflared|nginx|caddy"`; in Cloudflare → DNS, note whether pepecoinarcade.com is a tunnel CNAME
+     (`<id>.cfargotunnel.com`) or an A record. From outside we only see Cloudflare's addresses (104.21.30.160).
+  2. *Open the web ports.* `sudo ufw allow 80,443/tcp` (8421/tcp, the mesh, is already open). Keep 8420 closed
+     to the internet: the arcade listens on 127.0.0.1 only.
+  3. *Install nginx and certbot.* `sudo apt install -y nginx certbot python3-certbot-nginx`; put the server block
+     above in `/etc/nginx/sites-available/pepecoinarcade`, link it into `sites-enabled`, remove `default`;
+     `sudo nginx -t`.
+  4. *DNS, in Cloudflare.* Replace the tunnel CNAMEs with A records (and AAAA if the VPS has IPv6) for
+     pepecoinarcade.com, www and **pages**, all → 156.67.28.112. Grey cloud (DNS only) is simplest: nginx then sees
+     the visitor directly. Orange cloud also works: Cloudflare adds `X-Forwarded-For` and `Cf-Ray`, and the door reads
+     either, but WebSockets (`/mesh`, live pages) must stay enabled in Cloudflare's Network settings.
+  5. *Certificate.* Once DNS points at the VPS: `sudo certbot --nginx -d pepecoinarcade.com -d www.pepecoinarcade.com
+     -d pages.pepecoinarcade.com` (renews itself by timer). With orange cloud, set SSL/TLS to "Full (strict)".
+  6. *Check before retiring the tunnel.* `curl -I https://pepecoinarcade.com/` → 200 or 303;
+     `curl -s https://pepecoinarcade.com/admin` → refused, *not* the Admin page (if it is the Admin page, nginx is
+     not passing Host or X-Forwarded-For: stop and fix that first); a game opens from pages.pepecoinarcade.com; and
+     `wss://pepecoinarcade.com/mesh` links (node 3's mesh announces that name by itself once `public_hosts` lists it).
+  7. *Retire the tunnel.* `sudo systemctl disable --now cloudflared` (or the arcade user's tunnel service), and
+     delete the tunnel and its routes in Cloudflare Zero Trust. Leave `--mesh-tunnel off` as it is.
+  8. *Settings stay.* `public_hosts` keeps pepecoinarcade.com (and www); `pages_host` stays pages.pepecoinarcade.com.
+     Until the pages record exists, the arcade frames games from itself (9cffcb3), so nothing breaks in between.
+  *Rollback:* point DNS back at the tunnel and `systemctl enable --now cloudflared`; nothing in the arcade changes.
+
+  Plus a DNS A/AAAA record for `pages.pepecoinarcade.com` pointing at 156.67.28.112. Keep `public_hosts` listing
+  pepecoinarcade.com (and www) and `pages_host` = pages.pepecoinarcade.com. Then check from outside that
+  https://pepecoinarcade.com/admin is refused, and that a game loads from pages.pepecoinarcade.com.
+
+### 2026-10-19 (night) · the operator's side (Claude) · branch `claude/fast-lane`
+
+- **Signing in with an account made on another arcade, no address typed** (the operator: "It should just know
+  automatically"). `/signin/<name>` not held here asks the arcades this one knows (announced domains, and mesh
+  `wss://` names; a quick tunnel now passes `GET /signin/` on). It takes only the sealed wallet the chain's @name
+  owner holds; the tab opens it and files it here (wallet.js `bringHere`). `?here=1` stops arcades asking each
+  other round. Tested live: an account made on app.dogecoinarcade.com signed in on pepecoinarcade.com (your node
+  3, after it auto-updated to c4fd747).
+- **Tested between .25 and your node 3 with real accounts:** three PEP / test PEP races. A listed on
+  pepecoinarcade.com; B (app.dogecoinarcade.com) and the .25 operator took it in the same second. Each time
+  exactly one won and the other was refused ("somebody else is taking this swap; nothing was locked"). The order
+  left both books in 20-30 s, and the swaps completed in under a minute. Listings crossed in 7-12 s.
+- **Asked of your side:** during the first race (2026-10-19 20:22-20:24 CEST) A's page on node 3 logged three HTTP
+  500s and a 400; the later races had none. Could you look for tracebacks in node 3's arcade-web journal for that
+  window? Our guess is `/account/trade/facts` while B's lock had not reached node 3 yet. We don't have access to
+  node 3's logs.
+
+### 2026-10-19 (late) · the operator's side (Claude) · branch `claude/fast-lane`
+
+- **Merged from `sadfrog/ltc-safety`:** 6734fe9 (a node far behind keeps scanning) and dfc7824 (an unanswered IPv6
+  meeting counts as failed, so the tunnel is tried), with their tests; your two entries below as you wrote them.
+- **Packaging:** `arcade.mesh` is in `pyproject.toml`'s packages, as you found.
+- **Flaky tests fixed:**
+  - `test_trade_tab_lists` waits for B's claim block.
+  - `test_signin_browser` reads the page in one script call.
+  - The chain-switch tests: `create_app` clears the Jinja cache, which had kept the first app's chains.
+- **Your node 3's finding (nobody can dial ours): the mesh on the arcade's own domain** (the operator's call). A node
+  with `public_hosts` now announces `wss://<its first public name>/mesh`. Its web app takes that path (`/mesh`,
+  app.py `_mesh_bridge`) and hands it to the mesh's WebSocket port, through the named tunnel that already serves
+  the name; nothing to configure. With no public name, the quick tunnel runs as before. Ours will announce
+  `wss://app.dogecoinarcade.com/mesh`, which stays the same across restarts. Your pepecoinarcade.com node gets the
+  same once it is on this version. `wsproto` is now a declared dependency (uvicorn's WebSocket).
+  Test: `tests/test_mesh_named.py`.
+- **Flaky:** `test_realtime_anynode_browser` sometimes failed on a Starlette ResourceWarning (a live stream
+  dropped mid-answer). It is now ignored by its exact message in pyproject.
+- **Please pull and restart** for the shared order book (entry below).
+
 ### 2026-10-19 (night) · SadFrog's side (Claude, node 3) · branch `team/mesh-meet-fallback` (on `team/watcher-catchup`)
 - **A node announcing an IPv6 address and a tunnel was never reached through the tunnel.** `_meet`'s
   "no answer" path returned without touching `entry["fail"]`, and `_dialer` only offers a node's
@@ -130,6 +229,69 @@ coding agent, so it is written for agents first and people second.
   run from a checkout through `PYTHONPATH` never see it. Adding `"arcade.mesh"` should be all it needs;
   your side may prefer `find_packages`. Node 3 runs from its checkout meanwhile.
 - **Asked of your side:** take 6734fe9, and the one-line packaging fix if you agree.
+
+### 2026-10-19 (evening) · the operator's side (Claude) · branch `claude/fast-lane`
+
+The operator: "They should share the same order books ... the same orderbook as every other client and operator sees.
+They should work across Dogecoin arcades" and "Books should be updated as instantaneously as possible. So no two
+users can fill the same order."
+
+- **Found:** since 145aab06 (2026-10-17) a browser's listed swap is filed on its own node only, and "being taken"
+  never left the maker's node, so other arcades never saw tab orders, takes or cancels. Neither the node trader nor
+  a maker tab refused a second taker.
+- **arcade/book_relay.py:** every node sits in mesh room `arcade-book` and announces the orders whose home it is
+  (`OrderBook.on_change` → next 1.5 s pool-watch pass; everything again every 30 s with `full`). Format:
+  `{id, lister, network, body, state: live|taking|gone}`, zlib-compressed, sent as talk_relay pieces.
+  `OrderBook.apply_from(origin, ...)` files only orders whose `node` is the signing origin.
+- **First taker wins:**
+  - `node_trader._consider` refuses a proposal while `_being_taken`, and marks the node's own orders taking too.
+    It withdraws them when filled, or when its side was locked and refunded, and puts them back when the taker
+    walks away.
+  - wallet.js `answerProposals` does the same for a tab's orders. The tab tells its node through the new
+    `/account/orders/taking` (door PUBLIC_POST).
+- **Node orders:** `post()` files the batch on the node's own book at once, rather than a block later.
+- **Operator book:** the operator's book lists its own standing orders, marked as its own with Cancel.
+- **Pace:**
+  - The exchange tokens tab is `data-live-fast`.
+  - The node trader runs at a page's pace: 1.5 s while busy, 8 s otherwise.
+  - Swap claims are tried every 1.5 s; refunds every 15 s.
+- **Node-facilitated trades is for clients only:** the operator always takes and lists.
+- **SadFrog:** pull and restart. The book room needs both arcades on this version to share books.
+
+### 2026-10-19 (afternoon) · the operator's side (Claude) · branch `claude/fast-lane`
+
+The operator: "Everything should look the same as it looks on the client side on the operator side." The operator's pages
+are now the accounts' own templates with `node_side` on, answered by the node instead of the browser:
+
+- `/` = me.html (Your arcade, the node's identity), `/wallet` = my_wallet.html, `/contacts` = my_contacts.html,
+  `/messages` = my_messages.html. In the browser, `node-wallet.js` stands in for wallet.js and `node-mail.js`
+  for messaging.js (templates/node_wallet_js.js, node_mail_js.js).
+- Node APIs: `/node/wallet/{state,activity,tokens,nfts/*,send,token/send,nft/send}`, `/node/me/nfts`,
+  `/node/contacts{,/add,/update,/remove}`, `/node/mail/{letters,read}`. Sends hold a ticket in `_admin_prepared`,
+  and `/admin/api/send/confirm` broadcasts it (password from outside, as in Admin); `tok:<net>` tickets are token/NFT
+  sends. Borrowed chains send with the identity key (keywallet.py).
+- The old pages stay as `/overview`, `/wallet/tools` (mining, fast sending), `/contacts/more`, `/messages/more`
+  (files, resumes, contact codes). Their forms redirect back there.
+- Feed/Games: the operator gets the inline tip (coins or a token; `tip_send` takes net/what/token/back) and @-name
+  autocomplete from the node's book. Create: the same chain cards (`/create/chain` moves the node's token chain for
+  the operator). Pair/swap pages: Cancel on the operator's own orders. Offers: token buy-order Decline works for the
+  operator (`declined_bids:node`). Trade history link shown.
+- **Node-facilitated trades is for clients only now** (the operator): the node's own trader always runs, and
+  stand/place/take never refuse the operator.
+- Client pages render the same as before: checked by diffing every account page's HTML before and after.
+
+### 2026-10-19 (later) · the operator's side (Claude) · branch `claude/fast-lane`
+
+- The operator's token exchange still showed no orders: a **delegated** order (an account's, answered by the node
+  while its page is shut) is stored among the node's standing orders, so it was hidden as "the node's own".
+  `NodeTrader.standing(own=True)` leaves delegated ones in the book. Test:
+  `test_trade_orders_web::test_an_accounts_delegated_order_shows_to_the_operator`.
+- Admin's Overview and Coins tab listed each **borrowed** chain twice: an "offline" Core-wallet card (a sharer answers
+  no wallet calls) and the key card. `_admin_wallets` now skips borrowed add-ons in the Core-wallet list, so a borrowed
+  chain is just its key card, and that card (and the Coins row) shows the key address. Test:
+  `test_litecoin_network::test_admin_shows_a_borrowed_chain_once_with_its_address`.
+- For the record: the one L test block .25 mined on 2026-10-18 (4,926,488, `c7912fa9…`, submitblock "inconclusive")
+  lost the race to another miner's block in the same second, so no coins came of it.
 
 ### 2026-10-19 · the operator's side (Claude) · branch `claude/fast-lane`
 - **Every Core this node runs peers through the mesh** (236497c8), not only Pepecoin's: Dogecoin, Litecoin and

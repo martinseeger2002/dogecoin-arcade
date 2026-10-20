@@ -159,6 +159,17 @@ class Session:
     queue: asyncio.Queue
 
 
+def own_name(state) -> str | None:
+    """wss://<this arcade's public name>/mesh, when it has one (`public_hosts`, set by the domain wizard or by
+    hand): its web app takes the mesh there (app.py `/mesh`), through the named tunnel that already serves it."""
+    pages = (getattr(state, "pages_hostname", "") or "").lower()
+    for host in getattr(state, "public_hosts", ()) or ():
+        host = str(host or "").strip().lower()
+        if host and host != pages and "." in host and not host.startswith(("localhost", "127.")):
+            return f"wss://{host}/mesh"
+    return None
+
+
 class MeshService:
     def __init__(self, network: str, key: nacl.signing.SigningKey, *,
                  listen_host: str | None = None, listen_port: int | None = DEFAULT_PORT,
@@ -175,7 +186,8 @@ class MeshService:
                  max_inbound: int | None = None,
                  tunnel: str | None = None,
                  ws_port: int | None = None,
-                 web_port: int | None = None):
+                 web_port: int | None = None,
+                 named_url: Callable[[], str | None] | None = None):
         """`verify(address, signature, message)` asks a Core node; `announced()`
         lists the chain's mesh announcements; `announce(host, port)` publishes
         this node's; `announce_at` fixes the address by hand; `observe()` lists
@@ -202,6 +214,10 @@ class MeshService:
         self.meet: str | None = None            # the IPv6 address peers meet this node at
         # The cloudflared program to run a quick tunnel with, or None (wsock.py, notes above).
         self.tunnel_cmd = tunnel
+        # This arcade's own wss:// address on its own domain, or None (2026-10-19: "Since we have a domain, we
+        # can have a named tunnel through our domain, but if somebody doesn't have a domain connected, it should just
+        # use a temporary Cloudflare tunnel"). Asked every round: a domain set later takes over from the quick tunnel.
+        self.named_url = named_url
         self.core = None                        # corelink.CoreBridge, when Core rides the mesh
         self.coreshare = None                   # coreshare.CoreShare: Cores shared with, and borrowed from, other arcades
         self.indexcheck = None                  # indexcheck.IndexCheck: indexes compared with other arcades'
@@ -214,7 +230,7 @@ class MeshService:
         self._tunnel_proc = None
         self.node = MeshNode(key, network, listen_host=listen_host, listen_port=listen_port,
                              peers=peers or [], vouch=self._vouch,
-                             ws_port=(ws_port if ws_port is not None else 0) if tunnel else None,
+                             ws_port=(ws_port if ws_port is not None else 0) if (tunnel or named_url) else None,
                              web_port=web_port,
                              **({"max_inbound": max_inbound} if max_inbound else {}))
         self.node_id = self.node.node_id
@@ -279,7 +295,7 @@ class MeshService:
             self.node._spawn(self._peer_keeper())
         if self.announce is not None and (self.announce_at or self.observe):
             self.node._spawn(self._announcer())
-        if self.tunnel_cmd and self.node.ws_port:
+        if (self.tunnel_cmd or self.named_url) and self.node.ws_port:
             self.node._spawn(self._tunneler())
         if self.stun_port:
             self.node._spawn(self._stun_server())
@@ -428,6 +444,27 @@ class MeshService:
         home = tempfile.mkdtemp(prefix="arcade-tunnel-")  # no ~/.cloudflared/config.yml: a quick tunnel
         while True:
             try:
+                named = None
+                try:
+                    named = self.named_url() if self.named_url else None
+                except Exception:                      # noqa: BLE001 -- asked again next round
+                    named = None
+                if named:
+                    # The arcade's own name, through whatever already serves it (its named tunnel): fixed, so it is
+                    # announced once and stays dialable across restarts. No quick tunnel beside it.
+                    if self._tunnel_proc is not None:
+                        await self._tunnel_stop()
+                    self.tunnel_url = named
+                    if self.tunnel_url != self._tunnel_said and self.announce is not None:
+                        await asyncio.to_thread(self._announce_locked, self.tunnel_url, 443)
+                        self._tunnel_said = self.tunnel_url
+                        log.info("mesh: announced this node's own name %s", self.tunnel_url)
+                    await asyncio.sleep(TUNNEL_EVERY)
+                    continue
+                if not self.tunnel_cmd:
+                    self.tunnel_url = None
+                    await asyncio.sleep(TUNNEL_EVERY)
+                    continue
                 # Kept up even when an address is proved (2026-10-12): the tunnel is also how a
                 # BROWSER reaches this node over https, to use it as its way in (realtime.py).
                 # Nodes dialling nodes still prefer a direct address (node.py _dialer).
@@ -699,7 +736,7 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
         announce_at=announce_at, observe=observe, public_port=public_port,
         remember=Path(state.home) / "mesh-announced.json", own_v6=own_ipv6,
         peers_file=Path(state.home) / "mesh-peers.json", max_inbound=max_inbound,
-        tunnel=tunnel, web_port=web_port)
+        tunnel=tunnel, web_port=web_port, named_url=lambda: own_name(state))
     if core:
         # Core to Core through the mesh (corelink.py): each chain's own peer port, and its addnode. Every chain whose
         # Core runs here -- Pepecoin main and test, and Dogecoin, Litecoin and LTC TEST when this node runs them
@@ -720,6 +757,19 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
         def addnode(name: str, hostport: str, op: str):
             with by_name[name].rpc() as rpc:
                 return rpc.call("addnode", hostport, op)
+
+        # The bridge's peers from before this start: an arcade that stops (a restart) never says `addnode remove`,
+        # and Core keeps them, dialing dead local ports -- 150 each on .25's Pepecoin Cores after a day of deploys
+        # (2026-10-19, the operator: "we have like 11 peers"). No bridge port is live yet, so every 127.0.0.1 one goes.
+        for name in chains:
+            try:
+                with by_name[name].rpc() as rpc:
+                    for row in rpc.call("getaddednodeinfo") or []:
+                        added = str(row.get("addednode") or "")
+                        if added.startswith("127.0.0.1:"):
+                            rpc.call("addnode", added, "remove")
+            except Exception:                              # noqa: BLE001 -- a Core away: tidied next start
+                log.debug("mesh: could not tidy %s's added peers", name, exc_info=True)
         service.core = CoreBridge(chains, addnode)
         service.node.add_extension(service.core)
     service.coreshare = shared_cores(state)

@@ -60,7 +60,7 @@ def test_a_syncing_litecoin_is_shown_and_never_used(client, monkeypatch):
     assert ltc in state.all_chains, "shown"
     assert ltc not in state.token_chains, "but nothing works on it yet"
     assert state.rpc_chain("ltc") is None
-    page = app.get("/").text
+    page = app.get("/overview").text
     assert "Litecoin" in page and "Opens when its node has synced: 91.2% so far." in page
 
 
@@ -84,7 +84,10 @@ def test_litecoin_runs_here_when_its_node_is_there_or_borrowed_or_off_as_chosen(
     assert borrowed.borrowed and borrowed.label == "Litecoin"
     assert launcher._addon_context(argparse.Namespace(**{**vars(args), "no_ltc": True}), NETWORKS["ltc"], "") is None
     none_here = argparse.Namespace(no_ltc=False, ltc_conf=None, ltc_datadir=None, home=str(tmp_path))
-    assert launcher._addon_context(none_here, NETWORKS["ltc"], "") is None, "no node, no choice: off"
+    # No node, no choice: borrowed from an arcade that shares it (2026-10-19: "Using borrowed nodes should be
+    # on by default"). Still off when the operator says so.
+    got = launcher._addon_context(none_here, NETWORKS["ltc"], "")
+    assert got is not None and got.borrowed, "no node, no choice: borrowed"
 
 
 def test_litecoin_coins_are_guarded_like_the_others(app_state, monkeypatch):
@@ -237,7 +240,7 @@ def test_the_wallet_names_litecoin_testnet_test_and_mines_it_here(client, monkey
     # a fresh one sees this app's chain_menu.
     from arcade.web import app as appmod
     appmod.TEMPLATES.env.cache.clear()
-    page = app.get("/wallet").text
+    page = app.get("/wallet/tools").text
     # Since 2026-10-19 the Wallet's chains are picked by the page's own picker (one section per chain label), not the
     # node-global token chain switch, which moved every non-account page of the node at once.
     assert 'class="chainswitch"' not in page.split("</h1>", 1)[0]
@@ -246,6 +249,28 @@ def test_the_wallet_names_litecoin_testnet_test_and_mines_it_here(client, monkey
     assert 'class="keyedsend" data-which="key:ltctest"' in page, "sent from the Wallet, not only from Admin"
     assert "addr-ltctest" in page and 'data-net="ltctest"' in page, "mined here"
     assert 'data-net="ltc"' not in page, "real coins are never mined"
+
+
+def test_admin_shows_a_borrowed_chain_once_with_its_address(client, monkeypatch):
+    """2026-10-19: Admin's Overview read "offline" for L main and L test, and again 0 beside them. A borrowed
+    chain has no Core wallet here, so it is only its key card, and that card names the address."""
+    from arcade.web.state import ChainContext
+    from arcade import keywallet
+    app, state = client
+    ltc = ChainContext(network="ltc", role="ledger", label="Litecoin", conf=pathlib.Path("/x"), borrowed=True)
+    ltctest = ChainContext(network="ltctest", role="ledger", label="Litecoin testnet", conf=pathlib.Path("/x"),
+                           borrowed=True)
+    monkeypatch.setattr(state, "ltc", ltc, raising=False)
+    monkeypatch.setattr(state, "ltc_test", ltctest, raising=False)
+    real = type(state).chain_sync
+    monkeypatch.setattr(type(state), "chain_sync", lambda self, chain: {"ready": True, "progress": 1.0, "online": True}
+                        if chain.is_litecoin else real(self, chain))
+    monkeypatch.setattr(keywallet, "balance", lambda st, c: {"spendable": "0", "balance": "0",
+                                                            "address": f"addr-{c.network}"})
+    wallets = app.get("/admin/api/state").json()["wallets"]
+    lit = [w for w in wallets if w["network"] in ("ltc", "ltctest")]
+    assert sorted(w["which"] for w in lit) == ["key:ltc", "key:ltctest"], "no Core wallet card for a borrowed chain"
+    assert all(w["address"] == f"addr-{w['network']}" and "error" not in w for w in lit)
 
 
 def test_a_page_reads_the_tag_chain_whatever_the_operators_view(client, monkeypatch):
@@ -265,3 +290,39 @@ def test_a_page_reads_the_tag_chain_whatever_the_operators_view(client, monkeypa
     asked.clear()
     app.get(f"/r/balances/{LTC_L}")
     assert "ltc" in asked, "a Litecoin address is read on Litecoin"
+
+
+def test_a_page_never_waits_for_a_borrowed_chains_answer(client, monkeypatch):
+    """2026-10-19: pepecoinarcade.com borrows Dogecoin and Litecoin over the mesh, and a page drawing its chain menu
+    waited for the far arcade's answer (Exchange 25 s, feed 3-7 s). chain_sync answers from what is known, at once,
+    and asks on a thread of its own."""
+    import threading
+    import time as _t
+    from arcade.web.state import ChainContext
+    app, state = client
+    ltc = ChainContext(network="ltc", role="ledger", label="Litecoin", conf=pathlib.Path("/x"), borrowed=True)
+    gate = threading.Event()
+
+    class Slow:
+        def __enter__(self):
+            gate.wait(5)
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get_blockchain_info(self):
+            return {"blocks": 10, "headers": 10, "verificationprogress": 1.0, "initialblockdownload": False}
+    monkeypatch.setattr(ChainContext, "rpc", lambda self: Slow())
+    monkeypatch.setattr(type(state), "FIRST_SYNC_WAIT", 0.3)
+    t = _t.time()
+    first = state.chain_sync(ltc)
+    assert _t.time() - t < 1.0 and first["ready"] is False, "a short wait for the first answer, then not ready"
+    t = _t.time()
+    state.chain_sync(ltc)
+    assert _t.time() - t < 0.5, "and no wait at all while that answer is still on its way"
+    gate.set()
+    end = _t.time() + 5
+    while _t.time() < end and not state.chain_sync(ltc).get("ready"):
+        _t.sleep(0.05)
+    assert state.chain_sync(ltc)["ready"] is True, "and ready once it has answered"

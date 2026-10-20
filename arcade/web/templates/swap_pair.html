@@ -94,6 +94,9 @@
         <span class="obdo">
           {%- if o.mine and viewer == 'account' %}<button type="button" class="ghost small" data-mine-id="{{ o.id }}"
                   data-cancel-order="{{ o.id }}">Cancel</button>
+          {%- elif o.mine and o.id %}<form method="post" action="/exchange/trade-orders/withdraw" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="back" value="{{ here }}">
+            <input type="hidden" name="order" value="{{ o.id }}"><button type="submit" class="ghost small">Cancel</button></form>
           {%- elif o.mine %}<span class="muted" style="font-size:.74rem">yours</span>
           {%- elif can_trade_orders %}
           <form method="post" action="/exchange/trade-orders/take" style="margin:0">

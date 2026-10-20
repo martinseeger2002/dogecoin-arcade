@@ -10,9 +10,17 @@
 .faceopt.on{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 30%,transparent)}
 </style>
 <h1 id="hello">Your arcade</h1>
+{% if node_side %}
+{# The operator's Overview is this page, about the node's own identity (2026-10-19: "Everything should look
+   the same as it looks on the client side on the operator side"). The node's controls are in Admin. #}
+<p class="sub" id="whoami">This node's own identity. Its keys are in its wallet on this machine; the node's settings
+  are in <a href="/admin">Admin</a>.</p>
+<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>
+{% else %}
 <p class="sub" id="whoami">Your keys are in this browser. This node holds
   none of them &mdash; it builds what you ask for, you sign it, and it
   broadcasts.</p>
+{% endif %}
 
 {# 2026-09-25: "instead of displaying your wallet address it should just
    display your @name ... Simplify that page." You first -- your face, your @name,
@@ -65,6 +73,8 @@
     <h2 style="margin-top:0">Claim your name</h2>
     <p class="muted" style="margin:0 0 10px">Your name is yours once it is
       on the chain. Until then it is only this node's note of it.</p>
+    {% if node_side %}<div class="row" style="gap:8px;margin:0 0 10px"><input id="claim-name" autocomplete="off"
+      spellcheck="false" class="mono" placeholder="the name people will see" maxlength="32"></div>{% endif %}
     <button class="btn primary" id="claim">Claim it</button>
   </div>
   <div class="panel" id="announce-panel" hidden>
@@ -78,9 +88,14 @@
       nothing to press &mdash; a second announcement would be a second
       transaction saying the same thing.</p>
   </div>
+  {% if node_side %}
+  <p class="muted mebackup"><strong>The node's wallet is its identity.</strong> <a href="/backup">Back it up</a>
+    if you have not.</p>
+  {% else %}
   <p class="muted mebackup"><strong>Your twelve words are your account.</strong> There is no
     reset &mdash; <a href="/me/backup">back them up</a> if you have not.
     (Forgot your password? <a href="/restore">Restore with the words</a>.)</p>
+  {% endif %}
 
   {# The profile editor (2026-09-26: "there's no way to update your
      profile picture, bio, URL" -- it was there, folded into two <details> whose
@@ -241,7 +256,7 @@
     var said = document.getElementById('wallet-chains-said');
     document.querySelectorAll('.wallet-chain').forEach(function (box) {
       box.onchange = function () {
-        fetch('/account/wallets', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+        fetch('/account/wallets', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'{% if node_side %}, 'X-Arcade-Admin': '1'{% endif %}},
                                    body: JSON.stringify({network: box.dataset.network, shown: box.checked})})
           .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); })
           .then(function () { said.textContent = 'Saved.'; })
@@ -252,7 +267,7 @@
   </script>
 </div>
 
-<div class="panel" style="margin-top:14px">
+<div class="panel" style="margin-top:14px"{% if node_side %} hidden{% endif %}>
   <h2 style="margin-top:0">Your usage</h2>
 <div id="room" hidden>
   <p class="muted" style="margin:0 0 12px;font-size:.88rem">What this node lets one account do, and how much of it you have used. It opens again as the hour goes on.</p>
@@ -290,8 +305,8 @@
 </style>
 
 <script type="module">
-import * as wallet from "/wallet.js";
-import * as mail from "/messaging.js";
+import * as wallet from "{{ '/node-wallet.js' if node_side else '/wallet.js' }}";
+import * as mail from "{{ '/node-mail.js' if node_side else '/messaging.js' }}";
 
 const $ = (id) => document.getElementById(id);
 const say = (text) => { $("trouble").textContent = text;
@@ -372,7 +387,7 @@ function drawWallets(said) {
   }
   const open = document.createElement("a");
   open.className = "stat";
-  open.href = "/me/wallet";
+  open.href = {{ ('/wallet' if node_side else '/me/wallet')|tojson }};
   open.style.cssText =
     "display:flex;align-items:center;justify-content:center;" +
     "text-decoration:none;font-size:1.05rem;font-weight:600";
@@ -634,7 +649,7 @@ async function loadFacePicker() {
   if (pickedOnce) return;
   pickedOnce = true;
   try {
-    const said = await (await fetch("/account/nfts")).json();
+    const said = await (await fetch({{ ('/node/me/nfts' if node_side else '/account/nfts')|tojson }})).json();
     const pieces = [];
     for (const chain of said.chains || []) {
       for (const piece of chain.pieces || []) {
@@ -779,7 +794,7 @@ document.body.dataset.meReady = "yes";
 </script>
 {# At the very bottom, and nowhere else in the app but the sign-in page (the operator,
    2026-09-28). #}
-<div style="text-align:center;margin:40px 0 10px">
+<div style="text-align:center;margin:40px 0 10px"{% if node_side %} hidden{% endif %}>
   <button type="button" class="small ghost" id="sign-out">Sign out</button>
 </div>
   <script type="module">

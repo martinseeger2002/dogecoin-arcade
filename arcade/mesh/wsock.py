@@ -252,8 +252,11 @@ async def serve(handler, host: str, port: int, http_port: int | None = None) -> 
         lines = head.decode("latin-1").split("\r\n")
         got = {k.strip().lower(): v.strip() for k, _, v in (l.partition(":") for l in lines[1:] if ":" in l)}
         parts = lines[0].split(" ")
-        if http_port and len(parts) >= 2 and parts[1].startswith("/realtime/") and ".." not in parts[1] \
-                and parts[0] in ("GET", "POST", "OPTIONS", "HEAD"):
+        # And an account's sealed wallet by name (/signin/<name>, GET only): another arcade signing that account in
+        # asks for it (app.py _vault_elsewhere; 2026-10-19: "It should just know automatically").
+        if http_port and len(parts) >= 2 and ".." not in parts[1] and (
+                (parts[1].startswith("/realtime/") and parts[0] in ("GET", "POST", "OPTIONS", "HEAD"))
+                or (parts[1].startswith("/signin/") and parts[0] == "GET")):
             await _proxy(head, reader, writer, http_port)
             return
         if len(parts) < 2 or parts[0] != "GET" or parts[1].split("?")[0] != PATH \

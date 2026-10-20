@@ -403,6 +403,23 @@ class NodeTrader:
         except Exception:                                  # noqa: BLE001 -- a node without the order book
             pass
 
+    def _being_taken(self, order_id: str) -> bool:
+        """A swap on this order is under way: accepted, and neither done nor called off."""
+        with self._db() as conn:
+            ids = [r["id"] for r in conn.execute("SELECT id FROM link WHERE order_id=? AND agreed=1", (order_id,))]
+        for tid in ids:
+            t = self.book.get(tid)
+            if t is not None and t.state not in ("done", "aborted"):
+                return True
+        return False
+
+    def _own_order_of(self, trade_id: str) -> str:
+        """The node's own standing order a swap answers ("" for a delegated one, or none)."""
+        with self._db() as conn:
+            row = conn.execute("SELECT order_id FROM link WHERE id=?", (trade_id,)).fetchone()
+        oid = row["order_id"] if row else ""
+        return oid if oid and self.delegated(oid) is None else ""
+
     def _order_of(self, trade_id: str) -> dict | None:
         with self._db() as conn:
             row = conn.execute("SELECT order_id FROM link WHERE id=?", (trade_id,)).fetchone()
@@ -443,11 +460,15 @@ class NodeTrader:
     POST_EVERY = 12 * 3600
     ORDER_LIFE = 24 * 3600
 
-    def standing(self) -> list[dict]:
+    def standing(self, own: bool = False) -> list[dict]:
+        """Every order this node answers; `own`: only the node's own, not an account's delegated to it (2026-10-19:
+        the operator's exchange hid @apple's delegated order as the node's own)."""
         import json
         with self._db() as conn:
             rows = conn.execute("SELECT * FROM standing_order ORDER BY id").fetchall()
-        return [{"id": r["id"], "give": json.loads(r["give"]), "get": json.loads(r["get"])} for r in rows]
+            held = {r["order_id"] for r in conn.execute("SELECT order_id FROM delegated")} if own else set()
+        return [{"id": r["id"], "give": json.loads(r["give"]), "get": json.loads(r["get"])} for r in rows
+                if r["id"] not in held]
 
     def withdraw(self, order_id: str) -> None:
         with self._db() as conn:
@@ -483,6 +504,13 @@ class NodeTrader:
         from . import inscribe as inscribelib, trade_orders as O
         from .messaging.sender import MessageSender, funded_address
         body = self.batch(node_id)
+        # On this node's book (and so every arcade's, book_relay.py) at once, not a block later (2026-10-19).
+        home = self.state.derived_address or ""
+        if home:
+            try:
+                self.state.trade_orders.file_batch(home, self.messaging.network, f"node-{node_id[:16]}", body)
+            except Exception:                              # noqa: BLE001 -- the inscription files it anyway
+                pass
         plan = inscribelib.plan(body, O.CONTENT_TYPE, "")
         with self.messaging.rpc() as rpc:
             sender = MessageSender(rpc, self.messaging.params, public_only=True)
@@ -564,6 +592,12 @@ class NodeTrader:
             courier.send(self.state, self.messaging, bytes.fromhex(peer),
                          M.build("cancel", said["id"], reason="no such order here"))
             return
+        if self._being_taken(said["order"]):
+            # First taker wins (2026-10-19: "no two users can fill the same order"): a lock moves the whole
+            # order, so a second swap on it could only end in a refund.
+            courier.send(self.state, self.messaging, bytes.fromhex(peer),
+                         M.build("cancel", said["id"], reason="somebody else is taking this order"))
+            return
         want_give, want_get = json.loads(order["give"]), json.loads(order["get"])
         they_give, they_get = M.leg_from(said["give"]), M.leg_from(said["get"])
         mine = (held["held"] if held else self.key).pubkey.hex()
@@ -584,10 +618,9 @@ class NodeTrader:
         self.book.save(trade)
         with self._db() as conn:
             conn.execute("INSERT INTO link(id, peer, agreed, order_id) VALUES(?,?,1,?)",
-                         (trade.id, peer, said["order"] if held else ""))
+                         (trade.id, peer, said["order"]))
             conn.execute("INSERT OR REPLACE INTO meta(k, v) VALUES(?, ?)", (f"accepted:{trade.id}", str(time.time())))
-        if held:
-            self._taking(said["order"], True)
+        self._taking(said["order"], True)                  # off every book while this swap runs (2026-10-19)
         courier.send(self.state, self.messaging, bytes.fromhex(peer), M.build("accept", trade.id))
 
     def _note(self, said: dict) -> None:
@@ -769,14 +802,15 @@ class NodeTrader:
         theirs = _pointer(link["their_lock"])
         give_chain, get_chain = self.chains[trade.give.network], self.chains[trade.get.network]
         held = self._order_of(trade.id)
+        own = self._own_order_of(trade.id)                 # the node's own order, taken the same way (2026-10-19)
         key = held["held"] if held else self.key
-        if held and not mine and not theirs:
+        if (held or own) and not mine and not theirs:
             with self._db() as conn:
                 row = conn.execute("SELECT v FROM meta WHERE k=?", (f"accepted:{trade.id}",)).fetchone()
             if row and now - float(row["v"]) > self.TAKER_WAIT:
                 trade.state, trade.note = "aborted", "the taker never locked their side, so nothing was locked"
                 self.book.save(trade)
-                self._taking(held["order_id"], False)          # the order stands again
+                self._taking(held["order_id"] if held else own, False)   # the order stands again
                 return T.ABORT, trade.note
         home_give = held["deposit"][trade.give.network] if held else self._address(trade.give.network)
         home_get = held["payout"][trade.get.network] if held else self._address(trade.get.network)
@@ -821,6 +855,16 @@ class NodeTrader:
                     "refunded", trade.id, network=trade.give.network, txid=txid))
             elif step in (T.DONE, T.ABORT):
                 trade.state = "done" if step == T.DONE else "aborted"
+                if own and (step == T.DONE or mine):
+                    # The node's own order, taken whole (or its side locked and refunded): it never stands again.
+                    self.withdraw(own)
+                    try:
+                        self.state.trade_orders.cancel_id(own)
+                        self.state.bump_generation()
+                    except Exception:                      # noqa: BLE001 -- a node without the order book
+                        pass
+                elif own:
+                    self._taking(own, False)               # nothing of the node's was locked: it stands again
                 if held and step == T.ABORT and not mine:
                     self._taking(held["order_id"], False)       # nothing of the seller's left the deposit
                 elif held and step == T.ABORT:

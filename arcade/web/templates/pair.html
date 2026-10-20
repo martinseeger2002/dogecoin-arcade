@@ -81,6 +81,10 @@
         <span class="obdo">
           {%- if o.mine and not o.pending and viewer == 'account' %}<button type="button" class="ghost small"
               data-cancel-side="ask" data-cancel-price="{{ o.price_shown }}">Cancel</button>
+          {%- elif o.mine and not o.pending and viewer == 'wallet' %}<form method="post" action="/exchange/order/cancel" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="property_id" value="{{ prop.property_id }}">
+            <input type="hidden" name="side" value="ask"><input type="hidden" name="price" value="{{ o.price_shown }}">
+            <button type="submit" class="ghost small">Cancel</button></form>
           {%- elif o.taking and not o.free %}<span class="muted" style="font-size:.74rem">being bought</span>
           {%- elif not o.mine and not o.pending and fills_ready and viewer == 'account' %}
           <input class="take-amount" data-order="{{ o.txid }}" hidden
@@ -132,6 +136,10 @@
               data-standing-cancel="{{ o.standing }}">Cancel</button>
           {%- elif o.mine and not o.pending and viewer == 'account' %}<button type="button" class="ghost small"
               data-cancel-side="bid" data-cancel-price="{{ o.price_shown }}">Cancel</button>
+          {%- elif o.mine and not o.pending and viewer == 'wallet' %}<form method="post" action="/exchange/order/cancel" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="property_id" value="{{ prop.property_id }}">
+            <input type="hidden" name="side" value="bid"><input type="hidden" name="price" value="{{ o.price_shown }}">
+            <button type="submit" class="ghost small">Cancel</button></form>
           {%- elif o.mine and o.clears_now %}<span class="muted"
               style="font-size:.74rem">your bid reaches the ask</span>
           {%- elif not o.mine and viewer == 'account' %}<button type="button" class="ghost small"

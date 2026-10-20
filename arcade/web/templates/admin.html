@@ -152,7 +152,9 @@
     <strong>On:</strong> this node also holds pre-signed listings and bids to finish later,
     fills &ldquo;while I'm away&rdquo; buy orders, and may run the custodial mainnet PEP swap
     below &mdash; convenient, but people then trust this node to finish their trades.
-    Lock-script swaps between chains are trustless either way (see <a href="#trading">Lock-script swaps</a>).</p>
+    Lock-script swaps between chains are trustless either way (see <a href="#trading">Lock-script swaps</a>).
+    It is about clients coming through the web portal: this node's own swaps (listing and taking orders from its
+    wallet) work whichever way it is set.</p>
   <button type="button" class="small saveswitches">Save switches</button>
 </section>
 
@@ -354,6 +356,7 @@
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
 .card .n{font-size:1.35rem;font-weight:700}
 .card .l{color:var(--muted);font-size:.8rem}
+.card .a{font-size:.7rem;color:var(--muted);word-break:break-all;margin-top:4px}
 section.panel h2{margin-top:0}
 .tablewrap{overflow-x:auto;margin-top:10px}
 .admintable{width:100%;border-collapse:collapse;font-size:.9rem}
@@ -419,12 +422,13 @@ section.panel h2{margin-top:0}
     var d = data;
     // headline cards
     var cards = $('cards'); cards.textContent = '';
-    function card(n, l) { var c = text('div', '', 'card'); c.appendChild(text('div', n, 'n'));
-      c.appendChild(text('div', l, 'l')); cards.appendChild(c); }
+    function card(n, l, a) { var c = text('div', '', 'card'); c.appendChild(text('div', n, 'n'));
+      c.appendChild(text('div', l, 'l')); if (a) c.appendChild(text('div', a, 'a mono')); cards.appendChild(c); }
     card(d.seats.free + ' / ' + d.seats.total, 'seats open');
     d.wallets.forEach(function (w) {
       card(w.syncing ? 'syncing ' + w.progress + '%' : w.error ? 'offline'
-           : Number(w.spendable).toLocaleString(), w.label + (w.syncing ? ' node' : ' balance'));
+           : Number(w.spendable).toLocaleString(), w.label + (w.syncing ? ' node' : ' balance'),
+           w.keyed ? w.address : '');
     });
     card(d.push.available ? String(d.push.devices) : 'off', 'accounts with notifications');
 
@@ -505,6 +509,8 @@ section.panel h2{margin-top:0}
           .then(function (j) { addr.textContent = j.address; })
           .catch(function (e) { say(e.message, 'err'); });
       };
+      // A key wallet's address never changes, so it is shown as it is (2026-10-19).
+      if (w.keyed && w.address) addr.textContent = w.address;
       var right = document.createElement('div'); right.appendChild(recv); right.appendChild(addr);
       row.appendChild(right); ws.appendChild(row);
       var o = document.createElement('option'); o.value = w.which; o.textContent = 'from ' + w.label;

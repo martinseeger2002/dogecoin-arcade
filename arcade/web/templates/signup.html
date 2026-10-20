@@ -25,7 +25,7 @@
 {% endif %}
 
 <div id="forms" {% if not secure_enough or free <= 0 %}hidden{% endif %}>
-  <div class="panel">
+  <div class="panel" id="make">
     <h2 style="margin-top:0">Make an account</h2>
     <div class="field">
       <label for="tag">Your name</label>
@@ -65,15 +65,8 @@
     </div>
     <input type="password" id="in-pw" autocomplete="current-password"
            placeholder="password">
-    <label class="muted small" style="display:block;margin:8px 0 4px">
-      <input type="checkbox" id="elsewhere"> I made it on another arcade</label>
-    <input type="text" id="in-node" hidden autocomplete="off" autocapitalize="off"
-           spellcheck="false" value="https://app.dogecoinarcade.com"
-           placeholder="that arcade's address, like https://app.dogecoinarcade.com">
-    <p class="muted small" id="elsewhere-note" hidden style="margin:4px 0 8px">
-      Your encrypted wallet is fetched from there and opened here with your
-      password; this node keeps a copy, so the same name and password work here
-      too. On your own node, you can then make it the operator account.</p>
+    <p class="muted small" style="margin:6px 0 8px">Made on another arcade? The same name and password work here:
+      this arcade finds your encrypted wallet there by itself.</p>
     <button class="btn" id="enter">Sign in</button>
     <p class="muted small" style="margin:10px 0 0">This node kept your
       encrypted wallet when you signed up. It did not keep it? Use the file
@@ -140,11 +133,13 @@
 
 <style>
 .seats .count{font-size:1.3rem;margin:0 0 6px}
-.tagrow{display:flex;align-items:center;gap:6px}
-.tagrow .at{font-size:1.1rem;color:var(--muted)}
+/* The @ inside the name box, so the name and the password line up (2026-10-19). */
+.tagrow{position:relative;display:block}
+.tagrow .at{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:1rem;color:var(--muted);pointer-events:none}
 #forms input,#written input[type=text]{width:100%;padding:10px 12px;margin:4px 0;
   border:1px solid var(--line);border-radius:8px;background:var(--panel);
   color:var(--fg);font:inherit}
+#forms .tagrow input{width:100%;box-sizing:border-box;padding-left:32px}
 .words{columns:3;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
   background:var(--code);border-radius:8px;padding:14px 14px 14px 40px;margin:12px 0}
 .words li{break-inside:avoid;padding:2px 0}
@@ -288,10 +283,6 @@ function wire() {
     if (button.dataset.was) button.textContent = button.dataset.was;
   };
 
-  $("elsewhere").onchange = () => {
-    $("in-node").hidden = $("elsewhere-note").hidden = !$("elsewhere").checked;
-  };
-
   $("enter").onclick = async () => {
     const button = $("enter");
     if (!busy(button, "Opening your wallet\u2026")) return;
@@ -300,12 +291,8 @@ function wire() {
       // Signing in opens the wallet: it is the same password and the same
       // moment, and asking for it again on the next page is asking the
       // same question twice.
-      if ($("elsewhere").checked) {
-        await wallet.importFrom($("in-node").value.trim(), $("in-tag").value.trim(),
-                                $("in-pw").value, CHAIN);
-      } else {
-        await wallet.signIn($("in-tag").value.trim(), $("in-pw").value, CHAIN);
-      }
+      // An account made on another arcade is found there by itself (2026-10-19: no checkbox, no address).
+      await wallet.signIn($("in-tag").value.trim(), $("in-pw").value, CHAIN);
       button.textContent = "Signed in \u2713";
       location.href = NEXT;
     } catch (e) { idle(button); say(String(e.message || e)); }

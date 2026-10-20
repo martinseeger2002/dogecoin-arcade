@@ -753,10 +753,39 @@ ol.words{column-gap:1.4em}
 {% if stranger_here and not embed and not fullscreen and path not in ('/', '/join', '/restore', '/join/keys') %}
 {# A visitor: everything here can be read, and nothing can be done until they
    sign in (a tester, 2026-09-26: no sign-in hint on most public pages). #}
-<div class="unlockbar">
-  <span>You're looking around. Join free, or sign in, to post, trade, like and message.</span>
-  <a class="btn small" href="/join?next={{ path|urlencode }}">Join or sign in</a>
-</div>
+{# 2026-10-19: with nobody signed in, the top card asks for a name and a password, and making an account is
+   a link to the sign-up page. An account made on another arcade signs in here the same way: this arcade finds it
+   by itself (wallet.signIn, /signin/<name>). #}
+<form class="unlockbar signbar" id="signbar" autocomplete="on">
+  <span class="signbar-name"><span class="signbar-at">@</span>
+  <input type="text" id="signbar-tag" autocomplete="username" autocapitalize="off"
+         spellcheck="false" placeholder="name" aria-label="Your name"></span>
+  <input type="password" id="signbar-pw" autocomplete="current-password"
+         placeholder="password" aria-label="Your password">
+  <button type="submit" class="btn small" id="signbar-go">Sign in</button>
+  <a class="signbar-new" href="/join?next={{ path|urlencode }}#make">Create a new account</a>
+  <span class="signbar-said" id="signbar-said" role="status" hidden></span>
+</form>
+<script type="module">
+  const $ = (id) => document.getElementById(id);
+  $("signbar").addEventListener("submit", async (event) => {
+    // Never a real submit: the password stays in this tab. Its boxes have no names, so even with no script running
+    // a submit carries nothing.
+    event.preventDefault();
+    const go = $("signbar-go"), said = $("signbar-said");
+    const tag = $("signbar-tag").value.trim().replace(/^@/, ""), pw = $("signbar-pw").value;
+    if (!tag || !pw) { said.textContent = "your name and password"; said.hidden = false; return; }
+    go.disabled = true; go.textContent = "Opening your wallet\u2026"; said.hidden = true;
+    try {
+      const wallet = await import("/wallet.js");
+      await wallet.signIn(tag, pw, ARCADE_CHAIN);
+      location.reload();
+    } catch (e) {
+      go.disabled = false; go.textContent = "Sign in";
+      said.textContent = String(e.message || e); said.hidden = false;
+    }
+  });
+</script>
 {% endif %}
 <script>
 // A box for finding somebody else must never start with your own name in it
@@ -2589,6 +2618,14 @@ function arcadeFileCost(bytes){
 .unlockbar{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;
   padding:8px 16px;background:color-mix(in srgb,var(--accent) 14%,var(--panel));
   border-bottom:1px solid var(--line);font-size:.9rem}
+.signbar{margin:0}
+.signbar input{width:100%;box-sizing:border-box;margin:0;padding:6px 10px;font-size:16px}
+.signbar-name,.signbar #signbar-pw{flex:1 1 140px;max-width:220px}
+.signbar-name{position:relative;display:block}
+.signbar-name input{padding-left:28px}
+.signbar-at{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
+.signbar-new{font-size:.86rem}
+.signbar-said{flex-basis:100%;text-align:center;color:var(--bad);font-size:.86rem}
 .askcard input[type=password]{margin-top:6px}
 .sens-wall{display:inline}
 .sens-btn{font:inherit;font-size:.82em;padding:1px 8px;border-radius:999px;border:1px dashed var(--line);

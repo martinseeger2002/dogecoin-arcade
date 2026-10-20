@@ -631,7 +631,37 @@ class AppState:
         host = str(self.setting("pages_host", "") or "").strip()
         if not host:
             return ""
-        return host if "://" in host else f"https://{host}"
+        origin = host if "://" in host else f"https://{host}"
+        # A name with no DNS record frames nothing: every game was a white screen on pepecoinarcade.com (2026-10-19,
+        # pages.pepecoinarcade.com set and never routed). Then pages are framed from here, the sandbox without the
+        # second origin, until the name resolves; looked up every few minutes, never waited on for long.
+        name = origin.split("://", 1)[-1].split("/")[0].rsplit(":", 1)[0]
+        return origin if self._resolves(name) else ""
+
+    #: How often a pages name's DNS is looked up again.
+    PAGES_DNS_EVERY = 300.0
+
+    def _resolves(self, name: str) -> bool:
+        kept = self.__dict__.setdefault("_dns_kept", {})
+        now = time.time()
+        got = kept.get(name)
+        if got is not None and now - got[1] < self.PAGES_DNS_EVERY:
+            return got[0]
+        if name in ("localhost", "127.0.0.1") or name.startswith("127."):
+            return True
+
+        def look():
+            import socket
+            try:
+                socket.getaddrinfo(name, 443)
+                kept[name] = (True, time.time())
+            except OSError:
+                kept[name] = (False, time.time())
+        asking = threading.Thread(target=look, name="pages-dns", daemon=True)
+        asking.start()
+        asking.join(2.0 if got is None else 0)
+        got = kept.get(name) or got
+        return True if got is None else got[0]
 
     def vault(self):
         """Encrypted wallets by @tag. Bytes this node cannot read."""
@@ -1317,6 +1347,8 @@ class AppState:
 
     #: How long a sync answer is kept. Pages ask on every draw; the node is asked
     #: at most once a minute, from whichever request comes first.
+    #: How long the first look at a borrowed chain waits for its answer before calling it not ready.
+    FIRST_SYNC_WAIT = 3.0
     SYNC_SECONDS = 60
 
     def chain_sync(self, chain: ChainContext) -> dict:
@@ -1332,6 +1364,39 @@ class AppState:
         kept = self._sync.get(chain.network)
         if kept and kept[0] > now:
             return kept[1]
+        if getattr(chain, "borrowed", False):
+            # A borrowed chain answers over the mesh, from another arcade: up to a minute when that arcade is far or
+            # busy, and a page drawing its chain menu waited for it (2026-10-19: pepecoinarcade.com's Exchange took
+            # 25 s, its feed 3-7 s). The page gets what is known now; the asking happens on a thread of its own.
+            if kept:
+                self._refresh_sync_later(chain)
+                return kept[1]
+            # Nothing known yet (just started): a few seconds for the first answer, so a page drawn right after a
+            # restart does not gray out a chain that is fine (2026-10-19, pepecoinarcade.com's D and L icons).
+            asked = self._refresh_sync_later(chain)
+            if asked is not None:
+                asked.join(self.FIRST_SYNC_WAIT)
+            kept = self._sync.get(chain.network)
+            return kept[1] if kept else {"ready": False, "progress": 0.0, "online": False, "blocks": 0, "headers": 0}
+        return self._sync_now(chain)
+
+    def _refresh_sync_later(self, chain: ChainContext) -> "threading.Thread | None":
+        asking = self.__dict__.setdefault("_sync_asking", {})
+        if chain.network in asking:
+            return asking[chain.network]
+
+        def ask():
+            try:
+                self._sync_now(chain)
+            finally:
+                asking.pop(chain.network, None)
+        thread = threading.Thread(target=ask, name=f"arcade-sync-{chain.network}", daemon=True)
+        asking[chain.network] = thread
+        thread.start()
+        return thread
+
+    def _sync_now(self, chain: ChainContext) -> dict:
+        now = time.time()
         said = {"ready": False, "progress": 0.0, "online": False, "blocks": 0, "headers": 0}
         try:
             with chain.rpc() as rpc:
@@ -1482,9 +1547,17 @@ class AppState:
     def trade_orders(self):
         """Orders inscribed on the chains this node reads (arcade/trade_orders.py)."""
         if getattr(self, "_trade_orders", None) is None:
+            from ..book_relay import BookRelay
             from ..trade_orders import OrderBook
             self._trade_orders = OrderBook(self.home / "trade-orders.sqlite")
+            # One book across arcades: what changes here is said in the mesh's book room (2026-10-19).
+            self._book_relay = BookRelay(lambda: getattr(self, "mesh", None), self._trade_orders,
+                                         self.bump_generation)
         return self._trade_orders
+
+    def book_relay(self):
+        _ = self.trade_orders
+        return self._book_relay
 
     @property
     def trade_watch(self):
@@ -1501,13 +1574,12 @@ class AppState:
 
     @property
     def node_trader(self):
-        """This node's own lock-script trader (arcade/node_trader.py): idle unless the
-        operator turned node-facilitated trades on. Its chains are the ones ready now."""
+        """This node's own lock-script trader (arcade/node_trader.py). Always on: the operator takes and lists
+        whatever the node-facilitated trades switch says, which is for clients coming through the web portal
+        (2026-10-19). Its chains are the ones ready now."""
         if getattr(self, "_node_trader", None) is None:
             from ..node_trader import NodeTrader
-            self._node_trader = NodeTrader(
-                self, {}, self.messaging,
-                enabled=lambda: bool(self.setting("node_trades", False)))
+            self._node_trader = NodeTrader(self, {}, self.messaging, enabled=lambda: True)
         self._node_trader.chains = {c.network: c for c in self.token_chains}
         return self._node_trader
 

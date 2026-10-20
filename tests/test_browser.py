@@ -458,7 +458,9 @@ def test_tapping_a_field_does_not_zoom_the_page(phone, path):
         small = browser.execute_script("""
             const out = [];
             for (const el of document.querySelectorAll('input,select,textarea')) {
-              if (el.type === 'hidden') continue;
+              // A box to tick is not typed into, and iOS does not zoom for it (the Overview's wallet
+              // switches, 2026-10-19).
+              if (el.type === 'hidden' || el.type === 'checkbox' || el.type === 'radio') continue;
               const size = parseFloat(getComputedStyle(el).fontSize);
               if (size < 16) out.push((el.name || el.tagName) + ' ' + size + 'px');
             }

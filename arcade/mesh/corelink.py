@@ -69,6 +69,7 @@ class CoreBridge:
         # (peer, stream id) -> {"w": writer to Core or None while connecting, "buf": bytes waiting, "task": pump}
         self.streams: dict[tuple[str, int], dict] = {}
         self.rates: dict[str, _Rate] = {}
+        self._opening: set[tuple[str, str]] = set()      # (peer, chain) listeners being made right now
         self._next = 1
 
     # ---------------------------------------------------------------- the node's hooks
@@ -135,8 +136,15 @@ class CoreBridge:
                 if key[0] not in want:
                     await self._unlisten(key)
             for peer in want:
-                if (peer, chain) not in self.listeners:
-                    await self._listen(peer, chain)
+                # Reserved before the await: two offers arriving together each ran this and both found the pair
+                # unheard of, so a second listener (and a second addnode) was made and the first one left behind,
+                # never removed (2026-10-19: .25's Pepecoin main peered twice with one arcade).
+                if (peer, chain) not in self.listeners and (peer, chain) not in self._opening:
+                    self._opening.add((peer, chain))
+                    try:
+                        await self._listen(peer, chain)
+                    finally:
+                        self._opening.discard((peer, chain))
 
     async def _open(self, link, sid: int, chain: str) -> None:
         key = (link.peer_id, sid)

@@ -175,14 +175,18 @@ class Watch:
 
     # --- the pass --------------------------------------------------------------------------
 
-    def tick(self, rpc_for: Callable[[str], Any], now: int | None = None) -> list[tuple[str, str]]:
+    def tick(self, rpc_for: Callable[[str], Any], now: int | None = None,
+             claims_only: bool = False) -> list[tuple[str, str]]:
         """One pass over the waiting jobs. `rpc_for(network)` -> a context manager giving
         that chain's RPC (ChainContext.rpc), or None when this node does not run it.
-        Returns [(job id, what happened)] for what changed."""
+        Returns [(job id, what happened)] for what changed. `claims_only`: the claims that
+        finish a swap, not the refunds waiting hours for their locktime (the watcher's fast pass)."""
         done: list[tuple[str, str]] = []
         # Sent jobs too: until the lock shows spent, a spend that was dropped (or undone by
         # a reorg) is sent again.
         for job in self.jobs(status="waiting") + self.jobs(status="sent"):
+            if claims_only and job["kind"] == "refund":
+                continue
             try:
                 said = self._one(job, rpc_for, int(now or time.time()))
             except Exception as exc:                       # noqa: BLE001 -- next pass

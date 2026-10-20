@@ -425,7 +425,8 @@ def test_the_operator_keeps_the_forms_the_routes_expect(arcade):
     assert "acts-said" not in page.text, "no wallet on an operator's page"
     for doing in ("like", "reply", "share", "mute"):
         assert f'action="/feed/{theirs_id}/{doing}"' in page.text, doing
-    assert f'href="/feed/{theirs_id}/tip"' in page.text, "tip is still a page"
+    # The inline tip form the accounts have, posted to the node's own route (2026-10-19).
+    assert f'action="/feed/{theirs_id}/tip" id="tip-{theirs_id}"' in page.text, "tip is the accounts' form"
     assert f'action="/feed/{posted}/delete"' in page.text
     assert f'action="/feed/{theirs_id}/delete"' not in page.text
 

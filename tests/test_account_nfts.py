@@ -165,9 +165,10 @@ def test_the_public_nfts_page_says_who_can_inscribe(public):
     for refused in ('action="/inscriptions/create"',
                     'href="/inscriptions/collection"'):
         assert refused not in body, f"{refused} is a route the door shuts"
-    assert 'class="unlockbar"' in body and "Join free, or sign in" in body, \
+    # The visitor's bar is a sign-in card since 2026-10-19 (the operator: name and password on top, a link to join).
+    assert 'id="signbar"' in body and "Create a new account" in body, \
         "6380231 moved the sentence a visitor gets out of the pages and onto one bar"
-    assert "href=\"/join?next=/nfts\"" in body, "the bar has to bring them back here"
+    assert "href=\"/join?next=/nfts#make\"" in body, "the bar has to bring them back here"
 
 
 def test_the_run_list_is_asked_the_way_the_route_is_built(client):

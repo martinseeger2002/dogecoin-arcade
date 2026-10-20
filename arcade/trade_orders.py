@@ -143,6 +143,15 @@ class OrderBook:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._open() as conn:
             conn.executescript(SCHEMA)
+        #: Told the ids of every order that changed here (book_relay.py says this arcade's own to the others).
+        self.on_change: Callable[[list[str]], None] | None = None
+
+    def _changed(self, ids: list[str]) -> None:
+        if ids and self.on_change is not None:
+            try:
+                self.on_change(list(ids))
+            except Exception:                                  # noqa: BLE001 -- the book is right either way
+                pass
 
     def _open(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30)
@@ -159,7 +168,7 @@ class OrderBook:
             return 0
         if not isinstance(said, dict) or said.get("arcade") != "orders" or said.get("v") != VERSION:
             return 0
-        filed = 0
+        filed, touched = 0, []
         with self._open() as conn:
             for raw in (said.get("orders") or [])[:MAX_ORDERS]:
                 try:
@@ -174,10 +183,13 @@ class OrderBook:
                              (order["id"], lister, network, inscription, json.dumps(order),
                               order["node"], order["expires"]))
                 filed += 1
+                touched.append(order["id"])
             for oid in said.get("cancels") or []:
                 if isinstance(oid, str):
                     conn.execute("UPDATE trade_order SET cancelled=1 WHERE lister=? AND id=?",
                                  (lister, oid))
+                    touched.append(oid)
+        self._changed(touched)
         return filed
 
     def set_taking(self, order_id: str, taking: bool) -> None:
@@ -189,11 +201,13 @@ class OrderBook:
                 conn.execute("UPDATE trade_order SET cancelled=2 WHERE id=? AND cancelled=0", (order_id,))
             else:
                 conn.execute("UPDATE trade_order SET cancelled=0 WHERE id=? AND cancelled=2", (order_id,))
+        self._changed([order_id])
 
     def cancel_id(self, order_id: str) -> None:
         """Off this node's book: an order its node finished for the seller (node_trader delegated orders)."""
         with self._open() as conn:
             conn.execute("UPDATE trade_order SET cancelled=1 WHERE id=?", (order_id,))
+        self._changed([order_id])
 
     def cancel_local(self, listers: list[str], ids: list[str]) -> int:
         """Mark `ids` cancelled, where one of `listers` listed them (its own withdraw, said to this node)."""
@@ -203,7 +217,65 @@ class OrderBook:
             got = conn.execute(
                 f"UPDATE trade_order SET cancelled=1 WHERE cancelled=0 AND lister IN ({','.join('?' * len(listers))})"
                 f" AND id IN ({','.join('?' * len(ids))})", (*listers, *ids))
-            return got.rowcount
+            n = got.rowcount
+        self._changed(ids)
+        return n
+
+    # --- one book across arcades (book_relay.py, 2026-10-19) ---------------------------------------------
+
+    def homed(self, node: str, ids: list[str] | None = None, now: float | None = None) -> list[dict]:
+        """The orders whose home is `node` (`ids`: only those), as rows: lister, network, body, state -- "live",
+        "taking", or "gone" (cancelled or expired)."""
+        now = int(now or time.time())
+        sql, args = "SELECT * FROM trade_order WHERE node=?", [node]
+        if ids is not None:
+            if not ids:
+                return []
+            sql += f" AND id IN ({','.join('?' * len(ids))})"
+            args += list(ids)
+        with self._open() as conn:
+            rows = conn.execute(sql, args).fetchall()
+        return [{"id": r["id"], "lister": r["lister"], "network": r["network"], "body": json.loads(r["body"]),
+                 "state": "gone" if r["cancelled"] == 1 or r["expires"] <= now
+                 else "taking" if r["cancelled"] == 2 else "live"} for r in rows]
+
+    def apply_from(self, origin: str, rows: list[dict], full: bool = False, now: float | None = None) -> int:
+        """What arcade `origin` says of the orders whose home it is, filed here. Only those: an arcade speaks for
+        its own orders and nobody else's. `full`: that is all of them, so any other of its orders here is gone."""
+        changed = 0
+        said: set[str] = set()
+        with self._open() as conn:
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                state, lister, network = row.get("state"), str(row.get("lister") or ""), str(row.get("network") or "")
+                oid = str(row.get("id") or "")
+                if not oid:
+                    continue
+                said.add(oid)
+                if state in ("live", "taking"):
+                    try:
+                        order = check_order(row.get("body"), now)
+                    except OrderError:
+                        continue
+                    if order["node"] != origin or order["id"] != oid or not lister or network not in NETWORKS:
+                        continue
+                    conn.execute("INSERT INTO trade_order(id, lister, network, inscription, body, node, expires, "
+                                 "cancelled) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(lister, id) DO UPDATE SET "
+                                 "expires=excluded.expires, body=excluded.body, cancelled=excluded.cancelled "
+                                 "WHERE trade_order.node=excluded.node AND trade_order.cancelled != 1",
+                                 (oid, lister, network, f"mesh-{origin[:16]}", json.dumps(order), origin,
+                                  order["expires"], 2 if state == "taking" else 0))
+                    changed += 1
+                elif state == "gone":
+                    changed += conn.execute("UPDATE trade_order SET cancelled=1 WHERE id=? AND node=? AND cancelled!=1",
+                                            (oid, origin)).rowcount
+            if full:
+                for r in conn.execute("SELECT id FROM trade_order WHERE node=? AND cancelled!=1", (origin,)).fetchall():
+                    if r["id"] not in said:
+                        conn.execute("UPDATE trade_order SET cancelled=1 WHERE id=? AND node=?", (r["id"], origin))
+                        changed += 1
+        return changed
 
     def visible(self, online: Callable[[str], bool], now: float | None = None,
                 tab_live: Callable[[str], bool] | None = None,

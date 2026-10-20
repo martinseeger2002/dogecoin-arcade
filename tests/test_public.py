@@ -451,8 +451,8 @@ def test_the_front_page_follows_the_request_too(named):
     app, _ = named
     mine = app.get("/", headers=LOCAL).text
     theirs = app.get("/", headers={"host": "node.dogecoinarcade.com"}).text
-    assert "Known contacts" in mine, "the operator gets their overview"
-    assert "Known contacts" not in theirs, "a stranger gets the feed, not the overview"
+    assert "Your arcade" in mine and '"/node-mail.js"' in mine, "the operator gets their overview"
+    assert '"/node-mail.js"' not in theirs, "a stranger gets the feed, not the overview"
 
 
 def test_the_navigation_follows_the_request_too(named):
@@ -861,8 +861,9 @@ def test_sign_in_brings_you_back_to_the_page_that_sent_you(public):
 def test_a_stranger_is_told_how_to_join_on_every_public_page(public):
     app, _ = public
     body = app.get("/feed", headers=LOCAL).text
-    assert "Join or sign in" in body and "/join?next=/feed" in body
-    assert "Join or sign in" not in app.get("/join", headers=LOCAL).text
+    # A sign-in card with a link to make an account (2026-10-19).
+    assert 'id="signbar"' in body and "Create a new account" in body and "/join?next=/feed" in body
+    assert 'id="signbar"' not in app.get("/join", headers=LOCAL).text
 
 
 def test_the_not_here_page_has_a_way_home_and_a_title(public):

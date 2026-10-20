@@ -91,12 +91,9 @@
         <input type="hidden" name="back" value="/games{{ '?sort=new' if sort == 'new' else '' }}">
         <button class="small ghost dislikebtn{{ ' disliked' if it.disliked }}" type="submit" data-count="{{ it.dislikes }}">&#128078; {{ it.dislikes }}</button></form>
       <button class="small ghost" type="button" onclick="var f=document.getElementById('c-{{ it.txid }}');f.hidden=!f.hidden">&#128172; {{ it.comments }}</button>
-      {% if viewer == 'wallet' %}
-      <a class="btn small ghost" href="/feed/{{ it.txid }}/tip">Tip</a>
-      {% else %}
+      {# The same inline tip for the operator, sent by the node (2026-10-19). #}
       <button class="small ghost" type="button" data-tip-for="{{ it.txid }}"
               onclick="var f=document.getElementById('t-{{ it.txid }}');f.hidden=!f.hidden">Tip</button>
-      {% endif %}
       {% else %}
       <span class="pill">&#9829; {{ it.likes }}</span>
       <span class="pill">&#128078; {{ it.dislikes }}</span>
@@ -130,17 +127,16 @@
       <div style="flex:1"><input autocomplete="off" name="text" maxlength="200" placeholder="say something about it"></div>
       <button class="small" type="submit">Comment</button>
     </form>
-    {% if viewer != 'wallet' %}
     <form method="post" action="/feed/{{ it.txid }}/tip" id="t-{{ it.txid }}" hidden
           class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap" data-author-name="{{ it.creator|who_text }}">
       <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="back" value="/games{{ '?sort=new' if sort == 'new' else '' }}">
       {# The same four choices as the feed (2026-10-13). #}
       {{ tipui.tip_pay() }}
       <div style="flex:1 1 120px"><input autocomplete="off" name="amount" inputmode="decimal"
         placeholder="How many?" maxlength="24"></div>
       <button class="small" type="submit">Send the tip</button>
     </form>
-    {% endif %}
     {% endif %}
   </div>
 </div>
@@ -240,5 +236,9 @@ document.addEventListener("submit", async (event) => {
   } finally { if (button) button.disabled = false; }
 });
 </script>
+{% endif %}
+{% if viewer == 'wallet' %}
+{# The operator's tip form posts to the node (tip_send); this only fills its token list from the node's wallet. #}
+<script type="module">import {tipPicker} from "/wallet.js"; tipPicker(document, "/node/wallet/tokens");</script>
 {% endif %}
 {% endblock %}

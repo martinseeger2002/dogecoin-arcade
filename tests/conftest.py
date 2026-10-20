@@ -228,3 +228,11 @@ def ledger_addresses_start_empty():
     appmod._LEDGER_ADDRESSES.clear()
     yield
     appmod._LEDGER_ADDRESSES.clear()
+
+
+@pytest.fixture(autouse=True)
+def pages_names_resolve(monkeypatch):
+    """Tests name pages hosts that have no DNS (pages.example...); the arcade frames from here when its pages name
+    does not resolve (2026-10-19), which test_pages_dns asks of on purpose."""
+    from arcade.web.state import AppState
+    monkeypatch.setattr(AppState, "_resolves", lambda self, name: True)

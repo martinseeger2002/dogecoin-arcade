@@ -908,3 +908,31 @@ def test_every_chain_whose_core_runs_here_is_offered_over_the_mesh(tmp_path):
                                    "doge": NETWORKS["doge"].p2p_port}, svc.core.chains
     finally:
         svc.stop()
+
+
+def test_two_offers_at_once_make_one_core_peer_per_arcade_and_chain():
+    """2026-10-19: .25's Pepecoin main peered twice with one arcade -- two offers arriving together both made a
+    listener, and the first was never removed. One per (arcade, chain), on every chain the arcade runs here."""
+    import asyncio
+    from arcade.mesh.corelink import CoreBridge
+    asked = []
+
+    class Node:
+        links = {"peer-a": object()}
+
+        def rtts(self):
+            return {"peer-a": 10.0}
+
+    async def go():
+        bridge = CoreBridge({"main": 1, "test": 2, "doge": 3, "ltc": 4},
+                            lambda chain, hostport, op: asked.append((chain, op)))
+        bridge.node = Node()
+        bridge.offers["peer-a"] = {"main", "test", "doge", "ltc"}
+        await asyncio.gather(bridge.rebalance(), bridge.rebalance(), bridge.rebalance())
+        chains = sorted(k[1] for k in bridge.listeners)
+        for server, _port in bridge.listeners.values():
+            server.close()
+        return chains
+    chains = asyncio.run(go())
+    assert chains == ["doge", "ltc", "main", "test"], "every chain run here gets its arcade peer"
+    assert sorted(asked) == [("doge", "add"), ("ltc", "add"), ("main", "add"), ("test", "add")], "and one addnode each"

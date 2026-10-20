@@ -76,7 +76,7 @@ def test_the_tip_picker_grays_dogecoin_until_it_syncs(client, monkeypatch):
 def test_the_operator_wallet_and_admin_show_the_sync(client, monkeypatch):
     app, state = client
     _with_doge(state, monkeypatch, ready=False)
-    page = app.get("/wallet").text
+    page = app.get("/wallet/tools").text
     assert "D main opens here when its node has finished syncing" in page and "42.3%" in page
     from test_admin import LOCAL
     wallets = app.get("/admin/api/state", headers=LOCAL).json()["wallets"]
@@ -131,6 +131,6 @@ def test_one_naming_convention(client, monkeypatch):
     doge = _with_doge(state, monkeypatch, ready=False)
     assert (state.messaging.title, state.ledger.title, doge.title) == ("P test", "P main", "D main"), \
         'the operator: "make it say only P test or P main or D main in all of the labels"'
-    page = app.get("/wallet").text
+    page = app.get("/wallet/tools").text
     for letter, word in (("P", "test"), ("P", "main"), ("D", "main")):
         assert f">{letter}</b> {word}" in page, (letter, word)

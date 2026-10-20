@@ -1,9 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Messages · {{ brand.name }}{% endblock %}
 {% block body %}
+{% if node_side %}
+<p class="sub" style="margin-top:0">Sealed to the person you are writing to. This node opens the ones sealed to
+  it, with its own identity, on this machine.</p>
+{% else %}
 <p class="sub" style="margin-top:0">Sealed to the person you are writing
   to and opened only in your browser.
   This node carries them and cannot read one.</p>
+{% endif %}
 
 <div class="panel" id="locked" hidden>
   <h2 style="margin-top:0">Welcome back</h2>
@@ -26,7 +31,7 @@
     <div class="threads-head">
       <strong>Conversations</strong>
       <button type="button" class="ghost small" id="new">New</button>
-      <button type="button" class="ghost small" id="new-group"
+      <button type="button" class="ghost small" id="new-group"{% if node_side %} hidden{% endif %}
               title="A private group: only the people in it can read it">New group</button>
     </div>
 
@@ -58,14 +63,14 @@
       </div>
       <p class="muted" style="font-size:.78rem;margin:9px 0 0">
         Anybody who has claimed a name and published a key. Your
-        <a href="/me/contacts">address book</a> is the easier way in.</p>
+        <a href="{{ '/contacts' if node_side else '/me/contacts' }}">address book</a> is the easier way in.</p>
       <p class="msg err" id="new-trouble" hidden
          style="font-size:.8rem;margin:9px 0 0"></p>
     </form>
 
     <p class="muted empty" id="no-threads" hidden>No conversations yet. Press
       <strong>New</strong>, or add somebody to your
-      <a href="/me/contacts">address book</a>.</p>
+      <a href="{{ '/contacts' if node_side else '/me/contacts' }}">address book</a>.</p>
     <div id="threads"></div>
 
     <div class="threads-foot">
@@ -83,7 +88,7 @@
       <p>Select a conversation, or start one with somebody's @tag.</p>
       <p class="muted" style="font-size:.88rem">People can only write to you
         once your key is on the chain &mdash; that is one button on
-        <a href="/me">your arcade</a>.</p>
+        <a href="{{ '/' if node_side else '/me' }}">your arcade</a>.</p>
     </div>
 
     <div id="talking" class="talking" hidden>
@@ -94,11 +99,11 @@
           <div class="convo-name" id="convo-name">—</div>
           <div class="convo-sub" id="convo-sub"></div>
           <div class="convo-sub" id="group-admin" hidden style="margin-top:4px">
-            <select id="group-drop" style="width:auto;padding:3px 6px;font-size:.78rem"></select>
+            <select id="group-drop" style="width:auto;padding:3px 6px;font-size:{{ '16px' if node_side else '.78rem' }}"></select>
             <button type="button" class="ghost small" id="group-remove">Remove from the group</button>
           </div>
         </div>
-        <a class="ghost small btn" id="to-book" href="/me/contacts"
+        <a class="ghost small btn" id="to-book" href="{{ '/contacts' if node_side else '/me/contacts' }}"
            style="margin-left:auto">Address book</a>
       </header>
 
@@ -111,6 +116,11 @@
                   placeholder="Write a message…"></textarea>
         <button type="button" id="send">Send</button>
       </form>
+      {% if node_side %}
+      <p class="muted composer-note" style="padding-bottom:2px">
+        Each message is encrypted to the person you send it to, so it cannot be read back off the chain; the node
+        keeps its own copy on this machine. Files go from <a href="/messages/more">the node's full Messenger</a>.</p>
+      {% else %}
       <p class="muted composer-note" style="padding-bottom:2px">
         <strong>Words only, for now.</strong> Sending a file takes dozens of
         linked transactions, and an account cannot build those yet &mdash;
@@ -121,6 +131,7 @@
         cannot be read back off the chain &mdash; not by you either. Your copy is
         kept encrypted with your own key on this node, so it follows you to any
         browser you sign in on; nobody else can read it.</p>
+      {% endif %}
       <p class="muted composer-note" id="cost-note">
         Encrypted to them only. Costs a transaction fee and a little dust,
         which is paid to them and is how they know something arrived.
@@ -147,9 +158,13 @@
 .talking{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
 </style>
 
+{% if node_side %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>
+<p class="muted" style="font-size:.84rem;margin:14px 0 0">Sending a file, finishing an interrupted send, or writing by
+  contact code: <a href="/messages/more">the node's full Messenger</a>.</p>{% endif %}
 <script type="module">
-import * as wallet from "/wallet.js";
-import * as mail from "/messaging.js";
+{# The operator's Messages is this page over the node's own opened messages (2026-10-19; node-mail.js). #}
+import * as wallet from "{{ '/node-wallet.js' if node_side else '/wallet.js' }}";
+import * as mail from "{{ '/node-mail.js' if node_side else '/messaging.js' }}";
 
 const $ = (id) => document.getElementById(id);
 const say = (t) => { $("trouble").textContent = t; $("trouble").hidden = !t; };
@@ -898,6 +913,7 @@ if (already) await ready(already);
 else $("locked").hidden = false;
 document.body.dataset.messagesReady = "yes";
 </script>
+{% if not node_side %}
 <script>
 // Notifications for new messages on this device (arcade/push.py). Offered only
 // where the browser can do it and this arcade sends them. On an iPhone that
@@ -969,4 +985,5 @@ document.body.dataset.messagesReady = "yes";
     }).catch(function () {});
 })();
 </script>
+{% endif %}
 {% endblock %}

@@ -8,7 +8,7 @@
 {# Testnet or mainnet, chosen here (2026-10-09: "enable the ability for people to
    create tokens NFT's and NFT collections on main net. It should be an option on
    the create tab"). The choice is this browser's own; the pages it opens carry it. #}
-{% if public %}
+{% if true %}{# The same cards for the operator (2026-10-19); /create/chain moves the node's token chain then. #}
 <div class="chainpick" role="group" aria-label="Which chain to create on">
   {% for m in chain_menu()|sort(attribute="mainnet") %}
   {% set on = m.network == chain.network %}

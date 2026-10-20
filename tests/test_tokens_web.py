@@ -153,8 +153,8 @@ def test_two_prices_that_overlap_are_said_as_a_trade_and_not_a_sign(web):
         page = pair()
         assert "-1.00000000" not in page, "the sign on a decimal is not the news"
         assert "Crossed" in page
-        assert "your bid reaches the ask" in page, \
-            "and which of the reader's own bids is the one that clears right now"
+        # The operator's own bid has the Cancel an account's has (2026-10-19), as an account's does.
+        assert 'name="side" value="bid"' in page and "Cancel</button></form>" in page
         assert "ready to trade" in page, "the book says a trade is waiting, simply"
 
         # Withdraw it and put one back BELOW the ask: the figure comes back, and
@@ -343,7 +343,7 @@ def test_a_tag_is_claimed_by_one_press_and_read_back(web, monkeypatch):
     index = state.token_index(state.ledger)
     assert index.tag_of(alice) == "robin"
     assert index.address_of("robin") == alice
-    assert "@robin" in app.get("/contacts").text
+    assert "@robin" in app.get("/contacts/more").text
 
     # Already yours, and somebody else's, are both refused.
     # Already yours is a no-op rather than an error -- the button also

@@ -143,6 +143,9 @@ class Offers:
 #: excluded is a refusal somebody can retry; a coin wrongly OFFERED is a
 #: transaction the network refuses.
 IN_FLIGHT_SECONDS = 1800
+#: How long a broadcast counts as spending its coins before the node's mempool must agree: app._pool_spent reads the
+#: pool at most every 10 s, so a little more than that (2026-10-19: "one minute is too long").
+FLIGHT_GRACE = 12.0
 
 
 @dataclass
@@ -211,14 +214,22 @@ class Flights:
 
     def spent_by(self, pubkey: str, network: str = "") -> frozenset:
         self.sweep()
-        out: set = set()
-        for flight in self._mine(pubkey, network):
-            out.update(flight.spent)
+        pool = None
         if self._pool is not None:
             try:
-                out.update(self._pool(network))
+                pool = frozenset(self._pool(network))
             except Exception:                      # noqa: BLE001 -- node away
-                pass
+                pool = None
+        out: set = set(pool or ())
+        now = time.time()
+        for flight in self._mine(pubkey, network):
+            # A broadcast the node's mempool no longer holds -- refused, or evicted by a conflicting spend from another
+            # arcade (2026-10-19: @apple read 11.23 "leaving" here and 0.01 on pepecoinarcade.com, the pool holding
+            # 0.01) -- spends nothing. Its first seconds count whatever the pool says: it may not be read there yet.
+            if pool is None or now - flight.at < FLIGHT_GRACE:
+                out.update(flight.spent)
+            else:
+                out.update(o for o in flight.spent if o in pool)
         return frozenset(out)
 
     def change_for(self, pubkey: str, network: str = "") -> list:
