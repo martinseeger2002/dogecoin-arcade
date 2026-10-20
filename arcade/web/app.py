@@ -23120,6 +23120,20 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse(
                 {"detail": f"this account has no {chain.label.lower()} "
                            f"address yet"}, status_code=400)
+        # Send from the account's native-segwit (m/84') address when the
+        # browser names it (said["from"]): that key is the browser's, so
+        # building from it is harmless (only its holder can sign), and
+        # funding.spend_for flags the inputs segwit. bech32-v0 for this chain only.
+        want_from = str(said.get("from") or "").strip()
+        if want_from:
+            from ..script import segwit_decode
+            hrp = getattr(chain.params, "bech32_hrp", "")
+            ver, prog = (segwit_decode(hrp, want_from) if hrp else (None, None))
+            if ver != 0 or prog is None or len(prog) != 20:
+                return JSONResponse(
+                    {"detail": "that is not a native-segwit address for this chain"},
+                    status_code=400)
+            address = want_from
         try:
             # A @tag is a name for an address, so it is resolved here and
             # the ANSWER is shown: somebody paying @robin should see the
