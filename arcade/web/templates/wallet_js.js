@@ -27,6 +27,45 @@ import * as coins from "/coins.js";
  * refusal; `strength` below is what it says. */
 export const MIN_PASSWORD = 1;
 
+/* A password that has already leaked is refused (2026-10-20, answering SadFrog's review: "check a leaked
+ * password api and make sure whatever password they use is not on the leaked password list"). Not a floor: a
+ * leaked password is on every list an attacker tries first, whatever its length. Have I Been Pwned's range API,
+ * k-anonymity: only the first 5 hex characters of the password's SHA-1 leave this browser, with padding, and the
+ * hundreds of hash endings that come back are compared HERE. Neither the password nor its whole hash is ever sent,
+ * and nothing goes to this node. */
+export const LEAKED_URL = "https://api.pwnedpasswords.com/range/";
+
+/** How many times this password appears in the leaked-password lists: 0 for none, null when the list could not be
+ *  asked (the page then lets the password through rather than blocking a sign-up on somebody else's server). */
+export async function leaked(password) {
+  if (!password) return 0;
+  // The arcade's own word on where the list is (base.html, ARCADE_LEAKED_URL); "" turns the check off.
+  const url = typeof globalThis.ARCADE_LEAKED_URL === "string" ? globalThis.ARCADE_LEAKED_URL : LEAKED_URL;
+  if (!url) return null;
+  try {
+    const digest = hex(new Uint8Array(await crypto.subtle.digest("SHA-1", enc.encode(password)))).toUpperCase();
+    const head = digest.slice(0, 5), tail = digest.slice(5);
+    const answer = await fetch(url + head, {headers: {"Add-Padding": "true"}, cache: "no-store",
+                                                   credentials: "omit", referrerPolicy: "no-referrer"});
+    if (!answer.ok) return null;
+    for (const line of (await answer.text()).split("\n")) {
+      const [ending, count] = line.trim().split(":");
+      if (ending === tail) return parseInt(count, 10) || 0;      // padding lines carry a count of 0
+    }
+    return 0;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function refuseLeaked(password) {
+  const seen = await leaked(password);
+  if (seen) {
+    throw new Error(`That password has turned up ${seen.toLocaleString()} time${seen === 1 ? "" : "s"} in leaked-`
+      + "password lists (haveibeenpwned.com), so it is one of the first an attacker tries. Choose another.");
+  }
+}
+
 //: Roughly how long the blob would stand up to somebody who has it and a
 //: graphics card. Deliberately pessimistic: 600,000 PBKDF2 iterations is
 //: about 10^5 guesses a second on hardware somebody can rent, and the
@@ -156,6 +195,54 @@ export async function everyChain(wallet, chains) {
   return wallet;
 }
 
+/* --- address types --------------------------------------------------------
+ *
+ * One set of twelve words gives a chain more than one kind of address
+ * (2026-10-20: a drop-down on the Wallet card to choose the type; more
+ * types are coming from tbuuol). Each kind is a row here and nothing else needs
+ * to change: the card lists them, Receive shows that kind's address, and a coin
+ * send is built from it and signed with its key. The first row is the chain's
+ * ordinary address. A chain with one kind shows no drop-down.
+ * Segwit is test chains only until it has had a real-money review.
+ * The order is the menu's (2026-10-20, tbuuol): Legacy, P2SH, Native SegWit.
+ */
+export const ADDRESS_KINDS = {
+  ltctest: [
+    {id: "legacy", label: "Legacy", path: "m/44'/1'/0'/0/0"},
+    {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 58, path: "m/49'/1'/0'/0/0"},
+    {id: "p2wpkh", label: "Native SegWit", hrp: "tltc", path: "m/84'/1'/0'/0/0"},
+  ],
+};
+export const addressKinds = (network) => ADDRESS_KINDS[network] || [];
+
+/** That kind's key and address on `network`, from the wallet's words. */
+async function kindKey(wallet, network, kind) {
+  const base = keysOn(wallet, network);
+  if (kind.id === "p2wpkh") {
+    const seg = await coins.nativeSegwitKey(wallet.seed, network, 0);
+    return {...base, key: seg.key, pubkey: seg.pubkey,
+            address: await coins.p2wpkhAddress(seg.pubkey, kind.hrp)};
+  }
+  if (kind.id === "p2sh-p2wpkh") {
+    // BIP49: the key at m/49', its P2WPKH program wrapped in P2SH. `version`
+    // stays the chain's pubkeyhash, for reading who a send pays (verifyOffer).
+    const seg = await coins.p2shSegwitKey(wallet.seed, network, 0);
+    return {...base, key: seg.key, pubkey: seg.pubkey, nested: true,
+            address: await coins.p2shSegwitAddress(seg.pubkey, kind.scripthash)};
+  }
+  throw new Error(`this wallet cannot make a ${kind.label} address yet`);
+}
+
+/** The wallet as one address kind sees it: its key on `network` is that kind's,
+ *  so checked() and confirm() sign with it. The first kind is the wallet itself. */
+export async function asKind(wallet, network, kindId) {
+  const kinds = addressKinds(network);
+  const kind = kinds.find((k) => k.id === kindId);
+  if (!kind || kind === kinds[0]) return wallet;
+  if (!wallet || !wallet.seed) throw new Error(`Unlock your wallet to use its ${kind.label} address.`);
+  return {...wallet, on: {...wallet.on, [network]: await kindKey(wallet, network, kind)}};
+}
+
 /** Register any address this node does not know yet. Signed-in only. */
 export async function tellTheNode(wallet) {
   const said = await state();
@@ -223,6 +310,7 @@ async function _signUp(tag, password, {network, version}) {
   // these addresses for itself.
   const running = await chains();
   await everyChain(wallet, running);
+  await refuseLeaked(password);
   const blob = await seal(phrase, password);
   const alsoOn = {};
   for (const chain of running) {
@@ -393,6 +481,7 @@ async function _restore(phrase, password, {network, version}) {
     throw new Error("those words are not an account on this node. Check each word; "
       + "if you signed up on another node, restore there. Nothing was changed.");
   }
+  await refuseLeaked(password);
   const blob = await seal(wallet.phrase, password);
   const stored = await fetch("/account/vault", {
     method: "POST", headers: {"Content-Type": "application/json"},
@@ -503,11 +592,11 @@ export async function waitForCoins(seconds = 120) {
  * without asking.
  */
 
-export async function offerSend(to, amount, chain) {
+export async function offerSend(to, amount, chain, from = "") {
   return working(async () => {
     const asked = await fetch("/account/send", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({to, amount, chain: chain || ""}),
+      body: JSON.stringify(from ? {to, amount, chain: chain || "", from} : {to, amount, chain: chain || ""}),
     });
     const offer = await asked.json();
     if (!asked.ok) throw new Error(offer.detail || "that cannot be sent");
@@ -2038,7 +2127,7 @@ export async function signAndSend(wallet, where, body) {
  * again".
  */
 
-export async function setUp(wallet, identity, tag, {onStep, faucetRefusal} = {}) {
+export async function setUp(wallet, identity, tag, {onStep, faucetRefusal, fruit} = {}) {
   const step = (what, how) => { if (onStep) onStep({what, how}); };
   const out = {claimed: "", announced: "", trouble: []};
 
@@ -2058,13 +2147,18 @@ export async function setUp(wallet, identity, tag, {onStep, faucetRefusal} = {})
   }
   step("coins", "here");
 
-  step("name", "claiming");
-  try {
-    out.claimed = (await claim(wallet, tag)).txid;
-    step("name", "on its way");
-  } catch (e) {
-    out.trouble.push(`the name could not be claimed: ${e.message || e}`);
-    step("name", "failed");
+  if (fruit) {
+    // An operator's fruit name (2026-10-20): the arcade holding it sends it here; there is nothing to claim.
+    step("name", "coming from the fruit stand");
+  } else {
+    step("name", "claiming");
+    try {
+      out.claimed = (await claim(wallet, tag)).txid;
+      step("name", "on its way");
+    } catch (e) {
+      out.trouble.push(`the name could not be claimed: ${e.message || e}`);
+      step("name", "failed");
+    }
   }
 
   // The key, whether or not the name went: they are separate things and
@@ -2096,9 +2190,9 @@ export async function setUp(wallet, identity, tag, {onStep, faucetRefusal} = {})
   // not from a memory of relaying something. Quietly: nothing here is
   // blocked on it, and a tab that is closed early costs nothing, because
   // both transactions are already out.
-  if (out.claimed || out.announced) {
-    const seen = await settle(!!out.claimed, !!out.announced, tag, step);
-    if (out.claimed && !seen.name) {
+  if (out.claimed || out.announced || fruit) {
+    const seen = await settle(!!out.claimed || !!fruit, !!out.announced, tag, step);
+    if ((out.claimed || fruit) && !seen.name) {
       out.trouble.push("your name is broadcast but this node has not indexed "
         + "it yet, so people cannot find you by it this minute");
     }

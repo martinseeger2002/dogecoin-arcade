@@ -787,6 +787,50 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
         return dict(prints)
     service.indexcheck = IndexCheck(fingerprints)
     service.node.add_extension(service.indexcheck)
+    # Fruit names for new arcades' operators (fruitshare.py, arcade/fruit.py, 2026-10-20).
+    if hasattr(state, "fruit_stand"):
+        from .fruitshare import FruitShare
+
+        def stand():
+            try:
+                return state.fruit_stand() if state.setting("fruit_stand") else None
+            except Exception:                              # noqa: BLE001
+                return None
+        service.fruitshare = FruitShare(state, stand)
+        service.node.add_extension(service.fruitshare)
+    # Who runs each linked arcade (operators.py, 2026-10-20: "a list of other operators").
+    from .operators import OperatorsShare
+
+    def about() -> dict:
+        tag = ""
+        try:
+            chain = next(c for c in state.token_chains if c.network == state.messaging.network)
+            op = state.operator
+            address = ((state.setting(f"address:{chain.network}:{op}") or state.setting(f"address:{op}")) if op
+                       else state.derived_address)
+            tag = (state.token_index(chain).tag_of(address) or "") if address else ""
+        except Exception:                                  # noqa: BLE001 -- said without a name
+            pass
+        try:
+            from ..web import brand as brandlib
+            name = brandlib.current().name
+        except Exception:                                  # noqa: BLE001
+            name = ""
+        return {"tag": tag, "name": name, "version": str(getattr(state, "running_version", "") or ""),
+                "hosts": list(getattr(state, "public_hosts", []) or [])}
+    service.operators = OperatorsShare(about)
+    service.node.add_extension(service.operators)
+    # The ord indexes' shared chunks, one per chain (doginalshare.py, 2026-10-20).
+    if hasattr(state, "ord_indexes"):
+        from .doginalshare import DxShare
+
+        def indexes() -> dict:
+            try:
+                return state.ord_indexes()
+            except Exception:                              # noqa: BLE001
+                return {}
+        service.doginalshare = DxShare(indexes)
+        service.node.add_extension(service.doginalshare)
     from . import coreshare
     coreshare.CURRENT = service.coreshare
     # STUN for the WebRTC fast lane (stun.py): served here when asked for, proved by other nodes before it is

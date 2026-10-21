@@ -36,7 +36,9 @@ from typing import Any
 
 from . import fees, utxos
 from .config import Params
-from .script import b58check_decode
+from .script import (b58check_decode, hash160, p2sh_p2wpkh_address,
+                     p2sh_p2wpkh_redeem, p2wpkh_script as _p2wpkh_script,
+                     segwit_decode)
 from .txbuild import build_raw_tx, op_return_script, p2pkh_script, push, varint
 
 #: What an input costs once it is signed: the outpoint, the sequence number
@@ -113,7 +115,8 @@ class Unsigned:
             "inputs": [{"txid": i["txid"], "vout": i["vout"],
                         "value": i["value"], "address": i["address"],
                         **({"script": i["script"]} if i.get("multisig") else {}),
-                        **({"redeem": i["redeem"]} if i.get("redeem") else {})}
+                        **({"redeem": i["redeem"]} if i.get("redeem") else {}),
+                        **({"segwit": i["segwit"]} if i.get("segwit") else {})}
                        for i in self.inputs],
             "sighashes": self.sighashes,
             "signed_from": self.signed_from,
@@ -320,8 +323,11 @@ def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
 
 def build(db, params: Params, address: str, payload_outputs: list,
           rate: int, what: str = "", dust: int = 0,
-          exclude=frozenset(), extra: list | None = None) -> Unsigned:
+          exclude=frozenset(), extra: list | None = None,
+          keyhash: bytes | None = None) -> Unsigned:
     """An unsigned transaction paying `payload_outputs` from `address`.
+
+    `keyhash` is for a P2SH-nested segwit sender only (see `spend_for`).
 
     Change goes back to the sender, always: a Class B payload's obfuscation
     is seeded with "largest input by sum", so a transaction whose change
@@ -343,9 +349,10 @@ def build(db, params: Params, address: str, payload_outputs: list,
 
     total = sum(c["value"] for c in chosen)
     change = total - spend - fee
+    rule = spend_for(address, params, keyhash)
     outputs = list(payload_outputs)
     if change >= max(dust, fees.dust_limit(params)):
-        outputs.append((change, p2pkh_script(address)))
+        outputs.append((change, rule["change_script"]))
     else:
         # Too small to be worth an output: it goes to the miner rather than
         # creating a coin nobody can afford to spend. Below fees.DUST_LIMIT it
@@ -355,9 +362,14 @@ def build(db, params: Params, address: str, payload_outputs: list,
         change = 0
 
     raw = build_raw_tx([(c["txid"], c["vout"]) for c in chosen], outputs)
-    script = p2pkh_script(address)
-    hashes = [sighash(chosen, outputs, n, script).hex()
-              for n in range(len(chosen))]
+    hashes = []
+    for n, coin in enumerate(chosen):
+        if rule["kind"] in ("p2wpkh", "p2sh-p2wpkh"):
+            coin["segwit"] = rule["kind"]
+            hashes.append(sighash_witness(chosen, outputs, n, rule["script_code"],
+                                          int(coin["value"])).hex())
+        else:
+            hashes.append(sighash(chosen, outputs, n, rule["script_code"]).hex())
     return Unsigned(raw=raw, inputs=chosen, outputs=outputs, sighashes=hashes,
                     fee=fee, change=change, what=what)
 
@@ -740,6 +752,8 @@ def assemble(unsigned: Unsigned, signatures: list[str], pubkey: bytes) -> str:
         raise FundingError(
             f"{len(unsigned.inputs) - first} signatures were needed and "
             f"{len(signatures)} came back")
+    if any(coin.get("segwit") for coin in unsigned.inputs):
+        return _assemble_witness(unsigned, signatures, pubkey)
     raw = (1).to_bytes(4, "little") + varint(len(unsigned.inputs))
     for n, coin in enumerate(unsigned.inputs):
         script_sig = b""
@@ -1068,3 +1082,190 @@ def _doginal_first(db, address: str, coin: dict, inscription: str, first: bytes,
     script = p2pkh_script(address)
     hashes = [sighash(chosen, outputs, n, script).hex() for n in range(len(chosen))]
     return Unsigned(raw=raw, inputs=chosen, outputs=outputs, sighashes=hashes, fee=fee, change=change, what=what)
+
+
+# --- segwit v0 spending: BIP143 sighash and witness serialisation ------------
+#
+# 2026-10-19 (tbuuol's side), layer 3a. The legacy `sighash` above does not
+# commit to the amount being spent; BIP143 does, and a segwit input can be
+# signed no other way. This is the node's half for a segwit input: the digest
+# the browser signs, and the serialisation that carries the signature in the
+# witness instead of the scriptSig.
+#
+# Held to BIP143's own worked example (the native-P2WPKH vector) in
+# tests/test_bip143.py, byte for byte -- the same way the legacy sighash is
+# settled against pepecoind. The browser mirror is coins.js `sighashWitness`.
+# Only SIGHASH_ALL and ALL|ANYONECANPAY are built, as above; a type this does
+# not mean to implement is refused rather than computed.
+
+
+def _dsha256(data: bytes) -> bytes:
+    return hashlib.sha256(hashlib.sha256(data).digest()).digest()
+
+
+def p2sh_script(scripthash: bytes) -> bytes:
+    """A P2SH output: OP_HASH160 <20-byte script hash> OP_EQUAL."""
+    return bytes([0xA9, 0x14]) + scripthash + bytes([0x87])
+
+
+def witness_scriptcode(keyhash: bytes) -> bytes:
+    """The BIP143 scriptCode of a P2WPKH input (and of a P2SH-nested one): the
+    ordinary P2PKH script of the 20-byte key hash. Not length-prefixed; the
+    preimage adds the length."""
+    if len(keyhash) != 20:
+        raise FundingError("a P2WPKH scriptCode is built from a 20-byte hash")
+    return bytes([0x76, 0xA9, 0x14]) + keyhash + bytes([0x88, 0xAC])
+
+
+def sighash_witness(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
+                    index: int, script_code: bytes, amount: int,
+                    version: int = 1, locktime: int = 0,
+                    sighash_type: int = SIGHASH_ALL) -> bytes:
+    """The 32 bytes a segwit v0 input must sign (BIP143).
+
+    Unlike the legacy preimage this commits to `amount` (the value of the coin
+    being spent), which is why every segwit input needs its value known and
+    why a signature cannot be lifted onto a coin of a different size.
+    """
+    if sighash_type not in (SIGHASH_ALL, ALL_ANYONECANPAY):
+        raise FundingError(
+            f"this builds a segwit sighash for SIGHASH_ALL and "
+            f"ALL|ANYONECANPAY, not for {sighash_type:#04x}")
+    anyone = bool(sighash_type & SIGHASH_ANYONECANPAY)
+
+    def outpoint(coin: dict) -> bytes:
+        return bytes.fromhex(coin["txid"])[::-1] + int(coin["vout"]).to_bytes(4, "little")
+
+    def sequence(coin: dict) -> bytes:
+        return int(coin.get("sequence", 0xFFFFFFFF)).to_bytes(4, "little")
+
+    zero = b"\x00" * 32
+    hash_prevouts = zero if anyone else _dsha256(b"".join(outpoint(c) for c in raw_inputs))
+    # SIGHASH_ALL (and its ANYONECANPAY form only when not ANYONECANPAY) commits
+    # to every sequence; ANYONECANPAY commits to none.
+    hash_sequence = zero if anyone else _dsha256(b"".join(sequence(c) for c in raw_inputs))
+    serialised_outputs = b"".join(
+        (value & 0xFFFFFFFFFFFFFFFF).to_bytes(8, "little") + varint(len(spk)) + spk
+        for value, spk in outputs)
+    hash_outputs = _dsha256(serialised_outputs)
+
+    this = raw_inputs[index]
+    pre = version.to_bytes(4, "little")
+    pre += hash_prevouts + hash_sequence
+    pre += outpoint(this)
+    pre += varint(len(script_code)) + script_code
+    pre += int(amount).to_bytes(8, "little")
+    pre += sequence(this)
+    pre += hash_outputs
+    pre += locktime.to_bytes(4, "little")
+    pre += sighash_type.to_bytes(4, "little")
+    return _dsha256(pre)
+
+
+def _witness_stack(items: list[bytes]) -> bytes:
+    out = varint(len(items))
+    for item in items:
+        out += varint(len(item)) + item
+    return out
+
+
+def serialize_segwit(inputs: list[dict], outputs: list[tuple[int, bytes]],
+                     locktime: int = 0, version: int = 1) -> str:
+    """A finished transaction, with a witness section when any input carries
+    one (BIP144 marker 0x00 and flag 0x01). Each input: `txid`, `vout`,
+    optional `script_sig` (bytes; empty for native segwit, the pushed
+    redeemScript for a P2SH-nested one), optional `sequence`, and optional
+    `witness` (a list of byte items). With no witness anywhere this is the same
+    bytes as the legacy serialisation."""
+    has_witness = any(coin.get("witness") for coin in inputs)
+    raw = version.to_bytes(4, "little")
+    if has_witness:
+        raw += b"\x00\x01"                       # marker, flag
+    raw += varint(len(inputs))
+    for coin in inputs:
+        script_sig = coin.get("script_sig") or b""
+        if isinstance(script_sig, str):
+            script_sig = bytes.fromhex(script_sig)
+        raw += bytes.fromhex(coin["txid"])[::-1]
+        raw += int(coin["vout"]).to_bytes(4, "little")
+        raw += varint(len(script_sig)) + script_sig
+        raw += int(coin.get("sequence", 0xFFFFFFFF)).to_bytes(4, "little")
+    raw += varint(len(outputs))
+    for value, spk in outputs:
+        raw += int(value).to_bytes(8, "little") + varint(len(spk)) + spk
+    if has_witness:
+        for coin in inputs:
+            raw += _witness_stack(coin.get("witness") or [])
+    raw += locktime.to_bytes(4, "little")
+    return raw.hex()
+
+
+def segwit_txid(inputs: list[dict], outputs: list[tuple[int, bytes]],
+                locktime: int = 0, version: int = 1) -> str:
+    """The txid (not the wtxid): double-SHA of the serialisation with the
+    witness and the marker/flag stripped, in display (reversed) order."""
+    stripped = [{"txid": c["txid"], "vout": c["vout"],
+                 "script_sig": c.get("script_sig") or b"",
+                 "sequence": c.get("sequence", 0xFFFFFFFF)} for c in inputs]
+    raw = bytes.fromhex(serialize_segwit(stripped, outputs, locktime, version))
+    return _dsha256(raw)[::-1].hex()
+
+
+def spend_for(address: str, params: Params, keyhash: bytes | None = None) -> dict:
+    """How to spend a coin at `address`: the scriptCode its sighash is taken
+    over, the script its change comes back on, and whether it is a native
+    segwit (P2WPKH) input or a legacy P2PKH one.
+
+    Native segwit is read straight from the bech32 address -- the witness
+    program IS the key hash -- so the node builds it without a pubkey, the same
+    way it builds legacy from a base58 address. P2SH-nested segwit (BIP49)
+    hides the key hash behind a script hash, so the caller names it as
+    `keyhash` (2026-10-20: the account registered it with its pubkey); it is
+    used only when the address really is that key's P2SH-P2WPKH. The input
+    signs the same BIP143 digest as native segwit, and its change goes back
+    to the same P2SH address.
+    """
+    if keyhash is not None:
+        if len(keyhash) != 20 or p2sh_p2wpkh_address(params, keyhash) != address:
+            raise FundingError("that is not the P2SH-segwit address of this key")
+        return {"kind": "p2sh-p2wpkh",
+                "script_code": witness_scriptcode(keyhash),
+                "change_script": p2sh_script(hash160(p2sh_p2wpkh_redeem(keyhash)))}
+    if params.bech32_hrp:
+        version, program = segwit_decode(params.bech32_hrp, address)
+        if version == 0 and program is not None and len(program) == 20:
+            return {"kind": "p2wpkh",
+                    "script_code": witness_scriptcode(program),
+                    "change_script": _p2wpkh_script(program)}
+    return {"kind": "p2pkh", "script_code": p2pkh_script(address),
+            "change_script": p2pkh_script(address)}
+
+
+def _assemble_witness(unsigned: "Unsigned", signatures: list[str], pubkey: bytes) -> str:
+    """`assemble` for a transaction with native-segwit inputs: the signature
+    rides in the witness, not the scriptSig. Inputs before `signed_from`, and
+    any legacy/multisig/pool input mixed in, keep the scriptSig shapes `assemble`
+    builds; a P2WPKH input gets an empty scriptSig and a [sig, pubkey] witness."""
+    first = unsigned.signed_from
+    ins = []
+    for n, coin in enumerate(unsigned.inputs):
+        item = {"txid": coin["txid"], "vout": coin["vout"],
+                "sequence": 0xFFFFFFFF, "script_sig": b"", "witness": []}
+        if n >= first:
+            sig = bytes.fromhex(signatures[n - first])
+            if coin.get("segwit") == "p2wpkh":
+                item["witness"] = [sig, pubkey]
+            elif coin.get("segwit") == "p2sh-p2wpkh":
+                # BIP49: the scriptSig only pushes the redeemScript (the P2WPKH
+                # program of this pubkey); the signature rides in the witness.
+                item["script_sig"] = push(p2sh_p2wpkh_redeem(hash160(pubkey)))
+                item["witness"] = [sig, pubkey]
+            elif coin.get("multisig"):
+                item["script_sig"] = b"\x00" + push(sig)
+            elif coin.get("redeem"):
+                item["script_sig"] = (push(sig) + b"\x00"
+                                      + push(bytes.fromhex(coin["redeem"])))
+            else:
+                item["script_sig"] = push(sig) + push(pubkey)
+        ins.append(item)
+    return serialize_segwit(ins, unsigned.outputs, locktime=0, version=1)

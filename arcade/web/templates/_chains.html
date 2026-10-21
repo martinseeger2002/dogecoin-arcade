@@ -1,6 +1,6 @@
 {% macro card(ctx, status, role, note, hide_wallet=False) %}
 <div class="chaincard">
-  <h3><span><b class="netl {{ ctx.net }}">{{ ctx.letter }}</b> {{ ctx.word }}</span>
+  <h3><span><b class="netl {{ ctx.net }}">{{ ctx.letter }}</b> {{ ctx.title }}</span>
     {% if status.online %}
       {% if status.synced %}<span class="pill ok">synced</span>
       {% else %}<span class="pill warn">syncing</span>{% endif %}

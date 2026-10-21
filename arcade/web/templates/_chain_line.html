@@ -1,24 +1,43 @@
-{# Which chain this page makes things on, said plainly, with the way to the other
-   (2026-10-09: creating on mainnet is an option on the Create tab). An account's
-   choice is its own browser's (CHAIN_COOKIE via /create/chain); on the node's own
-   machine the chain is the operator's switch, which this does not touch. #}
+{# Which chain this page makes things on, and the way to the others
+   (2026-10-09: creating on mainnet is an option on the Create tab). Drawn as the
+   Wallet card's coin row (2026-10-20: "the coin selection should look the
+   same as the coin selection in the wallet tab"), with what the chosen chain
+   means said under it. An account's choice is its own browser's (CHAIN_COOKIE via
+   /create/chain); on the node's own machine /create/chain moves the operator's
+   token chain (2026-10-19). #}
 {% macro line(chain, back) -%}
-{% set others = state.token_chains|reject("sameas", chain)|list %}
-<div class="chainline {{ 'is-main' if chain.is_mainnet }} net-{{ chain.net }}">
-  <span class="tag {{ chain.net }}">{{ chain.word }}</span>
-  <span>{% if chain.is_mainnet %}Real {{ chain.params.coin }}. Every transaction here shows its full cost, the operator's fee included, and waits for your yes.{% else %}PEP TEST: test coins, free to try and worth nothing.{% endif %}</span>
-  {% if public %}
-  {% for m in chain_menu() if m.network != chain.network %}
-  {% if m.ready %}<a href="/create/chain?to={{ m.network }}&amp;back={{ back|urlencode }}">Switch to <b class="netl {{ m.net }}">{{ m.letter or ('D' if m.doge else ('L' if m.ltc else 'P')) }}</b> {{ m.word }}</a>
-  {% else %}<span class="chain-off" aria-disabled="true" title="{{ m.label }} opens when its node has synced ({{ m.progress }}% so far)">{{ m.label }}: syncing</span>{% endif %}
-  {% endfor %}
+{% set icons = coin_icons() %}
+<div class="coinpick-wrap {{ 'is-main' if chain.is_mainnet }}">
+<div class="coinpick" role="group" aria-label="Which chain to create on">
+  {% for m in chain_menu(account_side=True) %}{# the Wallet card's order: the tag chain first #}
+  {% set on = m.network == chain.network %}
+  {% set name = m.label ~ ': ' ~ ('real ' ~ m.coin if m.mainnet else m.coin) %}
+  {% if m.ready %}
+  <a href="/create/chain?to={{ m.network }}&amp;back={{ back|urlencode }}" class="coinpick-b{{ ' on' if on }}"
+     aria-pressed="{{ 'true' if on else 'false' }}" title="{{ name }}" aria-label="{{ name }}" data-net="{{ m.network }}">
+  {% else %}
+  <span class="coinpick-b chain-off" aria-disabled="true" data-net="{{ m.network }}"
+        title="{{ m.label }} opens when this node has synced it ({{ m.progress }}% so far)">
   {% endif %}
+    {% if icons.get(m.network) %}<img class="neticon" src="{{ icons[m.network] }}" alt="{{ m.coin }}">
+    {%- else %}<b class="netl {{ m.net }}">{{ m.letter or ('D' if m.doge else ('L' if m.ltc else 'P')) }}</b> {{ 'test' if (m.ltctest or not (m.mainnet or m.doge or m.ltc)) else 'main' }}{% endif %}
+  {% if m.ready %}</a>{% else %}</span>{% endif %}
+  {% endfor %}
+</div>
+<p class="coinpick-say"><b>{{ chain.title }}:</b> {% if chain.is_mainnet %}real {{ chain.params.coin }}. Permanent and worth money: every transaction shows its full cost, the operator's 0.5% fee included, before you say yes.{% else %}{{ chain.params.coin }}, free test coins to try things with. Nothing here is worth anything.{% endif %}</p>
 </div>
 <style>
-.chainline{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:9px 12px;margin:0 0 14px;border-radius:12px;border:1px solid var(--line);font-size:.88rem}
-.chainline.is-main{border-color:var(--net-main);background:color-mix(in srgb,var(--net-main) 6%,transparent)}
-.chainline.net-dogecoin{border-color:var(--net-doge);background:color-mix(in srgb,var(--net-doge) 7%,transparent)}
-.chainline a:first-of-type{margin-left:auto}
-.chainline a{font-weight:700}
+.coinpick-wrap{margin:6px 0 16px}
+.coinpick{display:inline-flex;flex-wrap:wrap;background:var(--code);border-radius:999px;padding:3px;max-width:100%}
+.coinpick-b{display:flex;align-items:center;justify-content:center;gap:4px;padding:6px 10px;border-radius:999px;
+  font-size:.8rem;font-weight:650;color:var(--muted);text-decoration:none}
+.coinpick-b:hover{text-decoration:none;color:var(--fg)}
+.coinpick-b.on{background:var(--panel);color:var(--fg);box-shadow:var(--shadow)}
+.coinpick-b .neticon{width:30px;height:30px;opacity:.55;transition:opacity .15s}
+.coinpick-b:hover .neticon{opacity:.85}
+.coinpick-b.on .neticon{opacity:1;box-shadow:0 0 0 2px var(--accent,#d4a72c)}
+.coinpick-b.chain-off .neticon{opacity:.25;filter:grayscale(1)}
+.coinpick-say{margin:8px 2px 0;font-size:.88rem;color:var(--muted)}
+.coinpick-wrap.is-main .coinpick-say b{color:var(--bad)}
 </style>
 {%- endmacro %}

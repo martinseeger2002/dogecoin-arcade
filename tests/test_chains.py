@@ -43,7 +43,7 @@ def test_a_chain_added_as_params_alone_runs_like_the_others(monkeypatch, tmp_pat
     args = argparse.Namespace(home=str(tmp_path))
     ctx = launcher._addon_context(args, coin, "")
     assert ctx.network == "bels" and ctx.conf == tmp_path / ".bells" / "bells.conf"
-    assert ctx.title == "B main" and ctx.family == "BEL" and ctx.net == "bellscoin" and ctx.is_addon
+    assert ctx.title == "Bellscoin (BEL) \u2013 Main" and ctx.family == "BEL" and ctx.net == "bellscoin" and ctx.is_addon
     fields = launcher._addon_fields({"doge": None, "bels": ctx})
     assert fields["more"] == {"bels": ctx} and fields["doge"] is None
     borrowed = launcher._addon_context(args, coin, "borrow")

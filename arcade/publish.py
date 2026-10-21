@@ -471,8 +471,17 @@ class Publisher:
                 txid = self._send(unsigned)
             except RpcError as exc:
                 # The output is already spent: this piece went out in a run whose
-                # journal entry never got written. Find it rather than pay again.
-                txid = self._already_sent(journal.data["split"], n)
+                # journal entry never got written. Find it rather than pay again --
+                # but only a spend that carries THIS piece. The arcade running on the
+                # same key spends the split's outputs too (2026-10-19: its mesh
+                # announcement took part 5's first coin, and that announcement was
+                # filed as the piece, so the Doginal Frogs root never assembled).
+                txid, spent = self._already_sent(journal.data["split"], n, body)
+                if not txid and spent:
+                    others = [c for c in self.coins.unspent() if c["txid"] != journal.data["split"]]
+                    txid = self._send(build(self.address, others, outputs, self.rate,
+                                            f"piece {n + 1} of {plan.chunks} of {name or kind}, "
+                                            "its coin spent by another sender"))
                 if not txid:
                     raise PublishError(f"piece {n + 1} could not be sent ({exc}); nothing further sent") from exc
             journal.data["pieces"][str(n)] = txid
@@ -483,14 +492,16 @@ class Publisher:
         journal.save()
         return {"id": txids[0], "txids": txids, "chunks": plan.chunks, "resumed": resumed}
 
-    def _already_sent(self, split: str, vout: int) -> str:
-        """The txid that spent output `vout` of the split, if the node can see it."""
+    def _already_sent(self, split: str, vout: int, body: bytes) -> tuple[str, bool]:
+        """(the txid that spent output `vout` of the split carrying `body`, whether the output is spent).
+
+        ("", True) is an output somebody else spent: the piece still has to go out, on another coin."""
         try:
             out = self.rpc.call("gettxout", split, vout, True)
         except RpcError:
-            return ""
+            return "", False
         if out is not None:
-            return ""
+            return "", False
         # Spent. The wallet has the address watch-only, so the spending transaction is in its list.
         try:
             for row in self.rpc.call("listtransactions", "*", 500, 0, True):
@@ -500,10 +511,21 @@ class Publisher:
                 tx = self.rpc.call("getrawtransaction", txid, True)
                 for vin in tx.get("vin", []):
                     if vin.get("txid") == split and int(vin.get("vout", -1)) == vout:
-                        return txid
+                        return (txid if self._carries(tx, body) else ""), True
         except RpcError:
             pass
-        return ""
+        return "", True
+
+    def _carries(self, tx: dict, body: bytes) -> bool:
+        """Whether a transaction's data outputs say `body` (wrapped as payload_outputs wraps it)."""
+        from . import tx as txlib
+        want = P.AnyData(data=body).encode()
+        try:
+            outputs = txlib._parsed_outputs(tx, self.params)
+            got = txlib.extract_payload(outputs, txlib.detect_class(outputs, self.params.marker), self.address)
+        except Exception:                                  # noqa: BLE001 -- not ours, or not readable: not it
+            return False
+        return got[:len(want)] == want and not any(got[len(want):])
 
     # ---------------------------------------------------------------- transfers (D-195)
     def transfer_token(self, property_id: int, amount: int, to: str, intent: str, dry: bool = False) -> dict:

@@ -69,6 +69,7 @@ PUBLIC_PAGES = frozenset({
     "/games",                 # every inscribed game (arcade/games.py)
     "/account/escrows",       # an account's own escrows (needs a session)
     "/account/doginals",      # this account's own Doginals on Dogecoin, to list (needs a session)
+    "/account/segwit/balance",  # the account's registered segwit address (native or P2SH), test chains (needs a session)
     "/account/doge-stray",    # coins at the account's testnet key's Dogecoin address, to move home (2026-10-17)
     "/doginals/listings",     # Doginals listed for DOGE (the Exchange's Doginals tab)
     "/launch",
@@ -102,6 +103,9 @@ PUBLIC_PAGES = frozenset({
     # allowlist that opens a whole subtree opens whatever is put in it
     # later, and this is the subtree a stranger is invited into.
     "/auth/challenge",
+    # An account from another arcade, for the sign-in page (2026-10-19). Its handler
+    # fetches only from arcades the operator lists (`import_from`) when asked from outside.
+    "/signin-import",
     "/auth/who",
     "/auth/door",
     "/me",
@@ -182,6 +186,7 @@ PUBLIC_SHAPES = (
     re.compile(r"^/coin-[a-z0-9-]{2,24}\.png$"),
     # One game's discussion: read-only, like the launch thread it is.
     re.compile(r"^/games/[0-9a-f]{64}$"),
+    re.compile(r"^/games/[0-9a-f]{64}/access$"),   # is a page a game (the wallet gate, base.html arcadeGameGate)
     # A game's own front door: its sign-up, or the game itself once signed in.
     re.compile(r"^/play/[A-Za-z0-9._-]{1,64}$"),
     re.compile(r"^/inscriptions/(?:[0-9a-fA-F]{64}|[0-9]{1,12})/view$"),
@@ -431,6 +436,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/token/send", "/account/token/create",
                "/account/token/manage",
                "/account/sign",
+               # the account's own segwit address (native or P2SH), watched (test chains only)
+               "/account/segwit/register",
                # starring a market: the caller's own list of favorites, nothing else
                "/account/favorites",
                # the page holding this account's listed swaps is open (order_presence)

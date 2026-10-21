@@ -204,3 +204,49 @@ def test_one_player_is_a_player_and_covers_are_never_cropped(client):
     assert "1 players" not in page and "2-4 players" in page
     assert "players players" not in page
     assert "object-fit:contain" in page
+
+
+# ------------------------------------------------------------------ the wallet gate
+
+def test_a_card_may_say_its_game_uses_the_wallet_and_only_true_counts():
+    assert gameslib.parse('{"game": {"name": "Ashvale", "wallet": true}}')["wallet"] is True
+    assert gameslib.parse('{"game": {"name": "Ashvale", "wallet": "yes"}}')["wallet"] is False
+    assert gameslib.parse('{"game": {"name": "Ashvale"}}')["wallet"] is False
+
+
+def test_the_wallet_gate_knows_which_pages_are_games_and_which_card(client):
+    """2026-10-20: a player "can't play a game that uses Wallet controls unless they check the wallet check
+    box on the game card". The browser's gate (base.html, arcadeGameGate) asks the node whether a page is a game --
+    the card itself, or the page its Play opens -- and which card holds the box."""
+    app, state = client
+    real, card, own, shop, theirs, borrowed = "f1" * 32, "f2" * 32, "f3" * 32, "f4" * 32, "f5" * 32, "f6" * 32
+    _inscribe(state, real, 60, MAKER, {}, height=10)
+    _inscribe(state, card, 61, MAKER, {"game": {"name": "Ghost Fleet", "play": real, "wallet": True}})
+    _inscribe(state, own, 62, MAKER, {"game": {"name": "Race"}})
+    _inscribe(state, shop, 63, MAKER, {"name": "A shop"})
+    _inscribe(state, theirs, 64, OTHER, {}, height=11)
+    _inscribe(state, borrowed, 65, MAKER, {"game": {"name": "Not Mine", "play": theirs}})
+
+    said = app.get(f"/games/{real}/access").json()
+    assert said["game"] and said["card"] == card and said["opens"] == real and said["wallet"] is True
+    assert said["name"] == "Ghost Fleet" and said["address"] == MAKER
+    assert app.get(f"/games/{card}/access").json()["opens"] == real, "the card's box is kept under what Play opens"
+    mine = app.get(f"/games/{own}/access").json()
+    assert mine["game"] and mine["card"] == own and mine["wallet"] is False
+    assert app.get(f"/games/{shop}/access").json() == {"game": False}, "a shop has no card: it keeps the ask"
+    assert app.get(f"/games/{theirs}/access").json() == {"game": False}, \
+        "a card cannot make somebody else's page its game"
+    assert app.get(f"/games/{'00' * 32}/access").json() == {"game": False}
+    assert app.get("/games/nothex/access").json() == {"game": False}
+    assert doorlib.public_path(f"/games/{real}/access"), "strangers' browsers ask it too"
+
+
+def test_a_card_that_says_wallet_holds_play_until_its_box_is_ticked(client):
+    app, state = client
+    game = "f7" * 32
+    _inscribe(state, game, 66, MAKER, {"game": {"name": "Bank Run", "wallet": True}})
+    page = app.get("/games").text
+    card = page[page.index(f'id="game-{game}"'):]
+    card = card[:card.index('class="panel gamecard"') if 'class="panel gamecard"' in card else len(card)]
+    assert 'data-wallet="1"' in card and f'data-play="{game}"' in card
+    assert "uses your wallet" in card

@@ -185,6 +185,10 @@ export const LTC_WIF = 0xb0;
 //: of the Dogecoin family 0xF1, Litecoin 0xB0 ("T") and Litecoin testnet 0xEF ("c").
 export const WIF = {main: 0x9e, doge: 0x9e, ltc: LTC_WIF, test: 0xf1, regtest: 0xf1, ltctest: 0xef};
 
+//: Litecoin's other address kinds, for saying who a send pays (2026-10-20, tbuuol: L test pays P2SH and
+//: native SegWit). The script-hash version (config.py `scripthash_version`) and the bech32 prefix.
+export const LTC_KINDS = {ltc: {scripthash: 50, hrp: "ltc"}, ltctest: {scripthash: 58, hrp: "tltc"}};
+
 /** A private key as Wallet Import Format text, for a compressed public key. */
 export async function wif(key, version) {
   const body = new Uint8Array(key.length + 1);
@@ -675,6 +679,9 @@ export async function verifyOffer(offer, keys) {
   }
 
   const mine = p2pkh(await hash160(keys.pubkey));
+  const mineSegwit = p2wpkhScript(await hash160(keys.pubkey));
+  // P2SH-nested segwit (BIP49): OP_HASH160 <hash160 of the P2WPKH program> OP_EQUAL
+  const mineNested = new Uint8Array([0xa9, 0x14, ...await hash160(mineSegwit), 0x87]);
   const own = keys.address || await address(keys.pubkey, keys.version);
   const hashes = [];
   for (let n = from; n < to; n++) {
@@ -701,7 +708,20 @@ export async function verifyOffer(offer, keys) {
           + "Nothing was signed.");
       }
     }
-    const derived = hex(await sighashAll(tx, n, spent));
+    // A native-segwit input (the node flags it, and its value is committed to)
+    // signs the BIP143 digest, not the legacy one. Its coin was already checked
+    // to be this key's (named[n].address === own) above.
+    let derived;
+    // A P2SH-nested one signs the very same digest: its scriptCode is the same
+    // P2PKH of the key hash (BIP143), only the scriptSig differs, and the node
+    // puts that in.
+    if (named[n].segwit === "p2wpkh" || named[n].segwit === "p2sh-p2wpkh") {
+      derived = hex(await sighashWitness(tx, n,
+        witnessScriptcode(await hash160(keys.pubkey)),
+        BigInt(String(named[n].value || 0))));
+    } else {
+      derived = hex(await sighashAll(tx, n, spent));
+    }
     if (derived !== asked[n - from]) {
       throw new Error("those signatures were asked for over different bytes "
         + `than this transaction -- what this browser worked out for input ${n} `
@@ -713,18 +733,35 @@ export async function verifyOffer(offer, keys) {
   // Everything below is what to SAY about it, and it is said from the
   // parsed transaction. `offer.fee` is never read: a confirmation that
   // repeats the node's numbers proves nothing.
-  const version = unbase58(own)[0];
+  // A bech32 own address has no base58 version byte: use the one the caller
+  // gives (keys.version) when own is bech32 (node 2 found+tested this).
+  // A nested-segwit own address is base58 too, but in the script-hash version,
+  // so it says the same (keys.nested, from wallet_js kindKey).
+  const version = keys.nested || /^[a-z]+1[02-9ac-hj-np-z]+$/.test(own) ? keys.version : unbase58(own)[0];
+  const ltc = LTC_KINDS[keys.network || offer.chain] || null;
   let paid = 0n, change = 0n;
   const pays = [];
   for (const out of tx.outputs) {
     paid += out.value;
     const script = out.script;
-    if (SAME(script, mine)) {
+    if (SAME(script, mine) || SAME(script, mineSegwit) || SAME(script, mineNested)) {
       change += out.value;
       pays.push({to: own, value: Number(out.value), mine: true});
     } else if (script.length === 25 && script[0] === 0x76 && script[1] === 0xa9
                && script[23] === 0x88 && script[24] === 0xac) {
       pays.push({to: await base58check(version, script.slice(3, 23)),
+                 value: Number(out.value), mine: false});
+    } else if (script.length === 22 && script[0] === 0x00 && script[1] === 0x14) {
+      // A native-segwit (P2WPKH) output: show the bech32 address when the hrp
+      // can be read off this key's own address, else say it is a segwit output.
+      const hrp = ltc ? ltc.hrp : /^[a-z]+1/.test(own) ? own.slice(0, own.lastIndexOf("1")) : "";
+      pays.push({to: hrp ? segwitEncode(hrp, 0, script.slice(2, 22)) : "a segwit address",
+                 value: Number(out.value), mine: false});
+    } else if (ltc && script.length === 23 && script[0] === 0xa9 && script[1] === 0x14
+               && script[22] === 0x87) {
+      // Somebody's P2SH address (Q... on L test, M... on Litecoin): a payment, said as one. Litecoin
+      // only: on the other chains a P2SH output is a pool's or a swap's, and those keep their words.
+      pays.push({to: await base58check(ltc.scripthash, script.slice(2, 22)),
                  value: Number(out.value), mine: false});
     } else {
       pays.push({bytes: payloadBytes(script), value: Number(out.value),
@@ -737,7 +774,9 @@ export async function verifyOffer(offer, keys) {
   const first = tx.outputs.length ? opreturnData(tx.outputs[0].script) : null;
   if (from > 0 && first && first.length === 20
       && MARKER.every((b, n) => first[n] === b) && first[6] === 0 && first[7] === 0
-      && !SAME(tx.outputs[tx.outputs.length - 1].script, mine)) {
+      && !SAME(tx.outputs[tx.outputs.length - 1].script, mine)
+      && !SAME(tx.outputs[tx.outputs.length - 1].script, mineSegwit)
+      && !SAME(tx.outputs[tx.outputs.length - 1].script, mineNested)) {
     throw new Error("that transaction sends tokens and does not end on an output "
       + "of yours, so they would go to somebody else. Nothing was signed.");
   }
@@ -1290,4 +1329,193 @@ export async function verifyDoginalBuy(buy, keys) {
   if (paid > taken) throw new Error("that transaction pays out more than it takes in. Nothing was signed.");
   const coinsOf = (sats) => (Number(sats) / 100000000).toFixed(8);
   return {tx, hashes, fee: Number(taken - paid), coinsOf};
+}
+
+/* --- Electrum-style Litecoin paths: legacy, P2SH-segwit, native segwit ------
+ *
+ * 2026-10-19 (tbuuol's side). The arcade's own coin key stays exactly where it
+ * was -- `coinPath`/`coinKey` above, m/44'/<coin>'/0'/0/i, legacy P2PKH. These
+ * are THREE MORE derivations beside it, the ones other wallets use, so a
+ * person can open the same Litecoin-testnet words in Electrum-LTC or Litecoin
+ * Core and find their coins:
+ *
+ *   legacy        m/44'/<coin>'/0'/0/i   P2PKH   (same shape as the arcade's)
+ *   P2SH-segwit   m/49'/<coin>'/0'/0/i   P2SH wrapping a P2WPKH   (BIP49)
+ *   native segwit m/84'/<coin>'/0'/0/i   P2WPKH, bech32           (BIP84)
+ *
+ * <coin> is the arcade's COIN_TYPE (1 for every test chain, so Litecoin
+ * testnet is coin type 1 here -- NOT its registered 2). The ENCODING below
+ * mirrors arcade/script.py byte for byte; tests/test_coins_browser.py holds
+ * the two to each other, and tests/test_segwit_addr.py holds the Python side
+ * to the BIP173/BIP350 vectors.
+ */
+
+const PURPOSE = {legacy: 44, p2shSegwit: 49, nativeSegwit: 84};
+
+export function purposePath(purpose, network, index = 0) {
+  const coin = COIN_TYPE[network] ?? 1;
+  return [purpose + HARDENED, coin + HARDENED, 0 + HARDENED, 0, index];
+}
+
+export async function legacyKey(seed, network, index = 0) {
+  const node = await derive(seed, purposePath(PURPOSE.legacy, network, index));
+  return {key: node.key, pubkey: publicKey(node.key)};
+}
+
+export async function p2shSegwitKey(seed, network, index = 0) {
+  const node = await derive(seed, purposePath(PURPOSE.p2shSegwit, network, index));
+  return {key: node.key, pubkey: publicKey(node.key)};
+}
+
+export async function nativeSegwitKey(seed, network, index = 0) {
+  const node = await derive(seed, purposePath(PURPOSE.nativeSegwit, network, index));
+  return {key: node.key, pubkey: publicKey(node.key)};
+}
+
+/* --- bech32 (BIP173) and bech32m (BIP350) -------------------------------- */
+
+const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+const BECH32_CONST = 1;
+const BECH32M_CONST = 0x2bc830a3;
+
+function bech32Polymod(values) {
+  const gen = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  let chk = 1;
+  for (const v of values) {
+    const top = chk >> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) chk ^= ((top >> i) & 1) ? gen[i] : 0;
+  }
+  return chk >>> 0;
+}
+
+function bech32HrpExpand(hrp) {
+  const out = [];
+  for (const c of hrp) out.push(c.charCodeAt(0) >> 5);
+  out.push(0);
+  for (const c of hrp) out.push(c.charCodeAt(0) & 31);
+  return out;
+}
+
+function bech32Checksum(hrp, data, cnst) {
+  const values = bech32HrpExpand(hrp).concat(data, [0, 0, 0, 0, 0, 0]);
+  const polymod = (bech32Polymod(values) ^ cnst) >>> 0;
+  const out = [];
+  for (let i = 0; i < 6; i++) out.push((polymod >> (5 * (5 - i))) & 31);
+  return out;
+}
+
+export function bech32Encode(hrp, data, cnst = BECH32_CONST) {
+  const combined = data.concat(bech32Checksum(hrp, data, cnst));
+  return hrp + "1" + combined.map((d) => BECH32_CHARSET[d]).join("");
+}
+
+/** Repack bytes into 5-bit groups (BIP173). Returns null on an invalid pack. */
+function convertbits(data, from, to, pad) {
+  let acc = 0, bits = 0;
+  const ret = [], maxv = (1 << to) - 1, maxAcc = (1 << (from + to - 1)) - 1;
+  for (const value of data) {
+    if (value < 0 || (value >> from)) return null;
+    acc = ((acc << from) | value) & maxAcc;
+    bits += from;
+    while (bits >= to) { bits -= to; ret.push((acc >> bits) & maxv); }
+  }
+  if (pad) { if (bits) ret.push((acc << (to - bits)) & maxv); }
+  else if (bits >= from || ((acc << (to - bits)) & maxv)) return null;
+  return ret;
+}
+
+/** The segwit address for a witness version and program (v0 bech32, v1+ bech32m). */
+export function segwitEncode(hrp, witver, program) {
+  const five = convertbits([...program], 8, 5, true);
+  if (five === null) throw new Error("cannot pack that witness program");
+  return bech32Encode(hrp, [witver].concat(five), witver === 0 ? BECH32_CONST : BECH32M_CONST);
+}
+
+/* --- segwit scripts and the three address kinds -------------------------- */
+
+/** OP_0 <20-byte key hash>: a native-segwit v0 output. */
+export function p2wpkhScript(keyhash) {
+  if (keyhash.length !== 20) throw new Error("a P2WPKH program is a 20-byte hash");
+  return new Uint8Array([0x00, 0x14, ...keyhash]);
+}
+
+/** The native-segwit (bech32) address for a public key: ltc1q... / tltc1q.... */
+export async function p2wpkhAddress(pubkey, hrp) {
+  return segwitEncode(hrp, 0, await hash160(pubkey));
+}
+
+/** The P2SH-nested-segwit address for a public key: base58check of the
+ *  hash160 of the P2WPKH program, in the chain's script-hash version. */
+export async function p2shSegwitAddress(pubkey, scripthashVersion) {
+  const redeem = p2wpkhScript(await hash160(pubkey));
+  return base58check(scripthashVersion, await hash160(redeem));
+}
+
+/** Every Electrum-style identity for one chain and index: the address of each
+ *  kind and the private key behind it as WIF, for opening the same words in
+ *  another wallet. `v` carries the chain's version bytes and bech32 prefix. */
+export async function electrumWallet(seed, network, v, index = 0) {
+  const legacy = await legacyKey(seed, network, index);
+  const nested = await p2shSegwitKey(seed, network, index);
+  const native = await nativeSegwitKey(seed, network, index);
+  return {
+    legacy: {path: `m/44'/${COIN_TYPE[network] ?? 1}'/0'/0/${index}`,
+             address: await address(legacy.pubkey, v.pubkeyhash),
+             wif: await wif(legacy.key, v.wif)},
+    p2shSegwit: {path: `m/49'/${COIN_TYPE[network] ?? 1}'/0'/0/${index}`,
+             address: await p2shSegwitAddress(nested.pubkey, v.scripthash),
+             wif: await wif(nested.key, v.wif)},
+    nativeSegwit: {path: `m/84'/${COIN_TYPE[network] ?? 1}'/0'/0/${index}`,
+             address: await p2wpkhAddress(native.pubkey, v.bech32Hrp),
+             wif: await wif(native.key, v.wif)},
+  };
+}
+
+/* --- BIP143: the digest a segwit v0 input signs -------------------------
+ *
+ * 2026-10-19 (tbuuol's side), layer 3a. The mirror of arcade/funding.py's
+ * `sighash_witness`, byte for byte -- tests/test_bip143.py holds the Python
+ * side to BIP143's own native-P2WPKH number, and the browser-vector test on
+ * node 2 holds this to the Python side. Unlike `sighashAll`, this commits to
+ * the AMOUNT of the coin being spent, so a signature cannot be moved onto a
+ * coin of a different size. Only SIGHASH_ALL and ALL|ANYONECANPAY, as the
+ * node builds.
+ */
+
+/** The BIP143 scriptCode of a P2WPKH input (and of a P2SH-nested one): the
+ *  ordinary P2PKH script of the 20-byte key hash. */
+export function witnessScriptcode(keyhash) {
+  if (keyhash.length !== 20) throw new Error("a P2WPKH scriptCode is a 20-byte hash");
+  return new Uint8Array([0x76, 0xa9, 0x14, ...keyhash, 0x88, 0xac]);
+}
+
+/** The 32 bytes input `index` signs under BIP143. `tx` is a `parseTx` result;
+ *  `amount` is the value (in sats) of the coin being spent. */
+export async function sighashWitness(tx, index, scriptCode, amount, sighashType = 1) {
+  if (sighashType !== 1 && sighashType !== 0x81) {
+    throw new Error("a segwit input here signs SIGHASH_ALL or ALL|ANYONECANPAY, "
+      + `not ${sighashType}. Nothing was signed.`);
+  }
+  const anyone = (sighashType & 0x80) !== 0;
+  const outpoint = (i) => join([unhex(i.txid).reverse(), writeLE(i.vout, 4)]);
+  const sequence = (i) => writeLE(i.sequence === undefined ? 0xffffffffn : BigInt(i.sequence), 4);
+  const zero = new Uint8Array(32);
+
+  const hashPrevouts = anyone ? zero : await hash256(join(tx.inputs.map(outpoint)));
+  const hashSequence = anyone ? zero : await hash256(join(tx.inputs.map(sequence)));
+  const outs = [];
+  for (const out of tx.outputs) {
+    outs.push(writeLE(out.value, 8), sizeOf(BigInt(out.script.length)), out.script);
+  }
+  const hashOutputs = await hash256(join(outs));
+
+  const input = tx.inputs[index];
+  const preimage = join([
+    writeLE(tx.version, 4), hashPrevouts, hashSequence,
+    outpoint(input), sizeOf(BigInt(scriptCode.length)), scriptCode,
+    writeLE(BigInt(amount), 8), sequence(input), hashOutputs,
+    writeLE(tx.locktime, 4), writeLE(BigInt(sighashType), 4),
+  ]);
+  return hash256(preimage);
 }

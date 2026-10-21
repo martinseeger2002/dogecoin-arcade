@@ -420,6 +420,110 @@ def test_a_page_speaks_under_the_accounts_own_key(browser, doors):
     assert _settled(browser, frame, "rep") == []
 
 
+def test_a_game_whose_card_box_is_off_is_stopped_not_asked(browser, doors):
+    """2026-10-20: a player "can't play a game that uses Wallet controls unless they check the wallet check
+    box on the game card". The same page, made a game by a card of its maker's whose Play opens it: the first door
+    that needs the key stops the game -- no ask, the frame emptied, a word pointing to the card -- and from then on
+    this browser holds it before it starts. Ticked on the card, it plays."""
+    import json as _json
+    state, page = doors["state"], doors["page"]
+    index = state.token_index(state.messaging)
+    maker = index.inscription(page)["creator"]
+    card = "c9" * 32
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,position,content_type,"
+            "content_len,sha256,json,chunks,content) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (card, 99999, maker, maker, 10 ** 7, 0, "text/html", 2, "ab" * 32,
+             _json.dumps({"game": {"name": "Doors Game", "play": page}}), 1, b"hi"))
+        db.conn.commit()
+    state.__dict__.get("_game_pages", {}).clear()
+    forget = "localStorage.removeItem('arcade.wallet.uses:' + arguments[0])"
+    try:
+        frame = _view(browser, doors, allow=False)
+        browser.execute_script(forget, page)
+        browser.refresh()
+        frame = browser.find_elements(By.CSS_SELECTOR, "iframe.inscription-frame")[0]
+        _click(browser, frame, "i")
+        gate = None
+        for _ in range(120):
+            shown = [g for g in browser.find_elements(By.CSS_SELECTOR, ".gamegate") if g.is_displayed()]
+            if shown:
+                gate = shown[0]
+                break
+            time.sleep(0.25)
+        assert gate is not None, "the game asked for the key and was not stopped"
+        assert "Doors Game uses your wallet" in gate.text and "Wallet access on its game card" in gate.text
+        assert gate.find_element(By.TAG_NAME, "a").get_attribute("href").endswith(f"/games#game-{card}")
+        assert not [c for c in browser.find_elements(By.CSS_SELECTOR, ".askcard") if c.is_displayed()], \
+            "a game is not asked: only its card's box opens the wallet to it"
+        assert browser.execute_script("return document.querySelector('iframe.inscription-frame').hidden")
+        assert browser.execute_script("return localStorage.getItem('arcade.wallet.uses:' + arguments[0])",
+                                      page) == "yes", "remembered: this game uses the wallet"
+
+        browser.get(f"{doors['base']}/inscriptions/{page}/full")      # held before it starts, full screen too
+        for _ in range(80):
+            if browser.execute_script("return !!document.querySelector('.gamegate')"):
+                break
+            time.sleep(0.25)
+        assert browser.execute_script("return !!document.querySelector('.gamegate')"), "it started anyway"
+
+        frame = _view(browser, doors, allow=True)                    # ticked on its card: it plays
+        _click(browser, frame, "i")
+        who = _settled(browser, frame, "nid")
+        assert "error" not in who, who
+        assert not browser.execute_script("return !!document.querySelector('.gamegate')")
+    finally:
+        with index.open() as db:
+            db.conn.execute("DELETE FROM inscription WHERE txid=?", (card,))
+            db.conn.commit()
+        state.__dict__.get("_game_pages", {}).clear()
+        browser.execute_script(forget, page)
+
+
+def test_a_ticked_wallet_access_box_stays_ticked_on_its_card(browser, doors):
+    """2026-10-20: "Once you check, allow Wallet access on a game card that check should stay on that game
+    card". The Games tab drew its boxes before base.html had defined what reads them, so every visit showed them off."""
+    import json as _json
+    state, page = doors["state"], doors["page"]
+    index = state.token_index(state.messaging)
+    maker = index.inscription(page)["creator"]
+    card = "c8" * 32
+    with index.open() as db:
+        db.conn.execute(
+            "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,position,content_type,"
+            "content_len,sha256,json,chunks,content) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (card, 99998, maker, maker, 10 ** 7, 0, "text/html", 2, "ab" * 32,
+             _json.dumps({"game": {"name": "Box Game", "play": page}}), 1, b"hi"))
+        db.conn.commit()
+    box = f'.gameaccess[data-access="{page}"] input'
+    try:
+        browser.get(f"{doors['base']}/games")
+        browser.execute_script("localStorage.removeItem('arcade.wallet.allow:' + arguments[0])", page)
+        browser.refresh()
+        browser.execute_script("arguments[0].click()", browser.find_element(By.CSS_SELECTOR, box))
+        allow = None
+        for _ in range(40):
+            allow = [b for b in browser.find_elements(By.CSS_SELECTOR, ".askcard button")
+                     if b.is_displayed() and b.text == "Allow wallet access"]
+            if allow:
+                break
+            time.sleep(0.25)
+        assert allow, "ticking the box asks, naming the publisher"
+        allow[0].click()
+        time.sleep(0.5)
+        assert browser.find_element(By.CSS_SELECTOR, box).is_selected()
+        for where in ("/games", "/games?sort=new"):
+            browser.get(doors["base"] + where)
+            time.sleep(1)
+            assert browser.find_element(By.CSS_SELECTOR, box).is_selected(), f"{where}: the box came back off"
+    finally:
+        with index.open() as db:
+            db.conn.execute("DELETE FROM inscription WHERE txid=?", (card,))
+            db.conn.commit()
+        browser.execute_script("localStorage.removeItem('arcade.wallet.allow:' + arguments[0])", page)
+
+
 def test_the_hour_the_page_spends_is_the_accounts_one(browser, doors):
     """The cap a page in a loop hits is the account's message dial -- a tally
     kept in the tab resets with the tab and could only ever be theatre. Here

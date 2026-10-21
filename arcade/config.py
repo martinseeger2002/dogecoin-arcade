@@ -220,7 +220,11 @@ class Params:
     #: cookie in that folder (or the network's `datadir_subdir` under it).
     node_dir: str = ""
     node_conf: str = ""
-    #: One capital letter for badges ("P main", "D main", "L test") and the coin family it belongs to.
+    #: The chain's name as people say it, before " - Main" / " - Test" (2026-10-20: "the network name - Main
+    #: or test ... Because we could be and will be adding many more blockchains"). Empty: its `label`, less a trailing
+    #: "testnet" ("Litecoin testnet" -> "Litecoin"), so a chain copied from another's Params is named by its own label.
+    chain_name: str = ""
+    #: One capital letter for a badge with no icon, and the coin family it belongs to.
     letter: str = "P"
     family: str = "PEP"
     #: The word a page files the chain under ("dogecoin", "litecoin"); empty: mainnet or testnet.

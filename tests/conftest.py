@@ -2,6 +2,10 @@ import os
 import sqlite3
 import threading
 
+# No test asks the real leaked-password list on the internet (wallet.js `leaked`, 2026-10-20): its own logic is tested
+# under Node against a fake answer (test_leaked_password.py).
+os.environ.setdefault("ARCADE_LEAKED_URL", "")
+
 import pytest
 
 from arcade.db import Database, StateDB, register_journalled_table

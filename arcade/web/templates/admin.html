@@ -15,6 +15,7 @@
   <button type="button" role="tab" data-tab="trading">Trading</button>
   <button type="button" role="tab" data-tab="safety">Safety</button>
   <button type="button" role="tab" data-tab="network">Network</button>
+  <button type="button" role="tab" data-tab="ords">Ords</button>
   <button type="button" role="tab" data-tab="people">People &amp; brand</button>
 </nav>
 
@@ -120,10 +121,10 @@
      column). The sign-up gift is P test's amount. What stays here is the one day-wide ceiling. #}
   <p class="muted" style="margin-top:0">Each test chain&rsquo;s faucet &mdash; what every account is
     topped back up to once a day, and how this node keeps the coins for it &mdash; is in
-    <a href="#coins">Chains</a>, in its Faucet column. P test&rsquo;s amount is also what each new
+    <a href="#coins">Chains</a>, in its Faucet column. Pepecoin (PEP) – Test&rsquo;s amount is also what each new
     account gets when it signs up. Chains with real coins have no faucet.</p>
   <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
-    <label class="muted" for="faucetdaily">P test sign-up gifts and top-ups, at most per day in all</label>
+    <label class="muted" for="faucetdaily">Pepecoin (PEP) – Test sign-up gifts and top-ups, at most per day in all</label>
     <input autocomplete="off" id="faucetdaily" style="width:160px" placeholder="no limit"> <span class="muted">(empty = no limit)</span>
   </div>
   <button type="button" class="small" id="savefaucet" style="margin-top:10px">Save faucet</button>
@@ -283,6 +284,65 @@
   <div id="meshinfo" class="muted" style="font-size:.88rem">Loading&hellip;</div>
 </section>
 
+{# 2026-10-20: "a list of other operators" -- each linked arcade says who runs it (mesh/operators.py). #}
+<section class="panel" id="operators">
+  <h2>Other operators</h2>
+  <p class="muted" style="margin-top:0">Who runs each arcade this one has heard from over the mesh, in their arcade&rsquo;s
+    own words.</p>
+  <div class="tablewrap"><table class="admintable">
+    <thead><tr><th>Operator</th><th>Arcade</th><th>Version</th><th>Published at</th><th>Now</th></tr></thead>
+    <tbody id="oprows"><tr><td colspan="5" class="muted">Loading&hellip;</td></tr></tbody>
+  </table></div>
+</section>
+
+</div>
+
+{# 2026-10-20: "Another tab for Ords and indexing index percentage for each of the chains. And controls to
+   enable ord in for each chain" -- each chain's own ord index (arcade/doginal_index.py, mesh/doginalshare.py). #}
+<div class="admintab" data-tab="ords" aria-label="Ords">
+<section class="panel" id="ords">
+  <h2>Ords</h2>
+  <p class="muted" style="margin-top:0">Every inscription on each chain, read from its blocks by the arcades themselves,
+    from the first block that chain&rsquo;s ord indexer starts at. <b>Walk</b> reads every block here, in order, and knows
+    where each inscription is now (it needs that chain&rsquo;s Core on this machine). <b>Help</b> takes 100 blocks at a
+    time from the shared list, reads them a block at a time, and says their hash; two arcades with the same hash for a
+    chunk agree on it. A chunk whose arcade goes quiet for 10 minutes goes to the next one.</p>
+  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0 10px">
+    <label for="ordcores"><b>Cores for ords:</b></label>
+    <input autocomplete="off" type="number" id="ordcores" min="1" step="1" inputmode="numeric" style="width:5.5em;font-size:16px">
+    <span class="muted" id="ordmachine"></span>
+    <button type="button" class="small" id="ordcoressave">Save</button>
+  </div>
+  <p class="muted" style="margin:0 0 10px;font-size:.84rem">Each core helps with a chunk of its own, side by side.
+    Walking a chain is block after block, so it uses one core whatever this says. One core on a small machine rests
+    between passes, so the arcade&rsquo;s pages stay quick.</p>
+  <div class="tablewrap"><table class="admintable">
+    <thead><tr><th>Chain</th><th>Index</th><th>Starts at</th><th>Indexed</th><th>Inscriptions</th><th>Now</th></tr></thead>
+    <tbody id="ordrows"><tr><td colspan="6" class="muted">Loading&hellip;</td></tr></tbody>
+  </table></div>
+  <span class="muted" id="ordsaid"></span>
+  <h3 style="margin:14px 0 6px">Look up</h3>
+  <p class="muted" style="margin-top:0;font-size:.84rem">An inscription id (where it is now), a coin as
+    <code>txid:vout</code> (what sits on it), a 4-character DRC-20 / PRC-20 tick (its supply and holders), a name like
+    <code>jon.doge</code> (who claimed it first, under each reading), an address (its token balances),
+    <code>type:image/png</code> or <code>p:drc-20</code> (how many, and the first ones), or <code>kinds</code> (the
+    commonest types and protocols). Answered from
+    this arcade&rsquo;s own walk, or, on <b>Read only</b>, by a linked arcade that walks the chain.</p>
+  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+    <select id="ordlooknet" aria-label="Chain to look up on" style="font-size:16px"></select>
+    <input autocomplete="off" id="ordlookq" style="flex:1;min-width:260px;font-size:16px" placeholder="inscription id, or txid:vout"
+           aria-label="Inscription id or coin">
+    <button type="button" class="small" id="ordlookgo">Look up</button>
+  </div>
+  <pre id="ordlooksaid" class="muted" style="white-space:pre-wrap;font-size:.84rem;margin:8px 0 0"></pre>
+  {# 2026-10-20: "make sure that we are indexing the domains the correct way" -- every reading kept. #}
+  <h3 style="margin:14px 0 6px">Names: where the readings disagree</h3>
+  <p class="muted" style="margin-top:0;font-size:.84rem">A <code>"p":"dns"</code> name is claimed by an inscription;
+    the first valid claim wins and its holder owns the name. The readings differ on which inscriptions are claims, so
+    the same name can have a different first claim under each. Read from this arcade&rsquo;s own walk.</p>
+  <button type="button" class="small" id="ordnamesgo">Show</button>
+  <pre id="ordnamessaid" class="muted" style="white-space:pre-wrap;font-size:.84rem;margin:8px 0 0"></pre>
+</section>
 </div>
 
 <div class="admintab" data-tab="people" aria-label="People & brand">
@@ -363,6 +423,12 @@ section.panel h2{margin-top:0}
 .admintable th{text-align:left;color:var(--muted);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line)}
 .admintable td{padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
 .admintable td.acts{text-align:right}
+/* The Ords tab (2026-10-20): a walking arcade's lines are long, so its cells wrap, a fact to a line, and the
+   control is wide enough to read -- the table looked different on every arcade. */
+#ords .admintable td{white-space:normal;vertical-align:top}
+#ords .admintable td.ordwhat{white-space:nowrap}
+#ords select{min-width:6.5em;font-size:16px}
+#ords .ordline{display:block}
 .quotagrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 14px;margin-bottom:10px}
 .quotagrid label{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:.9rem}
 .quotagrid input{width:90px}
@@ -597,7 +663,7 @@ section.panel h2{margin-top:0}
     var tb = $('chainrows'); tb.textContent = '';
     (c.rows || []).forEach(function (r) {
       var tr = document.createElement('tr');
-      tr.appendChild(text('td', r.title + ' \u00b7 ' + r.label));
+      tr.appendChild(text('td', r.title));          // "Dogecoin \u2013 Main": the name says it all (2026-10-20)
       var td = document.createElement('td');
       if (r.required) { td.textContent = 'Runs here (always)'; }
       else {
@@ -949,6 +1015,131 @@ section.panel h2{margin-top:0}
       }).catch(function () { $('swaplist').textContent = 'Could not read the swaps.'; });
   }
   loadSwaps(); setInterval(loadSwaps, 15000);
+  // --- Ords (2026-10-20): each chain's own ord index, every 5 s while the tab shows; and Network -> Other operators.
+  var ORD_WORDS = {walk: 'Walk', help: 'Help', read: 'Read only', off: 'Off'};
+  function pct(x) { return (x == null ? '\u2014' : Number(x).toFixed(x < 10 ? 2 : 1) + '%'); }
+  function num(x) { return Number(x || 0).toLocaleString(); }
+  function lines(items, cls) {
+    var td = document.createElement('td');
+    if (cls) td.className = cls;
+    if (!items.length) td.textContent = '\u2014';
+    items.forEach(function (x) { td.appendChild(text('span', x, 'ordline')); });
+    return td;
+  }
+  function loadOrds() {
+    if (!document.querySelector('.admintab[data-tab="ords"].on')) return;
+    fetch('/admin/api/ords', {headers: {'Accept': 'application/json'}, cache: 'no-store'}).then(function (r) { return r.json(); })
+      .then(function (d) {
+        var tb = $('ordrows'); tb.textContent = '';
+        var pick = $('ordlooknet');
+        if (!pick.options.length) (d.rows || []).forEach(function (r) {
+          var o = document.createElement('option'); o.value = r.net; o.textContent = r.title; pick.appendChild(o);
+        });
+        if (document.activeElement !== $('ordcores')) $('ordcores').value = d.cores;
+        $('ordcores').max = d.machine;
+        $('ordmachine').textContent = 'of ' + d.machine + ' on this machine';
+        (d.rows || []).forEach(function (r) {
+          var tr = document.createElement('tr');
+          var name = text('td', r.title); name.className = 'ordwhat'; tr.appendChild(name);
+          var td = document.createElement('td'), sel = document.createElement('select');
+          sel.setAttribute('aria-label', r.title + ' ord index');
+          ['walk', 'help', 'read', 'off'].forEach(function (m) {
+            var o = document.createElement('option'); o.value = m; o.textContent = ORD_WORDS[m];
+            o.selected = r.mode === m; sel.appendChild(o);
+          });
+          sel.onchange = function () {
+            call('/admin/api/ords', {net: r.net, mode: sel.value})
+              .then(function () { $('ordsaid').textContent = r.title + ': ' + ORD_WORDS[sel.value] + '.'; loadOrds(); })
+              .catch(function (e) { $('ordsaid').textContent = e.message; });
+          };
+          td.appendChild(sel); tr.appendChild(td);
+          var st = text('td', 'block ' + num(r.base)); st.title = r.source; tr.appendChild(st);
+          var w = r.walk, line = [];
+          if (w) line.push(pct(r.walked_pct) + ' walked here (block ' + num(w.next) + ' of ' + num(r.tip) + ')');
+          if (r.mode !== 'off') line.push(pct(r.agreed_pct) + ' agreed by two arcades (' + num(r.agreed) + ' of ' + num(r.ready) + ' chunks)');
+          tr.appendChild(lines(line));
+          // A walker knows every inscription it passed; a helper counts the births in the chunks it read (2026-10-20:
+          // a test machine showed a dash and looked as if it had found nothing).
+          tr.appendChild(w ? lines([num(w.inscriptions) + ' inscriptions', num(w.tokens) + ' tokens, '
+                                    + num(w.holders) + ' holders', num((w.names || {}).spec) + ' names'])
+                           : r.found ? lines([num(r.found), 'in chunks read here']) : text('td', '\u2014'));
+          var bits = [];
+          if (r.mode === 'off') bits.push('off');
+          if (r.mode === 'read') bits.push((r.walkers || []).length ? 'reads from arcade ' + r.walkers[0].node
+            + ' (walked to block ' + num(r.walkers[0].walked_to) + ')' : 'no linked arcade walks this chain yet');
+          (r.lanes || []).forEach(function (l) { bits.push('reading chunk ' + num(l.chunk) + ': ' + l.done + ' of ' + r.chunk + ' blocks'); });
+          if ((r.lanes || []).length && r.help_rate) bits.push(r.help_rate + ' blocks/s here');
+          if (w && w.rate) bits.push(w.rate + ' blocks/s');
+          if (r.helped) bits.push(num(r.helped) + ' chunks read here as help');
+          (r.leases || []).forEach(function (l) { bits.push('arcade ' + l.node + ' reads chunk ' + num(l.chunk) + ' (' + l.done + '/' + r.chunk + ')'); });
+          if (r.differ) bits.push(num(r.differ) + ' chunk' + (r.differ > 1 ? 's' : '') + ' read differently');
+          if (r.mode === 'walk' && r.borrowed) bits.push('walking needs this chain\u2019s Core here: helping instead');
+          if (r.error) bits.push(r.error);
+          tr.appendChild(lines(bits, (r.differ || r.error) ? 'idx-bad' : 'muted'));
+          tb.appendChild(tr);
+        });
+        if (!tb.childNodes.length) {
+          var none = document.createElement('tr'), cell = text('td', 'This arcade reads none of the chains that have ords.', 'muted');
+          cell.colSpan = 6; none.appendChild(cell); tb.appendChild(none);
+        }
+      }).catch(function () { $('ordrows').textContent = 'Could not read the ord indexes.'; });
+  }
+  $('ordlookgo').onclick = function () {
+    var out = $('ordlooksaid'); out.textContent = 'Asking\u2026';
+    fetch('/admin/api/ords/lookup?net=' + encodeURIComponent($('ordlooknet').value) + '&q='
+          + encodeURIComponent($('ordlookq').value.trim()), {headers: {'Accept': 'application/json'}, cache: 'no-store'})
+      .then(function (r) { return r.json(); })
+      .then(function (j) { out.textContent = j.detail ? j.detail : JSON.stringify(j, null, 2); })
+      .catch(function (e) { out.textContent = String(e.message || e); });
+  };
+  $('ordnamesgo').onclick = function () {
+    var out = $('ordnamessaid'); out.textContent = 'Reading\u2026';
+    fetch('/admin/api/ords/names?net=' + encodeURIComponent($('ordlooknet').value), {headers: {'Accept': 'application/json'},
+                                                                                   cache: 'no-store'})
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j.detail) { out.textContent = j.detail; return; }
+        var lines = [j.names.toLocaleString() + ' names in all; ' + j.different_first_claim.toLocaleString()
+          + ' with a different first claim under two readings.'];
+        Object.keys(j.readings).forEach(function (k) {
+          lines.push('\u2022 ' + k + ': ' + (j.per_reading[k] || 0).toLocaleString() + ' names \u2014 ' + j.readings[k]);
+        });
+        if (j.examples.length) lines.push('', 'First claim (inscription number) under each reading:');
+        j.examples.forEach(function (x) {
+          lines.push(x.name + ': ' + Object.keys(j.readings).map(function (k) {
+            return k + ' ' + (x[k] == null ? '\u2014' : '#' + Number(x[k]).toLocaleString()); }).join(', '));
+        });
+        out.textContent = lines.join('\n');
+      }).catch(function (e) { out.textContent = String(e.message || e); });
+  };
+  $('ordcoressave').onclick = function () {
+    call('/admin/api/ords', {cores: Number($('ordcores').value)})
+      .then(function (j) { $('ordsaid').textContent = 'Ords help with ' + j.cores + ' core' + (j.cores > 1 ? 's' : '') + '.'; loadOrds(); })
+      .catch(function (e) { $('ordsaid').textContent = e.message; });
+  };
+  function loadOperators() {
+    fetch('/admin/api/operators', {headers: {'Accept': 'application/json'}, cache: 'no-store'}).then(function (r) { return r.json(); })
+      .then(function (d) {
+        var tb = $('oprows'); tb.textContent = '';
+        (d.rows || []).forEach(function (r) {
+          var tr = document.createElement('tr');
+          tr.appendChild(text('td', r.tag ? '@' + r.tag : 'no name yet'));
+          tr.appendChild(text('td', (r.name || '') + ' \u00b7 ' + r.node));
+          tr.appendChild(text('td', r.version || ''));
+          tr.appendChild(text('td', (r.hosts || []).join(', ') || '\u2014'));
+          tr.appendChild(text('td', r.linked ? 'linked' : 'not linked now', r.linked ? '' : 'muted'));
+          tb.appendChild(tr);
+        });
+        if (!tb.childNodes.length) {
+          var tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 5; td.className = 'muted';
+          td.textContent = d.mesh ? 'No other arcade has said yet.' : 'The mesh is off on this arcade.';
+          tr.appendChild(td); tb.appendChild(tr);
+        }
+      }).catch(function () {});
+  }
+  loadOperators(); setInterval(function () { if (!document.hidden) loadOperators(); }, 30000);
+  setInterval(function () { if (!document.hidden) loadOrds(); }, 5000);
+  document.querySelectorAll('.admintabs button[data-tab="ords"]').forEach(function (b) { b.addEventListener('click', loadOrds); });
   document.querySelectorAll('.saveswitches').forEach(function (b) { b.onclick = saveSwitches; });
 
   // --- tabs: the tab is in the address (#trading), and an old link to a panel (#chains, #swaps, #gamecards)
@@ -967,6 +1158,7 @@ section.panel h2{margin-top:0}
   });
   window.addEventListener('hashchange', function () { showTab(location.hash); });
   showTab(location.hash);
+  loadOrds();
 
   // --- Overview: what needs the operator, and Network: the mesh (2026-10-19)
   function loadNeeds() {

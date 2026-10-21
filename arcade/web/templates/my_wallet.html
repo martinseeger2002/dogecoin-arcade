@@ -31,7 +31,10 @@
   <div class="wl-bal"><b id="bal">—</b><span id="unit">PEP</span>
     <span class="wl-chip" id="netchip"></span></div>
   <div class="wl-sub" id="sub"></div>
-  <button type="button" class="wl-addr" id="addrchip" title="Copy your address"></button>
+  <div class="wl-addrrow">
+    <select class="wl-kind" id="addrkind" aria-label="Address type" hidden></select>
+    <button type="button" class="wl-addr" id="addrchip" title="Copy your address"></button>
+  </div>
   <div class="wl-actions">
     <button type="button" class="wl-act" id="do-send"><i aria-hidden="true">&#8593;</i>Send</button>
     <button type="button" class="wl-act" id="do-recv"><i aria-hidden="true">&#8595;</i>Receive</button>
@@ -60,7 +63,7 @@
 <div id="panel-nfts" role="tabpanel" hidden></div>
 {# [Claude 2026-10-15] Inscriptions on this account's own coins -- Doginals on Dogecoin, ord inscriptions on Pepecoin
    mainnet -- read from the chain by this node (2026-10-14: "We have to have the wallet check its own utxo to see if
-   they are doginals"; 2026-10-15: "Remove Doge Soft API", "do the same for small .01 pep txs"). Shown under NFTs. #}
+   they are doginals"; 2026-10-15: the outside Doginals API removed, "do the same for small .01 pep txs"). Shown under NFTs. #}
 <section id="doginals" class="wl-dg" hidden aria-labelledby="dg-title"></section>
 
 {# Coins in the small outputs this account's messages, posts and files left on
@@ -103,6 +106,10 @@
 .wl-addr{margin-top:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;
   background:var(--code);color:var(--fg);border:0;box-shadow:none;padding:4px 10px;border-radius:999px;
   max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.wl-addrrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;max-width:100%}
+.wl-addrrow .wl-addr{margin-top:0;min-width:0}
+.wl-kind{font-size:16px;font-weight:600;padding:2px 26px 2px 10px;border-radius:999px;background:var(--code);
+  color:var(--fg);border:1px solid var(--line,#2b3c31);width:auto;max-width:100%}
 .wl-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
 .wl-act{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:.82rem;font-weight:650;
   padding:10px 4px;border-radius:14px;background:var(--code);color:var(--fg);border:0;box-shadow:none}
@@ -385,6 +392,53 @@ const chains = () => (said.chains || []).filter((c) => c.address && !HIDDEN.incl
 const chainNow = () => chains().find((c) => c.network === net) || chains()[0] || null;
 const mine = (address) => (said.chains || []).some((c) => c.address && c.address === address);
 
+/* The card's address type (2026-10-20): wallet.ADDRESS_KINDS lists a
+ * chain's kinds; the first is its ordinary address, the one everything else on
+ * this page uses. Another kind changes the card's address, balance, Receive and
+ * coin Send. Tokens and NFTs stay on the ordinary address. */
+const KIND = "arcade.wallet.kind:";
+const kinds = (c) => (!NODE_SIDE && c ? wallet.addressKinds(c.network) : []);
+let kindSeen = {};                     // "<network>:<kind>" -> {address, balance, at}
+function kindNow() {
+  const c = chainNow(), ks = kinds(c);
+  if (asset || ks.length < 2) return null;
+  const k = ks.find((x) => x.id === kept(KIND + c.network, ks[0].id));
+  return k && k !== ks[0] ? k : null;
+}
+const kindSpot = (c, k) => `arcade.wallet.kindaddr:${said.pubkey || said.name || ""}:${c.network}:${k.id}`;
+/** That kind's address: derived when the wallet is open, else as last seen in this browser.
+ *  `pubkey` (hex) only when derived: a P2SH address is registered with it, the first time. */
+async function kindAddress(c, k) {
+  const open = keys || await wallet.opened(c.network).catch(() => null);
+  if (open && open.seed) {
+    const mine = wallet.keysOn(await wallet.asKind(open, c.network, k.id), c.network);
+    keep(kindSpot(c, k), mine.address);
+    return {address: mine.address, pubkey: [...mine.pubkey].map((b) => b.toString(16).padStart(2, "0")).join("")};
+  }
+  return {address: kept(kindSpot(c, k), ""), pubkey: ""};
+}
+async function loadKind(c, k) {
+  const spot = `${c.network}:${k.id}`;
+  const seen = kindSeen[spot] || (kindSeen[spot] = {address: "", balance: null, at: 0});
+  if (Date.now() - seen.at < 15000) return;
+  seen.at = Date.now();
+  const derived = await kindAddress(c, k);
+  seen.address = derived.address;
+  if (!seen.address) { drawHead(); return; }
+  try {
+    // the node watches it once told (one address of each kind per account and chain)
+    await fetch("/account/segwit/register", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({address: seen.address, chain: c.network,
+                            ...(derived.pubkey ? {pubkey: derived.pubkey} : {})})});
+    const r = await fetch(`/account/segwit/balance?network=${encodeURIComponent(c.network)}`
+                          + `&address=${encodeURIComponent(seen.address)}`, {cache: "no-store"});
+    const b = await r.json();
+    if (r.ok) seen.balance = Number(b.balance || 0);
+  } catch (e) { /* the balance stays unknown */ }
+  if (chainNow() === c && kindNow() === k) drawHead();
+}
+const kindHere = () => { const c = chainNow(), k = kindNow(); return k && c ? (kindSeen[`${c.network}:${k.id}`] || {}) : null; };
+
 /* --- the balance card --------------------------------------------------- */
 
 function drawHead() {
@@ -413,8 +467,20 @@ function drawHead() {
     return;
   }
   if (asset && asset.network !== c.network) asset = null;
+  const ks = asset ? [] : kinds(c), k = kindNow(), here = kindHere();
+  const pick = $("addrkind");
+  pick.hidden = ks.length < 2;
+  if (ks.length > 1) {
+    pick.replaceChildren(...ks.map((one) => { const o = el("option", "", one.label); o.value = one.id; return o; }));
+    pick.value = (k || ks[0]).id;
+    pick.onchange = () => {
+      keep(KIND + c.network, pick.value);
+      drawAll();
+    };
+  }
   UNIT = asset ? asset.name : coinOf(c);
-  $("bal").textContent = asset ? tokenAmt(asset.balance, asset) : coinsOf(c.spendable ?? c.balance);
+  $("bal").textContent = asset ? tokenAmt(asset.balance, asset)
+    : k ? (here.balance == null ? "—" : coinsOf(here.balance)) : coinsOf(c.spendable ?? c.balance);
   // A token's name is a link to its own page, on its own chain (2026-10-15).
   if (asset) {
     const link = el("a", "wl-unitlink", UNIT);
@@ -453,12 +519,20 @@ function drawHead() {
     bits.length = 0;
   } else if (!bits.length) sub.textContent = c.mainnet ? "Real coins: a send cannot be taken back."
     : "Testnet coins pay message and game fees.";
+  if (k) {
+    bits.length = 0;
+    sub.textContent = here.address ? `Your ${k.label} address (${k.path}), from the same twelve words.`
+      : `Unlock your wallet to see your ${k.label} address.`;
+    loadKind(c, k).catch(() => {});
+  }
   bits.forEach(([cls, text], i) => {
     if (i) sub.append(" · ");
     sub.append(el("span", cls, text));
   });
-  $("addrchip").textContent = short(c.address);
-  $("addrchip").onclick = async () => toast(await copyText(c.address)
+  const shownAddr = k ? here.address : c.address;
+  $("addrchip").hidden = !shownAddr;
+  $("addrchip").textContent = short(shownAddr || "");
+  $("addrchip").onclick = async () => toast(await copyText(shownAddr)
     ? "Address copied" : "Copy blocked here: press Receive and copy it from there");
   let dismissed = false;
   try { dismissed = sessionStorage.getItem("arcade.wallet.backupx") === "yes"; } catch (e) {}
@@ -510,6 +584,14 @@ let act = {net: null, rows: [], since: null, tip: 0, more: false};
 async function loadActivity(older = false) {
   const c = chainNow();
   if (!c) { $("panel-activity").replaceChildren(el("div", "wl-empty", "No address yet, so nothing has happened.")); return; }
+  const k = kindNow();
+  if (k) {
+    act = {net: null, rows: [], since: null, tip: 0, more: false};
+    $("panel-activity").replaceChildren(el("div", "wl-empty",
+      `The history of your ${k.label} address is not listed yet; its balance is above. `
+      + `Choose ${kinds(c)[0].label} for your ordinary address and its history.`));
+    return;
+  }
   if (act.net !== c.network) older = false;
   const before = older && act.rows.length ? `&before=${act.rows[act.rows.length - 1].height}` : "";
   const answer = await fetch(`${API}/activity?chain=${encodeURIComponent(c.network)}${before}`, {cache: "no-store"});
@@ -699,8 +781,12 @@ function openPending(p) {
 /* --- receive ------------------------------------------------------------ */
 
 function openReceive() {
-  const c = chainNow();
-  if (!c) return;
+  const c0 = chainNow();
+  if (!c0) return;
+  const k = kindNow(), here = kindHere();
+  if (k && !here.address) { toast(`Unlock your wallet to see your ${k.label} address`); return; }
+  // the card's address type: Receive shows that kind's address
+  const c = k ? {...c0, address: here.address} : c0;
   const s = sheet();
   const body = s.set(`Receive ${UNIT}`);
   // A token arrives at the same address as the coins: there is one per chain.
@@ -759,7 +845,8 @@ async function copyText(text) {
  * to what caused it, instead of in a box somewhere behind it.
  */
 
-const ADDRESSY = /^[1-9A-HJ-NP-Za-km-z]{26,35}$/;
+// base58, or a native SegWit (bech32) address (2026-10-20: L test pays tltc1q...)
+const ADDRESSY = /^(?:[1-9A-HJ-NP-Za-km-z]{26,35}|[a-z]{1,4}1[02-9ac-hj-np-z]{38,58}|[A-Z]{1,4}1[02-9AC-HJ-NP-Z]{38,58})$/;
 
 /* Scan QR on Send (2026-10-17): templates/qrscan.js. */
 
@@ -795,12 +882,18 @@ function openSend(prefill = "", piece = null) {
                                          name: `${(chainNow() || {}).network === "doge" ? "Doginal" : "Pepinal"} ${short(piece.id)}`}
     : piece ? {kind: "nft", piece, name: piece.name || `#${piece.number}`}
     : asset ? {kind: "token", ...asset} : {kind: "coin"};
+  // from the card's address type, when it is not the ordinary one: coins only
+  const k = kindNow();
+  if (k && what.kind === "coin") {
+    if (!kindHere().address) { toast(`Unlock your wallet to send from your ${k.label} address`); return; }
+    Object.assign(what, {from: kindHere().address, fromKind: k.id, balance: kindHere().balance || 0});
+  }
   step1(s, {to: prefill, amount: piece ? "1" : "", what});
 }
 
 /** The offer for what is being sent, from the node. */
 async function offerFor(what, to, amount, network) {
-  if (what.kind === "coin") return wallet.offerSend(to, amount, network);
+  if (what.kind === "coin") return wallet.offerSend(to, amount, network, what.from || "");
   if (what.kind === "doginal") {
     // [Claude 2026-10-15] The node builds it (/account/doginal/send) and reads from the chain itself that the coin holds exactly
     // this Doginal before it will: the one time the server asks, because a send needs it.
@@ -897,7 +990,7 @@ async function step1(s, d) {
   const single = what.kind === "nft" || what.kind === "doginal";
   if (single) { la.hidden = true; arow.hidden = true; avail.hidden = true; }
 
-  const spendable = what.kind === "token" ? Number(what.balance || 0) : Number(c.spendable ?? c.balance ?? 0);
+  const spendable = what.kind === "token" || what.from ? Number(what.balance || 0) : Number(c.spendable ?? c.balance ?? 0);
   const unitNow = what.kind === "token" ? what.name : COIN();
   const fmt = (raw) => what.kind === "token" ? tokenAmt(raw, what) : coinsOf(raw);
   let shown = [], hi = -1;
@@ -987,10 +1080,12 @@ async function step1(s, d) {
     go.disabled = true; go.textContent = "Checking…";
     try {
       if (!keys) keys = NODE_SIDE ? await wallet.opened() : await arcadeKeys(TAGCHAIN);
+      // that address type's key signs (the same words, another path)
+      d.keys = what.fromKind ? await wallet.asKind(keys, c.network, what.fromKind) : null;
       const offer = await offerFor(what, typedTo, typedAmount, c.network);
       const wrong = mismatch(offer, typedTo, typedAmount, what);
       if (wrong) throw new Error(wrong);
-      const read = await wallet.checked(offer, keys);
+      const read = await wallet.checked(offer, d.keys || keys);
       step2(s, d, offer, read, {to: typedTo, amount: typedAmount});
     } catch (e) {
       problem.textContent = String(e.message || e); problem.hidden = false;
@@ -1095,7 +1190,7 @@ async function step3(s, d, offer, read) {
   s.lock(true);
   try {
     // Its own Review listed every cost from wallet.checked, so not asked twice.
-    const out = await wallet.confirm(keys, offer, {reviewed: true});
+    const out = await wallet.confirm(d.keys || keys, offer, {reviewed: true});
     one.className = "done"; one.firstChild.textContent = "✓";
     two.className = "done"; two.firstChild.textContent = "✓";
     s.lock(false);
@@ -1376,7 +1471,7 @@ async function drawCollection() {
  * Pepecoin mainnet. The node lists the account's own coins (/account/coins) and reads each transaction from its own chain
  * (/account/doginal-tx/<txid>, doginals.trace: the coin's koinu followed back to the envelope that inscribed them), once
  * per transaction for good; this browser keeps the answers too. Nothing outside this arcade is asked (2026-10-15:
- * "Remove Doge Soft API"). A small coin the node could not read is said so and never shown as a plain coin.
+ * the outside Doginals API removed). A small coin the node could not read is said so and never shown as a plain coin.
  */
 
 const DG_TX = "arcade.inscriptions.v2.";         // + network + "." + txid: the chain's answer (v1 held an outside index's)
@@ -1605,6 +1700,7 @@ function drawAll() {
 }
 
 async function refresh() {
+  kindSeen = {};                       // a send moves the other address types' balances too
   said = await wallet.state();
   if (!chainNow()) net = null;
   drawHead();
@@ -1734,5 +1830,6 @@ async function drawPending() {
 drawPending();
 document.addEventListener("arcade:changed", () => { drawPending().catch(() => {}); });
 </script>
+
 {% endif %}
 {% endblock %}

@@ -19,6 +19,7 @@ loads its parts from other inscriptions.
               "family": "ashvale",                     what its versions share (rooms too)
               "cover": "<inscription txid>",           a picture for the card
               "play": "<inscription txid>",            the page Play opens, if not this one
+              "wallet": true,                          uses the player's wallet (trades, pays, signs)
               "genre": "rpg"}}                         up to 24
 
 **One card per game.** The newest inscription per creator and name is the
@@ -75,6 +76,9 @@ def parse(json_text: Any) -> dict | None:
     if not out["name"]:
         return None
     out["multiplayer"] = game.get("multiplayer") is True
+    # Said by the maker, so it only ever adds a gate: a game that uses the wallet without saying so is stopped the
+    # first time it asks (base.html, arcadeGameGate), and from then on, in that browser, before it starts.
+    out["wallet"] = game.get("wallet") is True
     family = game.get("family")
     out["family"] = family if isinstance(family, str) and _FAMILY.match(family) else ""
     cover = str(game.get("cover") or "").lower()

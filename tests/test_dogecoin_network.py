@@ -70,14 +70,14 @@ def test_the_tip_picker_grays_dogecoin_until_it_syncs(client, monkeypatch):
     create_app(state)
     html = TEMPLATES.env.from_string('{% import "_tip.html" as t with context %}{{ t.tip_pay() }}').render()
     doge = re.search(r'<option value="doge"[^>]*>[^<]*</option>', html)
-    assert doge and " disabled" in doge.group(0) and "D main &mdash; syncing 42.3%" in doge.group(0)
+    assert doge and " disabled" in doge.group(0) and "Dogecoin (DOGE) \u2013 Main &mdash; syncing 42.3%" in doge.group(0)
 
 
 def test_the_operator_wallet_and_admin_show_the_sync(client, monkeypatch):
     app, state = client
     _with_doge(state, monkeypatch, ready=False)
     page = app.get("/wallet/tools").text
-    assert "D main opens here when its node has finished syncing" in page and "42.3%" in page
+    assert "Dogecoin (DOGE) – Main opens here when its node has finished syncing" in page and "42.3%" in page
     from test_admin import LOCAL
     wallets = app.get("/admin/api/state", headers=LOCAL).json()["wallets"]
     doge = [w for w in wallets if w["which"] == "doge"]
@@ -126,11 +126,13 @@ def test_every_network_word_says_which_coin(client, monkeypatch):
 
 def test_one_naming_convention(client, monkeypatch):
     """2026-10-13: "Pep and doge should have the same naming conventions for
-    mainnet": PEP Testnet, PEP Mainnet, DOGE Mainnet."""
+    mainnet"; 2026-10-20: "the network name - Main or test", with the ticker."""
     app, state = client
     doge = _with_doge(state, monkeypatch, ready=False)
-    assert (state.messaging.title, state.ledger.title, doge.title) == ("P test", "P main", "D main"), \
-        'the operator: "make it say only P test or P main or D main in all of the labels"'
+    assert (state.messaging.title, state.ledger.title, doge.title) == (
+        "Pepecoin (PEP) \u2013 Test", "Pepecoin (PEP) \u2013 Main", "Dogecoin (DOGE) \u2013 Main"), \
+        '2026-10-20: "the network name - Main or test", with the ticker'
     page = app.get("/wallet/tools").text
-    for letter, word in (("P", "test"), ("P", "main"), ("D", "main")):
-        assert f">{letter}</b> {word}" in page, (letter, word)
+    for title in (state.messaging.title, state.ledger.title, doge.title):
+        assert f"</b> {title}" in page, title
+    assert ">P</b> test" not in page and ">D</b> main" not in page, "no heading says it the old way"

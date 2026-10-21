@@ -1,6 +1,6 @@
 """Doginals for DOGE on the Exchange (2026-10-14: "I want doginals to be incorporated into the exchange on its own
 separate tab. So people can list doginals for doge."). The builders in arcade/doginal_market.py, then one listing listed
-and bought on a real dogecoind regtest node. Doge Soft is always faked."""
+and bought on a real dogecoind regtest node. The Doginals source is always faked."""
 
 import pathlib
 import shutil
@@ -26,7 +26,7 @@ INSCRIPTION = INS_TX + "i0"
 
 
 def _guard(tmp_path, inscribed: dict):
-    """A Doginals guard whose Doge Soft says `inscribed` ({txid: [(vout, id, offset)]}) and that every other
+    """A Doginals guard whose fake index says `inscribed` ({txid: [(vout, id, offset)]}) and that every other
     transaction is clean."""
     def fetch(txid):
         return {"txid": txid, "inscriptions": [{"vout": v, "inscription_id": i, "sat_offset": o}

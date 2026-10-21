@@ -49,7 +49,7 @@ def test_the_chain_says_what_it_is():
     from arcade.web.state import ChainContext
     c = ChainContext(network="ltc", role="ledger", label="Litecoin")
     assert c.is_ltc and c.is_addon and c.is_mainnet and not c.is_doge
-    assert (c.family, c.letter, c.title, c.net) == ("LTC", "L", "L main", "litecoin")
+    assert (c.family, c.letter, c.title, c.net) == ("LTC", "L", "Litecoin (LTC) – Main", "litecoin")
     pep = ChainContext(network="main", role="ledger", label="Pepecoin")
     assert (pep.family, pep.letter, pep.net) == ("PEP", "P", "mainnet") and not pep.is_addon
 
@@ -195,7 +195,7 @@ def test_the_exchange_offers_an_l_main_chip(client, monkeypatch):
     app, state = client
     _with_ltc(state, monkeypatch, ready=False)
     page = app.get("/exchange").text
-    assert 'title="L main opens when its node has synced (91.2% so far)"' in page, "grayed while syncing"
+    assert 'title="Litecoin (LTC) – Main opens when its node has synced (91.2% so far)"' in page, "grayed while syncing"
     _with_ltc(state, monkeypatch, ready=True)
     page = app.get("/exchange").text
     assert "show=litecoin" in page and 'src="/coin-ltc.png" alt="LTC"' in page
@@ -244,7 +244,7 @@ def test_the_wallet_names_litecoin_testnet_test_and_mines_it_here(client, monkey
     # Since 2026-10-19 the Wallet's chains are picked by the page's own picker (one section per chain label), not the
     # node-global token chain switch, which moved every non-account page of the node at once.
     assert 'class="chainswitch"' not in page.split("</h1>", 1)[0]
-    assert 'data-label="L test"' in page and page.count('data-label="L main"') == 1, \
+    assert 'data-label="Litecoin (LTC) – Test"' in page and page.count('data-label="Litecoin (LTC) – Main"') == 1, \
         "one picker button each (L test's key section and its Mine section share one label)"
     assert 'class="keyedsend" data-which="key:ltctest"' in page, "sent from the Wallet, not only from Admin"
     assert "addr-ltctest" in page and 'data-net="ltctest"' in page, "mined here"

@@ -90,6 +90,34 @@ def test_asked_again_nothing_goes_out_twice(publisher, tmp_path):
     assert node.rpc.call("getrawmempool") == before
 
 
+def test_a_piece_whose_coin_another_sender_spent_goes_out_on_another_coin(publisher, tmp_path):
+    """2026-10-19: the arcade on the same key spent part 5's first coin for its mesh announcement while the
+    Doginal Frogs went out, and that announcement was filed as the piece -- the part never assembled. A spend
+    that does not carry the piece is not the piece: it goes out again, paid from another coin."""
+    from arcade import funding
+    pub, node, params, follower, path, address = publisher
+    content = bytes(range(256)) * 80                  # 3 pieces
+    stolen = []
+
+    def meanwhile():
+        if not stolen:
+            split = json.loads(next((tmp_path / "journal").glob("*.json")).read_text())["split"]
+            coin = {"txid": split, "vout": 0, "value": int(round(float(
+                node.rpc.call("gettxout", split, 0, True)["value"]) * 100_000_000)), "address": address}
+            other = publish.payload_outputs(params, address, pub.key.pubkey, b"somebody else's message")
+            stolen.append(pub._send(funding.build_one(params, address, coin, other, pub.rate, "elsewhere")))
+        node.generate(1)
+
+    out = pub.inscribe(content, "image/png", "", "frogs.png", while_waiting=meanwhile)
+    assert stolen and stolen[0] not in out["txids"], "the other sender's transaction is not a piece"
+
+    _sync(node, follower)
+    index = LedgerIndex(path, params, rpc_factory=lambda: node.rpc)
+    rows = index.inscriptions()
+    assert [r["txid"] for r in rows] == [out["id"]]
+    assert index.inscription_content(out["id"]) == ("image/png", content), "it assembles, byte for byte"
+
+
 def test_a_file_too_small_to_pay_for_is_refused_before_anything_is_sent(publisher):
     pub, node, params, follower, path, address = publisher
     poor = publish.Publisher(node.rpc, params, publish.Key(7), pub.journal_home)

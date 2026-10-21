@@ -22,7 +22,8 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
-from .script import OutputType, b58check_encode, classify_script, hash160
+from .script import (OutputType, b58check_encode, classify_script, hash160,
+                     segwit_encode as segwit_address, witness_program)
 
 AUXPOW_FLAG = 0x100
 #: The merged-mining marker in a parent coinbase, before the chain merkle root (auxpow.cpp).
@@ -146,46 +147,16 @@ def asm(script: bytes, signatures: bool = False) -> str:
     return " ".join(out)
 
 
-_BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
-
-
-def _bech32_polymod(values: list[int]) -> int:
-    gen = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
-    chk = 1
-    for v in values:
-        top = chk >> 25
-        chk = (chk & 0x1FFFFFF) << 5 ^ v
-        for i in range(5):
-            chk ^= gen[i] if (top >> i) & 1 else 0
-    return chk
-
-
-def segwit_address(hrp: str, version: int, program: bytes) -> str:
-    """BIP 173 / 350: bech32 for version 0, bech32m for 1 and up."""
-    data, acc, bits = [version], 0, 0
-    for b in program:
-        acc, bits = (acc << 8) | b, bits + 8
-        while bits >= 5:
-            bits -= 5
-            data.append((acc >> bits) & 31)
-    if bits:
-        data.append((acc << (5 - bits)) & 31)
-    const = 1 if version == 0 else 0x2BC830A3
-    expanded = [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
-    mod = _bech32_polymod(expanded + data + [0] * 6) ^ const
-    return hrp + "1" + "".join(_BECH32[d] for d in data + [(mod >> 5 * (5 - i)) & 31 for i in range(6)])
-
-
-def _witness_program(script: bytes) -> tuple[int, bytes] | None:
-    if 4 <= len(script) <= 42 and (script[0] == 0 or 0x51 <= script[0] <= 0x60) and script[1] == len(script) - 2:
-        return (0 if script[0] == 0 else script[0] - 0x50), script[2:]
-    return None
+# bech32 / segwit encoding lives in arcade/script.py now, the one home for
+# address and script primitives: `segwit_address` here is that module's
+# `segwit_encode` (imported above), and `witness_program` is read from there
+# too -- the duplicate copies that used to sit here are gone.
 
 
 def script_pubkey(script: bytes, params) -> dict[str, Any]:
     """`scriptPubKey` as Core prints it: asm, hex, type, and the addresses it pays."""
     hrp = getattr(params, "bech32_hrp", "")
-    program = _witness_program(script) if hrp else None
+    program = witness_program(script) if hrp else None
     if program is not None:
         version, prog = program
         kind = ("witness_v0_keyhash" if version == 0 and len(prog) == 20 else

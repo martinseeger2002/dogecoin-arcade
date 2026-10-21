@@ -1,5 +1,5 @@
 """The Exchange's Doginals tab and its routes (2026-10-14: "I want doginals to be incorporated into the exchange
-on its own separate tab. So people can list doginals for doge."). Dogecoin and Doge Soft are faked: the chain answers
+on its own separate tab. So people can list doginals for doge."). Dogecoin and the Doginals source are faked: the chain answers
 gettxout from a dict, and every coin's Doginals come from `test_doginal_market._guard`."""
 
 import contextlib

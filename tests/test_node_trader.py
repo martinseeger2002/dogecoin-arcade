@@ -176,6 +176,18 @@ def _ledgers(*traders):
         t.state.token_index(t.state.messaging).sync()
 
 
+def _settled(check, rpc, *traders, rounds=10):
+    """`check()` once the claim is mined and indexed: "done" can come while it is still in the pool (a busy
+    machine under -n 8 is slow to put it in a block), so mine and read again a few times before asking."""
+    for _ in range(rounds):
+        _ledgers(*traders)
+        if check():
+            return True
+        _mine(rpc)
+    _ledgers(*traders)
+    return check()
+
+
 def test_two_nodes_trade_a_token_for_doge(market, monkeypatch):
     """B gives 40 Gold on PEP regtest for A's 2 DOGE: the token goes into a lock with the
     coin that pays its way out, and the ledger -- not a message -- says it is there."""
@@ -203,9 +215,9 @@ def test_two_nodes_trade_a_token_for_doge(market, monkeypatch):
             break
     assert a.book.get(trade.id).state == "done", log[-6:]
     assert b.book.get(trade.id).state == "done", log[-6:]
-    _ledgers(a, b)
     index = a.state.token_index(a.state.messaging)
     claimed_to = a._address("regtest")
+    _settled(lambda: int(index.balance(claimed_to, pid)) == 40 * COIN, pep, a, b)
     assert int(index.balance(claimed_to, pid)) == 40 * COIN, "A holds the Gold"
     assert int(index.balance(home, pid)) == 60 * COIN, "B's home kept the rest"
 
@@ -253,12 +265,13 @@ def test_two_nodes_trade_an_nft_for_doge(market, monkeypatch):
             break
     assert a.book.get(trade.id).state == "done", log[-6:]
     assert b.book.get(trade.id).state == "done", log[-6:]
-    _ledgers(a)
-    assert a.state.token_index(a.state.messaging).inscription(sword)["owner"] == a._address("regtest")
+    owner = lambda: a.state.token_index(a.state.messaging).inscription(sword)["owner"]
+    _settled(lambda: owner() == a._address("regtest"), pep, a)
+    assert owner() == a._address("regtest")
 
 
 def _doginals_on_doge(dg, tmp_path, traders, postage):
-    """Two small coins in the Dogecoin wallet, each carrying a Doginal by the fake Doge Soft's word: (txid, vout of the
+    """Two small coins in the Dogecoin wallet, each carrying a Doginal by the fake index's word: (txid, vout of the
     one traded, vout of a decoy -- ANOTHER Doginal, the smallest coin there, which must never pay a fee)."""
     from arcade import doginals
     home, decoy_home = dg.call("getnewaddress"), dg.call("getnewaddress")
@@ -284,7 +297,7 @@ def _doginals_on_doge(dg, tmp_path, traders, postage):
 
 def test_two_nodes_trade_a_doginal_for_pep(market, tmp_path):
     """[Claude 2026-10-15] the operator: "use the atomic swap feature we have to trade doginals." B gives a Doginal on
-    Dogecoin regtest for A's 3 PEP, through the same locks and steps as any leg; Doge Soft is faked (never the real one).
+    Dogecoin regtest for A's 3 PEP, through the same locks and steps as any leg; the Doginals source is faked (never a real one).
     The Doginal goes into B's lock first and whole (output 0, its reserve output 1) and comes out to A first and whole,
     the reserve paying the claim."""
     from arcade import htlc as H

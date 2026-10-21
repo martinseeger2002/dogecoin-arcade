@@ -122,10 +122,10 @@ def test_the_pages_follow_the_browsers_choice(client):
     for an account's view."""
     app, state = client
     _open_both(app)
-    assert "PEP TEST: test coins" in app.get("/tokens").text
+    assert "PEP TEST, free test coins" in app.get("/tokens").text
     app.cookies.set("arcade_chain", "main")
     page = app.get("/tokens").text
-    assert "Real PEP. Every transaction here shows its full cost" in page
+    assert "real PEP. Permanent and worth money: every transaction shows its full cost" in page
     assert state.token_chain.network != "main", "and the node's own switch is where it was"
     assert "Launchpads are testnet only for now" in app.get("/mintpad/new").text
 

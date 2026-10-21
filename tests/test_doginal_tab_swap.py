@@ -5,7 +5,7 @@
 * a Doginal order says what it is ("Doginal 1a2b3c4d…i0");
 * the node's own DOGE coin legs (sendtoaddress) never spend a coin carrying a Doginal;
 * what this arcade broadcasts from clean coins is vouched clean, so a token transaction's dust is spendable at once.
-Doge Soft is faked; nothing here asks the real one."""
+The Doginals source is faked; nothing here asks a real one."""
 
 import pathlib
 import sys
@@ -120,7 +120,7 @@ def test_the_nodes_doge_coin_leg_sets_doginal_coins_aside(tmp_path):
         T1: {"txid": T1, "inscriptions": [{"vout": 0, "inscription_id": INS, "sat_offset": 0}]},
         T3: {"txid": T3, "inscriptions": []}}[txid])
     guard.held(T1); guard.held(T3)                    # what is already known; the send asks nobody
-    guard.fetch = lambda txid: (_ for _ in ()).throw(AssertionError("asked Doge Soft during a send"))
+    guard.fetch = lambda txid: (_ for _ in ()).throw(AssertionError("asked the index during a send"))
     trader = NodeTrader.__new__(NodeTrader)
     trader._doginals = guard
     assert trader._send_coins(Rpc(), "doge", "DLockAddress", 2 * COIN) == "ff" * 32
@@ -128,7 +128,7 @@ def test_the_nodes_doge_coin_leg_sets_doginal_coins_aside(tmp_path):
     assert names == ["listunspent", "lockunspent", "sendtoaddress", "lockunspent"]
     locked = calls[1][1]
     assert locked[0] is False and {c["txid"] for c in locked[1]} == {T1, "55" * 32}, \
-        "the Doginal and the small coin Doge Soft never vouched for stay out of the send"
+        "the Doginal and the small coin the index never vouched for stay out of the send"
     assert calls[3][1][0] is True and calls[3][1][1] == locked[1], "and are let go after"
     calls.clear()
     trader._send_coins(Rpc(), "main", "PAddress", COIN)
@@ -140,16 +140,16 @@ def test_what_the_arcade_broadcasts_from_clean_coins_is_clean(tmp_path):
     asked = []
     guard = doginals.Doginals(tmp_path / "v.sqlite", fetch=lambda txid: asked.append(txid) or
                               {"txid": txid, "inscriptions": []})
-    guard.held(T3)                                            # a coin Doge Soft vouched for
+    guard.held(T3)                                            # a coin the index vouched for
     dust = [(100_000, p2pkh_script(ME)), (50_000, p2pkh_script(ME))]
     raw = E.serialize([{"txid": T3, "vout": 0}], dust, 0)
     assert guard.vouch_broadcast(raw.hex(), "77" * 32)
     asked.clear()
     assert guard.spendable([{"txid": "77" * 32, "vout": 0, "value": 100_000},
                             {"txid": "77" * 32, "vout": 1, "value": 50_000}]) != [], "the dust spends at once"
-    assert asked == [], "without asking Doge Soft"
+    assert asked == [], "without asking the index"
     unknown = E.serialize([{"txid": "88" * 32, "vout": 0}], dust, 0)
-    assert not guard.vouch_broadcast(unknown.hex(), "99" * 32), "an input not known clean: Doge Soft decides"
+    assert not guard.vouch_broadcast(unknown.hex(), "99" * 32), "an input not known clean: the index decides"
     assert not guard.vouch_broadcast(_with_script(raw, b"\x03ord\x51").hex(), "aa" * 32), "an inscription envelope"
 
 

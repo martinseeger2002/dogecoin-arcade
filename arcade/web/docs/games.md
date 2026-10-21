@@ -27,6 +27,7 @@ Two things, both decided when you inscribe it:
     "version": "1.0",
     "players": "1",
     "multiplayer": false,
+    "wallet": true,
     "family": "moon-miner",
     "cover": "<txid of a picture you inscribed>",
     "play": "<txid of the game page, if this page is only its card>",
@@ -91,10 +92,16 @@ wallet access until the player turns it on**:
 * Every card on the Games tab has a **Wallet access** switch, off until the player turns it on, next to
   whether their wallet is unlocked in that browser. Turning it on names the game's publisher (its @name and
   address) and asks the player to check that it is the real one.
-* A game that asks for the wallet while its switch is off gets the same question, once. Saying no leaves
-  the game running without the wallet.
-* Without access a game still plays, saves (`arcade.storage`) and joins rooms as the player
-  (`arcade.realtime`): that signature only proves who the player is and moves nothing.
+* **A game that uses the wallet does not play until the switch is on.** Say so on your card with
+  `"wallet": true`, and Play waits for the switch, and so does the game's own page. A game that asks for the
+  wallet while its switch is off (to trade, pay, send, mint, claim, put into escrow or sign) is stopped
+  there: its page is replaced by a word pointing to its card, nothing is asked, and from then on that
+  browser holds the game until the switch is on. So a game that uses the wallet should say `"wallet": true`,
+  or its players meet the stop mid-game.
+* A game that never asks for the wallet plays without the switch: it saves (`arcade.storage`) and joins rooms as
+  the player (`arcade.realtime`), and that signature only proves who the player is and moves nothing.
+* A page that is not a game (a shop, a mintpad) has no card to switch, and asks the player once when it first
+  needs the wallet.
 
 The switch belongs to the page Play opens (`play`, or the card itself), and the player's browser keeps it.
 

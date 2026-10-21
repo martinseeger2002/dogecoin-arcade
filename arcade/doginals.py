@@ -2,7 +2,7 @@
 2026-10-14: "identify which UTXOs are doginals to make sure they are not spent unless somebody is trying to send a doginal
 to someone else").
 
-Read from the chain itself, by this node (2026-10-15: "Remove Doge Soft API"; its index did not know Anti Doginal
+Read from the chain itself, by this node (2026-10-15: remove the outside Doginals API; its index did not know Anti Doginal
 Dog #1089, which sat on a 0.01 DOGE coin): each small output is traced back, koinu by koinu, to the transaction whose
 input opened an ord envelope (`trace`), and an inscription's content is read out of that envelope (`content`). No index:
 a few raw transactions per coin, through the chain's own node. Optionally an ord-style server answers as well
@@ -66,6 +66,9 @@ class Doginals:
         with self._db() as db:
             # `tx2`: answers that include the chain's own reading. The old `tx` table held an outside index's word alone.
             db.execute("CREATE TABLE IF NOT EXISTS tx2 (txid TEXT PRIMARY KEY, held TEXT NOT NULL, at REAL NOT NULL)")
+            # Where an unfinished walk back got to, per output: it goes on from here (trace's `resume`).
+            db.execute("CREATE TABLE IF NOT EXISTS walk (txid TEXT NOT NULL, vout INTEGER NOT NULL, state TEXT NOT NULL, "
+                       "at REAL NOT NULL, PRIMARY KEY (txid, vout))")
 
     def _db(self):
         db = sqlite3.connect(self.path, timeout=30)
@@ -95,9 +98,12 @@ class Doginals:
     def held(self, txid: str) -> dict[int, list[dict]]:
         """{vout: [{"id", "offset"}]} for one transaction; {} when nothing is inscribed on any of its outputs."""
         with self._lock, self._db() as db:
-            row = db.execute("SELECT held FROM tx2 WHERE txid=?", (txid,)).fetchone()
+            row = db.execute("SELECT held, at FROM tx2 WHERE txid=?", (txid,)).fetchone()
         if row:
-            return {int(k): v for k, v in json.loads(row[0]).items()}
+            kept = {int(k): v for k, v in json.loads(row[0]).items()}
+            unsure = any(i.get("unknown") for on in kept.values() for i in on)
+            if not unsure or time.time() - float(row[1]) < UNKNOWN_RETRY:
+                return kept
         try:
             said = self.fetch(txid) or {}
         except Exception as exc:                            # noqa: BLE001
@@ -130,11 +136,19 @@ class Doginals:
                     n, value = int(out["n"]), round(float(out["value"]) * 1e8)
                     if held.get(n) or value > TRACE_MAX:
                         continue
+                    with self._lock, self._db() as db:
+                        row = db.execute("SELECT state FROM walk WHERE txid=? AND vout=?", (txid, n)).fetchone()
                     try:
-                        found = trace(rpc, txid, n, tx=tx)
-                    except TraceIncomplete:
+                        found = trace(rpc, txid, n, tx=tx, resume=json.loads(row[0]) if row else None)
+                    except TraceIncomplete as stop:
+                        with self._lock, self._db() as db:
+                            db.execute("INSERT OR REPLACE INTO walk VALUES (?,?,?,?)",
+                                       (txid, n, json.dumps(stop.state), time.time()))
                         held[n] = [{"id": None, "offset": None, "unknown": True}]
                         continue
+                    if row:
+                        with self._lock, self._db() as db:
+                            db.execute("DELETE FROM walk WHERE txid=? AND vout=?", (txid, n))
                     if found:
                         held[n] = found
         except Exception as exc:                            # noqa: BLE001 -- the node is the second opinion
@@ -248,11 +262,21 @@ def _inputs_of(raw: bytes) -> list[tuple[str, int, bytes]]:
 #: through outputs this small, since an inscription that went into a big coin went with that coin's owner's consent.
 TRACE_MAX = 10_000_000          # koinu (0.1 DOGE)
 #: How far back one output is followed before it is left as "cannot tell" (protected, never called clean).
-TRACE_TXS = 40
+# Steps a walk takes per ask. 2026-10-20: 40 was too few -- a Doginal Frog that had changed hands for years (#10000,
+# sent to @dondogecon from a wallet off the arcade) took ~60 steps, its coin was filed "unknown" and the wallet never
+# showed it -- and the operator: "Some doginals are going to be deeper". So there is no depth limit: a walk that runs out of
+# steps keeps where it got to (`walk` table) and goes on from there the next time the coin is asked about.
+TRACE_TXS = 600
+#: A coin whose walk is not finished yet is asked about again after this long (each ask goes TRACE_TXS further).
+UNKNOWN_RETRY = 60
 
 
 class TraceIncomplete(Exception):
-    """The walk back hit its limit before it could say."""
+    """The walk back hit its limit before it could say. `state`: where it got to, for `trace(resume=...)`."""
+
+    def __init__(self, message: str, state: dict | None = None):
+        super().__init__(message)
+        self.state = state or {}
 
 
 def envelope(script_sig_hex: str) -> bool:
@@ -262,7 +286,8 @@ def envelope(script_sig_hex: str) -> bool:
     return raw[:4] == b"\x03ord"
 
 
-def trace(rpc, txid: str, vout: int, tx: dict | None = None, limit: int = TRACE_TXS) -> list[dict]:
+def trace(rpc, txid: str, vout: int, tx: dict | None = None, limit: int = TRACE_TXS,
+          resume: dict | None = None) -> list[dict]:
     """The inscriptions on output `vout` of `txid`, from the chain alone: each inscription is born on the first koinu of
     the input that carries its envelope, and koinu move first-in-first-out (ord's rule). The output's koinu are followed
     back, a range at a time, through outputs no bigger than TRACE_MAX; a transaction whose input opens an envelope is a
@@ -278,14 +303,19 @@ def trace(rpc, txid: str, vout: int, tx: dict | None = None, limit: int = TRACE_
     def value(o):
         return round(float(o["value"]) * 1e8)
 
-    first = get(txid)["vout"][vout]
-    found, seen = [], 0
-    queue = [(txid, vout, 0, value(first), 0)]          # (tx, output, lo, hi, where that range starts in OUR output)
+    if resume and resume.get("queue"):
+        found = [dict(f) for f in resume.get("found") or []]
+        queue = [tuple(q) for q in resume["queue"]]
+    else:
+        first = get(txid)["vout"][vout]
+        found, queue = [], [(txid, vout, 0, value(first), 0)]  # (tx, output, lo, hi, where that range starts in OUR output)
+    seen = 0
     while queue:
-        t, n, lo, hi, base = queue.pop()
         seen += 1
         if seen > limit:
-            raise TraceIncomplete(f"more than {limit} steps back from {txid}:{vout}")
+            raise TraceIncomplete(f"more than {limit} steps back from {txid}:{vout} this time",
+                                  {"queue": [list(q) for q in queue], "found": found})
+        t, n, lo, hi, base = queue.pop()
         x = get(t)
         outs, ins = x["vout"], x["vin"]
         start = sum(value(o) for o in outs[:n])

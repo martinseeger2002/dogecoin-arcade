@@ -13,6 +13,7 @@ import base64
 import dataclasses
 import datetime as dt
 import hashlib
+import ipaddress
 import json
 import logging
 import math
@@ -21,6 +22,7 @@ import threading
 import time
 import html
 import secrets
+import socket
 import sqlite3
 import urllib.parse
 import shutil
@@ -74,7 +76,7 @@ from .. import txbuild
 from ..messaging import sender as sendermod
 from .. import state as statelib
 from ..messaging import contact, content, group
-from ..script import b58check_decode, b58check_encode, hash160
+from ..script import b58check_decode, b58check_encode, hash160, segwit_decode
 from ..messaging.derive import DerivationError, derive_identity
 from ..messaging.envelope import (
     MAX_ANNOUNCE_NAME, MAX_ANNOUNCE_NAME_CLASS_B,
@@ -280,6 +282,10 @@ def _screen_text(text: str):
 
 
 TEMPLATES.env.globals["screen_text"] = _screen_text
+# Where the browser checks a new password against the leaked-password lists (wallet.js `leaked`; 2026-10-20). Empty
+# turns the check off: the test suite does (tests/conftest.py), so no test asks a server on the internet.
+TEMPLATES.env.globals["leaked_url"] = lambda: os.environ.get("ARCADE_LEAKED_URL",
+                                                              "https://api.pwnedpasswords.com/range/")
 # A steady colour per address, for letter avatars (the feed, like Notifications).
 TEMPLATES.env.filters["hue"] = lambda text: int(
     hashlib.sha256(str(text or "").encode()).hexdigest()[:4], 16) % 360
@@ -812,7 +818,7 @@ def create_app(state: AppState) -> FastAPI:
             pass
     TEMPLATES.env.globals["brand"] = brandlib.current()   # this node's name, colours, icons (brand.py)
     # [Claude 2026-10-14] Inscriptions stay put: a wallet's ordinary sends never spend a coin carrying one (arcade/doginals.py).
-    # Read from each chain by its own node (2026-10-15, "Remove Doge Soft API"): Doginals on Dogecoin, and the same ord
+    # Read from each chain by its own node (2026-10-15, the outside Doginals API removed): Doginals on Dogecoin, and the same ord
     # envelopes on small Pepecoin MAINNET coins ("do the same for small .01 pep txs. Not made by the Arcade").
     fundinglib.GUARDS = []
     fundinglib.GUARD_BY_NET = {}
@@ -4320,13 +4326,19 @@ def create_app(state: AppState) -> FastAPI:
             raise ValueError("unknown wallet")
         return state.messaging if which == "messaging" else state.ledger
 
+    def _key_chains() -> list:
+        """Every chain but Pepecoin testnet (where the identity key itself lives): where the node may hold coins with
+        its own key -- a borrowed chain, or a Core here run with no wallet (2026-10-20, chain-agnostic)."""
+        chains = [] if state.ledger.network == state.messaging.network else [state.ledger]
+        return chains + list(getattr(state, "addons", None) or [])
+
     def _keyed_wallets() -> list[dict[str, Any]]:
         """The node's coins on each add-on chain it has no Core wallet for (keywallet.py), for the Wallet page:
         balance, address, and whether this machine's CPU may mine there (2026-10-18: "no way to mine Test
         LTC" from the operator's Wallet)."""
         out = []
-        for ctx in list(getattr(state, "addons", None) or []):
-            if not ctx.borrowed:
+        for ctx in _key_chains():
+            if not state.keyed(ctx):
                 continue                                  # a Core here has its own wallet and its own section
             row = {"network": ctx.network, "title": ctx.title, "letter": ctx.letter, "net": ctx.net,
                    "word": ctx.word, "coin": ctx.params.coin, "mainnet": bool(ctx.is_mainnet),
@@ -4356,7 +4368,7 @@ def create_app(state: AppState) -> FastAPI:
         for ctx in [state.messaging, state.ledger] + list(getattr(state, "addons", None) or []):
             if ctx is None or any(c.network == ctx.network for c, _ in out) or not state.chain_ready(ctx):
                 continue
-            if getattr(ctx, "borrowed", False):
+            if state.keyed(ctx):                          # borrowed, or a Core here with no wallet (2026-10-20)
                 out.append((ctx, f"key:{ctx.network}"))
             else:
                 out.append((ctx, "messaging" if ctx is state.messaging else "ledger" if ctx is state.ledger
@@ -4912,6 +4924,9 @@ def create_app(state: AppState) -> FastAPI:
                 # The cross-chain book's exchange addresses hold deposits for
                 # other people and are never gathered (arcade/xchain_node.py).
                 keep = [state.setting(f"xchain:address:{which}") for which in ("testnet", "main")]
+                # The fruit names' addresses (arcade/fruit.py): each keeps the coins its claim and its transfer pay
+                # from (2026-10-20: the gather swept 149 of them home between their funding and their claims).
+                keep += [row.get("address") for row in (state.setting("fruit_stand") or {}).values()]
                 return gatherlib.walk_home(rpc, index, home, own, send_coins=coins,
                                            send_token=token, send_piece=piece,
                                            limit=limit, keep=[a for a in keep if a])
@@ -5105,14 +5120,14 @@ def create_app(state: AppState) -> FastAPI:
             if account is None:
                 raise ValueError("sign in first: the block pays your account")
             if not _mines_here(request):
-                raise ValueError("only this node's operator mines L test blocks here")
+                raise ValueError(f"only this node's operator mines {chain.title} blocks here")
             if state.mining is not None:
                 state.flash("Already mining a block; it will say when one is found.")
                 return RedirectResponse("/wallet/tools", status_code=303)
             address = _faucet_address(chain)
             # Said before the thread starts: the notice is one slot, and a block found at once
             # would otherwise have its "Mined" overwritten by this.
-            state.flash(f"Mining one L test block to this node's faucet, {address}. "
+            state.flash(f"Mining one {chain.title} block to this node's faucet, {address}. "
                         f"The page will say when it is found.")
             if not _start_mining(address, chain, "faucet"):
                 state.flash("Already mining a block; it will say when one is found.")
@@ -5193,7 +5208,7 @@ def create_app(state: AppState) -> FastAPI:
                 "expected": int(mining.get("expected", 0)),
                 # At the rate seen so far; 0 until the first batch is in.
                 "expected_seconds": int(mining["expected"] / rate) if rate else 0,
-                "stopping": bool(mining.get("stop")), "chain": mining.get("chain") or "P test"}
+                "stopping": bool(mining.get("stop")), "chain": mining.get("chain") or state.messaging.title}
 
     # --- tokens ---------------------------------------------------------------
     # Shown for one chain at a time: mainnet, the ledger (D-012), or testnet,
@@ -8350,8 +8365,8 @@ def create_app(state: AppState) -> FastAPI:
         """
         return RedirectResponse("/docs/features.md", status_code=307)
 
-    #: The arcade's affiliates (2026-10-15): (name, link, what they do). Doge Soft was one until the operator removed it
-    #: the same day ("Remove Doge Soft API and affiliate link").
+    #: The arcade's affiliates (2026-10-15): (name, link, what they do). An outside Doginals index was one until
+    #: the operator removed it the same day, with its API.
     #: explorer is where this arcade reads Doginals from (arcade/doginals.py).
     AFFILIATES = (
         ("Anti Doginal Dogs", "https://antidoginaldogs.com",
@@ -10149,7 +10164,7 @@ def create_app(state: AppState) -> FastAPI:
         of what this one does underneath.
         """
         register = state.accounts()
-        return render(request, "signup.html", chain=_account_chain(),
+        return render(request, "signup.html", chain=_account_chain(), fruit=_fruit_here(request),
                       seats=register.seats, free=register.free(),
                       secure_enough=secure_context(request),
                       why_not=WHY_NOT_SECURE)
@@ -10937,8 +10952,16 @@ def create_app(state: AppState) -> FastAPI:
     # nothing to check and nothing to steal: only somebody who can decrypt
     # the blob can produce the key that signs a challenge.
 
+    def _fruit_here(request: Request) -> str:
+        """The fruit name the mesh offered this arcade for its operator (mesh/fruitshare.py, 2026-10-20), while
+        it has no operator and only to a request from the machine itself: "" otherwise."""
+        if state.operator or state.public or _from_outside(request):
+            return ""
+        offer = state.setting("fruit_offer") or {}
+        return "" if offer.get("to") else str(offer.get("name") or "")
+
     @app.get("/signup/{tag}")
-    def signup_free(tag: str):
+    def signup_free(tag: str, request: Request):
         """Is this name free -- here, and as far as the chain has been read.
 
         Two answers rather than one, because they are different questions
@@ -10950,6 +10973,9 @@ def create_app(state: AppState) -> FastAPI:
         except taglib.TagError as bad:
             return JSONResponse({"free": False, "detail": str(bad)})
         here = state.vault().taken(wanted)
+        if wanted == _fruit_here(request) and not here:
+            return JSONResponse({"tag": wanted, "free": True, "here": False, "on_chain": True, "fruit": True,
+                                 "detail": f"@{wanted} is this arcade's operator name, from the fruit stand"})
         on_chain = ""
         try:
             on_chain = state.token_index(_account_chain()).address_of(wanted) or ""
@@ -10984,6 +11010,17 @@ def create_app(state: AppState) -> FastAPI:
             complaint = _check_address(address, mainnet=chain)
             if complaint:
                 raise ValueError(complaint)
+            # A name the chain says another address holds is not filed here: this arcade would then serve a
+            # stranger's sealed wallet under it, and its owner could no longer sign in here (node 2's review,
+            # 2026-10-20). A node still reading the chain says nothing, as /signup/<tag> does.
+            try:
+                owner = state.token_index(chain).address_of(wanted) or ""
+            except Exception:                 # noqa: BLE001 -- no index yet
+                owner = ""
+            # Except this arcade's operator's fruit, which the fruit stand holds on the chain until it sends it here
+            # (arcade/fruit.py, mesh/fruitshare.py; 2026-10-20).
+            if owner and owner != address and wanted != _fruit_here(request):
+                raise ValueError(f"@{wanted} is claimed on the chain by another address")
             register = state.accounts()
             register.join(pubkey)         # a seat, and it may say there is none
             state.vault().put(wanted, pubkey, address, json.dumps(blob))
@@ -11054,9 +11091,23 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:
             why_not = f"the faucet could not pay just now: {exc}"
 
+        # This arcade's first operator, signing up at the machine with the fruit the mesh offered it: made the
+        # operator, and the fruit's holder asked to send the name to its address (mesh/fruitshare.py).
+        fruit = ""
+        if wanted == _fruit_here(request):
+            fruit = wanted
+            state.claim_operator(pubkey)
+            try:
+                share = getattr(getattr(state, "mesh", None), "fruitshare", None)
+                to = _account_address(pubkey, _tag_chain()[0]) or address
+                if share is not None:
+                    share.ask_to_give(to)
+            except Exception:                                  # noqa: BLE001 -- asked again every minute
+                log.debug("asking for the fruit name failed", exc_info=True)
+
         token = _open_session(pubkey)
         answer = JSONResponse({"tag": wanted, "pubkey": pubkey,
-                               "address": address,
+                               "address": address, "fruit": bool(fruit),
                                "given": given, "no_coins": why_not})
         _set_session(answer, token, request)
         return answer
@@ -11172,7 +11223,7 @@ def create_app(state: AppState) -> FastAPI:
         found = None
         for host in _arcade_hosts():
             try:
-                r = requests.get(f"https://{host}/signin/{urllib.parse.quote(tag)}/activity", timeout=6,
+                r = _ask_arcade(f"https://{host}/signin/{urllib.parse.quote(tag)}/activity", timeout=6,
                                  params={"chain": chain.network, "before": before, "limit": limit},
                                  headers={"User-Agent": "arcade-node"})
                 said = r.json() if r.status_code == 200 else None
@@ -11220,7 +11271,7 @@ def create_app(state: AppState) -> FastAPI:
                 try:
                     for host in _arcade_hosts():
                         try:
-                            r = requests.get(f"https://{host}/signin/{urllib.parse.quote(tag)}/coins", timeout=8,
+                            r = _ask_arcade(f"https://{host}/signin/{urllib.parse.quote(tag)}/coins", timeout=8,
                                              headers={"User-Agent": "arcade-node"})
                             if r.status_code != 200:
                                 continue
@@ -11278,7 +11329,7 @@ def create_app(state: AppState) -> FastAPI:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         def ask(host: str) -> dict | None:
-            got = requests.get(f"https://{host}/signin/{urllib.parse.quote(name)}?here=1", timeout=8,
+            got = _ask_arcade(f"https://{host}/signin/{urllib.parse.quote(name)}?here=1", timeout=8,
                                headers={"User-Agent": "arcade-node"})
             said = got.json() if got.status_code == 200 else None
             blob = said.get("blob") if isinstance(said, dict) else None
@@ -11376,6 +11427,26 @@ def create_app(state: AppState) -> FastAPI:
                             "from": start, "to": end})
         return JSONResponse({"started": started})
 
+    #: Arcades whose accounts a stranger may bring here from the public sign-in page, when
+    #: the operator names none (`import_from` in settings.json). The one the page suggests.
+    IMPORT_FROM_DEFAULT = ("https://app.dogecoinarcade.com",)
+
+    def _import_from() -> tuple[str, ...]:
+        """The arcades the public sign-in page may fetch an account from, as https origins."""
+        said = state.setting("import_from", None)
+        if said is None:
+            said = IMPORT_FROM_DEFAULT
+        if isinstance(said, str):
+            said = [said]
+        out = []
+        for one in said:
+            one = str(one or "").strip().rstrip("/").lower()
+            if one and "://" not in one:
+                one = "https://" + one
+            if re.fullmatch(r"https://[a-z0-9.\-]+(:\d+)?", one):
+                out.append(one)
+        return tuple(out)
+
     @app.get("/signin-import")
     def signin_import(request: Request, node: str = "", tag: str = ""):
         """An account's encrypted wallet from ANOTHER arcade, for this browser to
@@ -11385,24 +11456,44 @@ def create_app(state: AppState) -> FastAPI:
         The other node hands its `/signin/{tag}` answer to anybody; this only
         fetches it for a browser that cannot fetch across origins. The password
         never comes here, and neither do the words: the blob is opened in the
-        tab. From the machine itself only, so a public node is not a way to
-        make requests to wherever a stranger names.
+        tab.
+
+        From the machine itself, any arcade. From outside (2026-10-19, SadFrog: an
+        account made on node 1 should sign in on node 3 "in the normal signin
+        options"), only an arcade the operator lists in `import_from`, over https:
+        a public node must not be a way to make requests to wherever a stranger
+        names, its own loopback services included.
         """
-        if _from_outside(request):
-            return JSONResponse({"detail": "bringing an account from another arcade is "
-                                           "done on the machine this node runs on"},
-                                status_code=403)
+        outside = _from_outside(request)
         node = str(node or "").strip().rstrip("/")
         if node and "://" not in node:
             node = "https://" + node
         if not re.fullmatch(r"https?://[A-Za-z0-9.\-]+(:\d+)?", node):
             return JSONResponse({"detail": "that is not an arcade's address, like "
                                            "https://app.dogecoinarcade.com"}, status_code=400)
+        if outside:
+            allowed = _import_from()
+            if node.lower() not in allowed:
+                listed = ", ".join(allowed) if allowed else "none"
+                return JSONResponse(
+                    {"detail": "this arcade brings accounts only from the arcades its "
+                               f"operator lists ({listed}). From another one, sign in with "
+                               "the file its Backup page saves.", "allowed": list(allowed)},
+                    status_code=403)
+            register = state.accounts()
+            who = (request.client.host if request.client else "")
+            now = int(time.time())
+            if register._rate_limited(f"import:{who}", now):
+                return JSONResponse({"detail": "too many in a row. Wait a few minutes."},
+                                    status_code=429)
+            register._attempt(f"import:{who}", now)
         name = str(tag or "").strip().lstrip("@")
         if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,40}", name):
             return JSONResponse({"detail": "that is not a name"}, status_code=400)
         try:
-            answer = requests.get(f"{node}/signin/{urllib.parse.quote(name)}", timeout=15)
+            # Not followed from outside: a listed arcade's redirect could name anywhere.
+            answer = requests.get(f"{node}/signin/{urllib.parse.quote(name)}", timeout=15,
+                                  allow_redirects=not outside)
             said = answer.json()
         except Exception:                                   # noqa: BLE001
             return JSONResponse({"detail": f"{node} did not answer"}, status_code=502)
@@ -13284,8 +13375,8 @@ def create_app(state: AppState) -> FastAPI:
         """The account's own coins on one chain, one row per output.
 
         [Claude 2026-10-15] For the Wallet's Doginals check (2026-10-14: "We have to have the wallet check its own utxo
-        to see if they are doginals", and "I want the client side to access Doge soft"): the BROWSER takes this list to Doge
-        Soft and asks which of these coins carry an inscription. This node only lists them; it asks nobody."""
+        to see if they are doginals"): the BROWSER takes this list to /account/doginal-tx and asks which of these coins carry
+        an inscription. This node only lists them; it asks nobody."""
         account = _signed_in_account(request)
         try:
             one = _chain_asked({"chain": chain})
@@ -13304,7 +13395,7 @@ def create_app(state: AppState) -> FastAPI:
         """What sits on one transaction's outputs, read from the chain by this node (doginals.trace), for the Wallet's
         inscriptions check: Doginals on Dogecoin, ord inscriptions on Pepecoin mainnet (`chain`). Only a transaction that
         holds one of this account's own coins on that chain; kept for good, so each is read once. 2026-10-15 (the browser
-        could not read the outside index it used; then the operator: "Remove Doge Soft API")."""
+        could not read the outside index it used; then the operator removed that outside Doginals API)."""
         from .. import doginals as D
         account = _signed_in_account(request)
         txid = str(txid or "").lower()
@@ -22918,6 +23009,62 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(404, "no such game")
         return launch_thread(request, txid)
 
+    def _game_of_page(page: str) -> dict:
+        """Whether an inscribed page is a game -- a card itself, or the page a card's `play` opens -- and that card.
+
+        For the wallet gate (base.html, arcadeGameGate; 2026-10-20: a player "can't play a game that uses
+        Wallet controls unless they check the wallet check box on the game card"): a game page that asks for the
+        wallet without the card's box ticked is stopped, so the browser needs to know which pages are games."""
+        pages = state.__dict__.setdefault("_game_pages", {})      # page -> (when, answer); a test may clear it
+        held = pages.get(page)
+        if held and time.time() - held[0] < (300 if held[1].get("game") else 60):
+            return held[1]
+        said = {"game": False}
+        chain, index = _token_chain()
+        for _, ix in [(chain, index)] + _other_indexes():
+            try:
+                row = ix.inscription(page)
+            except Exception:
+                row = None
+            if not row:
+                continue
+            card, own = None, gameslib.parse(row.get("json"))
+            if own:
+                card = {"txid": row["txid"], "game": own}
+            else:
+                # A card by the same maker whose Play opens this page (_game_opens' rule).
+                try:
+                    with contextlib.closing(ix.open()) as db:
+                        rows = db.conn.execute(
+                            "SELECT txid, json FROM inscription WHERE creator=? AND content_type LIKE 'text/html%' "
+                            "AND json LIKE ? ORDER BY block_height DESC, position DESC LIMIT 20",
+                            (row["creator"], f"%{page}%")).fetchall()
+                except Exception:
+                    rows = []
+                for r in rows:
+                    g = gameslib.parse(r["json"])
+                    if g and g.get("play") == page:
+                        card = {"txid": r["txid"], "game": g}
+                        break
+            if card:
+                creator = row["creator"]
+                tag = _name_of(creator)
+                said = {"game": True, "card": card["txid"], "name": card["game"]["name"],
+                        "wallet": bool(card["game"].get("wallet")),
+                        "opens": _game_opens(ix, creator, card["txid"], card["game"]),
+                        "publisher": f"@{tag}" if tag else "", "address": creator}
+            break
+        pages[page] = (time.time(), said)
+        return said
+
+    @app.get("/games/{txid}/access")
+    def game_access(txid: str):
+        """Is this page a game, which card, and does the card say it uses the wallet (for the wallet gate)."""
+        txid = (txid or "").lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", txid):
+            return JSONResponse({"game": False})
+        return JSONResponse(_game_of_page(txid))
+
     @app.get("/play/{which}", response_class=HTMLResponse)
     def game_door(request: Request, which: str):
         """A game's own front door (SadFrog, 2026-10-17): the sign-up in the game's
@@ -23035,6 +23182,114 @@ def create_app(state: AppState) -> FastAPI:
                       prices=sorted({r["price"] for r in rows}),
                       signed_in=signed_in(request) is not None)
 
+    def _segwit_kind(chain, addr: str) -> str | None:
+        """"p2wpkh" (native, m/84') or "p2sh-p2wpkh" (nested, m/49') for an
+        address of that shape on this chain, else None. Nested segwit is only
+        offered where native segwit is (a chain with a bech32 prefix)."""
+        from ..script import segwit_decode
+        hrp = getattr(chain.params, "bech32_hrp", "")
+        if not hrp or not addr:
+            return None
+        ver, prog = segwit_decode(hrp, addr)
+        if ver == 0 and prog is not None and len(prog) == 20:
+            return "p2wpkh"
+        try:
+            version, payload = b58check_decode(addr)
+        except Exception:
+            return None
+        if version == chain.params.scripthash_version and len(payload) == 20:
+            return "p2sh-p2wpkh"
+        return None
+
+    def _segwit_setting(account, chain, kind: str) -> str:
+        """Where this account's registered address of that kind is kept: one per
+        kind per account per chain. The native one keeps its first name."""
+        if kind == "p2wpkh":
+            return f"segwit_watch:{account.pubkey}:{chain.network}"
+        return f"segwit_watch:{kind}:{account.pubkey}:{chain.network}"
+
+    @app.post("/account/segwit/register")
+    def account_segwit_register(request: Request, payload: Any = Body(None)):
+        """A signed-in account registers its native-segwit (m/84') or
+        P2SH-nested segwit (m/49') address so the node WATCHES it. That key is
+        the browser's -- not derivable from the account's identity key -- so the
+        browser is what tells the node. Watching only: the node can later build
+        an UNSIGNED send from this address, but only the holder of the key can
+        sign it, so accepting an address here moves nothing and is safe.
+
+        A nested address hides its key hash, so the first registration of one
+        carries `pubkey`: the node checks the address is that key's
+        P2SH-P2WPKH and keeps the key hash to build sends from it."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        if getattr(chain.params, "real_coins", False):
+            return JSONResponse(
+                {"detail": "segwit is on test chains only for now"},
+                status_code=400)
+        addr = str(said.get("address") or "").strip()
+        kind = _segwit_kind(chain, addr)
+        if kind is None:
+            return JSONResponse(
+                {"detail": "that is not a segwit address for this chain"},
+                status_code=400)
+        # One address of each kind per account per chain, so a signed-in
+        # account cannot grow the watch list with many addresses (node 2).
+        key = _segwit_setting(account, chain, kind)
+        prior = state.setting(key)
+        if prior and prior != addr:
+            return JSONResponse(
+                {"detail": "this account already registered a different segwit "
+                           "address on this chain"}, status_code=409)
+        if kind == "p2sh-p2wpkh" and not prior:
+            from ..script import p2sh_p2wpkh_address
+            try:
+                pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
+            except ValueError:
+                pubkey = b""
+            if len(pubkey) != 33 or p2sh_p2wpkh_address(
+                    chain.params, hash160(pubkey)) != addr:
+                return JSONResponse(
+                    {"detail": "a P2SH-segwit address is registered with the "
+                               "public key it was made from"}, status_code=400)
+            state.set_setting(f"segwit_keyhash:{account.pubkey}:{chain.network}",
+                              hash160(pubkey).hex())
+        state.set_setting(key, addr)
+        _watch(addr, "account segwit (m/84')" if kind == "p2wpkh"
+               else "account segwit (m/49')", chain)
+        return JSONResponse({"ok": True, "watching": addr, "kind": kind,
+                             "chain": chain.network})
+
+    @app.get("/account/segwit/balance")
+    def account_segwit_balance(request: Request, address: str = "", network: str = ""):
+        """The balance the node sees at a registered segwit address (native or
+        P2SH-nested), for the Wallet card's address type. Public on-chain info; signed-in to keep it to
+        the app. 0 until the index has read a block paying it (watch is not
+        retroactive), so register first and fund after."""
+        _signed_in_account(request)
+        try:
+            chain = _chain_asked({"chain": network} if network else {})
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        if getattr(chain.params, "real_coins", False):
+            return JSONResponse(
+                {"detail": "segwit is on test chains only for now"},
+                status_code=400)
+        addr = (address or "").strip()
+        if _segwit_kind(chain, addr) is None:
+            return JSONResponse(
+                {"detail": "that is not a segwit address for this chain"},
+                status_code=400)
+        index = state.token_index(chain)
+        with contextlib.closing(index.open()) as db:
+            bal = utxoslib.balance(db, addr)
+            watched = addr in utxoslib.watching(db)
+        return JSONResponse({"address": addr, "chain": chain.network,
+                             "balance": bal, "watched": watched})
+
     @app.post("/account/send")
     def account_send(request: Request, payload: Any = Body(None)):
         """Offer to send coins. Nothing is broadcast here.
@@ -23055,12 +23310,37 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse(
                 {"detail": f"this account has no {chain.label.lower()} "
                            f"address yet"}, status_code=400)
+        # Send from the account's native-segwit (m/84') or P2SH-nested (m/49')
+        # address when the browser names it (said["from"]): that key is the
+        # browser's, so building from it is harmless (only its holder can sign),
+        # and funding.spend_for flags the inputs segwit. This chain's only.
+        want_from = str(said.get("from") or "").strip()
+        keyhash = None
+        if want_from:
+            kind = _segwit_kind(chain, want_from)
+            if kind is None:
+                return JSONResponse(
+                    {"detail": "that is not a segwit address for this chain"},
+                    status_code=400)
+            if getattr(chain.params, "real_coins", False):
+                return JSONResponse(
+                    {"detail": "segwit is on test chains only for now"},
+                    status_code=400)
+            # Only the address this account registered, never somebody else's.
+            if state.setting(_segwit_setting(account, chain, kind)) != want_from:
+                return JSONResponse(
+                    {"detail": "register this segwit address on the Wallet page first"},
+                    status_code=400)
+            if kind == "p2sh-p2wpkh":
+                keyhash = bytes.fromhex(state.setting(
+                    f"segwit_keyhash:{account.pubkey}:{chain.network}") or "")
+            address = want_from
         try:
             # A @tag is a name for an address, so it is resolved here and
             # the ANSWER is shown: somebody paying @robin should see the
             # address their coins are going to before they sign.
             to, to_tag = _payee(said.get("to", ""), chain)
-            complaint = _check_address(to, mainnet=chain)
+            complaint = _check_address(to, mainnet=chain, segwit_ok=True)
             if complaint:
                 raise ValueError(complaint)
             # Coins to your own address are allowed: it is how one coin becomes
@@ -23075,12 +23355,13 @@ def create_app(state: AppState) -> FastAPI:
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build(
                     db, chain.params, address,
-                    [(amount, txbuild.p2pkh_script(to))],
+                    [(amount, _pay_script(to, chain))],
                     rate=fees.MIN_FEE_PER_KB,
                     what=(f"send {format_amount(amount, True)} "
                           f"{chain.label.lower()} to {to}"),
                     exclude=_flights.spent_by(account.pubkey, chain.network),
-                    extra=_flights.change_for(account.pubkey, chain.network))
+                    extra=_flights.change_for(account.pubkey, chain.network),
+                    keyhash=keyhash)
             _quota(account, "send")
         except (taglib.TagError, fundinglib.FundingError, AmountError,
                 ValueError) as exc:
@@ -23174,12 +23455,31 @@ def create_app(state: AppState) -> FastAPI:
 
     def _looks_like_an_address(text: str) -> bool:
         """Address or name? Decided by shape, and only to choose which
-        complaint to make -- both are checked properly afterwards."""
+        complaint to make -- both are checked properly afterwards. A bech32
+        address (2026-10-20) is longer than any tag can be, so a tag that
+        happens to start like "tltc1" stays a tag."""
+        lowered = text.lower()
+        if len(text) > taglib.MAX_LENGTH and any(
+                p.bech32_hrp and lowered.startswith(p.bech32_hrp + "1")
+                for p in NETWORKS.values()):
+            return True
         try:
             b58check_decode(text)
             return True
         except Exception:
             return False
+
+    def _pay_script(to: str, chain) -> bytes:
+        """The output that pays `to` on this chain: native segwit v0 for a bech32
+        address (2026-10-20; `_check_address(..., segwit_ok=True)` let it through),
+        else P2PKH or P2SH by its version byte (txbuild)."""
+        hrp = getattr(chain.params, "bech32_hrp", "")
+        if hrp and to.lower().startswith(hrp + "1"):
+            version, program = segwit_decode(hrp, to.lower())
+            if version != 0:
+                raise ValueError("that is not a native SegWit address for this chain")
+            return bytes([0x00, len(program)]) + program
+        return txbuild.p2pkh_script(to)
 
     @app.post("/account/sign")
     def account_sign(request: Request, payload: Any = Body(None)):
@@ -23516,11 +23816,14 @@ def create_app(state: AppState) -> FastAPI:
 
     def _admin_wallets() -> list[dict]:
         out = []
-        wallets = [("messaging", state.messaging), ("ledger", state.ledger)]
-        # Every add-on chain's node wallet, Dogecoin's first as before (2026-10-18: L main, L test).
-        # A borrowed chain has no Core wallet here (a sharer answers no wallet calls), so it gets only its key card
-        # below -- not an "offline" card besides it (2026-10-19).
-        wallets += [(c.network, c) for c in getattr(state, "addons", []) if not c.borrowed]
+        wallets = [("messaging", state.messaging)]
+        # P main and every add-on chain's node wallet, Dogecoin's first as before (2026-10-18: L main, L test).
+        # A borrowed chain, or a Core here run with no wallet, has no Core wallet card -- only its key card below,
+        # not an "offline" card besides it (2026-10-19; 2026-10-20: chain-agnostic, a test machine's walletless
+        # Dogecoin Core).
+        if state.ledger.network != state.messaging.network and not state.keyed(state.ledger):
+            wallets.append(("ledger", state.ledger))
+        wallets += [(c.network, c) for c in getattr(state, "addons", []) if not state.keyed(c)]
         for which, ctx in wallets:
             row = {"which": which, "label": ctx.title, "network": ctx.network,
                    "net": ctx.net, "coin": ctx.params.coin}
@@ -23543,16 +23846,16 @@ def create_app(state: AppState) -> FastAPI:
         # arcade with that key (keywallet.py; 2026-10-18: "there should be no extra step").
         # A chain whose Core runs here has its own wallet card above, so its key card is shown only when that
         # address holds coins (2026-10-18, SadFrog: L main and L test were listed twice), as the Wallet page does.
-        for ctx in list(getattr(state, "addons", None) or []):
+        for ctx in _key_chains():
             row = {"which": f"key:{ctx.network}", "label": ctx.title, "network": ctx.network, "net": ctx.net,
                    "coin": ctx.params.coin, "keyed": True}
             try:
                 row.update(keywalletlib.balance(state, ctx))
             except Exception as exc:                    # noqa: BLE001
-                if not ctx.borrowed:
+                if not state.keyed(ctx):
                     continue
                 row["error"] = str(exc)[:200]
-            if not ctx.borrowed and not float(row.get("balance") or 0):
+            if not state.keyed(ctx) and not float(row.get("balance") or 0):
                 continue
             out.append(row)
         return out
@@ -23703,6 +24006,149 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:
             out["error"] = str(exc)[:200]
         return out
+
+    @app.get("/admin/api/ords")
+    def admin_ords(request: Request):
+        """Admin -> Ords (2026-10-20): each chain's own ord index -- walk, help or off, where it starts (the
+        official first-inscription height of that chain's ord indexer), how far it is, and every linked arcade's
+        chunks (arcade/doginal_index.py)."""
+        _admin_check(request)
+        from ..doginal_index import SETTLE, SOURCES, STARTS
+        indexes = state.ord_indexes()
+        rows = []
+        for chain in state.all_chains:
+            net = chain.network
+            if net not in STARTS:
+                continue
+            index = indexes.get(net)
+            st = index.status() if index is not None else {"mode": "off", "base": STARTS[net]}
+            tip = st.get("tip") or 0
+            if not tip:
+                try:
+                    tip = int(state.chain_sync(chain).get("blocks") or 0)
+                except Exception:                              # noqa: BLE001 -- not answering: no percentage
+                    tip = 0
+            span = max(1, tip - SETTLE - st["base"] + 1)
+            walk = st.get("walk") or {}
+            ready = st.get("ready") or 0
+            rows.append({
+                **st, "net": net, "title": getattr(chain, "title", "") or chain.label, "label": chain.label,
+                "source": SOURCES.get(net, ""), "tip": tip, "borrowed": bool(getattr(chain, "borrowed", False)),
+                "walked_pct": round(100 * max(0, (walk.get("next") or st["base"]) - st["base"]) / span, 2) if walk else None,
+                "agreed_pct": round(100 * (st.get("agreed") or 0) / ready, 2) if ready else 0.0,
+            })
+        import os
+        return JSONResponse({"rows": rows, "cores": state.ord_cores(), "machine": os.cpu_count() or 1},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/ords")
+    def admin_ords_mode(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        from ..doginal_index import MODES, STARTS
+        said = payload if isinstance(payload, dict) else {}
+        if "cores" in said:
+            import os
+            try:
+                cores = int(said["cores"])
+            except (TypeError, ValueError):
+                cores = 0
+            if not 1 <= cores <= (os.cpu_count() or 1):
+                return JSONResponse({"detail": f"from 1 to {os.cpu_count() or 1} cores"}, status_code=400)
+            state.set_setting("ord_cores", cores)
+            return JSONResponse({"ok": True, "cores": cores})
+        net, mode = str(said.get("net") or ""), said.get("mode")
+        if net not in STARTS or mode not in MODES:
+            return JSONResponse({"detail": "a chain, and walk, help or off"}, status_code=400)
+        state.set_setting(f"ord_index:{net}", mode)
+        return JSONResponse({"ok": True, "net": net, "mode": mode})
+
+    @app.get("/admin/api/ords/lookup")
+    def admin_ords_lookup(request: Request, net: str = "doge", q: str = ""):
+        """Admin -> Ords -> Look up: an inscription id (where it is now) or txid:vout (what sits on it), from this
+        arcade's own walk, or -- read only, or not walking -- a linked arcade that walks the chain (2026-10-20)."""
+        _admin_check(request)
+        from ..doginals import INSCRIPTION_ID
+        index = state.ord_indexes().get(net)
+        if index is None:
+            return JSONResponse({"detail": "this arcade does not read that chain"}, status_code=404)
+        said = (q or "").strip()
+        q = said.lower()
+        if INSCRIPTION_ID.match(q):
+            question = {"what": "where", "id": q}
+        elif re.match(r"^[0-9a-f]{64}:[0-9]{1,6}$", q):
+            txid, vout = q.split(":")
+            question = {"what": "on", "txid": txid, "vout": int(vout)}
+        elif q.startswith("type:") or q.startswith("p:") or q == "kinds":     # by content type or JSON "p"
+            question = {"what": "kinds", "ctype": said[5:].strip() if q.startswith("type:") else "",
+                        "proto": said[2:].strip() if q.startswith("p:") else ""}
+        elif len(said.encode("utf-8")) == 4:                   # a DRC-20 / PRC-20 tick (2026-10-20)
+            question = {"what": "token", "tick": said}
+        elif "." in said and " " not in said:                  # a name ("p":"dns"): every reading's first claim
+            question = {"what": "name", "name": said}
+        elif re.match(r"^[1-9A-HJ-NP-Za-km-z]{25,40}$", said):  # an address: its token balances
+            question = {"what": "balances", "owner": said}
+        else:
+            return JSONResponse({"detail": "an inscription id, a coin as txid:vout, a 4-character tick, a name "
+                                           "like jon.doge, an address, type:image/png, p:drc-20, or kinds"},
+                                status_code=400)
+        try:
+            return JSONResponse(index.lookup(question), headers={"Cache-Control": "no-store"})
+        except Exception as exc:                               # noqa: BLE001 -- said in the box
+            return JSONResponse({"detail": str(exc)[:300]}, status_code=409)
+
+    @app.get("/admin/api/ords/names")
+    def admin_ords_names(request: Request, net: str = "doge"):
+        """Admin -> Ords -> Names: where the readings of a "p":"dns" name disagree (arcade/ord_rules.NAME_RULES), from
+        this arcade's own walk (2026-10-20: "make sure that we are indexing the domains the correct way")."""
+        _admin_check(request)
+        from .. import ord_rules
+        index = state.ord_indexes().get(net)
+        if index is None or index.mode() != "walk":
+            return JSONResponse({"detail": "only an arcade that walks this chain keeps its names"}, status_code=409)
+        return JSONResponse({**index.name_disagreements(), "readings": ord_rules.NAME_RULES},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/admin/api/operators")
+    def admin_operators(request: Request):
+        """Network -> Other operators: who runs each arcade this one has heard from over the mesh."""
+        _admin_check(request)
+        share = getattr(getattr(state, "mesh", None), "operators", None)
+        return JSONResponse({"mesh": share is not None, "rows": share.status() if share is not None else []},
+                            headers={"Cache-Control": "no-store"})
+
+    def _fruit_stand():
+        """The node's fruit names for new arcades' operators (arcade/fruit.py, 2026-10-20)."""
+        stand = state.fruit_stand()
+        if stand is None:
+            raise HTTPException(404, "this arcade indexes no chain names are claimed on")
+        return stand
+
+    @app.get("/admin/api/fruit")
+    def admin_fruit(request: Request):
+        _admin_check(request)
+        return JSONResponse(_fruit_stand().status(), headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/fruit/reserve")
+    def admin_fruit_reserve(request: Request):
+        """Claim every fruit name not held yet, each from an address of its own in this node's wallet."""
+        _admin_check(request, write=True)
+        stand = _fruit_stand()
+        if stand.busy:
+            return JSONResponse({"detail": f"already at it: {stand.busy}"}, status_code=409)
+        stand.busy = "starting"
+        threading.Thread(target=stand.reserve, name="arcade-fruit", daemon=True).start()
+        return JSONResponse({"ok": True})
+
+    @app.post("/admin/api/fruit/give")
+    def admin_fruit_give(request: Request, payload: Any = Body(None)):
+        """Hand one fruit name to an address (a new arcade's operator)."""
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            txid = _fruit_stand().give(str(said.get("name") or ""), str(said.get("to") or "").strip())
+        except (ValueError, tokenlib.TokenError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True, "txid": txid})
 
     @app.post("/admin/api/seats")
     def admin_seats(request: Request, payload: Any = Body(None)):
@@ -24232,9 +24678,9 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"txid": txid})
 
     def _keyed_context(which: str):
-        """The add-on chain a `key:<net>` wallet card names (keywallet.py)."""
+        """The chain a `key:<net>` wallet card names (keywallet.py): P main or an add-on chain, never P test."""
         net = which.split(":", 1)[1]
-        ctx = next((c for c in (getattr(state, "addons", None) or []) if c.network == net), None)
+        ctx = next((c for c in _key_chains() if c.network == net), None)
         if ctx is None:
             raise ValueError("unknown wallet")
         return ctx
@@ -29012,7 +29458,7 @@ def _tag_address(state, destination: str, *, mainnet) -> str:
         f"the claim yet. A tag is claimed from the Address book.")
 
 
-def _check_address(address: str, *, mainnet: bool) -> str | None:
+def _check_address(address: str, *, mainnet: bool, segwit_ok: bool = False) -> str | None:
     """Return a human-readable complaint about `address`, or None if it is fine.
 
     An address carries its chain in the version byte, so a mainnet address pasted
@@ -29051,6 +29497,17 @@ def _check_address(address: str, *, mainnet: bool) -> str | None:
     for params in NETWORKS.values():
         hrp = getattr(params, "bech32_hrp", None)
         if hrp and lowered.startswith(hrp + "1"):
+            # A coin send on a test chain pays native segwit v0 (2026-10-20, tbuuol): `segwit_ok`
+            # is that caller saying it builds the output (`_pay_script`). Taproot is not paid yet.
+            if (segwit_ok and not getattr(params, "real_coins", False)
+                    and params.name in {p.name for p in wanted}):
+                version, program = segwit_decode(hrp, lowered)
+                if version == 0:
+                    return None
+                if version is None:
+                    return "that does not look like an address (the checksum does not match)."
+                return (f"that is a {params.label} Taproot address ({hrp}1p…). This arcade pays legacy, "
+                        "P2SH and native SegWit addresses for now; ask for one of those.")
             return (f"that is a {params.label} SegWit or Taproot address ({hrp}1…). This arcade pays "
                     f"{params.label}'s legacy addresses for now; ask for one of those.")
     try:
@@ -29191,6 +29648,32 @@ async def _mesh_bridge(state, socket) -> None:
 _COINS_ASKED: dict[tuple[str, str], tuple[float, Any]] = {}
 
 
+def _host_is_public(host: str) -> bool:
+    """Does every address this name resolves to belong to the public internet?
+
+    The arcades this one asks for an account (`_arcade_hosts`) come from announcements, which anybody can make. A
+    name that resolves to 127.0.0.1, the LAN or a cloud metadata address would have this node fetch from itself or
+    its neighbours on a stranger's say-so (node 3's review, 2026-10-20). A name that does not resolve is not asked."""
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):
+        return False
+    found = {info[4][0].split("%", 1)[0] for info in infos}
+    try:
+        return bool(found) and all(ipaddress.ip_address(a).is_global for a in found)
+    except ValueError:
+        return False
+
+
+def _ask_arcade(url: str, **kwargs):
+    """GET from another arcade: only a public address, and never a redirect. A redirect would undo the check above
+    (a 302 to http://127.0.0.1:8420/...), so a 3xx is the answer and the caller, wanting a 200, takes nothing."""
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if not _host_is_public(host):
+        raise requests.ConnectionError(f"{host} is not a public address; not asked")
+    return requests.get(url, allow_redirects=False, **kwargs)
+
+
 def _coins_from(state, source: str, tag: str, chain, address: str) -> int | None:
     """An account's coins on `chain` as the arcade it came from knows them, each checked against this arcade's
     own chain and filed; how many, or None when that arcade could not say (the blocks are read instead)."""
@@ -29199,7 +29682,7 @@ def _coins_from(state, source: str, tag: str, chain, address: str) -> int | None
         # One question per arcade for every chain (a minute's keep): five in a row tripped nobody's limit yet, but
         # the answer is the same for all of them.
         try:
-            got = requests.get(f"{source}/signin/{urllib.parse.quote(tag)}/coins", timeout=15,
+            got = _ask_arcade(f"{source}/signin/{urllib.parse.quote(tag)}/coins", timeout=15,
                                headers={"User-Agent": "arcade-node"})
             kept = (time.time(), got.json().get("chains") if got.status_code == 200 else None)
         except Exception:                               # noqa: BLE001

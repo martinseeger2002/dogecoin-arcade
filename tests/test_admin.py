@@ -192,3 +192,176 @@ def test_chains_run_here_or_borrowed_with_testnet_and_one_more_here(public, monk
     monkeypatch.delenv("INVOCATION_ID", raising=False)
     assert app.post("/admin/api/restart", headers={**LOCAL, **WRITE}).status_code == 409
     assert 'id="chains"' in app.get("/admin", headers=LOCAL).text
+
+
+def test_the_ords_tab_lists_each_chain_with_its_official_start_and_saves_its_mode(public):
+    """Admin -> Ords (2026-10-20): each chain's own ord index, its official first-inscription height, how far
+    it is, and walk / help / off for each."""
+    app, state = public
+    page = app.get("/admin", headers=LOCAL)
+    assert page.status_code == 200 and 'data-tab="ords"' in page.text and 'id="ordrows"' in page.text
+    assert 'id="oprows"' in page.text, "Network -> Other operators"
+    assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE}, json={"net": "doge", "mode": "fly"}).status_code == 400
+    assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE}, json={"net": "btc", "mode": "off"}).status_code == 400
+    assert app.post("/admin/api/ords", headers=LOCAL, json={"net": "main", "mode": "help"}).status_code == 403
+    assert state.ord_mode("main") == "off" and state.ord_mode("doge") == "help", "off until turned on; Dogecoin helps"
+    assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE}, json={"net": "main", "mode": "help"}).json()["ok"]
+    assert state.ord_mode("main") == "help"
+    from arcade import doginal_index as dx
+    rows = {r["net"]: r for r in app.get("/admin/api/ords", headers=LOCAL).json()["rows"]}
+    assert rows, "every chain this arcade reads that has ords"
+    for net, r in rows.items():
+        assert r["base"] == dx.STARTS[net] and r["source"]
+    assert rows["main"]["mode"] == "help"
+    assert app.get("/admin/api/ords", headers=EDGE).status_code != 200, "never shown to a stranger"
+    assert "rows" in app.get("/admin/api/operators", headers=LOCAL).json()
+    state.set_setting("ord_index:main", None)
+    # Cores for ords (2026-10-20): a number from 1 to this machine's.
+    import os
+    assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE}, json={"cores": 0}).status_code == 400
+    assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE},
+                    json={"cores": (os.cpu_count() or 1) + 1}).status_code == 400
+    assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE}, json={"cores": 1}).json()["cores"] == 1
+    said = app.get("/admin/api/ords", headers=LOCAL).json()
+    assert said["cores"] == 1 and said["machine"] == (os.cpu_count() or 1) and 'id="ordcores"' in page.text
+    state.set_setting("ord_cores", None)
+    # Read only, and the lookup box (2026-10-20).
+    assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE}, json={"net": "main", "mode": "read"}).json()["ok"]
+    assert state.ord_mode("main") == "read" and 'Read only' in page.text and 'id="ordlookq"' in page.text
+    assert app.get("/admin/api/ords/lookup?net=main&q=nonsense", headers=LOCAL).status_code == 400
+    said = app.get("/admin/api/ords/lookup?net=main&q=" + "ab" * 32 + "i0", headers=LOCAL)
+    assert said.status_code == 409 and "linked arcade" in said.json()["detail"], "no walker linked in a test"
+    # Ticks, names and addresses go to the same box (2026-10-20); a walker answers them, a reader asks one.
+    for q in ("wow!", "jon.doge", "nYW2BPLENpu2nGa7WCExvzxD3hQYueULFa"):
+        got = app.get("/admin/api/ords/lookup?net=main&q=" + q, headers=LOCAL)
+        assert got.status_code == 409, (q, got.text)
+    assert app.get("/admin/api/ords/names?net=main", headers=LOCAL).status_code == 409, "names: walkers only"
+    state.set_setting("ord_index:main", "walk")
+    names = app.get("/admin/api/ords/names?net=main", headers=LOCAL).json()
+    assert names["names"] == 0 and set(names["readings"]) == {"spec", "json", "doge2023"}
+    assert app.get("/admin/api/ords/lookup?net=main&q=wow!", headers=LOCAL).json() == {
+        "token": None, "from": "this arcade", "walked_to": 186920}
+    assert 'id="ordnamesgo"' in page.text
+    state.set_setting("ord_index:main", None)
+
+
+def test_the_first_operator_signs_up_with_the_offered_fruit_at_the_machine(public):
+    """2026-10-20: a new arcade's operator gets a fruit name automatically (arcade/fruit.py,
+    mesh/fruitshare.py). At the machine, with no operator yet, the offered fruit is free to that sign-up, which
+    becomes the operator and asks the fruit's holder to send the name. From outside it is nobody's to take."""
+    from nacl.signing import SigningKey
+    from arcade.script import b58check_encode, hash160
+    app, state = public
+    state.set_setting("fruit_offer", {"name": "mango", "from": "holder-node"})
+    asked = []
+
+    class Share:
+        def ask_to_give(self, to):
+            asked.append(to)
+
+    class Mesh:
+        fruitshare = Share()
+    was = getattr(state, "mesh", None)
+    state.mesh = Mesh()
+    try:
+        assert 'value="mango"' in app.get("/join", headers=LOCAL).text
+        assert 'value="mango"' not in app.get("/join", headers=EDGE).text
+        assert app.get("/signup/mango", headers=LOCAL).json()["fruit"] is True
+        assert "fruit" not in app.get("/signup/mango", headers=EDGE).json()
+        key = SigningKey.generate()
+        pubkey = key.verify_key.encode().hex()
+        chain = state.messaging
+        address = b58check_encode(chain.params.pubkeyhash_version, hash160(b"\x02" + key.verify_key.encode()))
+        said = app.post("/signup", headers=LOCAL, json={"tag": "mango", "pubkey": pubkey, "address": address,
+                                                        "blob": {"sealed": "x"}})
+        assert said.status_code == 200, said.text
+        assert said.json()["fruit"] is True
+        assert state.operator == pubkey
+        assert asked == [address]
+    finally:
+        state.mesh = was
+        state.set_setting("fruit_offer", None)
+
+
+def test_a_core_here_with_its_wallet_switched_off_is_held_with_the_arcades_own_key():
+    """2026-10-20: a test machine's Dogecoin Core runs with disablewallet=1; every wallet call said "Method not found" and the
+    operator's Wallet showed no Dogecoin. Such a Core is treated as a borrowed chain is: the arcade's own key holds
+    the coins (keywallet.py), on every chain but P test. A Core with a wallet keeps its own."""
+    from arcade.rpc import RpcError
+    from arcade.web.state import AppState
+
+    class Rpc:
+        def __init__(self, wallet):
+            self.wallet = wallet
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def call(self, method, *params):
+            if not self.wallet:
+                raise RpcError(-32601, "Method not found", method)
+            return {"walletversion": 130000}
+
+    class Chain:
+        is_addon, borrowed = True, False
+
+        def __init__(self, net, wallet):
+            self.network, self._wallet = net, wallet
+
+        def rpc(self):
+            return Rpc(self._wallet)
+
+    class Holder:
+        KEYED_SECONDS = 300
+        messaging = Chain("test", wallet=False)
+    holder = Holder()
+    assert AppState.keyed(holder, Chain("doge", wallet=False)) is True
+    assert AppState.keyed(holder, Chain("main", wallet=False)) is True, "chain-agnostic: P main too"
+    assert AppState.keyed(holder, Holder.messaging) is False, "P test: the identity key itself lives in its wallet"
+    assert AppState.keyed(holder, Chain("ltc", wallet=True)) is False
+    borrowed = Chain("ltctest", wallet=True)
+    borrowed.borrowed = True
+    assert AppState.keyed(holder, borrowed) is True
+
+
+def test_the_offered_fruit_passes_the_claimed_name_check_and_nothing_else_does(public, monkeypatch):
+    """SadFrog's /signup refuses a name the chain says another address holds (team/signin-hardening). The operator's
+    offered fruit is held on the chain by the fruit stand until it is sent, so it alone goes through (2026-10-20)."""
+    from nacl.signing import SigningKey
+    from arcade.script import b58check_encode, hash160
+    app, state = public
+    state.set_setting("fruit_offer", {"name": "papaya", "from": "holder-node"})
+    held = {"papaya": "fruit-stand-address", "someone": "their-address"}
+
+    class Index:
+        def address_of(self, tag):
+            return held.get(tag)
+
+        def __getattr__(self, name):
+            raise AttributeError(name)
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain: Index())
+
+    class Mesh:
+        class fruitshare:
+            @staticmethod
+            def ask_to_give(to):
+                pass
+    was = getattr(state, "mesh", None)
+    state.mesh = Mesh()
+
+    def signup(tag):
+        key = SigningKey.generate()
+        address = b58check_encode(state.messaging.params.pubkeyhash_version, hash160(b"\x02" + key.verify_key.encode()))
+        return app.post("/signup", headers=LOCAL, json={"tag": tag, "pubkey": key.verify_key.encode().hex(),
+                                                        "address": address, "blob": {"sealed": "x"}})
+    try:
+        refused = signup("someone")
+        assert refused.status_code == 400 and "claimed on the chain" in refused.json()["detail"]
+        took = signup("papaya")
+        assert took.status_code == 200 and took.json()["fruit"] is True, took.text
+    finally:
+        state.mesh = was
+        state.set_setting("fruit_offer", None)

@@ -114,14 +114,14 @@ document.querySelectorAll('.ex-seg a').forEach(function (a) {
   {%- if doge.ready %}
   <a class="ex-chip{{ ' on' if show == 'dogecoin' }}" href="/exchange?tab={{ tab_name }}{{ extra }}&show=dogecoin"{% if show == 'dogecoin' %} aria-current="true"{% endif %}>{{ net_badge('doge') }}</a>
   {%- else %}
-  <span class="ex-chip chain-off" aria-disabled="true" title="D main opens when its node has synced ({{ doge.progress }}% so far)">{{ net_badge('doge') }}</span>
+  <span class="ex-chip chain-off" aria-disabled="true" title="Dogecoin (DOGE) – Main opens when its node has synced ({{ doge.progress }}% so far)">{{ net_badge('doge') }}</span>
   {%- endif %}
   {%- endif %}
   {%- if key == 'mainnet' and ltc %}
   {%- if ltc.ready %}
   <a class="ex-chip{{ ' on' if show == 'litecoin' }}" href="/exchange?tab={{ tab_name }}{{ extra }}&show=litecoin"{% if show == 'litecoin' %} aria-current="true"{% endif %}>{{ net_badge('ltc') }}</a>
   {%- else %}
-  <span class="ex-chip chain-off" aria-disabled="true" title="L main opens when its node has synced ({{ ltc.progress }}% so far)">{{ net_badge('ltc') }}</span>
+  <span class="ex-chip chain-off" aria-disabled="true" title="Litecoin (LTC) – Main opens when its node has synced ({{ ltc.progress }}% so far)">{{ net_badge('ltc') }}</span>
   {%- endif %}
   {%- endif %}
   {%- endfor %}</span>

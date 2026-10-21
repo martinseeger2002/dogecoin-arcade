@@ -1,6 +1,5 @@
 """The Affiliates tab (2026-10-15: "Between the exchange and the Docs tab, add an affiliate
-tab. Add a link to Doge soft ... I also want you to add as an affiliate antidoginaldogs.com"), and
-Doge Soft credited where Doginals show."""
+tab. ... I also want you to add as an affiliate antidoginaldogs.com"), and no outside Doginals index named or asked."""
 
 import pathlib
 import sys
@@ -13,7 +12,7 @@ def test_the_tab_sits_between_the_exchange_and_the_docs(client):
     app, state = client
     page = app.get("/affiliates").text
     assert 'href="https://antidoginaldogs.com"' in page
-    assert "dogesoft" not in page.lower(), "removed (2026-10-15: \"Remove Doge Soft API and affiliate link\")"
+    assert "dogesoft" not in page.lower(), "removed (2026-10-15: the outside Doginals API and its affiliate link)"
     assert 'rel="noopener"' in page
     nav = app.get("/").text
     assert nav.index('href="/exchange"') < nav.index('href="/affiliates"') < nav.index('href="/docs"')
@@ -28,8 +27,9 @@ def test_a_stranger_may_read_it():
     assert "/affiliates" in PUBLIC_PAGES
 
 
-def test_doge_soft_is_gone_everywhere():
-    """2026-10-15: "Remove Doge Soft API and affiliate link." No page, script or module asks it or names it."""
+def test_the_outside_doginals_index_is_gone_everywhere():
+    """2026-10-15: the outside Doginals API and its affiliate link removed. No page, script or module asks it or
+    names it."""
     root = pathlib.Path(__file__).resolve().parent.parent / "arcade"
     for f in list(root.rglob("*.py")) + list((root / "web" / "templates").rglob("*")):
         if f.is_file():

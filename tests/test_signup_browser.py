@@ -137,9 +137,12 @@ def test_the_node_never_sees_the_password_or_the_words(loaded):
     assert "a long enough password" not in row["blob"]
     # Whole words: "era" is in "iterations" and a short word can sit inside the hex, neither of them a leak
     # (2026-10-19, a phrase with "era" failed this).
+    # The values only (2026-10-20): the blob's own field names are fixed, and "salt" is a recovery word too -- a phrase
+    # holding it failed this against the key "salt", not a leak.
     import re as _re
+    values = " ".join(str(v) for v in blob.values())
     for word in said["phrase"].split():
-        assert not _re.search(rf"(?<![a-z]){_re.escape(word)}(?![a-z])", row["blob"]), \
+        assert not _re.search(rf"(?<![a-z]){_re.escape(word)}(?![a-z])", values), \
             "a word of the phrase is in the blob"
 
     raw = (home / "accounts.sqlite").read_bytes()
@@ -196,7 +199,8 @@ def test_a_short_password_is_allowed_and_the_page_says_what_it_costs(loaded):
     """Somebody who wants `1234` gets `1234` (D-157). What they also get is
     a sentence saying their encrypted wallet can be taken from this node
     and opened in seconds -- because that is true, and refusing them would
-    not have made it less so."""
+    not have made it less so. (2026-10-20: a password on the leaked-password lists IS refused -- `1234` would be
+    in real life; the suite runs with that check off, so this is a short password the list has not seen.)"""
     browser, base, state, home = loaded
     said = _sign_up(browser, "brief", password="1234")
     assert "error" not in said, said
@@ -470,8 +474,11 @@ def test_forgot_password_the_words_set_a_new_one(loaded):
 
     row = state.vault().get("forgetful")
     assert row["blob"] != old_blob, "sealed again"
+    # Whole words only (2026-10-20): the blob is hex, and a recovery word spelled from a-f ("face", "decade", "add")
+    # turns up inside random hex now and then, which failed this test by chance under the gate.
+    import re
     for word in made["phrase"].split():
-        assert word not in row["blob"]
+        assert not re.search(rf"\b{re.escape(word)}\b", row["blob"]), word
     assert made["phrase"].encode() not in (home / "accounts.sqlite").read_bytes()
 
     browser.delete_all_cookies()

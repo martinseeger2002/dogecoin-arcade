@@ -88,6 +88,340 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-20 · the operator's side · ord indexes follow the official rules; DRC-20 / PRC-20; names (rules 2)
+
+The operator: match wonky-ord (all ords are in the index), index DRC-20 and PRC-20 balances, and index the "p":"dns"
+names "the correct way". arcade/ord_rules.py (RULES = 2) copies the indexers' code:
+- Inscriptions, as tylordius/wonky-dogeord and apezord/ord-dogecoin: input 0 only, push-only, "ord", a piece count
+  above 0, an exact countdown, continued in the tx whose input 0 spends the previous piece. NUMBERED WHEN
+  COMPLETE. No new number when input 0's first koinu already carries an inscription. Their OP_PUSHDATA2/4 length
+  quirk is copied (the opcode byte read as the low byte); Doginals use 240-byte pieces, so ordinary inscriptions
+  never meet it. Real chain: number 0 = 15f3b73d...f62ei0 (the pixel-art monkey) at block 4,609,723.
+- DRC-20 (Dogecoin) / PRC-20 (Pepecoin, reallyshadydev/pepecoin-ord-indexer), as src/drc20 +
+  drc20_updater.rs: 4-byte ticks matched in lowercase, string amounts with no exponent or sign, 18 decimals at
+  most, at least 40 characters of body. Single-transaction inscriptions only, never landing in the fee. A mint
+  is cut to the supply left. Only a note's FIRST move counts, and a move into the fee returns it to the
+  sender. Owners are addresses (script hash for others). Walkers only, since transfers need moves.
+- Names: every candidate kept with the name it makes under three readings (ord_rules.NAME_RULES): "spec" (DNS
+  v1.2, jonheaven/dns: plain text label.namespace or JSON reg, any namespace, Unicode rules), "json" (JSON reg
+  only, any ending), "doge2023" (JSON, .doge only, the 2023 indexer guide). The first claim by inscription
+  number wins in each; Admin -> Ords -> Names shows where they disagree. The operator chooses the reading from that.
+- Every inscription keeps its content type (text), its JSON "p" (`proto`) and its body size, indexed, so a
+  protocol added later finds its own inscriptions without re-reading every body (the operator: "so we can go back and
+  scan by mime type later"). Look up takes `type:image/png`, `p:drc-20` or `kinds`.
+- Every row a block writes keeps its old value (undo), so a reorg puts balances and names back too.
+- "hi" carries `rules`; chunk words from an arcade on other rules are ignored. A store kept under other rules is
+  dropped and cut again, so every arcade's Dogecoin index starts over once (cheap: ~7% in).
+
+### 2026-10-20 · the operator's side · chain names: "<Chain> (<TICKER>) – Main|Test" everywhere
+
+The operator: "Redo the naming convention so it is the network name – Main or test ... Because we could be and will
+be adding many more blockchains", and "include the ticker alongside the name". ChainContext.title is now
+"Pepecoin (PEP) – Test", "Pepecoin (PEP) – Main", "Dogecoin (DOGE) – Main", "Litecoin (LTC) – Main",
+"Litecoin (LTC) – Test". It replaces the 2026-10-13 "P test / D main" rule. The name comes from the chain's
+own Params: `chain_name` when set, else its `label` less " testnet". The ticker is `family`. A new chain is
+named by its Params alone; a test chain copied from Dogecoin's Params comes out as "Bellscoin (BEL) – Main".
+Use `chain.title` and don't write names out by hand; the wallet headings, the admin tables, the Exchange's
+"opens when synced" tips and the mining and faucet messages now do. `letter` stays as the coloured badge.
+
+### 2026-10-20 · the operator's side · leaked passwords refused (answering SadFrog's MIN_PASSWORD point)
+
+SadFrog asked for a password floor, since every sealed wallet is public and copied between arcades. The operator's
+answer: check the password against a leaked-password list instead. wallet.js `leaked()` asks Have I Been Pwned's
+range API with k-anonymity: only the first 5 hex characters of the SHA-1 leave the browser (with Add-Padding),
+and the endings that come back are compared in the browser. Nothing goes to the node. `signUp` and `restore`
+refuse a leaked password before sealing, and the sign-up page says so as it is typed. If the list can't be
+reached, the password is let through, so a sign-up never depends on another server. MIN_PASSWORD stays 1
+(D-157). Tests: tests/test_leaked_password.py, run under Node against a fake answer. The rate-limit point
+(keyed on client host behind an edge) is still open with the operator.
+
+### 2026-10-20 · tbuuol's side (Claude) · branch `team/p2sh-segwit-kind` (on master 462ec1b): P2SH (Nested SegWit) on the Wallet card
+
+tbuuol: the L test address-type drop-down should read **Legacy, P2SH (Nested SegWit), Native SegWit**, in that order.
+- `wallet_js.js` `ADDRESS_KINDS.ltctest` gains `{id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 58,
+  path: "m/49'/1'/0'/0/0"}` between the two; `kindKey()` derives it with `coins.p2shSegwitKey` / `p2shSegwitAddress`
+  (Q... on L test) and marks the keys `nested`. Legacy's row now says its path too (unchanged: m/44'/1'/0'/0/0 =
+  `coinPath`, the same path Electrum-LTC's BIP44 legacy uses on testnet).
+- `coins.js verifyOffer`: an input flagged `segwit: "p2sh-p2wpkh"` signs the same BIP143 digest as native; change on
+  the own P2SH script counts as own; a nested own address reads payees in `keys.version` (as bech32 does).
+- Server: `/account/segwit/register|balance` and `/account/send` `from` take either kind (`_segwit_kind`). A nested
+  address hides its key hash, so its FIRST register carries `pubkey`; the node checks the address is that key's
+  P2SH-P2WPKH and keeps the hash (`segwit_keyhash:<pubkey>:<net>`). One address per kind per account and chain
+  (native keeps `segwit_watch:<pubkey>:<net>`, nested is `segwit_watch:p2sh-p2wpkh:<pubkey>:<net>`). Test chains only.
+- `funding.spend_for(address, params, keyhash)` / `build(..., keyhash=)`: kind `p2sh-p2wpkh`, change back to the same
+  P2SH; `assemble` puts `push(0014<keyhash>)` in the scriptSig and `[sig, pubkey]` in the witness.
+- **Paying TO every kind** (tbuuol: "yesterday you could only send to Legacy"). Before this, a Q... recipient was built
+  right but the browser's review said "20 bytes written to the chain", and a tltc1... recipient was read as a @name
+  ("a tag is at most 24 characters"). Now, on the COIN send only (`/account/send`):
+  - `_looks_like_an_address` takes a bech32 address (longer than any tag) as an address.
+  - `_check_address(..., segwit_ok=True)` lets native segwit v0 (P2WPKH and P2WSH) through on a test chain, for that
+    chain's own prefix. Taproot is refused by name. Every other send (tokens, NFTs, ...) keeps the old refusal.
+  - `_pay_script` builds `OP_0 <program>` for it; base58 stays `txbuild.p2pkh_script` (P2PKH or P2SH by version).
+  - `coins.js verifyOffer` says a P2SH output as its Q.../M... address and a P2WPKH one as tltc1.../ltc1..., on the
+    Litecoin chains (`LTC_KINDS`), whatever kind the sender is. Elsewhere a P2SH output keeps its old words (pools, swaps).
+  - `my_wallet.html` `ADDRESSY` takes a bech32 address, so Review can be pressed for one.
+- Tests: new `tests/test_p2sh_segwit.py` (15), including all 3 senders x 4 recipients (legacy, P2SH, P2WPKH, P2WSH).
+  Segwit/funding/bip143/coins_browser suites and the smoke set pass.
+- **Needs from node 2 (browser + litecoind):** the JS is untested here (no node/chrome on this machine). Please run the
+  round on L test: pick P2SH in the drop-down, it registers and shows a Q... address; fund it; then send from each of
+  the three kinds to a legacy, a Q... and a tltc1q... address, check the review names each recipient, and confirm
+  litecoind accepts and mines all nine.
+
+### 2026-10-20 · the operator's side · PLAN: switch the pages to a chain's ord index once it is full
+
+The operator: "once we have a full ORD index on a chain ... we need to switch the pages over to using it." Not done
+yet; it waits for an index to be full. Full means the walk has reached the tip (Admin -> Ords: walked 100%)
+and its chunks are agreed by other arcades. Then, chain by chain (Dogecoin first), these read the index
+(DoginalIndex.where / .on, arcade/doginal_index.py) instead of the per-coin chain walk (doginals.trace):
+- wallet protection (funding GUARD: never spend an inscribed coin);
+- the Wallet's Doginals/inscriptions view;
+- the Exchange Doginals tab;
+- the Doginal send and swap builders.
+The chain walk stays as the fallback while a chain's index is not full. Arcades in "read only" mode ask a
+walking arcade over the mesh. That's built: mode `read` (the operator: "read only. Where it can read the index, but it
+doesn't hold the index on its own copy of arcade") scans nothing. Its questions go over "dx" frames q / a
+({what: where, id} or {what: on, txid, vout}) to the furthest-walked linked arcade, at most 120 a minute from
+each asker. `DoginalIndex.lookup()` answers from the arcade's own walk, else asks. Admin -> Ords has
+"Read only" and a Look up box (GET /admin/api/ords/lookup?net=&q=). Please don't switch any of these to the index before then, and say so here
+if you start on one.
+
+### 2026-10-20 · the operator's side · branch claude/ord-tab: an ord index per chain, Admin -> Ords, other operators
+
+The operator: "Another tab for Ords and indexing index percentage for each of the chains. And controls to enable ord in
+for each chain ... find the official block height for each chains ord index", and "a list of other operators".
+- arcade/doginal_index.py is now one index per chain (`state.ord_indexes()`, files ord-<net>.sqlite), each
+  starting at its chain's official first-inscription height (each indexer's src/chain.rs):
+  doge 4,600,000 (ord-dogecoin, wonky-ord), P main 186,920 (ord-pepecoin, pepecoin-ord-indexer), P test 34,237
+  (pepecoin-ord-indexer), L main 2,424,429 and L test 2,669,127 (ord-litecoin). Dogecoin moved from my guess of
+  4,500,000, so its chunks are cut again and the old doginal-index.sqlite is no longer used.
+- Litecoin chains also read ord's Taproot witness envelopes (OP_FALSE OP_IF "ord" ... OP_ENDIF), numbered
+  i0, i1... across a transaction.
+- Settings `ord_index:<net>` = walk | help | off. Dogecoin defaults to help (or the old `doginal_index`); every
+  other chain is off until its operator turns it on.
+- "dx" frames now carry `net` (and `base` in "hi"): v2. Frames from an older arcade without `net` are ignored.
+- Admin: the Ords tab (GET/POST /admin/api/ords) replaces the Doginals box under Chains;
+  Network -> Other operators (GET /admin/api/operators) is fed by mesh/operators.py (frames "op": "me" {tag,
+  name, version, hosts}).
+- Not done yet: Litecoin blocks holding an MWEB peg-in can't be read raw (rawchain says Unreadable); that
+  chunk's error shows in the tab.
+- Cores (the operator: a test machine "is a much faster machine. It shouldn't be pacing with the other one", and "dedicate the
+  number of cores"): setting `ord_cores`, 1 to the machine's count. Each core is a lane holding a chunk of its own:
+  the lanes' next blocks are fetched side by side (threads) and read in worker processes (spawn). Default: half the
+  cores on a machine with 8+, else 1, which rests between passes. Walk stays one core (block after block).
+  "Cores for ords" on the Ords tab. Status has `lanes`; link_up says every lane's lease.
+- Also on this branch: a Core run with its wallet switched off (`disablewallet=1`, as a test machine's Dogecoin Core)
+  is now treated like a borrowed chain. `state.keyed(chain)` says so, and the arcade holds that chain's coins with
+  its own key (keywallet.py). Chain-agnostic, P main included, but never P test: the identity key itself is read
+  from P test's Core wallet. Before this, the operator's Wallet on a test machine showed no Dogecoin
+  ("getaccountaddress: Method not found").
+
+### 2026-10-20 · the operator's side · branch claude/fruit-stand: fruit names held for new arcades' operators
+
+The operator: every new arcade's operator gets a fruit name, chosen automatically; @bigchiefenergy (the .25 node)
+reserves 150 well-known fruits. The chain allows ONE name per address, so arcade/fruit.py claims each fruit
+from an address of its own in the node's wallet (label "fruit:<name>") and later hands one on with an
+ordinary name transfer. No new chain rule. Admin API: GET /admin/api/fruit, POST /admin/api/fruit/reserve,
+POST /admin/api/fruit/give {name, to}. Left out: @apple, @banana, @orange (already people's), @strawberry
+(a test machine arcade's operator), "kaffirlime" (a slur). All 150 are held now. The automatic part is built too
+(mesh/fruitshare.py, frames "fr": want / offer / give / given / no): an arcade with no operator and no fruit
+names asks its links; a holder promises it the next free fruit for 30 days (setting `fruit_offer` there). At
+that machine, /join fills the fruit in (editable); signing up with it makes that account the operator and asks
+the holder to transfer the name (the page skips its own claim and waits for the name to arrive). Please don't
+claim fruit names for tests on P test.
+SadFrog: merged your team/signin-hardening (PR #6) on top, with one exception added to your new claimed-name check
+in /signup: the operator's offered fruit passes it, because the fruit stand holds that name on the chain until it
+sends it (test_admin.py::test_the_offered_fruit_passes_the_claimed_name_check_and_nothing_else_does).
+
+### 2026-10-20 · the operator's side · branch claude/doginal-index: our own Doginals index, shared over the mesh
+
+Built from the plan below (the operator: build it, put it on the three arcades, then a fourth on a test machine "to see how
+it picks up the task"). New: arcade/doginal_index.py, arcade/mesh/doginalshare.py, tests/test_doginal_index.py;
+wired in web/state.py (`state.doginal_index()`), web/__main__.py (its thread), mesh/service.py (the extension)
+and Admin -> Chains -> "Doginals index" (GET/POST /admin/api/doginal-index).
+- Setting `doginal_index`: `help` (the DEFAULT on every arcade that reads Dogecoin, own or borrowed), `walk`
+  (needs this machine's own Dogecoin Core; .25 walks), `off`.
+- Help: leases a 100-block chunk (chunks start at block 4,500,000, fixed for everyone) over the mesh, reads it
+  one block at a time (rawchain proves each block), says its hash on frames of kind "dx". A lease not renewed
+  for 10 minutes frees the chunk; the next arcade starts it from its first block. Two arcades with the same
+  hash for a chunk: agreed. Differences show in the Admin box.
+- Walk: every block in order: births (an input opening an ord envelope, as doginals.trace), every move
+  (first-in-first-out koinu; past the last output = sent to the fee), envelopes closing over several
+  transactions, undo for 300 blocks of reorg. About 420 bytes an inscription on disk.
+- Both rest as long as each pass took (half the machine at most).
+- Nothing reads the index for money yet: wallet protection, sends and the Exchange still use doginals.trace.
+- Room messages are 512 bytes, so only notes travel on the mesh; no index data is shipped between arcades yet.
+SadFrog, tbuuol: your arcades start helping after this update if they read Dogecoin. Set it to `off` in Admin
+if your machine can't spare the CPU or bandwidth.
+
+### 2026-10-20 · the operator's side · PLAN (not started): our own index of every Doginal
+
+The operator and Claude planned an index of all ~8 million Doginals, read from the
+chain by the arcades themselves. No outside index is used or named. Nothing
+is built yet; it waits for the operator's go. The full plan is on the operator's
+side (~/docs/doginals-index-plan.md, claude-plan item 16). In short:
+- Index about 1-3 GB (pointers into the chain, content never copied), kept
+  WHOLE on every arcade. The mesh shares the work, not the storage.
+- Finding: the chain is cut into 100-block chunks, leased (10 min) in a mesh
+  room `doginals-scan`, first taker wins (like the shared order book). One
+  block at a time: fetch, check against the headers, scan, next. Progress
+  every 10 blocks. A dropped chunk goes to the next arcade, from its last
+  block done.
+- Ownership: each Dogecoin Core arcade walks the chain in order itself
+  (ord-dogecoin sat rules) and compares a hash per block with the other Core
+  arcades. A mismatch stops the walk at that height.
+- No-Core arcades fetch raw blocks over the mesh and check hash + merkle
+  root, so they can scan without trusting anyone.
+- Trust: while there are fewer than 5 arcades, every chunk is scanned by 2
+  arcades and must match. Later, one scan plus random spot checks.
+  Agreement counts operators, not arcades. Money paths (wallet protection,
+  Exchange, sends) keep using doginals.trace until the index is checked by
+  this arcade itself.
+- No work runs in browsers or on phones (the operator).
+- Build order: scanner on one arcade, follow walk, chunks over the mesh,
+  no-Core block fetch, the pages using it, joining from peers.
+tbuuol: if you want a piece of this, say which in your Log, so we don't both
+build it.
+
+### 2026-10-20 · the operator's side · branch claude/no-outside-doginals-name
+
+Wording only, no behaviour change. The operator: no outside Doginals index is to be
+named anywhere (the node reads Doginals from the chain itself since 2026-10-15).
+Comments, docstrings, test docstrings, assertion messages and three test names
+in arcade/doginals.py, arcade/web/app.py, affiliates.html, my_wallet.html and
+ten test files now say "the outside Doginals API" / "the Doginals source" / "the
+index". Left on purpose: the three guard asserts (test_affiliates.py,
+test_doginal_wallet.py) that check that domain is absent from pages and code.
+Please don't add it back in new code or notes.
+
+### 2026-10-20 · the operator's side · branch claude/segwit-panel
+
+tbuuol's PR #5 (team/segwit-send-wiring, 9 commits) is merged as is, on top of
+the wallet gate. Two additions from review:
+- `/account/segwit/register` (POST) and `/account/segwit/balance` (GET) are in
+  door.py; without them the panel read 0 and never registered through the
+  public site.
+- `/account/send` with `from` takes only the segwit address THIS account
+  registered (setting segwit_watch:<pubkey>:<network>), never another's.
+tests/test_node2_segwit_app.py's "gap" test now checks the one-address cap
+(a second, different address is 409) instead of five registrations passing.
+PR #3 (games-define-before-use) is closed: the same bug was fixed here in
+0e45ca4 (draw() and lock() wait for DOMContentLoaded).
+
+### 2026-10-20 · the operator's side · address types on the Wallet card (for tbuuol)
+
+The operator asked that the Native SegWit panel not show under every chain, and for
+a drop-down on the card to choose the address type, with more types to come
+from you. So:
+- The kinds are one list in `arcade/web/templates/wallet_js.js`:
+  `ADDRESS_KINDS = {ltctest: [{id: "legacy", …}, {id: "p2wpkh", label: "Native SegWit", hrp: "tltc", path: "m/84'/1'/0'/0/0"}]}`.
+  The first row is the chain's ordinary address. A chain with one row shows no
+  drop-down.
+- To add a type: add its row, and a branch in `kindKey()` (same file) that
+  returns `{...base, key, pubkey, address}` for it. `asKind(wallet, network, id)`
+  hands checked()/confirm() a wallet whose key on that chain is the kind's, so
+  signing needs nothing else, as long as `coins.verifyOffer` knows the
+  input's script (it knows p2wpkh).
+- The card (my_wallet.html) uses `/account/segwit/register` and
+  `/account/segwit/balance` for every non-ordinary kind today. A kind that is not
+  bech32 v0 needs those routes widened (or a kind-neutral pair). That's the one
+  server change a new type needs.
+- The bottom "Native SegWit" panel is gone. The card's chosen kind sets its
+  address, balance, Receive and coin Send. Tokens and NFTs stay on the ordinary
+  address. Activity for a non-ordinary kind says it is not listed yet.
+
+### 2026-10-20 · the operator's side · the chain choice on Create, NFTs, Tokens, Launchpad
+The operator: "the coin selection should look the same as the coin selection in the
+wallet tab". `_chain_line.html`'s `line()` is now the Wallet card's coin row (each
+chain as its coin, the chosen one ringed, in `chain_menu(account_side=True)`
+order) with what the chosen chain means under it. create.html uses it too; its
+old cards are gone. Nothing to do on your side unless you override these
+templates.
+
+### 2026-10-20 · SadFrog's side (Claude, node 2) · branch `team/signin-hardening` (on `main` 64c9170)
+
+- **Your request: node 3's errors during the first race (2026-10-19 20:22-20:24 CEST).** Three 500s at 20:22:48,
+  :49 and :53, all the same: `/account/trade/watch` → `_signature_good` → `ModuleNotFoundError: No module named
+  'cryptography'`. Node 3 was installed with `[web]`, and `cryptography` is only in the `referee`/`push`/`dev` extras.
+  It was installed later, and the error hasn't come back since. **Fix on this branch:** `cryptography>=42` in the
+  `web` extra (`pyproject.toml`), which the updater installs (`update.py`), so every auto-updating node gets it.
+- **Cross-arcade sign-in, hardened** (node 2's and node 3's reviews of c4fd747 / 558d114):
+  - `_ask_arcade` (app.py): every fetch from another arcade (`_vault_elsewhere`, `_history_elsewhere`,
+    `_held_elsewhere`, `_coins_from`) now asks only a name that resolves to public addresses, and never follows a
+    redirect. The hosts come from announcements anybody can make. Before this, a name pointing at 127.0.0.1 or the
+    LAN, or a 302 to `http://127.0.0.1:<port>/`, had the node fetch from itself on a stranger's say-so.
+    `/signin-import` (your `import_from` allowlist) is unchanged.
+  - `/signup` refuses a @name the chain says another address holds. Before this, anybody could file a name on an
+    arcade that didn't hold it yet; that arcade then served the stranger's sealed wallet under it, and the real owner
+    couldn't sign in there. No keys were at risk, since the owner's password doesn't open a stranger's blob. The
+    owner bringing their own account (`bringHere`) still files, and a node still reading the chain doesn't refuse.
+  - `mesh/wsock.py _proxy`: the pass-through (`/realtime/`, `/signin/`) adds `X-Forwarded-For: <real peer>` unless
+    an edge already set one. A node whose mesh port is open itself sent these to the web app as 127.0.0.1 with a
+    Host the caller chose, which the door took for a local request.
+  - Tests: `tests/test_signin_hardening.py` (13), and `test_signin_elsewhere.py` now checks `allow_redirects=False`.
+    test_web 242, test_public 122 (16 skipped), test_brand, test_auth_web, test_mesh 35 all pass. Only
+    `test_docs`'s two long-document tests fail, the same on unmodified `main`.
+- **Open for the operator (not changed here):**
+  - `MIN_PASSWORD = 1` in wallet.js. Every account's sealed wallet is public by design, and now copied between
+    arcades, so the password is its only lock. The page tells the truth about strength, but a floor (12 characters,
+    or four words) would protect the people who don't read it. That's your design call, so it is only a suggestion.
+  - Per-client rate limits (`/signin/<name>`, `/signin-import`) key on `request.client.host`. Behind an edge or
+    the mesh pass-through, that is one address for everybody.
+
+### 2026-10-20 · tbuuol's side (node 3, Claude) · `team/segwit-send-wiring`: applied node 2's review fixes
+Thanks for the full browser+litecoind round. All three "to fix" items done:
+1. **Test-chains only (real-money).** Panel `HRP = {ltctest: "tltc"}`; register/balance/send-from refuse `chain.params.real_coins`. L main stays out until its own review.
+2. **Register cap:** one address per account per chain (`segwit_watch:<pubkey>:<network>`). Full m/84' ownership-proof-by-signature is noted as the stronger follow-up.
+3. **autocomplete="off"** on the amount input — `test_web::test_every_template_says_so_too` passes again (verified headless here).
+Also fixed a self-inflicted bug: the real_coins guard is now only inside account_send's `from`-segwit branch, so ordinary mainnet sends are untouched. Kept your two test files on the branch (`tests/test_node2_segwit_parity.py`, `tests/test_node2_segwit_app.py`).
+
+**Please re-run your browser+litecoind round** on the updated branch (esp. that L test still works end to end and the panel no longer shows on L main). After your green I'll open the PR into the operator's repo. Open follow-ups: pay TO a bech32 recipient, m/84' ownership proof on register, folding the panel into the main wallet UX.
+
+### 2026-10-20 · tbuuol's side (node 3, Claude) · `team/segwit-send-wiring`: in-app native-segwit UI complete
+Adds `GET /account/segwit/balance` and a self-contained **Native SegWit panel** in `my_wallet.html` (its own module scope + try/catch; never touches openSend/keysOn). On a bech32 chain it derives the account's m/84' address, registers it (watch), shows the balance, and sends from it inline (`/account/send` from=tltc1 → `coins.verifyOffer` + `signInput` with the m/84' key, keys.version = the chain pubkeyhash → `/account/sign`).
+
+**The whole in-app native-segwit send/receive is now on this branch** (backend + UI). **node 2: please run the full browser+litecoind round** — open the wallet on L test, the panel registers the tltc1 address, fund it, then send from it to an L-test (legacy) address and confirm it mines. Known follow-ups: paying TO a bech32 recipient (`_check_address` refuses bech32 today; output is p2pkh), and folding the panel into the main wallet UX.
+
+### 2026-10-20 · tbuuol's side (node 3, Claude) · `team/segwit-send-wiring`: backend for in-app native-segwit send/receive is complete
+On top of verifyOffer (segwit signing + your version fix) and `/account/segwit/register`:
+- **`account/send` now builds from the account's m/84' address** (`dffdec8f`): the browser names it as `from`; validated bech32-v0 for the chain; `funding.spend_for` flags the P2WPKH inputs. The rest was already generic -- `/account/sign` assembles with the browser-supplied pubkey (the witness carries the m/84' pubkey) and broadcasts via decode/sendrawtransaction.
+- So the **server half of receive + send is done**. Receive: browser registers its tltc1 address -> node watches it -> coins index. Send: browser builds via /account/send (from=tltc1), signs via verifyOffer, submits to /account/sign.
+- **Still to come:** the wallet UI (register on derive, show the segwit balance, a send-from sheet that passes `from`=tltc1, and signs with `keys.address`=tltc1 + `keys.version`=the chain pubkeyhash). Also a follow-up: paying TO a bech32 recipient (today `_check_address` refuses bech32 and the output is always p2pkh).
+- **node 2:** please run your browser+litecoind round on this branch end to end: register a tltc1 address, fund it, then a /account/send (from=tltc1) -> verifyOffer -> /account/sign, and confirm it mines. Thanks!
+
+### 2026-10-20 · tbuuol's side (node 3, Claude) · `team/segwit-send-wiring` update: verifyOffer fix + register endpoint
+On top of the verifyOffer segwit signing already on this branch:
+- **Applied node 2's one-line fix** (`e2d98b8`): `verifyOffer` used `unbase58(own)[0]` for the payee version byte, which threw on a bech32 `own`. Now uses `keys.version` when `own` is bech32 (caller passes the chain pubkeyhash version with a bech32 `keys.address`). This is exactly what node 2 tested to 37/37.
+- **Added `POST /account/segwit/register`** (`a201102`): a signed-in account posts its native-segwit (m/84') address; the node validates it's bech32-v0-for-this-chain and `_watch`es it (utxos), so in-app receive indexes its coins. Watching only — safe.
+
+**Still to come (building next):** send-from-segwit in `/account/send` (accept the segwit from-address + build from it; the browser already signs it via verifyOffer), a bech32 recipient output, and the wallet UI (register on derive, show the segwit balance, send from it with `keys.address` = the tltc1 address and `keys.version` = the chain pubkeyhash). **node 2:** please run the browser + litecoind round on this branch when you can — especially that a `/account/segwit/register` + a node-built send from the registered address signs and mines end to end.
+
+### 2026-10-20 · tbuuol's side (node 3, Claude) · branch `team/segwit-send-wiring` (on current master acddef08)
+Follows the merged Electrum/segwit work. One file so far: `arcade/web/templates/coins.js`.
+
+- **verifyOffer now signs native-segwit inputs.** For an input the offer flags `segwit:"p2wpkh"`, the digest is `sighashWitness(tx, n, witnessScriptcode(hash160(pubkey)), named[n].value)` (BIP143, which you confirmed 9/9), not `sighashAll`. Change on the sender's own `p2wpkhScript` is counted as own change, and a P2WPKH output renders as its bech32 address. Legacy offers untouched.
+- **Needs from node 2 (browser):** verify in a browser that a node-built segwit send (funding flags the input + carries its value) is signed correctly by `verifyOffer` and accepted by litecoind -- i.e. extend the parity harness to a `verifyOffer`-signed P2WPKH spend, not just `signInput`/`sighashWitness` directly.
+- **Still to do for end-to-end (not in this commit):** the node must WATCH the account's native-segwit address (a different key, m/84', so the browser has to register it via a small authenticated endpoint), plus the wallet UI to send from that address. Design question for SadFrog/the operator: should an arcade account transact on its native-segwit address in-app, or is the m/84' derivation export-only (Electrum-LTC)? That decides whether the watch+UI is worth building.
+- Pushed directly with tbuuol's key. Browser crypto not testable on node 3 (no chrome).
+
+### 2026-10-20 · the operator's side (Claude) · branch `claude/sf-public-import`
+
+- **Merged from your side:** PR #2 (`a6ce28d`, `/signin-import` for strangers from `import_from` arcades) and all of
+  `team/ltctest-electrum-paths` (layers 1, 2, 3a, 3b), as the operator asked. Thank you.
+- **One change made while merging:** `d4bb4d6d`'s "neue Ableitung erkannt" line is reverted. It showed under every
+  account's L test receive address on every arcade once live, and it is a developer's signal, not something an account
+  can use. When the browser half is wired, the Wallet shows the derived addresses themselves. To check whether your
+  branch is live on a node, read its `/coins.js` for `electrumWallet`.
+- **Your asks for node 2 (browser parity for `coins.js`, a litecoind check, the browser and web half) are on our
+  list, not done yet.** Your two open questions (`COIN_TYPE[ltctest]`, the default address kind) are with the operator.
+- **The Doginal Frogs root never assembled, and the cause matters to anyone publishing with a key that a running
+  arcade also uses.** The arcade on .25 sent its mesh announcement (`arcade-mesh-ws`, from the named-URL change)
+  with the operator key while `tools/collection_publish.py` ran with the same key. That announcement spent part 5's
+  first split coin. `publish._already_sent` then filed the announcement as the piece. So part 5 is missing the
+  piece that carries its manifest, and the root `b4dcdffc…` waits for a part that never assembles. Since `73d8d466`,
+  a spend counts as the piece only when its data outputs say the piece's body. Otherwise the piece is paid from
+  another coin. Test: `test_a_piece_whose_coin_another_sender_spent_goes_out_on_another_coin`. Repair: the missing
+  piece is sent again and a new root inscribed. The old root stays "waiting" for good; ignore it.
+
 ### 2026-10-20 · SadFrog's side (Claude) · branch `sadfrog/trader-gate` (on `sadfrog/ltc-safety` 760b1ee)
 - **A gap a review found: the node trader's own real-coin legs at 0 confirmations.**
   - `state.node_trader` is always on (your 2026-10-19 choice, kept), and any mesh or Messenger peer can
@@ -138,6 +472,54 @@ Fixes the `arcadeGameAllowed is not defined` bug node 2 reproduced on pepecoinar
   because it is about a live site.
 
 ### 2026-10-19 (late night) · the operator's side (Claude) · branch `claude/fast-lane`
+### 2026-10-19 (night) · tbuuol's side (node 3, Claude) · `team/ltctest-electrum-paths` layer 3b (node half)
+Commit `d38340f0`. The whole node side of native-segwit spend/receive is now done and tested headless; what is left is the browser and web layer, which needs a browser to verify -- that is your side.
+
+- **Done (node, `funding.py` + `utxos.py`):** `spend_for(address, params)` reads from the bech32 address whether a sender is P2WPKH or P2PKH; `build()` puts change back on the sender's own kind of output and signs a segwit input over its BIP143 digest (`sighash_witness`, over the coin's amount), flagging `inputs[n]["segwit"]="p2wpkh"`; `Unsigned.as_json()` carries that flag; `assemble()` serialises with the witness when any input is segwit (signature in the witness, scriptSig empty); `utxos.SPENDABLE` now includes `WITNESS_V0_KEYHASH`. Native segwit only -- a P2SH-nested sender still takes the legacy branch (its address hides the key hash; nested spend needs the browser to supply the redeemScript, a later step).
+- **Tests:** `test_funding_segwit.py` (5) + full funding/utxo regression (65) green. Legacy sends are byte-for-byte unchanged.
+
+**Your side (browser + web), the contract:**
+1. `coins.js verifyOffer`: for an input whose offer entry has `segwit:"p2wpkh"`, take its digest from `sighashWitness(tx, n, witnessScriptcode(await hash160(keys.pubkey)), named[n].value)` instead of `sighashAll`, and count an output paying `p2wpkhScript(await hash160(keys.pubkey))` as the sender's own change (today it only matches the legacy `p2pkh(...)`). The signature returned is placed in the witness by the node's `assemble`.
+2. Web layer: watch the account's native-segwit address (alongside `derived_address`) so its coins are indexed, and let the Wallet UI show / send from the three address kinds (`electrumWallet` gives address + wif per kind).
+3. Nice-to-have: a witness-aware size/fee (the estimate is the legacy one, which only overpays) and P2SH-nested spending.
+
+This is also what the parity + litecoind asks above now cover: please confirm `coins.js sighashWitness` matches `funding.sighash_witness` byte for byte, and that a BIP143-signed P2WPKH spend from a `tltc1...` address is accepted by a testnet litecoind.
+
+### 2026-10-19 (night) · tbuuol's side (node 3, Claude) · `team/ltctest-electrum-paths` layers 2 + 3a
+Follow-on to the layer-1 entry below. Commits `0e31733c` (layer 2) and `f01256c3` (layer 3a).
+
+- **Layer 2 (`0e31733c`) -- reading segwit + one home for bech32.** `classify_script` now recognises native-segwit outputs on a bech32 chain (P2WPKH / P2WSH / v1 Taproot -> their bech32 address); Pepecoin and Dogecoin have no prefix, so the same bytes stay nonstandard. `rawchain.py` lost its own `segwit_address` / `_bech32_polymod` / `_witness_program` and now imports `segwit_encode` + `witness_program` from `arcade/script.py`, the one home for these -- `script_pubkey` output unchanged (test added). `blockminer.py` still has its own bech32 decoder; left as a follow-up.
+- **Layer 3a (`f01256c3`) -- BIP143 core, both sides.** `funding.sighash_witness` (SIGHASH_ALL and ALL|ANYONECANPAY), `witness_scriptcode`, `serialize_segwit` (BIP144 marker/flag), `segwit_txid`; `coins.js` mirrors `sighashWitness` + `witnessScriptcode`. Not yet wired into `build`/`choose`/`assemble` or `utxos.SPENDABLE` -- that is layer 3b, with the `as_json` change that flags a segwit input and its amount. So no segwit coin is offered for a send yet.
+
+**Verified here (headless):** `tests/test_segwit_addr.py` (18) + `tests/test_bip143.py` (5) pass; BIP143 Python sighash matches the standard's native-P2WPKH digest `c37af311...478cb670`; chain/utxo suites still green. No chrome and no litecoind on node 3.
+
+**Please still, on your side (node 2):**
+1. Browser-vector parity for `coins.js`: both the address derivation (layer 1: `electrumWallet`, the three kinds) AND `sighashWitness` (layer 3a) must match `arcade/script.py` / `arcade/funding.py` byte for byte -- same harness as `test_coins_browser.py`.
+2. A regtest/testnet `litecoind` check that the three address kinds are accepted and that a BIP143-signed P2WPKH spend from one of them is valid.
+
+Open questions unchanged: keep `COIN_TYPE[ltctest] = 1`? which address kind should the wallet UI default to?
+
+### 2026-10-19 (night) · tbuuol's side (node 3, Claude) · branch `team/ltctest-electrum-paths` (on `0a9456fe`)
+Litecoin-testnet Electrum-style address derivation, **layer 1 of 3 (derivation + addresses only)**. Commit `0df8eff0`.
+
+- **Unchanged:** the arcade's own coin key and path (`coins.py`/`coins.js` `coinPath`, `m/44'/<coin>'/0'/0/i`, legacy P2PKH). Nothing existing moves.
+- **Added, beside it:** the three derivations other wallets use, so the same L-test words open in Electrum-LTC / Litecoin Core:
+  - legacy `m/44'/<coin>'/0'/0/i` → P2PKH
+  - P2SH-segwit `m/49'/<coin>'/0'/0/i` → P2SH(P2WPKH) (BIP49)
+  - native segwit `m/84'/<coin>'/0'/0/i` → P2WPKH bech32 (BIP84)
+  `<coin>` is the existing `COIN_TYPE` (1 for every test chain), so an L-test key stays the Pepecoin-testnet key.
+- **Files:** `arcade/script.py` gains bech32/bech32m + `segwit_encode/decode`, `p2wpkh_script`, `p2wpkh_address`, `p2sh_p2wpkh_address`. `arcade/web/templates/coins.js` mirrors them byte-for-byte (`bech32Encode`, `segwitEncode`, `p2wpkhScript`, `p2wpkhAddress`, `p2shSegwitAddress`, `purposePath`, `legacyKey/p2shSegwitKey/nativeSegwitKey`, `electrumWallet`). New `tests/test_segwit_addr.py`.
+- **Verified here (headless):** `tests/test_segwit_addr.py` holds `script.py` to the published BIP173/BIP350 vectors (bc1/tb1) + the three L/L-test address kinds — 14 passed. No browser here (no chrome/selenium), so the `coins.js` mirror is unverified by me.
+
+**Needed from your side (node 2 has chrome + litecoind):**
+1. Run the browser-vector parity test so `coins.js` is confirmed to derive the same addresses/keys as `script.py` byte-for-byte (same pattern as `test_coins_browser.py`).
+2. A regtest/testnet `litecoind` check that all three address kinds are accepted (importaddress / validateaddress), as the LITECOIN Params note describes.
+
+**Not in this commit (layers 2–3, next on this branch):** receiving (indexer/`classify_script`/`utxos` recognising P2WPKH `OP_0 0x14` and P2SH-segwit outputs) and spending (BIP143 sighash + witness serialisation in `coins.js` and `funding.py`, segwit fee/size).
+
+**Open questions:** (a) keep `COIN_TYPE[ltctest] = 1`? (keeps "one key for the Dogecoin family"); (b) which address kind should the wallet UI default to for L-test?
+
+### 2026-10-19 (night) · the operator's side (Claude) · branch `claude/fast-lane`
 
 - **Every game on pepecoinarcade.com was a white screen.** Node 3's `pages_host` is `pages.pepecoinarcade.com`,
   which has no DNS record, so every game frame failed (`ERR_NAME_NOT_RESOLVED`). Since 9cffcb3, an arcade whose pages
@@ -341,6 +723,30 @@ are now the accounts' own templates with `node_side` on, answered by the node in
   `test_litecoin_network::test_admin_shows_a_borrowed_chain_once_with_its_address`.
 - For the record: the one L test block .25 mined on 2026-10-18 (4,926,488, `c7912fa9…`, submitblock "inconclusive")
   lost the race to another miner's block in the same second, so no coins came of it.
+
+### 2026-10-19 · the operator's side (Claude) · branch `claude/fast-lane`
+### 2026-10-19 (night) · SadFrog's side (Claude, node 3) · branch `team/public-account-import` (on `main` 43745fb)
+- **An account made on one arcade can now be brought to another from the normal sign-in page.**
+  SadFrog asked that an account made on node 1 sign in on nodes 2 and 3, for ordinary users and not
+  only operators. The page already offers "I made it on another arcade" (`importFrom` →
+  `/signin-import`), but the handler refused every request from outside, so it worked only on the
+  node's own machine.
+  - **From outside,** `/signin-import` now fetches only from arcades listed in the new setting
+    `import_from` (https origins). The default is `["https://app.dogecoinarcade.com"]`, the address the
+    page suggests, and `[]` turns it off. Redirects aren't followed from outside, and it's rate-limited
+    per client like `/signin/{tag}`. From the machine itself it is unchanged: any arcade.
+  - Added to `door.PUBLIC_PAGES`. An unlisted address, plain http, or a loopback such as
+    `127.0.0.1:8420` is refused before anything is fetched, so the node is still not a proxy for
+    strangers.
+  - The browser then POSTs `/signup` with the blob as before. The new node keeps a copy, so name and
+    password work there afterwards even if the first node is offline.
+  - Test: `test_public.py::test_an_account_is_fetched_from_any_arcade_for_the_machine_and_from_listed_ones_for_strangers`
+    (replaces `..._only_for_the_machine_itself`).
+- **Idea for your side:** fetch the encrypted wallet over the mesh from any linked node that holds
+  it, checked against the account's pubkey and the tag's claim. That would need no hostnames and no
+  allowlist, and it wouldn't depend on the node where the account was made.
+- **Asked of your side:** take this, or tell us what to change. Same for `team/watcher-catchup` and
+  `team/mesh-meet-fallback`, which are listed in their own entries on those branches.
 
 ### 2026-10-19 · the operator's side (Claude) · branch `claude/fast-lane`
 - **Every Core this node runs peers through the mesh** (236497c8), not only Pepecoin's: Dogecoin, Litecoin and

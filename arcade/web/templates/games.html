@@ -31,14 +31,18 @@
     "version": "1.0",
     "players": "1-8",
     "multiplayer": true,
+    "wallet": true,
     "family": "my-game",
     "cover": "&lt;txid of a picture you inscribed&gt;",
     "genre": "puzzle"
   }
 }</pre>
   <p class="muted" style="font-size:.86rem;margin-bottom:0">Only <code>name</code> is
-    required. A multiplayer game uses <code>arcade.realtime</code> to meet other players;
-    the full guide is in the <a href="/docs">docs</a>.</p>
+    required. A multiplayer game uses <code>arcade.realtime</code> to meet other players.
+    A game that trades, pays, sends, mints or signs with the player's wallet says
+    <code>"wallet": true</code>: Play then waits until the player ticks Wallet access on its
+    card. A game that uses the wallet without saying so is stopped the first time it asks.
+    The full guide is in the <a href="/docs">docs</a>.</p>
 </div>
 
 <p class="msg" id="games-news" hidden></p>
@@ -51,8 +55,9 @@
 
 {% for it in games %}
 {% set g = it.game %}
-<div class="panel gamecard">
-  <a class="gamecover" target="_blank" rel="noopener" href="/inscriptions/{{ g.opens or it.txid }}/full" title="Play {{ g.name }}">
+<div class="panel gamecard" id="game-{{ it.txid }}">
+  <a class="gamecover" target="_blank" rel="noopener" href="/inscriptions/{{ g.opens or it.txid }}/full" title="Play {{ g.name }}"
+     data-play="{{ g.opens or it.txid }}"{% if g.wallet %} data-wallet="1"{% endif %}>
     {% if g.cover %}
     <img src="/content/{{ g.cover }}" alt="" loading="lazy">
     {% else %}
@@ -72,7 +77,8 @@
     {% if g.description %}<p style="margin:6px 0 0">{{ g.description }}</p>{% endif %}
 
     <div class="row lacts" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
-      <a class="btn small" target="_blank" rel="noopener" href="/inscriptions/{{ g.opens or it.txid }}/full">Play</a>
+      <a class="btn small" target="_blank" rel="noopener" href="/inscriptions/{{ g.opens or it.txid }}/full"
+         data-play="{{ g.opens or it.txid }}"{% if g.wallet %} data-wallet="1"{% endif %}>Play</a>
       {# Wallet access, per game (2026-10-18; base.html WALLET ACCESS, PER GAME): off until the player turns it
          on after checking the publisher, beside whether the wallet is open in this browser now. #}
       <label class="gameaccess" title="Let this game ask your wallet to trade, pay and sign"
@@ -80,6 +86,8 @@
              data-access="{{ g.opens or it.txid }}" data-game="{{ g.name }}"
              data-publisher="{{ ('@' ~ name_of(it.creator)) if name_of(it.creator) else '' }}"
              data-address="{{ it.creator }}"><input type="checkbox" style="margin:0;width:auto"> Wallet access</label>
+      <span class="pill gameuses" data-uses="{{ g.opens or it.txid }}"{% if not g.wallet %} hidden{% endif %}
+            title="This game uses your wallet: tick Wallet access to play it">uses your wallet</span>
       <span class="pill walletlock" data-walletlock>&#128274; wallet locked</span>
       {% if acts %}
       <form method="post" action="/feed/{{ it.txid }}/{{ 'unlike' if it.liked else 'like' }}" style="display:inline">
@@ -163,7 +171,29 @@
     document.querySelectorAll('.gameaccess').forEach(function (l) {
       l.querySelector('input').checked = arcadeGameAllowed(l.dataset.access);
     });
+    document.querySelectorAll('[data-uses]').forEach(function (p) {
+      if (arcadeGameUses(p.dataset.uses)) p.hidden = false;
+    });
   }
+  // Play holds a game that uses the wallet until its box is ticked (base.html, THE GATE): it says so on the card
+  // ("wallet": true) or this browser saw it ask.
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('[data-play]'); if (!a) return;
+    var id = a.dataset.play;
+    if (arcadeGameAllowed(id) || !(a.dataset.wallet || arcadeGameUses(id))) return;
+    e.preventDefault();
+    var card = a.closest('.gamecard') || document;
+    var l = card.querySelector('.gameaccess');
+    var say = card.querySelector('.gamegate-say');
+    if (!say && l) {
+      say = document.createElement('p');
+      say.className = 'msg err gamegate-say';
+      say.style.margin = '8px 0 0';
+      l.closest('.lacts').after(say);
+    }
+    if (say) say.textContent = ARCADE_GATE_SAYS + ' Check its publisher first.';
+    if (l) { l.scrollIntoView({block: 'center', behavior: 'smooth'}); l.querySelector('input').focus(); }
+  });
   function lock() {
     arcadeWalletOpen().then(function (open) {
       document.querySelectorAll('[data-walletlock]').forEach(function (p) {
@@ -178,11 +208,19 @@
     var box = e.target;
     if (!box.checked) { arcadeGameAllow(l.dataset.access, false); return; }
     box.checked = false;
-    arcadeAccessAsk(l.dataset.access, l.dataset.game, l.dataset.publisher, l.dataset.address).then(draw);
+    arcadeAccessAsk(l.dataset.access, l.dataset.game, l.dataset.publisher, l.dataset.address).then(function (yes) {
+      var say = yes && l.closest('.gamecard') && l.closest('.gamecard').querySelector('.gamegate-say');
+      if (say) say.remove();
+      draw();
+    });
   });
   document.addEventListener('arcade:access', draw);
   document.addEventListener('arcade:unlocked', lock);
-  draw(); lock();
+  // After the page has parsed: base.html's arcadeGameAllowed and arcadeWalletOpen are defined below this script, so
+  // drawing at once threw and every box came back unticked on each visit (2026-10-20: a ticked box "should
+  // stay on that game card").
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { draw(); lock(); });
+  else { draw(); lock(); }
 })();
 </script>
 

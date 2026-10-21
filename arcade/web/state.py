@@ -201,10 +201,15 @@ class ChainContext:
 
     @property
     def title(self) -> str:
-        """One short name for every chain, said the same everywhere (2026-10-13:
-        "make it say only P test or P main or D main in all of the labels across the
-        site"): P test, P main, D main."""
-        return f"{self.letter} {self.word}"
+        """One name for every chain, said the same everywhere: the chain's name and ticker, then Main or Test --
+        "Pepecoin (PEP) - Test", "Dogecoin (DOGE) - Main", "Litecoin (LTC) - Test" (2026-10-20: "the network
+        name - Main or test ... Because we could be and will be adding many more blockchains", and "include the
+        ticker alongside the name"; before, "P test", "D main").
+        A new chain names itself once, in its Params (`chain_name`)."""
+        name = self.params.chain_name or self.params.label.removesuffix(" testnet").removesuffix(" regtest")
+        if name in ("Mainnet", "Testnet", "Regtest"):
+            name = "Pepecoin"            # the arcade's own chain, whose Params were written before it had company
+        return f"{name} ({self.params.family}) \u2013 {self.word.capitalize()}"
 
     @property
     def net(self) -> str:
@@ -1558,6 +1563,93 @@ class AppState:
     def book_relay(self):
         _ = self.trade_orders
         return self._book_relay
+
+    def fruit_stand(self):
+        """The fruit names this node holds for new arcades' operators (arcade/fruit.py), on the chain names are
+        claimed on (the messaging chain, as web/app.py's _tag_chain). None when that chain is not indexed here."""
+        if getattr(self, "_fruit_stand", None) is None:
+            chain = next((c for c in self.token_chains if c.network == self.messaging.network), None)
+            if chain is None:
+                return None
+            from ..fruit import FruitStand
+            self._fruit_stand = FruitStand(self, chain, self.token_index(chain))
+        return self._fruit_stand
+
+    #: How long "this Core has no wallet" is believed before asking again.
+    KEYED_SECONDS = 300
+
+    def keyed(self, chain: Any) -> bool:
+        """Does this arcade hold its coins on `chain` with its own key (keywallet.py) rather than a Core wallet: a
+        borrowed chain, or a Core here run with its wallet switched off (2026-10-20: a test machine's Dogecoin Core has
+        `disablewallet=1`, every wallet call answered "Method not found", and the operator's Wallet showed no
+        Dogecoin)."""
+        if getattr(chain, "borrowed", False):
+            return True
+        if chain.network == self.messaging.network:
+            # Pepecoin testnet, which every arcade runs: the identity key itself is read from this Core's wallet
+            # (keywallet.node_key), so this one chain still needs a wallet (2026-10-20: chain-agnostic
+            # otherwise; P test "probably" too, which needs the identity key kept by the arcade itself first).
+            return False
+        cache = self.__dict__.setdefault("_keyed_seen", {})
+        kept = cache.get(chain.network)
+        if kept is not None and kept[0] > time.monotonic():
+            return kept[1]
+        from ..rpc import RpcError
+        keyed = False
+        try:
+            with chain.rpc() as rpc:
+                rpc.call("getwalletinfo")
+        except RpcError as exc:
+            keyed = getattr(exc, "code", None) == -32601          # no wallet methods at all
+        except Exception:                                         # noqa: BLE001 -- node away: ask again soon
+            return False
+        cache[chain.network] = (time.monotonic() + self.KEYED_SECONDS, keyed)
+        return keyed
+
+    def ord_mode(self, net: str) -> str:
+        """walk | help | off for one chain's ord index (Admin -> Ords). Dogecoin helps unless told otherwise (it did
+        first, as `doginal_index`); every other chain is off until its operator turns it on."""
+        from ..doginal_index import MODES
+        chosen = self.setting(f"ord_index:{net}")
+        if chosen is None and net == "doge":
+            chosen = self.setting("doginal_index") or "help"
+        chosen = str(chosen or "off")
+        return chosen if chosen in MODES else "off"
+
+    def ord_cores(self) -> int:
+        """How many CPU cores the ord indexes help with (Admin -> Ords; 2026-10-20: "dedicate the number of
+        cores"): the operator's number, at most this machine's; by default half of a big machine's, one on a small
+        one."""
+        import os
+        from ..doginal_index import default_cores
+        chosen = self.setting("ord_cores")
+        try:
+            return max(1, min(int(chosen), os.cpu_count() or 1)) if chosen is not None else default_cores()
+        except (TypeError, ValueError):
+            return default_cores()
+
+    def ord_indexes(self) -> dict:
+        """Our own ord index of each chain this arcade reads, its own Core or a borrowed one (arcade/doginal_index.py;
+        2026-10-20: the Ords tab, "controls to enable ord in for each chain"). One file each, ord-<net>.sqlite."""
+        if getattr(self, "home", None) is None:
+            return {}
+        kept = getattr(self, "_ord_indexes", None)
+        if kept is None:
+            kept = self._ord_indexes = {}
+        from ..doginal_index import STARTS, DoginalIndex
+        for chain in self.all_chains:
+            net = chain.network
+            if net in kept or net not in STARTS:
+                continue
+            kept[net] = DoginalIndex(Path(self.home) / f"ord-{net}.sqlite", chain.rpc,
+                                     (lambda n=net: self.ord_mode(n)),
+                                     own_core=(lambda c=chain: not getattr(c, "borrowed", False)),
+                                     net=net, mweb=bool(getattr(chain.params, "mweb", False)), cores=self.ord_cores)
+        return dict(kept)
+
+    def doginal_index(self):
+        """Dogecoin's ord index (the first one, 2026-10-20), or None on an arcade that reads no Dogecoin."""
+        return self.ord_indexes().get("doge")
 
     @property
     def trade_watch(self):

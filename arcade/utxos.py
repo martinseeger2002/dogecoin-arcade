@@ -104,7 +104,8 @@ def watch(db, address: str, height: int, why: str = "") -> None:
         "ON CONFLICT(address) DO NOTHING", (address, int(height), why))
 
 
-SPENDABLE = (OutputType.PUBKEYHASH, OutputType.SCRIPTHASH)
+SPENDABLE = (OutputType.PUBKEYHASH, OutputType.SCRIPTHASH,
+             OutputType.WITNESS_V0_KEYHASH)
 
 
 def backfill(index, rpc, params, address: str, start: int, end: int) -> int:

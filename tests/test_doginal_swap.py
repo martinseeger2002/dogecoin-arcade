@@ -1,7 +1,7 @@
 """A Doginal as one leg of a lock-script swap ([Claude 2026-10-15]; the operator: "use the atomic swap feature we have to trade
 doginals"). Doginals move by koinu order, first in, first out, so the lock, the claim and the refund must each keep the
 inscribed coin first and whole: the inscription at offset 0 of output 0 at every step, no other Doginal ever paying a fee,
-and a coin that does not hold exactly the named Doginal refused. Doge Soft is faked, as in test_doginals.py."""
+and a coin that does not hold exactly the named Doginal refused. The Doginals source is faked, as in test_doginals.py."""
 
 import pathlib
 import sys
@@ -181,7 +181,7 @@ def test_the_other_lock_is_read_from_the_coin_it_spent(tmp_path):
     bare = _vtx(LOCK_TXID, [(T1, 0)], [(100_000, p2sh)])
     assert T.doginal_at(g, leg, redeem, bare, parent) is False, "no reserve to pay the claim"
     away = doginals.Doginals(tmp_path / "e.sqlite", fetch=_fake({}, []))
-    assert T.doginal_at(away, leg, redeem, good, parent) is None, "Doge Soft away: not yet, never wrong"
+    assert T.doginal_at(away, leg, redeem, good, parent) is None, "the index away: not yet, never wrong"
     trade = T.Trade(id="tr-x", role=T.RESPONDER, give=T.Leg("regtest", "coin", "", 1, CLAIMER.hex(), REFUNDER.hex()),
                     get=T.Leg("doge", "doginal", INS, 1, REFUNDER.hex(), CLAIMER.hex()),
                     secret_hash=H.parse(redeem)["secret_hash"].hex(), initiator_locktime=H.parse(redeem)["locktime"])

@@ -35,7 +35,7 @@ def test_the_tip_picker_offers_both_coins_and_both_kinds_of_token(client):
     nets = re.search(r'<select name="net"[^>]*>(.*?)</select>', html, re.S).group(1)
     whats = re.search(r'<select name="what"[^>]*>(.*?)</select>', html, re.S).group(1)
     assert re.findall(r'<option value="([^"]+)"', nets) == [state.messaging.network, state.ledger.network]
-    assert [" ".join(x.split()) for x in re.findall(r">([^<]+)</option>", nets)] == ["P test", "P main"]
+    assert [" ".join(x.split()) for x in re.findall(r">([^<]+)</option>", nets)] == ["Pepecoin (PEP) \u2013 Test", "Pepecoin (PEP) \u2013 Main"]
     assert re.findall(r'<option value="([^"]+)"', whats) == ["coin", "token"]
     assert ">PEP TEST</option>" in whats and ">a token</option>" in whats
     assert '<select name="token"' in html and "hidden" in html.split('<select name="token"')[1][:80]

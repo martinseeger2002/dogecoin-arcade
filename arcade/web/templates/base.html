@@ -1126,6 +1126,10 @@ async function pageSends() {
   const answer = (body) => fetch("/account/pagesends/answer", {method: "POST",
     headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: ask.id, ...body})});
   try {
+    if (ask.page && !(await arcadeGameGate(ask.page))) {   // a game whose card's Wallet access is off: stopped
+      await answer({status: "failed", error: ARCADE_GATE_SAYS});
+      return;
+    }
     const wallet = await import("/wallet.js");
     const held = (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
     let offer;
@@ -1188,10 +1192,16 @@ window.addEventListener("message", async (e) => {
     if (h > 0) frame.style.height = Math.max(160, Math.min(h + 4, 1400)) + "px";
     return;
   }
-  if (m.arcade === "take" && typeof m.seq === "number") { takeFor(e.source, m); return; }
   // The page as itself (the viewer, or full screen), not a frame in somebody's post.
   const pageId = (/\/content\/([0-9a-f]{64})/.exec(frame.getAttribute("src") || "") || [])[1] || "";
   const own = !!pageId && !frame.classList.contains("postmedia");
+  // Every one of these reaches the wallet: a game whose card's Wallet access is off is stopped (arcadeGameGate).
+  if (["take", "inscribe", "claim", "mint"].includes(m.arcade) && typeof m.seq === "number"
+      && !(await arcadeGameGate(pageId))) {
+    e.source.postMessage({arcade: m.arcade, seq: m.seq, error: ARCADE_GATE_SAYS}, "*");
+    return;
+  }
+  if (m.arcade === "take" && typeof m.seq === "number") { takeFor(e.source, m); return; }
   if (m.arcade === "inscribe" && typeof m.seq === "number") { inscribeFor(e.source, m, pageId, own); return; }
   // A seed for one run at a refereed pool (2026-09-29): the game plays from it,
   // and sends it back with its moves when it claims. Issued to the wallet that
@@ -1475,18 +1485,28 @@ document.addEventListener("click", async (event) => {
   <span>Your wallet is locked.</span>
   <button type="button" class="small" id="unlockbar-go">Unlock</button>
 </div>
+<script>
+// Shown the moment the page draws when this tab holds no open wallet (2026-10-20: "it takes about three
+// seconds before the unlock button even appears ... The unlock button should appear as soon as the page opens").
+// The wait was wallet.js loading, then asking the other tabs for an open wallet (0.4 s, then 1.5 s more); the
+// module below still asks, and hides the bar if another tab hands one over.
+(function () {
+  var open = null, bar = document.getElementById("unlockbar");
+  try { open = sessionStorage.getItem("arcade-open-wallet"); } catch (e) {}
+  if (!bar) return;
+  if (!open) bar.hidden = false;
+  document.getElementById("unlockbar-go").onclick = async function () {
+    var opened = await arcadeUnlockSheet("");
+    // Drawn again, so everything on the page that needs the key has it.
+    if (opened) location.reload();
+  };
+})();
+</script>
 <script type="module">
   const w = await import("/wallet.js");
   const keys = await w.opened(ARCADE_CHAIN);
   const bar = document.getElementById("unlockbar");
-  if (!keys && bar) {
-    bar.hidden = false;
-    document.getElementById("unlockbar-go").onclick = async () => {
-      const opened = await arcadeUnlockSheet("");
-      // Drawn again, so everything on the page that needs the key has it.
-      if (opened) location.reload();
-    };
-  }
+  if (bar) bar.hidden = !!keys;
 </script>
 {% endif %}
 <script>
@@ -1972,6 +1992,7 @@ function arcadeMainnetReview(costs){
 // other tab of this site), otherwise this sheet, and the action carries on once
 // the password opens it -- instead of sending somebody to their own page first.
 var ARCADE_ME = {{ (account_name or '')|tojson }};
+var ARCADE_LEAKED_URL = {{ leaked_url()|tojson }};
 // Signed in at all -- with or without a wallet kept here under a name. An account
 // signed in by its twelve words (/join/keys) has a session but no ARCADE_ME, and
 // was told to sign in again and again (2026-10-08).
@@ -2151,6 +2172,68 @@ function arcadeAccessWords(game, publisher, address){
 function arcadeAccessAsk(id, game, publisher, address){
   return arcadeAsk('Allow this game to use your wallet?', arcadeAccessWords(game, publisher, address), 'Allow wallet access')
     .then(function(yes){ if (yes) arcadeGameAllow(id, true); return !!yes; });
+}
+// THE GATE (2026-10-20: a player "can't play a game that uses Wallet controls unless they check the wallet
+// check box on the game card"). Every bridge a page reaches the wallet through -- the doors' trades, escrow, shops
+// and signing (_page_doors), and this page's take, inscribe, claim, mint and page sends -- asks arcadeGameGate
+// first. A page that is a game (a card, or the page a card's Play opens: /games/<id>/access) and whose card's box is
+// not ticked is STOPPED there: its frame emptied, a word in its place pointing to the card, and nothing asked. The
+// browser then remembers the game uses the wallet, so Play on its card and the game's own page hold it until the
+// box is ticked (as they do from the start for a card that says "wallet": true). A page that is not a game -- a
+// shop, a mintpad -- has no card to tick and keeps the ask (arcadeAccessAsk).
+var ARCADE_USES = 'arcade.wallet.uses:';
+var ARCADE_GATE_SAYS = 'This game uses your wallet. Turn on Wallet access on its game card to play it.';
+var ARCADE_GAMES = '/games', _arcadeGames = {};
+function arcadeGameOf(page){
+  if (!page) return Promise.resolve({game: false});
+  if (!_arcadeGames[page]) {
+    _arcadeGames[page] = fetch(ARCADE_GAMES + '/' + page + '/access', {cache: 'no-store'})
+      .then(function(r){ return r.ok ? r.json() : {game: false}; })
+      .catch(function(){ delete _arcadeGames[page]; return {game: false, unknown: true}; });
+  }
+  return _arcadeGames[page];
+}
+function arcadeGameUses(id){ try { return localStorage.getItem(ARCADE_USES + id) === 'yes'; } catch (e) { return false; } }
+function arcadeGameUsed(id){ try { localStorage.setItem(ARCADE_USES + id, 'yes'); } catch (e) {} }
+// Ticked on its card: the card's box is kept under the page Play opens.
+function arcadeGameOn(page, g){ return arcadeGameAllowed(page) || !!(g && g.opens && arcadeGameAllowed(g.opens)); }
+// Whether this game should not start here: its card's box is off and it says, or was seen, to use the wallet.
+function arcadeGameHeld(page, g){
+  return !!(g && g.game) && !arcadeGameOn(page, g)
+    && (g.wallet || arcadeGameUses(page) || !!(g.opens && arcadeGameUses(g.opens)));
+}
+function arcadeGameStop(page, g){
+  document.querySelectorAll('iframe.inscription-frame').forEach(function(f){
+    if ((f.getAttribute('src') || '').indexOf('/content/' + page) < 0 || f.dataset.gated) return;
+    f.dataset.gated = '1';
+    f.setAttribute('src', 'about:blank');
+    f.hidden = true;
+    var box = document.createElement('div');
+    box.className = 'panel gamegate';
+    box.setAttribute('role', 'alert');
+    box.style.cssText = 'max-width:560px;margin:24px auto;padding:18px;text-align:center';
+    var h = document.createElement('h3'); h.style.marginTop = '0';
+    h.textContent = '\u{1F512} ' + ((g && g.name) || 'This game') + ' uses your wallet';
+    var p = document.createElement('p');
+    p.textContent = 'To play it, turn on Wallet access on its game card. '
+      + arcadeAccessWords(g && g.name, g && g.publisher, g && g.address);
+    var a = document.createElement('a'); a.className = 'btn';
+    a.href = '/games#game-' + ((g && g.card) || page); a.textContent = 'Open its game card';
+    box.append(h, p, a);
+    f.after(box);
+  });
+}
+// true: the page may go on to the wallet. false: it is a game whose box is off, and it has been stopped.
+function arcadeGameGate(page){
+  if (!page) return Promise.resolve(true);
+  if (arcadeGameAllowed(page)) return Promise.resolve(true);
+  return arcadeGameOf(page).then(function(g){
+    if (!g.game || arcadeGameOn(page, g)) return true;
+    arcadeGameUsed(page);
+    if (g.opens) arcadeGameUsed(g.opens);
+    arcadeGameStop(page, g);
+    return false;
+  });
 }
 // Whether the wallet is open in this browser now (the card shows it beside the switch).
 function arcadeWalletOpen(){

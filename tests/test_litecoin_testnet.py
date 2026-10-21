@@ -71,9 +71,9 @@ def test_the_chain_says_what_it_is():
     c = ChainContext(network="ltctest", role="ledger", label="Litecoin testnet")
     assert c.is_ltc_test and c.is_litecoin and c.is_addon
     assert not c.is_mainnet and not c.is_ltc and not c.is_doge, "test LTC is never real LTC"
-    assert (c.family, c.letter, c.title, c.net) == ("LTC", "L", "L test", "litecoin")
+    assert (c.family, c.letter, c.title, c.net) == ("LTC", "L", "Litecoin (LTC) – Test", "litecoin")
     main = ChainContext(network="ltc", role="ledger", label="Litecoin")
-    assert main.is_litecoin and not main.is_ltc_test and main.title == "L main"
+    assert main.is_litecoin and not main.is_ltc_test and main.title == "Litecoin (LTC) – Main"
 
 
 def test_an_l_test_address_is_the_pepecoin_testnet_keys_twin():
@@ -161,7 +161,7 @@ def test_the_chain_switch_says_test_for_l_test(client, monkeypatch):
     page = app.get("/wallet/tokens").text          # /wallet has its own chain picker since 2026-10-19
     # Drawn as its coin since 2026-10-18 (the operator: "Use the icons ... rather than text badges"): L test's own, the
     # purple one, never L main's.
-    after = page.split('title="Switch to L test"')[1][:200]
+    after = page.split('title="Switch to Litecoin (LTC) – Test"')[1][:200]
     assert 'src="/coin-ltctest.png" alt="LTC TEST"' in after, "L test's net is litecoin, but it is a test chain"
     assert 'coin-ltc.png' not in after
 
@@ -235,7 +235,7 @@ def test_one_l_test_block_is_mined_to_the_nodes_faucet_by_the_operator_only(clie
     state.set_setting("operator", pubkey)
     from arcade.web.app import _ltc_test_twin
     page = app.get("/wallet/tools").text
-    assert "Mine one L test block" in page and _ltc_test_twin(PEP_TEST) not in page
+    assert "Mine one Litecoin (LTC) – Test block" in page and _ltc_test_twin(PEP_TEST) not in page
     app.post("/fund/ltctest", data={"csrf_token": state.csrf_token}, follow_redirects=False)
     for _ in range(100):
         if state.mining is None:
@@ -244,7 +244,7 @@ def test_one_l_test_block_is_mined_to_the_nodes_faucet_by_the_operator_only(clie
     mined = [c for c in calls if c[0] == "generatetoaddress"]
     assert mined and mined[0][2] == LTC_TEST, "the node's faucet, never the operator's own account"
     assert state.setting("faucet_address:ltctest") == LTC_TEST
-    assert "Mined L test block abababababababab" in app.get("/wallet/tools").text
+    assert "Mined Litecoin (LTC) – Test block abababababababab" in app.get("/wallet/tools").text
 
 
 def test_every_chains_key_is_handed_out_in_its_own_text(tmp_path):

@@ -63,7 +63,7 @@
 </div>
 
 {% macro panel(which, ctx, status, tag) %}
-<h2><b class="netl {{ ctx.net }}">{{ ctx.letter }}</b> {{ ctx.word }} <span class="tag {{ 'dogecoin' if which == 'doge' else tag }}">{{ 'test' if tag == 'testnet' else 'main' }}</span></h2>
+<h2><b class="netl {{ ctx.net }}">{{ ctx.letter }}</b> {{ ctx.title }}</h2>
 <div class="panel">
   {% if not status.online %}
     <p class="muted">{{ status.error }}</p>
@@ -115,7 +115,7 @@
 </div>
 {% endmacro %}
 
-<section class="wchain" data-label="{{ state.messaging.letter }} {{ state.messaging.word }}" data-which="messaging">
+<section class="wchain" data-label="{{ state.messaging.title }}" data-which="messaging">
 {{ panel('messaging', state.messaging, messaging, 'testnet') }}
 
 {% if messaging.online and messaging.funding %}
@@ -132,7 +132,7 @@
     {% endif %}</p>
   {% if mining.mining %}
   <div class="msg info" id="mining" style="margin:0 0 8px">
-    <strong>Mining a block on this machine&hellip;</strong>{% if mining.chain and mining.chain != 'P test' %} ({{ mining.chain }}){% endif %}
+    <strong>Mining a block on this machine&hellip;</strong>{% if mining.chain and mining.chain != state.messaging.title %} ({{ mining.chain }}){% endif %}
     <span id="mining-so-far"></span>
     This page refreshes itself when one is found.</div>
   <form method="post" action="/fund/stop">
@@ -193,7 +193,7 @@
 </div>
 </section>
 
-<section class="wchain" data-label="{{ state.ledger.letter }} {{ state.ledger.word }}" data-which="ledger">
+<section class="wchain" data-label="{{ state.ledger.title }}" data-which="ledger">
 {{ panel('ledger', state.ledger, ledger, 'mainnet') }}
 </section>
 
@@ -201,8 +201,8 @@
    key's address there and signed by this arcade (keywallet.py), and mined here on a test-coin chain with this
    machine's CPU (blockminer.py). 2026-10-18. #}
 {% for k in (keyed or []) %}
-<section class="wchain" data-label="{{ k.letter }} {{ k.word }}" data-which="key:{{ k.network }}">
-<h2><b class="netl {{ k.net }}">{{ k.letter }}</b> {{ k.word }} <span class="tag {{ k.net }}">{{ 'main' if k.mainnet else 'test' }}</span></h2>
+<section class="wchain" data-label="{{ k.title }}" data-which="key:{{ k.network }}">
+<h2><b class="netl {{ k.net }}">{{ k.letter }}</b> {{ k.title }}</h2>
 <div class="panel">
   {% if not k.ready %}
     <p class="muted">Opens when {{ 'a linked arcade sharing its Core answers' if k.borrowed else 'its node has synced' }}.</p>
@@ -280,13 +280,13 @@
 {% endif %}
 
 {% if doge %}
-<section class="wchain" data-label="{{ state.doge.letter }} {{ state.doge.word }}" data-which="doge">
+<section class="wchain" data-label="{{ state.doge.title }}" data-which="doge">
 {% if doge_sync.ready %}
 {{ panel('doge', state.doge, doge, 'mainnet') }}
 {% else %}
-<h2 class="chain-off"><b class="netl dogecoin">D</b> main <span class="tag dogecoin">main</span></h2>
+<h2 class="chain-off"><b class="netl dogecoin">D</b> {{ state.doge.title }}</h2>
 <div class="panel chain-off" aria-disabled="true">
-  <p style="margin:0">D main opens here when its node has finished syncing:
+  <p style="margin:0">Dogecoin (DOGE) – Main opens here when its node has finished syncing:
     <strong>{{ '%.1f' % (100 * (doge_sync.progress or 0)) }}%</strong> so far
     ({{ "{:,}".format(doge_sync.blocks or 0) }} of {{ "{:,}".format(doge_sync.headers or 0) }} blocks).
     Until then nothing can be sent, held or shown on it.</p>
@@ -295,19 +295,19 @@
 </section>
 {% endif %}
 {% if ltc_test_mine %}
-<section class="wchain" data-label="L test" data-which="ltc_test">
+<section class="wchain" data-label="Litecoin (LTC) – Test" data-which="ltc_test">
 {# Litecoin testnet, "L test" (2026-10-18, SadFrog's side): one block mined here, paid to the signed-in account. #}
-<h2 id="ltctest-mine"><b class="netl litecoin">L</b> test <span class="tag litecoin">test</span></h2>
+<h2 id="ltctest-mine"><b class="netl litecoin">L</b> {{ state.ltc_test.title if state.ltc_test else "Litecoin (LTC) – Test" }}</h2>
 <div class="panel">
   {% if not ltc_test_mine.ready %}
-  <p style="margin:0" class="muted">L test opens here when its node has finished syncing.</p>
+  <p style="margin:0" class="muted">Litecoin (LTC) – Test opens here when its node has finished syncing.</p>
   {% elif not ltc_test_mine.signed_in %}
-  <p style="margin:0">Sign in as this node&rsquo;s operator to mine an L test block.</p>
+  <p style="margin:0">Sign in as this node&rsquo;s operator to mine a Litecoin (LTC) – Test block.</p>
   {% elif not ltc_test_mine.operator %}
-  <p style="margin:0" class="muted">Only this node&rsquo;s operator mines L test blocks here.</p>
+  <p style="margin:0" class="muted">Only this node&rsquo;s operator mines Litecoin (LTC) – Test blocks here.</p>
   {% else %}
   <p style="margin:0 0 8px">Litecoin testnet blocks come when somebody mines one. This mines one block on this
-    machine and pays it to this node&rsquo;s own wallet, the L test faucet{% if ltc_test_mine.address %}
+    machine and pays it to this node&rsquo;s own wallet, the Litecoin (LTC) – Test faucet{% if ltc_test_mine.address %}
     (<code style="word-break:break-all">{{ ltc_test_mine.address }}</code>){% endif %}, which tops every
     account up. A block pays about 1.56 LTC TEST, spendable after 100 more blocks (Litecoin&rsquo;s rule
     for mined coins); test coins, worth nothing.</p>
@@ -315,7 +315,7 @@
   <p class="muted" style="margin:0">Mining a {{ mining.chain }} block now; see above.</p>
   {% else %}
   <form method="post" action="/fund/ltctest">
-    <input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit">Mine one L test block</button>
+    <input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit">Mine one Litecoin (LTC) – Test block</button>
   </form>
   {% endif %}
   {% set f = ltc_test_mine.faucet %}

@@ -1,7 +1,7 @@
-"""The Wallet's Doginals: the browser checks the account's own Dogecoin coins with Doge Soft, and one route sends a
+"""The Wallet's Doginals: the browser checks the account's own Dogecoin coins through this node, and one route sends a
 Doginal on purpose (2026-10-14: "identify which UTXOs are doginals to make sure they are not spent unless somebody
 is trying to send a doginal to someone else", "We have to have the wallet check its own utxo to see if they are
-doginals"). Doge Soft is faked here; nothing in this file asks the real one."""
+doginals"). The Doginals source is faked here; nothing in this file asks a real one."""
 
 import pathlib
 import sys
@@ -57,16 +57,16 @@ def test_the_account_lists_its_own_dogecoin_coins_and_asks_nobody(client, monkey
     assert body["doge"] is True and body["address"] == ME
     assert {(c["txid"], c["vout"], c["value"]) for c in body["coins"]} == \
         {(T1, 0, 100_000), (T2, 0, 100_000), (T3, 0, 300_000_000)}
-    assert calls == [], "the browser asks Doge Soft about these, not the server"
+    assert calls == [], "the browser asks about these, not the server"
 
 
 def test_the_wallet_page_has_the_doginals_section_and_the_configured_base(client, monkeypatch, tmp_path):
     app, state = client
     _doge_account(app, state, monkeypatch, tmp_path)
     page = app.get("/me/wallet").text
-    # Read from the chain by this node; nothing outside the arcade is asked (2026-10-15: "Remove Doge Soft API").
+    # Read from the chain by this node; nothing outside the arcade is asked (2026-10-15: the outside Doginals API removed).
     assert 'id="doginals"' in page and "dogesoft" not in page.lower()
-    # Through this node (2026-10-15): Doge Soft sends no CORS header for this site, so the browser cannot ask it.
+    # Through this node (2026-10-15): the browser asks nothing outside this arcade.
     assert "/account/doginal-tx/${txid}?chain=" in page and "localStorage.setItem(DG_TX + net" in page
     assert "Inscriptions can't be checked right now" in page and "/content/${encodeURIComponent(g.id)}" in page
     assert '"/account/doginal/send"' in page and "/account/coins?chain=" in page
@@ -121,7 +121,7 @@ def test_a_coin_that_is_not_the_accounts_is_refused(client, monkeypatch, tmp_pat
     assert got.status_code == 400 and "not this account's" in got.json()["detail"]
 
 
-def test_doge_soft_away_is_said_never_guessed(client, monkeypatch, tmp_path):
+def test_the_index_away_is_said_never_guessed(client, monkeypatch, tmp_path):
     app, state = client
     _doge_account(app, state, monkeypatch, tmp_path, answers={})
     got = app.post("/account/doginal/send", json={"chain": "doge", "txid": T1, "vout": 0, "inscription": INS,
@@ -152,9 +152,9 @@ def test_the_public_door_lets_both_routes_through():
     assert "/account/coins" in door.PUBLIC_PAGES and "/account/doginal/send" in door.PUBLIC_POST
 
 
-def test_the_node_asks_doge_soft_for_the_accounts_own_coins_only(client, monkeypatch, tmp_path):
-    """The Wallet's Doginals check goes through this node (Doge Soft sends no CORS header for this site): the same
-    answer shape as Doge Soft's, kept for good, and only for a transaction holding one of this account's own coins."""
+def test_the_node_reads_the_accounts_own_coins_only(client, monkeypatch, tmp_path):
+    """The Wallet's Doginals check goes through this node, read from the chain: one answer shape,
+    kept for good, and only for a transaction holding one of this account's own coins."""
     app, state = client
     _, calls = _doge_account(app, state, monkeypatch, tmp_path)
     got = app.get(f"/account/doginal-tx/{T1}")
@@ -168,7 +168,7 @@ def test_the_node_asks_doge_soft_for_the_accounts_own_coins_only(client, monkeyp
     assert app.get("/account/doginal-tx/nope").status_code == 400
 
 
-def test_doge_soft_away_says_so_through_the_node(client, monkeypatch, tmp_path):
+def test_the_index_away_says_so_through_the_node(client, monkeypatch, tmp_path):
     app, state = client
     _doge_account(app, state, monkeypatch, tmp_path, answers={})
     assert app.get(f"/account/doginal-tx/{T1}").status_code == 503

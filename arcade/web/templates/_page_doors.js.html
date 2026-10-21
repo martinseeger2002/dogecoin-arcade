@@ -18,13 +18,26 @@
     var gameName = {{ game_name(row.json)|tojson }};
     // Wallet access for THIS page (base.html, WALLET ACCESS, PER GAME): asked for once, with the publisher named,
     // before any door that uses the key -- trades, escrow, shops, signing. Joining rooms as yourself is not one.
+    // A GAME is not asked: with its card's box off it is stopped (base.html, THE GATE). Only a page that is not a
+    // game -- a shop, a mintpad, with no card to tick -- is asked here.
     function gameKeys(chain, why){
       if (arcadeGameAllowed(here)) return arcadeKeys(chain, why);
-      return arcadeAccessAsk(here, gameName, makerName, maker).then(function(yes){
-        if (!yes) throw new Error('Wallet access is off for this game. Check its publisher, then turn it on on its card or when it asks.');
-        return arcadeKeys(chain, why);
+      return arcadeGameGate(here).then(function(open){
+        if (!open) throw new Error(ARCADE_GATE_SAYS);
+        return arcadeGameOf(here);
+      }).then(function(g){
+        if (g.game) return arcadeKeys(chain, why);            // ticked on its card
+        return arcadeAccessAsk(here, gameName, makerName, maker).then(function(yes){
+          if (!yes) throw new Error('Wallet access is off for this page. Check its publisher, then allow it when it asks.');
+          return arcadeKeys(chain, why);
+        });
       });
     }
+    // Held before it starts: a game whose card says it uses the wallet, or that this browser saw use it, and whose
+    // card's box is off, does not run here at all.
+    // After the page has parsed: base.html's gate is defined below this script.
+    function hold(){ arcadeGameOf(here).then(function(g){ if (arcadeGameHeld(here, g)) arcadeGameStop(here, g); }); }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hold); else hold();
     var CHAIN = {network: "{{chain.network}}",
                  version: {{chain.params.pubkeyhash_version}}};
     var doors = {contacts: 'viewer', storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',

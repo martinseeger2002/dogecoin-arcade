@@ -1,7 +1,6 @@
-"""The Wallet's Doginals in a real browser: the page asks a (fake) Doge Soft about the account's own Dogecoin coins,
+"""The Wallet's Doginals in a real browser: the page asks a (fake) Doginals source about the account's own Dogecoin coins,
 keeps each answer, shows the Doginal with a Send button, and the Send goes as far as the review that names the Doginal
-and the recipient. And when Doge Soft cannot be reached the page says so (2026-10-14: "I want the client side to
-access Doge soft"). Nothing here asks the real Doge Soft."""
+and the recipient. And when the answer cannot be had the page says so. Nothing here asks a real one."""
 
 import json
 import pathlib

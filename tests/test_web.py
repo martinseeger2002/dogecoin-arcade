@@ -2289,7 +2289,7 @@ def test_the_chain_tag_switches_tokens_between_mainnet_and_testnet(client, tmp_p
                         follow_redirects=False)
     assert response.status_code == 303 and response.headers["location"] == "/tokens"
     page = app.get("/tokens").text
-    assert '<span class="tag iconic on" aria-current="true" title="Showing P main"' in page
+    assert '<span class="tag iconic on" aria-current="true" title="Showing Pepecoin (PEP) – Main"' in page
     assert '<button type="submit" class="tag iconic switch" name="chain" value="regtest"' in page
     assert "Every fungible token on mainnet" in page
     assert (state.home / "tokens-chain").read_text().strip() == "main"
