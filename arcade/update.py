@@ -339,8 +339,12 @@ def _update_services(checkout: Path, venv: Path, dry_run: bool) -> int:
             print("  already correct")
 
     print("Restarting the interface")
+    from .web import supervisor as supervisorlib
     if dry_run:
         print("  would restart arcade-web")
+    elif supervisorlib.reload(Path.home() / ".dogecoinarcade"):
+        # Run by the supervisor (2026-10-20): the new code gets ready beside the old, then takes over -- no downtime.
+        print("  reloading: the new code takes over once it is ready, with no downtime")
     elif shutil.which("systemctl"):
         # Restart the scope that ACTUALLY OWNS the port, not the first one that
         # accepts the command. This tried --user first and stopped on success,

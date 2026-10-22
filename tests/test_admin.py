@@ -8,6 +8,7 @@ operator is otherwise an account like any other.
 
 import pathlib
 import sys
+import time
 
 import pytest
 from nacl.signing import SigningKey
@@ -199,7 +200,8 @@ def test_the_ords_tab_lists_each_chain_with_its_official_start_and_saves_its_mod
     it is, and walk / help / off for each."""
     app, state = public
     page = app.get("/admin", headers=LOCAL)
-    assert page.status_code == 200 and 'data-tab="ords"' in page.text and 'id="ordrows"' in page.text
+    assert page.status_code == 200 and 'data-tab="ords"' in page.text and 'id="ordcoins"' in page.text \
+        and 'id="ordchain"' in page.text, "a coin for each chain, then that chain's panel (2026-10-20)"
     assert 'id="oprows"' in page.text, "Network -> Other operators"
     assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE}, json={"net": "doge", "mode": "fly"}).status_code == 400
     assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE}, json={"net": "btc", "mode": "off"}).status_code == 400
@@ -213,6 +215,17 @@ def test_the_ords_tab_lists_each_chain_with_its_official_start_and_saves_its_mod
     for net, r in rows.items():
         assert r["base"] == dx.STARTS[net] and r["source"]
     assert rows["main"]["mode"] == "help"
+    assert all(isinstance(r["disk"], int) and r["disk"] >= 0 for r in rows.values()), "each index's size on disk"
+    assert all(isinstance(r["copies"], list) and isinstance(r["others"], list) for r in rows.values()), "the ring"
+    assert all(r["icon"].startswith("/coin-") for r in rows.values()), "each chain's coin"
+    # 2026-10-21: before the tip is known (just started) no percentage, never "61,750,500% indexed"
+    for r in rows.values():
+        assert r["walked_pct"] is None or 0 <= r["walked_pct"] <= 100
+        assert all(c["frac"] is None or 0 <= c["frac"] <= 1 for c in r["copies"])
+        if not r["tip_known"]:
+            assert r["walked_pct"] is None and all(c["frac"] is None for c in r["copies"])
+    said = app.get("/admin/api/ords", headers=LOCAL).json()
+    assert "free" in said and "me" in said, "free disk, and this arcade's own @name for the ring"
     assert app.get("/admin/api/ords", headers=EDGE).status_code != 200, "never shown to a stranger"
     assert "rows" in app.get("/admin/api/operators", headers=LOCAL).json()
     state.set_setting("ord_index:main", None)
@@ -223,7 +236,7 @@ def test_the_ords_tab_lists_each_chain_with_its_official_start_and_saves_its_mod
                     json={"cores": (os.cpu_count() or 1) + 1}).status_code == 400
     assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE}, json={"cores": 1}).json()["cores"] == 1
     said = app.get("/admin/api/ords", headers=LOCAL).json()
-    assert said["cores"] == 1 and said["machine"] == (os.cpu_count() or 1) and 'id="ordcores"' in page.text
+    assert said["cores"] == 1 and said["machine"] == (os.cpu_count() or 1) and "ordcoressave" in page.text
     state.set_setting("ord_cores", None)
     # Read only, and the lookup box (2026-10-20).
     assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE}, json={"net": "main", "mode": "read"}).json()["ok"]
@@ -365,3 +378,131 @@ def test_the_offered_fruit_passes_the_claimed_name_check_and_nothing_else_does(p
     finally:
         state.mesh = was
         state.set_setting("fruit_offer", None)
+
+
+def _mesh_of(me, links, rtts=None, offers=None, said=None, sharing=None):
+    """A mesh as /admin/api/arcades reads it: links and their round trips, who shares which Core, and what each
+    linked arcade said about itself (mesh/operators.py)."""
+    class Node:
+        pass
+    node = Node()
+    node.links = {p: object() for p in links}
+    node.addrs = {}
+    node.rtts = lambda: dict(rtts or {})
+
+    class Cores:
+        pass
+    cores = Cores()
+    cores.offers = dict(offers or {})
+    cores.status = lambda: dict(sharing or {})
+
+    class Ops:
+        pass
+    ops = Ops()
+    ops.peers = dict(said or {})
+
+    class Mesh:
+        pass
+    mesh = Mesh()
+    mesh.loop, mesh.node_id, mesh.node, mesh.coreshare, mesh.operators = object(), me, node, cores, ops
+    return mesh
+
+
+def test_overview_lists_every_arcade_this_one_first_with_its_cores_ords_and_link(public, monkeypatch):
+    """Admin -> Overview's Arcades panel (2026-10-21, approving the mockup): a row per arcade running on the
+    mesh, THIS arcade first with its own Cores (shared or not) and @name; every other with what it said, the Cores it
+    shares, the ord indexes it holds with how much of the chain each has walked, and its link."""
+    from arcade import doginal_index as dx
+    app, state = public
+    me, fast, slow, gone = "a" * 64, "b" * 64, "c" * 64, "d" * 64
+    base = dx.STARTS["main"]
+
+    class Index:
+        def __init__(self):
+            self.base, self.tip = base, base + 1000 + dx.SETTLE - 1
+
+        def holders(self):
+            return [(fast, base + 500), ("", base + 1000)]
+
+        def mode(self):
+            return "walk"
+        helped = 0
+
+        class chunks:                                    # 2026-10-21: helping, or read only
+            peers = {slow: {"mode": "help", "helped": 4200, "at": time.time()},
+                     gone: {"mode": "read", "at": time.time()},
+                     me: {"mode": "help", "at": time.time() - 900}}   # stale: not shown
+    monkeypatch.setattr(state, "ord_indexes", lambda: {"main": Index()})
+    monkeypatch.setattr(state, "operator_tag", lambda: "strawberry")
+    state.set_setting("share:regtest", False)
+    was = getattr(state, "mesh", None)
+    state.mesh = _mesh_of(me, [fast, slow], rtts={fast: 48.2, slow: 1500.0},
+                          offers={fast: {"doge": {"h": 1}, "main": {"h": 2}}, gone: {"ltc": {"h": 3}}},
+                          said={fast: {"tag": "bigchiefenergy", "hosts": ["app.dogecoinarcade.com"]},
+                                gone: {"tag": "faraway", "hosts": []}},
+                          sharing={"main": {"sharing": True}, "regtest": {"sharing": False}})
+    monkeypatch.setattr(state, "store", _store_announcing(state, [gone]))
+    try:
+        got = app.get("/admin/api/arcades", headers=LOCAL).json()
+    finally:
+        state.mesh = was
+        state.set_setting("share:regtest", None)
+    assert got["ok"] and got["total"] == 4 and got["running"] == 3 and got["linked"] == 2
+    rows = got["rows"]
+    mine = rows[0]
+    assert mine["me"] and mine["tag"] == "strawberry" and mine["node"] == me[:12] and mine["link"] == {"state": "me"}
+    cores = {c["net"]: c for c in mine["cores"]}
+    assert cores["main"]["shared"] is True and cores["regtest"]["shared"] is False, "shared, or running unshared"
+    assert cores["regtest"]["switch"] is False and cores["main"]["icon"] == "/coin-pep.png"
+    assert mine["ords"] == [{"net": "main", "label": "Pepecoin", "icon": "/coin-pep.png", "role": "walk", "pct": 100.0,
+                             "walked_to": base + 1000}]
+    assert [r["node"] for r in rows[1:]] == [fast[:12], slow[:12], gone[:12]], "linked fastest first, then the rest"
+    f, s, g = rows[1:]
+    assert f["tag"] == "bigchiefenergy" and f["host"] == "app.dogecoinarcade.com"
+    assert [c["net"] for c in f["cores"]] == ["main", "doge"] and all(c["shared"] for c in f["cores"])
+    assert f["cores"][1]["icon"] == "/coin-doge.png"
+    assert f["ords"][0]["pct"] == 50.0 and f["link"] == {"state": "linked", "ms": 48.2}
+    assert s["tag"] == "" and s["cores"] == [] and s["link"]["state"] == "slow", "over a second is slow"
+    assert [(o["role"], o["helped"]) for o in s["ords"]] == [("help", 4200)], "helping on the PEP index"
+    assert [o["role"] for o in g["ords"]] == ["read"], "read only"
+    assert g["link"] == {"state": "none"} and g["cores"] == [], "a Core is known only from an arcade linked now"
+    assert g["tag"] == "faraway", "what an arcade said stays shown after its link is down"
+    assert app.get("/admin/api/arcades", headers=EDGE).status_code != 200, "never shown to a stranger"
+
+
+def _store_announcing(state, keys):
+    """state.store, with these mesh keys announced on the chain in the last day."""
+    import contextlib
+    import time as _time
+    real = state.store
+
+    @contextlib.contextmanager
+    def store():
+        with real() as s:
+            class Wrapped:
+                def __getattr__(self, name):
+                    return getattr(s, name)
+
+                def mesh_peers(self, network, since=0):
+                    return [{"mesh_key": k, "seen_at": int(_time.time())} for k in keys]
+            yield Wrapped()
+    return store
+
+
+def test_overview_without_a_mesh_shows_this_arcade_alone(public):
+    app, state = public
+    got = app.get("/admin/api/arcades", headers=LOCAL).json()
+    assert got["ok"] is False and got["total"] == 1 and len(got["rows"]) == 1 and got["rows"][0]["me"]
+    assert all(c["icon"].startswith("/coin-") for c in got["rows"][0]["cores"]), "the arcade's own coin faces"
+
+
+def test_overview_has_no_balance_or_notification_cards_and_an_arcades_panel(public):
+    """2026-10-21: "We should remove all the token balances that's not necessary in overview ... We don't have
+    to have a display of accounts with notifications at all." The Coins tab keeps its own wallets list."""
+    app, state = public
+    page = app.get("/admin", headers=LOCAL).text
+    assert "'accounts with notifications')" not in page and "' balance'" not in page, "neither card is drawn"
+    assert 'id="arcadesline"' not in page and "other arcade' + " not in page
+    assert 'id="arcades"' in page and 'id="arcrows"' in page and "/admin/api/arcades" in page
+    assert "Ord indexes" in page and 'src="/coin-pep.png"' in page, "the legend draws the arcade's own coin"
+    assert 'id="wallets"' in page and page.count("d.wallets.forEach") == 1, "the Coins tab's list stays"

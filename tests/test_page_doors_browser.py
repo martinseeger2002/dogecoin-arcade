@@ -566,6 +566,40 @@ def test_the_owner_door_says_who_is_looking_and_never_spends(browser, doors):
         "a page may not spend an account's coins, and here it did not"
 
 
+def test_the_shelf_keeps_what_a_key_held_before(browser, doors):
+    """2026-10-20: a game that saved a new player over an old one had nothing to bring back. The shelf now
+    keeps each key's last ten values beside it, newest first, and op "history" reads them."""
+    _view(browser, doors)
+    browser.set_script_timeout(60)
+    got = browser.execute_async_script("""
+        const done = arguments[1], page = arguments[0];
+        import('/wallet.js').then(async (w) => {
+          await w.storageDoor(page, {op: 'set', key: 'save', value: 'first'});
+          await w.storageDoor(page, {op: 'set', key: 'save', value: 'second'});
+          await w.storageDoor(page, {op: 'set', key: 'save', value: 'second'});
+          await w.storageDoor(page, {op: 'remove', key: 'save'});
+          done((await w.storageDoor(page, {op: 'history', key: 'save'})).history);
+        }).catch((e) => done({error: String(e)}));""", doors["page"])
+    assert [h["value"] for h in got.get("save", [])] == ["second", "first"], got
+    assert f"arcade.pagehistory.{doors['address']}.{doors['page']}" in browser.execute_script(
+        "return Object.keys(localStorage);")
+
+
+def test_a_shelf_is_refused_not_emptied_when_the_account_does_not_answer(browser, doors):
+    """2026-10-20, @tbuuol: /account failed during a restart, the shelf fell back to "anon" and handed a
+    signed-in player's game an empty shelf, so it started him as a new player. Now the call is refused."""
+    _view(browser, doors)
+    browser.set_script_timeout(60)
+    got = browser.execute_async_script("""
+        const done = arguments[1], page = arguments[0], real = window.fetch;
+        window.fetch = (u, o) => String(u).startsWith('/account')
+          ? Promise.resolve(new Response('bad gateway', {status: 502})) : real(u, o);
+        import('/wallet.js').then((w) => w.storageDoor(page, {op: 'load'}))
+          .then((r) => done({items: r.items}), (e) => done({error: String(e)}))
+          .finally(() => { window.fetch = real; });""", doors["page"])
+    assert "did not answer" in got.get("error", ""), got
+
+
 # --- and the stranger: the last test, because it deletes the session ---------------------------------------
 
 def test_a_signed_out_stranger_gets_a_shelf_and_no_voice(browser, doors):

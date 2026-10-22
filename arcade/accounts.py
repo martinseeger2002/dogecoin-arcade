@@ -35,6 +35,8 @@ PyNaCl's `VerifyKey` takes, and its signature is the same 64.
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 import secrets
 import sqlite3
 import threading
@@ -1085,6 +1087,225 @@ class Mailbox:
             "ON CONFLICT(pubkey) DO UPDATE SET blob = excluded.blob, "
             "updated = excluded.updated", ((pubkey or "").lower(), blob, stamp))
         return {"updated": stamp}
+
+
+IMPORTED_SCHEMA = """
+CREATE TABLE IF NOT EXISTS imported_wallets (
+    pubkey  TEXT PRIMARY KEY,            -- the account it belongs to
+    blob    TEXT NOT NULL,               -- ciphertext and KDF parameters only
+    updated INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS imported_siblings (
+    pubkey  TEXT NOT NULL,               -- the account
+    digest  TEXT NOT NULL,               -- sha256 of the blob, hex
+    version INTEGER NOT NULL,
+    blob    TEXT NOT NULL,
+    sig     TEXT NOT NULL DEFAULT '',
+    at      INTEGER NOT NULL,
+    PRIMARY KEY (pubkey, digest)
+);
+"""
+#: Columns added 2026-10-21 (the record travels between arcades): its version, the account's signature over it, and
+#: whether it was written here by the account's own browser ("here") or taken from another arcade ("peer"). A row
+#: from before has version 0 and no signature: the Wallet page saves it again, signed, at the next unlock.
+IMPORTED_COLUMNS = (("version", "INTEGER NOT NULL DEFAULT 0"), ("sig", "TEXT NOT NULL DEFAULT ''"),
+                    ("origin", "TEXT NOT NULL DEFAULT 'here'"))
+
+#: The most one account's sealed record of imported wallets may take here, as stored text: twenty wallets on each
+#: chain, each a key or a phrase and a name, sealed, is a few kilobytes.
+IMPORTED_MAX = 64 * 1024
+#: Other copies of one account's record kept aside for its browser to fold in (see ImportedWallets.adopt), at most.
+SIBLINGS_MAX = 8
+_IMPORTED_LOCK = threading.RLock()
+
+
+def _sealed_shape(blob: str) -> bool:
+    """Whether `blob` is what wallet.js `sealText` makes: {kdf, iterations, salt, nonce, sealed}, hex, nothing else.
+    Checked so the node never keeps something a browser would choke on; it still cannot read it."""
+    try:
+        said = json.loads(blob)
+    except ValueError:
+        return False
+    return (isinstance(said, dict) and set(said) == {"kdf", "iterations", "salt", "nonce", "sealed"}
+            and said["kdf"] == "PBKDF2-SHA512"
+            and isinstance(said["iterations"], int) and not isinstance(said["iterations"], bool)
+            and said["iterations"] >= 100000
+            and all(isinstance(said[k], str) and re.fullmatch(r"(?:[0-9a-f]{2})+", said[k])
+                    for k in ("salt", "nonce", "sealed")))
+
+
+class ImportedWallets:
+    """Each account's SECOND sealed record: the wallets it imported (plan item 18, 2026-10-21).
+
+    Keys and phrases the account typed in, sealed in its browser under the same password as its main wallet
+    (wallet.js `sealText`: the same AES-256-GCM under PBKDF2-SHA512 as `seal`). Kept beside the vault, never in
+    it: the vault's blob is read by older arcades (`/signin/{tag}`), so its format does not change. This node
+    stores bytes it cannot open, exactly as it does the vault and the mailbox.
+
+    Since 2026-10-21 every version is numbered and signed by the account's login key (wallet_imports.check_record),
+    so the record can travel between the arcades the account uses (mesh/importshare.py): `put` is the account's own
+    browser saving the next version; `adopt` is a version another arcade handed over, taken only when it is signed by
+    the pubkey this node's own vault holds for the account and is newer than what is kept.
+
+    Two arcades may each take a change before they hear of each other's (two devices, one offline). A version is
+    never merged here -- this node cannot open it -- so nothing is lost when one replaces another: the copy it replaced,
+    when it was written HERE (`origin` "here", the only copies that may hold a wallet no other arcade has), and a
+    signed copy of the same version that differs from the one kept, are put aside (`imported_siblings`) for the
+    account's browser, which opens them, folds their wallets in, saves the next version, and only then has them dropped
+    (with its key's signature over which: `put`'s `merged`, or `drop_siblings` when they held nothing new).
+    """
+
+    def __init__(self, accounts: "Accounts"):
+        self.conn = accounts.conn
+        self.conn.executescript(IMPORTED_SCHEMA)
+        have = {row[1] for row in self.conn.execute("PRAGMA table_info(imported_wallets)").fetchall()}
+        for name, spec in IMPORTED_COLUMNS:
+            if name not in have:
+                try:
+                    self.conn.execute(f"ALTER TABLE imported_wallets ADD COLUMN {name} {spec}")
+                except sqlite3.OperationalError:        # another thread added it first
+                    pass
+
+    def _lock(self):
+        return getattr(self.conn, "_lock", None) or _IMPORTED_LOCK
+
+    def get(self, pubkey: str) -> dict | None:
+        row = self.conn.execute("SELECT blob, updated, version, sig, origin FROM imported_wallets WHERE pubkey = ?",
+                                ((pubkey or "").lower(),)).fetchone()
+        if not row:
+            return None
+        return {"blob": row[0], "updated": int(row[1]), "version": int(row[2] or 0), "sig": str(row[3] or ""),
+                "origin": str(row[4] or "here"), "signed": bool(row[3]) and int(row[2] or 0) > 0}
+
+    def signed(self) -> list[tuple[str, int]]:
+        """Every account with a signed record here, and its version: what this arcade can offer the others."""
+        return [(str(r[0]), int(r[1])) for r in self.conn.execute(
+            "SELECT pubkey, version FROM imported_wallets WHERE version > 0 AND sig != '' LIMIT 20000").fetchall()]
+
+    @staticmethod
+    def _checked_blob(blob: str) -> str:
+        blob = str(blob or "")
+        if len(blob) > IMPORTED_MAX:
+            raise AccountError(f"your imported wallets are {len(blob):,} bytes sealed and this node keeps at most "
+                               f"{IMPORTED_MAX:,} per account")
+        if not _sealed_shape(blob):
+            raise AccountError("that is not a sealed record")
+        return blob
+
+    def put(self, pubkey: str, blob: str, version: int, signature: str, now: int | None = None, *,
+            merged: list | None = None, merged_sig: str = "") -> dict:
+        """The account's own browser saves the next version: signed by its login key (`pubkey`, the session's
+        account), numbered one more than the version kept (0 for none, or a record from before versions). Anything
+        else -- another tab or device or arcade wrote first -- is refused (ImportedMoved), never overwritten, so two
+        tabs never lose each other's imports. `merged`: the blob hashes of put-aside copies this version folds in,
+        dropped once its signature over them checks."""
+        from . import wallet_imports as importslib
+        blob = self._checked_blob(blob)
+        who = (pubkey or "").lower()
+        try:
+            version = importslib.check_record(who, version, blob, signature)
+            if merged:
+                importslib.check_merged(who, version, merged, merged_sig)
+        except importslib.ImportRefused as exc:
+            raise AccountError(str(exc)) from None
+        now = int(now if now is not None else time.time())
+        # One check-and-write at a time: the register's statement lock (an RLock, so the statements inside take it
+        # again); two tabs saving at once cannot both pass the version check.
+        with self._lock():
+            have = self.get(who)
+            was, was_version = (have or {}).get("updated", 0), (have or {}).get("version", 0)
+            if version != was_version + 1:
+                raise ImportedMoved(was, was_version)
+            stamp = max(now, was + 1)
+            self.conn.execute(
+                "INSERT INTO imported_wallets (pubkey, blob, updated, version, sig, origin) VALUES (?,?,?,?,?,'here') "
+                "ON CONFLICT(pubkey) DO UPDATE SET blob = excluded.blob, updated = excluded.updated, "
+                "version = excluded.version, sig = excluded.sig, origin = 'here'",
+                (who, blob, stamp, version, str(signature).lower()))
+            for digest in merged or ():
+                self.conn.execute("DELETE FROM imported_siblings WHERE pubkey = ? AND digest = ?",
+                                  (who, str(digest).lower()))
+        return {"updated": stamp, "version": version}
+
+    def adopt(self, pubkey: str, blob: str, version, signature: str, now: int | None = None) -> str:
+        """A version another arcade handed over. `pubkey` is the account's as THIS node's vault holds it (never what
+        the other arcade said). Returns "taken" (newer, signed: kept), "same" (this very version is here), "older"
+        (no newer than what is kept: not taken), or "aside" (the same version number with other contents: kept aside
+        for the browser to fold in, not taken). Raises AccountError when it is not signed by `pubkey`, or not a
+        sealed record."""
+        from . import wallet_imports as importslib
+        blob = self._checked_blob(blob)
+        who = (pubkey or "").lower()
+        try:
+            version = importslib.check_record(who, version, blob, signature)
+        except importslib.ImportRefused as exc:
+            raise AccountError(str(exc)) from None
+        now = int(now if now is not None else time.time())
+        digest = importslib.blob_hash(blob)
+        with self._lock():
+            have = self.get(who)
+            if have is not None and version <= have["version"]:
+                if version < have["version"]:
+                    return "older"
+                if importslib.blob_hash(have["blob"]) == digest:
+                    return "same"
+                self._aside(who, digest, version, blob, signature, now)
+                return "aside"
+            if have is not None and have["origin"] == "here" and have["blob"]:
+                # Written here by the account's browser: it may hold a wallet the newer version never saw.
+                self._aside(who, importslib.blob_hash(have["blob"]), have["version"], have["blob"], have["sig"], now)
+            stamp = max(now, (have or {}).get("updated", 0) + 1)
+            self.conn.execute(
+                "INSERT INTO imported_wallets (pubkey, blob, updated, version, sig, origin) VALUES (?,?,?,?,?,'peer') "
+                "ON CONFLICT(pubkey) DO UPDATE SET blob = excluded.blob, updated = excluded.updated, "
+                "version = excluded.version, sig = excluded.sig, origin = 'peer'",
+                (who, blob, stamp, version, str(signature).lower()))
+            # A copy put aside earlier that is this very version needs no folding in any more.
+            self.conn.execute("DELETE FROM imported_siblings WHERE pubkey = ? AND digest = ?", (who, digest))
+        return "taken"
+
+    def _aside(self, who: str, digest: str, version: int, blob: str, sig: str, now: int) -> None:
+        self.conn.execute("INSERT OR IGNORE INTO imported_siblings (pubkey, digest, version, blob, sig, at) "
+                          "VALUES (?,?,?,?,?,?)", (who, digest, int(version), blob, str(sig or ""), now))
+        # Bounded: the oldest go first past SIBLINGS_MAX (a browser folds them in at its next unlock).
+        self.conn.execute("DELETE FROM imported_siblings WHERE pubkey = ? AND digest NOT IN (SELECT digest FROM "
+                          "imported_siblings WHERE pubkey = ? ORDER BY at DESC, version DESC LIMIT ?)",
+                          (who, who, SIBLINGS_MAX))
+
+    def drop_siblings(self, pubkey: str, digests: list, signature: str) -> int:
+        """Copies put aside that the account's browser folded in and found holding nothing the kept version lacks:
+        dropped with no new version (so two arcades do not answer each other's versions with ever newer ones), once
+        the login key signed which, over the version kept (wallet_imports.merged_digest). How many went."""
+        from . import wallet_imports as importslib
+        who = (pubkey or "").lower()
+        with self._lock():
+            have = self.get(who)
+            if not have or not have["signed"]:
+                raise AccountError("there is no signed record here to fold copies into")
+            try:
+                importslib.check_merged(who, have["version"], digests, signature)
+            except importslib.ImportRefused as exc:
+                raise AccountError(str(exc)) from None
+            gone = 0
+            for digest in digests:
+                gone += self.conn.execute("DELETE FROM imported_siblings WHERE pubkey = ? AND digest = ?",
+                                          (who, str(digest).lower())).rowcount or 0
+        return gone
+
+    def siblings(self, pubkey: str) -> list[dict]:
+        return [{"digest": r[0], "version": int(r[1]), "blob": r[2]} for r in self.conn.execute(
+            "SELECT digest, version, blob FROM imported_siblings WHERE pubkey = ? ORDER BY at",
+            ((pubkey or "").lower(),)).fetchall()]
+
+
+class ImportedMoved(AccountError):
+    """Another tab or device of the same account wrote the record first."""
+
+    def __init__(self, updated: int, version: int = 0):
+        super().__init__("your imported wallets changed in another tab or on another device; "
+                         "read them again and try once more")
+        self.updated = updated
+        self.version = version
 
 
 class MailboxMoved(AccountError):

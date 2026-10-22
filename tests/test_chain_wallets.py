@@ -60,13 +60,35 @@ def test_each_chain_says_its_node_operators_and_numbers(client):
     state.public = False                                     # the operator's own Overview reads them too (2026-10-19)
     assert app.get("/account/chain-stats").status_code == 200
     _seat(app)
-    assert 'class="chain-stats' in app.get("/me").text
     said = app.get("/account/chain-stats").json()
     assert set(said) == {c.network for c in state.all_chains}
     for net, row in said.items():
         assert row["here"] is True and row["operators"] >= 1, "a chain run here counts this arcade"
         assert {"online", "operators", "here"} <= set(row)
     assert "/account/chain-stats" in door.PUBLIC_PAGES, "a public arcade lets the route through"
+
+
+def test_your_arcade_shows_wallet_coins_lit_or_grey_and_the_arcades_card(client):
+    """2026-10-21: "the Wallet selection should just be a row of the icons and have them lit up when enabled
+    and grayed out when disabled. Below that should be a copy of the arcades card in the admin overview page"."""
+    from test_me_page import _seat
+    app, state = client
+    _seat(app)
+    nets = [c.network for c in state.all_chains]
+    assert app.post("/account/wallets", json={"network": nets[0], "shown": False}).status_code == 200
+    me = app.get("/me").text
+    assert f'data-network="{nets[0]}" aria-pressed="false"' in me, "hidden: greyed"
+    assert f'data-network="{nets[-1]}" aria-pressed="true"' in me, "shown: lit"
+    assert 'type="checkbox" class="wallet-chain"' not in me and 'class="chain-stats' not in me
+    assert 'id="arcades"' in me and "/account/arcades" in me and "window.arcadesPanel" in me
+    said = app.get("/account/arcades")
+    assert said.status_code == 200 and said.json()["rows"][0]["me"] is True
+    assert all("switch" not in c for r in said.json()["rows"] for c in r["cores"]), "the operator's switches stay theirs"
+    assert "/account/arcades" in door.PUBLIC_PAGES
+    state.public = True
+    app.cookies.clear()
+    assert app.get("/account/arcades").status_code in (401, 403), "signed in only"
+    state.public = False
 
 
 def test_hiding_one_of_several(client, monkeypatch):

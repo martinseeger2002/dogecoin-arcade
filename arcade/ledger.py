@@ -709,8 +709,21 @@ class LedgerIndex:
             last = db.conn.execute("SELECT MAX(rowid) FROM arcade_tx").fetchone()[0]
         memo = getattr(self, "_trades_memo", None)
         if not (memo and memo[0] == (tip, last, since_height)):
-            memo = ((tip, last, since_height), self._trades_uncached(5000, since_height))
-            self._trades_memo = memo
+            # One reader at a time (2026-10-21, app.dogecoinarcade.com's /feed 57 s): after a block every page counting
+            # its notifications (_notif_events) read the whole table at once, on a disk busy with a Core rescan. The
+            # one that takes the lock reads; the others are given what was known a block ago, or wait when nothing is.
+            lock = self.__dict__.setdefault("_trades_lock", threading.Lock())
+            if memo and memo[0][2] == since_height and not lock.acquire(blocking=False):
+                return list(memo[1][:max(1, min(limit, 5000))])
+            if not (memo and memo[0][2] == since_height):
+                lock.acquire()
+            try:
+                memo = getattr(self, "_trades_memo", None)
+                if not (memo and memo[0] == (tip, last, since_height)):
+                    memo = ((tip, last, since_height), self._trades_uncached(5000, since_height))
+                    self._trades_memo = memo
+            finally:
+                lock.release()
         return list(memo[1][:max(1, min(limit, 5000))])
 
     def _trades_uncached(self, limit: int, since_height: int) -> list[dict]:
@@ -1430,6 +1443,9 @@ class LedgerIndex:
         bids.sort(key=lambda r: (-r["price"], when(r)))
         return {"asks": asks[:limit], "bids": bids[:limit]}
 
+    #: How long one call may spend reading new mempool transactions (pending_orders).
+    POOL_SECONDS = 3.0
+
     def pending_orders(self) -> tuple[list[dict], set[str]]:
         """(orders broadcast and not yet mined, txids the pool cancels).
 
@@ -1456,10 +1472,16 @@ class LedgerIndex:
                 known = getattr(self, "_pool_orders", {})
                 cache = PrevOutCache(rpc, self.params)
                 found: dict[str, Any] = {}
+                # New mempool transactions are read for POOL_SECONDS at most a call; the rest on the next ones
+                # (2026-10-21: with .25's Dogecoin Core rescanning, its reads went over the mesh, one round trip a
+                # transaction, and the Exchange waited 50 s on thousands of them). A block shows every order anyway.
+                until = time.monotonic() + self.POOL_SECONDS
                 for txid in ids:
                     if txid in known:
                         found[txid] = known[txid]
                         continue
+                    if time.monotonic() > until:
+                        continue                        # not read yet: not kept, so the next call reads it
                     try:
                         tx = rpc.call("getrawtransaction", txid, True)
                         rtx = extract(tx, 0, 0, self.params, cache.lookup)

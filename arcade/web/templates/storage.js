@@ -13,14 +13,18 @@
 //     var best = Number(s.getItem('best') || 0);
 //     s.setItem('best', String(Math.max(best, score)));
 //   });
+//
+// The wallet also keeps the last ten values each key had before it changed, newest first:
+//   arcade.storage.history('save').then(function (h) { h.save -> [{value, replaced}, ...] });
+// A game that saved over its own player can offer them back (2026-10-20).
 (function () {
   var items = {}, seq = 0, waiting = {};
 
-  function ask(message) {
+  function ask(message, raw) {
     return new Promise(function (resolve, reject) {
       message.arcade = 'storage';
       message.seq = ++seq;
-      waiting[message.seq] = {resolve: resolve, reject: reject};
+      waiting[message.seq] = {resolve: resolve, reject: reject, raw: !!raw};
       setTimeout(function () {
         if (waiting[message.seq]) {
           delete waiting[message.seq];
@@ -39,6 +43,7 @@
     var w = waiting[m.seq];
     delete waiting[m.seq];
     if (m.ok) {
+      if (w.raw) { w.resolve(m.history || {}); return; }
       if (m.items) items = m.items;
       w.resolve(storage);
     } else {
@@ -68,6 +73,10 @@
     clear: function () {
       items = {};
       return ask({op: 'clear'});
+    },
+    // Earlier values of one key (or of every key, with none), newest first.
+    history: function (key) {
+      return ask({op: 'history', key: key === undefined ? '' : String(key)}, true);
     },
     key: function (i) { return Object.keys(items)[i] || null; },
     get length() { return Object.keys(items).length; },

@@ -2,6 +2,7 @@
 game's colours for somebody who came from the game's site, or the game itself."""
 
 import pathlib
+import re
 import sys
 
 from nacl.signing import SigningKey
@@ -34,7 +35,8 @@ def test_a_stranger_gets_the_games_own_sign_up(client):
     assert "<title>Play ASHVALE</title>" in body
     assert f'const NEXT = "/inscriptions/{REAL}/full";' in body, "signing up lands in the game"
     assert gameslib.DOOR_SKINS["ashvale"]["bg"] in body, "in the game's colours"
-    assert 'import * as wallet from "/wallet.js"' in body, "the same account /join makes"
+    assert re.search(r'import \* as wallet from "/wallet\.js(\?v=[0-9a-f]{12})?"', body), \
+        "the same account /join makes (wallet.js by its fingerprinted address since 2026-10-20)"
     assert "nobody can reset it" in body and "recovery words" in body
 
 

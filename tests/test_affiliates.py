@@ -13,7 +13,7 @@ def test_the_tab_sits_between_the_exchange_and_the_docs(client):
     page = app.get("/affiliates").text
     assert 'href="https://antidoginaldogs.com"' in page
     assert "dogesoft" not in page.lower(), "removed (2026-10-15: the outside Doginals API and its affiliate link)"
-    assert 'rel="noopener"' in page
+    assert 'rel="noopener noreferrer nofollow"' in page, "since 2026-10-21 (sites from other arcades): no referrer, no follow"
     nav = app.get("/").text
     assert nav.index('href="/exchange"') < nav.index('href="/affiliates"') < nav.index('href="/docs"')
     from arcade.web.app import ACCOUNT_NAV, NAV

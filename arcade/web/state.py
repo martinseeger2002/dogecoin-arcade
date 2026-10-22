@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import dataclasses
 import secrets
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -34,7 +35,7 @@ from ..messaging.derive import (
 )
 from ..messaging.keys import Identity
 from ..messaging.store import MessageStore
-from ..rpc import RpcClient
+from ..rpc import RpcClient, RpcTransportError
 
 #: The wallet this node signs with, which is the lane every send in `app.py`
 #: claims until it is told otherwise. An account's lane is its own public key.
@@ -125,6 +126,9 @@ class SendQueue:
 #: The add-on chains: each beside the arcade's own two, run here, borrowed or off (arcade/cores.py). Read
 #: from the chains' own Params (`addon`), so a chain added there is an add-on everywhere.
 ADDON_NETWORKS = tuple(name for name, p in NETWORKS.items() if p.addon)
+
+#: Made once, so every request shares one SendRefs and its per-ref locks.
+_SEND_REFS_MADE = threading.Lock()
 
 
 @dataclass
@@ -235,8 +239,22 @@ class ChainContext:
         return found.credentials
 
     def rpc(self) -> RpcClient:
+        """The one door to this chain's Core, which every caller goes through. A chain set to "borrow" is read
+        through a sharer; a chain run here is read through its own Core -- or, while that Core is behind (syncing,
+        re-indexing, rescanning) and a linked arcade shares the chain, its reads and broadcasts go to the sharer
+        and its wallet stays here (arcade/core_catchup.py, 2026-10-20)."""
         if self.borrowed:
             return self._borrowed_rpc()
+        from .. import core_catchup
+        if core_catchup.borrowing(self):
+            try:
+                return core_catchup.CatchingUpRpc(self.local_rpc, self._borrowed_rpc())
+            except Exception:                                  # noqa: BLE001 -- the sharer is gone: this Core as it is
+                pass
+        return self.local_rpc()
+
+    def local_rpc(self) -> RpcClient:
+        """This arcade's own Core, never a sharer: what it shares with other arcades, and its wallet."""
         creds = self.credentials()
         client = RpcClient(creds)
         # Checks reality, not intent: a stray config must not silently point us
@@ -250,8 +268,21 @@ class ChainContext:
         from ..mesh import coreshare
         client = coreshare.BorrowedRpc(coreshare.CURRENT, self.params)
         if _BORROWED_SEEN.get(self.network, 0) < time.time():
-            verify_connected_chain(client, self.params)
-            _BORROWED_SEEN[self.network] = time.time() + 300
+            # One check at a time, and a failed one remembered half a minute (2026-10-21): every other thread asking
+            # meanwhile is told at once that the chain cannot be read now, rather than each waiting minutes on the mesh.
+            if time.time() < _BORROWED_FAILED.get(self.network, 0):
+                raise RpcTransportError(f"{self.label}: the arcades sharing it did not answer just now")
+            lock = _BORROWED_LOCKS.setdefault(self.network, threading.Lock())
+            if not lock.acquire(blocking=False):
+                raise RpcTransportError(f"{self.label}: being checked with the arcades sharing it")
+            try:
+                verify_connected_chain(client, self.params)
+                _BORROWED_SEEN[self.network] = time.time() + 300
+            except Exception:
+                _BORROWED_FAILED[self.network] = time.time() + 30
+                raise
+            finally:
+                lock.release()
         return client
 
     #: How long one node's status is kept (2026-10-13: pages felt slow tab to tab; the
@@ -279,7 +310,7 @@ class ChainContext:
                     "blocks": info.get("blocks", 0),
                     "headers": info.get("headers", 0),
                     "synced": info.get("blocks") == info.get("headers"),
-                    "peers": rpc.call("getconnectioncount"),
+                    "peers": _peers(rpc),
                     "wallet": None,
                     "borrowed": self.borrowed,
                 }
@@ -297,10 +328,20 @@ class ChainContext:
             return {"online": False, "error": str(exc)}
 
 
+def _peers(rpc) -> int | None:
+    """The Core's peer count; None from a Core still loading (its chain read from a sharer meanwhile)."""
+    try:
+        return rpc.call("getconnectioncount")
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
 #: ChainContext.status answers, by node, until they go stale.
 _STATUS_KEPT: dict = {}
 #: Borrowed chains checked lately: network -> until when (ChainContext._borrowed_rpc).
 _BORROWED_SEEN: dict = {}
+_BORROWED_FAILED: dict = {}               # network -> until when a failed check of the sharers is not tried again
+_BORROWED_LOCKS: dict = {}                # network -> the one check of the sharers running
 
 
 @dataclass
@@ -678,6 +719,11 @@ class AppState:
         from ..accounts import Mailbox
         return Mailbox(self.accounts())
 
+    def imported_wallets(self):
+        """Each account's imported wallets, sealed by its browser (plan item 18): bytes this node cannot read."""
+        from ..accounts import ImportedWallets
+        return ImportedWallets(self.accounts())
+
     def screen(self):
         """Content screening (arcade/moderation.py): the `moderation` setting names a
         model to ask. Off when unset. Rebuilt only when the setting changes."""
@@ -914,6 +960,22 @@ class AppState:
 
     def claim_operator(self, pubkey: str) -> None:
         self.set_setting("operator", (pubkey or "").strip().lower())
+
+    def operator_tag(self) -> str:
+        """The @name of whoever runs this arcade, as the chain has it ("" when none): the operator account's address on
+        the messaging chain, or the node's own derived address for an arcade whose operator is its node (as on .25).
+
+        What this arcade says about itself to linked arcades (mesh/operators.py, "me") and what Admin -> Overview's
+        Arcades panel shows on its own row (2026-10-21, approving the mockup). Only ever this arcade's OWN
+        operator: never an account that merely signed in here."""
+        try:
+            chain = next(c for c in self.token_chains if c.network == self.messaging.network)
+            op = self.operator
+            address = ((self.setting(f"address:{chain.network}:{op}") or self.setting(f"address:{op}")) if op
+                       else self.derived_address)
+            return (self.token_index(chain).tag_of(address) or "") if address else ""
+        except Exception:                                  # noqa: BLE001 -- said without a name
+            return ""
 
     @property
     def public_hosts(self) -> tuple[str, ...]:
@@ -1369,21 +1431,22 @@ class AppState:
         kept = self._sync.get(chain.network)
         if kept and kept[0] > now:
             return kept[1]
-        if getattr(chain, "borrowed", False):
-            # A borrowed chain answers over the mesh, from another arcade: up to a minute when that arcade is far or
-            # busy, and a page drawing its chain menu waited for it (2026-10-19: pepecoinarcade.com's Exchange took
-            # 25 s, its feed 3-7 s). The page gets what is known now; the asking happens on a thread of its own.
-            if kept:
-                self._refresh_sync_later(chain)
-                return kept[1]
-            # Nothing known yet (just started): a few seconds for the first answer, so a page drawn right after a
-            # restart does not gray out a chain that is fine (2026-10-19, pepecoinarcade.com's D and L icons).
-            asked = self._refresh_sync_later(chain)
-            if asked is not None:
-                asked.join(self.FIRST_SYNC_WAIT)
-            kept = self._sync.get(chain.network)
-            return kept[1] if kept else {"ready": False, "progress": 0.0, "online": False, "blocks": 0, "headers": 0}
-        return self._sync_now(chain)
+        # A borrowed chain answers over the mesh, from another arcade: up to a minute when that arcade is far or
+        # busy, and a page drawing its chain menu waited for it (2026-10-19: pepecoinarcade.com's Exchange took
+        # 25 s, its feed 3-7 s). The page gets what is known now; the asking happens on a thread of its own.
+        # Every add-on chain, not only one set to borrow (2026-10-21, app.dogecoinarcade.com down 16:13-16:45): a
+        # Dogecoin run here but borrowing while its Core rescans (core_catchup) was asked on every request thread
+        # at once each minute, each waiting minutes on the mesh, until no thread was left to answer a page.
+        if kept:
+            self._refresh_sync_later(chain)
+            return kept[1]
+        # Nothing known yet (just started): a few seconds for the first answer, so a page drawn right after a
+        # restart does not gray out a chain that is fine (2026-10-19, pepecoinarcade.com's D and L icons).
+        asked = self._refresh_sync_later(chain)
+        if asked is not None:
+            asked.join(self.FIRST_SYNC_WAIT)
+        kept = self._sync.get(chain.network)
+        return kept[1] if kept else {"ready": False, "progress": 0.0, "online": False, "blocks": 0, "headers": 0}
 
     def _refresh_sync_later(self, chain: ChainContext) -> "threading.Thread | None":
         asking = self.__dict__.setdefault("_sync_asking", {})
@@ -1541,6 +1604,16 @@ class AppState:
         return self._approvals
 
     @property
+    def send_refs(self):
+        """The refs pages gave their /r/send asks, so a retry is not a second send (send_refs.py)."""
+        if getattr(self, "_send_refs", None) is None:
+            from ..send_refs import SendRefs
+            with _SEND_REFS_MADE:                    # one store, so one set of per-ref locks
+                if getattr(self, "_send_refs", None) is None:
+                    self._send_refs = SendRefs(self.home / "send-refs.sqlite")
+        return self._send_refs
+
+    @property
     def pagestore(self):
         """What this wallet remembers for each inscribed page."""
         if self._pagestore is None:
@@ -1628,6 +1701,20 @@ class AppState:
         except (TypeError, ValueError):
             return default_cores()
 
+    def ord_share(self) -> int:
+        """How much of this machine the ord walk may take, in percent (Admin -> Ords; 2026-10-21: ".25 seems to
+        be running slow ... see if we can mess around with how much is allocated to walking the chain"). The walk
+        shares the web process with the pages; at 30% it works a second and rests over two, so pages get in between.
+        By default all of a big machine, 30% of a small one."""
+        import os
+        from ..doginal_index import BIG_FROM_CORES
+        chosen = self.setting("ord_share")
+        try:
+            return max(10, min(int(chosen), 100)) if chosen is not None else (
+                100 if (os.cpu_count() or 1) >= BIG_FROM_CORES else 30)
+        except (TypeError, ValueError):
+            return 30
+
     def ord_indexes(self) -> dict:
         """Our own ord index of each chain this arcade reads, its own Core or a borrowed one (arcade/doginal_index.py;
         2026-10-20: the Ords tab, "controls to enable ord in for each chain"). One file each, ord-<net>.sqlite."""
@@ -1641,10 +1728,17 @@ class AppState:
             net = chain.network
             if net in kept or net not in STARTS:
                 continue
-            kept[net] = DoginalIndex(Path(self.home) / f"ord-{net}.sqlite", chain.rpc,
-                                     (lambda n=net: self.ord_mode(n)),
-                                     own_core=(lambda c=chain: not getattr(c, "borrowed", False)),
-                                     net=net, mweb=bool(getattr(chain.params, "mweb", False)), cores=self.ord_cores)
+            try:
+                kept[net] = DoginalIndex(Path(self.home) / f"ord-{net}.sqlite", chain.rpc,
+                                         (lambda n=net: self.ord_mode(n)),
+                                         own_core=(lambda c=chain: not getattr(c, "borrowed", False)),
+                                         net=net, mweb=bool(getattr(chain.params, "mweb", False)),
+                                         cores=self.ord_cores, walk_share=self.ord_share)
+            except Exception:                                  # noqa: BLE001 -- e.g. the file still locked by the
+                # worker this one replaces, mid-reset (2026-10-21): this chain is opened again at the next ask, and
+                # the others go on meanwhile.
+                logging.getLogger("arcade.web").warning("ord index of %s not opened yet; asked again later", net,
+                                                         exc_info=True)
         return dict(kept)
 
     def doginal_index(self):

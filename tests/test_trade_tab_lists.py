@@ -181,7 +181,8 @@ def test_a_tab_lists_a_token_and_another_node_takes_it(world, monkeypatch):
         _scan_a(a)
         O.import_announced(a.trade_orders, a.token_index(a.messaging), "regtest")
         found = next(o for o in a.trade_orders.visible(a.mesh.online) if o["id"] == mine["id"])
-        assert found["give"] == {"network": "regtest", "kind": "token", "asset": "150", "amount": 40 * COIN}
+        assert found["give"] == {"network": "regtest", "kind": "token", "asset": "150", "amount": 40 * COIN,
+                                 "fee_bps": 0}
         give = b.leg("doge", 2 * COIN, bytes.fromhex(found["take_key"]))
         get = T.Leg("regtest", "token", "150", 40 * COIN, found["trade_key"], b.key.pubkey.hex())
         trade = b.propose(bytes.fromhex(found["msg_key"]), found["id"], give, get).id
@@ -293,6 +294,18 @@ def test_the_list_form_offers_a_token_the_account_holds(world, monkeypatch):
         tab.fill('.pick[data-for="pair-quote"] .pick-q', "doge")
         tab.locator('.pick[data-for="pair-quote"] .pick-row[data-value="doge-coin"]').dispatch_event("mousedown")
         assert tab.input_value("#pair-base") == "regtest-token-150" and tab.input_value("#pair-quote") == "doge-coin"
+        # Type to search, not a long list (2026-10-20): tapped, the box empties and keeps the choice in view
+        # greyed; a short start of at most 8; nonsense finds nothing; leaving puts the choice back.
+        quote = '.pick[data-for="pair-quote"] .pick-q'
+        chosen = tab.input_value(quote)
+        tab.focus(quote)
+        assert tab.input_value(quote) == "" and tab.get_attribute(quote, "placeholder") == chosen
+        assert tab.locator('.pick[data-for="pair-quote"] .pick-row').count() <= 8
+        tab.fill(quote, "zzqqxx")
+        assert tab.locator('.pick[data-for="pair-quote"] .pick-row').count() == 0
+        assert "Nothing matches" in tab.inner_text('.pick[data-for="pair-quote"] .pick-list')
+        tab.focus("#start-market input[name=amount]")
+        assert tab.input_value(quote) == chosen and tab.input_value("#pair-quote") == "doge-coin"
         tab.fill("#start-market input[name=amount]", "40")
         tab.fill("#start-market input[name=price]", "0.05")
         assert "You get 2 DOGE for 40 Gold" in tab.inner_text("#pair-sum")
@@ -324,7 +337,7 @@ def test_the_list_form_offers_a_token_the_account_holds(world, monkeypatch):
     O.import_announced(a.trade_orders, a.token_index(a.messaging), "regtest")
     listed = [o for o in a.trade_orders.visible(a.mesh.online) if o["lister"] == made]
     assert listed and listed[0]["give"] == {"network": "regtest", "kind": "token", "asset": "150",
-                                            "amount": 40 * COIN}
+                                            "amount": 40 * COIN, "fee_bps": 0}
 
 
 def test_the_swap_finishes_with_the_listers_browser_closed(world, monkeypatch):

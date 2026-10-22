@@ -202,6 +202,62 @@ def test_a_tab_takes_a_swap_and_both_sides_settle(world):
     assert b.book.get(trade).state == "done", seen[-6:]
 
 
+def test_a_tab_swap_with_operator_fees_pays_each_operator_and_each_side_exactly(world):
+    """2026-10-21: the sender of each lock pays its fees, and each lock holds its own arcade's operator fee. Both
+    arcades charge 1%. The tab's PEP lock holds 3 + 0.01 + 0.03 and B's claim of it pays A's operator 0.03 and B
+    exactly 3; B's DOGE lock holds 2 + 0.01 + 0.02 and the tab's claim -- built by its node, checked and signed in
+    the page -- pays B's operator 0.02 and the tab exactly 2."""
+    from playwright.sync_api import sync_playwright
+    from arcade.node_trader import _spender, lock_fee
+    base, a, b, pep, dg = world
+    a.set_setting("trade_cut", 1)
+    b.state.set_setting("trade_cut", 1)
+    b.stand("order-feesdp", {"network": "doge", "kind": "coin", "amount": 2 * COIN},
+            {"network": "regtest", "kind": "coin", "amount": 3 * COIN})
+    stood = next(o for o in b.standing() if o["id"] == "order-feesdp")["give"]
+    order = {"id": "order-feesdp", "give": stood,
+             "get": {"network": "regtest", "kind": "coin", "asset": "", "amount": 3 * COIN},
+             "trade_key": b.key.pubkey.hex(), "msg_key": b.state.identity.public_bytes.hex(),
+             "node": "ab" * 32, "expires": int(time.time()) + 3600}
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        tab = browser.new_page()
+        tab.goto(f"{base}/join")
+        tab.evaluate("async () => { window.w = await import('/wallet.js'); }")
+        made = tab.evaluate("""async (net) => {
+            const r = await w.signUp('feepayer' + Math.floor(Math.random() * 1e6), 'a long enough password',
+                                     {network: net.network, version: net.version});
+            return {regtest: r.wallet.on.regtest.address, doge: r.wallet.on.doge && r.wallet.on.doge.address}; }""",
+            {"network": "regtest", "version": 111})
+        pep.call("sendtoaddress", made["regtest"], 10)
+        _mine(pep)
+        _scan_a(a)
+        trade = tab.evaluate("""async (order) => {
+            const wal = await w.opened({network: 'regtest', version: 111});
+            const t = await w.takeOrder(wal, order); return t.id; }""", order)
+        seen = _run(tab, {'network': 'regtest', 'version': 111}, trade, a, b, pep, dg)
+        browser.close()
+    assert seen and seen[-1][0] == "done", seen[-6:]
+    assert b.book.get(trade).state == "done", seen[-6:]
+    with b._db() as conn:
+        link = dict(conn.execute("SELECT * FROM link WHERE id=?", (trade,)).fetchone())
+
+    def paid(rpc, pointer):
+        txid, vout = pointer.split(":")
+        tx = _spender(rpc, {"txid": txid, "vout": int(vout)}, {})
+        out = {}
+        for o in tx["vout"]:
+            for addr in o["scriptPubKey"].get("addresses", []):
+                out[addr] = out.get(addr, 0) + round(o["value"] * COIN)
+        return out
+    tab_lock = link["their_lock"].split(":")
+    assert round(pep.call("getrawtransaction", tab_lock[0], 1)["vout"][int(tab_lock[1])]["value"] * COIN) \
+        == 3 * COIN + 1_000_000 + 3_000_000, "the tab's lock: the amount, the network fee and its operator's fee"
+    assert paid(dg, link["my_lock"]) == {stood["fee_to"]: 2_000_000, made["doge"]: 2 * COIN}
+    assert paid(pep, link["their_lock"]) == {lock_fee(a, a.messaging)["to"]: 3_000_000,
+                                             b._address("regtest"): 3 * COIN}
+
+
 def test_one_tab_runs_the_trades_and_another_takes_over_when_it_closes(world):
     """2026-10-13: the trade loop runs "on every arcade page ... even if the tab is in
     the background". Every page starts the runner; a Web Lock lets one tab run it, and when

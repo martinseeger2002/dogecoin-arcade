@@ -59,6 +59,7 @@ def test_the_wallet_serves_the_shim_and_guards_the_store():
     assert shim.status_code == 200 and "javascript" in shim.headers["content-type"]
     assert shim.headers["access-control-allow-origin"] == "*"
     assert "arcade.storage" in shim.text and "localStorage" in shim.text
+    assert "history: function" in shim.text, "a page can read back what a key held before"
     # The store itself is the viewer's, same origin, CSRF-guarded, and only
     # for inscriptions this wallet knows.
     assert app.get("/storage/" + "a" * 64).status_code == 404
@@ -67,3 +68,28 @@ def test_the_wallet_serves_the_shim_and_guards_the_store():
     assert app.post("/storage/" + "a" * 64, json={"csrf_token": state.csrf_token, "op": "set",
                                                   "key": "k", "value": "v"}).status_code == 404
     assert state.pagestore.items("a" * 64) == {}
+
+
+def test_a_key_keeps_its_last_values(tmp_path):
+    """2026-10-20: a game saved a new player over the old one and nothing could bring it back."""
+    store, page = P.PageStore(tmp_path / "pagedata.sqlite"), "a" * 64
+    for n in range(P.HISTORY + 3):
+        store.set(page, "save", f"v{n}")
+    store.set(page, "save", f"v{P.HISTORY + 2}")         # the same value again is not a change
+    store.set(page, "best", "1")
+    kept = store.history(page)["save"]
+    assert [h["value"] for h in kept] == [f"v{n}" for n in range(P.HISTORY + 1, 1, -1)]
+    assert "best" not in store.history(page), "a first value replaced nothing"
+    store.remove(page, "save")
+    assert store.history(page, "save")["save"][0]["value"] == f"v{P.HISTORY + 2}"
+    store.clear(page)
+    assert store.history(page, "best")["best"][0]["value"] == "1"
+    assert store.history("b" * 64) == {}, "another page sees nothing of it"
+
+
+def test_history_never_holds_more_than_a_page_may_keep(tmp_path):
+    store, page = P.PageStore(tmp_path / "pagedata.sqlite"), "a" * 64
+    for n in range(40):
+        store.set(page, f"k{n % 4}", str(n) * (P.MAX_VALUE // 2 // len(str(n))))
+    total = sum(len(k) + len(h["value"]) for k, hs in store.history(page).items() for h in hs)
+    assert 0 < total <= P.MAX_TOTAL

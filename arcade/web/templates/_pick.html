@@ -1,0 +1,90 @@
+{#- The search box with suggestions (2026-10-17: "Search boxes, not drop-downs"; 2026-10-20: "auto complete
+    search boxes rather than a drop-down with a super long list"). Made for the Exchange's Trade any pair, and shared
+    since 2026-10-21 with Admin -> Ords -> Tokens (the operator: "search by token ticker borrow the search tool from the token
+    exchange"), so both are one tool. The markup it works on:
+
+      <span class="pick"><input type="search" class="pick-q" autocomplete="off" role="combobox" aria-expanded="false">
+        <span class="pick-list" role="listbox" hidden></span></span>
+
+    and window.arcadePick(box, cfg) wires one, where cfg is
+      items(text, words, done)  what matches: done(rows, more, none) with rows [{value, label, note}], how many more
+                                there are, and what to say when nothing matches; may answer later (a fetch): an answer
+                                to a question the box has moved past is dropped
+      choose(row)               a row was picked
+      shown()                   what the box shows while not typing (the choice so far), '' for nothing
+      placeholder               its hint when empty
+    It returns {q, sync}: sync() puts the choice back in the box. Included once per page. -#}
+<style>
+  .pick{position:relative;flex:1 1 170px;min-width:0;display:block}
+  .pick-q{width:100%;box-sizing:border-box}
+  .pick-list{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 4px);max-height:280px;overflow-y:auto;
+    background:var(--panel,#1b1916);border:1px solid var(--line,#3a352d);border-radius:12px;padding:4px;
+    box-shadow:0 10px 28px rgba(0,0,0,.45)}
+  .pick-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;width:100%;text-align:left;
+    background:none;border:0;border-radius:8px;padding:9px 10px;color:inherit;font:inherit;cursor:pointer}
+  .pick-row:hover,.pick-row.on{background:var(--hover,rgba(255,255,255,.07))}
+  .pick-held{color:var(--muted,#a69d8e);font-size:.82rem;white-space:nowrap}
+  .pick-none{display:block;padding:9px 10px;color:var(--muted,#a69d8e);font-size:.86rem}
+</style>
+<script>
+window.arcadePick = window.arcadePick || function (box, cfg) {
+  var q = box.querySelector('.pick-q'), list = box.querySelector('.pick-list'), at = -1, rows = [], asked = 0;
+  var hint = cfg.placeholder || q.placeholder || '';
+  function open(on) { list.hidden = !on; q.setAttribute('aria-expanded', on ? 'true' : 'false'); }
+  function choose(row) {
+    q.value = row.label; open(false);
+    cfg.choose(row);
+    q.blur();                       // picked: let go, so a phone puts its keyboard away and the next tap searches
+  }
+  function draw(got, more, none) {
+    list.innerHTML = ''; at = -1; rows = got || [];
+    if (!rows.length) {
+      var nothing = document.createElement('span'); nothing.className = 'pick-none';
+      nothing.textContent = none || 'Nothing matches.';
+      list.appendChild(nothing);
+    }
+    rows.forEach(function (it) {
+      var row = document.createElement('button'); row.type = 'button'; row.className = 'pick-row';
+      row.setAttribute('role', 'option'); row.dataset.value = it.value;
+      var name = document.createElement('span'); name.textContent = it.label; row.appendChild(name);
+      if (it.note) {
+        var has = document.createElement('span'); has.className = 'pick-held';
+        has.textContent = it.note; row.appendChild(has);
+      }
+      row.addEventListener('mousedown', function (e) { e.preventDefault(); choose(it); });
+      list.appendChild(row);
+    });
+    if (more > 0) {
+      var left = document.createElement('span'); left.className = 'pick-none';
+      left.textContent = more + ' more — type to narrow it down';
+      list.appendChild(left);
+    }
+    open(true);
+  }
+  function fill() {
+    var mine = ++asked, text = q.value.trim();
+    cfg.items(text, text.toLowerCase().split(/\s+/).filter(Boolean), function (got, more, none) {
+      if (mine === asked) draw(got, more, none);
+    });
+  }
+  // Emptied to type into; what is chosen now stays in view, greyed, until something else is picked.
+  q.addEventListener('focus', function () { q.placeholder = cfg.shown() || hint; q.value = ''; fill(); });
+  q.addEventListener('input', function (e) { e.stopPropagation(); fill(); });
+  // A tap on a box that already has focus (and shows the choice again) searches afresh too.
+  q.addEventListener('click', function () { if (list.hidden || q.value === cfg.shown()) { q.value = ''; fill(); } });
+  q.addEventListener('blur', function () { asked++; open(false); q.value = cfg.shown(); q.placeholder = hint; });
+  q.addEventListener('keydown', function (e) {
+    var shown = list.querySelectorAll('.pick-row');
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); if (list.hidden) fill();
+      at = Math.max(0, Math.min(shown.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)));
+      shown.forEach(function (r, i) { r.classList.toggle('on', i === at); });
+      if (shown[at]) shown[at].scrollIntoView({block: 'nearest'});
+    } else if (e.key === 'Enter' && !list.hidden) {
+      e.preventDefault();
+      var r = rows[at < 0 ? 0 : at]; if (r) choose(r);
+    } else if (e.key === 'Escape') { open(false); q.blur(); }
+  });
+  return {q: q, sync: function () { q.value = cfg.shown(); }};
+};
+</script>

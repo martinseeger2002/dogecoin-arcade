@@ -659,6 +659,50 @@ def test_an_ipv6_address_nobody_answers_counts_as_failed_so_the_tunnel_is_tried(
     run(go())
 
 
+def test_an_unchanged_own_name_is_not_announced_again_after_a_restart(tmp_path, monkeypatch):
+    """An arcade that updates itself restarts with every release. Its own wss:// name is announced once,
+    and a restart within the day, sharing the same memory file, pays for nothing; a new name, or a day
+    gone by, is announced again. The address's entry and the name's live side by side in that file."""
+    from arcade.mesh import service as servicelib
+    from arcade.mesh.service import MeshService
+    monkeypatch.setattr(servicelib, "TUNNEL_FIRST", 0.0)
+    monkeypatch.setattr(servicelib, "TUNNEL_EVERY", 0.05)
+    said = []
+    remember = tmp_path / "mesh-announced.json"
+    name = {"url": "wss://arcade.example/mesh"}
+
+    async def one_run():
+        svc = MeshService(NET, nacl.signing.SigningKey.generate(), listen_port=None, remember=remember,
+                          announce=lambda host, port: said.append((host, port)), named_url=lambda: name["url"])
+        task = asyncio.ensure_future(svc._tunneler())
+        await asyncio.sleep(0.3)                       # several rounds of the tunnel keeper
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return svc
+
+    run(one_run())
+    assert said == [("wss://arcade.example/mesh", 443)]
+    run(one_run())                                     # restarted: same file, same name, same day
+    assert said == [("wss://arcade.example/mesh", 443)], "a restart announced the unchanged name again"
+
+    svc = run(one_run())
+    svc._keep({**svc.last_announced, "host": "9.9.9.9", "port": 8421, "at": 1})   # as the address announcer does
+    assert MeshService(NET, nacl.signing.SigningKey.generate(), listen_port=None,
+                       remember=remember)._name_said_lately("wss://arcade.example/mesh"), "the name's entry stayed"
+
+    name["url"] = "wss://other.example/mesh"           # a new name is news
+    run(one_run())
+    assert said[-1] == ("wss://other.example/mesh", 443) and len(said) == 2
+    data = json.loads(remember.read_text())
+    data["name_at"] -= int(servicelib.ANNOUNCE_EVERY) + 60   # and a day later, the same one is said again
+    remember.write_text(json.dumps(data))
+    run(one_run())
+    assert len(said) == 3 and said[-1] == ("wss://other.example/mesh", 443)
+
+
 def test_a_node_whose_ipv4_cannot_be_reached_announces_its_ipv6_to_be_met():
     from arcade.mesh.service import MeshService
 

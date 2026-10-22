@@ -311,6 +311,16 @@ class MeshService:
             if self.stun is not None:
                 self.stun.hosts = None
 
+    def say_who_runs_this(self) -> bool:
+        """Say "me" (operators.py) to every linked arcade now rather than at the next minute's turn: the operator just
+        ticked or unticked a site to share (Admin -> Affiliates, 2026-10-21). Not waited for. False when the mesh
+        is not running."""
+        share = getattr(self, "operators", None)
+        if self.loop is None or share is None:
+            return False
+        asyncio.run_coroutine_threadsafe(share.rebalance(), self.loop)
+        return True
+
     def _call(self, coro, timeout: float = 5.0):
         """Run a coroutine on the mesh's loop from any other thread, and wait."""
         if self.loop is None:
@@ -396,6 +406,18 @@ class MeshService:
             except OSError:
                 pass
 
+    def _name_said_lately(self, url: str) -> bool:
+        """Whether `url` is the own name this node announced within ANNOUNCE_EVERY, across restarts too.
+
+        Kept in the same file as the address (2026-10-21, node 3): in memory only, every restart announced the
+        unchanged name again, and an arcade that updates itself restarts with every release -- 31 paid
+        announcements of one name in a day and a half."""
+        last = self.last_announced or {}
+        return last.get("name") == url and time.time() - float(last.get("name_at") or 0) < ANNOUNCE_EVERY
+
+    def _said_name(self, url: str) -> None:
+        self._keep({**(self.last_announced or {}), "name": url, "name_at": int(time.time())})
+
     async def where_am_i(self) -> tuple[str, int] | None:
         """The public address this node can be reached at, proved, or None."""
         if self.announce_at:
@@ -433,7 +455,7 @@ class MeshService:
             return False
         await asyncio.to_thread(self._announce_locked, host, port)
         log.info("mesh: announced this node at %s:%s", host, port)
-        self._keep({"host": host, "port": port, "at": int(time.time())})
+        self._keep({**last, "host": host, "port": port, "at": int(time.time())})   # the own name's entry stays
         return True
 
     async def _tunneler(self) -> None:
@@ -455,10 +477,12 @@ class MeshService:
                     if self._tunnel_proc is not None:
                         await self._tunnel_stop()
                     self.tunnel_url = named
-                    if self.tunnel_url != self._tunnel_said and self.announce is not None:
+                    # Again only when the name changed or a day has passed, whatever restarted in between.
+                    if self.announce is not None and not self._name_said_lately(self.tunnel_url):
                         await asyncio.to_thread(self._announce_locked, self.tunnel_url, 443)
-                        self._tunnel_said = self.tunnel_url
+                        self._said_name(self.tunnel_url)
                         log.info("mesh: announced this node's own name %s", self.tunnel_url)
+                    self._tunnel_said = self.tunnel_url
                     await asyncio.sleep(TUNNEL_EVERY)
                     continue
                 if not self.tunnel_cmd:
@@ -801,24 +825,9 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
     # Who runs each linked arcade (operators.py, 2026-10-20: "a list of other operators").
     from .operators import OperatorsShare
 
-    def about() -> dict:
-        tag = ""
-        try:
-            chain = next(c for c in state.token_chains if c.network == state.messaging.network)
-            op = state.operator
-            address = ((state.setting(f"address:{chain.network}:{op}") or state.setting(f"address:{op}")) if op
-                       else state.derived_address)
-            tag = (state.token_index(chain).tag_of(address) or "") if address else ""
-        except Exception:                                  # noqa: BLE001 -- said without a name
-            pass
-        try:
-            from ..web import brand as brandlib
-            name = brandlib.current().name
-        except Exception:                                  # noqa: BLE001
-            name = ""
-        return {"tag": tag, "name": name, "version": str(getattr(state, "running_version", "") or ""),
-                "hosts": list(getattr(state, "public_hosts", []) or [])}
-    service.operators = OperatorsShare(about)
+    from .. import affiliates as affiliateslib
+    service.operators = OperatorsShare(lambda: operator_about(state),
+                                       lambda peer, tag, sites: affiliateslib.record(state, peer, tag, sites))
     service.node.add_extension(service.operators)
     # The ord indexes' shared chunks, one per chain (doginalshare.py, 2026-10-20).
     if hasattr(state, "ord_indexes"):
@@ -831,6 +840,11 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
                 return {}
         service.doginalshare = DxShare(indexes)
         service.node.add_extension(service.doginalshare)
+    # Each account's imported wallets, to every arcade that holds the account (importshare.py, 2026-10-21).
+    if hasattr(state, "imported_wallets"):
+        from .importshare import ImportShare, StateRecords
+        service.importshare = ImportShare(StateRecords(state))
+        service.node.add_extension(service.importshare)
     from . import coreshare
     coreshare.CURRENT = service.coreshare
     # STUN for the WebRTC fast lane (stun.py): served here when asked for, proved by other nodes before it is
@@ -847,10 +861,38 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
     return service
 
 
+def operator_about(state) -> dict:
+    """What this arcade says about itself to each linked arcade (operators.py "me"): its operator's own @name, its
+    face's name, its version and the names it is published under. The operator's own @name only (state.operator_tag),
+    left out of the frame when it has none, so a hearer shows the mesh id rather than an empty name (2026-10-21:
+    Overview's Arcades panel). `sites`: what the operator ticked to share in Admin -> Affiliates (arcade/affiliates.py,
+    2026-10-21), always a list so unticking the last one is heard too."""
+    tag = state.operator_tag() if hasattr(state, "operator_tag") else ""
+    try:
+        from ..web import brand as brandlib
+        name = brandlib.current().name
+    except Exception:                                      # noqa: BLE001
+        name = ""
+    return {**({"tag": tag} if tag else {}), "name": name,
+            "version": str(getattr(state, "running_version", "") or ""),
+            "hosts": list(getattr(state, "public_hosts", []) or []), **_shared_sites(state)}
+
+
+def _shared_sites(state) -> dict:
+    """{"sites": [...]}, or nothing when they could not be read: left out, a hearer keeps what it had, where an empty
+    list would have told it to forget them."""
+    try:
+        from .. import affiliates
+        return {"sites": affiliates.to_share(state)}
+    except Exception:                                      # noqa: BLE001 -- said without them
+        return {}
+
+
 def shared_cores(state):
     """Shared Cores (coreshare.py) for an arcade node: it answers for each chain whose Core runs on
     this machine unless its box is unticked in Admin -> Chains (`share:<net>`, on when not set), and
     borrows the chains it was told to (`core:<net>` = borrow, read at start)."""
+    from .. import core_catchup
     from .. import cores as coreslib
     from ..rpc import RpcError
     from .coreshare import CoreShare
@@ -863,7 +905,7 @@ def shared_cores(state):
         if chain is None:
             raise RuntimeError(f"{net} does not run here")
         out = []
-        with chain.rpc() as rpc:
+        with chain.local_rpc() as rpc:          # never a sharer's: a Core catching up here is not offered at all
             for method, params in calls:
                 try:
                     out.append({"r": rpc.call(method, *params)})
@@ -878,8 +920,10 @@ def shared_cores(state):
                 continue
             if not state.chain_ready(chain):
                 continue
+            if core_catchup.known_behind(chain.network):
+                continue                                   # syncing here: it borrows, it does not lend
             try:
-                with chain.rpc() as rpc:
+                with chain.local_rpc() as rpc:
                     best = rpc.call("getbestblockhash")
                     nets[chain.network] = {"h": int(rpc.call("getblockheader", best, True)["height"]), "b": best}
                 # Where those who use it pay its tenth: the operator account's address there, which its Wallet

@@ -1,0 +1,714 @@
+/* The style every page shares, out of base.html since 2026-10-20 (45 KB a page, now kept by the browser:
+   app.py ASSETS). */
+:root{
+  --bg:#faf8f4; --panel:#fffdf9; --fg:#1b1a17; --muted:#6b665c; --line:#e2ddd3;
+  --accent:#b8860b; --accent-fg:#fff; --ok:#2d7a4f; --warn:#a8620a; --bad:#a83232;
+  --code:#f2eee6;
+  /* Sent bubbles get their own colour rather than the app accent: a chat reads
+     as a chat largely because outgoing messages are a distinct, saturated
+     block, and the amber accent is too close to the page ground to do that. */
+  --sent:#2f7cf6; --sent-fg:#fff;
+}
+/* Scrollbars in the theme's own colours, not the browser's white track: color-scheme
+   alone left a white strip under the piece page's JSON in dark mode (2026-09-26). */
+*{scrollbar-color:var(--line) transparent}
+::-webkit-scrollbar{width:10px;height:10px;background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:6px}
+:root{color-scheme:light dark}   /* native scrollbars and form parts follow the theme:
+   a white overflow strip under a table in dark mode (filming, 2026-09-25) */
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#141310; --panel:#1a1815; --fg:#ece8e0; --muted:#9b948a; --line:#2c2a25;
+    --accent:#d9a520; --accent-fg:#141310; --ok:#5bbd85; --warn:#d99a3e; --bad:#e07070;
+    --code:#1d1b17;
+    --sent:#0b84ff; --sent-fg:#fff;
+  }
+}
+*{box-sizing:border-box}
+/* The `hidden` attribute needs `!important` to be reliable here.
+ *
+ * `[hidden]{display:none}` lives in the browser's own stylesheet, and ANY author
+ * rule that sets `display` on the same element beats it outright -- so
+ * `.bubble-row{display:flex}` made `hidden` completely inert on the send
+ * progress bubble. The element rendered on first paint of a brand-new page with
+ * no send in progress, and every `row.hidden = true` in the JavaScript was a
+ * no-op that silently appeared to work.
+ *
+ * a test machine found it in a headless browser by asserting the computed style rather
+ * than the attribute. That distinction is the whole lesson: a check for the
+ * attribute reports "hidden: 1" for ever while the user stares at the element.
+ */
+[hidden]{display:none !important}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+header{border-bottom:1px solid var(--line);background:var(--panel)}
+.bar{max-width:1000px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.brand{font-weight:650;font-size:1.05rem;letter-spacing:-.01em}
+.net{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;padding:3px 8px;
+  border:1px solid var(--accent);color:var(--accent);border-radius:999px}
+nav{display:flex;gap:4px;flex-wrap:wrap;margin-left:auto}
+nav a{padding:6px 11px;border-radius:6px;font-size:.9rem;color:var(--muted)}
+nav a:hover{background:var(--code);text-decoration:none}
+nav a.on{background:var(--accent);color:var(--accent-fg)}
+/* A heart you gave is pink, and a dislike you gave is filled, on every page
+   that has them (2026-09-28: so nobody hearts twice by accident). */
+button.likebtn.liked{color:#e0457b;border-color:#e0457b;background:rgba(224,69,123,.14)}
+button.dislikebtn.disliked{color:#fff;border-color:#5b6b8c;background:#5b6b8c}
+nav a.off{opacity:.4;cursor:not-allowed}
+main{max-width:1000px;margin:0 auto;padding:26px 20px 60px}
+/* Drawn inside the pop-up under a running inscription: no chrome, and the
+   room the chrome took goes to the transaction. */
+body.embed main{padding:14px 14px 18px}
+body.embed .back-link{display:none}
+/* Approve and Refuse sit at the bottom edge of the pop-up's frame, directly
+   above its Close button, however far down the transaction's details go. A
+   swap lists two legs, five rows and every output; the buttons that answer it
+   were off the bottom of the frame and had to be scrolled to, with Close --
+   the one button that does nothing -- in plain view underneath.
+
+   `fixed` rather than `sticky`, which was tried first and is wrong here: a
+   sticky element may only move within its containing block, so on a short
+   page the panel itself runs out of room and the bar stays exactly where it
+   was. In a framed document `fixed` pins to the frame's own viewport, which
+   is the box we mean. It leaves the flow, so `.decide-space` holds the room
+   it would have taken and nothing ends up underneath it. */
+body.embed .decide.pinned{position:fixed;left:0;right:0;bottom:0;z-index:2;
+  margin:0;padding:12px 14px;background:var(--panel);
+  border-top:1px solid var(--line);box-shadow:0 -6px 18px rgba(0,0,0,.18)}
+body.embed .decide-space{height:62px}
+h1{font-size:1.5rem;margin:0 0 4px;letter-spacing:-.02em}
+.sub{color:var(--muted);margin:0 0 24px;font-size:.95rem}
+h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
+  margin:28px 0 12px;font-weight:600}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.stat .k{font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.stat .v{font-size:1.5rem;font-variant-numeric:tabular-nums;margin-top:3px}
+.stat .n{font-size:.8rem;color:var(--muted);margin-top:2px}
+table{width:100%;border-collapse:collapse;font-size:.92rem}
+th{text-align:left;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--muted);padding:0 10px 8px 0;font-weight:600}
+td{padding:9px 10px 9px 0;border-top:1px solid var(--line);vertical-align:top}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.87em}
+code{background:var(--code);padding:1px 5px;border-radius:4px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:13px;
+  overflow-x:auto;margin:0 0 12px;font-size:.85rem;line-height:1.55}
+input,textarea,select{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;
+  background:var(--bg);color:var(--fg);font:inherit}
+textarea{min-height:150px;resize:vertical;font-family:ui-monospace,monospace;font-size:.88rem}
+label{display:block;font-size:.8rem;color:var(--muted);margin:0 0 5px;font-weight:500}
+.field{margin-bottom:14px}
+button,.btn{padding:9px 16px;border:1px solid var(--accent);background:var(--accent);
+  color:var(--accent-fg);border-radius:7px;font:inherit;font-weight:550;cursor:pointer}
+button:hover{filter:brightness(1.08)}
+button.ghost{background:transparent;color:var(--accent)}
+button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+/* A heading that shares a row with a button and pushes it to the far end. A
+   class rather than an inline style, so the phone rules below can give it the
+   whole width -- an inline `flex:1` beats any stylesheet and left "Find people
+   on the chain" four words tall in a squeezed column. */
+.row > .row-title{flex:1;margin:0}
+.msg{padding:11px 14px;border-radius:8px;margin-bottom:16px;font-size:.92rem;border:1px solid}
+.msg.err{background:color-mix(in srgb,var(--bad) 10%,transparent);border-color:var(--bad)}
+.msg.info{background:color-mix(in srgb,var(--accent) 10%,transparent);border-color:var(--accent)}
+.msg.ok{background:color-mix(in srgb,var(--ok) 12%,transparent);border-color:var(--ok)}
+.msg.reveal{background:var(--code);border-color:var(--accent);border-width:2px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:1.05rem;
+  letter-spacing:.02em;user-select:all;word-break:break-word}
+.askcard-back{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.45);
+  display:flex;align-items:center;justify-content:center;padding:16px}
+.askcard{max-width:440px;width:100%;margin:0}
+.askcard h3{margin-top:0}
+.mainnet-review{border:2px solid var(--bad)}
+.mainnet-review h3{display:flex;align-items:center;gap:8px}
+.mr-rows{margin:6px 0 10px}
+.mr-row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line);font-size:.9rem}
+.mr-row span:last-child{white-space:nowrap;font-variant-numeric:tabular-nums}
+.mr-row.total{font-weight:700;border-bottom:0}
+.mr-warn{color:var(--bad);font-weight:600;font-size:.88rem;margin:0 0 12px}
+.askcard .row{gap:8px;justify-content:flex-end}
+.pill{font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.pill.ok{color:var(--ok);border-color:var(--ok)}
+.pill.warn{color:var(--warn);border-color:var(--warn)}
+.pill.bad{color:var(--bad);border-color:var(--bad)}
+.tag{font-size:.58rem;text-transform:uppercase;letter-spacing:.06em;padding:1px 5px;
+  border-radius:4px;margin-left:6px;vertical-align:1px;font-weight:600}
+/* One color per coin, everywhere (2026-10-13: "Change the P test color to green"
+   -- PEP green on both its networks, DOGE yellow; "test"/"main" tells PEP's two apart). */
+:root{--net-test:#22a35a;--net-main:#22a35a;--net-doge:#d4a106;--net-ltc:#345d9d}
+@media (prefers-color-scheme:dark){:root{--net-ltc:#7fa3dc}}
+.tag.testnet{background:color-mix(in srgb,var(--net-test) 20%,transparent);color:var(--net-test)}
+.tag.mainnet{background:color-mix(in srgb,var(--net-main) 22%,transparent);color:var(--net-main)}
+.tag.dogecoin{background:color-mix(in srgb,var(--net-doge) 24%,transparent);color:var(--net-doge)}
+.tag.litecoin{background:color-mix(in srgb,var(--net-ltc) 22%,transparent);color:var(--net-ltc)}
+/* Which coin, beside every testnet/mainnet word (2026-10-13): an uppercase P
+   or D in the network's own color -- blue P testnet, green P mainnet, yellow D. */
+.netl{font-weight:800;font-style:normal;letter-spacing:0;margin-right:1px}
+.netl.testnet{color:var(--net-test)}.netl.mainnet{color:var(--net-main)}.netl.dogecoin{color:var(--net-doge)}.netl.litecoin{color:var(--net-ltc)}
+.tag.testnet::before,.tag.mainnet::before{content:"P";font-weight:800;margin-right:3px;letter-spacing:0}
+.tag.dogecoin::before{content:"D";font-weight:800;margin-right:3px;letter-spacing:0}
+.tag.litecoin::before{content:"L";font-weight:800;margin-right:3px;letter-spacing:0}
+/* A chain whose node is still syncing: shown, and grayed out (2026-10-13). */
+.chain-off{opacity:.45;filter:grayscale(1);cursor:not-allowed}
+a.chain-off,button.chain-off,span.chain-off.ex-chip{pointer-events:none}
+/* what an asset is, at a glance (2026-10-06): its chain, with an icon, and its supply */
+.netbadge,.supplybadge{display:inline-flex;align-items:center;gap:3px;font-size:.6rem;font-weight:700;
+  letter-spacing:.05em;padding:1px 6px;border-radius:999px;vertical-align:2px;white-space:nowrap;
+  line-height:1.6;margin-left:4px}
+/* A chain as its coin (2026-10-18): the icon alone, the name on hover. */
+.netbadge.icon{padding:0;background:none;vertical-align:-4px}
+.neticon{width:18px;height:18px;border-radius:50%;display:block;object-fit:cover}
+.netbadge.test{background:color-mix(in srgb,var(--net-test) 20%,transparent);color:var(--net-test)}
+.netbadge.main{background:color-mix(in srgb,var(--net-main) 22%,transparent);color:var(--net-main)}
+.netbadge.doge{background:color-mix(in srgb,var(--net-doge) 24%,transparent);color:var(--net-doge)}
+.netbadge.ltc{background:color-mix(in srgb,var(--net-ltc) 22%,transparent);color:var(--net-ltc)}
+.supplybadge{font-weight:600;letter-spacing:.02em;text-transform:none}
+.supplybadge.fixed{border:1px solid color-mix(in srgb,var(--muted) 45%,transparent);color:var(--muted)}
+.supplybadge.managed{border:1px solid color-mix(in srgb,var(--warn) 60%,transparent);color:var(--warn)}
+button.tag.switch{border:0;cursor:pointer;font-family:inherit;line-height:1.5;
+  outline-offset:2px}
+button.tag.switch:hover{filter:brightness(.85)}
+/* The chain switch (2026-10-13). The operator: "the one that is selected should be higher
+   than the other two and have a border" -- the chain being shown is the tall one with a
+   border; the other two are smaller, level with each other, centred on it. */
+.chainswitch{display:inline-flex;gap:5px;align-items:center;vertical-align:middle;margin-left:8px}
+.chainswitch form{display:inline-flex;margin:0;align-items:center}
+.chainswitch .tag,.chainswitch button.tag.switch{display:inline-flex;align-items:center;margin:0;
+  font-size:.58rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;line-height:1.5;
+  padding:1px 6px;border-radius:5px;border:1px solid transparent;min-height:0;height:auto;
+  vertical-align:middle;box-shadow:none}
+.chainswitch .tag.on{font-size:.7rem;padding:5px 10px;border:1.5px solid currentColor;border-radius:7px}
+.chainswitch .tag:not(.on),.chainswitch button.tag.switch{height:1.3rem;box-sizing:border-box;font-family:inherit}
+/* the form carries style="display:inline", so only !important reaches it */
+.chainswitch form{display:inline-flex!important;align-items:center;height:1.3rem;line-height:1}
+.chainswitch button.tag.switch{opacity:.75;cursor:pointer}
+/* A chain as its coin (2026-10-18): no pill, the picked one ringed. */
+.chainswitch .tag.iconic{padding:0;height:auto;background:none;border:0}
+.chainswitch .tag.iconic .neticon{width:26px;height:26px}
+.chainswitch .tag.iconic.on .neticon{box-shadow:0 0 0 2px var(--accent,#d4a72c)}
+.chainswitch .tag.iconic.chain-off .neticon{opacity:.3;filter:grayscale(1)}
+.chainswitch button.tag.switch:hover{opacity:1}
+.chainswitch button.tag.switch:hover{opacity:1}
+.chainbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px}
+.chaincard{flex:1;min-width:240px;background:var(--panel);border:1px solid var(--line);
+  border-radius:10px;padding:14px 16px}
+.chaincard h3{margin:0 0 2px;font-size:.95rem;font-weight:650;display:flex;
+  align-items:center;justify-content:space-between;gap:8px}
+.chaincard .role{font-size:.75rem;color:var(--muted);margin:0 0 10px}
+.kv{display:flex;justify-content:space-between;font-size:.86rem;padding:3px 0}
+.kv .k{color:var(--muted)}
+.kv .v{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.fp{font-family:ui-monospace,monospace;letter-spacing:.04em}
+.phrase{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:1.12rem;line-height:1.7;letter-spacing:.02em;word-spacing:.1em;
+  background:var(--code);border:1px solid var(--accent);border-radius:8px;
+  padding:14px 16px;user-select:all;word-break:break-word}
+.unread{font-weight:650}
+.note{border-left:3px solid var(--accent);padding:10px 14px;background:var(--panel);
+  border-radius:0 8px 8px 0;font-size:.9rem;margin-bottom:14px}
+
+/* address book */
+.two{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+@media(max-width:640px){.two{grid-template-columns:1fr}}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+
+/* A collection as a market: a hero, a strip of numbers, and a wall of pieces.
+   Laid out the way marketplaces lay one out, because that is the shape people
+   already know how to read -- the picture first and the price under it, not a
+   table with a thumbnail in it (D-096). */
+.collhero{display:flex;gap:16px;align-items:flex-start;margin:0 0 14px;flex-wrap:wrap}
+.collhero img{width:104px;height:104px;object-fit:cover;border-radius:14px;
+  border:1px solid var(--line);background:var(--panel)}
+.collhero .who{flex:1 1 240px;min-width:0}
+.collhero h1{margin:0 0 4px}
+.statbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(116px,1fr));
+  gap:10px;margin:0 0 18px}
+.stat{border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:10px 12px}
+.stat b{display:block;font-size:1.04rem;font-variant-numeric:tabular-nums}
+.stat span{font-size:.68rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+/* Where a token has no icon: a plain mark, never its initials. Two letters of
+   a name read as a ticker symbol, and nothing here has one. */
+.coinface{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;
+  background:var(--code);color:var(--muted);font-size:.68rem;font-weight:700;letter-spacing:.02em}
+table.markets td{vertical-align:middle}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(186px,1fr));gap:12px}
+.tile{border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  overflow:hidden;display:flex;flex-direction:column}
+.tile .art{display:block;aspect-ratio:1/1;background:var(--bg) center/cover no-repeat;
+  image-rendering:pixelated}
+.tile .body{padding:9px 11px 11px;display:flex;flex-direction:column;gap:5px;flex:1}
+.tile .name{font-weight:600;font-size:.92rem;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.tile .who{font-size:.74rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.tile .price{font-variant-numeric:tabular-nums;font-size:.92rem}
+.tile details>summary{list-style:none;cursor:pointer}
+.tile details>summary::-webkit-details-marker{display:none}
+.tile .act{margin-top:auto;display:flex;gap:6px;flex-wrap:wrap}
+@media (max-width:560px){.tiles{grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:9px}}
+.card{border:1px solid var(--line);border-radius:10px;padding:15px 16px;background:var(--panel)}
+.card.editing{border-color:var(--accent);box-shadow:0 0 0 3px rgba(120,110,255,.12)}
+.card h3{font-size:1.02rem}
+dl.addrs{display:grid;grid-template-columns:auto 1fr;gap:7px 10px;margin:12px 0 0;align-items:center}
+dl.addrs dt{margin:0}
+dl.addrs dd{margin:0;min-width:0}
+code.addr{font-size:.78rem;word-break:break-all;cursor:pointer;padding:2px 5px;
+  border-radius:4px;background:var(--code);display:inline-block;line-height:1.35}
+code.addr:hover{background:var(--line)}
+code.addr.copied{background:var(--ok,#1f9d55);color:#fff}
+.card .notes{font-size:.87rem;color:var(--muted);margin:12px 0 0;white-space:pre-wrap}
+a.btn{display:inline-block;padding:6px 11px;border:1px solid var(--line);border-radius:6px;
+  font-size:.86rem;color:var(--fg);background:transparent}
+a.btn:hover{background:var(--code);text-decoration:none}
+.panel.empty{text-align:center;padding:34px 20px}
+.panel.empty p{margin:0 0 8px}
+textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;
+  background:var(--panel);color:var(--fg);font:inherit;font-size:.92rem;resize:vertical}
+input.mono{font-family:var(--mono,ui-monospace,monospace);font-size:.85rem}
+/* A people-search box looks like every other box (iOS draws its own). */
+input[type=search]{-webkit-appearance:none;appearance:none}
+
+table.wallets{width:100%;border-collapse:collapse}
+table.wallets td{padding:9px 8px;border-top:1px solid var(--line);vertical-align:middle}
+table.wallets tr:first-child td{border-top:0}
+table.wallets tr.active td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+button.small,.ghost.small{padding:4px 9px;font-size:.82rem}
+
+.who.unnamed{font-family:var(--mono,ui-monospace,monospace);font-size:.82rem}
+label.attach{display:flex;align-items:center;cursor:pointer;padding:0 8px;font-size:1.15rem;
+  opacity:.65}
+label.attach:hover{opacity:1}
+label.introduce{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);
+  white-space:nowrap;cursor:pointer}
+label.introduce input{width:auto;margin:0}
+a.file{display:flex;align-items:center;gap:10px;margin-top:7px;padding:9px 11px;
+  border-radius:8px;background:rgba(0,0,0,.07);color:inherit;text-decoration:none}
+a.file:hover{background:rgba(0,0,0,.13);text-decoration:none}
+.bubble-row.mine a.file{background:rgba(255,255,255,.2)}
+.file-icon{font-size:1.35rem;flex:none}
+.file-meta{display:flex;flex-direction:column;min-width:0;line-height:1.35}
+.file-meta strong{word-break:break-all;font-size:.86rem}
+.file-meta .muted{font-size:.76rem}
+
+.note.warn-note{border-color:var(--warn,#b8860b);
+  background:color-mix(in srgb,var(--warn,#b8860b) 9%,transparent)}
+.danger-text{color:var(--bad)}
+a.chainpick{flex:1;display:block;padding:11px 14px;border:1px solid var(--line);
+  border-radius:9px;color:var(--fg);text-decoration:none;font-weight:600}
+a.chainpick em{display:block;font-weight:400;font-style:normal;font-size:.8rem;
+  color:var(--muted);margin-top:3px}
+a.chainpick:hover{background:var(--code);text-decoration:none}
+a.chainpick.on{border-color:var(--accent);box-shadow:0 0 0 2px rgba(120,110,255,.16)}
+.poster{font-size:.76rem;font-weight:700;opacity:.75;margin-bottom:3px}
+
+.live{font-size:.78rem;color:var(--accent);padding:0 16px;min-height:1.1em}
+
+.media{display:block;margin-top:8px;max-width:100%;border-radius:8px;overflow:hidden}
+.media img,img.media{display:block;max-width:100%;height:auto;border-radius:8px}
+audio.media{width:100%;min-width:220px}
+video.media{width:100%;max-height:420px;background:#000;border-radius:8px}
+
+/* public feed */
+.feed{max-width:620px;margin:0 auto}
+.feedhead{display:flex;align-items:flex-start;gap:14px;margin-bottom:16px}
+.feedhead h1{margin:0}
+.feedhead .sub{margin:4px 0 0}
+.chainpills{margin-left:auto;display:flex;gap:6px;flex:none}
+.pillpick{padding:5px 12px;border:1px solid var(--line);border-radius:999px;
+  font-size:.82rem;color:var(--muted);text-decoration:none}
+.pillpick:hover{background:var(--code);text-decoration:none}
+.pillpick.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.pillpick.main.on{background:var(--bad);border-color:var(--bad);color:#fff}
+.feed .card{border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  padding:16px 18px;margin-bottom:14px}
+.composer-card textarea{width:100%;resize:vertical;font-size:.97rem}
+.composer-foot{display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}
+.composer-foot .grow{flex:1}
+.composer-foot .as{font-size:.82rem}
+.composer-card .counter{font-size:.8rem;margin:8px 0 0}
+.composer-foot label.attach{padding:0;opacity:.7;font-size:1rem;gap:5px}
+.attach-label{font-size:.84rem}
+.picked{font-size:.83rem;margin:9px 0 0}
+.picked.costly{color:var(--bad);font-weight:500}
+.feednote{font-size:.8rem;margin:12px 0 0;padding-top:11px;border-top:1px solid var(--line)}
+.confirm-card{border-color:var(--accent);box-shadow:0 0 0 3px rgba(120,110,255,.1)}
+.empty-card p{margin:0 0 6px}
+.post{padding:15px 18px}
+.post.mine{border-left:3px solid var(--accent)}
+.post-head{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
+.post-head .poster{font-weight:700;font-size:.92rem}
+.post-head .when{font-size:.78rem;margin-left:auto;white-space:nowrap}
+.pending{color:var(--warn,#b8860b)}
+.post-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.post-media{display:block;width:100%;margin-top:11px;border-radius:9px}
+img.post-media{height:auto;background:var(--code)}
+video.post-media{max-height:460px;background:#000}
+audio.post-media{height:40px}
+.post-file{display:inline-block;margin-top:9px;font-size:.79rem;color:var(--muted)}
+.chanlist{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+.chanchip{padding:4px 11px;border:1px solid var(--line);border-radius:999px;
+  font-size:.83rem;color:var(--fg);text-decoration:none}
+.chanchip:hover{background:var(--code);text-decoration:none}
+.chanchip.on{border-color:var(--accent);color:var(--accent)}
+
+.chanbar{padding:14px 18px}
+.chanbar .chanlist{margin-top:10px}
+
+table.published{width:100%;border-collapse:collapse;margin-top:6px}
+table.published td{padding:8px 6px;border-top:1px solid var(--line);vertical-align:middle}
+table.published tr:first-child td{border-top:0}
+
+/* --- messenger -------------------------------------------------------------
+   A conversation, styled like one: the other person on the left in a neutral
+   bubble, you on the right in an accented one, each with a tail. The whole
+   messenger block was silently lost in an earlier edit, which is why this had
+   been rendering as unstyled divs. */
+.msgr{display:grid;grid-template-columns:290px 1fr;gap:0;height:calc(100vh - 190px);
+  min-height:440px;max-height:820px;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+  background:var(--panel)}
+/* `height:auto` alone was not enough: `max-height:820px` still applied and
+   `overflow:hidden` cut what stuck out. On a phone that clipped the composer's
+   own note mid-sentence -- 818px shown of 833px -- and the sentence it cut was
+   the one saying a message is permanent once sent. A stacked messenger has no
+   reason to be capped at all: the page scrolls. */
+/* Shown only where a pane is hidden; with both on screen there is nothing to
+   go back to. */
+.convo-head .back{display:none;align-items:center;min-height:44px;padding:0 10px 0 2px;
+  margin-right:2px;font-weight:600;color:var(--accent);white-space:nowrap}
+.convo-head .back:hover{text-decoration:none}
+
+@media(max-width:760px){.msgr{grid-template-columns:1fr;height:auto;max-height:none;
+    min-height:0;overflow:visible}
+  .msgr .threads{max-height:none;border-right:0}
+
+  /* One screen at a time. Stacked, the list pushed the conversation below the
+     fold on every visit, so reading a reply began with scrolling past everyone
+     you have ever spoken to. The list hands over to the conversation and the
+     back button hands back -- which is how every phone does this. */
+  .msgr.open .threads{display:none}
+  .msgr:not(.open) .convo{display:none}
+  .convo-head .back{display:inline-flex}
+
+  /* An open conversation is one screen, like every phone messenger (the operator,
+     2026-09-27: "when I load into a conversation it should load to the newest
+     message at the bottom of the screen"). Left at height:auto the bubbles grew
+     to their content and the PAGE scrolled, so the jump to the newest message
+     and the load-older-as-you-scroll-up both acted on a box that never
+     scrolled: you landed on the oldest message loaded. Fixed to the screen,
+     the bubbles scroll inside it and the composer stays at the bottom. */
+  .msgr.open{height:100vh;height:100dvh;max-height:none;min-height:0;overflow:hidden;
+    grid-template-rows:100%;border-radius:0;border-left:0;border-right:0}
+  .msgr.open .convo{min-height:0;height:100%}
+}
+
+
+.threads{border-right:1px solid var(--line);display:flex;flex-direction:column;
+  overflow-y:auto;background:var(--bg)}
+.threads-head{display:flex;align-items:center;gap:8px;padding:13px 14px;
+  border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:1}
+.threads-head strong{flex:1;font-size:.92rem}
+.newthread,.newconv{padding:13px 14px;border-bottom:1px solid var(--line);
+  background:var(--code)}
+.newconv label{display:block;font-size:.78rem;color:var(--muted);margin-bottom:5px}
+.newconv input{margin-bottom:7px}
+
+a.thread{display:block;padding:11px 14px;border-bottom:1px solid var(--line);
+  color:var(--fg);text-decoration:none}
+a.thread:hover{background:var(--code);text-decoration:none}
+a.thread.on{background:var(--code);box-shadow:inset 3px 0 0 var(--accent)}
+.thread-top{display:flex;align-items:center;gap:8px}
+.thread-top .who{flex:1;font-weight:600;font-size:.9rem;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+/* Unread is red, and red is for unread. The accent badge counts things
+   that are merely there -- approvals waiting, offers standing; this one says
+   somebody has said something to you since you last looked (D-108). */
+.badge.new{background:var(--bad);color:#fff;min-width:1.35em;text-align:center}
+.badge{background:var(--accent);color:var(--accent-fg);border-radius:999px;
+  padding:1px 7px;font-size:.72rem;font-weight:700;flex:none}
+/* The count beside a nav item: red, because it is the one thing in the nav
+   that is asking to be looked at rather than describing where you are.
+   min-width with centred text so 1 and 12 are the same circle. */
+.nav-count{display:inline-block;margin-left:6px;background:#d6483b;color:#fff;
+  border-radius:999px;min-width:1.25em;padding:1px 5px;font-size:.7rem;
+  font-weight:700;line-height:1.35;text-align:center;vertical-align:1px}
+.thread-preview{font-size:.8rem;color:var(--muted);margin-top:3px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.thread-when{font-size:.72rem;color:var(--muted);margin-top:3px}
+
+.convo{display:flex;flex-direction:column;min-width:0;min-height:0;
+  background:var(--panel)}
+.convo-head{display:flex;align-items:center;gap:10px;padding:12px 16px;
+  border-bottom:1px solid var(--line);flex-wrap:wrap}
+.convo-name{font-weight:700}
+.convo-sub{font-size:.76rem;color:var(--muted);word-break:break-all}
+.convo .nothing,.convo .empty{padding:28px 16px;text-align:center;color:var(--muted)}
+
+.bubbles{flex:1 1 auto;overflow-y:auto;
+  /* 26px, not 16px: the tail hangs 12px past the bubble, so the old
+     padding left it almost touching the panel edge. */
+  padding:18px 26px;display:flex;
+  flex-direction:column;gap:3px;
+  /* Without min-height:0 a flex child sizes to its content and never scrolls --
+     the default min-height of a flex item is auto, not zero. That is why the
+     conversation grew past the panel instead of scrolling inside it. */
+  min-height:0}
+.bubble-row{display:flex;margin-top:7px}
+.bubble-row.theirs{justify-content:flex-start}
+.bubble-row.mine{justify-content:flex-end}
+.bubble{position:relative;max-width:min(76%,520px);padding:9px 14px;
+  border-radius:19px;font-size:.94rem;line-height:1.4}
+.bubble .text{white-space:pre-wrap;overflow-wrap:anywhere}
+.bubble-row.theirs .bubble{background:var(--code);color:var(--fg);
+  border-bottom-left-radius:3px}
+.bubble-row.mine .bubble{background:var(--sent);color:var(--sent-fg);
+  border-bottom-right-radius:3px}
+
+/* The tail. It leaves the bubble's bottom corner and tapers to a point. Drawn
+ * as one clipped box: a plain background-coloured rectangle with everything
+ * outside the tail shape clipped away. Two earlier attempts both read as a
+ * spur sticking out of the SIDE rather than a tail -- a box hung off the right
+ * edge with a quarter-disc carved from its top-left, then a pair of blocks
+ * whose horizontal border-radius exceeded their own width, which collapsed the
+ * tail to a sliver. A third clipped a path whose two curves hugged each other,
+ * leaving a hairline. This shape was picked by rendering candidates at 8x and
+ * looking at them.
+ *
+ * The path is a 13x16 box sitting on the bubble's bottom edge and overlapping
+ * it by 1px, so there is no antialiasing seam at the join. It runs down the
+ * bubble's edge (x=0), curves out and down to a tip level with the bubble's
+ * bottom (13,16), and closes back along the bottom. The bubble's own corner
+ * radius is dropped to 0 on that side: the tail carries the corner, and any
+ * radius there pulls the bubble away from the tail root.
+ *
+ * Clipping means the tail needs no knowledge of what is behind it -- unlike a
+ * background-coloured mask, it works on the selected thread row and on the
+ * public board, not only against --panel. @supports keeps browsers without
+ * clip-path: path() from showing a bare rectangle; they get no tail. */
+@supports (clip-path: path("M 0 0 Z")) {
+  .bubble-row .bubble::after{content:"";position:absolute;bottom:0;
+    width:13px;height:16px;
+    clip-path:path("M 0 0 Q 0 12 13 16 L 0 16 Z")}
+  .bubble-row.mine .bubble{border-bottom-right-radius:0}
+  .bubble-row.mine .bubble::after{right:-12px;background:var(--sent)}
+  .bubble-row.theirs .bubble{border-bottom-left-radius:0}
+  /* Same path, mirrored, so the two tails are exact reflections. */
+  .bubble-row.theirs .bubble::after{left:-12px;background:var(--code);
+    transform:scaleX(-1)}
+}
+.bubble .stamp{font-size:.68rem;opacity:.62;margin-top:4px}
+.bubble-row.mine .bubble a{color:inherit;text-decoration:underline}
+.bubble-row .bubble a.file{text-decoration:none}
+.bubble-row .bubble a.file strong{text-decoration:underline}
+
+.composer{display:flex;align-items:flex-end;gap:8px;padding:11px 14px;
+  border-top:1px solid var(--line);background:var(--bg)}
+/* `min-height:0` because the generic `textarea{min-height:150px}` above was
+   never overridden here, and it turned the chat box into a tall narrow block
+   instead of the single-line pill the markup asks for -- `rows="1"`, `grow()`
+   on input, `max-height:160px` to stop it. On a desktop that merely looked
+   heavy; on a phone, where the Send button takes a third of the row, it looked
+   squashed into a corner. It starts at one line and grows as you type. */
+.composer textarea{flex:1;resize:none;border-radius:19px;padding:10px 15px;
+  min-height:0;max-height:160px}
+.composer button{border-radius:19px;flex:none}
+.composer-note{font-size:.76rem;padding:0 16px 11px;margin:0;background:var(--bg)}
+
+/* A picture, opened. Fixed to the viewport rather than grown in place: a chat
+   scrolls, and a picture that pushes the conversation around while you look at
+   it loses your place in it. */
+.lightbox{display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.86);
+  align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:14px}
+.lightbox.on{display:flex}
+.lightbox-stage{flex:1 1 auto;min-height:0;width:100%;display:flex;align-items:center;
+  justify-content:center;overflow:hidden;touch-action:none}
+.lightbox img{max-width:100%;max-height:calc(100vh - 90px);object-fit:contain;
+  border-radius:8px;background:#fff;transform-origin:0 0;will-change:transform;
+  touch-action:none;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;cursor:zoom-in}
+.lightbox.zoomed img{cursor:grab}
+.lightbox-zoom{display:flex;gap:6px}
+.lightbox-zoom button{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;
+  border-radius:7px;min-width:40px;min-height:40px;padding:0 10px;font-size:1.05rem;line-height:1}
+.lightbox-bar{display:flex;align-items:center;gap:12px;color:#fff;font-size:.85rem;
+  max-width:100%}
+.lightbox-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.85}
+.lightbox-save{color:var(--accent);font-weight:600}
+.lightbox-close{background:transparent;border:1px solid rgba(255,255,255,.4);
+  color:#fff;border-radius:7px;padding:7px 13px;font-size:.85rem;min-height:40px}
+a.media img{cursor:zoom-in}
+/* The three sizes a picture can be sent at. Each button carries what that
+   choice costs, because the cost is the reason the choice exists. */
+.pager{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:16px 0 4px}
+.pager .on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);
+  cursor:default}
+.sizes{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.sizes button.size{font-size:.76rem;padding:6px 9px;line-height:1.25;text-align:left}
+.sizes button.size strong{display:block;font-size:.8rem}
+.sizes button.size.on{background:var(--accent);color:var(--accent-fg);
+  border-color:var(--accent)}
+.convo .confirm{margin:0 16px 10px;padding:12px 14px;border:1px solid var(--accent);
+  border-radius:10px;font-size:.88rem;background:var(--code)}
+.small-input{padding:5px 9px;font-size:.84rem}
+
+footer.version{max-width:1000px;margin:0 auto;padding:0 20px 30px;
+  font-size:.74rem;color:var(--muted)}
+
+.spin{display:inline-block;width:11px;height:11px;margin-right:7px;vertical-align:-1px;
+  border:2px solid var(--accent);border-right-color:transparent;border-radius:50%;
+  animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+button:disabled{opacity:.55;cursor:default}
+
+/* The button that sends is the colour of what it produces -- the same blue as a
+   sent bubble -- rather than the app accent, which is the colour of links and
+   navigation. Both composers, because the public board is meant to look like
+   the private one. */
+form.composer button[type=submit]{background:var(--sent);border-color:var(--sent);
+  color:var(--sent-fg)}
+
+.bubble .bar-row{display:flex;align-items:center;gap:9px;margin-top:8px}
+.bubble .bar{flex:1;height:6px;border-radius:3px;overflow:hidden;
+  background:rgba(255,255,255,.28)}
+.bubble .bar-pct{font-size:.74rem;font-variant-numeric:tabular-nums;opacity:.9;
+  min-width:2.6em;text-align:right}
+.bubble .bar-fill{height:100%;width:4%;border-radius:3px;background:#fff;
+  transition:width .4s ease}
+.bubble-row.failed .bubble{background:var(--bad)}
+.bubble.failed-note{background:var(--warn,#b8860b)}
+.bubble-row.failed .bar-fill{background:rgba(255,255,255,.6)}
+
+.msg.stale{border-width:2px}
+
+.chainpick-row{display:flex;gap:6px;padding:11px 14px;border-bottom:1px solid var(--line)}
+.chainpick-row .pillpick{flex:1;text-align:center}
+.bubble .poster{font-size:.74rem;font-weight:700;opacity:.75;margin-bottom:3px}
+.bubble .media,.bubble img.media{margin-top:7px;border-radius:8px;max-width:100%}
+.composer-note.costly{color:var(--bad)}
+
+.bubble .stamp .unconfirmed{opacity:.85;font-style:italic}
+
+/* --- phones ----------------------------------------------------------------
+   Measured in a 390px viewport (an iPhone 12/13/14), not guessed at. Three
+   things were wrong and none of them shows on a desktop:
+
+   * Every text field was 13.6-15px. Safari on iOS zooms the page in when it
+     focuses a field smaller than 16px, and does not zoom back out -- so the
+     first tap on any form left the wallet magnified and scrolled sideways.
+   * The header was 226px of an 844px screen, because eleven navigation links
+     wrapped onto four rows before any page began.
+   * Tap targets were 35px tall against the 44px people's fingers actually need.
+*/
+@media(max-width:640px){
+  input,select,textarea{font-size:16px}
+  input.mono{font-size:16px}
+  textarea{min-height:120px}
+
+  .bar{padding:10px 14px;gap:8px}
+  main{padding:18px 14px 48px}
+  h1{font-size:1.35rem}
+  .panel{padding:14px}
+
+  /* One scrolling row rather than three wrapped ones. Nine sections wrapped to
+     184px of an 844px screen before any page began, and every feature still to
+     come makes that worse -- a strip that scrolls costs the same at nine as at
+     twenty. The edge of the next item is what says there is more.
+
+     It stops at the page's own edge instead of bleeding to the screen's. The
+     negative right margin that bought the bleed measured the whole page 14px
+     wider than a 390px phone, and a page wider than the phone scrolls sideways
+     whatever else is on it -- which is the thing this whole block is here to
+     stop. */
+  nav{margin-left:0;width:100%;gap:2px;flex-wrap:nowrap;overflow-x:auto;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-right:14px}
+  nav::-webkit-scrollbar{display:none}
+  nav a{padding:9px 11px;font-size:.83rem;min-height:40px;display:flex;
+    align-items:center;white-space:nowrap;flex:none}
+  /* The pages that are not built yet are not links, and a dead item is dead
+     space. They are still there on a desktop, where saying what is coming
+     costs nothing. */
+  nav a.off{display:none}
+
+  /* Four one-line figures as four full-width cards is four screens of
+     scrolling to read four numbers. Two columns fit at 390px and read at a
+     glance, which is what a figure on a phone is for. */
+  .grid{grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:10px}
+  /* `minmax(330px,1fr)` is wider than a 320px phone, so a contact card stuck
+     330px out of a 292px column and the whole page scrolled sideways. One
+     column, and the minimum stops being a claim about the screen. */
+  .cards{grid-template-columns:1fr}
+
+  /* A table of transactions cannot be squeezed below the width of its own
+     columns: at 320px the inbox pushed the whole PAGE sideways, so every other
+     page element moved too and the text no longer fit the screen. As a block
+     it scrolls on its own and leaves the page alone. */
+  table{display:block;overflow-x:auto;font-size:.88rem}
+  th,td{padding-right:8px}
+
+  /* A heading sharing a flex row with a wide button gets squeezed to its
+     narrowest: "Find people on the chain" came out four words tall beside
+     "Scan for published addresses". On one column each gets the width. */
+  .row > h2, .row > h3, .row > .row-title{flex-basis:100%}
+
+  button,.btn{padding:11px 16px;min-height:44px}
+  /* Every pixel the buttons give back is a pixel of what you are writing. */
+  /* wrap, or a full-width item on a nowrap flex line squeezes the box it is
+     supposed to sit under to a sliver. */
+  .composer{gap:6px;padding:9px 10px;flex-wrap:wrap}
+  .composer textarea{flex:1 1 55%;min-width:0}
+  .composer button{min-height:40px;padding:9px 14px}
+  /* On its own line: sharing the row left "Write a" of "Write a message…". */
+  .composer label.introduce{flex:0 0 100%;order:3;margin-top:2px}
+  .composer-foot{gap:8px}
+  button.small,.btn.small{min-height:40px;padding:8px 13px}
+}
+/* ── The look, 2026-09-25 (the operator): the same feel as the dogecoinarcade.com homepage.
+   Only presentation lives here, after everything above, so it can be read or removed as
+   one piece. The pixel face is Press Start 2P (SIL OFL 1.1), subset to the letters of the
+   brand (the letters of every face in brand.py; recut by SadFrog 2026-10-17) and the network tags and embedded, so no page asks a font server for anything. */
+@font-face{font-family:"Arcade Pixel";font-display:swap;
+  src:url(data:font/woff2;base64,d09GMgABAAAAAAOkAAwAAAAACXAAAANVAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHCoGYACBHBEICohshiMBNgIkAzALMAAEIAWECgcgGyQHAC4HeDI7khyEid2yKIJ3+JyRykWjWeWfFg//v9bu+28X1caZRqME8ZBEs2jdqVjPJJpY2oa08c29+p7lLEn+zkLZKBvAXAhdcHcD0isvQNAA5WJuP2tYE/0jmXrcEPFObVYibQdpjA7e/A1POKzCoQjG/YTskoUaKqTcmVW9/K8FcBs766tDix9F/7umNmnZMVsUsqrG16i7X/olTkpDVrOI7pSeAlLzM4Ken9LTTWD4l0DUk6tz/gF9qQAD5rTI5dXjKsHp8fcuCRpoAKCVJcRAeSxdYGu9Gwfs8YO2lRr+zNL2uddH5ZAF8jsAAijdHBUKFJBgCoVgCu0fmCNCqczEpOSUVTWxhsamNnYODTA0SYu0Ie8rVv9F8+Lr7Z01WgkTQgT5ncCGUcAswAJQgVgEcQJACwBFwGct7MpB8t4Ux/p48pDX+1NKj/oE0RdWsiuqetTYjE2xZhRdgsW2lA4Zpq5Ao5HjWNyGC4yJcnyuQyBx2SGspszQluHQazGBO4SlwesqNB0NU8/SRGUpc4v9mPhhrBhS+N7HDGNwpI5rF8DJKFbjjyNEidgyqpL5TiVaPauWkp0WH/iesUMranT1Nwxv19qRgoFtZpeKh8wJ8aKQLTvtFvrnIPRlq1lC85qcTUOY/V3ZaOXEBiFhST1PsoPnxUMyuLBTcUBM1aPjLcfzECMzi0kxAUyDhUbsqSSowAUhQ8SCjEipsbnI9q47MlunzrTD0QyHYLGX6/PKDRm00GpHpgPrrZatbWbi/1MHPNCBTztOWBLfnBhf87NQtTO4nlfDJo3ChKoB8gZ0EWXuQdCeLvWiizo3SRHjNKmfC5Bw+yE+Hm67n76UAk/z+ILP/7qAPMmCXgEQ8AdxH9T5iSARkUXtbO0nBcBQYjJL0eUA81GvMwpbLcAzM0wj/3BQeYXFPuhwtI14uGYQq++uW8ZLwtrG1c7U2MQBsrOysUNNE0Ooamdobw81HLB26EoVwdZmUupnWMxx4CRe2lUxrb6/feAq6qaJK0MOXuZnHegYobNp5QDV+20f2jkZfjhKD+BfLWMtz3VpzcmOgIAuq2NHi8yqg5nVLgck9KY0JcCRV9BzTHKU32cvvqGtdFea3ukUdj+eji2KSdecHQA=) format("woff2")}
+:root{--shadow:0 1px 2px rgba(40,30,10,.05),0 4px 14px rgba(40,30,10,.06);--radius:14px}
+@media (prefers-color-scheme:dark){:root{--shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.22)}}
+body{font-size:16px;-webkit-font-smoothing:antialiased}
+/* Always there (2026-09-26: "the navigation bar at the top needs to be always
+   visible"): sticky above the page, under the cards and the picture viewer (50+). A
+   jump to #something lands below it rather than behind it (--head-h, set below). */
+header{background:var(--bg);position:sticky;top:0;z-index:40}
+html{scroll-padding-top:calc(var(--head-h,72px) + 8px)}
+.brand{font-family:"Arcade Pixel",monospace;font-size:12px;font-weight:400;letter-spacing:.02em}
+.brand::before{content:"\25B6";color:var(--accent);margin-right:8px;font-size:10px;vertical-align:1px}
+nav a{border-radius:999px;padding:6px 13px}
+nav a.on{box-shadow:var(--shadow)}
+h1{font-size:1.75rem;letter-spacing:-.025em;font-weight:720}
+.panel,.stat,.chaincard,.tile,.card{border-radius:var(--radius);box-shadow:var(--shadow)}
+.panel{padding:20px}
+.tile{transition:transform .12s ease,box-shadow .12s ease}
+.tile:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(40,30,10,.06),0 10px 24px rgba(40,30,10,.1)}
+button,.btn{border-radius:11px;padding:10px 18px;font-weight:620;box-shadow:var(--shadow);
+  transition:filter .12s ease,transform .06s ease}
+button:active,.btn:active{transform:translateY(1px)}
+button.ghost{box-shadow:none}
+button.tag,button.tag.switch{box-shadow:none;padding:1px 5px;border-radius:4px;font-weight:600}
+input,textarea,select{border-radius:10px;padding:10px 12px}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+.msg{border-radius:12px}
+.note{border-radius:0 12px 12px 0}
+.pill{padding:3px 10px}
+pre{border-radius:12px}
+.resetnote{max-width:1000px;margin:12px auto 0;padding:9px 16px;font-size:.86rem;border-radius:12px;
+  border:1px solid color-mix(in srgb,var(--accent) 55%,var(--line));
+  background:color-mix(in srgb,var(--accent) 9%,var(--bg));color:var(--fg)}
+@media(max-width:1040px){.resetnote{margin:12px 20px 0}}
+.btn.small,button.small{border-radius:999px;padding:6px 14px;box-shadow:none}
+.btn.small.on{box-shadow:var(--shadow)}
+/* Phone fixes from a first-time walk-through (2026-09-25): the recovery words ran into each
+   other in three columns ("tomorrow7. garage"), and the menu strip gave no sign it scrolls. */
+ol.words{column-gap:1.4em}
+@media(max-width:480px){ol.words{columns:2}}
+@media(max-width:640px){header nav{-webkit-mask-image:linear-gradient(90deg,#000 82%,transparent);
+  mask-image:linear-gradient(90deg,#000 82%,transparent)}}

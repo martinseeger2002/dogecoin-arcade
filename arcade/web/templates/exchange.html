@@ -694,18 +694,7 @@ document.addEventListener('click', function (ev) {
      that chain's own market (instant, one transaction); two chains list a swap, settled by lock
      scripts. Below it, the swaps every arcade lists, each with its price. #}
   {% set trades_here = (viewer == 'account' and can_list_orders) or can_trade_orders %}
-  <style>
-    .pick{position:relative;flex:1 1 170px;min-width:0;display:block}
-    .pick-q{width:100%;box-sizing:border-box}
-    .pick-list{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 4px);max-height:280px;overflow-y:auto;
-      background:var(--panel,#1b1916);border:1px solid var(--line,#3a352d);border-radius:12px;padding:4px;
-      box-shadow:0 10px 28px rgba(0,0,0,.45)}
-    .pick-row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;width:100%;text-align:left;
-      background:none;border:0;border-radius:8px;padding:9px 10px;color:inherit;font:inherit;cursor:pointer}
-    .pick-row:hover,.pick-row.on{background:var(--hover,rgba(255,255,255,.07))}
-    .pick-held{color:var(--muted,#a69d8e);font-size:.82rem;white-space:nowrap}
-    .pick-none{display:block;padding:9px 10px;color:var(--muted,#a69d8e);font-size:.86rem}
-  </style>
+  {% include "_pick.html" %}
   <div class="ex-card" id="trade-orders" style="margin-top:18px">
     <h3 style="margin:0 0 4px">Trade any pair</h3>
     <p class="muted" style="font-size:.84rem;margin:0 0 12px">Both on one chain: that chain's own market, settled
@@ -773,62 +762,42 @@ document.addEventListener('click', function (ev) {
       function ownHalf(sel) { return known && (f.side.value === 'buy' ? sel === f.quote : sel === f.base); }
       function allowed(sel, o) { return !ownHalf(sel) || o.dataset.mine === '1'; }
       function shown(sel) { var o = sel.selectedOptions[0]; return o && allowed(sel, o) ? o.textContent : ''; }
+      // Each box is the shared search tool (_pick.html, 2026-10-21); the select behind it keeps the value sent.
       var boxes = [].slice.call(f.querySelectorAll('.pick')).map(function (box) {
-        var sel = document.getElementById(box.dataset.for), q = box.querySelector('.pick-q'),
-            list = box.querySelector('.pick-list'), at = -1;
-        function open(on) { list.hidden = !on; q.setAttribute('aria-expanded', on ? 'true' : 'false'); }
-        function choose(o) {
-          sel.value = o.value; q.value = o.textContent; open(false);
-          sel.dispatchEvent(new Event('change', {bubbles: true}));
-        }
-        function fill() {
-          var words = q.value.trim().toLowerCase(), opts = [].slice.call(sel.options).filter(function (o) {
-            return allowed(sel, o) && (!words || q.value === shown(sel)
-              || (o.textContent + ' ' + o.value).toLowerCase().indexOf(words) >= 0);
-          });
-          list.innerHTML = ''; at = -1;
-          if (!opts.length) {
-            var none = document.createElement('span'); none.className = 'pick-none';
-            none.textContent = ownHalf(sel) ? 'Nothing you hold matches. You can only offer coins and tokens in your wallet.'
-                                            : 'Nothing matches.';
-            list.appendChild(none);
-          }
-          opts.slice(0, 60).forEach(function (o) {
-            var row = document.createElement('button'); row.type = 'button'; row.className = 'pick-row';
-            row.setAttribute('role', 'option'); row.dataset.value = o.value;
-            var name = document.createElement('span'); name.textContent = o.textContent; row.appendChild(name);
-            if (o.dataset.held) {
-              var has = document.createElement('span'); has.className = 'pick-held';
-              has.textContent = 'you have ' + o.dataset.held; row.appendChild(has);
+        var sel = document.getElementById(box.dataset.for);
+        var tool = window.arcadePick(box, {
+          placeholder: 'Search a coin or token',
+          shown: function () { return shown(sel); },
+          choose: function (row) { sel.value = row.value; sel.dispatchEvent(new Event('change', {bubbles: true})); },
+          // Type to search (2026-10-20: "auto complete search boxes rather than a drop-down with a super long
+          // list"): empty, a short start -- what the reader holds on their own half, coins first otherwise -- and
+          // then only what every typed word matches, a dozen at most.
+          items: function (text, words, done) {
+            var opts = [].slice.call(sel.options).filter(function (o) {
+              var hay = (o.textContent + ' ' + o.value + ' ' + (o.dataset.name || '')).toLowerCase();
+              return allowed(sel, o) && words.every(function (w) { return hay.indexOf(w) >= 0; });
+            });
+            if (!words.length) {
+              opts.sort(function (a, b) {
+                return (b.dataset.mine === '1') - (a.dataset.mine === '1')
+                  || (a.dataset.kind === 'coin' ? 0 : 1) - (b.dataset.kind === 'coin' ? 0 : 1);
+              });
             }
-            row.addEventListener('mousedown', function (e) { e.preventDefault(); choose(o); });
-            list.appendChild(row);
-          });
-          open(true);
-        }
-        q.addEventListener('focus', function () { q.select(); fill(); });
-        q.addEventListener('input', function (e) { e.stopPropagation(); fill(); });
-        q.addEventListener('blur', function () { open(false); q.value = shown(sel); });
-        q.addEventListener('keydown', function (e) {
-          var rows = list.querySelectorAll('.pick-row');
-          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-            e.preventDefault(); if (list.hidden) fill();
-            at = Math.max(0, Math.min(rows.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)));
-            rows.forEach(function (r, i) { r.classList.toggle('on', i === at); });
-            if (rows[at]) rows[at].scrollIntoView({block: 'nearest'});
-          } else if (e.key === 'Enter' && !list.hidden) {
-            e.preventDefault();
-            var r = rows[at < 0 ? 0 : at]; if (r) choose(sel.querySelector('option[value="' + CSS.escape(r.dataset.value) + '"]'));
-          } else if (e.key === 'Escape') { open(false); q.blur(); }
+            var cap = words.length ? 12 : 8;
+            done(opts.slice(0, cap).map(function (o) {
+              return {value: o.value, label: o.textContent, note: o.dataset.held ? 'you have ' + o.dataset.held : ''};
+            }), opts.length - cap, ownHalf(sel) ? 'Nothing you hold matches. You can only offer coins and tokens in your '
+                                                 + 'wallet.' : 'Nothing matches.');
+          }
         });
-        return {sel: sel, q: q, sync: function () {
+        return {sel: sel, q: tool.q, sync: function () {
           // A side switch can leave the reader's half on something they do not hold: take the first they do.
           var o = sel.selectedOptions[0];
           if (!o || !allowed(sel, o)) {
             var first = [].slice.call(sel.options).filter(function (x) { return allowed(sel, x); })[0];
             if (first) sel.value = first.value; else sel.selectedIndex = -1;
           }
-          q.value = shown(sel);
+          tool.sync();
         }};
       });
       function syncAll() { boxes.forEach(function (b) { b.sync(); }); draw(); }

@@ -1345,6 +1345,37 @@ def test_an_account_signed_in_on_the_nodes_own_machine_sees_its_own_arcade(named
     assert 'href="/wallet"' not in app.get("/feed", headers=LOCAL).text
 
 
+def test_the_nodes_own_machine_opens_as_its_operator_account(named):
+    """2026-10-20, on a test machine: "Other operators are seeing my operator name as strawberry, but in my your
+    arcade page it says I have not claimed a name" -- nobody was signed in there, so the page drew the installer's
+    built-in wallet, which has no name. The arcade's own machine now opens as its operator account; the built-in
+    wallet is still one switch away; signing out there means signed out; the public site is never anybody."""
+    app, state = named
+    mine = _seat(app)
+    state.set_setting(f"address:{mine}", "n4sZQy4dMCQLJKHkLNpPEj4dpv2CxA8VUj")
+    state.set_setting("operator", mine)
+    app.cookies.clear()                                   # nobody signed in on this browser
+    assert app.get("/auth/who", headers=LOCAL).json()["pubkey"] == mine
+    assert app.get("/account", headers=LOCAL).json()["address"] == "n4sZQy4dMCQLJKHkLNpPEj4dpv2CxA8VUj"
+    page = app.get("/feed", headers=LOCAL).text
+    assert 'href="/me/accounts"' in page and 'href="/wallet"' not in page
+    assert app.get("/auth/who", headers=EDGE).json()["pubkey"] is None, "never through the door"
+    app.cookies.set("arcade_view", "node")
+    assert 'href="/wallet"' in app.get("/feed", headers=LOCAL).text, "the built-in wallet, one switch away"
+    app.cookies.delete("arcade_view")
+    out = app.post("/auth/logout", headers=LOCAL)
+    assert "arcade_out=1" in out.headers["set-cookie"]
+    app.cookies.set("arcade_out", "1")
+    assert app.get("/auth/who", headers=LOCAL).json()["pubkey"] is None, "signed out on purpose"
+    back = app.get("/view/account", headers=LOCAL, follow_redirects=False)
+    assert "arcade_out=" in back.headers.get("set-cookie", "")
+    app.cookies.delete("arcade_out")
+    assert app.get("/auth/who", headers=LOCAL).json()["pubkey"] == mine
+    state.set_setting(f"address:{mine}", None)
+    assert app.get("/auth/who", headers=LOCAL).json()["pubkey"] is None, "an operator with no wallet IS the node"
+    state.set_setting("operator", None)
+
+
 def test_a_password_only_operator_still_sees_the_node(named):
     """The installer's username and password open the NODE: it has no wallet of
     its own to show instead."""

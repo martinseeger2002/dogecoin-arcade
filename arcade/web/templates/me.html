@@ -201,71 +201,64 @@
 </div>
 
 {# 2026-10-18: any chain's wallet on or off in the Wallet tab. Off hides it only: the address is still yours,
-   still announced with your name, and coins sent there still arrive. #}
+   still announced with your name, and coins sent there still arrive. 2026-10-21: "the Wallet selection should
+   just be a row of the icons and have them lit up when enabled and grayed out when disabled. Below that should be a
+   copy of the arcades card in the admin overview page" (_arcades_panel.html). #}
+<style>
+#wallet-chains .wchips{display:flex;flex-wrap:wrap;gap:10px}
+#wallet-chains .wchip{display:inline-flex;flex-direction:column;align-items:center;gap:4px;min-width:56px;min-height:44px;
+  padding:6px 4px;border:0;background:none;color:var(--fg);font-size:.74rem;cursor:pointer}
+#wallet-chains .wchip img,#wallet-chains .wchip .wcoin{width:40px;height:40px;border-radius:50%;display:block;
+  transition:filter .15s,opacity .15s}
+#wallet-chains .wchip .wcoin{display:flex;align-items:center;justify-content:center;border:1px solid var(--line)}
+#wallet-chains .wchip[aria-pressed="false"] img,#wallet-chains .wchip[aria-pressed="false"] .wcoin{filter:grayscale(1);opacity:.35}
+#wallet-chains .wchip[aria-pressed="false"] span.wname{color:var(--muted)}
+#wallet-chains .wchip:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:10px}
+</style>
 <div class="panel" style="margin-top:14px" id="wallet-chains">
   <h2 style="margin-top:0">Your wallets</h2>
-  <p class="muted" style="margin:0 0 10px;font-size:.88rem">Which chains show in your Wallet tab. A hidden wallet keeps
-    its address: it is still published with your name, and coins sent to it still arrive. Under each chain: how many
-    node operators run it, and how its chain stands.</p>
+  <p class="muted" style="margin:0 0 10px;font-size:.88rem">Tap a coin to show or hide its wallet in your Wallet tab. A
+    hidden wallet keeps its address: it is still published with your name, and coins sent to it still arrive.</p>
+  <div class="wchips" role="group" aria-label="Wallets shown in your Wallet tab">
   {% for c in chain_menu(account_side=True) %}
-  <label style="display:flex;flex-direction:row;gap:10px;align-items:center;margin:0 0 8px;cursor:pointer">
-    <input type="checkbox" class="wallet-chain" style="width:auto;flex:none;margin:0" data-network="{{ c.network }}" {{ '' if c.network in (hidden or []) else 'checked' }}>
-    <span>{{ net_badge(c.network) }} {{ c.coin }}{% if not c.ready %} <span class="muted small">(not open yet)</span>{% endif %}</span>
-  </label>
-  {# 2026-10-18: each chain's node operators and numbers, filled from /account/chain-stats. #}
-  <div class="chain-stats muted small" data-network="{{ c.network }}" style="display:flex;flex-wrap:wrap;gap:4px 14px;margin:-4px 0 12px 28px">
-    <span>Loading the chain&rsquo;s numbers&hellip;</span></div>
+    {% set on = c.network not in (hidden or []) %}
+    <button type="button" class="wchip wallet-chain" data-network="{{ c.network }}" aria-pressed="{{ 'true' if on else 'false' }}"
+            title="{{ c.coin }}{% if not c.ready %} (not open yet){% endif %}">
+      {% if coin_icon(c.network) %}<img src="{{ coin_icon(c.network) }}" alt="">{% else %}<span class="wcoin">{{ c.coin[:1] }}</span>{% endif %}
+      <span class="wname">{{ c.coin }}</span>
+    </button>
   {% endfor %}
-  <p class="muted small" id="wallet-chains-said" style="margin:6px 0 0"></p>
+  </div>
+  <p class="muted small" id="wallet-chains-said" style="margin:6px 0 0" aria-live="polite"></p>
   <script>
   (function () {
-    function num(n) { return Number(n).toLocaleString(); }
-    function stat(k, v, tip) {
-      var s = document.createElement('span');
-      if (tip) s.title = tip;
-      var b = document.createElement('b'); b.textContent = v;
-      s.append(k + ' ', b);
-      return s;
-    }
-    fetch('/account/chain-stats', {credentials: 'same-origin'})
-      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (all) {
-        document.querySelectorAll('.chain-stats').forEach(function (row) {
-          var c = all[row.dataset.network] || {};
-          var bits = [stat('Node operators', num(c.operators || 0),
-                           'Arcades this one can see running this chain\'s node: this one when it runs its own, and each linked arcade that shares it')];
-          if (c.online) {
-            bits.push(stat('Height', num(c.blocks)));
-            bits.push(stat('Status', c.synced ? 'synced' : 'syncing ' + c.progress + '%'));
-            if (c.mempool != null) bits.push(stat('Waiting txs', num(c.mempool), 'Transactions in the mempool, not in a block yet'));
-            if (c.difficulty != null) bits.push(stat('Difficulty', c.difficulty >= 1 ? num(Math.round(c.difficulty)) : Number(c.difficulty.toPrecision(2)).toString()));
-            if (c.peers != null) bits.push(stat('Peers', num(c.peers), 'Other nodes of this chain the arcade\'s node is connected to'));
-          } else {
-            bits.push(stat('Status', 'node not answering'));
-          }
-          bits.push(stat('Here', c.here ? 'own node' : 'borrowed node',
-                         c.here ? 'This arcade runs this chain\'s node itself' : 'This arcade reads this chain through another arcade\'s node, over the mesh'));
-          row.replaceChildren.apply(row, bits);
-        });
-      })
-      .catch(function () {
-        document.querySelectorAll('.chain-stats').forEach(function (row) { row.remove(); });
-      });
-  })();
-  (function () {
     var said = document.getElementById('wallet-chains-said');
-    document.querySelectorAll('.wallet-chain').forEach(function (box) {
-      box.onchange = function () {
+    document.querySelectorAll('.wallet-chain').forEach(function (chip) {
+      chip.onclick = function () {
+        var shown = chip.getAttribute('aria-pressed') !== 'true';
+        chip.setAttribute('aria-pressed', shown ? 'true' : 'false');
         fetch('/account/wallets', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'{% if node_side %}, 'X-Arcade-Admin': '1'{% endif %}},
-                                   body: JSON.stringify({network: box.dataset.network, shown: box.checked})})
+                                   body: JSON.stringify({network: chip.dataset.network, shown: shown})})
           .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); })
-          .then(function () { said.textContent = 'Saved.'; })
-          .catch(function (e) { box.checked = !box.checked; said.textContent = e.message; });
+          .then(function () { said.textContent = chip.title + (shown ? ' shown' : ' hidden') + ' in your Wallet tab.'; })
+          .catch(function (e) { chip.setAttribute('aria-pressed', shown ? 'false' : 'true'); said.textContent = e.message; });
       };
     });
   })();
   </script>
 </div>
+
+{% include "_arcades_panel.html" %}
+<script>
+(function () {
+  function load() {
+    fetch('{{ "/admin/api/arcades" if node_side else "/account/arcades" }}', {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+      .then(function (a) { window.arcadesPanel.draw(a); });
+  }
+  load(); setInterval(function () { if (!document.hidden) load(); }, 30000);
+})();
+</script>
 
 <div class="panel" style="margin-top:14px"{% if node_side %} hidden{% endif %}>
   <h2 style="margin-top:0">Your usage</h2>

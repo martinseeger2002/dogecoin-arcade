@@ -226,6 +226,10 @@
     // nobody could hear until they reloaded. Now the viewer rejoins by itself,
     // as the same player where it can (a guest keeps its name), and tells the
     // page who left and who is there now.
+    // The node lost this seat (a restart, a dropped line): the mesh service says "join again", the node itself
+    // "join the room first". Either way the page has to take its seat again, or it hears the room but nobody
+    // hears it (2026-10-20, one-way players in ASHVALE).
+    function seatLost(j){ return !!j && !j.ok && /join again|join the room first/.test(j.error || ''); }
     function realtimeRejoin(name, frame, h){
       if (rt[name] !== h || h.rejoining) return;
       h.rejoining = true;
@@ -434,7 +438,8 @@
           if (!fastViaRoom(h)) { clearInterval(h.fast.pump); h.fast.pump = null; }
           return;
         }
-        realtimePost('/realtime/send', {token: h.token, data: RTC + JSON.stringify(msg)}, h.base).catch(function(){});
+        realtimePost('/realtime/send', {token: h.token, data: RTC + JSON.stringify(msg)}, h.base)
+          .then(function(j){ if (seatLost(j)) realtimeRejoin(name, h.frame, h); }).catch(function(){});
       }, 340);
     }
     function fastViaRoom(h){
@@ -505,7 +510,7 @@
       if (m.op === 'send') {
         realtimePost('/realtime/send', {token: held.token, data: String(m.data || '')}, held.base)
           .then(function(j){
-            if (!j.ok && /join again/.test(j.error || '')) realtimeRejoin(name, frame, held);
+            if (seatLost(j)) realtimeRejoin(name, frame, held);
             answer(j.ok ? {ok: true} : {ok: false, error: j.error || 'refused'});
           })
           .catch(function(){
@@ -563,7 +568,10 @@
       if (!h) return Promise.reject(new Error('you left the room this trade was in'));
       msg.id = t.id; msg.to = t.peer.id;
       return realtimePost('/realtime/send', {token: h.token, data: TRADE + JSON.stringify(msg)}, h.base)
-        .then(function(j){ if (!j.ok) throw new Error(j.error || 'the room did not take it'); });
+        .then(function(j){
+          if (seatLost(j)) realtimeRejoin(t.room, h.frame, h);
+          if (!j.ok) throw new Error(j.error || 'the room did not take it');
+        });
     }
     function tradeFail(t, err, quiet){
       var why = String((err && err.message) || err || 'failed');
@@ -906,17 +914,23 @@
     // you know), so handing it to a page is the person's own decision, asked once
     // per inscription and remembered in this browser; a "no" is remembered too.
     // A guest, a node's own wallet view, or a refusal: [].
+    // One contacts card on screen at a time for this page: the permission question below, or an add/remove
+    // card. An add or remove asked while one is open is refused "busy" (it is not queued: a page that asks
+    // again later is asked again later, and a queue would stack cards up behind the one being read).
+    var contactsCards = 0;               // contacts cards open now
     function contactsDoor(m, answer){
-      if ((m.op || 'list') !== 'list') { answer({ok: false, error: 'contacts are read-only: op is list'}); return; }
+      var op = m.op || 'list';
+      if (op === 'add' || op === 'remove') { contactsChange(op, m, answer); return; }
+      if (op !== 'list') { answer({ok: false, error: 'contacts: op is list, add or remove'}); return; }
       if (viewer !== 'account') { answer({ok: true, contacts: []}); return; }
       var slot = 'arcade.contacts.allow:' + here, said = null;
       try { said = localStorage.getItem(slot); } catch (err) {}
       var asked = said === 'yes' ? Promise.resolve(true) : said === 'no' ? Promise.resolve(false)
-        : arcadeAsk('Let this game see your contacts?',
+        : (contactsCards++, arcadeAsk('Let this game see your contacts?',
             'It will get the names and addresses in your address book, and nothing else of it. '
             + 'A game can send what it gets to its own server: only say yes to a game you trust. '
-            + 'This browser remembers your answer for this game.', 'Allow')
-          .then(function(yes){ try { localStorage.setItem(slot, yes ? 'yes' : 'no'); } catch (err) {} return !!yes; });
+            + 'This browser remembers your answer for this game.', 'Allow'))
+          .then(function(yes){ contactsCards--; try { localStorage.setItem(slot, yes ? 'yes' : 'no'); } catch (err) {} return !!yes; });
       asked.then(function(yes){
         if (!yes) { answer({ok: true, contacts: []}); return; }
         return import('/messaging.js').then(function(mail){ return mail.book(); }).then(function(all){
@@ -924,6 +938,73 @@
                   .map(function(c){ return {address: c.address, tag: c.tag || ''}; })});
         });
       }).catch(function(){ answer({ok: true, contacts: []}); });
+    }
+
+    // arcade.contacts.add / remove (2026-10-21, asked for by ASHVALE: "able to add in game friends").
+    // The same book and the same writes as the Address book (messaging.js addToBook, updateBookEntry,
+    // removeFromBook), so what a game adds is an ordinary contact there. Every change is the reader's,
+    // one tap on a card here naming the game; nothing is written without it. Asking for what is already
+    // so -- adding somebody in the book, removing somebody not in it -- answers "already" / "absent" with
+    // no card. The answer is only that status: nothing of the book goes back, and saying yes here does
+    // not let the game list() the book (that keeps its own question).
+    var CONTACT_NOTE_MAX = 60;           // the Address book's private note (feed.html, m-notein maxlength)
+    function contactsChange(op, m, answer){
+      var raw = typeof m.address === 'string' ? m.address.trim() : '';
+      var wanted = raw.replace(/^@/, '');
+      var isTag = /^@?[A-Za-z0-9_]{1,24}$/.test(raw);                // a tag is at most 24 (tags.MAX_LENGTH)
+      var isAddress = !isTag && raw.charAt(0) !== '@' && /^[A-Za-z0-9]{25,90}$/.test(raw);
+      if (!isTag && !isAddress) { answer({ok: false, error: 'not an address: give an address or an @tag'}); return; }
+      var note = '';
+      if (op === 'add' && m.name != null) {
+        if (typeof m.name !== 'string') { answer({ok: false, error: 'name must be text'}); return; }
+        note = m.name.trim().slice(0, CONTACT_NOTE_MAX);
+      }
+      // A guest, or the node's own wallet view: no account's book here to change.
+      if (viewer !== 'account' || !ARCADE_SIGNED) {
+        answer({ok: false, error: 'sign in first: a page can only change the address book of somebody signed in'});
+        return;
+      }
+      var who = (gameName ? '“' + gameName + '”' : 'This page') + (makerName ? ' (published by ' + makerName + ')' : '');
+      var key = isTag ? wanted.toLowerCase() : wanted;
+      var match = function(c){ return c && (isTag ? c.tag === key : c.address === key); };
+      var mine = false;                    // whether this ask holds the one card
+      import('/messaging.js').then(function(mail){
+        return mail.book().then(function(all){
+          var had = (all || []).filter(match)[0];
+          if (op === 'remove' && !had) return {status: 'absent'};
+          if (op === 'add' && had) return {status: 'already'};
+          if (contactsCards) throw new Error('busy: this page already has a contacts question open; ask again after it is answered');
+          contactsCards++; mine = true;
+          if (op === 'remove') {
+            return arcadeAsk('Remove @' + had.tag + ' from your address book?',
+                who + ' asks to remove them. Only the contact goes: your messages with them, and everything else, stay as they are.',
+                'Remove', 'No').then(function(yes){
+              if (!yes) throw new Error('declined');
+              return mail.removeFromBook(had.tag).then(function(){ return {status: 'removed'}; });
+            });
+          }
+          // Who it is, from the chain, the way the Address book adds: only a claimed name goes in.
+          return mail.lookUp(isTag ? key : wanted).then(function(them){
+            if (!them.tag) throw new Error('no name: nobody has claimed a name for that address, and only claimed names go in the address book');
+            if ((all || []).some(function(c){ return c && c.tag === them.tag; })) return {status: 'already'};
+            var short = String(them.address || '').slice(0, 10) + '…';
+            return arcadeAsk('Add @' + them.tag + ' (' + short + ') to your address book' + (note ? ' as “' + note + '”' : '') + '?',
+                who + ' asks to add them.' + (note ? ' “' + note + '” is kept as your private note on them.' : '')
+                + ' The game is not shown your address book.', 'Add', 'No').then(function(yes){
+              if (!yes) throw new Error('declined');
+              return mail.addToBook(them.tag).then(function(entry){
+                return note ? mail.updateBookEntry(entry.tag, {note: note}) : entry;
+              }).then(function(){ return {status: 'added'}; });
+            });
+          });
+        });
+      }).then(function(r){
+        if (mine) contactsCards--;
+        answer({ok: true, status: r.status});
+      }, function(err){
+        if (mine) contactsCards--;
+        answer({ok: false, error: String((err && err.message) || err || 'refused')});
+      });
     }
 
     window.addEventListener('message', function(e){

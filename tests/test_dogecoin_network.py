@@ -99,7 +99,8 @@ def test_a_dogecoin_send_takes_a_dogecoin_address_and_nothing_else(client, monke
 
 def test_the_network_colors(client):
     app, _ = client
-    css = app.get("/exchange?tab=tokens").text
+    from test_web import _stylesheet                 # the page's styles and the shared stylesheet (2026-10-20)
+    css = _stylesheet(app.get("/exchange?tab=tokens").text)
     assert "--net-test:#22a35a" in css and "--net-main:#22a35a" in css and "--net-doge:#d4a106" in css, \
         "PEP green on both its networks, DOGE yellow (2026-10-13)"
     assert ".netbadge.test{background:color-mix(in srgb,var(--net-test)" in css
@@ -118,9 +119,11 @@ def test_every_network_word_says_which_coin(client, monkeypatch):
     assert 'src="/coin-pep-test.png" alt="PEP TEST"' in badge(False) and "Pepecoin testnet" in badge(False)
     assert 'src="/coin-pep.png" alt="PEP"' in badge(True)
     assert 'src="/coin-doge.png"' in badge("doge") and 'src="/coin-doge.png"' in badge(state.doge)
+    from test_web import _stylesheet
     page = app.get("/exchange?tab=tokens").text
-    assert '.tag.testnet::before,.tag.mainnet::before{content:"P"' in page
-    assert '.tag.dogecoin::before{content:"D"' in page
+    css = _stylesheet(page)
+    assert '.tag.testnet::before,.tag.mainnet::before{content:"P"' in css
+    assert '.tag.dogecoin::before{content:"D"' in css
     assert 'alt="PEP TEST"></span></a>' in page and 'alt="PEP"></span></a>' in page
 
 

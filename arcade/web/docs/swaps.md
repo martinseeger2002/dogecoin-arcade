@@ -61,11 +61,21 @@ and they can only go to you. All it adds is the secret, which by then is public.
 
 ## What it costs
 
+Whoever locks a side pays its fees, on top, so the other side receives exactly
+what was agreed:
+
 * About **0.01** of the coin to put your side in its lock (the network fee).
-* When you claim coins out of a lock, **0.01** comes off what you receive (the
-  fee for that transaction).
+* A coin lock also holds the network fee of the other side's claim (**0.01**;
+  about 0.0001 on Litecoin), so the coins come out of it whole.
 * A token or NFT goes into its lock with **0.02** of that chain's coin, which
   pays for moving it out again, whoever ends up with it.
+* Your arcade's operator fee, if it charges one (Admin, Trading): a per cent of
+  the coins you lock, at least the chain's smallest payment (0.01). It waits in
+  the lock and is paid to the operator when the other side claims; if your lock
+  comes back to you, so does the fee. A token or NFT lock pays only that
+  smallest amount, unless its price is coin on the same chain.
+* Trading with an arcade that has not updated yet, its claim fee still comes off
+  what you receive from it, and its claim keeps the operator fee in your lock.
 * Listing a swap writes a small record on the chain so other arcades can show
   it: about **0.01**.
 

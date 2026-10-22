@@ -70,6 +70,8 @@ PUBLIC_PAGES = frozenset({
     "/account/escrows",       # an account's own escrows (needs a session)
     "/account/doginals",      # this account's own Doginals on Dogecoin, to list (needs a session)
     "/account/segwit/balance",  # the account's registered segwit address (native or P2SH), test chains (needs a session)
+    "/account/imported",      # the account's own sealed record of imported wallets, and their addresses (needs a session)
+    "/account/imported/busy", # whether an import on a chain must wait for a rescan (needs a session)
     "/account/doge-stray",    # coins at the account's testnet key's Dogecoin address, to move home (2026-10-17)
     "/doginals/listings",     # Doginals listed for DOGE (the Exchange's Doginals tab)
     "/launch",
@@ -93,7 +95,7 @@ PUBLIC_PAGES = frozenset({
     "/push/key",              # the key a browser subscribes to this node's pushes with
     "/account/push/news",     # what woke the phone: who wrote, never what (signed in)
     "/admin/login",           # the remote admin password page (rate-limited)
-    "/signin.js",
+    "/signin.js", "/base.css",
     "/coins.js",
     "/wallet.js",
     "/messaging.js",
@@ -129,6 +131,7 @@ PUBLIC_PAGES = frozenset({
     "/account/inscribe/unfinished",
     "/account/dust",                  # coins in this account's own payload outputs
     "/account/coins",                 # this account's own coins on one chain (the Doginals check)
+    "/account/arcades",               # the arcades on the mesh, for the Your arcade page's Arcades card
     "/account/favorites",             # the markets this account starred (Exchange, 2026-10-17)
     "/account/orders/delegated",      # where this account's node-filled orders stand (2026-10-17)
     "/account/talk/inbox",            # sealed swap messages the mesh brought this page (talk_relay)
@@ -438,6 +441,14 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/sign",
                # the account's own segwit address (native or P2SH), watched (test chains only)
                "/account/segwit/register",
+               # imported wallets (plan item 18): the account's own sealed record, an address registered with its
+               # key's signature, its read-back, taking one off, the main wallet's name -- each the caller's own only
+               "/account/imported", "/account/imported/address", "/account/imported/rescan",
+               "/account/imported/forget", "/account/imported/name",
+               # its signed record fetched from the arcade it was brought from (the caller's own account only)
+               "/account/imported/bring", "/account/imported/siblings/drop",
+               # what sits on the caller's own coins, many transactions at once (the Wallet's Doginals)
+               "/account/doginal-txs",
                # starring a market: the caller's own list of favorites, nothing else
                "/account/favorites",
                # the page holding this account's listed swaps is open (order_presence)
@@ -451,6 +462,12 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # a finished lock-script swap, for its market's history (swap_history)
                "/account/trade/done",
                "/signup")
+
+#: POSTs a stranger may make, by shape: another arcade asking this one for an imported address's coins, with a proof
+#: that address's key signed (web/app.py signin_imported_coins; nothing without it).
+PUBLIC_POST_SHAPES = (
+    re.compile(r"^/signin/[^/]{1,64}/imported-coins$"),
+)
 
 #: What an inscribed page's own hostname may reach, and nothing else. A page
 #: in the sandbox has an opaque origin and sends no cookie, so this hostname
@@ -466,7 +483,7 @@ def public_path(path: str, method: str = "GET") -> bool:
            for deny in NEVER_PUBLIC):
         return False
     if method.upper() not in ("GET", "HEAD"):
-        return path in PUBLIC_POST
+        return path in PUBLIC_POST or any(shape.match(path) for shape in PUBLIC_POST_SHAPES)
     if path in PUBLIC_PAGES:
         return True
     if any(shape.match(path) for shape in PUBLIC_SHAPES):

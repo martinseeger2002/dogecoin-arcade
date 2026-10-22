@@ -354,6 +354,13 @@ class BlockWatcher:
                 wanted[b58check_encode(chain.params.pubkeyhash_version, b58check_decode(value)[1])] = pubkey
             except Exception:                                  # noqa: BLE001 -- a stored address that does not decode
                 continue
+        # Wallets accounts imported on this chain (plan item 18): already this chain's addresses, so as they are.
+        # Each was watched when it was registered; this keeps them watched if the index was made anew.
+        from ..wallet_imports import entries as imported_entries
+        for name, value in self.state.settings().items():
+            if name.startswith(f"extra_address:{chain.network}:"):
+                for entry in imported_entries(value):
+                    wanted.setdefault(entry["a"], name.rsplit(":", 1)[-1])
         # The node's own key address there: where it is paid on a chain with no Core wallet of its own (a
         # sharer's tenth, fees, mined coins), spent from Admin -> The node's coins (keywallet.py, 2026-10-18).
         try:

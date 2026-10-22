@@ -238,10 +238,10 @@ def test_a_taken_order_never_goes_back_on_the_book(world, monkeypatch):
     trade_courier.mesh_inbox(a)
     real_way_out = seller_node._way_out
 
-    def cannot_claim(coin, leg, redeem, chain, to=""):
+    def cannot_claim(coin, leg, redeem, chain, to="", **more):
         if leg.network == "regtest":                                 # the seller's claim of the taker's PEP
             raise H.HtlcError("the lock holds too little to pay for its own spend")
-        return real_way_out(coin, leg, redeem, chain, to)
+        return real_way_out(coin, leg, redeem, chain, to, **more)
     monkeypatch.setattr(seller_node, "_way_out", cannot_claim)
     give = b.leg("regtest", 3 * COIN, key)
     get = T.Leg("doge", "coin", "", 2 * COIN, key.hex(), b.key.pubkey.hex())

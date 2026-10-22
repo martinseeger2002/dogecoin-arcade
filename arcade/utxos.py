@@ -36,7 +36,7 @@ import time
 from typing import Any
 
 from .db import register_journalled_table
-from .rpc import RpcError
+from .rpc import RpcError, RpcTransportError
 from .script import OutputType, parse_output
 
 SCHEMA = """
@@ -108,7 +108,7 @@ SPENDABLE = (OutputType.PUBKEYHASH, OutputType.SCRIPTHASH,
              OutputType.WITNESS_V0_KEYHASH)
 
 
-def backfill(index, rpc, params, address: str, start: int, end: int) -> int:
+def backfill(index, rpc, params, address: str, start: int, end: int, progress: dict | None = None) -> int:
     """The coins an address already held when it started being watched: the
     one exception to "never retroactive", for an account brought here from
     another node (2026-09-30: "he has zero balance ... has @tag"), whose coins
@@ -119,7 +119,19 @@ def backfill(index, rpc, params, address: str, start: int, end: int) -> int:
     see -- in a later block, or read by the indexer meanwhile -- cannot leave a
     coin counted that is gone. Returns how many coins it filed.
     """
-    return backfill_many(index, rpc, params, {address}, start, end)
+    return backfill_many(index, rpc, params, {address}, start, end, progress=progress)
+
+
+#: Seconds one block of a read-back takes here, pacing included, by chain (Params.name): measured by each pass, for
+#: saying how long the next one will take (plan item 18). A guess until a pass has run.
+READ_RATE: dict[str, float] = {}
+#: The guess: a few blocks a second with the pacing above.
+READ_RATE_GUESS = 0.25
+
+
+def read_rate(params) -> float:
+    """Seconds a block of a read-back takes on this chain: the last pass's measure, else a guess."""
+    return READ_RATE.get(getattr(params, "name", ""), READ_RATE_GUESS)
 
 
 #: One read-back at a time, in the whole process, and at a pace (2026-10-19: an account brought to pepecoinarcade.com
@@ -130,20 +142,28 @@ _BACKFILL_ONE = threading.Lock()
 BACKFILL_REST = 1.5
 
 
-def backfill_many(index, rpc, params, addresses: set[str], start: int, end: int) -> int:
+def backfill_many(index, rpc, params, addresses: set[str], start: int, end: int,
+                  progress: dict | None = None) -> int:
     """`backfill` for several addresses in ONE pass over the blocks (2026-10-17: every account's Dogecoin address at
     once, which read block by block per address would be thousands of reads each). One pass at a time, paced, so
-    the arcade's own pages keep answering while it runs."""
+    the arcade's own pages keep answering while it runs.
+
+    `progress`, when given, is kept up to date for whoever is waiting (plan item 18): "height" (the block being
+    read, absent until this pass has the lock) and "per_block" (seconds a block takes, pacing included)."""
     addresses = set(addresses)
     if not addresses:
         return 0
     with _BACKFILL_ONE:
-        return _backfill_many(index, rpc, params, addresses, start, end)
+        return _backfill_many(index, rpc, params, addresses, start, end, progress)
 
 
-def _backfill_many(index, rpc, params, addresses: set[str], start: int, end: int) -> int:
+def _backfill_many(index, rpc, params, addresses: set[str], start: int, end: int,
+                   progress: dict | None = None) -> int:
     found = []
+    began, done = time.monotonic(), 0
     for height in range(int(start), int(end) + 1):
+        if progress is not None:
+            progress["height"] = height
         took = time.perf_counter()
         block = rpc.get_block(rpc.get_block_hash(height), 2)
         for tx in block.get("tx") or []:
@@ -159,6 +179,12 @@ def _backfill_many(index, rpc, params, addresses: set[str], start: int, end: int
                                   int(round(float(out.get("value", 0)) * 100_000_000)), height))
         if BACKFILL_REST:
             time.sleep(min(1.0, (time.perf_counter() - took) * BACKFILL_REST))
+        done += 1
+        if done >= 20:
+            per = (time.monotonic() - began) / done
+            READ_RATE[getattr(params, "name", "")] = per
+            if progress is not None:
+                progress["per_block"] = per
     filed = 0
     with index.open() as db:
         for txid, vout, address, value, height in found:
@@ -174,6 +200,110 @@ def _backfill_many(index, rpc, params, addresses: set[str], start: int, end: int
 #: How long one `scantxoutset` may take: it reads the node's whole coin set from disk, about four minutes
 #: for Litecoin mainnet's 54 million coins on this node's hard disk (2026-10-18).
 SCAN_SECONDS = 1200.0
+
+
+#: How long a Core may take to rescan its whole chain for a watch-only import (Dogecoin 1.14 on a spinning disk).
+CORE_RESCAN_SECONDS = 24 * 3600
+
+
+class CoreBusy(Exception):
+    """The Core did not take the call: its queue is full or it is still at a rescan sent earlier (one an arcade
+    restart cut the connection to, which the Core finishes anyway). Not a failure of the import: asked again later,
+    and the reads stay borrowed meanwhile."""
+
+
+def _up_since(rpc) -> float | None:
+    """A time the Core has been running since, at the latest: its oldest peer connection (a Core keeps no uptime
+    in 1.14). None when it has no peers."""
+    try:
+        times = [int(p.get("conntime") or 0) for p in (rpc.call("getpeerinfo") or [])]
+    except (RpcError, RpcTransportError):
+        return None
+    times = [t for t in times if t > 0]
+    return float(min(times)) if times else None
+
+
+def _rescan_already_ran(rpc, addresses, sent) -> bool:
+    """Whether an `importmulti` rescan sent earlier (`sent`: {"at", "addresses"}) already covered these addresses
+    and ran to its end: every one sent then and watched now, and the Core not restarted since (a peer of its older
+    than the send). Then the coins are listed with no second rescan of the whole chain -- hours on Dogecoin."""
+    if not isinstance(sent, dict) or not set(addresses) <= set(sent.get("addresses") or ()):
+        return False
+    up = _up_since(rpc)
+    if up is None or up >= float(sent.get("at") or 0):
+        return False
+    try:
+        return all((rpc.call("validateaddress", a) or {}).get("iswatchonly") for a in addresses)
+    except (RpcError, RpcTransportError):
+        return False
+
+
+def seed_from_core_wallet(index, rpc, params, addresses, upto: int, *, sent=None,
+                          remember=None) -> dict[str, int] | None:
+    """The coins an address holds now, from the Core's own WALLET: imported watch-only (never a key) with a rescan of
+    the whole chain, then listed (2026-10-21: an imported wallet's coins from before the index's floor were
+    never found on Dogecoin and Pepecoin, whose 1.14 Cores have no scantxoutset). `importmulti` with timestamp 0
+    rescans from the first block and holds the Core's lock until done -- hours on a big chain -- so the caller borrows
+    the chain's reads meanwhile (core_catchup.hold). Returns how many coins it filed, or None when this Core has no
+    wallet (then the caller reads blocks instead). Filed like seed_from_core's rows, at or below `upto` only.
+    Every address in one call, so one rescan serves every import waiting for it (2026-10-21: "multiple people
+    can import their wallets during a rescan, and during the next rescan, all of their wallet addresses will be
+    watched"). Returns {address: coins filed}.
+
+    `sent` is what `remember` was handed by an earlier call ({"at", "addresses"}), saved by the caller before the
+    `importmulti` goes: when that rescan already ran to its end for these addresses, it is not sent again. CoreBusy
+    when the Core does not take a call (queue full, still rescanning, its connection cut)."""
+    addresses = sorted(set(addresses))
+    try:
+        rpc.call("getwalletinfo")
+    except RpcTransportError as exc:
+        # Busy since at least now: most often at a rescan an earlier call sent (an arcade restart cut its
+        # connection, so nothing here remembers sending it). Remembered as sent now, so that once the Core answers,
+        # addresses it watches already and a Core not restarted since are listed, not rescanned again.
+        if remember is not None and not (isinstance(sent, dict)
+                                         and set(addresses) <= set(sent.get("addresses") or ())):
+            remember({"at": time.time(), "addresses": addresses})
+        raise CoreBusy(str(exc)) from None
+    except RpcError as exc:
+        if exc.code == -28:                          # warming up
+            raise CoreBusy(str(exc)) from None
+        return None                                  # -disablewallet
+    if not _rescan_already_ran(rpc, addresses, sent):
+        if remember is not None:
+            remember({"at": time.time(), "addresses": addresses})
+        held = getattr(rpc, "_timeout", None)
+        if held is not None:
+            rpc._timeout = max(held, CORE_RESCAN_SECONDS)
+        try:
+            said = rpc.call("importmulti", [{"scriptPubKey": {"address": a}, "timestamp": 0, "watchonly": True,
+                                             "label": "arcade-import"} for a in addresses], {"rescan": True}) or []
+        except RpcTransportError as exc:
+            # Never taken (queue full), or the connection went while the Core rescans on: the next try finds it.
+            raise CoreBusy(str(exc)) from None
+        finally:
+            if held is not None:
+                rpc._timeout = held
+        refused = [(a, r) for a, r in zip(addresses, said) if not (r or {}).get("success")]
+        if len(said) != len(addresses) or refused:
+            raise RuntimeError(f"the Core would not watch {refused[0][0] if refused else 'every address'}: "
+                               f"{(refused[0][1] or {}).get('error') if refused else 'it answered for fewer'}")
+    tip = int(rpc.call("getblockcount"))
+    filed = {a: 0 for a in addresses}
+    with index.open() as db:
+        for coin in rpc.call("listunspent", 1, 99_999_999, addresses) or []:
+            address = coin.get("address")
+            height = tip - int(coin.get("confirmations") or 0) + 1
+            value = int(round(float(coin.get("amount", 0)) * 100_000_000))
+            if address not in filed or height <= 0 or height > int(upto) or value <= 0:
+                continue
+            parsed = parse_output(str(coin.get("scriptPubKey", "")), 0, params)
+            if parsed.type not in SPENDABLE or parsed.address != address:
+                continue
+            cur = db.conn.execute(
+                "INSERT OR IGNORE INTO utxo (txid, vout, address, value, height) VALUES (?,?,?,?,?)",
+                (str(coin["txid"]), int(coin["vout"]), address, value, height))
+            filed[address] += cur.rowcount
+    return filed
 
 
 def seed_from_core(index, rpc, params, addresses: set[str], upto: int) -> int | None:

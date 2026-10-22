@@ -186,6 +186,24 @@ def test_an_envelope_over_two_transactions_closes_in_the_second(tmp_path):
     assert index.store.q("SELECT COUNT(*) FROM pending")[0][0] == 0
 
 
+def test_a_spend_of_a_pieces_change_first_does_not_end_its_envelope(tmp_path):
+    """2026-10-21, against pepeblocks.com: in PEP block 293,201 a transaction whose input 0 spent a piece's CHANGE
+    (output 1, a signature, no piece) came before the next piece (spending output 0). The walk took it for the next
+    piece and dropped the envelope; the official indexers keep it ("ParsedInscription::None" removes nothing), and the
+    next piece completes it. 862 of PEP's first 2.07 million were lost that way."""
+    chain = Chain()
+    first = _tx([(FUND, 0, _envelope(parts=((1, b"part one"),), total=2))], [100_000, 5_000_000])
+    chain.add([first])
+    change = _tx([(first[1], 1, _push(b"\x30" * 71) + _push(b"\x02" * 33))], [4_000_000])
+    rest = _tx([(first[1], 0, _more(((0, b"part two"),)))], [100_000])
+    chain.add([change, rest])
+    index = _walker(tmp_path, chain)
+    index.step()
+    where = index.where(f"{first[1]}i0")
+    assert where is not None and where["output"] == f"{rest[1]}:0", "the next piece still completes it"
+    assert index.store.q("SELECT COUNT(*) FROM pending")[0][0] == 0
+
+
 def test_a_reorg_walks_back_and_takes_the_new_blocks(tmp_path):
     chain = Chain()
     reveal = _tx([(FUND, 0, _envelope())], [100_000])
@@ -220,6 +238,7 @@ class Mesh:
     def __init__(self):
         self.members: dict[str, dx.DoginalIndex] = {}
         self.up: set[str] = set()
+        self.fetched: list = []
 
     def join(self, name, index):
         self.members[name] = index
@@ -233,6 +252,44 @@ class Mesh:
                 for other, idx in mesh.members.items():
                     if other != name and other in mesh.up:
                         idx.heard(name, frame)
+
+            def post_to(self, node, frame):
+                if node in mesh.up and name in mesh.up:
+                    mesh.members[node].heard(name, frame)
+
+            def get(self, node, ask):                              # DxShare's g / gb, at once
+                peer = mesh.members.get(node)
+                if peer is None or node not in mesh.up:
+                    return
+                mesh.fetched.append((name, node, ask.get("what"), ask.get("i")))
+                if ask["what"] == "manifest":
+                    m = peer.snapshots.manifest(ask["snap"])
+                    if m is not None:
+                        index.snapshots.got_manifest(node, ask["snap"], m)
+                else:
+                    data = peer.snapshots.piece(ask["snap"], ask["i"])
+                    if data is not None:
+                        index.snapshots.got_piece(node, ask["snap"], ask["i"], data)
+                    else:
+                        index.snapshots.piece_failed(node, ask["snap"], ask["i"])
+
+            def ask_manifest(self, node, sid):
+                self.get(node, {"what": "manifest", "snap": sid})
+
+            def ask_piece(self, node, sid, i):
+                self.get(node, {"what": "piece", "snap": sid, "i": i})
+
+            def ask(self, question, node=None):
+                return mesh.members[node].answer(question)
+
+            def fetch_notes(self, c, node, nd, hash_):           # DxShare's ng / nb, at once
+                mesh.fetched.append((name, node, c))
+                peer = mesh.members.get(node)
+                got = peer.notes_blob(c) if peer is not None and node in mesh.up else None
+                if got is None:
+                    index.fetch_failed(node, c)
+                else:
+                    index.got_notes(node, c, got[0], nd, hash_)
         index.share = Share()
         for other, idx in self.members.items():               # link up: each says everything it has
             if other != name:
@@ -240,6 +297,9 @@ class Mesh:
                 index.heard(other, idx.hello())
                 if idx.all_mine():
                     index.heard(other, {"op": "dn", "rows": idx.all_mine()})
+                for lane in idx.chunks.lanes:                  # and the chunks it holds (DxShare.link_up)
+                    index.heard(other, {"op": "ls", "c": lane["c"], "at": lane["at"],
+                                        "until": time.time() + dx.LEASE_SECONDS})
 
 
 def test_a_walkers_chunks_and_a_helpers_scans_agree(tmp_path):
@@ -255,6 +315,9 @@ def test_a_walkers_chunks_and_a_helpers_scans_agree(tmp_path):
     status = helper.status()
     assert status["ready"] == 3 and status["agreed"] == 3 and status["differ"] == 0, status
     assert walker.status()["agreed"] == 3
+    born = walker.store.q("SELECT COALESCE(SUM(births), 0) FROM seen WHERE node=''")[0][0]
+    assert born > 0 and status["agreed_births"] == walker.status()["agreed_births"] == born, \
+        "every inscription the two read the same way counts as agreed"
     # The helper read whole chunks, and its hash of each is the walker's.
     for c in range(3):
         assert helper.store.words(c)[""] == walker.store.words(c)[""]
@@ -268,7 +331,7 @@ def test_a_helper_that_lies_shows_as_a_difference(tmp_path):
     walker.heard("liar", {"op": "dn", "rows": [[0, "ab" * 32, 0]]})
     status = walker.status()
     assert status["differ"] == 1 and status["differs"][0]["chunk"] == 0
-    assert status["agreed"] == 0
+    assert status["agreed"] == 0 and status["agreed_births"] == 0, "one word against a liar agrees on nothing"
 
 
 def test_a_chunk_whose_helper_went_quiet_goes_to_the_next(tmp_path, monkeypatch):
@@ -293,16 +356,19 @@ def test_a_chunk_whose_helper_went_quiet_goes_to_the_next(tmp_path, monkeypatch)
 def test_two_helpers_take_different_chunks(tmp_path):
     chain = _busy_chain(40)                                 # ten chunks
     mesh = Mesh()
-    a = dx.DoginalIndex(tmp_path / "a.sqlite", lambda: chain, lambda: "help")
-    b = dx.DoginalIndex(tmp_path / "b.sqlite", lambda: chain, lambda: "help")
+    a = dx.DoginalIndex(tmp_path / "a.sqlite", lambda: chain, lambda: "help", cores=lambda: 1)
+    b = dx.DoginalIndex(tmp_path / "b.sqlite", lambda: chain, lambda: "help", cores=lambda: 1)
     mesh.join("a", a)
     mesh.join("b", b)
     a.step(budget=0)
     b.step(budget=0)
-    # Each wants a chunk nobody else holds while there are such chunks (AGREE 2: a held chunk may still be chosen by a
-    # second helper, which is a second scan of it, never a wrong one).
-    assert a.chunks.mine and b.chunks.mine
+    # 2026-10-20: handed out in line, never two on the same blocks while any chunk is unscanned.
+    assert a.chunks.mine["c"] == 0 and b.chunks.mine["c"] == 1
     assert b.status()["leases"][0]["node"] == "a"
+    many = dx.DoginalIndex(tmp_path / "m.sqlite", lambda: chain, lambda: "help", cores=lambda: 3)
+    mesh.join("m", many)
+    many.step(budget=0)
+    assert sorted(lane["c"] for lane in many.chunks.lanes) == [2, 3, 4], "a faster arcade takes the next ones in line"
 
 
 def test_off_does_nothing(tmp_path):
@@ -491,3 +557,448 @@ def test_read_only_holds_no_index_and_asks_an_arcade_that_walks(tmp_path):
     assert where["where"]["output"] == f"{send[1]}:0" and where["from"] == "arcade walker-node"
     assert on["on"] == [{"id": f"{reveal[1]}i0", "offset": 0}]
     assert reader.store.q("SELECT COUNT(*) FROM insc")[0][0] == 0, "and the reader keeps no index"
+
+
+def test_status_never_makes_a_page_wait_for_another_working_it_out(tmp_path):
+    """2026-10-20 on .25: Admin tabs asked at once when the kept status ran out, every one worked it out again, and
+    they held the threads that serve pages. Now one works it out; the rest get the last answer at once."""
+    import threading
+    chain = _busy_chain(4)
+    index = dx.DoginalIndex(tmp_path / "s.sqlite", lambda: chain, lambda: "help")
+    first = index.status()
+    index._status_kept = (time.monotonic() - 999, first)      # run out
+    index._status_lock.acquire()                              # somebody is working it out
+    try:
+        started = time.monotonic()
+        assert index.status() is first and time.monotonic() - started < 0.5
+    finally:
+        index._status_lock.release()
+    assert index.status() is not first, "and once nobody is, it is worked out again"
+
+
+def test_reads_do_not_wait_for_a_write_in_progress(tmp_path):
+    chain = _busy_chain(4)
+    index = dx.DoginalIndex(tmp_path / "r.sqlite", lambda: chain, lambda: "walk")
+    index.step()
+    with index.store.tx():                                    # a write held open on another path
+        import threading
+        got = []
+        t = threading.Thread(target=lambda: got.append(index.store.q("SELECT COUNT(*) FROM block")[0][0]))
+        t.start()
+        t.join(2)
+        assert got == [4], "read on its own connection, not queued behind the writer's lock"
+
+
+# --------------------------------------------------------------------------- spend notes (ord_notes, 2026-10-20)
+
+def _json(obj) -> bytes:
+    import json
+    return json.dumps(obj, separators=(",", ":")).encode()
+
+
+def _tx_to(vin, outs):
+    """Like _tx, but each output is (koinu, script): to a chosen address, or to a script that pays none."""
+    raw = (1).to_bytes(4, "little") + _varint(len(vin))
+    for txid, n, script in vin:
+        raw += bytes.fromhex(txid)[::-1] + n.to_bytes(4, "little") + _varint(len(script)) + script + b"\xff\xff\xff\xff"
+    raw += _varint(len(outs))
+    for v, spk in outs:
+        raw += v.to_bytes(8, "little") + _varint(len(spk)) + spk
+    raw += (0).to_bytes(4, "little")
+    return raw, rawchain.read_tx(raw).txid
+
+
+def _story_chain():
+    """Every kind of thing the walk follows, over three chunks of 4 blocks: an image moved and sold on a later input,
+    an envelope across a chunk's edge, an image in two pieces inside a chunk, a token deployed, minted, set aside and
+    sent to a script that pays no address, a name, a burn."""
+    chain = Chain()
+    img = _tx([(FUND, 0, _envelope(b"image/png", parts=((0, b"\x89PNG" + bytes(range(200))),)))], [100_000], tag=b"i")
+    big = _tx([(FUND, 8, SIG)], [100_000], tag=b"bg")
+    chain.add([img, big])                                                       # block 0
+    deploy = _tx([(FUND, 1, _envelope(b"text/plain", parts=((0, _json(
+        {"p": "drc-20", "op": "deploy", "tick": "woof", "max": "1000", "lim": "100"})),)))], [100_000], tag=b"dp")
+    mint = _tx([(FUND, 2, _envelope(b"text/plain", parts=((0, _json(
+        {"p": "drc-20", "op": "mint", "tick": "woof", "amt": "100"})),)))], [100_000], tag=b"mt")
+    chain.add([deploy, mint])                                                   # block 1
+    send = _tx([(img[1], 0, SIG)], [100_000], tag=b"s")
+    two = _tx([(FUND, 3, _envelope(b"image/gif", parts=((1, b"G" * 240),), total=2))], [100_000], tag=b"t1")
+    chain.add([send, two])                                                      # block 2
+    two_b = _tx([(two[1], 0, _more(((0, b"I" * 240),)))], [100_000], tag=b"t2")
+    edge = _tx([(FUND, 4, _envelope(b"text/plain", parts=((1, b'{"p":"dns",'),), total=2))], [100_000], tag=b"e1")
+    chain.add([two_b, edge])                                                    # block 3: an envelope begins
+    edge_b = _tx([(edge[1], 0, _more(((0, b'"op":"reg","name":"pup.doge"}'),)))], [100_000], tag=b"e2")
+    name = _tx([(FUND, 5, _envelope(b"text/plain", parts=((0, b"robin.doge"),)))], [100_000], tag=b"nm")
+    chain.add([edge_b, name])                                                   # block 4: and ends, a chunk on
+    holder = rawchain.read_tx(mint[0]).vout[0][1]                               # whoever minted the 100
+    coin = _tx_to([(FUND, 9, SIG)], [(100_000, holder)])
+    chain.add([coin])                                                           # block 5: a coin to the minter
+    note = _tx_to([(coin[1], 0, _envelope(b"text/plain", parts=((0, _json(
+        {"p": "drc-20", "op": "transfer", "tick": "woof", "amt": "40"})),)))], [(100_000, holder)])
+    chain.add([note])                                                           # block 6: 40 set aside
+    dummies = _tx([(FUND, 6, SIG)], [10_000, 20_000], tag=b"dm")
+    chain.add([dummies])                                                        # block 7
+    buy = _tx([(dummies[1], 0, SIG), (dummies[1], 1, SIG), (send[1], 0, SIG)], [20_000, 100_000, 10_000], tag=b"b")
+    gift = _tx_to([(note[1], 0, SIG)], [(100_000, b"\x51")])                    # the 40 to a script, no address
+    chain.add([buy, gift])                                                      # block 8
+    nowhere = _tx_to([(two_b[1], 0, SIG)], [(100_000, b"\x51\x51")])
+    burn = _tx([(big[1], 0, SIG), (deploy[1], 0, SIG)], [90_000], tag=b"bn")
+    chain.add([nowhere, burn])                                                  # block 9
+    chain.add([])
+    chain.add([])                                                               # blocks 10, 11
+    return chain
+
+
+TABLES = ("insc", "at", "pending", "tok", "bal", "xfer", "names")
+
+
+def _dump(index):
+    out = {t: sorted(index.store.q(f"SELECT * FROM {t}")) for t in TABLES}
+    out["block"] = sorted(index.store.q("SELECT height, hash, line, n, moves FROM block"))
+    return out
+
+
+def test_an_index_stitched_from_notes_is_the_one_walked_from_a_core(tmp_path):
+    """2026-10-20: chunks scanned by whoever is free, stitched in order. A walk that reads only another
+    arcade's notes -- not one block read from the chain -- ends with every table the same as the walk that read each
+    block from its Core: owners, the token, the names, the burn."""
+    from arcade import ord_notes
+    chain = _story_chain()
+    walked = _walker(tmp_path, chain)
+    walked.walker.step(chain, dx.BASE + 11, budget=60)
+    assert walked.walker.next_height() == dx.BASE + 12
+    assert walked.token("woof")["minted"] == "100"
+    assert walked.name("pup.doge")["readings"]["json"]["winner"], "the name across a chunk's edge"
+    assert any(o.startswith("script:") and int(b) == 40 * 10 ** 18 for o, _t, b, _x in walked.store.q(
+        "SELECT * FROM bal")), "the 40 sent to a script that pays no address"
+    kept = {c: walked.store.notes_of(c) for c in range(3)}
+    assert all(k and k[2] == "" for k in kept.values()), "a walk from its own Core writes each chunk's notes"
+    words = walked.store.all_notes_words(3)
+    assert all(words[c][""][1] == kept[c][1] for c in range(3)), "and says their digest with the chunk's hash"
+
+    stitched = dx.DoginalIndex(tmp_path / "stitch.sqlite", lambda: chain, lambda: "walk")
+    reads = []
+    real = chain.call
+
+    def counted(method, *params):
+        reads.append(method)
+        return real(method, *params)
+    chain.call = counted
+    got = stitched.walker.step(chain, dx.BASE + 11, budget=60,
+                               notes=lambda c: (ord_notes.decode(ord_notes.unpack(kept[c][0])), False)
+                               if c in kept else False)
+    assert got == 12
+    assert "getblock" not in reads, "not one block read from the chain"
+    assert _dump(stitched) == _dump(walked)
+    assert stitched.store.all_notes_words(3) == {}, "stitched from another's notes: no word of its own"
+
+
+def test_notes_keep_what_matters_and_zero_what_does_not():
+    """An image's body is zeroed (same length, so its size stays), a token's or a name's never; two scans of a chunk
+    write the same bytes; a note that lies about a block's transactions does not read."""
+    from arcade import ord_notes
+    chain = _story_chain()
+    blocks = [rawchain.read_block(raw) for _h, raw in chain.blocks]
+    first = ord_notes.finish([ord_notes.one_block(b) for b in blocks[0:4]])
+    assert first == ord_notes.finish([ord_notes.one_block(b) for b in blocks[0:4]]), "canonical"
+    assert b"\x89PNG" not in first and b"G" * 240 not in first and b"I" * 240 not in first
+    assert b"woof" in first and b'{"p":"dns",' in first, "a token, and a name begun here, are kept"
+    second = ord_notes.finish([ord_notes.one_block(b) for b in blocks[4:8]])
+    assert b'"op":"reg","name":"pup.doge"}' in second and b"robin.doge" in second
+    decoded = ord_notes.decode(first)
+    assert [b.hash for b in decoded] == [b.hash for b in blocks[0:4]]
+    assert len(decoded[0].txs[1].vin[0]["script"]) == len(blocks[0].txs[1].vin[0]["script"]), "lengths kept"
+    assert len(ord_notes.pack(first)) < len(b"".join(raw for _h, raw in chain.blocks[0:4]))
+    bad = bytearray(first)
+    at = bad.index(bytes.fromhex(blocks[0].txs[1].txid))
+    bad[at] ^= 1
+    with pytest.raises(ord_notes.NotesError, match="merkle"):
+        ord_notes.decode(bytes(bad))
+
+
+def test_helpers_cover_in_line_a_holder_stitches_their_notes_then_they_audit(tmp_path):
+    """The whole scheme on three arcades (2026-10-20). Two helpers take the chunks in line, none twice while any
+    is unscanned; an arcade holding the index -- no Core of its own -- fetches each chunk's notes from whoever scanned
+    it and stitches them, ending with the index a walk from a Core makes; then the helpers audit each other's chunks,
+    and the confidence goes up; notes the holder has stitched past are let go."""
+    chain = _story_chain()
+    reference = dx.DoginalIndex(tmp_path / "ref.sqlite", lambda: chain, lambda: "walk")
+    reference.walker.step(chain, dx.BASE + 11, budget=60)
+    mesh = Mesh()
+    a = dx.DoginalIndex(tmp_path / "a.sqlite", lambda: chain, lambda: "help", cores=lambda: 1)
+    b = dx.DoginalIndex(tmp_path / "b.sqlite", lambda: chain, lambda: "help", cores=lambda: 1)
+    holder = dx.DoginalIndex(tmp_path / "h.sqlite", lambda: chain, lambda: "walk", own_core=lambda: False)
+    for name, idx in (("a", a), ("b", b), ("h", holder)):
+        mesh.join(name, idx)
+        idx.me = name
+    seen_twice = []
+    for _ in range(12):
+        a.step()
+        b.step()
+        words = a.store.all_words(3)
+        if len(words) < 3:
+            seen_twice += [c for c, w in words.items() if len(w) > 1]
+        holder.step()
+        for idx in (a, b):
+            idx.heard("h", holder.hello())
+    assert not seen_twice, "no chunk scanned twice before every chunk had been scanned once"
+    assert holder.error == "" and holder.walker.next_height() == dx.BASE + 12
+    assert _dump(holder) == _dump(reference), "stitched from the helpers' notes: the same index"
+    assert {node for _h, node, _c in mesh.fetched} <= {"a", "b"} and len({c for *_x, c in mesh.fetched}) == 3
+    status = a.status()
+    assert status["phase"] == "audit" and status["levels"][2]["chunks"] >= 1, status["levels"]
+    for idx in (a, b):
+        idx._pruned = 0
+        idx._prune_notes()
+    assert a.store.q("SELECT COUNT(*) FROM notes")[0][0] == 0 == b.store.q("SELECT COUNT(*) FROM notes")[0][0], \
+        "the holder stitched past them: let go"
+
+
+def test_notes_cross_a_link_in_parts_and_a_wrong_part_is_refused(tmp_path, monkeypatch):
+    """DxShare's ng / nb: a chunk's notes go in slices under a frame's size, are put back together and checked; a
+    sender that has let them go says so, and the asker asks elsewhere."""
+    import asyncio
+    from arcade.mesh import doginalshare
+    from arcade.mesh.doginalshare import DxShare
+    monkeypatch.setattr(doginalshare, "PART", 100)            # many parts even for a small chunk
+    chain = _story_chain()
+    helper = dx.DoginalIndex(tmp_path / "help.sqlite", lambda: chain, lambda: "help", cores=lambda: 1)
+    for _ in range(4):
+        helper.step()
+    holder = dx.DoginalIndex(tmp_path / "hold.sqlite", lambda: chain, lambda: "walk", own_core=lambda: False)
+    serve, ask = DxShare(helper), DxShare(holder)
+
+    class Link:
+        def __init__(self, me, other_share):
+            self.peer_id, self.other, self.sent = me, other_share, []
+
+        async def send(self, header, blob=b""):
+            self.sent.append(header)
+            await self.other.on_frame(self.back, header, blob)
+
+    to_helper, to_holder = Link("help", serve), Link("hold", ask)    # named for the arcade each leads to
+    to_helper.back, to_holder.back = to_holder, to_helper
+
+    class Node:
+        def __init__(self, links):
+            self.links = links
+
+    serve.node, ask.node = Node({"hold": to_holder}), Node({"help": to_helper})
+
+    async def go():
+        serve.loop = ask.loop = asyncio.get_running_loop()
+        word = helper.store.all_notes_words(3)
+        for c in range(3):
+            h, nd, _n = word[c][""]
+            await asyncio.to_thread(holder.share.fetch_notes, c, "help", nd, h)
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            if all(holder.store.notes_of(c) for c in range(3)):
+                break
+        helper.store.x("DELETE FROM notes WHERE chunk=0")
+        holder.store.x("DELETE FROM notes WHERE chunk=0")
+        await asyncio.to_thread(holder.share.fetch_notes, 0, "help", word[0][""][1], word[0][""][0])
+        await asyncio.sleep(0.1)
+    asyncio.run(go())
+    parts = [f for f in to_holder.sent if f["op"] == "nb"]
+    assert max(f["seq"] for f in parts) > 3, "sent in slices"
+    assert all(holder.store.notes_of(c) and holder.store.notes_of(c)[2] == "help" for c in (1, 2))
+    assert holder.store.notes_of(0) is None and "help" in holder._notes_failed[0], "let go there: ask elsewhere"
+    blob, nd, _src = holder.store.notes_of(1)
+    h = helper.store.all_notes_words(3)[1][""][0]
+    assert holder.got_notes("liar", 1, blob, "00" * 32, h) is False, "not the digest it said"
+    assert holder.got_notes("liar", 1, blob, nd, "00" * 32) is False, "its blocks do not make the hash it said"
+    assert holder.got_notes("liar", 1, blob[:-3], nd, h) is False, "cut short"
+
+
+def test_a_chunk_stitched_from_notes_the_audit_outvotes_is_said_never_wiped(tmp_path):
+    """The holder trusted one helper's notes for a chunk during the cover; two auditors later say otherwise of it. It is
+    said for the operator; the index is kept (2026-10-20: never lose an index by itself)."""
+    chain = _story_chain()
+    mesh = Mesh()
+    a = dx.DoginalIndex(tmp_path / "a.sqlite", lambda: chain, lambda: "help", cores=lambda: 1)
+    holder = dx.DoginalIndex(tmp_path / "h.sqlite", lambda: chain, lambda: "walk", own_core=lambda: False)
+    mesh.join("a", a)
+    mesh.join("h", holder)
+    for _ in range(6):
+        a.step()
+        holder.step()
+    assert holder.walker.next_height() == dx.BASE + 12
+    assert holder.store.q("SELECT COUNT(*) FROM stitched")[0][0] == 3
+    holder._pruned = 0
+    holder._prune_notes()
+    assert holder.walker.next_height() == dx.BASE + 12, "one word, not outvoted: kept"
+    for liar in ("x", "y"):
+        holder.heard(liar, {"op": "hi", "mode": "help", "rules": dx.ord_rules.RULES})
+        holder.heard(liar, {"op": "dn", "rows": [[1, "cd" * 32, 0, "ef" * 32]]})
+    kept = holder.store.q("SELECT COUNT(*) FROM insc")[0][0]
+    holder._pruned = 0
+    holder._prune_notes()
+    assert holder.status()["disputed"] == [1] or holder.disputed == [1]
+    assert holder.walker.next_height() == dx.BASE + 12 and holder.store.q("SELECT COUNT(*) FROM insc")[0][0] == kept
+    for liar in ("p", "q"):                              # other notes, the same births: not a dispute
+        holder.heard(liar, {"op": "hi", "mode": "help", "rules": dx.ord_rules.RULES})
+    assert holder.disputed == [1]
+
+
+def _hold_round(mesh, *indexes):
+    for idx in indexes:
+        idx.step()
+    for name, idx in mesh.members.items():                 # every arcade's hello, as the mesh says it each minute
+        for other, peer in mesh.members.items():
+            if other != name and other in mesh.up:
+                peer.heard(name, idx.hello())
+
+
+def test_the_whole_index_comes_from_the_arcades_that_hold_it(tmp_path, monkeypatch):
+    """2026-10-20: "Anyone who wants to hold the full index can request it, and it will be served torrent style
+    from the rest of its peers that hold it". A newcomer far behind asks; the furthest holder makes a snapshot; its
+    pieces come from every arcade that has them -- a second newcomer takes some from the first, still fetching; the
+    copy's moves are checked with a second holder, and it takes the newcomer's index's place."""
+    from arcade import ord_snapshot
+    monkeypatch.setattr(ord_snapshot, "WORTH_BLOCKS", 4)
+    monkeypatch.setattr(ord_snapshot, "PIECE", 4096)
+    chain = _story_chain()
+    mesh = Mesh()
+    first = dx.DoginalIndex(tmp_path / "first.sqlite", lambda: chain, lambda: "walk", cores=lambda: 1)
+    second = dx.DoginalIndex(tmp_path / "second.sqlite", lambda: chain, lambda: "walk", cores=lambda: 1)
+    newcomer = dx.DoginalIndex(tmp_path / "new.sqlite", lambda: chain, lambda: "walk", own_core=lambda: False)
+    later = dx.DoginalIndex(tmp_path / "later.sqlite", lambda: chain, lambda: "walk", own_core=lambda: False)
+    first.walker.step(chain, dx.BASE + 11, budget=60)
+    second.walker.step(chain, dx.BASE + 11, budget=60)
+    for idx in (first, second):                          # long stitched past: no notes left to stitch from
+        idx.store.x("DELETE FROM notes")
+    for name, idx in (("first", first), ("second", second), ("new", newcomer)):
+        mesh.join(name, idx)
+        idx.me = name
+    for n in range(40):
+        if n == 3:
+            mesh.join("later", later)
+            later.me = "later"
+        _hold_round(mesh, first, newcomer, *([later] if n >= 3 else []))
+        if all(i.snapshots.said.startswith("the index came") for i in (newcomer, later)):
+            break
+    assert first.snapshots.made is not None, "asked, the holder made one"
+    assert newcomer.snapshots.said.startswith("the index came"), newcomer.snapshots.said
+    assert newcomer.walker.next_height() == dx.BASE + 12
+    assert _dump(newcomer) == _dump(first)
+    assert newcomer.store.q("SELECT COUNT(*) FROM notes")[0][0] == 0, "no work in hand came with it"
+    assert not newcomer.snapshots.single, "a second holder's moves were compared"
+    pieces = [x for x in mesh.fetched if x[0] == "new" and x[2] == "piece"]
+    assert len(pieces) == len(first.snapshots.made["manifest"]["pieces"]) > 1
+    assert _dump(later) == _dump(first)
+    assert any(x[0] == "later" and x[1] == "new" and x[2] == "piece" for x in mesh.fetched), \
+        "pieces from an arcade still fetching them: torrent style"
+
+
+def test_a_snapshot_whose_moves_another_holder_does_not_share_is_refused(tmp_path, monkeypatch):
+    from arcade import ord_snapshot
+    monkeypatch.setattr(ord_snapshot, "WORTH_BLOCKS", 4)
+    chain = _story_chain()
+    mesh = Mesh()
+    liar = dx.DoginalIndex(tmp_path / "liar.sqlite", lambda: chain, lambda: "walk", cores=lambda: 1)
+    honest = dx.DoginalIndex(tmp_path / "honest.sqlite", lambda: chain, lambda: "walk", cores=lambda: 1)
+    newcomer = dx.DoginalIndex(tmp_path / "new.sqlite", lambda: chain, lambda: "walk", own_core=lambda: False)
+    liar.walker.step(chain, dx.BASE + 11, budget=60)
+    honest.walker.step(chain, dx.BASE + 11, budget=60)
+    # The liar moves one inscription somewhere else in its own copy, moves and all.
+    liar.store.x("UPDATE block SET moves='ab' WHERE height=?", (dx.BASE + 8,))
+    for idx in (liar, honest):
+        idx.store.x("DELETE FROM notes")
+    monkeypatch.setattr(ord_snapshot, "MOVES_SAMPLE", 3)
+    for name, idx in (("liar", liar), ("honest", honest), ("new", newcomer)):
+        mesh.join(name, idx)
+        idx.me = name
+    liar._snap_asked = True
+    honest.walker.next_height = lambda: dx.BASE + 5       # not ahead enough to be the one asked
+    for _ in range(40):
+        _hold_round(mesh, liar, newcomer)
+        if "refused" in newcomer.snapshots.said:
+            break
+    assert "refused" in newcomer.snapshots.said and "moves in chunk 2" in newcomer.snapshots.said
+    assert newcomer.store.q("SELECT COUNT(*) FROM insc")[0][0] == 0, "nothing of it was used"
+
+
+def test_a_chunk_only_an_older_arcade_said_is_scanned_here_not_waited_for(tmp_path):
+    """An arcade from before the notes says a chunk's hash and keeps no notes: a holder on many cores does not wait
+    for notes nobody can send -- while plenty of chunks further on are still unscanned (the cover far from done), its
+    lane takes that chunk next."""
+    chain = _busy_chain(40)                                 # ten chunks
+
+    def holder_after_three_passes(name, needed=True):
+        holder = dx.DoginalIndex(tmp_path / f"{name}.sqlite", lambda: chain, lambda: "walk", cores=lambda: 2)
+        if not needed:
+            holder._needed = lambda: []                   # as it was before: the lane goes on with the cover
+        Mesh().join(name, holder)
+        holder.heard("old", {"op": "hi", "mode": "help", "rules": dx.ord_rules.RULES, "v": 2})
+        holder.heard("old", {"op": "dn", "rows": [[1, "ab" * 32, 0]]})
+        for _ in range(3):
+            holder.step()
+        return holder.walker.next_height() - dx.BASE
+    assert holder_after_three_passes("before", needed=False) == 4, "it waited at chunk 1 for notes nobody has"
+    assert holder_after_three_passes("now") >= 8
+
+
+def test_an_envelope_begun_in_an_earlier_chunk_is_followed_back_and_zeroed_when_it_cannot_matter(tmp_path):
+    """2026-10-20: PEP's big images in hundreds of pieces cross every chunk's edge; kept whole, a chunk's notes were as
+    big as its blocks (27 MB). Followed back to its first piece through the Core, an image's later pieces are zeroed;
+    a name's are kept; and the index stitched from those notes is still the one a walk from a Core makes."""
+    from arcade import ord_notes
+    ord_notes._GENESIS.clear()
+    chain = Chain()
+    a = _tx([(FUND, 0, _envelope(b"image/jpeg", parts=((2, b"\xff\xd8" + b"J" * 200),), total=3))], [100_000], tag=b"a")
+    n = _tx([(FUND, 1, _envelope(b"text/plain", parts=((1, b"pup"),), total=2))], [100_000], tag=b"n")
+    chain.add([a, n])                                                           # block 0
+    chain.add([])
+    chain.add([])
+    chain.add([])                                                               # blocks 1-3: the chunk ends
+    b = _tx([(a[1], 0, _more(((1, b"K" * 200),)))], [100_000], tag=b"b")
+    m = _tx([(n[1], 0, _more(((0, b".doge"),)))], [100_000], tag=b"m")
+    chain.add([b, m])                                                           # block 4: both carry on
+    c = _tx([(b[1], 0, _more(((0, b"L" * 200),)))], [100_000], tag=b"c")
+    chain.add([c])                                                              # block 5: the image ends
+    chain.add([])
+    chain.add([])                                                               # blocks 6, 7
+    blocks = [rawchain.read_block(raw) for _h, raw in chain.blocks]
+    lookup = lambda txid: chain.txs[txid]
+    second = ord_notes.finish([ord_notes.one_block(x) for x in blocks[4:8]], lookup)
+    assert b"K" * 200 not in second and b"L" * 200 not in second, "the image's later pieces, zeroed"
+    assert b".doge" in second, "a name's piece is kept: plain text can matter"
+    kept_whole = ord_notes.finish([ord_notes.one_block(x) for x in blocks[4:8]])
+    assert b"K" * 200 in kept_whole, "with no way to look back, kept whole"
+    assert ord_notes.finish([ord_notes.one_block(x) for x in blocks[4:8]], lookup) == second, "canonical"
+
+    walked = _walker(tmp_path, chain)
+    walked.walker.step(chain, dx.BASE + 7, budget=60)
+    assert walked.name("pup.doge")["readings"]["spec"]["winner"], "the name across the edge"
+    assert ord_notes.unpack(walked.store.notes_of(1)[0]) == second, "a walk follows them back through its Core too"
+    assert walked.store.q("SELECT size, pieces FROM insc WHERE tx=? AND n=0", (bytes.fromhex(a[1]),))[0] == (602, 3)
+    notes = {0: ord_notes.finish([ord_notes.one_block(x) for x in blocks[0:4]], lookup), 1: second}
+    stitched = dx.DoginalIndex(tmp_path / "s.sqlite", lambda: chain, lambda: "walk")
+    stitched.walker.step(chain, dx.BASE + 7, budget=60, notes=lambda k: (ord_notes.decode(notes[k]), False))
+    assert _dump(stitched) == _dump(walked)
+
+
+def test_a_small_machine_never_fetches_the_whole_index(tmp_path, monkeypatch):
+    """2026-10-20: .25 (four cores, a spinning disk, the live site) fetched two 6 GB copies at once and the site stopped
+    answering. A machine under BIG_FROM_CORES walks on instead, and says so; nor does it ask a holder to make one."""
+    from arcade import ord_snapshot
+    monkeypatch.setattr(ord_snapshot, "WORTH_BLOCKS", 4)
+    chain = _story_chain()
+    mesh = Mesh()
+    holder = dx.DoginalIndex(tmp_path / "h.sqlite", lambda: chain, lambda: "walk", cores=lambda: 1)
+    small = dx.DoginalIndex(tmp_path / "s.sqlite", lambda: chain, lambda: "walk", own_core=lambda: False)
+    holder.walker.step(chain, dx.BASE + 11, budget=60)
+    holder.store.x("DELETE FROM notes")
+    holder._snap_asked = True
+    for name, idx in (("holder", holder), ("small", small)):
+        mesh.join(name, idx)
+        idx.me = name
+    monkeypatch.setattr(ord_snapshot.os, "cpu_count", lambda: 4)
+    for _ in range(6):
+        _hold_round(mesh, holder, small)
+    assert small.snapshots.fetch is None and small.walker.next_height() == dx.BASE
+    assert "fewer than 8 cores" in small.snapshots.said
+    assert not any(x[2] == "piece" for x in mesh.fetched if x[0] == "small")
+    monkeypatch.setattr(ord_snapshot.os, "cpu_count", lambda: 20)
+    assert "free disk" in small.snapshots.may_fetch(10 ** 15), "and a big one with too little room says so"

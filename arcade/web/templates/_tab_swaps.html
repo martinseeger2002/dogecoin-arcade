@@ -146,7 +146,7 @@
         return alert("A swap is one coin for another, on two different chains.");
       }
       const ok = await arcadeAsk("List this swap?",
-        `${amt(give)} for ${amt(get)}. ` + listWords(give) + wallet.swapFees(give, get), "List it");
+        `${amt(give)} for ${amt(get)}. ` + listWords(give) + await wallet.swapFees(give, get), "List it");
       if (!ok) { step("cancelled"); return; }
       button.disabled = true;
       step("listing");
@@ -372,7 +372,7 @@
       const [give, get] = f.dataset.pairSide === "sell" ? [base, quote] : [quote, base];
       const ok = await arcadeAsk(f.dataset.pairSide === "sell" ? "List this sale?" : "List this bid?",
         `${amt(give)} for ${amt(get)} (${price} ${Q.label} ${kind === "nft" || kind === "doginal" ? "for it" : "per " + label}). `
-        + listWords(give) + wallet.swapFees(give, get), "List it");
+        + listWords(give) + await wallet.swapFees(give, get), "List it");
       if (!ok) { step("cancelled"); return; }
       button.disabled = true;
       step("listing");
@@ -409,7 +409,7 @@
       const [give, get] = selling ? [a, b] : [b, a];
       const ok = await arcadeAsk(selling ? "List this ask?" : "List this bid?",
         `${amt(give)} for ${amt(get)} (${price} ${B.name} per ${A.kind === "nft" ? "it" : A.name}). `
-        + listWords(give) + wallet.swapFees(give, get), "List it");
+        + listWords(give) + await wallet.swapFees(give, get), "List it");
       if (!ok) return;
       const go = box2.querySelector("button[type=submit]");
       go.disabled = true;
@@ -450,7 +450,7 @@
       if (short) { track("You can't take this one", -1, short.charAt(0).toUpperCase() + short.slice(1) + ".", true); return; }
       const ok = await arcadeAsk("Take this swap?",
         `You give ${order.get_label || amt(order.get)} and get ${order.give_label || amt(order.give)}. `
-        + "Either both sides get paid or both get their own back. " + wallet.swapFees(order.get, order.give)
+        + "Either both sides get paid or both get their own back. " + await wallet.swapFees(order.get, order.give, {taking: true})
         + " This is the only question: the rest happens by itself.", "Take it");
       if (!ok) { step("cancelled"); return; }
       b.disabled = true;

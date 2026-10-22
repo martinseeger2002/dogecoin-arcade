@@ -6,7 +6,7 @@
   <span class="pill {{ 'ok' if local else 'warn' }}">{{ 'at the node machine' if local else 'remote' }}</span>
   {% if not local %}<button type="button" class="ghost small" id="adminout">Lock the panel</button>{% endif %}
 </div>
-<p class="sub" style="margin-top:4px">Everything this node's operator runs, in six tabs.</p>
+<p class="sub" style="margin-top:4px">Everything this node's operator runs, in seven tabs.</p>
 <p class="msg" id="said" hidden></p>
 
 <nav class="admintabs" role="tablist">
@@ -16,16 +16,17 @@
   <button type="button" role="tab" data-tab="safety">Safety</button>
   <button type="button" role="tab" data-tab="network">Network</button>
   <button type="button" role="tab" data-tab="ords">Ords</button>
+  <button type="button" role="tab" data-tab="affiliates">Affiliates</button>
   <button type="button" role="tab" data-tab="people">People &amp; brand</button>
 </nav>
 
 <div class="admintab" data-tab="overview" aria-label="Overview">
 <div class="cards" id="cards"></div>
 <section class="panel" id="needs">
-  <p style="margin:0 0 10px;font-weight:600" id="arcadesline"></p>
   <h2>Needs you</h2>
   <div id="needlist" class="muted">Looking&hellip;</div>
 </section>
+{% include "_arcades_panel.html" %}
 <section class="panel" id="nodeswitch">
   <h2>This node</h2>
   <p class="muted" style="margin:0 0 6px;font-size:.84rem">
@@ -136,12 +137,22 @@
 <section class="panel" id="tradeswitches">
   <h2>Trading switches</h2>
   <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-    <label for="tradecut" class="muted">Your cut of trades made here, per cent</label>
-    <input autocomplete="off" id="tradecut" type="number" min="0" max="100" step="0.1" style="width:90px" value="{{ '%g'|format(trade_cut) }}">
+    <label for="tradecut" class="muted">Your cut of trades made here, and your fee on lock-script swaps</label>
+    {# A selector (2026-10-21: "Lock script fee selector in the operator admin trading panel"): one setting for
+       both, saved as before (trade_cut). A rate set some other way stays on the list as it is. #}
+    {% set cut_now = '%g'|format(trade_cut) %}
+    <select id="tradecut" style="width:auto">
+      {% for value, label in [('0', 'Off'), ('0.1', '0.1%'), ('0.25', '0.25%'), ('0.5', '0.5%'), ('1', '1%'), ('2', '2%')] %}
+      <option value="{{ value }}"{{ ' selected' if value == cut_now }}>{{ label }}</option>
+      {% endfor %}
+      {% if cut_now not in ['0', '0.1', '0.25', '0.5', '1', '2'] %}<option value="{{ cut_now }}" selected>{{ cut_now }}%</option>{% endif %}
+    </select>
   </div>
   <p class="muted" style="margin:0 0 10px;font-size:.84rem">What this node takes of a trade it made the offer for (a sale
     from your shop, a fill of your order, an offer you accepted), paid by the buyer on top of the price and named in
-    the offer. Zero asks nothing of anybody.</p>
+    the offer. The same rate is held in every lock-script swap lock made here, on top of what is traded, and paid to
+    this node's own address on that chain when the other side claims it (at least that chain's dust line; a token or
+    NFT lock pays the line alone unless its price is coin on the same chain). Off asks nothing of anybody.</p>
   <label class="switch"><input type="checkbox" id="auto_sell"> Sell listed pieces automatically</label>
   <label class="switch"><input type="checkbox" id="auto_fill"> Fill exchange orders automatically</label>
   {# Off by default (2026-10-13): trades only while both people's tabs are open,
@@ -302,39 +313,56 @@
 <div class="admintab" data-tab="ords" aria-label="Ords">
 <section class="panel" id="ords">
   <h2>Ords</h2>
-  <p class="muted" style="margin-top:0">Every inscription on each chain, read from its blocks by the arcades themselves,
-    from the first block that chain&rsquo;s ord indexer starts at. <b>Walk</b> reads every block here, in order, and knows
-    where each inscription is now (it needs that chain&rsquo;s Core on this machine). <b>Help</b> takes 100 blocks at a
-    time from the shared list, reads them a block at a time, and says their hash; two arcades with the same hash for a
-    chunk agree on it. A chunk whose arcade goes quiet for 10 minutes goes to the next one.</p>
-  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0 10px">
-    <label for="ordcores"><b>Cores for ords:</b></label>
-    <input autocomplete="off" type="number" id="ordcores" min="1" step="1" inputmode="numeric" style="width:5.5em;font-size:16px">
-    <span class="muted" id="ordmachine"></span>
-    <button type="button" class="small" id="ordcoressave">Save</button>
-  </div>
-  <p class="muted" style="margin:0 0 10px;font-size:.84rem">Each core helps with a chunk of its own, side by side.
-    Walking a chain is block after block, so it uses one core whatever this says. One core on a small machine rests
-    between passes, so the arcade&rsquo;s pages stay quick.</p>
-  <div class="tablewrap"><table class="admintable">
-    <thead><tr><th>Chain</th><th>Index</th><th>Starts at</th><th>Indexed</th><th>Inscriptions</th><th>Now</th></tr></thead>
-    <tbody id="ordrows"><tr><td colspan="6" class="muted">Loading&hellip;</td></tr></tbody>
-  </table></div>
+  {# 2026-10-20 (the operator): "update the admin interface to be more descriptive and helpful to the admin" -- a coin to pick
+     the chain, then that chain's index in plain words: how complete, what needs you, the ring of arcades holding it,
+     how this arcade takes part, and what it costs this machine. Mock-up first (ords.html), then this. #}
+  <div class="ordcoins" id="ordcoins" role="tablist" aria-label="Chain"></div>
+  <div id="ordchain"><p class="muted">Loading&hellip;</p></div>
   <span class="muted" id="ordsaid"></span>
-  <h3 style="margin:14px 0 6px">Look up</h3>
-  <p class="muted" style="margin-top:0;font-size:.84rem">An inscription id (where it is now), a coin as
-    <code>txid:vout</code> (what sits on it), a 4-character DRC-20 / PRC-20 tick (its supply and holders), a name like
-    <code>jon.doge</code> (who claimed it first, under each reading), an address (its token balances),
+  {# 2026-10-21: "In the ord admin panel The Explorer on the bottom should be picked by the coin type at the top
+     you should be able to search by number as well as TXID utxo:index. Or whatever it is already. Below the search
+     should display ord 0 of the chain that is selected with arrows to navigate by ord number. Below that should be PRC
+     and DRC token info and the ability to search by token ticker borrow the search tool from the token exchange. When a
+     ticker is selected it should show information about token and a list rich list of the token holders paginated to
+     20 holders." One explorer for the chain picked at the top (no chain choice of its own), answered by this arcade's
+     own walk or, on Read only, by a linked arcade that walks the chain. #}
+  {% include "_pick.html" %}
+  <div class="ordcard ordx" id="ordexplorer">
+  <h3>Explorer: <span id="ordxchain">the chain above</span></h3>
+  <p class="muted" style="margin-top:0;font-size:.84rem">An inscription number (<code>0</code>, <code>1</code>,
+    &hellip;) or id, a coin as <code>txid:vout</code> (what sits on it), a 4-character tick (or <code>tick:1234</code>),
+    a name like <code>jon.doge</code> (who claimed it first, under each reading), an address (its token balances),
     <code>type:image/png</code> or <code>p:drc-20</code> (how many, and the first ones), or <code>kinds</code> (the
-    commonest types and protocols). Answered from
-    this arcade&rsquo;s own walk, or, on <b>Read only</b>, by a linked arcade that walks the chain.</p>
+    commonest types and protocols).</p>
   <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
-    <select id="ordlooknet" aria-label="Chain to look up on" style="font-size:16px"></select>
-    <input autocomplete="off" id="ordlookq" style="flex:1;min-width:260px;font-size:16px" placeholder="inscription id, or txid:vout"
-           aria-label="Inscription id or coin">
+    <input autocomplete="off" id="ordlookq" type="search" style="flex:1 1 220px;min-width:0;font-size:16px"
+           placeholder="number, inscription id, txid:vout, tick, name, address" aria-label="Look up">
     <button type="button" class="small" id="ordlookgo">Look up</button>
   </div>
-  <pre id="ordlooksaid" class="muted" style="white-space:pre-wrap;font-size:.84rem;margin:8px 0 0"></pre>
+  <div id="ordlooksaid" class="ordxsaid" aria-live="polite"></div>
+
+  <div class="ordxview" id="ordview" aria-label="Inscription viewer">
+    <div class="ordxnav">
+      <button type="button" class="small" id="ordprev" aria-label="Previous inscription">&lsaquo; Previous</button>
+      <label class="ordxjump"><span>#</span><input autocomplete="off" type="number" id="ordnum" min="0" step="1"
+             inputmode="numeric" aria-label="Inscription number"></label>
+      <button type="button" class="small" id="ordjump">Go</button>
+      <button type="button" class="small" id="ordnext" aria-label="Next inscription">Next &rsaquo;</button>
+    </div>
+    <div class="ordxbody">
+      <div class="ordxframe" id="ordframe"></div>
+      <dl class="ordxfacts" id="ordfacts"><dt>&nbsp;</dt><dd class="muted">Loading&hellip;</dd></dl>
+    </div>
+  </div>
+
+  <h3 id="ordtokh" style="margin-top:16px">Tokens</h3>
+  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+    <span class="pick" id="ordtickpick"><input type="search" class="pick-q" placeholder="Search a ticker"
+          autocomplete="off" role="combobox" aria-expanded="false" aria-label="Token ticker" style="font-size:16px"><span
+          class="pick-list" role="listbox" hidden></span></span>
+  </div>
+  <div id="ordtok" aria-live="polite"></div>
+  </div>
   {# 2026-10-20: "make sure that we are indexing the domains the correct way" -- every reading kept. #}
   <h3 style="margin:14px 0 6px">Names: where the readings disagree</h3>
   <p class="muted" style="margin-top:0;font-size:.84rem">A <code>"p":"dns"</code> name is claimed by an inscription;
@@ -342,6 +370,36 @@
     the same name can have a different first claim under each. Read from this arcade&rsquo;s own walk.</p>
   <button type="button" class="small" id="ordnamesgo">Show</button>
   <pre id="ordnamessaid" class="muted" style="white-space:pre-wrap;font-size:.84rem;margin:8px 0 0"></pre>
+</section>
+</div>
+
+{# 2026-10-21: "I want an admin affiliate panel. It should show the operators published URLs with a check box next
+   to each to share with affiliates. It should have a list of shared URLs from other node operators, each with a
+   checkmark to share on client side affiliate tab." Which URLs: "Arcade's names + ones I add". Then: "The second list
+   should be a list of operators and their published URLs that they shared with the affiliates." arcade/affiliates.py;
+   shared over the mesh in the operators "me" frame's `sites` (mesh/operators.py). #}
+<div class="admintab" data-tab="affiliates" aria-label="Affiliates">
+<section class="panel" id="affmine">
+  <h2>Your sites</h2>
+  <p class="muted" style="margin-top:0">The names this arcade is published under, and any other sites you add. Sites you
+    add are always on this arcade&rsquo;s <a href="/affiliates">Affiliates</a> tab. Tick <b>Share with other arcades</b>
+    to offer a site to the arcades linked to this one; their operators choose whether to show it.</p>
+  <div id="affhosts" class="afflist"></div>
+  <h3 style="margin:14px 0 6px">Sites you add</h3>
+  <div id="affown" class="afflist"></div>
+  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+    <button type="button" class="ghost small" id="affadd">Add a site</button>
+    <button type="button" class="small" id="affsave">Save</button>
+    <span class="muted" id="affsaid"></span>
+  </div>
+</section>
+<section class="panel" id="affothers">
+  <h2>Shared by other arcades</h2>
+  <p class="muted" style="margin-top:0">Each operator who shares sites with this arcade, and what they share. Nothing here
+    reaches your users until you tick <b>Show on my Affiliates tab</b>; a ticked site leaves the tab again when its
+    operator stops sharing it or is not heard from for <span id="affdays">30</span> days.</p>
+  <div id="affgroups"><p class="muted">Loading&hellip;</p></div>
+  <span class="muted" id="affshownsaid"></span>
 </section>
 </div>
 
@@ -428,7 +486,73 @@ section.panel h2{margin-top:0}
 #ords .admintable td{white-space:normal;vertical-align:top}
 #ords .admintable td.ordwhat{white-space:nowrap}
 #ords select{min-width:6.5em;font-size:16px}
+#ords .ordcoins{display:flex;gap:10px;overflow-x:auto;padding:2px 0 6px}
+#ords .ordcoins button{padding:5px;border-radius:14px;border:2px solid transparent;background:none;flex:none;cursor:pointer}
+#ords .ordcoins button.on{border-color:var(--accent)}
+#ords .ordcoins img{width:42px;height:42px;display:block;border-radius:50%}
+#ords .ordcoins button.off img{opacity:.45}
+#ords .ordtitle{font-weight:700;font-size:1.12rem;margin:6px 0 2px}
+#ords .ordpct{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
+#ords .ordpct>div,#ords .ordcard{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+#ords .ordpct b{display:block;font-size:1.5rem;line-height:1.2}
+#ords .ordbar{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:6px 0 4px}
+#ords .ordbar i{display:block;height:100%}
+#ords .ordattn{border-left:4px solid var(--warn,#b26b00);padding:9px 12px;border-radius:8px;margin:0 0 8px;font-size:.92rem;
+  background:color-mix(in srgb,var(--warn,#b26b00) 9%,transparent)}
+#ords .ordattn.bad{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 9%,transparent)}
+#ords .ordattn.ok{border-color:var(--good,#2f7d4f);background:color-mix(in srgb,var(--good,#2f7d4f) 9%,transparent)}
+#ords .ordcard{margin:12px 0}
+#ords .ordcard h3{margin:0 0 6px;font-size:1rem}
+#ords .ordring svg{width:100%;max-width:400px;display:block;margin:0 auto}
+#ords .ordring text{font:600 11px system-ui,sans-serif;fill:var(--fg)}
+#ords .ordring .sub{font:500 10px system-ui,sans-serif;fill:var(--muted)}
+#ords .ordmodes{display:grid;gap:8px}
+#ords .ordmode{display:flex;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;cursor:pointer}
+#ords .ordmode.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent)}
+#ords .ordmode input{margin-top:4px}
+#ords .ordrec{font-size:.72rem;border:1px solid var(--accent);color:var(--accent);border-radius:99px;padding:0 7px;margin-left:6px}
+#ords .ordcost{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+#ords .ordcost>div{border:1px solid var(--line);border-radius:10px;padding:10px}
+#ords .ordcost b{display:block;font-size:1.05rem}
+#ords details.ordmore>summary{cursor:pointer;color:var(--muted);font-size:.9rem}
 #ords .ordline{display:block}
+/* The explorer (2026-10-21): stacks on a phone, nothing wider than the page; the frame scales to the width. */
+#ords .ordx h3{margin:0 0 6px}
+#ords .ordx code{word-break:break-all}
+#ords .ordxsaid{margin:8px 0 0;font-size:.9rem}
+#ords .ordxsaid .ordcard{margin:8px 0}
+#ords .ordxview{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}
+#ords .ordxnav{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+#ords .ordxjump{display:flex;gap:4px;align-items:center}
+#ords .ordxjump input{width:8.5em;font-size:16px}
+#ords .ordxbody{display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:14px;align-items:start}
+#ords .ordxframe{width:100%;aspect-ratio:1;border:1px solid var(--line);border-radius:10px;overflow:hidden;
+  background:color-mix(in srgb,var(--fg) 4%,transparent);display:flex;align-items:center;justify-content:center}
+#ords .ordxframe iframe{width:100%;height:100%;border:0;display:block;background:transparent}
+#ords .ordxframe pre{margin:0;padding:10px;width:100%;height:100%;box-sizing:border-box;overflow:auto;white-space:pre-wrap;
+  word-break:break-word;font-size:.8rem;align-self:stretch}
+#ords .ordxframe .ordxnone{padding:14px;text-align:center;font-size:.88rem}
+#ords .ordxfacts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:0;font-size:.9rem}
+#ords .ordxfacts dt{color:var(--muted)}
+#ords .ordxfacts dd{margin:0;overflow-wrap:anywhere;word-break:break-word}
+#ords .ordxfacts dd code{font-size:.82rem}
+#ords .ordxlink{background:none;border:0;padding:0;box-shadow:none;min-height:0;color:var(--accent);cursor:pointer;font:inherit;text-decoration:underline;
+  overflow-wrap:anywhere;text-align:left}
+#ords .ordrich{width:100%;border-collapse:collapse;font-size:.88rem;margin-top:8px}
+#ords .ordrich th,#ords .ordrich td{text-align:left;padding:6px 8px;border-top:1px solid var(--line);vertical-align:top}
+#ords .ordrich td.n,#ords .ordrich th.n{text-align:right;white-space:nowrap}
+#ords .ordrich td.addr{overflow-wrap:anywhere;word-break:break-all}
+#ords .ordpager{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+@media (max-width:640px){
+  #ords .ordxbody{grid-template-columns:minmax(0,1fr)}
+  #ords .ordrich thead{display:none}
+  #ords .ordrich,#ords .ordrich tbody{display:block;width:auto}
+  #ords .ordrich tr{display:flex;flex-wrap:wrap;gap:2px 12px;border-top:1px solid var(--line);padding:6px 0}
+  #ords .ordrich td{display:block;border:0;padding:0}
+  #ords .ordrich td.addr{flex:1 1 calc(100% - 4em);min-width:0}
+  #ords .ordrich td.n{text-align:left;font-size:.84rem}
+  #ords .ordrich td.n[data-l]::before{content:attr(data-l) " ";color:var(--muted)}
+}
 .quotagrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 14px;margin-bottom:10px}
 .quotagrid label{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:.9rem}
 .quotagrid input{width:90px}
@@ -457,6 +581,24 @@ section.panel h2{margin-top:0}
 /* base.html gives every input width:100%, which stretched each switch's checkbox across its panel */
 .switch input[type=checkbox]{width:auto;flex:none;margin:0}
 #needlist div,#meshinfo div{padding:3px 0}
+#affmine .afflist,#affothers .afflist{display:grid;gap:8px}
+.affrow{display:grid;grid-template-columns:minmax(120px,1fr) minmax(180px,1.4fr) minmax(160px,1.6fr) auto auto;gap:8px;
+  align-items:center;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.affrow.fixed{grid-template-columns:1fr auto}
+.affrow input[type=text],.affrow input[type=url]{width:100%;min-width:0;font-size:16px;box-sizing:border-box}
+.affrow .tick{display:inline-flex;align-items:center;gap:6px;font-size:.84rem;white-space:nowrap}
+.affrow .addr{overflow-wrap:anywhere}
+.affgroup{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+.affgroup h3{margin:0 0 2px;font-size:1rem;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.affsite{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.affsite:first-of-type{border-top:0}
+.affsite .addr{font-size:.82rem;color:var(--muted);overflow-wrap:anywhere}
+@media (max-width:720px){
+  .affrow{grid-template-columns:1fr 1fr}
+  .affrow .url,.affrow .about{grid-column:1 / -1}
+  .affrow.fixed{grid-template-columns:1fr;justify-items:start}
+  .affsite{grid-template-columns:1fr}
+}
 </style>
 
 <script>
@@ -491,12 +633,10 @@ section.panel h2{margin-top:0}
     function card(n, l, a) { var c = text('div', '', 'card'); c.appendChild(text('div', n, 'n'));
       c.appendChild(text('div', l, 'l')); if (a) c.appendChild(text('div', a, 'a mono')); cards.appendChild(c); }
     card(d.seats.free + ' / ' + d.seats.total, 'seats open');
-    d.wallets.forEach(function (w) {
-      card(w.syncing ? 'syncing ' + w.progress + '%' : w.error ? 'offline'
-           : Number(w.spendable).toLocaleString(), w.label + (w.syncing ? ' node' : ' balance'),
-           w.keyed ? w.address : '');
-    });
-    card(d.push.available ? String(d.push.devices) : 'off', 'accounts with notifications');
+    // No balances and no notification count here (2026-10-21: "We should remove all the token balances
+    // that's not necessary in overview. We can see those in the wallet page ... We don't have to have a display of
+    // accounts with notifications at all"); beside the seats, the arcades running (loadNeeds fills it).
+    cards.appendChild(arcCard());
 
     // seats
     $('seats').value = d.seats.total;
@@ -684,6 +824,7 @@ section.panel h2{margin-top:0}
       if (r.now === 'borrow') bits.push(m.sharers ? 'borrowed from ' + m.sharers + ' arcade' + (m.sharers > 1 ? 's' : '')
                                          : 'no sharing arcade linked yet');
       if (r.now === 'here') bits.push('runs here');
+      if (r.now === 'here' && r.catchup) bits.push(r.catchup);    // syncing: borrowed until it catches up, or why not
       if (r.now === 'off') bits.push(m.sharers ? 'off \u00b7 ' + m.sharers + ' linked arcade' + (m.sharers > 1 ? 's share' : ' shares') + ' it'
                                                : 'off \u00b7 no linked arcade shares it yet');
       if (r.now === 'borrow' && r.work !== 'checked') bits.push('blocks checked; proof of work is the sharer\u2019s word');
@@ -1016,85 +1157,566 @@ section.panel h2{margin-top:0}
   }
   loadSwaps(); setInterval(loadSwaps, 15000);
   // --- Ords (2026-10-20): each chain's own ord index, every 5 s while the tab shows; and Network -> Other operators.
-  var ORD_WORDS = {walk: 'Walk', help: 'Help', read: 'Read only', off: 'Off'};
+  var ORD_WORDS = {walk: 'Hold the full index', help: 'Help scan', read: 'Read only', off: 'Off'};
   function pct(x) { return (x == null ? '\u2014' : Number(x).toFixed(x < 10 ? 2 : 1) + '%'); }
   function num(x) { return Number(x || 0).toLocaleString(); }
+  function bytes(n) {
+    var units = ['bytes', 'KB', 'MB', 'GB', 'TB'], i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (i ? n.toFixed(n < 10 ? 2 : 1) : n) + ' ' + units[i];
+  }
   function lines(items, cls) {
-    var td = document.createElement('td');
+    var td = document.createElement('div');
     if (cls) td.className = cls;
     if (!items.length) td.textContent = '\u2014';
     items.forEach(function (x) { td.appendChild(text('span', x, 'ordline')); });
     return td;
   }
-  function loadOrds() {
-    if (!document.querySelector('.admintab[data-tab="ords"].on')) return;
+  var ORD_PICK = null;
+  try { ORD_PICK = localStorage.getItem('ords.chain'); } catch (e) { /* no storage: first chain */ }
+  var ORD_DATA = null;
+  var ORD_COLORS = ['#c8962a', '#3c8dbc', '#2f9e6e', '#a05cc4', '#d0573c', '#6b8e23'];
+  var ORD_CHOICES = [
+    ['walk', 'Hold the full index', 'Keeps every inscription, who owns it and every token balance, stitched in order from '
+      + 'the chunks every arcade scans. Answers lookups for the arcades that only read. Takes disk (see below) and, on a '
+      + 'big machine, its spare cores scan ahead.'],
+    ['help', 'Help scan', 'Scans chunks of blocks for everyone, in line, and keeps small notes until the holders have '
+      + 'stitched them. No index here. Uses the cores set below.'],
+    ['read', 'Read only', 'Keeps nothing; asks an arcade that holds the index. Costs nothing here.'],
+    ['off', 'Off', 'This arcade takes no part in this chain’s ords.']];
+  function ordName(c) { return c.tag ? '@' + c.tag : (c.me ? 'this arcade' : 'arcade ' + c.node); }
+  function ordEl(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+  function ordEsc(t) { var d = document.createElement('div'); d.textContent = String(t); return d.innerHTML; }
+
+  function ordRing(r) {
+    // Every whole copy of the index is a ring (A inside, then B, then C), as long as that copy reaches; the thin ring
+    // inside says how many copies each part has. When the index is cut into stretches (plan item 16), each ring will
+    // hold several arcades' stretches: the drawing is already one arc per holder.
+    var cx = 200, cy = 200, F = 1, R = [100, 128, 156], letters = ['A', 'B', 'C'];
+    var p = function (f, rad) { var a = -Math.PI / 2 + f * 2 * Math.PI; return [cx + rad * Math.cos(a), cy + rad * Math.sin(a)]; };
+    var arc = function (f0, f1, rad) {
+      if (f1 - f0 >= .9999) f1 = f0 + .9999;
+      var a = p(f0, rad), b = p(f1, rad);
+      return 'M' + a[0].toFixed(2) + ' ' + a[1].toFixed(2) + ' A' + rad + ' ' + rad + ' 0 ' + (f1 - f0 > .5 ? 1 : 0) + ' 1 '
+        + b[0].toFixed(2) + ' ' + b[1].toFixed(2);
+    };
+    var copies = (r.copies || []).slice(0, 3), svg = '<svg viewBox="0 0 400 400" role="img" aria-label="'
+      + ordEsc(r.title) + ': the copies of its index">';
+    letters.forEach(function (L, k) {
+      var rad = R[k], c = copies[k];
+      svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + rad + '" fill="none" stroke="var(--line)" stroke-width="22"'
+        + (c ? ' opacity=".55"' : ' stroke-dasharray="3 6" opacity=".9"') + '/>';
+      var t = p(-.014, rad);
+      svg += '<text x="' + t[0] + '" y="' + (t[1] + 4) + '" text-anchor="end" style="font:700 11px system-ui;fill:var(--muted)">' + L + '</text>';
+      if (!c) return;
+      var f = Math.max(c.frac || 0, .004), id = 'ordarc-' + r.net + '-' + k;
+      svg += '<path id="' + id + '" d="' + arc(0, f, rad) + '" fill="none" stroke="' + ORD_COLORS[k] + '" stroke-width="22"/>';
+      var label = ordName(c) + (c.frac == null ? '' : ' ' + Math.round(c.frac * 100) + '%');
+      if (f * 2 * Math.PI * rad > label.length * 6.2 + 12) {
+        svg += '<text dy="4" style="font:600 10.5px system-ui;fill:#fff"><textPath href="#' + id + '" startOffset="50%" '
+          + 'text-anchor="middle">' + ordEsc(label) + '</textPath></text>';
+      } else {
+        var q = p(f / 2, rad + 30);
+        svg += '<text x="' + q[0] + '" y="' + q[1] + '" text-anchor="middle">' + ordEsc(label) + '</text>';
+      }
+    });
+    // copies: 2+ green, 1 amber, none red, past the furthest copy grey (not indexed yet)
+    var cuts = [0, 1].concat(copies.map(function (c) { return c.frac || 0; })).sort(function (a, b) { return a - b; });
+    var two = 0, top = copies.length ? copies[0].frac : 0;
+    for (var i = 0; i + 1 < cuts.length; i++) {
+      var s0 = cuts[i], e0 = cuts[i + 1], m = (s0 + e0) / 2;
+      if (e0 - s0 < 1e-4) continue;
+      var n = copies.filter(function (c) { return c.frac > m; }).length;
+      var col = m > top ? 'var(--line)' : n >= 2 ? 'var(--good,#2f7d4f)' : n === 1 ? 'var(--warn,#b26b00)' : 'var(--bad)';
+      if (n >= 2) two += e0 - s0;
+      svg += '<path d="' + arc(s0, e0 - .001, 76) + '" fill="none" stroke="' + col + '" stroke-width="7"/>';
+    }
+    svg += '<text x="' + cx + '" y="' + (cy - 50) + '" text-anchor="middle" class="sub">copies</text>';
+    svg += '<text x="' + cx + '" y="' + (cy - 6) + '" text-anchor="middle" style="font:700 22px system-ui;fill:var(--fg)">'
+      + Math.round(two * 100) + '%</text><text x="' + cx + '" y="' + (cy + 12) + '" text-anchor="middle" class="sub">'
+      + 'of the chain on 2 copies</text><text x="' + cx + '" y="' + (cy + 26) + '" text-anchor="middle" class="sub">'
+      + (r.copies || []).length + ' arcade' + ((r.copies || []).length === 1 ? '' : 's') + ' holding</text></svg>';
+    return svg;
+  }
+
+  function ordAttention(r) {
+    var out = [], copies = r.copies || [];
+    if (r.upgrading) out.push(['', r.upgrading + '. Lookups wait until it is done; nothing is walked again.']);
+    if (r.tip_known === false) out.push(['', 'Waiting for this chain\u2019s tip from its Core (it has just started, or is busy): '
+      + 'the percentages show once it answers.']);
+    if ((r.disputed || []).length) out.push(['bad', r.disputed.length + ' chunk(s) this index stitched from another '
+      + 'arcade’s notes are now outvoted (first: chunk ' + num(r.disputed[0]) + '). The index past it may be wrong; '
+      + 'nothing was changed. Ask Claude before rebuilding.']);
+    if (r.error) out.push(['bad', r.error]);
+    if (r.differ) out.push(['', num(r.differ) + ' chunk' + (r.differ > 1 ? 's were' : ' was') + ' read differently by '
+      + 'two arcades. Another arcade scans it to settle which is right.']);
+    if (r.mode !== 'off' && !copies.length) out.push(['bad', 'No arcade holds this chain’s index yet. One that can '
+      + 'spare the disk should choose Hold the full index.']);
+    else if (r.mode !== 'off' && copies.length === 1) out.push(['', 'Only one copy: ' + ordName(copies[0]) + ' holds it. '
+      + 'A second arcade holding the index (ring B) would keep it safe if that one goes offline.']);
+    if (r.mode === 'read' && !(r.walkers || []).length) out.push(['', 'Read only, but no linked arcade holds this '
+      + 'chain’s index right now: lookups cannot be answered.']);
+    var sn = r.snapshot || {};
+    if (sn.fetching) out.push(['', 'Fetching the whole index from arcade ' + sn.fetching.from + ': '
+      + (sn.fetching.pieces ? num(sn.fetching.have) + ' of ' + num(sn.fetching.pieces) + ' pieces' : 'asking') + '.']);
+    if (!out.length) out.push(['ok', r.mode === 'off' ? 'Off here. Nothing needs you.' : 'Nothing needs you.']);
+    return out;
+  }
+
+  function ordDetails(r) {
+    // Everything the old table said, kept for when it matters.
+    var w = r.walk, bits = [];
+    bits.push('Starts at block ' + num(r.base) + (r.source ? ' (' + r.source + ')' : ''));
+    if (w) bits.push(num(w.inscriptions) + ' inscriptions, ' + num(w.tokens) + ' tokens with ' + num(w.holders)
+      + ' holders, ' + num((w.names || {}).spec) + ' names');
+    if (r.found) bits.push(num(r.found) + ' births in the chunks read here');
+    if (r.agreed_births) bits.push(num(r.agreed_births) + ' inscriptions agreed by two or more arcades');
+    Object.keys(r.levels || {}).forEach(function (k) {
+      var lv = r.levels[k];
+      if (!lv.chunks) return;
+      var who = k === '1' ? '1 arcade (unchecked)' : (Number(k) >= 5 ? '5 or more arcades' : k + ' arcades');
+      bits.push(who + ': ' + num(lv.chunks) + ' chunks, ' + num(lv.inscriptions) + ' inscriptions');
+    });
+    if (r.ready) bits.push(r.phase === 'audit' ? 'every chunk scanned once: auditing'
+                           : 'scanned once: ' + num(r.covered) + ' of ' + num(r.ready) + ' chunks');
+    (r.lanes || []).forEach(function (l) { bits.push('reading chunk ' + num(l.chunk) + ': ' + l.done + ' of ' + r.chunk + ' blocks'); });
+    if (r.helped) bits.push(num(r.helped) + ' chunks read here as help');
+    (r.leases || []).forEach(function (l) { bits.push('arcade ' + l.node + ' reads chunk ' + num(l.chunk) + ' (' + l.done + '/' + r.chunk + ')'); });
+    if (r.mode === 'walk' && r.borrowed) bits.push('no Core of this chain here: stitched from other arcades’ notes');
+    if (r.notes && r.notes.chunks) bits.push(num(r.notes.chunks) + ' chunks of notes kept (' + bytes(r.notes.bytes)
+                                               + ') until every holder has stitched past them');
+    var sn = r.snapshot || {};
+    if (sn.said) bits.push(sn.said);
+    if (sn.made) bits.push('serves a copy of its index at block ' + num(sn.made));
+    if (r.rebuilt && r.rebuilt.why) bits.push('built again: ' + r.rebuilt.why);
+    return bits;
+  }
+
+  function ordDraw() {
+    var d = ORD_DATA, rows = (d && d.rows) || [];
+    var box = $('ordchain'), coins = $('ordcoins');
+    coins.textContent = ''; box.textContent = '';
+    if (!rows.length) { box.appendChild(ordEl('p', 'muted', 'This arcade reads none of the chains that have ords.')); return; }
+    var r = rows.filter(function (x) { return x.net === ORD_PICK; })[0] || rows.filter(function (x) { return x.mode !== 'off'; })[0] || rows[0];
+    ordxChain(r);                                     // the explorer follows the chain shown (2026-10-21)
+    rows.forEach(function (x) {
+      var b = ordEl('button', (x === r ? 'on' : '') + (x.mode === 'off' ? ' off' : ''));
+      b.type = 'button'; b.title = x.title; b.setAttribute('aria-label', x.title); b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', x === r ? 'true' : 'false');
+      if (x.icon) { var img = document.createElement('img'); img.src = x.icon; img.alt = ''; b.appendChild(img); }
+      else b.textContent = x.label;
+      b.onclick = function () { ORD_PICK = x.net; try { localStorage.setItem('ords.chain', x.net); } catch (e) { /* kept for this visit */ } ordDraw(); };
+      coins.appendChild(b);
+    });
+    box.appendChild(ordEl('div', 'ordtitle', ordEsc(r.title)));
+    var copies = r.copies || [], mine = copies.filter(function (c) { return c.me; })[0];
+    var what = r.mode === 'walk' ? 'This arcade <b>holds the full index</b>' + (mine ? ', walked to block ' + num(mine.walked_to)
+      + ' of ' + num(r.tip) : '') + '.'
+      : r.mode === 'help' ? 'This arcade <b>helps scan</b> this chain' + ((r.lanes || []).length ? ': ' + (r.lanes || []).map(function (l) {
+          return 'chunk ' + num(l.chunk) + ', ' + l.done + ' of ' + r.chunk + ' blocks'; }).join('; ') : '') + '.'
+      : r.mode === 'read' ? 'This arcade is <b>read only</b> for this chain' + ((r.walkers || []).length ? ': it asks '
+          + ordEsc(ordName((copies.filter(function (c) { return c.node === r.walkers[0].node; })[0]) || {node: r.walkers[0].node})) : '') + '.'
+      : 'This arcade takes <b>no part</b> in this chain’s ords.';
+    box.appendChild(ordEl('div', 'muted', what));
+    // how complete
+    var three = 0;
+    Object.keys(r.levels || {}).forEach(function (k) { if (Number(k) >= 3) three += r.levels[k].chunks; });
+    var best = copies.length ? (copies[0].frac || 0) * 100 : 0;
+    var boxes = [
+      [r.mode === 'walk' ? 'Indexed here' : 'Indexed (best copy)', r.mode === 'walk' && r.walked_pct != null ? r.walked_pct : best,
+       '#3c8dbc', r.mode === 'walk' && mine ? 'block ' + num(mine.walked_to) + ' of ' + num(r.tip) : (copies.length ? 'by ' + ordName(copies[0]) : 'nobody holds it yet')],
+      ['Scanned once', r.ready ? 100 * (r.covered || 0) / r.ready : 0, '#9b948a', 'every block read by some arcade'],
+      ['Checked by two', r.agreed_pct || 0, 'var(--accent)', 'two arcades read it the same way'],
+      ['Three or more', r.ready ? 100 * three / r.ready : 0, 'var(--good,#2f7d4f)', 'audited again: higher confidence']];
+    var pctBox = ordEl('div', 'ordpct');
+    boxes.forEach(function (b) {
+      var v = Math.max(0, Math.min(100, Number(b[1]) || 0)), cell = ordEl('div');
+      cell.innerHTML = '<span class="muted" style="font-size:.84rem">' + b[0] + '</span><b>' + pct(v) + '</b>'
+        + '<div class="ordbar"><i style="width:' + v + '%;background:' + b[2] + '"></i></div>'
+        + '<span class="muted" style="font-size:.8rem">' + ordEsc(b[3]) + '</span>';
+      pctBox.appendChild(cell);
+    });
+    box.appendChild(pctBox);
+    // needs you
+    ordAttention(r).forEach(function (a) { box.appendChild(ordEl('div', 'ordattn ' + a[0], ordEsc(a[1]))); });
+    // the ring
+    var ring = ordEl('div', 'ordcard ordring');
+    ring.appendChild(ordEl('h3', '', 'The copies of the index'));
+    ring.appendChild(ordEl('div', 'muted', '<span style="font-size:.84rem">Each ring is one whole copy of this chain’s '
+      + 'index, drawn as far as it reaches. Two copies keep it safe if an arcade goes offline; a third ring opens as more '
+      + 'arcades take part. The thin ring inside shows how many copies each part has: green two or more, amber one, grey '
+      + 'not indexed yet.</span>'));
+    ring.appendChild(ordEl('div', '', ordRing(r)));
+    var legend = copies.map(function (c, k) {
+      return '<div style="display:flex;gap:8px;align-items:baseline;margin:4px 0"><span style="width:12px;height:12px;border-radius:3px;'
+        + 'flex:none;background:' + (k < 3 ? ORD_COLORS[k] : 'var(--line)') + '"></span><span><b>' + ordEsc(ordName(c)) + '</b>'
+        + (c.me ? ' (this arcade)' : ' <span class="muted">arcade ' + ordEsc(c.node) + '</span>') + ': ring '
+        + (k < 3 ? 'ABC'[k] : '–') + ', ' + (c.frac == null ? 'waiting for the tip' : Math.round(c.frac * 100) + '%')
+        + ' (block ' + num(c.walked_to) + ')</span></div>';
+    }).join('');
+    var others = (r.others || []).map(function (o) { return '<b>' + ordEsc(ordName(o)) + '</b> (' + (o.mode === 'help' ? 'helps scan' : 'read only') + ')'; });
+    ring.appendChild(ordEl('div', '', legend + (others.length ? '<div class="muted" style="margin-top:6px">Also linked, holding '
+      + 'no copy: ' + others.join(', ') + '</div>' : '')));
+    box.appendChild(ring);
+    // how this arcade takes part
+    var big = (d.machine || 1) >= 8, rec = big ? 'walk' : 'help';
+    var part = ordEl('div', 'ordcard');
+    part.appendChild(ordEl('h3', '', 'How this arcade takes part'));
+    var modes = ordEl('div', 'ordmodes');
+    ORD_CHOICES.forEach(function (c) {
+      var lab = ordEl('label', 'ordmode' + (r.mode === c[0] ? ' on' : ''));
+      lab.innerHTML = '<input type="radio" name="ordmode-' + r.net + '"' + (r.mode === c[0] ? ' checked' : '') + '><span><b>'
+        + c[1] + '</b>' + (c[0] === rec ? '<span class="ordrec">recommended here</span>' : '') + '<br><span class="muted" '
+        + 'style="font-size:.84rem">' + c[2] + '</span></span>';
+      lab.querySelector('input').onchange = function () {
+        call('/admin/api/ords', {net: r.net, mode: c[0]})
+          .then(function () { $('ordsaid').textContent = r.title + ': ' + ORD_WORDS[c[0]] + '.'; loadOrds(true); })
+          .catch(function (e) { $('ordsaid').textContent = e.message; });
+      };
+      modes.appendChild(lab);
+    });
+    part.appendChild(modes);
+    var cores = ordEl('div', 'row', '<label for="ordcores"><b>Cores for ords:</b></label> <input autocomplete="off" type="number" '
+      + 'id="ordcores" min="1" step="1" inputmode="numeric" style="width:5.5em;font-size:16px"> <span class="muted">of ' + d.machine
+      + ' on this machine</span> <button type="button" class="small" id="ordcoressave">Save</button>');
+    cores.style.cssText = 'gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 0';
+    part.appendChild(cores);
+    // How much of the machine the walk may take (2026-10-21): the walk shares the web process with the pages.
+    var shareRow = ordEl('div', 'row', '<label for="ordshare"><b>Share of this machine for walking:</b></label> '
+      + '<select id="ordshare" style="font-size:16px">' + [10, 20, 30, 50, 75, 100].map(function (v) {
+        return '<option value="' + v + '"' + (v === d.share ? ' selected' : '') + '>' + v + '%</option>'; }).join('')
+      + (([10, 20, 30, 50, 75, 100].indexOf(d.share) < 0) ? '<option value="' + d.share + '" selected>' + d.share + '%</option>' : '')
+      + '</select>');
+    shareRow.style.cssText = 'gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 0';
+    part.appendChild(shareRow);
+    part.appendChild(ordEl('p', 'muted', '<span style="font-size:.84rem">The walk works in short bursts and rests between '
+      + 'them, so this much of the time goes to walking and the rest to the arcade\u2019s pages. Lower it if pages feel '
+      + 'slow while it walks; 100% walks as fast as it can.</span>'));
+    part.appendChild(ordEl('p', 'muted', '<span style="font-size:.84rem">Each core scans a chunk of its own. Holding the index, '
+      + 'one core stitches and the rest scan ahead. ' + (big ? '' : 'A machine with fewer than 8 cores that serves the live site '
+      + 'should not hold a big chain’s index: walking it slows the pages. Help scan instead.') + '</span>'));
+    box.appendChild(part);
+    $('ordcores').value = d.cores; $('ordcores').max = d.machine;
+    $('ordshare').onchange = function () {
+      call('/admin/api/ords', {share: Number($('ordshare').value)})
+        .then(function (j) { $('ordsaid').textContent = 'Walking takes up to ' + j.share + '% of this machine.'; loadOrds(true); })
+        .catch(function (e) { $('ordsaid').textContent = e.message; });
+    };
+    $('ordcoressave').onclick = function () {
+      call('/admin/api/ords', {cores: Number($('ordcores').value)})
+        .then(function (j) { $('ordsaid').textContent = 'Ords help with ' + j.cores + ' core' + (j.cores > 1 ? 's' : '') + '.'; loadOrds(true); })
+        .catch(function (e) { $('ordsaid').textContent = e.message; });
+    };
+    // cost here
+    var w = r.walk || {}, cost = ordEl('div', 'ordcard');
+    cost.appendChild(ordEl('h3', '', 'What it costs this machine'));
+    var speed = w.rate ? w.rate + ' blocks/s walking' : r.help_rate ? r.help_rate + ' blocks/s scanning' : 'idle';
+    cost.appendChild(ordEl('div', 'ordcost', '<div><span class="muted" style="font-size:.84rem">Disk</span><b>'
+      + (r.disk ? bytes(r.disk) : 'nothing') + '</b><span class="muted" style="font-size:.8rem">' + (d.free != null ? bytes(d.free)
+      + ' free' : '') + '</span></div><div><span class="muted" style="font-size:.84rem">Cores</span><b>' + d.cores + ' of '
+      + d.machine + '</b><span class="muted" style="font-size:.8rem">' + (r.cores ? r.cores + ' at work on this chain' : '')
+      + '</span></div><div><span class="muted" style="font-size:.84rem">Speed</span><b>' + ordEsc(speed) + '</b></div>'));
+    box.appendChild(cost);
+    var more = ordEl('details', 'ordmore');
+    more.appendChild(ordEl('summary', '', 'Everything, in detail'));
+    more.appendChild(lines(ordDetails(r), 'muted'));
+    box.appendChild(more);
+  }
+  function loadOrds(force) {
+    if (!force && !document.querySelector('.admintab[data-tab="ords"].on')) return;
+    if (document.activeElement && document.activeElement.id === 'ordcores') return;   // typing: redraw later
     fetch('/admin/api/ords', {headers: {'Accept': 'application/json'}, cache: 'no-store'}).then(function (r) { return r.json(); })
       .then(function (d) {
-        var tb = $('ordrows'); tb.textContent = '';
-        var pick = $('ordlooknet');
-        if (!pick.options.length) (d.rows || []).forEach(function (r) {
-          var o = document.createElement('option'); o.value = r.net; o.textContent = r.title; pick.appendChild(o);
-        });
-        if (document.activeElement !== $('ordcores')) $('ordcores').value = d.cores;
-        $('ordcores').max = d.machine;
-        $('ordmachine').textContent = 'of ' + d.machine + ' on this machine';
-        (d.rows || []).forEach(function (r) {
-          var tr = document.createElement('tr');
-          var name = text('td', r.title); name.className = 'ordwhat'; tr.appendChild(name);
-          var td = document.createElement('td'), sel = document.createElement('select');
-          sel.setAttribute('aria-label', r.title + ' ord index');
-          ['walk', 'help', 'read', 'off'].forEach(function (m) {
-            var o = document.createElement('option'); o.value = m; o.textContent = ORD_WORDS[m];
-            o.selected = r.mode === m; sel.appendChild(o);
-          });
-          sel.onchange = function () {
-            call('/admin/api/ords', {net: r.net, mode: sel.value})
-              .then(function () { $('ordsaid').textContent = r.title + ': ' + ORD_WORDS[sel.value] + '.'; loadOrds(); })
-              .catch(function (e) { $('ordsaid').textContent = e.message; });
-          };
-          td.appendChild(sel); tr.appendChild(td);
-          var st = text('td', 'block ' + num(r.base)); st.title = r.source; tr.appendChild(st);
-          var w = r.walk, line = [];
-          if (w) line.push(pct(r.walked_pct) + ' walked here (block ' + num(w.next) + ' of ' + num(r.tip) + ')');
-          if (r.mode !== 'off') line.push(pct(r.agreed_pct) + ' agreed by two arcades (' + num(r.agreed) + ' of ' + num(r.ready) + ' chunks)');
-          tr.appendChild(lines(line));
-          // A walker knows every inscription it passed; a helper counts the births in the chunks it read (2026-10-20:
-          // a test machine showed a dash and looked as if it had found nothing).
-          tr.appendChild(w ? lines([num(w.inscriptions) + ' inscriptions', num(w.tokens) + ' tokens, '
-                                    + num(w.holders) + ' holders', num((w.names || {}).spec) + ' names'])
-                           : r.found ? lines([num(r.found), 'in chunks read here']) : text('td', '\u2014'));
-          var bits = [];
-          if (r.mode === 'off') bits.push('off');
-          if (r.mode === 'read') bits.push((r.walkers || []).length ? 'reads from arcade ' + r.walkers[0].node
-            + ' (walked to block ' + num(r.walkers[0].walked_to) + ')' : 'no linked arcade walks this chain yet');
-          (r.lanes || []).forEach(function (l) { bits.push('reading chunk ' + num(l.chunk) + ': ' + l.done + ' of ' + r.chunk + ' blocks'); });
-          if ((r.lanes || []).length && r.help_rate) bits.push(r.help_rate + ' blocks/s here');
-          if (w && w.rate) bits.push(w.rate + ' blocks/s');
-          if (r.helped) bits.push(num(r.helped) + ' chunks read here as help');
-          (r.leases || []).forEach(function (l) { bits.push('arcade ' + l.node + ' reads chunk ' + num(l.chunk) + ' (' + l.done + '/' + r.chunk + ')'); });
-          if (r.differ) bits.push(num(r.differ) + ' chunk' + (r.differ > 1 ? 's' : '') + ' read differently');
-          if (r.mode === 'walk' && r.borrowed) bits.push('walking needs this chain\u2019s Core here: helping instead');
-          if (r.error) bits.push(r.error);
-          tr.appendChild(lines(bits, (r.differ || r.error) ? 'idx-bad' : 'muted'));
-          tb.appendChild(tr);
-        });
-        if (!tb.childNodes.length) {
-          var none = document.createElement('tr'), cell = text('td', 'This arcade reads none of the chains that have ords.', 'muted');
-          cell.colSpan = 6; none.appendChild(cell); tb.appendChild(none);
-        }
-      }).catch(function () { $('ordrows').textContent = 'Could not read the ord indexes.'; });
+        ORD_DATA = d;
+        ordDraw();
+      }).catch(function () { $('ordchain').textContent = 'Could not read the ord indexes.'; });
   }
-  $('ordlookgo').onclick = function () {
-    var out = $('ordlooksaid'); out.textContent = 'Asking\u2026';
-    fetch('/admin/api/ords/lookup?net=' + encodeURIComponent($('ordlooknet').value) + '&q='
-          + encodeURIComponent($('ordlookq').value.trim()), {headers: {'Accept': 'application/json'}, cache: 'no-store'})
-      .then(function (r) { return r.json(); })
-      .then(function (j) { out.textContent = j.detail ? j.detail : JSON.stringify(j, null, 2); })
-      .catch(function (e) { out.textContent = String(e.message || e); });
-  };
+  // --- The explorer (2026-10-21): search, the viewer by number, and the tokens with their rich list, all on the
+  // chain the Ords tab shows. Changing that chain puts the viewer back at its #0 and empties the token section.
+  var ORDX = {net: null, title: '', number: 0, last: -1, tick: null, page: 0};
+  function ordxGet(path, args) {
+    var qs = Object.keys(args).map(function (k) { return k + '=' + encodeURIComponent(args[k]); }).join('&');
+    return fetch('/admin/api/ords/' + path + '?net=' + encodeURIComponent(ORDX.net) + '&' + qs,
+                 {headers: {'Accept': 'application/json'}, cache: 'no-store'})
+      .then(function (r) { return r.json().then(function (j) {
+        if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
+        return j;
+      }); });
+  }
+  function ordxStd(net) { return net === 'main' || net === 'test' ? 'PRC-20' : 'DRC-20'; }
+  function ordxUnits(units, dec) {                     // whole units (text, past 2^53) shown with the token's decimals
+    try {
+      var v = BigInt(String(units)), unit = BigInt(10) ** BigInt(dec || 0), w = (v / unit).toString(), f = v % unit;
+      w = w.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      return f ? w + '.' + f.toString().padStart(Number(dec), '0').replace(/0+$/, '') : w;
+    } catch (e) { return String(units); }
+  }
+  function ordxAmount(t) {                             // "12345.6" as the index shows it, with thousands marks
+    var parts = String(t == null ? '' : t).split('.');
+    return parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (parts[1] ? '.' + parts[1] : '');
+  }
+  function ordxPct(p) { return p == null ? '—' : (p >= 1 ? p.toFixed(2) : p >= 0.01 ? p.toFixed(3) : p > 0 ? '<0.01' : '0') + '%'; }
+  function ordxFrom(j) { return j && j.from ? ordEl('div', 'muted', '<span style="font-size:.8rem">Answered by ' + ordEsc(j.from)
+    + (j.walked_to ? ', walked to block ' + num(j.walked_to) : '') + '</span>') : ordEl('span'); }
+  function ordxLink(label, go) { var b = ordEl('button', 'ordxlink'); b.type = 'button'; b.textContent = label; b.onclick = go; return b; }
+  function ordxFacts(dl, facts) {
+    dl.textContent = '';
+    facts.forEach(function (f) {
+      if (f[1] == null || f[1] === '') return;
+      dl.appendChild(ordEl('dt', '', ordEsc(f[0])));
+      var dd = ordEl('dd');
+      if (f[1] instanceof Node) dd.appendChild(f[1]); else dd.textContent = String(f[1]);
+      dl.appendChild(dd);
+    });
+  }
+
+  function ordxChain(r) {
+    if (!r || r.net === ORDX.net) return;
+    ORDX.net = r.net; ORDX.title = r.title; ORDX.tick = null; ORDX.page = 0; ORDX.last = -1;
+    $('ordxchain').textContent = r.title;
+    $('ordtokh').textContent = ordxStd(r.net) + ' tokens on ' + r.title;
+    $('ordlooksaid').textContent = '';
+    $('ordtok').textContent = '';
+    ORDX_PICK.q.value = '';
+    ordxShow(0);
+  }
+
+  // The viewer: one inscription, by number (or by id, from a search), and the arrows.
+  function ordxContent(box, x) {
+    box.textContent = '';
+    // One that names a delegate shows the delegate's content: /content serves it, so it is drawn by the delegate's type.
+    var ct = String((x.delegate ? x.delegate_content_type : x.content_type) || '').toLowerCase(),
+      src = '/content/' + encodeURIComponent(x.id);
+    if (/^image\//.test(ct) || /^text\/html/.test(ct)) {
+      // As the Wallet shows a Doginal (my_wallet.html doginalPic): sandboxed, scripts only, never this page's origin.
+      var frame = document.createElement('iframe');
+      frame.src = /^image\//.test(ct) ? src + '/fit' : src;
+      frame.title = 'Inscription ' + x.id; frame.loading = 'lazy';
+      frame.setAttribute('sandbox', 'allow-scripts'); frame.setAttribute('scrolling', 'no');
+      frame.setAttribute('referrerpolicy', 'no-referrer');
+      box.appendChild(frame);
+    } else if ((/^text\//.test(ct) || /json/.test(ct)) && (x.size || 0) <= 65536) {
+      var pre = ordEl('pre', '', ''); pre.textContent = 'Reading…'; box.appendChild(pre);
+      fetch(src, {cache: 'force-cache'}).then(function (r) { if (!r.ok) throw new Error(); return r.text(); })
+        .then(function (t) {
+          if (/json/.test(ct) || /^\s*[{\[]/.test(t)) { try { t = JSON.stringify(JSON.parse(t), null, 2); } catch (e) { /* as it is */ } }
+          pre.textContent = t.length > 8000 ? t.slice(0, 8000) + '\n…' : t;
+        })
+        .catch(function () { pre.textContent = 'The content could not be read here.'; });
+    } else {
+      var none = ordEl('div', 'ordxnone muted', ordEsc(ct || 'unknown type') + (x.size ? '<br>' + bytes(x.size) : '')
+        + '<br><a href="' + src + '" target="_blank" rel="noopener noreferrer">Open the content</a>');
+      box.appendChild(none);
+    }
+  }
+  function ordxDraw(j) {
+    var x = j.number && j.number.inscription, last = j.number ? j.number.last : ORDX.last;
+    ORDX.last = last == null ? -1 : last;
+    var facts = $('ordfacts'), frame = $('ordframe');
+    if (!x) {
+      frame.textContent = '';
+      frame.appendChild(ordEl('div', 'ordxnone muted', ORDX.last < 0 ? 'No inscriptions indexed on this chain yet.'
+        : 'No inscription #' + num(ORDX.number) + ' yet: the last one known is #' + num(ORDX.last) + '.'));
+      ordxFacts(facts, [['Number', '#' + num(ORDX.number)], ['Last known', ORDX.last < 0 ? 'none yet' : '#' + num(ORDX.last)]]);
+    } else {
+      ORDX.number = x.number;
+      ordxContent(frame, x);
+      var content = ordEl('a', '', ordEsc(x.id)); content.href = '/content/' + encodeURIComponent(x.id);
+      content.target = '_blank'; content.rel = 'noopener noreferrer';
+      var where = x.output ? ordEl('code', '', ordEsc(x.output) + (x.offset ? ' (koinu ' + num(x.offset) + ')' : '')) : 'fees (no output)';
+      ordxFacts(facts, [
+        ['Number', '#' + num(x.number) + (ORDX.last >= 0 ? ' of ' + num(ORDX.last) : '')],
+        ['Id', content],
+        ['Content type', x.content_type],
+        // rules 4 (2026-10-21): the inscription its tags name, opened here in the viewer
+        ['Delegate', x.delegate ? ordxLink(x.delegate, function () { ordxShow(null, x.delegate); }) : null],
+        ['Parent', x.parent ? ordxLink(x.parent, function () { ordxShow(null, x.parent); }) : null],
+        ['Size', x.size == null ? null : bytes(x.size) + (x.pieces > 1 ? ' in ' + x.pieces + ' pieces' : '')],
+        ['Block', num(x.height)],
+        ['Protocol', x.protocol || '—'],
+        ['Burned', x.burned ? 'yes' : 'no'],
+        ['Sits on', x.burned ? null : where],
+        ['Owner', x.burned ? null : (x.owner || 'not known here (the walking arcade has no Core to ask)')],
+        ['Moved at block', x.moved_at && x.moved_at !== x.height ? num(x.moved_at) : null],
+        // 2026-10-21: an inscription by the rules that other explorers do not show (doginal_index.SEEN_ELSEWHERE)
+        ['Note', x.note ? ordEl('span', '', ordEsc(x.note)) : null]]);
+      facts.appendChild(ordEl('dt', '', '')); var dd = ordEl('dd'); dd.appendChild(ordxFrom(j)); facts.appendChild(dd);
+    }
+    $('ordnum').value = ORDX.number;
+    $('ordprev').disabled = ORDX.number <= 0;
+    $('ordnext').disabled = ORDX.last < 0 || ORDX.number >= ORDX.last;
+  }
+  function ordxShow(number, id) {
+    if (!ORDX.net) return;
+    var net = ORDX.net;
+    if (!id) ORDX.number = Math.max(0, Number(number) || 0);
+    $('ordprev').disabled = $('ordnext').disabled = true;
+    ordxGet('inscription', id ? {id: id} : {number: ORDX.number})
+      .then(function (j) { if (net === ORDX.net) ordxDraw(j); })
+      .catch(function (e) {
+        if (net !== ORDX.net) return;
+        $('ordframe').textContent = '';
+        $('ordframe').appendChild(ordEl('div', 'ordxnone muted', ordEsc(e.message)));
+        ordxFacts($('ordfacts'), [['Number', '#' + num(ORDX.number)]]);
+        $('ordprev').disabled = ORDX.number <= 0; $('ordnext').disabled = false;
+      });
+  }
+  $('ordprev').onclick = function () { if (ORDX.number > 0) ordxShow(ORDX.number - 1); };
+  $('ordnext').onclick = function () { ordxShow(ORDX.number + 1); };
+  $('ordjump').onclick = function () { ordxShow($('ordnum').value); };
+  $('ordnum').onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); ordxShow($('ordnum').value); } };
+
+  // Search: each kind of answer as a card; an inscription or a coin opens in the viewer, a tick in the tokens.
+  function ordxSaid(j) {
+    var out = $('ordlooksaid'); out.textContent = '';
+    var card = ordEl('div', 'ordcard');
+    if ('number' in j || 'where' in j) {
+      var x = j.number ? j.number.inscription : j.where;
+      if (!x) card.appendChild(ordEl('div', 'muted', 'Not found on ' + ordEsc(ORDX.title) + '.'));
+      else {
+        card.appendChild(ordEl('div', '', 'Inscription <b>#' + num(x.number) + '</b>: shown below.'));
+        if (j.number) ordxDraw(j); else ordxShow(null, x.id);
+      }
+    } else if ('on' in j) {
+      var on = j.on || [];
+      card.appendChild(ordEl('div', '', on.length ? '<b>' + on.length + '</b> inscription' + (on.length > 1 ? 's' : '')
+        + ' on this coin:' : 'No inscription sits on this coin.'));
+      on.forEach(function (x) {
+        var row = ordEl('div'); row.appendChild(ordxLink(x.id, function () { ordxShow(null, x.id); }));
+        if (x.offset) row.appendChild(ordEl('span', 'muted', ' at koinu ' + num(x.offset)));
+        card.appendChild(row);
+      });
+      if (on.length) ordxShow(null, on[0].id);
+    } else if ('kinds' in j) {
+      var k = j.kinds || {};
+      if ('count' in k) {
+        card.appendChild(ordEl('div', '', '<b>' + num(k.count) + '</b> inscriptions. The first ones:'));
+        var row = ordEl('div', 'row'); row.style.cssText = 'gap:10px;flex-wrap:wrap';
+        (k.first || []).forEach(function (x) { row.appendChild(ordxLink('#' + num(x.number), function () { ordxShow(x.number); })); });
+        card.appendChild(row);
+      } else {
+        [['Commonest content types', k.types], ['Commonest protocols', k.protocols]].forEach(function (g) {
+          card.appendChild(ordEl('h3', '', g[0]));
+          card.appendChild(lines((g[1] || []).map(function (t) { return t[0] + ': ' + num(t[1]); })));
+        });
+      }
+    } else if ('token' in j) {
+      if (!j.token) card.appendChild(ordEl('div', 'muted', 'No such tick on ' + ordEsc(ORDX.title) + '.'));
+      else { card.appendChild(ordEl('div', '', '<b>' + ordEsc(j.token.tick) + '</b>: shown under Tokens below.')); ordxTick(j.token.tick, 0); }
+    } else if ('name' in j) {
+      var n = j.name || {};
+      card.appendChild(ordEl('div', '', 'The name <b>' + ordEsc(n.name) + '</b>, under each reading:'));
+      Object.keys(n.readings || {}).forEach(function (rule) {
+        var w = n.readings[rule].winner, row = ordEl('div');
+        row.appendChild(ordEl('span', '', '<b>' + ordEsc(rule) + '</b>: '));
+        if (!w) row.appendChild(ordEl('span', 'muted', 'unclaimed'));
+        else {
+          row.appendChild(ordxLink('#' + num(w.number), function () { ordxShow(w.number); }));
+          row.appendChild(ordEl('span', 'muted', ' (' + ordEsc(w.kind) + (n.readings[rule].later_claims ? ', '
+            + num(n.readings[rule].later_claims) + ' later claims' : '') + ')'));
+        }
+        card.appendChild(row);
+      });
+    } else if ('balances' in j) {
+      var bs = j.balances || [];
+      card.appendChild(ordEl('div', '', bs.length ? 'Token balances of this address:' : 'This address holds no tokens here.'));
+      bs.forEach(function (b) {
+        var row = ordEl('div'); row.appendChild(ordxLink(b.tick, function () { ordxTick(b.tick, 0); }));
+        row.appendChild(ordEl('span', '', ': ' + ordxUnits(b.units, b.decimals) + (b.transferable_units && b.transferable_units !== '0'
+          ? ' <span class="muted">(' + ordxUnits(b.transferable_units, b.decimals) + ' transferable)</span>' : '')));
+        card.appendChild(row);
+      });
+    }
+    card.appendChild(ordxFrom(j));
+    var raw = ordEl('details', 'ordmore'); raw.appendChild(ordEl('summary', '', 'raw'));
+    var pre = ordEl('pre', 'muted'); pre.style.cssText = 'white-space:pre-wrap;word-break:break-all;font-size:.78rem;margin:4px 0 0';
+    pre.textContent = JSON.stringify(j, null, 2); raw.appendChild(pre); card.appendChild(raw);
+    out.appendChild(card);
+  }
+  function ordxLook() {
+    var out = $('ordlooksaid'), q = $('ordlookq').value.trim();
+    if (!q) return;
+    out.textContent = 'Asking…';
+    ordxGet('lookup', {q: q}).then(ordxSaid).catch(function (e) { out.textContent = e.message; });
+  }
+  $('ordlookgo').onclick = ordxLook;
+  $('ordlookq').onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); ordxLook(); } };
+
+  // Tokens: the Exchange's search box (_pick.html) on the index's ticks, then the token and its rich list.
+  var ORDX_WAIT = null;
+  var ORDX_PICK = window.arcadePick($('ordtickpick'), {
+    placeholder: 'Search a ticker',
+    shown: function () { return ORDX.tick || ''; },
+    choose: function (row) { ordxTick(row.value, 0); },
+    items: function (text, words, done) {
+      clearTimeout(ORDX_WAIT);
+      ORDX_WAIT = setTimeout(function () {
+        ordxGet('ticks', {q: text}).then(function (j) {
+          var t = j.ticks || {first: [], count: 0};
+          done(t.first.map(function (x) {
+            return {value: x.tick, label: x.tick, note: '#' + num(x.number) + ' · ' + ordxPct(x.minted_pct) + ' minted'};
+          }), t.count - t.first.length, text ? 'No tick starts with “' + text + '”.' : 'No tokens indexed yet.');
+        }).catch(function (e) { done([], 0, e.message); });
+      }, text ? 160 : 0);
+    }
+  });
+  function ordxTick(tick, page) {
+    var net = ORDX.net, box = $('ordtok');
+    ORDX.tick = tick; ORDX.page = page; ORDX_PICK.sync();
+    box.textContent = 'Reading…';
+    ordxGet('holders', {tick: tick, page: page}).then(function (j) {
+      if (net !== ORDX.net || tick !== ORDX.tick) return;
+      box.textContent = '';
+      var t = j.holders;
+      if (!t) { box.appendChild(ordEl('p', 'muted', 'No such tick on ' + ordEsc(ORDX.title) + '.')); return; }
+      var info = ordEl('div', 'ordcard');
+      info.appendChild(ordEl('h3', '', ordEsc(t.tick) + ' <span class="muted" style="font-weight:400">' + ordxStd(net) + '</span>'));
+      var dl = ordEl('dl', 'ordxfacts'); info.appendChild(dl);
+      ordxFacts(dl, [
+        ['Deploy', ordxLink(t.deploy, function () { ordxShow(null, t.deploy); $('ordview').scrollIntoView({block: 'start'}); })],
+        ['Number', '#' + num(t.number)],
+        ['Deployed at block', num(t.height)],
+        ['Deployer', t.deployer],
+        ['Max supply', ordxAmount(t.supply)],
+        ['Mint limit', ordxAmount(t.limit)],
+        ['Decimals', t.decimals],
+        ['Minted', ordxAmount(t.minted) + (t.minted_pct == null ? '' : ' (' + ordxPct(t.minted_pct) + ' of supply)')],
+        ['Holders', num(t.holders)]]);
+      box.appendChild(info);
+      var rich = ordEl('div', 'ordcard');
+      rich.appendChild(ordEl('h3', '', 'Rich list'));
+      if (j.older) rich.appendChild(ordEl('div', 'ordattn', ordEsc(j.older)));
+      if (!t.rows.length) rich.appendChild(ordEl('p', 'muted', 'Nobody holds any yet.'));
+      else {
+        var table = ordEl('table', 'ordrich', '<thead><tr><th class="n">Rank</th><th>Address</th><th class="n">Balance</th>'
+          + '<th class="n">Transferable</th><th class="n">% of supply</th></tr></thead>');
+        var body = ordEl('tbody');
+        t.rows.forEach(function (h) {
+          var tr = ordEl('tr');
+          [['n', '', '#' + h.rank], ['addr', '', h.owner], ['n', 'Balance', ordxAmount(h.balance)],
+           ['n', 'Transferable', ordxAmount(h.transferable)], ['n', '% of supply', ordxPct(h.pct)]].forEach(function (c) {
+            var td = ordEl('td', c[0]); td.textContent = c[2]; if (c[1]) td.setAttribute('data-l', c[1]); tr.appendChild(td);
+          });
+          body.appendChild(tr);
+        });
+        table.appendChild(body); rich.appendChild(table);
+      }
+      var pager = ordEl('div', 'ordpager');
+      var prev = ordEl('button', 'small', '&lsaquo; Previous'); prev.type = 'button'; prev.id = 'ordrichprev';
+      prev.disabled = t.page <= 0; prev.onclick = function () { ordxTick(tick, t.page - 1); };
+      var next = ordEl('button', 'small', 'Next &rsaquo;'); next.type = 'button'; next.id = 'ordrichnext';
+      next.disabled = t.page + 1 >= t.pages || !!j.older; next.onclick = function () { ordxTick(tick, t.page + 1); };
+      pager.appendChild(prev);
+      pager.appendChild(ordEl('span', 'muted', 'Page <b id="ordrichpage">' + (t.page + 1) + '</b> of ' + num(t.pages)));
+      pager.appendChild(next);
+      rich.appendChild(pager);
+      rich.appendChild(ordxFrom(j));
+      box.appendChild(rich);
+    }).catch(function (e) { if (net === ORDX.net) box.textContent = e.message; });
+  }
   $('ordnamesgo').onclick = function () {
     var out = $('ordnamessaid'); out.textContent = 'Reading\u2026';
-    fetch('/admin/api/ords/names?net=' + encodeURIComponent($('ordlooknet').value), {headers: {'Accept': 'application/json'},
+    fetch('/admin/api/ords/names?net=' + encodeURIComponent(ORDX.net || ''), {headers: {'Accept': 'application/json'},
                                                                                    cache: 'no-store'})
       .then(function (r) { return r.json(); })
       .then(function (j) {
@@ -1111,11 +1733,6 @@ section.panel h2{margin-top:0}
         });
         out.textContent = lines.join('\n');
       }).catch(function (e) { out.textContent = String(e.message || e); });
-  };
-  $('ordcoressave').onclick = function () {
-    call('/admin/api/ords', {cores: Number($('ordcores').value)})
-      .then(function (j) { $('ordsaid').textContent = 'Ords help with ' + j.cores + ' core' + (j.cores > 1 ? 's' : '') + '.'; loadOrds(); })
-      .catch(function (e) { $('ordsaid').textContent = e.message; });
   };
   function loadOperators() {
     fetch('/admin/api/operators', {headers: {'Accept': 'application/json'}, cache: 'no-store'}).then(function (r) { return r.json(); })
@@ -1138,9 +1755,108 @@ section.panel h2{margin-top:0}
       }).catch(function () {});
   }
   loadOperators(); setInterval(function () { if (!document.hidden) loadOperators(); }, 30000);
-  setInterval(function () { if (!document.hidden) loadOrds(); }, 5000);
+  setInterval(function () { if (!document.hidden) loadOrds(); }, 15000);   // the server keeps its answer 20 s
   document.querySelectorAll('.admintabs button[data-tab="ords"]').forEach(function (b) { b.addEventListener('click', loadOrds); });
   document.querySelectorAll('.saveswitches').forEach(function (b) { b.onclick = saveSwitches; });
+
+  // --- Affiliates (2026-10-21): this arcade's names + its own added sites, each with a share tick; under them,
+  // each operator who shares sites, with a show tick per site. Built with textContent only: every word here may be
+  // another operator's.
+  var AFF = null;
+  function tick(label, on, cb) {
+    var l = text('label', '', 'tick'), c = document.createElement('input'); c.type = 'checkbox'; c.checked = !!on;
+    if (cb) c.onchange = function () { cb(c); };
+    l.appendChild(c); l.appendChild(document.createTextNode(label)); return [l, c];
+  }
+  function affOwnRow(site) {
+    var row = text('div', '', 'affrow');
+    function field(cls, type, value, ph, max) {
+      var i = document.createElement('input'); i.type = type; i.value = value || ''; i.placeholder = ph;
+      i.maxLength = max; i.autocomplete = 'off'; i.className = cls; i.setAttribute('aria-label', ph);
+      var w = text('div', '', cls); w.appendChild(i); row.appendChild(w); return i;
+    }
+    var lim = (AFF && AFF.limits) || {name: 60, url: 200, about: 200};
+    row._name = field('name', 'text', site.name, 'Name', lim.name);
+    row._url = field('url', 'url', site.url, 'https://example.com', lim.url);
+    row._about = field('about', 'text', site.about, 'One line about it', lim.about);
+    var t = tick('Share with other arcades', site.share); row._share = t[1]; row.appendChild(t[0]);
+    var rm = text('button', 'Remove', 'ghost small'); rm.type = 'button';
+    rm.onclick = function () { row.remove(); $('affsaid').textContent = 'Removed. Save to keep it that way.'; };
+    row.appendChild(rm);
+    return row;
+  }
+  function drawAff(d) {
+    AFF = d; $('affdays').textContent = (d.limits && d.limits.heard_days) || 30;
+    var hosts = $('affhosts'); hosts.textContent = '';
+    if (!d.hosts.length) hosts.appendChild(text('p', 'This arcade has no published names yet (Network \u2192 Put this arcade online).', 'muted'));
+    d.hosts.forEach(function (h) {
+      var row = text('div', '', 'affrow fixed'), who = text('div', '', 'addr');
+      who.appendChild(text('b', h.url.replace('https://', '')));
+      who.appendChild(text('span', ' published name', 'pill'));
+      row.appendChild(who);
+      var t = tick('Share with other arcades', h.share); t[1].dataset.url = h.url; t[1].className = 'affhost';
+      row.appendChild(t[0]); hosts.appendChild(row);
+    });
+    var own = $('affown'); own.textContent = '';
+    d.mine.forEach(function (s) { own.appendChild(affOwnRow(s)); });
+    var box = $('affgroups'); box.textContent = '';
+    if (!d.others.length) box.appendChild(text('p', d.mesh ? 'No linked arcade shares any sites yet.' : 'The mesh is off on this arcade.', 'muted'));
+    d.others.forEach(function (g) {
+      var block = text('div', '', 'affgroup'), h = document.createElement('h3');
+      h.appendChild(text('span', g.tag ? '@' + g.tag : 'arcade ' + g.node, g.tag ? '' : 'mono'));
+      h.appendChild(text('span', 'last heard ' + (g.at ? new Date(g.at * 1000).toLocaleString() : '\u2014'), 'muted'));
+      if (g.linked) h.appendChild(text('span', 'linked', 'pill ok'));
+      var all = text('button', 'Show all', 'ghost small'); all.type = 'button';
+      h.appendChild(all); block.appendChild(h);
+      var boxes = [];
+      g.sites.forEach(function (s) {
+        var row = text('div', '', 'affsite'), what = document.createElement('div');
+        what.appendChild(text('b', s.name));
+        if (s.about) what.appendChild(text('div', s.about, 'muted'));
+        what.appendChild(text('div', s.url, 'addr'));
+        row.appendChild(what);
+        var t = tick('Show on my Affiliates tab', s.shown, function () { saveShown(); });
+        t[1].dataset.url = s.url; t[1].className = 'affshow'; boxes.push(t[1]);
+        row.appendChild(t[0]); block.appendChild(row);
+      });
+      all.onclick = function () {
+        var on = !boxes.every(function (c) { return c.checked; });
+        boxes.forEach(function (c) { c.checked = on; }); saveShown();
+      };
+      box.appendChild(block);
+    });
+  }
+  function loadAff() {
+    fetch('/admin/api/affiliates', {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.json(); }).then(drawAff).catch(function () {});
+  }
+  function saveShown() {
+    var urls = {};
+    document.querySelectorAll('#affgroups input.affshow').forEach(function (c) {
+      if (c.checked) urls[c.dataset.url] = 1;
+    });
+    // a URL ticked under one operator and not another: ticked wins (the tab shows each address once)
+    call('/admin/api/affiliates', {shown: Object.keys(urls)})
+      .then(function () { $('affshownsaid').textContent = 'Saved.'; loadAff(); })
+      .catch(function (e) { $('affshownsaid').textContent = e.message; });
+  }
+  $('affadd').onclick = function () { $('affown').appendChild(affOwnRow({share: false})); };
+  $('affsave').onclick = function () {
+    var mine = [], hosts = [];
+    document.querySelectorAll('#affown .affrow').forEach(function (row) {
+      var s = {name: row._name.value.trim(), url: row._url.value.trim(), about: row._about.value.trim(), share: row._share.checked};
+      if (s.name || s.url || s.about) mine.push(s);
+    });
+    document.querySelectorAll('#affhosts input.affhost').forEach(function (c) { if (c.checked) hosts.push(c.dataset.url); });
+    $('affsave').disabled = true;
+    call('/admin/api/affiliates', {mine: mine, hosts_shared: hosts})
+      .then(function (j) { $('affsaid').textContent = 'Saved. Sharing ' + j.sharing + ' site' + (j.sharing === 1 ? '' : 's')
+          + (j.told ? '; linked arcades told now.' : '.'); loadAff(); })
+      .catch(function (e) { $('affsaid').textContent = e.message; })
+      .then(function () { $('affsave').disabled = false; });
+  };
+  loadAff();
+  document.querySelectorAll('.admintabs button[data-tab="affiliates"]').forEach(function (b) { b.addEventListener('click', loadAff); });
 
   // --- tabs: the tab is in the address (#trading), and an old link to a panel (#chains, #swaps, #gamecards)
   // opens the tab that holds it and scrolls there.
@@ -1164,13 +1880,13 @@ section.panel h2{margin-top:0}
   function loadNeeds() {
     Promise.all([
       fetch('/admin/api/cards', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); }).catch(function () { return {}; }),
-      fetch('/admin/api/mesh', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); }).catch(function () { return {}; })
+      fetch('/admin/api/mesh', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); }).catch(function () { return {}; }),
+      fetch('/admin/api/arcades', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); }).catch(function () { return {}; })
     ]).then(function (got) {
       var cards = got[0] || {}, mesh = got[1] || {}, box = $('needlist'), lines = [];
       var hidden = (cards.rows || []).filter(function (r) { return r.status === 'flagged'; });
-      var ar = mesh.arcades || {}, arc = $('arcadesline');
-      if (arc) arc.textContent = (ar.running || 0) + ' other arcade' + (ar.running === 1 ? '' : 's') + ' running, '
-                                 + (ar.linked || 0) + ' linked to this one.';
+      arcSaid = got[2] && got[2].rows ? got[2] : null;
+      arcCard(); window.arcadesPanel.draw(arcSaid);
       if (hidden.length) lines.push(['gamecards', hidden.length + ' game card' + (hidden.length > 1 ? 's' : '') + ' hidden, waiting for you to look']);
       if (mesh.ok && !mesh.linked) lines.push(['mesh', 'This node is not linked to any other arcade']);
       (mesh.chains || []).forEach(function (c) { if (c.syncing) lines.push(['coins', c.label + ' is still syncing (' + c.progress + '%)']); });
@@ -1179,6 +1895,17 @@ section.panel h2{margin-top:0}
       if (!lines.length) { box.textContent = 'Nothing. Everything here is running.'; return; }
       lines.forEach(function (l) { var d = document.createElement('div'), a = document.createElement('a'); a.href = '#' + l[0]; a.textContent = l[1]; d.append('\u2022 ', a); box.append(d); });
     });
+  }
+  // --- Overview -> Arcades (2026-10-21, approving the mockup): /admin/api/arcades, this arcade first.
+  var arcSaid = null;
+  function arcCard() {
+    // The card beside the seats: "N arcades · running, N linked to this one" (N counts this arcade too).
+    var c = $('arcadescard') || text('div', '', 'card'); c.id = 'arcadescard'; c.textContent = '';
+    var a = arcSaid;
+    c.appendChild(text('div', a ? String(a.total) : '\u2026', 'n'));
+    c.appendChild(text('div', 'arcade' + (a && a.total === 1 ? '' : 's') + ' \u00b7 running'
+                              + (a ? ', ' + a.linked + ' linked to this one' : ''), 'l'));
+    return c;
   }
   function drawMesh(m) {
     var box = $('meshinfo'); if (!box) return;

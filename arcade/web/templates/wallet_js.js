@@ -359,6 +359,10 @@ async function _signIn(tag, password, {network, version}) {
     throw new Error("that wallet does not match this name. Nothing was opened.");
   }
   const result = await seatWith(wallet);
+  // A newer record of its imported wallets from the arcade it came from, when this one has not heard (the mesh
+  // carries them too); then they open with the same password (plan item 18), in the second sealed record.
+  await bringImports("");
+  await openImportsWith(wallet, password);
   // Any chain whose coins were never read back here (a read-back cut short by a restart): finished now. A chain
   // already done costs the node nothing (2026-10-19).
   fetch("/account/coins/backfill", {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"})
@@ -417,6 +421,10 @@ async function bringHere(said, password, {network, version}) {
   // (2026-10-19), or read back from the blocks when that arcade cannot say.
   fetch("/account/coins/backfill", {method: "POST", headers: {"Content-Type": "application/json"},
                                     body: JSON.stringify({from: said.from || ""})}).catch(() => {});
+  // Its imported wallets too (2026-10-21): the signed record from the arcade it came from, checked here
+  // against this account's key, then opened with the same password.
+  await bringImports(said.from || "");
+  await openImportsWith(wallet, password);
   return {...result, tag: said.tag, wallet};
 }
 
@@ -451,6 +459,7 @@ async function _openFile(said, password, {network, version}) {
       + "Nothing was opened.");
   }
   const result = await seatWith(wallet);
+  await openImportsWith(wallet, password);
   fetch("/account/coins/backfill", {method: "POST"}).catch(() => {});
   return {...result, tag: (said && said.tag) || "", wallet};
 }
@@ -2012,13 +2021,54 @@ const SHELF_KEYS = 1000;
 const SHELF_VALUE = 65536;            // pagestore's MAX_VALUE, as characters
 const SHELF_TOTAL = 1048576;          // and its MAX_TOTAL
 
+const SHELF_HISTORY = 10;             // pagestore's HISTORY: earlier values kept per key
+
+// Whose shelf this is. Only a clear answer from /account picks one: a stranger (signed out) gets the
+// "anon" shelf, but an /account that did not answer -- a restart, a timeout -- REFUSES the call. It used
+// to fall back to "anon", which handed a signed-in player's game an empty shelf: the game took them for a
+// new player and saved the new one over the old in its own records (@tbuuol, ASHVALE, 2026-10-20).
 async function shelfName(page) {
-  let who = "anon";
-  try {
-    const asked = await fetch("/account", {cache: "no-store"});
-    if (asked.ok) who = (await asked.json()).address || "anon";
-  } catch (e) { /* a stranger's browser is its own shelf */ }
-  return "arcade.pagestore." + who + "." + page;
+  let asked;
+  try { asked = await fetch("/account", {cache: "no-store"}); }
+  catch (e) { asked = null; }
+  if (!asked || !asked.ok)
+    throw new Error("the wallet did not answer: try again in a moment");
+  let said;
+  try { said = await asked.json(); }
+  catch (e) { throw new Error("the wallet did not answer: try again in a moment"); }
+  return "arcade.pagestore." + ((said && said.address) || "anon") + "." + page;
+}
+
+// The history sits beside the shelf, not under its prefix: "arcade.pagehistory.<who>.<page>".
+function historyName(name) { return "arcade.pagehistory." + name.slice("arcade.pagestore.".length); }
+
+// File what the shelf is about to lose for `key`, newest first, HISTORY per key and SHELF_TOTAL in all.
+// The history is a nicety: a browser that will not hold it drops the oldest, never the save itself.
+function shelfKeep(name, items, key, next) {
+  if (!Object.prototype.hasOwnProperty.call(items, key) || items[key] === next) return;
+  const slot = historyName(name);
+  let hist = {};
+  try { hist = JSON.parse(localStorage.getItem(slot) || "{}") || {}; } catch (e) { hist = {}; }
+  const now = Date.now() / 1000;
+  hist[key] = [{value: items[key], replaced: now}].concat(hist[key] || []).slice(0, SHELF_HISTORY);
+  const all = [];
+  Object.keys(hist).forEach((k) => hist[k].forEach((h) => all.push([h.replaced, k, h])));
+  all.sort((a, b) => b[0] - a[0]);
+  let total = 0;
+  all.forEach(([, k, h]) => {
+    total += k.length + String(h.value).length;
+    if (total > SHELF_TOTAL) hist[k] = hist[k].filter((x) => x !== h);
+  });
+  Object.keys(hist).forEach((k) => { if (!hist[k].length) delete hist[k]; });
+  for (;;) {
+    try { localStorage.setItem(slot, JSON.stringify(hist)); return; }
+    catch (e) {
+      const oldest = all.filter(([, k, h]) => hist[k] && hist[k].includes(h)).pop();
+      if (!oldest) { try { localStorage.removeItem(slot); } catch (e2) {} return; }
+      hist[oldest[1]] = hist[oldest[1]].filter((x) => x !== oldest[2]);
+      if (!hist[oldest[1]].length) delete hist[oldest[1]];
+    }
+  }
 }
 
 export async function storageDoor(page, ask) {
@@ -2028,6 +2078,14 @@ export async function storageDoor(page, ask) {
   try { items = JSON.parse(localStorage.getItem(name) || "{}"); }
   catch (e) { items = {}; }
   if (op === "load") return {items: items};
+  if (op === "history") {
+    let hist = {};
+    try { hist = JSON.parse(localStorage.getItem(historyName(name)) || "{}") || {}; } catch (e) { hist = {}; }
+    const only = ask.key === undefined || ask.key === null || ask.key === "" ? null : String(ask.key);
+    if (only === null) return {history: hist};
+    return {history: hist[only] ? {[only]: hist[only]} : {}};
+  }
+  const before = Object.assign({}, items);
   if (op === "set") {
     const key = String(ask.key === undefined ? "" : ask.key);
     const value = String(ask.value === undefined ? "" : ask.value);
@@ -2048,8 +2106,9 @@ export async function storageDoor(page, ask) {
   } else if (op === "clear") {
     items = {};
   } else {
-    throw new Error("op must be set, remove or clear");
+    throw new Error("op must be set, remove, clear or history");
   }
+  Object.keys(before).forEach((k) => { if (before[k] !== items[k]) shelfKeep(name, before, k, items[k]); });
   try {
     if (Object.keys(items).length) localStorage.setItem(name, JSON.stringify(items));
     else localStorage.removeItem(name);
@@ -2267,6 +2326,36 @@ function keepOpen(phrase) {
   try { sessionStorage.setItem(OPEN_WALLETS, JSON.stringify(kept.slice(0, 6))); } catch (e) {}
 }
 
+/* The wallets an account imported (plan item 18), once its sealed record is open: where the open words are, for as
+ * long (this tab, shared with the site's other tabs below, gone on lock and sign-out), by account, because one tab
+ * can hold several accounts. {<account pubkey>: {updated, wallets: [...]}} -- `stale` when the record was sealed under
+ * an earlier password and is not open. */
+const OPEN_IMPORTS = "arcade-open-imports";
+/** The key the record is sealed with, while this page is open and only after the password was typed here and proved
+ *  against the main wallet: {account, key (a non-extractable AES key), salt, iterations}. Never the password, never
+ *  in storage; a new page asks again. */
+let importKey = null;
+
+function openImportsAll() {
+  try { return JSON.parse(sessionStorage.getItem(OPEN_IMPORTS) || "{}") || {}; } catch (e) { return {}; }
+}
+
+function mergeImports(given) {
+  const all = openImportsAll();
+  for (const [who, got] of Object.entries(given || {})) {
+    const have = all[who];
+    if (!have || Number(got.updated || 0) >= Number(have.updated || 0)) all[who] = got;
+  }
+  try { sessionStorage.setItem(OPEN_IMPORTS, JSON.stringify(all)); } catch (e) {}
+}
+
+function keepImports(account, opened) {
+  const all = openImportsAll();
+  all[String(account).toLowerCase()] = opened;
+  try { sessionStorage.setItem(OPEN_IMPORTS, JSON.stringify(all)); } catch (e) {}
+  try { if (TABS) TABS.postMessage({imports: {[String(account).toLowerCase()]: opened}}); } catch (e) {}
+}
+
 /* Unlocked once, unlocked everywhere (2026-09-26: "If you unlock on one
  * page, it should stay unlocked on all pages"). The open wallet lives in THIS
  * tab's sessionStorage, which a navigation keeps and a new tab does not have. So
@@ -2287,12 +2376,19 @@ if (TABS) {
       let phrase = null;
       try { phrase = sessionStorage.getItem(OPEN_WALLET); } catch (x) {}
       if (phrase) TABS.postMessage({phrase});
+      // The imported wallets open in this tab go with it (plan item 18): the same place, the same lifetime.
+      const imports = openImportsAll();
+      if (phrase && Object.keys(imports).length) TABS.postMessage({imports});
     } else if (m.phrase) {
       try {
         if (!sessionStorage.getItem(OPEN_WALLET)) sessionStorage.setItem(OPEN_WALLET, m.phrase);
       } catch (x) {}
+    } else if (m.imports) {
+      mergeImports(m.imports);
     } else if (m.locked) {
       try { sessionStorage.removeItem(OPEN_WALLET); } catch (x) {}
+      try { sessionStorage.removeItem(OPEN_IMPORTS); } catch (x) {}
+      importKey = null;
     } else if (m.switched && m.from !== THIS_PAGE) {
       // Another tab switched accounts: this one is showing the old one. Not
       // this page, which may hold more than one copy of this module.
@@ -2342,6 +2438,9 @@ export function forgetOpen() {
   let phrase = null;
   try { phrase = sessionStorage.getItem(OPEN_WALLET); } catch (e) {}
   try { sessionStorage.removeItem(OPEN_WALLET); } catch (e) {}
+  // Locked means the imported wallets too, in every tab (the `locked` message below clears theirs).
+  try { sessionStorage.removeItem(OPEN_IMPORTS); } catch (e) {}
+  importKey = null;
   if (phrase) {
     try { sessionStorage.setItem(OPEN_WALLETS,
             JSON.stringify(openWallets().filter((p) => p !== phrase))); } catch (e) {}
@@ -2519,8 +2618,9 @@ export async function tip(held, form, txid, kinds, ask) {
 
 /** Claim (`kind` "claim", with `secret` hex) or refund one lock coin to this account. */
 /** A lock spend built by the node and checked and signed HERE: [node's answer, signature]. */
-async function signLockSpend(wallet, {chain, redeem, txid, vout, kind, secret, leg, presign = false}) {
-    const what = legWhat(leg);
+async function signLockSpend(wallet, {chain, redeem, txid, vout, kind, secret, leg, other = null, presign = false}) {
+    // `other`: the swap's other leg, which a token's operator fee is worked out from (operatorFee).
+    const what = legWhat(leg, other);
     const asked = await fetch("/account/trade/spend", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({chain, redeem, txid, vout, kind, leg: what}),
@@ -2549,14 +2649,28 @@ async function signLockSpend(wallet, {chain, redeem, txid, vout, kind, secret, l
     const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
     // A coin comes out to this account alone. A token or NFT comes out by one OP_RETURN,
     // what is left of the lock's coin back into the lock, and this account LAST -- the
-    // ledger's recipient (escrow.move_out).
+    // ledger's recipient (escrow.move_out). A Doginal comes out first and whole to this account.
+    // A CLAIM also pays the other side's operator exactly the fee its lock holds, as one output of
+    // its own (2026-10-21) -- worked out here from the terms, never taken from the node.
     const lockScript = await coins.htlcScript(unhex(redeem));
-    const fine = (o) => same(o.script, mine)
+    const op = kind === "claim" && what.fee ? {value: BigInt(what.fee), script: await payeeScript(what.fee_to)} : null;
+    if (op && !op.script) throw new Error("the operator fee's address cannot be paid. Nothing was signed.");
+    const isOp = (o) => op && same(o.script, op.script) && !same(o.script, mine);
+    const fine = (o) => same(o.script, mine) || (isOp(o) && o.value === op.value)
       || (what.kind !== "coin" && !dg && (o.script[0] === 0x6a || same(o.script, lockScript)));
-    if (!tx.outputs.length || !tx.outputs.every(fine) || !same(tx.outputs[tx.outputs.length - 1].script, mine)
-        || (dg && tx.outputs.length !== 1)
+    const ours = tx.outputs.length ? tx.outputs[dg ? 0 : tx.outputs.length - 1] : null;
+    if (!tx.outputs.length || !tx.outputs.every(fine) || !same(ours.script, mine)
+        || tx.outputs.filter(isOp).length > 1
+        || (dg && tx.outputs.length > 2)
         || (what.kind !== "coin" && !dg && tx.outputs.filter((o) => o.script[0] === 0x6a).length !== 1))
       throw new Error("that spend pays somebody else. Nothing was signed.");
+    if (op && !same(op.script, mine) && tx.outputs.filter(isOp).length !== 1)
+      throw new Error("that claim leaves out the operator fee the swap agreed. Nothing was signed.");
+    // The sender paid the network fee (2026-10-21): a coin claimed on the new terms comes out whole.
+    if (kind === "claim" && what.kind === "coin" && leg && leg.fee_bps != null) {
+      const got = tx.outputs.filter((o) => same(o.script, mine)).reduce((n, o) => n + o.value, 0n);
+      if (got < BigInt(leg.amount)) throw new Error("that claim pays you less than the amount agreed. Nothing was signed.");
+    }
     if (kind === "refund" && tx.locktime !== lock.locktime)
       throw new Error("a refund must carry the lock's own time. Nothing was signed.");
     // One signature per input, each over a digest worked out HERE from the lock's own script.
@@ -2573,13 +2687,13 @@ async function signLockSpend(wallet, {chain, redeem, txid, vout, kind, secret, l
     return [said, signatures];
 }
 
-export async function tradeSpend(wallet, {chain, redeem, txid, vout, kind, secret, leg}) {
+export async function tradeSpend(wallet, {chain, redeem, txid, vout, kind, secret, leg, other = null}) {
   return working(async () => {
-    const [said, signatures] = await signLockSpend(wallet, {chain, redeem, txid, vout, kind, secret, leg});
+    const [said, signatures] = await signLockSpend(wallet, {chain, redeem, txid, vout, kind, secret, leg, other});
     const back = await fetch("/account/trade/spend/sign", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({chain: said.chain, redeem, raw: said.raw, signature: signatures[0], signatures, kind,
-                            secret: kind === "claim" ? secret : ""}),
+                            secret: kind === "claim" ? secret : "", leg: legWhat(leg, other)}),
     });
     const done = await back.json();
     if (!back.ok) throw new Error(done.detail || "the node would not send it");
@@ -2591,13 +2705,14 @@ export async function tradeSpend(wallet, {chain, redeem, txid, vout, kind, secre
  *  this tab is closed. Same checks as tradeSpend; the node adds only the secret, and only
  *  sends at the right moment (arcade/trade_watch.py). Claims need no secret here when
  *  `secret_lock` says where it will show up (this account's own lock, once claimed). */
-export async function tradePresign(wallet, {chain, redeem, txid, vout, kind, secret, leg, secret_lock,
+export async function tradePresign(wallet, {chain, redeem, txid, vout, kind, secret, leg, other = null, secret_lock,
                                             min_conf, not_after, trade}) {
   const [said, signatures] = await signLockSpend(wallet, {chain, redeem, txid, vout, kind,
-                                                           secret: secret || "", leg, presign: true});
+                                                           secret: secret || "", leg, other, presign: true});
   const asked = await fetch("/account/trade/watch", {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({chain: said.chain, redeem, txid, vout, kind, raw: said.raw, signature: signatures[0], signatures,
+                          leg: legWhat(leg, other),
                           secret: secret || "", secret_lock: secret_lock || null,
                           min_conf: min_conf || 0, not_after: not_after || 0, trade: trade || ""}),
   });
@@ -2618,9 +2733,20 @@ export async function tradeFacts(chain, txid, vout, leg = null, redeem = null) {
   return said.seen;
 }
 
-/** What moves in a leg, as the node's trade routes take it: {kind, asset, amount}. */
-function legWhat(leg) {
-  return leg ? {kind: leg.kind || "coin", asset: leg.asset || "", amount: leg.amount} : {kind: "coin", asset: "", amount: 0};
+/** The pay-to-pubkey-hash script an operator fee is paid to, from its address; null if it is not one (payeeOk). */
+async function payeeScript(address) {
+  if (!(await payeeOk(address))) return null;
+  return coins.p2pkh(coins.unbase58(address).slice(1, 21));
+}
+
+/** What moves in a leg, as the node's trade routes take it: {kind, asset, amount}, and its operator fee worked out
+ *  HERE from the terms ({fee, fee_to}, 2026-10-21): what goes into this account's own lock on top, or what its claim
+ *  of the other lock pays the other side's operator. */
+function legWhat(leg, other = null) {
+  if (!leg) return {kind: "coin", asset: "", amount: 0};
+  const fee = operatorFee(leg, other);
+  return {kind: leg.kind || "coin", asset: leg.asset || "", amount: leg.amount,
+          ...(fee ? {fee, fee_to: leg.fee_to} : {})};
 }
 
 /* The trade state machine: arcade/trade.py's next_step, rule for rule (tests compare
@@ -2631,6 +2757,15 @@ export const TRADE = {
   BIG: {main: 1_000_000 * 100_000_000, doge: 1_000 * 100_000_000, ltc: 2 * 100_000_000},
   CLAIM_MARGIN: 20 * 60, LOCK_MARGIN: 30 * 60,
   LOCK_RESERVE: 2_000_000,          // htlc.SPEND_FEE + htlc.DUST (trade.LOCK_RESERVE)
+  DOGINAL_RESERVE: 2_000_000,       // htlc.DOGINAL_RESERVE
+  // Who pays a lock's fees (2026-10-21; trade.py "who pays the fees of a lock"): the claim's network fee per
+  // chain (trade.claim_fee = htlc.spend_fee of config.NETWORKS), the least an operator fee output may be (trade.fee_floor
+  // = htlc.dust_of), and the version bytes it may be paid to (trade.PAYEE_VERSIONS). tests/test_trade_fees.py holds
+  // these to the Python numbers.
+  CLAIM_FEE: {main: 1_000_000, test: 1_000_000, regtest: 1_000_000, doge: 1_000_000, ltc: 10_000, ltctest: 10_000},
+  FEE_FLOOR: {main: 1_000_000, test: 1_000_000, regtest: 1_000_000, doge: 1_000_000, ltc: 10_000, ltctest: 10_000},
+  FEE_BPS_CEILING: 10_000,
+  PAYEE_VERSIONS: [30, 48, 56, 111, 113],
 };
 const tierOf = (leg) => (leg.network === "main" || leg.network === "doge" || leg.network === "ltc") ? "mainnet" : "testnet";
 
@@ -2650,28 +2785,130 @@ export function planLocktimes(give, get, now) {
           t2: Math.floor(now) + Math.floor(TRADE.LOCK_SECONDS[tier] / 2)};
 }
 
-/** Is `seen` exactly the lock the terms say? "" if so, else why not (trade.check_lock). */
+/** Is `seen` exactly the lock the terms say? "" if so, else why not (trade.check_lock). "Holds at least": a lock
+ *  that holds more passes, which is how an arcade from before 2026-10-21 still accepts an updated one's lock. */
 export async function checkLock(trade, seen, theirs) {
   const leg = theirs ? trade.get : trade.give;
+  const other = theirs ? trade.give : trade.get;
   const redeem = theirs ? trade.theirRedeem : trade.myRedeem;
   const script = coinsHex(await coins.htlcScript(redeem));
   if (seen.script_hex !== script) return "that lock's script is not the one agreed (hash, keys or lock time differ)";
   if (leg.kind === "doginal" && (seen.vout !== 0 || !seen.asset_ok))
     return "that lock does not hold the agreed Doginal at the start of output 0, with its reserve beside it";
-  if (seen.value < lockValue(leg)) {
-    if (leg.kind === "coin") return `that lock holds ${seen.value}, less than the ${leg.amount} agreed`;
+  if (leg.kind === "doginal" && operatorFee(leg, other) && Number(seen.reserve || 0) < doginalReserve(leg, other))
+    return "the reserve beside that Doginal is too small to pay its spend and the operator fee agreed";
+  if (seen.value < lockValue(leg, other)) {
+    if (leg.kind === "coin") {
+      if (leg.fee_bps == null) return `that lock holds ${seen.value}, less than the ${leg.amount} agreed`;
+      return `that lock holds ${seen.value}, less than the ${leg.amount} agreed with its network fee `
+        + `(${claimFee(leg.network)}) and operator fee (${operatorFee(leg, other)}) on top`;
+    }
     return "that lock holds too little coin to move its token or NFT out again";
   }
   if (leg.kind !== "coin" && !seen.asset_ok) return "the ledger does not show the agreed token or NFT at that lock";
   return "";
 }
 
-/** The coin a lock output for `leg` must hold (trade.lock_value): the amount for coin,
- *  else the reserve that pays for moving the token or NFT out again. */
-export function lockValue(leg) {
-  // A Doginal's lock output holds its own coin, whatever that is worth (trade.lock_value).
-  if (leg.kind === "doginal") return 1;
-  return leg.kind === "coin" ? leg.amount : TRADE.LOCK_RESERVE;
+/** What the claim (or refund) of a coin lock on `network` pays the network (trade.claim_fee). */
+export function claimFee(network) {
+  return TRADE.CLAIM_FEE[network] ?? 1_000_000;
+}
+
+/** The least an operator fee output may be on `network` (trade.fee_floor): its dust line. */
+export function feeFloor(network) {
+  return TRADE.FEE_FLOOR[network] ?? 1_000_000;
+}
+
+/** The operator fee `leg`'s lock holds and its claim pays to `leg.fee_to` (trade.operator_fee, 2026-10-21:
+ *  "percent with a floor"): 0 with no rate or no payee (terms from before that day too); else rate x base // 10,000,
+ *  rounded down -- in BigInt, so a big amount lands on the same satoshi as Python's -- at least the chain's floor. The
+ *  base is the leg's own amount for coin; for a token, NFT or Doginal, `other`'s when that is coin on the same chain,
+ *  else nothing (the floor alone). */
+export function operatorFee(leg, other = null) {
+  const bps = Math.min(Math.trunc(Number(leg.fee_bps || 0)), TRADE.FEE_BPS_CEILING);
+  if (!(bps > 0) || !leg.fee_to) return 0;
+  const kind = leg.kind || "coin";
+  let base = 0;
+  if (kind === "coin") base = Number(leg.amount);
+  else if (other && (other.kind || "coin") === "coin" && other.network === leg.network) base = Number(other.amount);
+  const pct = Number((BigInt(Math.trunc(base)) * BigInt(bps)) / 10000n);
+  return Math.max(feeFloor(leg.network), pct);
+}
+
+/** The coin locked beside a Doginal (trade.doginal_reserve): the spend's own reserve and the operator fee. */
+export function doginalReserve(leg, other = null) {
+  return TRADE.DOGINAL_RESERVE + operatorFee(leg, other);
+}
+
+/** The least coin a lock output for `leg` must hold (trade.lock_value): the amount, the claim's network fee and the
+ *  operator fee for coin; the reserve and the operator fee for a token or NFT. A leg on old terms (no fee_bps, an
+ *  arcade from before 2026-10-21) is held to the old rule. A Doginal's lock output holds its own coin, whatever that
+ *  is worth; its reserve stands beside it (checkLock). */
+export function lockValue(leg, other = null) {
+  const kind = leg.kind || "coin";
+  if (kind === "doginal") return 1;
+  if (kind !== "coin") return TRADE.LOCK_RESERVE + operatorFee(leg, other);
+  if (leg.fee_bps == null) return Number(leg.amount);
+  return Number(leg.amount) + claimFee(leg.network) + operatorFee(leg, other);
+}
+
+/** What this trader puts into its OWN lock for `leg` (trade.fund_value): lockValue as an updated arcade reads it,
+ *  whatever terms the other side sent -- the claim's network fee is always the sender's. A Doginal: its reserve. */
+export function fundValue(leg, other = null) {
+  if ((leg.kind || "coin") === "doginal") return doginalReserve(leg, other);
+  return lockValue(leg.fee_bps == null ? {...leg, fee_bps: 0, fee_to: ""} : leg, other);
+}
+
+/** `leg` with this arcade's lock-fee terms ({bps, to} from /account chains[].lock_fee; {} = Off: rate 0, still the
+ *  new terms) (trade.with_fee). */
+export function withFee(leg, terms) {
+  const bps = Math.trunc(Number((terms && terms.bps) || 0));
+  const to = bps > 0 ? String((terms && terms.to) || "") : "";
+  const out = {...leg, fee_bps: to ? bps : 0};
+  if (to) out.fee_to = to; else delete out.fee_to;
+  return out;
+}
+
+/** Is `address` somewhere an operator fee can be paid (trade.payee_ok): base58check, a 20-byte hash, a
+ *  pay-to-pubkey-hash version this software knows? */
+export async function payeeOk(address) {
+  if (typeof address !== "string" || address.length < 26 || address.length > 36) return false;
+  try {
+    const raw = coins.unbase58(address);
+    if (raw.length !== 25) return false;
+    const sum = (await coins.hash256(raw.slice(0, 21))).slice(0, 4);
+    if (!sum.every((b, i) => b === raw[21 + i])) return false;
+    return TRADE.PAYEE_VERSIONS.includes(raw[0]);
+  } catch (e) { return false; }
+}
+
+/** A leg's lock-fee terms are well formed (trade_messages.fee_terms): none, or a whole rate 0..10,000 with a payable
+ *  address when above 0. A proposal that fails this is refused before anything is locked: its claim could not be
+ *  built. */
+async function feeTermsOk(leg) {
+  if (!leg || leg.fee_bps == null) return true;
+  if (!Number.isInteger(leg.fee_bps) || leg.fee_bps < 0 || leg.fee_bps > TRADE.FEE_BPS_CEILING) return false;
+  return leg.fee_bps === 0 || await payeeOk(leg.fee_to);
+}
+
+/** May this lister lock `proposed` (its own side as the taker wrote it) under the terms it listed (`stood`)? Yes with
+ *  no operator fee asked of it (an old arcade, a book that dropped the fields: rate 0), or exactly the rate and payee
+ *  listed; never a payee or rate the taker chose (node_trader.fee_terms_fit). */
+function feeTermsFit(proposed, stood) {
+  if (!proposed.fee_bps) return true;
+  return proposed.fee_bps === Number((stood && stood.fee_bps) || 0) && proposed.fee_to === String((stood && stood.fee_to) || "");
+}
+
+//: This arcade's lock-fee terms per chain (/account chains[].lock_fee), read once per page.
+let lockFeesKnown = null;
+export async function lockFeeOf(network) {
+  if (!lockFeesKnown) {
+    try {
+      const said = await (await fetch("/account", {cache: "no-store"})).json();
+      lockFeesKnown = Object.fromEntries((said.chains || []).map((c) => [c.network, c.lock_fee || {}]));
+    } catch (e) { return {}; }
+  }
+  return lockFeesKnown[network] || {};
 }
 
 /** [step, why]: "lock" | "wait" | "claim" | "refund" | "done" | "abort" (trade.next_step).
@@ -2907,30 +3144,55 @@ export async function tradeHeard(wallet, after, meshAfter = 0) {
 const coinsText = (sats) => (Number(sats) / 1e8).toFixed(8).replace(/\.?0+$/, "");
 
 /** Take an order (trade_orders.py) as the initiator: secret made here, terms proposed. */
-/** What a swap costs in network fees, in words, from the side of whoever gives `give` and
- *  gets `get` -- shown before anything is signed. A lock costs about one minimum fee (0.01);
- *  a coin claimed out of a lock pays its own fee (0.01 comes off it); a token or NFT goes
- *  into its lock with 0.02 that pays its way out (trade.LOCK_RESERVE). */
-export function swapFees(give, get) {
+/** What a swap costs, in words, from the side of whoever gives `give` and gets `get` -- shown before anything is
+ *  signed. 2026-10-21: the sender of each lock pays its fees, so they come ON TOP of what is given and the
+ *  other side receives exactly it: the lock's own transaction (about one minimum fee), the network fee of the other
+ *  side's claim (a coin lock; htlc.spend_fee) or the reserve that moves a token or NFT out again (trade.LOCK_RESERVE),
+ *  and this arcade's operator fee when it charges one (operatorFee). `give` may carry its fee terms already (fee_bps,
+ *  fee_to); else this arcade's are read (lockFeeOf). What you receive is the amount agreed, whole -- unless the other
+ *  side's arcade is not updated yet (its leg carries no fee_bps), when its claim fee still comes off it.
+ *  `options.taking`: `get` is the order's own side, so whether its arcade is updated is known. */
+export async function swapFees(give, get, options = {}) {
   // LTC and LTC TEST too (2026-10-18: Litecoin's legs read "PEP TEST").
   const coin = (n) => n === "doge" ? "DOGE" : n === "main" ? "PEP" : n === "ltc" ? "LTC"
     : n === "ltctest" ? "LTC TEST" : "PEP TEST";
   // Litecoin pays its own rate (htlc.spend_fee, 2026-10-18): about 0.0001 LTC, not the Dogecoin family's 0.01.
-  const fee = (n) => n === "ltc" || n === "ltctest" ? "0.0001" : "0.01";
-  const parts = [`about ${fee(give.network)} ${coin(give.network)} to lock yours`];
-  if (give.kind && give.kind !== "coin") parts.push(`0.02 ${coin(give.network)} that goes in with it to pay for moving it out`);
-  if (!get.kind || get.kind === "coin") parts.push(`${fee(get.network)} ${coin(get.network)} comes off what you receive`);
-  return "Network fees: " + parts.join("; ") + ".";
+  const sendFee = (n) => n === "ltc" || n === "ltctest" ? 10_000 : 1_000_000;
+  const kindOf = (l) => l.kind || "coin";
+  const mine = give.fee_bps == null ? withFee(give, await lockFeeOf(give.network)) : give;
+  const net = coin(give.network);
+  const onTop = [`about ${coinsText(sendFee(give.network))} ${net} to send your lock`];
+  if (kindOf(give) === "coin") onTop.push(`${coinsText(claimFee(give.network))} ${net} for the network fee of the other side's claim`);
+  else if (kindOf(give) === "doginal") onTop.push(`${coinsText(TRADE.DOGINAL_RESERVE)} ${net} that goes in with it to pay for moving it out`);
+  else onTop.push(`${coinsText(TRADE.LOCK_RESERVE)} ${net} that goes in with it to pay for moving it out`);
+  const cut = operatorFee(mine, get);
+  if (cut) onTop.push(`${coinsText(cut)} ${net} operator fee (${Number(mine.fee_bps) / 100}%) to this arcade`);
+  let back;
+  if (kindOf(get) !== "coin") back = "You receive what you are getting, whole; its fees are the other side's.";
+  else if (options.taking && get.fee_bps == null) back = `${coinsText(claimFee(get.network))} ${coin(get.network)} comes off `
+    + "what you receive: the other side's arcade is not updated yet and leaves its claim fee in its lock.";
+  else if (options.taking) back = `You receive exactly the ${coin(get.network)} agreed; the other side pays its own fees.`;
+  else back = `You receive exactly the ${coin(get.network)} agreed; the taker pays its own fees (a taker on an arcade `
+    + `not updated yet leaves ${coinsText(claimFee(get.network))} ${coin(get.network)} of it as its claim fee).`;
+  return `Fees you pay on top: ${onTop.join("; ")}. The other side receives exactly what you give. ${back}`;
 }
 
 export async function takeOrder(wallet, order, options = {}) {
   const mineOn = (network) => coinsHex(keysOn(wallet, network).pubkey);
-  const give = {network: order.get.network, kind: order.get.kind, asset: order.get.asset || "",
-                amount: order.get.amount,
-                giver_key: mineOn(order.get.network), taker_key: order.take_key || order.trade_key};
+  // This side's lock carries this arcade's operator fee (withFee); the lister's carries the terms its order names, or
+  // none from an arcade before 2026-10-21 (that lock is then held to the old rule). 2026-10-21.
+  const give = withFee({network: order.get.network, kind: order.get.kind, asset: order.get.asset || "",
+                        amount: order.get.amount,
+                        giver_key: mineOn(order.get.network), taker_key: order.take_key || order.trade_key},
+                       await lockFeeOf(order.get.network));
   const get = {network: order.give.network, kind: order.give.kind, asset: order.give.asset || "",
                amount: order.give.amount,
                giver_key: order.trade_key, taker_key: mineOn(order.give.network)};
+  if (order.give.fee_bps != null) {
+    get.fee_bps = Number(order.give.fee_bps);
+    if (order.give.fee_to) get.fee_to = String(order.give.fee_to);
+    if (!(await feeTermsOk(get))) throw new Error("that swap's fee terms cannot be met, so nothing was asked");
+  }
   const secret = crypto.getRandomValues(new Uint8Array(32));
   const secretHash = await coins.sha256Of(secret);
   const {t1, t2} = planLocktimes(give, get, Date.now() / 1000);
@@ -3044,13 +3306,15 @@ export async function tradeTick(wallet, id) {
     const address = await coins.htlcAddress(myRedeem, await p2shOf(trade.give.network));
     const sent = await spending(async () => {
     let offer;
-    if (trade.give.kind === "coin") offer = await offerSend(address, coinsText(trade.give.amount), trade.give.network);
+    // The sender pays (2026-10-21): the claim's network fee and this arcade's operator fee go in on top, so the
+    // other side receives exactly the amount agreed (fundValue).
+    if (trade.give.kind === "coin") offer = await offerSend(address, coinsText(fundValue(trade.give, trade.get)), trade.give.network);
     else {
       // A token or NFT: the node builds it (payload, then the lock with the coin that pays
       // its way out, last); this tab checks and signs it like any other offer.
       const asked = await fetch("/account/trade/lock", {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({chain: trade.give.network, redeem: coinsHex(myRedeem), leg: legWhat(trade.give)}),
+        body: JSON.stringify({chain: trade.give.network, redeem: coinsHex(myRedeem), leg: legWhat(trade.give, trade.get)}),
       });
       offer = await asked.json();
       if (!asked.ok) throw new Error(offer.detail || "the node could not build that lock");
@@ -3064,7 +3328,7 @@ export async function tradeTick(wallet, id) {
     let vout = trade.give.kind === "doginal" ? 0 : -1;
     for (let n = 0; n < 4 && vout < 0; n++) {
       const seen = await tradeFacts(trade.give.network, sent.txid, n).catch(() => null);
-      if (seen && seen.script_hex === script && seen.value < lockValue(trade.give)) continue;
+      if (seen && seen.script_hex === script && seen.value < lockValue(trade.give, trade.get)) continue;
       if (seen && seen.script_hex === script) vout = n;
     }
     trade.myLock = {txid: sent.txid, vout: Math.max(0, vout)};
@@ -3073,12 +3337,13 @@ export async function tradeTick(wallet, id) {
                                         network: trade.give.network, txid: sent.txid, vout: trade.myLock.vout});
   } else if (step === "claim") {
     const done = await tradeSpend(wallet, {chain: trade.get.network, redeem: coinsHex(theirRedeem),
-      txid: trade.theirLock.txid, vout: trade.theirLock.vout, kind: "claim", secret: trade.secret, leg: trade.get});
+      txid: trade.theirLock.txid, vout: trade.theirLock.vout, kind: "claim", secret: trade.secret, leg: trade.get,
+      other: trade.give});
     await tradeSay(wallet, trade.peer, {t: "trade", v: 1, id: trade.id, step: "claimed",
                                         network: trade.get.network, txid: done.txid});
   } else if (step === "refund") {
     const done = await tradeSpend(wallet, {chain: trade.give.network, redeem: coinsHex(myRedeem),
-      txid: trade.myLock.txid, vout: trade.myLock.vout, kind: "refund", leg: trade.give});
+      txid: trade.myLock.txid, vout: trade.myLock.vout, kind: "refund", leg: trade.give, other: trade.get});
     await tradeSay(wallet, trade.peer, {t: "trade", v: 1, id: trade.id, step: "refunded",
                                         network: trade.give.network, txid: done.txid});
   } else if (step === "done") trade.state = "done";
@@ -3098,14 +3363,15 @@ async function holdSpends(wallet, trade, view, facts) {
   const hex = coinsHex;
   if (trade.myLock && !trade.heldRefund) {
     await tradePresign(wallet, {chain: trade.give.network, redeem: hex(view.myRedeem), txid: trade.myLock.txid,
-                                vout: trade.myLock.vout, kind: "refund", leg: trade.give, trade: trade.id});
+                                vout: trade.myLock.vout, kind: "refund", leg: trade.give, other: trade.get,
+                                trade: trade.id});
     trade.heldRefund = true;
   }
   if (trade.heldClaim || !trade.theirLock || !facts.theirs || facts.theirs.spent_by_script_sig) return;
   if (await checkLock(view, facts.theirs, true)) return;            // not the lock agreed: never
   const theirTime = trade.role === "initiator" ? trade.t2 : trade.t1;
   const base = {chain: trade.get.network, redeem: hex(view.theirRedeem), txid: trade.theirLock.txid,
-                vout: trade.theirLock.vout, kind: "claim", leg: trade.get, trade: trade.id};
+                vout: trade.theirLock.vout, kind: "claim", leg: trade.get, other: trade.give, trade: trade.id};
   const need = trade.need || confirmationsFor(trade.give, trade.get);
   if (trade.role === "initiator") {
     // A token or NFT is only known to be in the lock once the ledger has read it confirmed;
@@ -3210,25 +3476,29 @@ async function delegateOrder(wallet, id, give, get, approved) {
     order: {id, give, get}, key: coinsHex(k.key), deposit: {[give.network]: deposit},
     payout: {[get.network]: keysOn(wallet, get.network).address}});
   if (!told) throw new Error(said.detail || "this arcade's node would not take the order on");
+  // The node locks with the fees on top (2026-10-21: the claim's network fee and its operator fee, node_trader
+  // _delegated_lock), so the deposit carries them; whatever a taker's terms leave unused comes back with the rest.
+  const fee = said.lock_fee || {};
+  const lockNeeds = fundValue(withFee(give, fee), get);
   if (give.kind === "coin") {
-    await confirm(wallet, await offerSend(deposit, coinsText(give.amount + DELEGATED_FEES), give.network), ok);
+    await confirm(wallet, await offerSend(deposit, coinsText(lockNeeds + DELEGATED_FEES), give.network), ok);
   } else {
     if (give.kind === "token") {
       await send("/account/token/send", {property_id: give.asset, to: deposit, units: give.amount, chain: give.network});
     } else {
       await send("/account/nft/send", {piece: give.asset, to: deposit, chain: give.network});
     }
-    await confirm(wallet, await offerSend(deposit, coinsText(TRADE.LOCK_RESERVE + DELEGATED_FEES), give.network), ok);
+    await confirm(wallet, await offerSend(deposit, coinsText(lockNeeds + DELEGATED_FEES), give.network), ok);
   }
   return {trade_key: coinsHex(k.pubkey), take_key: coinsHex(k.pubkey), msg_key: said.msg_key, node: said.node,
-          deposit};
+          deposit, lock_fee: fee};
 }
 
 /** List a swap from this tab: give `give` {network, kind?, asset?, amount}, get `get` (coin, token or NFT).
  *  `options.delegated`: its node finishes it with the seller away (delegateOrder). */
 export async function listOrder(wallet, give, get, options = {}) {
   const short = await canFund({network: give.network, kind: give.kind || "coin", asset: String(give.asset || ""),
-                               amount: Number(give.amount)});
+                               amount: Number(give.amount)}, get);
   if (short) throw new Error(`You can't list this swap yet: ${short}.`);
   const book = myOrdersOf(wallet);
   const id = "ord-" + coinsHex(crypto.getRandomValues(new Uint8Array(8)));
@@ -3238,6 +3508,10 @@ export async function listOrder(wallet, give, get, options = {}) {
   const keys = options.delegated
     ? {...(await delegateOrder(wallet, id, sides.give, sides.get, !!options.approved)), delegated: true}
     : {trade_key: coinsHex(keysOn(wallet, give.network).pubkey), take_key: coinsHex(keysOn(wallet, get.network).pubkey)};
+  // The side this listing locks names this arcade's lock-fee terms (2026-10-21), so a taker on any arcade knows
+  // what the lock holds and what its claim pays; a delegated order's are the ones its node stood it with.
+  sides.give = withFee(sides.give, options.delegated ? keys.lock_fee : await lockFeeOf(give.network));
+  delete keys.lock_fee;
   book.orders[id] = {id, ...sides, labels: [give.label || "", get.label || ""],
                      approved: !!options.approved, ...keys};
   keepMyOrders(wallet, book);
@@ -3323,7 +3597,10 @@ export async function answerProposals(wallet) {
       && (p.give.asset || "") === mine.get.asset && p.give.amount >= mine.get.amount
       && p.give.taker_key === mine.take_key
       && Number.isInteger(p.t1) && Number.isInteger(p.t2) && p.t2 < p.t1
-      && p.t2 - TRADE.LOCK_MARGIN > now && /^[0-9a-f]{64}$/.test(p.secret_hash || "");
+      && p.t2 - TRADE.LOCK_MARGIN > now && /^[0-9a-f]{64}$/.test(p.secret_hash || "")
+      // The operator fee in this lister's own lock: none, or exactly what it listed; the taker's own terms well formed,
+      // or the claim of the taker's lock could not be built (2026-10-21).
+      && feeTermsFit(p.get, mine.give) && await feeTermsOk(p.give) && await feeTermsOk(p.get);
     const refuse = async (reason) => {
       book.refused = [...book.refused, p.id].slice(-300);
       keepMyOrders(wallet, book);
@@ -3338,7 +3615,7 @@ export async function answerProposals(wallet) {
       await refuse("somebody else is taking this swap"); continue;
     }
     // Able to lock its side? If not, say so now, before the taker locks anything.
-    const short = await canFund(mine.give);
+    const short = await canFund(p.get, p.give);
     if (short) { await refuse(`the lister cannot fund its side (${short})`); continue; }
     const trade = {id: p.id, role: "responder", order: p.order, peer: a.sender, give: p.get, get: p.give,
                    secret: "", secretHash: p.secret_hash, t1: p.t1, t2: p.t2, myLock: null, theirLock: null,
@@ -3433,8 +3710,8 @@ async function tradePass() {
  *  (2026-10-17: a GOLD/DOGE swap stuck because the bid could not pay its own lock).
  *  Asked before a listing is posted and before a take is accepted, so nobody locks against a
  *  side that was never going to lock. "" too when the node cannot say: the lock itself will. */
-export async function canFund(give) {
-  return (await fundsReader())(give);
+export async function canFund(give, get = null) {
+  return (await fundsReader())(give, get);
 }
 
 /** A reader for many sides at once (one /account, one /account/tokens): (give) -> "" or why not, in words.
@@ -3443,7 +3720,7 @@ export async function fundsReader() {
   let acct = null, toks = null;
   try { acct = await (await fetch("/account", {cache: "no-store"})).json(); } catch (e) { acct = null; }
   const show = (n) => (n / 1e8).toFixed(4).replace(/\.?0+$/, "");
-  return async (give) => {
+  return async (give, get = null) => {
     try {
       if (!acct) return "";
       const c = (acct.chains || []).find((x) => x.network === give.network);
@@ -3465,9 +3742,11 @@ export async function fundsReader() {
         }
       }
       const fee = 1_000_000;                                    // about 0.01 to send the lock
-      const need = kind === "coin" ? Number(give.amount) + fee
-        : kind === "doginal" ? Number(c.doginal_lock_need || TRADE.LOCK_RESERVE + fee)
-        : TRADE.LOCK_RESERVE + fee;
+      // What the lock holds, with the claim's network fee and this arcade's operator fee on top (2026-10-21).
+      const legF = give.fee_bps == null ? withFee({...give, kind}, c.lock_fee || {}) : {...give, kind};
+      const need = kind === "coin" ? fundValue(legF, get) + fee
+        : kind === "doginal" ? Number(c.doginal_lock_need || TRADE.LOCK_RESERVE + fee) + operatorFee(legF, get)
+        : fundValue(legF, get) + fee;
       const have = Number(c.spendable ?? c.balance ?? 0);
       if (have >= need) return "";
       return `not enough ${coin} to lock it: about ${show(need)} ${coin} is needed and this wallet has ${show(have)}`;
@@ -3554,4 +3833,493 @@ export function startTradeRunner(chain, beat = TRADE_BEAT) {
 export function kickTrades() {
   if (globalThis.__arcadeTradeRunner) tradePass();
   else if (kicks) kicks.postMessage("kick");
+}
+
+/* --- imported wallets (plan item 18, 2026-10-20) --------------------------------------------------------
+ *
+ * "We should be able to import any with private key or 12 word seed phrase, even if that wallet has not been used
+ * in Dogecoin arcade." A key (WIF) or a phrase typed into the Wallet page becomes a wallet beside the account's own,
+ * by name. Its secret never leaves this browser unsealed: the account keeps a SECOND sealed record on the node
+ * (/account/imported), made with `sealText` -- the same AES-256-GCM under PBKDF2-SHA512 at KDF_ITERATIONS as `seal`,
+ * under the same password -- and opened with it at sign-in. The main wallet's blob, which older arcades read, is not
+ * changed in any way. The node is told the imported ADDRESS only, with a signature by its key, so it can watch it.
+ */
+
+/** The record's text sealed with a key made from the password (`keyed`: {key, salt, iterations}). The parameters
+ *  travel with it, as `seal`'s do; unlike `seal`, the text is kept exactly (a private key is case-sensitive). */
+async function sealText(text, keyed) {
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = await crypto.subtle.encrypt({name: "AES-GCM", iv: nonce}, keyed.key, enc.encode(text));
+  return {kdf: "PBKDF2-SHA512", iterations: keyed.iterations, salt: hex(keyed.salt), nonce: hex(nonce),
+          sealed: hex(sealed)};
+}
+
+async function openText(blob, keyed) {
+  try {
+    const plain = await crypto.subtle.decrypt({name: "AES-GCM", iv: unhex(blob.nonce)}, keyed.key,
+                                              unhex(blob.sealed));
+    return new TextDecoder().decode(plain);
+  } catch (e) {
+    throw new Error("that password does not open your imported wallets.");
+  }
+}
+
+/** The key for a record: the password through the same KDF `seal` uses, over the record's own salt (a new record
+ *  gets a new random one). */
+async function recordKey(password, blob) {
+  if (blob && blob.kdf !== "PBKDF2-SHA512") throw new Error("your imported wallets are sealed in a way this page does not know");
+  const salt = blob ? unhex(blob.salt) : crypto.getRandomValues(new Uint8Array(16));
+  const iterations = blob ? Number(blob.iterations) : KDF_ITERATIONS;
+  return {key: await keyFrom(password, salt, iterations), salt, iterations};
+}
+
+/** What the node keeps for this account's imports: the sealed record (parsed), when it was written, the main
+ *  wallet's sealed blob, each chain's imported addresses with balance and read-back state, the main wallets' names. */
+export async function importedOnNode() {
+  const got = await fetch("/account/imported", {cache: "no-store"});
+  const said = await got.json().catch(() => ({}));
+  if (!got.ok) throw new Error(said.detail || "this arcade did not answer about your imported wallets");
+  let record = null;
+  try { record = said.blob ? JSON.parse(said.blob) : null; } catch (e) { record = null; }
+  return {...said, record};
+}
+
+/** The account's imported wallets open in this tab: {updated, wallets} or {stale: true}, or null when not open. */
+export function importsOpen(account) {
+  return openImportsAll()[String(account || "").toLowerCase()] || null;
+}
+
+/** Open the record with the password that just opened the main wallet (sign-in, a backup file). Never fails a
+ *  sign-in: a record sealed under an earlier password (the Restore page set a new one) is marked `stale`. */
+async function openImportsWith(wallet, password) {
+  try {
+    const said = await importedOnNode();
+    if (!said.record) { keepImports(wallet.pubkey, {updated: 0, wallets: []}); return; }
+    const keyed = await recordKey(password, said.record);
+    let opened;
+    try {
+      opened = JSON.parse(await openText(said.record, keyed));
+    } catch (e) {
+      keepImports(wallet.pubkey, {updated: said.updated, stale: true, wallets: []});
+      return;
+    }
+    importKey = {account: wallet.pubkey, ...keyed};
+    keepImports(wallet.pubkey, {updated: said.updated, version: said.version,
+                                wallets: (opened && opened.wallets) || []});
+    await tidyImports(wallet, password);
+  } catch (e) { /* the record is read again on the Wallet page */ }
+}
+
+/** Open a record sealed under an EARLIER password (after a Restore), with that password. Only opens it in this
+ *  tab: the next change seals it again under the current password. */
+export async function openStaleImports(wallet, oldPassword) {
+  const said = await importedOnNode();
+  if (!said.record) throw new Error("you have no imported wallets on this arcade");
+  const opened = JSON.parse(await openText(said.record, await recordKey(oldPassword, said.record)));
+  keepImports(wallet.pubkey, {updated: said.updated, wallets: (opened && opened.wallets) || [], reseal: true});
+  return opened.wallets || [];
+}
+
+/** The record's key for a change: the one this page already proved, else from `password` -- which must open the
+ *  main wallet to the words open in this tab (so an import is never sealed under a mistyped password nobody could
+ *  open again). `{reseal}` when the node's record was sealed under an earlier password and is re-sealed now. */
+async function keyForChange(wallet, said, password) {
+  const record = said.record;
+  if (importKey && importKey.account === wallet.pubkey
+      && (!record || hex(importKey.salt) === String(record.salt))) return {keyed: importKey};
+  if (!password) {
+    const e = new Error("Type your password to seal your imported wallets.");
+    e.needsPassword = true;
+    throw e;
+  }
+  if (!said.vault) {
+    throw new Error("This arcade keeps no sealed copy of your wallet, so there is no password to seal imported "
+      + "wallets under here.");
+  }
+  const words = await open(said.vault, password).catch(() => {
+    const e = new Error("That is not your password.");
+    e.needsPassword = true;
+    throw e;
+  });
+  if (signer.normalise(words) !== signer.normalise(wallet.phrase)) {
+    throw new Error("That password opens a different wallet than the one open here. Nothing was changed.");
+  }
+  if (record) {
+    const keyed = await recordKey(password, record);
+    try {
+      await openText(record, keyed);
+      importKey = {account: wallet.pubkey, ...keyed};
+      return {keyed: importKey};
+    } catch (e) {
+      // Sealed under an earlier password: sealed again, under this one, from the copy open in this tab.
+      const here = importsOpen(wallet.pubkey);
+      if (!here || !here.reseal || Number(here.updated) !== Number(said.updated)) {
+        throw new Error("Your imported wallets were sealed under an earlier password. Open them with that password "
+          + "first; they are sealed under your new one from then on.");
+      }
+      importKey = {account: wallet.pubkey, ...(await recordKey(password, null))};
+      return {keyed: importKey, reseal: here.wallets};
+    }
+  }
+  importKey = {account: wallet.pubkey, ...(await recordKey(password, null))};
+  return {keyed: importKey};
+}
+
+/* --- the record between arcades (2026-10-21: "an imported wallet needs to be automatically broadcast to
+ * other arcades that you are signed in with") ----------------------------------------------------------------------
+ * Every version of the record is numbered (one more each change) and signed HERE by the account's login key, over
+ * sha256("DogecoinArcade imported wallets\n" + pubkey + "\n" + version + "\n" + sha256(sealed text)), so another
+ * arcade can check it against the account's key and keep it (mesh/importshare.py, wallet_imports.record_digest).
+ * The plaintext keeps a tombstone for each removed wallet (`gone`: id -> when) and each wallet when it last changed
+ * (`at`), so two copies changed apart (two devices, one offline) fold together with nothing lost and nothing removed
+ * coming back. */
+
+async function sha256Hex(bytes) {
+  return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+}
+
+/** The 32 bytes the login key signs for one version of the record (wallet_imports.record_digest). */
+export async function recordDigest(pubkey, version, text) {
+  const line = `DogecoinArcade imported wallets\n${String(pubkey).toLowerCase()}\n${Number(version)}\n`
+    + await sha256Hex(enc.encode(text));
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(line)));
+}
+
+async function mergedDigest(pubkey, version, digests) {
+  const line = `DogecoinArcade imported wallets merged\n${String(pubkey).toLowerCase()}\n${Number(version)}\n`
+    + [...digests].map((d) => String(d).toLowerCase()).sort().join(",");
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(line)));
+}
+
+/** What an imported address's key signs so this arcade may ask another for its coins (wallet_imports.coins_digest). */
+async function coinsDigest(tag, network, address, host, minute) {
+  const line = `DogecoinArcade imported coins\n${String(tag).toLowerCase()}\n${network}\n${address}\n`
+    + `${String(host).toLowerCase()}\n${minute}`;
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(line)));
+}
+
+const changedAt = (w) => Number(w.at || w.made || 0);
+
+/** Fold another copy's wallets and tombstones into these (both changed in place): the newest change of each
+ *  wallet wins, a tombstone newer than a wallet's last change removes it, and one key imported twice is kept once. */
+export function foldImports(wallets, gone, other) {
+  for (const [id, at] of Object.entries((other && other.gone) || {})) {
+    if (!(Number(gone[id] || 0) >= Number(at))) gone[id] = Number(at);
+  }
+  for (const w of (other && other.wallets) || []) {
+    const at = wallets.findIndex((x) => x.id === w.id);
+    if (at < 0) {
+      if (!wallets.some((x) => x.chain === w.chain && x.address && x.address === w.address)) wallets.push({...w});
+    } else if (changedAt(w) > changedAt(wallets[at])) {
+      wallets[at] = {...w};
+    }
+  }
+  for (let i = wallets.length - 1; i >= 0; i--) {
+    if (Number(gone[wallets[i].id] || 0) >= changedAt(wallets[i])) wallets.splice(i, 1);
+  }
+}
+
+/** Tombstones are kept 180 days and at most 400. */
+function trimGone(gone) {
+  const old = Date.now() - 180 * 86400000;
+  return Object.fromEntries(Object.entries(gone).filter(([, at]) => Number(at) > old)
+    .sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 400));
+}
+
+/** Change the record: read it, open it, fold in any copies of it put aside here (the node keeps them when another
+ *  arcade's newer version replaced one written here: accounts.ImportedWallets.adopt), apply `change` to its wallets,
+ *  seal it, sign it as the next version, hand it back -- read again and retried when another tab or device wrote it in
+ *  between (the node's 409), so neither loses the other's change. `{tidy}`: only save when that changes something
+ *  (a copy folded in, or a record from before signatures). */
+async function changeImports(wallet, change, password, {tidy = false} = {}) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const said = await importedOnNode();
+    const {keyed, reseal} = await keyForChange(wallet, said, password);
+    let wallets = reseal ? JSON.parse(JSON.stringify(reseal)) : [];
+    const gone = {};
+    if (said.record && !reseal) {
+      const body = JSON.parse(await openText(said.record, keyed));
+      wallets = body.wallets || [];
+      Object.assign(gone, body.gone || {});
+    }
+    const merged = [];
+    const before = JSON.stringify([wallets, gone]);
+    for (const one of said.siblings || []) {
+      let blob, body = null;
+      try { blob = JSON.parse(one.blob); } catch (e) { continue; }
+      try { body = JSON.parse(await openText(blob, keyed)); } catch (e) {
+        if (password) {
+          try { body = JSON.parse(await openText(blob, await recordKey(password, blob))); } catch (x) { body = null; }
+        }
+      }
+      if (!body) continue;                 // sealed under a password this page does not have: folded in later
+      foldImports(wallets, gone, body);
+      merged.push(one.digest);
+    }
+    if (tidy && said.signed && !merged.length) return null;
+    if (tidy && said.signed && JSON.stringify([wallets, gone]) === before) {
+      // The copies hold nothing this version lacks (usually the one this arcade wrote before another's newer one
+      // came): dropped with no new version, or two arcades would answer each other's versions with newer ones.
+      const signature = hex(await wallet.sign(await mergedDigest(wallet.pubkey, Number(said.version), merged)));
+      await fetch("/account/imported/siblings/drop", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({merged, merged_signature: signature})});
+      return null;
+    }
+    const out = await change(wallets, gone);
+    const text = JSON.stringify(await sealText(JSON.stringify({v: 1, wallets, gone: trimGone(gone)}), keyed));
+    const version = Number(said.version || 0) + 1;
+    const signature = hex(await wallet.sign(await recordDigest(wallet.pubkey, version, text)));
+    const body = {blob: text, version, signature, base: said.updated || 0};
+    if (merged.length) {
+      body.merged = merged;
+      body.merged_signature = hex(await wallet.sign(await mergedDigest(wallet.pubkey, version, merged)));
+    }
+    const put = await fetch("/account/imported", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    const got = await put.json().catch(() => ({}));
+    if (put.status === 409) continue;
+    if (!put.ok) throw new Error(got.detail || "your imported wallets were not saved");
+    keepImports(wallet.pubkey, {updated: got.updated, version: got.version, wallets});
+    return out;
+  }
+  throw new Error("Your imported wallets kept changing in another tab. Close the other tabs and try again.");
+}
+
+/** After the record opens with the password: a record from before signatures is saved again, signed, and copies
+ *  put aside are folded in (2026-10-21). Never fails an unlock. */
+async function tidyImports(wallet, password) {
+  try {
+    const said = await importedOnNode();
+    if (!said.record || (said.signed && !(said.siblings || []).length)) return;
+    await changeImports(wallet, () => {}, password, {tidy: true});
+  } catch (e) { /* tried again at the next unlock */ }
+}
+
+/** The account's signed record from the arcade it came from (`from`, or the one this node remembers), kept by this
+ *  node when it checks. A few seconds at most: a sign-in never waits on another arcade for long. */
+async function bringImports(from) {
+  try {
+    await Promise.race([
+      fetch("/account/imported/bring", {method: "POST", headers: {"Content-Type": "application/json"},
+                                        body: JSON.stringify({from: from || ""})}),
+      new Promise((ok) => setTimeout(ok, 12000))]);
+  } catch (e) { /* the mesh brings it later */ }
+}
+
+const syncTried = new Set();
+
+/** The imported wallets in the open record that this arcade is not watching for the account (the record came from
+ *  another arcade): each registered here with its key's proof (`sync`, an allowance of its own), with a second proof
+ *  by the same key that lets this arcade ask the others the account uses for its coins (wallet_imports.coins_digest)
+ *  instead of reading the chain back. `said` is importedOnNode()'s answer. How many were registered. */
+export async function syncImported(account, said, onStart) {
+  const here = importsOpen(account);
+  if (!here || here.stale || here.reseal || !said || !said.signed
+      || Number(here.updated || 0) !== Number(said.updated || 0)) return 0;
+  const running = await chains();
+  let n = 0;
+  for (const w of here.wallets || []) {
+    if (!w.address || (said.no_imports || []).includes(w.chain)) continue;
+    const chain = running.find((c) => c.network === w.chain);
+    if (!chain) continue;
+    if (((said.chains || {})[w.chain] || []).some((x) => x.address === w.address)) continue;
+    const key = `${account}:${w.chain}:${w.address}`;
+    if (syncTried.has(key)) continue;
+    syncTried.add(key);
+    if (onStart && !n) onStart();
+    try {
+      const keys = await importedKeys(w, chain);
+      const mine = keys.on[chain.network];
+      if (mine.address !== w.address) continue;
+      const proof = await coins.importProof(account, chain.network, mine.address, mine.pubkey);
+      const body = {chain: chain.network, address: mine.address, kind: keys.kind, pubkey: hex(mine.pubkey),
+                    signature: hex(await coins.signHash(mine.key, proof)), sync: true};
+      if (said.host && said.tag) {
+        const minute = Math.floor(Date.now() / 60000);
+        const digest = await coinsDigest(said.tag, chain.network, mine.address, said.host, minute);
+        body.coins = {minute, asker: said.host, signature: hex(await coins.signHash(mine.key, digest))};
+      }
+      const asked = await fetch("/account/imported/address", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+      if (asked.ok) n++;
+    } catch (e) { /* tried again on the next page */ }
+  }
+  return n;
+}
+
+const KIND_IDS = {legacy: "p2pkh", "p2sh-p2wpkh": "p2sh-p2wpkh", p2wpkh: "p2wpkh"};
+
+/** The keys an imported wallet signs with on its chain, shaped as a wallet's `on[network]` (so `checked` and
+ *  `confirm` take it as they take the account's own): from its private key, or its phrase at the arcade's own
+ *  path (m/44'/<coin>'/0'/0/0), or the SegWit kind's path (m/49', m/84'), as the main wallet derives them. */
+export async function importedKeys(entry, chain) {
+  const network = chain.network;
+  const kind = addressKinds(network).find((k) => k.id === (entry.addr_kind || "legacy")) || {id: "legacy"};
+  let key, pubkey;
+  if (entry.kind === "wif") {
+    const got = await coins.fromWif(entry.secret, network);
+    if (kind.id !== "legacy" && !got.compressed) throw new Error("a SegWit address needs a compressed key");
+    ({key, pubkey} = got);
+  } else {
+    const wrong = await signer.complaint(entry.secret);
+    if (wrong) throw new Error(wrong);
+    const seed = await signer.toSeed(signer.normalise(entry.secret));
+    const made = kind.id === "p2wpkh" ? await coins.nativeSegwitKey(seed, network, 0)
+      : kind.id === "p2sh-p2wpkh" ? await coins.p2shSegwitKey(seed, network, 0)
+      : await coins.coinKey(seed, network, 0);
+    ({key, pubkey} = made);
+  }
+  const address = kind.id === "p2wpkh" ? await coins.p2wpkhAddress(pubkey, kind.hrp)
+    : kind.id === "p2sh-p2wpkh" ? await coins.p2shSegwitAddress(pubkey, kind.scripthash)
+    : await coins.address(pubkey, chain.version);
+  const keys = {network, version: chain.version, key, pubkey, address, ...(kind.id === "p2sh-p2wpkh" ? {nested: true} : {})};
+  return {on: {[network]: keys}, kind: KIND_IDS[kind.id] || "p2pkh"};
+}
+
+/** "Wallet N", N the lowest number no wallet name on that chain uses (2026-10-20). */
+export function nextWalletName(names) {
+  const used = new Set((names || []).map((n) => (/^Wallet (\d+)$/.exec(String(n || "")) || [])[1])
+    .filter(Boolean).map(Number));
+  let n = 1;
+  while (used.has(n)) n++;
+  return "Wallet " + n;
+}
+
+const cleanName = (text) => String(text || "").split(/\s+/).filter(Boolean).join(" ").slice(0, 40);
+
+/** Import a wallet on `chain` ({network, version}): `kind` "wif" or "phrase", its `secret`, an optional `name`, and
+ *  `addrKind` (a SegWit kind where the chain has them). `otherNames`: every other wallet name on that chain, for the
+ *  next free "Wallet N". The node registers the address first: an import it refuses (a rescan running on that
+ *  chain, the cap) keeps NOTHING. Then the record is sealed with the secret in it; should that fail, the address is
+ *  taken off again. Returns the node's word on its read-back and the new wallet. */
+export async function importWallet(chain, {kind, secret, name = "", addrKind = "legacy", otherNames = [], password = ""}) {
+  return working(async () => {
+    const wallet = await opened(chain);
+    if (!wallet) throw new Error("Unlock your wallet first.");
+    const text = kind === "phrase" ? signer.normalise(secret) : String(secret || "").trim();
+    if (kind === "phrase") {
+      const wrong = await signer.complaint(text);
+      if (wrong) throw new Error(wrong);
+    } else if (kind !== "wif") throw new Error("Paste a private key or a seed phrase.");
+    const entry = {id: hex(crypto.getRandomValues(new Uint8Array(8))), chain: chain.network, kind, secret: text,
+                   addr_kind: addrKind || "legacy", name: "", made: Date.now()};
+    const keys = await importedKeys(entry, chain);
+    const mine = keys.on[chain.network];
+    if (wallet.on[chain.network] && wallet.on[chain.network].address === mine.address) {
+      throw new Error("That is your arcade wallet's own key on this coin, already here.");
+    }
+    // Before anything is registered: the password, when this page does not hold the record's key yet.
+    const said = await importedOnNode();
+    await keyForChange(wallet, said, password);
+    const here = importsOpen(wallet.pubkey);
+    const dupe = ((here && here.wallets) || []).find((w) => w.chain === chain.network && w.address === mine.address);
+    if (dupe) throw new Error(`That wallet is already here, as “${dupe.name}”.`);
+    const proof = await coins.importProof(wallet.pubkey, chain.network, mine.address, mine.pubkey);
+    const signature = hex(await coins.signHash(mine.key, proof));
+    const asked = await fetch("/account/imported/address", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({chain: chain.network, address: mine.address, kind: keys.kind,
+                            pubkey: hex(mine.pubkey), signature}),
+    });
+    const answer = await asked.json().catch(() => ({}));
+    if (!asked.ok) {
+      const e = new Error(answer.detail || "this arcade did not take that wallet");
+      e.busy = !!answer.busy;
+      throw e;
+    }
+    entry.address = mine.address;
+    try {
+      await changeImports(wallet, (wallets) => {
+        if (wallets.some((w) => w.chain === chain.network && w.address === mine.address)) return;
+        const names = otherNames.concat(wallets.filter((w) => w.chain === chain.network).map((w) => w.name));
+        entry.name = cleanName(name) || nextWalletName(names);
+        wallets.push(entry);
+      }, password);
+    } catch (e) {
+      if (!answer.already) {
+        fetch("/account/imported/forget", {method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({chain: chain.network, address: mine.address})}).catch(() => {});
+      }
+      throw e;
+    }
+    return {...answer, wallet: {...entry, secret: undefined}};
+  });
+}
+
+/** Rename an imported wallet ("" gives it the lowest free "Wallet N"). */
+export async function renameImported(chain, id, name, {otherNames = [], password = ""} = {}) {
+  const wallet = await opened(chain);
+  if (!wallet) throw new Error("Unlock your wallet first.");
+  return changeImports(wallet, (wallets) => {
+    const it = wallets.find((w) => w.id === id);
+    if (!it) throw new Error("That wallet is not in your imported wallets any more.");
+    it.name = "";
+    it.at = Date.now();
+    const names = otherNames.concat(wallets.filter((w) => w.chain === it.chain && w.id !== id).map((w) => w.name));
+    it.name = cleanName(name) || nextWalletName(names);
+    return it.name;
+  }, password);
+}
+
+/** Take an imported wallet off: out of the sealed record first, then the node stops watching its address. Its coins
+ *  are not touched. */
+export async function removeImported(chain, id, {password = ""} = {}) {
+  const wallet = await opened(chain);
+  if (!wallet) throw new Error("Unlock your wallet first.");
+  let gone = null;
+  await changeImports(wallet, (wallets, tombs) => {
+    const at = wallets.findIndex((w) => w.id === id);
+    if (at >= 0) gone = wallets.splice(at, 1)[0];
+    tombs[id] = Math.max(Date.now(), gone ? changedAt(gone) + 1 : 0);   // so a copy elsewhere does not bring it back
+  }, password);
+  if (gone && gone.address) {
+    await fetch("/account/imported/forget", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({chain: gone.chain, address: gone.address})}).catch(() => {});
+  }
+  return gone ? {...gone, secret: undefined} : null;
+}
+
+/** Name the account's MAIN wallet on one chain (not a secret: kept by the node). */
+export async function nameMainWallet(network, name) {
+  const asked = await fetch("/account/imported/name", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({chain: network, name: cleanName(name)}),
+  });
+  const said = await asked.json().catch(() => ({}));
+  if (!asked.ok) throw new Error(said.detail || "that name was not saved");
+  return said.name;
+}
+
+/** Whether this page holds the record's key (so a change needs no password). */
+export function importsKeyHere(account) {
+  return !!(importKey && importKey.account === String(account || "").toLowerCase());
+}
+
+/** Open the record in this tab with the account's password (a tab that was unlocked before imports existed, or
+ *  whose copy was lost). A password that opens the main wallet and not the record means the record was sealed under
+ *  an earlier one: said so (`stale`), and `openStaleImports` takes that earlier password. */
+export async function openImports(wallet, password) {
+  const said = await importedOnNode();
+  if (!said.record) { keepImports(wallet.pubkey, {updated: 0, wallets: []}); return []; }
+  const keyed = await recordKey(password, said.record);
+  try {
+    const opened = JSON.parse(await openText(said.record, keyed));
+    importKey = {account: wallet.pubkey, ...keyed};
+    keepImports(wallet.pubkey, {updated: said.updated, version: said.version,
+                                wallets: (opened && opened.wallets) || []});
+    await tidyImports(wallet, password);
+    return (importsOpen(wallet.pubkey) || {}).wallets || opened.wallets || [];
+  } catch (e) {
+    const main = said.vault ? await open(said.vault, password).catch(() => null) : null;
+    if (main && signer.normalise(main) === signer.normalise(wallet.phrase)) {
+      keepImports(wallet.pubkey, {updated: said.updated, stale: true, wallets: []});
+      const stale = new Error("Your imported wallets were sealed under an earlier password (before it was changed). "
+        + "Type that earlier password to open them.");
+      stale.stale = true;
+      throw stale;
+    }
+    throw new Error("That is not your password.");
+  }
 }

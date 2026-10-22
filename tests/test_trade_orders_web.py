@@ -62,7 +62,7 @@ def test_the_operator_posts_a_swap(client, monkeypatch):
     assert said.status_code == 303
     standing = state.node_trader.standing()
     assert len(standing) == 1 and standing[0]["give"] == {"network": "regtest", "kind": "coin",
-                                                          "asset": "", "amount": 3 * COIN}
+                                                          "asset": "", "amount": 3 * COIN, "fee_bps": 0}
 
 
 @pytest.mark.node_trades_default
@@ -108,7 +108,7 @@ def test_the_operator_posts_a_token_from_its_home_address(client, monkeypatch):
     assert app.post("/exchange/trade-orders/stand", data=said, follow_redirects=False).status_code == 303
     standing = state.node_trader.standing()
     assert standing and standing[0]["give"] == {"network": "regtest", "kind": "token", "asset": "150",
-                                                "amount": 40 * COIN}
+                                                "amount": 40 * COIN, "fee_bps": 0}
     monkeypatch.setattr(state, "mesh", _Mesh(set()), raising=False)
     assert "40 Gold" in app.get("/exchange?tab=tokens").text, "this node's swap is named by its token"
     # More than the home address holds is refused.
@@ -155,7 +155,8 @@ def test_the_operator_posts_an_nft_from_its_home_address(client, monkeypatch):
         give_network=f"nft:regtest:{sword}", give_amount="1", get_network="main", get_amount="20",
         csrf_token=state.csrf_token), follow_redirects=False)
     standing = state.node_trader.standing()
-    assert standing and standing[0]["give"] == {"network": "regtest", "kind": "nft", "asset": sword, "amount": 1}
+    assert standing and standing[0]["give"] == {"network": "regtest", "kind": "nft", "asset": sword, "amount": 1,
+                                                "fee_bps": 0}
     app.post("/exchange/trade-orders/stand", data=dict(
         give_network=f"nft:regtest:{'b8' * 32}", give_amount="1", get_network="main", get_amount="20",
         csrf_token=state.csrf_token), follow_redirects=False)

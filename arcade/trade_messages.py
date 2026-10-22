@@ -79,8 +79,15 @@ def parse(raw: bytes) -> dict:
 
 
 def leg_json(leg: Leg) -> dict:
-    return {"network": leg.network, "kind": leg.kind, "asset": leg.asset,
-            "amount": int(leg.amount), "giver_key": leg.giver_key, "taker_key": leg.taker_key}
+    """A leg as a trade step carries it. Its lock-fee terms (2026-10-21: `fee_bps`, `fee_to`, trade.operator_fee) only
+    when it has them: a leg on old terms goes out exactly as an arcade before that day sent it."""
+    out = {"network": leg.network, "kind": leg.kind, "asset": leg.asset,
+           "amount": int(leg.amount), "giver_key": leg.giver_key, "taker_key": leg.taker_key}
+    if leg.fee_bps is not None:
+        out["fee_bps"] = int(leg.fee_bps)
+        if leg.fee_to:
+            out["fee_to"] = leg.fee_to
+    return out
 
 
 def leg_from(said: Any) -> Leg:
@@ -109,7 +116,25 @@ def leg_from(said: Any) -> Leg:
             raise TradeMessageError(f"a leg's {side} is a compressed public key, in hex")
     if said["giver_key"] == said["taker_key"]:
         raise TradeMessageError("a leg goes from one person to another")
-    return Leg(network, kind, asset, amount, said["giver_key"], said["taker_key"])
+    fee_bps, fee_to = fee_terms(said)
+    return Leg(network, kind, asset, amount, said["giver_key"], said["taker_key"], fee_bps, fee_to)
+
+
+def fee_terms(said: dict) -> tuple[int | None, str]:
+    """A leg's lock-fee terms (2026-10-21; trade.operator_fee): (None, "") when it carries none -- an arcade from before
+    that day, rate 0, checked the old way -- else (whole basis points 0..10,000, the payee). A rate above 0 names a
+    pay-to-pubkey-hash payee (trade.payee_ok), or the claim that must pay it could never be built: refused here, before
+    anybody locks anything. Older readers ignore both fields."""
+    from .trade import FEE_BPS_CEILING, payee_ok
+    if "fee_bps" not in said or said.get("fee_bps") is None:
+        return None, ""
+    bps = said["fee_bps"]
+    if not isinstance(bps, int) or isinstance(bps, bool) or not 0 <= bps <= FEE_BPS_CEILING:
+        raise TradeMessageError("a leg's fee rate is whole basis points, 0 to 10,000")
+    to = said.get("fee_to") or ""
+    if bps and not payee_ok(to):
+        raise TradeMessageError("a leg's operator fee is paid to an address (pay to public key hash)")
+    return bps, (to if bps else "")
 
 
 def _order(said: dict) -> None:

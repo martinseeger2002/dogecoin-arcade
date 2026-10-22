@@ -88,6 +88,664 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-21 PEP rebuilt under rules 4 matches the other explorer but for one inscription, kept and noted (Claude)
+After the rules-4 rebuild a test machine's PEP index was compared by hand with an outside explorer again: the three
+inscriptions missing at #30,410-30,412 are in, and a random sample to #3.6 million matches exactly but for ONE:
+our #29,809, 83d1cbea...0a31i0 (an image, block 292,159), which that explorer says it has no record of; every later
+number of ours is one higher. Its envelope is ordinary ("ord", OP_2 pieces, image/png, 240 + 179 bytes); ord-pepecoin's
+published parser reads it complete, the coin it spends carries nothing, and no partial chain is involved. The operator:
+"Let's keep it. it follows the rules and it renders as an image ... it is the truth from the Blockchain." So it stays
+numbered; `doginal_index.SEEN_ELSEWHERE` (a small fixed list, nothing stored) gives it a note that Admin -> Ords shows
+("Other explorers do not show this one ..."), naming no outside index.
+
+### 2026-10-21 Ord notes: multisig spends not followed back (a test machine's and .25's walks stood still) (Claude)
+Both walks stood on their first Dogecoin block after the rules-3 reset: a test machine's lane finished chunk 0 and then hung
+in `Store.finish_notes -> ord_notes.finish -> genesis_before` (faulthandler, a scratch walk on a test machine's Core). Ordinary
+P2SH multisig spends (OP_0, a DER signature, ..., a redeem script ending OP_CHECKMULTISIG) pass `may_envelope` (the
+first push reads as the number 0), so each was followed back as a possible envelope piece -- through long chains of
+such spends, up to MAX_BACK (5,000) Core calls each, and a "too far" answer was not remembered, so every candidate
+walked the chain again. `ord_notes._multisig_spend` (script shape only, so every arcade finishes a chunk the same way)
+now stops the follow-back at such a spend and skips it as a candidate (kept whole). What notes KEEP is unchanged
+(`may_envelope`). A scratch walk of a test machine's Dogecoin then ran ~60 blocks/s and found #0 = 15f3b73d...i0 at 4,609,723.
+.25 waited on a test machine's chunk (it borrows its reads while its Core rescans), hence "stalled on the same block".
+
+### 2026-10-21 Ord index rules 4: each chain read in its own indexer's dialect, delegates and parents kept -- every ord index rebuilt again (Claude)
+Branch `claude/ord-rules4`. Read from the official sources (gh api, today): mvdnbrk/ord-pepecoin
+`src/inscriptions/parser.rs` (whole), `tag.rs`, `inscription.rs` (delegate_id/into_body), `src/index/updater/
+inscription_updater.rs`, `src/subcommand/server.rs` (`content`); tylordius/wonky-dogeord `src/inscription.rs`
+(parser + `inscription_id_field`), `src/tag.rs`, `inscription_updater.rs`, `server.rs`; ynohtna92/ord-litecoin
+`src/inscriptions/envelope.rs`, `tag.rs`.
+- **`ord_rules.dialect_of(net)`**: "pepecoin" (main, test) | "dogecoin" (doge, ltc, ltctest). Threaded through
+  `envelope_start/envelope_more/parse/read/genesis`, `doginal_index.birth_of/births_of/births` (chunk hashes),
+  `carry`, `Walker` (and `Store.dialect` for notes), `scan_block`, the helpers' worker job, `got_notes`, and
+  `ord_notes.may_envelope/block_notes/one_block/finish/genesis_before/_zeroed`.
+- **Pepecoin** (parser.rs 43-56, 68-87, 136-150; tag.rs 11-21): a piece count of 0 is COMPLETE, no body (we returned
+  none: every zero-piece inscription missing, every later number low); after the countdown the PRC-721 trailer
+  (`chunks_exact(2)`, UTF-8 keys); "delegate"/"parent" = 36 bytes, txid as stored (reversed) + LE u32, else no id.
+  `delegate_id` takes the FIRST value only. decode_push_datas reads OP_PUSHDATA2/4 right (fixed upstream 414ce571,
+  "OP_PUSHDATA2/4 parser bug"), so Pepecoin reads pushes over 255 bytes; Dogecoin keeps wonky's quirk.
+  inscription_updater.rs 139-140 `if true` ("In Pepecoin, we always check for new inscriptions"): a new inscription is
+  looked for even when one sits on the first koinu (wonky's `offset != 0` rule stays Dogecoin's). Lines 222-278: a
+  parent claim stands only when the parent is indexed and txs[0] spends its coin (so only single-transaction
+  children), and that parent then goes to output 1 at koinu 0. No cursed / negative numbers there.
+  A trailer in a LATER script (parser.rs da6333ee) is read by `ord_rules.read`, but the updater only ever parses the
+  kept pieces + the tx at hand and keeps a chain only while partial, so the walk reads tags from the script the
+  countdown ends in -- same result.
+- **Dogecoin** (wonky inscription.rs 207-209, 227-251, 117-154; tag.rs `Delegate = 11`): zero pieces stays none;
+  after the countdown 1-byte-key fields up to the first other key; delegate = first value of key 11, 32-36 bytes,
+  index trimmed (no trailing zero unless 4 bytes). No parent (wonky never reads `Parent = 3`).
+- **Litecoin**: `taproot_read` also reads tag 11 (ord-litecoin envelope.rs `Tag::Delegate.take`). Numbering unchanged.
+- **Stored**: `insc.delegate BLOB`, `insc.parent BLOB` (Pepecoin only): 36 bytes = the txid's bytes as written (same as
+  insc.tx, so the named row is found by its tx lookup) + n LE u32; NULL for none. In TABLES, and `_columns_added`
+  for an index of another layout. Layout stays 3. `where()` / `inscription()` say `delegate`, `parent`,
+  `delegate_content_type`; `DoginalIndex.delegate(id)` for /content.
+- **Notes**: zeroing keeps a delegate/parent tag value after the countdown (`ord_notes._tag_values`); a script the
+  dialect reads otherwise than its opcodes (the quirk) is kept whole. Peers are already split by rules, so notes
+  VERSION stays 2.
+- **/content/<id>** (`app._chain_inscription`, `_ord_delegate`): when this arcade's own walk of that chain says the
+  inscription names a delegate, the DELEGATE's content and type are served (one hop, as both servers); delegate not
+  in the index: 404 (ord's "delegate not found"); on Pepecoin a delegate that names its own: 404 (ord-pepecoin
+  into_body() is None); no index / not walked that far: as before. Admin -> Ords viewer: "Delegate:" and "Parent:"
+  links open them in the viewer; the frame draws by the delegate's type.
+- **The explorer asks the most complete index** (2026-10-21: "All arcades should be able to access all other
+  arcades indexs and they should always use the most complete index in the ord Explorer"): `DoginalIndex.lookup`
+  (Admin -> Ords lookup, inscription by number, ticks, holders) orders this arcade's own walk and every linked walker
+  heard in the last 5 min by walked height, this arcade first on a tie, and asks the furthest; a peer that fails
+  (gone, timeout, error, too old) is passed over for the next, down to the own walk. `walkers()` now counts only
+  arcades on these rules (`peers[node]["rules"] == RULES`), so a rules-3 arcade is never asked (nor counted as a
+  holder for snapshots / notes pruning / Admin's walker list). Answers keep "from" / "walked_to"; `_ords_ask` shows a
+  peer as its @tag when the mesh knows one. /content's delegate lookup reads only this arcade's own walk (no mesh
+  round trip on a page read).
+- **ord_rules.RULES 3 -> 4**: every arcade's ord indexes are dropped and walked again (births and numbers change on
+  Pepecoin). **SadFrog / tbuuol: update, and your ord indexes rebuild again.**
+- Real chain (a test machine's own Pepecoin Core, scratch Store, read only): blocks 1,221,880-1,221,930 hold d7645bf5...i0
+  (image/svg+xml, 2 pieces, block 1,221,885) and two zero-piece children a861a3b5...i0 (1,221,887) and b0b1cd21...i0
+  (1,221,925), each with delegate AND parent d7645bf5...i0. Rules 4: numbered 0, 1, 2, both delegates and parents
+  kept, the parent on output 1 of each child. The old reading: only d7645bf5, and it went to the fee.
+- Tests: tests/test_ord_dialects.py (20: dialects, walk, notes, /content, the most complete index).
+- **Not done / open**: Pepecoin's "content-encoding" tag (br) is not sent as a header by /content; a Doginal-kind
+  inscription whose every output is 0 koinu is numbered at once here, while ord numbers it with the coinbase at the
+  block's end (pre-existing, untouched); `Walker.walk_block`'s taproot filter `b["n"] or b["vin"]` seems to drop a
+  witness envelope in input 0 when the transaction has no Doginal-kind birth (Litecoin, pre-existing, untouched --
+  please check).
+
+### 2026-10-21 Ord index rules 3: an envelope kept when something else spends a piece -- every ord index rebuilt (Claude)
+The operator compared our PEP numbers with pepeblocks.com: #0 matched exactly, but by our #2,074,940 they were 862 higher. A
+binary search against their pages found the first split at our #30,410: their #30,410-30,412 (790fb113...i0,
+7dc0523b...i0, 6a45475b...i0, blocks 293,201 / 293,207 / 293,215) were not in our index. Each is a ~50-transaction
+envelope; in its last block a transaction whose input 0 spends a piece's CHANGE (a signature, no piece) comes before
+the next piece. `Walker.walk_block` looked the chain up by the spent txid (as ord-pepecoin / ord-dogecoin do) and,
+reading no piece, DROPPED the pending envelope; the official inscription_updater.rs removes nothing on
+`ParsedInscription::None`, so the next piece completes it. Fixed: the pending row is removed only on "complete" (or
+replaced on "partial"). A fresh walk of 293,190-293,220 with the fix gives exactly pepeblocks' three, then 9da92d33.
+- **ord_rules.RULES 2 -> 3**: the operator chose "Rebuild everything". Every arcade that updates drops its ord indexes and
+  walks again from each chain's first block; arcades still on rules 2 are not trusted for chunks or snapshots. Dogecoin
+  (the same walker, wonky-ord's rule) is rebuilt too. **SadFrog / tbuuol: update, and your ord indexes rebuild.**
+- Test: tests/test_doginal_index.py `test_a_spend_of_a_pieces_change_first_does_not_end_its_envelope` (fails on the
+  old code).
+- **Half-made after the reset (fixed 18:5x):** on .25 PEP's index came out with 5 of its 15 tables and rules 3
+  (most likely the reset ran beside the worker being replaced), was then taken for layout 2 (its layout mark gone), so
+  the rest were never made: Admin -> Ords 500 "no such table: main.seen". Now the reset is one transaction (drop,
+  meta, layout and rules marks), an index with no inscription in it is always this layout (missing tables made), and
+  `state.ord_indexes` opens each chain on its own (one that fails is asked again, the others go on).
+- **Old files:** an index of other rules is emptied in place (its tables dropped; SQLite keeps the file's size and the
+  rebuild reuses the space). A snapshot kept beside it (`.snap`, GBs) is now let go of at start when its manifest's
+  rules are not these (ord_snapshot.Snapshots: it checked only the layout; a fetching arcade refused it already).
+
+### 2026-10-21 Trades read once a block, not by every page at once (Claude)
+.25's /feed stalled 49-57 s at 17:32: every request thread was in `render -> _account_counts -> _notif_events ->
+index.trades() -> _trades_uncached` (the pre-existing stall noted this morning). The memo (per tip and newest row) was
+recomputed by EVERY page that asked after a block, all reading the whole transaction table at once on a disk busy with
+the Dogecoin Core's rescan. `LedgerIndex.trades` now lets one thread read (`_trades_lock`); the others get what was
+known a block ago at once (or wait, when nothing is known yet for that `since_height`).
+tests/test_trades_one_reader.py.
+
+### 2026-10-21 No "tap to refresh" bar (Claude)
+The operator: "This button comes up too often and seemingly for no reason can we just remove it?" base.html's live update no
+longer offers "The site was updated — tap to refresh" (new code is taken at the next page opened; a page of other code
+is not patched in place) nor "Updated — tap to refresh". The second was the "no reason" one: it showed whenever the
+page had no baseline yet, and a busy arcade is seldom quiet for the 5 s poll that takes one, so nearly every change
+offered it; now a page with no baseline takes that answer as its baseline. The feed's "New posts are in" stays.
+tests/test_live_update.py says no bar and no reload.
+
+### 2026-10-21 Admin -> Ords: the explorer follows the chain at the top, a viewer by number, tokens with a rich list (Claude)
+The operator: "In the ord admin panel The Explorer on the bottom should be picked by the coin type at the top ... search by
+number as well as TXID utxo:index ... display ord 0 of the chain that is selected with arrows to navigate by ord number
+... PRC and DRC token info and the ability to search by token ticker borrow the search tool from the token exchange ...
+a list rich list of the token holders paginated to 20 holders." Branch claude/ord-explorer.
+- **admin.html:** the Look up box lost its own chain select: the explorer uses the coin picked at the top of the Ords
+  tab, and a new pick there puts the viewer at that chain's #0 and empties the tokens. Search also takes a number (`7`,
+  `#7`) and `tick:1234`; answers are cards (raw JSON under "raw"); a number/id/coin opens in the viewer. Viewer:
+  Previous / number / Go / Next, content sandboxed as in the Wallet (`/content/<id>/fit`, `sandbox="allow-scripts"`),
+  text as text, other types a link. Tokens: "PRC-20" on main/test, "DRC-20" elsewhere; ticker search, token facts, rich
+  list 20 a page. The Names button reads the chain at the top too.
+- **Shared search tool:** the Exchange's Trade any pair boxes moved into `_pick.html` (`window.arcadePick(box, cfg)`,
+  same markup and classes); exchange.html and admin.html both include it.
+- **Routes** (operator only, `_admin_check`): `GET /admin/api/ords/inscription?net=&number=|&id=`,
+  `GET /admin/api/ords/ticks?net=&q=`, `GET /admin/api/ords/holders?net=&tick=&page=`.
+- **Index (doginal_index.py):** new question kinds `number` {number | id}, `ticks` {prefix}, `holders` {tick, page}
+  (`inscription()`, `ticks()`, `rich_list()`); the owner address is read from the walking arcade's own Core
+  (None without one). New index `bal_rich ON bal (tick, length(overall), overall)`, made in place on open (IF NOT
+  EXISTS); about 20 MB for a test machine's 532k Dogecoin balances (0.2% of 9.3 GB), built in 0.24 s. `token()` now takes its
+  top holders from it (it used to sort every holder in Python); `balances()` joins `tok` instead of calling `token()`.
+- **Older walkers** answer the new kinds "no such question": a read-only arcade then says the walker "runs an older
+  version"; the rich list's first page still comes from its `token` answer (no percentages, no later pages).
+- Tests: tests/test_ord_explorer.py, tests/test_ord_explorer_browser.py (new).
+- Need from you: nothing. Your arcade answers the new questions once it has this.
+### 2026-10-21 app.dogecoinarcade.com down 16:13-: page threads all waiting on a borrowed chain (Claude)
+.25's Dogecoin Core is rescanning for @apple's import, so core_catchup borrows its reads from a sharer. `chain_sync`
+kept add-on chains' status in the background ONLY for a chain set to borrow; this Dogecoin (run here, borrowing for the
+rescan) was asked on the request threads themselves, every thread at once each minute when the 60 s cache went stale,
+each through `_borrowed_rpc`'s `verify_connected_chain` over the mesh (up to ~3 min per sharer tried). The stall
+watchdog showed every AnyIO worker in `chain_ready -> _sync_now -> _borrowed_rpc -> getblockchaininfo`; the worker then
+ignored SIGTERM (waiting on those threads).
+- state.chain_sync: EVERY add-on chain's status is refreshed on one thread of its own (`arcade-sync-<net>`); a page
+  gets what is known at once (3 s wait only when nothing is known yet).
+- state._borrowed_rpc: the sharers' chain check runs on one thread at a time (`_BORROWED_LOCKS`); a thread arriving
+  meanwhile, or within 30 s of a failed check (`_BORROWED_FAILED`), is told at once that the chain cannot be read now.
+- Tests: tests/test_core_rescan_hold.py (eight pages answered at once and asked once; the single check and its
+  remembered failure).
+
+### 2026-10-21 Your arcade: the wallets a row of coins, and the Arcades card (Claude)
+The operator: "On the client side, your arcade tab the Wallet selection should just be a row of the icons and have them lit
+up when enabled and grayed out when disabled. Below that should be a copy of the arcades card in the admin overview
+page." me.html: `#wallet-chains` is a row of `button.wchip` (aria-pressed; grey and faded when hidden), saved through
+`/account/wallets` as before; the per-chain number lines (/account/chain-stats, still served) are gone from the page.
+The Arcades card moved into `_arcades_panel.html` (markup, styles and its own script scope, `window.arcadesPanel.draw`)
+and is included by admin.html and me.html; new `GET /account/arcades` (signed in; door PUBLIC_PAGES) is
+`_arcades_view()` less this arcade's Share switches. The node side's page reads /admin/api/arcades.
+- **Tip** (the operator: "Allow tipping to any of the operators from the operator list"): each row with an operator @name
+  other than this arcade's own has a Tip button, `/me/wallet?to=@name`, the Send sheet with their name in To.
+- **Fixed on the way:** admin.html had two `function ordRing` in one script (the Ords tab's ring and the Arcades
+  card's, 030b4d9): the later one replaced the first, so the Ords tab's ring was drawn by the wrong function. The
+  card's now lives in its own scope.
+
+### 2026-10-21 Admin -> Affiliates: your sites to share, and other operators' sites to show (Claude)
+The operator: "I want an admin affiliate panel. It should show the operators published URLs with a check box next to each to
+share with affiliates. It should have a list of shared URLs from other node operators, each with a checkmark to share
+on client side affiliate tab." Which URLs: "Arcade's names + ones I add"; then "The second list should be a list of
+operators and their published URLs that they shared with the affiliates." Branch claude/affiliates-panel.
+- **New `arcade/affiliates.py`** (validation, settings, the client tab's list). Settings: `affiliates_mine`
+  [{url,name,about,share}] (the old fixed app.py AFFILIATES = affiliates.SEED until the operator saves a list, so
+  antidoginaldogs.com stays on the tab), `affiliates_hosts_shared` [url] (which https://<public_hosts> are shared),
+  `affiliates_heard` {peer id: {at, tag, sites}} (what linked arcades share; kept 90 days, at most 200 peers,
+  rewritten only on change or hourly), `affiliates_shown` [url] (others' sites ticked to show; off by default).
+- **Mesh:** operators "me" gains optional `sites` [{url,name,about}], <=20, this operator's ticked names + sites, always
+  a list (empty = "forget mine"). On receipt: not a list or >20 -> ignored whole; each entry via affiliates.clean_site:
+  https only, <=200 chars, urllib-parsed, a DNS name host with a letter TLD, no userinfo, port or IP literal, no
+  whitespace/control/quote/angle/backslash; name 1-60, about 0-200 plain text; bad entries dropped. Older arcades lack
+  the field: nothing changes. `MeshService.say_who_runs_this()` re-sends "me" now after an Admin save.
+- **Admin:** new tab Affiliates (Your sites: published names, not deletable, + added sites with add/edit/remove, each
+  "Share with other arcades"; Shared by other arcades: one block per operator, @tag or mesh id + last heard, per-site
+  "Show on my Affiliates tab" and a Show all toggle). `GET/POST /admin/api/affiliates`, _admin_check (write header).
+- **Client /affiliates:** own added sites, then ticked sites still shared and heard within 30 days under "Shared by
+  @tag"; each URL once; this arcade's own names never; links rel="noopener noreferrer nofollow"; autoescaped.
+- Tests: tests/test_affiliates_panel.py (new), tests/test_affiliates.py (rel assert updated).
+- Need from you: nothing; once on main your arcade can share and show sites with ours.
+### 2026-10-21 Import rescans on a busy Core, the walk's real pace, copies with nothing new (Claude)
+Follow-ups deployed on .25 the same day after @apple's Dogecoin import (DCHxodk...) met a Core still rescanning
+from an `importmulti` an arcade restart had cut the connection to (the Core goes on with it; its RPC queue stays full).
+- **utxos.CoreBusy** (c341838, 3433069, aaa5a99): "Work queue depth exceeded", a transport error, or a Core failing
+  even `local_rpc`'s connection check is a WAIT (3 min, `CORE_BUSY_SECONDS`), never one of the three strikes. The
+  batch is remembered as sent (`core_rescan_sent:<net>` = {at, addresses}) before `importmulti` goes, and when it is
+  first found busy with nothing remembered; once the Core answers, addresses it already watches with a Core not
+  restarted since (a peer older than `at`, getpeerinfo conntime) are LISTED, not rescanned again (hours on Dogecoin).
+- **The notice** (4250440, a2c5d6e): while the Core is held at a rescan with no real failure, `_rescan_says` says
+  "This arcade's node is rescanning the whole chain for imported wallets (meanwhile the arcade reads the chain from
+  another arcade, so sends work as usual)" with a countdown from `core_rescan_rate` (a guess of 600 b/s until
+  measured), never "There is no node to borrow" (the operator's screenshot). `_can_read_back` counts a held Core with a
+  sharer as readable: it read offline because its own queue is full.
+- **Start-up sweep** (66c4691): tried each minute for an hour until every Core-rescan chain counts ready
+  (`_account_chains` leaves out a Dogecoin whose Core is busy), so an import is never left off the queue by a restart.
+  The queue logs why an import waits, every ten minutes (8af72f6): `imported <addr> on <net> waits: ...`.
+- **Ord walk pace** (66c4691): `walk.rate` in the Ords status is now the pace over two minutes of wall time
+  (`DoginalIndex.walk_pace`, rests and waits for scans included); the speed inside a pass is `burst`. Strawberry's
+  PEP main said 12,000 b/s while it moved ~15.
+- **Imported-wallet copies** (f6623dc): a copy put aside that holds nothing the kept version lacks is dropped by
+  `POST /account/imported/siblings/drop` (the login key's signature over the KEPT version) with no new version, so
+  two arcades no longer answer each other's versions at every unlock.
+
+### 2026-10-21 Lock-script swaps: the sender pays the fees, and every lock holds its operator's fee (Claude)
+The operator: "We need to have the sender of each lock script pay the fee so it doesn't come out of the amount of the coin
+received. We need to add an operator fee output to each lock script. Lock script fee selector in the operator admin
+trading panel." Branch claude/lock-fees.
+- **Sender pays.** A coin lock holds amount + the claim's network fee (`trade.claim_fee` = htlc.spend_fee of
+  config.NETWORKS: 0.01 on PEP/DOGE, 0.0001 LTC) + the operator fee; the claimer receives exactly the amount. A refund
+  returns everything less its own fee. Token/NFT locks keep LOCK_RESERVE, Doginal locks DOGINAL_RESERVE (output 1),
+  each plus the operator fee.
+- **Operator fee in the lock.** Rate = the existing `trade_cut` setting (swap.cut_bps), now an Admin -> Trading
+  selector (Off, 0.1, 0.25, 0.5, 1, 2 %). fee = amount * bps // 10000 (rounded down), at least the chain's dust line
+  (htlc.dust_of); a token/NFT/Doginal lock takes its percent of the other leg when that is coin on the same chain, else
+  the floor; Off = no output. Paid to the LOCKER's arcade (node_trader.lock_fee: home_address / payout_address on that
+  chain) by the CLAIM as its own output (claimer last, so a token's recipient is still the claimer); a refund gives it
+  back. Nothing in the script enforces it (no covenants): the claimer's arcade builds it.
+- **Terms fields (all optional):** legs in `propose` carry `fee_bps` (int 0..10000) and `fee_to` (P2PKH address);
+  order sides (`give`) carry the lister's. trade_messages.fee_terms / trade_orders._side validate them. A lister accepts
+  a proposal only with no fee on its own leg or exactly the terms it listed (node_trader.fee_terms_fit, JS
+  feeTermsFit). The browser mirrors every number (wallet_js.js operatorFee, lockValue, fundValue, checkLock);
+  tests/test_trade_fees.py holds both to the same satoshi.
+- **Old arcades:** a leg with no `fee_bps` is old terms: rate 0, checked the old way (lock >= amount), and its
+  receiver still loses the claim fee as before. Our locks are bigger, and old check_lock is "at least", so old arcades
+  still accept them; but an old arcade's claim pays itself value - fee, so the operator fee in our lock goes to that
+  claimer. An old arcade (or an old relay) drops the order's fee fields: that side trades at rate 0.
+- Need from you: nothing to merge yet; once you take main, your arcade charges your own `trade_cut` on your locks.
+### 2026-10-21 Admin -> Overview: no balance cards, an Arcades panel (Claude)
+The operator, approving the mockup: "We should remove all the token balances that's not necessary in overview. We can see
+those in the wallet page. We can remove notifications because that can be seen in notifications page." Branch
+claude/overview-arcades. Overview's cards are now the seats and "N arcades · running, N linked to this one" (N counts
+this arcade); the coin balance cards and "accounts with notifications" are gone (the Coins tab's `#wallets` and the
+push line are untouched). New panel **Arcades** under Needs you, from new `GET /admin/api/arcades` (operator only, as
+every /admin route; door.py unchanged): a row per arcade `_arcades_running(with_ids=True)` counts, THIS one first,
+each with its @name and public host (or mesh id), its Cores (coin faces from `_coin_icon`; this arcade's own with
+`shared` from coreshare.status, a running-unshared one faded and dashed; another's only as far as it shares them,
+coreshare.offers), its ord indexes (doginal_index.holders, a ring of how much of the chain it has walked, the same
+reckoning as Admin -> Ords) and its link (node.rtts; amber over a second). Phone width: each row a small card.
+- **Operator @name on the mesh:** already said in operators.py's `op`/`me` frame; now `tag` is LEFT OUT when the
+  operator has none (`service.operator_about`, `state.operator_tag()`), and on receipt it is kept only with a tag's
+  shape (`operators.said_tag`: tags.py's alphabet, 2-24, not reserved; bounded before it is read), hosts only when
+  shaped like host names. Display only, never trusted. An arcade without the field shows its mesh id: nothing to do
+  on your side, and a node of yours that says a bad tag is simply shown by its id.
+- Tests: tests/test_admin.py (route shape, page), tests/test_mesh_operators.py (said tag), new
+  tests/test_admin_arcades_browser.py.
+- **Helping / read only** (e3007d1, the operator: "an indicator that shows if an arcade is helping on one of the ord
+  indexes ... or read only"): besides the holders' rings, each chain's `index.chunks.peers` (its last "hi", five
+  minutes) and this arcade's own `index.mode()` add `role: "help"` (a whole dashed ring, "helping", blocks scanned in
+  the title) or `role: "read"` (faded coin, "read only"); walkers carry `role: "walk"`. Legend says all three.
+
+### 2026-10-21 Wallet Doginals: pages, one batched read, frames built once (Claude)
+The operator: "over 1500 doginals in that wallet ... good pagination ... lazy loading and caching ... whatever is lightest
+weight for the server ... right now it looks like the doginals in my Wallet load like three times when I'm looking at
+them". `drawDoginals` (my_wallet.html) now asks only coins of Doginal postage size, a hundred transactions per
+`POST /account/doginal-txs` (own coins read once per call, not once per transaction; one call at a time), keeps each
+answer in localStorage as before, shows 30 cards a page (Previous / page picker / Next, page remembered per wallet),
+and builds a page's cards only when what is on it changes. Before, every answer and every block rebuilt the whole grid,
+so every picture frame loaded again. An imported wallet's Doginals and Pepinals now show too (view only: Send and Swap
+from an imported wallet are not built yet; `/account/doginal/send` is the main address only). Also in this bundle: a
+busy Core during an import rescan is waited for rather than counted as a failure, and a whole-chain rescan the Core
+already ran for those addresses (an arcade restart cut the connection to it) is not sent again (utxos.CoreBusy,
+`core_rescan_sent:<net>`).
+
+### 2026-10-21 · the operator's side · imported wallets follow the account to every arcade it signs into
+
+The operator: "an imported wallet needs to be automatically broadcast to other arcades that you are signed in with. So all
+of your wallet balances persist over all arcades that you sign into." Branch claude/imports-everywhere.
+- **The record is signed and numbered.** Every save of the sealed record of imported wallets is version N+1 with an
+  Ed25519 signature by the ACCOUNT'S LOGIN KEY (the /auth/login key, from the words) over
+  `sha256("DogecoinArcade imported wallets\n" + pubkey + "\n" + str(version) + "\n" + sha256(blob) hex)`
+  (wallet_imports.record_digest; wallet.js recordDigest). Made in the browser (changeImports), checked on
+  POST /account/imported (a version other than kept+1 is a 409; unsigned is refused). Columns `version`, `sig`,
+  `origin` added in place; a record from before is version 0, unsigned, never shared, and the page saves it again,
+  signed, at the next unlock.
+- **Mesh extension `iw`** (arcade/mesh/importshare.py): `ls` (on link up: every signed record here as
+  [account_hash, version]), `an` (a new version), `gt`/`rc` (ask for / send the record, in 48 KB parts), `no`.
+  Accounts are named by `sha256("DogecoinArcade imported account\n" + pubkey)[:32]`, so a list only matches accounts
+  the hearer already holds. A version is taken only when the hearer's OWN vault holds the pubkey, the signature
+  checks against that pubkey, the blob's hash matches, and the version is higher than its own; then it tells its
+  other links. Rate limits per linked arcade (rows read, records sent, 16 questions open).
+- **Nothing lost when two arcades change it apart:** the plaintext keeps tombstones (`gone`) and each wallet's `at`;
+  a copy written here that a newer version replaces, or a signed copy of the same version with other contents, is
+  kept aside (`imported_siblings`, at most 8) and the page folds it in and saves the next version; the copies are
+  dropped only with the login key's signature over which (wallet_imports.merged_digest).
+- **Bringing an account:** GET `/signin/{tag}/imported` (public like /signin/{tag}: blob, version, signature);
+  POST `/account/imported/bring` fetches it from the arcade the account came from (one this arcade knows) and keeps
+  it after checking it against this vault's pubkey. bringHere and signIn call it, then open the record.
+- **Addresses everywhere:** the Wallet page registers every wallet of the open, current record that this arcade
+  does not watch, with the existing key-signed /account/imported/address (`sync: true`: an allowance of its own as
+  large as PER_DAY, only for an account with a signed record here; this node cannot open the record to check the
+  wallet is in it). "Bringing your imported wallets over…" while it runs.
+- **Balances privately:** POST `/signin/{tag}/imported-coins` {network, address, kind, pubkey, minute, asker,
+  signature}: the signature is by THAT ADDRESS'S KEY over
+  `sha256("DogecoinArcade imported coins\n" + tag + "\n" + network + "\n" + address + "\n" + asker + "\n" + minute)`,
+  made in the browser for this arcade's public name (`public_hosts`). Answered only when it checks, within 5
+  minutes, the asker is an arcade the answerer knows, the address is that tag's import there, and its whole past is
+  read; the asker checks every coin with gettxout (`_file_checked_coins`, shared with `_coins_from`). None answers:
+  the usual read-back / Core rescan. `/signin/{tag}/coins` still lists main addresses only.
+- **Removal** is a new signed version without the wallet; an arcade that takes it stops watching the address when
+  the account's page there next has the record open (the page's existing "registered here but not in the record"
+  forget): this node cannot read the record.
+- Tests: tests/test_imports_everywhere.py, tests/test_imports_everywhere_browser.py (two arcades, Firefox).
+- **SadFrog / tbuuol:** nothing to set; your arcades take part once they update. An arcade that has not updated
+  ignores `iw` frames and has no /signin/{tag}/imported, so it just does not take part (its accounts' imports stay
+  on it). An updated arcade asks for imported coins only with a public name in `public_hosts`.
+
+### 2026-10-21 · the operator's side · the ord walk: a filter instead of every place in memory; a share of the machine
+
+- **Memory** (a test machine's arcade, ~17.5 GB, was killed by the out-of-memory killer at 10:18): the walker no longer keeps
+  every inscription's place in a Python dict (22 million on a test machine). It keeps a Bloom filter of the coins
+  inscriptions sit on (`_Seen`, ~1.5 bytes a coin, ~0.3% false "maybe"s) and looks a "maybe" up in the index file
+  (`at`, by `at_out8`) on the walk's own connection, so a block's own earlier moves are seen. Spent coins stay in the
+  filter (a lookup that finds nothing); it is built again from `at` once it has taken in twice what it was made for.
+  The recent-outputs value cache is 500,000 coins (was 2 million).
+- **A share of the machine for walking** (Admin -> Ords, "Share of this machine for walking", setting `ord_share`,
+  10-100%; 2026-10-21: ".25 seems to be running slow ... see if we can mess around with how much is allocated
+  to walking the chain"): the walk shares the web process with the pages, so it works in short bursts (1 s a pass on a
+  machine under 8 cores, 5 s on a big one) and rests so walking is that share of the time. Default: 100% on a big
+  machine, 30% on a small one (an index made without the setting paces at 50% on a small machine, as before).
+
+### 2026-10-21 · the operator's side · an imported wallet's whole past, from a Core rescan, reads borrowed meanwhile
+
+The operator imported a Dogecoin wallet and asked whether the arcade borrows another node while it rescans. It did not, and
+it only found a week's coins: Dogecoin and Pepecoin Core 1.14 have no `scantxoutset`, and the block read-back goes
+down to the index's floor only (Dogecoin: block 6,415,000). Now, on Dogecoin and PEP Main (setting
+`import_core_rescan:<net>` switches a chain on or off; PEP TEST stays on the read-back because the @ashvale Bank's
+wallet lives in that Core and a rescan makes it wait):
+- **The address is imported WATCH-ONLY into this node's Core** (`importmulti`, timestamp 0, never a key) **with a
+  rescan of the whole chain**, then its coins are listed (`listunspent`) into the ledger (utxos.seed_from_core_wallet).
+- **Reads are borrowed meanwhile:** a 1.14 Core holds its lock for the whole rescan and answers nothing, so the
+  import tells core_catchup itself (`hold`): the chain's reads and broadcasts go to a linked arcade's shared Core, the
+  wallet stays here. The hold is kept in settings (`core_rescan_holds`), so a restart mid-rescan still borrows; it goes
+  once no import runs here and the Core answers a check again. Never started with nobody to borrow from (then queued,
+  "no node to borrow").
+- **Back to back, batched** (the operator: "multiple people can import their wallets during a rescan, and during the next
+  rescan, all of their wallet addresses will be watched"): an import during a rescan is never refused; it joins the
+  next rescan, which starts as soon as this one is done and takes every wallet imported meanwhile in one `importmulti`.
+- **Told how long, every time** (the operator: "the client just needs to be notified with how long it's going to take"):
+  the import sheet says a rescan is running before anything is typed (GET /account/imported/busy), the import's answer
+  and the wallet's line count down from the chain's length at the last measured rate (`core_rescan_rate:<net>`, kept
+  after each rescan); an overrun says "taking longer than expected; still running". The Cores' own progress lines are
+  in logs only their system users can read on .25.
+- **A failing rescan backs off** (10 min, 20 min, then stops until a restart): a Core is never made to rescan its
+  whole chain again at once.
+- At start, every imported wallet on these chains without its whole past read goes on the queue.
+
+### 2026-10-21 · the operator's side · idea parked for later: trace each inscription to where it is, in parallel
+
+The operator: "Can't we split up the walk work so that the identified TXIDs that are an ORD are each traced to their current
+location". Parked ("will come back to it"). The thinking so far:
+- **Sound part:** an inscription's moves do not depend on other inscriptions -- where it lands after a spend depends
+  only on the spending transaction and its inputs' values -- so every inscription could be traced on its own, side by
+  side, handed out like chunks.
+- **The missing piece:** "who spent this coin?" Dogecoin Core cannot say (it knows unspent coins, not their spenders),
+  and only reading every input of every block finds out -- which is what the walk does. Backward tracing (a coin back
+  to its inscription's start: doginals.trace) is easy; forward is not.
+- **How it could be split anyway:** (1) every chunk scanner keeps a compact "spent here?" filter of the coins spent in
+  its chunks (a few hundred MB for all of Dogecoin, across the mesh, instead of ~96 GB of full notes); (2) trace every
+  inscription in parallel, each hop = ask the filters which chunk spent the coin, read that one block; (3) settle the
+  two rules that do depend on others afterwards -- re-inscription (a birth counts only when nothing sits on input 0's
+  first koinu) and inscriptions spent to the fee (they follow the coinbase) -- as a check-and-fix pass; (4) prove it on
+  PEP Main against the walked index, inscription by inscription, before Dogecoin.
+- **The catch:** a busy wallet's inscription can hop thousands of times (a block read per hop). Several days' work.
+- **First, cheaper:** profile why a test machine walks 2023 Dogecoin at ~5 blocks/s (input values asked one transaction at
+  a time? block reads? Python?), batch the input-value lookups, and shrink the notes so they can be kept for the whole
+  chain. And the walk keeps every inscription's place in memory (~17 GB on a test machine): compact it or look up on demand.
+
+### 2026-10-21 · the operator's side · import any wallet (a private key or a 12-word phrase), several named wallets a coin
+
+The operator (plan item 18): "We should be able to import any with private key or 12 word seed phrase, even if that wallet
+has not been used in Dogecoin arcade." Branch claude/wallet-import.
+- **Wallet page:** a wallet drop-down under the coin icons: the account's own wallet, then its imported ones, by name
+  (never by address; an unnamed one is "Wallet N", the lowest number free, kept until renamed; the main one is
+  nameable too), "+ Import a wallet" last. The address is under Receive (QR + copy). Rename; Remove from list (imported
+  only; no coins touched). Tokens/NFTs stay the main wallet's for now.
+- **The secret never leaves the browser unsealed.** coins.js `fromWif` (base58check, the chain's WIF byte -- another
+  chain's key is refused saying whose -- compressed flag honoured) or a BIP39 phrase (12-24 words, checksum checked)
+  derived at the arcade's own path (m/44'/coin'/0'/0/0; on L test the SegWit kinds too, as the main words offer).
+  Sealed in a SECOND record, `imported_wallets` table (accounts.ImportedWallets), by wallet.js `sealText`: the same
+  AES-256-GCM / PBKDF2-SHA512 600k / {kdf, iterations, salt, nonce, sealed} as `seal`, under the same password, opened
+  at sign-in, kept open in sessionStorage + the tab BroadcastChannel beside the open words, cleared on lock/sign-out.
+  **The vault blob, `seal()`, /signup and /signin are unchanged byte for byte** (older arcades read them).
+- **The node learns only the address,** with a signature by its key over the account and the address
+  (arcade/wallet_imports.py `check_proof`), so nobody registers an address whose key they do not hold. Setting
+  `extra_address:<net>:<account>`, at most 20 a chain (and 40 imports a day an account); watched (`_watch`, and the
+  watcher's account pickup). `/account/coins` and `/account/activity` take `address=`, which must be one of the
+  account's own (main, SegWit, imported) or 403. `/account/send` with `from` = an imported address takes only its
+  coins, change back to it; the browser signs with its key through the same verifyOffer/signInput path.
+- **Read-back:** already watched from the floor (or read back before) is ready at once; else the Core's coin set
+  (`scantxoutset`) or the paced block read-back, with "The arcade is reading back this wallet's coins; check back in
+  about N minutes" (blocks left x the measured rate). One per chain: an import while one runs is refused, NOTHING
+  kept. No Core here and none to borrow: "There is no node to borrow right now ..." -- queued, started by itself.
+  Another arcade is NOT asked for an imported address: arcades answer by @tag, and a public by-address answer would
+  tell anybody which addresses an arcade's accounts imported.
+- Routes: GET/POST `/account/imported`, POST `/account/imported/{address,rescan,forget,name}` (door.py PUBLIC_POST).
+  Tests: tests/test_wallet_imports.py, tests/test_wallet_imports_browser.py, tests/test_wallet_imports_restore_browser.py.
+- **SadFrog:** nothing to do; it works for every chain and face.
+
+### 2026-10-21 · the operator's side · a Core that is behind borrows the chain until it catches up
+
+The operator (plan item 17): "If the block chain is being re-scanned or being synced on any arcade, it should automatically
+switch over to borrowing somebody else's core until the re-scan is finished." Branch claude/core-borrow-sync.
+- **One place:** `ChainContext.rpc()` (arcade/web/state.py). For a chain run here, while its Core is behind and a
+  linked arcade shares the chain, it hands out a `CatchingUpRpc` (new arcade/core_catchup.py): reads and broadcasts
+  (coreshare's `SERVED` + `MINED`, and `decoderawtransaction`) go through `BorrowedRpc`, proved as on a "borrow"
+  chain; everything else, the node's own wallet above all, stays on this Core. A broadcast is also handed to this
+  Core, quietly, so its wallet knows what it spent. `scantxoutset` is refused (-28) while behind: a part-synced coin
+  set is wrong, and the watcher falls back to reading the index's blocks. A client keeps its routing for its life.
+- **Behind:** error -28 (loading the block index, verifying, -reindex, -rescan at start); `getwalletinfo.scanning`;
+  `initialblockdownload` or `verificationprogress` < 0.9999; headers more than 6 ahead of blocks (0-2 is a block on
+  its way; `chain_sync` allows 2). The last two are overruled when this Core is within 2 blocks of the sharers' tip:
+  a quiet test chain's progress estimate sits below 0.9999 at its tip.
+- **Cheap:** checked every 30 s per chain on a thread of its own, and not at all while no linked arcade shares the
+  chain (Admin -> Chains still asks, to say it). Back to this Core after 2 caught-up checks in a row. One log line per switch (logger `arcade.cores`).
+- **No sharer:** this Core is used as it is. A chain set to "borrow" in Admin is untouched (`borrowed` stays the
+  only flag the wallet, fee and keywallet code read, so a catching-up chain keeps its own wallet).
+- **Not lent while behind:** `shared_cores` no longer offers a chain whose Core is behind, and serves only from the
+  Core itself (`local_rpc()`), so two arcades catching up never pass reads round in a loop.
+- **Admin -> Chains** says it on the chain's row: "syncing: borrowed from arcade a1b2c3d4e5f6 until it catches up
+  (block 100 of 6,000)", "caught up (...); reads come back to this Core after 1 more check (every 30 s)", or
+  "syncing (block 100 of 6,000); no linked arcade shares this chain, so this Core is used as it is" ("the mesh is
+  off" when it is).
+- **Limits:** a Core that is not answering at all is not "behind" (no switch); a wallet call on a Core still
+  loading gets its -28, as before. Tests: tests/test_core_catchup.py.
+- **SadFrog:** nothing to do; it works for every chain and face.
+### 2026-10-21 · the operator's side · `arcade.contacts.add` / `remove`: a game adds a friend, with the player's yes
+
+ASHVALE asked (game-agnostic; the operator wants players "able to add in game friends"). Branch claude/contacts-add.
+- **SDK** (`/r/contacts.js`, beside `list()`): `arcade.contacts.add({address, name})` and
+  `arcade.contacts.remove(address)`. Both resolve `{ok: true, status}`: `added` / `already`, `removed` / `absent`;
+  or reject with an Error starting with the reason: `declined`, `sign in first`, `not an address`, `busy`,
+  `no viewer`, or what `/account/who` said (`nobody holds @x ...`, no messaging key).
+- **Same book, same writes** as the Address book: the viewer (`_page_doors.js.html`, contactsChange) resolves an
+  address or @tag with messaging.js `lookUp`, then `addToBook(tag)`; `name` (trimmed, 60 characters, the Address
+  book's note limit) goes in with `updateBookEntry(tag, {note})`; remove is `removeFromBook(tag)` (with its
+  tombstone, so a synced copy does not bring them back). Browser IndexedDB, nothing on the node. Only claimed names
+  go in, as on the Address book page.
+- **Consent:** every change is one tap on an `arcadeAsk` card naming the game ("Add @alice (nAlice1…) to your address
+  book as “Alice”?" / "Remove @alice from your address book?", Add or Remove / No). `arcadeAsk` takes an optional
+  4th argument for its No button (default still "Cancel"). Already in / not in the book: answered with no card.
+  A yes to an add does not grant `list()`; add/remove never return anything of the book.
+- **One card per page:** a second add/remove while a contacts card (the list permission question included) is open
+  is refused `busy`, not queued.
+- A guest, or the node's own wallet view, is refused `sign in first`; a page opened on its own rejects `no viewer`
+  at once (5 minutes if a parent never answers).
+- Docs: inscription-api.md "The reader's contacts" (list() was not documented before either), guide.md table.
+  Tests: tests/test_contacts_add_browser.py (Firefox, no chain), tests/test_contacts_bridge.py.
+- SadFrog: nothing to do beyond taking it.
+### 2026-10-21 · the operator's side · ord index layout 3: whole copies, slimmer (PEP Main 2.10 -> 1.38 GB)
+
+The operator chose "whole copies, slimmer" over splitting the index around the ring: the split would save only ~15% a
+holder, because every holder must follow every inscription's moves anyway (ord's reinscription rule: a birth counts
+only when no inscription sits on input 0's first koinu, and any inscription can be moved onto one). Rings A and B stay
+whole copies held by big machines. Branch claude/ord-slimmer.
+- **Layout 3:** the id and coin lookups keyed by the txid's first 8 bytes (`insc_id8`, `at_out8`; the whole txid is
+  still compared -- a query must say `substr(tx, 1, 8) = ?` to use them); no content-type, protocol or number lookups
+  (Admin `type:` / `p:` searches scan: 0.3 s for PEP's 6.7M; rows are kept in number order, rid = number + 1, tested).
+  Converted in place by the index thread from layout 1 or 2 (Store.upgrade; lookups built after the rows). Real PEP
+  Main copy: 15 s, 2.10 -> 1.38 GB, 3,000 ids and 500 coins looked up the same before and after.
+- Snapshots are offered as "sn<layout>" ("sn3"), so an arcade of another layout never fetches one it cannot read.
+- **Notes wait only for holders within 20,000 blocks of the furthest** (one further behind fetches the whole index or
+  walks from its Core); the cap is 512 MB, was 3 GB. A test machine had kept 588 MB of Dogecoin notes for a holder whose walk
+  had not left the chain's first block.
+- SadFrog / tbuuol: nothing to do; your arcades convert by themselves after the update.
+
+### 2026-10-21 · the operator's side · `POST /r/send` takes a `ref`: a retry is never a second send
+
+ASHVALE asked (game-agnostic): a game's `POST /r/send` reached the node, Safari lost the reply ("Load failed"),
+the game asked again with a fresh POST and could have paid 1,000 GOLD twice to a bank that credits one tx.
+Branch claude/send-ref.
+- **New optional body field `ref`**: the page's own name for the send, a string of 1..64 characters (anything else
+  is a 400 saying so; absent or null = exactly as before).
+- **A repeat** (same sending wallet, same chain network, same `ref`, within 7 days) files and sends nothing and
+  answers **200** with the FIRST request as it stands now, plus `"repeat": true`: the same `id`, so polling
+  `/r/send/<id>` carries on, and its live status (`sent` with the txid once sent). A new one is still 202. The
+  repeat's body is not read again: a `ref` names one send.
+- **Scoped to the wallet that would send:** the signed-in reader's address on a public arcade, the node's own wallet
+  ("node") on its silent and approvals paths. Two players using the same `ref` get a request each.
+- **Only what was filed is remembered.** A 4xx is not, so a corrected retry is judged afresh. One filed and then
+  failed (the silent path's "this needs the player's say-so", a broadcast error) answers that failure again.
+- Two POSTs with the same key at once: the second waits on that key's lock and gets the first's answer (no global
+  lock across a broadcast). Nothing a `ref` does skips a check: sign-in, the creator allowance, the twenty-waiting
+  limit and the caps all apply to the first ask exactly as before.
+- **Kept on disk** (`<home>/send-refs.sqlite`, arcade/send_refs.py, pruned after 7 days), so a restart forgets no
+  ref, and `GET /r/send/<id>` of a reader's question filed with a `ref` still answers its last known status after a
+  restart (the questions themselves are in memory). Limit: the frame's viewer ticket is in memory too, so after a
+  restart the page must be opened again before the pages host answers it.
+- Docs: inscription-api.md ("Asking again safely") and guide.md. Tests: tests/test_send_ref.py.
+- **Game makers, both sides:** give every send a `ref` (an order or deposit id) and send the same one on a retry.
+  SadFrog: nothing to do beyond taking it.
+
+### 2026-10-21 · SadFrog's side (Claude, node 3) · branch `team/mesh-name-announce-once` (on `main` 0817a59)
+- **An arcade's own `wss://<name>/mesh` was announced again after every restart.** `_tunneler` kept
+  `_tunnel_said` in memory only. An arcade that updates itself restarts with each release, so node 3
+  paid for 31 announcements of the same unchanged name in about 36 hours. The address announcer was
+  already safe: it remembers in `mesh-announced.json` and repeats only once a day.
+  - **Fix:** the own name is remembered in the same file (`name`, `name_at`) and announced again only
+    when it changes or `ANNOUNCE_EVERY` has passed. The address announcer now merges into that file
+    instead of overwriting it.
+  - Test: `test_mesh.py::test_an_unchanged_own_name_is_not_announced_again_after_a_restart` (fails
+    without the fix). `test_mesh.py` 36 pass. `test_mesh_named`, `test_talk_relay` and the realtime
+    tests: 30 pass, 5 skipped.
+- **The `/mesh` websocket itself works behind a proxy.** On node 3, the upgrade answers 101 at every hop
+  and the mesh greeting comes back over `wss://`. An earlier "404" from node 3's side was a faulty test:
+  curl over HTTP/2 can't upgrade. Sorry for the noise.
+- **Asked of your side:** take this, or tell us what to change.
+
+### 2026-10-20 · the operator's side · the ord index slimmed (layout 2): PEP Main 11.0 GB -> 2.1 GB, nothing lost
+
+The operator: "figure out how we can slim down the index ... without losing functionality", "we should not be saving every
+image, we should be retrieving those images directly from the blockchain when they are needed", "implement the other
+space saving ideas". Branch claude/ord-slim.
+- **Measured first** (a test machine PEP Main): 9.6 GB file + 2.8 GB write log + 6.6 GB snapshot. 6.25 GB of the file was `undo`:
+  each block's undo copied the whole of every image still arriving (as hex, up to 9 MB a row) for 300 blocks.
+- **A body arriving in pieces is kept as its envelope's state** (content type, pieces still to come, size, pieces so
+  far) -- ord_rules.envelope_start / envelope_more read it a piece at a time; parse() is the same reading (fuzz-tested
+  against the old one). The body itself is kept only while a rule could still read it (ord_rules.body_matters: a
+  text/plain or application/json body for names, or one that may yet be a JSON "p" within 64 KB); an image's is never
+  kept. Content is read from the chain when it is wanted, as before.
+- **Layout 2** (doginal_index.LAYOUT): insc and at keep ids/txids as 32 bytes (insc.tx + n, at.tx), content types by
+  number (ctypes), the protocol lookup only where there is one, undo packed (zlib JSON). journal_size_limit 64 MB and a
+  TRUNCATE checkpoint every 10 minutes. **Nothing peers compare changed**: chunk hashes and moves are the same, so
+  arcades of layouts 1 and 2 scan together.
+- **Converted in place, once, by the index thread** (Store.upgrade): a new file built beside the old, then swapped in
+  as a fetched snapshot is; the walk waits meanwhile; Ords status says "slimming the index (one time)". Real PEP Main
+  copy: 100 s, 11.0 GB -> 2.1 GB, every table's row count the same, every inscription's place the same, 20,000 sampled
+  inscriptions field for field the same. tests/test_ord_slim.py: a converted index matches a walk of the new layout
+  row for row, walks on the same and rolls back the same.
+- **Snapshots:** offered as "sn2" with "layout" in the manifest -- an arcade of layout 1 (which reads "sn") never
+  fetches one it cannot read; a layout-1 snapshot on disk is deleted; a snapshot nobody fetched from for 2 hours is let
+  go of (made again on the next ask).
+- SadFrog / tbuuol: nothing to do; your arcades convert by themselves after the update.
+
+### 2026-10-20 · the operator's side · zero-downtime restarts (a supervisor); spend notes v2; ord pruning fixes
+
+The operator: "add zero downtime restarts to Dogecoin arcade so that every node has redundancy", then "Word".
+- **arcade/web/supervisor.py**: `arcade-web` is now a small supervisor holding the port; the arcade runs as its child
+  (`--worker-fd`). A reload (SIGHUP: post-merge hook, arcade/update.py, Admin's restart) starts the new worker beside
+  the old; it builds the app, says "warm", and waits for the run lock (`web.lock` flock) the old one lets go when it
+  exits. Connections wait in the shared socket meanwhile: a few seconds late, never a 502 (load test: 934 requests
+  through two reloads, all 200, slowest 2.9 s). Two workers never serve or run background work at once. A dead
+  worker is started again at once. `ARCADE_NO_SUPERVISOR=1` runs the old way. Pidfile: <home>/web-supervisor.pid.
+  The FIRST deploy of this needs one ordinary restart; every later one is seamless. App imports in __main__ are
+  lazy so the supervisor stays small; card watch waits for `state.running`.
+- **Notes v2** (ord_notes.VERSION 2): an envelope begun before the chunk is followed back to its first piece through
+  the Core (`genesis_before`) and zeroed when its first piece says it cannot matter (`may_matter`): a heavy PEP Main
+  chunk 20 MB -> 1.5 MB.
+- Notes wait only for holders on v3 (an older arcade never stitches them); a holder far behind asks for a snapshot
+  every 10 minutes, of v3 holders only.
+- **Only a big machine fetches the whole index** (8+ cores, three times its size free): 2026-10-20 ~22:00 .25 fetched two
+  6 GB copies onto its spinning disk and the live site stopped answering (load 12, 85% I/O wait). Full indexes are
+  several GB (Dogecoin 14M inscriptions at ~8% of its blocks), not the ~1 GB planned. .25 set to Read only for both.
+- **Helping on a small machine stays off the web process**: ~22:11 .25 on Help scan stalled pages for a minute (the
+  deployed notes re-parsed a whole envelope for every new piece, in the web process). Now an envelope that may matter
+  is re-parsed only up to MAX_PARSED=50 pieces (then kept whole), and a machine under 8 cores reads blocks in a worker
+  process even on one lane. .25 back on Read only until this is live.
+- **An outvoted stitched chunk is SAID, never wiped** (`disputed` in the status, a "needs you" line in Admin -> Ords;
+  Store.reset is no longer called by itself): the operator, "I don't want you to lose any of that index information" (the
+  a test machine's PEP Main index, ~50% walked). Only the births hash counts as a dispute: notes v1 and v2 differ harmlessly.
+### 2026-10-20 · the operator's side · ord index: cover in line, spend notes stitched, audit after, the whole index torrent-style; own machine opens as its operator
+
+Branch claude/ord-cover-stitch. The operator asked for this design in his own words (the operator's
+~/docs/doginals-index-plan.md, "Redesign"), then "build it and test it".
+- **Spend notes** (arcade/ord_notes.py): a chunk cut down to what the walk reads: header, txids (proved by the merkle
+  root), inputs, outputs as value + owner, input 0's script where it can open or continue an envelope. Content
+  that cannot matter (no "p", token op or name) is zeroed at its own length. Canonical, so `digest` is a second word
+  on each chunk (`seen.nd`, "dn" rows gain a 4th field). Measured on real Dogecoin: ~5.6 KB a block packed,
+  ~10 GB for the whole chain, kept only until every holder has stitched past.
+- **Walk = hold the full index.** Spare cores scan the chunks in line ahead; notes others scanned are fetched
+  (ng/nb frames, each chunk from another peer, checked against the digest and births hash); the walk stitches
+  them (`Walker.step(notes=...)`), reading its own Core only when nobody has or is about to have a chunk. Stitched
+  from another's notes = that arcade's word, never a second one; if the audit later outvotes those notes the
+  index is built again. A holder with no Core of its own stitches from notes.
+- **Chunks.choose**: cover first, the lowest chunk nobody has said or holds; the audit (chunks this arcade did not
+  say, fewest agreeing first, up to AUDIT_MAX=5) only once every chunk is said. Two arcades on one chunk: the one
+  behind lets go. Status gains confidence `levels`, `phase`, `notes`, `holders`, `snapshot`.
+- **The whole index on request** (arcade/ord_snapshot.py): a holder far behind asks ("sq"); a big holder makes a
+  snapshot (VACUUM INTO, 1 MiB pieces, a manifest of piece hashes); "hi" carries `sn`; pieces come from every arcade
+  that has them, partial fetchers included (g/gb frames); the copy is checked against chunks two arcades agree on
+  and a second holder's moves, then swapped in (Store.swap).
+- Ords panel: modes "Hold the full index" / "Help scan" / "Read only" / "Off"; confidence per level; holders; notes.
+- Own machine: with nobody signed in, the arcade opens as its operator account (`_operator_here` in signed_in) --
+  the operator on a test machine: other operators saw @strawberry, its own page drew the nameless built-in wallet. Not for a
+  public request, not after /view/node, not after signing out there (`arcade_out` cookie; /view/account clears).
+
+### 2026-10-20 · the operator's side · Admin -> Ords: each index's size on disk; the index redesign planned
+
+The operator: "Each index should show their size on disc in the ORD panel". /admin/api/ords rows carry `disk` (the
+database plus its -wal and -shm), shown in an On disk column. Also planned, not built yet (operator's
+~/docs/doginals-index-plan.md, "Redesign"): cover every chunk once, handed out in line; spend notes per chunk;
+stitch owners/balances in order; audit after with a confidence = agreeing arcades; hold-the-full-index on
+request, served torrent-style.
+
+### 2026-10-20 · the operator's side · Admin -> Ords: an Agreed column
+
+The operator: "add a number of [inscriptions] that are agreed upon by two or more arcades into the ORD table on its
+own column". The index status gains `agreed_births`: the births in every chunk two or more arcades hashed the
+same way, counted from that agreeing word (`seen.births`). Shown as its own column after Inscriptions.
+
+### 2026-10-20 · the operator's side · arcade.storage keeps each key's last 10 values; no empty shelf on a failed /account
+
+@tbuuol lost his ASHVALE character: during a restart /account failed, wallet.js shelfName() fell back to the
+"anon" shelf, his game got an empty shelf and started him as new. The operator: "Yes, last 10".
+- shelfName() now REFUSES the storage call ("the wallet did not answer") unless /account answers 200; a
+  signed-out visitor (200, no address) still gets the anon shelf. Games: treat a refused/not-ready storage
+  as "not loaded", never as "new player".
+- Every set/remove/clear files the value a key loses: node pagestore table item_history, browser shelf
+  "arcade.pagehistory.<who>.<page>" (beside the shelf, not under its prefix). 10 per key, newest first,
+  at most MAX_TOTAL per page; the browser drops the oldest history, never the save. Read with
+  `arcade.storage.history(key)` (op "history") -> {key: [{value, replaced}, ...]}.
+
+### 2026-10-20 · the operator's side · realtime players lost their seat one way; ord index stops stalling
+
+Ashvale reported @apple seeing @makwa while makwa could not see him; the operator: "Ship it".
+- A seat the node lost (restart, dropped line) is refused on send as "join the room first" (node) or
+  "not in that room any more -- join again" (mesh service). The page only rejoined on the second, and the
+  fast-lane and trade sends never rejoined: the player heard the room but nobody heard them. Now
+  `seatLost()` in _page_doors matches both, on all three send paths; tests/test_realtime_seat_lost.py
+  reads both texts from the server code so a reworded refusal fails the test.
+- (cb8373f, already live) the ord index reads on a connection per thread and its status answers from the
+  last result while one thread works the new one out, so Admin -> Ords polling no longer piles up.
+
+### 2026-10-20 · the operator's side · faster pages: kept scripts and style, no picture loop, search boxes
+
+The operator: "measure the load times ... offer solutions", then "Yep" to the first two, and "these should be auto
+complete search boxes rather than a drop-down with a super long list" (Exchange -> Trade any pair).
+- wallet.js, coins.js, signin.js, messaging.js, qrscan.js and the new /base.css (base.html's 45 KB style,
+  now templates/base_css.css) are asked for as "<path>?v=<one fingerprint of all six>". app.py ASSETS:
+  render() and the scripts themselves rewrite every quoted "/wallet.js" etc. That exact address is kept
+  for good (immutable); anything else stays no-store. One fingerprint for all six, because they import one
+  another (in a circle too) and a page must never load two copies of a module. Pages stay no-store. Only
+  `[hidden]{display:none !important}` stays inline. Please keep using "/wallet.js" etc.; the rewrite adds
+  the fingerprint. New static files go in ASSETS.
+- base.html's picture screening retried a picture with no verdict every 4 s forever (70 requests and
+  810 KB on the Exchange): now 3 tries at most (5, 15, 45 s), reset when new pictures arrive.
+- Trade any pair: an empty box on tap, the current choice as its placeholder, at most 8 to start
+  (held first, coins first), every typed word must match, 12 at most, "N more, type to narrow". Coins
+  are labelled by the chain's own name ("Pepecoin (PEP) – Main"), no longer "PEP · Pepecoin (PEP) – Main".
+- /account: asks for the same account that arrive while its answer is being worked out wait for it and get
+  the same answer (single flight); nothing is reused after. A 3-second reuse was tried first and hid real
+  changes (a key in the pool, quota used, a notice taken away), so don't add one. /account/standing/fillable
+  reads the pool only for an account with an open standing buy order on that chain.
+- Earlier today: .25's Dogecoin index is read only. Walking it starved the site (see the ord-rules entry).
+
 ### 2026-10-20 · the operator's side · ord indexes follow the official rules; DRC-20 / PRC-20; names (rules 2)
 
 The operator: match wonky-ord (all ords are in the index), index DRC-20 and PRC-20 balances, and index the "p":"dns"

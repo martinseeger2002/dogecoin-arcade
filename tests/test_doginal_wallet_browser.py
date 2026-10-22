@@ -151,8 +151,14 @@ def test_the_wallet_finds_its_doginal_asks_once_and_sends_it_to_review(browser, 
     src = browser.execute_script(f'return document.querySelector("#doginals [data-doginal=\\"{INS}\\"] iframe").src')
     assert src == f"{base}/content/{INS}/fit", "this arcade's own /content, read off the chain, fitted to the frame"
     assert len(browser.find_elements(By.CSS_SELECTOR, "#doginals [data-doginal]")) == 1, "the clean coin is not one"
-    assert sorted(set(asked)) == sorted([T1, T3])
+    assert sorted(set(asked)) == [T1], "a coin too big to be Doginal postage is never asked about"
     count = len(asked)
+    # A block, an answer, a redraw: the picture frame is the same element, not built (and loaded) again.
+    browser.execute_script(f'window.__dgframe = document.querySelector("#doginals [data-doginal=\\"{INS}\\"] iframe");'
+                           'document.dispatchEvent(new Event("arcade:changed"))')
+    time.sleep(2)
+    assert browser.execute_script(f'return window.__dgframe === document.querySelector('
+                                  f'"#doginals [data-doginal=\\"{INS}\\"] iframe")'), "the frame was rebuilt"
 
     _open_doginals(browser, base)            # again: answered from this browser (and the node), nothing read again
     _wait(browser, f'return document.querySelector("#doginals [data-doginal=\\"{INS}\\"]")')
@@ -184,3 +190,40 @@ def test_a_chain_that_cannot_be_read_is_said_plainly(browser, served, signed_in)
         assert not browser.find_elements(By.CSS_SELECTOR, "#doginals [data-doginal]"), "nothing guessed"
     finally:
         funding.GUARD = real_guard
+
+
+def test_many_doginals_come_a_page_at_a_time(browser, served, signed_in, reads):
+    """2026-10-21: "I have like over 1500 doginals in that wallet. Make sure they have good pagination. And lazy
+    loading and caching." Thirty cards a page, a hundred transactions a call to the node, and a page's frames only."""
+    base, state = served
+    many = [f"{n:064x}" for n in range(0x5000, 0x5000 + 65)]
+    for t in many:
+        ANSWERS[t] = {"txid": t, "inscriptions": [{"vout": 0, "inscription_id": t + "i0", "sat_offset": 0}]}
+    with state.token_index(state.doge).open() as db:
+        for t in many:
+            db.conn.execute("INSERT OR REPLACE INTO utxo(txid,vout,address,value,height) VALUES (?,?,?,?,?)",
+                            (t, 0, signed_in, 100_000, 2))
+        db.conn.commit()
+    browser.execute_script("localStorage.clear(); sessionStorage.clear()")
+    _open_doginals(browser, base)
+    _wait(browser, 'return document.querySelector(".wl-dgpager select")')
+    _wait(browser, 'return document.querySelector(".wl-dgpager").textContent.includes("66 Doginals")')
+    assert len(browser.find_elements(By.CSS_SELECTOR, "#doginals [data-doginal]")) == 30
+    assert len(browser.find_elements(By.CSS_SELECTOR, "#doginals iframe")) == 30, "only this page's pictures"
+    pages = browser.execute_script('return [...document.querySelectorAll(".wl-dgpager option")].map(o => o.text)')
+    assert pages == ["Page 1 of 3", "Page 2 of 3", "Page 3 of 3"]
+    first = browser.execute_script('return [...document.querySelectorAll("#doginals [data-doginal]")]'
+                                   '.map(c => c.dataset.doginal)')
+    [b for b in browser.find_elements(By.CSS_SELECTOR, ".wl-dgpager button") if "Next" in b.text][0].click()
+    _wait(browser, 'return document.querySelector(".wl-dgpager select").value === "1"')
+    second = browser.execute_script('return [...document.querySelectorAll("#doginals [data-doginal]")]'
+                                    '.map(c => c.dataset.doginal)')
+    assert len(second) == 30 and not set(first) & set(second)
+    browser.execute_script('const s = document.querySelector(".wl-dgpager select"); s.value = "2";'
+                           ' s.dispatchEvent(new Event("change"))')
+    _wait(browser, 'return document.querySelectorAll("#doginals [data-doginal]").length === 6')
+    # Back again: the page is remembered and every answer comes from this browser, none from the node.
+    count = len(reads[1])
+    _open_doginals(browser, base)
+    _wait(browser, 'return document.querySelectorAll("#doginals [data-doginal]").length === 6')
+    assert len(reads[1]) == count

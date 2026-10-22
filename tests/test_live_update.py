@@ -215,11 +215,10 @@ def test_something_the_reader_hid_or_opened_stays_that_way(browser, served):
         "return document.querySelector('footer.version').hidden") is True
 
 
-def test_new_site_code_is_offered_not_forced(browser, served):
-    """When the site itself was updated, the open page cannot take it in place.
-
-    It says so with a button. It does not reload under the reader.
-    """
+def test_new_site_code_is_neither_offered_nor_forced(browser, served):
+    """When the site itself was updated, the open page cannot take it in place. It does not reload under the reader,
+    and since 2026-10-21 it shows no "tap to refresh" bar either (the operator: "This button comes up too often and seemingly
+    for no reason can we just remove it?"): the next page opened has the new code."""
     base, peer_hex, peer, state = served
     browser.get(f"{base}/messages/{peer_hex}")
     browser.execute_script("window.__survived = 'yes'")
@@ -229,11 +228,9 @@ def test_new_site_code_is_offered_not_forced(browser, served):
     cls.running_version = property(lambda self: "0000000-new")
     try:
         _arrives(state, peer, "newsite: arrived with a new version")
-        assert _until(lambda: browser.execute_script(
-            "return !!document.getElementById('newposts')")), "no refresh was offered"
-        assert browser.execute_script("return window.__survived") == "yes", (
-            "the page reloaded itself instead of offering"
-        )
+        assert not _until(lambda: browser.execute_script(
+            "return !!document.getElementById('newposts')"), 8), "no refresh bar any more"
+        assert browser.execute_script("return window.__survived") == "yes", "the page did not reload itself"
     finally:
         cls.running_version = old
 

@@ -55,7 +55,7 @@ def test_only_input_0_and_no_new_number_on_an_inscribed_first_koinu(tmp_path):
     again = _tx([(first[1], 0, _envelope(b"text/html"))], [100_000], tag=b"c")
     chain.add([again])
     index = _walk(tmp_path, chain)
-    ids = [r[0] for r in index.store.q("SELECT id FROM insc ORDER BY number")]
+    ids = [dx.iid_of(*r) for r in index.store.q("SELECT tx, n FROM insc ORDER BY number")]
     assert ids == [f"{first[1]}i0"], ids
     assert index.where(f"{first[1]}i0")["output"] == f"{again[1]}:0", "it moved; nothing new was born on it"
 

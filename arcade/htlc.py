@@ -211,21 +211,56 @@ def dust_of(params: Any = None) -> int:
 
 
 def pay_out(coin: dict, to: str, fee: int | None = None,
-            params: Any = None) -> tuple[list[dict], list[tuple[int, bytes]]]:
+            params: Any = None, operator: tuple[int, str] | None = None) -> tuple[list[dict], list[tuple[int, bytes]]]:
     """Coins out of a lock: the whole coin, less the fee, to one address. `params`: the lock's chain, for its own
-    fee and dust line (spend_fee)."""
+    fee and dust line (spend_fee).
+
+    `operator` (fee, address): a CLAIM's operator output (trade.payee; 2026-10-21, "add an operator fee output
+    to each lock script"), paid first, the claimer LAST with everything else -- so the claimer gets the amount agreed
+    and whatever the lock holds beyond it. A refund passes none: the whole lock less its fee goes back."""
     value = int(coin["value"]) - int(spend_fee(params) if fee is None else fee)
+    outputs: list[tuple[int, bytes]] = []
+    if operator is not None and int(operator[0]) > 0:
+        if int(operator[0]) < dust_of(params):
+            raise HtlcError("an operator fee under the dust line would not relay")
+        outputs.append((int(operator[0]), p2pkh_script(operator[1])))
+        value -= int(operator[0])
     if value < dust_of(params):
         raise HtlcError("the lock holds too little to pay for its own spend")
     return ([{"txid": coin["txid"], "vout": int(coin["vout"])}],
-            [(value, p2pkh_script(to))])
+            outputs + [(value, p2pkh_script(to))])
 
 
 def move_out(coin: dict, lock_address: str, data: bytes, to: str,
-             fee: int = SPEND_FEE) -> tuple[list[dict], list[tuple[int, bytes]]]:
+             fee: int = SPEND_FEE, operator: tuple[int, str] | None = None,
+             params: Any = None) -> tuple[list[dict], list[tuple[int, bytes]]]:
     """A token or an NFT out of a lock (escrow.move_out): the lock's coin first, which
-    makes the lock the sender; the payload; `to` last, which makes it the receiver."""
-    return E.move_out(coin, lock_address, data, to, fee=fee)
+    makes the lock the sender; the payload; `to` last, which makes it the receiver.
+
+    With no operator fee this is escrow.move_out exactly, as it always was. With one (a claim, 2026-10-21): the
+    payload, the operator's output, then `to` last with all the rest of the lock's coin -- the token's recipient by the
+    reference rule (tx.determine_reference: the last output that is not the sender's), whatever the operator's address.
+    A refund passes none; then, unlike an escrow, a lock holding more than its reserve (an operator fee held in it)
+    sends all of it, less the spend's fee, to `to` rather than back into the lock, where nobody would spend it."""
+    if operator is None:
+        value = int(coin["value"])
+        if value - int(fee) - DUST >= DUST:
+            # More than the reserve in the lock (its operator fee, on a refund): all of it to `to`, not back into the
+            # lock, where nobody would ever spend it.
+            return ([{"txid": coin["txid"], "vout": int(coin["vout"])}],
+                    [(0, op_return_script(data)), (value - int(fee), p2pkh_script(to))])
+        return E.move_out(coin, lock_address, data, to, fee=fee)
+    cut, payee_address = int(operator[0]), operator[1]
+    rest = int(coin["value"]) - int(fee) - cut
+    if cut > 0 and cut < dust_of(params):
+        raise HtlcError("an operator fee under the dust line would not relay")
+    if rest < dust_of(params):
+        raise HtlcError("that lock holds too little coin to move its token or NFT out and pay the operator fee")
+    outputs = [(0, op_return_script(data))]
+    if cut > 0:
+        outputs.append((cut, p2pkh_script(payee_address)))
+    outputs.append((rest, p2pkh_script(to)))
+    return ([{"txid": coin["txid"], "vout": int(coin["vout"])}], outputs)
 
 
 # --- a Doginal in a lock -----------------------------------------------------------------
@@ -248,23 +283,37 @@ def move_out(coin: dict, lock_address: str, data: bytes, to: str,
 DOGINAL_RESERVE = SPEND_FEE + DUST
 
 
-def doginal_lock_outputs(value: int, redeem: bytes) -> list[tuple[int, bytes]]:
-    """Outputs 0 and 1 of a Doginal's lock: the inscribed coin's whole `value`, then the reserve, both to the lock."""
+def doginal_lock_outputs(value: int, redeem: bytes, reserve: int = DOGINAL_RESERVE) -> list[tuple[int, bytes]]:
+    """Outputs 0 and 1 of a Doginal's lock: the inscribed coin's whole `value`, then the reserve, both to the lock.
+    `reserve`: DOGINAL_RESERVE and the locker's operator fee on top (trade.doginal_reserve, 2026-10-21)."""
     script = p2sh_script(redeem)
-    return [(int(value), script), (DOGINAL_RESERVE, script)]
+    return [(int(value), script), (int(reserve), script)]
 
 
-def doginal_out(lock_coin: dict, reserve_coin: dict, to: str) -> tuple[list[dict], list[tuple[int, bytes]]]:
+def doginal_out(lock_coin: dict, reserve_coin: dict, to: str, operator: tuple[int, str] | None = None,
+                refund: bool = False) -> tuple[list[dict], list[tuple[int, bytes]]]:
     """A Doginal out of a lock, claim or refund: lock:0 first and whole to `to` as output 0, the reserve (lock:1) second
-    and spent whole as the fee. Nothing else goes in, so nothing else can land on the Doginal's koinu."""
+    and spent whole as the fee. Nothing else goes in, so nothing else can land on the Doginal's koinu.
+
+    2026-10-21 (the operator: an operator fee in every lock): a claim's `operator` (fee, address) is output 1, paid from the
+    reserve, the rest of the reserve the fee as before. A `refund` gives back what the reserve holds beyond
+    DOGINAL_RESERVE (an operator fee held in it) as output 1 to `to`, when that is worth an output. Output 0 is the
+    Doginal's coin, exactly, either way: the inscription stays at its first koinu."""
     if lock_coin["txid"] != reserve_coin["txid"] or int(lock_coin["vout"]) != 0 or int(reserve_coin["vout"]) != 1:
         raise HtlcError("a Doginal's lock is output 0 of its transaction and its reserve output 1")
-    if int(reserve_coin["value"]) < SPEND_FEE:
+    cut = int(operator[0]) if operator is not None and not refund else 0
+    if int(reserve_coin["value"]) - cut < SPEND_FEE:
         raise HtlcError("the reserve beside that Doginal is too small to pay for its spend")
+    if cut and cut < DUST:
+        raise HtlcError("an operator fee under the dust line would not relay")
     if int(lock_coin["value"]) <= 0:
         raise HtlcError("a Doginal's coin has value")
-    return ([{"txid": lock_coin["txid"], "vout": 0}, {"txid": reserve_coin["txid"], "vout": 1}],
-            [(int(lock_coin["value"]), p2pkh_script(to))])
+    outputs = [(int(lock_coin["value"]), p2pkh_script(to))]
+    if cut:
+        outputs.append((cut, p2pkh_script(operator[1])))
+    elif refund and int(reserve_coin["value"]) - DOGINAL_RESERVE >= DUST:
+        outputs.append((int(reserve_coin["value"]) - DOGINAL_RESERVE, p2pkh_script(to)))
+    return ([{"txid": lock_coin["txid"], "vout": 0}, {"txid": reserve_coin["txid"], "vout": 1}], outputs)
 
 
 def claimed(inputs: list[dict], outputs: list[tuple[int, bytes]], redeem: bytes,

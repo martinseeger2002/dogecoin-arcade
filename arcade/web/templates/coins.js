@@ -197,6 +197,52 @@ export async function wif(key, version) {
   return base58check(version, body);
 }
 
+/** Every chain's name, for saying whose a key is. */
+const WIF_CHAIN = {main: "Pepecoin or Dogecoin mainnet", doge: "Pepecoin or Dogecoin mainnet",
+                   ltc: "Litecoin mainnet", test: "a Pepecoin or Dogecoin test chain",
+                   regtest: "a Pepecoin or Dogecoin test chain", ltctest: "Litecoin testnet"};
+
+/** A private key out of Wallet Import Format text, for `network` (plan item 18, importing a wallet): base58check,
+ *  the version byte this chain's (WIF above), 32 bytes of key, and a trailing 0x01 when its public key is
+ *  compressed. Returns {key, compressed, pubkey}. A key of another chain, a mistyped one (the checksum) or anything
+ *  that is not a key is refused, saying which. Nothing is sent anywhere. */
+export async function fromWif(text, network) {
+  const said = String(text || "").trim();
+  if (!said) throw new Error("Paste the private key, please.");
+  if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(said)) throw new Error("That is not a private key: it has characters a key never has.");
+  const whole = unbase58(said);
+  if (whole.length < 5) throw new Error("That is not a private key.");
+  const body = whole.slice(0, whole.length - 4), sum = whole.slice(whole.length - 4);
+  const want = (await hash256(body)).slice(0, 4);
+  if (want.some((b, i) => b !== sum[i])) {
+    throw new Error("That private key has a typo in it: its checksum does not match. Check each character.");
+  }
+  const version = body[0];
+  let compressed;
+  if (body.length === 34 && body[33] === 0x01) compressed = true;
+  else if (body.length === 33) compressed = false;
+  else throw new Error("That is not a private key (it is the wrong length for one).");
+  if (WIF[network] === undefined) throw new Error(`This arcade has no private-key format for ${network}.`);
+  if (version !== WIF[network]) {
+    const whose = Object.keys(WIF).filter((n) => WIF[n] === version).map((n) => WIF_CHAIN[n]);
+    throw new Error(whose.length
+      ? `That private key is for ${[...new Set(whose)].join(" or ")}, not this coin. Pick its coin at the top first.`
+      : "That private key is for a coin this arcade does not run.");
+  }
+  const key = body.slice(1, 33);
+  const n = toBig(key);
+  if (n === 0n || n >= N) throw new Error("That is not a usable private key.");
+  return {key, compressed, pubkey: secp.getPublicKey(key, compressed)};
+}
+
+/** What an imported key signs to register its address for one account (wallet_imports.proof_message, byte for
+ *  byte), as the 32-byte digest it signs: SHA-256 twice. */
+export async function importProof(account, network, address, pubkey) {
+  const text = `DogecoinArcade wallet import\n${String(account || "").toLowerCase()}\n${network}\n${address}\n`
+    + hex(pubkey).toLowerCase();
+  return hash256(enc.encode(text));
+}
+
 export function coinPath(network, index = 0) {
   const coin = COIN_TYPE[network] ?? 1;
   return [44 + HARDENED, coin + HARDENED, 0 + HARDENED, 0, index];

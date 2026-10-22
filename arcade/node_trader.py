@@ -127,6 +127,60 @@ def swap_big(state: Any) -> dict:
     return out
 
 
+#: How long a chain's payee address is kept before it is asked again (lock_fee): /account asks on every page.
+PAYEE_FOR = 600
+_payees: dict[str, tuple[float, str]] = {}
+
+
+def lock_fee(state: Any, chain: Any) -> dict:
+    """This arcade's lock-fee terms on `chain` (2026-10-21: "add an operator fee output to each lock script"):
+    {"bps": whole basis points, "to": the node's own address there}, or {} when the fee is Off or the node has no
+    address on that chain -- then its locks carry no operator fee.
+
+    The rate is the one setting the operator already had, "Your cut of trades made here" (`trade_cut`, swap.cut_bps;
+    the operator: "one setting for both"). The payee is the node's own address on that chain (AppState.home_address: the
+    identity's on the messaging chain, the Core wallet's kept "arcade-identity" account address elsewhere, the operator
+    account's on a borrowed chain or one whose Core keeps no wallet: payout_address), as `_node_cut` pays this node's cut to its derived address. It is only ever the
+    LOCKER's: these terms go into the legs this arcade locks, never into somebody else's."""
+    from . import swap as swaplib
+    try:
+        bps = swaplib.cut_bps(state.setting("trade_cut", 0))
+    except Exception:                                      # noqa: BLE001 -- no settings: no fee
+        return {}
+    if bps <= 0:
+        return {}
+    network = getattr(chain, "network", "")
+    kept = _payees.get(f"{getattr(state, 'home', '')}:{network}")
+    if kept is not None and kept[0] > time.monotonic():
+        to = kept[1]
+    else:
+        try:
+            # A chain whose coins this arcade holds with its own key (a borrowed chain, a Core with its wallet off):
+            # where it is paid there (payout_address), as its other fees are; else its one address on the chain.
+            keyed = getattr(state, "keyed", None)
+            if keyed is not None and network != state.messaging.network and keyed(chain):
+                to = str(state.payout_address(chain) or "")
+            else:
+                to = str(state.home_address(chain) or "")
+        except Exception:                                  # noqa: BLE001 -- a chain with no address here
+            to = ""
+        _payees[f"{getattr(state, 'home', '')}:{network}"] = (time.monotonic() + PAYEE_FOR, to)
+    if not T.payee_ok(to):
+        return {}
+    return {"bps": bps, "to": to}
+
+
+def fee_terms_fit(proposed: T.Leg, stood: dict) -> bool:
+    """May a responder lock `proposed` -- its own side as the taker wrote it -- under the fee terms it listed (`stood`:
+    the order's side, with or without fee_bps/fee_to)? Yes when the taker asks no operator fee of that lock (an arcade
+    from before 2026-10-21, or a book that dropped the fields on the way): it trades at rate 0. Yes when the taker
+    copied exactly the rate and payee listed. Never anything else: a taker who wrote ANOTHER payee, or a higher rate,
+    into the lister's own lock would be paid out of it by its own claim."""
+    if not proposed.fee_bps:
+        return True
+    return proposed.fee_bps == int(stood.get("fee_bps") or 0) and proposed.fee_to == str(stood.get("fee_to") or "")
+
+
 def asset_seen(seen: T.LockSeen | None, leg: T.Leg, lock_address: str, index: Any,
                rpc: Any) -> T.LockSeen | None:
     """`seen` with the ledger's word on a token or NFT leg: asset_ok, or -- while the
@@ -240,18 +294,29 @@ class NodeTrader:
 
     # --- orders and proposals ----------------------------------------------------------
 
+    def fee_terms(self, network: str) -> dict:
+        """This node's lock-fee terms on `network` (lock_fee), {} on a chain it does not run."""
+        chain = self.chains.get(network)
+        return lock_fee(self.state, chain) if chain is not None else {}
+
     def stand(self, order_id: str, give: dict, get: dict) -> None:
         """An order this node answers: it gives `give` for `get`, each
-        {network, kind, asset, amount}. Keys come with a proposal, not the order."""
+        {network, kind, asset, amount}. Keys come with a proposal, not the order.
+
+        The side it gives carries this node's lock-fee terms as they stand now (fee_bps, fee_to; 2026-10-21), kept
+        with the order: the batch posts them and a proposal is held to them (fee_terms_fit), whatever the rate is
+        set to later."""
         import json
         from .trade_orders import one_chain_offer
         if give["network"] == get["network"] and not one_chain_offer(give, get):
             raise ValueError("a swap on one chain settles in one transaction on its own market; "
                              "lock-script swaps are between two chains (and Doginal offers in DOGE)")
         what = lambda d: {k: d.get(k, "") for k in ("network", "kind", "asset")} | {"amount": int(d["amount"])}
+        terms = self.fee_terms(give["network"])
+        mine = what(give) | {"fee_bps": int(terms.get("bps") or 0)} | ({"fee_to": terms["to"]} if terms else {})
         with self._db() as conn:
             conn.execute("INSERT OR REPLACE INTO standing_order(id, give, get) VALUES(?,?,?)",
-                         (order_id, json.dumps(what(give)), json.dumps(what(get))))
+                         (order_id, json.dumps(mine), json.dumps(what(get))))
         courier.mesh_inbox(self.state)                    # reachable on the mesh for whoever takes it
 
     def delegate(self, order_id: str, give: dict, get: dict, key_hex: str, deposit: dict, payout: dict,
@@ -460,9 +525,10 @@ class NodeTrader:
 
     def leg(self, network: str, amount: int, taker_key: bytes, kind: str = "coin",
             asset: str = "") -> T.Leg:
-        """A leg this node gives: its trade key as giver. A token or NFT goes from its home
-        address (state.home_address), where the node's own tokens are kept."""
-        return T.Leg(network, kind, str(asset), int(amount), self.key.pubkey.hex(), taker_key.hex())
+        """A leg this node gives: its trade key as giver, its own lock-fee terms on that chain (2026-10-21). A token or
+        NFT goes from its home address (state.home_address), where the node's own tokens are kept."""
+        return T.with_fee(T.Leg(network, kind, str(asset), int(amount), self.key.pubkey.hex(), taker_key.hex()),
+                          self.fee_terms(network))
 
     # --- telling the other nodes ----------------------------------------------------------
 
@@ -617,7 +683,9 @@ class NodeTrader:
               and they_get.giver_key == mine
               and they_give.network == want_get["network"] and they_give.kind == want_get["kind"]
               and they_give.asset == want_get["asset"] and they_give.amount >= want_get["amount"]
-              and they_give.taker_key == mine)
+              and they_give.taker_key == mine
+              # The operator fee in this node's own lock: none, or exactly the terms the order was listed with.
+              and fee_terms_fit(they_get, want_give))
         if not ok:
             courier.send(self.state, self.messaging, bytes.fromhex(peer),
                          M.build("cancel", said["id"], reason="those are not this order's terms"))
@@ -708,7 +776,7 @@ class NodeTrader:
             if keep:
                 rpc.call("lockunspent", True, keep)
 
-    def _lock_doginal(self, leg: T.Leg, redeem: bytes, rpc: Any) -> str:
+    def _lock_doginal(self, leg: T.Leg, redeem: bytes, rpc: Any, reserve: int = H.DOGINAL_RESERVE) -> str:
         """The Doginal into its lock from this node's wallet (htlc.doginal_lock_outputs):
         the coin holding exactly it at offset 0 as input 0, whole to the lock as output 0;
         the reserve to the same lock as output 1; clean wallet coins for both and the fee
@@ -730,7 +798,7 @@ class NodeTrader:
                 break
         if found is None:
             raise ValueError(f"this node's wallet does not hold Doginal {leg.asset}")
-        outputs = H.doginal_lock_outputs(found["value"], redeem)
+        outputs = H.doginal_lock_outputs(found["value"], redeem, reserve)
         owed = sum(v for v, _ in outputs[1:])
         clean = sorted(self.doginals.spendable([c for c in coins if c is not found]), key=lambda c: c["value"])
         change_script = txbuild.p2pkh_script(rpc.call("getrawchangeaddress"))
@@ -752,10 +820,10 @@ class NodeTrader:
             raise ValueError("this node's wallet could not sign its Doginal lock")
         return rpc.call("sendrawtransaction", signed["hex"])
 
-    def _lock_asset(self, leg: T.Leg, lock_address: str, chain: Any, rpc: Any) -> str:
+    def _lock_asset(self, leg: T.Leg, lock_address: str, chain: Any, rpc: Any, value: int = T.LOCK_RESERVE) -> str:
         """The token or NFT into the lock, from this node's home address, with the reserve
         that pays its way out as the lock output (the reference: last, so the lock is the
-        recipient)."""
+        recipient). `value`: the reserve and this node's operator fee (trade.fund_value)."""
         from . import inscriptions as I, payload as P, tokens as tokenlib
         if leg.kind == "token":
             payload = tokenlib.send_payload(int(leg.asset), leg.amount)
@@ -763,32 +831,40 @@ class NodeTrader:
             payload = P.AnyData(data=I.Transfer(txid=bytes.fromhex(leg.asset)).encode()).encode()
         sender = tokenlib.TokenSender(rpc, chain.params)
         prepared = sender.prepare(self.state.home_address(chain), payload, lock_address,
-                                  reference_value=T.LOCK_RESERVE)
+                                  reference_value=int(value))
         return sender.broadcast(prepared)
 
-    def _way_out(self, coin: dict, leg: T.Leg, redeem: bytes, chain: Any, to: str = ""):
+    def _way_out(self, coin: dict, leg: T.Leg, redeem: bytes, chain: Any, to: str = "",
+                 operator: tuple[int, str] | None = None, refund: bool = False):
         """The claim or refund's inputs and outputs, to this node (or `to`): the coin itself, or the
-        token/NFT moved out by the lock's own reserve."""
+        token/NFT moved out by the lock's own reserve. A claim pays the locker's `operator` fee
+        (trade.payee) as an output of its own; a refund gives everything back (2026-10-21)."""
         to = to or self._address(leg.network)
         if leg.kind == "coin":
-            return H.pay_out(coin, to, params=chain.params)
+            return H.pay_out(coin, to, fee=T.claim_fee(leg.network), params=chain.params, operator=operator)
         if leg.kind == "doginal":
-            return H.doginal_out(coin, {"txid": coin["txid"], "vout": 1, "value": coin["reserve"]}, to)
-        return H.move_out(coin, H.address_of(redeem, chain.params), T.move_data(leg), to)
+            return H.doginal_out(coin, {"txid": coin["txid"], "vout": 1, "value": coin["reserve"]}, to,
+                                 operator=operator, refund=refund)
+        return H.move_out(coin, H.address_of(redeem, chain.params), T.move_data(leg), to,
+                          operator=operator, params=chain.params)
 
-    def _delegated_lock(self, held: dict, leg: T.Leg, lock_address: str, chain: Any, rpc: Any) -> str:
+    def _delegated_lock(self, held: dict, leg: T.Leg, lock_address: str, chain: Any, rpc: Any,
+                        value: int | None = None) -> str:
         """The seller's side into its lock from the order's deposit address, signed with the order's key: a coin
         straight in; a token or NFT as one OP_RETURN plus the lock's reserve (last, so the lock is the recipient)."""
         import contextlib
         from . import encoding, fees, funding, inscriptions as I, payload as P, tokens as tokenlib, txbuild
         deposit = held["deposit"][leg.network]
         lock_script = txbuild.p2pkh_script(lock_address)
+        # What the lock holds (trade.fund_value): the amount with the claim's network fee and the operator fee on
+        # top, or the reserve and the operator fee beside a token or NFT (2026-10-21).
+        value = T.fund_value(leg) if value is None else int(value)
         if leg.kind == "coin":
-            outputs = [(leg.amount, lock_script)]
+            outputs = [(value, lock_script)]
         elif leg.kind in ("token", "nft"):
             raw = (tokenlib.send_payload(int(leg.asset), leg.amount) if leg.kind == "token"
                    else P.AnyData(data=I.Transfer(txid=bytes.fromhex(leg.asset)).encode()).encode())
-            outputs = [(0, txbuild.op_return_script(encoding.encode_class_c(raw))), (T.LOCK_RESERVE, lock_script)]
+            outputs = [(0, txbuild.op_return_script(encoding.encode_class_c(raw))), (value, lock_script)]
         else:
             raise ValueError(f"a delegated order does not lock a {leg.kind} yet")
         with contextlib.closing(self.state.token_index(chain).open()) as db:
@@ -835,14 +911,16 @@ class NodeTrader:
             peer = bytes.fromhex(link["peer"])
             if step == T.LOCK:
                 lock_address = H.address_of(trade.my_redeem(), give_chain.params)
+                # The sender pays (2026-10-21): the claim's network fee and this arcade's operator fee go in with it.
+                value = T.fund_value(trade.give, trade.get)
                 if held:
-                    txid = self._delegated_lock(held, trade.give, lock_address, give_chain, grpc)
+                    txid = self._delegated_lock(held, trade.give, lock_address, give_chain, grpc, value)
                 elif trade.give.kind == "coin":
-                    txid = self._send_coins(grpc, trade.give.network, lock_address, trade.give.amount)
+                    txid = self._send_coins(grpc, trade.give.network, lock_address, value)
                 elif trade.give.kind == "doginal":
-                    txid = self._lock_doginal(trade.give, trade.my_redeem(), grpc)
+                    txid = self._lock_doginal(trade.give, trade.my_redeem(), grpc, value)
                 else:
-                    txid = self._lock_asset(trade.give, lock_address, give_chain, grpc)
+                    txid = self._lock_asset(trade.give, lock_address, give_chain, grpc, value)
                 tx = grpc.call("getrawtransaction", txid, 1)
                 vout = next(o["n"] for o in tx["vout"]
                             if lock_address in o["scriptPubKey"].get("addresses", []))
@@ -852,14 +930,16 @@ class NodeTrader:
                     "locked", trade.id, network=trade.give.network, txid=txid, vout=vout))
             elif step == T.CLAIM:
                 coin = {**theirs, "value": facts.theirs.value, "reserve": facts.theirs.reserve}
-                inputs, outputs = self._way_out(coin, trade.get, trade.their_redeem(), get_chain, to=home_get)
+                inputs, outputs = self._way_out(coin, trade.get, trade.their_redeem(), get_chain, to=home_get,
+                                                operator=T.payee(trade.get, trade.give))
                 txid = trpc.call("sendrawtransaction", H.claimed(
                     inputs, outputs, trade.their_redeem(), bytes.fromhex(trade.secret), key.sign))
                 courier.send(self.state, self.messaging, peer, M.build(
                     "claimed", trade.id, network=trade.get.network, txid=txid))
             elif step == T.REFUND:
                 coin = {**mine, "value": facts.mine.value, "reserve": facts.mine.reserve}
-                inputs, outputs = self._way_out(coin, trade.give, trade.my_redeem(), give_chain, to=home_give)
+                inputs, outputs = self._way_out(coin, trade.give, trade.my_redeem(), give_chain, to=home_give,
+                                                refund=True)
                 txid = grpc.call("sendrawtransaction", H.refunded(
                     inputs, outputs, trade.my_redeem(), key.sign))
                 courier.send(self.state, self.messaging, peer, M.build(

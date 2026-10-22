@@ -54,6 +54,7 @@ from .. import bids as bidslib
 from .. import standing as standinglib
 from .. import collections as collectionlib
 from .. import approvals as approvalslib
+from .. import send_refs as sendrefs
 from .. import payload as P
 from .. import referee as refereelib
 from .. import escrow as escrowlib
@@ -386,6 +387,9 @@ PAGE_TOKENS = 50
 #: Which wallet the node's own machine is showing: "node" for its built-in
 #: wallet, absent for the signed-in account's (app._account_view).
 VIEW_COOKIE = "arcade_view"
+#: Set when somebody signs out on the arcade's own machine, so it does not open as its operator account again at
+#: once (_operator_here); /view/account clears it.
+OUT_COOKIE = "arcade_out"
 #: The other accounts signed in on this browser, on the node's own machine
 #: only: their session tokens, newest first (2026-09-30: "a way to have
 #: multiple wallets imported into the local web ui").
@@ -1009,6 +1013,7 @@ def create_app(state: AppState) -> FastAPI:
                               samesite="strict")
         else:
             answer.delete_cookie(VIEW_COOKIE)
+            answer.delete_cookie(OUT_COOKIE)
         return answer
 
     def _again(where: str, **context: Any) -> RedirectResponse:
@@ -1030,6 +1035,57 @@ def create_app(state: AppState) -> FastAPI:
         token = _hold(**context)
         return RedirectResponse(f"{where}{'&' if '?' in where else '?'}"
                                 f"held={token}", status_code=303)
+
+    # --- the scripts and the stylesheet every page loads, kept by the browser (2026-10-20: "measure the load
+    # times ... offer solutions"; every tab switch downloaded ~250 KB of the same code again). Each is asked for as
+    # "/wallet.js?v=<fingerprint of what is served>": that exact address is kept for good, any change makes a new
+    # address, and the pages themselves are still never cached -- so a browser can never run an old copy (the reason
+    # these were no-store: a stale copy of the code that derives somebody's keys has no acceptable failure mode).
+    ASSETS = {"/wallet.js": "wallet_js.js", "/coins.js": "coins.js", "/signin.js": "signin.js",
+              "/messaging.js": "messaging_js.js", "/qrscan.js": "qrscan.js", "/base.css": "base_css.css"}
+    _asset_kept: dict = {}
+
+    def _assets_mark() -> str:
+        """ONE fingerprint for all of them together: they import one another (in a circle, too), and a page must never
+        load two copies of a module under two addresses -- so any change to any of them changes every address."""
+        stamps = tuple((TEMPLATE_DIR / f).stat().st_mtime_ns for f in ASSETS.values())
+        kept = _asset_kept.get("")
+        if kept and kept[0] == stamps:
+            return kept[1]
+        h = hashlib.sha256()
+        for f in ASSETS.values():
+            h.update((TEMPLATE_DIR / f).read_bytes())
+        mark = h.hexdigest()[:12]
+        _asset_kept.clear()
+        _asset_kept[""] = (stamps, mark)
+        return mark
+
+    def _asset(path: str) -> tuple[str, str]:
+        """(body, fingerprint) of one asset, its references to the others versioned too."""
+        mark = _assets_mark()
+        kept = _asset_kept.get(path)
+        if kept and kept[0] == mark:
+            return kept[1], mark
+        body = _versioned((TEMPLATE_DIR / ASSETS[path]).read_text())
+        _asset_kept[path] = (mark, body)
+        return body, mark
+
+    def _versioned(text: str) -> str:
+        """Every quoted reference to an asset ("/wallet.js", '/coins.js', `/signin.js`) as its fingerprinted address."""
+        mark = None
+        for path in ASSETS:
+            if path not in text:
+                continue
+            mark = mark or _assets_mark()
+            for q in ('"', "'", "`"):
+                text = text.replace(f"{q}{path}{q}", f"{q}{path}?v={mark}{q}")
+        return text
+
+    def _asset_response(request: Request, path: str) -> Response:
+        body, mark = _asset(path)
+        kind = "text/css" if path.endswith(".css") else "application/javascript"
+        keep = ("public, max-age=31536000, immutable" if request.query_params.get("v") == mark else "no-store")
+        return Response(body, media_type=kind, headers={"Cache-Control": keep})
 
     def render(request: Request, template: str, **context: Any) -> HTMLResponse:
         """Render a page, never from a cache.
@@ -1094,6 +1150,10 @@ def create_app(state: AppState) -> FastAPI:
         # has since gone. A page painted mid-send and restored from cache was
         # part of how an interface got stuck looking busy against an idle server.
         response.headers["Cache-Control"] = "no-store, must-revalidate"
+        # The scripts and the stylesheet by their fingerprinted addresses, which the browser keeps (2026-10-20).
+        body = _versioned(response.body.decode("utf-8"))
+        response.body = body.encode("utf-8")
+        response.headers["content-length"] = str(len(response.body))
         # Only this wallet may put one of its pages in a frame. The approval
         # pop-up under a running inscription is one, and that is the reason
         # for the rule: an inscribed page could otherwise frame the same
@@ -1228,10 +1288,12 @@ def create_app(state: AppState) -> FastAPI:
 
     # --- overview -------------------------------------------------------------
 
-    def _arcades_running() -> dict:
+    def _arcades_running(with_ids: bool = False) -> dict:
         """How many OTHER arcades are running (2026-10-19: Overview "should show how many other Dogecoin
         arcades are running"): linked to this one now, reached in the last hour, or announced on the chain in the
-        last day -- each arcade once, by its mesh key."""
+        last day -- each arcade once, by its mesh key. With `with_ids`, which ones too (`ids`, their mesh keys), for
+        Overview's Arcades panel (2026-10-21: one row per arcade running on the mesh); the counts stay as they
+        were for the pages that read only them."""
         mesh = getattr(state, "mesh", None)
         live, me, linked = set(), "", 0
         if mesh is not None and getattr(mesh, "loop", None) is not None:
@@ -1249,7 +1311,11 @@ def create_app(state: AppState) -> FastAPI:
             pass
         live.discard(me)
         live.discard(None)
-        return {"running": len(live), "linked": linked}
+        live.discard("")
+        out = {"running": len(live), "linked": linked}
+        if with_ids:
+            out["ids"] = sorted(live)
+        return out
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
@@ -6842,9 +6908,25 @@ def create_app(state: AppState) -> FastAPI:
         from .. import doginals as D
         if not D.INSCRIPTION_ID.match(str(key or "").lower()):
             return None
+        nets = {id(g): n for n, g in (fundinglib.GUARD_BY_NET or {}).items()}
         for guard in [g for g in [fundinglib.GUARD] if g is not None] + [g for _, g in fundinglib.GUARDS]:
+            net = nets.get(id(guard)) or ("doge" if guard is fundinglib.GUARD else "")
+            read = str(key).lower()
+            # An inscription that names a delegate shows the delegate's content and type (rules 4, 2026-10-21),
+            # as ord-pepecoin's and wonky-ord's /content do -- once: a delegate is not followed on to its own. Known
+            # only from this arcade's own walk of that chain; without one, the inscription's own envelope, as before.
+            said = _ord_delegate(net, read)
+            if said is not None:
+                if not said["known"]:
+                    # ord: `.ok_or_not_found(|| format!("delegate {inscription_id}"))`
+                    return contentlib._missing("its delegate is not an inscription this arcade knows")
+                if said["delegates"] and said["dialect"] == "pepecoin":
+                    # ord-pepecoin's into_body() is None for an inscription that names a delegate, so a delegate
+                    # that names one of its own has no content there (wonky-ord serves its body: Dogecoin does).
+                    return contentlib._missing("its delegate names a delegate of its own")
+                read = said["delegate"]
             try:
-                ctype, body = guard.content(str(key).lower())
+                ctype, body = guard.content(read)
             except Exception:                               # noqa: BLE001 -- not on this chain, or not readable now
                 continue
             # The same rules as the arcade's own pieces (content.content): a type it renders, else a download.
@@ -6855,6 +6937,18 @@ def create_app(state: AppState) -> FastAPI:
                 headers["Content-Disposition"] = "attachment"
             return Response(body, media_type=safe or "application/octet-stream", headers=headers)
         return None
+
+    def _ord_delegate(net: str, inscription: str) -> dict | None:
+        """The delegate this arcade's own ord index of `net` says an inscription names (DoginalIndex.delegate, with the
+        chain's dialect), or None: no index of that chain, an index not walked that far, or no delegate."""
+        if not net:
+            return None
+        try:
+            index = state.ord_indexes().get(net)
+            said = index.delegate(inscription) if index is not None else None
+        except Exception:                                   # noqa: BLE001 -- an index that cannot say: as before
+            return None
+        return {**said, "dialect": index.dialect} if said else None
 
     def _inscription_content(key: str, download: int = 0, reveal: int = 0):
         """An inscription's bytes -- screened first when this arcade screens
@@ -7706,12 +7800,39 @@ def create_app(state: AppState) -> FastAPI:
         """
         if not isinstance(body, dict):
             return contentlib._json({"error": "send a JSON object"}, status=400)
+        try:
+            ref = sendrefs.check_ref(body.get("ref"))
+        except ValueError as exc:
+            return contentlib._json({"error": str(exc)}, status=400)
         chain, _ = _token_chain()
         if state.public or doorlib.from_outside(request.headers, request.headers.get("host", ""),
                                                 state.public_hosts):
-            return _ask_the_reader(request, chain, body)
-        if body.get("silent") is True:
-            return _node_silent_send(request, chain, body)
+            # The reader's own wallet is the scope; nobody signed in has none, and is
+            # told so by _ask_the_reader as before.
+            scope, source = _viewer_of(request, chain), "reader"
+            ask = lambda: _ask_the_reader(request, chain, body)   # noqa: E731
+        else:
+            scope, source = sendrefs.NODE, "node"
+            ask = ((lambda: _node_silent_send(request, chain, body)) if body.get("silent") is True
+                   else (lambda: _file_node_request(body)))
+        if ref is None or not scope:
+            return ask()
+        # A page's retry of a send it named (2026-10-21): the same (wallet, chain, ref)
+        # answers with the first request as it stands now. The lock is this ref's
+        # alone, so a second POST waits for the first and nothing else does.
+        key = (scope, chain.network, ref)
+        refs = state.send_refs
+        with refs.held(key):
+            first = refs.find(*key)
+            if first is not None:
+                return contentlib._json({**_send_ref_now(first), "repeat": True}, status=200)
+            answer = ask()
+            if answer.status_code == 202:             # filed: remembered, even if it failed
+                told = json.loads(answer.body)
+                refs.remember(*key, request_id=str(told["id"]), source=source, told=told)
+            return answer
+
+    def _file_node_request(body: dict):
         try:
             filed = _file_request("page", body)
         except approvalslib.RequestError as exc:
@@ -7720,6 +7841,28 @@ def create_app(state: AppState) -> FastAPI:
             return contentlib._json({"error": f"could not file the request: {exc}"},
                                     status=503)
         return contentlib._json(filed, status=202)
+
+    def _send_ref_now(kept: dict) -> dict:
+        """A remembered request as it stands now: the live row where there is one (the
+        approvals queue is kept on disk; a reader's question lives in memory until a
+        restart), else the last answer kept with the ref."""
+        rid = kept["request_id"]
+        if rid in _page_sends:
+            return _page_send_told(_page_sends[rid])
+        if kept["source"] == "node":
+            row = state.approvals.get(rid)
+            if row is not None:
+                return _described(row)
+        told = dict(kept["told"])
+        if told.get("status") == "pending" and kept["source"] == "reader" \
+                and time.time() - kept["created"] > PAGE_SEND_FOR:
+            told["status"] = "expired"            # as the question in memory would have
+        if told.get("status") == "sent" and told.get("txid"):
+            status = _tx_status(state.chain_named(kept["network"]), told["txid"])
+            if status is not None:
+                told["confirmations"] = status["confirmations"]
+                told["confirmed"] = status["confirmed"]
+        return told
 
     def _node_silent_send(request: Request, chain, body: dict):
         """A page asks the node's own wallet to send with {silent: true}: the node
@@ -7908,6 +8051,9 @@ def create_app(state: AppState) -> FastAPI:
             row.update(status=status, error=str(said.get("error") or "")[:200])
         else:
             return JSONResponse({"detail": "sent, denied or failed"}, status_code=400)
+        # A question a page named with a ref keeps its answer past a restart.
+        state.send_refs.update(row["id"], status=row["status"], txid=row["txid"],
+                               error=row["error"])
         return JSONResponse({"ok": True})
 
     @app.options("/r/send")
@@ -7969,9 +8115,12 @@ def create_app(state: AppState) -> FastAPI:
         if request_id in _page_sends:              # a question for a signed-in reader
             return contentlib._json(_page_send_told(_page_sends[request_id]))
         row = state.approvals.get(request_id)
-        if row is None:
+        if row is not None:
+            return contentlib._json(_described(row))
+        kept = state.send_refs.by_id(request_id)  # a named question, after a restart
+        if kept is None:
             return contentlib._missing("no such request")
-        return contentlib._json(_described(row))
+        return contentlib._json(_send_ref_now(kept))
 
     @app.get("/r/contacts.js")
     def r_contacts_js():
@@ -8020,8 +8169,12 @@ def create_app(state: AppState) -> FastAPI:
                 state.pagestore.remove(page, body.get("key", ""))
             elif op == "clear":
                 state.pagestore.clear(page)
+            elif op == "history":
+                key = body.get("key")
+                return JSONResponse({"ok": True, "history": state.pagestore.history(
+                    page, None if key in (None, "") else str(key))})
             else:
-                raise StoreError("op must be set, remove or clear")
+                raise StoreError("op must be set, remove, clear or history")
         except StoreError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
         return JSONResponse({"ok": True})
@@ -8365,19 +8518,15 @@ def create_app(state: AppState) -> FastAPI:
         """
         return RedirectResponse("/docs/features.md", status_code=307)
 
-    #: The arcade's affiliates (2026-10-15): (name, link, what they do). An outside Doginals index was one until
-    #: the operator removed it the same day, with its API.
-    #: explorer is where this arcade reads Doginals from (arcade/doginals.py).
-    AFFILIATES = (
-        ("Anti Doginal Dogs", "https://antidoginaldogs.com",
-         "Recursive transformative art on Dogecoin."),
-    )
-
     @app.get("/affiliates", response_class=HTMLResponse)
     def affiliates(request: Request):
-        """The Affiliates tab, between the Exchange and the Docs (2026-10-15)."""
-        return render(request, "affiliates.html",
-                      affiliates=[{"name": n, "url": u, "about": a} for n, u, a in AFFILIATES])
+        """The Affiliates tab, between the Exchange and the Docs (2026-10-15): the operator's own added sites, then the
+        sites linked arcades share that the operator ticked in Admin -> Affiliates, under who shares them (the operator
+        2026-10-21; arcade/affiliates.py). The fixed list it had (antidoginaldogs.com) is affiliates.SEED, what an
+        operator who never saved a list has. Every field is plain text through autoescaping, never |safe."""
+        from .. import affiliates as affiliateslib
+        tab = affiliateslib.for_tab(state)
+        return render(request, "affiliates.html", affiliates=tab["own"], shared=tab["groups"])
 
     @app.get("/docs", response_class=HTMLResponse)
     def docs_index(request: Request):
@@ -10060,12 +10209,32 @@ def create_app(state: AppState) -> FastAPI:
                 or request.url.scheme) == "https"
 
     def signed_in(request: Request):
-        """The account this request belongs to, or None. Touches the seat."""
+        """The account this request belongs to, or None. Touches the seat. On the arcade's own machine with nobody
+        signed in, its operator account (_operator_here)."""
         try:
-            return state.accounts().session(
+            found = state.accounts().session(
                 request.cookies.get(SESSION_COOKIE, ""))
         except Exception:
             return None
+        return found if found is not None else _operator_here(request)
+
+    def _operator_here(request: Request):
+        """The arcade's own machine, nobody signed in: the arcade IS its operator account (2026-10-20: on the
+        a test machine "Other operators are seeing my operator name as strawberry, but in my your arcade page it says I have not
+        claimed a name" -- the page drew the installer's built-in wallet, which has no name). Never for a public
+        request; not after the browser switched to the built-in wallet (/view/node) or signed out here (OUT_COOKIE);
+        not for an operator with no wallet of its own (a username and password: that operator IS the node)."""
+        if not state.operator or request.cookies.get(VIEW_COOKIE) == "node" or request.cookies.get(OUT_COOKIE):
+            return None
+        if _public_request(request):
+            return None
+        try:
+            account = state.accounts().account(state.operator)
+        except Exception:                                  # noqa: BLE001 -- no accounts here yet
+            return None
+        if account is None or not account.seated or not _account_address(account.pubkey, _account_chain()):
+            return None
+        return account
 
     @app.get("/bip39-english.txt")
     def bip39_wordlist():
@@ -10102,11 +10271,9 @@ def create_app(state: AppState) -> FastAPI:
                         headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
     @app.get("/wallet.js")
-    def wallet_js():
+    def wallet_js(request: Request):
         """Signing up and signing in, as a person does it (templates/wallet_js.js)."""
-        return Response((TEMPLATE_DIR / "wallet_js.js").read_text(),
-                        media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
+        return _asset_response(request, "/wallet.js")
 
     @app.get("/node-wallet.js")
     def node_wallet_js():
@@ -10123,37 +10290,33 @@ def create_app(state: AppState) -> FastAPI:
                         headers={"Cache-Control": "no-store"})
 
     @app.get("/messaging.js")
-    def messaging_js():
+    def messaging_js(request: Request):
         """Opening and sealing messages in the browser (templates/messaging_js.js)."""
-        return Response((TEMPLATE_DIR / "messaging_js.js").read_text(),
-                        media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
+        return _asset_response(request, "/messaging.js")
 
     @app.get("/qrscan.js")
-    def qrscan_js():
+    def qrscan_js(request: Request):
         """Scanning a QR code with the camera (templates/qrscan.js; the reader is vendor/jsQR.js)."""
-        return Response((TEMPLATE_DIR / "qrscan.js").read_text(),
-                        media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
+        return _asset_response(request, "/qrscan.js")
 
     @app.get("/coins.js")
-    def coins_js():
+    def coins_js(request: Request):
         """The browser's coin half (templates/coins.js)."""
-        return Response((TEMPLATE_DIR / "coins.js").read_text(),
-                        media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
+        return _asset_response(request, "/coins.js")
 
     @app.get("/signin.js")
-    def signin_js():
+    def signin_js(request: Request):
         """The browser's half of the login (templates/signin.js).
 
-        Not cached. It is small, and a stale copy of the code that derives
-        somebody's keys is the one kind of staleness with no acceptable
-        failure mode.
+        A stale copy of the code that derives somebody's keys is the one kind of staleness with no acceptable failure
+        mode: so it is kept only under its fingerprinted address (ASSETS), which changes whenever it does.
         """
-        body = (TEMPLATE_DIR / "signin.js").read_text()
-        return Response(body, media_type="application/javascript",
-                        headers={"Cache-Control": "no-store"})
+        return _asset_response(request, "/signin.js")
+
+    @app.get("/base.css")
+    def base_css(request: Request):
+        """The style every page shares (templates/base_css.css, out of base.html since 2026-10-20: 45 KB a page)."""
+        return _asset_response(request, "/base.css")
 
     @app.get("/join", response_class=HTMLResponse)
     def join_page(request: Request):
@@ -10238,6 +10401,8 @@ def create_app(state: AppState) -> FastAPI:
         state.accounts().logout(request.cookies.get(SESSION_COOKIE, ""))
         answer = JSONResponse({"pubkey": None})
         answer.delete_cookie(SESSION_COOKIE)
+        if not _public_request(request):                   # signed out on purpose: not the operator again at once
+            answer.set_cookie(OUT_COOKIE, "1", max_age=365 * 86400, httponly=True, samesite="strict")
         return answer
 
     def _account_row(token: str, current: bool) -> dict | None:
@@ -10804,6 +10969,14 @@ def create_app(state: AppState) -> FastAPI:
                 held += int(coin["value"])
         return held
 
+    def _lock_fee_on(chain) -> dict:
+        """This arcade's operator fee for a lock on `chain` (node_trader.lock_fee): {bps, to}, or {} when Off."""
+        from ..node_trader import lock_fee
+        try:
+            return lock_fee(state, chain)
+        except Exception:                                  # noqa: BLE001 -- no fee rather than no page
+            return {}
+
     def _doginal_needs() -> dict:
         """What Dogecoin a wallet needs ON TOP of its Doginals to move one (2026-10-15: "If the user doesn't have any
         Dogecoin in their wallet, and their only Doge coin is a Doginal they can't make a swap. Those buttons should be
@@ -11357,6 +11530,9 @@ def create_app(state: AppState) -> FastAPI:
 
     #: Addresses whose past coins are being read right now (utxos.backfill).
     _backfilling: set = set()
+    #: The same read-backs, by address, with what a wait is worked out from (plan item 18): the chain, the blocks
+    #: from and to, how far it has got (utxos.backfill_many's `progress`) and when it began.
+    _backfill_runs: dict[str, dict] = {}
 
     @app.post("/account/coins/backfill")
     def account_coins_backfill(request: Request, payload: Any = Body(None)):
@@ -11395,6 +11571,8 @@ def create_app(state: AppState) -> FastAPI:
                 state.set_setting(key, 0)
                 continue
             _backfilling.add(address)
+            _backfill_runs[address] = {"network": chain.network, "start": start, "end": end, "progress": {},
+                                       "began": time.time()}
 
             def run(chain=chain, address=address, key=key, start=start, end=end, index=index):
                 try:
@@ -11412,7 +11590,8 @@ def create_app(state: AppState) -> FastAPI:
                             utxoslib.seed_from_core(index, rpc, chain.params, {address},
                                                     index.indexed_height() or 0)
                         if filed is None:
-                            filed = utxoslib.backfill(index, rpc, chain.params, address, start, end)
+                            filed = utxoslib.backfill(index, rpc, chain.params, address, start, end,
+                                                      progress=(_backfill_runs.get(address) or {}).get("progress"))
                     state.set_setting(key, filed)
                     state.bump_generation()
                     log.info("backfill: %s held %d coins before this node watched it",
@@ -11421,6 +11600,7 @@ def create_app(state: AppState) -> FastAPI:
                     log.warning("backfill of %s stopped: %s", address, exc)
                 finally:
                     _backfilling.discard(address)
+                    _backfill_runs.pop(address, None)
 
             threading.Thread(target=run, daemon=True, name=f"backfill {address}").start()
             started.append({"chain": chain.network, "address": address,
@@ -11566,8 +11746,41 @@ def create_app(state: AppState) -> FastAPI:
         from ..node_trader import swap_big
         return swap_big(state)
 
+    #: /account asked again for the same account while an answer is being worked out waits for that answer instead of
+    #: working it out again (2026-10-20: a page asks from several of its parts at once -- 22 times a minute for one
+    #: phone, ~1.3 s each on .25). Nothing is reused afterwards, so no change can be missed: a 3-second reuse was
+    #: tried first and hid real changes (a key in the pool, quota used, a notice taken away).
+    _account_flight: dict[str, list] = {}
+    _account_flight_lock = threading.Lock()
+
     @app.get("/account")
     def account_state(request: Request):
+        account = signed_in(request)
+        if account is None:
+            return _account_state(request)
+        with _account_flight_lock:
+            flight = _account_flight.get(account.pubkey)
+            first = flight is None
+            if first:
+                flight = _account_flight[account.pubkey] = [threading.Event(), None]
+        if not first:
+            if flight[0].wait(30) and flight[1] is not None:
+                return JSONResponse(flight[1])
+            return _account_state(request)
+        try:
+            answer = _account_state(request)
+            try:
+                flight[1] = json.loads(answer.body)
+            except Exception:                       # noqa: BLE001 -- the waiters work theirs out
+                flight[1] = None
+            return answer
+        finally:
+            flight[0].set()
+            with _account_flight_lock:
+                if _account_flight.get(account.pubkey) is flight:
+                    del _account_flight[account.pubkey]
+
+    def _account_state(request: Request):
         """Everything the page needs to draw itself, and nothing else.
 
         Only ever about the account making the request. An endpoint that
@@ -11699,7 +11912,10 @@ def create_app(state: AppState) -> FastAPI:
                    # Whether the words were ever typed back, for the notice
                    # the Wallet tab shows beside real coins. Spends no longer
                    # wait on it (2026-10-08).
-                   "backed_up": _words_backed_up(account)}
+                   "backed_up": _words_backed_up(account),
+                   # This arcade's lock-fee terms here (node_trader.lock_fee, 2026-10-21): what the
+                   # page writes into the legs it locks, {} when the fee is Off. Never the account's own.
+                   "lock_fee": _lock_fee_on(one)}
             if here:
                 try:
                     index = state.token_index(one)
@@ -13349,10 +13565,11 @@ def create_app(state: AppState) -> FastAPI:
                              "number": row["number"], "chain": chain.network,
                              **unsigned.as_json()})
 
-    def _own_coins(account, chain) -> list[dict]:
+    def _own_coins(account, chain, address: str = "") -> list[dict]:
         """The coins this account can spend on `chain`: the index's, less what
-        this node has already broadcast away, plus change it has not filed yet."""
-        address = _account_address(account.pubkey, chain)
+        this node has already broadcast away, plus change it has not filed yet.
+        `address`, one of the account's own (checked by the caller), else its main one."""
+        address = address or _account_address(account.pubkey, chain)
         if not address:
             return []
         gone = _flights.spent_by(account.pubkey, chain.network)
@@ -13371,7 +13588,7 @@ def create_app(state: AppState) -> FastAPI:
         return out
 
     @app.get("/account/coins")
-    def account_coins(request: Request, chain: str = ""):
+    def account_coins(request: Request, chain: str = "", address: str = ""):
         """The account's own coins on one chain, one row per output.
 
         [Claude 2026-10-15] For the Wallet's Doginals check (2026-10-14: "We have to have the wallet check its own utxo
@@ -13382,13 +13599,59 @@ def create_app(state: AppState) -> FastAPI:
             one = _chain_asked({"chain": chain})
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
+        # One of this account's own addresses only (an imported wallet's, plan item 18); a 403 for any other.
+        address = _own_address_asked(account, one, address)
         try:
-            coins = _own_coins(account, one)
+            coins = _own_coins(account, one, address)
         except Exception as exc:                          # noqa: BLE001 -- a node still catching up
             return JSONResponse({"detail": f"this node cannot read those coins yet: {exc}"}, status_code=503)
-        return JSONResponse({"chain": one.network, "address": _account_address(account.pubkey, one),
+        return JSONResponse({"chain": one.network, "address": address,
                              "doge": bool(one.is_doge), "ltc": bool(one.is_ltc),
                              "ltctest": bool(one.is_ltc_test), "coins": coins})
+
+    #: Transactions one /account/doginal-txs call reads at most: a wallet of 1,500 Doginals is 15 calls, once (each
+    #: answer is kept by the node and by the browser).
+    DOGINAL_TXS_MAX = 100
+
+    @app.post("/account/doginal-txs")
+    def account_doginal_txs(request: Request, payload: Any = Body(None)):
+        """What sits on many transactions' outputs at once, for the Wallet's Doginals (2026-10-21: "I have like
+        over 1500 doginals in that wallet ... whatever is lightest weight for the server"): one call for up to
+        DOGINAL_TXS_MAX transactions, the wallet's coins read once for all of them, where /account/doginal-tx read them
+        once per transaction. `address`: one of this account's own (an imported wallet's), else its main one. Each
+        answer is {txid: [{vout, inscription_id, sat_offset, unknown}]}, or {txid: null} when the chain could not be
+        read for it just now (asked again later)."""
+        from .. import doginals as D
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        one = next((c for c in state.token_chains if c.network == str(said.get("chain") or "doge")), None)
+        if one is None:
+            return JSONResponse({"detail": "no such chain here"}, status_code=404)
+        address = _own_address_asked(account, one, str(said.get("address") or ""))
+        guard = fundinglib.guard_for(address) if address else None
+        if guard is None:
+            return JSONResponse({"detail": "this node does not check inscriptions on that chain"}, status_code=404)
+        txids = said.get("txids")
+        if not isinstance(txids, list) or not 0 < len(txids) <= DOGINAL_TXS_MAX or not all(
+                isinstance(t, str) and re.fullmatch(r"[0-9a-f]{64}", t) for t in txids):
+            return JSONResponse({"detail": f"1 to {DOGINAL_TXS_MAX} transaction ids"}, status_code=400)
+        try:
+            mine = {c["txid"] for c in _own_coins(account, one, address)}
+        except Exception as exc:                          # noqa: BLE001 -- a node still catching up
+            return JSONResponse({"detail": f"this node cannot read your coins yet: {exc}"}, status_code=503)
+        out: dict[str, Any] = {}
+        for txid in dict.fromkeys(txids):
+            if txid not in mine:
+                continue                                  # only transactions holding this wallet's own coins
+            try:
+                held = guard.held(txid)
+            except D.Unknown:
+                out[txid] = None
+                continue
+            out[txid] = [{"vout": vout, "inscription_id": i.get("id"), "sat_offset": i.get("offset"),
+                          "unknown": bool(i.get("unknown"))} for vout, on in sorted(held.items()) for i in on]
+        return JSONResponse({"chain": one.network, "address": address, "txs": out},
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/account/doginal-tx/{txid}")
     def account_doginal_tx(request: Request, txid: str, chain: str = "doge"):
@@ -13855,7 +14118,7 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/account/activity")
     def account_activity(request: Request, chain: str = "", before: int | None = None,
-                         limit: int = 50):
+                         limit: int = 50, address: str = ""):
         """What happened to this account's coins on one chain, newest first.
 
         The Wallet tab's history (2026-10-08: "It needs to give feedback when
@@ -13875,7 +14138,9 @@ def create_app(state: AppState) -> FastAPI:
         if picked is None:
             return JSONResponse({"detail": f"no chain called {chain} here"},
                                 status_code=404)
-        address = _account_address(account.pubkey, picked)
+        # `address=`: one of this account's own (an imported wallet's, plan item 18), else a 403; none, the main one.
+        main = _account_address(account.pubkey, picked)
+        address = _own_address_asked(account, picked, address)
         said: dict[str, Any] = {"chain": picked.network, "label": picked.label,
                                 "address": address, "since": None, "tip": 0,
                                 "rows": [], "more": False}
@@ -13895,7 +14160,7 @@ def create_app(state: AppState) -> FastAPI:
         said["more"] = len(rows) > limit
         rows = rows[:limit]
         # What happened before this arcade followed the address, from the arcade that did (2026-10-19).
-        if not said["more"] and said["since"] is not None and len(rows) < limit:
+        if not said["more"] and said["since"] is not None and len(rows) < limit and address == main:
             tag = (state.vault().by_pubkey(account.pubkey) or {}).get("tag") or ""
             older = _history_elsewhere(tag, picked, address,
                                        min([said["since"]] + [r["height"] for r in rows] + ([before] if before else [])),
@@ -14545,14 +14810,18 @@ def create_app(state: AppState) -> FastAPI:
         account = _signed_in_account(request)
         out = []
         for chain in _account_chains():
+            # Only an account with an open standing buy order on this chain needs the pool read (2026-10-20: every
+            # page asked, nearly every account has none, and pending_takes once took 20 s on .25).
+            mine = [s for s in _standing.mine(account.pubkey, chain.network)
+                    if not s["away"] and s["status"] == standinglib.OPEN]
+            if not mine:
+                continue
             try:
                 index = state.token_index(chain)
                 taking = index.pending_takes()
             except Exception:
                 continue
-            for s in _standing.mine(account.pubkey, chain.network):
-                if s["away"] or s["status"] != standinglib.OPEN:
-                    continue
+            for s in mine:
                 left = s["left_units"]
                 for ask in _crossing(index, s, taking):
                     units = min(left, ask["free"])
@@ -16913,7 +17182,56 @@ def create_app(state: AppState) -> FastAPI:
             raise ValueError("an NFT leg names its inscription")
         return tradelib.Leg(chain.network, kind, asset, 1 if kind == "nft" else amount, "", "")
 
-    def _doginal_lock(account, chain, owner: str, leg, redeem: bytes, hint: Any):
+    def _trade_operator(said: Any, chain) -> tuple[int, str] | None:
+        """The operator fee of the lock a tab names (2026-10-21: "add an operator fee output to each lock
+        script"), as the tab worked it out from the swap's terms (wallet_js.js operatorFee, the same arithmetic as
+        trade.operator_fee): {fee, fee_to} on its leg; None for none. For the tab's OWN lock it is what goes in on top;
+        for the lock it claims, the output its claim pays the other side's operator. Checked to be a payable address
+        and worth an output; how much is the account's own word, about its own swap."""
+        from .. import htlc as htlclib
+        leg = said if isinstance(said, dict) else {}
+        try:
+            fee = int(leg.get("fee") or 0)
+        except (TypeError, ValueError):
+            raise ValueError("an operator fee is a whole number of base units")
+        if fee <= 0:
+            return None
+        to = str(leg.get("fee_to") or "")
+        if not tradelib.payee_ok(to):
+            raise ValueError("an operator fee is paid to an address")
+        if fee < htlclib.dust_of(chain.params):
+            raise ValueError("an operator fee under the dust line would not relay")
+        return fee, to
+
+    def _lock_spend_pays(decoded: dict, owner: str, lock_address: str, kind: str,
+                         operator: tuple[int, str] | None) -> None:
+        """A lock spend the tab hands back pays this account and nobody else -- but for, on a claim, the one output of
+        exactly the operator fee the terms owe the other side's operator (2026-10-21), and, moving a token or NFT out,
+        what is left of the lock's coin back into the lock itself. The account's output is the last (a token's
+        recipient), or for a Doginal the first (its inscription's koinu). ValueError if not."""
+        outs = decoded["vout"]
+        ok = {owner, lock_address}
+        paid = []
+        for o in outs:
+            addresses = o["scriptPubKey"].get("addresses", [])
+            for a in addresses:
+                if a in ok:
+                    continue
+                if kind == "claim" and operator is not None and a == operator[1] and addresses == [a]:
+                    paid.append(round(float(o["value"]) * COIN))
+                    continue
+                raise ValueError("that spend pays somebody besides this account")
+        if paid and paid != [operator[0]]:
+            raise ValueError("that spend pays the operator something other than the fee agreed")
+        # A Doginal comes out with two inputs (the Doginal and its reserve, htlc.doginal_out): its first output is the
+        # Doginal's coin; everything else's last output is the token's recipient, so never the operator's.
+        doginal = len(decoded.get("vin") or []) == 2
+        mine = outs[0 if doginal else -1]["scriptPubKey"].get("addresses", []) if outs else []
+        if mine != [owner]:
+            raise ValueError("a lock spend's last output is this account's" if not doginal
+                             else "a Doginal comes out of its lock as this account's first output")
+
+    def _doginal_lock(account, chain, owner: str, leg, redeem: bytes, hint: Any, reserve: int | None = None):
         """The unsigned lock of one Doginal from this account's own coins. `hint` ({txid, vout}) is
         the coin the tab's wallet already knows carries it; without one, the account's coins are
         read until one does (each reading is kept, so each is read once)."""
@@ -16944,7 +17262,8 @@ def create_app(state: AppState) -> FastAPI:
             if found is None:
                 raise ValueError(f"this account does not hold Doginal {leg.asset} (or the chain cannot be read right now)")
             return fundinglib.build_doginal_lock(
-                db, chain.params, owner, found, leg.asset, htlclib.p2sh_script(redeem), htlclib.DOGINAL_RESERVE,
+                db, chain.params, owner, found, leg.asset, htlclib.p2sh_script(redeem),
+                htlclib.DOGINAL_RESERVE if reserve is None else int(reserve),
                 rate=fees.MIN_FEE_PER_KB, exclude=spent, extra=_flights.change_for(account.pubkey, chain.network))
 
     @app.post("/account/trade/lock")
@@ -16960,6 +17279,8 @@ def create_app(state: AppState) -> FastAPI:
             if lock["refunder"] != _coin_pubkey(account.pubkey, chain):
                 raise ValueError("that lock would refund somebody else; only lock your own")
             leg = _trade_leg(said.get("leg"), chain, account)
+            # This account's arcade's operator fee goes into its own lock on top (2026-10-21).
+            cut = (_trade_operator(said.get("leg"), chain) or (0, ""))[0]
             index = state.token_index(chain)
             mine = _coin_pubkey(account.pubkey, chain)
             if leg.kind == "token":
@@ -16983,7 +17304,8 @@ def create_app(state: AppState) -> FastAPI:
             elif leg.kind == "doginal":
                 # The coin carrying exactly this Doginal at its first koinu goes in whole as output 0
                 # of the lock, its reserve beside it as output 1 (funding.build_doginal_lock).
-                unsigned = _doginal_lock(account, chain, owner, leg, redeem, said.get("coin"))
+                unsigned = _doginal_lock(account, chain, owner, leg, redeem, said.get("coin"),
+                                         reserve=htlclib.DOGINAL_RESERVE + cut)
                 _quota(account, "send")
                 offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
                 return JSONResponse({"offer": offer.id, "lock": htlclib.address_of(redeem, chain.params),
@@ -16991,7 +17313,7 @@ def create_app(state: AppState) -> FastAPI:
             else:
                 raise ValueError("a coin goes into its lock with an ordinary send")
             address = htlclib.address_of(redeem, chain.params)
-            outputs.append((tradelib.LOCK_RESERVE, txbuild.p2pkh_script(address)))
+            outputs.append((tradelib.LOCK_RESERVE + cut, txbuild.p2pkh_script(address)))
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build(
                     db, chain.params, owner, outputs, rate=fees.MIN_FEE_PER_KB, what=what,
@@ -17029,6 +17351,8 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("that coin is not under this lock")
             coin = {"txid": txid, "vout": vout, "value": int(round(float(out["value"]) * COIN))}
             leg = _trade_leg(said.get("leg"), chain, account)
+            # A claim pays the other side's operator the fee its lock holds; a refund gives everything back.
+            operator = _trade_operator(said.get("leg"), chain) if kind == "claim" else None
             if leg.kind == "doginal":
                 # Two inputs under the lock: the Doginal (output 0), then its reserve (output 1) as the fee.
                 with chain.rpc() as rpc:
@@ -17036,13 +17360,16 @@ def create_app(state: AppState) -> FastAPI:
                 if vout != 0 or beside is None or beside["scriptPubKey"]["hex"] != out["scriptPubKey"]["hex"]:
                     raise ValueError("a Doginal's lock is output 0, with its reserve beside it as output 1")
                 inputs, outputs = htlclib.doginal_out(
-                    coin, {"txid": txid, "vout": 1, "value": int(round(float(beside["value"]) * COIN))}, owner)
+                    coin, {"txid": txid, "vout": 1, "value": int(round(float(beside["value"]) * COIN))}, owner,
+                    operator=operator, refund=kind == "refund")
             elif leg.kind == "coin":
-                inputs, outputs = htlclib.pay_out(coin, owner, params=chain.params)
+                inputs, outputs = htlclib.pay_out(coin, owner, fee=tradelib.claim_fee(chain.network),
+                                                  params=chain.params, operator=operator)
             else:
                 # The token or NFT moved out by the lock's own reserve, to this account.
                 inputs, outputs = htlclib.move_out(coin, htlclib.address_of(redeem, chain.params),
-                                                   tradelib.move_data(leg), owner)
+                                                   tradelib.move_data(leg), owner, operator=operator,
+                                                   params=chain.params)
             if kind == "refund":
                 inputs = [{**c, "sequence": htlclib.NOT_FINAL} for c in inputs]
                 locktime = lock["locktime"]
@@ -17079,14 +17406,11 @@ def create_app(state: AppState) -> FastAPI:
                     if under is None or under["scriptPubKey"]["hex"] != htlclib.p2sh_script(redeem).hex():
                         raise ValueError("that spend takes a coin that is not under this lock")
                 # This account, and -- moving a token or NFT out -- what is left of the
-                # lock's coin back into the lock itself; nobody else.
-                ok = {owner, htlclib.address_of(redeem, chain.params)}
-                if any(a not in ok for o in decoded["vout"]
-                       for a in o["scriptPubKey"].get("addresses", [])):
-                    raise ValueError("that spend pays somebody besides this account")
-                last = decoded["vout"][-1]["scriptPubKey"].get("addresses", [])
-                if last != [owner]:
-                    raise ValueError("a lock spend's last output is this account's")
+                # lock's coin back into the lock itself; on a claim, the operator fee agreed; nobody else.
+                kind = "refund" if said.get("kind") == "refund" else "claim"
+                # The terms are read for a claim only: nothing a leg says can stand in the way of a refund.
+                _lock_spend_pays(decoded, owner, htlclib.address_of(redeem, chain.params), kind,
+                                 _trade_operator(said.get("leg"), chain) if kind == "claim" else None)
                 from ..trade_watch import put_scripts, WatchError
                 if said.get("kind") == "refund":
                     scripts = [htlclib.refund_script_sig(sig, redeem) for sig in sigs]
@@ -17139,11 +17463,8 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError("one signature per input")
             if prev is None or prev["scriptPubKey"]["hex"] != htlclib.p2sh_script(redeem).hex():
                 raise ValueError("that coin is not under this lock, or is already spent")
-            if any(a not in (owner, lock_address) for o in decoded["vout"]
-                   for a in o["scriptPubKey"].get("addresses", [])):
-                raise ValueError("that spend pays somebody besides this account")
-            if decoded["vout"][-1]["scriptPubKey"].get("addresses", []) != [owner]:
-                raise ValueError("a lock spend's last output is this account's")
+            _lock_spend_pays(decoded, owner, lock_address, kind,
+                             _trade_operator(said.get("leg"), chain) if kind == "claim" else None)
             locktime = int(decoded.get("locktime", 0))
             if kind == "refund" and locktime != lock["locktime"]:
                 raise ValueError("a refund carries the lock's own time")
@@ -22905,8 +23226,14 @@ def create_app(state: AppState) -> FastAPI:
                 log.exception("card watch")
             time.sleep(cwlib.EVERY)
 
+    def _cardwatch_when_running():
+        running = getattr(state, "running", None)        # a worker waiting for the run lock (supervisor.py)
+        if running is not None:
+            running.wait()
+        _cardwatch_loop()
+
     if not getattr(state, "no_background", False) and "PYTEST_CURRENT_TEST" not in os.environ:
-        threading.Thread(target=_cardwatch_loop, name="card-watch", daemon=True).start()
+        threading.Thread(target=_cardwatch_when_running, name="card-watch", daemon=True).start()
 
     def _game_by_txid(txid: str) -> dict | None:
         """The game an inscription on the Games tab's chain is, or None."""
@@ -23290,6 +23617,949 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"address": addr, "chain": chain.network,
                              "balance": bal, "watched": watched})
 
+    # --- imported wallets (plan item 18, 2026-10-20) ---------------------------------------------------------
+    #
+    # "We should be able to import any with private key or 12 word seed phrase, even if that wallet has not been used
+    # in Dogecoin arcade." The key or phrase stays in the browser, sealed under the account's password in a second
+    # record (/account/imported, accounts.ImportedWallets). This node is told only each imported ADDRESS, with a
+    # signature by its key (wallet_imports.check_proof), and from then on treats it as the account's own: it watches
+    # it, reads back the coins it already held, answers its balance, coins and history to this account only, and
+    # builds unsigned sends from it. The vault blob that /signin hands out is not touched.
+
+    from .. import wallet_imports as importslib
+
+    #: One import, removal or read-back start at a time: the cap, the "one read-back per chain" check and the start
+    #: it guards happen together (an RLock: a start inside a registration takes it again).
+    _imports_lock = threading.RLock()
+    #: Imported addresses waiting for their read-back: (network, address) -> when they were queued. Either the chain
+    #: cannot be read right now (no Core here, none to borrow) or another read-back of that chain runs first. One
+    #: thread starts them once it can (`_rescan_queue_runner`).
+    _rescan_queue: dict[tuple[str, str], float] = {}
+    _rescan_queue_running = threading.Event()
+
+    # --- an imported wallet's whole past, from the Core's own wallet (2026-10-21) -------------------------
+    # Dogecoin and Pepecoin Core 1.14 have no scantxoutset, and the block read-back only goes down to the index's
+    # floor (on Dogecoin a week of blocks): coins an imported wallet got before it were never found. On these chains
+    # the address is imported WATCH-ONLY into this node's Core (never a key) with a rescan of the whole chain, while the
+    # chain's reads are borrowed from a linked arcade that shares it (core_catchup.hold): a 1.14 Core answers nothing
+    # until its rescan is done. Never started with nobody to borrow from. PEP TEST stays on the read-back unless
+    # switched on (2026-10-21): the @ashvale Bank's wallet is on that Core, and a rescan makes it wait.
+    from .. import core_catchup as catchuplib
+    catchuplib.store = (lambda: state.setting("core_rescan_holds", None) or {},
+                        lambda holds: state.set_setting("core_rescan_holds", holds or None))
+    CORE_RESCAN_ON = ("doge", "main")
+    #: Chains no wallet may be imported on (2026-10-21: "No imports for pep test").
+    NO_IMPORTS = ("test",)
+    #: A chain whose Core rescan failed: network -> (failures in a row, not before this time). A Core is never made to
+    #: rescan its whole chain again at once: 10 minutes, then 20, then it stops until the arcade restarts.
+    _core_retry: dict[str, tuple[int, float]] = {}
+    CORE_RETRY_SECONDS, CORE_RETRY_MAX = 600.0, 3
+    CORE_BUSY_SECONDS = 180.0
+    #: Blocks a Core rescans a second, until one is measured here (Dogecoin 1.14 on a spinning disk, cautious).
+    CORE_RESCAN_RATE_GUESS = 600.0
+
+    def _core_rescan_on(chain) -> bool:
+        if chain.borrowed:
+            return False
+        said = state.setting(f"import_core_rescan:{chain.network}", None)
+        return bool(said) if said is not None else chain.network in CORE_RESCAN_ON
+
+    def _core_rescan_rate(chain) -> float:
+        try:
+            return max(50.0, float(state.setting(f"core_rescan_rate:{chain.network}", None) or CORE_RESCAN_RATE_GUESS))
+        except (TypeError, ValueError):
+            return CORE_RESCAN_RATE_GUESS
+
+    def _can_read_back(chain) -> bool:
+        """Whether an import's read-back can start now: the chain readable, and for a Core rescan somebody to borrow
+        its reads from meanwhile, and no failed rescan still waiting out its back-off."""
+        if not _readable(chain):
+            # A Core held at a rescan reads as offline itself (its queue full), yet its reads are borrowed: the batch
+            # is tried, finds it busy, and waits (utxos.CoreBusy), rather than the page saying nobody can be read.
+            if not (_core_rescan_on(chain) and catchuplib.held(chain.network) and catchuplib.can_borrow(chain)):
+                return False
+        if not _core_rescan_on(chain):
+            return True
+        fails, until = _core_retry.get(chain.network, (0, 0.0))
+        if fails >= CORE_RETRY_MAX or time.time() < until:
+            return False
+        return catchuplib.can_borrow(chain)
+
+    def _chain_busy(chain) -> dict | None:
+        """Whether an import on `chain` must wait (2026-10-21: "the client side needs to know they can't import
+        a wallet until the re-scan is finished"): a read-back running here, or this node's Core still rescanning
+        (from before a restart, kept by core_catchup's hold). {says, eta} or None."""
+        running = _chain_rescan(chain.network)
+        if running is not None:
+            eta = _wait_for(running["address"])
+            nxt = eta + (_run_left({"network": chain.network, "end": state.token_index(chain).indexed_height() or 0,
+                                    "core_next": True}) if _core_rescan_on(chain) else 0)
+            return {"eta": int(nxt), "says": "A rescan is running on this coin right now. You can still import: your "
+                                             "wallet joins the next rescan, which starts as soon as this one is done "
+                                             f"(check back in {importslib.say_wait(nxt)})."}
+        if catchuplib.held(chain.network):
+            return {"eta": None, "says": "This arcade's node is still rescanning this coin's chain. You can still "
+                                         "import: your wallet joins the next rescan, which starts as soon as this one "
+                                         "is done. Check back later."}
+        return None
+
+    def _sweep_imports() -> None:
+        """At start (and a minute after, once the chains answer): every imported wallet on a chain that rescans in the
+        Core and has not had its whole past read yet -- one imported before 2026-10-21, a batch cut short by a
+        restart -- goes on the queue, and the next batch takes them all."""
+        # A chain whose Core is busy at a rescan is not counted ready at first (_account_chains): tried again each
+        # minute, for an hour, until every chain an import may wait on has been swept (2026-10-21: @apple's Dogecoin
+        # import sat off the queue after a restart while its Core rescanned).
+        swept: set[str] = set()
+        for _ in range(60):
+            time.sleep(60)
+            _sweep_once(swept)
+            if all(chain.network in swept for chain in (state.doge, state.ledger)
+                   if chain is not None and _core_rescan_on(chain)):
+                return
+
+    def _sweep_once(swept: set) -> None:
+        try:
+            for chain in _account_chains():
+                if not _core_rescan_on(chain) or chain.network in swept:
+                    continue
+                swept.add(chain.network)
+                prefix = f"extra_address:{chain.network}:"
+                for name, value in list(state.settings().items()):
+                    if not name.startswith(prefix):
+                        continue
+                    for entry in importslib.entries(value):
+                        try:
+                            if not _rescan_done(chain, entry["a"]):
+                                _rescan_queue.setdefault((chain.network, entry["a"]), time.time())
+                        except Exception:              # noqa: BLE001 -- that chain's index not ready: next start
+                            pass
+            _rescan_queue_wake()
+        except Exception:                              # noqa: BLE001
+            log.warning("the imported-wallet sweep stopped", exc_info=True)
+
+    if getattr(state, "home", None) is not None and not os.environ.get("ARCADE_NO_IMPORT_SWEEP"):
+        threading.Thread(target=_sweep_imports, daemon=True, name="import sweep").start()
+
+    def _core_batch_start(chain) -> None:
+        """One Core rescan for every import waiting on `chain` (taken off the queue together), on a thread; the
+        reads borrowed meanwhile. When it is done, the next batch -- every wallet imported during it -- starts at
+        once (the queue runner), back to back."""
+        index = state.token_index(chain)
+        batch = sorted(a for (net, a) in list(_rescan_queue) if net == chain.network)
+        for a in batch:
+            _rescan_queue.pop((chain.network, a), None)
+        batch = [a for a in batch if _still_imported(chain.network, a) and not _rescan_done(chain, a)]
+        if not batch:
+            return
+        tip = int(index.indexed_height() or 0)
+        run = {"network": chain.network, "start": 0, "end": tip, "progress": {}, "began": time.time(),
+               "imported": True, "core": True, "batch": len(batch)}
+        for a in batch:
+            _backfilling.add(a)
+            _backfill_runs[a] = run
+
+        def go() -> None:
+            try:
+                catchuplib.hold(chain, "rescanning for wallet imports")
+                try:
+                    sent_key = f"core_rescan_sent:{chain.network}"
+                    try:
+                        rpc = chain.local_rpc()
+                    except Exception as exc:               # noqa: BLE001 -- not answering: still at a rescan
+                        # Remembered as sent now, as seed_from_core_wallet does for a busy Core: no second rescan
+                        # once it answers, and the page's countdown starts from here.
+                        sent = state.setting(sent_key, None)
+                        if not (isinstance(sent, dict) and set(batch) <= set(sent.get("addresses") or ())):
+                            state.set_setting(sent_key, {"at": time.time(), "addresses": sorted(batch)})
+                        raise utxoslib.CoreBusy(str(exc)) from None
+                    try:
+                        filed = utxoslib.seed_from_core_wallet(
+                            index, rpc, chain.params, batch, tip, sent=state.setting(sent_key, None),
+                            remember=lambda said: state.set_setting(sent_key, said))
+                    finally:
+                        rpc.close()
+                finally:
+                    catchuplib.finished(chain.network)
+                took = time.time() - run["began"]
+                if filed is None:                      # no wallet in this Core: each address read back instead
+                    for a in batch:
+                        _rescan_queue[(chain.network, a)] = time.time()
+                        state.set_setting(f"core_rescanned:{chain.network}:{a}", 0)
+                else:
+                    if took > 60 and tip:
+                        state.set_setting(f"core_rescan_rate:{chain.network}", round(tip / took, 1))
+                    for a in batch:
+                        state.set_setting(f"core_rescanned:{chain.network}:{a}", int(time.time()))
+                        state.set_setting(f"backfilled:{chain.network}:{a}", filed.get(a, 0))
+                    log.info("imported wallets on %s: one rescan for %d, %.0f min", chain.network, len(batch),
+                             took / 60)
+                state.bump_generation()
+            except utxoslib.CoreBusy as exc:
+                # The Core is busy (most often still at a rescan sent before an arcade restart): not a failure;
+                # asked again in a few minutes, the reads borrowed meanwhile, and that rescan is not sent twice.
+                fails = _core_retry.get(chain.network, (0, 0.0))[0]
+                _core_retry[chain.network] = (fails, time.time() + CORE_BUSY_SECONDS)
+                log.info("rescan for imported wallets on %s waits: the Core is busy (%s)", chain.network, exc)
+                for a in batch:
+                    _rescan_queue[(chain.network, a)] = time.time()
+            except Exception as exc:                   # noqa: BLE001 -- queued again, after a back-off
+                fails = _core_retry.get(chain.network, (0, 0.0))[0] + 1
+                _core_retry[chain.network] = (fails, time.time() + CORE_RETRY_SECONDS * fails)
+                log.warning("rescan for imported wallets on %s stopped (%d in a row): %s; %s", chain.network, fails, exc,
+                            "tried again later" if fails < CORE_RETRY_MAX else "not tried again until a restart")
+                for a in batch:
+                    _rescan_queue[(chain.network, a)] = time.time()
+            else:
+                _core_retry.pop(chain.network, None)
+            finally:
+                for a in batch:
+                    _backfilling.discard(a)
+                    _backfill_runs.pop(a, None)
+                _rescan_queue_wake()
+
+        threading.Thread(target=go, daemon=True, name=f"import rescan {chain.network}").start()
+
+    def _imported(account, chain) -> list[dict]:
+        return importslib.entries(state.setting(importslib.setting_key(chain.network, account.pubkey), []))
+
+    def _imported_entry(account, chain, address: str) -> dict | None:
+        return next((e for e in _imported(account, chain) if e["a"] == address), None)
+
+    def _account_own_addresses(account, chain) -> dict[str, str]:
+        """Every address on `chain` that is this account's own, and what it is: "main" (the words it signed up
+        with), "segwit" (the same words' SegWit kinds, registered on the Wallet page) or "imported". Nothing an
+        account names freely: the main one is the browser's derivation at sign-up, the others were registered by
+        this account (an imported one with its key's signature)."""
+        out: dict[str, str] = {}
+        main = _account_address(account.pubkey, chain)
+        if main:
+            out[main] = "main"
+        for kind in ("p2wpkh", "p2sh-p2wpkh"):
+            seg = str(state.setting(_segwit_setting(account, chain, kind), "") or "")
+            if seg:
+                out.setdefault(seg, "segwit")
+        for entry in _imported(account, chain):
+            out.setdefault(entry["a"], "imported")
+        return out
+
+    def _own_address_asked(account, chain, address: str) -> str:
+        """`address` when it is one of this account's own on `chain` ("" means the main one); a 403 otherwise. The
+        one check every `address=` read goes through: an account never reads another's address here."""
+        address = (address or "").strip()
+        if not address:
+            return _account_address(account.pubkey, chain)
+        if address not in _account_own_addresses(account, chain):
+            raise HTTPException(403, "that is not one of your own wallets on this chain")
+        return address
+
+    def _rescan_floor(chain) -> int:
+        """The first block a read-back reads, the same floor the account read-back uses."""
+        return max(chain.params.messaging_start_height, chain.params.activation_height or 0)
+
+    def _rescan_done(chain, address: str) -> bool:
+        """Whether this node already has the address's whole past: read back before, or watched from the floor."""
+        if _core_rescan_on(chain):
+            # The whole past, from the Core (a week's read-back from before 2026-10-21 is not enough here); a Core
+            # with no wallet (0) falls back to the read-back below.
+            said = state.setting(f"core_rescanned:{chain.network}:{address}", None)
+            if said is None:
+                return False
+            if said:
+                return True
+        if state.setting(f"backfilled:{chain.network}:{address}", None) is not None:
+            return True
+        with contextlib.closing(state.token_index(chain).open()) as db:
+            since = utxoslib.since(db, address)
+        return since is not None and since <= _rescan_floor(chain)
+
+    def _run_left(run: dict) -> float:
+        """Seconds a read-back still needs: the blocks it has left at the measured pace. A Core rescan says nothing
+        while it runs: the whole chain at the last measured rate, counting down (at least a minute while it runs)."""
+        if run.get("core") or run.get("core_next"):
+            chain = next((c for c in _account_chains() if c.network == run.get("network")), None)
+            total = int(run.get("end") or 0) / (_core_rescan_rate(chain) if chain is not None else CORE_RESCAN_RATE_GUESS)
+            if not run.get("core"):
+                return total
+            return max(60.0, total - (time.time() - float(run.get("began") or time.time())))
+        progress = run.get("progress") or {}
+        chain = next((c for c in _account_chains() if c.network == run.get("network")), None)
+        per = float(progress.get("per_block") or (utxoslib.read_rate(chain.params) if chain is not None
+                                                  else utxoslib.READ_RATE_GUESS))
+        at = progress.get("height")
+        left = int(run.get("end", 0)) - (int(at) if at is not None else int(run.get("start", 0))) + 1
+        return max(0, left) * per
+
+    def _chain_rescan(network: str) -> dict | None:
+        """The read-back running on that chain, if one is: an account's or an import's."""
+        return next((dict(r, address=a) for a, r in list(_backfill_runs.items()) if r.get("network") == network),
+                    None)
+
+    def _wait_for(address: str) -> float:
+        """Seconds until the read-back of `address` is done: its own blocks, and every read-back ahead of it (one
+        reads at a time, in the whole process: utxos._BACKFILL_ONE)."""
+        mine = _backfill_runs.get(address)
+        total = _run_left(mine) if mine else 0.0
+        began = (mine or {}).get("began", time.time())
+        seen = {id(mine)} if mine else set()
+        for other, run in list(_backfill_runs.items()):
+            if id(run) in seen:
+                continue                                # one batch, many addresses: counted once
+            seen.add(id(run))
+            if other != address and ((run.get("progress") or {}).get("height") is not None
+                                     or run.get("began", 0) < began):
+                total += _run_left(run)
+        return total
+
+    def _readable(chain) -> bool:
+        """Whether this chain can be read now: its Core here, or a sharer's when it is borrowed (status, kept 10 s)."""
+        try:
+            return bool((chain.status() or {}).get("online"))
+        except Exception:                                  # noqa: BLE001
+            return False
+
+    def _rescan_says(chain, address: str) -> dict:
+        """Where an imported address's read-back stands, with what to tell the person:
+        "ready", "rescan" (reading back now or next in line), "none" (no node to read the chain), "stopped" (never
+        finished, e.g. cut short by a restart: POST /account/imported/rescan starts it again)."""
+        if (chain.network, address) in _asking_peers:
+            return {"state": "rescan", "eta": 30,
+                    "says": "Bringing this wallet's coins over from another arcade you use; check back in a minute."}
+        if address in _backfill_runs:
+            eta = _wait_for(address)
+            run = _backfill_runs.get(address) or {}
+            if run.get("core"):
+                total = _run_left({**run, "core": None, "core_next": True})
+                late = time.time() - float(run.get("began") or time.time()) > total
+                return {"state": "rescan", "eta": int(eta), "core": True,
+                        "says": ("This arcade's node is rescanning the whole chain for this wallet's coins, and it is "
+                                 "taking longer than expected; it is still running. Check back later."
+                                 if late else
+                                 f"This arcade's node is rescanning the whole chain for this wallet's coins (meanwhile "
+                                 f"the arcade reads the chain from another arcade); check back in "
+                                 f"{importslib.say_wait(eta)}.")}
+            return {"state": "rescan", "eta": int(eta),
+                    "says": f"The arcade is reading back this wallet's coins; check back in "
+                            f"{importslib.say_wait(eta)}."}
+        if (chain.network, address) in _rescan_queue:
+            fails, until = _core_retry.get(chain.network, (0, 0.0)) if _core_rescan_on(chain) else (0, 0.0)
+            sent = state.setting(f"core_rescan_sent:{chain.network}", None)
+            if _core_rescan_on(chain) and not fails and catchuplib.held(chain.network):
+                if not isinstance(sent, dict):
+                    # Begun before the arcade last restarted, with nothing kept of when or for whom: taken as this
+                    # wallet's, a whole rescan's length from now (the batch, once tried, keeps the real record).
+                    sent = {"at": time.time(), "addresses": [address]}
+                # The Core is at a whole-chain rescan (one an arcade restart cut the connection to goes on all the
+                # same), and waited for: said as what it is, with its countdown (2026-10-21: "the arcades node
+                # is re-scanning and give a estimate time until finished"), never as "no node to borrow".
+                total = _run_left({"network": chain.network, "end": state.token_index(chain).indexed_height() or 0,
+                                   "core_next": True})
+                left = float(sent.get("at") or time.time()) + total - time.time()
+                mine = address in (sent.get("addresses") or ())
+                then = "" if mine else " After it, one more rescan reads this wallet's coins."
+                if left <= 0:
+                    return {"state": "rescan", "eta": None, "core": True,
+                            "says": "This arcade's node is rescanning the whole chain for imported wallets, and it is "
+                                    "taking longer than expected; it is still running, and the arcade reads the chain "
+                                    f"from another arcade meanwhile.{then} Check back later."}
+                eta = left + (0 if mine else total)
+                return {"state": "rescan", "eta": int(eta), "core": True,
+                        "says": f"This arcade's node is rescanning the whole chain for imported wallets (meanwhile the "
+                                f"arcade reads the chain from another arcade, so sends work as usual).{then} Check back "
+                                f"in about {importslib.say_wait(eta)}."}
+            if fails:
+                when = ("after the arcade restarts" if fails >= CORE_RETRY_MAX
+                        else f"in {importslib.say_wait(max(0.0, until - time.time()))}")
+                return {"state": "rescan", "eta": None if fails >= CORE_RETRY_MAX else int(until - time.time()),
+                        "says": f"This arcade's node could not finish rescanning for this wallet; it tries again {when}."}
+            if not _can_read_back(chain):
+                return {"state": "none",
+                        "says": (f"There is no node to borrow right now: this arcade cannot read {chain.title} "
+                                 "by itself, and no other arcade is sharing it. The read-back of this wallet's "
+                                 "coins is queued and starts by itself as soon as one is available; its balance "
+                                 "shows then. You can close this page.")}
+            running = _chain_rescan(chain.network)
+            eta = (_wait_for(running["address"]) if running else 0.0) + _run_left(
+                {"network": chain.network, "start": _rescan_floor(chain),
+                 "end": state.token_index(chain).indexed_height() or 0, "core_next": _core_rescan_on(chain)})
+            return {"state": "rescan", "eta": int(eta),
+                    "says": f"The arcade is reading back this wallet's coins; check back in "
+                            f"{importslib.say_wait(eta)}."}
+        if _rescan_done(chain, address):
+            return {"state": "ready", "says": "Ready: this arcade has this wallet's coins."}
+        return {"state": "stopped", "says": "This wallet's coins were not read back yet."}
+
+    def _rescan_start(chain, address: str) -> None:
+        """Read back the coins `address` already held, on a thread: the Core's coin set where it has one
+        (`scantxoutset`), else the blocks from the floor to where watching began. Another arcade is NOT asked for an
+        imported address: the arcades answer by @tag only, and a public "what does this address hold here" would
+        tell anybody which addresses this arcade's accounts imported."""
+        key = f"backfilled:{chain.network}:{address}"
+        index = state.token_index(chain)
+        with contextlib.closing(index.open()) as db:
+            since = utxoslib.since(db, address)
+        end = since if since is not None else (index.indexed_height() or 0)
+        start = _rescan_floor(chain)
+        if end < start:
+            state.set_setting(key, 0)
+            return
+        run = {"network": chain.network, "start": start, "end": end, "progress": {}, "began": time.time(),
+               "imported": True}
+        _backfilling.add(address)
+        _backfill_runs[address] = run
+
+        def go() -> None:
+            try:
+                with chain.rpc() as rpc:
+                    filed = None
+                    if not chain.borrowed:
+                        filed = utxoslib.seed_from_core(index, rpc, chain.params, {address},
+                                                        index.indexed_height() or 0)
+                    if filed is None:
+                        filed = utxoslib.backfill(index, rpc, chain.params, address, start, end,
+                                                  progress=run["progress"])
+                state.set_setting(key, filed)
+                state.bump_generation()
+                log.info("imported wallet %s on %s: read back, %d coins", address, chain.network, filed)
+            except Exception as exc:                       # noqa: BLE001 -- the chain went away: queued again
+                log.warning("read-back of imported %s stopped: %s; queued", address, exc)
+                _rescan_queue[(chain.network, address)] = time.time()
+            finally:
+                _backfilling.discard(address)
+                _backfill_runs.pop(address, None)
+                _rescan_queue_wake()
+
+        threading.Thread(target=go, daemon=True, name=f"import read-back {address}").start()
+
+    def _still_imported(network: str, address: str) -> bool:
+        """Whether any account still lists `address` among its imports on that chain."""
+        prefix = f"extra_address:{network}:"
+        return any(name.startswith(prefix) and any(e["a"] == address for e in importslib.entries(value))
+                   for name, value in state.settings().items())
+
+    def _rescan_queue_runner() -> None:
+        """Starts each queued read-back once its chain can be read and nothing else reads that chain; every 20 s
+        while anything waits."""
+        try:
+            while _rescan_queue:
+                for (network, address) in sorted(_rescan_queue, key=_rescan_queue.get):
+                    chain = next((c for c in _account_chains() if c.network == network), None)
+                    if chain is None or not _still_imported(network, address):
+                        _rescan_queue.pop((network, address), None)
+                        continue
+                    if address in _backfill_runs or _rescan_done(chain, address):
+                        _rescan_queue.pop((network, address), None)
+                        continue
+                    if not _can_read_back(chain):
+                        _queue_says(network, address, f"waits: the chain cannot be read back now (readable "
+                                    f"{_readable(chain)}, held {catchuplib.held(network)!r}, sharer "
+                                    f"{catchuplib.can_borrow(chain)}, retry {_core_retry.get(network)})")
+                        continue
+                    with _imports_lock:
+                        running = _chain_rescan(network)
+                        if running is None and (network, address) in _rescan_queue:
+                            _begin_next(chain, address)
+                        elif running is not None:
+                            _queue_says(network, address, f"waits behind the read-back of {running['address']}")
+                time.sleep(20)
+        except Exception:                                  # noqa: BLE001 -- woken again by the next queue
+            log.warning("the imported-wallet queue stopped", exc_info=True)
+        finally:
+            _rescan_queue_running.clear()
+
+    #: When each queued import last said why it waits (once every ten minutes in the log).
+    _queue_said: dict[tuple[str, str], float] = {}
+
+    def _queue_says(network: str, address: str, why: str) -> None:
+        if time.time() - _queue_said.get((network, address), 0.0) > 600:
+            _queue_said[(network, address)] = time.time()
+            log.info("imported %s on %s %s", address, network, why)
+
+    def _rescan_queue_wake() -> None:
+        if _rescan_queue and not _rescan_queue_running.is_set():
+            _rescan_queue_running.set()
+            threading.Thread(target=_rescan_queue_runner, daemon=True, name="import read-back queue").start()
+
+    def _begin_next(chain, address: str) -> None:
+        """Start what reads `address`'s past next: the chain's next Core batch (with every other import waiting),
+        or the address's own read-back."""
+        core = _core_rescan_on(chain) and state.setting(f"core_rescanned:{chain.network}:{address}", None) is None
+        if core:
+            _rescan_queue.setdefault((chain.network, address), time.time())
+            _core_batch_start(chain)
+        else:
+            _rescan_queue.pop((chain.network, address), None)
+            _rescan_start(chain, address)
+
+    def _rescan_begin(chain, address: str) -> dict:
+        """Start the read-back of an imported address now, or queue it; and say where it stands."""
+        with _imports_lock:
+            if (chain.network, address) in _asking_peers:
+                pass                                       # another arcade is being asked first
+            elif not (address in _backfill_runs or _rescan_done(chain, address)):
+                if _chain_rescan(chain.network) is None and _can_read_back(chain):
+                    _begin_next(chain, address)
+                else:
+                    _rescan_queue.setdefault((chain.network, address), time.time())
+                    _rescan_queue_wake()
+        return _rescan_says(chain, address)
+
+    def _imported_view(account, chain) -> list[dict]:
+        """This account's imported addresses on one chain, each with its balance and where its read-back stands."""
+        out = []
+        gone = _flights.spent_by(account.pubkey, chain.network)
+        index = state.token_index(chain)
+        for entry in _imported(account, chain):
+            address = entry["a"]
+            with contextlib.closing(index.open()) as db:
+                coins = utxoslib.unspent(db, address)
+                since = utxoslib.since(db, address)
+            coins += [dict(c) for c in _flights.change_for(account.pubkey, chain.network)
+                      if c.get("address") == address]
+            seen, spendable = set(), 0
+            for c in coins:
+                outpoint = (c["txid"], int(c["vout"]))
+                if outpoint in gone or outpoint in seen:
+                    continue
+                seen.add(outpoint)
+                spendable += int(c["value"])
+            out.append({"address": address, "kind": entry["k"], "since": since, "spendable": spendable,
+                        "registered": entry["t"], **_rescan_says(chain, address)})
+        return out
+
+    @app.get("/account/imported")
+    def account_imported(request: Request):
+        return _account_imported(request)
+
+    @app.get("/account/imported/busy")
+    def account_imported_busy(request: Request, chain: str = ""):
+        """Whether an import on a chain must wait right now: asked by the Wallet page before its import sheet opens,
+        so nobody types a key in only to be told no."""
+        _signed_in_account(request)
+        picked = next((c for c in _account_chains() if c.network == chain), None)
+        if picked is None:
+            return JSONResponse({"detail": f"no chain called {chain} here"}, status_code=404)
+        said = _chain_busy(picked)
+        return JSONResponse({"chain": picked.network, "busy": said is not None, **(said or {})},
+                            headers={"Cache-Control": "no-store"})
+
+    def _account_imported(request: Request):
+        """This account's sealed record of imported wallets, for its browser to open; the main wallet's sealed
+        blob beside it (the same one /signin hands anybody), so the browser can check a password against it before
+        it seals anything; each chain's imported addresses and where they stand; the main wallet's names."""
+        account = _signed_in_account(request)
+        record = state.imported_wallets()
+        have = record.get(account.pubkey) or {"blob": "", "updated": 0, "version": 0, "signed": False}
+        vault = state.vault().by_pubkey(account.pubkey)
+        chains: dict[str, Any] = {}
+        names: dict[str, str] = {}
+        for chain in _account_chains():
+            names[chain.network] = str(state.setting(importslib.name_key(chain.network, account.pubkey), "") or "")
+            try:
+                chains[chain.network] = _imported_view(account, chain)
+            except Exception:                              # noqa: BLE001 -- a chain with no index yet
+                chains[chain.network] = []
+        busy = {}
+        for chain in _account_chains():
+            try:
+                said = _chain_busy(chain)
+            except Exception:                              # noqa: BLE001
+                said = None
+            if said is not None:
+                busy[chain.network] = said
+        # Since 2026-10-21: the record's version and whether the account's key signed it (one from before is saved
+        # again, signed, by the page), copies of it put aside for the page to fold in (accounts.ImportedWallets.adopt),
+        # and what an imported address's key signs to have another arcade tell this one its coins: this arcade's
+        # public name and the account's @tag (wallet_imports.coins_digest).
+        return JSONResponse({"blob": have["blob"], "updated": have["updated"], "busy": busy,
+                             "version": int(have.get("version") or 0), "signed": bool(have.get("signed")),
+                             "siblings": [{"digest": one["digest"], "version": one["version"], "blob": one["blob"]}
+                                          for one in record.siblings(account.pubkey)],
+                             "tag": str((vault or {}).get("tag") or ""), "host": _proof_host(),
+                             "no_imports": list(NO_IMPORTS),
+                             "vault": json.loads(vault["blob"]) if vault else None,
+                             "chains": chains, "names": names, "cap": importslib.CAP_PER_CHAIN})
+
+    @app.post("/account/imported")
+    def account_imported_put(request: Request, payload: Any = Body(None)):
+        """Keep this account's sealed record of imported wallets (accounts.ImportedWallets): ciphertext the browser
+        sealed under the account's password, as the next `version`, with `signature` by the account's login key over
+        it (wallet_imports.record_digest); refused unless it is exactly one more than the version kept (a 409 says
+        read it again). Then every linked arcade is told (mesh/importshare.py). The main vault is never touched."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        blob = said.get("blob")
+        if not state.vault().by_pubkey(account.pubkey):
+            return JSONResponse({"detail": "this arcade keeps no sealed wallet for your account, so there is no "
+                                           "password to seal imported wallets under here"}, status_code=404)
+        merged = said.get("merged") or []
+        if not isinstance(merged, list) or len(merged) > 2 * accountslib.SIBLINGS_MAX or not all(
+                isinstance(d, str) and re.fullmatch(r"[0-9a-fA-F]{64}", d) for d in merged):
+            return JSONResponse({"detail": "that merge is not readable"}, status_code=400)
+        try:
+            # The text exactly as the browser signed it; a parsed object (an older page) as JSON, compact.
+            text = blob if isinstance(blob, str) else json.dumps(blob, separators=(",", ":")) \
+                if isinstance(blob, dict) else ""
+            out = state.imported_wallets().put(account.pubkey, text, said.get("version"),
+                                               str(said.get("signature") or ""), merged=merged,
+                                               merged_sig=str(said.get("merged_signature") or ""))
+        except accountslib.ImportedMoved as exc:
+            return JSONResponse({"detail": str(exc), "updated": exc.updated, "version": exc.version},
+                                status_code=409)
+        except (accountslib.AccountError, ValueError, TypeError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        _announce_record(account.pubkey)
+        return JSONResponse(out)
+
+    @app.post("/account/imported/siblings/drop")
+    def account_imported_siblings_drop(request: Request, payload: Any = Body(None)):
+        """Copies of the record put aside here that the page folded in and found nothing new in: dropped, signed by
+        the login key over the version kept, with no new version saved or announced."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        merged = said.get("merged") or []
+        if not isinstance(merged, list) or not 0 < len(merged) <= 2 * accountslib.SIBLINGS_MAX or not all(
+                isinstance(d, str) and re.fullmatch(r"[0-9a-fA-F]{64}", d) for d in merged):
+            return JSONResponse({"detail": "that merge is not readable"}, status_code=400)
+        try:
+            gone = state.imported_wallets().drop_siblings(account.pubkey, merged,
+                                                          str(said.get("merged_signature") or ""))
+        except accountslib.AccountError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        return JSONResponse({"dropped": gone})
+
+    def _announce_record(pubkey: str) -> None:
+        """Tell every linked arcade this account's record has a new version (mesh/importshare.py)."""
+        share = getattr(getattr(state, "mesh", None), "importshare", None)
+        if share is None:
+            return
+        try:
+            have = state.imported_wallets().get(pubkey)
+            if have and have.get("signed"):
+                share.announce(pubkey, have["version"], importslib.blob_hash(have["blob"]))
+        except Exception:                                  # noqa: BLE001 -- linked arcades catch up at the next link
+            log.debug("could not announce an imported-wallets record", exc_info=True)
+
+    def _proof_host() -> str:
+        """The name other arcades know this one by, which an imported address's key signs when it asks them for
+        that address's coins through this arcade ("" when it has none: then nobody is asked)."""
+        return next((str(h).strip().lower() for h in (state.public_hosts or ()) if str(h).strip()), "")
+
+    @app.post("/account/imported/address")
+    def account_imported_address(request: Request, payload: Any = Body(None)):
+        """Register an imported wallet's address for this account, with its key's signature over the account and the
+        address (wallet_imports.check_proof), and start reading back its coins.
+
+        Refused, with nothing kept, past CAP_PER_CHAIN on the chain, past PER_DAY a day, and while another read-back
+        runs on that chain ("a rescan is currently happening ..."). An address this node already has whole is ready
+        at once; otherwise it is read back now, or queued when no node can read the chain."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        if chain.network in NO_IMPORTS:
+            return JSONResponse({"detail": f"wallets cannot be imported on {chain.title}"}, status_code=400)
+        address = str(said.get("address") or "").strip()
+        kind = str(said.get("kind") or "p2pkh")
+        try:
+            importslib.check_proof(chain.params, account.pubkey, chain.network, address,
+                                   str(said.get("pubkey") or ""), kind, str(said.get("signature") or ""))
+        except importslib.ImportRefused as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        # A wallet already in the account's signed record, registered on another arcade it uses (2026-10-21:
+        # "all of your wallet balances persist over all arcades that you sign into"): the Wallet page registers it
+        # here by itself, with the same key proof. Those count against an allowance of their own, so bringing a
+        # record of many wallets over does not use up the day's imports. This node cannot open the record to see
+        # that the wallet is in it, so the allowance is the bound (as large as PER_DAY), and it is open only to an
+        # account whose signed record is here.
+        sync = bool(said.get("sync"))
+        coins_proof = said.get("coins") if isinstance(said.get("coins"), dict) else None
+        if sync and not (state.imported_wallets().get(account.pubkey) or {}).get("signed"):
+            return JSONResponse({"detail": "this arcade has no signed record of your imported wallets yet"},
+                                status_code=400)
+        with _imports_lock:
+            listed = _imported(account, chain)
+            if any(e["a"] == address for e in listed):
+                return JSONResponse({"address": address, "chain": chain.network, "already": True,
+                                     **_rescan_begin(chain, address)})
+            if _account_own_addresses(account, chain).get(address):
+                return JSONResponse({"detail": "that is already your arcade wallet's own address on this chain"},
+                                    status_code=400)
+            if len(listed) >= importslib.CAP_PER_CHAIN:
+                return JSONResponse({"detail": f"An account can import at most {importslib.CAP_PER_CHAIN} wallets "
+                                               f"on {chain.title}. Remove one first."}, status_code=400)
+            day_key = f"import_{'sync_' if sync else ''}day:{account.pubkey}"
+            day = importslib.recent(state.setting(day_key, []))
+            if len(day) >= importslib.PER_DAY:
+                return JSONResponse({"detail": f"{importslib.PER_DAY} imports in a day is the most one account can "
+                                               "make. Try again tomorrow."}, status_code=429)
+            try:
+                done = _rescan_done(chain, address)
+            except Exception as exc:                       # noqa: BLE001
+                return JSONResponse({"detail": f"the index is not ready: {exc}"}, status_code=503)
+            # A rescan running on this chain does not refuse an import (2026-10-21): it joins the next one,
+            # which starts as soon as this one is done, with every other wallet imported meanwhile.
+            try:
+                _watch(address, f"imported by account {account.pubkey[:12]}", chain=chain)
+            except Exception as exc:                       # noqa: BLE001
+                return JSONResponse({"detail": f"the index is not ready: {exc}"}, status_code=503)
+            listed.append({"a": address, "k": kind, "p": str(said.get("pubkey") or "").lower(),
+                           "t": int(time.time())})
+            state.set_setting(importslib.setting_key(chain.network, account.pubkey), listed)
+            state.set_setting(day_key, day + [int(time.time())])
+            if done:
+                return JSONResponse({"address": address, "chain": chain.network, "state": "ready",
+                                     "says": "Imported. This arcade was already watching this address, so it is "
+                                             "ready now."})
+            if coins_proof is not None:
+                _asking_peers[(chain.network, address)] = time.time()
+        if coins_proof is not None:
+            # Its coins as another arcade the account uses knows them, each checked here; the read-back only when
+            # none can say.
+            try:
+                got = _imported_coins_elsewhere(account, chain, address, kind, str(said.get("pubkey") or ""),
+                                                coins_proof)
+            finally:
+                _asking_peers.pop((chain.network, address), None)
+            if got is not None:
+                filed, host = got
+                state.set_setting(f"backfilled:{chain.network}:{address}", filed)
+                if _core_rescan_on(chain):
+                    state.set_setting(f"core_rescanned:{chain.network}:{address}", int(time.time()))
+                state.bump_generation()
+                return JSONResponse({"address": address, "chain": chain.network, "state": "ready", "from": host,
+                                     "says": f"Ready: brought over from {host}, every coin checked here."})
+        return JSONResponse({"address": address, "chain": chain.network, **_rescan_begin(chain, address)})
+
+    #: Imported addresses whose coins are being asked of other arcades right now: (network, address) -> since.
+    _asking_peers: dict[tuple[str, str], float] = {}
+
+    def _imported_coins_elsewhere(account, chain, address: str, kind: str, pubkey: str,
+                                  proof: dict) -> tuple[int, str] | None:
+        """An imported address's coins from another arcade this account uses (POST /signin/{tag}/imported-coins
+        there), with the proof its key signed in the browser for THIS arcade, this minute; each coin checked against
+        this arcade's own chain and filed. (filed, host), or None when no arcade could say."""
+        mine = state.vault().by_pubkey(account.pubkey) or {}
+        tag, asker = str(mine.get("tag") or ""), _proof_host()
+        if not tag or not asker or str(proof.get("asker") or "").lower() != asker:
+            return None
+        hosts = _arcade_hosts()
+        first = str(state.setting(f"came_from:{account.pubkey}", "") or "").removeprefix("https://")
+        order = ([first] if first in hosts else []) + [h for h in hosts if h != first]
+        body = {"network": chain.network, "address": address, "kind": kind, "pubkey": pubkey,
+                "minute": proof.get("minute"), "signature": str(proof.get("signature") or ""), "asker": asker}
+
+        def ask(host: str):
+            got = _post_arcade(f"https://{host}/signin/{urllib.parse.quote(tag)}/imported-coins", json=body,
+                               timeout=10, headers={"User-Agent": "arcade-node"})
+            said = got.json() if got.status_code == 200 else None
+            if not isinstance(said, dict) or said.get("address") != address or said.get("network") != chain.network:
+                return None
+            return said.get("coins") if isinstance(said.get("coins"), list) else None
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        if not order:
+            return None
+        with ThreadPoolExecutor(max_workers=min(8, len(order))) as pool:
+            jobs = {pool.submit(ask, h): h for h in order[:8]}
+            for job in as_completed(jobs):
+                try:
+                    coins = job.result()
+                except Exception:                          # noqa: BLE001 -- that arcade did not answer
+                    coins = None
+                if coins is not None:
+                    try:
+                        filed = _file_checked_coins(state, chain, address, coins)
+                    except Exception as exc:               # noqa: BLE001 -- this chain cannot check them: read back
+                        log.warning("coins of imported %s could not be checked here: %s", address, exc)
+                        return None
+                    log.info("imported %s on %s: %d coins as %s knew them", address, chain.network, filed, jobs[job])
+                    return filed, jobs[job]
+        return None
+
+    @app.post("/account/imported/rescan")
+    def account_imported_rescan(request: Request, payload: Any = Body(None)):
+        """Where an imported address's read-back stands; one that never finished (a restart) is started again, or
+        queued behind the one running on its chain. Only this account's own imported addresses."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = str(said.get("address") or "").strip()
+        if _imported_entry(account, chain, address) is None:
+            return JSONResponse({"detail": "that is not one of your imported wallets on this chain"},
+                                status_code=403)
+        return JSONResponse({"address": address, "chain": chain.network, **_rescan_begin(chain, address)})
+
+    @app.post("/account/imported/forget")
+    def account_imported_forget(request: Request, payload: Any = Body(None)):
+        """Take an imported address off this account. Its coins are not touched: they stay where they are on the
+        chain, and the key in the browser's record (removed there first) still spends them anywhere. The node stops
+        watching the address unless another account, or anything else here, still wants it."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        address = str(said.get("address") or "").strip()
+        with _imports_lock:
+            listed = _imported(account, chain)
+            kept = [e for e in listed if e["a"] != address]
+            if len(kept) == len(listed):
+                return JSONResponse({"address": address, "removed": False})
+            state.set_setting(importslib.setting_key(chain.network, account.pubkey), kept or None)
+            wanted = _still_imported(chain.network, address) or any(
+                isinstance(value, str) and value == address and name.startswith(("address:", "segwit_watch:"))
+                for name, value in state.settings().items())
+            if not wanted:
+                _rescan_queue.pop((chain.network, address), None)
+                try:
+                    with contextlib.closing(state.token_index(chain).open()) as db:
+                        db.conn.execute("DELETE FROM watched WHERE address = ? AND why LIKE 'imported by %'",
+                                        (address,))
+                    # Watched again later, its past is read back again: what arrived meanwhile was not filed.
+                    state.set_setting(f"backfilled:{chain.network}:{address}", None)
+                except Exception:                          # noqa: BLE001 -- still watched; nothing lost
+                    log.warning("could not stop watching %s", address, exc_info=True)
+        return JSONResponse({"address": address, "removed": True, "watched": wanted})
+
+    @app.post("/account/imported/name")
+    def account_imported_name(request: Request, payload: Any = Body(None)):
+        """Name this account's MAIN wallet on one chain (an imported wallet's name is in its sealed record). Not a
+        secret: the drop-down shows it instead of the address. An empty name clears it."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            chain = _chain_asked(said)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        name = importslib.clean_name(said.get("name"))
+        state.set_setting(importslib.name_key(chain.network, account.pubkey), name or None)
+        return JSONResponse({"chain": chain.network, "name": name})
+
+    # --- the record and its coins between arcades (2026-10-21: "an imported wallet needs to be automatically
+    # broadcast to other arcades that you are signed in with. So all of your wallet balances persist over all arcades
+    # that you sign into") -------------------------------------------------------------------------------------------
+
+    @app.get("/signin/{tag}/imported")
+    def signin_imported(request: Request, tag: str):
+        """An account's sealed record of imported wallets, its version and its login key's signature over both, for
+        an arcade the account is brought to. Handed to whoever asks, like the sealed vault at /signin/{tag}: nobody
+        can open it without the password, and nobody can change it without the words. Only a signed record."""
+        if _peer_data_limited(request):
+            return JSONResponse({"detail": "too many in a row. Wait a few minutes."}, status_code=429)
+        found = state.vault().get(tag)
+        have = state.imported_wallets().get(found["pubkey"]) if found else None
+        if not have or not have.get("signed"):
+            return JSONResponse({"detail": "no signed record of imported wallets here by that name"},
+                                status_code=404)
+        return JSONResponse({"tag": found["tag"], "pubkey": found["pubkey"], "version": have["version"],
+                             "blob": have["blob"], "signature": have["sig"]})
+
+    #: When each account last had its record fetched by /account/imported/bring (one try a minute).
+    _bring_asked: dict[str, float] = {}
+
+    def _take_record_from(source: str, mine: dict) -> str | None:
+        """Fetch an account's signed record from another arcade and keep it if it checks: signed by the pubkey of
+        THIS arcade's vault row for the account (never the one the answer names) and newer than the one here."""
+        try:
+            got = _ask_arcade(f"{source}/signin/{urllib.parse.quote(mine['tag'])}/imported", timeout=10,
+                              headers={"User-Agent": "arcade-node"})
+            said = got.json() if got.status_code == 200 else None
+        except Exception:                                  # noqa: BLE001 -- that arcade did not answer
+            return None
+        if not isinstance(said, dict) or not isinstance(said.get("blob"), str):
+            return None
+        try:
+            return state.imported_wallets().adopt(mine["pubkey"], said["blob"], said.get("version"),
+                                                  str(said.get("signature") or ""))
+        except accountslib.AccountError as exc:
+            log.info("imported wallets of %s from %s refused: %s", mine.get("tag"), source, exc)
+            return "refused"
+
+    @app.post("/account/imported/bring")
+    def account_imported_bring(request: Request, payload: Any = Body(None)):
+        """An account just brought here (wallet.js bringHere), or signing in: its signed record of imported wallets
+        from the arcade it came from (`from`, one of the arcades this one knows, or the one remembered), kept when it
+        checks. Linked arcades also hand newer versions over by themselves (mesh/importshare.py)."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        mine = state.vault().by_pubkey(account.pubkey)
+        if not mine or not mine.get("tag"):
+            return JSONResponse({"detail": "this arcade keeps no sealed wallet for your account"}, status_code=404)
+        hosts = _arcade_hosts()
+        source = str(said.get("from") or "").rstrip("/").lower()
+        if source.removeprefix("https://") not in hosts:
+            source = ""
+        if not source:
+            source = str(state.setting(f"came_from:{account.pubkey}", "") or "").rstrip("/").lower()
+            if source.removeprefix("https://") not in hosts:
+                source = ""
+        if not source:
+            return JSONResponse({"asked": False, "version": (state.imported_wallets().get(account.pubkey) or {})
+                                 .get("version", 0)})
+        if time.time() - _bring_asked.get(account.pubkey, 0.0) < 60:
+            return JSONResponse({"asked": False, "version": (state.imported_wallets().get(account.pubkey) or {})
+                                 .get("version", 0)})
+        _bring_asked[account.pubkey] = time.time()
+        if not source.startswith("https://"):
+            source = "https://" + source
+        outcome = _take_record_from(source, mine)
+        if outcome == "taken":
+            _announce_record(account.pubkey)
+            state.bump_generation()
+        have = state.imported_wallets().get(account.pubkey) or {}
+        return JSONResponse({"asked": True, "from": source, "outcome": outcome, "version": have.get("version", 0)})
+
+    @app.post("/signin/{tag}/imported-coins")
+    def signin_imported_coins(request: Request, tag: str, payload: Any = Body(None)):
+        """One imported address's coins, for another arcade the account uses, which checks each against its own
+        chain. Never said by address alone (that would tell anybody which addresses this arcade's accounts imported):
+        the asker passes on a proof the ADDRESS'S KEY signed in the account's browser (wallet_imports.coins_digest)
+        naming this @tag, the chain, the address, the asking arcade and the minute. Answered only when that checks,
+        the asking arcade is one this one knows, the address is that account's import here, and this arcade has the
+        address's whole past."""
+        if _peer_data_limited(request):
+            return JSONResponse({"detail": "too many in a row. Wait a few minutes."}, status_code=429)
+        said = payload if isinstance(payload, dict) else {}
+        found = state.vault().get(tag)
+        if found is None:
+            return JSONResponse({"detail": "no wallet here by that name"}, status_code=404)
+        chain = next((c for c in _account_chains() if c.network == str(said.get("network") or "")), None)
+        if chain is None:
+            return JSONResponse({"detail": "no such chain here"}, status_code=404)
+        address = str(said.get("address") or "").strip()
+        asker = str(said.get("asker") or "").strip().lower()
+        if asker not in _arcade_hosts():
+            return JSONResponse({"detail": "asked for an arcade this one does not know"}, status_code=403)
+        try:
+            importslib.check_coins_proof(chain.params, found["tag"], chain.network, address, asker,
+                                         said.get("minute"), str(said.get("pubkey") or ""),
+                                         str(said.get("kind") or "p2pkh"), str(said.get("signature") or ""))
+        except importslib.ImportRefused as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=403)
+        entries = importslib.entries(state.setting(importslib.setting_key(chain.network, found["pubkey"]), []))
+        if not any(e["a"] == address for e in entries):
+            return JSONResponse({"detail": "that is not one of this account's imported wallets here"},
+                                status_code=404)
+        try:
+            whole = address not in _backfill_runs and _rescan_done(chain, address)
+        except Exception:                                  # noqa: BLE001 -- the chain's index is not ready
+            whole = False
+        if not whole:
+            return JSONResponse({"detail": "this arcade has not read this wallet's whole past yet"}, status_code=409)
+        index = state.token_index(chain)
+        with contextlib.closing(index.open()) as db:
+            coins = utxoslib.unspent(db, address)
+            since = utxoslib.since(db, address)
+        return JSONResponse({"tag": found["tag"], "network": chain.network, "address": address, "since": since,
+                             "coins": [{k: c[k] for k in ("txid", "vout", "value", "height")} for c in coins]})
+
     @app.post("/account/send")
     def account_send(request: Request, payload: Any = Body(None)):
         """Offer to send coins. Nothing is broadcast here.
@@ -23316,7 +24586,20 @@ def create_app(state: AppState) -> FastAPI:
         # and funding.spend_for flags the inputs segwit. This chain's only.
         want_from = str(said.get("from") or "").strip()
         keyhash = None
-        if want_from:
+        # An imported wallet of this account (plan item 18): only an address it registered with its key's signature.
+        # Its coins only, its change back to it; the browser signs with that wallet's key.
+        imported = _imported_entry(account, chain, want_from) if want_from else None
+        if imported is not None:
+            if imported["k"] != "p2pkh" and getattr(chain.params, "real_coins", False):
+                return JSONResponse({"detail": "segwit is on test chains only for now"}, status_code=400)
+            if imported["k"] == "p2sh-p2wpkh":
+                try:
+                    keyhash = hash160(bytes.fromhex(imported["p"]))
+                except ValueError:
+                    return JSONResponse({"detail": "import this wallet again: its key was not kept here"},
+                                        status_code=400)
+            address = want_from
+        elif want_from:
             kind = _segwit_kind(chain, want_from)
             if kind is None:
                 return JSONResponse(
@@ -23360,7 +24643,10 @@ def create_app(state: AppState) -> FastAPI:
                     what=(f"send {format_amount(amount, True)} "
                           f"{chain.label.lower()} to {to}"),
                     exclude=_flights.spent_by(account.pubkey, chain.network),
-                    extra=_flights.change_for(account.pubkey, chain.network),
+                    # Change not yet in a block, of the address being sent FROM only: another address's coin
+                    # here is a transaction its key cannot sign.
+                    extra=[c for c in _flights.change_for(account.pubkey, chain.network)
+                           if c.get("address", address) == address],
                     keyhash=keyhash)
             _quota(account, "send")
         except (taglib.TagError, fundinglib.FundingError, AmountError,
@@ -23481,6 +24767,16 @@ def create_app(state: AppState) -> FastAPI:
             return bytes([0x00, len(program)]) + program
         return txbuild.p2pkh_script(to)
 
+    def _flight_address(account, chain, unsigned) -> str:
+        """Whose change a broadcast made: an imported P2PKH wallet's when every input was its (a send from it,
+        plan item 18), else the account's main address, as always."""
+        spent_from = {str(c.get("address") or "") for c in unsigned.inputs}
+        if len(spent_from) == 1:
+            entry = _imported_entry(account, chain, next(iter(spent_from)))
+            if entry is not None and entry["k"] == "p2pkh":
+                return entry["a"]
+        return _account_address(account.pubkey, chain)
+
     @app.post("/account/sign")
     def account_sign(request: Request, payload: Any = Body(None)):
         """Take the signatures, check what they make, and broadcast it."""
@@ -23532,8 +24828,7 @@ def create_app(state: AppState) -> FastAPI:
             # Remembered until the index reads it, so the next transaction
             # this account builds does not offer the coin this one just spent
             # or miss the change it just made.
-            _flights.add(account.pubkey, txid, offer.unsigned,
-                         _account_address(account.pubkey, chain),
+            _flights.add(account.pubkey, txid, offer.unsigned, _flight_address(account, chain, offer.unsigned),
                          network=chain.network)
 
             # Somewhere to write the txid down, if the route that built this
@@ -24015,6 +25310,12 @@ def create_app(state: AppState) -> FastAPI:
         _admin_check(request)
         from ..doginal_index import SETTLE, SOURCES, STARTS
         indexes = state.ord_indexes()
+        share = getattr(getattr(state, "mesh", None), "operators", None)
+        names = {r["node"]: r.get("tag") or "" for r in (share.status() if share is not None else [])}
+        try:
+            me_tag = (share.about() or {}).get("tag") or "" if share is not None else ""
+        except Exception:                                      # noqa: BLE001 -- shown without a name
+            me_tag = ""
         rows = []
         for chain in state.all_chains:
             net = chain.network
@@ -24028,24 +25329,72 @@ def create_app(state: AppState) -> FastAPI:
                     tip = int(state.chain_sync(chain).get("blocks") or 0)
                 except Exception:                              # noqa: BLE001 -- not answering: no percentage
                     tip = 0
+            # The tip not known yet (an arcade just started, its Core still answering slowly): no percentages rather
+            # than nonsense (2026-10-21: a test machine read "61,750,500% indexed" for a minute after a restart).
+            known = tip > st["base"]
             span = max(1, tip - SETTLE - st["base"] + 1)
             walk = st.get("walk") or {}
             ready = st.get("ready") or 0
+            # The ring (Admin -> Ords, 2026-10-20): every whole copy of this chain's index -- for now each
+            # holding arcade keeps all of it -- with how far it reaches, by its operator's @name; and who helps.
+            frac = lambda h: (round(min(1.0, max(0.0, (int(h or 0) - st["base"]) / span)), 4)   # noqa: E731
+                              if known else None)
+            copies = sorted(({"node": h["node"], "me": h["node"] == "this arcade",
+                              "tag": me_tag if h["node"] == "this arcade" else names.get(h["node"], ""),
+                              "frac": frac(h["walked_to"]), "walked_to": h["walked_to"]}
+                             for h in st.get("holders") or []), key=lambda c: -(c["frac"] or 0))
+            others = [{"node": n, "tag": names.get(n, ""), "mode": p.get("mode")}
+                      for n, p in (st.get("peers") or {}).items() if p.get("mode") in ("help", "read")
+                      and not any(c["node"] == n for c in copies)]
             rows.append({
                 **st, "net": net, "title": getattr(chain, "title", "") or chain.label, "label": chain.label,
                 "source": SOURCES.get(net, ""), "tip": tip, "borrowed": bool(getattr(chain, "borrowed", False)),
-                "walked_pct": round(100 * max(0, (walk.get("next") or st["base"]) - st["base"]) / span, 2) if walk else None,
+                "icon": _coin_icon(net), "copies": copies, "others": others,
+                "walked_pct": (round(min(100.0, 100 * max(0, (walk.get("next") or st["base"]) - st["base"]) / span), 2)
+                               if walk and known else None),
+                "tip_known": known,
                 "agreed_pct": round(100 * (st.get("agreed") or 0) / ready, 2) if ready else 0.0,
+                # What the index takes on disk, its write-ahead log included (2026-10-20).
+                "disk": _index_bytes(index),
             })
         import os
-        return JSONResponse({"rows": rows, "cores": state.ord_cores(), "machine": os.cpu_count() or 1},
+        import shutil
+        try:
+            free = shutil.disk_usage(state.home).free
+        except (OSError, TypeError):
+            free = None
+        return JSONResponse({"rows": rows, "cores": state.ord_cores(), "share": state.ord_share(),
+                             "machine": os.cpu_count() or 1, "free": free,
+                             "me": me_tag},
                             headers={"Cache-Control": "no-store"})
+
+    def _index_bytes(index) -> int:
+        """Bytes one chain's ord index takes on disk: the database and its -wal and -shm files."""
+        if index is None:
+            return 0
+        path = Path(index.store.path)
+        total = 0
+        for p in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+            try:
+                total += p.stat().st_size
+            except OSError:
+                pass
+        return total
 
     @app.post("/admin/api/ords")
     def admin_ords_mode(request: Request, payload: Any = Body(None)):
         _admin_check(request, write=True)
         from ..doginal_index import MODES, STARTS
         said = payload if isinstance(payload, dict) else {}
+        if "share" in said:
+            try:
+                share = int(said["share"])
+            except (TypeError, ValueError):
+                share = 0
+            if not 10 <= share <= 100:
+                return JSONResponse({"detail": "from 10 to 100 percent"}, status_code=400)
+            state.set_setting("ord_share", share)
+            return JSONResponse({"ok": True, "share": share})
         if "cores" in said:
             import os
             try:
@@ -24075,6 +25424,10 @@ def create_app(state: AppState) -> FastAPI:
         q = said.lower()
         if INSCRIPTION_ID.match(q):
             question = {"what": "where", "id": q}
+        elif re.match(r"^#?[0-9]{1,12}$", said):             # an inscription number (2026-10-21)
+            question = {"what": "number", "number": int(said.lstrip("#"))}
+        elif q.startswith("tick:") and said[5:].strip():      # a tick of digits, which a plain number is not
+            question = {"what": "token", "tick": said[5:].strip()}
         elif re.match(r"^[0-9a-f]{64}:[0-9]{1,6}$", q):
             txid, vout = q.split(":")
             question = {"what": "on", "txid": txid, "vout": int(vout)}
@@ -24088,13 +25441,78 @@ def create_app(state: AppState) -> FastAPI:
         elif re.match(r"^[1-9A-HJ-NP-Za-km-z]{25,40}$", said):  # an address: its token balances
             question = {"what": "balances", "owner": said}
         else:
-            return JSONResponse({"detail": "an inscription id, a coin as txid:vout, a 4-character tick, a name "
-                                           "like jon.doge, an address, type:image/png, p:drc-20, or kinds"},
+            return JSONResponse({"detail": "an inscription number or id, a coin as txid:vout, a 4-character tick, a "
+                                           "name like jon.doge, an address, type:image/png, p:drc-20, or kinds"},
                                 status_code=400)
+        return _ords_ask(index, question)
+
+    def _ords_ask(index, question: dict):
+        """One question to a chain's index, answered by its own walk or a walking linked arcade (index.lookup); what
+        went wrong said in a 409 the box shows. The most complete index of the chain answers (DoginalIndex.lookup,
+        2026-10-21); a linked arcade's answer is said as its @tag when the mesh knows one ("Answered by")."""
         try:
-            return JSONResponse(index.lookup(question), headers={"Cache-Control": "no-store"})
+            said = index.lookup(question)
         except Exception as exc:                               # noqa: BLE001 -- said in the box
             return JSONResponse({"detail": str(exc)[:300]}, status_code=409)
+        node = str(said.pop("node", "") or "")
+        if node:
+            try:
+                share = getattr(getattr(state, "mesh", None), "operators", None)
+                for row in (share.status() if share is not None else []):
+                    known = str(row.get("node") or "")
+                    if known and row.get("tag") and (node.startswith(known) or known.startswith(node)):
+                        said["from"] = "@" + str(row["tag"])
+                        break
+            except Exception:                                  # noqa: BLE001 -- said as the arcade's id
+                pass
+        return JSONResponse(said, headers={"Cache-Control": "no-store"})
+
+    def _ords_index(net: str):
+        index = state.ord_indexes().get(net)
+        if index is None:
+            raise HTTPException(status_code=404, detail="this arcade does not read that chain")
+        return index
+
+    @app.get("/admin/api/ords/inscription")
+    def admin_ords_inscription(request: Request, net: str = "doge", number: str = "", id: str = ""):
+        """Admin -> Ords -> the explorer's viewer (2026-10-21: "Below the search should display ord 0 of the
+        chain that is selected with arrows to navigate by ord number"): one inscription by number (or id), where it
+        sits, who holds it, and the last number known ({"what": "number"}, from the own walk or a walking peer)."""
+        _admin_check(request)
+        from ..doginals import INSCRIPTION_ID
+        index = _ords_index(net)
+        iid = (id or "").strip().lower()
+        if iid:
+            if not INSCRIPTION_ID.match(iid):
+                return JSONResponse({"detail": "an inscription id: <txid>i<n>"}, status_code=400)
+            return _ords_ask(index, {"what": "number", "id": iid})
+        said = (number or "0").strip().lstrip("#")
+        if not re.match(r"^[0-9]{1,12}$", said):
+            return JSONResponse({"detail": "an inscription number: 0, 1, 2 ..."}, status_code=400)
+        return _ords_ask(index, {"what": "number", "number": int(said)})
+
+    @app.get("/admin/api/ords/ticks")
+    def admin_ords_ticks(request: Request, net: str = "doge", q: str = ""):
+        """Admin -> Ords -> Tokens: the ticker search's suggestions (2026-10-21: "search by token ticker borrow
+        the search tool from the token exchange"), ticks starting with what is typed, a dozen at most."""
+        _admin_check(request)
+        index = _ords_index(net)
+        said = (q or "").strip()
+        if len(said) > 8 or any(ord(c) < 32 for c in said):
+            return JSONResponse({"detail": "the start of a tick: up to 8 characters"}, status_code=400)
+        return _ords_ask(index, {"what": "ticks", "prefix": said})
+
+    @app.get("/admin/api/ords/holders")
+    def admin_ords_holders(request: Request, net: str = "doge", tick: str = "", page: str = "0"):
+        """Admin -> Ords -> Tokens: a token's information and its rich list, 20 holders a page, biggest first."""
+        _admin_check(request)
+        index = _ords_index(net)
+        said = (tick or "").strip()
+        if not said or len(said) > 8 or any(ord(c) < 32 for c in said):
+            return JSONResponse({"detail": "a tick"}, status_code=400)
+        if not re.match(r"^[0-9]{1,7}$", (page or "").strip()):
+            return JSONResponse({"detail": "a page number: 0, 1, 2 ..."}, status_code=400)
+        return _ords_ask(index, {"what": "holders", "tick": said, "page": int(page)})
 
     @app.get("/admin/api/ords/names")
     def admin_ords_names(request: Request, net: str = "doge"):
@@ -24115,6 +25533,49 @@ def create_app(state: AppState) -> FastAPI:
         share = getattr(getattr(state, "mesh", None), "operators", None)
         return JSONResponse({"mesh": share is not None, "rows": share.status() if share is not None else []},
                             headers={"Cache-Control": "no-store"})
+
+    @app.get("/admin/api/affiliates")
+    def admin_affiliates(request: Request):
+        """Admin -> Affiliates (2026-10-21: "show the operators published URLs with a check box next to each to
+        share with affiliates ... a list of shared URLs from other node operators, each with a checkmark to share on
+        client side affiliate tab"; then "The second list should be a list of operators and their published URLs that
+        they shared"): this arcade's names and added sites with their share ticks, and each sharing arcade's sites
+        with their show ticks (arcade/affiliates.py)."""
+        _admin_check(request)
+        from .. import affiliates as affiliateslib
+        mesh = getattr(state, "mesh", None)
+        share = getattr(mesh, "operators", None)
+        live = dict(getattr(share, "peers", {}) or {}) if share is not None else {}
+        linked = set(getattr(getattr(mesh, "node", None), "links", None) or {}) if mesh is not None else set()
+        others = affiliateslib.others(state, live)
+        for row in others:
+            row["linked"] = row["peer"] in linked
+        return JSONResponse({"hosts": affiliateslib.host_sites(state), "mine": affiliateslib.mine(state),
+                             "others": others, "mesh": share is not None,
+                             "limits": {"sites": affiliateslib.MAX_SITES, "url": affiliateslib.MAX_URL,
+                                        "name": affiliateslib.MAX_NAME, "about": affiliateslib.MAX_ABOUT,
+                                        "heard_days": affiliateslib.HEARD_DAYS}},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/affiliates")
+    def admin_affiliates_save(request: Request, payload: Any = Body(None)):
+        """Save any of `mine` [{url, name, about, share}], `hosts_shared` [url] and `shown` [url], checked the way a
+        linked arcade's sites are (affiliates.clean_site), then say "me" again so linked arcades hear the new list now."""
+        _admin_check(request, write=True)
+        from .. import affiliates as affiliateslib
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            affiliateslib.save(state, said)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        mesh = getattr(state, "mesh", None)
+        told = False
+        if mesh is not None and ("mine" in said or "hosts_shared" in said):
+            try:
+                told = bool(mesh.say_who_runs_this())
+            except Exception:                              # noqa: BLE001 -- said at the next minute's turn anyway
+                told = False
+        return JSONResponse({"ok": True, "told": told, "sharing": len(affiliateslib.to_share(state))})
 
     def _fruit_stand():
         """The node's fruit names for new arcades' operators (arcade/fruit.py, 2026-10-20)."""
@@ -24314,8 +25775,19 @@ def create_app(state: AppState) -> FastAPI:
                 row["now"] = coreslib.OFF
                 row["chosen"] = coreslib.mode(state.settings(), row["net"], coreslib.OFF)
         index = check.status() if check else {}
+        from .. import core_catchup
         for row in rows:
             row["index"] = index.get(row["net"], {})
+            # A Core here that is behind (syncing, re-indexing, rescanning): read from a sharer until it catches up,
+            # or used as it is when none shares the chain, said in one line (arcade/core_catchup.py, 2026-10-21).
+            own = state.messaging if row["net"] == state.messaging.network else (
+                state.ledger if row["net"] == state.ledger.network else state.addon(row["net"]))
+            row["catchup"] = None
+            if own is not None and row["now"] == coreslib.HERE and not own.borrowed:
+                try:
+                    row["catchup"] = core_catchup.say(own, mesh_on=share is not None)
+                except Exception:                          # noqa: BLE001 -- never takes the panel down
+                    pass
             row["faucet"] = _admin_faucet_row(row["net"])
             # Whether the Wallet and the markets offer it yet (2026-10-18: Litecoin borrowed, and still grey with
             # nothing to say why): the same reading they use, the sharer's getblockchaininfo.
@@ -24327,7 +25799,8 @@ def create_app(state: AppState) -> FastAPI:
         unknown = sorted((net, s.get("sharers", 0)) for net, s in status.items()
                          if net not in NETWORKS and s.get("sharers"))
         return {"rows": rows, "mesh": mesh is not None, "unknown": unknown,
-                "restart": bool(os.environ.get("INVOCATION_ID")), "mining": _mining_json()}
+                "restart": bool(os.environ.get("INVOCATION_ID") or os.environ.get("ARCADE_SUPERVISOR_PID")),
+                "mining": _mining_json()}
 
     def _admin_faucet_row(net: str) -> dict | None:
         """A test chain's faucet for Admin -> Chains (2026-10-18): its daily top-off, how it is stocked,
@@ -24512,10 +25985,16 @@ def create_app(state: AppState) -> FastAPI:
         who = _admin_check(request, write=True)
         if not who["local"]:
             return JSONResponse({"detail": "the arcade is restarted at the node machine"}, status_code=403)
+        import signal
+        supervisor = os.environ.get("ARCADE_SUPERVISOR_PID")
+        if supervisor:
+            # Run by the supervisor (arcade/web/supervisor.py): a reload -- the new worker gets ready beside this one,
+            # and nobody sees the arcade go down.
+            threading.Timer(1.0, lambda: os.kill(int(supervisor), signal.SIGHUP)).start()
+            return JSONResponse({"ok": True})
         if not os.environ.get("INVOCATION_ID"):
             return JSONResponse({"detail": "this arcade is not run by a service that would start it again; "
                                            "restart it yourself"}, status_code=409)
-        import signal
         threading.Timer(1.0, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
         return JSONResponse({"ok": True})
 
@@ -24549,6 +26028,130 @@ def create_app(state: AppState) -> FastAPI:
         out["stun_mine"] = [f"{h}:{p}" for h, p in stun.mine()] if stun is not None else []
         out["stun_known"] = len(stun.known()) if stun is not None else 0
         return JSONResponse(out)
+
+    @app.get("/admin/api/arcades")
+    def admin_arcades(request: Request):
+        """Admin -> Overview's Arcades panel (2026-10-21, approving the mockup: "N arcades running, N linked to
+        this one", and a row per arcade): every arcade running on the mesh (_arcades_running), THIS one first, each
+        with its operator's @name, where it is published, the Cores it runs, the ord indexes it holds and how far
+        each has walked, and its link to this one.
+
+        Where each piece comes from, and what can be known:
+          * @name and host: this arcade's from state.operator_tag() and public_hosts; another's from what it said on
+            its link (mesh/operators.py "me", checked for a tag's shape there) -- display only, never trusted for
+            anything. An arcade that never said one (older, or not linked since this one started) shows its mesh id.
+          * Cores: this arcade's own, each chain it runs here (not borrowed), `shared` when the mesh offers it now
+            (coreshare.status "sharing"; its Share box in Coins -> Chains is `switch`). Another arcade's only as far
+            as it shares them (coreshare.offers, linked arcades): a Core it runs and does not share is not told.
+          * Ord indexes: every holder of each chain's index (doginal_index.holders: this arcade when it walks,
+            linked walkers heard in the last five minutes), with the share of the chain's ord range it has walked
+            by the same reckoning as Admin -> Ords (None while the tip is not known: "walking").
+          * Link: this arcade, linked with its round trip (node.rtts, ms; None until the first pong), or not linked.
+        """
+        _admin_check(request)
+        return JSONResponse(_arcades_view(), headers={"Cache-Control": "no-store"})
+
+    @app.get("/account/arcades")
+    def account_arcades(request: Request):
+        """The same Arcades card for a signed-in account's Your arcade page (2026-10-21: "Below that should be a
+        copy of the arcades card in the admin overview page"): what /admin/api/arcades says, less this arcade's own
+        Share switches (`switch`), which are the operator's settings, not what the mesh can see."""
+        _signed_in_account(request)
+        said = _arcades_view()
+        for row in said["rows"]:
+            for core in row["cores"]:
+                core.pop("switch", None)
+        return JSONResponse(said, headers={"Cache-Control": "no-store"})
+
+    def _arcades_view() -> dict:
+        from .. import cores as coreslib
+        from ..doginal_index import SETTLE
+        mesh = getattr(state, "mesh", None)
+        up = mesh is not None and getattr(mesh, "loop", None) is not None
+        running = _arcades_running(with_ids=True)
+        me = (mesh.node_id if up else "") or ""
+        links = set(dict(mesh.node.links)) if up else set()
+        try:
+            rtts = mesh.node.rtts() if up else {}
+        except Exception:                                  # noqa: BLE001 -- shown linked without a time
+            rtts = {}
+        coreshare = getattr(mesh, "coreshare", None) if up else None
+        operators = getattr(mesh, "operators", None) if up else None
+        said = dict(getattr(operators, "peers", {}) or {}) if operators is not None else {}
+        try:
+            sharing = coreshare.status() if coreshare is not None else {}
+        except Exception:                                  # noqa: BLE001
+            sharing = {}
+        offers = dict(getattr(coreshare, "offers", {}) or {}) if coreshare is not None else {}
+
+        def coin(net: str) -> dict:
+            params = NETWORKS.get(net)
+            return {"net": net, "label": params.label if params is not None else net, "icon": _coin_icon(net)}
+
+        settings = state.settings()
+        mine_cores = [{**coin(c.network), "shared": bool((sharing.get(c.network) or {}).get("sharing")),
+                       "switch": coreslib.sharing(settings, c.network)}
+                      for c in state.all_chains if not getattr(c, "borrowed", False)]
+        # Each chain's ord index: who holds it, and how far each has walked (peer id -> [{net, pct, walked_to}]).
+        ords: dict[str, list[dict]] = {}
+        try:
+            indexes = state.ord_indexes()
+        except Exception:                                  # noqa: BLE001 -- no rings this time
+            indexes = {}
+        for chain in state.all_chains:
+            index = indexes.get(chain.network)
+            if index is None:
+                continue
+            try:
+                held = index.holders()
+                base, tip = int(index.base), int(index.tip or 0)
+            except Exception:                              # noqa: BLE001 -- an index busy opening
+                continue
+            known = tip > base
+            span = max(1, tip - SETTLE - base + 1)
+            for node, walked in held:
+                pct = (round(100 * min(1.0, max(0.0, (int(walked or 0) - base) / span)), 1) if known else None)
+                ords.setdefault(node or me or "this arcade", []).append(
+                    {**coin(chain.network), "role": "walk", "pct": pct, "walked_to": int(walked or 0)})
+            # The arcades taking part without holding the whole index (2026-10-21: "an indicator that shows if
+            # an arcade is helping on one of the ord indexes ... or read only"): "help" scans chunks of it for the
+            # holders, "read" asks the holders and keeps none; each as it said in its last "hi" (five minutes).
+            try:
+                peers = dict(index.chunks.peers)
+                mode_here, helped_here = index.mode(), int(index.helped or 0)
+            except Exception:                              # noqa: BLE001 -- the roles next time
+                peers, mode_here, helped_here = {}, "", 0
+            part = [(node, p.get("mode"), int(p.get("helped") or 0)) for node, p in peers.items()
+                    if time.time() - float(p.get("at") or 0) < 300]
+            part.append(("", mode_here, helped_here))
+            for node, mode, helped in part:
+                if mode in ("help", "read"):
+                    ords.setdefault(node or me or "this arcade", []).append(
+                        {**coin(chain.network), "role": mode, "pct": None, "helped": helped})
+        rows = [{"me": True, "node": me[:12], "tag": state.operator_tag(),
+                 "host": (list(state.public_hosts) or [""])[0], "cores": mine_cores,
+                 "ords": ords.get(me or "this arcade", []), "link": {"state": "me"}}]
+        order = {n: i for i, n in enumerate(NETWORKS)}      # the chains in the order the arcade lists them
+        others = []
+        for peer in running["ids"]:
+            heard = said.get(peer) or {}
+            if peer in links:
+                ms = rtts.get(peer)
+                link = {"state": "slow" if ms is not None and ms > 1000 else "linked", "ms": ms}
+            else:
+                link = {"state": "none"}
+            others.append({"me": False, "node": peer[:12], "tag": heard.get("tag") or "",
+                           "host": (heard.get("hosts") or [""])[0],
+                           "cores": [{**coin(n), "shared": True}
+                                     for n in sorted(offers.get(peer) or {}, key=lambda n: (order.get(n, 99), n))
+                                     if peer in links],
+                           "ords": ords.get(peer, []), "link": link})
+        # Linked first, fastest first; then the rest by name.
+        others.sort(key=lambda r: (r["link"]["state"] == "none",
+                                   r["link"].get("ms") if r["link"].get("ms") is not None else 9e9,
+                                   r["tag"] or "~" + r["node"]))
+        return {"ok": up, "running": running["running"], "linked": running["linked"],
+                "total": 1 + running["running"], "rows": rows + others}
 
     @app.get("/admin/api/cards")
     def admin_cards(request: Request):
@@ -26452,7 +28055,8 @@ def create_app(state: AppState) -> FastAPI:
                     log.debug("the coins held on %s could not be read", c.network, exc_info=True)
             out.append({"key": f"{c.network}-coin", "kind": "coin", "net": c.network,
                         "name": NETWORKS[c.network].coin, "divisible": True,
-                        "label": f"{NETWORKS[c.network].coin} \u00b7 {c.title or c.net}",
+                        # The chain's own name says the coin (2026-10-20: "PEP \u00b7 Pepecoin (PEP) \u2013 Main" said it twice).
+                        "label": c.title or f"{NETWORKS[c.network].coin} \u00b7 {c.net}",
                         "mine": bool(held), "held": held})
         if viewer == "nobody" and not everything:
             return out
@@ -28231,8 +29835,12 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": "this node does not run that chain"}, status_code=400)
         except (ValueError, KeyError, TypeError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
+        # The lock-fee terms the node stood the order with (node_trader.stand): the page posts the order with exactly
+        # these, so a taker's proposal fits them (node_trader.fee_terms_fit).
+        stood = next((o["give"] for o in state.node_trader.standing() if o["id"] == oid), {})
         return JSONResponse({"msg_key": state.ensure_identity().public_bytes.hex(), "node": mesh.node_id,
-                             "deposit": deposit})
+                             "deposit": deposit,
+                             "lock_fee": {"bps": int(stood.get("fee_bps") or 0), "to": stood.get("fee_to", "")}})
 
     @app.post("/account/orders/post")
     def orders_post(request: Request, payload: Any = Body(None)):
@@ -28632,8 +30240,11 @@ def create_app(state: AppState) -> FastAPI:
             give = trader.leg(want["network"], want["amount"],
                               bytes.fromhex(found.get("take_key") or found["trade_key"]),
                               kind=want["kind"], asset=want["asset"])
+            # The lister's own lock-fee terms come with its order (fee_bps, fee_to; absent from an arcade before
+            # 2026-10-21, and then that lock is held to the old rule).
             get = tradelib.Leg(found["give"]["network"], found["give"]["kind"], found["give"]["asset"],
-                               found["give"]["amount"], found["trade_key"], mine.hex())
+                               found["give"]["amount"], found["trade_key"], mine.hex(),
+                               found["give"].get("fee_bps"), found["give"].get("fee_to", ""))
             trade = trader.propose(bytes.fromhex(found["msg_key"]), found["id"], give, get)
             state.flash(f"Proposed ({trade.id}). It locks and settles by itself; follow it below.", "ok")
         except Exception as exc:
@@ -29691,10 +31302,24 @@ def _coins_from(state, source: str, tag: str, chain, address: str) -> int | None
     said = (kept[1] or {}).get(chain.network) if isinstance(kept[1], dict) else None
     if not isinstance(said, dict) or said.get("address") != address:
         return None
+    return _file_checked_coins(state, chain, address, said.get("coins"))
+
+
+def _post_arcade(url: str, **kwargs):
+    """POST to another arcade, on the same terms as `_ask_arcade`: a public address only, never a redirect."""
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if not _host_is_public(host):
+        raise requests.ConnectionError(f"{host} is not a public address; not asked")
+    return requests.post(url, allow_redirects=False, **kwargs)
+
+
+def _file_checked_coins(state, chain, address: str, coins) -> int:
+    """Coins another arcade says `address` holds, each checked against this arcade's own chain (gettxout: unspent,
+    in a block, paying `address`) and filed; how many. Nothing another arcade says is filed unchecked."""
     filed = 0
     index = state.token_index(chain)
     with chain.rpc() as rpc, index.open() as db:
-        for coin in (said.get("coins") or [])[:5000]:
+        for coin in (coins if isinstance(coins, list) else [])[:5000]:
             try:
                 txid, vout = str(coin["txid"]).lower(), int(coin["vout"])
                 out = rpc.call("gettxout", txid, vout, False)

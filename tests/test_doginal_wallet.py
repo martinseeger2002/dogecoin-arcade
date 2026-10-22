@@ -67,7 +67,7 @@ def test_the_wallet_page_has_the_doginals_section_and_the_configured_base(client
     # Read from the chain by this node; nothing outside the arcade is asked (2026-10-15: the outside Doginals API removed).
     assert 'id="doginals"' in page and "dogesoft" not in page.lower()
     # Through this node (2026-10-15): the browser asks nothing outside this arcade.
-    assert "/account/doginal-tx/${txid}?chain=" in page and "localStorage.setItem(DG_TX + net" in page
+    assert '"/account/doginal-txs"' in page and "localStorage.setItem(DG_TX + net" in page
     assert "Inscriptions can't be checked right now" in page and "/content/${encodeURIComponent(g.id)}" in page
     assert '"/account/doginal/send"' in page and "/account/coins?chain=" in page
 
@@ -150,6 +150,7 @@ def test_the_public_door_lets_both_routes_through():
     """A route the door does not know 404s on the public site while every local test passes."""
     from arcade.web import door
     assert "/account/coins" in door.PUBLIC_PAGES and "/account/doginal/send" in door.PUBLIC_POST
+    assert "/account/doginal-txs" in door.PUBLIC_POST
 
 
 def test_the_node_reads_the_accounts_own_coins_only(client, monkeypatch, tmp_path):
@@ -166,6 +167,26 @@ def test_the_node_reads_the_accounts_own_coins_only(client, monkeypatch, tmp_pat
     assert calls.count(T1) == 1, "asked once, kept for good"
     assert app.get(f"/account/doginal-tx/{'99' * 32}").status_code == 403, "not this account's: nobody's free client"
     assert app.get("/account/doginal-tx/nope").status_code == 400
+
+
+def test_many_transactions_are_read_in_one_call_own_coins_only(client, monkeypatch, tmp_path):
+    """2026-10-21, 1,500 Doginals in one wallet, "whatever is lightest weight for the server": up to a hundred
+    transactions a call, each read once for good; someone else's never answered, an unreadable one said as null."""
+    app, state = client
+    _, calls = _doge_account(app, state, monkeypatch, tmp_path, answers={
+        T1: {"txid": T1, "inscriptions": [{"vout": 0, "inscription_id": INS, "sat_offset": 0}]},
+        T3: {"txid": T3, "inscriptions": []}})
+    got = app.post("/account/doginal-txs", json={"chain": "doge", "txids": [T1, T2, T3, "99" * 32]})
+    assert got.status_code == 200, got.text
+    txs = got.json()["txs"]
+    assert txs[T1] == [{"vout": 0, "inscription_id": INS, "sat_offset": 0, "unknown": False}]
+    assert txs[T3] == [] and txs[T2] is None and "99" * 32 not in txs
+    app.post("/account/doginal-txs", json={"chain": "doge", "txids": [T1]})
+    assert calls.count(T1) == 1, "asked once, kept for good"
+    assert app.post("/account/doginal-txs", json={"chain": "doge", "txids": ["nope"]}).status_code == 400
+    assert app.post("/account/doginal-txs", json={"chain": "doge", "txids": [T1] * 101}).status_code == 400
+    assert app.post("/account/doginal-txs", json={"chain": "doge", "txids": [T1],
+                                                   "address": THEM}).status_code == 403, "someone else's wallet"
 
 
 def test_the_index_away_says_so_through_the_node(client, monkeypatch, tmp_path):

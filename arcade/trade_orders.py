@@ -68,7 +68,21 @@ def _side(said: Any) -> dict:
     if kind == "doginal" and (network not in ("doge", "main") or not INSCRIPTION_ID.match(asset) or amount != 1):
         raise OrderError("a doginal (or pepinal) is on Dogecoin or Pepecoin mainnet, named by its inscription id, "
                          "and moves exactly one")
-    return {"network": network, "kind": kind, "asset": asset, "amount": amount}
+    out = {"network": network, "kind": kind, "asset": asset, "amount": amount}
+    # The lister's lock-fee terms for the side it locks (2026-10-21: "the sender of each lock script pay the
+    # fee", "an operator fee output to each lock script"): its own arcade's rate and payee, which the taker copies into
+    # that leg (trade.operator_fee). Optional both ways: an order without them is from an arcade before that day, and
+    # an older reader drops them (that side then trades at rate 0).
+    if said.get("fee_bps") is not None:
+        from .trade_messages import TradeMessageError, fee_terms
+        try:
+            bps, to = fee_terms(said)
+        except TradeMessageError as exc:
+            raise OrderError(str(exc)) from None
+        out["fee_bps"] = bps
+        if to:
+            out["fee_to"] = to
+    return out
 
 
 def check_order(said: Any, now: float | None = None) -> dict:

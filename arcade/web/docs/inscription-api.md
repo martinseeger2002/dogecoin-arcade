@@ -327,6 +327,7 @@ preflight is answered):
 | `from` | optional: which of the wallet's addresses pays. Left out, the wallet chooses |
 | `label` | optional: what your page calls itself, shown in quotes to the person |
 | `note` | optional: why, in a sentence, shown in quotes to the person |
+| `ref` | optional: your page's own name for this send, a string of 1 to 64 characters (anything else is a `400`). Asked again with the same `ref`, by the same wallet on the same chain, within 7 days, nothing new is filed or sent: see *Asking again safely* below |
 | `silent` | optional: `true` and the person is never shown a card. What a test chain lets a game do unasked -- a token its creator issued, or a piece its creator inscribed, sent back to that creator, from the page open as itself -- goes through; anything else fails at once with `this needs the player's say-so`. The same flag works on `claim` and `inscribe` messages |
 
 ```js
@@ -346,6 +347,25 @@ waiting. Then poll:
 const answer = await (await fetch('/r/send/' + asked.id)).json();
 // status: 'pending' | 'sent' (with txid) | 'denied' | 'failed' (with error) | 'expired'
 ```
+
+**Asking again safely (`ref`).** A browser can lose the reply to a POST that
+reached the node ("Load failed" in Safari), and a page that simply asks again
+files a second request, which can mean paying twice. Give each send a `ref` of
+your own (an order number, `deposit-<save id>-<n>`) and send the same `ref`
+when you retry. A repeat is answered `200` with `"repeat": true` and the
+**first** request as it stands now: the same `id` (so your polling of
+`/r/send/<id>` carries on), and its current `status`, with the `txid` once it
+is sent. The body of a repeat is not read again: a `ref` names one send, so
+use a new `ref` for a new one. A `ref` belongs to the wallet that would send
+(the signed-in reader on a public arcade, the node's own wallet otherwise) and
+to the chain, so two players using the same `ref` get a request each. Only a
+request that was filed is remembered: a `400` is not, so a corrected retry with
+the same `ref` is judged afresh, while one that was filed and then failed
+(`this needs the player's say-so`, a broadcast error) answers that failure
+again. Two POSTs with the same `ref` at the same moment: the second waits for
+the first and gets its answer. Refs are kept 7 days and across restarts, and
+`/r/send/<id>` of a request filed with a `ref` still answers after the arcade
+restarts.
 
 A request nobody answers within an hour expires. What is approved is priced
 against the wallet as it is when the person looks, not when you asked; a
@@ -487,6 +507,59 @@ an unsigned visitor shares one anonymous shelf. Same shape, same limits, the
 same refusals word for word. It does not sync to the account's other devices
 and a cleared browser forgets it; what a page must *prove* belongs on the
 chain, which is where storage was never going to help it.
+
+### The reader's contacts
+
+The address book of the account signed in and looking at your page. It lives
+in that person's browser and nowhere else, so your page asks the viewer
+around it, and every answer is theirs to give:
+
+```html
+<script src="/r/contacts.js"></script>
+<script>
+arcade.contacts.list().then(function (people) {      // [{address, tag}]
+  people.forEach(function (p) { console.log('@' + p.tag, p.address); });
+});
+
+arcade.contacts.add({address: '@alice', name: 'Alice'})
+  .then(function (r) { /* {ok: true, status: "added" | "already"} */ },
+        function (e) { /* e.message: "declined", "sign in first ...", ... */ });
+
+arcade.contacts.remove('@alice')
+  .then(function (r) { /* {ok: true, status: "removed" | "absent"} */ });
+</script>
+```
+
+* **`list()`** asks the person once per game whether it may see their
+  contacts, and the browser remembers the answer. Until they say yes, and for
+  a guest or a page opened on its own, it resolves `[]`. Only names and
+  addresses come back, nothing else of the book.
+* **`add({address, name})`** puts one person in the book. `address` is an
+  address or an `@tag`; only names claimed on the chain go in an address book,
+  so an address nobody holds a name for is refused. `name` is optional,
+  trimmed and cut to 60 characters, and is kept as the player's private note
+  on them, the same note the Address book lets them write by hand.
+* **`remove(address)`** takes one person out, by address or `@tag`. Only the
+  contact goes: messages, saves and everything else stay as they are.
+* **The player says yes to every change.** The viewer shows a card naming your
+  game and the change ("Add @alice (nAlice1…) to your address book as
+  “Alice”?" / "Remove @alice from your address book?") with Add or Remove, and
+  No. Nothing is written without that tap. What a game adds is an ordinary
+  contact on the Address book page.
+* **Nothing to change, nothing asked.** Adding somebody already in the book
+  resolves `{ok: true, status: "already"}`, and removing somebody who is not
+  there resolves `"absent"`, with no card either way. So calling `add` every
+  time two players meet is fine.
+* **One card at a time.** While a contacts card from your page is open, another
+  `add` or `remove` is refused at once with `busy` rather than queued. Ask
+  again once the first is answered.
+* **Rejections** are an `Error` whose message starts with the reason:
+  `declined` (the player said No), `sign in first` (a guest, or the node's own
+  wallet view), `not an address`, `busy`, `no viewer` (the page was opened on
+  its own), or what the chain said about the name (`nobody holds @x on this
+  chain`, `they have not published a messaging key ...`).
+* **Adding and removing never read the book**, and a yes to an add is not a
+  yes to `list()`: that keeps its own question.
 
 ### Talking to another node
 

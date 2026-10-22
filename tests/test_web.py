@@ -466,8 +466,14 @@ def test_a_missing_attachment_does_not_500(client):
 
 
 def test_the_address_book_offers_a_scan(client):
-    body = client[0].get("/contacts/more").text
-    assert "Scan for published addresses" in body
+    """The book offers to look again for people who published (the "Look again" form since 7e87acdf), and the scan
+    answers. Until 2026-10-20 this passed only because the old wording sat in a style comment inside every page."""
+    import pathlib
+    app, state = client
+    page = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/contacts.html").read_text()
+    assert 'action="/contacts/scan"' in page and "Look again" in page
+    said = app.post("/contacts/scan", data={"csrf_token": state.csrf_token}, follow_redirects=False)
+    assert said.status_code in (200, 303), said.status_code
 
 
 def test_only_somebody_with_a_tag_is_offered_for_adding(client):
@@ -686,7 +692,7 @@ def test_a_real_conversation_keeps_both_sides(tmp_path):
 
 def test_the_conversation_can_scroll(client):
     """A flex child sizes to its content unless min-height is zero."""
-    body = client[0].get("/messages").text
+    body = _stylesheet(client[0].get("/messages").text)
     assert "overflow-y:auto" in body
     assert "min-height:0" in body
 
@@ -1488,7 +1494,14 @@ def test_media_may_still_be_cached(client):
 
 
 def _stylesheet(body: str) -> str:
-    return body[body.index("<style>"):body.index("</style>")]
+    """Every style a page gets: its own <style> blocks and, when it links it, the shared stylesheet
+    (templates/base_css.css, out of base.html since 2026-10-20 so the browser keeps it)."""
+    import pathlib
+    import re
+    css = "".join(re.findall(r"<style[^>]*>.*?</style>", body, re.S))
+    if "/base.css" in body:
+        css += (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/base_css.css").read_text()
+    return css
 
 
 def test_hidden_is_enforced_over_author_display_rules(client):
@@ -1544,6 +1557,7 @@ def test_no_element_relies_on_hidden_without_the_guard():
     templates = pathlib.Path("arcade/web/templates")
     css = (templates / "base.html").read_text()
     css = css[css.index("<style>"):css.index("</style>")]
+    css += (templates / "base_css.css").read_text()      # the shared style, out of base.html since 2026-10-20
     assert "[hidden]{display:none !important}" in css, (
         "the guard is what makes the sweep below unnecessary"
     )

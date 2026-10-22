@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from . import htlc as H
+from .config import NETWORKS
 
 INITIATOR, RESPONDER = "initiator", "responder"
 
@@ -83,6 +84,12 @@ class Leg:
     amount: int                  # sats for coin, units for a token, 1 for an NFT or a Doginal
     giver_key: str               # hex pubkey of whoever locks it (refunds to them)
     taker_key: str               # hex pubkey of whoever claims it
+    #: The locker's operator fee, held INSIDE this leg's lock and paid out by the claim (2026-10-21, below
+    #: `operator_fee`): the rate in whole basis points and the address it is paid to, both the LOCKER's own arcade's.
+    #: None: terms from an arcade before that day, which carry no fee fields -- rate 0, and the lock is checked the old
+    #: way (at least the amount; the claim's network fee comes off it). 0: an updated arcade with its fee Off.
+    fee_bps: int | None = None
+    fee_to: str = ""
 
     def tier(self) -> str:
         return "mainnet" if self.network in ("main", "doge", "ltc") else "testnet"
@@ -125,14 +132,124 @@ class Trade:
 #: (htlc.move_out), so neither side has to bring coin of its own to finish.
 LOCK_RESERVE = H.SPEND_FEE + H.DUST
 
+# --- who pays the fees of a lock (2026-10-21) ----------------------------------------
+#
+# The operator: "We need to have the sender of each lock script pay the fee so it doesn't come out of the amount of the coin
+# received. We need to add an operator fee output to each lock script." His answers, the same day:
+#
+# * The NETWORK fee of the claim is the sender's: a coin lock holds the amount plus `claim_fee` for its chain, so the
+#   claimer receives exactly the amount agreed. A refund gives back everything less the refund's own fee -- at least the
+#   amount. A token, NFT or Doginal lock already carries its own reserve (LOCK_RESERVE, the Doginal's output 1).
+# * The OPERATOR fee is held in the lock too ("Hold it in the lock"): the claim pays it out as an output of its own to
+#   the locker's operator, a refund gives it back to the locker. The script cannot make a claim pay it (no covenants):
+#   the claimer's arcade builds the claim honestly, which was accepted. An arcade from before this change claims the
+#   whole lock less the network fee, so with it the operator fee goes to the claimer instead.
+# * Whose fee: each locker's OWN arcade's operator, at its "cut of trades" rate (app.TRADE_CUT, swap.cut_bps), carried
+#   in the terms for that leg (Leg.fee_bps, Leg.fee_to) so the other side -- possibly on another arcade, through the
+#   shared order book -- knows what the lock must hold and what its claim must pay.
+# * Its form: "percent with a floor". The rate times the coin amount of that lock, rounded DOWN to the satoshi, never
+#   under the chain's dust line (an output under it does not relay). A token, NFT or Doginal lock takes its percent of
+#   the other leg when that is coin on the SAME chain; against another chain (or a non-coin) only the floor. Rate 0
+#   (Off): no operator output at all, and no floor.
+#
+# Both traders work every one of these numbers out for themselves, from the terms, in integers, here and in
+# wallet_js.js (operatorFee, claimFee...; tests/test_trade_fees.py holds the two to the same satoshi).
 
-def lock_value(leg: Leg) -> int:
-    """The coin a lock output for `leg` must hold: the amount for coin, the reserve else.
-    A Doginal's lock output holds its own coin, whatever that is worth; its reserve stands
-    beside it as output 1 and is checked with the Doginal itself (doginal_at)."""
+#: The highest rate a leg may carry: all of it (swap.CUT_CEILING). A bigger number in a leg is read as this.
+FEE_BPS_CEILING = 10_000
+
+
+def claim_fee(network: str) -> int:
+    """What the claim (or refund) of a COIN lock on `network` pays the network (htlc.spend_fee), from the chain's own
+    published parameters (config.NETWORKS) -- never from whichever node is asked, so two arcades always agree."""
+    return H.spend_fee(NETWORKS.get(network))
+
+
+def fee_floor(network: str) -> int:
+    """The least an operator fee output may be on `network`: its dust line (htlc.dust_of -- 0.01 on the Dogecoin family,
+    its soft-dust line; 0.0001 LTC on Litecoin)."""
+    return H.dust_of(NETWORKS.get(network))
+
+
+def operator_fee(leg: Leg, other: Leg | None = None) -> int:
+    """The operator fee `leg`'s lock holds and its claim pays to `leg.fee_to`, in that chain's base units: 0 with no rate
+    or no payee (terms from before 2026-10-21 included); else rate x base // 10,000, at least `fee_floor`. The base is
+    the leg's own amount for coin; for a token, NFT or Doginal it is `other`'s amount when `other` is coin on the same
+    chain, else nothing (the floor alone)."""
+    bps = min(int(leg.fee_bps or 0), FEE_BPS_CEILING)
+    if bps <= 0 or not leg.fee_to:
+        return 0
+    if leg.kind == "coin":
+        base = int(leg.amount)
+    elif other is not None and other.kind == "coin" and other.network == leg.network:
+        base = int(other.amount)
+    else:
+        base = 0
+    return max(fee_floor(leg.network), base * bps // 10_000)
+
+
+def payee(leg: Leg, other: Leg | None = None) -> tuple[int, str] | None:
+    """(fee, address) of the operator output a claim of `leg`'s lock pays, or None when it pays none."""
+    fee = operator_fee(leg, other)
+    return (fee, leg.fee_to) if fee else None
+
+
+def doginal_reserve(leg: Leg, other: Leg | None = None) -> int:
+    """The coin locked beside a Doginal (output 1 of its lock): the spend's own reserve and the operator fee."""
+    return H.DOGINAL_RESERVE + operator_fee(leg, other)
+
+
+def lock_value(leg: Leg, other: Leg | None = None) -> int:
+    """The least coin the lock output for `leg` must hold for the terms to be met (check_lock): the amount, the claim's
+    network fee and the operator fee for coin; the reserve and the operator fee for a token or NFT. A leg on terms from
+    before 2026-10-21 (fee_bps None) is held to the old rule, the amount alone (or the reserve), so an arcade not yet
+    updated still trades. A Doginal's lock output holds its own coin, whatever that is worth; its reserve stands beside
+    it as output 1 and is checked with the Doginal itself (doginal_at, check_lock)."""
     if leg.kind == "doginal":
         return 1
-    return leg.amount if leg.kind == "coin" else LOCK_RESERVE
+    if leg.kind != "coin":
+        return LOCK_RESERVE + operator_fee(leg, other)
+    if leg.fee_bps is None:
+        return leg.amount
+    return leg.amount + claim_fee(leg.network) + operator_fee(leg, other)
+
+
+def fund_value(leg: Leg, other: Leg | None = None) -> int:
+    """What this trader puts into its OWN lock for `leg`: lock_value as an updated arcade reads it, whatever terms the
+    other side sent -- the network fee of the claim is always the sender's, so the claimer gets exactly the amount even
+    when the claimer is an old arcade (which pays itself the lock less that fee). A Doginal: the reserve beside it."""
+    if leg.kind == "doginal":
+        return doginal_reserve(leg, other)
+    if leg.fee_bps is None:
+        leg = dataclasses.replace(leg, fee_bps=0, fee_to="")
+    return lock_value(leg, other)
+
+
+#: The version bytes an operator fee may be paid to: a pay-to-pubkey-hash address of any chain this software knows.
+#: The key behind a hash holds the coins on every chain, so a regtest node standing in for Dogecoin (its own version
+#: byte) is paid as well as a real one; a script hash is refused, nobody's arcade pays one.
+PAYEE_VERSIONS = frozenset(p.pubkeyhash_version for p in NETWORKS.values())
+
+
+def payee_ok(address: Any) -> bool:
+    """Is `address` somewhere an operator fee can be paid: a pay-to-pubkey-hash address (PAYEE_VERSIONS)?"""
+    from .script import b58check_decode
+    if not isinstance(address, str) or not 26 <= len(address) <= 36:
+        return False
+    try:
+        version, payload = b58check_decode(address)
+    except Exception:                                      # noqa: BLE001 -- not base58check
+        return False
+    return version in PAYEE_VERSIONS and len(payload) == 20
+
+
+def with_fee(leg: Leg, terms: dict | None) -> Leg:
+    """`leg` carrying an arcade's lock-fee terms ({"bps", "to"}, as /account and node_trader.lock_fee give them; empty
+    or None: Off, rate 0 -- still the new terms, so the lock is checked with its network fee on top)."""
+    terms = terms or {}
+    bps = int(terms.get("bps") or 0)
+    to = str(terms.get("to") or "") if bps > 0 else ""
+    return dataclasses.replace(leg, fee_bps=bps if to else 0, fee_to=to)
 
 
 def move_data(leg: Leg) -> bytes:
@@ -258,16 +375,23 @@ def plan_locktimes(give: Leg, get: Leg, role: str, now: int) -> tuple[int, int]:
 
 
 def check_lock(trade: Trade, seen: LockSeen, theirs: bool) -> str:
-    """"" if `seen` is exactly the lock the terms say, else why not."""
+    """"" if `seen` is exactly the lock the terms say, else why not. "Holds at least": a lock that holds more passes,
+    which is how an arcade from before 2026-10-21 (checking the amount alone) still accepts an updated one's lock."""
     leg = trade.get if theirs else trade.give
+    other = trade.give if theirs else trade.get
     redeem = trade.their_redeem() if theirs else trade.my_redeem()
     if seen.script_hex != H.p2sh_script(redeem).hex():
         return "that lock's script is not the one agreed (hash, keys or lock time differ)"
     if leg.kind == "doginal" and (seen.vout != 0 or not seen.asset_ok):
         return "that lock does not hold the agreed Doginal at the start of output 0, with its reserve beside it"
-    if seen.value < lock_value(leg):
+    if leg.kind == "doginal" and operator_fee(leg, other) and seen.reserve < doginal_reserve(leg, other):
+        return "the reserve beside that Doginal is too small to pay its spend and the operator fee agreed"
+    if seen.value < lock_value(leg, other):
         if leg.kind == "coin":
-            return f"that lock holds {seen.value}, less than the {leg.amount} agreed"
+            if leg.fee_bps is None:
+                return f"that lock holds {seen.value}, less than the {leg.amount} agreed"
+            return (f"that lock holds {seen.value}, less than the {leg.amount} agreed with its network fee "
+                    f"({claim_fee(leg.network)}) and operator fee ({operator_fee(leg, other)}) on top")
         return "that lock holds too little coin to move its token or NFT out again"
     if leg.kind != "coin" and not seen.asset_ok:
         return "the ledger does not show the agreed token or NFT at that lock"

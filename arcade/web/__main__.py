@@ -20,9 +20,8 @@ import uvicorn
 
 from ..config import MESSAGING_NETWORKS, NETWORKS
 from . import brand as brandlib
-from .app import create_app
-from .state import AppState, ChainContext
-from .watcher import BlockWatcher
+# The app (create_app, AppState, BlockWatcher) is imported inside main, after the supervisor is out of the way: the
+# supervisor (arcade/web/supervisor.py) is a small process and stays one.
 
 DEFAULT_HOME = Path.home() / ".dogecoinarcade"
 
@@ -116,7 +115,18 @@ def main(argv: list[str] | None = None) -> int:
         "--log-level", default=os.environ.get("ARCADE_LOG_LEVEL", "info"),
         choices=["debug", "info", "warning", "error"],
         help="how much this writes to the journal; info by default")
+    # Run as the supervisor's worker (arcade/web/supervisor.py): the listening socket and the pipe it says "warm" on.
+    parser.add_argument("--worker-fd", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--ready-fd", type=int, help=argparse.SUPPRESS)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
+    if args.worker_fd is None and not os.environ.get("ARCADE_NO_SUPERVISOR"):
+        # Updates with no downtime (2026-10-20): this process holds the port and runs the arcade as its child.
+        from .supervisor import Supervisor
+        return Supervisor(raw_argv, args.host, args.port, Path(args.home).expanduser()).run()
+    from .app import create_app
+    from .state import AppState, ChainContext
+    from .watcher import BlockWatcher
     if args.brand:   # before create_app, which reads it (brand.py)
         os.environ["ARCADE_BRAND"] = args.brand
 
@@ -214,6 +224,27 @@ def main(argv: list[str] | None = None) -> int:
     # machinery that retired rows in every OTHER store, which existed for a
     # floor that moved repeatedly while the rules were being settled.
 
+    # Everything slow is done: the app is built while the worker before this one still serves (a reload), and only
+    # then does this one wait for the run lock -- which that one lets go as it exits -- before it starts any work in
+    # the background or takes a request (arcade/web/supervisor.py).
+    import threading
+    from .supervisor import RunLock, worker_ready
+    state.port = args.port
+    state.public = bool(args.public)
+    if not brandlib.FROM_ENV and state.setting("brand"):   # the admin panel's face (create_app applies it too)
+        try:
+            brandlib.use(str(state.setting("brand")))
+        except ValueError:
+            pass
+    state.running = threading.Event()
+    app = create_app(state)
+    worker_ready(args.ready_fd, b"warm")
+    run_lock = RunLock(home)
+    if not run_lock.take(wait=False):
+        print("  waiting for the arcade-web before this one to finish")
+        run_lock.take(wait=True)
+    state.running.set()
+
     # If the passphrase was saved, unlock at startup rather than making the user
     # do it on every launch. That is the entire point of saving it.
     if state.try_auto_unlock():
@@ -271,19 +302,12 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:                  # noqa: BLE001 -- games play solo instead
             print(f"  mesh not started: {exc}")
 
-    state.port = args.port
-    state.public = bool(args.public)
     if state.public:
         # Said at startup, every time. An operator who does not know which
         # of the two things they are running is an operator who will one
         # day put a wallet on a public address.
         print("  PUBLIC: only the feed, the collections and the chain are "
               "served; every form is refused")
-    if not brandlib.FROM_ENV and state.setting("brand"):   # the admin panel's face (create_app applies it too)
-        try:
-            brandlib.use(str(state.setting("brand")))
-        except ValueError:
-            pass
     print(f"{brandlib.current().name}  ->  http://{args.host}:{args.port}")
     # Without a timeout here uvicorn waits for every request to finish before it
     # stops, and a game room's event stream is a request that never finishes --
@@ -291,8 +315,13 @@ def main(argv: list[str] | None = None) -> int:
     # process was killed mid-request rather than shutting down. Whatever was
     # being written was written by a killed process, not by the careful
     # shutdown in the lifespan, which never got its turn.
-    uvicorn.run(create_app(state), host=args.host, port=args.port, log_level="warning",
-                timeout_graceful_shutdown=GRACEFUL_STOP)
+    if args.worker_fd is not None:
+        worker_ready(args.ready_fd, b"serving")
+        uvicorn.Server(uvicorn.Config(app, fd=args.worker_fd, log_level="warning",
+                                      timeout_graceful_shutdown=GRACEFUL_STOP)).run()
+    else:
+        uvicorn.run(app, host=args.host, port=args.port, log_level="warning",
+                    timeout_graceful_shutdown=GRACEFUL_STOP)
     return 0
 
 
@@ -308,6 +337,7 @@ def _addon_context(args, params, mode: str = "") -> "ChainContext | None":
     node: named on the command line, or ~/<node_dir>/<node_conf> (its folder too, for the cookie
     beside it: 2026-10-17, an installer's config with no rpcuser read "syncing 0%" forever), or that
     folder with a readable .cookie. None when there is none: the arcade runs without that chain."""
+    from .state import ChainContext
     net = params.name.replace("-", "_")
     if getattr(args, f"no_{net}", False) or mode == "off":
         return None

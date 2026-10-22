@@ -148,7 +148,8 @@ def test_a_person_buys_on_the_market_page_and_the_page_settles_it(world, monkeyp
                     break
             browser.close()
         assert done, (trades, said)
-        assert "Network fees: about 0.01 DOGE to lock yours" in asked and "0.01 PEP TEST comes off" in asked, asked
+        assert "Fees you pay on top: about 0.01 DOGE to send your lock; 0.01 DOGE for the network fee of the " \
+            "other side's claim" in asked and "You receive exactly the PEP TEST agreed" in asked, asked
         # The page now works on its swap every 1.5 s (2026-10-17), so it can be done before node
         # B's trader has had a tick since the secret showed: give it the few ticks it needs.
         for _ in range(10):

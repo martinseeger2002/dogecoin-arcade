@@ -121,6 +121,70 @@ def test_two_nodes_trade_pep_for_doge_over_the_messenger(market):
         "the responder claimed only after the initiator revealed the secret"
 
 
+def _spent_by(rpc, pointer):
+    from arcade.node_trader import _spender
+    txid, vout = pointer.split(":")
+    return _spender(rpc, {"txid": txid, "vout": int(vout)}, {})
+
+
+def test_each_lock_pays_its_own_operator_and_each_claimer_gets_exactly_the_amount(market):
+    """2026-10-21: the sender of each lock pays its fees, and each lock holds its own arcade's operator fee,
+    paid out by the claim. Both nodes charge 1%: A's PEP lock holds 3 PEP + 0.01 + 0.03, B's DOGE lock 2 DOGE + 0.01 +
+    0.02; each claim pays the locker's operator its fee and the claimer exactly the amount."""
+    a, b, pep, dg = market
+    for t in (a, b):
+        t.state.set_setting("trade_cut", 1)
+    b.stand("order-fees", {"network": "doge", "kind": "coin", "amount": 2 * COIN},
+            {"network": "regtest", "kind": "coin", "amount": 3 * COIN})
+    stood = next(o for o in b.standing() if o["id"] == "order-fees")["give"]
+    assert stood["fee_bps"] == 100 and stood["fee_to"] == b.fee_terms("doge")["to"], "listed with its terms"
+    give = a.leg("regtest", 3 * COIN, b.key.pubkey)
+    assert give.fee_bps == 100 and give.fee_to == a.fee_terms("regtest")["to"]
+    get = T.Leg("doge", "coin", "", 2 * COIN, b.key.pubkey.hex(), a.key.pubkey.hex(), stood["fee_bps"],
+                stood["fee_to"])
+    trade = a.propose(b.state.identity.public_bytes, "order-fees", give, get)
+    for _ in range(40):
+        for t in (a, b):
+            _scan(t)
+            t.tick()
+        _mine(pep, dg)
+        if a.book.get(trade.id).state == "done" and (b.book.get(trade.id) or trade).state == "done":
+            break
+    assert a.book.get(trade.id).state == b.book.get(trade.id).state == "done"
+    with a._db() as conn:
+        link = dict(conn.execute("SELECT * FROM link WHERE id=?", (trade.id,)).fetchone())
+
+    def paid(tx):
+        out = {}
+        for o in tx["vout"]:
+            for addr in o["scriptPubKey"].get("addresses", []):
+                out[addr] = out.get(addr, 0) + round(o["value"] * COIN)
+        return out
+    a_lock = pep.call("getrawtransaction", link["my_lock"].split(":")[0], 1)["vout"][int(link["my_lock"].split(":")[1])]
+    assert round(a_lock["value"] * COIN) == 3 * COIN + 1_000_000 + 3_000_000, "A's lock: the amount and both fees"
+    claim_of_b = paid(_spent_by(dg, link["their_lock"]))
+    assert claim_of_b == {b.fee_terms("doge")["to"]: 2_000_000, a._address("doge"): 2 * COIN}, claim_of_b
+    claim_of_a = paid(_spent_by(pep, link["my_lock"]))
+    assert claim_of_a == {a.fee_terms("regtest")["to"]: 3_000_000, b._address("regtest"): 3 * COIN}, claim_of_a
+
+
+def test_a_taker_cannot_write_its_own_payee_into_the_listers_lock(market):
+    a, b, pep, dg = market
+    b.state.set_setting("trade_cut", 1)
+    b.stand("order-payee", {"network": "doge", "kind": "coin", "amount": 2 * COIN},
+            {"network": "regtest", "kind": "coin", "amount": 3 * COIN})
+    give = a.leg("regtest", 3 * COIN, b.key.pubkey)
+    get = T.Leg("doge", "coin", "", 2 * COIN, b.key.pubkey.hex(), a.key.pubkey.hex(), 100, Key(30).address)
+    trade = a.propose(b.state.identity.public_bytes, "order-payee", give, get)
+    for _ in range(3):
+        for t in (a, b):
+            _scan(t)
+            t.tick()
+        _mine(pep)
+    assert a.book.get(trade.id).state == "aborted", "refused before anything was locked"
+    assert b.book.get(trade.id) is None
+
+
 def test_a_proposal_against_no_order_is_cancelled_and_costs_nothing(market):
     a, b, pep, dg = market
     give = a.leg("regtest", 3 * COIN, b.key.pubkey)

@@ -2,24 +2,42 @@
 {% block title %}Affiliates · {{ brand.name }}{% endblock %}
 {% block body %}
 {# Who the arcade works with (2026-10-15: an Affiliates tab between the Exchange and
-   the Docs; antidoginaldogs.com; an outside Doginals index removed the same day). The list is app.py AFFILIATES. #}
+   the Docs; antidoginaldogs.com; an outside Doginals index removed the same day). Since 2026-10-21 (the operator: "an admin
+   affiliate panel") the list is the operator's own sites, then the sites linked arcades share that the operator ticked
+   to show, under who shares them (arcade/affiliates.py). Every name, line and address here came from an operator,
+   some from another arcade's: plain text through autoescaping only, never |safe. #}
 <style>
 .aff-list{display:grid;gap:12px;max-width:640px}
-.aff-card{display:block;text-decoration:none;color:inherit;padding:16px 18px}
+.aff-card{display:block;text-decoration:none;color:inherit;padding:16px 18px;overflow-wrap:anywhere}
 .aff-card strong{display:block;font-size:1.05rem;color:var(--accent)}
 .aff-card .about{display:block;margin-top:6px;font-size:.9rem;color:var(--muted)}
 .aff-card .where{display:block;margin-top:8px;font-size:.8rem;color:var(--muted)}
+.aff-by{margin:22px 0 8px;font-size:.95rem;color:var(--muted);font-weight:600;text-transform:none;letter-spacing:0}
 </style>
 <h1>Affiliates</h1>
 <p class="sub">Projects this arcade works with. Each link opens their own site.</p>
 
 <div class="aff-list">
   {% for a in affiliates %}
-  <a class="panel aff-card" href="{{ a.url }}" target="_blank" rel="noopener">
+  <a class="panel aff-card" href="{{ a.url }}" target="_blank" rel="noopener noreferrer nofollow">
     <strong>{{ a.name }}</strong>
-    <span class="about">{{ a.about }}</span>
+    {% if a.about %}<span class="about">{{ a.about }}</span>{% endif %}
     <span class="where">{{ a.url|replace('https://', '') }} &#8599;</span>
   </a>
   {% endfor %}
 </div>
+
+{% for g in shared %}
+<h2 class="aff-by">Shared by {{ g.by }}</h2>
+<div class="aff-list">
+  {% for a in g.sites %}
+  <a class="panel aff-card" href="{{ a.url }}" target="_blank" rel="noopener noreferrer nofollow">
+    <strong>{{ a.name }}</strong>
+    {% if a.about %}<span class="about">{{ a.about }}</span>{% endif %}
+    <span class="where">{{ a.url|replace('https://', '') }} &#8599; &middot; shared by {{ g.by }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% endfor %}
+{% if not affiliates and not shared %}<p class="muted">None yet.</p>{% endif %}
 {% endblock %}

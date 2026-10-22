@@ -285,9 +285,10 @@ meaning matches.
 | `/r/balances/<address>` | token balances at any address |
 | `/r/tag/<name>`, `/r/address/<address>` | who holds a @tag, and the other way |
 | `/r/wallet` | which wallet is looking — can be switched off |
-| `/r/send` | **asks** the wallet to send coins, tokens or an inscription; the person approves |
+| `/r/send` | **asks** the wallet to send coins, tokens or an inscription; the person approves. Give it a `ref` and a retry is never a second send |
 | `/r/tx/<txid>` | whether a transaction is confirmed, and how deep |
 | `/r/storage.js` | `arcade.storage`: what the wallet remembers for the page, since a sandbox has no `localStorage` |
+| `/r/contacts.js` | `arcade.contacts`: the signed-in player's address book. `list()` (asked once per game), and `add({address, name})` / `remove(address)`, each only after the player taps yes on a card |
 | `/r/node.js` | `arcade.node`: node-to-node messages sent as the wallet the page runs in, and the replies to them |
 | `/r/swap.js` | `arcade.swap`: a shop page's listings, and a buy button that ends in one transaction both sides signed |
 | `/r/owner.js` | `arcade.owner`: a page sending, unasked, from the wallet that created it and holds it |
@@ -1046,6 +1047,26 @@ forwarding. The mempool already gossips to every node in seconds.
   before any is broadcast, and one yes sends the set.
 * One wallet per chain, with a two-step send: the decoded transaction and its
   fee are shown before anything is broadcast.
+* **Import any wallet of a coin** (Wallet → the wallet drop-down → **+ Import a
+  wallet**): paste its private key (WIF) or its 12-word phrase, even one never
+  used on an arcade. A phrase gives the address the arcade's own words would
+  (m/44'/coin'/0'/0/0; on Litecoin test, the address type you pick). The key
+  never leaves your browser: it is sealed under your password in a second
+  record beside your wallet, opened when you sign in, and this arcade learns
+  only the address, with the key's signature over your account, so nobody can
+  register an address whose key they do not hold. Up to 20 per coin.
+* **Wallets go by name**, never by address: an unnamed one is "Wallet N", the
+  lowest number free, until you rename it (renaming frees its number). Your own
+  wallet can be renamed too. The address is under **Receive**, with its QR code.
+* **An imported wallet's past coins are read back once.** If this arcade was
+  already watching the address, it is ready at once; otherwise it says how long
+  the read-back will take. One read-back runs per coin at a time, so an import
+  while one runs is refused, nothing of it kept, with when to come back. With no
+  Core to read that coin, here or shared by another arcade, it waits and starts
+  by itself once there is one. Its history starts when it was imported.
+* **Sending from an imported wallet** spends only its coins and gives the change
+  back to it; your browser signs with its key. **Remove from list** takes it off
+  this arcade and touches no coins: its key still opens it anywhere.
 * **Change comes back to the address that paid**, so the messaging identity is
   not quietly emptied by an ordinary send.
 * **Split for fast sending** cuts the wallet into many small outputs, so the
