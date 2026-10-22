@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import htlc as H, trade as T, trade_courier as courier, trade_messages as M
+from .config import NETWORKS
 
 COIN = 100_000_000
 _N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
@@ -751,7 +752,8 @@ class NodeTrader:
         # (funding.GUARD_BY_NET), and a sendtoaddress there spent an inscribed coin on regtest.
         if network == "doge":
             guard = self._doginals or funding.GUARD
-        elif network in ("ltc", "ltctest"):
+        elif getattr(NETWORKS.get(network), "addon", False):
+            # Litecoin, and any other add-on chain the app guards (2026-10-22: Bellscoin, Luckycoin).
             guard = funding.guard_on(network)
         else:
             guard = None

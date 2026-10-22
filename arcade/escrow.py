@@ -41,6 +41,7 @@ from typing import Any
 
 from . import encoding, inscriptions as I, payload as P
 from .script import b58check_encode, hash160
+from .config import require_p2sh_payable
 from .txbuild import op_return_script, p2pkh_script, push, varint
 
 OP_0, OP_1 = 0x00, 0x51
@@ -144,6 +145,7 @@ def parse(redeem: bytes) -> dict | None:
 
 
 def address_of(redeem: bytes, params: Any) -> str:
+    require_p2sh_payable(params)
     return b58check_encode(params.scripthash_version, hash160(redeem))
 
 

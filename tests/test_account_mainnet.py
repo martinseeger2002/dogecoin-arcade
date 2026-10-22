@@ -157,4 +157,4 @@ def test_the_browser_derives_a_different_key_on_each_chain():
     # Dogecoin (the third network) is SLIP-44's own 3, the one Pepecoin borrows. Litecoin
     # (2026-10-17, SadFrog's choice) uses 3 as well -- one key for PEP, DOGE and LTC -- and the
     # backup page hands out its key for wallets that look on Litecoin's own 2.
-    assert "COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3, ltc: 3}" in coins
+    assert "COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3, ltc: 3, bel: 3, lky: 3}" in coins

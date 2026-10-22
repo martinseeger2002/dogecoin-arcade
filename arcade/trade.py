@@ -54,7 +54,10 @@ CONFIRMATIONS_BIG = 1
 BIG = {"main": 1_000_000 * 100_000_000, "doge": 1_000 * 100_000_000,
        # Litecoin (2026-10-17, SadFrog's side): 2 LTC, about the value of the Dogecoin line;
        # The operator moves it with swap_big:ltc like the others.
-       "ltc": 2 * 100_000_000}
+       "ltc": 2 * 100_000_000,
+       # Bellscoin and Luckycoin (2026-10-22, SadFrog's side): set low on purpose, so a lock asks for its
+       # confirmation early until the operator sets swap_big:bel / swap_big:lky to the coins' worth.
+       "bel": 200 * 100_000_000, "lky": 20 * 100_000_000}
 #: Never claim the responder's lock when less than this is left on it: the responder
 #: must still have time to see the secret and claim the initiator's lock before T1.
 CLAIM_MARGIN = 20 * 60
@@ -96,7 +99,10 @@ class Leg:
     fee_to: str = ""
 
     def tier(self) -> str:
-        return "mainnet" if self.network in ("main", "doge", "ltc") else "testnet"
+        # Any real-coin chain's leg is mainnet tier (2026-10-22): a chain added as Params (Bellscoin,
+        # Luckycoin) must not trade at the testnet tier's zero confirmations.
+        params = NETWORKS.get(self.network)
+        return "mainnet" if self.network == "main" or (params is not None and params.real_coins) else "testnet"
 
 
 @dataclasses.dataclass

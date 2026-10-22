@@ -379,8 +379,10 @@ const netButton = (one, cls) => {
   const ltctest = one.network === "ltctest" || one.ltctest;  // Litecoin testnet, "L test"
   const ltc = one.network === "ltc" || one.ltc || ltctest;   // Litecoin (2026-10-17)
   const b = el("button", cls);
-  const letter = el("b", "netl " + (doge ? "dogecoin" : ltc ? "litecoin" : one.mainnet ? "mainnet" : "testnet"),
-                    doge ? "D" : ltc ? "L" : "P");
+  // Any other add-on chain (2026-10-22: Bellscoin, Luckycoin) by its own word and letter (/account chains[].net, .letter).
+  const other = !doge && !ltc && one.net && !["mainnet", "testnet"].includes(one.net) && one.net;
+  const letter = el("b", "netl " + (doge ? "dogecoin" : ltc ? "litecoin" : other ? one.net : one.mainnet ? "mainnet" : "testnet"),
+                    doge ? "D" : ltc ? "L" : other ? (one.letter || "?") : "P");
   b.append(letter, " " + (!ltctest && (one.mainnet || doge || ltc) ? "main" : "test"));
   b.title = one.title || one.label || "";
   return b;
@@ -966,7 +968,8 @@ function drawHead() {
   // Set aside for this account's offers and orders, on this arcade or another (2026-10-19): not leaving, not to spend.
   if (c.held) bits.push(["out", `${coinsOf(c.held)} held for your offers`]);
   // Coins carrying an inscription are held, not spendable (2026-10-15): said beside the number they are left out of.
-  const inscWord = c.network === "doge" ? "Doginals" : (c.network === "ltc" || c.network === "ltctest") ? "Litecoin inscriptions" : c.network === "main" ? "Pepinals" : "inscriptions";
+  const inscWord = c.network === "doge" ? "Doginals" : (c.network === "ltc" || c.network === "ltctest") ? "Litecoin inscriptions" : c.network === "main" ? "Pepinals"
+    : c.network === "bel" ? "Bellinals" : c.network === "lky" ? "Luckinals" : "inscriptions";
   // An imported wallet's own (2026-10-22): its number is what it can send; what is held is said beside it.
   const held1 = w ? (w.status || {}) : c;
   if (held1.inscribed) bits.push(["out", `${coinsOf(held1.inscribed)} held in ${inscWord}`]);
@@ -1488,9 +1491,11 @@ async function step1(s, d) {
     if (!text) return;
     const got = parseQR(text);
     // Which coin a payment code names, against the one picked (Litecoin: "litecoin:" / "ltc:", 2026-10-17).
-    const family = (s) => s.startsWith("doge") ? "doge" : (s.startsWith("lite") || s.startsWith("ltc")) ? "ltc" : "pep";
-    const named = {doge: "Dogecoin", ltc: "Litecoin", pep: "Pepecoin"};
-    const here = c.network === "doge" ? "doge" : (c.network === "ltc" || c.network === "ltctest") ? "ltc" : "pep";
+    const family = (s) => s.startsWith("doge") ? "doge" : (s.startsWith("lite") || s.startsWith("ltc")) ? "ltc"
+      : (s.startsWith("bel")) ? "bel" : (s.startsWith("lucky") || s.startsWith("lky")) ? "lky" : "pep";
+    const named = {doge: "Dogecoin", ltc: "Litecoin", pep: "Pepecoin", bel: "Bellscoin", lky: "Luckycoin"};
+    const here = c.network === "doge" ? "doge" : (c.network === "ltc" || c.network === "ltctest") ? "ltc"
+      : (c.network === "bel" || c.network === "lky") ? c.network : "pep";
     if (got.coin && family(got.coin) !== here)
       toast(`That code asks for ${named[family(got.coin)]}: switch coins at the top first.`);
     to.value = got.to;

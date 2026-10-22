@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from .script import OP_CHECKSIG, b58check_encode, hash160
+from .config import require_p2sh_payable
 from .txbuild import push
 
 OP_0, OP_1 = 0x00, 0x51
@@ -116,6 +117,7 @@ def keys_of(redeem: bytes) -> tuple[bytes, bytes, bytes] | None:
 
 
 def address_of(redeem: bytes, params: Any) -> str:
+    require_p2sh_payable(params)
     return b58check_encode(params.scripthash_version, hash160(redeem))
 
 
