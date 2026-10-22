@@ -1175,7 +1175,9 @@ section.panel h2{margin-top:0}
   var ORD_PICK = null;
   try { ORD_PICK = localStorage.getItem('ords.chain'); } catch (e) { /* no storage: first chain */ }
   var ORD_DATA = null;
-  var ORD_COLORS = ['#c8962a', '#3c8dbc', '#2f9e6e', '#a05cc4', '#d0573c', '#6b8e23'];
+  // Rings A, B, C red, yellow, green, the same three the inner ring uses for 1, 2 and 3 agreeing (2026-10-22: "so
+  // they match the inner ring"): one copy alone is red, a second makes yellow, a third green.
+  var ORD_COLORS = ['#c0392b', '#d4a017', '#2f7d4f', '#a05cc4', '#d0573c', '#6b8e23'];
   var ORD_CHOICES = [
     ['walk', 'Hold the full index', 'Keeps every inscription, who owns it and every token balance, stitched in order from '
       + 'the chunks every arcade scans. Answers lookups for the arcades that only read. Takes disk (see below) and, on a '
@@ -1184,6 +1186,13 @@ section.panel h2{margin-top:0}
       + 'stitched them. No index here. Uses the cores set below.'],
     ['read', 'Read only', 'Keeps nothing; asks an arcade that holds the index. Costs nothing here.'],
     ['off', 'Off', 'This arcade takes no part in this chain’s ords.']];
+  // What a linked arcade says of the whole-index copy it is fetching (2026-10-22): its pieces so far, or nothing.
+  function ordCopyWord(p) {
+    var c = p && p.copy;
+    if (!c || c.have === 'all' || !c.of) return '';
+    return ' <span class="muted">· fetching a copy of the index to block ' + num(c.h) + ': ' + num(c.have) + ' of '
+      + num(c.of) + ' pieces (' + Math.floor(100 * c.have / c.of) + '%)</span>';
+  }
   function ordName(c) { return c.tag ? '@' + c.tag : (c.me ? 'this arcade' : 'arcade ' + c.node); }
   function ordEl(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
   function ordEsc(t) { var d = document.createElement('div'); d.textContent = String(t); return d.innerHTML; }
@@ -1201,7 +1210,7 @@ section.panel h2{margin-top:0}
         + b[0].toFixed(2) + ' ' + b[1].toFixed(2);
     };
     var copies = (r.copies || []).slice(0, 3), svg = '<svg viewBox="0 0 400 400" role="img" aria-label="'
-      + ordEsc(r.title) + ': the copies of its index">';
+      + ordEsc(r.title) + ': the copies of its index, and how many arcades agree along it">';
     letters.forEach(function (L, k) {
       var rad = R[k], c = copies[k];
       svg += '<circle cx="' + cx + '" cy="' + cy + '" r="' + rad + '" fill="none" stroke="var(--line)" stroke-width="22"'
@@ -1211,7 +1220,9 @@ section.panel h2{margin-top:0}
       if (!c) return;
       var f = Math.max(c.frac || 0, .004), id = 'ordarc-' + r.net + '-' + k;
       svg += '<path id="' + id + '" d="' + arc(0, f, rad) + '" fill="none" stroke="' + ORD_COLORS[k] + '" stroke-width="22"/>';
-      var label = ordName(c) + (c.frac == null ? '' : ' ' + Math.round(c.frac * 100) + '%');
+      // The share walked only: the arcade is named in the key below (2026-10-22: "Remove the @tag labels").
+      var label = c.frac == null ? '' : Math.round(c.frac * 100) + '%';
+      if (!label) return;
       if (f * 2 * Math.PI * rad > label.length * 6.2 + 12) {
         svg += '<text dy="4" style="font:600 10.5px system-ui;fill:#fff"><textPath href="#' + id + '" startOffset="50%" '
           + 'text-anchor="middle">' + ordEsc(label) + '</textPath></text>';
@@ -1220,21 +1231,23 @@ section.panel h2{margin-top:0}
         svg += '<text x="' + q[0] + '" y="' + q[1] + '" text-anchor="middle">' + ordEsc(label) + '</text>';
       }
     });
-    // copies: 2+ green, 1 amber, none red, past the furthest copy grey (not indexed yet)
-    var cuts = [0, 1].concat(copies.map(function (c) { return c.frac || 0; })).sort(function (a, b) { return a - b; });
-    var two = 0, top = copies.length ? copies[0].frac : 0;
-    for (var i = 0; i + 1 < cuts.length; i++) {
-      var s0 = cuts[i], e0 = cuts[i + 1], m = (s0 + e0) / 2;
-      if (e0 - s0 < 1e-4) continue;
-      var n = copies.filter(function (c) { return c.frac > m; }).length;
-      var col = m > top ? 'var(--line)' : n >= 2 ? 'var(--good,#2f7d4f)' : n === 1 ? 'var(--warn,#b26b00)' : 'var(--bad)';
-      if (n >= 2) two += e0 - s0;
-      svg += '<path d="' + arc(s0, e0 - .001, 76) + '" fill="none" stroke="' + col + '" stroke-width="7"/>';
-    }
-    svg += '<text x="' + cx + '" y="' + (cy - 50) + '" text-anchor="middle" class="sub">copies</text>';
+    // The inner circle (2026-10-21): how many arcades AGREE on each stretch of the chain -- one alone red, two
+    // agreeing yellow, three or more green; grey where no arcade has said it yet (doginal_index status agree_runs).
+    var runs = r.agree_runs || [], ready = Math.max(1, r.ready || 0), three = 0;
+    var AGREE_COL = ['var(--line)', ORD_COLORS[0], ORD_COLORS[1], ORD_COLORS[2]];
+    runs.forEach(function (run) {
+      var s0 = run[0] / ready, e0 = run[1] / ready;
+      if (e0 - s0 < 1e-4) return;
+      if (run[2] >= 3) three += e0 - s0;
+      // edge to edge: a gap between runs showed the dark page through as black ticks (2026-10-22, 157 runs on PEP)
+      svg += '<path d="' + arc(s0, e0, 76) + '" fill="none" stroke="' + AGREE_COL[run[2]]
+        + '" stroke-width="7"><title>' + (run[2] ? run[2] + (run[2] >= 3 ? '+' : '') + ' arcade' + (run[2] === 1 ? '' : 's')
+        + ' agreeing' : 'not said yet') + '</title></path>';
+    });
+    svg += '<text x="' + cx + '" y="' + (cy - 50) + '" text-anchor="middle" class="sub">agreeing</text>';
     svg += '<text x="' + cx + '" y="' + (cy - 6) + '" text-anchor="middle" style="font:700 22px system-ui;fill:var(--fg)">'
-      + Math.round(two * 100) + '%</text><text x="' + cx + '" y="' + (cy + 12) + '" text-anchor="middle" class="sub">'
-      + 'of the chain on 2 copies</text><text x="' + cx + '" y="' + (cy + 26) + '" text-anchor="middle" class="sub">'
+      + Math.round(three * 100) + '%</text><text x="' + cx + '" y="' + (cy + 12) + '" text-anchor="middle" class="sub">'
+      + 'of the chain, 3 agreeing</text><text x="' + cx + '" y="' + (cy + 26) + '" text-anchor="middle" class="sub">'
       + (r.copies || []).length + ' arcade' + ((r.copies || []).length === 1 ? '' : 's') + ' holding</text></svg>';
     return svg;
   }
@@ -1344,15 +1357,16 @@ section.panel h2{margin-top:0}
     ring.appendChild(ordEl('h3', '', 'The copies of the index'));
     ring.appendChild(ordEl('div', 'muted', '<span style="font-size:.84rem">Each ring is one whole copy of this chain’s '
       + 'index, drawn as far as it reaches. Two copies keep it safe if an arcade goes offline; a third ring opens as more '
-      + 'arcades take part. The thin ring inside shows how many copies each part has: green two or more, amber one, grey '
-      + 'not indexed yet.</span>'));
+      + 'arcades take part. The thin ring inside shows how many arcades hold each part and agree on it: red one alone, '
+      + 'yellow two, green three or more, grey none yet. Where their words for a part differ, it counts only those that '
+      + 'agree.</span>'));
     ring.appendChild(ordEl('div', '', ordRing(r)));
     var legend = copies.map(function (c, k) {
       return '<div style="display:flex;gap:8px;align-items:baseline;margin:4px 0"><span style="width:12px;height:12px;border-radius:3px;'
         + 'flex:none;background:' + (k < 3 ? ORD_COLORS[k] : 'var(--line)') + '"></span><span><b>' + ordEsc(ordName(c)) + '</b>'
         + (c.me ? ' (this arcade)' : ' <span class="muted">arcade ' + ordEsc(c.node) + '</span>') + ': ring '
         + (k < 3 ? 'ABC'[k] : '–') + ', ' + (c.frac == null ? 'waiting for the tip' : Math.round(c.frac * 100) + '%')
-        + ' (block ' + num(c.walked_to) + ')</span></div>';
+        + ' (block ' + num(c.walked_to) + ')' + ordCopyWord((r.peers || {})[c.node]) + '</span></div>';
     }).join('');
     var others = (r.others || []).map(function (o) { return '<b>' + ordEsc(ordName(o)) + '</b> (' + (o.mode === 'help' ? 'helps scan' : 'read only') + ')'; });
     ring.appendChild(ordEl('div', '', legend + (others.length ? '<div class="muted" style="margin-top:6px">Also linked, holding '

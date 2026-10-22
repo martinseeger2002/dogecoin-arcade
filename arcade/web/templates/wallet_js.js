@@ -733,6 +733,36 @@ export async function checked(offer, wallet) {
   return coins.verifyOffer(offer, keys);
 }
 
+/** A DRC-20 / PRC-20 send in one press (2026-10-22; arcade/token20_send.py), in two calls so the page can
+ *  review it first. `startToken20(keys, ask)` -- {chain, tick, amount, to} -- has the node check the balance and offer the
+ *  commit: what comes back carries the exact `note`, the recipient and `fees` (commit, reveal, send). */
+async function token20Post(body, route = "/account/token20/send") {
+  const r = await fetch(route, {method: "POST", headers: {"Content-Type": "application/json"},
+                                                  body: JSON.stringify(body)});
+  const said = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(said.detail || `the node would not take it (HTTP ${r.status})`);
+  return said;
+}
+export async function startToken20(wallet, ask) {
+  // The address's own key (not the login key): the note's script is its, so only it can reveal the note.
+  const k = keysOn(wallet, ask.chain);
+  return token20Post({...ask, pubkey: coinsHex(k.pubkey)});
+}
+/** Then `sendToken20(keys, first, onStep)`: the commit, the note's reveal and the send, each checked here
+ *  (coins.verifyOffer: the reveal only for this key's own note script) and broadcast before the next is asked for.
+ *  The page's review listed the note and the fees, so each signature is `reviewed`. The three txids. */
+export async function sendToken20(keys, first, onStep = null) {
+  let offer = first;
+  const sid = first.send, txids = {};
+  for (let n = 0; n < 3 && offer.step !== "done"; n++) {
+    if (onStep) onStep(offer.step, offer);
+    const sent = await working(() => signOffer(keys, offer, null, {reviewed: true}));
+    txids[offer.step] = sent.txid;
+    offer = await token20Post({send: sid});
+  }
+  return txids;
+}
+
 /** Sign and send. `{reviewed: true}` only from a page whose own review already
  *  listed every cost of this mainnet transaction from `checked` (the Wallet's). */
 export async function confirm(wallet, offer, options = null) {
@@ -2641,7 +2671,8 @@ async function signLockSpend(wallet, {chain, redeem, txid, vout, kind, secret, l
     const tx = coins.parseTx(said.raw);
     // A Doginal comes out with two inputs, both under this lock: the Doginal (output 0 of the lock's
     // transaction) first and whole, then its reserve (output 1), spent whole as the fee (htlc.doginal_out).
-    const dg = what.kind === "doginal";
+    // A DRC-20 / PRC-20 lock is the same shape (token20_swap): its note at output 0, the reserve at 1.
+    const dg = what.kind === "doginal" || what.kind === "token20";
     const wanted = dg ? [[txid, 0], [txid, 1]] : [[txid, Number(vout)]];
     if (tx.inputs.length !== wanted.length || tx.inputs.some((x, i) => x.txid !== wanted[i][0] || x.vout !== wanted[i][1]))
       throw new Error("the node asked to spend a different coin. Nothing was signed.");
@@ -2771,6 +2802,8 @@ const tierOf = (leg) => (leg.network === "main" || leg.network === "doge" || leg
 
 /** 0, or 1 when a mainnet coin leg is at or above its line (trade.confirmations_for). */
 export function confirmationsFor(give, get, big = TRADE.BIG) {
+  // A DRC-20 / PRC-20 lock counts only once a copy of the ord index has read its note (token20_swap): never 0-conf.
+  if (give.kind === "token20" || get.kind === "token20") return Math.max(TRADE.CONFIRMATIONS_BIG, 1);
   for (const leg of [give, get]) {
     const line = big[leg.network];
     if (leg.kind === "coin" && tierOf(leg) === "mainnet" && line && leg.amount >= Number(line)) return TRADE.CONFIRMATIONS_BIG;
@@ -2793,9 +2826,10 @@ export async function checkLock(trade, seen, theirs) {
   const redeem = theirs ? trade.theirRedeem : trade.myRedeem;
   const script = coinsHex(await coins.htlcScript(redeem));
   if (seen.script_hex !== script) return "that lock's script is not the one agreed (hash, keys or lock time differ)";
-  if (leg.kind === "doginal" && (seen.vout !== 0 || !seen.asset_ok))
+  if ((leg.kind === "doginal" || leg.kind === "token20") && (seen.vout !== 0 || !seen.asset_ok))
     return "that lock does not hold the agreed Doginal at the start of output 0, with its reserve beside it";
-  if (leg.kind === "doginal" && operatorFee(leg, other) && Number(seen.reserve || 0) < doginalReserve(leg, other))
+  if ((leg.kind === "doginal" || leg.kind === "token20") && operatorFee(leg, other)
+      && Number(seen.reserve || 0) < doginalReserve(leg, other))
     return "the reserve beside that Doginal is too small to pay its spend and the operator fee agreed";
   if (seen.value < lockValue(leg, other)) {
     if (leg.kind === "coin") {
@@ -2846,7 +2880,7 @@ export function doginalReserve(leg, other = null) {
  *  is worth; its reserve stands beside it (checkLock). */
 export function lockValue(leg, other = null) {
   const kind = leg.kind || "coin";
-  if (kind === "doginal") return 1;
+  if (kind === "doginal" || kind === "token20") return 1;
   if (kind !== "coin") return TRADE.LOCK_RESERVE + operatorFee(leg, other);
   if (leg.fee_bps == null) return Number(leg.amount);
   return Number(leg.amount) + claimFee(leg.network) + operatorFee(leg, other);
@@ -2855,7 +2889,7 @@ export function lockValue(leg, other = null) {
 /** What this trader puts into its OWN lock for `leg` (trade.fund_value): lockValue as an updated arcade reads it,
  *  whatever terms the other side sent -- the claim's network fee is always the sender's. A Doginal: its reserve. */
 export function fundValue(leg, other = null) {
-  if ((leg.kind || "coin") === "doginal") return doginalReserve(leg, other);
+  if ((leg.kind || "coin") === "doginal" || leg.kind === "token20") return doginalReserve(leg, other);
   return lockValue(leg.fee_bps == null ? {...leg, fee_bps: 0, fee_to: ""} : leg, other);
 }
 
@@ -3164,6 +3198,8 @@ export async function swapFees(give, get, options = {}) {
   const onTop = [`about ${coinsText(sendFee(give.network))} ${net} to send your lock`];
   if (kindOf(give) === "coin") onTop.push(`${coinsText(claimFee(give.network))} ${net} for the network fee of the other side's claim`);
   else if (kindOf(give) === "doginal") onTop.push(`${coinsText(TRADE.DOGINAL_RESERVE)} ${net} that goes in with it to pay for moving it out`);
+  else if (kindOf(give) === "token20") onTop.push(`${coinsText(TRADE.DOGINAL_RESERVE)} ${net} that goes in with it to pay for `
+    + "moving it out, and the fees of the two transfer notes and four transactions that put the tokens into the lock");
   else onTop.push(`${coinsText(TRADE.LOCK_RESERVE)} ${net} that goes in with it to pay for moving it out`);
   const cut = operatorFee(mine, get);
   if (cut) onTop.push(`${coinsText(cut)} ${net} operator fee (${Number(mine.fee_bps) / 100}%) to this arcade`);
@@ -3309,7 +3345,20 @@ export async function tradeTick(wallet, id) {
     // The sender pays (2026-10-21): the claim's network fee and this arcade's operator fee go in on top, so the
     // other side receives exactly the amount agreed (fundValue).
     if (trade.give.kind === "coin") offer = await offerSend(address, coinsText(fundValue(trade.give, trade.get)), trade.give.network);
-    else {
+    else if (trade.give.kind === "token20") {
+      // A DRC-20 / PRC-20 token (token20_swap): four offers -- note 1's commit and reveal, the tokens to the lock with
+      // note 2's commit, then note 2 on the lock -- each checked and signed here; the last is the lock.
+      let step20 = await token20Post({chain: trade.give.network, redeem: coinsHex(myRedeem),
+                                      leg: legWhat(trade.give, trade.get)}, "/account/trade/lock20");
+      if (step20.lock !== address) throw new Error("the node built a different lock. Nothing was signed.");
+      const lid = step20.lock20;
+      for (let n = 0; n < 4 && step20.step !== "done"; n++) {
+        await confirm(wallet, step20, trade.approved ? {reviewed: true} : null);
+        step20 = await token20Post({lock20: lid}, "/account/trade/lock20");
+      }
+      if (step20.step !== "done") throw new Error("the token lock did not finish: " + (step20.detail || step20.step));
+      return {txid: step20.lock_txid};
+    } else {
       // A token or NFT: the node builds it (payload, then the lock with the coin that pays
       // its way out, last); this tab checks and signs it like any other offer.
       const asked = await fetch("/account/trade/lock", {
@@ -3325,7 +3374,7 @@ export async function tradeTick(wallet, id) {
     });
     const script = coinsHex(await coins.htlcScript(myRedeem));
     // A Doginal's lock is output 0 (its reserve output 1, under the same script).
-    let vout = trade.give.kind === "doginal" ? 0 : -1;
+    let vout = trade.give.kind === "doginal" || trade.give.kind === "token20" ? 0 : -1;
     for (let n = 0; n < 4 && vout < 0; n++) {
       const seen = await tradeFacts(trade.give.network, sent.txid, n).catch(() => null);
       if (seen && seen.script_hex === script && seen.value < lockValue(trade.give, trade.get)) continue;
@@ -3746,6 +3795,9 @@ export async function fundsReader() {
       const legF = give.fee_bps == null ? withFee({...give, kind}, c.lock_fee || {}) : {...give, kind};
       const need = kind === "coin" ? fundValue(legF, get) + fee
         : kind === "doginal" ? Number(c.doginal_lock_need || TRADE.LOCK_RESERVE + fee) + operatorFee(legF, get)
+        // A DRC-20 / PRC-20 lock: two notes and four transactions -- about twice a Doginal's lock (the tokens
+        // themselves are checked by the node when the lock is made).
+        : kind === "token20" ? 2 * Number(c.doginal_lock_need || TRADE.LOCK_RESERVE + fee) + operatorFee(legF, get)
         : fundValue(legF, get) + fee;
       const have = Number(c.spendable ?? c.balance ?? 0);
       if (have >= need) return "";

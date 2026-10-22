@@ -65,6 +65,7 @@ PUBLIC_PAGES = frozenset({
     "/create/chain",          # which chain this browser creates on (a cookie, no spending)
     "/inscriptions",
     "/exchange",
+    "/exchange/token20/search",       # DRC-20 / PRC-20 ticks as they are typed into the exchange's search boxes
     "/exchange/pairs",            # the "open a pair" box: two token ids to a token/token pair's page
     "/games",                 # every inscribed game (arcade/games.py)
     "/account/escrows",       # an account's own escrows (needs a session)
@@ -131,6 +132,9 @@ PUBLIC_PAGES = frozenset({
     "/account/inscribe/unfinished",
     "/account/dust",                  # coins in this account's own payload outputs
     "/account/coins",                 # this account's own coins on one chain (the Doginals check)
+    "/account/doginal-index",         # how far the chain's ord index has walked (the Doginals fill in as it goes)
+    "/account/token20",               # this account's DRC-20 / PRC-20 balances, from the most complete ord index
+    "/account/listed",                # what this account's standing listings hold (the Wallet shows them held)
     "/account/arcades",               # the arcades on the mesh, for the Your arcade page's Arcades card
     "/account/favorites",             # the markets this account starred (Exchange, 2026-10-17)
     "/account/orders/delegated",      # where this account's node-filled orders stand (2026-10-17)
@@ -449,6 +453,10 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/imported/bring", "/account/imported/siblings/drop",
                # what sits on the caller's own coins, many transactions at once (the Wallet's Doginals)
                "/account/doginal-txs",
+               # a DRC-20 / PRC-20 send of the caller's own tokens: its three offers, one after the other
+               "/account/token20/send",
+               # a DRC-20 / PRC-20 token into the caller's own trade lock: its four offers, one after the other
+               "/account/trade/lock20",
                # starring a market: the caller's own list of favorites, nothing else
                "/account/favorites",
                # the page holding this account's listed swaps is open (order_presence)

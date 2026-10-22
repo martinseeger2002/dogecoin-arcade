@@ -17,7 +17,8 @@ this arcade and by Doginals-style indexers pointed at Litecoin; Litecoin's Tapro
 marketplaces do not see it. Existing Taproot inscriptions are untouched; reading them is a separate,
 Litecoin-only adapter (a later phase), never `doginals.py`.
 
-Litecoin-only by design: nothing here is imported by the Pepecoin or Dogecoin paths.
+Its envelope writer (`plan`, `envelope_pushes`) is the Doginals format every chain of this family reads, so
+arcade/token20_send.py writes DRC-20 / PRC-20 transfer notes with it too (2026-10-22); the rest stays Litecoin's.
 """
 
 from __future__ import annotations

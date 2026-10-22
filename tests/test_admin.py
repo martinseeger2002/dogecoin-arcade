@@ -215,6 +215,12 @@ def test_the_ords_tab_lists_each_chain_with_its_official_start_and_saves_its_mod
     for net, r in rows.items():
         assert r["base"] == dx.STARTS[net] and r["source"]
     assert rows["main"]["mode"] == "help"
+    # 2026-10-22, the operator: the four choices "are not registering the clicks". Each of them, chosen right after a read
+    # (the status is kept 20 s), shows at once.
+    for mode in ("walk", "read", "off", "help"):
+        assert app.post("/admin/api/ords", headers={**LOCAL, **WRITE}, json={"net": "main", "mode": mode}).json()["ok"]
+        again = {r["net"]: r for r in app.get("/admin/api/ords", headers=LOCAL).json()["rows"]}
+        assert again["main"]["mode"] == mode, mode
     assert all(isinstance(r["disk"], int) and r["disk"] >= 0 for r in rows.values()), "each index's size on disk"
     assert all(isinstance(r["copies"], list) and isinstance(r["others"], list) for r in rows.values()), "the ring"
     assert all(r["icon"].startswith("/coin-") for r in rows.values()), "each chain's coin"
@@ -419,7 +425,7 @@ def test_overview_lists_every_arcade_this_one_first_with_its_cores_ords_and_link
 
     class Index:
         def __init__(self):
-            self.base, self.tip = base, base + 1000 + dx.SETTLE - 1
+            self.base, self.tip = base, base + 1000 + dx.WALK_SETTLE - 1
 
         def holders(self):
             return [(fast, base + 500), ("", base + 1000)]

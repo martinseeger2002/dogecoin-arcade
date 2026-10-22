@@ -94,6 +94,9 @@ def test_an_accounts_coins_come_from_its_arcade_and_are_checked_here(tmp_path, n
                     "cc" * 32: {"confirmations": 3, "value": 9, "scriptPubKey": {"addresses": ["nSomebodyElse"]}}
                     }.get(txid)
 
+        def batch(self, calls):
+            return [self.call(method, *params) for method, params in calls]
+
         def get_block_count(self):
             return 100
     monkeypatch.setattr(type(here.messaging), "rpc", lambda self: Rpc())

@@ -65,6 +65,10 @@ LOCK_MARGIN = 30 * 60
 def confirmations_for(give: "Leg", get: "Leg", big: dict | None = None) -> int:
     """0 (the lock seen in the mempool), or 1 when a mainnet coin leg is at or above its BIG line."""
     big = BIG if big is None else big
+    # A DRC-20 / PRC-20 lock counts only once a copy of the ord index has read its note (token20_swap.token20_seen):
+    # never from the mempool.
+    if "token20" in (give.kind, get.kind):
+        return max(CONFIRMATIONS_BIG, 1)
     for leg in (give, get):
         line = big.get(leg.network)
         if leg.kind == "coin" and leg.tier() == "mainnet" and line and leg.amount >= int(line):
@@ -79,7 +83,7 @@ LOCK, WAIT, CLAIM, REFUND, DONE, ABORT = "lock", "wait", "claim", "refund", "don
 class Leg:
     """One side of a trade: what moves, on which chain, from whom to whom."""
     network: str                 # "test", "main", "doge", "regtest"...
-    kind: str                    # "coin", "token", "nft", "doginal" (Dogecoin only)
+    kind: str                    # "coin", "token", "nft", "doginal", "token20" (Dogecoin / Pepecoin mainnet)
     asset: str                   # "" for coin, property id for a token, txid for an NFT, inscription id for a Doginal
     amount: int                  # sats for coin, units for a token, 1 for an NFT or a Doginal
     giver_key: str               # hex pubkey of whoever locks it (refunds to them)
@@ -205,7 +209,7 @@ def lock_value(leg: Leg, other: Leg | None = None) -> int:
     before 2026-10-21 (fee_bps None) is held to the old rule, the amount alone (or the reserve), so an arcade not yet
     updated still trades. A Doginal's lock output holds its own coin, whatever that is worth; its reserve stands beside
     it as output 1 and is checked with the Doginal itself (doginal_at, check_lock)."""
-    if leg.kind == "doginal":
+    if leg.kind in ("doginal", "token20"):
         return 1
     if leg.kind != "coin":
         return LOCK_RESERVE + operator_fee(leg, other)
@@ -218,7 +222,7 @@ def fund_value(leg: Leg, other: Leg | None = None) -> int:
     """What this trader puts into its OWN lock for `leg`: lock_value as an updated arcade reads it, whatever terms the
     other side sent -- the network fee of the claim is always the sender's, so the claimer gets exactly the amount even
     when the claimer is an old arcade (which pays itself the lock less that fee). A Doginal: the reserve beside it."""
-    if leg.kind == "doginal":
+    if leg.kind in ("doginal", "token20"):
         return doginal_reserve(leg, other)
     if leg.fee_bps is None:
         leg = dataclasses.replace(leg, fee_bps=0, fee_to="")
@@ -382,9 +386,9 @@ def check_lock(trade: Trade, seen: LockSeen, theirs: bool) -> str:
     redeem = trade.their_redeem() if theirs else trade.my_redeem()
     if seen.script_hex != H.p2sh_script(redeem).hex():
         return "that lock's script is not the one agreed (hash, keys or lock time differ)"
-    if leg.kind == "doginal" and (seen.vout != 0 or not seen.asset_ok):
+    if leg.kind in ("doginal", "token20") and (seen.vout != 0 or not seen.asset_ok):
         return "that lock does not hold the agreed Doginal at the start of output 0, with its reserve beside it"
-    if leg.kind == "doginal" and operator_fee(leg, other) and seen.reserve < doginal_reserve(leg, other):
+    if leg.kind in ("doginal", "token20") and operator_fee(leg, other) and seen.reserve < doginal_reserve(leg, other):
         return "the reserve beside that Doginal is too small to pay its spend and the operator fee agreed"
     if seen.value < lock_value(leg, other):
         if leg.kind == "coin":

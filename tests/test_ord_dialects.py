@@ -27,6 +27,7 @@ TAIL = _push(b"\x30" * 71) + _push(b"\x51" * 30)            # the signature and 
 def small(monkeypatch):
     monkeypatch.setattr(dx, "CHUNK", 4)
     monkeypatch.setattr(dx, "SETTLE", 0)
+    monkeypatch.setattr(dx, "WALK_SETTLE", 0)
     monkeypatch.setitem(dx.STARTS, "main", dx.BASE)        # Pepecoin's index over the made-up chain's heights
 
 
@@ -211,9 +212,10 @@ def test_a_chunk_hash_differs_by_dialect_and_each_dialects_helpers_agree_with_it
     assert lines["main"] != lines["doge"], "the zero-piece birth is in Pepecoin's chunk hash only"
 
 
-def test_pepecoin_looks_for_a_new_inscription_even_on_an_inscribed_first_koinu(tmp_path):
+def test_pepecoin_looks_for_a_new_inscription_even_on_an_inscribed_first_koinu(tmp_path, monkeypatch):
     """ord-pepecoin inscription_updater.rs: "In Pepecoin, we always check for new inscriptions" (`if true`), where
     wonky-ord looks only when no inscription sits on the first koinu."""
+    monkeypatch.setitem(dx.STARTS, "ltc", dx.BASE)            # the fake chain starts where a Dogecoin one does
     chain = Chain()
     first = _tx([(FUND, 0, _envelope())], [100_000], tag=b"a")
     chain.add([first])
@@ -223,10 +225,14 @@ def test_pepecoin_looks_for_a_new_inscription_even_on_an_inscribed_first_koinu(t
     for _ in range(2):
         chain.add([])
     pep, doge = _index(tmp_path, chain, "main", name="p"), _index(tmp_path, chain, "doge", name="d")
-    for idx in (pep, doge):
+    ltc = _index(tmp_path, chain, "ltc", name="l")
+    for idx in (pep, doge, ltc):
         idx.walker.step(chain, dx.BASE + 3, budget=60)
     assert _numbers(pep) == {f"{first[1]}i0": 0, f"{again[1]}i0": 1, f"{later[1]}i0": 2}
-    assert _numbers(doge) == {f"{first[1]}i0": 0, f"{later[1]}i0": 1}
+    # Dogecoin numbers the reinscription too since rules 5 (2026-10-22: "Number them like nintondo");
+    # Litecoin's Doginals kind keeps wonky-ord's first-koinu rule.
+    assert _numbers(doge) == {f"{first[1]}i0": 0, f"{again[1]}i0": 1, f"{later[1]}i0": 2}
+    assert _numbers(ltc) == {f"{first[1]}i0": 0, f"{later[1]}i0": 1}
     assert pep.where(f"{first[1]}i0")["output"] == pep.where(f"{again[1]}i0")["output"] == f"{again[1]}:0"
 
 
@@ -383,20 +389,20 @@ def _walkers(tmp_path, mine_to, theirs, own_mode="walk"):
 
 
 def test_the_explorer_asks_a_linked_walker_further_along_than_this_arcade(tmp_path):
-    me, others = _walkers(tmp_path, dx.BASE + 4, {"far": (dx.BASE + 12, ord_rules.RULES)})
+    me, others = _walkers(tmp_path, dx.BASE + 4, {"far": (dx.BASE + 12, ord_rules.rules_for("doge"))})
     said = me.lookup({"what": "number", "number": 0})
     assert said["node"] == "far" and said["walked_to"] == dx.BASE + 12 and said["from"] != "this arcade"
 
 
 def test_this_arcade_answers_when_its_own_walk_is_furthest_or_tied(tmp_path):
-    me, others = _walkers(tmp_path, dx.BASE + 12, {"near": (dx.BASE + 4, ord_rules.RULES),
-                                                   "tied": (dx.BASE + 12, ord_rules.RULES)})
+    me, others = _walkers(tmp_path, dx.BASE + 12, {"near": (dx.BASE + 4, ord_rules.rules_for("doge")),
+                                                   "tied": (dx.BASE + 12, ord_rules.rules_for("doge"))})
     said = me.lookup({"what": "number", "number": 0})
     assert said["from"] == "this arcade" and said["walked_to"] == dx.BASE + 12 and "node" not in said
 
 
 def test_a_walker_on_other_rules_is_never_asked(tmp_path, monkeypatch):
-    me, others = _walkers(tmp_path, 0, {"old": (dx.BASE + 12, ord_rules.RULES - 1)}, own_mode="read")
+    me, others = _walkers(tmp_path, 0, {"old": (dx.BASE + 12, ord_rules.rules_for("doge") - 1)}, own_mode="read")
     asked = []
     monkeypatch.setattr(others["old"], "answer", lambda q: asked.append(q) or {})
     assert me.walkers() == []
@@ -404,13 +410,13 @@ def test_a_walker_on_other_rules_is_never_asked(tmp_path, monkeypatch):
         me.lookup({"what": "number", "number": 0})
     assert asked == []
     (tmp_path / "b").mkdir()
-    me2, others2 = _walkers(tmp_path / "b", dx.BASE + 4, {"old": (dx.BASE + 12, ord_rules.RULES - 1)})
+    me2, others2 = _walkers(tmp_path / "b", dx.BASE + 4, {"old": (dx.BASE + 12, ord_rules.rules_for("doge") - 1)})
     assert me2.lookup({"what": "number", "number": 0})["from"] == "this arcade", "its own, though behind"
 
 
 def test_a_walker_that_fails_is_passed_over_for_the_next_then_this_arcade(tmp_path, monkeypatch):
-    me, others = _walkers(tmp_path, dx.BASE + 4, {"far": (dx.BASE + 12, ord_rules.RULES),
-                                                  "mid": (dx.BASE + 8, ord_rules.RULES)})
+    me, others = _walkers(tmp_path, dx.BASE + 4, {"far": (dx.BASE + 12, ord_rules.rules_for("doge")),
+                                                  "mid": (dx.BASE + 8, ord_rules.rules_for("doge"))})
 
     def down(question):
         raise TimeoutError("no answer in time")
@@ -441,3 +447,20 @@ def test_a_multisig_spend_is_not_followed_back_as_a_piece():
         calls.append(txid)
         raise AssertionError("a multisig chain is not followed")
     assert ord_notes.genesis_before.__name__  # (the candidate itself is skipped in finish; see the walk test below)
+
+
+
+def test_each_chain_has_its_own_rules_version_and_only_dogecoin_is_cut_again(tmp_path):
+    """2026-10-22: Dogecoin's rules moved to 5 alone (reinscriptions numbered); Pepecoin and Litecoin stay on 4, so
+    their indexes are not rebuilt for it. A Dogecoin index of rules 4 is cut again; a Pepecoin one of 4 is kept."""
+    from arcade import ord_rules
+    assert ord_rules.rules_for("doge") == 5 and ord_rules.rules_for("main") == ord_rules.rules_for("ltc") == 4
+    for net, kept in (("doge", False), ("main", True)):
+        path = tmp_path / f"{net}.sqlite"
+        st = dx.Store(path, dialect=ord_rules.dialect_of(net), net=net)
+        st.x("INSERT INTO block (height, hash, line) VALUES (1, 'h', 'l')")
+        st.set_meta("rules", 4)
+        st._db.close()
+        again = dx.Store(path, dialect=ord_rules.dialect_of(net), net=net)
+        assert again.meta("rules") == ord_rules.rules_for(net)
+        assert (again.q("SELECT COUNT(*) FROM block")[0][0] == 1) is kept, net

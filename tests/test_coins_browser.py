@@ -896,3 +896,49 @@ def test_a_claim_of_tokens_that_does_not_end_on_the_claimer_is_refused(loaded):
     good = browser.execute_async_script(check, json.dumps(
         offer([lot, seller, (COIN // 100, script), (COIN - 10_000, script)])))
     assert good == {"ok": True}, good
+
+
+def test_a_notes_reveal_is_signed_only_for_this_keys_own_note_script(loaded):
+    """A DRC-20 / PRC-20 send's reveal (arcade/token20_send.py, 2026-10-22) spends a P2SH coin whose script is
+    <key> OP_CHECKSIGVERIFY OP_DROP... OP_TRUE: the browser signs over it only when the key is its own, works the digest
+    out itself, and reads the note back from the envelope it is shown."""
+    from arcade import funding, token20_send as t20
+
+    browser, _, _ = loaded
+    here = browser.execute_async_script("""
+        const done = arguments[0];
+        (async () => {
+          try {
+            const c = window.coins;
+            const coin = await c.coinKey(c.unhex("000102030405060708090a0b0c0d0e0f"), "regtest", 0);
+            done({pubkey: c.hex(coin.pubkey), address: await c.address(coin.pubkey, 111)});
+          } catch (e) { done({error: String(e && e.message || e)}); }
+        })();""")
+    assert "error" not in here, here
+    params = type("P", (), {"scripthash_version": 196})()
+
+    def reveal_for(pubkey_hex):
+        pushes, redeem = t20.envelope(t20.note("prc-20", "frgy", "10000"), bytes.fromhex(pubkey_hex))
+        unsigned = t20.build_reveal(params, {"txid": "%064x" % 9, "vout": 0, "value": 3 * COIN}, pushes, redeem,
+                                    here["address"])
+        return {**unsigned.as_json(), "chain": "regtest"}
+
+    check = """
+        const done = arguments[1];
+        (async () => {
+          try {
+            const c = window.coins;
+            const coin = await c.coinKey(c.unhex("000102030405060708090a0b0c0d0e0f"), "regtest", 0);
+            const offer = JSON.parse(arguments[0]);
+            const out = await c.verifyOffer(offer, {pubkey: coin.pubkey, address: await c.address(coin.pubkey, 111)});
+            done({signed: out.hashes, note: c.noteText(offer.inputs[0].envelope)});
+          } catch (e) { done({error: String(e && e.message || e)}); }
+        })();"""
+    mine = reveal_for(here["pubkey"])
+    got = browser.execute_async_script(check, json.dumps(mine))
+    assert "error" not in got, got
+    assert got["signed"] == mine["sighashes"], "the digest worked out here is the node's"
+    assert got["note"] == '{"p":"prc-20","op":"transfer","tick":"frgy","amt":"10000"}'
+    theirs = reveal_for("03" + "22" * 32)
+    refused = browser.execute_async_script(check, json.dumps(theirs))
+    assert "error" in refused and "Nothing was signed" in refused["error"], refused

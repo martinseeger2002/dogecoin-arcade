@@ -35,6 +35,16 @@ import unicodedata
 from decimal import Decimal, InvalidOperation
 
 RULES = 4                      # bump when what an index keeps changes: an index of other rules is cut again
+#: A chain whose index rules moved on alone, so the other chains' indexes are not cut again for it: Dogecoin 5
+#: (2026-10-22, the operator: number reinscriptions "like nintondo" -- a second inscription on an inscribed coin is numbered;
+#: wonky-ord / ord-dogecoin never numbered one, so every Dogecoin number after the first differs; Litecoin, which also
+#: reads the Dogecoin dialect, keeps 4).
+RULES_BY_NET = {"doge": 5}
+
+
+def rules_for(net: str) -> int:
+    """The rules version of `net`'s ord index (RULES unless RULES_BY_NET says otherwise)."""
+    return RULES_BY_NET.get(net or "", RULES)
 #: 3 (2026-10-21): an envelope is no longer dropped when a transaction spends one of its pieces without continuing it
 #: (doginal_index.Walker: the official indexers keep it) -- every index walked under 2 lost such inscriptions.
 #: 4 (2026-10-21): each chain read in its own indexer's dialect (DIALECTS). On Pepecoin a piece count of 0 is an

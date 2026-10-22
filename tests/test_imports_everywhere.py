@@ -504,6 +504,9 @@ def test_a_wallet_in_the_record_is_registered_on_another_arcade_with_its_coins(t
 
         def get_block_count(self):
             return 100
+
+        def batch(self, calls):
+            return [self.call(method, *params) for method, params in calls]
     monkeypatch.setattr(type(here.ltc_test), "rpc", lambda self: Rpc())
     sync = {**asked, "sync": True,
             "coins": {k: v for k, v in _coins_proof(0x5151, "roamer", address, "here.example.com").items()
@@ -513,9 +516,18 @@ def test_a_wallet_in_the_record_is_registered_on_another_arcade_with_its_coins(t
     here.imported_wallets().adopt(pk, rec, 1, _sig(key, 1, rec))
     view = here_app.get("/account/imported").json()
     assert view["host"] == "here.example.com" and view["tag"] == "roamer"
+    # Registered here first with no word from elsewhere (2026-10-22: pepecoinarcade.com read the wallet back while
+    # dogecoinarcade.com had it already): asked again with the proof, it is brought over, not read back.
+    first = here_app.post("/account/imported/address", json={k: v for k, v in sync.items() if k != "coins"})
+    assert first.status_code == 200, first.text
+    assert first.status_code == 200 and posted == []
+    here.set_setting(f"backfilled:ltctest:{address}", None)      # its read-back not finished here
+    real_since = utxos.since
+    monkeypatch.setattr(utxos, "since", lambda db, a: None if str(here.home) in str(getattr(db, "path", ""))
+                        else real_since(db, a))
     said = here_app.post("/account/imported/address", json=sync)
     assert said.status_code == 200, said.text
-    assert said.json()["state"] == "ready" and said.json()["from"] == "home.example.com"
+    assert said.json()["state"] == "ready" and said.json()["from"] == "home.example.com" and said.json()["already"], (said.json(), posted)
     assert posted == ["https://home.example.com/signin/roamer/imported-coins"]
     with contextlib.closing(here.token_index(here.ltc_test).open()) as db:
         assert [c["txid"] for c in utxos.unspent(db, address)] == ["aa" * 32], "only what here's chain says"

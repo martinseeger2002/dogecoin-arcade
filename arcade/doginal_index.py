@@ -54,8 +54,12 @@ SOURCES = {
 TAPROOT = frozenset({"ltc", "ltctest"})
 BASE = STARTS["doge"]
 CHUNK = 100
-#: Blocks this far under the tip are scanned; the newest ones may still be replaced by a reorg.
+#: Blocks this far under the tip are scanned in chunks; the newest ones may still be replaced by a reorg. A chunk is
+#: scanned by many arcades and its word compared, so it covers only blocks a reorg will not move.
 SETTLE = 12
+#: How close to the tip the walk goes (2026-10-22: "Why can't strawberry keep up with the confirmed blocks?" --
+#: it sat 12 blocks under). The last blocks past the chunks are read from the Core; a reorg is walked back (rollback).
+WALK_SETTLE = 2
 #: How many different arcades must say the same hash before a chunk is `agreed` (fewer than 5 arcades: every chunk
 #: is scanned twice).
 AGREE = 2
@@ -399,7 +403,7 @@ def _pct(part: Any, whole: Any) -> float | None:
 
 
 #: Questions the explorer asks (2026-10-21) that a walking arcade from before does not know.
-NEWER_QUESTIONS = ("number", "ticks", "holders")
+NEWER_QUESTIONS = ("number", "ticks", "holders", "note", "ticklist")
 
 
 def _first_page_of(token: dict | None) -> dict | None:
@@ -417,10 +421,12 @@ def _first_page_of(token: dict | None) -> dict | None:
 # --------------------------------------------------------------------------- the store
 
 class Store:
-    def __init__(self, path: Path, base: int | None = None, dialect: str = "dogecoin"):
+    def __init__(self, path: Path, base: int | None = None, dialect: str = "dogecoin", net: str = ""):
         self.path = Path(path)
         self.base = BASE if base is None else base
         self.dialect = dialect                         # how the chain's envelopes read (ord_rules.dialect_of)
+        self.net = net                                 # its chain, for its rules version (ord_rules.rules_for)
+        self.rules = ord_rules.rules_for(net)
         self._lock = threading.RLock()                 # the one writer connection
         self._readers = threading.local()              # a read connection per thread (q)
         self._gen = 0                                  # bumped when the file is swapped (a snapshot installed)
@@ -436,7 +442,7 @@ class Store:
         # Kept under other rules (or none, before 2026-10-20's): cut again from the start.
         # All or nothing (2026-10-21, rules 3 on .25: PEP's index was left with 5 of its tables and the new rules,
         # taken for layout 2, so the rest were never made): the drop, the meta and the new marks in one transaction.
-        if self.meta("rules") != ord_rules.RULES:
+        if self.meta("rules") != self.rules:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 for (table,) in self._db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name != 'meta'"
@@ -444,7 +450,7 @@ class Store:
                     self._db.execute(f"DROP TABLE IF EXISTS {table}")
                 self._db.execute("DELETE FROM meta")
                 self._db.execute("INSERT OR REPLACE INTO meta VALUES ('layout', ?)", (json.dumps(LAYOUT),))
-                self._db.execute("INSERT OR REPLACE INTO meta VALUES ('rules', ?)", (json.dumps(ord_rules.RULES),))
+                self._db.execute("INSERT OR REPLACE INTO meta VALUES ('rules', ?)", (json.dumps(self.rules),))
                 self._db.execute("COMMIT")
             except BaseException:
                 self._db.execute("ROLLBACK")
@@ -937,7 +943,7 @@ class Walker:
         return "script:" + hash160(script).hex()
 
     def step(self, rpc, tip: int, budget: float = 5.0, notes: Callable[[int], Any] | None = None) -> int:
-        """Walk on for about `budget` seconds, never past tip - SETTLE. Returns the blocks walked.
+        """Walk on for about `budget` seconds, never past tip - WALK_SETTLE. Returns the blocks walked.
 
         `notes(chunk)` says where each chunk's blocks come from (2026-10-20: scanned in line by whoever is free,
         stitched here in order): ([blocks], this arcade's own scan?) from its spend notes; False to wait for them;
@@ -947,7 +953,7 @@ class Walker:
         start, done = time.monotonic(), 0
         while True:
             h = self.next_height()
-            if h > tip - SETTLE or (done and time.monotonic() - start >= budget):
+            if h > tip - WALK_SETTLE or (done and time.monotonic() - start >= budget):
                 break
             c = chunk_of(h, self.base)
             got = notes(c) if notes is not None else None
@@ -1013,7 +1019,9 @@ class Walker:
                 # inscription_updater.rs `if inscriptions.iter().all(|flotsam| flotsam.offset != 0)`). Pepecoin: in
                 # every transaction (ord-pepecoin's: "In Pepecoin, we always check for new inscriptions to support
                 # parent/child collection provenance" -- `if true`), rules 4.
-                if (self.dialect == "pepecoin" or all(c[1] != 0 for c in carried)) and tx.vin \
+                # Dogecoin numbers a reinscription too since rules 5 (2026-10-22: "Number them like nintondo"),
+                # so only Litecoin's Doginals kind still waits for an uninscribed first koinu.
+                if (self.dialect == "pepecoin" or self.store.net == "doge" or all(c[1] != 0 for c in carried)) and tx.vin \
                         and tx.vin[0]["vout"] != -1:
                     prev = tx.vin[0]["txid"]
                     chain = w.get("pending", (prev,))
@@ -1381,7 +1389,8 @@ class DoginalIndex:
         self.taproot, self.mweb = net in TAPROOT, mweb
         # Each chain read as its own official indexer reads it (rules 4, 2026-10-21): births, completions, notes.
         self.dialect = ord_rules.dialect_of(net)
-        self.store = Store(path, self.base, self.dialect)
+        self.store = Store(path, self.base, self.dialect, net)
+        self.rules = self.store.rules
         self.rpc_factory = rpc_factory
         self.mode = mode
         self.own_core = own_core
@@ -1489,9 +1498,10 @@ class DoginalIndex:
             self._snap_asked = False
             snaps.make()
         snaps.step(self.share)
-        if snaps.fetch is not None:
-            return                                       # the whole index is on its way: no walk until it is here
-        self._ask_for_snapshot()
+        # The whole index on its way: the walk goes on from this arcade's own Core meanwhile, and whichever gets there
+        # first wins (2026-10-22: "Both"; Snapshots.step lets the copy go once the walk passes its block).
+        if snaps.fetch is None:
+            self._ask_for_snapshot()
         own = self.own_core()
         lanes = self._lanes_wanted() - 1 if own else 0
         if lanes > 0:
@@ -1881,7 +1891,7 @@ class DoginalIndex:
         if op == "hi":
             self.chunks.peers[node] = {k: header.get(k) for k in ("mode", "walk", "helped", "v", "rules")} | \
                 {"at": time.time()}
-            if header.get("rules") == ord_rules.RULES:
+            if header.get("rules") == self.rules:
                 # "sn<layout>": a snapshot of this layout, said under its own key so an arcade of another layout
                 # never fetches one it cannot read ("sn" was layout 1, "sn2" layout 2).
                 self.snapshots.heard_offer(node, header.get(f"sn{LAYOUT}"))
@@ -1889,7 +1899,7 @@ class DoginalIndex:
         if op == "sq":                                   # a linked arcade far behind asks for a snapshot
             self._snap_asked = True
             return
-        if (self.chunks.peers.get(node) or {}).get("rules") != ord_rules.RULES:
+        if (self.chunks.peers.get(node) or {}).get("rules") != self.rules:
             return                         # an arcade on other rules (or not heard from yet): its chunks are not ours
         if op == "ls":
             c, at = int(header["c"]), int(header.get("at") or 0)
@@ -1916,7 +1926,7 @@ class DoginalIndex:
     def hello(self) -> dict:
         said = {"op": "hi", "net": self.net, "base": self.base, "mode": self.mode(),
                 "walk": self.walker.next_height() if self.mode() == "walk" else None, "helped": self.helped, "v": 3,
-                "rules": ord_rules.RULES}
+                "rules": self.rules}
         offer = self.snapshots.offer()
         if offer is not None:
             said[f"sn{LAYOUT}"] = offer
@@ -1975,11 +1985,13 @@ class DoginalIndex:
         # Confidence (2026-10-20): how many arcades said the same of a chunk -- 1 found, 2 legitimate, more
         # raises it. Chunks and the inscriptions in them, at each level (AUDIT_MAX and over together).
         levels = {k: {"chunks": 0, "inscriptions": 0} for k in range(1, AUDIT_MAX + 1)}
+        agreeing: dict[int, int] = {}                     # chunk -> arcades saying its most-said hash
         for c, words in per.items():
             tally: dict[str, int] = {}
             for h in words.values():
                 tally[h] = tally.get(h, 0) + 1
             best = max(tally, key=tally.get)
+            agreeing[c] = tally[best]
             level = levels[min(tally[best], AUDIT_MAX)]
             level["chunks"] += 1
             level["inscriptions"] += born.get((c, best), 0)
@@ -2007,7 +2019,7 @@ class DoginalIndex:
         if self.mode() == "walk":
             nxt = self.walker.next_height()
             counts = self._counts()
-            walk = {"next": nxt, "tip": self.tip, "left": max(0, self.tip - SETTLE - nxt + 1),
+            walk = {"next": nxt, "tip": self.tip, "left": max(0, self.tip - WALK_SETTLE - nxt + 1),
                     "inscriptions": counts.get("inscriptions", 0), "burned": counts.get("burned", 0),
                     "tokens": counts.get("tokens", 0), "holders": counts.get("holders", 0),
                     "names": counts.get("names", {}),
@@ -2024,7 +2036,27 @@ class DoginalIndex:
                     "fetching": ({"from": f["from"][:12], "have": len(f["have"]),
                                   "pieces": len(f["manifest"]["pieces"]) if f.get("manifest") else None}
                                  if f else None)}
-        return {"net": self.net, "levels": levels, "covered": covered, "snapshot": snapshot,
+        # Where along the chain how many arcades agree (2026-10-21: the Ords ring's inner circle "red when there
+        # is a single node that has the index ... yellow if there are two nodes with agreeing index, and ... green when
+        # there are three"): runs of chunks [first, last + 1, agreeing], agreeing 0 (nobody said it yet) to 3 (3 or more).
+        # 2026-10-22 (the operator: "The inner circle is not displaying correctly yet"): counted by the arcades HOLDING each
+        # chunk -- every walker whose walk has passed it -- not only those that scanned it and said its word (an arcade
+        # stitching another's notes never says one, so stretches two arcades hold showed red or grey). A chunk whose
+        # words disagree counts only as many as agree on its most-said word.
+        reached = sorted(int(h or 0) for _n, h in self.holders())
+        runs: list[list[int]] = []
+        for c in range(ready):
+            end = chunk_range(c, self.base)[1]
+            k = sum(1 for h in reached if h >= end)
+            words = per.get(c) or {}
+            if len(set(words.values())) > 1:
+                k = min(k, agreeing.get(c, 0))
+            k = min(k, 3)
+            if runs and runs[-1][2] == k and runs[-1][1] == c:
+                runs[-1][1] = c + 1
+            else:
+                runs.append([c, c + 1, k])
+        return {"net": self.net, "levels": levels, "covered": covered, "snapshot": snapshot, "agree_runs": runs,
                 "disputed": list(getattr(self, "disputed", []))[:20],
                 "rebuilt": self.store.meta("rebuilt"),
                 "phase": "cover" if covered < ready else "audit",
@@ -2038,7 +2070,10 @@ class DoginalIndex:
                 "cores": self._lanes_wanted(),
                 "walkers": [{"node": n[:12], "walked_to": h} for n, h in self.walkers()],
                 "helped": self.helped, "help_rate": round(self.help_rate, 2), "leases": sorted(leases, key=lambda l: l["chunk"]),
-                "peers": {n[:12]: p for n, p in self.chunks.peers.items()}, "walk": walk, "error": self.error,
+                # With the copy of the whole index each one is fetching, as its "hi" says it (2026-10-22: two arcades
+                # sat at one block for hours, and nothing here said whether they were fetching a copy or stuck).
+                "peers": {n[:12]: {**p, **_copy_said(self.snapshots.offers.get(n))}
+                          for n, p in self.chunks.peers.items()}, "walk": walk, "error": self.error,
                 "upgrading": (f"slimming the index (one time): {self.store.upgrading or 'starting'}"
                               if self.store.old_layout else "")}
 
@@ -2070,6 +2105,10 @@ class DoginalIndex:
             return {"name": self.name(str(question.get("name") or ""))}
         if what == "on":
             return {"on": self.on(str(question.get("txid") or ""), int(question.get("vout") or 0))}
+        if what == "note":
+            return {"note": self.note(str(question.get("id") or ""))}
+        if what == "ticklist":
+            return {"ticklist": self.ticklist()}
         if what == "moves":                              # a snapshot being checked: this walk's moves, chunk by chunk
             from .ord_snapshot import MOVES_SAMPLE, moves_digest
             chunks = [int(c) for c in (question.get("chunks") or [])[:MOVES_SAMPLE]]
@@ -2126,7 +2165,7 @@ class DoginalIndex:
         """Linked arcades that walk this chain, furthest first: (node, the block they have walked to)."""
         # Only arcades on these rules (2026-10-21): an index built under other rules numbers otherwise.
         rows = [(node, int(p.get("walk") or 0)) for node, p in self.chunks.peers.items()
-                if p.get("mode") == "walk" and p.get("rules") == ord_rules.RULES
+                if p.get("mode") == "walk" and p.get("rules") == self.rules
                 and time.time() - float(p.get("at") or 0) < 300]
         return sorted(rows, key=lambda r: -r[1])
 
@@ -2291,6 +2330,14 @@ class DoginalIndex:
             {"tick": shown, "number": number, "supply": _shown(supply, dec), "minted": _shown(minted, dec),
              "minted_pct": _pct(minted, supply)} for _t, shown, number, supply, minted, dec in rows]}
 
+    def ticklist(self, most: int = 5000) -> list[str]:
+        """Every DRC-20 / PRC-20 tick as deployed (its `shown` spelling), in tick order, for the exchange's search
+        (2026-10-22: "The tokens should be added to the search of tokens with their ticker, followed by the
+        protocol"): one compact list, the primary key read in order."""
+        if self.store.old_layout:
+            return []
+        return [r[0] for r in self.store.q("SELECT shown FROM tok ORDER BY tick LIMIT ?", (max(1, int(most)),))]
+
     def rich_list(self, tick: str, page: Any = 0) -> dict | None:
         """2026-10-21: "When a ticker is selected it should show information about token and a list rich list
         of the token holders paginated to 20 holders." The token, and one page of its holders biggest first, each with
@@ -2346,13 +2393,36 @@ class DoginalIndex:
         return {"names": len(firsts), "per_reading": {r: sum(1 for g in firsts.values() if r in g) for r in rules},
                 "different_first_claim": len(differ), "examples": differ[:limit]}
 
+    def note(self, iid: str) -> dict | None:
+        """A DRC-20 / PRC-20 transfer note not moved yet (2026-10-22, a swap's lock holds one: token20_swap): its tick,
+        amount in units and the owner it was inscribed to; None when the inscription is no such note -- never one,
+        refused by the rules (more than its owner had), or already moved."""
+        key = iid_parts(iid)
+        if not key or self.store.old_layout:
+            return None
+        rows = self.store.q("SELECT x.tick, x.amt, x.owner FROM xfer x JOIN insc i ON i.rid = x.rid "
+                            "WHERE substr(i.tx, 1, 8)=? AND i.tx=? AND i.n=?", (key[0][:8],) + key)
+        return {"tick": rows[0][0], "amt": rows[0][1], "owner": rows[0][2]} if rows else None
+
     def on(self, txid: str, vout: int) -> list[dict]:
         if self.store.old_layout:
             return []
-        return [{"id": iid_of(r[0], r[1]), "offset": r[2]} for r in self.store.q(
-            "SELECT i.tx, i.n, a.off FROM at a JOIN insc i ON i.rid = a.rid "
+        # With its content type (2026-10-22: the Wallet's NFTs leave text, JSON and scripts out).
+        return [{"id": iid_of(r[0], r[1]), "offset": r[2], "ctype": r[3]} for r in self.store.q(
+            "SELECT i.tx, i.n, a.off, c.ctype FROM at a JOIN insc i ON i.rid = a.rid "
+            "LEFT JOIN ctypes c ON c.ct = i.ct "
             "WHERE substr(a.tx, 1, 8)=? AND a.tx=? AND a.vout=? ORDER BY a.off",
             (bytes.fromhex(txid)[:8], bytes.fromhex(txid), vout))]
+
+
+def _copy_said(offer) -> dict:
+    """{"copy": {"h", "have", "of"}} for a peer's snapshot word: "have" is "all" for a copy it made, else how many of
+    its "of" pieces it has fetched so far; {} when it says none."""
+    if not isinstance(offer, dict):
+        return {}
+    have = offer.get("have")
+    return {"copy": {"h": int(offer.get("h") or 0), "of": int(offer.get("n") or 0),
+                     "have": "all" if have == "all" else len(have) if isinstance(have, list) else 0}}
 
 
 class Runner:

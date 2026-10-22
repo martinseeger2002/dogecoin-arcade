@@ -116,6 +116,9 @@ class Unsigned:
                         "value": i["value"], "address": i["address"],
                         **({"script": i["script"]} if i.get("multisig") else {}),
                         **({"redeem": i["redeem"]} if i.get("redeem") else {}),
+                        # A DRC-20 / PRC-20 note's reveal (token20_send): the envelope the node puts in front of the
+                        # signature, so the browser can show the note it is signing for (coins.js reads it back).
+                        **({"envelope": i["envelope"]} if i.get("envelope") else {}),
                         **({"segwit": i["segwit"]} if i.get("segwit") else {})}
                        for i in self.inputs],
             "sighashes": self.sighashes,
@@ -161,6 +164,10 @@ def guard_for(address: str):
     return None
 
 
+#: doginals.POSTAGE_MAX, said here so funding needs no import of it at load.
+POSTAGE_MAX_GUARDED = 1_000_000
+
+
 def choose(db, address: str, target: int, exclude=frozenset(),
            extra: list | None = None) -> list[dict]:
     """Coins for `address` worth at least `target`.
@@ -194,6 +201,11 @@ def choose(db, address: str, target: int, exclude=frozenset(),
     for coin in (extra or []):
         out = (coin["txid"], coin["vout"])
         if out in exclude or out in outpoints:
+            continue
+        # A small coin on its way is not taken to pay where inscriptions are guarded: it may be the one an inscription
+        # was just put on (2026-10-22: a DRC-20 / PRC-20 note's reveal lands its note on this address, unconfirmed,
+        # and no index has read it yet). Never spent by an ordinary send until a block, and the guard, say what it is.
+        if guard is not None and int(coin["value"]) <= POSTAGE_MAX_GUARDED:
             continue
         available.append(dict(coin))
     big_enough = [u for u in available if u["value"] >= target]
@@ -760,6 +772,10 @@ def assemble(unsigned: Unsigned, signatures: list[str], pubkey: bytes) -> str:
         if n >= first and coin.get("multisig"):
             # 1-of-n CHECKMULTISIG pops one item too many: the OP_0 is that item.
             script_sig = b"\x00" + push(bytes.fromhex(signatures[n - first]))
+        elif n >= first and coin.get("envelope") and coin.get("redeem"):
+            # A note's reveal (token20_send): the envelope, the signature, the redeem script it satisfies.
+            script_sig = (bytes.fromhex(coin["envelope"]) + push(bytes.fromhex(signatures[n - first]))
+                          + push(bytes.fromhex(coin["redeem"])))
         elif n >= first and coin.get("redeem"):
             # A refereed pool's coin, closed by its creator: the ELSE branch.
             script_sig = (push(bytes.fromhex(signatures[n - first])) + b"\x00"
@@ -1046,18 +1062,28 @@ def build_doginal_lock(db, params: Params, address: str, coin: dict, inscription
                           rate, exclude, extra, what=f"lock Doginal {inscription} for a swap")
 
 
+def build_note_send(db, params: Params, address: str, note_coin: dict, to: str, rate: int,
+                    exclude=frozenset(), extra: list | None = None, what: str = "") -> Unsigned:
+    """A DRC-20 / PRC-20 transfer note's send (token20_send, step 3): the note's coin -- the reveal this same send
+    built a moment ago, not yet in any block, so no index has read it -- as input 0, whole to `to` as output 0, as a
+    Doginal is sent; clean coins pay the fee; change last."""
+    return _doginal_first(db, address, note_coin, "", p2pkh_script(to), [], rate, exclude, extra, what=what,
+                          vouched=True)
+
+
 def _doginal_first(db, address: str, coin: dict, inscription: str, first: bytes, more: list, rate: int,
-                   exclude, extra, what: str) -> Unsigned:
+                   exclude, extra, what: str, vouched: bool = False) -> Unsigned:
     """The inscribed coin as input 0, whole to `first` as output 0; `more` outputs after it; clean coins pay for them and
-    the fee; change last."""
+    the fee; change last. `vouched`: the coin is one this node just built (a note's reveal) and is taken as it is."""
     guard = guard_for(address) or GUARD          # Doginals on Dogecoin, Pepinals on Pepecoin mainnet
     if guard is None:
         raise FundingError("inscriptions are not checked on this chain here: nothing that carries one is sent")
-    from .doginals import exactly
-    bad = exactly(guard.held(coin["txid"]).get(int(coin["vout"])), inscription)
-    if bad:
-        raise FundingError(bad)
-    if not any((u["txid"], u["vout"]) == (coin["txid"], int(coin["vout"])) for u in utxos.unspent(db, address)) \
+    if not vouched:
+        from .doginals import exactly
+        bad = exactly(guard.held(coin["txid"]).get(int(coin["vout"])), inscription)
+        if bad:
+            raise FundingError(bad)
+    if not vouched and not any((u["txid"], u["vout"]) == (coin["txid"], int(coin["vout"])) for u in utxos.unspent(db, address)) \
             and not any((c["txid"], c["vout"]) == (coin["txid"], int(coin["vout"])) for c in (extra or [])):
         raise FundingError("that coin is not this address's to spend")
     piece = (int(coin["value"]), first)

@@ -227,15 +227,32 @@ def _rescan_already_ran(rpc, addresses, sent) -> bool:
     """Whether an `importmulti` rescan sent earlier (`sent`: {"at", "addresses"}) already covered these addresses
     and ran to its end: every one sent then and watched now, and the Core not restarted since (a peer of its older
     than the send). Then the coins are listed with no second rescan of the whole chain -- hours on Dogecoin."""
+    try:
+        if not all((rpc.call("validateaddress", a) or {}).get("iswatchonly") for a in addresses):
+            return False
+    except (RpcError, RpcTransportError):
+        return False
+    # The wallet already holds transactions for every one of them: a rescan found them, and ran to its end (the operator
+    # 2026-10-22, "looks like rescan started over": the peer test below said "restarted" after a 22-hour rescan, which
+    # drops and makes its peers anew, and the whole chain was sent again). An address with no history at all is told
+    # apart only by the peer test, and rescanned when in doubt.
+    if _wallet_has_history(rpc, addresses):
+        return True
     if not isinstance(sent, dict) or not set(addresses) <= set(sent.get("addresses") or ()):
         return False
     up = _up_since(rpc)
-    if up is None or up >= float(sent.get("at") or 0):
-        return False
+    return up is not None and up < float(sent.get("at") or 0)
+
+
+def _wallet_has_history(rpc, addresses) -> bool:
+    """Whether the Core's wallet knows at least one transaction for EVERY address (watch-only included):
+    listreceivedbyaddress(minconf 0, include_empty, include_watchonly)."""
     try:
-        return all((rpc.call("validateaddress", a) or {}).get("iswatchonly") for a in addresses)
+        rows = rpc.call("listreceivedbyaddress", 0, True, True) or []
     except (RpcError, RpcTransportError):
         return False
+    seen = {str(r.get("address")): bool(r.get("txids")) for r in rows if isinstance(r, dict)}
+    return bool(addresses) and all(seen.get(a) for a in addresses)
 
 
 def seed_from_core_wallet(index, rpc, params, addresses, upto: int, *, sent=None,

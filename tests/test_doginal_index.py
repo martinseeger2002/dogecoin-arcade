@@ -112,6 +112,7 @@ FUND = "aa" * 32
 def small(monkeypatch):
     monkeypatch.setattr(dx, "CHUNK", 4)
     monkeypatch.setattr(dx, "SETTLE", 0)
+    monkeypatch.setattr(dx, "WALK_SETTLE", 0)
 
 
 def _walker(tmp_path, chain):
@@ -154,7 +155,7 @@ def test_the_walker_follows_an_inscription_koinu_by_koinu(tmp_path):
     index.step()
     where = index.where(iid)
     assert where["output"] == f"{buy[1]}:1" and where["offset"] == 10_000 and where["number"] == 0
-    assert index.on(buy[1], 1) == [{"id": iid, "offset": 10_000}]
+    assert index.on(buy[1], 1) == [{"id": iid, "offset": 10_000, "ctype": "text/plain"}]
     assert index.on(reveal[1], 0) == []
 
 
@@ -327,7 +328,7 @@ def test_a_helper_that_lies_shows_as_a_difference(tmp_path):
     chain = _busy_chain(8)
     walker = _walker(tmp_path, chain)
     walker.step()
-    walker.heard("liar", {"op": "hi", "mode": "help", "rules": dx.ord_rules.RULES})
+    walker.heard("liar", {"op": "hi", "mode": "help", "rules": dx.ord_rules.rules_for("doge")})
     walker.heard("liar", {"op": "dn", "rows": [[0, "ab" * 32, 0]]})
     status = walker.status()
     assert status["differ"] == 1 and status["differs"][0]["chunk"] == 0
@@ -555,7 +556,7 @@ def test_read_only_holds_no_index_and_asks_an_arcade_that_walks(tmp_path):
         return where, on
     where, on = asyncio.run(go())
     assert where["where"]["output"] == f"{send[1]}:0" and where["from"] == "arcade walker-node"
-    assert on["on"] == [{"id": f"{reveal[1]}i0", "offset": 0}]
+    assert on["on"] == [{"id": f"{reveal[1]}i0", "offset": 0, "ctype": "text/plain"}]
     assert reader.store.q("SELECT COUNT(*) FROM insc")[0][0] == 0, "and the reader keeps no index"
 
 
@@ -829,7 +830,7 @@ def test_a_chunk_stitched_from_notes_the_audit_outvotes_is_said_never_wiped(tmp_
     holder._prune_notes()
     assert holder.walker.next_height() == dx.BASE + 12, "one word, not outvoted: kept"
     for liar in ("x", "y"):
-        holder.heard(liar, {"op": "hi", "mode": "help", "rules": dx.ord_rules.RULES})
+        holder.heard(liar, {"op": "hi", "mode": "help", "rules": dx.ord_rules.rules_for("doge")})
         holder.heard(liar, {"op": "dn", "rows": [[1, "cd" * 32, 0, "ef" * 32]]})
     kept = holder.store.q("SELECT COUNT(*) FROM insc")[0][0]
     holder._pruned = 0
@@ -837,7 +838,7 @@ def test_a_chunk_stitched_from_notes_the_audit_outvotes_is_said_never_wiped(tmp_
     assert holder.status()["disputed"] == [1] or holder.disputed == [1]
     assert holder.walker.next_height() == dx.BASE + 12 and holder.store.q("SELECT COUNT(*) FROM insc")[0][0] == kept
     for liar in ("p", "q"):                              # other notes, the same births: not a dispute
-        holder.heard(liar, {"op": "hi", "mode": "help", "rules": dx.ord_rules.RULES})
+        holder.heard(liar, {"op": "hi", "mode": "help", "rules": dx.ord_rules.rules_for("doge")})
     assert holder.disputed == [1]
 
 
@@ -891,6 +892,131 @@ def test_the_whole_index_comes_from_the_arcades_that_hold_it(tmp_path, monkeypat
         "pieces from an arcade still fetching them: torrent style"
 
 
+def test_a_fetch_of_a_snapshot_nobody_offers_any_more_is_let_go_and_the_newest_taken(tmp_path, monkeypatch):
+    """2026-10-22: @yourfirstname's Pepecoin walk sat at its first block all day. Its fetch was of a snapshot the holder
+    had let go of and made again under a new id: no piece of the old one ever came, and the walk waits while a fetch
+    runs. A fetch that gets nothing for FETCH_STALL is let go of, and the copy on offer now is fetched."""
+    from arcade import ord_snapshot
+    monkeypatch.setattr(ord_snapshot, "WORTH_BLOCKS", 4)
+    monkeypatch.setattr(ord_snapshot, "PIECE", 4096)
+    chain = _story_chain()
+    mesh = Mesh()
+    holder = dx.DoginalIndex(tmp_path / "h.sqlite", lambda: chain, lambda: "walk", cores=lambda: 1)
+    newcomer = dx.DoginalIndex(tmp_path / "new.sqlite", lambda: chain, lambda: "walk", own_core=lambda: False)
+    holder.walker.step(chain, dx.BASE + 11, budget=60)
+    holder.store.x("DELETE FROM notes")
+    holder._snap_asked = True
+    for name, idx in (("holder", holder), ("new", newcomer)):
+        mesh.join(name, idx)
+        idx.me = name
+    for _ in range(6):
+        _hold_round(mesh, holder, newcomer)
+        if newcomer.snapshots.fetch is not None:
+            break
+    f = newcomer.snapshots.fetch
+    assert f is not None, newcomer.snapshots.said
+    f.update(id="0" * 64, manifest=None, have=set(), asked={})   # the copy it began on: gone, nobody offers it
+    f.pop("moved", None)
+    for _ in range(4):
+        _hold_round(mesh, holder, newcomer)
+    assert newcomer.snapshots.fetch is not None and newcomer.walker.next_height() == dx.BASE, "waits, as it did"
+    newcomer.snapshots.fetch["started"] -= ord_snapshot.FETCH_STALL + 1
+    for _ in range(12):
+        _hold_round(mesh, holder, newcomer)
+        if newcomer.snapshots.said.startswith("the index came"):
+            break
+    assert newcomer.snapshots.said.startswith("the index came"), newcomer.snapshots.said
+    assert newcomer.walker.next_height() == dx.BASE + 12
+    assert _dump(newcomer) == _dump(holder)
+
+
+def _fetch_setup(tmp_path, monkeypatch, own_core=False):
+    from arcade import ord_snapshot
+    monkeypatch.setattr(ord_snapshot, "WORTH_BLOCKS", 4)
+    monkeypatch.setattr(ord_snapshot, "PIECE", 4096)
+    monkeypatch.setattr(ord_snapshot, "IN_FLIGHT", 1)            # a piece a pass: a fetch caught half way
+    monkeypatch.setattr(ord_snapshot, "FETCH_SAVE", 0)
+    chain = _story_chain()
+    mesh = Mesh()
+    holder = dx.DoginalIndex(tmp_path / "h.sqlite", lambda: chain, lambda: "walk", cores=lambda: 1)
+    newcomer = dx.DoginalIndex(tmp_path / "new.sqlite", lambda: chain, lambda: "walk", own_core=lambda: own_core,
+                               cores=lambda: 1)
+    holder.walker.step(chain, dx.BASE + 11, budget=60)
+    holder.store.x("DELETE FROM notes")
+    holder._snap_asked = True
+    for name, idx in (("holder", holder), ("new", newcomer)):
+        mesh.join(name, idx)
+        idx.me = name
+    return chain, mesh, holder, newcomer
+
+
+def test_a_fetch_cut_short_by_a_restart_carries_on_with_the_pieces_it_had(tmp_path, monkeypatch):
+    """2026-10-22: @yourfirstname's fetch went from 420 of 2,978 pieces back to 13 when its arcade restarted. Where a
+    fetch got to is kept beside its .part; after a restart each kept piece is checked again by its hash (one half
+    written is asked for again) and the rest are fetched."""
+    chain, mesh, holder, newcomer = _fetch_setup(tmp_path, monkeypatch)
+    for _ in range(40):
+        _hold_round(mesh, holder, newcomer)
+        f = newcomer.snapshots.fetch
+        if f and f["manifest"] and len(f["have"]) >= 3:
+            break
+    f = newcomer.snapshots.fetch
+    total = len(f["manifest"]["pieces"])
+    assert 3 <= len(f["have"]) < total, (len(f["have"]), total)
+    kept = sorted(f["have"])
+    with open(newcomer.snapshots.part_path, "r+b") as part:      # the arcade stopped half way through a write
+        part.seek(kept[0] * 4096)
+        part.write(b"\0" * 16)
+    newcomer._snapshots = None                                   # the restart: everything in memory gone
+    again = newcomer.snapshots.fetch
+    assert again is not None and again["have"] == set(kept[1:]), "kept, each checked again"
+    assert "carried on after a restart" in newcomer.snapshots.said
+    before = len([x for x in mesh.fetched if x[0] == "new" and x[2] == "piece"])
+    for _ in range(4 * total):
+        _hold_round(mesh, holder, newcomer)
+        if newcomer.snapshots.said.startswith("the index came"):
+            break
+    assert newcomer.snapshots.said.startswith("the index came"), newcomer.snapshots.said
+    after = len([x for x in mesh.fetched if x[0] == "new" and x[2] == "piece"]) - before
+    assert after == total - len(kept) + 1, (after, total, len(kept))
+    assert _dump(newcomer) == _dump(holder)
+    assert not newcomer.snapshots.fetch_path.exists() and not newcomer.snapshots.part_path.exists()
+
+
+def test_a_stalled_fetch_of_a_copy_still_offered_keeps_its_pieces(tmp_path, monkeypatch):
+    from arcade import ord_snapshot
+    chain, mesh, holder, newcomer = _fetch_setup(tmp_path, monkeypatch)
+    for _ in range(40):
+        _hold_round(mesh, holder, newcomer)
+        f = newcomer.snapshots.fetch
+        if f and f["manifest"] and len(f["have"]) >= 2:
+            break
+    f = newcomer.snapshots.fetch
+    had = set(f["have"])
+    f["moved"] -= ord_snapshot.FETCH_STALL + 1
+    newcomer.snapshots.step(newcomer.share)
+    assert newcomer.snapshots.fetch is f and had <= f["have"], "asked again, nothing thrown away"
+
+
+def test_the_walk_goes_on_from_its_own_core_while_a_copy_comes_and_the_first_there_wins(tmp_path, monkeypatch):
+    """2026-10-22: "Both" -- fetching the copy and walking from its own node at once; once the walk passes the
+    copy's block, the copy is let go of."""
+    chain, mesh, holder, newcomer = _fetch_setup(tmp_path, monkeypatch)
+    for _ in range(6):
+        _hold_round(mesh, holder, newcomer)
+        if newcomer.snapshots.fetch is not None:
+            break
+    assert newcomer.snapshots.fetch is not None
+    newcomer.own_core = lambda: True                              # its own node, caught up meanwhile
+    newcomer.tip = dx.BASE + 11
+    newcomer._walk(chain, 60)                                     # walks on while the copy comes
+    assert newcomer.snapshots.fetch is not None or "walked past" in newcomer.snapshots.said
+    assert newcomer.walker.next_height() == dx.BASE + 12
+    newcomer.snapshots.step(newcomer.share)
+    assert newcomer.snapshots.fetch is None and "walked past" in newcomer.snapshots.said
+    assert not newcomer.snapshots.part_path.exists()
+
+
 def test_a_snapshot_whose_moves_another_holder_does_not_share_is_refused(tmp_path, monkeypatch):
     from arcade import ord_snapshot
     monkeypatch.setattr(ord_snapshot, "WORTH_BLOCKS", 4)
@@ -930,7 +1056,7 @@ def test_a_chunk_only_an_older_arcade_said_is_scanned_here_not_waited_for(tmp_pa
         if not needed:
             holder._needed = lambda: []                   # as it was before: the lane goes on with the cover
         Mesh().join(name, holder)
-        holder.heard("old", {"op": "hi", "mode": "help", "rules": dx.ord_rules.RULES, "v": 2})
+        holder.heard("old", {"op": "hi", "mode": "help", "rules": dx.ord_rules.rules_for("doge"), "v": 2})
         holder.heard("old", {"op": "dn", "rows": [[1, "ab" * 32, 0]]})
         for _ in range(3):
             holder.step()
@@ -1002,3 +1128,41 @@ def test_a_small_machine_never_fetches_the_whole_index(tmp_path, monkeypatch):
     assert not any(x[2] == "piece" for x in mesh.fetched if x[0] == "small")
     monkeypatch.setattr(ord_snapshot.os, "cpu_count", lambda: 20)
     assert "free disk" in small.snapshots.may_fetch(10 ** 15), "and a big one with too little room says so"
+
+
+def test_the_status_says_how_many_arcades_hold_each_stretch_and_agree(tmp_path, monkeypatch):
+    """2026-10-21/22: the Ords ring's inner circle red where one arcade holds a stretch, yellow where two do,
+    green where three or more do -- counted by the walks that have passed each chunk, a chunk whose words disagree
+    counting only as many as agree. agree_runs are [first chunk, last + 1, holding-and-agreeing (0-3)]."""
+    chain = Chain()
+    index = _walker(tmp_path, chain)
+    index.tip = dx.BASE + 6 * dx.CHUNK - 1 + dx.SETTLE                 # six whole chunks ready
+    C = dx.CHUNK
+    holders = [("", dx.BASE + 5 * C), ("b" * 64, dx.BASE + 3 * C), ("c" * 64, dx.BASE + 1 * C)]
+    monkeypatch.setattr(index, "holders", lambda: holders)
+    st = index.store
+    st.say(2, "", "x", 0); st.say(2, "b" * 64, "y", 0)                  # chunk 2: two hold it but disagree
+    runs = index.status()["agree_runs"]
+    assert runs == [[0, 1, 3], [1, 2, 2], [2, 5, 1], [5, 6, 0]], runs   # chunk 2 disagrees: 1, as chunks 3-4 held by one
+
+
+def test_the_status_says_each_linked_arcades_copy_fetch():
+    """2026-10-22: two arcades sat at one block for hours, and nothing said whether they were fetching a copy."""
+    assert dx._copy_said({"id": "a" * 64, "h": 1009720, "n": 2978, "have": [0, 1, 2]}) == \
+        {"copy": {"h": 1009720, "of": 2978, "have": 3}}
+    assert dx._copy_said({"id": "a" * 64, "h": 5, "n": 9, "have": "all"})["copy"]["have"] == "all"
+    assert dx._copy_said(None) == {}
+
+
+def test_the_walk_goes_to_two_blocks_under_the_tip_and_chunks_stay_twelve_under(tmp_path, monkeypatch):
+    """2026-10-22: "Why can't strawberry keep up with the confirmed blocks?" -- it sat 12 under the tip. The walk
+    now goes to WALK_SETTLE (2) under it, reading the last blocks from its Core; a chunk, compared across arcades, is
+    still only whole SETTLE (12) under the tip."""
+    monkeypatch.setattr(dx, "WALK_SETTLE", 2)
+    monkeypatch.setattr(dx, "SETTLE", 12)
+    chain = _story_chain()
+    tip = dx.BASE + 11
+    index = dx.DoginalIndex(tmp_path / "w.sqlite", lambda: chain, lambda: "walk", cores=lambda: 1)
+    index.walker.step(chain, tip, budget=60)
+    assert index.walker.next_height() == tip - 2 + 1
+    assert dx.ready_chunks(tip, dx.BASE) == 0, "no chunk is whole twelve under this tip"

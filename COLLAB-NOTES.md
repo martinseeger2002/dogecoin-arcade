@@ -88,6 +88,377 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-22 Listings hold what they list until unlisted or taken (Claude)
+The operator: "I made a listing of frgy from my @apple but it remains in my balance so it seems like I could list it and send
+it at the same time ... It should be locked as listed until it is unlisted or purchased", "This should happen for all
+tokens and all coins listed", "And NFTs listed". A delegated swap order (coins, Omni tokens, NFTs: the swap tab's
+default) already moves its side to the order's own address when listed, and signed NFT listings already set their coins
+aside (`_listed_coins`); what stayed on the account's address was a DRC-20 / PRC-20 or Doginal swap order (locked
+only once taken) and a Doginal on the Doginals tab. Now `_listed_holds(account)` (trade_orders.standing_of: the
+account's orders not cancelled, not being taken, not expired, not delegated; plus its open Doginals-tab listings):
+* DRC-20 / PRC-20: `listed_units` beside each balance (/account/token20), taken off a send and a token lock ("listed
+  on the exchange: unlist it first"); the Tokens tab and the card show it held ("X listed").
+* /account/orders/post refuses a book that lists more of a token than is free (`_listing_over`: balance less set
+  aside, on its way), or one Doginal twice, or one also on the Doginals tab (409, said on the page).
+* A listed Doginal can't be sent (/account/doginal/send), can't go on the Doginals tab while a swap holds it, and a
+  swap can't lock one listed on the Doginals tab; the wallet's card says "Listed" instead of Send / Swap
+  (GET /account/listed, door PUBLIC_PAGES). An order being taken holds nothing: its own lock goes ahead.
+Test: test_doginal_wallet.py.
+
+### 2026-10-22 Exchange search: DRC-20 / PRC-20 ticks looked up as typed, not all in the page (Claude)
+With every tick of both chains in the pair boxes (about 400 PRC-20 and 4,900 DRC-20, twice), /exchange?tab=swaps was
+1.9 MB. `_pair_choices` now carries only the reader's own DRC-20 / PRC-20 (with whole tokens held); new GET
+/exchange/token20/search?q= (door PUBLIC_PAGES, cached 60 s) answers the ticks starting with what was typed from the
+most complete copy of each chain's index ("ticks"), a dozen at most, "frgy · PRC-20"; exchange.html's pick box asks it
+on the other half and adds what comes back to the select behind it. Test: tests/test_token20_swap.py.
+
+### 2026-10-22 DRC-20 / PRC-20 in the swap book: whole orders, cross-chain, the token locked as a note on the lock (Claude)
+The operator: "Add prc 20 and drc 20 tokens to the token/coin exchange", "list their PRC 20s in the exact same way that our
+current order book works", "added to the search of tokens with their ticker, followed by the protocol"; asked, "Yes,
+build it". Orders are taken whole as every swap-book order is (trade_orders: "a lock moves exactly its amount").
+* Why a note cannot just be sent into a lock: a transfer note credits on its FIRST move, so moving it into the lock
+  would give the tokens to the lock address and the claim would move nothing. arcade/token20_swap.py: the seller
+  inscribes note 1 on its own address, FUNDS the lock (one tx: note 1 to the lock -- its first move, the lock address
+  now holds the tokens -- and note 2's commit, so note 2 comes after it on the chain), then LOCKS (note 2's reveal, the
+  same amount, landing on the lock as output 0, the reserve as output 1: a Doginal lock's shape, so htlc.doginal_out
+  claims / refunds it, the claim being note 2's first move). Note 1's 0.001 coin stays at the lock address.
+* `token20_seen`: the lock counts only once a copy of the ord index has read note 2 as a valid note owned by the lock
+  address (new index question "note", DoginalIndex.note from `xfer`), with the agreed tick and amount in the reveal's
+  envelope; until then confirmations 0; `confirmations_for` is at least 1 for a token leg (Python and wallet_js).
+* Leg kind "token20": trade_orders `_side` / `parse_leg_key` / `one_chain_offer` (token20 + coin on one chain),
+  trade_messages, trade.py (lock_value 1, fund_value the Doginal reserve, check_lock as a Doginal's), app `_trade_leg`,
+  /account/trade/spend and /facts, node_trader (reads and claims a token lock; its own wallet never makes one),
+  wallet_js (tradeSpend, checkLock, lockValue, fundValue, canFund, swapFees, the lock step).
+* POST /account/trade/lock20 (door PUBLIC_POST): {chain, redeem, leg} checked against a complete index and the amount
+  on hand (less what is on its way, `_t20_pending`), then four offers in turn: commit, reveal, fund, lock; "done" with
+  `lock_txid` (the note at output 0). The tab's lock step runs them (wallet_js token20Post with the route).
+* The exchange: `_token20_choices` lists the reader's own ticks with whole tokens held and (search) every tick of the
+  chain from the most complete index (new question "ticklist", kept 10 min), keyed `<net>-token20-<tick>`, labelled
+  "frgy · PRC-20" / "dogi · DRC-20"; `_leg_info`, `_swap_amount`, `_side_label` name them; _tab_swaps.html lists them
+  in whole tokens and never delegates one (the node's wallet makes no token lock).
+Tests: tests/test_token20_swap.py (our walker: claimed -> the claimer's, refunded -> the seller's; the lock read as the
+other side reads it; the order rules), test_doginal_wallet.py (the four offers end to end). Not done: a real trade.
+
+### 2026-10-22 Wallet drop-down: each address type is its own wallet, every wallet labelled "name · protocol" (Claude)
+The operator (a screenshot of L TEST's "Wallet 1" picker over a separate "Native SegWit" select): "The three different
+types of wallets should each get their own wallet in the Wallet drop-down instead of a separate drop-down. Each one of
+the wallets should be labeled with their Wallet name and the protocol." my_wallet.html: the card's #addrkind select is
+gone (kept hidden); `drawMenu` lists the account's own wallet once per kind (`mainKinds`: wallet.ADDRESS_KINDS, or the
+one Legacy address on a chain without kinds), "Wallet 1 · Legacy" / "· P2SH (Nested SegWit)" / "· Native SegWit", each
+with its balance (the other kinds read by loadKind when the menu opens); picking one sets the kind (KIND) as the select
+did. Imported wallets say their protocol too (`addr_kind`), and the picker's own label is "name · protocol".
+tests/test_wallet_imports_browser.py reads the name and checks the label.
+
+### 2026-10-22 DRC-20 / PRC-20: a sent amount is off the balance until the index reads its note (Claude)
+The operator, after sending 500 frgy from @apple to @yourfirstname (note ea32fec4...i0, send f109fbc3..., block 1,261,650):
+"my balance remain the same. So it appears as though I could send same tokens more than once this needs to be fixed"
+and "It should remove the amount sent from the balance total until it can be updated from the chain". The index walks
+2 under the tip, so for a few minutes it had not read the note. Now `_t20_pending` keeps each send from its commit's
+broadcast (`_t20_committed`, the commit offer's done hook) until the index has walked past its note's block (or the note
+never went out within T20_SEND_SECONDS, or T20_PENDING_SECONDS); /account/token20 says `pending_units` beside each
+balance, the start of a send takes it off what can go ("some is still on its way from an earlier send"), and the
+Tokens tab and the card show the balance less it, "X on its way". In memory: after a restart a second note would be
+void by the rules (never a double spend), only fees lost. Test: test_doginal_wallet.py (the three offers test).
+
+### 2026-10-22 DRC-20 / PRC-20 send from the Wallet, one Send press, counted as pepeblocks and nintondo count it (Claude)
+The operator: "look at the recent PRC-20 that @apple recently received ... I want the ability to send a PRC 20 token in the
+same way I can send any other token" and "Our transfer and send protocol needs to match that of Pepe block and
+Nintondo". @apple's 50,000 frgy (pepeblocks: frgy 50,000.00, transferable 0.00, as our index) came the BRC-20 way: five
+notes `{"p":"prc-20","op":"transfer","tick":"frgy","amt":"10000"}` inscribed on the deployer's own address (e.g.
+ddc29df9...i0, block 778,863: the envelope in a P2SH input's scriptSig), then one transaction (67f2cc49..., block
+1,261,581) sent the five 0.001 PEP note coins to @apple. There is no one-step "send" op in DRC-20 / PRC-20 (wonky-ord
+rules: deploy, mint, transfer; the BRC-20 single-step idea is a Bitcoin taproot proposal), and the "send" is an ordinary
+transaction, not an inscription. Asked, the operator chose "One Send press"; then: the token loads on the wallet card like an
+Omni token and the card's own Send sends it.
+* arcade/token20_send.py: `note` (compact JSON, the explorers' key order), `envelope` (ltc_ord's Doginals writer: byte
+  for byte the frgy note), `commit_script`, `reveal_fee`, `build_reveal` (the commit coin in, POSTAGE 0.001 to the
+  sender's own address out; the input carries `redeem` and `envelope`).
+* funding: `assemble` puts envelope + signature + redeem for such an input; `build_note_send` (= the Doginal send,
+  taking the reveal's coin as vouched: no index has read it yet); `choose` never takes an in-flight coin at or under
+  POSTAGE_MAX_GUARDED where a guard runs (the note's coin is in flight on the sender's own address).
+* POST /account/token20/send (door PUBLIC_POST): {chain, tick, amount, to, pubkey} -- the address's own coin key, not
+  the login key, checked against the address -- refused unless a copy of the index is within INDEX_READY_LAG of the tip
+  and the amount is on hand (units - transferable); offers the commit and keeps the run (`_t20_sends`, 30 min);
+  {send} after each broadcast (each offer's `done` hook notes its txid) offers the reveal, then the send, then "done".
+* coins.js `noteKey` / `noteText`: verifyOffer signs a reveal only over this key's own note script, and reads the note
+  back from the envelope. wallet_js `startToken20` / `sendToken20` (signs the three in turn, `reviewed`).
+* my_wallet.html: a DRC-20 / PRC-20 row selects the card (`asset.token20`: balance on hand, BigInt units), the card's
+  Send gives the `token20` kind (amount by its decimals, Max, Review shows the note, the three fees with the 0.001 note
+  coin, Send runs the three steps "Signing 1 of 3 ...").
+Not yet: sending from an imported wallet; sending a note already inscribed but unsent. Tests: tests/test_token20_send.py
+(our walker credits a send built here), test_doginal_wallet.py (the three offers end to end), test_coins_browser.py.
+
+### 2026-10-22 Tokens tab: an empty DRC-20 list while the index walks says "none found yet", with how far it has read (Claude)
+The operator: "Add drc-20 balances to doge wallet tokens." The section was there (drawToken20), but for his imported address
+the most complete Dogecoin index (@strawberry, at block 4,766,321 of ~6.43 M) has not reached his DRC-20 activity, and
+the page said "No DRC-20 tokens on your address" as if final. While the index is short of the tip it now says "No DRC-20
+tokens found yet ... read the chain up to block X of Y (Z%), and balances appear here as it reaches them".
+
+### 2026-10-22 Ord walk goes to 2 blocks under the tip (chunks stay 12 under) (Claude)
+The operator: "On strawberry ... 100% index for Pepe ORD's but now we are about 11 blocks behind. Why can't strawberry keep up
+with the confirmed blocks?" It was by design: the walk stopped at tip - SETTLE (12). Asked, the operator chose 2 blocks. New
+`WALK_SETTLE = 2` for the walk (Walker.step, the status's `left`, and Admin's walked percentages in app.py); SETTLE stays
+12 for whole chunks (`ready_chunks`), whose words are compared across arcades, so a reorg near the tip never moves a
+chunk word. The blocks past the last chunk are read from the Core, and a reorg is walked back by the walk's rollback
+(the prev-hash check before every block). Test: tests/test_doginal_index.py.
+
+### 2026-10-22 Imports across arcades: coins brought over in batches, all of them; asked again for one being read back; no new import on a chain with fewer than two nodes (Claude)
+The operator: "the rescan is done on dogecoinarcade.com but when I go to Pepecoinarcade.com it says that the re-scan is in
+progress on the same Doge wallet" (7,000+ coins); and "importing a wallet to LTC right now should not be possible
+since there is only one LTC node. So that option should be grayed out on all arcades." .25 answered the coins in 1.1 s;
+the arcade being brought the wallet then checked them one gettxout + one getblockcount each (over a borrowed Core on
+pepecoinarcade.com: 14,000 mesh calls) and only the first 5,000.
+* `_file_checked_coins`: every coin (CHECKED_COINS_MAX 100,000, a sanity bound), `rpc.batch` of CHECKED_COINS_BATCH
+  (250) gettxout, the tip read once; a batch that fails twice raises (the caller reads the wallet back, never files
+  part of it).
+* An address already registered here and still read back is brought over when the page registers it again with the
+  coins proof (`_imported_coins_elsewhere`), the read-back's entry dropped (its thread finishes harmlessly).
+* `IMPORT_CORES_MIN` (2, module level): `_import_cores` counts this arcade's own Core of the chain and the linked
+  sharers (coreshare tips); under it a new import is refused (a sync of a wallet already in the record is not), and
+  GET /account/imported says `import_closed` {net: why}, which greys "+ Import a wallet" out with the reason.
+  tests/conftest.py treats a lone test arcade as having enough Cores; the rule has its own test.
+### 2026-10-22 Wallet Tokens tab: DRC-20 / PRC-20 balances from the ord index, refreshed as it walks (Claude)
+The operator: "under Wallet tokens tab DRC-20 and PRC-20 balances should be displayed updated as the index is updated." The
+tab listed only the arcade's own (Omni-style) tokens. New GET /account/token20?chain=doge|main[&address=own] (door
+PUBLIC_PAGES): the most complete copy of the chain's ord index answers "balances" for the account's address (or an
+imported wallet's, `_own_address_asked`), with `walked_to` and the tip. my_wallet.html `drawToken20` draws a DRC-20 /
+PRC-20 section under the tokens (tick, amount, transferable), asks again every T20_MS (60 s) while the tab is open, and
+says "at block X of Y: these balances update as it walks" until the index is at the tip. Test: test_doginal_wallet.py.
+
+### 2026-10-22 Wallet Doginals fill in as the ord index walks (Claude)
+The operator: "Can the doginals in my wallet that I have imported with 7000+ of them can the Wallet view be updated in real
+time as the index is built?" A coin can be answered as soon as some copy of the index has walked past the block that
+made it (every move before it is known), so the guard no longer waits for a complete index: `_add_indexed` asks the
+index once `Doginals.index_reach()` (the furthest copy, complete or not) is past the coin's block; a protected coin's
+marker keeps that block (`"h"`), and asking again reads nothing until the reach passes it. New GET
+/account/doginal-index {reach, tip} (door PUBLIC_PAGES); the wallet page asks it every DG_LIVE_MS (60 s) on the NFTs
+tab and asks again only about the coins the walk has just passed, so the cards fill in while the index walks; the note
+says "protected until the arcades' Doginal index (at block X of Y) reaches their blocks". Sends still leave every small
+coin with no answer out while the index is incomplete (`waiting_for_index`). Tests: test_doginals.py,
+test_doginal_wallet.py.
+
+### 2026-10-22 Ord copies: a fetch carries on after a restart, and the walk goes on from the arcade's own Core meanwhile (Claude)
+Admin -> Ords' new readout showed @yourfirstname's fetch of Strawberry's Pepecoin copy go from 420 of 2,978 pieces back
+to 13 (its arcade restarted: the pieces were only in memory, and `_drop` threw the .part away), and both far-behind
+arcades walked nothing while they fetched. The operator, asked how a far-behind arcade should catch up: "Both". Now:
+* `Snapshots._save_fetch` keeps where a fetch got to beside its .part (`<index>.part.json`: id, maker, manifest, the
+  pieces in hand; every FETCH_SAVE = 15 s, and at the manifest); `_resume` carries it on after a restart, each kept
+  piece checked again against the manifest's hash (one half written is asked for again).
+* A fetch that got nothing for FETCH_STALL is let go of only when nobody offers its copy any more; still offered (a
+  slow link, a restart over there), its pieces are kept and asked for again, of a holder that has them all.
+* `_walk` no longer waits for a fetch: the walk goes on from the arcade's own Core (as far as it has one), and once it
+  passes the copy's block the copy is let go of ("walked past block N ... before the copy came").
+Tests: the three new ones in tests/test_doginal_index.py beside the snapshot ones.
+
+### 2026-10-22 Admin -> Ords: each linked arcade's whole-index copy fetch is said in the rings' key (Claude)
+The operator: "It seems as though that the indexing is still stalled ... on yourfirstname and banana" (Pepecoin walks at
+186,920 and 803,295 for hours). Their "hi" already carries the copy they fetch (`sn<layout>`, with the pieces they
+have), heard into `snapshots.offers`, but nothing showed it. The status's `peers` now carry `copy` {h, of, have}
+(`_copy_said`), and the key under the rings says "fetching a copy of the index to block N: X of Y pieces (Z%)".
+
+### 2026-10-22 Wallet NFTs: text, JSON and script inscriptions left out of the Doginals/Pepinals view (Claude)
+The operator: "In your wallet view of the doginals in the NFTs filter out txt json and js meme types." Each answer of
+/account/doginal-txs and /account/doginal-tx now carries `ctype`: the ord index's own (`DoginalIndex.on` joins
+`ctypes`, and `Doginals._add_indexed` keeps it), else the `.type` kept beside the content once read, else read from the
+chain once (`Doginals.ctype_of`, two at a time, kept for good). The page (my_wallet.html `DG_NOT_ART`) leaves
+text/plain, application/json and text/javascript / application/(x-)javascript out of the cards and says how many it left
+out; they stay held like every inscription (an ordinary send never spends them). The browser's kept answers moved to
+`arcade.inscriptions.v3.` so the old ones (no type) are asked once more; an answer with an inscription whose type is not
+known yet is not kept. Tests: tests/test_doginals.py, test_doginal_wallet.py, test_doginal_index.py.
+
+### 2026-10-22 Imported wallets: the balance is what it can send; Doginals and unchecked small coins said beside it (Claude)
+The operator: "on my imported wallet ... it shows that I have 77 Doge but it doesn't show how many are protected as doginals.
+Is the 77 Doge expendable or does that include the doginals?" It included them: `_imported_view`'s `spendable` summed
+every coin, while a send from it (funding.choose -> guard.spendable) already left them out. Now `Doginals.sort_known`
+sorts the coins from what is known, reading nothing (a Doginal's coin; a small coin with no answer, or protected:
+waiting for the ord index or an unfinished trace; the rest), and the view says `spendable` (free only), `inscribed` and
+`unchecked` (with counts). The wallet header says "X held in Doginals · Y in N small coins protected until checked" for
+an imported wallet, as the main wallet already said its locked Doginals. And while the ord index walks, `spendable`
+leaves an unasked small coin out without reading it from the Core (a 6,000-coin wallet was read coin by coin for one
+send). Tests: tests/test_doginals.py.
+
+### 2026-10-22 Doginals guard: no more backwards tracing where the chain has an ord index (Claude)
+The operator (an imported wallet of 6,000+ small Doginal coins, each walked back by `doginals.trace` for hours): "stop the
+scan for doginals using our old backwards scanning technique ... Mark all of the small transactions as protected until
+scanned. And then wait until the new Doginals index is complete before scanning them". Now `Doginals(index=...)` (wired
+in app.py for every chain in doginal_index.STARTS: doge, main, ltc, ltctest) never traces: `_add_indexed` reads the
+transaction once and, while no copy of the ord index (this arcade's walk or a linked walker's on the same rules) is
+within `INDEX_READY_LAG` (30) blocks of the tip, files each small output (<= TRACE_MAX) as protected `{"id": None,
+"unknown": True, "wait": "index"}` -- out of every ordinary send, named nothing; asked again after UNKNOWN_RETRY with no
+read at all while the index still walks. Once a copy is complete and past the coin's block, the "on" question
+(`DoginalIndex.lookup`, the most complete copy) says what sits there. Answers already kept (traced before) stay.
+An index that is not opened yet protects too. The wallet page says "N small coins are protected until the arcades'
+Doginal index reaches the chain's tip". Consequence: a Doginal that reaches a wallet before Dogecoin's index is complete
+can't be sent, listed or swapped until then (Pepecoin's index is complete: answered at once). Tests: tests/test_doginals.py.
+### 2026-10-22 To do: connect players' Chrome extension wallets (no code changed) (Claude)
+The operator: "We need Wallet connect to all of the Extension wallets." Players who keep their coins in a Chrome extension
+wallet should be able to connect it to the arcade and sign there. This would sit beside our own browser wallet and
+imported keys; it would not replace them. Nothing has been built yet. This is the request, written down for later.
+
+- **Goal:** a single "Connect wallet" button that lists every extension wallet the browser has, so the player can sign in
+  (the `accounts.login_message` challenge), see balances and Doginals, and sign sends, swaps and inscriptions in the
+  extension. The private key never reaches the arcade.
+- **Wallets to cover.** Each injects its own object into the page. The names below are from memory, so **confirm each API
+  before building**:
+  - MyDoge / MyDogeMask (`window.doge`): connect, send, DRC-20, inscriptions, PSBT signing
+  - DogeLabs Wallet (`window.dogeLabs`, a UniSat-style API: requestAccounts, signMessage, signPsbt)
+  - Nintondo (`window.nintondo`)
+  - any others found, including Pepecoin and Litecoin extension wallets, so every face and chain is covered
+- **Shape (game-agnostic, see the ground rules):**
+  - one adapter per wallet behind one small interface: connect, address, signMessage, signPsbt or signTx, send
+  - detect what is injected and list only the wallets the player has
+  - games keep calling the same `arcade.*` wallet API and never talk to an extension directly
+  - the per-game wallet permission box still applies
+- **Things to settle:**
+  - which arcade transactions can be expressed as PSBTs the extensions will sign (lock-script swaps, the P2SH referee
+    pools and inscription commit/reveal may need wallets that sign custom scripts)
+  - sign-in by signed message, with each wallet's message format
+  - testnet support, since many extensions are mainnet only
+  - whether WalletConnect itself (the relay protocol) is worth adding for phone wallets
+- Related: the 2026-10-22 "Repos to look at later" entry below (GreatApe42069 also forked mydogemask).
+
+### 2026-10-22 Ords rings: no @tag on the arcs (Claude)
+The operator: "Remove the @tag labels from the rings." Each copy's arc in Admin -> Ords now says only how far it has walked
+("57%"); who holds it is in the key under the rings, as before (admin.html, the rings' `label`).
+
+### 2026-10-22 Repos to look at later for the arcade (no code changed) (Claude)
+The operator asked to note these for possible future use. Nothing has been taken or run yet. All of it was read through the GitHub
+API. **Check the license before copying anything:** GPL-3 code is for ideas only. Where no license file exists, the code is all
+rights reserved, so only the idea can be reused.
+
+**The repos the operator named**
+- **dogechat-android** (GreatApe42069, CC0; the README says it is a fork of bitchat-android, which is MIT, so keep that
+  notice). <https://github.com/GreatApe42069/dogechat-android>
+  - `app/src/main/java/com/dogechat/android/wallet/WalletManager.kt`: a DOGE SPV wallet built on bitcoinj + libdohj
+    `WalletAppKit`, with up to 6 peers, DNS seeds (`seed.dogecoin.com`, `seed.multidoge.org`, `seed2.multidoge.org`,
+    `seed.dogechain.info`) and optional Tor (SOCKS) with a 45 s bootstrap wait. It pre-generates a receive address and
+    reports sync %, peer count and a live log line as status flows.
+    - For the arcade: a reference for a light wallet when a player has no Core.
+    - It is also a pattern for our "a Core that is behind" status: peers, sync % and the last log line.
+  - `.../wallet/net/PeerDirectory.kt`: a peer book that seeds from a writable `dogecoin_peers.csv`, then the bundled CSV, then
+    hardcoded IPv4s (Tor mode). It resolves the DNS seeds on clearnet and writes newly found IPs back to disk.
+    - For the arcade: the installer/Core bootstrap could ship a peer list and keep it fresh the same way, as an `addnode`
+      fallback when DNS seeds fail.
+  - `app/src/main/assets/dogecoin_peers.csv`: 11 mainnet `ip:22556` lines (IPv4 only, for SOCKS). It is a list from one
+    moment, so check the peers are alive before using it.
+- **qlpqlp/dogecoin-wallet**: the Android "Dogecoin Wallet" (fork of langerhans/dogecoin-wallet-new, from Schildbach Bitcoin
+  Wallet), Java, **GPL-3 (`wallet/COPYING`)**, so it is for ideas only. <https://github.com/qlpqlp/dogecoin-wallet>
+  - Atomic swaps DOGE <-> BTC/LTC (`wallet/src/de/schildbach/wallet/util/HtlcScriptBuilder.java`,
+    `service/AtomicSwapService.java`). The script is the standard HTLC:
+    `IF SHA256 <h> EQUALVERIFY DUP HASH160 <to> EQUALVERIFY CHECKSIG ELSE <t> CLTV DROP DUP HASH160 <refund> ... ENDIF`.
+    - It is a cross-chain swap compatible with other wallets. Our lock-script swaps could add Litecoin <-> Dogecoin swaps in
+      this shape, so phones running that wallet could trade with an arcade.
+  - Other features:
+    - timelocked "checks" (`WriteCheckActivity`, `CheckPdfGenerator`), which could become an arcade gift or voucher
+    - a Point of Sale web server, which could become an arcade "merchant mode"
+    - custom checkpoints, recurring payments, and RadioDoge (LoRa) status
+
+**More from GreatApe42069 (77 repos; about 45 are forks without changes, including old copies of our own repos)**
+- High:
+  - **dogechat-android** as a whole is Bluetooth-mesh + Nostr geohash chat. Parts to take:
+    - `sync/GossipSyncManager.kt` + `sync/GCSFilter.kt`: catch-up sync. Each node sends a compact filter of the ids it has
+      seen, and the other side sends back only what is missing. Fits mesh rooms and the shared order book after a reconnect.
+    - `mesh/StoreForwardManager.kt`, `PacketRelayManager.kt`, `FragmentManager.kt`: store-and-forward, multi-hop relay and
+      large-message fragments.
+    - `nostr/NostrProofOfWork.kt` (NIP-13): a proof-of-work stamp against spam on public feed and chat posts.
+    - `parsing/DogeTokenParser.kt`: `Đ1.23@Daddr #memo` in chat becomes a pay link, a cheap tip feature.
+    - Bigger idea: bridge testnet messaging to dogechat users over Nostr.
+  - **dogechat-extension** (JS, CC0): a small Chrome extension for geohash chat over Nostr, a reference for a "nearby players"
+    room.
+  - **royalties-doginals** (JS, CC0, spec `DOIP-6969.md`): royalty data on inscriptions (flat amount or %), plus minting from a
+    delegate. The order book and swap builder could read it and add a payout output to the creator.
+- Medium:
+  - **doginals** fork (CC0): the specs in `docs/DNS.md` (`.doge` names, first inscription wins; the indexer could resolve
+    name.doge), `docs/DUNES.md` and `docs/Delegates.md`.
+  - **dunes-cli** fork (MIT): reference if the arcade adds Dunes (Runes-style tokens), with pay terms and parent-child.
+  - **dogeclaw-wallet** (GPL-3 Schildbach base, ideas only): another HTLC swap service (unfinished in places) and
+    `PaymentTerminalApiService.java`, an HTTP API a till calls for an address, amount and QR code.
+  - **Degentralized_Wallet** (TS, no license): browser SPV wallet idea. The code is unfinished: mock headers always validate,
+    and multisig is mostly TODOs.
+  - **dogechatMeshCore** (MIT): a dogechat bridge to LoRa radios, only if the arcade ever needs messages off the internet.
+  - **dogechat** (iOS fork of bitchat): only the iOS end of the same chat protocol.
+- Low:
+  - doginalsArtGallery: a three.js 3D gallery stored as inscriptions; could be a showcase room in a game.
+  - dogechat-client: Python, the easiest copy of the chat protocol to read.
+  - The rest are one-off scripts or unchanged forks. dunes-gui and the doginals fork commit `.env`/`.wallet.json` files;
+    never copy those.
+
+**Suggested order if picked up:**
+1. gossip catch-up sync for the mesh
+2. `Đamount@address` tips in chat
+3. a shipped and refreshed peer list for Core bootstrap
+4. royalty outputs in swaps (DOIP-6969)
+5. `.doge` name resolution
+6. DOGE <-> LTC HTLC swaps compatible with other wallets
+
+### 2026-10-22 Rescan %: the Core's own progress line, read from its debug.log (Claude)
+The operator: "Can we include rescan % to Arcade from RPC?" Dogecoin Core 1.14.9's RPC says nothing of a rescan (no
+`scanning` in getwalletinfo; the rescan holds the locks most calls need), so the RPC cannot. What it does write each
+minute is `Still rescanning. At block N. Progress=F` in debug.log. New `arcade/core_log.py` reads the tail of the
+chain's log (the datadir its config names, ~/<node_dir>, /var/lib/<coin>d), kept 20 s, only a line under 3 minutes
+old, and the countdown from the pace of the last half hour of lines. `_core_rescan_said` puts it in the wallet notice
+("59.8% done (block 5,471,263), about 2 hours left") with `pct`/`block` in the JSON; the wallet page draws a bar.
+No readable log: the arcade's guess, as before. On .25 the Core runs as `dogecoin` and keeps its log 0600, so the
+operator lets robin read it once (group + g+r; the dir is already g+x). Tests: tests/test_core_log.py, and the
+countdown test in test_wallet_imports.py.
+
+### 2026-10-22 Ord snapshots: a fetch that gets nothing for 10 minutes is let go of (Claude)
+The operator: "@yourfirstname's node is stuck on block 186,920 for Pepe coin". Its hello said walk, rules 4, walked to the
+chain's first block, helped 0, while its Pepecoin Core was synced to the tip (1,261,353, seen in a test machine's getpeerinfo
+through the mesh). The walk does nothing while a snapshot fetch runs (`_walk` returns on `snaps.fetch`), and nothing
+ever ended a fetch: a test machine lets an unfetched snapshot go after SNAP_IDLE and makes a new one under a new id (00:24,
+04:17, 07:34 today), so an arcade fetching the old id waited for a manifest or pieces nobody offered, for good. Now
+`Snapshots.step` lets a fetch go after `FETCH_STALL` (600 s) with no manifest and no piece ("moved" set by each), says
+so in the Ords tab, and the next pass starts on the newest copy on offer (or walks on). A slow fetch that still gets
+pieces is untouched. Test: `test_a_fetch_of_a_snapshot_nobody_offers_any_more_is_let_go_and_the_newest_taken`.
+@yourfirstname needs this update for its walk to move.
+
+### 2026-10-22 Import rescans: a wallet that already found the address's history is not rescanned again (Claude)
+The operator: "looks like rescan started over". @apple's Dogecoin rescan on .25 finished about 09:35 CDT after ~22 h; when the
+Core answered, `utxos._rescan_already_ran` judged "Core restarted since the send" by its OLDEST PEER (getpeerinfo
+conntime) -- but a Core locked for 22 hours drops and makes its peers anew -- so at 09:42 the whole chain was sent
+again. Now: every address watch-only AND the wallet already holding transactions for each
+(`listreceivedbyaddress 0 true true`, `_wallet_has_history`) means a rescan ran: the coins are listed, nothing is
+sent again. The peer test is only the fallback for an address with no history at all. Test:
+tests/test_wallet_imports.py `test_a_rescan_that_found_history_is_not_sent_again_though_the_peers_are_new`.
+
+### 2026-10-22 Dogecoin rules 5: reinscriptions numbered like nintondo; per-chain rules versions (Claude)
+The operator compared our Dogecoin numbers with nintondo.io: identical to #3,052, then nintondo pulled ahead (152,856 by our
+#63.4 million). The first one, nintondo's #3,053 (3af064b2...i0, block 4,610,566), is a REINSCRIPTION -- written on the
+coin carrying #3,052 -- which wonky-ord / ord-dogecoin never number (a new one only on an uninscribed first koinu).
+The operator: "Number them like nintondo". So on Dogecoin (`store.net == "doge"`) the walker looks for a new inscription in
+every transaction, as Pepecoin already does; Litecoin's Doginals kind keeps the first-koinu rule.
+- **Rules per chain:** `ord_rules.RULES_BY_NET = {"doge": 5}`, `rules_for(net)` (RULES stays 4): `Store.rules`,
+  `DoginalIndex.rules`, the mesh "hi", walkers, snapshots (and the snapshot verifier opens its copy with the chain), so
+  ONLY Dogecoin indexes are cut again; PEP and Litecoin keep theirs.
+- **Checked against nintondo** on a fresh scratch walk to block 4,653,100 (101,216 inscriptions): identical to #54,423
+  (reinscriptions included: #3,053 = 3af064b2...), then nintondo is ONE ahead (its #54,424, between our #54,423 at
+  4,625,077 and #54,424 at 4,625,078) -- not an envelope starting or completing there, nor an unfinished one (nintondo
+  does not number those either); still to find. Pepecoin against nintondo: identical to #8,571,312; past it we are
+  ahead by zero-piece inscriptions only (ord-pepecoin numbers them, nintondo does not; the operator: keep ord-pepecoin's rule).
+- Tests: tests/test_ord_dialects.py (Dogecoin numbers the reinscription, Litecoin does not; per-chain rules, only
+  Dogecoin cut again), tests/test_ord_rules.py (the first-koinu rule on Litecoin), fixtures on each chain's rules.
+### 2026-10-22 Admin -> Ords: the four choices register at once (Claude)
+The operator: "The operator cannot change how they interact with the ords. Read only help or keep a complete index buttons are
+not registering the clicks." The choice was saved, but the redraw right after read the index's status, kept 20 s
+(`DoginalIndex.STATUS_SECONDS`), whose `mode` was the old one, so the radio turned back. `GET /admin/api/ords` now
+gives each row the mode as set now (`state.ord_mode`), and `POST` clears that index's kept status. tests/test_admin.py
+checks all four (walk, read, off, help) show at once.
+
+### 2026-10-21 Ords ring: the inner circle by agreement (Claude)
+The operator: "the inner circle should be red when there is a single node that has the index it should be yellow if there are
+two nodes with agreeing index, and it should be green when there are three". `DoginalIndex.status()` now gives
+`agree_runs`: runs of chunks [first, last + 1, agreeing], agreeing = how many arcades said a chunk's most-said hash,
+capped at 3 (0: nobody yet). admin.html `ordRing` draws the thin inner ring from them: red 1, yellow 2, green 3+,
+grey 0 (each run titled on hover); the centre says the share of the chain with 3 agreeing. Runs are drawn edge to edge
+(2026-10-22: a 0.1% gap after each of PEP's 157 runs showed the page through as black ticks). Rings A, B, C are now
+red, yellow, green (ORD_COLORS), the inner ring's own three colours, as the operator asked. 2026-10-22 ("The inner circle is
+not displaying correctly yet"): agree_runs now count the arcades HOLDING each chunk (every walker whose walk has
+passed it, DoginalIndex.holders) -- an arcade stitching another's notes never says a chunk's word, so stretches two
+arcades held showed red or grey -- and a chunk whose words disagree counts only as many as agree. Before, it counted how far
+each copy reached (2+ green, 1 amber), whether or not their words agreed. Test: tests/test_doginal_index.py
+`test_the_status_says_how_many_arcades_agree_along_the_chain`.
+
 ### 2026-10-21 PEP rebuilt under rules 4 matches the other explorer but for one inscription, kept and noted (Claude)
 After the rules-4 rebuild a test machine's PEP index was compared by hand with an outside explorer again: the three
 inscriptions missing at #30,410-30,412 are in, and a random sample to #3.6 million matches exactly but for ONE:

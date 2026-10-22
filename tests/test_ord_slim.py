@@ -253,11 +253,11 @@ def test_a_snapshot_of_another_layout_is_never_fetched_nor_kept(tmp_path):
     chain = Chain()
     chain.add([])
     index = _walker(tmp_path, chain)
-    index.heard("peer", {"op": "hi", "rules": ord_rules.RULES, "sn": {"id": "a" * 64, "h": 9, "n": 1, "have": "all"}})
+    index.heard("peer", {"op": "hi", "rules": ord_rules.rules_for("doge"), "sn": {"id": "a" * 64, "h": 9, "n": 1, "have": "all"}})
     assert "peer" not in index.snapshots.offers, "a layout-1 arcade's offer (sn) is not one this arcade can read"
-    index.heard("peer", {"op": "hi", "rules": ord_rules.RULES, "sn2": {"id": "d" * 64, "h": 9, "n": 1, "have": "all"}})
+    index.heard("peer", {"op": "hi", "rules": ord_rules.rules_for("doge"), "sn2": {"id": "d" * 64, "h": 9, "n": 1, "have": "all"}})
     assert "peer" not in index.snapshots.offers, "nor a layout-2 arcade's (sn2)"
-    index.heard("peer", {"op": "hi", "rules": ord_rules.RULES, f"sn{dx.LAYOUT}": {"id": "b" * 64, "h": 9, "n": 1, "have": "all"}})
+    index.heard("peer", {"op": "hi", "rules": ord_rules.rules_for("doge"), f"sn{dx.LAYOUT}": {"id": "b" * 64, "h": 9, "n": 1, "have": "all"}})
     assert index.snapshots.offers["peer"]["id"] == "b" * 64
     snaps = index.snapshots
     snaps.manifest_path.write_text(json.dumps({"manifest": {"size": 3, "at": 0}, "id": "c" * 64}))
@@ -267,12 +267,12 @@ def test_a_snapshot_of_another_layout_is_never_fetched_nor_kept(tmp_path):
     # Of this layout but other rules (2026-10-21, rules 3): let go of too, its gigabytes off the disk.
     snaps = fresh
     snaps.manifest_path.write_text(json.dumps({"manifest": {"size": 3, "at": 0, "layout": dx.LAYOUT,
-                                                            "rules": ord_rules.RULES - 1}, "id": "e" * 64}))
+                                                            "rules": ord_rules.rules_for("doge") - 1}, "id": "e" * 64}))
     snaps.snap_path.write_bytes(b"abc")
     again = dx.DoginalIndex(index.store.path, lambda: chain, lambda: "walk").snapshots
     assert again.made is None and not again.snap_path.exists(), "a snapshot of other rules is let go of"
     snaps.manifest_path.write_text(json.dumps({"manifest": {"size": 3, "at": 0, "layout": dx.LAYOUT,
-                                                            "rules": ord_rules.RULES}, "id": "f" * 64}))
+                                                            "rules": ord_rules.rules_for("doge")}, "id": "f" * 64}))
     snaps.snap_path.write_bytes(b"abc")
     kept = dx.DoginalIndex(index.store.path, lambda: chain, lambda: "walk").snapshots
     assert kept.made is not None, "one of these rules and layout is kept"

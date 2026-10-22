@@ -22,6 +22,7 @@
       : n === "ltctest" ? "LTC TEST" : "PEP TEST";
     const amt = (leg) => leg.label || (leg.kind === "doginal" ? `Doginal ${String(leg.asset).slice(0, 8)}\u2026${String(leg.asset).replace(/^[0-9a-f]{64}/, "")}`
       : leg.kind === "token" ? `${leg.amount} of token #${leg.asset}`
+      : leg.kind === "token20" ? `${leg.amount} ${leg.asset}`
       : leg.kind === "nft" ? `NFT ${String(leg.asset).slice(0, 10)}\u2026` : `${(leg.amount / 1e8).toString()} ${coinName(leg.network)}`);
     const obox = document.getElementById("tab-orders"), olist = document.getElementById("tab-orders-list");
     // The reader's own swap is a row of the market's own book where that book is on the page
@@ -221,7 +222,8 @@
     // Every swap fills with the seller away (2026-10-17: "I want pre-signed ... for all orders. So that orders
     // can be filled without the counterparty being on Arcade"): its side waits at the order's own key and this
     // account's node finishes it (wallet.js delegateOrder). A Doginal still settles from a page.
-    function delegates(give) { return (give.kind || "coin") !== "doginal"; }
+    // A DRC-20 / PRC-20 token too (2026-10-22): its lock is four steps from the page (token20_swap), none by the node.
+    function delegates(give) { return !["doginal", "token20"].includes(give.kind || "coin"); }
     function listWords(give) {
       return delegates(give)
         ? "Yours moves to this order's own address now, and your arcade's node fills the order for you -- you can close "
@@ -358,10 +360,11 @@
         return {kind, label, whole, net, asset: d[which + "Asset"] || ""};
       };
       const B = leg("base"), Q = leg("quote");
-      if (B.kind === "token" && B.whole && !Number.isInteger(amount))
+      if ((B.kind === "token" && B.whole || B.kind === "token20") && !Number.isInteger(amount))
         return alert(`${B.label} comes in whole units only.`);
       const one = (L) => L.kind === "nft" || L.kind === "doginal";
-      const units = (L, n) => one(L) ? 1 : L.kind === "token" && L.whole ? Math.round(n) : Math.round(n * 1e8);
+      const units = (L, n) => one(L) ? 1 : (L.kind === "token" && L.whole) || L.kind === "token20" ? Math.round(n)
+        : Math.round(n * 1e8);
       const side = (L, n) => L.kind === "coin" ? {network: L.net, amount: units(L, n)}
         : {network: L.net, kind: L.kind, asset: L.asset, amount: units(L, n),
            label: one(L) ? L.label : `${n} ${L.label}`};

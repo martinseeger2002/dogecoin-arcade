@@ -370,6 +370,36 @@ export function refereeKeys(s) {
   return {pool: s.slice(2, 35), referee: s.slice(37, 70), creator: s.slice(73, 106)};
 }
 
+/** The key of a DRC-20 / PRC-20 note's commit script (arcade/token20_send.py, the Doginals envelope's redeem), or
+ *  null: <33-byte key> OP_CHECKSIGVERIFY, one OP_DROP or more, OP_TRUE. Only the key's own holder can spend it, and
+ *  what spending it does is reveal the note -- so a browser signs over it only for its own key. */
+export function noteKey(s) {
+  if (!s || s.length < 37 || s[0] !== 33 || s[34] !== 0xad || s[s.length - 1] !== 0x51) return null;
+  for (let n = 35; n < s.length - 1; n++) if (s[n] !== 0x75) return null;
+  return s.slice(1, 34);
+}
+
+/** The note a reveal carries, read back from its envelope ("ord", count, type, then the parts): its text, or "". */
+export function noteText(envelope) {
+  try {
+    const b = envelope instanceof Uint8Array ? envelope : unhex(String(envelope || ""));
+    const pushes = [];
+    for (let at = 0; at < b.length;) {
+      const op = b[at++];
+      if (op === 0) { pushes.push(new Uint8Array()); continue; }
+      if (op >= 0x51 && op <= 0x60) { pushes.push(new Uint8Array([op - 0x50])); continue; }
+      let n = op;
+      if (op === 0x4c) n = b[at++];
+      else if (op === 0x4d) { n = b[at] | (b[at + 1] << 8); at += 2; }
+      else if (op > 0x4b) return "";
+      pushes.push(b.slice(at, at + n)); at += n;
+    }
+    if (pushes.length < 5 || new TextDecoder().decode(pushes[0]) !== "ord") return "";
+    return new TextDecoder().decode(new Uint8Array(pushes.slice(4).filter((_, i) => i % 2 === 0)
+      .flatMap((x) => [...x])));
+  } catch (e) { return ""; }
+}
+
 /** Split an unsigned transaction into what it spends and what it pays. */
 export function parseTx(raw) {
   const bytes = unhex(String(raw || ""));
@@ -734,7 +764,13 @@ export async function verifyOffer(offer, keys) {
     // A refereed prize pool's coin, closed by its creator (2026-09-29): signed
     // over the pool's script, and only if this key is the one that closes it.
     const redeem = named[n].redeem ? unhex(String(named[n].redeem)) : null;
-    if (redeem) {
+    if (redeem && named[n].envelope) {
+      // A DRC-20 / PRC-20 note's reveal (2026-10-22): its commit coin, spendable only by this key.
+      const key = noteKey(redeem);
+      if (!key || !SAME(key, keys.pubkey)) {
+        throw new Error(`input ${n} is a note's coin that this key does not hold. Nothing was signed.`);
+      }
+    } else if (redeem) {
       const parts = refereeKeys(redeem);
       if (!parts || !SAME(parts.creator, keys.pubkey)) {
         throw new Error(`input ${n} is a prize pool's coin that this key does not `

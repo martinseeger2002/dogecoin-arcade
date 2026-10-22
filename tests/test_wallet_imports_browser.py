@@ -220,7 +220,8 @@ def _menu(browser):
 
 
 def _picked(browser) -> str:
-    return browser.find_element(By.ID, "wpickname").text
+    """The picked wallet's name (the label also says its protocol, " · Legacy": 2026-10-22)."""
+    return browser.find_element(By.ID, "wpickname").text.split(" · ")[0]
 
 
 def _rename(browser, name):
@@ -264,6 +265,7 @@ def test_import_a_key_see_it_by_name_rename_it_and_its_number_is_free_again(brow
     _wallet_page(browser, base)
     # The account's own wallet takes the lowest free number, kept until renamed.
     _until(lambda: _picked(browser) == "Wallet 1", "the main wallet is Wallet 1")
+    assert browser.find_element(By.ID, "wpickname").text == "Wallet 1 · Legacy", "named with its protocol"
     _rename(browser, "Spending")
     _until(lambda: _picked(browser) == "Spending", "the main wallet is renamed")
 
@@ -291,7 +293,8 @@ def test_import_a_key_see_it_by_name_rename_it_and_its_number_is_free_again(brow
     _import_key(browser, _wif(hashlib.sha256(b"second import").digest(), 0xf1))
     _until(lambda: _picked(browser) == "Wallet 1", "the second import is Wallet 1")
     shown = _menu(browser)
-    names = [t.split("\n")[0] for t in shown]
+    names = [t.split("\n")[0].split(" · ")[0] for t in shown]
+    assert all(" · Legacy" in t for t in shown[:3]), shown
     assert names[:3] == ["Spending", "Savings", "Wallet 1"], shown
     browser.find_element(By.ID, "wpick").click()
 

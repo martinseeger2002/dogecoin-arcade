@@ -726,6 +726,14 @@ class NodeTrader:
         has not read the lock's block yet the lock counts as unconfirmed (trade.asset_at)."""
         if leg.kind == "doginal":
             return self._doginal_seen(seen, leg, redeem, rpc)
+        if leg.kind == "token20":
+            from .token20_swap import token20_seen
+            index = self.state.ord_indexes().get(leg.network)
+            if index is None:
+                if seen is not None:
+                    seen.confirmations = 0                # no ord index here: never counted
+                return seen
+            return token20_seen(seen, leg, redeem, rpc, index, chain.params)
         return asset_seen(seen, leg, H.address_of(redeem, chain.params),
                           self.state.token_index(chain), rpc)
 
@@ -842,7 +850,8 @@ class NodeTrader:
         to = to or self._address(leg.network)
         if leg.kind == "coin":
             return H.pay_out(coin, to, fee=T.claim_fee(leg.network), params=chain.params, operator=operator)
-        if leg.kind == "doginal":
+        if leg.kind in ("doginal", "token20"):
+            # A DRC-20 / PRC-20 lock is a Doginal lock's shape (token20_swap): its note at output 0, the reserve at 1.
             return H.doginal_out(coin, {"txid": coin["txid"], "vout": 1, "value": coin["reserve"]}, to,
                                  operator=operator, refund=refund)
         return H.move_out(coin, H.address_of(redeem, chain.params), T.move_data(leg), to,
@@ -919,6 +928,10 @@ class NodeTrader:
                     txid = self._send_coins(grpc, trade.give.network, lock_address, value)
                 elif trade.give.kind == "doginal":
                     txid = self._lock_doginal(trade.give, trade.my_redeem(), grpc, value)
+                elif trade.give.kind == "token20":
+                    # A DRC-20 / PRC-20 lock is four signed steps from an account's tab (/account/trade/lock20); this
+                    # arcade's own wallet makes none yet (2026-10-22), so it never gives one.
+                    raise ValueError("this arcade's own wallet does not lock DRC-20 / PRC-20 tokens")
                 else:
                     txid = self._lock_asset(trade.give, lock_address, give_chain, grpc, value)
                 tx = grpc.call("getrawtransaction", txid, 1)

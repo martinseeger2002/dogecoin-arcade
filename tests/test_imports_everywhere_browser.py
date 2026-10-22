@@ -145,6 +145,9 @@ def test_a_wallet_imported_on_one_arcade_shows_on_another_with_its_balance(brows
                 return None
             raise RuntimeError("no node (test)")
 
+        def batch(self, calls):
+            return [self.call(method, *params) for method, params in calls]
+
         def get_block_count(self):
             return 1
     real_rpc = ChainContext.rpc

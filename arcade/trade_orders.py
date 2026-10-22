@@ -41,6 +41,10 @@ COIN = 100_000_000
 _ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _KEY33 = re.compile(r"^0[23][0-9a-f]{64}$")
 _HEX32 = re.compile(r"^[0-9a-f]{64}$")
+#: A DRC-20 / PRC-20 tick as a swap leg names it (lower case, as the index files it): no space, no path character.
+TICK20 = re.compile(r"^[^\sA-Z/?#%&]{1,16}$")
+#: The most whole tokens one DRC-20 / PRC-20 leg moves (a whole number: the JS port counts it in a Number).
+TOKEN20_MAX = 10 ** 15
 
 
 class OrderError(ValueError):
@@ -53,8 +57,8 @@ def _side(said: Any) -> dict:
     network, kind = said.get("network"), said.get("kind")
     if network not in NETWORKS:
         raise OrderError(f"no such network {network!r}")
-    if kind not in ("coin", "token", "nft", "doginal"):
-        raise OrderError("an order moves a coin, a token, an nft or a doginal")
+    if kind not in ("coin", "token", "nft", "doginal", "token20"):
+        raise OrderError("an order moves a coin, a token, an nft, a doginal or a DRC-20 / PRC-20 token")
     amount = said.get("amount")
     if not isinstance(amount, int) or amount <= 0:
         raise OrderError("an amount is a positive whole number")
@@ -68,6 +72,11 @@ def _side(said: Any) -> dict:
     if kind == "doginal" and (network not in ("doge", "main") or not INSCRIPTION_ID.match(asset) or amount != 1):
         raise OrderError("a doginal (or pepinal) is on Dogecoin or Pepecoin mainnet, named by its inscription id, "
                          "and moves exactly one")
+    # A DRC-20 / PRC-20 token (2026-10-22: "Add prc 20 and drc 20 tokens to the token/coin exchange"): `asset`
+    # its tick, `amount` WHOLE tokens; locked as a transfer note on the lock itself (arcade/token20_swap.py).
+    if kind == "token20" and (network not in ("doge", "main") or not TICK20.match(asset) or amount > TOKEN20_MAX):
+        raise OrderError("a DRC-20 / PRC-20 token is on Dogecoin or Pepecoin mainnet, named by its tick (lower "
+                         "case), and moves a whole number of tokens")
     out = {"network": network, "kind": kind, "asset": asset, "amount": amount}
     # The lister's lock-fee terms for the side it locks (2026-10-21: "the sender of each lock script pay the
     # fee", "an operator fee output to each lock script"): its own arcade's rate and payee, which the taker copies into
@@ -313,6 +322,18 @@ class OrderBook:
                             "inscription": row["inscription"], "network": row["network"]})
         return out
 
+    def standing_of(self, listers: list[str], now: float | None = None) -> list[dict]:
+        """`listers`' orders standing on the book right now (not cancelled, not being taken, not expired), as their
+        bodies: what each holds of its lister's (2026-10-22: a listing "should be locked as listed until it is
+        unlisted or purchased"). One being taken (cancelled=2) holds nothing here: its own lock is under way."""
+        if not listers:
+            return []
+        now = int(now or time.time())
+        with self._open() as conn:
+            rows = conn.execute(f"SELECT body FROM trade_order WHERE cancelled=0 AND expires>? AND lister IN "
+                                f"({','.join('?' * len(listers))})", (now, *listers)).fetchall()
+        return [json.loads(r["body"]) for r in rows]
+
     def lister_of(self, order_id: str) -> str:
         """Who listed an order (expired or cancelled included): "" if it was never filed here."""
         with self._open() as conn:
@@ -399,7 +420,8 @@ def one_chain_offer(a: dict, b: dict) -> bool:
     DOGE for a Doginal -- Dogecoin's own one-transaction market is listings only, the seller naming the price, so an offer
     goes through the same two locks a cross-chain swap does, both on Dogecoin)."""
     kinds = {a.get("kind"), b.get("kind")}
-    return a.get("network") == b.get("network") and a.get("network") in ("doge", "main") and kinds == {"doginal", "coin"}
+    return a.get("network") == b.get("network") and a.get("network") in ("doge", "main") and \
+        kinds in ({"doginal", "coin"}, {"token20", "coin"})
 
 
 def leg_key(side: dict) -> str:
@@ -418,6 +440,8 @@ def parse_leg_key(key: str) -> dict | None:
             and re.fullmatch(r"[0-9]+" if parts[1] == "token" else r"[0-9a-fA-F]{64}i[0-9]+" if parts[1] == "doginal"
                              else r"[0-9a-fA-F]{64}(i[0-9]+)?", parts[2])):
         return {"network": parts[0], "kind": parts[1], "asset": parts[2].lower()}
+    if len(parts) == 3 and parts[0] in ("doge", "main") and parts[1] == "token20" and TICK20.match(parts[2].lower()):
+        return {"network": parts[0], "kind": "token20", "asset": parts[2].lower()}
     return None
 
 
@@ -425,7 +449,7 @@ def base_first(a: dict, b: dict) -> tuple[dict, dict]:
     """(base, quote) for a market between two sides: a token or piece is priced in what it
     is traded for (a coin, or a token on another chain by rank); two coins by RANK."""
     def order(s: dict) -> tuple:
-        return ({"nft": 0, "doginal": 0, "token": 1, "coin": 2}.get(s["kind"], 3), RANK.get(s["network"], 9),
+        return ({"nft": 0, "doginal": 0, "token": 1, "token20": 1, "coin": 2}.get(s["kind"], 3), RANK.get(s["network"], 9),
                 int(s["asset"]) if s["kind"] == "token" else 0)
     return (a, b) if order(a) <= order(b) else (b, a)
 

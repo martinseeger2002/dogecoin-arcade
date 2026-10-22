@@ -773,6 +773,27 @@ document.addEventListener('click', function (ev) {
           // list"): empty, a short start -- what the reader holds on their own half, coins first otherwise -- and
           // then only what every typed word matches, a dozen at most.
           items: function (text, words, done) {
+            // DRC-20 / PRC-20 ticks are thousands (2026-10-22): asked of the node as they are typed, and added to the
+            // select behind the box, so a pick is sent like any other.
+            if (words.length && !ownHalf(sel)) {
+              fetch('/exchange/token20/search?q=' + encodeURIComponent(words[0])).then(function (r) { return r.json(); })
+                .then(function (got) {
+                  var have = {};
+                  [].slice.call(sel.options).forEach(function (o) { have[o.value] = 1; });
+                  (got.results || []).forEach(function (t) {
+                    if (have[t.value]) return;
+                    var o = document.createElement('option');
+                    o.value = t.value; o.textContent = t.label;
+                    o.dataset.net = t.net; o.dataset.kind = t.kind; o.dataset.div = '0'; o.dataset.name = t.name;
+                    o.dataset.mine = '0'; o.dataset.held = '';
+                    sel.appendChild(o);
+                  });
+                  answer();
+                }).catch(answer);
+              return;
+            }
+            answer();
+            function answer() {
             var opts = [].slice.call(sel.options).filter(function (o) {
               var hay = (o.textContent + ' ' + o.value + ' ' + (o.dataset.name || '')).toLowerCase();
               return allowed(sel, o) && words.every(function (w) { return hay.indexOf(w) >= 0; });
@@ -788,6 +809,7 @@ document.addEventListener('click', function (ev) {
               return {value: o.value, label: o.textContent, note: o.dataset.held ? 'you have ' + o.dataset.held : ''};
             }), opts.length - cap, ownHalf(sel) ? 'Nothing you hold matches. You can only offer coins and tokens in your '
                                                  + 'wallet.' : 'Nothing matches.');
+            }
           }
         });
         return {sel: sel, q: tool.q, sync: function () {
