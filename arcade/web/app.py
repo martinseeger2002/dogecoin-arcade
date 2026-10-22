@@ -46,7 +46,7 @@ from . import brand as brandlib
 
 from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import COIN, AmountError, format_amount, parse_amount
-from ..config import NETWORKS, MainnetRefused, WrongChain
+from ..config import NETWORKS, MainnetRefused, WrongChain, unpayable_versions
 from .. import inscribe as inscribelib
 from .. import games as gameslib
 from .. import gamestate as gamestatelib
@@ -855,19 +855,29 @@ def create_app(state: AppState) -> FastAPI:
             fundinglib.GUARDS = [(_on_pep_main, _pep)]
             fundinglib.GUARD_BY_NET["main"] = _pep
             _guards.append(_pep)
-        for _lchain, _lfile in ((getattr(state, "ltc", None), "ltc-inscriptions.sqlite"),
-                                (getattr(state, "ltc_test", None), "ltctest-inscriptions.sqlite")):
-            if _lchain is None:
+        # Every other add-on chain the same way (2026-10-22, SadFrog's side: Bellscoin and Luckycoin beside
+        # Litecoin), each in its own <net>-inscriptions.sqlite.
+        _others = {}
+        for _p in NETWORKS.values():
+            _others.setdefault(_p.pubkeyhash_version, set()).add(_p.name)
+            _others.setdefault(_p.scripthash_version, set()).add(_p.name)
+        _others.setdefault(5, set()).add("ltc")            # Litecoin's legacy "3" P2SH
+        for _lchain in state.addons:
+            if _lchain.network == "doge":
                 continue
             # Litecoin (2026-10-17, SadFrog's side): the same guard, reading Doginals-format envelopes
             # (arcade/ltc_ord.py) through the Litecoin node. On regtest a node's wallet carried an
             # earlier inscription into a new one before this existed (tests/test_litecoin_chain.py).
             # Taproot inscriptions sent to a legacy Litecoin address are not seen by it (a witness
             # adapter is a later, Litecoin-only step; docs/litecoin.md says so). L test the same, on
-            # its own versions only: its older P2SH byte 196 is Pepecoin testnet's too.
-            _ltc = _doginals.Doginals(Path(state.home) / _lfile, rpc_factory=_lchain.rpc,
-                                      index=_ord_index_of(_lchain.network))
-            _ltc_versions = {_lchain.params.pubkeyhash_version, _lchain.params.scripthash_version}
+            # its own versions only: its older P2SH byte 196 is Pepecoin testnet's too. A chain watches
+            # its script-hash byte only where no other chain uses it (Bellscoin's 30 is Dogecoin's "D",
+            # Luckycoin's 5 is Litecoin's legacy "3"): the guard is found by the address alone.
+            _ltc = _doginals.Doginals(Path(state.home) / f"{_lchain.network}-inscriptions.sqlite",
+                                      rpc_factory=_lchain.rpc, index=_ord_index_of(_lchain.network))
+            _ltc_versions = {_lchain.params.pubkeyhash_version}
+            if _others.get(_lchain.params.scripthash_version, set()) <= {_lchain.network}:
+                _ltc_versions.add(_lchain.params.scripthash_version)
             if _lchain.network == "ltc":
                 _ltc_versions.add(5)
 
@@ -3133,6 +3143,7 @@ def create_app(state: AppState) -> FastAPI:
                         continue
                     name = prop["name"] + (" (Dogecoin)" if chain.is_doge else " (Litecoin)" if chain.is_ltc else
                                            " (Litecoin testnet)" if chain.is_ltc_test else
+                                           f" ({chain.params.label})" if chain.is_addon else
                                            " (mainnet)" if chain.is_mainnet else "")
                     said[name] = format_amount(units, prop["divisible"])
                 post.token_tipped = said
@@ -3152,6 +3163,8 @@ def create_app(state: AppState) -> FastAPI:
             return author
         if chain.is_ltc_test:                    # L test: the same key as their Pepecoin testnet one
             return _ltc_test_twin(author)
+        if chain.is_addon and not _named_addon(chain) and not chain.is_mainnet:
+            return _chain_twin(author, chain.params)
         with state.store() as store:
             said = store.key_for(author)
         if said is None or "other_address" not in said.keys():
@@ -3163,6 +3176,8 @@ def create_app(state: AppState) -> FastAPI:
             return published or _doge_twin(other)
         if chain.is_ltc:                         # Litecoin: the same key as their Pepecoin mainnet one
             return _ltc_twin(other)
+        if chain.is_addon:                       # Bellscoin, Luckycoin, ...: the same, by Params (2026-10-22)
+            return _chain_twin(other, chain.params)
         return other
 
     def _chain_menu(account_side: bool = False) -> list[dict[str, Any]]:
@@ -3984,7 +3999,9 @@ def create_app(state: AppState) -> FastAPI:
             where = address if context.network == state.messaging.network \
                 else profile.get("doge", "") if context.is_doge \
                 else _ltc_twin(profile.get("mainnet", "")) if context.is_ltc \
-                else _ltc_test_twin(address) if context.is_ltc_test else profile.get("mainnet", "")
+                else _ltc_test_twin(address) if context.is_ltc_test \
+                else _chain_twin(profile.get("mainnet", "") if context.is_mainnet else address, context.params) \
+                if context.is_addon else profile.get("mainnet", "")
             row = {"chain": context, "coin": context.params.coin, "address": where, "balance": None}
             if where and context in state.token_chains:
                 try:
@@ -3997,7 +4014,9 @@ def create_app(state: AppState) -> FastAPI:
             where = address if context.network == state.messaging.network \
                 else profile.get("doge", "") if context.is_doge \
                 else _ltc_twin(profile.get("mainnet", "")) if context.is_ltc \
-                else _ltc_test_twin(address) if context.is_ltc_test else profile.get("mainnet", "")
+                else _ltc_test_twin(address) if context.is_ltc_test \
+                else _chain_twin(profile.get("mainnet", "") if context.is_mainnet else address, context.params) \
+                if context.is_addon else profile.get("mainnet", "")
             if not where:
                 continue
             entry: dict[str, Any] = {"chain": context, "address": where,
@@ -5367,6 +5386,10 @@ def create_app(state: AppState) -> FastAPI:
             state.flash("Litecoin is not open yet: its node is still syncing.", "err")
         if chosen is None and getattr(state, "ltc_test", None) is not None and to == "ltctest":
             state.flash("Litecoin testnet is not open yet: its node is still syncing.", "err")
+        if chosen is None:
+            for c in state.addons:                         # any other add-on chain (2026-10-22)
+                if not _named_addon(c) and to in (c.network, c.net):
+                    state.flash(f"{c.params.label} is not open yet: its node is still syncing.", "err")
         if chosen is not None and not _account_view(request):
             # The operator's Create picks the node's token chain, with the same cards an account has (2026-10-19).
             try:
@@ -6569,7 +6592,8 @@ def create_app(state: AppState) -> FastAPI:
         if not isinstance(where, str):
             return str(getattr(where, "network", "") or ("main" if getattr(where, "is_mainnet", False) else "test"))
         w = where.lower()
-        return {"mainnet": "main", "testnet": "test", "dogecoin": "doge", "litecoin": "ltc"}.get(w, w)
+        words = {p.net_word: p.name for p in NETWORKS.values() if p.net_word}    # "bellscoin" -> "bel" (2026-10-22)
+        return {"mainnet": "main", "testnet": "test", **words, "litecoin": "ltc"}.get(w, w)
 
     def _net_badge(where: Any = None) -> Markup:
         """Which chain, as that chain's own coin (2026-10-18: "Use the icons in these places rather than text
@@ -10632,7 +10656,8 @@ def create_app(state: AppState) -> FastAPI:
         once here stops every caller having to.
         """
         out = [_account_chain()]
-        for chain in (state.ledger, state.doge, getattr(state, "ltc", None), getattr(state, "ltc_test", None)):
+        # Every add-on chain, Bellscoin and Luckycoin too (2026-10-22): state.addons, in the Params' order.
+        for chain in (state.ledger, *state.addons):
             if chain is not None and chain.network != _account_chain().network:
                 # Dogecoin only once its node has synced (2026-10-13): until
                 # then nothing may be paid, held or signed there.
@@ -10662,6 +10687,9 @@ def create_app(state: AppState) -> FastAPI:
             raise ValueError("Litecoin is not open here yet: its node is still syncing")
         if getattr(state, "ltc_test", None) is not None and wanted == "ltctest":
             raise ValueError("Litecoin testnet is not open here yet: its node is still syncing")
+        for chain in state.addons:
+            if wanted in (chain.network, chain.net, chain.params.label.lower()):
+                raise ValueError(f"{chain.params.label} is not open here yet: its node is still syncing")
         raise ValueError(f"this node does not run {wanted}")
 
     def _chain_on(network: str):
@@ -25383,6 +25411,9 @@ def create_app(state: AppState) -> FastAPI:
         elif chain.is_ltc:
             # LTC to an @tag (2026-10-17): their Pepecoin mainnet key's twin on Litecoin.
             other = _ltc_twin(other) if other else ""
+        elif chain.is_addon:
+            # Any other add-on chain (2026-10-22): the same key's twin there, from their mainnet or testnet one.
+            other = _chain_twin(other if chain.is_mainnet else found, chain.params)
         if not other:
             raise ValueError(
                 f"@{tag} has not published a {chain.label.lower()} address, "
@@ -31759,6 +31790,28 @@ def _ltc_test_twin(address: str) -> str:
     return b58check_encode(NETWORKS["ltctest"].pubkeyhash_version, payload)
 
 
+def _chain_twin(address: str, params) -> str:
+    """The same key's address on any other add-on chain (2026-10-22: Bellscoin, Luckycoin), else "".
+
+    Every real-coin chain derives on coin type 3 and every test chain on 1 (coins.js COIN_TYPE), so an
+    account's key there IS its Pepecoin mainnet (or testnet) key: the same hash, that chain's own P2PKH byte.
+    Dogecoin and Litecoin keep their own helpers above; this is the same rule, read from the chain's Params."""
+    try:
+        version, payload = b58check_decode(address)
+    except Exception:
+        return ""
+    sources = ((NETWORKS["main"].pubkeyhash_version,) if params.real_coins
+               else (NETWORKS["test"].pubkeyhash_version, NETWORKS["regtest"].pubkeyhash_version))
+    if version not in sources or len(payload) != 20:
+        return ""
+    return b58check_encode(params.pubkeyhash_version, payload)
+
+
+def _named_addon(chain) -> bool:
+    """A chain with helpers of its own (Dogecoin, Litecoin, L test); any other add-on goes by `_chain_twin`."""
+    return bool(getattr(chain, "is_doge", False) or getattr(chain, "is_litecoin", False))
+
+
 def _tag_address(state, destination: str, *, mainnet) -> str:
     """An @tag turned into the address that holds it, or the text unchanged.
 
@@ -31789,6 +31842,12 @@ def _tag_address(state, destination: str, *, mainnet) -> str:
         twin = _ltc_twin(_tag_address(state, destination, mainnet=True))
         if not twin:
             raise ValueError(f"@{wanted} has no address this node can pay in LTC.")
+        return twin
+    if getattr(mainnet, "is_addon", False) and not _named_addon(mainnet):
+        # Any other add-on chain (2026-10-22): the holder's Pepecoin key, that chain's version byte.
+        twin = _chain_twin(_tag_address(state, destination, mainnet=bool(mainnet.is_mainnet)), mainnet.params)
+        if not twin:
+            raise ValueError(f"@{wanted} has no address this node can pay in {mainnet.params.coin}.")
         return twin
     if getattr(mainnet, "is_doge", False):
         # Tags are not claimed on Dogecoin: the holder's Pepecoin mainnet
@@ -31882,12 +31941,19 @@ def _check_address(address: str, *, mainnet: bool, segwit_ok: bool = False) -> s
         return "that does not look like an address (the checksum does not match)."
     if len(payload) != 20:
         return "that is not a 20-byte address."
+    for p in wanted:
+        if version == p.scripthash_version and version in unpayable_versions(p):
+            # Bellscoin's P2SH byte is Dogecoin's P2PKH "D" (2026-10-22): the string cannot say which
+            # script it means, and txbuild reads 30 as a key hash, so a script hash paid that way is lost.
+            return (f"that looks like a {p.label} script (P2SH) address, which shares its first letter and "
+                    f"version with another chain's ordinary addresses. This arcade cannot tell them apart "
+                    f"safely, so it pays {p.label}'s ordinary addresses only; ask for one of those.")
     if any(version in (p.pubkeyhash_version, p.scripthash_version) for p in wanted):
         return None
     other = [p.name for p in NETWORKS.values()
              if version in (p.pubkeyhash_version, p.scripthash_version)]
     if other:
-        named = "Dogecoin" if other[0] == "doge" else other[0]
+        named = NETWORKS[other[0]].label if NETWORKS[other[0]].addon else other[0]
         return (f"that is a {named} address, not a "
                 f"{word} one.")
     return ("that address is not one this arcade can pay -- it belongs to a "

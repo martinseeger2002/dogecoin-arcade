@@ -42,16 +42,19 @@ log = logging.getLogger("arcade.doginal_index")
 #: 2026-10-20: "The block height on each chain varies so find the official block height for each chains ord index"),
 #: read from each indexer's src/chain.rs `first_inscription_height`. Every arcade cuts the same chunks from these,
 #: so they never change without a new protocol word.
-STARTS = {"doge": 4_600_000, "main": 186_920, "test": 34_237, "ltc": 2_424_429, "ltctest": 2_669_127}
+STARTS = {"doge": 4_600_000, "main": 186_920, "test": 34_237, "ltc": 2_424_429, "ltctest": 2_669_127,
+          "bel": 22_470, "lky": 88_554}
 SOURCES = {
     "doge": "ord-dogecoin (apezord) and wonky-ord: 4,600,000",
     "main": "ord-pepecoin (mvdnbrk) and pepecoin-ord-indexer: 186,920",
     "test": "pepecoin-ord-indexer (reallyshadydev): 34,237",
     "ltc": "ord-litecoin (ynohtna92): 2,424,429",
     "ltctest": "ord-litecoin (ynohtna92): 2,669,127",
+    "bel": "Nintondo/ord (Bellscoin): 22,470",
+    "lky": "the first Doginals-style envelope on Luckycoin (no official indexer height found; scanned): 88,554",
 }
 #: Chains whose ords are mostly Taproot (ord's witness envelope) as well as the Doginals kind.
-TAPROOT = frozenset({"ltc", "ltctest"})
+TAPROOT = frozenset({"ltc", "ltctest", "bel"})     # Bellscoin: Nintondo/ord reads Taproot envelopes too
 BASE = STARTS["doge"]
 CHUNK = 100
 #: Blocks this far under the tip are scanned in chunks; the newest ones may still be replaced by a reorg. A chunk is

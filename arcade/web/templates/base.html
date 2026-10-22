@@ -1214,7 +1214,9 @@ function arcadeMainnetReview(costs){
   // DOGE on Dogecoin, PEP on Pepecoin mainnet (2026-10-13), LTC on Litecoin (2026-10-18: it said
   // "Real PEP" there): `costs.chain` says which.
   var doge = costs.chain === 'doge', ltc = costs.chain === 'ltc';
-  var coin = doge ? ' DOGE' : ltc ? ' LTC' : ' PEP';
+  // Bellscoin and Luckycoin too (2026-10-22): a real-coin review never says PEP for another chain's coins.
+  var more = {bel: ['bellscoin', 'BEL'], lky: ['luckycoin', 'LKY']}[costs.chain];
+  var coin = doge ? ' DOGE' : ltc ? ' LTC' : more ? ' ' + more[1] : ' PEP';
   var pep = function(sats){ return (Number(sats || 0) / 1e8).toLocaleString(undefined,
     {minimumFractionDigits: 2, maximumFractionDigits: 8}) + coin; };
   return new Promise(function(answer){
@@ -1224,6 +1226,7 @@ function arcadeMainnetReview(costs){
     var h = document.createElement('h3');
     h.innerHTML = doge ? '<span class="tag dogecoin">dogecoin</span> Real DOGE'
                 : ltc ? '<span class="tag litecoin">litecoin</span> Real LTC'
+                : more ? '<span class="tag ' + more[0] + '">' + more[0] + '</span> Real ' + more[1]
                        : '<span class="tag mainnet">mainnet</span> Real PEP';
     var what = document.createElement('p'); what.className = 'muted';
     what.textContent = costs.label ? costs.label : costs.count

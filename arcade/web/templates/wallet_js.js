@@ -2785,7 +2785,8 @@ function legWhat(leg, other = null) {
 export const TRADE = {
   LOCK_SECONDS: {mainnet: 2 * 3600, testnet: 2 * 3600},
   CONFIRMATIONS: 0, CONFIRMATIONS_BIG: 1,       // 0 below the big line, 1 at or above it (2026-10-17; trade.py)
-  BIG: {main: 1_000_000 * 100_000_000, doge: 1_000 * 100_000_000, ltc: 2 * 100_000_000},
+  BIG: {main: 1_000_000 * 100_000_000, doge: 1_000 * 100_000_000, ltc: 2 * 100_000_000,
+       bel: 200 * 100_000_000, lky: 20 * 100_000_000},
   CLAIM_MARGIN: 20 * 60, LOCK_MARGIN: 30 * 60,
   LOCK_RESERVE: 2_000_000,          // htlc.SPEND_FEE + htlc.DUST (trade.LOCK_RESERVE)
   DOGINAL_RESERVE: 2_000_000,       // htlc.DOGINAL_RESERVE
@@ -2793,12 +2794,18 @@ export const TRADE = {
   // chain (trade.claim_fee = htlc.spend_fee of config.NETWORKS), the least an operator fee output may be (trade.fee_floor
   // = htlc.dust_of), and the version bytes it may be paid to (trade.PAYEE_VERSIONS). tests/test_trade_fees.py holds
   // these to the Python numbers.
-  CLAIM_FEE: {main: 1_000_000, test: 1_000_000, regtest: 1_000_000, doge: 1_000_000, ltc: 10_000, ltctest: 10_000},
-  FEE_FLOOR: {main: 1_000_000, test: 1_000_000, regtest: 1_000_000, doge: 1_000_000, ltc: 10_000, ltctest: 10_000},
+  CLAIM_FEE: {main: 1_000_000, test: 1_000_000, regtest: 1_000_000, doge: 1_000_000, ltc: 10_000, ltctest: 10_000,
+              bel: 10_000, lky: 1_000_000},
+  FEE_FLOOR: {main: 1_000_000, test: 1_000_000, regtest: 1_000_000, doge: 1_000_000, ltc: 10_000, ltctest: 10_000,
+              bel: 10_000, lky: 1_000_000},
   FEE_BPS_CEILING: 10_000,
-  PAYEE_VERSIONS: [30, 48, 56, 111, 113],
+  PAYEE_VERSIONS: [25, 30, 47, 48, 56, 111, 113],
 };
-const tierOf = (leg) => (leg.network === "main" || leg.network === "doge" || leg.network === "ltc") ? "mainnet" : "testnet";
+//: The real-coin chains (config.py `real_coins`): their legs are mainnet tier (trade.Leg.tier).
+//: Each chain's coin as a leg says it (config.py `coin`).
+const COIN_WORD = {doge: "DOGE", main: "PEP", ltc: "LTC", ltctest: "LTC TEST", bel: "BEL", lky: "LKY"};
+const REAL_COINS = new Set(["main", "doge", "ltc", "bel", "lky"]);
+const tierOf = (leg) => REAL_COINS.has(leg.network) ? "mainnet" : "testnet";
 
 /** 0, or 1 when a mainnet coin leg is at or above its line (trade.confirmations_for). */
 export function confirmationsFor(give, get, big = TRADE.BIG) {
@@ -3038,7 +3045,8 @@ export async function spending(fn) {
 const TRADES = "arcade-trades";
 //: A lock's address on each chain: P2SH version bytes (arcade/config.py). The node's own
 //: word (/account chains[].p2sh) wins: a chain standing in for another has its own.
-const P2SH_VERSION = {main: 22, doge: 22, ltc: 50, ltctest: 58, test: 196, regtest: 196};   // ltc: "M" (2026-10-17)
+const P2SH_VERSION = {main: 22, doge: 22, ltc: 50, ltctest: 58, test: 196, regtest: 196,   // ltc: "M" (2026-10-17)
+                      bel: 30, lky: 5};    // bel: the node refuses a lock there (config.require_p2sh_payable)
 let p2shKnown = null;
 async function p2shOf(network) {
   if (!p2shKnown) {
@@ -3188,10 +3196,9 @@ const coinsText = (sats) => (Number(sats) / 1e8).toFixed(8).replace(/\.?0+$/, ""
  *  `options.taking`: `get` is the order's own side, so whether its arcade is updated is known. */
 export async function swapFees(give, get, options = {}) {
   // LTC and LTC TEST too (2026-10-18: Litecoin's legs read "PEP TEST").
-  const coin = (n) => n === "doge" ? "DOGE" : n === "main" ? "PEP" : n === "ltc" ? "LTC"
-    : n === "ltctest" ? "LTC TEST" : "PEP TEST";
+  const coin = (n) => COIN_WORD[n] || "PEP TEST";
   // Litecoin pays its own rate (htlc.spend_fee, 2026-10-18): about 0.0001 LTC, not the Dogecoin family's 0.01.
-  const sendFee = (n) => n === "ltc" || n === "ltctest" ? 10_000 : 1_000_000;
+  const sendFee = (n) => n === "ltc" || n === "ltctest" || n === "bel" ? 10_000 : 1_000_000;   // Bellscoin: Litecoin's shape
   const kindOf = (l) => l.kind || "coin";
   const mine = give.fee_bps == null ? withFee(give, await lockFeeOf(give.network)) : give;
   const net = coin(give.network);
@@ -3775,8 +3782,7 @@ export async function fundsReader() {
       const c = (acct.chains || []).find((x) => x.network === give.network);
       if (!c) return "";
       const kind = give.kind || "coin";
-      const coin = give.network === "doge" ? "DOGE" : give.network === "main" ? "PEP"
-        : give.network === "ltc" ? "LTC" : give.network === "ltctest" ? "LTC TEST" : "PEP TEST";
+      const coin = COIN_WORD[give.network] || "PEP TEST";
       if (kind === "token") {
         if (toks === null) {
           try { toks = await (await fetch("/account/tokens", {cache: "no-store"})).json(); } catch (e) { toks = {}; }

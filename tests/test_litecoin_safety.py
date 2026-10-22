@@ -74,7 +74,8 @@ def test_the_real_money_review_says_ltc_on_litecoin():
     page = (TEMPLATE_DIR / "base.html").read_text()
     assert "Real LTC" in page and "costs.chain === 'ltc'" in page
     swaps = (TEMPLATE_DIR / "wallet_js.js").read_text()
-    assert 'n === "ltc" ? "LTC"' in swaps and 'give.network === "ltc" ? "LTC"' in swaps
+    # One table of coin words since 2026-10-22 (Bellscoin and Luckycoin joined), read by both the fee lines and the review.
+    assert 'ltc: "LTC"' in swaps and "COIN_WORD[n]" in swaps and "COIN_WORD[give.network]" in swaps
     assert "'ledger', 'doge', 'ltc'" in (TEMPLATE_DIR / "wallet.html").read_text()
 
 

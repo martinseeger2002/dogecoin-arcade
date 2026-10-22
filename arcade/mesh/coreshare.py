@@ -652,7 +652,8 @@ class BorrowedRpc(RpcClient):
         return got[0]
 
     def _work(self, block: rawchain.Block) -> None:
-        rawchain.check_work(block, self._params.auxpow_chain_id, self._params.pow_algo)
+        rawchain.check_work(block, self._params.auxpow_chain_id, self._params.pow_algo,
+                               self._params.auxpow_chain_mask)
         with self._KNOWN_LOCK:
             known = self._KNOWN.setdefault(self.net, OrderedDict())
             before = known.get(block.prev)

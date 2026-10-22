@@ -175,7 +175,9 @@ export async function address(pubkey, version) {
 //: Litecoin (2026-10-17, SadFrog's choice) uses 3 as well, NOT its own registered 2: one key for
 //: PEP, DOGE and LTC, so the arcade's words recover all three here. Other Litecoin wallets look on
 //: m/44'/2'/..., which is why the backup page also hands out the key itself (`wif`).
-export const COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3, ltc: 3};
+//: Bellscoin and Luckycoin (2026-10-22, SadFrog's side) the same way: one key for every real-coin chain.
+//: (Their registered types are 762 and 743/790, and their own wallets derive on 0, so neither would match.)
+export const COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3, ltc: 3, bel: 3, lky: 3};
 
 //: Litecoin's private-key text prefix (WIF, 0xB0: keys starting with "T"), for importing elsewhere.
 export const LTC_WIF = 0xb0;
@@ -183,7 +185,9 @@ export const LTC_WIF = 0xb0;
 //: Every chain's private-key text prefix (2026-10-18), each checked against that chain's own Core with
 //: `signmessagewithprivkey`: Pepecoin mainnet shares Dogecoin's 0x9E (keys start "Q"), both testnets
 //: of the Dogecoin family 0xF1, Litecoin 0xB0 ("T") and Litecoin testnet 0xEF ("c").
-export const WIF = {main: 0x9e, doge: 0x9e, ltc: LTC_WIF, test: 0xf1, regtest: 0xf1, ltctest: 0xef};
+//: Bellscoin 0x99 and Luckycoin 0xAF (2026-10-22, from their chainparams.cpp SECRET_KEY, checked the same way).
+export const WIF = {main: 0x9e, doge: 0x9e, ltc: LTC_WIF, test: 0xf1, regtest: 0xf1, ltctest: 0xef,
+                    bel: 0x99, lky: 0xaf};
 
 //: Litecoin's other address kinds, for saying who a send pays (2026-10-20, tbuuol: L test pays P2SH and
 //: native SegWit). The script-hash version (config.py `scripthash_version`) and the bech32 prefix.
@@ -200,7 +204,8 @@ export async function wif(key, version) {
 /** Every chain's name, for saying whose a key is. */
 const WIF_CHAIN = {main: "Pepecoin or Dogecoin mainnet", doge: "Pepecoin or Dogecoin mainnet",
                    ltc: "Litecoin mainnet", test: "a Pepecoin or Dogecoin test chain",
-                   regtest: "a Pepecoin or Dogecoin test chain", ltctest: "Litecoin testnet"};
+                   regtest: "a Pepecoin or Dogecoin test chain", ltctest: "Litecoin testnet",
+                   bel: "Bellscoin mainnet", lky: "Luckycoin mainnet"};
 
 /** A private key out of Wallet Import Format text, for `network` (plan item 18, importing a wallet): base58check,
  *  the version byte this chain's (WIF above), 32 bytes of key, and a trailing 0x01 when its public key is

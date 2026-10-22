@@ -435,7 +435,7 @@ def pow_hash(header: bytes, algo: str = "scrypt") -> int:
     raise RawError(f"no proof-of-work hash called {algo!r}")
 
 
-def check_work(block: Block, chain_id: int | None = None, algo: str = "scrypt") -> None:
+def check_work(block: Block, chain_id: int | None = None, algo: str = "scrypt", chain_mask: int = 0xFFFF) -> None:
     """Raise unless the header carries the work its bits ask for.
 
     Plain: scrypt(header) <= target. Merge-mined (AuxPoW, auxpow.cpp CAuxPow::check): the parent's
@@ -445,7 +445,8 @@ def check_work(block: Block, chain_id: int | None = None, algo: str = "scrypt") 
     version's top half, so another merge-mined coin's block cannot be passed off as this chain's. `algo`
     is the chain's proof-of-work hash (Params.pow_algo; "scrypt" above stands for it); "" -- a chain whose
     work cannot be checked here, such as a multi-algorithm one -- checks nothing (the caller still proves
-    hash, merkle root and links)."""
+    hash, merkle root and links). `chain_mask` is which bits of that top half are the id (Params.auxpow_chain_mask:
+    Bellscoin keeps versionbits beside its id 16, 0x20100100)."""
     if not algo:
         return
     target = target_of(block.bits)
@@ -459,8 +460,8 @@ def check_work(block: Block, chain_id: int | None = None, algo: str = "scrypt") 
         if pow_hash(block.header, algo) > target:
             raise RawError(f"block {block.hash}: its work does not meet its target")
         return
-    if chain_id is not None and (version >> 16) != chain_id:
-        raise RawError(f"block {block.hash}: chain id {version >> 16}, not {chain_id}")
+    if chain_id is not None and (version >> 16) & chain_mask != chain_id:
+        raise RawError(f"block {block.hash}: chain id {(version >> 16) & chain_mask}, not {chain_id}")
     if aux.merkle_index != 0:
         raise RawError(f"block {block.hash}: the AuxPoW coinbase is not the parent's first transaction")
     parent_root = aux.parent_header[36:68]
