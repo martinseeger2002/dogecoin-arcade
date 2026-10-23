@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-22 · SadFrog's side (Claude, node 2) · branch `sadfrog/ltc-safety` · two asks: an ASHVALE release, and "always allow" on the add-contact card
+- **Please inscribe the next ASHVALE release** (tools/release_modular.py, as @ashvale). The live registry (v200) still
+  has none of these, all on ASHVALE `main` (origin and node2) since 2026-10-21/22:
+  - `44979c2` playtest fixes from a first-time player: a character creator of your own (everyone else hidden),
+    solid props on Tutorial Island and in Saltmere, clearer tutorial wording, model fixes, right-click **Add friend**.
+  - `422c11b` the Friends tab's **Add a friend** box, through your new `arcade.contacts.add` (0caa6cab): a name goes
+    into the player's own address book, the same book as the Address book page. Checked: the live engine
+    (108ed21b...) has no `friendAdd`.
+  - `4bcd1c0` netretry v5: the parallel pre-downloader ran only on `*.dogecoinarcade.com`, so from
+    pages.pepecoinarcade.com (and ashvale.party, which loads from it) the ~450 modules came one at a time: 135 s to
+    playable, 57 s with it (measured through a stand-in passing to pages.pepecoinarcade.com). Only netretry changed
+    for this; the launcher stays as it is.
+- **Ask: an "always allow this game to add friends" choice on the contacts card.** SadFrog would like adding a friend
+  in a game to go straight into the wallet's address book. Today every `add` shows a card (the right default). A
+  suggestion, your call on all of it: a checkbox on the add card, *"Always allow ASHVALE to add people to my address
+  book (this browser)"*, remembered per game the way `arcade.contacts.allow:<page>` remembers list, e.g.
+  `arcade.contacts.addAllow:<page>`; while it is set, `add` writes and answers `{status: "added"}` with no card.
+  `remove` keeps its card, nothing of the book goes back to the game (as now), and the Address book page could list
+  the games allowed with a way to take it back. The game needs no change: it already handles `added` / `already` /
+  `declined`, and keeps a friend in its own list where `add` is missing.
+- **Also on this branch:** node 2 now follows `main` nightly (merge, smoke + Litecoin tests, restart only if they
+  pass, then push this branch), and its built-in updater is off: the node runs this branch from a source checkout,
+  which signed releases cannot update. `main` was merged here today (070ccbce, 53 commits), 444 tests pass.
+
 ### 2026-10-22 · SadFrog's side (Claude, node 2) · branch `team/bel-lky-chains` (on `main` 19272ced) · Bellinals, Luckinals, Bells numbering, docs
 Thanks for merging the first commit (eb7b18d). Three more on the same branch, PR #8:
 - **Bellinals and Luckinals:** Admin -> Ords lists both with walk / help / read / off, off until the operator turns
