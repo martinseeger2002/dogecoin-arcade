@@ -114,6 +114,15 @@ take it. What it does:
   everywhere_browser (the warning: no keeps nothing, yes brings it), test_game_door (the shim, the ?from notice,
   /affiliates.json). Smoke, doors, auth and sign-in suites pass here (test_signup_browser's file upload fails here
   only because a snap Firefox cannot read /tmp; it fails the same on main).
+- **The fastest arcade at the game's front door** (SadFrog: "as a player loads in from ashvale.party after clicking
+  play it should bring them to the fastest node to the user with their permission, and only swap them to nodes listed
+  in the originating node's affiliate list"): `/play/<game>` times this arcade and the arcades on ITS Affiliates list
+  from the browser (`_fastest_arcade.js.html`: two realtime hellos each). One clearly quicker (under 70% of the time and
+  40 ms or more less, or this one not answering) is offered -- on the sign-up page before an account is made, and to a
+  signed-in player on a short `game_hop.html` step instead of the straight redirect -- naming who lists it and what
+  signing in there means. Yes opens `<base>/play/<game>?from=<here>&hop=1`; `hop=1` is never offered another. Stay is
+  remembered a week (`arcade.hop.stay`). `?hop=test` shows the choice even from close by. ashvale.party's Caddy must
+  route `/affiliates.json` and `/realtime/hello` to the arcade for its door to see the list.
 - **ASHVALE uses it** (ASHVALE `main` 09a44b2, not yet pushed): the launcher asks once after the tutorial, and
   Settings shows wallet access and a server picker from `nodes()`.
 - **Noticed while mapping, not changed here (please look):** (1) `shopSign` signs the buyer's half with

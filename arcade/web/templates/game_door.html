@@ -71,6 +71,32 @@ input[type=text],input[type=password]{width:100%;padding:10px 12px;margin:4px 0;
   {% if free <= 0 %}<div class="msg">This server is full right now: all {{ seats }} places are taken.
     Please try again later.</div>{% endif %}
 
+  {# The fastest arcade (2026-10-23, _fastest_arcade.js.html): one on this arcade's Affiliates list clearly quicker for
+     this player is offered before they make or open an account, so they sign in once, there. #}
+  <div class="panel" id="hop" hidden>
+    <h2>A faster server is available</h2>
+    <p class="small" id="hop-words"></p>
+    <button class="go" id="hop-go"></button>
+    <p class="switch small"><a href="#" id="hop-stay"></a></p>
+  </div>
+  <script>
+    {% include "_fastest_arcade.js.html" %}
+    (function(){
+      var WHICH = {{ which|tojson }};
+      arcadeFastest().then(function(r){
+        if (!r.best) return;
+        var box = document.getElementById('hop');
+        document.getElementById('hop-words').textContent = arcadeHopWords(r.best, r.here, false);
+        var go = document.getElementById('hop-go'), stay = document.getElementById('hop-stay');
+        go.textContent = 'Play on ' + r.best.host;
+        stay.textContent = 'No thanks, stay on ' + location.host;
+        go.onclick = function(){ location.href = arcadeHopUrl(r.best, WHICH); };
+        stay.onclick = function(e){ e.preventDefault(); arcadeHopStay(); box.hidden = true; };
+        box.hidden = false;
+      }).catch(function(){});
+    })();
+  </script>
+
   {# Sent here by a game moving to this arcade (2026-10-23, the 'access' door's move: ?from=<the arcade left>): what
      signing in here means, said before the password is typed, and the sign-in shown first. #}
   <div class="msg" id="moved" hidden></div>

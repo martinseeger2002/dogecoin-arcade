@@ -24048,9 +24048,14 @@ def create_app(state: AppState) -> FastAPI:
         game = found["game"]
         opens = f"/inscriptions/{game.get('opens') or found['txid']}/full"
         if signed_in(request) is not None:
-            return RedirectResponse(opens, status_code=303)
+            # Signed in: straight in, after a moment to find the fastest arcade on this one's Affiliates list (2026-10-23,
+            # game_hop.html); not when this was itself a hop (?hop=1), so a player is never passed along twice.
+            if request.query_params.get("hop") == "1":
+                return RedirectResponse(opens, status_code=303)
+            return render(request, "game_hop.html", game=game, card=found["txid"], opens=opens,
+                          skin=gameslib.door_skin(game), which=wanted)
         register = state.accounts()
-        return render(request, "game_door.html", chain=_account_chain(), game=game,
+        return render(request, "game_door.html", chain=_account_chain(), game=game, which=wanted,
                       card=found["txid"], opens=opens, skin=gameslib.door_skin(game),
                       notice=gameslib.door_notice(game),
                       seats=register.seats, free=register.free(),

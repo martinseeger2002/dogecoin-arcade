@@ -59,7 +59,12 @@ def test_somebody_signed_in_goes_straight_to_the_game(client):
     assert joined.status_code == 200
     # the session cookie is https-only, and the test client speaks http: hand it back
     session = dict(OUTSIDE, cookie=joined.headers["set-cookie"].split(";")[0])
+    # Signed in: a moment to find the fastest arcade on this one's Affiliates list, then the game (2026-10-23)
     went = app.get("/play/ashvale", headers=session, follow_redirects=False)
+    assert went.status_code == 200 and "Finding the fastest server" in went.text
+    assert f'var NEXT = "/inscriptions/{REAL}/full"' in went.text and "/affiliates.json" in went.text
+    # ...but not after a hop: straight in, never passed along twice
+    went = app.get("/play/ashvale?hop=1", headers=session, follow_redirects=False)
     assert went.status_code == 303 and went.headers["location"] == f"/inscriptions/{REAL}/full"
 
 
@@ -112,3 +117,16 @@ def test_the_affiliates_are_the_arcades_a_game_may_move_a_player_to(client):
     assert got.status_code == 200
     sites = got.json()["sites"]
     assert sites[0] == {"url": "https://other-arcade.example", "name": "Other Arcade", "by": "this arcade"}, sites
+
+
+
+def test_the_door_offers_the_fastest_affiliated_arcade_before_signing_in(client):
+    """2026-10-23, SadFrog: "it should bring them to the fastest node to the user with their permission, and only swap
+    them to nodes listed in the originating node's affiliate list". The sign-up page carries the check (its own
+    Affiliates list, timed in the browser) and the choice, hidden until a quicker arcade answers."""
+    app, state = client
+    _ashvale(state)
+    body = app.get("/play/ashvale", headers=OUTSIDE).text
+    assert 'id="hop" hidden' in body and "fetch('/affiliates.json'" in body
+    assert "var WHICH = \"ashvale\"" in body
+    assert "&hop=1" in body, "a hop says so, and the next door does not offer another"
