@@ -293,6 +293,20 @@ class Doginals:
         except Exception:                                   # noqa: BLE001 -- said later
             return None
 
+    def kept_many(self, txids) -> dict[str, dict[int, list[dict]]]:
+        """`kept` for many transactions in one read, a few hundred a query (2026-10-22: a 7,000-coin wallet's balance
+        line read them one connection each, 1.45 s on .25's disk, several times an unlock). Those never asked are
+        left out."""
+        want = list(dict.fromkeys(str(t) for t in txids))
+        out: dict[str, dict[int, list[dict]]] = {}
+        with self._lock, self._db() as db:
+            for at in range(0, len(want), 500):
+                part = want[at:at + 500]
+                for txid, held in db.execute(f"SELECT txid, held FROM tx2 WHERE txid IN ({','.join('?' * len(part))})",
+                                             part):
+                    out[txid] = {int(k): v for k, v in json.loads(held).items()}
+        return out
+
     def kept(self, txid: str) -> dict[int, list[dict]] | None:
         """What is already known about a transaction, without asking anybody: None when it was never asked."""
         with self._lock, self._db() as db:
@@ -304,8 +318,9 @@ class Doginals:
         a coin known to carry a Doginal stays out; a small coin nobody vouched for stays out; anything else may go -- the
         rule `spendable` keeps while the chain cannot be read."""
         out = []
+        known = self.kept_many(c["txid"] for c in coins)
         for coin in coins:
-            on = self.kept(coin["txid"])
+            on = known.get(coin["txid"])
             if on is None:
                 if int(coin["value"]) > POSTAGE_MAX:
                     out.append(coin)
@@ -319,12 +334,9 @@ class Doginals:
         a coin a Doginal sits on is inscribed; a small coin with no answer yet, or one protected (waiting for the ord
         index, or a trace not finished), is unchecked; the rest are free -- what `spendable_known` lets go."""
         free, inscribed, unchecked = [], [], []
-        known: dict[str, dict | None] = {}
+        known = self.kept_many(c["txid"] for c in coins)
         for coin in coins:
-            txid = coin["txid"]
-            if txid not in known:
-                known[txid] = self.kept(txid)
-            on = known[txid]
+            on = known.get(coin["txid"])
             here = on.get(int(coin["vout"])) if on is not None else None
             if on is None:
                 (free if int(coin["value"]) > POSTAGE_MAX else unchecked).append(coin)
@@ -346,8 +358,9 @@ class Doginals:
         # While the index walks, a small coin nothing is known about yet stays out without a read of its own: a
         # wallet of 6,000 small coins is not read from the Core coin by coin for one send (2026-10-22).
         waiting = self.waiting_for_index()
+        known = self.kept_many(c["txid"] for c in coins if int(c["value"]) <= TRACE_MAX) if waiting else {}
         for coin in coins:
-            if waiting and int(coin["value"]) <= TRACE_MAX and self.kept(coin["txid"]) is None:
+            if waiting and int(coin["value"]) <= TRACE_MAX and coin["txid"] not in known:
                 continue
             try:
                 on = self.held(coin["txid"]).get(int(coin["vout"]))

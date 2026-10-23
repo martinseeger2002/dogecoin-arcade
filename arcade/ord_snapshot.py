@@ -34,6 +34,8 @@ log = logging.getLogger("arcade.ord_snapshot")
 PIECE = 1024 * 1024
 #: A snapshot is made again only when the last is this old, so a burst of askers costs one copy.
 SNAP_EVERY = 6 * 3600
+#: A copy that served a piece this recently is not made again, however old: its fetchers keep their pieces.
+SNAP_SERVING = 15 * 60
 #: Fetch a snapshot only when it is at least this many blocks ahead of the index here (else walking on is cheaper).
 WORTH_BLOCKS = 20_000
 #: Pieces asked for at once, each of another arcade where it can.
@@ -221,7 +223,13 @@ class Snapshots:
             return False
         if self.index.walker.next_height() <= self.index.base:
             return False
-        return self.made is None or time.time() - self.made["manifest"]["at"] > SNAP_EVERY
+        if self.made is None:
+            return True
+        # Never while somebody is still fetching it (2026-10-22: the copy was made again at 17:29 under a new id, and
+        # Banana's 384 pieces and @yourfirstname's went for nothing -- a new id is a new copy to every fetcher).
+        if time.time() - self.served_at < SNAP_SERVING:
+            return False
+        return time.time() - self.made["manifest"]["at"] > SNAP_EVERY
 
     # --- what this arcade offers -----------------------------------------------------------------------------------
 

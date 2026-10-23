@@ -1921,8 +1921,10 @@ async function drawToken20(box, c) {
       const onWay = BigInt(String(b.pending_units || "0"));
       // Listed on the exchange (2026-10-22): held until it is unlisted or sold, so not on hand.
       const listed = BigInt(String(b.listed_units || "0"));
-      const onHand = (BigInt(String(b.units || "0")) - BigInt(String(b.transferable_units || "0")) - onWay
-                      - listed).toString();
+      // Never below nothing, whatever an order claims (2026-10-22: a listing of 100,000,000,000 frgy showed a
+      // negative balance).
+      const left = BigInt(String(b.units || "0")) - BigInt(String(b.transferable_units || "0")) - onWay - listed;
+      const onHand = (left > 0n ? left : 0n).toString();
       if (asset && asset.token20 && asset.tick === b.tick) {
         row.classList.add("on");
         if (asset.balance !== onHand) { asset.balance = onHand; drawHead(); }   // the index walked on: the card follows
@@ -1944,8 +1946,8 @@ async function drawToken20(box, c) {
       const way = (onWay > 0n ? ` · ${units20(onWay.toString(), b.decimals)} on its way` : "")
         + (listed > 0n ? ` · ${units20(listed.toString(), b.decimals)} listed` : "");
       mid.append(el("b", "", b.tick), el("small", "", word + free + way));
-      row.append(av, mid, el("span", "wl-amt", units20((BigInt(String(b.units || "0")) - onWay - listed).toString(),
-                                                       b.decimals)));
+      const shownLeft = BigInt(String(b.units || "0")) - onWay - listed;
+      row.append(av, mid, el("span", "wl-amt", units20((shownLeft > 0n ? shownLeft : 0n).toString(), b.decimals)));
       rows.push(row);
     }
     if (reading && got.balances.length) {

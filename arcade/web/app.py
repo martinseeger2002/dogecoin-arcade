@@ -13779,13 +13779,17 @@ def create_app(state: AppState) -> FastAPI:
             out["doginal"] |= {(chain.network, str(r["inscription"]).lower()) for r in rows if r["seller"] == mine}
         return out
 
-    def _listing_over(account, orders: list[dict]) -> str:
-        """Why a book of this account's swap orders lists more than it has ("" when it does not): a DRC-20 / PRC-20
-        amount past what is free (the balance less what is set aside on notes and on its way), the same Doginal twice,
-        or a Doginal also listed on the Doginals tab. Delegated orders are left out: their side already moved."""
-        want: dict = {}
+    def _listing_over(account, orders: list[dict]) -> tuple[str, set]:
+        """(why, ids) for the orders of a book of this account's swap orders that list more than it has: a DRC-20 /
+        PRC-20 order past what is free (the balance less what is set aside on notes and on its way; in book order,
+        the first that fit are kept), the same Doginal twice, or a Doginal also on the Doginals tab. Delegated orders
+        are left out: their side already moved. 2026-10-22: "listing should be limited to what you have
+        available" -- a 1,000 frgy listing had gone on as 100,000,000,000. When a token cannot be checked just now,
+        only orders not standing already are held back, so a moment's outage never takes a good order off."""
+        drop: set = set()
+        why = ""
         seen_dg: set = set()
-        tab_book = set()
+        tab_book: set = set()
         for chain in state.token_chains:
             if chain.network in ("doge", "main"):
                 mine = _account_address(account.pubkey, chain)
@@ -13794,43 +13798,66 @@ def create_app(state: AppState) -> FastAPI:
                                  for r in state.doginal_book.open_listings(chain.network) if r["seller"] == mine}
                 except Exception:                          # noqa: BLE001
                     pass
+        lister = _account_address(account.pubkey, _account_chain())
+        try:
+            standing = {str(b.get("id")) for b in state.trade_orders.standing_of([lister] if lister else [])}
+        except Exception:                                  # noqa: BLE001
+            standing = set()
+        want: dict = {}
         for o in orders:
             if o.get("delegated"):
                 continue
+            oid = str(o.get("id"))
             give = o.get("give") or {}
             net, kind, asset = str(give.get("network")), give.get("kind"), str(give.get("asset") or "").lower()
             if kind == "token20":
-                want[(net, asset)] = want.get((net, asset), 0) + int(give.get("amount") or 0)
+                want.setdefault((net, asset), []).append((oid, int(give.get("amount") or 0)))
             elif kind == "doginal":
                 if (net, asset) in seen_dg:
-                    return f"that Doginal is already listed in another of your swaps"
-                if (net, asset) in tab_book:
-                    return "that Doginal is listed on the Doginals tab: unlist it there first"
+                    drop.add(oid)
+                    why = "that Doginal is already listed in another of your swaps"
+                elif (net, asset) in tab_book:
+                    drop.add(oid)
+                    why = "that Doginal is listed on the Doginals tab: unlist it there first"
                 seen_dg.add((net, asset))
-        for (net, tick), whole in want.items():
+        for (net, tick), rows in want.items():
             chain = next((c for c in state.token_chains if c.network == net), None)
             index = state.ord_indexes().get(net)
             address = _account_address(account.pubkey, chain) if chain is not None else ""
+            free = None
+            problem = ""
             if chain is None or index is None or not address:
-                return f"this arcade cannot read {tick} on that chain"
-            try:
-                got = index.lookup({"what": "balances", "owner": address})
-            except Exception as exc:                       # noqa: BLE001
-                return f"{tick} can't be checked right now: {str(exc)[:120]}"
-            guard = fundinglib.guard_on(net)
-            tip = int(index.tip or 0) or (guard._tip() if guard is not None else 0)
-            if not tip or int(got.get("walked_to") or 0) < tip - doginalslib.INDEX_READY_LAG:
-                return f"the arcades' index is not at the chain's tip yet, so {tick} can't be listed"
-            row = next((b for b in got.get("balances") or [] if str(b.get("tick")).lower() == tick), None)
-            if row is None:
-                return f"this wallet holds no {tick}"
-            dec = int(row.get("decimals") or 0)
-            on_way = _t20_pending_units(chain, address, int(got.get("walked_to") or 0)).get(tick, 0)
-            free = int(row.get("units") or 0) - int(row.get("transferable_units") or 0) - on_way
-            if whole * 10 ** dec > free:
-                return (f"that lists {whole:,} {row['tick']} in all, and only {free // 10 ** dec:,} is free to list "
-                        "(the rest is on its way, set aside, or listed already)")
-        return ""
+                problem = f"this arcade cannot read {tick} on that chain"
+            else:
+                try:
+                    got = index.lookup({"what": "balances", "owner": address})
+                    guard = fundinglib.guard_on(net)
+                    tip = int(index.tip or 0) or (guard._tip() if guard is not None else 0)
+                    if not tip or int(got.get("walked_to") or 0) < tip - doginalslib.INDEX_READY_LAG:
+                        problem = f"the arcades' index is not at the chain's tip yet, so {tick} can't be listed"
+                    else:
+                        row = next((b for b in got.get("balances") or [] if str(b.get("tick")).lower() == tick), None)
+                        dec = int((row or {}).get("decimals") or 0)
+                        units = int((row or {}).get("units") or 0) - int((row or {}).get("transferable_units") or 0)
+                        units -= _t20_pending_units(chain, address, int(got.get("walked_to") or 0)).get(tick, 0)
+                        free = max(0, units) // 10 ** dec
+                except Exception as exc:                   # noqa: BLE001
+                    problem = f"{tick} can't be checked right now: {str(exc)[:120]}"
+            if free is None:
+                new = [oid for oid, _w in rows if oid not in standing]
+                if new:
+                    drop |= set(new)
+                    why = problem
+                continue
+            total = 0
+            for oid, whole in rows:
+                if total + whole > free:
+                    drop.add(oid)
+                    why = (f"that lists more {tick} than this wallet has free ({free:,} to list, less what is on its "
+                           "way or set aside): that order is off the book")
+                else:
+                    total += whole
+        return why, drop
 
     def _t20_listed_units(account, chain, tick: str, decimals: int) -> int:
         return _listed_holds(account)["token20"].get((chain.network, tick.lower()), 0) * 10 ** int(decimals or 0)
@@ -30571,14 +30598,18 @@ def create_app(state: AppState) -> FastAPI:
         # Nothing listed twice, and no more of a token than is free (2026-10-22: a listing "should be locked
         # as listed until it is unlisted or purchased"): the page posts its whole book, so these are its totals.
         cancelled = set(cancels)
-        over = _listing_over(account, [o for o in orders if str(o.get("id")) not in cancelled])
-        if over:
-            return JSONResponse({"detail": over}, status_code=409)
+        why, drop = _listing_over(account, [o for o in orders if str(o.get("id")) not in cancelled])
+        if drop:
+            # The rest of the book is filed; these are not, and any of them standing already comes off.
+            orders = [o for o in orders if str(o.get("id")) not in drop]
+            cancels = cancels + sorted(drop)
         body = json.dumps({"arcade": "orders", "v": trade_orders.VERSION, "orders": orders, "cancels": cancels})
         filed = state.trade_orders.file_batch(lister, chain.network, f"node-{secrets.token_hex(8)}", body.encode())
         if cancels:
             state.trade_orders.cancel_local([lister], cancels)
         state.bump_generation()
+        if drop:
+            return JSONResponse({"detail": why, "filed": filed, "dropped": sorted(drop)}, status_code=409)
         return JSONResponse({"filed": filed, "cancelled": len(cancels)})
 
     @app.get("/account/orders/delegated")

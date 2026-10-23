@@ -88,6 +88,36 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-22 Token orders past what is free come off the book on every post (Claude)
+The operator: "My listing amount was only 1000 FRGY. I didn't have that much to list so how could I have listed that much
+anyways listing should be limited to what you have available" (and: "Probably because it's a divisible coin and you're
+forgetting about the eight decimal points" -- yes, the box's 10^8). The order went on before `_listing_over` existed,
+and nothing looked at a standing order again. Now `_listing_over` returns (why, ids): DRC-20 / PRC-20 orders past what
+is free (in book order, the first that fit kept), a Doginal twice or also on the Doginals tab; /account/orders/post
+files the rest and cancels those (409 with `dropped`), so a book re-posted with a bad standing order takes it off.
+When a token can't be checked just now, only orders not standing already are held back.
+
+### 2026-10-22 "Start a market" box: DRC-20 / PRC-20 in whole tokens (a listing went on as 10^8 times its amount) (Claude)
+The operator (a screenshot: frgy at -99,999,952,250, "100,000,000,000 listed"): "These PRC balances got all messed up". His
+1,000 frgy listing from the exchange's Start-a-market box (_tab_swaps.html `box2`) was filed as 100,000,000,000: its
+`whole` counted only NFTs and whole Omni tokens, so a token20 amount was multiplied by 10^8 like a coin's. Now token20
+is whole there too, its tick read as everything after "<net>-<kind>-", and the wallet never shows a token balance below
+zero. The bad order has to be cancelled by its lister (Swaps listed -> Cancel; a book with it is refused by
+/account/orders/post as more than is free, its cancel goes through).
+### 2026-10-22 Index copies are not made again while being fetched; the imported wallet's balance line reads its coins in one go (Claude)
+* The operator (Admin -> Ords: Banana at 384 of 3,116 pieces, @yourfirstname at 63, both now fetching a copy at block
+  1,261,709): "they should be walking while fetching a copy and every time they are restarted the fetching is reset".
+  Banana (0c68a51) does walk while fetching (1,029,320 -> 1,034,229) and keeps its pieces across restarts; what reset
+  both was Strawberry making its Pepecoin copy AGAIN at 17:29 (SNAP_EVERY, asked by a fetcher): a new id is a new copy
+  to every fetcher. `Snapshots.want_made` now never remakes a copy that served a piece within SNAP_SERVING (15 min).
+  @yourfirstname runs an old local build (070ccbce): no walk while fetching, no resume -- it needs to update.
+* The operator: "Investigate why it takes so long to unlock your wallet." .25's log: /account/imported 1.5-4.5 s a call
+  (9 calls in 40.5 s once), called several times during an unlock; `Doginals.sort_known` (the imported wallet's
+  balance line, since today) read each of 7,139 coins on a connection of its own: 1.45 s on .25. Now `kept_many`
+  reads them 500 a query: 0.033 s, the same answer; `spendable_known` and `spendable` use it too. The rest of an
+  unlock is the browser: PBKDF2-SHA512 at 600,000 iterations (0.39 s on a test machine's Chromium, a phone 2-4x), done
+  twice (the wallet, then the imported wallets' record with its own salt).
+
 ### 2026-10-22 Listings hold what they list until unlisted or taken (Claude)
 The operator: "I made a listing of frgy from my @apple but it remains in my balance so it seems like I could list it and send
 it at the same time ... It should be locked as listed until it is unlisted or purchased", "This should happen for all

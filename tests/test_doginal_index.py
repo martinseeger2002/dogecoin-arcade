@@ -1166,3 +1166,22 @@ def test_the_walk_goes_to_two_blocks_under_the_tip_and_chunks_stay_twelve_under(
     index.walker.step(chain, tip, budget=60)
     assert index.walker.next_height() == tip - 2 + 1
     assert dx.ready_chunks(tip, dx.BASE) == 0, "no chunk is whole twelve under this tip"
+
+
+def test_a_copy_being_fetched_is_never_made_again_under_a_new_id(tmp_path, monkeypatch):
+    """2026-10-22: Strawberry made its Pepecoin copy again at 17:29 while two arcades were part way through the old one;
+    a new id is a new copy to every fetcher, so their pieces went for nothing."""
+    from arcade import ord_snapshot
+    chain, mesh, holder, newcomer = _fetch_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(ord_snapshot.os, "cpu_count", lambda: 20)
+    for _ in range(10):
+        _hold_round(mesh, holder, newcomer)
+        f = newcomer.snapshots.fetch
+        if f and f["manifest"] and len(f["have"]) >= 1:
+            break
+    snaps = holder.snapshots
+    assert snaps.made is not None
+    snaps.made["manifest"]["at"] -= ord_snapshot.SNAP_EVERY + 1          # old enough to make again
+    assert not snaps.want_made(), "a piece was served a moment ago: kept"
+    snaps.served_at -= ord_snapshot.SNAP_SERVING + 1
+    assert snaps.want_made(), "nobody fetching it any more, and old: made again"

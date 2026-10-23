@@ -189,3 +189,12 @@ def test_the_exchange_looks_ticks_up_as_typed_and_never_lists_them_all(client, m
     assert "ticklist" not in str(asked)
     page = app.get("/exchange?tab=swaps").text
     assert "/exchange/token20/search?q=" in page
+
+
+def test_the_start_a_market_box_lists_tokens_in_whole_tokens():
+    """2026-10-22: 1,000 frgy listed from the exchange's "Start a market" box went on the book as 100,000,000,000 (the
+    box scaled everything not a coin-like token by 10^8)."""
+    from pathlib import Path
+    page = Path("arcade/web/templates/_tab_swaps.html").read_text()
+    assert 'const whole = (d) => d.kind === "nft" || d.kind === "token20" ||' in page
+    assert 'box2.base.value.split("-").slice(2).join("-")' in page

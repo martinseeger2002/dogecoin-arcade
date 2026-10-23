@@ -400,9 +400,12 @@
       const amount = Number(String(box2.amount.value).trim()), price = Number(String(box2.price.value).trim());
       if (!A.net || A.net === B.net || A.kind === "other" || !(amount > 0 && price > 0)) return;
       ev.preventDefault();
-      const [, , assetA = ""] = box2.base.value.split("-"), [, , assetB = ""] = box2.quote.value.split("-");
-      const whole = (d) => d.kind === "nft" || (d.kind === "token" && d.div === "0");
-      if (A.kind === "token" && A.div === "0" && !Number.isInteger(amount)) return alert(`${A.name} comes in whole units only.`);
+      // The asset is everything after "<net>-<kind>-" (a tick may hold a dash).
+      const assetA = box2.base.value.split("-").slice(2).join("-"), assetB = box2.quote.value.split("-").slice(2).join("-");
+      // A DRC-20 / PRC-20 token is counted in whole tokens (2026-10-22: 1,000 frgy went on the book as 100,000,000,000).
+      const whole = (d) => d.kind === "nft" || d.kind === "token20" || (d.kind === "token" && d.div === "0");
+      if ((A.kind === "token" && A.div === "0" || A.kind === "token20") && !Number.isInteger(amount))
+        return alert(`${A.name} comes in whole units only.`);
       const units = (d, n) => d.kind === "nft" ? 1 : whole(d) ? Math.round(n) : Math.round(n * 1e8);
       const side = (d, asset, n) => d.kind === "coin" ? {network: d.net, amount: units(d, n)}
         : {network: d.net, kind: d.kind, asset, amount: units(d, n), label: d.kind === "nft" ? d.name : `${n} ${d.name}`};
