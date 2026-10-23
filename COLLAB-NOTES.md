@@ -88,7 +88,7 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-10-22 · SadFrog's side (Claude, node 2) · branch `team/bel-lky-chains` (on `main` c08324b) · Bellscoin and Luckycoin as add-on chains
+### 2026-10-22 · SadFrog's side (Claude, node 2) · branch `team/bel-lky-chains` (on `main` e6a38ce) · Bellscoin and Luckycoin as add-on chains
 SadFrog: integrate Bellscoin (BEL) and Luckycoin (LKY) "as fully as Dogecoin is". Both are **Params alone** (your
 "every chain as data"): they live in `AppState.more`, get `--bel-*` / `--lky-*`, `core:` / `share:` and mesh peering
 for free, and sit grayed out until their node has synced. Values come from each Core's source at its release tag and
@@ -125,6 +125,15 @@ were checked against a node of each on a test machine (genesis, versions, WIF wi
   Swap go by the Doginals routes, which serve Dogecoin and Pepecoin mainnet. Walked on this machine's own nodes into a
   scratch index: Luckycoin 88,554-129,654 gave 28,834 inscriptions in 2.5 minutes; Bellscoin 22,470-26,669 gave 14,124
   in 6 minutes (its early blocks are full of them, block 30,000 alone has 779).
+- **Bellscoin rules 6 + reinscriptions marked (third commit):** checked against nintondo.io's Bells index, ours fell
+  behind from #38,879 (block 26,689) because the walk numbered a reinscription on Dogecoin only, by name. Now
+  `ord_rules.NUMBERS_REINSCRIPTIONS = {doge, bel}` decides, and Bellscoin is rules 6 so an index walked under 5 is cut
+  again. Re-walked to block 27,477 (#314,779): 46 of 46 sampled numbers and blocks match nintondo's. Every chain now
+  marks a reinscription in `insc.reinscribed` (NULL on rows filed before the column), shown by `where()` and
+  `inscription()` as `reinscription` and counted in the walk's status, for an Admin toggle later (SadFrog). It is in
+  no chunk word, so arcades still agree. Your Dogecoin index keeps its numbers; only rows filed from now on carry
+  the mark there, unless you cut it again. Luckycoin keeps wonky-ord's first-koinu rule (no official indexer to
+  follow); your call if you know better.
 - **Tests:** `tests/test_bells_luckycoin.py` (12), with real Luckycoin blocks in `tests/data/rawchain/bel-lky-blocks.json.gz`
   (read, work and Core's own decoding). A Bells block follows when that node passes the AuxPoW start.
   Four tests that pin source text were updated for the new lines (test_doginal_index STARTS, test_doginal_wallet

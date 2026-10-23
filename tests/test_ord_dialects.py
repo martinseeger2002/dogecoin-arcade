@@ -234,6 +234,19 @@ def test_pepecoin_looks_for_a_new_inscription_even_on_an_inscribed_first_koinu(t
     assert _numbers(doge) == {f"{first[1]}i0": 0, f"{again[1]}i0": 1, f"{later[1]}i0": 2}
     assert _numbers(ltc) == {f"{first[1]}i0": 0, f"{later[1]}i0": 1}
     assert pep.where(f"{first[1]}i0")["output"] == pep.where(f"{again[1]}i0")["output"] == f"{again[1]}:0"
+    # Bellscoin numbers it as nintondo's ord does (rules 6); Luckycoin keeps wonky-ord's rule, as Litecoin (2026-10-22).
+    monkeypatch.setitem(dx.STARTS, "bel", dx.BASE)
+    monkeypatch.setitem(dx.STARTS, "lky", dx.BASE)
+    bel, lky = _index(tmp_path, chain, "bel", name="b"), _index(tmp_path, chain, "lky", name="k")
+    for idx in (bel, lky):
+        idx.walker.step(chain, dx.BASE + 3, budget=60)
+    assert _numbers(bel) == _numbers(doge) and _numbers(lky) == _numbers(ltc)
+    # Each is marked for what it is (2026-10-22: "highlight them as reinscriptions"), wherever it is numbered.
+    for idx in (pep, doge, bel):
+        assert idx.where(f"{again[1]}i0")["reinscription"] is True
+        assert idx.where(f"{first[1]}i0")["reinscription"] is False and idx.where(f"{later[1]}i0")["reinscription"] is False
+    for idx in (doge, bel):
+        assert idx.store.q("SELECT COUNT(reinscribed) FROM insc")[0][0] == 1, "counted for Admin -> Ords"
 
 
 def test_a_pepecoin_parent_spent_beside_its_child_is_kept_and_sent_to_output_1(tmp_path):
@@ -455,6 +468,7 @@ def test_each_chain_has_its_own_rules_version_and_only_dogecoin_is_cut_again(tmp
     their indexes are not rebuilt for it. A Dogecoin index of rules 4 is cut again; a Pepecoin one of 4 is kept."""
     from arcade import ord_rules
     assert ord_rules.rules_for("doge") == 5 and ord_rules.rules_for("main") == ord_rules.rules_for("ltc") == 4
+    assert ord_rules.rules_for("bel") == 6 and ord_rules.NUMBERS_REINSCRIPTIONS == {"doge", "bel"}
     for net, kept in (("doge", False), ("main", True)):
         path = tmp_path / f"{net}.sqlite"
         st = dx.Store(path, dialect=ord_rules.dialect_of(net), net=net)
