@@ -10,8 +10,10 @@ On the wire (frames of kind "cr" on an ordinary mesh link, never flooded):
 
     offer  {nets: {net: {h, b}}}      the chains this arcade shares, with its tip (height, hash)
     sub    {nets: [...]}              a borrower asks for that chain's mempool as it arrives
-    q      {id, net, seq, end} + a slice of the calls' JSON    a borrower's batch of calls
-    a      {id, seq, end[, err]} + a slice of the answers' JSON
+    q      {id, net, seq, end, z} + a slice of the calls' JSON    a borrower's batch of calls; `z` 1: it reads a
+                                                                  zlib-compressed answer (2026-10-22)
+    a      {id, seq, end[, err][, z]} + a slice of the answers' JSON (zlib-compressed when `z` 1; an older sharer
+                                      ignores `z` and answers raw, an older borrower never asks)
     tx     {net}  + raw tx bytes      a transaction that just entered the sharer's mempool
     gone   {net, ids}                 transactions that left it (mined, or dropped)
 
@@ -36,6 +38,7 @@ import json
 import logging
 import threading
 import time
+import zlib
 from collections import OrderedDict
 from typing import Any, Callable
 
@@ -61,6 +64,18 @@ MINE_EVERY = {"getblocktemplate": 2.0, "submitblock": 1.0}
 NETWORKINFO_FIELDS = ("version", "subversion", "protocolversion", "relayfee", "incrementalfee")
 
 CHUNK = 48 * 1024            # bytes of an answer per frame (a frame is at most 64 KB)
+
+
+def _inflate(data: bytes, most: int) -> bytes | None:
+    """A compressed answer unpacked, or None: not zlib, or more than `most` (never inflated past it)."""
+    d = zlib.decompressobj()
+    try:
+        out = d.decompress(data, most + 1)
+    except zlib.error:
+        return None
+    if len(out) > most or d.unconsumed_tail or not d.eof:
+        return None
+    return out
 RATE = 512 * 1024            # answer bytes per second to one borrower
 AT_ONCE_PER_PEER = 4         # batches one borrower may have in flight
 CORE_AT_ONCE = 2             # batches this arcade's Core works on for borrowers, all together
@@ -234,6 +249,7 @@ class CoreShare:
         if not header.get("end", True):
             return
         blob = b"".join(self._asked.pop(key))
+        zipped = header.get("z") == 1                # the borrower reads a compressed answer (2026-10-22)
         if self._busy.get(peer, 0) >= AT_ONCE_PER_PEER:
             await link.send({"t": "cr", "op": "a", "id": rid, "seq": 0, "end": True, "err": "busy"})
             return
@@ -246,9 +262,9 @@ class CoreShare:
             await link.send({"t": "cr", "op": "a", "id": rid, "seq": 0, "end": True, "err": "not a batch"})
             return
         self._busy[peer] = self._busy.get(peer, 0) + 1
-        self.node._spawn(self._answer(link, rid, net, calls))
+        self.node._spawn(self._answer(link, rid, net, calls, zipped))
 
-    async def _answer(self, link, rid: int, net: str, calls: list) -> None:
+    async def _answer(self, link, rid: int, net: str, calls: list, zipped: bool = False) -> None:
         peer = link.peer_id
         try:
             now = time.monotonic()
@@ -276,11 +292,16 @@ class CoreShare:
                         one = {"r": _sanitise(method, one["r"])}
                     answers.append(one)
             data = json.dumps(answers, separators=(",", ":")).encode()
+            # Raw blocks and transactions ride in it as hex, twice their size: compressed, the answer is about half
+            # (2026-10-22: compress what arcades send each other).
+            if zipped:
+                data = await asyncio.to_thread(zlib.compress, data, 6)
             rate = self._rates.setdefault(peer, _Rate(self.rate))
             parts = [data[i:i + CHUNK] for i in range(0, len(data), CHUNK)] or [b""]
             for seq, part in enumerate(parts):
                 await rate.take(len(part))
-                await link.send({"t": "cr", "op": "a", "id": rid, "seq": seq, "end": seq == len(parts) - 1}, part)
+                await link.send({"t": "cr", "op": "a", "id": rid, "seq": seq, "end": seq == len(parts) - 1,
+                                 **({"z": 1} if zipped else {})}, part)
             self.served[peer] = self.served.get(peer, 0) + 1
         except Exception as exc:                               # noqa: BLE001 -- the borrower tries elsewhere
             try:
@@ -369,11 +390,18 @@ class CoreShare:
             return
         w["parts"].append(blob)
         w["size"] += len(blob)
+        w["z"] = w.get("z") or header.get("z") == 1
         if w["size"] > MAX_ANSWER:
             w["fut"].set_exception(RpcTransportError("the answer is too large"))
         elif header.get("end"):
+            data = b"".join(w["parts"])
+            if w.get("z"):
+                data = _inflate(data, MAX_ANSWER)
+                if data is None:
+                    w["fut"].set_exception(RpcTransportError("a compressed answer that does not unpack (or too large)"))
+                    return
             try:
-                w["fut"].set_result(json.loads(b"".join(w["parts"]).decode()))
+                w["fut"].set_result(json.loads(data.decode()))
             except Exception as exc:                           # noqa: BLE001
                 w["fut"].set_exception(RpcTransportError(f"an answer that is not JSON: {exc}"))
 
@@ -406,7 +434,7 @@ class CoreShare:
                 parts = [data[i:i + CHUNK] for i in range(0, len(data), CHUNK)] or [b""]
                 for seq, part in enumerate(parts):
                     await link.send({"t": "cr", "op": "q", "id": rid, "net": net, "seq": seq,
-                                     "end": seq == len(parts) - 1}, part)
+                                     "end": seq == len(parts) - 1, "z": 1}, part)
                 got = await asyncio.wait_for(fut, timeout)
                 if not isinstance(got, list) or len(got) != len(calls):
                     raise RpcTransportError("an answer of the wrong length")

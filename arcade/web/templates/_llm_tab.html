@@ -1,0 +1,563 @@
+{#- The Exchange's LLM tab (arcade/llm.py, web/llmweb.py; 2026-10-23, approved mock-up "LLM Exchange Mock-up"):
+    the LLM service book across the mesh, a top-up paid straight to the seller, a chat, and API keys for the buyer's own
+    programs. Everything is drawn from /account/llm/offers by the script below. #}
+<style>
+.llm-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-end;margin:6px 0 12px}
+.llm-head p{margin:2px 0 0;color:var(--muted);font-size:.9rem}
+.llm-chips{display:flex;gap:6px;flex-wrap:wrap}
+.llm-chips button{font:inherit;font-size:.82rem;height:34px;padding:0 13px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
+.llm-chips button.on{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:650}
+.llm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));gap:14px}
+.llm-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.04)}
+.llm-card.picked{border:2px solid var(--accent);padding:17px}
+.llm-card .who{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.llm-card .who small{display:block;color:var(--muted);font-size:.8rem}
+.llm-pill{font-size:.75rem;font-weight:650;padding:3px 9px;border-radius:999px;background:color-mix(in srgb,var(--ok) 15%,var(--panel));color:var(--ok);white-space:nowrap}
+.llm-model{padding:9px 11px;border-radius:10px;background:var(--code);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:.88rem}
+.llm-model code{font-weight:650;overflow-wrap:anywhere}
+.llm-prices{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 14px;font-size:.88rem}
+.llm-prices .h{font-size:.72rem;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.llm-prices>span{padding:3px 0;border-top:1px solid var(--line)}.llm-prices>.h{border-top:0}
+.llm-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--line);margin-top:auto}
+.llm-foot small{display:block;color:var(--muted);font-size:.75rem}
+.llm-btn{font:inherit;height:42px;padding:0 16px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--accent);font-weight:650;cursor:pointer}
+.llm-btn.go{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.llm-btn.bad{color:#a33;border-color:color-mix(in srgb,#a33 35%,var(--line))}
+.llm-btn:disabled{opacity:.55;cursor:default}
+.llm-row{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;margin-top:16px}
+.llm-panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:12px;min-width:0;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.04)}
+.llm-panel h3{margin:0;font-size:1.05rem}.llm-panel p.sub{margin:0;color:var(--muted);font-size:.88rem}
+.llm-panel label{display:flex;flex-direction:column;gap:5px;font-size:.8rem;font-weight:650;min-width:0}
+.llm-panel input,.llm-panel select,.llm-panel textarea{font:inherit;font-weight:400;width:100%;min-width:0;max-width:100%;box-sizing:border-box;height:42px;padding:0 11px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
+.llm-panel textarea{height:auto;padding:10px 12px;resize:vertical}
+.llm-note{padding:9px 11px;border-radius:10px;background:var(--code);font-size:.86rem}
+.llm-chat{flex:999 1 520px;padding:0;overflow:hidden;gap:0}
+.llm-chat .top{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center}
+.llm-msgs{padding:16px;display:flex;flex-direction:column;gap:12px;min-height:260px;max-height:60vh;overflow:auto}
+.llm-me{align-self:flex-end;max-width:82%;background:var(--accent);color:var(--accent-fg);border-radius:16px 16px 4px 16px;padding:9px 13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.llm-it{align-self:flex-start;max-width:82%;display:flex;flex-direction:column;gap:4px}
+.llm-it>div{background:var(--bg);border:1px solid var(--line);border-radius:16px 16px 16px 4px;padding:9px 13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.llm-it details{font-size:.8rem;color:var(--muted)}
+.llm-it small{color:var(--muted);font-size:.75rem;padding-left:4px}
+.llm-send{padding:12px 14px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:flex-end}
+.llm-send textarea{flex:1 1 auto;height:64px;min-height:46px}
+.llm-copy{display:flex;gap:8px}.llm-copy code{flex:1 1 auto;min-width:0;height:42px;display:flex;align-items:center;padding:0 11px;border-radius:10px;background:var(--code);border:1px solid var(--line);font-size:.86rem;overflow-x:auto;white-space:nowrap}
+.llm-copy code.fresh{background:color-mix(in srgb,#e6b400 16%,var(--panel));border-color:color-mix(in srgb,#e6b400 45%,var(--line))}
+.llm-keys{display:grid;grid-template-columns:minmax(0,.6fr) minmax(0,1.2fr) minmax(0,1.3fr) minmax(0,.8fr) 90px;gap:8px 12px;align-items:center;font-size:.86rem}
+.llm-keys .h{font-size:.72rem;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.llm-pre{margin:0;background:#141a26;color:#e3e8f1;padding:14px 16px;border-radius:12px;font-size:.8rem;line-height:1.6;overflow-x:auto}
+.llm-empty{padding:26px;border:1px dashed var(--line);border-radius:16px;color:var(--muted);text-align:center}
+@media (max-width:640px){.llm-keys{grid-template-columns:1fr 1fr}.llm-keys .h{display:none}}
+</style>
+
+<div class="llm-head">
+  <div>
+    <h2 style="margin:0">LLM service</h2>
+    <p>Models sold by arcades across the mesh, cheapest first. Prices are per token: input is what you send, output is what it writes.</p>
+  </div>
+  <div class="llm-chips" id="llm-chips"></div>
+</div>
+<div class="llm-grid" id="llm-offers"><div class="llm-empty">Looking for sellers&hellip;</div></div>
+
+{#- Pictures (arcade/imagegen.py; 2026-10-23: "I would like to also be able to share my image generation model"):
+    per picture, make from words or edit a picture the buyer brings. #}
+<div id="pic-wrap" hidden>
+  <div class="llm-head" style="margin-top:22px">
+    <div><h2 style="margin:0">Pictures</h2>
+      <p>Image models sold by arcades across the mesh, priced in credits: a picture from words is 1 credit, an edit of a picture you bring is 2.</p></div>
+  </div>
+  <div class="llm-grid" id="pic-offers"></div>
+  <section class="llm-panel" id="pic-make" style="margin-top:16px" hidden>
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
+      <div style="min-width:0"><h3>Make a picture</h3><code id="pic-who" style="font-size:.8rem;color:var(--muted)"></code></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="pic-leg" aria-label="Pay with" style="width:auto;height:34px;padding:0 8px;border-radius:999px"></select>
+        <span class="llm-pill" id="pic-left" style="background:color-mix(in srgb,var(--accent) 14%,var(--panel));color:var(--accent)"></span></div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
+      <div style="flex:1 1 320px;display:flex;flex-direction:column;gap:12px;min-width:0">
+        <label>What to draw, or what to change <textarea rows="3" id="pic-prompt" autocomplete="off" placeholder="e.g. a shiba inu playing an arcade cabinet, neon light"></textarea></label>
+        <label>Size <select id="pic-size"></select></label>
+        <label>Change a picture of yours <span style="font-weight:400;color:var(--muted)">(optional)</span>
+          <input type="file" id="pic-file" accept="image/png,image/jpeg,image/webp" style="height:auto;padding:8px"></label>
+        <button type="button" class="llm-btn go" id="pic-go" style="height:46px">Make it &middot; 1 credit</button>
+        <p class="sub" id="pic-said"></p>
+      </div>
+      <div style="flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+        <img id="pic-out" alt="" style="max-width:100%;border-radius:12px;border:1px solid var(--line);display:none">
+        <a id="pic-dl" class="llm-btn" download="arcade-picture.png" style="display:none;align-items:center;text-decoration:none">Download</a>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="llm-row">
+  <section class="llm-panel" style="flex:1 1 300px" id="llm-topup" hidden>
+    <div><h3>Top up</h3><p class="sub" id="llm-topup-sub"></p></div>
+    <label>Pay with <select id="llm-pay"></select></label>
+    <label>Amount <input id="llm-amount" inputmode="decimal" autocomplete="off" placeholder="e.g. 10"></label>
+    <div class="llm-note" id="llm-buys">Enter an amount to see what it buys.</div>
+    <button type="button" class="llm-btn go" id="llm-send-pay" style="height:46px">Send</button>
+    <p class="sub" id="llm-topup-said">Your wallet shows the fee and asks before it signs. Real coins count once the payment is in a block.</p>
+  </section>
+
+  <section class="llm-panel llm-chat" id="llm-chat" hidden>
+    <div class="top">
+      <div style="min-width:0"><h3>Chat</h3><code id="llm-chat-who" style="font-size:.8rem;color:var(--muted)"></code></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="llm-chat-leg" aria-label="Pay with" style="width:auto;height:34px;padding:0 8px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--fg)"></select>
+        <span class="llm-pill" id="llm-left" style="background:color-mix(in srgb,var(--accent) 14%,var(--panel));color:var(--accent)"></span>
+        <button type="button" class="llm-btn" id="llm-new-chat" style="height:34px;padding:0 12px">New chat</button>
+      </div>
+    </div>
+    <div class="llm-msgs" id="llm-msgs"></div>
+    <div class="llm-send">
+      <textarea rows="2" id="llm-input" autocomplete="off" aria-label="Message" placeholder="Ask anything&hellip;"></textarea>
+      <button type="button" class="llm-btn go" id="llm-go" style="height:46px">Send</button>
+    </div>
+  </section>
+</div>
+
+<section class="llm-panel" style="margin-top:16px" id="llm-api">
+  <div><h3>Use it from your own apps</h3>
+    <p class="sub">An OpenAI-compatible API on this arcade. Any local harness, chat app or script that takes a base URL and an API key works. Each key spends one seller's credit in one coin.</p></div>
+  <div class="llm-grid" style="grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:14px">
+    <div style="display:flex;flex-direction:column;gap:5px;min-width:0"><span style="font-size:.8rem;font-weight:650">Base URL</span>
+      <div class="llm-copy"><code id="llm-base"></code><button type="button" class="llm-btn" data-copy="llm-base">Copy</button></div></div>
+    <div style="display:flex;flex-direction:column;gap:5px;min-width:0" id="llm-fresh-box" hidden><span style="font-size:.8rem;font-weight:650">New key, shown once</span>
+      <div class="llm-copy"><code class="fresh" id="llm-fresh"></code><button type="button" class="llm-btn" data-copy="llm-fresh">Copy</button></div></div>
+  </div>
+  <div class="llm-keys" id="llm-keys"></div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding:14px;border-radius:12px;background:var(--code)">
+    <label style="flex:1 1 200px">Name <input id="llm-key-name" placeholder="e.g. desktop harness" autocomplete="off"></label>
+    <label style="flex:1 1 220px">Spends <select id="llm-key-on"></select></label>
+    <button type="button" class="llm-btn go" id="llm-key-make">Make a key</button>
+  </div>
+  <pre class="llm-pre" id="llm-curl"></pre>
+</section>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const COIN_NAMES = {};
+let book = {offers: [], me: "", signed_in: false, api_base: ""};
+let credit = {};                 // seller -> balance answer
+let picked = null, filter = "all", history = [], busy = false;
+
+async function getJSON(url) {
+  const r = await fetch(url, {credentials: "same-origin", cache: "no-store"});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+  return j;
+}
+async function postJSON(url, body) {
+  const r = await fetch(url, {method: "POST", credentials: "same-origin",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+  return j;
+}
+const toast = (t) => (window.arcadeToast ? arcadeToast(t) : alert(t));
+const legNet = (leg) => leg.split("-")[0];
+const legIsToken = (leg) => leg.includes("-token-");
+const short = (label) => String(label || "").split(" · ")[0];
+const num = (t) => Number(String(t).replace(/,/g, ""));
+
+function price(p) {                  // the dearest part shown plainly: no exponent for tiny prices
+  const n = Number(p); if (!n) return "free";
+  return n.toLocaleString(undefined, {maximumSignificantDigits: 8, maximumFractionDigits: 12});
+}
+function cheapness(o) { return o.free || !o.prices.length ? 0 : Math.min(...o.prices.map((p) => Number(p.out) || 0)); }
+const legsOf = (o) => o.free ? [{leg: "free", label: "Free", in: "0", out: "0"}] : o.prices;
+// How busy a model is (2026-10-23: "Users also need a way to know if one of the models is congested or being
+// frequently used"): the seller's own word for it on the book, said again whenever it changes.
+const WORDS = {idle: ["Idle", "var(--muted)"], steady: ["In use", "var(--ok)"], busy: ["Busy", "#b7791f"], full: ["Full: queue", "#a33"]};
+function loadPill(o) {
+  const w = WORDS[(o.load || {}).word] || WORDS.idle;
+  return `<span class="llm-pill" style="color:${w[1]};background:color-mix(in srgb,${w[1]} 14%,var(--panel))">${w[0]}</span>`;
+}
+function loadLine(o) {
+  const l = o.load || {}; if (!l.at_once) return "";
+  const bits = [`${l.active || 0} of ${l.at_once} running`];
+  if (l.waiting) bits.push(`${l.waiting} waiting`);
+  bits.push(`${(l.last_hour || 0).toLocaleString()} ${l.last_hour === 1 ? "reply" : "replies"} in the last hour`);
+  if (l.tok_s) bits.push(`${l.tok_s} tok/s`);
+  return `<div style="font-size:.8rem;color:var(--muted);margin-top:-4px">${bits.join(" \u00b7 ")}</div>`;
+}
+function sellerName(o) { return o.here ? (o.tag ? "@" + o.tag : "This arcade") : (o.tag ? "@" + o.tag : o.seller.slice(0, 10) + "…"); }
+
+function drawChips() {
+  const kinds = new Map([["all", "Any coin"]]);
+  if (book.offers.some((o) => o.free)) kinds.set("free", "Free");
+  book.offers.forEach((o) => o.prices.forEach((p) => kinds.set(legIsToken(p.leg) ? "tokens" : p.leg, legIsToken(p.leg) ? "Tokens" : short(p.label))));
+  $("llm-chips").innerHTML = [...kinds].map(([k, v]) => `<button type="button" data-k="${esc(k)}" class="${k === filter ? "on" : ""}">${esc(v)}</button>`).join("");
+}
+$("llm-chips").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; filter = b.dataset.k; draw(); });
+
+function creditText(o) {
+  const c = credit[o.seller];
+  if (!book.signed_in) return {big: "Sign in", small: "to buy"};
+  if (o.free) return {big: "Free", small: "for everyone"};
+  if (c && c.free) return {big: "Free", small: "your own model"};
+  if (!c) return {big: o.here || o.granted ? "…" : "—", small: o.here || o.granted ? "" : "sign once to see"};
+  const rows = o.prices.map((p) => c.credit && c.credit[p.leg] ? `${c.credit[p.leg].text} ${short(p.label)}` : "").filter(Boolean);
+  return rows.length ? {big: rows[0], small: rows.slice(1).join(" · ")} : {big: "None yet", small: ""};
+}
+
+function draw() {
+  drawChips();
+  drawPictures();
+  const shown = book.offers.filter((o) => o.models.length).filter((o) => filter === "all" || (filter === "free" ? o.free : o.prices.some((p) => filter === "tokens" ? legIsToken(p.leg) : p.leg === filter)))
+    .sort((a, b) => (b.here - a.here) || cheapness(a) - cheapness(b));
+  if (!shown.length) {
+    $("llm-offers").innerHTML = `<div class="llm-empty">No arcade sells a model ${filter === "all" ? "right now" : "for that coin"}. Operators turn it on in Admin &rarr; LLM.</div>`;
+  } else {
+    $("llm-offers").innerHTML = shown.map((o) => {
+      const c = creditText(o), mine = picked && picked.seller === o.seller;
+      return `<article class="llm-card${mine ? " picked" : ""}" data-s="${esc(o.seller)}">
+        <div class="who"><div style="min-width:0"><strong>${esc(sellerName(o))}</strong><small>${esc(o.name || "")}${o.host ? " · " + esc(o.host) : ""}</small></div>
+          ${loadPill(o)}</div>
+        ${loadLine(o)}
+        ${o.models.map((m) => `<div class="llm-model"><code>${esc(m.id)}</code><span style="color:var(--muted)">up to ${(o.max_out || 0).toLocaleString()} out</span></div>`).join("")}
+        ${o.free ? `<div class="llm-note"><b>Free for everyone.</b> Sign in and chat, or make an API key; nothing to pay.</div>` : `<div class="llm-prices"><span class="h">Coin</span><span class="h">In</span><span class="h">Out</span>
+          ${o.prices.map((p) => `<span><b>${esc(short(p.label))}</b></span><span>${price(p.in)}</span><span>${price(p.out)}</span>`).join("")}</div>`}
+        <div class="llm-foot"><div style="min-width:0"><small>Your credit</small><strong>${esc(c.big)}</strong>${c.small ? `<small>${esc(c.small)}</small>` : ""}</div>
+          <div style="display:flex;gap:8px">${book.signed_in ? `${o.free ? "" : `<button type="button" class="llm-btn" data-do="topup">Top up</button>`}<button type="button" class="llm-btn go" data-do="chat">Chat</button>` : `<a class="llm-btn go" href="/signin" style="display:inline-flex;align-items:center;text-decoration:none">Sign in</a>`}</div></div>
+      </article>`;
+    }).join("");
+  }
+  drawKeys();
+}
+
+$("llm-offers").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-do]"); if (!b) return;
+  const o = book.offers.find((x) => x.seller === b.closest("[data-s]").dataset.s); if (!o) return;
+  picked = o;
+  try { await ensureGrant(o); } catch (err) { toast(err.message); return; }
+  if (b.dataset.do === "topup") openTopup(o, o.prices); else openChat(o);
+  draw();
+});
+
+// --- who the buyer is, at a seller that is not this arcade: their own key signs it, once a month ---------------
+async function keysFor(network, why) {
+  const w = await import("/wallet.js");
+  const chain = (await w.chains()).find((c) => c.network === network) || {network};
+  const keys = (await w.opened(chain)) || (window.arcadeKeys ? await arcadeKeys(chain, why) : null);
+  if (!keys || !keys.on || !keys.on[network]) throw new Error("Unlock your wallet first.");
+  return {w, keys, chain};
+}
+async function ensureGrant(o) {
+  if (o.here || o.granted) return;
+  const said = await getJSON(`/account/llm/grant?seller=${encodeURIComponent(o.seller)}`);
+  if (said.ok) { o.granted = true; return; }
+  const {keys} = await keysFor(said.sign.chain.network, "To use another arcade's model, your wallet signs who you are, once a month.");
+  const coins = await import("/coins.js");
+  const sig = await coins.signMessage(keys.on[said.sign.chain.network].key, said.sign.message, said.sign.magic);
+  await postJSON("/account/llm/grant", {seller: o.seller, expires: said.sign.expires, sig});
+  o.granted = true;
+  loadCredit(o);
+}
+
+async function loadCredit(o) {
+  if (!book.signed_in || !(o.here || o.granted)) return;
+  try { credit[o.seller] = await getJSON(`/account/llm/balance?seller=${encodeURIComponent(o.seller)}`); }
+  catch (err) { credit[o.seller] = null; }
+  draw(); if (picked && picked.seller === o.seller) { drawLeft(); drawBuys(); }
+  if (picPicked && picPicked.seller === o.seller) picLeft();
+}
+
+// --- pictures --------------------------------------------------------------------------------------------------
+let picPicked = null;
+function picCredit(o) {
+  const c = credit[o.seller], im = o.images;
+  if (!book.signed_in) return {big: "Sign in", small: "to buy"};
+  if (im.free) return {big: "Free", small: "for everyone"};
+  if (c && c.free) return {big: "Free", small: "your own model"};
+  if (!c) return {big: o.here || o.granted ? "\u2026" : "\u2014", small: o.here || o.granted ? "" : "sign once to see"};
+  const rows = im.prices.map((p) => c.credit && c.credit[p.leg] ? `${c.credit[p.leg].text} ${short(p.label)}` : "").filter(Boolean);
+  return rows.length ? {big: rows[0], small: rows.slice(1).join(" \u00b7 ")} : {big: "None yet", small: ""};
+}
+function drawPictures() {
+  const shown = book.offers.filter((o) => o.images);
+  $("pic-wrap").hidden = !shown.length;
+  $("pic-offers").innerHTML = shown.map((o) => {
+    const im = o.images, l = im.load || {}, w = WORDS[l.word] || WORDS.idle, c = picCredit(o), mine = picPicked && picPicked.seller === o.seller;
+    const bits = [`${l.active || 0} of ${l.at_once || 1} drawing`]; if (l.waiting) bits.push(`${l.waiting} waiting`);
+    bits.push(`${(l.last_hour || 0).toLocaleString()} ${l.last_hour === 1 ? "picture" : "pictures"} in the last hour`); if (l.avg_s) bits.push(`about ${l.avg_s} s each`);
+    return `<article class="llm-card${mine ? " picked" : ""}" data-s="${esc(o.seller)}">
+      <div class="who"><div style="min-width:0"><strong>${esc(sellerName(o))}</strong><small>${esc(im.name || o.name || "")}${o.host ? " \u00b7 " + esc(o.host) : ""}</small></div>
+        <span class="llm-pill" style="color:${w[1]};background:color-mix(in srgb,${w[1]} 14%,var(--panel))">${w[0]}</span></div>
+      <div style="font-size:.8rem;color:var(--muted);margin-top:-4px">${bits.join(" \u00b7 ")}</div>
+      ${im.models.map((m) => `<div class="llm-model"><code>${esc(m.label || m.id)}</code><span style="color:var(--muted)">up to ${im.max_side}px \u00b7 make + edit</span></div>`).join("")}
+      ${im.free ? `<div class="llm-note"><b>Free for everyone.</b> Sign in and make a picture; nothing to pay.</div>` : `<div class="llm-prices" style="grid-template-columns:minmax(0,1fr) auto"><span class="h">Coin</span><span class="h">Per credit</span>
+        ${im.prices.map((p) => `<span><b>${esc(short(p.label))}</b></span><span>${price(p.per)}</span>`).join("")}</div>
+        <div style="font-size:.8rem;color:var(--muted)">1 credit per picture \u00b7 2 credits per edit</div>`}
+      <div class="llm-foot"><div style="min-width:0"><small>Your credit</small><strong>${esc(c.big)}</strong>${c.small ? `<small>${esc(c.small)}</small>` : ""}</div>
+        <div style="display:flex;gap:8px">${book.signed_in ? `${im.free ? "" : `<button type="button" class="llm-btn" data-pic="topup">Top up</button>`}<button type="button" class="llm-btn go" data-pic="make">Make a picture</button>` : `<a class="llm-btn go" href="/signin" style="display:inline-flex;align-items:center;text-decoration:none">Sign in</a>`}</div></div>
+    </article>`;
+  }).join("");
+}
+$("pic-offers").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-pic]"); if (!b) return;
+  const o = book.offers.find((x) => x.seller === b.closest("[data-s]").dataset.s); if (!o) return;
+  try { await ensureGrant(o); } catch (err) { toast(err.message); return; }
+  if (b.dataset.pic === "topup") { picked = o; openTopup(o, o.images.prices); draw(); return; }
+  picPicked = o; openPicture(o); draw();
+});
+function openPicture(o) {
+  const im = o.images, side = im.max_side || 1024;
+  $("pic-make").hidden = false;
+  $("pic-who").textContent = `${(im.models[0] || {}).label || ""} \u00b7 ${sellerName(o)}`;
+  $("pic-leg").hidden = !!im.free;
+  $("pic-leg").innerHTML = (im.free ? [{leg: "free", label: "Free"}] : im.prices).map((p) => `<option value="${esc(p.leg)}">${esc(short(p.label))}</option>`).join("");
+  const c = credit[o.seller], has = im.prices.find((p) => c && c.credit && c.credit[p.leg] && c.credit[p.leg].units > 0);
+  if (has) $("pic-leg").value = has.leg;
+  const r = (a, b) => `${Math.round(side * a / 16) * 16}x${Math.round(side * b / 16) * 16}`;
+  $("pic-size").innerHTML = [["Square", r(1, 1)], ["Landscape", r(1, 0.75)], ["Portrait", r(0.75, 1)], ["Wide", r(1, 0.5625)]]
+    .map(([n, v]) => `<option value="${v}">${n} \u00b7 ${v.replace("x", " \u00d7 ")}</option>`).join("");
+  picLeft();
+  $("pic-make").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+function picLeft() {
+  if (!picPicked) return;
+  const im = picPicked.images, c = credit[picPicked.seller], leg = $("pic-leg").value, p = im.prices.find((x) => x.leg === leg);
+  $("pic-left").textContent = im.free || (c && c.free) ? "Free" : c && c.credit && c.credit[leg] ? `${c.credit[leg].text} ${short(p && p.label)} left` : "No credit";
+}
+$("pic-leg").addEventListener("change", picLeft);
+$("pic-file").addEventListener("change", () => {
+  const edit = !!$("pic-file").files.length;
+  $("pic-size").disabled = edit;
+  $("pic-go").textContent = edit ? "Edit it \u00b7 2 credits" : "Make it \u00b7 1 credit";
+});
+$("pic-go").addEventListener("click", async () => {
+  const o = picPicked, prompt = $("pic-prompt").value.trim();
+  if (!o || !prompt) { toast("Say what to draw."); return; }
+  const btn = $("pic-go"); btn.disabled = true;
+  $("pic-said").textContent = "Drawing\u2026 a picture takes about half a minute, longer if the model has to wake up.";
+  try {
+    const body = {seller: o.seller, leg: $("pic-leg").value, model: (o.images.models[0] || {}).id, prompt, size: $("pic-size").value};
+    const f = $("pic-file").files[0];
+    if (f) body.image = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+    const got = await postJSON("/account/llm/image", body);
+    const url = "data:image/png;base64," + got.png;
+    $("pic-out").src = url; $("pic-out").style.display = "block";
+    $("pic-dl").href = url; $("pic-dl").style.display = "inline-flex";
+    const a = got.arcade || {}, p = o.images.prices.find((x) => x.leg === a.leg);
+    $("pic-said").textContent = `Done in ${((a.ms || 0) / 1000).toFixed(0)} s \u00b7 ${a.free ? "free" : a.cost_text + " " + short(p && p.label)} \u00b7 seed ${got.seed}`;
+    if (!a.free) { credit[o.seller] = credit[o.seller] || {credit: {}}; credit[o.seller].credit = credit[o.seller].credit || {};
+      credit[o.seller].credit[a.leg] = {units: a.left, text: a.left_text}; picLeft(); }
+  } catch (err) { $("pic-said").textContent = String(err.message || err); }
+  finally { btn.disabled = false; draw(); }
+});
+
+// --- top up --------------------------------------------------------------------------------------------------
+function openTopup(o, legs) {
+  $("llm-topup").hidden = false;
+  $("llm-topup-sub").textContent = `With ${sellerName(o)}. Paid straight to the seller, whose arcade keeps your balance, so start small with sellers you don't know.`;
+  const all = [...(legs || o.prices)];
+  (o.images && !o.images.free ? o.images.prices : []).concat(o.prices).forEach((p) => { if (!all.some((x) => x.leg === p.leg)) all.push(p); });
+  $("llm-pay").innerHTML = all.map((p) => `<option value="${esc(p.leg)}">${esc(p.label)}</option>`).join("");
+  $("llm-pay").dataset.legs = JSON.stringify(all);
+  drawBuys();
+  $("llm-topup").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+function drawBuys() {
+  if (!picked) return;
+  const legs = JSON.parse($("llm-pay").dataset.legs || "[]"), p = legs.find((x) => x.leg === $("llm-pay").value), amt = num($("llm-amount").value);
+  const label = p ? short(p.label) : "";
+  $("llm-send-pay").textContent = amt > 0 ? `Send ${amt} ${label}` : "Send";
+  if (!p || !(amt > 0)) { $("llm-buys").textContent = "Enter an amount to see what it buys."; return; }
+  if (p.per !== undefined && p.in === undefined) {
+    const n = Number(p.per) ? Math.floor(amt / Number(p.per)) : 0;
+    $("llm-buys").innerHTML = n ? `Buys <b>${n.toLocaleString()} ${n === 1 ? "credit" : "credits"}</b>: ${n.toLocaleString()} ${n === 1 ? "picture" : "pictures"}, or ${Math.floor(n / 2).toLocaleString()} ${Math.floor(n / 2) === 1 ? "edit" : "edits"}` : "Pictures are free at this price."; return;
+  }
+  const out = Number(p.out) ? Math.floor(amt / Number(p.out)) : 0;
+  $("llm-buys").innerHTML = out ? `Buys about <b>${out.toLocaleString()} output tokens</b> (roughly ${Math.round(out * 0.75).toLocaleString()} words)` : "Output is free at this price.";
+}
+$("llm-pay").addEventListener("change", drawBuys); $("llm-amount").addEventListener("input", drawBuys);
+
+const PENDING = "arcade.llm.topups";
+function pending() { try { return JSON.parse(localStorage.getItem(PENDING) || "[]"); } catch (e) { return []; } }
+function keepPending(list) { try { localStorage.setItem(PENDING, JSON.stringify(list)); } catch (e) {} }
+
+$("llm-send-pay").addEventListener("click", async () => {
+  const o = picked, leg = $("llm-pay").value, amount = $("llm-amount").value.trim();
+  const p = o && JSON.parse($("llm-pay").dataset.legs || "[]").find((x) => x.leg === leg);
+  if (!p || !(num(amount) > 0)) { toast("Enter an amount."); return; }
+  const net = legNet(leg), btn = $("llm-send-pay");
+  btn.disabled = true;
+  try {
+    const {w, keys} = await keysFor(net, "Your wallet signs this payment.");
+    let offer;
+    if (legIsToken(leg)) {
+      const r = await fetch("/account/token/send", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({property_id: Number(leg.split("-token-")[1]), to: p.to, amount, chain: net})});
+      offer = await r.json(); if (!r.ok) throw new Error(offer.detail || "that cannot be sent");
+    } else {
+      offer = await w.offerSend(p.to, amount, net);
+    }
+    const shown = await w.checked(offer, keys);
+    const ok = window.arcadeAsk ? await arcadeAsk(`Pay ${amount} ${short(p.label)} to ${sellerName(o)}?`,
+      `For LLM credit, to ${p.to}. ${shown.says}`, "Yes, send it") : confirm(`Pay ${amount} ${short(p.label)}?`);
+    if (!ok) return;
+    const done = await w.confirm(keys, offer);
+    const words = await getJSON(`/account/llm/topup?seller=${encodeURIComponent(o.seller)}&leg=${encodeURIComponent(leg)}&txid=${done.txid}`);
+    const coins = await import("/coins.js");
+    const sig = await coins.signMessage(keys.on[net].key, words.message, words.magic);
+    keepPending([...pending(), {seller: o.seller, leg, txid: done.txid, sig, at: Date.now()}]);
+    $("llm-topup-said").textContent = "Sent. Counting it as credit as soon as the seller sees it…";
+    claimPending();
+  } catch (err) { toast(err.message || String(err)); }
+  finally { btn.disabled = false; }
+});
+
+let claiming = false;
+async function claimPending() {
+  if (claiming) return; claiming = true;
+  try {
+    let list = pending();
+    for (const t of [...list]) {
+      try {
+        const got = await postJSON("/account/llm/topup", {seller: t.seller, leg: t.leg, txid: t.txid, sig: t.sig});
+        list = list.filter((x) => x.txid !== t.txid);
+        toast(got.again ? "That payment was already counted." : `Credit added: ${got.text || ""}`);
+        $("llm-topup-said").textContent = "Credit added.";
+        const o = book.offers.find((x) => x.seller === t.seller); if (o) loadCredit(o);
+      } catch (err) {
+        const m = String(err.message || err);
+        if (Date.now() - t.at > 6 * 3600e3 || /already counted|not sent from|another token|does not go|nothing to|not valid|does not check/.test(m)) {
+          list = list.filter((x) => x.txid !== t.txid); toast("Top-up not counted: " + m);
+        } else if (picked && picked.seller === t.seller) {
+          $("llm-topup-said").textContent = m;
+        }
+      }
+    }
+    keepPending(list);
+    if (list.length) setTimeout(claimPending, 15000);
+  } finally { claiming = false; }
+}
+
+// --- chat ----------------------------------------------------------------------------------------------------
+function openChat(o) {
+  $("llm-chat").hidden = false;
+  $("llm-chat-who").textContent = `${o.models[0] ? o.models[0].id : ""} · ${sellerName(o)}`;
+  const c = credit[o.seller];
+  $("llm-chat-leg").hidden = !!o.free;
+  $("llm-chat-leg").innerHTML = legsOf(o).map((p) => `<option value="${esc(p.leg)}">${esc(short(p.label))}</option>`).join("");
+  const has = o.prices.find((p) => c && c.credit && c.credit[p.leg] && c.credit[p.leg].units > 0);
+  if (has) $("llm-chat-leg").value = has.leg;
+  drawLeft();
+  $("llm-chat").scrollIntoView({behavior: "smooth", block: "nearest"});
+  $("llm-input").focus();
+}
+function drawLeft() {
+  if (!picked) return;
+  const c = credit[picked.seller], leg = $("llm-chat-leg").value, p = picked.prices.find((x) => x.leg === leg);
+  $("llm-left").textContent = picked.free || (c && c.free) ? "Free" : c && c.credit && c.credit[leg] ? `${c.credit[leg].text} ${short(p && p.label)} left` : "No credit";
+}
+$("llm-chat-leg").addEventListener("change", drawLeft);
+$("llm-new-chat").addEventListener("click", () => { history = []; $("llm-msgs").innerHTML = ""; });
+
+function bubble(cls, text) {
+  const el = document.createElement("div");
+  if (cls === "me") { el.className = "llm-me"; el.textContent = text; }
+  else { el.className = "llm-it"; el.innerHTML = `<details hidden><summary>Thinking</summary><span></span></details><div></div><small></small>`; }
+  $("llm-msgs").appendChild(el); $("llm-msgs").scrollTop = 1e9; return el;
+}
+async function sendChat() {
+  const text = $("llm-input").value.trim();
+  if (!text || busy || !picked) return;
+  busy = true; $("llm-go").disabled = true; $("llm-input").value = "";
+  history.push({role: "user", content: text}); bubble("me", text);
+  const it = bubble("it"), out = it.querySelector("div"), think = it.querySelector("details"), small = it.querySelector("small");
+  let said = "", thought = "";
+  try {
+    const r = await fetch("/account/llm/chat", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({seller: picked.seller, leg: $("llm-chat-leg").value, model: picked.models[0] && picked.models[0].id, messages: history})});
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || `HTTP ${r.status}`); }
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+    for (;;) {
+      const {value, done} = await reader.read(); if (done) break;
+      buf += dec.decode(value, {stream: true});
+      let at;
+      while ((at = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, at).trim(); buf = buf.slice(at + 2);
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim(); if (data === "[DONE]") continue;
+        let ev; try { ev = JSON.parse(data); } catch (e) { continue; }
+        if (ev.error) throw new Error(ev.error.message || "failed");
+        if (ev.arcade) {
+          const a = ev.arcade, p = picked.prices.find((x) => x.leg === a.leg);
+          small.textContent = `${a.tokens_in} in · ${a.tokens_out} out · ${a.free ? "free" : a.cost_text + " " + short(p && p.label)}`;
+          if (!a.free) { credit[picked.seller] = credit[picked.seller] || {credit: {}}; credit[picked.seller].credit = credit[picked.seller].credit || {};
+            credit[picked.seller].credit[a.leg] = {units: a.left, text: a.left_text}; drawLeft(); }
+          continue;
+        }
+        for (const ch of ev.choices || []) {
+          const d = ch.delta || {};
+          if (d.reasoning_content) { thought += d.reasoning_content; think.hidden = false; think.querySelector("span").textContent = thought; }
+          if (d.content) { said += d.content; out.textContent = said.replace(/^\s+/, ""); }
+        }
+        $("llm-msgs").scrollTop = 1e9;
+      }
+    }
+    history.push({role: "assistant", content: said});
+  } catch (err) {
+    out.textContent = said || "—"; small.textContent = String(err.message || err);
+    history.pop();
+  } finally { busy = false; $("llm-go").disabled = false; draw(); }
+}
+$("llm-go").addEventListener("click", sendChat);
+$("llm-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+
+// --- API keys ------------------------------------------------------------------------------------------------
+let keys = [];
+function drawKeys() {
+  $("llm-base").textContent = book.api_base;
+  $("llm-api").hidden = !book.signed_in;
+  const on = [];
+  book.offers.forEach((o) => (o.models.length ? legsOf(o) : o.images && o.images.free ? [{leg: "free", label: "Free"}] : (o.images || {}).prices || [])
+    .concat(o.models.length && o.images && !o.images.free ? o.images.prices.filter((p) => !o.prices.some((x) => x.leg === p.leg)) : []).forEach((p) => on.push(`<option value="${esc(o.seller)}|${esc(p.leg)}">${esc(sellerName(o))} · ${esc(short(p.label))}</option>`)));
+  const keep = $("llm-key-on").value; $("llm-key-on").innerHTML = on.join(""); if (keep) $("llm-key-on").value = keep;
+  const name = (sid) => { const o = book.offers.find((x) => x.seller === sid); return o ? sellerName(o) : sid.slice(0, 10) + "…"; };
+  $("llm-keys").innerHTML = keys.length ? `<span class="h">Key</span><span class="h">Name</span><span class="h">Spends</span><span class="h">Last used</span><span></span>` +
+    keys.map((k) => `<code>…${esc(k.tail)}</code><span style="overflow-wrap:anywhere">${esc(k.name || "—")}</span><span>${esc(name(k.seller))} · ${esc(k.leg)}</span>
+      <span style="color:var(--muted)">${k.used ? new Date(k.used * 1000).toLocaleString() : "never"}</span>
+      <button type="button" class="llm-btn bad" data-drop="${esc(k.hash)}" style="height:36px">Revoke</button>`).join("") : "";
+  const model = (book.offers[0] && book.offers[0].models[0] && book.offers[0].models[0].id) || "MODEL";
+  $("llm-curl").textContent = `curl ${book.api_base}/chat/completions \\\n  -H "Authorization: Bearer sk-arcade-…" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hi"}]}'`;
+}
+async function loadKeys() { if (!book.signed_in) return; try { keys = (await getJSON("/account/llm/keys")).keys || []; } catch (e) { keys = []; } drawKeys(); }
+$("llm-key-make").addEventListener("click", async () => {
+  const [seller, leg] = ($("llm-key-on").value || "").split("|");
+  if (!leg) { toast("No seller to make a key for yet."); return; }
+  const o = book.offers.find((x) => x.seller === seller);
+  try {
+    if (o) await ensureGrant(o);
+    const got = await postJSON("/account/llm/keys/new", {seller, leg, name: $("llm-key-name").value.trim()});
+    $("llm-fresh").textContent = got.key; $("llm-fresh-box").hidden = false; $("llm-key-name").value = "";
+    loadKeys();
+  } catch (err) { toast(err.message); }
+});
+$("llm-keys").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-drop]"); if (!b) return;
+  if (window.arcadeAsk && !(await arcadeAsk("Revoke this key?", "Programs using it stop working at once.", "Revoke"))) return;
+  try { await postJSON("/account/llm/keys/drop", {hash: b.dataset.drop}); loadKeys(); } catch (err) { toast(err.message); }
+});
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-copy]"); if (!b) return;
+  navigator.clipboard.writeText($(b.dataset.copy).textContent).then(() => { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500); });
+});
+
+async function load() {
+  try { book = await getJSON("/account/llm/offers"); }
+  catch (err) { $("llm-offers").innerHTML = `<div class="llm-empty">${esc(err.message)}</div>`; return; }
+  if (picked) picked = book.offers.find((o) => o.seller === picked.seller) || null;
+  if (picPicked) picPicked = book.offers.find((o) => o.seller === picPicked.seller && o.images) || null;
+  draw();
+  book.offers.forEach(loadCredit);
+  loadKeys();
+}
+load(); claimPending();
+setInterval(() => { if (!document.hidden && !busy) getJSON("/account/llm/offers").then((b) => { book = b; if (picked) picked = b.offers.find((o) => o.seller === picked.seller) || picked; draw(); }).catch(() => {}); }, 10000);
+</script>

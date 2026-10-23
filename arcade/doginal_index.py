@@ -1973,10 +1973,30 @@ class DoginalIndex:
             lock.release()
 
     def _counts(self) -> dict:
+        """The index's totals. A walking index's (inscriptions, tokens, holders, names) are never waited for: worked out
+        on a thread of their own, and until they are, the last ones (or none, said as counting). 2026-10-22:
+        @strawberry's Dogecoin index had 52.8 million inscriptions and the count took 42 s -- every Ords tab waited
+        behind it, and the panel stopped loading."""
         kept = getattr(self, "_counts_kept", None)
         if kept and time.monotonic() - kept[0] < self.COUNTS_SECONDS:
             return kept[1]
-        walking = self.mode() == "walk" and not self.store.old_layout
+        if not (self.mode() == "walk" and not self.store.old_layout):
+            return self._count(walking=False)
+        lock = self.__dict__.setdefault("_counts_lock", threading.Lock())
+        if lock.acquire(blocking=False):
+            def count() -> None:
+                try:
+                    self._count(walking=True)
+                except Exception as exc:                       # noqa: BLE001 -- tried again next time
+                    log.warning("doginal index counts: %s", exc)
+                finally:
+                    lock.release()
+            threading.Thread(target=count, name="ord-counts", daemon=True).start()
+        if kept:
+            return kept[1]
+        return {"found": self.store.q("SELECT COALESCE(SUM(n), 0) FROM block")[0][0], "counting": True}
+
+    def _count(self, walking: bool) -> dict:
         counts = {"found": self.store.q("SELECT COALESCE(SUM(n), 0) FROM block")[0][0]}
         if walking:
             ins = self.store.q("SELECT COUNT(*), COUNT(burned), COUNT(reinscribed) FROM insc")[0]
@@ -2039,10 +2059,10 @@ class DoginalIndex:
             walk = {"next": nxt, "tip": self.tip, "left": max(0, self.tip - WALK_SETTLE - nxt + 1),
                     "inscriptions": counts.get("inscriptions", 0), "burned": counts.get("burned", 0),
                     "tokens": counts.get("tokens", 0), "holders": counts.get("holders", 0),
-                    "names": counts.get("names", {}),
+                    "names": counts.get("names", {}), "counting": bool(counts.get("counting")),
                     "rate": round(self.walk_pace(), 2), "burst": round(self.walker.rate, 2),
                     "error": self.walker.error}
-        found = self._counts()["found"]
+        found = self._counts().get("found", 0)
         kept = self.store.q("SELECT COUNT(*), COALESCE(SUM(LENGTH(blob)), 0), "
                             "COALESCE(SUM(src = ''), 0) FROM notes")[0]
         covered = sum(1 for c in range(ready) if c in per)

@@ -41,7 +41,7 @@
     var CHAIN = {network: "{{chain.network}}",
                  version: {{chain.params.pubkeyhash_version}}};
     var doors = {contacts: 'viewer', storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
-                 realtime: '/realtime/', escrow: '/r/escrow/', state: '/r/state/'};
+                 realtime: '/realtime/', escrow: '/r/escrow/', state: '/r/state/', llm: 'viewer'};
 
     // Realtime rooms (arcade/web/realtime.py, templates/realtime.js): this page
     // joins on the frame's behalf, holds the token and the stream, and passes
@@ -284,10 +284,11 @@
     // size and rate limits on every node, old ones included. STUN comes from /realtime/ice (nodes first, then a
     // public one); there is no relay unless the game's builder pays for one, so a pair that cannot connect
     // directly carries that link over the room instead, as often as the room allows (state 'room').
-    var RTC = '\u001farcade-rtc:', FAST_WAIT = 12000, FAST_MAX = 16384, FAST_PEERS = 15, RTC_PIECE = 300;
+    var RTC = '\u001farcade-rtc:', FAST_WAIT = 12000, FAST_MAX = 16384, FAST_PEERS = 19, RTC_PIECE = 300;
     var fastIce = null;
     function fastServers(){
-      if (!fastIce) fastIce = fetch('/realtime/ice', {cache: 'no-store'}).then(function(r){ return r.json(); })
+      // Which app asks: the operator chooses the apps their relay serves (realtime.py relay_for, 2026-10-23).
+      if (!fastIce) fastIce = fetch('/realtime/ice?app=' + encodeURIComponent(here), {cache: 'no-store'}).then(function(r){ return r.json(); })
         .then(function(j){ return (j && j.iceServers) || []; })
         .catch(function(){ fastIce = null; return []; });
       return fastIce;
@@ -299,6 +300,7 @@
     }
     function fastStop(h){
       if (!h || !h.fast) return;
+      mediaStop(h, true);
       for (var id in h.fast.peers) fastDrop(h, id, true);
       clearInterval(h.fast.pump);
       h.fast = null;
@@ -320,6 +322,7 @@
       var peer = h.fast && h.fast.peers[id];
       if (!peer) return;
       clearTimeout(peer.timer);
+      mediaGone(h, peer);
       try { if (peer.pc) peer.pc.close(); } catch (err) {}
       delete h.fast.peers[id];
     }
@@ -333,8 +336,10 @@
         if (!h.fast || h.fast.peers[peer.p.id] !== peer) throw new Error('gone');
         try { if (peer.pc) peer.pc.close(); } catch (err) {}
         var pc = peer.pc = new RTCPeerConnection({iceServers: servers});
+        pc._relay = servers.some(function(s){ return !!s.username; });
         peer.u = pc.createDataChannel('u', {negotiated: true, id: 0, ordered: false, maxRetransmits: 0});
         peer.r = pc.createDataChannel('r', {negotiated: true, id: 1, ordered: true});
+        mediaPc(name, h, peer, pc);
         [peer.u, peer.r].forEach(function(dc){
           dc.onopen = function(){
             if (peer.pc !== pc) return;
@@ -356,27 +361,44 @@
         return pc;
       });
     }
+    // Until gathering is complete, or 2.5 s -- or, when a relay was handed out, until it has answered too (up to
+    // 6 s): a home behind Starlink's shared IPv4 is reached only through it (2026-10-23).
     function fastGathered(pc){
       return new Promise(function(done){
         if (pc.iceGatheringState === 'complete') return done();
-        var t = setTimeout(done, 2500);
+        var relayed = false, start = Date.now(), wantsRelay = !!pc._relay;
+        var finish = function(){ clearInterval(t); done(); };
+        var t = setInterval(function(){
+          var waited = Date.now() - start;
+          if (waited >= 6000 || (waited >= 2500 && (!wantsRelay || relayed))) finish();
+        }, 100);
+        pc.addEventListener('icecandidate', function(e){
+          if (e.candidate && / typ relay/.test(e.candidate.candidate)) relayed = true;
+        });
         pc.addEventListener('icegatheringstatechange', function(){
-          if (pc.iceGatheringState === 'complete') { clearTimeout(t); done(); }
+          if (pc.iceGatheringState === 'complete') finish();
         });
       });
     }
     // The description boiled down to what the other side needs (a full one is about 1 KB, the room takes 512 B):
-    // ICE user and password, the DTLS fingerprint and role, and the UDP candidates.
+    // ICE user and password, the DTLS fingerprint and role, and the UDP candidates -- at most 10, the relay's and
+    // the public ones first, so a machine with many local addresses never crowds out the ones another home can use.
+    var SDP_KEEP = {r: 3, s: 4, p: 2, h: 10}, SDP_MOST = 10;
     function sdpPack(sdp, kind){
-      var out = {t: kind, c: []};
+      var out = {t: kind, c: []}, found = {r: [], s: [], p: [], h: []};
       sdp.split(/\r?\n/).forEach(function(l){
         var m;
         if ((m = /^a=ice-ufrag:(.+)$/.exec(l))) out.u = m[1];
         else if ((m = /^a=ice-pwd:(.+)$/.exec(l))) out.p = m[1];
         else if ((m = /^a=fingerprint:sha-256 (.+)$/i.exec(l))) out.f = m[1].replace(/:/g, '');
         else if ((m = /^a=setup:(\w+)$/.exec(l))) out.s = m[1];
-        else if ((m = /^a=candidate:\S+ 1 udp \d+ (\S+) (\d+) typ (host|srflx|prflx|relay)/i.exec(l))
-                 && out.c.length < 8) out.c.push(m[1] + ' ' + m[2] + ' ' + m[3][0]);
+        else if ((m = /^a=candidate:\S+ 1 udp \d+ (\S+) (\d+) typ (host|srflx|prflx|relay)/i.exec(l))) {
+          var k = m[3][0].toLowerCase();
+          if (found[k].length < SDP_KEEP[k]) found[k].push(m[1] + ' ' + m[2] + ' ' + k);
+        }
+      });
+      ['r', 's', 'p', 'h'].forEach(function(k){
+        found[k].forEach(function(c){ if (out.c.length < SDP_MOST) out.c.push(c); });
       });
       return out;
     }
@@ -463,7 +485,7 @@
       var key = p.id + '/' + msg.k, got = h.fast.parts[key] || (h.fast.parts[key] = []);
       got[msg.i | 0] = msg.d;
       var n = msg.n | 0;
-      if (n < 1 || n > 8) { delete h.fast.parts[key]; return; }
+      if (n < 1 || n > 8) { delete h.fast.parts[key]; return; }   // 8 x RTC_PIECE: room for 10 candidates
       for (var i = 0; i < n; i++) if (got[i] == null) return;
       delete h.fast.parts[key];
       var o; try { o = JSON.parse(got.join('')); } catch (err) { return; }
@@ -490,6 +512,389 @@
         else h.fast.latest = data;
       }
     }
+    // CAMERA & MICROPHONE (2026-10-22: a game card can be allowed the camera and microphone "in the same way
+    // that they allow an app Wallet access"; base.html, CAMERA & MICROPHONE, PER GAME). A sandboxed game has no origin,
+    // and getUserMedia refuses a frame without one whatever its allow= says (tested in Chromium), so THIS page opens
+    // the camera, puts its tracks on the fast lane's connections and draws every picture itself, in a layer over the
+    // game's frame, where the game asks (room.media.place). Nothing goes anywhere until the game names a player
+    // (share); nobody's sound plays until the game names them (hear): a room's name can be guessed, and whoever
+    // joins it must not get a picture or a voice by being there. A pair renegotiates over a channel of its own
+    // (negotiated id 2) once it is direct -- whole descriptions, which the room could never carry -- so media is
+    // direct only (or through the builder's leased relay): it never falls back to the room. While the camera or
+    // microphone is open the viewer shows so, with a Stop button the game cannot cover.
+    var MEDIA_TILES = 16, mediaLayerEl = null, mediaPillEl = null, mediaNoteEl = null;
+    function mediaEvent(name, h, ev){
+      ev.room = name;
+      h.frame.postMessage({arcade: 'realtime', event: ev}, '*');
+    }
+    function mediaOf(h){
+      return h.media || (h.media = {stream: null, video: false, audio: false, share: {}, hear: {}, place: {},
+                                    tiles: {}, muted: {video: false, audio: false}});
+    }
+    function mediaPc(name, h, peer, pc){
+      var polite = h.me.id > peer.p.id;                    // the one that did not offer the first time gives way
+      peer.making = false; peer.ignoring = false; peer.senders = [];
+      peer.remote = null;
+      var mc = peer.m = pc.createDataChannel('m', {negotiated: true, id: 2, ordered: true});
+      mc.onopen = function(){ if (peer.pc === pc) mediaPeerUp(name, h, peer); };
+      pc.onnegotiationneeded = function(){
+        if (peer.pc !== pc || mc.readyState !== 'open') return;    // the first time: the fast lane's own offer
+        peer.making = true;
+        pc.setLocalDescription()
+          .then(function(){ mc.send(JSON.stringify({d: pc.localDescription})); })
+          .catch(function(){})
+          .then(function(){ peer.making = false; });
+      };
+      mc.onmessage = function(ev){
+        if (peer.pc !== pc) return;
+        var msg; try { msg = JSON.parse(ev.data); } catch (err) { return; }
+        var d = msg && msg.d;
+        if (!d || (d.type !== 'offer' && d.type !== 'answer') || typeof d.sdp !== 'string') return;
+        var collision = d.type === 'offer' && (peer.making || pc.signalingState !== 'stable');
+        peer.ignoring = !polite && collision;
+        if (peer.ignoring) return;
+        pc.setRemoteDescription(d).then(function(){
+          if (d.type !== 'offer') return;
+          return pc.setLocalDescription().then(function(){ mc.send(JSON.stringify({d: pc.localDescription})); });
+        }).catch(function(){});
+      };
+      pc.ontrack = function(ev){
+        if (peer.pc !== pc) return;
+        var stream = peer.remote || (peer.remote = new MediaStream());
+        mediaOf(h);
+        mediaWatch();
+        if (stream.getTracks().indexOf(ev.track) < 0) stream.addTrack(ev.track);
+        var said = function(){ mediaRemoteSaid(name, h, peer); };
+        ev.track.onunmute = said;
+        ev.track.onmute = said;
+        ev.track.onended = function(){ stream.removeTrack(ev.track); said(); };
+        if (ev.streams && ev.streams[0]) ev.streams[0].onremovetrack = function(e){ stream.removeTrack(e.track); said(); };
+        said();
+      };
+    }
+    // What the game is told of a player's picture and sound: 'media' {video, audio} while they send, 'media-off'.
+    // Worked out again from the tracks themselves, never only from their events (2026-10-23, the Cul-de-sac session:
+    // with three in a call a picture played in the viewer and its game never heard 'media' -- a track that arrived
+    // muted and whose unmute was missed). Also on every picture's loadeddata and resize, and once a second (mediaCheck).
+    function mediaRemoteSaid(name, h, peer, quiet){
+      var tile = h.media && h.media.tiles[peer.p.id];
+      var tracks = peer.remote ? peer.remote.getTracks().filter(function(t){
+        return t.readyState === 'live' && (!t.muted || (t.kind === 'video' && tile && tile.videoWidth > 0));
+      }) : [];
+      var video = tracks.some(function(t){ return t.kind === 'video'; }), audio = tracks.some(function(t){ return t.kind === 'audio'; });
+      var was = peer.said || '', now = video || audio ? (video ? 'v' : '') + (audio ? 'a' : '') : '';
+      if (was === now) { if (!quiet) mediaDraw(h); return; }
+      peer.said = now;
+      if (now) mediaEvent(name, h, {type: 'media', member: peer.p, video: video, audio: audio});
+      else mediaEvent(name, h, {type: 'media-off', member: peer.p});
+      mediaDraw(h);
+    }
+    var mediaChecking = null;
+    function mediaCheck(){
+      var any = false;
+      for (var k in rt) {
+        var h = rt[k];
+        if (!h.fast || !h.media) continue;
+        for (var id in h.fast.peers) {
+          var pr = h.fast.peers[id];
+          if (pr.remote) { any = true; mediaRemoteSaid(k, h, pr, true); }
+        }
+      }
+      if (!any && mediaChecking) { clearInterval(mediaChecking); mediaChecking = null; }
+    }
+    function mediaWatch(){ if (!mediaChecking) mediaChecking = setInterval(mediaCheck, 1000); }
+    // A pair connected (again, after a dropped link: a new connection): what this player shares with them goes on it.
+    function mediaPeerUp(name, h, peer){
+      var md = h.media;
+      if (md && md.stream && md.share[peer.p.id]) mediaAttach(h, peer);
+    }
+    // What goes to this player now: the tracks of the kinds shared with them (2026-10-22: a call of up to
+    // 20, where everybody's voice goes to everybody and each sees only a few pictures; and "if somebody doesn't want
+    // to share their video, they just want to share their audio, that's fine").
+    function mediaAttach(h, peer){
+      var md = h.media;
+      if (!peer.pc || !md) return;
+      var kinds = md.share[peer.p.id] || {}, want = md.stream ? md.stream.getTracks().filter(function(t){
+        return kinds[t.kind];
+      }) : [];
+      var free = want.filter(function(t){ return !(peer.senders || []).some(function(s){ return s.track === t; }); });
+      peer.senders = (peer.senders || []).filter(function(s){
+        if (s.track && want.indexOf(s.track) >= 0) return true;
+        // A new track of the same kind (start() again): swapped in place, nothing renegotiated, no gap.
+        var same = free.filter(function(t){ return s.track && t.kind === s.track.kind; })[0];
+        if (same) { free.splice(free.indexOf(same), 1); s.replaceTrack(same).catch(function(){}); s._t = same; return true; }
+        try { peer.pc.removeTrack(s); } catch (err) {}
+        return false;
+      });
+      want.forEach(function(t){
+        if (!peer.senders.some(function(s){ return s.track === t || s._t === t; })) peer.senders.push(peer.pc.addTrack(t, md.stream));
+      });
+    }
+    function mediaDetach(peer){
+      (peer.senders || []).forEach(function(s){ try { peer.pc.removeTrack(s); } catch (err) {} });
+      peer.senders = [];
+    }
+    function mediaGone(h, peer){
+      var md = h.media;
+      if (peer.said) { peer.said = ''; mediaEvent(rtName(h), h, {type: 'media-off', member: peer.p}); }
+      peer.remote = null;
+      if (md) { delete md.share[peer.p.id]; delete md.hear[peer.p.id]; delete md.place[peer.p.id]; mediaDraw(h); }
+    }
+    function rtName(h){ for (var k in rt) if (rt[k] === h) return k; return ''; }
+    // Camera and microphone off, and every share with them (quiet: the room itself is going).
+    function mediaStop(h, quiet, silent){
+      var md = h && h.media;
+      if (!md) return;
+      if (h.fast) for (var id in h.fast.peers) mediaDetach(h.fast.peers[id]);
+      if (md.stream) md.stream.getTracks().forEach(function(t){ t.stop(); });
+      var had = !!md.stream;
+      md.stream = null; md.video = md.audio = false; md.share = {};
+      if (quiet) { h.media = null; mediaDraw(h, true); }
+      else { mediaDraw(h); if (had && !silent) mediaEvent(rtName(h), h, {type: 'media-state', state: 'off'}); }
+    }
+    function mediaAnyOn(){ for (var k in rt) if (rt[k].media && rt[k].media.stream) return rt[k]; return null; }
+    // The card's switch: on, or (a page that is no game, with no card to tick) asked here, as Wallet access is.
+    function mediaAllowed(){
+      if (arcadeMediaAllowed(here)) return Promise.resolve(true);
+      return arcadeGameOf(here).then(function(g){
+        if (g.game) {
+          if (arcadeMediaOn(here, g)) return true;
+          arcadeMediaUsed(here);
+          if (g.opens) arcadeMediaUsed(g.opens);
+          mediaNote(g);
+          return false;
+        }
+        return arcadeMediaAsk(here, gameName, makerName, maker);
+      });
+    }
+    function mediaDoor(name, h, m, answer){
+      var md = mediaOf(h), peer = h.fast && h.fast.peers[String(m.peer || '')];
+      if (!h.fast) { answer({ok: false, error: 'media needs a room joined with {fast: true}'}); return; }
+      if (m.do === 'start') {
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+          answer({ok: false, error: 'denied', why: 'this browser has no camera or microphone here'}); return;
+        }
+        var want = {video: !!m.video, audio: !!m.audio};
+        if (!want.video && !want.audio) { answer({ok: false, error: 'ask for video, audio or both'}); return; }
+        mediaAllowed().then(function(yes){
+          if (!yes) { answer({ok: false, error: 'off', why: 'Camera & microphone is off on this app’s card'}); return; }
+          return navigator.mediaDevices.getUserMedia({
+            // No shape forced: a phone's camera stays portrait, a PC's landscape (2026-10-23: "All should
+            // maintain their aspect ratios"); only capped, for a call of up to 20.
+            video: want.video ? {width: {max: 1280}, height: {max: 1280}} : false, audio: want.audio
+          }).then(function(stream){
+            if (rt[name] !== h) { stream.getTracks().forEach(function(t){ t.stop(); }); throw new Error('left the room'); }
+            var old = md.stream;                            // a second start: the new tracks replace the old
+            md.stream = stream;
+            md.video = stream.getVideoTracks().length > 0; md.audio = stream.getAudioTracks().length > 0;
+            stream.getVideoTracks().forEach(function(t){ t.enabled = !md.muted.video; });
+            stream.getAudioTracks().forEach(function(t){ t.enabled = !md.muted.audio; });
+            if (h.fast) Object.keys(md.share).forEach(function(id){
+              var pr = h.fast.peers[id];
+              if (pr) mediaAttach(h, pr);
+            });
+            if (old && old !== stream) old.getTracks().forEach(function(t){ t.stop(); });
+            mediaDraw(h);
+            mediaEvent(name, h, {type: 'media-state', state: 'on'});
+            answer({ok: true, video: md.video, audio: md.audio});
+          }, function(err){
+            mediaEvent(name, h, {type: 'media-state', state: 'denied'});
+            answer({ok: false, error: 'denied', why: String((err && (err.name || err.message)) || err)});
+          });
+        }).catch(function(err){ answer({ok: false, error: String((err && err.message) || err || 'refused')}); });
+        return;
+      }
+      if (m.do === 'stop') { mediaStop(h); answer({ok: true}); return; }
+      if (m.do === 'share') {
+        if (!peer) { answer({ok: false, error: 'no such player'}); return; }
+        // on: true (both kinds), false (neither) or {video, audio}
+        var kinds = m.on && typeof m.on === 'object' ? {video: !!m.on.video, audio: !!m.on.audio}
+                  : {video: !!m.on, audio: !!m.on};
+        if (!kinds.video && !kinds.audio) { delete md.share[peer.p.id]; mediaDetach(peer); answer({ok: true}); return; }
+        if (peer.state !== 'direct' || !peer.m || peer.m.readyState !== 'open') {
+          answer({ok: false, error: 'not direct'}); return;
+        }
+        md.share[peer.p.id] = kinds;
+        mediaAttach(h, peer);
+        answer({ok: true, sending: !!md.stream});
+        return;
+      }
+      if (m.do === 'hear') {
+        if (!peer) { answer({ok: false, error: 'no such player'}); return; }
+        if (m.on) md.hear[peer.p.id] = true; else delete md.hear[peer.p.id];
+        mediaDraw(h); answer({ok: true}); return;
+      }
+      if (m.do === 'place') {
+        var key = m.who === 'me' ? 'me' : String(m.who || '');
+        if (key !== 'me' && !(h.fast.peers[key])) { answer({ok: false, error: 'no such player'}); return; }
+        var r = m.rect;
+        if (r == null) delete md.place[key];
+        else {
+          var n = function(v){ v = Number(v); return isFinite(v) ? v : 0; };
+          if (!md.place[key] && Object.keys(md.place).length >= MEDIA_TILES) { answer({ok: false, error: 'too many pictures'}); return; }
+          md.place[key] = {x: n(r.x), y: n(r.y), w: Math.max(0, n(r.w)), h: Math.max(0, n(r.h)),
+                           fit: m.fit === 'contain' ? 'contain' : 'cover', mirror: !!m.mirror};
+        }
+        mediaDraw(h); answer({ok: true}); return;
+      }
+      if (m.do === 'mute') {
+        if (typeof m.video === 'boolean') md.muted.video = m.video;
+        if (typeof m.audio === 'boolean') md.muted.audio = m.audio;
+        if (md.stream) {
+          md.stream.getVideoTracks().forEach(function(t){ t.enabled = !md.muted.video; });
+          md.stream.getAudioTracks().forEach(function(t){ t.enabled = !md.muted.audio; });
+        }
+        mediaDraw(h); answer({ok: true, muted: md.muted}); return;
+      }
+      answer({ok: false, error: 'media ops are start, stop, share, hear, place and mute'});
+    }
+    // The layer over the game's frame: the pictures where the game placed them, every voice the game hears (a
+    // picture not placed still plays its sound), and the on-air pill with its Stop.
+    function mediaLayer(){
+      if (mediaLayerEl) return mediaLayerEl;
+      var el = mediaLayerEl = document.createElement('div');
+      el.className = 'arcade-media-layer';
+      el.style.cssText = 'position:fixed;pointer-events:none;overflow:hidden;z-index:2147483000;left:0;top:0;width:0;height:0';
+      document.body.appendChild(el);
+      var fit = function(){
+        if (!sandbox) return;
+        var b = sandbox.getBoundingClientRect();
+        el.style.left = b.left + 'px'; el.style.top = b.top + 'px';
+        el.style.width = b.width + 'px'; el.style.height = b.height + 'px';
+        el.hidden = !!sandbox.hidden;
+      };
+      window.addEventListener('resize', fit);
+      window.addEventListener('scroll', fit, true);
+      if (typeof ResizeObserver === 'function' && sandbox) new ResizeObserver(fit).observe(sandbox);
+      el._fit = fit;
+      setInterval(fit, 1000);                         // a page that moves the frame without a resize or a scroll
+      fit();
+      return el;
+    }
+    function mediaTile(md, key){
+      var v = md.tiles[key];
+      if (!v) {
+        v = md.tiles[key] = document.createElement('video');
+        v.autoplay = true; v.playsInline = true; v.setAttribute('playsinline', '');
+        v.dataset.media = key;
+        v.style.cssText = 'position:absolute;background:#000;border-radius:6px;display:none';
+        v.addEventListener('loadeddata', mediaCheck);
+        v.addEventListener('resize', mediaCheck);
+        mediaLayer().appendChild(v);
+      }
+      return v;
+    }
+    function mediaDraw(h, gone){
+      var md = h.media || {tiles: {}};
+      var tiles = (gone ? h.mediaTiles : md.tiles) || {};
+      var keep = {};
+      if (!gone && h.media) {
+        if (md.stream) keep.me = md.stream;
+        if (h.fast) for (var id in h.fast.peers) {
+          var pr = h.fast.peers[id];
+          if (pr.remote && pr.remote.getTracks().length) keep[id] = pr.remote;
+        }
+      }
+      for (var k in tiles) if (!keep[k]) {
+        try { tiles[k].srcObject = null; tiles[k].remove(); } catch (err) {}
+        delete tiles[k];
+      }
+      if (h.media) h.mediaTiles = md.tiles;
+      Object.keys(keep).forEach(function(key){
+        var v = mediaTile(md, key), at = md.place[key];
+        if (v.srcObject !== keep[key]) { v.srcObject = keep[key]; v.play().catch(function(){}); }
+        v.muted = key === 'me' || !md.hear[key];       // your own sound never; theirs once the game hears them
+        if (at && at.w > 0 && at.h > 0) {
+          v.style.display = 'block';
+          v.style.left = at.x + 'px'; v.style.top = at.y + 'px';
+          v.style.width = at.w + 'px'; v.style.height = at.h + 'px';
+          v.style.objectFit = at.fit;                 // cover: centre-cropped; contain: black bars; never stretched
+          v.style.objectPosition = 'center';
+          v.style.transform = at.mirror ? 'scaleX(-1)' : '';
+        } else v.style.display = 'none';
+      });
+      mediaPill();
+    }
+    function mediaPill(){
+      var on = mediaAnyOn();
+      if (!on) { if (mediaPillEl) mediaPillEl.hidden = true; return; }
+      if (!mediaPillEl) {
+        var el = mediaPillEl = document.createElement('div');
+        el.className = 'arcade-media-pill';
+        el.setAttribute('role', 'status');
+        el.style.cssText = 'position:absolute;right:8px;top:8px;z-index:2;pointer-events:auto;display:flex;gap:8px;'
+          + 'align-items:center;padding:4px 6px 4px 10px;border-radius:999px;background:rgba(20,20,20,.82);color:#fff;'
+          + 'font:600 13px/1.2 system-ui,sans-serif;box-shadow:0 1px 4px rgba(0,0,0,.4)';
+        var dot = document.createElement('span'); dot.textContent = '●'; dot.style.color = '#ff4d4d';
+        var words = document.createElement('span'); words.className = 'arcade-media-words';
+        var stop = document.createElement('button'); stop.type = 'button'; stop.textContent = 'Stop';
+        stop.className = 'arcade-media-stop';
+        stop.style.cssText = 'border:0;border-radius:999px;padding:3px 10px;background:#fff;color:#111;font:inherit;cursor:pointer';
+        stop.onclick = function(){ for (var k in rt) if (rt[k].media) mediaStop(rt[k]); };
+        el.append(dot, words, stop);
+        mediaLayer().appendChild(el);
+      }
+      var md = on.media, what = md.video && md.audio ? 'Camera and microphone on' : md.video ? 'Camera on' : 'Microphone on';
+      if (md.muted.video && md.muted.audio) what += ' (muted)';
+      mediaPillEl.querySelector('.arcade-media-words').textContent = what;
+      mediaPillEl.hidden = false;
+    }
+    // A game whose card's switch is off asked for the camera: said over its frame, pointing to the card.
+    function mediaNote(g){
+      var layer = mediaLayer();
+      if (mediaNoteEl) mediaNoteEl.remove();
+      var el = mediaNoteEl = document.createElement('div');
+      el.className = 'panel arcade-media-note';
+      el.setAttribute('role', 'alert');
+      el.style.cssText = 'position:absolute;left:50%;top:16px;transform:translateX(-50%);max-width:min(520px,90%);'
+        + 'pointer-events:auto;padding:12px 14px;text-align:center;z-index:3';
+      var p = document.createElement('p'); p.style.margin = '0 0 8px';
+      p.textContent = '\u{1F3A5} ' + ((g && g.name) || 'This app') + ' wants your camera and microphone. '
+        + 'Turn on Camera & microphone on its card to allow it.';
+      var a = document.createElement('a'); a.className = 'btn small';
+      a.href = '/apps#game-' + ((g && g.card) || here); a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = 'Open its card';
+      var x = document.createElement('button'); x.type = 'button'; x.className = 'btn small'; x.textContent = 'Not now';
+      x.style.marginLeft = '6px';
+      x.onclick = function(){ el.remove(); mediaNoteEl = null; };
+      el.append(p, a, x);
+      layer.appendChild(el);
+    }
+    // Turned on on the card (in another tab): the note goes.
+    window.addEventListener('storage', function(e){
+      if (mediaNoteEl && e.key && e.key.indexOf(ARCADE_MEDIA) === 0 && e.newValue === 'yes') { mediaNoteEl.remove(); mediaNoteEl = null; }
+    });
+    // RINGING (arcade/ring.py): the app asks to ring an address; the viewer adds who is ringing (the player's own
+    // certificate, as a realtime join proves it) and WHICH app -- this frame's page, never what the page says -- and
+    // the node passes it on. Whether it wakes anybody is the recipient's node's to decide (their switch, their book).
+    function ringDoor(m, answer){
+      if (viewer !== 'account') { answer({ok: false, error: 'sign in to ring anybody'}); return; }
+      var to = String(m.to || '').trim();
+      if (!to) { answer({ok: false, error: 'ring whom?'}); return; }
+      fetch('/realtime/hello', {cache: 'no-store'}).then(function(r){ return r.json(); })
+        .then(function(hello){ return realtimeProof(hello, ''); })
+        .then(function(proof){
+          if (!proof) throw new Error('unlock your wallet: a ring says who you are');
+          return fetch('/account/ring', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            credentials: 'same-origin', body: JSON.stringify({to: to, app: here, line: String(m.line || ''),
+              link: String(m.link || ''), sig: proof.sig, expires: proof.expires})});
+        })
+        .then(function(r){ return r.json(); })
+        .then(function(j){ answer(j.ok ? {ok: true, rung: !!j.rung, why: j.why || ''} : {ok: false, error: j.error || 'refused'}); })
+        .catch(function(err){ answer({ok: false, error: String((err && err.message) || err || 'refused')}); });
+    }
+    // The ring a tapped notification opened this page with (?ring=), for this app only.
+    function ringedDoor(answer){
+      var id = '';
+      try { id = new URLSearchParams(location.search).get('ring') || ''; } catch (err) {}
+      if (!/^[0-9a-f]{16}$/.test(id) || viewer !== 'account') { answer({ok: true, ring: null}); return; }
+      fetch('/account/ring/' + id, {cache: 'no-store', credentials: 'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+          answer({ok: true, ring: j.ok && j.app === here
+            ? {from: j.from, tag: j.tag || '', link: j.link || '', line: j.line || '', at: j.at} : null});
+        }).catch(function(){ answer({ok: true, ring: null}); });
+    }
     function realtimeDoor(m, answer, frame){
       var name = String(m.room || '');
       if (m.op === 'join') {
@@ -498,15 +903,18 @@
           if (j.ok && j.online === false && !j.token) { answer(j); return; }
           if (!j.ok) { answer({ok: false, error: j.error || 'refused'}); return; }
           var h = realtimeOpen(name, frame, j, game, !!m.fast);
-          answer({ok: true, online: true, me: h.me, members: j.members, fast: !!h.fast});
+          answer({ok: true, online: true, me: h.me, members: j.members, fast: !!h.fast, media: !!h.fast});
         }).catch(function(err){
           answer({ok: false, error: String((err && err.message) || err || 'refused')});
         });
         return;
       }
+      if (m.op === 'ring') { ringDoor(m, answer); return; }
+      if (m.op === 'ringed') { ringedDoor(answer); return; }
       var held = rt[name];
       if (m.op === 'fast') { if (held) fastSend(held, m); return; }   // many a second: never answered
       if (!held) { answer({ok: false, error: 'join the room first'}); return; }
+      if (m.op === 'media') { mediaDoor(name, held, m, answer); return; }
       if (m.op === 'send') {
         realtimePost('/realtime/send', {token: held.token, data: String(m.data || '')}, held.base)
           .then(function(j){
@@ -523,7 +931,7 @@
         realtimePost('/realtime/leave', {token: held.token}, held.base).catch(function(){});
         answer({ok: true});
       } else {
-        answer({ok: false, error: 'realtime ops are join, send and leave'});
+        answer({ok: false, error: 'realtime ops are join, send, media and leave'});
       }
     }
     // In-game trades (arcade.swap.trade, templates/swap.js). Game-agnostic: a
@@ -922,22 +1330,157 @@
       var op = m.op || 'list';
       if (op === 'add' || op === 'remove') { contactsChange(op, m, answer); return; }
       if (op !== 'list') { answer({ok: false, error: 'contacts: op is list, add or remove'}); return; }
-      if (viewer !== 'account') { answer({ok: true, contacts: []}); return; }
-      var slot = 'arcade.contacts.allow:' + here, said = null;
-      try { said = localStorage.getItem(slot); } catch (err) {}
-      var asked = said === 'yes' ? Promise.resolve(true) : said === 'no' ? Promise.resolve(false)
-        : (contactsCards++, arcadeAsk('Let this game see your contacts?',
-            'It will get the names and addresses in your address book, and nothing else of it. '
-            + 'A game can send what it gets to its own server: only say yes to a game you trust. '
-            + 'This browser remembers your answer for this game.', 'Allow'))
-          .then(function(yes){ contactsCards--; try { localStorage.setItem(slot, yes ? 'yes' : 'no'); } catch (err) {} return !!yes; });
+      // Empty, and why (the Cul-de-sac session 2026-10-23): 'operator' (the node's own wallet view has no book),
+      // 'guest' (not signed in), 'off' (the app's Contacts switch is off), 'no' (a page with no card, told no).
+      if (viewer !== 'account') { answer({ok: true, contacts: [], why: viewer === 'wallet' ? 'operator' : 'guest'}); return; }
+      if (typeof ARCADE_SIGNED !== 'undefined' && !ARCADE_SIGNED) { answer({ok: true, contacts: [], why: 'guest'}); return; }
+      var asked = arcadeContactsAllowed(here) ? Promise.resolve(true) : arcadeGameOf(here).then(function(g){
+        // An app with a card: its Contacts switch decides, and nothing is asked here (2026-10-23: "Allow
+        // access to Contacts should be another box on the card"). Off: the card shows the switch from now on.
+        if (g.game) {
+          if (arcadeContactsOn(here, g)) return true;
+          arcadeContactsUsed(here);
+          if (g.opens) arcadeContactsUsed(g.opens);
+          return 'off';
+        }
+        // A page with no card to tick asks, once a visit (a 'no' is not kept: it can say yes next time).
+        contactsCards++;
+        return arcadeContactsAsk(here, gameName, makerName, maker)
+          .then(function(yes){ contactsCards--; return yes || 'no'; });
+      });
       asked.then(function(yes){
-        if (!yes) { answer({ok: true, contacts: []}); return; }
+        if (yes !== true) { answer({ok: true, contacts: [], why: yes}); return; }
         return import('/messaging.js').then(function(mail){ return mail.book(); }).then(function(all){
           answer({ok: true, contacts: (all || []).filter(function(c){ return c && c.address; })
                   .map(function(c){ return {address: c.address, tag: c.tag || ''}; })});
         });
       }).catch(function(){ answer({ok: true, contacts: []}); });
+    }
+
+    // arcade.llm (arcade/llm.py, 2026-10-23: apps and players on every arcade buy model tokens). The signed-in
+    // player pays from the credit they hold with a seller (Exchange -> LLM); a page is let use it only after the
+    // player says yes once in this browser. Pieces of the reply go back to the frame as they are written
+    // ({part: true, delta}), then the whole answer.
+    var LLM_OK = 'arcade.llm.ok:';
+    function llmJSON(url, body){
+      return fetch(url, body ? {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify(body)} : {credentials: 'same-origin', cache: 'no-store'})
+        .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){
+          if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status)); return j; }); });
+    }
+    function llmGrant(o){
+      if (o.here || o.granted) return Promise.resolve();
+      return llmJSON('/account/llm/grant?seller=' + encodeURIComponent(o.seller)).then(function(said){
+        if (said.ok) return;
+        var net = said.sign.chain.network;
+        return import('/wallet.js').then(function(w){
+          return w.opened(said.sign.chain).then(function(k){
+            return k || arcadeKeys(said.sign.chain, 'To use another arcade\'s model, your wallet signs who you are, once a month.');
+          });
+        }).then(function(keys){
+          if (!keys || !keys.on || !keys.on[net]) throw new Error('unlock your wallet first');
+          return import('/coins.js').then(function(coins){ return coins.signMessage(keys.on[net].key, said.sign.message, said.sign.magic); });
+        }).then(function(sig){ return llmJSON('/account/llm/grant', {seller: o.seller, expires: said.sign.expires, sig: sig}); });
+      });
+    }
+    function llmPick(book, req){
+      var offers = book.offers || [];
+      var named = offers.filter(function(o){ return !req.seller || o.seller === req.seller || (req.seller === 'here' && o.here); });
+      if (!named.length) return Promise.reject(new Error(offers.length ? 'that seller sells no model now' : 'no arcade sells a model right now'));
+      // The seller and coin the player has credit with, this arcade's own first; else the first named.
+      var tries = named.filter(function(o){ return o.here || o.granted || o.free; });
+      function next(i){
+        if (i >= tries.length) return Promise.resolve({o: named[0], leg: req.leg || (named[0].free ? 'free' : named[0].prices[0].leg)});
+        var o = tries[i];
+        if (o.free) return Promise.resolve({o: o, leg: 'free'});
+        return llmJSON('/account/llm/balance?seller=' + encodeURIComponent(o.seller)).then(function(b){
+          if (b.free) return {o: o, leg: req.leg || (o.prices[0] ? o.prices[0].leg : 'free')};
+          var leg = req.leg || (o.prices.find(function(p){ return b.credit && b.credit[p.leg] && b.credit[p.leg].units > 0; }) || {}).leg;
+          return leg ? {o: o, leg: leg} : next(i + 1);
+        }, function(){ return next(i + 1); });
+      }
+      return next(0);
+    }
+    function llmDoor(m, answer, source){
+      var op = m.op || 'chat';
+      if (op === 'offers') {
+        llmJSON('/account/llm/offers').then(function(b){
+          answer({ok: true, offers: (b.offers || []).map(function(o){
+            return {seller: o.seller, here: o.here, free: !!o.free, name: o.name, tag: o.tag, models: o.models, prices: o.prices.map(function(p){
+              return {leg: p.leg, label: p.label, in: p.in, out: p.out}; }), max_out: o.max_out}; })});
+        }).catch(function(err){ answer({ok: false, error: String(err.message || err)}); });
+        return;
+      }
+      if (op !== 'chat' && op !== 'image') { answer({ok: false, error: 'llm: op is offers, chat or image'}); return; }
+      if (viewer !== 'account' || (typeof ARCADE_SIGNED !== 'undefined' && !ARCADE_SIGNED)) {
+        answer({ok: false, error: 'sign in first: the model is paid from your credit'}); return;
+      }
+      var req = (m.request && typeof m.request === 'object') ? m.request : {};
+      var ok;
+      try { ok = localStorage.getItem(LLM_OK + here) === '1'; } catch (err) { ok = false; }
+      var asked = ok ? Promise.resolve(true) : arcadeAsk((gameName ? '"' + String(gameName).slice(0, 60) + '"' : 'This page') + ' wants to use an AI model',
+        'Each reply is paid from the credit you hold with a seller on the Exchange\'s LLM tab. Allow it for this game?', 'Allow', 'Not now')
+        .then(function(yes){ if (yes) { try { localStorage.setItem(LLM_OK + here, '1'); } catch (err) {} } return yes; });
+      asked.then(function(yes){
+        if (!yes) throw new Error('declined');
+        return llmJSON('/account/llm/offers');
+      }).then(function(book){
+        if (op !== 'image') return llmPick(book, req);
+        // A picture: the first seller with pictures this player can pay for (free first, then any with credit).
+        var named = (book.offers || []).filter(function(o){ return o.images && (!req.seller || o.seller === req.seller); });
+        if (!named.length) throw new Error('no arcade shares pictures right now');
+        var o = named.find(function(x){ return x.images.free; }) || named[0];
+        return {o: o, leg: req.leg || (o.images.free ? 'free' : o.images.prices[0].leg)};
+      }).then(function(got){
+        return llmGrant(got.o).then(function(){ return got; });
+      }).then(function(got){
+        if (op === 'image') {
+          var pic = {seller: got.o.seller, leg: got.leg, prompt: req.prompt || '', size: req.size || '', image: req.image || '',
+                     model: req.model || (got.o.images.models[0] || {}).id};
+          return llmJSON('/account/llm/image', pic).then(function(r){
+            var a = r.arcade || {}, p = (got.o.images.prices || []).find(function(x){ return x.leg === a.leg; }) || {}, coin = String(p.label || '').split(' \u00b7 ')[0];
+            answer({ok: true, png: r.png, seed: r.seed, seller: got.o.seller, leg: a.leg,
+                    cost: a.free ? 'free' : a.cost_text + ' ' + coin, left: a.free ? '' : a.left_text + ' ' + coin});
+          });
+        }
+        var body = {};
+        Object.keys(req).forEach(function(k){ if (k !== 'seller' && k !== 'leg' && k !== 'stream') body[k] = req[k]; });
+        body.seller = got.o.seller; body.leg = got.leg;
+        if (!body.model && got.o.models[0]) body.model = got.o.models[0].id;
+        return fetch('/account/llm/chat', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                                           body: JSON.stringify(body)}).then(function(r){
+          if (!r.ok) return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.detail || ('HTTP ' + r.status)); });
+          var reader = r.body.getReader(), dec = new TextDecoder(), buf = '', content = '', reasoning = '', done = null;
+          function pump(){
+            return reader.read().then(function(step){
+              if (step.done) return;
+              buf += dec.decode(step.value, {stream: true});
+              var at;
+              while ((at = buf.indexOf('\n\n')) >= 0) {
+                var line = buf.slice(0, at).trim(); buf = buf.slice(at + 2);
+                if (line.indexOf('data:') !== 0) continue;
+                var data = line.slice(5).trim(); if (data === '[DONE]') continue;
+                var ev; try { ev = JSON.parse(data); } catch (err) { continue; }
+                if (ev.error) throw new Error(ev.error.message || 'failed');
+                if (ev.arcade) { done = ev.arcade; continue; }
+                (ev.choices || []).forEach(function(ch){
+                  var d = ch.delta || {};
+                  if (d.reasoning_content) reasoning += d.reasoning_content;
+                  if (d.content) { content += d.content; source.postMessage({arcade: 'llm', seq: m.seq, part: true, delta: d.content}, '*'); }
+                });
+              }
+              return pump();
+            });
+          }
+          return pump().then(function(){
+            var p = got.o.prices.find(function(x){ return x.leg === got.leg; }) || {}, coin = String(p.label || '').split(' \u00b7 ')[0];
+            answer({ok: true, content: content, reasoning: reasoning, seller: got.o.seller, leg: got.leg,
+                    usage: done ? {tokens_in: done.tokens_in, tokens_out: done.tokens_out} : {},
+                    cost: done ? (done.free ? 'free' : done.cost_text + ' ' + coin) : '',
+                    left: done && !done.free ? done.left_text + ' ' + coin : ''});
+          });
+        });
+      }).catch(function(err){ answer({ok: false, error: String(err.message || err)}); });
     }
 
     // arcade.contacts.add / remove (2026-10-21, asked for by ASHVALE: "able to add in game friends").
@@ -1017,6 +1560,7 @@
       }
       if (m.arcade === 'realtime') { realtimeDoor(m, answer, e.source); return; }
       if (m.arcade === 'contacts') { contactsDoor(m, answer); return; }
+      if (m.arcade === 'llm') { llmDoor(m, answer, e.source); return; }
       if (m.arcade === 'escrow') { escrowDoor(m, answer); return; }
       if (m.arcade === 'state' && m.op === 'update') {
         // Game state (arcade.state): anybody asks, the game's judge decides, so

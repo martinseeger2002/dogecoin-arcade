@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}LLM usage · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- 2026-10-23: "The admin should be able to a link on their model that they're sharing and get all of the usage
+    analytics" (arcade/llm.py Books.analytics, web/llmweb.py /admin/api/llm/usage). #}
+<style>
+.lu-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.lu-head p{margin:2px 0 0;color:var(--muted)}
+.lu-chips{display:flex;gap:6px;flex-wrap:wrap}
+.lu-chips button{font:inherit;font-size:.82rem;height:34px;padding:0 13px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
+.lu-chips button.on{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:650}
+.lu-panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-bottom:16px;min-width:0}
+.lu-panel h2{margin:0 0 2px;font-size:1.05rem}.lu-panel p.sub{margin:0 0 12px;color:var(--muted);font-size:.88rem}
+.lu-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.lu-tile{border:1px solid var(--line);border-radius:12px;background:var(--code);padding:13px 14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.lu-tile span{font-size:.78rem;color:var(--muted)}.lu-tile strong{font-size:1.35rem;overflow-wrap:anywhere}
+.lu-pill{font-size:.78rem;font-weight:650;padding:3px 10px;border-radius:999px;vertical-align:middle}
+.lu-chart{position:relative;width:100%}
+.lu-chart svg{display:block;width:100%;height:200px;overflow:visible}
+.lu-chart .grid{stroke:var(--line);stroke-width:1}
+.lu-chart .ax{fill:var(--muted);font-size:11px}
+.lu-chart rect.bar{fill:var(--accent)}
+.lu-chart rect.hit{fill:transparent;cursor:default}
+.lu-chart rect.hit:hover + rect.bar,.lu-chart g:hover rect.bar{opacity:.75}
+.lu-tip{position:absolute;pointer-events:none;background:var(--fg);color:var(--bg);font-size:.78rem;padding:6px 9px;border-radius:8px;white-space:nowrap;transform:translate(-50%,-110%)}
+.lu-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:16px}
+.lu-two .lu-panel{margin-bottom:0}
+.lu-table{width:100%;border-collapse:collapse;font-size:.86rem}
+.lu-table th{text-align:left;font-size:.72rem;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding:6px 8px;border-bottom:1px solid var(--line)}
+.lu-table td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.lu-table td.n,.lu-table th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.lu-wrap{overflow-x:auto}
+.lu-empty{color:var(--muted);padding:10px 0}
+</style>
+
+<div class="lu-head">
+  <div>
+    <p style="margin:0"><a href="/admin#llm">&larr; Admin &middot; LLM</a></p>
+    <h1 style="margin:4px 0 0">Usage analytics <span class="lu-pill" id="lu-word"></span></h1>
+    <p id="lu-models"></p>
+  </div>
+  <div class="lu-chips" id="lu-range">
+    <button type="button" data-d="1">24 hours</button><button type="button" data-d="7">7 days</button>
+    <button type="button" data-d="30">30 days</button><button type="button" data-d="90">90 days</button>
+  </div>
+</div>
+
+<section class="lu-panel">
+  <h2>Right now</h2><p class="sub">What buyers see on the book, refreshed every few seconds.</p>
+  <div class="lu-tiles" id="lu-now"></div>
+</section>
+
+<section class="lu-panel">
+  <h2 id="lu-total-h">Totals</h2><p class="sub">Every reply your model wrote for anybody but you, paid or free.</p>
+  <div class="lu-tiles" id="lu-total"></div>
+</section>
+
+<div class="lu-two">
+  <section class="lu-panel"><h2>Replies</h2><p class="sub" id="lu-rep-sub"></p><div class="lu-chart" id="lu-c-replies"></div></section>
+  <section class="lu-panel"><h2>Output tokens</h2><p class="sub" id="lu-tok-sub"></p><div class="lu-chart" id="lu-c-tokens"></div></section>
+</div>
+<div style="height:16px"></div>
+
+<div class="lu-two">
+  <section class="lu-panel"><h2>By coin</h2><p class="sub">What it earned, in each way you are paid.</p><div class="lu-wrap" id="lu-leg"></div></section>
+  <section class="lu-panel"><h2>By way in</h2><p class="sub">The Exchange tab and apps here, API keys, or another arcade's players.</p><div class="lu-wrap" id="lu-via"></div></section>
+</div>
+<div style="height:16px"></div>
+<div class="lu-two">
+  <section class="lu-panel"><h2>By model</h2><p class="sub">&nbsp;</p><div class="lu-wrap" id="lu-model"></div></section>
+  <section class="lu-panel"><h2>Top buyers</h2><p class="sub">By replies.</p><div class="lu-wrap" id="lu-buyer"></div></section>
+</div>
+<div style="height:16px"></div>
+
+<section class="lu-panel">
+  <h2>Latest replies</h2><p class="sub">The last 50, newest first.</p>
+  <div class="lu-wrap" id="lu-last"></div>
+</section>
+
+<details class="lu-panel"><summary style="cursor:pointer;font-weight:650">The series as a table</summary>
+  <div class="lu-wrap" id="lu-series" style="margin-top:10px"></div></details>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+  function n(v) { return Number(v || 0).toLocaleString(); }
+  function secs(ms) { return ms ? (Number(ms) / 1000).toFixed(1) + ' s' : '—'; }
+  var days = 7, data = null;
+  try { days = Number(localStorage.getItem('arcade.llm.usage.days')) || 7; } catch (e) {}
+  var WORDS = {idle: ['Idle', 'var(--muted)'], steady: ['In use', 'var(--ok)'], busy: ['Busy', '#b7791f'], full: ['Full: buyers waiting', '#a33']};
+  function tile(name, big, small) { return '<div class="lu-tile"><span>' + name + '</span><strong>' + big + '</strong>' + (small ? '<span>' + small + '</span>' : '') + '</div>'; }
+  function drawNow(l) {
+    var w = WORDS[l.word] || WORDS.idle;
+    $('lu-word').textContent = w[0]; $('lu-word').style.cssText = 'color:' + w[1] + ';background:color-mix(in srgb,' + w[1] + ' 14%,var(--panel))';
+    $('lu-now').innerHTML = tile('Replies running', l.active + ' of ' + l.at_once, l.waiting ? l.waiting + ' waiting' : 'none waiting') +
+      tile('Last 15 minutes', n(l.last_15m), 'replies') + tile('Last hour', n(l.last_hour), l.failed_hour ? l.failed_hour + ' failed' : 'no failures') +
+      tile('Speed', l.tok_s ? l.tok_s + ' tok/s' : '—', l.first_ms ? 'first word in ' + secs(l.first_ms) : '');
+  }
+  function when(t) {
+    var d = new Date(t * 1000);
+    return data.bucket >= 86400 ? d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})
+      : d.toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: data.bucket < 3600 ? '2-digit' : undefined});
+  }
+  // One series per chart, in the arcade's own accent; a bar per bucket, empty buckets drawn as gaps; a tooltip each.
+  function bars(el, field, label) {
+    var rows = data.series, b = data.bucket, end = Math.floor(Date.now() / 1000 / b) * b, start = end - Math.ceil(data.days * 86400 / b) * b + b;
+    var by = {}; rows.forEach(function (r) { by[r.t] = r; });
+    var pts = []; for (var t = start; t <= end; t += b) pts.push({t: t, v: Number((by[t] || {})[field] || 0)});
+    var max = Math.max(1, Math.max.apply(null, pts.map(function (p) { return p.v; })));
+    var nice = Math.pow(10, Math.floor(Math.log10(max))), top = Math.max(2, Math.ceil(max / nice) * nice);
+    if (top % 2) top += 1;                       // the middle line on a whole number
+    var W = 600, H = 200, L = 36, B = 22, w = (W - L) / pts.length, gap = Math.min(2, w * 0.25);
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="' + esc(label) + '">';
+    [0, 0.5, 1].forEach(function (f) { var y = (H - B) * (1 - f); svg += '<line class="grid" x1="' + L + '" x2="' + W + '" y1="' + y + '" y2="' + y + '"/>' +
+      '<text class="ax" x="' + (L - 6) + '" y="' + (y + 4) + '" text-anchor="end">' + n(Math.round(top * f)) + '</text>'; });
+    pts.forEach(function (p, i) {
+      var h = p.v ? Math.max(2, (H - B) * p.v / top) : 0, x = L + i * w;
+      svg += '<g data-i="' + i + '"><rect class="hit" x="' + x + '" y="0" width="' + w + '" height="' + (H - B) + '"/>' +
+        (h ? '<rect class="bar" x="' + (x + gap / 2) + '" y="' + (H - B - h) + '" width="' + Math.max(1, w - gap) + '" height="' + h + '" rx="' + Math.min(4, (w - gap) / 2) + '"/>' : '') + '</g>';
+    });
+    var marks = [0, Math.floor(pts.length / 2), pts.length - 1];
+    marks.forEach(function (i, k) { svg += '<text class="ax" x="' + (L + i * w + w / 2) + '" y="' + (H - 6) + '" text-anchor="' + ['start', 'middle', 'end'][k] + '">' + esc(when(pts[i].t)) + '</text>'; });
+    el.innerHTML = svg + '</svg><div class="lu-tip" hidden></div>';
+    var tip = el.querySelector('.lu-tip');
+    el.querySelector('svg').addEventListener('mousemove', function (e) {
+      var g = e.target.closest('g[data-i]'); if (!g) { tip.hidden = true; return; }
+      var p = pts[Number(g.dataset.i)], box = el.getBoundingClientRect();
+      tip.hidden = false; tip.textContent = when(p.t) + ': ' + n(p.v) + ' ' + label;
+      tip.style.left = (e.clientX - box.left) + 'px'; tip.style.top = (e.clientY - box.top) + 'px';
+    });
+    el.querySelector('svg').addEventListener('mouseleave', function () { tip.hidden = true; });
+  }
+  function table(el, heads, rows) {
+    if (!rows.length) { el.innerHTML = '<div class="lu-empty">Nothing in this time yet.</div>'; return; }
+    el.innerHTML = '<table class="lu-table"><thead><tr>' + heads.map(function (h) { return '<th' + (h[1] ? ' class="n"' : '') + '>' + h[0] + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (c, i) { return '<td' + (heads[i][1] ? ' class="n"' : '') + '>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>';
+  }
+  function draw() {
+    var t = data.total, reps = Number(t.replies || 0), bad = Number(t.failed || 0);
+    $('lu-models').textContent = (data.models || []).join(', ') || 'No model shared yet';
+    $('lu-total-h').textContent = 'Totals, last ' + ({1: '24 hours', 7: '7 days', 30: '30 days', 90: '90 days'}[data.days] || data.days + ' days');
+    var secsWriting = Number(t.ms_sum || 0) / 1000;
+    $('lu-total').innerHTML = tile('Replies', n(reps), bad ? n(bad) + ' failed (' + (100 * bad / Math.max(1, reps)).toFixed(1) + '%)' : 'no failures') +
+      tile('Buyers', n(t.buyers)) + tile('Tokens in', n(t.tokens_in)) + tile('Tokens out', n(t.tokens_out)) +
+      tile('First word', secs(t.avg_first_ms), 'on average') + tile('Whole reply', secs(t.avg_ms), 'on average') +
+      tile('Speed', secsWriting ? (Number(t.tokens_out || 0) / secsWriting).toFixed(1) + ' tok/s' : '—', 'output, overall');
+    var per = data.bucket >= 86400 ? 'day' : data.bucket >= 3600 ? 'hour' : '5 minutes';
+    $('lu-rep-sub').textContent = 'Per ' + per + '.'; $('lu-tok-sub').textContent = 'Per ' + per + ', written by your model.';
+    bars($('lu-c-replies'), 'replies', 'replies'); bars($('lu-c-tokens'), 'tokens_out', 'tokens out');
+    table($('lu-leg'), [['Coin'], ['Replies', 1], ['Earned', 1]], data.by.leg.map(function (r) { return [esc(r.label), n(r.replies), r.key === 'free' ? 'free' : esc(r.text)]; }));
+    table($('lu-via'), [['Way in'], ['Replies', 1], ['Buyers', 1], ['Tokens', 1]], data.by.via.map(function (r) { return [esc(r.label), n(r.replies), n(r.buyers), n(Number(r.tokens_in || 0) + Number(r.tokens_out || 0))]; }));
+    table($('lu-model'), [['Model'], ['Replies', 1], ['Tokens out', 1], ['First word', 1]], data.by.model.map(function (r) { return ['<code>' + esc(r.key) + '</code>', n(r.replies), n(r.tokens_out), secs(r.avg_first_ms)]; }));
+    table($('lu-buyer'), [['Buyer'], ['Replies', 1], ['Tokens', 1]], data.by.buyer.slice(0, 20).map(function (r) {
+      return [r.tag ? '<a href="/u/' + esc(r.tag) + '">@' + esc(r.tag) + '</a>' : '<code>' + esc(String(r.key).slice(0, 12)) + '…</code>', n(r.replies), n(Number(r.tokens_in || 0) + Number(r.tokens_out || 0))]; }));
+    table($('lu-last'), [['When'], ['Buyer'], ['Way in'], ['In', 1], ['Out', 1], ['Time', 1], ['Cost', 1]], data.last.map(function (r) {
+      return [esc(new Date(r.at * 1000).toLocaleString()), r.tag ? '@' + esc(r.tag) : '<code>' + esc(String(r.buyer).slice(0, 10)) + '…</code>', esc(r.where),
+              n(r.tokens_in), n(r.tokens_out), r.ok ? secs(r.ms) : '<span style="color:#a33">failed</span>', r.leg === 'free' ? 'free' : esc(r.cost + ' ' + r.coin)]; }));
+    table($('lu-series'), [['From'], ['Replies', 1], ['Failed', 1], ['Tokens in', 1], ['Tokens out', 1], ['Buyers', 1]], data.series.map(function (r) {
+      return [esc(when(r.t)), n(r.replies), n(r.failed), n(r.tokens_in), n(r.tokens_out), n(r.buyers)]; }));
+    drawNow(data.load);
+    document.querySelectorAll('#lu-range button').forEach(function (b) { b.classList.toggle('on', Number(b.dataset.d) === data.days); });
+  }
+  function load() {
+    fetch('/admin/api/llm/usage?days=' + days, {credentials: 'same-origin', cache: 'no-store'}).then(function (r) {
+      if (r.status === 401) location.href = '/admin/login'; return r.json();
+    }).then(function (j) { data = j; draw(); }).catch(function (e) { $('lu-models').textContent = 'Could not load: ' + e.message; });
+  }
+  $('lu-range').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return; days = Number(b.dataset.d);
+    try { localStorage.setItem('arcade.llm.usage.days', String(days)); } catch (err) {}
+    load();
+  });
+  setInterval(function () {
+    if (document.hidden || !data) return;
+    fetch('/admin/api/llm/load', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (l) { if (l) drawNow(l); }).catch(function () {});
+  }, 5000);
+  setInterval(function () { if (!document.hidden) load(); }, 60000);
+  load();
+})();
+</script>
+{% endblock %}

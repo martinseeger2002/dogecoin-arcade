@@ -49,12 +49,20 @@
     window.parent.postMessage(body, '*');
   }
 
+  // list() -> the contacts, an array. Empty, it says why on `.why` (2026-10-23): 'off' (Contacts is off on this
+  // app's card: say "turn on Contacts on its card"), 'guest' (not signed in), 'operator' (the node's own wallet
+  // view), 'no' (a page with no card, told no), 'viewer' (no arcade viewer around this page).
   function list() {
+    function said(contacts, why) {
+      var out = contacts || [];
+      if (!out.length && why) out.why = why;
+      return out;
+    }
     return new Promise(function (resolve) {
       // The person may take a while to answer the question, so the wait is long;
       // no viewer at all (the page opened on its own) answers [] when it ends.
-      ask({op: 'list'}, 120000, function (m) { resolve(m.contacts || []); },
-          function () { resolve([]); }, function () { resolve([]); });
+      ask({op: 'list'}, 120000, function (m) { resolve(said(m.contacts, m.why)); },
+          function () { resolve(said([], 'viewer')); }, function () { resolve(said([], 'viewer')); });
     });
   }
 

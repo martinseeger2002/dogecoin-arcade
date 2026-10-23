@@ -63,33 +63,33 @@ def test_the_games_tab_lists_games_and_nothing_else(client):
                                                 "description": "A small valley RPG."}})
     _inscribe(state, image, 12, MAKER, {"game": {"name": "Not a page"}}, kind="image/png")
     _inscribe(state, pad, 13, MAKER, {"mintpad": {"creator": MAKER, "collection": "x"}})
-    page = app.get("/games").text
+    page = app.get("/apps").text
     assert f"/inscriptions/{game}/full" in page and "A small valley RPG." in page
     assert "v1.1" in page and "multiplayer" in page
     assert f"/inscriptions/{old}/full" not in page, "a new version replaces the card"
     assert f"/inscriptions/{image}/full" not in page, "a game is a page"
     assert f"/inscriptions/{pad}/full" not in page
     assert f'href="/games/{game}"' in page, "and it can be discussed"
-    latest = app.get("/games?sort=new").text
+    latest = app.get("/apps?sort=new").text
     assert f"/inscriptions/{game}/full" in latest
 
 
 def test_an_empty_chain_says_how_to_list_a_game(client):
     app, _ = client
-    page = app.get("/games").text
-    assert "No games are on" in page and '"game"' in page
+    page = app.get("/apps").text
+    assert "No apps are on" in page and '"app"' in page
 
 
 def test_games_sits_between_your_arcade_and_messages():
     from arcade.web.app import ACCOUNT_NAV, NAV
     hrefs = [entry[0] for entry in ACCOUNT_NAV]
-    assert hrefs.index("/games") == hrefs.index("/me") + 1 == hrefs.index("/me/messages") - 1
+    assert hrefs.index("/apps") == hrefs.index("/me") + 1 == hrefs.index("/me/messages") - 1
     hrefs = [entry[0] for entry in NAV]
-    assert hrefs.index("/games") == hrefs.index("/") + 1 == hrefs.index("/messages") - 1
+    assert hrefs.index("/apps") == hrefs.index("/") + 1 == hrefs.index("/messages") - 1
 
 
 def test_strangers_can_see_games_and_their_discussions():
-    assert doorlib.public_path("/games")
+    assert doorlib.public_path("/apps") and doorlib.public_path("/games")
     assert doorlib.public_path("/games/" + "ab" * 32)
     assert not doorlib.public_path("/games/" + "ab" * 32, "POST")
 
@@ -140,7 +140,7 @@ def test_play_opens_the_real_game_only_when_its_maker_made_both(client):
     _inscribe(state, card, 51, MAKER, {"game": {"name": "Ghost Fleet", "play": real}})
     _inscribe(state, theirs, 52, OTHER, {}, height=11)
     _inscribe(state, borrowed, 53, MAKER, {"game": {"name": "Not Mine", "play": theirs}})
-    page = app.get("/games").text
+    page = app.get("/apps").text
     assert f"/inscriptions/{real}/full" in page and f"/inscriptions/{real}/view" in page
     assert f"/inscriptions/{card}/full" not in page
     assert f"/inscriptions/{theirs}/full" not in page, "a card cannot borrow another maker's game"
@@ -166,10 +166,10 @@ def test_a_maker_removes_a_game_card_like_a_post_and_nobody_else_can(client):
     _inscribe(state, card, 61, MAKER, {"game": {"name": "Gone Game", "version": "2"}})
     _inscribe(state, other, 62, MAKER, {"game": {"name": "Still Here"}})
     _delete(state, other, OTHER, "aa" * 32)                         # a stranger's delete
-    page = app.get("/games").text
+    page = app.get("/apps").text
     assert f"/inscriptions/{card}/full" in page and f"/inscriptions/{other}/full" in page
     _delete(state, card, MAKER, "ab" * 32)                          # the maker's
-    page = app.get("/games").text
+    page = app.get("/apps").text
     assert f"/inscriptions/{card}/full" not in page, "removed by its maker"
     assert f"/inscriptions/{old}/full" not in page, "and no older version comes back"
     assert f"/inscriptions/{other}/full" in page, "a stranger's delete counts for nothing"
@@ -179,7 +179,7 @@ def test_a_maker_removes_a_game_card_like_a_post_and_nobody_else_can(client):
     # A newer version brings the game back.
     _inscribe(state, "f4" * 32, 63, MAKER, {"game": {"name": "Gone Game", "version": "3"}},
               height=300)
-    assert "/inscriptions/" + "f4" * 32 + "/full" in app.get("/games").text
+    assert "/inscriptions/" + "f4" * 32 + "/full" in app.get("/apps").text
 
 
 def test_only_the_maker_is_offered_remove(client):
@@ -189,7 +189,7 @@ def test_only_the_maker_is_offered_remove(client):
     _inscribe(state, theirs, 71, OTHER, {"game": {"name": "Theirs"}})
     with state.store() as store:
         store.set_meta(f"identity_address:{state.messaging.network}", MAKER)
-    page = app.get("/games").text
+    page = app.get("/apps").text
     assert f'action="/feed/{mine}/delete"' in page
     assert f'action="/feed/{theirs}/delete"' not in page
 
@@ -199,7 +199,7 @@ def test_one_player_is_a_player_and_covers_are_never_cropped(client):
     _inscribe(state, "d7" * 32, 80, MAKER, {"game": {"name": "Solo", "players": "1"}})
     _inscribe(state, "d8" * 32, 81, MAKER, {"game": {"name": "Party", "players": "2-4"}})
     _inscribe(state, "d9" * 32, 82, MAKER, {"game": {"name": "Said", "players": "1-2 players"}})
-    page = app.get("/games").text
+    page = app.get("/apps").text
     assert "1 player<" in page.replace(" </", "<") or "&middot; 1 player" in page
     assert "1 players" not in page and "2-4 players" in page
     assert "players players" not in page
@@ -245,8 +245,74 @@ def test_a_card_that_says_wallet_holds_play_until_its_box_is_ticked(client):
     app, state = client
     game = "f7" * 32
     _inscribe(state, game, 66, MAKER, {"game": {"name": "Bank Run", "wallet": True}})
-    page = app.get("/games").text
+    page = app.get("/apps").text
     card = page[page.index(f'id="game-{game}"'):]
     card = card[:card.index('class="panel gamecard"') if 'class="panel gamecard"' in card else len(card)]
     assert 'data-wallet="1"' in card and f'data-play="{game}"' in card
     assert "uses your wallet" in card
+
+
+def test_the_tab_is_apps_and_an_app_card_lists_like_a_game_card(client):
+    """2026-10-23: "Change the games tab to the apps tab" ... "application agnostic". /games still lands on
+    it; a card may say {"app": ...}, and every {"game": ...} card ever inscribed still lists."""
+    app, state = client
+    old, new = "c1" * 32, "c2" * 32
+    _inscribe(state, old, 31, MAKER, {"game": {"name": "Old Game"}})
+    _inscribe(state, new, 32, MAKER, {"app": {"name": "Video Call", "media": True}})
+    moved = app.get("/games?sort=new", follow_redirects=False)
+    assert moved.status_code == 301 and moved.headers["location"] == "/apps?sort=new"
+    page = app.get("/apps").text
+    assert "<h1" in page and ">Apps</h1>" in page
+    assert "Old Game" in page and "Video Call" in page
+    assert app.get(f"/games/{new}/access").json()["media"] is True
+
+
+def test_a_card_only_inscription_takes_over_a_page_that_carries_its_own_card(client):
+    """The Cul-de-sac session 2026-10-23: Video Call's launcher carries its first card; a newer card by the same maker
+    naming it in `play` replaces that card everywhere -- on the tab and for the viewer's switches -- while the page,
+    which every switch is keyed on, stays. An older card-only inscription does not."""
+    app, state = client
+    launcher, card, old = "d1" * 32, "d2" * 32, "d0" * 32
+    _inscribe(state, old, 40, MAKER, {"app": {"name": "Video Call", "play": launcher}}, height=90)
+    _inscribe(state, launcher, 41, MAKER, {"app": {"name": "Video Call", "media": True}}, height=100)
+    said = app.get(f"/games/{launcher}/access").json()
+    assert said["card"] == launcher and said["opens"] == launcher, "the older card-only one does not take over"
+    state.__dict__.pop("_game_pages", None)
+    _inscribe(state, card, 42, MAKER, {"app": {"name": "Video Call", "play": launcher, "media": True,
+                                               "contacts": True, "notify": True}}, height=110)
+    said = app.get(f"/games/{launcher}/access").json()
+    assert said["card"] == card and said["opens"] == launcher and said["contacts"] is True, said
+    page = app.get("/apps").text
+    assert f'data-media="{launcher}"' in page and f'data-contacts="{launcher}"' in page, "switches keyed on the page"
+    assert page.count('data-contacts="') == 1, "one card for the app"
+
+
+def test_a_star_puts_an_app_first_and_stays_across_its_versions(client):
+    """2026-10-23: "a star on app cards that bring the game app to the top of your favorites list. The star
+    should persist across version changes so should hearts comments tips and dislikes." """
+    app, state = client
+    a1, a2, b = "e1" * 32, "e2" * 32, "e3" * 32
+    _inscribe(state, b, 50, MAKER, {"app": {"name": "Big App"}}, height=120)
+    _inscribe(state, a1, 51, MAKER, {"app": {"name": "Little App", "version": "1"}}, height=100)
+    key = gameslib.app_key(MAKER, "Little App")
+    assert key == f"app:{MAKER}:little-app"
+    assert app.post("/account/favorites", json={"key": key, "on": True}).json()["saved"]
+    page = app.get("/apps?sort=new").text
+    assert page.index(f'id="game-{a1}"') < page.index(f'id="game-{b}"'), "the starred app first, though older"
+    assert f'data-fav="{key}"' in page
+    # A new version: the same star, and the first version's heart and comment count for it.
+    _inscribe(state, a2, 52, MAKER, {"app": {"name": "Little App", "version": "2"}}, height=130)
+    from arcade.messaging import feed as feedlib
+    with state.store() as store:
+        store.add_feed_act(state.messaging.network, "f1" * 32, feedlib.LIKE, a1, "nSomebody" + "a" * 25,
+                           height=101, block_time=1)
+        store.add_feed_act(state.messaging.network, "f2" * 32, feedlib.REPLY, a1, "nSomebody" + "a" * 25,
+                           height=102, block_time=2)
+    page = app.get("/apps?sort=new").text
+    assert f'id="game-{a2}"' in page and f'id="game-{a1}"' not in page, "the newest version is the card"
+    assert page.index(f'id="game-{a2}"') < page.index(f'id="game-{b}"'), "and it is still starred"
+    card = page[page.index(f'id="game-{a2}"'):page.index(f'id="game-{b}"')]
+    assert 'data-count="1"' in card or "&#9829; 1" in card, "v1's heart is v2's"
+    assert "&#128172; 1" in card, "and its comment"
+    thread = app.get(f"/games/{a2}").text
+    assert thread.count("nSomebody") >= 1, "the discussion holds what was said to v1"

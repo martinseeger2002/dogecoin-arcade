@@ -60,7 +60,7 @@ document.getElementById('go').onclick = function () {
   var job = JSON.parse(document.getElementById('job').value);
   var call = job.op === 'list' ? arcade.contacts.list()
            : job.op === 'add' ? arcade.contacts.add(job.arg) : arcade.contacts.remove(job.arg);
-  call.then(function (r) { done(job.slot, {value: r}); },
+  call.then(function (r) { done(job.slot, r && r.why ? {value: r, why: r.why} : {value: r}); },
             function (e) { done(job.slot, {error: String(e.message || e)}); });
 };
 function done(slot, said) {
@@ -252,3 +252,45 @@ def test_a_guest_and_a_page_on_its_own_are_refused_with_a_reason(browser, base):
         got = browser.execute_script("var p = document.getElementById('r-n1'); return p ? p.textContent : null;")
         time.sleep(0.2)
     assert got is not None and json.loads(got)["error"].startswith("no viewer"), got
+
+
+@pytest.fixture
+def card_base(tmp_path, no_nodes):
+    """The same page, now an app with its own card that says it reads contacts."""
+    from arcade.web.app import create_app
+
+    state = make_state(tmp_path, "node")
+    _inscribe(state, PAGE_ID, 1, "n" + "G" * 33, "text/html", PAGE, {"app": {"name": "Friends", "contacts": True}})
+    port = _free_port()
+    server = Server(create_app(state), port)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.stop()
+
+
+def test_an_apps_contacts_switch_decides_and_an_empty_list_says_why(browser, card_base):
+    """2026-10-23: "Allow access to Contacts should be another box on the card". An app with a card is never
+    asked in the page: off is an empty list that says 'off' (an old 'no' is only the switch off), on is the book."""
+    base = card_base
+    _signed_in(browser, base)
+    assert _wipe_book(browser) == "ok"
+    frame = _view(browser, base)
+    _ask(browser, frame, "l1", "list")
+    assert _answer(browser, frame, "l1") == {"value": [], "why": "off"}
+    assert not _cards(browser), "nothing asked: the card's switch decides"
+    browser.switch_to.default_content()
+    assert browser.execute_script("return localStorage.getItem('arcade.contacts.uses:' + arguments[0])", PAGE_ID) \
+        == "yes", "its card shows the switch from now on"
+    browser.execute_script("localStorage.setItem('arcade.contacts.allow:' + arguments[0], 'no')", PAGE_ID)
+    _ask(browser, frame, "l2", "list")
+    assert _answer(browser, frame, "l2")["why"] == "off", "an old no is the switch off, not a wall"
+    # On (as the card's switch keeps it): the book.
+    browser.switch_to.default_content()
+    browser.execute_script("localStorage.setItem('arcade.contacts.allow:' + arguments[0], 'yes')", PAGE_ID)
+    _ask(browser, frame, "a1", "add", {"address": "@Robin"})
+    _press(_card(browser), "Add")
+    assert _answer(browser, frame, "a1")["value"]["status"] == "added"
+    _ask(browser, frame, "l3", "list")
+    said = _answer(browser, frame, "l3")
+    assert [c["tag"] for c in said["value"]] == ["robin"] and "why" not in said, said

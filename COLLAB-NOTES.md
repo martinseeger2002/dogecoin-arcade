@@ -88,6 +88,238 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-23 Pictures on the LLM tab: share a ComfyUI image model, priced in credits (Claude)
+The operator: "I would like to also be able to share my image generation model" -- per image (his choice), make AND edit;
+then "it should be credits ... an edit should cost two credits and a plain picture should stay at one credit" ("it's
+a two-way upload and download"). Branch claude/llm-images (on claude/llm-stats).
+* **arcade/imagegen.py**: setting `llm_images` {on, url, wake, name, models, max_side, steps, at_once, prices [{leg,
+  label, per}]}; `per` is the price of one credit; a picture is `PLAIN_CREDITS` (1), an edit `EDIT_COUNTS` (2); no
+  asks (or only 0) = free. `ComfyServer`: models found from /object_info (UNETLoader + a Qwen CLIPLoader + VAELoader;
+  only the Qwen-Image family has workflows so far), /upload/image, /prompt, /history, /view. Workflows ported from
+  ~/qwen-tools/comfy_mcp.py (text: the encoder's square latent resized; edit: the FLAT "images.image_1" key).
+  `wake` is a command run when ComfyUI does not answer (on-demand ComfyUI); **set only from the node machine**
+  (clean(..., local)), never through the remote admin password. `ImageSeller.make` charges after the picture exists;
+  a failure costs nothing and is logged ok=0.
+* Same credit as the LLM (llm.Books), usage gains `images`; `Seller.paid_legs` lets a top-up be in any coin either
+  side asks for. The offer carries `images` {models, prices, free, max_side, edits, edit_counts, load}; an arcade
+  sharing only pictures says an offer with no text models. llmshare: what=image, and an event bigger than a frame
+  goes in `more` pieces (CHUNK) put back together by the buyer.
+* Web: Admin -> LLM "Share your image model" (scan, wake, sizes, steps, price per credit); Exchange -> LLM
+  "Pictures" (cards with load, Make a picture: words, size, optional picture to edit, download);
+  `/account/llm/image`; OpenAI `/v1/images/generations` (b64_json) and `/v1/images/edits` (multipart) for API keys;
+  `arcade.llm.image({prompt, size, image})` for apps. door.py lets the three POSTs through.
+* Live check on a test machine with the real ComfyUI (woken by `systemctl --user start comfyui`): a 1024x768 picture in
+  62 s for 1 credit, an edit (party hat) in 51 s for 2 credits; the browser made one in 32 s.
+* Tests: test_llm.py (19), with a fake ComfyUI.
+* Exchange: the tab is "LLMs" and comes first (the operator: "I want LLM to be the first option"); /exchange still opens on
+  Tokens.
+
+### 2026-10-23 LLM service: models found by themselves, how busy each is, a usage analytics page (Claude)
+The operator: "It should automatically scan the LLM service for the models that are available and then the admin should be
+able to just select which model they want to share"; "Users also need a way to know if one of the models is congested
+or being frequently used" -- "So should the admin"; "The admin should be able to [have] a link on their model that
+they're sharing and get all of the usage analytics"; "Straighten out the text input fields"; the share switch reads
+"Tick to share on the exchange". Branch claude/llm-stats (on claude/llm-exchange).
+* Admin -> LLM: the server's /v1/models is read on load and as the address is typed ("Scan again" by hand); every
+  model listed with a tick; a shared model no longer on the server says so. The three fields have the same rows (name,
+  box, a line under it). A "Right now" panel (polled every 5 s, `/admin/api/llm/load`) and a "Usage analytics" link.
+* `Seller.load()`: active, waiting, at_once, replies in the last 15 min and hour, failures, output tok/s, first-word
+  time; `Seller.word()` idle | steady | busy | full. Carried on the offer (`load`); llmshare says the offer again
+  every 15 s when it changed (`LOAD_EVERY`). The tab draws a pill and a line on each card and re-reads the book
+  every 10 s.
+* `usage` table gains `ms`, `first_ms`, `ok` (added to an existing table on open: checked on copies of .25's and
+  Strawberry's llm.sqlite); failed and timed-out replies are logged at no cost. `via` is web | api | <peer id>.
+* `/admin/llm/usage` (llm_usage.html) + `/admin/api/llm/usage?days=`: right now, totals, replies and output tokens
+  per 5 min / hour / day, by coin (earned), by way in, by model, top buyers, the last 50 replies, the series as a table.
+* Tests: test_llm.py (16).
+
+### 2026-10-23 LLM service: no asks = free for everyone (Claude)
+The operator: "Should be able to offer my model for free" and "if I offer my model for free, it should have all the same
+capabilities as a paid model. But I should be able to change it from free to pay at any time by adding an ask to my
+admin LLM page". `llm.is_free(cfg)`: no asks, or only asks of 0 in / 0 out. A free offer says `free: true` with no
+prices on the book; chat, API keys (leg `free`), arcade.llm and the mesh all work with no credit; a top-up is refused.
+Selling needs only the server and a model now. Adding an ask makes it paid at once (a `free` key then gets "this seller
+charges for its model now"); removing every ask makes it free again. Tab: a "Free" chip, a "Free for everyone" card
+with Chat only; Admin -> LLM shows "Free for everyone" while no ask is listed. Test:
+test_llm.py::test_a_model_can_be_offered_free_for_everyone. Branch claude/llm-exchange.
+
+### 2026-10-23 LLM service on the exchange: sell your own model per token, buy it from any arcade (Claude)
+The operator: "There should be a admin LLM tab, where I can enter my local LLM server and decide how much I want to charge per
+LLM token ... the bid would always be LLM service ... they could even accept Omni and PRC and DRC 20 tokens", then "A
+purchaser of model usage should be able to directly connect their local harness to the Dogecoin arcade LLM api". His
+choices: apps and players on every arcade buy (over the mesh); prepaid credit; an input and an output price per payment
+kind; one shared "LLM service" book the buyer picks from; top-ups paid straight to the selling operator, whose node keeps
+the balance. Mock-up approved before building. Branch claude/llm-exchange.
+* **arcade/llm.py**: setting `llm` {on, url, key, name, models, at_once, max_out, prices [{leg, label, in, out}]}; legs
+  are trade_orders' keys (`<net>-coin`, `<net>-token-<id>`). Prices are decimal text per token; balances integer units
+  (sats, or whole units for an indivisible token). `Books` = llm.sqlite (credit, topup once per txid, usage, the buyer
+  side's grants and API-key hashes). `Seller.chat` caps max_tokens to the operator's limit AND what the credit pays for,
+  streams the server's OpenAI chunks, charges from its `usage` after the reply (never below 0), `at_once` semaphore; the
+  operator's own account is free. Signatures are checked from the bytes (`recover_hash160`, key hash vs address, any
+  chain), no Core needed.
+* **Who a buyer is**: their tag-chain address. A remote seller serves it only with `grant_words(seller, address,
+  expires)` signed by that address's key (browser signs once a month per seller; the buyer's arcade keeps it).
+  **A top-up**: a normal wallet send to the seller's `payout_address`, then `topup_words(net, txid, seller, address)`
+  signed by the key that paid; the seller checks the payment (coins: getrawtransaction, signer's key among the inputs,
+  real coins need 1 conf; Omni: the token index's row, sender's key hash) and counts each txid once.
+  **DRC-20 / PRC-20 payments are not checked yet** (listed by the admin picker only as coins/Omni for now).
+* **mesh/llmshare.py**: kind "lm" -- offer {o}, q {id, what: chat|topup|balance} + zlib JSON, a {id, seq, end, err}
+  one event each. Wired in mesh/service.py for_state (`service.llmshare`).
+* **web/llmweb.py**: Admin -> LLM (`/admin/api/llm`, `/admin/api/llm/test`), the Exchange's LLM tab
+  (`/exchange?tab=llm`, `_llm_tab.html`; `/account/llm/{offers,balance,grant,topup,chat,keys,keys/new,keys/drop}`),
+  and an OpenAI-compatible `/v1/models` + `/v1/chat/completions` (stream or not, tool calls put back together) for
+  `sk-arcade-...` keys: one account, one seller, one payment kind; only the hash is kept. door.py lets them through.
+* **Apps**: `/r/llm.js` -> `arcade.llm.offers()`, `arcade.llm.chat({messages, onToken, seller?, leg?})`; the viewer
+  (_page_doors `llmDoor`) asks the player once per game, picks a seller and coin they hold credit with, streams pieces.
+* Tests: tests/test_llm.py (13). Live check against a test machine's vLLM: a /v1 call and a browser chat metered exactly.
+* **For SadFrog's side**: nothing to do; an operator turns it on in Admin -> LLM. Open: DRC-20/PRC-20 top-up checks,
+  a per-key spending cap, a seller track record on the book.
+
+### 2026-10-23 The operator chooses which apps get the relay; a relay subscription fee is planned (Claude)
+The operator: "Can I decide what clients are allowed to use the relay? Or what apps on my arcade are allowed to use my
+relay?" -- chose "Apps I choose, any account". The viewer's /realtime/ice now names its app (?app=<page>); relay_for
+hands logins only to apps in setting turn.apps (the page each card opens; none chosen yet: every app, so nothing
+broke). Admin -> Network -> Call relay -> "Apps that may use it": Every app / only the ticked ones, listed by
+/admin/api/relay-apps (on its own: listing every chain's apps slowed the Admin state answer, and
+test_admin_arcades_browser raced it -- it now waits for its card). A signed-in person could name an allowed app by
+hand to get a login: per-app is a choice of use, not a lock. And the operator: "a future subscription fee for this type of
+relay should be added" -- planned in hosting-plan.md 6a (who subscribes, per month or per GB, assets, lapse ->
+direct only: to be designed); Admin's Call relay card carries a short note saying it is coming. Test:
+test_stun.py::test_the_operator_chooses_which_apps_get_the_relay.
+
+### 2026-10-23 The relay's usage meter, and a stop at the monthly limit (Claude)
+The operator (calls work through the relay now): "I need some sort of usage meter on my node so that I don't go over the
+limit." Cloudflare bills TURN by egress and reports it only through its GraphQL analytics (callsTurnUsageAdaptiveGroups,
+filter keyId + date range), which takes an Account Analytics token, not the TURN key's. Admin -> Network -> Call relay
+-> Usage this month: account id + Analytics token (tried before kept) + a monthly limit (default 1000 GB, the free
+allowance); a bar and "X GB of Y GB since <1st>". The node asks Cloudflare at most every 10 minutes (relay_meter);
+at the limit /realtime/ice stops handing the relay out (direct links only) until the month turns -- logins already
+handed out (up to 6 h) still work, so it can run a little over. Direct-capable pairs never use the relay: its candidates
+rank last. Tests: test_stun.py (the query and its parse, an error says why, the stop at the limit).
+
+### 2026-10-23 Stars on app cards; reactions carry across an app's versions (Claude)
+The operator: "a star on app cards that bring the game app to the top of your favorites list. The star should persist across
+version changes so should hearts comments tips and dislikes." Each card has the exchange's star (_exui.fav_button,
+/account/favorites, which now also takes `app:<creator>:<name slug>` -- gameslib.app_key, the same for every version);
+starred apps come first on /apps (server-side for a signed-in account or the operator, and in the page at once).
+Versions are the tab's own rule (same maker and name, newest_per_game): _games_ranked counts every version's acts for
+the card shown (likes/dislikes by each person's last word across versions, comments, tips), and the discussion page
+(launch_thread) gathers every version's replies under the newest card (_app_versions). Tests:
+test_games.py::test_a_star_puts_an_app_first_and_stays_across_its_versions; checked in Chromium (star, reorder,
+kept after a reload).
+
+### 2026-10-23 A card-only inscription takes over a page that carries its own card; relay errors say why (Claude)
+The Cul-de-sac session: Video Call's launcher (a7ba0bc5...) carries its first card, and a new launcher would be a new
+page and reset every switch. A newer card by the same maker naming the page in `play` now replaces the page's own card
+for the viewer too (_game_of_page; the Apps tab already kept the newest per maker and name); an older one does not; an
+unconfirmed one counts as newest. Switches stay keyed on the page. And the operator's first relay key was refused with a bare
+"404": Cloudflare's words come through now ("cannot find specified key -- use the TURN key's own id"). Tests:
+test_games.py::test_a_card_only_inscription_takes_over_a_page_that_carries_its_own_card, test_stun.py.
+
+### 2026-10-23 A Contacts switch on the card; each switch shows only where it applies (Claude)
+The operator: "Allow access to Contacts should be another box on the card" (Video Call's book came up empty: a one-time
+"no" had been kept forever). Cards may say "contacts": true; the **Contacts** switch keeps the old answers' key
+(arcade.contacts.allow:<page>), so a yes stays a yes and a no is only the switch off. An app with a card is never asked
+in the page any more: off, `arcade.contacts.list()` gives [] with `.why` = 'off' (and the card shows the switch from
+then on); also 'guest', 'operator', 'no' (a page with no card, which is still asked, each visit), 'viewer'. And from
+the Cul-de-sac session: Wallet access (with its wallet-locked pill), Contacts and Camera & microphone show on a card
+only when it says it uses them, this browser saw it ask, or the switch is on -- Video Call no longer shows a Wallet
+box it never uses. Tests: test_contacts_add_browser.py::test_an_apps_contacts_switch_decides_and_an_empty_list_says_why.
+
+### 2026-10-23 The call relay: Cloudflare TURN for signed-in players (Claude)
+The operator, live test from two homes: "We can't hear or see each other. I can see myself." Gathering here was quick and
+complete, but this home's IPv4 is Starlink's shared one (129.222.x, carrier NAT): no direct link to another home gets
+through, and the fast lane had no relay. The operator chose "Cloudflare TURN". Admin -> Network -> Call relay: a TURN key's
+id and API token, tried with Cloudflare before it is kept (setting `turn`; the token never goes back to the page).
+/realtime/ice adds fresh logins (generate-ice-servers, 6 h, kept half that per player) for a signed-in player or the
+operator; a guest gets none ("relay": false), so strangers cannot spend it. The fast lane packs the relay's and public
+candidates before local ones (up to 10: relay 3, srflx 4, prflx 2, host the rest; a PC with many local addresses no
+longer crowds them out) and waits up to 6 s for the relay's when one was handed out. Tests: test_stun.py (both of
+Cloudflare's answer shapes, guests get none, kept not re-asked); the fast-lane and media browser tests still pass.
+
+### 2026-10-23 Ringing a player whose app is closed: a Notifications switch per app (Claude)
+The operator: call "at any time, even if the application is not open through push notifications as long as we have push
+notifications enabled for the app just like the Wallet access and camera and microphone access switches", "Keeping
+the game agnostic"; who may ring: "My contacts only". arcade/ring.py + routes in app.py: a card that says "notify":
+true shows a **Notifications** switch (account view; per ACCOUNT on its node, `ring:<pubkey>` apps, so every phone of
+the account rings). Turning it on asks (publisher named), turns this device's push on (the Messenger's VAPID push) and
+hands the node the addresses in this browser's address book (`allow`; the book lives in the browser; handed over again
+on signed-in pages when it changed). An app calls `arcade.realtime.ring(address, {line, link})`; the viewer adds the
+player's certificate and the TRUE app (its frame's page) and POSTs /account/ring. The callee's node holds a room
+`arcade!ring/<address>` for each account with a phone and an app on (`!` is no game name, so no page can join); the
+caller's node joins it as a guest and says the ring (a local callee is rung directly). The callee's node wakes the
+phone only if: the app is switched on, the caller is in the book, the caller's certificate checks against the node it
+came through, and not too often (15 s a pair, 30 an hour; 20 sends a minute a caller). The push is still empty; the
+worker shows "@caller · App" with the line, staying until answered, a long buzz on Android (iPhone: its one sound --
+no web page can ring like a phone while closed). Tapping opens /inscriptions/<app>/full?ring=<id>; the app reads it
+with `arcade.realtime.ringed()` ({from, tag, link, line}, for that app only). door.py lets the routes through. Tests:
+tests/test_ring.py, test_media_browser.py::test_ring_and_ringed_answer_in_the_viewer.
+
+### 2026-10-23 room.media: a playing picture always tells its game (Claude)
+The Cul-de-sac session's call test (three in a public room): a peer's picture played in the viewer and the game never
+heard 'media' for it -- a track arrived muted and its unmute was missed, and a player who had not started their own
+camera had no media state for the tiles at all. _page_doors works the 'media' / 'media-off' events out from the tracks
+again on each picture's loadeddata and resize and once a second while any remote media is live (mediaCheck), counts
+a video track with frames as sending whatever its muted flag says, and makes the media state on the first incoming
+track. ~/arcadecall tests/test_call_browser.py now passes every run (3 of 3; it failed every run before).
+
+### 2026-10-23 The Games tab is the Apps tab (Claude)
+The operator: "Change the games tab to the apps tab" ... "Keeping the game agnostic" ... "So now it's application agnostic"
+(a video-call card is coming). Nav Apps at /apps; /games 301s there (query kept); /games/<id> and /games/<id>/access
+stay as they are (the gate's own URL). A card may say {"app": {...}} -- games.MARKS, and the tab's query looks for
+either -- and every {"game": ...} card inscribed still lists. Words on the tab, the cards (Play -> Open) and the
+Wallet access / Camera & microphone asks and stops say "app" now. door.py lets /apps through. Tests:
+test_the_tab_is_apps_and_an_app_card_lists_like_a_game_card, and the quoted words in the door/games tests.
+
+### 2026-10-23 Camera pictures keep their own shape (Claude)
+The operator: "landscape should be cropped to fit into the portrait view ... portrait view on a PC should have extra black on
+the sides and no cropping. All should maintain their aspect ratios." The camera is asked for at most 1280 px each way
+and no shape (it asked for 640x480 before, which could turn a phone's portrait camera landscape); a tile is
+object-fit cover (centre-cropped) or contain (black bars), centred, never stretched -- the card chooses per layout.
+
+### 2026-10-23 Camera & microphone per game card, and room.media (Claude, with the Cul-de-sac session)
+The operator: "Our user can allow an app camera and microphone in the same way that they allow an app Wallet access on the
+game card" (a video-call card, built by the Cul-de-sac session on this API), "fast track the camera access", "And
+microphone access". A card may say `"media": true`: it then shows a **Camera & microphone** switch (games.html,
+base.html CAMERA & MICROPHONE, PER GAME; `arcade.media.allow:<page>` in localStorage, the same lookalike warning). A
+sandboxed frame cannot call getUserMedia whatever its allow= says (the Cul-de-sac session tested it in Chromium), so
+the VIEWER (_page_doors) opens the camera, adds its tracks to the fast lane's connections and draws every picture in
+a layer over the game's frame. room.media (realtime.js): start({video, audio}) / stop() / share(id, true|false|{video,
+audio}) / hear(id, on) / place(id|'me', rect|null, {fit, mirror}) / mute({video, audio}); events media, media-off,
+state ('on', 'off' -- also the viewer's own Stop --, 'denied'). Nothing is sent until the game shares with a player
+and nobody's sound plays until the game hears them (room names can be guessed). A pair renegotiates over its own
+negotiated channel (id 2, whole descriptions) once direct; media never goes through the room. A second start swaps
+tracks in place (voice-only, then the camera, no gap). The viewer always shows "Camera on · Stop" top-right. Off on
+its card: the game is told `off` and the viewer says where to turn it on; a page that is no game is asked once.
+FAST_PEERS 15 -> 19 (the operator: "up to 20 people in a room"). Tests: tests/test_media_browser.py (two Chromiums with
+fake cameras, and Chromium <-> Firefox both ways). Docs: games.md "Camera and microphone".
+
+### 2026-10-22 Ords panel never waits for the index's totals (Claude)
+The operator: "strawberries admin, ORD's panel is not loading". @strawberry's Dogecoin index reached 52.8 million inscriptions
+(12 GB); `SELECT COUNT(*), COUNT(burned) FROM insc` took 42 s, the holders count 5 s, redone every 2 min, and the first
+status after a restart held every Ords request behind it (the stall watch showed all page threads in admin_ords ->
+_counts). doginal_index._counts now works a walking index's totals out on a thread of its own ("ord-counts", one at a
+time) and answers with the last ones, or "counting" (the panel says so) until the first arrive; "found" (a block sum,
+0.7 s) stays as it was. Test: test_the_totals_never_hold_up_the_status.
+### 2026-10-22 Compression, step 2: borrowed Core answers cross the mesh zlib-compressed (Claude)
+mesh/coreshare.py: a borrower's "q" now says `z: 1`; a sharer that reads it compresses its JSON answer (zlib 6) and marks
+each "a" part `z: 1` -- raw blocks and transactions ride in it as hex, twice their size, so a block's answer comes out
+under 0.7 of the raw answer in the test (a real Dogecoin block). The borrower unpacks (`_inflate`, never past
+MAX_ANSWER; not zlib or too large fails the call, tried at the next sharer) before reading the JSON. An older sharer
+ignores `z` and answers raw; an older borrower never asks. Tests (tests/test_coreshare.py, two real MeshNodes over
+local links): a borrowed block crosses compressed and reads the same; an older sharer's raw answer still reads; a bomb
+and a non-zlib answer fail the call. The existing borrowing tests run the compressed path end to end too.
+
+### 2026-10-22 Compression, step 1: index copies cross the mesh zlib-compressed (Claude)
+The operator: "start with the compression plan", "Make sure you test everything thoroughly". mesh/doginalshare.py: every
+"g" (a snapshot's manifest or piece) now says `z: 1`; an arcade that reads it compresses its answer (zlib 6) and marks
+each "gb" part `z: 1`; the asker unpacks (`_inflate`, never past INFLATE_MAX 16 MB -- a bomb or a non-zlib answer is a
+failed piece, asked elsewhere) and checks the RAW piece against the manifest's hash as before. An older holder ignores
+`z` and answers raw; an older asker never asks: both still work. Real pieces of @strawberry's 3.1 GB Pepecoin copy:
+0.59 of the size, 25 ms each, round trip and hash exact. Tests (tests/test_doginal_index.py): a whole copy fetched
+over two real DxShare objects, compressed, installs the holder's index exactly in fewer bytes; with "z" stripped (an
+older arcade) it goes raw and still arrives; a bomb and a non-zlib answer are failed pieces, nothing installed.
+
 ### 2026-10-22 · SadFrog's side (Claude, node 2) · branch `sadfrog/ltc-safety` · two asks: an ASHVALE release, and "always allow" on the add-contact card
 - **Please inscribe the next ASHVALE release** (tools/release_modular.py, as @ashvale). The live registry (v200) still
   has none of these, all on ASHVALE `main` (origin and node2) since 2026-10-21/22:
@@ -146,7 +378,9 @@ to this to our indexes?" Measured on a 64 MB sample of @strawberry's Pepecoin co
 2. **Borrowed Core reads** (mesh/coreshare): raw blocks and transactions go as HEX in the JSON header today (twice
    their size); send them as raw bytes in the frame's blob (and compressed), about half the traffic of a borrowing
    arcade -- how Bells would run on .25 without its own Core.
-3. **Arcade-to-arcade web replies** (imported-coin lists, /signin/... JSON): gzip.
+3. **Arcade-to-arcade web replies** (imported-coin lists, /signin/... JSON): gzip. **Already so, no code:**
+   `_ask_arcade` / `_post_arcade` use `requests`, which asks for gzip and unpacks it, and every arcade's public host
+   is behind Cloudflare, which compresses them (checked: /signin/apple answers `content-encoding: gzip` to it).
 Each only once both ends say they read it (a flag in the "hi" / the request), so an updated arcade answers an older one
 the old way. Already compressed: chunk notes (ord_notes, zlib) and the shared order book (book_relay, zlib). Not worth
 it: index answers, hellos, leases (small). Keeping the local index compressed was weighed and left: SQLite has no

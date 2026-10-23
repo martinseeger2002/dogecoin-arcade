@@ -323,7 +323,7 @@ block, or nothing moves. Until `broadcast`, either player can walk away and
 nothing is spent. After `settled`, the NFT and the payment are where your game
 expects them; read them with `items()`.
 
-## Putting your game on the Games tab
+## Putting your game on the Apps tab
 
 A multiplayer game is listed like any other: see *Games: listing yours on the
-Games tab*, and set `"multiplayer": true` in its `game` JSON.
+Apps tab*, and set `"multiplayer": true` in its `game` JSON.

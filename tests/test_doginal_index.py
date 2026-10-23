@@ -1186,3 +1186,133 @@ def test_a_copy_being_fetched_is_never_made_again_under_a_new_id(tmp_path, monke
     assert not snaps.want_made(), "a piece was served a moment ago: kept"
     snaps.served_at -= ord_snapshot.SNAP_SERVING + 1
     assert snaps.want_made(), "nobody fetching it any more, and old: made again"
+
+
+def test_the_totals_never_hold_up_the_status(tmp_path, monkeypatch):
+    """2026-10-22: @strawberry's Ords panel stopped loading -- counting its 52.8 million Dogecoin inscriptions took 42 s,
+    and every status waited for it. The status answers at once ("counting"), the totals arrive from their own thread."""
+    import threading
+    chain = _story_chain()
+    index = dx.DoginalIndex(tmp_path / "w.sqlite", lambda: chain, lambda: "walk", cores=lambda: 1)
+    index.walker.step(chain, dx.BASE + 11, budget=60)
+    gate, real = threading.Event(), index._count
+    monkeypatch.setattr(index, "_count", lambda walking: (gate.wait(10), real(walking))[1])
+    walk = index._status()["walk"]
+    assert walk["counting"] and walk["inscriptions"] == 0, "answered without waiting for the count"
+    assert index._status()["walk"]["counting"], "one count at a time, still nobody waits"
+    gate.set()
+    for _ in range(100):
+        if not index._counts_lock.locked():
+            break
+        threading.Event().wait(0.05)
+    walk = index._status()["walk"]
+    assert not walk["counting"] and walk["inscriptions"] > 0, walk
+def _linked_shares(holder, newcomer, strip_z=False):
+    """Two arcades on real DxShare objects, one link each way; `strip_z`: an older arcade (no "z" on the wire)."""
+    from arcade.mesh.doginalshare import DxShare
+    wire = {"gb": [], "g": []}
+
+    class Link:
+        def __init__(self, peer_id):
+            self.peer_id, self.far, self.share = peer_id, None, None
+
+        async def send(self, header, blob=b""):
+            if strip_z:
+                header = {k: v for k, v in header.items() if k != "z"}
+            if header.get("op") in wire:
+                wire[header["op"]].append((dict(header), len(blob)))
+            await self.share.on_frame(self.far, header, blob)
+
+    class Node:
+        def __init__(self):
+            self.links = {}
+    h_share, n_share = DxShare(holder), DxShare(newcomer)
+    to_holder, to_new = Link("holder"), Link("new")
+    to_holder.far, to_new.far = to_new, to_holder
+    to_holder.share, to_new.share = h_share, n_share
+    h_share.node, n_share.node = Node(), Node()
+    n_share.node.links = {"holder": to_holder}
+    h_share.node.links = {"new": to_new}
+    return h_share, n_share, to_holder, to_new, wire
+
+
+def _fetch_over_real_links(tmp_path, monkeypatch, strip_z=False):
+    import asyncio
+    from arcade import ord_snapshot
+    monkeypatch.setattr(ord_snapshot, "WORTH_BLOCKS", 4)
+    monkeypatch.setattr(ord_snapshot, "PIECE", 4096)
+    monkeypatch.setattr(ord_snapshot.os, "cpu_count", lambda: 20)
+    chain = _story_chain()
+    holder = dx.DoginalIndex(tmp_path / "h.sqlite", lambda: chain, lambda: "walk", cores=lambda: 1)
+    newcomer = dx.DoginalIndex(tmp_path / "n.sqlite", lambda: chain, lambda: "walk", own_core=lambda: False)
+    holder.walker.step(chain, dx.BASE + 11, budget=60)
+    holder.store.x("DELETE FROM notes")
+    holder._snap_asked = True
+    h_share, n_share, to_holder, to_new, wire = _linked_shares(holder, newcomer, strip_z)
+
+    async def go():
+        h_share.loop = n_share.loop = asyncio.get_running_loop()
+        for _ in range(200):
+            await n_share.on_frame(to_holder, {"t": "dx", **holder.hello()}, b"")    # the newcomer hears the holder
+            await h_share.on_frame(to_new, {"t": "dx", **newcomer.hello()}, b"")
+            await asyncio.to_thread(holder.step)
+            await asyncio.to_thread(newcomer.step)
+            await asyncio.sleep(0.01)
+            if newcomer.snapshots.said.startswith("the index came"):
+                return
+    asyncio.run(go())
+    return holder, newcomer, wire
+
+
+def test_an_index_copy_crosses_real_links_compressed_and_comes_out_the_same(tmp_path, monkeypatch):
+    """2026-10-22: compress what arcades send each other, starting with the index copy's pieces. Over two real
+    DxShare objects: the asker says "z", the holder compresses, the asker unpacks and checks each RAW piece against
+    the manifest's hash as before, and the copy put in place is the holder's index exactly -- in fewer bytes."""
+    holder, newcomer, wire = _fetch_over_real_links(tmp_path, monkeypatch)
+    assert newcomer.snapshots.said.startswith("the index came"), newcomer.snapshots.said
+    assert _dump(newcomer) == _dump(holder)
+    asks = [h for h, _n in wire["g"]]
+    assert asks and all(h.get("z") == 1 for h in asks), "every ask says it reads a compressed answer"
+    answers = [(h, n) for h, n in wire["gb"]]
+    assert answers and all(h.get("z") == 1 for h, _n in answers), "and every answer is compressed"
+    pieces = holder.snapshots.made["manifest"]
+    raw = int(pieces["size"])
+    assert sum(n for _h, n in answers) < raw, (sum(n for _h, n in answers), raw)
+
+
+def test_with_an_older_arcade_on_either_end_the_copy_goes_raw_and_still_arrives(tmp_path, monkeypatch):
+    holder, newcomer, wire = _fetch_over_real_links(tmp_path, monkeypatch, strip_z=True)
+    assert newcomer.snapshots.said.startswith("the index came"), newcomer.snapshots.said
+    assert _dump(newcomer) == _dump(holder)
+    assert not any(h.get("z") for h, _n in wire["gb"]), "no flag: the raw answer an older arcade reads"
+
+
+def test_a_compressed_answer_that_unpacks_too_far_or_is_not_zlib_is_a_wrong_piece(tmp_path, monkeypatch):
+    """Never inflated past INFLATE_MAX (a "zip bomb" from a hostile arcade), and not zlib at all: the piece is said
+    failed (asked of another arcade), nothing installed."""
+    import asyncio
+    import zlib
+    from arcade.mesh import doginalshare
+    monkeypatch.setattr(doginalshare, "INFLATE_MAX", 64 * 1024)
+    chain = _story_chain()
+    holder = dx.DoginalIndex(tmp_path / "h.sqlite", lambda: chain, lambda: "walk", cores=lambda: 1)
+    newcomer = dx.DoginalIndex(tmp_path / "n.sqlite", lambda: chain, lambda: "walk", own_core=lambda: False)
+    h_share, n_share, to_holder, _to_new, _wire = _linked_shares(holder, newcomer)
+    failed = []
+    monkeypatch.setattr(type(newcomer.snapshots), "piece_failed",
+                        lambda self, node, sid, i: failed.append((node, sid, i)))
+    got = []
+    monkeypatch.setattr(type(newcomer.snapshots), "got_piece", lambda self, *a: got.append(a))
+    bomb = zlib.compress(b"\0" * (1024 * 1024), 9)             # 1 MB of zeros in about a kilobyte
+    assert doginalshare._inflate(bomb) is None and doginalshare._inflate(b"not zlib at all") is None
+    assert doginalshare._inflate(zlib.compress(b"x" * 1000)) == b"x" * 1000
+
+    async def go():
+        n_share.loop = asyncio.get_running_loop()
+        for rid, data in ((101, bomb), (102, b"not zlib at all")):
+            n_share._get_wait[rid] = {"net": newcomer.net, "peer": "holder", "what": "piece", "snap": "s" * 64,
+                                      "i": 3, "parts": [], "size": 0, "at": 0}
+            n_share._get_wait[rid]["at"] = __import__("time").monotonic()
+            await n_share._get_part(to_holder, {"op": "gb", "id": rid, "seq": 0, "end": True, "z": 1}, data)
+    asyncio.run(go())
+    assert failed == [("holder", "s" * 64, 3), ("holder", "s" * 64, 3)] and got == []

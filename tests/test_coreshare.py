@@ -437,3 +437,89 @@ def test_mining_is_shared_for_test_coins_only_not_too_often_and_the_sharer_names
         finally:
             await a.stop(); await b.stop()
     run(go())
+
+
+def _spy(link, seen):
+    """Record (header, bytes) of every frame `link` sends."""
+    real = link.send
+
+    async def send(header, blob=b""):
+        seen.append((dict(header), len(blob)))
+        return await real(header, blob)
+    link.send = send
+
+
+def test_a_borrowed_block_crosses_compressed_and_reads_the_same(monkeypatch):
+    """2026-10-22: compress what arcades send each other. A borrowed block's answer carries its bytes as hex
+    (twice their size); the borrower asks with "z", the sharer compresses, the block reads exactly as before."""
+    core = FakeCore("doge")
+    seen: list = []
+
+    async def go():
+        a, b = mk(), mk()
+        sa, sb = _share(core), _borrower()
+        a.add_extension(sa); b.add_extension(sb)
+        await started(a, b)
+        try:
+            await _linked((b, a))
+            await until(lambda: sb.sharers("doge"), what="b hears a's offer")
+            for link in a.links.values():
+                _spy(link, seen)
+            rpc = BorrowedRpc(sb, NETWORKS["doge"])
+            row = _blocks("doge")[-1]
+            assert await asyncio.to_thread(rpc.call, "getblock", row["hash"], 0) == row["raw"]
+            assert await asyncio.to_thread(rpc.call, "getblock", row["hash"], 2) == _strip(row["verbose"])
+        finally:
+            await a.stop(); await b.stop()
+    run(go())
+    answers = [(h, n) for h, n in seen if h.get("op") == "a"]
+    assert answers and all(h.get("z") == 1 for h, _n in answers), "every answer compressed"
+    raw_answer = len(json.dumps([{"r": _blocks("doge")[-1]["raw"]}], separators=(",", ":")))
+    first = sum(n for h, n in answers[:1])
+    assert first < raw_answer * 0.7, (first, raw_answer)
+
+
+def test_an_older_sharer_or_borrower_still_trades_raw(monkeypatch):
+    """No "z" on the request (an older borrower): the answer goes raw; and an older sharer that ignores "z" answers
+    raw, which the borrower still reads."""
+    core = FakeCore("doge")
+    seen: list = []
+    real_answer = CoreShare._answer
+
+    async def old_answer(self, link, rid, net, calls, zipped=False):     # an older sharer: never compresses
+        return await real_answer(self, link, rid, net, calls, False)
+    monkeypatch.setattr(CoreShare, "_answer", old_answer)
+
+    async def go():
+        a, b = mk(), mk()
+        sa, sb = _share(core), _borrower()
+        a.add_extension(sa); b.add_extension(sb)
+        await started(a, b)
+        try:
+            await _linked((b, a))
+            await until(lambda: sb.sharers("doge"), what="b hears a's offer")
+            for link in a.links.values():
+                _spy(link, seen)
+            rpc = BorrowedRpc(sb, NETWORKS["doge"])
+            row = _blocks("doge")[-1]
+            assert await asyncio.to_thread(rpc.call, "getblock", row["hash"], 0) == row["raw"]
+        finally:
+            await a.stop(); await b.stop()
+    run(go())
+    assert seen and not any(h.get("z") for h, _n in seen if h.get("op") == "a")
+
+
+def test_a_compressed_answer_that_unpacks_too_far_or_is_not_zlib_fails_the_call():
+    import zlib
+    assert coreshare._inflate(zlib.compress(b"\0" * (2 * 1024 * 1024)), 1024 * 1024) is None, "a bomb: never inflated"
+    assert coreshare._inflate(b"not zlib", 1024) is None
+    assert coreshare._inflate(zlib.compress(b"[1]"), 1024) == b"[1]"
+    sb = _borrower()
+
+    async def go():
+        fut = asyncio.get_running_loop().create_future()
+        sb._waiting[7] = {"peer": "p", "fut": fut, "parts": [], "size": 0}
+        sb._on_answer("p", {"id": 7, "seq": 0, "end": True, "z": 1}, b"not zlib")
+        with pytest.raises(Exception, match="does not unpack"):
+            await fut
+    run(go())

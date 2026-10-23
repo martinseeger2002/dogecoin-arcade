@@ -43,7 +43,7 @@
 // those, and you say things only in your own. Somebody on the far side of town
 // costs you nothing. Keep `view` below `cell` and you are in at most four cells.
 //
-// THE FAST LANE (2026-10-18), for action games of up to about 8 players:
+// THE FAST LANE (2026-10-18), for action games of up to about 8 players (a room connects up to 20):
 //
 //   arcade.realtime.join('match-1', {fast: true}).then(function (room) {
 //     room.fast.on('message', function (data, p) { moveTank(p, data); });
@@ -59,11 +59,39 @@
 // leased a relay) is in state 'room': their sends go through the room at about three a second, reliable ones in
 // order and of the rest only the latest, so the game keeps working, slower, for those two. `room.fast` is null
 // where the viewer has no WebRTC: use room.send then.
+//
+// CAMERA & MICROPHONE (2026-10-22), for a video call or a game with voice. The card says "media": true and the
+// player turns on Camera & microphone on it. A page cannot open the camera itself; the viewer does, and draws:
+//
+//   arcade.realtime.join('call-x7', {fast: true}).then(function (room) {
+//     room.media.start({video: true, audio: true}).then(function (r) {   // {ok, video, audio} or {ok: false, error}
+//       if (r.error === 'off') return say('Turn on Camera & microphone on this game card');   // the viewer says so too
+//     });
+//     room.media.place('me', {x: 10, y: 10, w: 160, h: 120}, {fit: 'cover', mirror: true});
+//     room.fast.on('peer', function (p, state) {
+//       if (state === 'direct' && p.address === friend) {    // ONLY the player you mean: a room's name can be guessed
+//         room.media.share(p.id, true);                      // your picture and sound go to them
+//         room.media.hear(p.id, true);                       // their sound plays (nobody's does until you say)
+//         room.media.place(p.id, {x: 0, y: 0, w: 640, h: 480}, {fit: 'contain'});
+//       }
+//     });
+//     room.media.on('media', function (p, has) { ... });    // has = {video, audio}: they are sending
+//     room.media.on('media-off', function (p) { ... });
+//     room.media.on('state', function (s) { ... });         // 'on', 'off' (the player pressed Stop too), 'denied'
+//     room.media.share(p.id, {video: false, audio: true});  // one kind only: your voice, not your picture
+//     room.media.start({video: true, audio: true});          // again, mid-call: the camera joins the microphone
+//     room.media.mute({video: false, audio: true});           // true = muted
+//     room.media.stop();                                      // camera and microphone off, every share ends
+//   });
+//
+// Rectangles are in this page's CSS pixels (getBoundingClientRect), placed again when your layout moves; null hides
+// one. A picture can only be shared over a direct link ('not direct' otherwise: media never goes through the room).
+// The viewer always shows that the camera or microphone is on, with a Stop button, over your page.
 (function () {
   if (window.arcade && window.arcade.realtime) return;
   var seq = 0, waiting = {}, rooms = {};
 
-  function ask(message) {
+  function ask(message, wait) {
     return new Promise(function (resolve, reject) {
       message.arcade = 'realtime';
       message.seq = ++seq;
@@ -73,7 +101,7 @@
           delete waiting[message.seq];
           reject(new Error('no viewer is listening: open this page in a DogecoinArcade viewer'));
         }
-      }, 20000);
+      }, wait || 20000);
       window.parent.postMessage(message, '*');
     });
   }
@@ -102,7 +130,56 @@
     var self = this;
     (said.members || []).forEach(function (p) { self._members[p.id] = p; });
     this.fast = said.fast ? new Fast(this) : null;
+    this.media = said.fast && said.media ? new Media(this) : null;
   }
+
+  // CAMERA & MICROPHONE (2026-10-22), on a fast room. The viewer opens them (a sandboxed page cannot), only while the
+  // game's card has Camera & microphone on, sends them to the players you name and draws the pictures over your page
+  // where you say. See the guide at the top of this file.
+  function Media(room) {
+    this.room = room;
+    this._on = {media: [], 'media-off': [], state: []};
+  }
+  Media.prototype.on = function (type, fn) {
+    if (!this._on[type]) throw new Error('media events are: media, media-off, state');
+    this._on[type].push(fn);
+    return this;
+  };
+  Media.prototype._ask = function (what, extra, wait) {
+    var m = {op: 'media', room: this.room.name, do: what};
+    for (var k in extra || {}) m[k] = extra[k];
+    return ask(m, wait);
+  };
+  Media.prototype.start = function (options) {
+    options = options || {video: true, audio: true};
+    return this._ask('start', {video: !!options.video, audio: !!options.audio}, 600000)
+      .then(function (said) { return {ok: true, video: !!said.video, audio: !!said.audio}; },
+            function (err) { return {ok: false, error: err.message}; });
+  };
+  Media.prototype.stop = function () { return this._ask('stop'); };
+  Media.prototype.share = function (id, on) {
+    // on: true / false, or {video, audio} for one kind only (your voice to everybody, your picture to a few)
+    var said = on && typeof on === 'object' ? {video: !!on.video, audio: !!on.audio} : on !== false;
+    return this._ask('share', {peer: String(id), on: said})
+      .then(function () { return {ok: true}; }, function (err) { return {ok: false, error: err.message}; });
+  };
+  Media.prototype.hear = function (id, on) { return this._ask('hear', {peer: String(id), on: on !== false}); };
+  // place(id | 'me', {x, y, w, h} in this page's CSS pixels, or null to hide, {fit: 'cover' | 'contain', mirror})
+  Media.prototype.place = function (who, rect, options) {
+    options = options || {};
+    return this._ask('place', {who: who === 'me' ? 'me' : String(who),
+                               rect: rect ? {x: rect.x, y: rect.y, w: rect.w != null ? rect.w : rect.width,
+                                             h: rect.h != null ? rect.h : rect.height} : null,
+                               fit: options.fit, mirror: !!options.mirror});
+  };
+  Media.prototype.mute = function (which) {
+    which = which || {};
+    var m = {};
+    if (typeof which.video === 'boolean') m.video = which.video;
+    if (typeof which.audio === 'boolean') m.audio = which.audio;
+    return this._ask('mute', m);
+  };
+  Media.prototype._emit = function (type, a, b) { Room.prototype._emit.call(this, type, a, b); };
 
   function Fast(room) {
     this.room = room;
@@ -166,6 +243,9 @@
       if (typeof said === 'string') { try { said = JSON.parse(said); } catch (err) {} }
       this.fast._emit('message', said, p);
     }
+    else if (ev.type === 'media' && this.media) this.media._emit('media', p, {video: !!ev.video, audio: !!ev.audio});
+    else if (ev.type === 'media-off' && this.media) this.media._emit('media-off', p);
+    else if (ev.type === 'media-state' && this.media) this.media._emit('state', ev.state);
     else if (ev.type === 'peer' && this.fast) {
       if (ev.state === 'gone') delete this.fast._peers[p.id]; else this.fast._peers[p.id] = ev.state;
       this.fast._emit('peer', p, ev.state);
@@ -177,6 +257,21 @@
       this._emit('message', data, p);
     }
   };
+
+  // RINGING (arcade/ring.py, 2026-10-23): ring somebody while your app is closed on their phone. It wakes them only
+  // if they turned on Notifications on your app's card and you are in their address book.
+  //   arcade.realtime.ring(address, {line: 'Video call', link: 'call=x7'}) -> {ok, rung, why}
+  //   arcade.realtime.ringed() -> {from, tag, link, line, at} when a tapped notification opened your app, else null
+  function ring(address, options) {
+    options = options || {};
+    return ask({op: 'ring', room: '', to: String(address || ''), line: String(options.line || '').slice(0, 80),
+                link: String(options.link || '').slice(0, 200)}, 60000)
+      .then(function (said) { return {ok: true, rung: !!said.rung, why: said.why || ''}; },
+            function (err) { return {ok: false, error: err.message}; });
+  }
+  function ringed() {
+    return ask({op: 'ringed', room: ''}).then(function (said) { return said.ring || null; }, function () { return null; });
+  }
 
   // join(room, {game}): `game` defaults to this inscription, so only copies of
   // the same page meet. A game whose versions are separate inscriptions names
@@ -300,5 +395,5 @@
   }
 
   window.arcade = window.arcade || {};
-  window.arcade.realtime = {join: join, area: area, MAX_BYTES: 512};
+  window.arcade.realtime = {join: join, area: area, ring: ring, ringed: ringed, MAX_BYTES: 512};
 })();

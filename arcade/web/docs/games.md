@@ -1,4 +1,4 @@
-# Games: listing yours on the Games tab
+# Games: listing yours on the Apps tab
 
 The *Games* tab lists every game anyone has inscribed, on every arcade, ranked
 by what players say about them. Players can press *Play* to open a game full
@@ -89,7 +89,7 @@ A game can ask a player's wallet to trade, pay, put things in escrow or sign. An
 including a copy of yours under a lookalike name (an extra letter, a digit for a letter), so **no game gets
 wallet access until the player turns it on**:
 
-* Every card on the Games tab has a **Wallet access** switch, off until the player turns it on, next to
+* Every card on the Apps tab has a **Wallet access** switch, off until the player turns it on, next to
   whether their wallet is unlocked in that browser. Turning it on names the game's publisher (its @name and
   address) and asks the player to check that it is the real one.
 * **A game that uses the wallet does not play until the switch is on.** Say so on your card with
@@ -108,8 +108,49 @@ The switch belongs to the page Play opens (`play`, or the card itself), and the 
 **Lookalike cards are hidden.** Each arcade checks new cards against the games already listed. A card by a
 different publisher with a name that reads the same once the lookalike letters are taken out, or with the same
 cover, goes to the operator's model; if it looks made to be mistaken for the other game, it is left off the
-Games tab and its `/play` link until the operator has looked. The first publisher of a name counts as the real
+Apps tab and its `/play` link until the operator has looked. The first publisher of a name counts as the real
 one, unless the operator trusts another. Pick a name of your own and nothing here affects you.
+
+## Camera and microphone (video calls, voice)
+
+A game can show players to each other and let them talk: a video call, a table with voices. The camera and
+microphone are the player's, so they work like Wallet access:
+
+* Say `"media": true` on your card. The card then shows a **Camera & microphone** switch, off until the player
+  turns it on; turning it on names the publisher and asks the player to check it is the real one.
+* A game whose switch is off and that asks anyway is told `off`, and the arcade says over the game where to turn
+  it on (the game is not stopped: it can still play without them). A page that is not a game asks the player once.
+* Your page never touches the camera (a sandboxed page cannot). The arcade opens it, sends it to the players you
+  name, and draws the pictures over your page where you say. While the camera or microphone is on, the arcade shows
+  so in the top-right corner of your page, with a **Stop** button you cannot cover; Stop tells your game `off`.
+
+It rides the fast lane (`arcade.realtime.join(name, {fast: true})`, up to 20 players a room) and only over a
+direct link: pictures and sound never go through the room.
+
+```js
+arcade.realtime.join('call-x7', {fast: true}).then(function (room) {
+  room.media.start({video: true, audio: true});              // {ok, video, audio} or {ok: false, error: 'off' | 'denied'}
+  room.media.place('me', {x: 10, y: 10, w: 160, h: 120}, {fit: 'cover', mirror: true});
+  room.fast.on('peer', function (p, state) {
+    if (state !== 'direct' || p.address !== friend) return;   // only the player you mean
+    room.media.share(p.id, true);                             // or {video: false, audio: true}: the voice only
+    room.media.hear(p.id, true);                              // their sound plays
+    room.media.place(p.id, {x: 0, y: 140, w: 640, h: 480}, {fit: 'contain'});
+  });
+  room.media.on('media', function (p, has) { /* has = {video, audio} */ });
+  room.media.on('media-off', function (p) { });
+  room.media.on('state', function (s) { /* 'on', 'off', 'denied' */ });
+});
+```
+
+**Nothing is sent and nothing is heard until you say so.** A room's name can be guessed, so being in your room gives
+nobody your player's picture: `share` names who gets it (by kind), and nobody's sound plays until you `hear` them.
+Check `p.address` (proved by that player's own key) before you share. Rectangles are your page's CSS pixels
+(`getBoundingClientRect`), drawn exactly there, with rounded corners inside the rectangle; place them again when
+your layout moves, and keep your buttons out from under them: the pictures sit on top of your page. `start` again
+(say, to add the camera to a voice-only call) swaps the tracks without a gap; `mute({video, audio})` darkens or
+silences them; `stop()` closes both. A pair that cannot connect directly (state `room`) gets no media unless your
+builder has leased a relay: say "could not connect directly".
 
 ## How the tab ranks games
 
@@ -143,7 +184,7 @@ viewer, saves with `arcade.storage`, and can pay prizes through prize pools
 
 ### A card for a game you already inscribed
 
-A game inscribed before the Games tab existed has no `game` JSON, and JSON can
+A game inscribed before the Apps tab existed has no `game` JSON, and JSON can
 never be added afterwards. Give it a card by inscribing a tiny page, from the
 **same address** that inscribed the game, whose JSON names the game in `play`:
 

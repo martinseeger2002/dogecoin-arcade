@@ -49,6 +49,7 @@ from ..ledger import COIN, AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain, unpayable_versions
 from .. import inscribe as inscribelib
 from .. import games as gameslib
+from .. import ring as ringlib
 from .. import gamestate as gamestatelib
 from .. import bids as bidslib
 from .. import standing as standinglib
@@ -435,7 +436,7 @@ MINING_CALLS = frozenset({"getblocktemplate", "submitblock", "getbestblockhash",
 NAV = [
     ("/",             "Overview",     None,        True),
     # Every inscribed game (arcade/games.py), where an account's sits.
-    ("/games",        "Games",        "mainnet",   True),
+    ("/apps",         "Apps",         "mainnet",   True),
     ("/messages",     "Messages",     "testnet",   True),
     # Likes, replies, sales and swaps to the node's own address, as an account has (2026-10-19).
     ("/notifications", "Notifications", None,     True),
@@ -467,7 +468,7 @@ ACCOUNT_NAV = [
     ("/me",              "Your arcade",  None,        True),
     # Every inscribed game (arcade/games.py), right after the account's own
     # page (2026-10-01: "between your arcade and Messages").
-    ("/games",           "Games",        "mainnet",   True),
+    ("/apps",            "Apps",         "mainnet",   True),
     ("/me/messages",     "Messages",     "testnet",   True),
     # 2026-09-25: Messages, Notifications, Feed, then the address book.
     ("/me/notifications", "Notifications", None,      True),
@@ -8164,6 +8165,14 @@ def create_app(state: AppState) -> FastAPI:
         return Response(body, media_type="application/javascript",
                         headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
 
+    @app.get("/r/llm.js")
+    def r_llm_js():
+        """The LLM shim an inscribed page loads: arcade.llm.offers() and arcade.llm.chat(), paid from the signed-in
+        player's prepaid credit with a seller (arcade/llm.py, 2026-10-23)."""
+        body = (TEMPLATE_DIR / "llm.js").read_text()
+        return Response(body, media_type="application/javascript",
+                        headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
+
     @app.get("/r/storage.js")
     def r_storage_js():
         """The storage shim an inscribed page loads (see pagestore.py).
@@ -9047,7 +9056,9 @@ def create_app(state: AppState) -> FastAPI:
         waiting = _pending_feed(state.messaging.network)
         pool = [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])]
         acts: list[dict] = []
-        level, seen = [txid], set()
+        # An app's discussion is every version's (2026-10-23): what was said to an older card is said here.
+        versions = _app_versions(txid) if launch.get("kind") == "game" else [txid]
+        level, seen = list(dict.fromkeys([txid] + versions)), set()
         for _depth in range(6):                    # six deep is deep enough
             if not level:
                 break
@@ -9061,6 +9072,8 @@ def create_app(state: AppState) -> FastAPI:
             acts += [a for a in got if a["txid"] not in seen]
             seen |= {a["txid"] for a in got}
             level = [a["txid"] for a in got if a["kind"] == feedlib.REPLY]
+        olders = set(versions) - {txid}
+        acts = [dict(a, target=txid) if a.get("target") in olders else a for a in acts]
         replies = [a for a in acts if a["kind"] == feedlib.REPLY]
         likes: dict[str, set] = {}
         for a in acts:
@@ -9899,7 +9912,10 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(403, "sign in first")
         said = payload if isinstance(payload, dict) else {}
         key = str(said.get("key", "")).strip()
-        if not re.fullmatch(r"/exchange[/?][A-Za-z0-9/_.@?=&%+-]{1,200}", key):     # a collection name is %-encoded; a tab
+        # An app is starred by its maker and name, so the star stays across its versions (2026-10-23):
+        # "app:<creator>:<name slug>" (gameslib.app_key).
+        if not (re.fullmatch(r"/exchange[/?][A-Za-z0-9/_.@?=&%+-]{1,200}", key)
+                or re.fullmatch(r"app:[A-Za-z0-9]{20,90}:[a-z0-9-]{1,80}", key)):     # a collection name is %-encoded; a tab
             return JSONResponse({"detail": "that is not a market"}, status_code=400)
         now = [k for k in _favorites(owner) if k != key]
         if said.get("on", True):
@@ -9943,6 +9959,26 @@ def create_app(state: AppState) -> FastAPI:
         rows = push.news(account.pubkey) if push is not None else []
         out = []
         for row in rows:
+            if str(row["txid"]).startswith("ring:"):
+                try:
+                    said = json.loads(row["sender"])
+                except ValueError:
+                    continue
+                tag, name = "", "an app"
+                try:
+                    tag = state.token_index(_account_chain()).tag_of(said.get("f") or "") or ""
+                except Exception:                                  # noqa: BLE001
+                    pass
+                found = _game_by_txid(str(said.get("app") or ""))
+                if not found:
+                    card = _game_of_page(str(said.get("app") or ""))
+                    name = card.get("name") or name
+                else:
+                    name = found["game"].get("name") or name
+                out.append({"kind": "ring", "at": row["at"], "app": name, "line": said.get("line") or "",
+                            "from": f"@{tag}" if tag else str(said.get("f") or "")[:10] + "\u2026",
+                            "url": f"/inscriptions/{said.get('app')}/full?ring={row['txid'][5:]}"})
+                continue
             if str(row["txid"]).startswith("fill:"):
                 pid = str(row["sender"]).split(":", 1)[-1]
                 try:
@@ -10002,6 +10038,173 @@ def create_app(state: AppState) -> FastAPI:
         _watcher["thread"] = threading.Thread(target=loop, name="arcade-push",
                                               daemon=True)
         _watcher["thread"].start()
+        _ring_loop()
+
+    # --- ringing a player whose app is closed (arcade/ring.py, 2026-10-23) ---------------------
+    #
+    # An app's card has a Notifications switch (per account, kept here); an app rings an address
+    # (arcade.realtime.ring); the RECIPIENT's node wakes their phone only for an app they switched on and a
+    # caller in their address book, proved by the caller's own certificate.
+
+    _rings = ringlib.Rings(lambda: getattr(state, "mesh", None))
+    _ring_thread: dict[str, Any] = {}
+
+    def _ring_setting(pubkey: str) -> dict:
+        said = state.setting(f"ring:{pubkey}") or {}
+        apps = [a for a in (said.get("apps") or []) if isinstance(a, str) and re.fullmatch(r"[0-9a-f]{64}", a)]
+        allow = [a for a in (said.get("allow") or []) if isinstance(a, str)]
+        return {"apps": apps, "allow": allow}
+
+    def _ring_deliver(to: str, said: dict, node: str) -> bool:
+        """A ring for an account on this node: woken only if every rule holds (arcade/ring.py)."""
+        push = state.push()
+        pubkey = _owners().get(to)
+        if push is None or pubkey is None or not isinstance(said, dict):
+            return False
+        caller, app_id = str(said.get("f") or "")[:64], str(said.get("app") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", app_id) or not caller or caller == to:
+            return False
+        rules = _ring_setting(pubkey)
+        if app_id not in rules["apps"] or caller not in rules["allow"]:
+            return False
+        if node and str(said.get("n") or "") != node:
+            return False                                       # the ring came through another node than it says
+        svc = getattr(state, "mesh", None)
+        cred = {"a": caller, "x": said.get("x"), "s": said.get("s")}
+        try:
+            if svc is None or not svc.check_cert_from(str(said.get("n") or ""), caller, cred):
+                return False
+        except Exception:                                      # noqa: BLE001 -- unproven is refused
+            return False
+        if not _rings.may_ring(caller, to):
+            return False
+        ring = {"id": ringlib.new_id(), "from": caller, "to": to, "app": app_id, "at": time.time(),
+                "line": ringlib.clean_line(said.get("line"), ringlib.RING_LINE),
+                "link": str(said.get("link") or "")[:ringlib.RING_LINK]}
+        _rings.keep(ring)
+        push.tell(pubkey, "ring:" + ring["id"], json.dumps({"f": caller, "app": app_id, "line": ring["line"]}))
+        return True
+
+    def _ring_loop() -> None:
+        """Hold the ring rooms of this node's accounts that have a phone and an app switched on; wake them."""
+        push = state.push()
+        if push is None or _ring_thread.get("thread") is not None:
+            return
+
+        def loop():
+            while not getattr(state, "shutting_down", False):
+                try:
+                    phones = push.subscribed()
+                    hold = set()
+                    for address, pubkey in _owners().items():
+                        if pubkey in phones and _ring_setting(pubkey)["apps"]:
+                            hold.add(address)
+                    _rings.hold(hold)
+                    for to, said, node in _rings.heard_now():
+                        _ring_deliver(to, said, node)
+                    _rings.expire()
+                except Exception as exc:                       # noqa: BLE001 -- keep listening
+                    log.info("ring loop: %s", exc)
+                time.sleep(2)
+
+        _ring_thread["thread"] = threading.Thread(target=loop, name="arcade-ring", daemon=True)
+        _ring_thread["thread"].start()
+
+    def _ring_owner(request: Request):
+        account = _signed_in_account(request)
+        return account, account.pubkey
+
+    @app.get("/account/ring/apps")
+    def ring_apps(request: Request):
+        """The apps this account switched Notifications on for, and whether this arcade can push at all."""
+        _, pubkey = _ring_owner(request)
+        push = state.push()
+        rules = _ring_setting(pubkey)
+        return JSONResponse({"apps": rules["apps"], "allowed": len(rules["allow"]), "push": push is not None,
+                             "devices": len(push.devices(pubkey)) if push is not None else 0},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/account/ring/apps")
+    def ring_apps_set(request: Request, payload: Any = Body(None)):
+        _, pubkey = _ring_owner(request)
+        said = payload if isinstance(payload, dict) else {}
+        app_id = str(said.get("app") or "").lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", app_id):
+            return JSONResponse({"detail": "that is not an app"}, status_code=400)
+        rules = state.setting(f"ring:{pubkey}") or {}
+        apps = [a for a in _ring_setting(pubkey)["apps"] if a != app_id]
+        if said.get("on", True):
+            if len(apps) >= ringlib.APPS_MAX:
+                return JSONResponse({"detail": f"{ringlib.APPS_MAX} apps is the most"}, status_code=400)
+            apps.append(app_id)
+        state.set_setting(f"ring:{pubkey}", {**rules, "apps": apps})
+        _watch_for_mail()
+        return JSONResponse({"ok": True, "apps": apps})
+
+    @app.post("/account/ring/allow")
+    def ring_allow_set(request: Request, payload: Any = Body(None)):
+        """Who may ring this account: the addresses in its address book, handed over by its browser (the book
+        lives there; 2026-10-23: "My contacts only")."""
+        _, pubkey = _ring_owner(request)
+        said = payload if isinstance(payload, dict) else {}
+        allow = said.get("allow")
+        if not isinstance(allow, list) or len(allow) > ringlib.ALLOW_MAX:
+            return JSONResponse({"detail": f"a list of at most {ringlib.ALLOW_MAX} addresses"}, status_code=400)
+        allow = sorted({str(a) for a in allow if isinstance(a, str) and re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{25,64}|[a-z0-9]{8,90}", str(a))})
+        rules = state.setting(f"ring:{pubkey}") or {}
+        state.set_setting(f"ring:{pubkey}", {**rules, "allow": allow})
+        return JSONResponse({"ok": True, "allowed": len(allow)})
+
+    @app.post("/account/ring")
+    def ring_send(request: Request, payload: Any = Body(None)):
+        """Ring an address from this account, for the app the viewer says (its own frame's page)."""
+        account = _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        me = _account_address(account.pubkey, _account_chain())
+        to, app_id = str(said.get("to") or "").strip()[:64], str(said.get("app") or "").lower()
+        if not me:
+            return JSONResponse({"ok": False, "error": "this account has no address here"}, status_code=400)
+        if not re.fullmatch(r"[0-9a-f]{64}", app_id) or not to or to == me:
+            return JSONResponse({"ok": False, "error": "ring whom, from which app?"}, status_code=400)
+        svc = getattr(state, "mesh", None)
+        if svc is None or getattr(svc, "loop", None) is None:
+            return JSONResponse({"ok": True, "rung": False, "why": "this arcade is not on the mesh"})
+        cred = {"a": me, "x": said.get("expires"), "s": str(said.get("sig") or "")}
+        try:
+            cred["x"] = int(cred["x"] or 0)
+            proved = svc.check_cert(me, cred)
+        except Exception:                                      # noqa: BLE001
+            proved = False
+        if not proved:
+            return JSONResponse({"ok": False, "error": "unlock your wallet: a ring says who you are"}, status_code=400)
+        if not _rings.may_send(me):
+            return JSONResponse({"ok": False, "error": "too many rings: wait a minute"}, status_code=429)
+        ring = {"t": "ring", "f": me, "x": cred["x"], "s": cred["s"], "n": svc.node_id, "to": to, "app": app_id,
+                "line": ringlib.clean_line(said.get("line"), ringlib.RING_LINE),
+                "link": str(said.get("link") or "")[:ringlib.RING_LINK]}
+        if to in _owners():
+            return JSONResponse({"ok": True, "rung": _ring_deliver(to, ring, svc.node_id)})
+        if not _rings.live(to):
+            return JSONResponse({"ok": True, "rung": False,
+                                 "why": "they have no phone to wake for this app, or their arcade is away"})
+        threading.Thread(target=_rings.say, args=(to, ring), daemon=True).start()
+        return JSONResponse({"ok": True, "rung": True})
+
+    @app.get("/account/ring/{ring_id}")
+    def ring_get(request: Request, ring_id: str):
+        """The ring a tapped notification opened, for its app: who, and the app's own link."""
+        account = _signed_in_account(request)
+        ring = _rings.get(ring_id)
+        me = _account_address(account.pubkey, _account_chain())
+        if ring is None or ring["to"] != me:
+            return JSONResponse({"ok": False}, headers={"Cache-Control": "no-store"})
+        tag = ""
+        try:
+            tag = state.token_index(_account_chain()).tag_of(ring["from"]) or ""
+        except Exception:                                      # noqa: BLE001
+            pass
+        return JSONResponse({"ok": True, "from": ring["from"], "tag": tag, "app": ring["app"], "link": ring["link"],
+                             "line": ring["line"], "at": ring["at"]}, headers={"Cache-Control": "no-store"})
 
     # --- notifications (2026-09-25) ------------------------------------
     #
@@ -23730,7 +23933,7 @@ def create_app(state: AppState) -> FastAPI:
                     "SELECT i.txid, i.number, i.creator, i.json, i.block_height, "
                     "COALESCE(b.time, 0) AS time FROM inscription i "
                     "LEFT JOIN block b ON b.height = i.block_height "
-                    "WHERE i.content_type LIKE 'text/html%' AND i.json LIKE '%\"game\"%' "
+                    "WHERE i.content_type LIKE 'text/html%' AND (i.json LIKE '%\"game\"%' OR i.json LIKE '%\"app\"%') "
                     "ORDER BY i.block_height DESC, i.position DESC LIMIT ?",
                     (int(limit),)).fetchall()
         except Exception:
@@ -23741,6 +23944,32 @@ def create_app(state: AppState) -> FastAPI:
             if game:
                 found.append({**dict(r), "game": game})
         return gameslib.newest_per_game(found) if newest else found
+
+    def _relay_app_choices() -> list[dict]:
+        """The apps on the tab, as the relay's choice lists them: the page each opens, its name and publisher."""
+        out, seen = [], set()
+        for c, ix in [_token_chain()] + _other_indexes():
+            for r in _game_rows(ix):
+                page = _game_opens(ix, r["creator"], r["txid"], r["game"])
+                if page in seen:
+                    continue
+                seen.add(page)
+                tag = _name_of(r["creator"])
+                out.append({"id": page, "name": r["game"]["name"], "net": c.network,
+                            "publisher": f"@{tag}" if tag else r["creator"][:10] + "\u2026"})
+        return sorted(out, key=lambda a: a["name"].casefold())
+
+    def _app_versions(txid: str) -> list[str]:
+        """Every card of the same app on its chain -- the same maker and name, the rule the Apps tab keeps the newest
+        by (gameslib.newest_per_game) -- newest first; [txid] when it is no card. Hearts, dislikes, comments and tips
+        aimed at any version count for the app (2026-10-23: they "should persist across version changes")."""
+        for _, ix in [_token_chain()] + _other_indexes():
+            rows = _game_rows(ix, newest=False)
+            me = next((r for r in rows if r["txid"] == txid), None)
+            if me is not None:
+                key = (me["creator"], me["game"]["name"].casefold())
+                return [r["txid"] for r in rows if (r["creator"], r["game"]["name"].casefold()) == key]
+        return [txid]
 
     # A game's maker can take its card off the tab the way a post's author takes
     # a post off the feed (2026-10-01): the feed's own DELETE, aimed at the card's
@@ -23893,6 +24122,13 @@ def create_app(state: AppState) -> FastAPI:
             rows += [r for r in gameslib.newest_per_game([x for x in every if id(x["_chain"]) == c]) if not r["removed"]]
         for r in rows:
             r["game"]["opens"] = _game_opens(r["_ix"], r["creator"], r["txid"], r["game"])
+        # Every version's reactions count for the card shown (2026-10-23: hearts, comments, tips and dislikes
+        # "should persist across version changes"): aimed at an older card of the same app, they are this one's. A
+        # person's last word across versions is what counts (an unlike on the new card undoes a like on the old).
+        shown = {(id(r["_chain"]), r["creator"], r["game"]["name"].casefold()): r["txid"] for r in rows}
+        version_of = {r["txid"]: shown.get((id(r["_chain"]), r["creator"], r["game"]["name"].casefold()))
+                      for r in every}
+        acts = [dict(a, target=version_of.get(a["target"]) or a["target"]) for a in acts]
         items = [{"txid": r["txid"], "number": r["number"], "creator": r["creator"],
                   "name": r["game"]["name"], "game": r["game"],
                   "time": int(r["time"] or 0), "height": r["block_height"],
@@ -23914,12 +24150,27 @@ def create_app(state: AppState) -> FastAPI:
             item["mine"] = bool(me) and me in makers.get(item["creator"], {item["creator"]})
         return launchlist.rank(items, sort, int(time.time()))
 
-    @app.get("/games", response_class=HTMLResponse)
+    @app.get("/games")
+    def games_moved(request: Request):
+        """The Games tab is the Apps tab (2026-10-23); old links still land on it."""
+        q = request.url.query
+        return RedirectResponse("/apps" + (f"?{q}" if q else ""), status_code=301)
+
+    @app.get("/apps", response_class=HTMLResponse)
     def games_page(request: Request, sort: str = "popular"):
-        """Every game on the chain, Popular or Latest, with the feed's buttons."""
+        """Every app (a game, a video call, any page with a card) on the chain, Popular or Latest, with the feed's
+        buttons."""
         chain, _index = _token_chain()
         sort = "new" if sort == "new" else "popular"
         games = _games_ranked(request, sort)
+        # Starred apps first, in the order they were ranked (2026-10-23: "a star on app cards that bring the
+        # game app to the top of your favorites list"); the star is the account's (or the operator's), kept on this node.
+        owner = _favorites_owner(request)
+        starred = set(_favorites(owner)) if owner else set()
+        for g in games:
+            g["star_key"] = gameslib.app_key(g["creator"], g["name"])
+            g["starred"] = g["star_key"] in starred
+        games = [g for g in games if g["starred"]] + [g for g in games if not g["starred"]]
         mine = _tag_of_whoever_is_asking(request) or {}
         return render(request, "games.html", chain=chain, games=games, sort=sort,
                       kinds=feedlib.BY_NAME,
@@ -23956,26 +24207,37 @@ def create_app(state: AppState) -> FastAPI:
             card, own = None, gameslib.parse(row.get("json"))
             if own:
                 card = {"txid": row["txid"], "game": own}
-            else:
-                # A card by the same maker whose Play opens this page (_game_opens' rule).
-                try:
-                    with contextlib.closing(ix.open()) as db:
-                        rows = db.conn.execute(
-                            "SELECT txid, json FROM inscription WHERE creator=? AND content_type LIKE 'text/html%' "
-                            "AND json LIKE ? ORDER BY block_height DESC, position DESC LIMIT 20",
-                            (row["creator"], f"%{page}%")).fetchall()
-                except Exception:
-                    rows = []
-                for r in rows:
-                    g = gameslib.parse(r["json"])
-                    if g and g.get("play") == page:
-                        card = {"txid": r["txid"], "game": g}
-                        break
+            # A card by the same maker whose Play opens this page (_game_opens' rule) -- and, for a page with a card of
+            # its own, a newer card-only inscription replaces it, as on the Apps tab (newest_per_game; the Cul-de-sac
+            # session 2026-10-23: Video Call's launcher carries its first card, and a new card naming it in `play`
+            # keeps the page, so every switch, keyed on the page, stays).
+            try:
+                with contextlib.closing(ix.open()) as db:
+                    rows = db.conn.execute(
+                        "SELECT txid, json, block_height, position FROM inscription WHERE creator=? "
+                        "AND content_type LIKE 'text/html%' AND json LIKE ? "
+                        "ORDER BY block_height DESC, position DESC LIMIT 20",
+                        (row["creator"], f"%{page}%")).fetchall()
+            except Exception:
+                rows = []
+            def at(h, pos):                                    # not in a block yet: the newest
+                return (10 ** 9 if h is None else h, pos or 0)
+            here_at = at(row.get("block_height"), row.get("position"))
+            for r in rows:
+                g = gameslib.parse(r["json"])
+                if not g or g.get("play") != page or r["txid"] == page:
+                    continue
+                if own and at(r["block_height"], r["position"]) <= here_at:
+                    break                                      # older than the page's own card: that one stands
+                card = {"txid": r["txid"], "game": g}
+                break
             if card:
                 creator = row["creator"]
                 tag = _name_of(creator)
                 said = {"game": True, "card": card["txid"], "name": card["game"]["name"],
                         "wallet": bool(card["game"].get("wallet")),
+                        "media": bool(card["game"].get("media")),
+                        "contacts": bool(card["game"].get("contacts")),
                         "opens": _game_opens(ix, creator, card["txid"], card["game"]),
                         "publisher": f"@{tag}" if tag else "", "address": creator}
             break
@@ -25897,6 +26159,14 @@ def create_app(state: AppState) -> FastAPI:
             "faucet": {"gift": int(state.setting("faucet", faucetlib.GIFT)),
                        "daily": state.setting("faucet_daily"),
                        "real_coins": bool(state.setting("faucet_real_coins", False))},
+            # The call relay (web/realtime.py, THE RELAY): the key's id, never its token.
+            "turn": {"key_id": (state.setting("turn") or {}).get("key_id") or "",
+                     "has_token": bool((state.setting("turn") or {}).get("token")),
+                     "account_id": (state.setting("turn") or {}).get("account_id") or "",
+                     "has_analytics": bool((state.setting("turn") or {}).get("analytics")),
+                     "meter": (state.relay_meter() if hasattr(state, "relay_meter") else {}),
+                     # Which apps may use it (None: every app) and the apps there are to choose from.
+                     "apps": (state.setting("turn") or {}).get("apps")},
             # Never the access token itself: only that there is one.
             "moderation": {k: v for k, v in (state.setting("moderation") or {}).items()
                            if k != "key"}
@@ -25918,6 +26188,12 @@ def create_app(state: AppState) -> FastAPI:
             "brand": {"current": brandlib.current().key, "locked": brandlib.FROM_ENV,
                       "choices": [[b.key, b.name] for b in brandlib.BRANDS.values()]},
         }, headers={"Cache-Control": "no-store"})
+
+    @app.get("/admin/api/relay-apps")
+    def admin_relay_apps(request: Request):
+        """The apps the Call relay's choice lists (asked on its own: listing every chain's apps is not quick)."""
+        _admin_check(request)
+        return JSONResponse({"apps": _relay_app_choices()})
 
     @app.get("/admin/api/swaps")
     def admin_swaps(request: Request):
@@ -26374,6 +26650,57 @@ def create_app(state: AppState) -> FastAPI:
             for flag in ("auto_update", "auto_sell", "auto_fill", "node_trades"):
                 if flag in said:
                     state.set_setting(flag, bool(said[flag]))
+            if isinstance(said.get("turn"), dict):
+                # The call relay (2026-10-23, "Cloudflare TURN"): tried before it is kept, so a wrong key says so.
+                t, kept = said["turn"], state.setting("turn") or {}
+                if t.get("clear"):
+                    state.set_setting("turn", None)
+                else:
+                    key_id = str(t.get("key_id") or kept.get("key_id") or "").strip()
+                    token = str(t.get("token") or "").strip() or str(kept.get("token") or "")
+                    if not re.fullmatch(r"[0-9a-fA-F]{32}", key_id) or not token:
+                        raise ValueError("a TURN key is its 32-character id and its API token")
+                    from .realtime import turn_servers
+                    try:
+                        turn_servers(key_id, token, ttl=60)
+                    except Exception as exc:                    # noqa: BLE001
+                        raise ValueError(f"Cloudflare did not take that key: {exc}") from None
+                    state.set_setting("turn", {**kept, "key_id": key_id, "token": token})
+            if isinstance(said.get("turn_apps"), dict):
+                # The apps the relay serves (2026-10-23, "Apps I choose, any account"): every app, or a list.
+                t, kept = said["turn_apps"], state.setting("turn") or {}
+                if t.get("all"):
+                    kept = {k: v for k, v in kept.items() if k != "apps"}
+                else:
+                    apps = [str(a).lower() for a in (t.get("apps") or []) if re.fullmatch(r"[0-9a-fA-F]{64}", str(a))]
+                    kept = {**kept, "apps": sorted(set(apps))[:500]}
+                state.set_setting("turn", kept)
+            if isinstance(said.get("turn_meter"), dict):
+                # The relay's meter (2026-10-23: "so that I don't go over the limit"): an Account Analytics
+                # token and the account's id, tried with Cloudflare before they are kept, and the month's limit.
+                t, kept = said["turn_meter"], state.setting("turn") or {}
+                if not kept.get("key_id"):
+                    raise ValueError("save the relay's TURN key first")
+                limit = float(t.get("limit_gb") or kept.get("limit_gb") or 1000)
+                if not 0 < limit <= 1_000_000:
+                    raise ValueError("a monthly limit is a number of GB")
+                if t.get("clear"):
+                    kept = {k: v for k, v in kept.items() if k not in ("account_id", "analytics")}
+                else:
+                    account = str(t.get("account_id") or kept.get("account_id") or "").strip()
+                    analytics = str(t.get("analytics") or "").strip() or str(kept.get("analytics") or "")
+                    if account or analytics:
+                        if not re.fullmatch(r"[0-9a-fA-F]{32}", account) or not analytics:
+                            raise ValueError("the meter needs the account's 32-character id and an Account Analytics token")
+                        from .realtime import turn_usage
+                        try:
+                            turn_usage(account, analytics, str(kept["key_id"]))
+                        except Exception as exc:                # noqa: BLE001
+                            raise ValueError(str(exc)) from None
+                        kept = {**kept, "account_id": account, "analytics": analytics}
+                state.set_setting("turn", {**kept, "limit_gb": limit})
+                if hasattr(state, "relay_meter"):
+                    state.relay_meter(fresh=True)
             # Moved here from Overview (2026-10-19, the operator: "the overview page needs to be re-organized"): extra
             # room for sale (the /settings/quotas form's boost fields) and this node's cut of trades (/settings/cut).
             if isinstance(said.get("boost"), dict):
@@ -27429,7 +27756,7 @@ def create_app(state: AppState) -> FastAPI:
 
     # --- the exchange ---------------------------------------------------------
 
-    EXCHANGE_TABS = ("offers", "mintpads", "tokens", "market", "doginals", "pepinals")
+    EXCHANGE_TABS = ("offers", "mintpads", "tokens", "market", "doginals", "pepinals", "llm")
 
     def _coins_each(price: Any, divisible: bool) -> float:
         """The book's price ratio as coins per whole token.
@@ -31446,6 +31773,11 @@ def create_app(state: AppState) -> FastAPI:
     realtimelib.register(app, state, account_view=_account_view, signed_in=signed_in,
                          account_address=_account_address, account_chain=_account_chain,
                          check_csrf=check_csrf)
+    # The LLM service (llmweb.py, 2026-10-23): Admin -> LLM, the Exchange's LLM tab, and /v1 for API keys.
+    from . import llmweb
+    llmweb.register(app, state, signed_in=signed_in, account_address=_account_address, account_chain=_account_chain,
+                    admin_check=_admin_check, name_of=_name_of,
+                    pay_choices=lambda request: _pair_choices(request, "nobody", everything=True), render=render)
     return app
 
 

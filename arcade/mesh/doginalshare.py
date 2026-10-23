@@ -14,8 +14,10 @@ older arcade (v1, no `net`) are not read.
     ng  {c, id}                          the asker holds the whole index: send chunk c's spend notes (ord_notes)
     nb  {id, seq, end, nd[, err]} + a slice of the packed notes      the answer, in parts under a frame's size
     sq  {}                               the asker is far behind: make a snapshot of the whole index (ord_snapshot)
-    g   {id, what, snap[, i]}            send snapshot `snap`'s manifest (what "manifest") or its piece i ("piece")
-    gb  {id, seq, end[, err]} + a slice                               the answer, in parts
+    g   {id, what, snap[, i], z}         send snapshot `snap`'s manifest (what "manifest") or its piece i ("piece");
+                                         `z` 1: the asker reads a zlib-compressed answer (2026-10-22)
+    gb  {id, seq, end[, err][, z]} + a slice                          the answer, in parts; `z` 1 when compressed
+                                         (an older arcade ignores `z` and answers raw; an older asker never asks)
   (a "hi" carries `sn`: the snapshot this arcade serves, whole or the pieces it has so far)
 
 A frame names no other arcade: what a link carries is that arcade's own word (the link proves who it is), so nobody
@@ -29,6 +31,7 @@ import logging
 import itertools
 import threading
 import time
+import zlib
 from typing import Any
 
 log = logging.getLogger("arcade.mesh")
@@ -37,6 +40,9 @@ ROWS_PER_FRAME = 500           # a "dn" frame stays well under the link's 64 KB 
 
 
 ASK_SECONDS = 15.0
+#: The most a compressed snapshot answer may unpack to (2026-10-22: compress what arcades send each other): a
+#: piece is 1 MB (ord_snapshot.PIECE) and a manifest a few hundred KB, so anything larger is refused, never inflated.
+INFLATE_MAX = 16 * 1024 * 1024
 PART = 60 * 1024               # a slice of packed notes in one frame (a link carries at most 64 KB)
 NOTES_AT_ONCE = 4              # chunks' notes this arcade sends at the same time, to everybody together
 MAX_NOTES = 64 * 1024 * 1024   # the packed notes of one chunk, at most
@@ -66,6 +72,18 @@ class _Chain:
 
     def ask_piece(self, node: str, sid: str, i: int) -> None:
         self.share.get(self.net, node, {"what": "piece", "snap": sid, "i": i})
+
+
+def _inflate(data: bytes) -> bytes | None:
+    """A compressed snapshot answer unpacked, or None: not zlib, or more than INFLATE_MAX (never inflated past it)."""
+    d = zlib.decompressobj()
+    try:
+        out = d.decompress(data, INFLATE_MAX + 1)
+    except zlib.error:
+        return None
+    if len(out) > INFLATE_MAX or d.unconsumed_tail or not d.eof:
+        return None
+    return out
 
 
 class DxShare:
@@ -282,9 +300,15 @@ class DxShare:
                 if data is None:
                     await link.send({"t": "dx", "op": "gb", "id": rid, "seq": 0, "end": True, "err": "gone"})
                     return
+                # Compressed when the asker reads it (2026-10-22: an index copy is about 40% smaller so, its pieces
+                # mostly txids and hashes); the asker checks the RAW piece against the manifest's hash as before.
+                z = header.get("z") == 1
+                if z:
+                    data = await asyncio.to_thread(zlib.compress, data, 6)
                 parts = [data[i:i + PART] for i in range(0, len(data), PART)] or [b""]
                 for seq, part in enumerate(parts):
-                    await link.send({"t": "dx", "op": "gb", "id": rid, "seq": seq, "end": seq == len(parts) - 1}, part)
+                    await link.send({"t": "dx", "op": "gb", "id": rid, "seq": seq, "end": seq == len(parts) - 1,
+                                     **({"z": 1} if z else {})}, part)
             except Exception:                                  # noqa: BLE001 -- the link went
                 log.debug("dx snapshot send", exc_info=True)
 
@@ -301,7 +325,8 @@ class DxShare:
         rid = next(self._ids)
         self._get_wait[rid] = {"net": net, "peer": node, **ask, "parts": [], "size": 0, "at": now}
         try:
-            asyncio.run_coroutine_threadsafe(link.send({"t": "dx", "op": "g", "net": net, "id": rid, **ask}), loop)
+            asyncio.run_coroutine_threadsafe(link.send({"t": "dx", "op": "g", "net": net, "id": rid, **ask, "z": 1}),
+                                             loop)
         except RuntimeError:
             self._get_wait.pop(rid, None)
 
@@ -317,6 +342,7 @@ class DxShare:
             return
         w["parts"].append(blob)
         w["size"] += len(blob)
+        w["z"] = w.get("z") or header.get("z") == 1
         if not header.get("end"):
             return
         self._get_wait.pop(header.get("id"), None)
@@ -324,6 +350,12 @@ class DxShare:
         if index is None:
             return
         data = b"".join(w["parts"])
+        if w.get("z"):
+            data = await asyncio.to_thread(_inflate, data)
+            if data is None:                               # not zlib, or more than INFLATE_MAX: as a wrong part
+                if w["what"] == "piece":
+                    await asyncio.to_thread(index.snapshots.piece_failed, w["peer"], w["snap"], int(w["i"]))
+                return
         snaps = index.snapshots
         if w["what"] == "manifest":
             try:
