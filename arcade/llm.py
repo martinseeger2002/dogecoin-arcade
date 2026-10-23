@@ -215,7 +215,7 @@ def fmt(units: int, scale: int) -> str:
 # ------------------------------------------------------------------------------------------------ the operator's offer
 
 DEFAULTS = {"on": False, "url": "", "key": "", "models": [], "at_once": 2, "max_out": 4096, "prices": [],
-            "name": ""}
+            "name": "", "free_for": []}
 
 
 def is_free(cfg: dict) -> bool:
@@ -252,6 +252,15 @@ def clean(said: dict, kept: dict) -> dict:
         out["url"] = url
     if said.get("key"):
         out["key"] = str(said["key"]).strip()[:400]
+    if "free_for" in said:
+        # Operators who use this arcade's models free (2026-10-23: "share my model with Bigchiefenergy if I
+        # choose for free while simultaneously having it listed"), already resolved to their addresses by the web layer.
+        rows, seen = [], set()
+        for row in said.get("free_for") or []:
+            if isinstance(row, dict) and row.get("address") and row["address"] not in seen:
+                seen.add(row["address"])
+                rows.append({"tag": str(row.get("tag") or "")[:24], "address": str(row["address"])[:100]})
+        out["free_for"] = rows[:100]
     if said.get("clear_key"):
         out["key"] = ""
     if "name" in said:
@@ -302,6 +311,17 @@ class Server:
             if isinstance(m, dict) and m.get("id"):
                 out.append({"id": str(m["id"]), "ctx": int(m.get("max_model_len") or m.get("context_length") or 0)})
         return out
+
+    def count(self, text: str, model: str) -> int:
+        """How many tokens `text` is to this server (vLLM's /tokenize), or 0 when it cannot say."""
+        try:
+            r = requests.post(f"{self.url}/tokenize", json={"model": model, "prompt": text}, headers=self._headers(),
+                              timeout=10)
+            if r.status_code < 400:
+                return int((r.json() or {}).get("count") or 0)
+        except Exception:                                       # noqa: BLE001
+            pass
+        return 0
 
     def chat(self, body: dict) -> Iterator[dict]:
         """Stream a chat completion: each OpenAI chunk as it comes, the last one carrying `usage`."""
@@ -752,6 +772,7 @@ class Seller:
         return {"ok": True, "units": units, "text": fmt(units, self.scale(leg)), **self.balance(buyer)}
 
     node_id = staticmethod(lambda: "")                          # set by the web layer: this arcade's mesh id
+    arcade_name = staticmethod(lambda: "DogecoinArcade")        # set by the web layer: this arcade's face's name
 
     def chat(self, buyer: str, leg: str, body: dict, via: str = "") -> Iterator[dict]:
         """One reply, streamed: the model server's OpenAI chunks, then {"arcade": {...}} with what it cost."""
@@ -766,6 +787,17 @@ class Seller:
             raise LlmError("a chat needs messages")
         if len(json.dumps(body)) > MAX_BODY:
             raise LlmError("that request is too large")
+        # The DogecoinArcade expert (llmdocs.py, the Exchange's chat): this arcade adds the system prompt and the parts of
+        # the public docs that bear on the question, and does not charge for them (2026-10-23).
+        house = 0
+        guess_own = guess_tokens(body)                          # the buyer's own words: what the credit must cover
+        if body.get("docs") is True:
+            from . import llmdocs
+            sysmsg = llmdocs.system_message(messages, self.arcade_name())
+            messages = [{"role": "system", "content": sysmsg}] + [
+                m for m in messages if not (isinstance(m, dict) and m.get("role") == "system")]
+            body = {**body, "messages": messages}
+            house = Server(cfg["url"], cfg.get("key") or "").count(sysmsg, model) or len(sysmsg) // 4
         free = bool(self.free(buyer)) or is_free(cfg)
         prices = {"in": 0, "out": 0} if free else self._price(leg)
         scale = self.scale(leg) if not free else COIN
@@ -773,7 +805,7 @@ class Seller:
         guess_in = guess_tokens(body)
         most = int(cfg.get("max_out") or 4096)
         if not free:
-            can = affordable_out(prices, balance, guess_in, scale)
+            can = affordable_out(prices, balance, guess_own, scale)
             if can == 0:
                 raise LlmError("not enough credit for that; top up first")
             if can > 0:
@@ -827,11 +859,11 @@ class Seller:
                     used_in = guess_in
                 if not used_out and chars:
                     used_out = chars // 4 + 1
-                cost = 0 if free else cost_units(prices, used_in, used_out, scale)
+                cost = 0 if free else cost_units(prices, max(0, used_in - house), used_out, scale)
                 left = self.books.charge(buyer, leg if not free else "free", model, used_in, used_out, cost, via,
                                          ms=ms, first_ms=first_ms)
             else:
                 self.books.charge(buyer, leg if not free else "free", model, 0, 0, 0, via, ms=ms, ok=False)
-        yield {"arcade": {"tokens_in": used_in, "tokens_out": used_out, "cost": cost,
+        yield {"arcade": {"tokens_in": used_in, "tokens_out": used_out, "cost": cost, "docs_tokens": house,
                           "cost_text": fmt(cost, scale), "left": left, "left_text": fmt(left, scale),
                           "free": free, "leg": leg}}

@@ -112,7 +112,7 @@
     </div>
     <div class="llm-msgs" id="llm-msgs"></div>
     <div class="llm-send">
-      <textarea rows="2" id="llm-input" autocomplete="off" aria-label="Message" placeholder="Ask anything&hellip;"></textarea>
+      <textarea rows="2" id="llm-input" autocomplete="off" aria-label="Message" placeholder="Ask anything &mdash; it knows DogecoinArcade's docs&hellip;"></textarea>
       <button type="button" class="llm-btn go" id="llm-go" style="height:46px">Send</button>
     </div>
   </section>
@@ -478,7 +478,8 @@ async function sendChat() {
   let said = "", thought = "";
   try {
     const r = await fetch("/account/llm/chat", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({seller: picked.seller, leg: $("llm-chat-leg").value, model: picked.models[0] && picked.models[0].id, messages: history})});
+      // docs: the seller adds what DogecoinArcade's documentation says about the question, free (llmdocs.py).
+      body: JSON.stringify({seller: picked.seller, leg: $("llm-chat-leg").value, model: picked.models[0] && picked.models[0].id, messages: history, docs: true})});
     if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || `HTTP ${r.status}`); }
     const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
     for (;;) {
@@ -493,7 +494,9 @@ async function sendChat() {
         if (ev.error) throw new Error(ev.error.message || "failed");
         if (ev.arcade) {
           const a = ev.arcade, p = picked.prices.find((x) => x.leg === a.leg);
-          small.textContent = `${a.tokens_in} in · ${a.tokens_out} out · ${a.free ? "free" : a.cost_text + " " + short(p && p.label)}`;
+          const yours = Math.max(0, a.tokens_in - (a.docs_tokens || 0));
+          small.textContent = `${yours} in · ${a.tokens_out} out · ${a.free ? "free" : a.cost_text + " " + short(p && p.label)}` +
+            (a.docs_tokens ? ` · ${a.docs_tokens.toLocaleString()} tokens of DogecoinArcade docs, free` : "");
           if (!a.free) { credit[picked.seller] = credit[picked.seller] || {credit: {}}; credit[picked.seller].credit = credit[picked.seller].credit || {};
             credit[picked.seller].credit[a.leg] = {units: a.left, text: a.left_text}; drawLeft(); }
           continue;

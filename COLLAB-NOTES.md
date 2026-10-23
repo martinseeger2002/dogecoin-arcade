@@ -88,6 +88,39 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-23 The Exchange chat knows DogecoinArcade's docs; models free for chosen operators (Claude)
+* The operator: "that model should include a system prompt that it is an expert on Dogecoin arcade and it should have access to
+  all of the Dogecoin arcade documentation" -- his choice: the relevant parts, not charged. **arcade/llmdocs.py**: the
+  public docs (guide.pages(private=False), minus hosting-plan.md) cut at headings into <=2,400-char sections, BM25 on
+  the person's last three messages, the best up to 24,000 chars under a DogecoinArcade-expert system prompt. The
+  SELLER adds it (`docs: true` on a chat; the Exchange tab sends it, API keys and apps do not), counts it with vLLM's
+  /tokenize (chars/4 when the server cannot), and charges `max(0, prompt_tokens - docs)`; the end event says
+  `docs_tokens`. Live on a test machine Qwen: a prize-pool question got 6,536 tokens of referee/prize-pool docs free and a
+  correct answer citing /docs/referee.md.
+* The operator: "share my model with Bigchiefenergy if I choose for free while simultaneously having it listed" -- his choice:
+  that operator's account only. Setting `llm.free_for` [{tag, address}]; Admin -> LLM "Free for other operators"
+  (names typed or picked from the linked operators, each resolved on the tag chain by the server -- never an address
+  from the form); `free(buyer)` covers words and pictures. Tests: test_llm.py (23).
+
+### 2026-10-23 Finding ComfyUI's models when the voice model takes its slot (Claude)
+The operator: "ComfyUI 127.0.0.1:8188 pictures No model it can share." On a test machine only one of ComfyUI and the CSM voice
+model sits beside vLLM (~/bin/gpu-slot); a voice request 9 s after the wake stopped ComfyUI while it was being asked
+for its loaders, and the list came back empty with no reason. `probe` now asks twice and says why
+(`why`: stopped while asked / holds no Qwen-Image model); "Wake it and look" wakes once more when ComfyUI is gone
+again before it was asked; the images scan retries a wake when the model list fails. A picture in progress is never
+cut off (gpu-slot waits for ComfyUI's queue); an idle ComfyUI is unloaded for voice and woken again by the next order.
+
+### 2026-10-23 Admin -> LLM: "Find models on this computer" (Claude)
+The operator: "Can the operator just have a button that they can click to scan for all models and then it will just give
+them a list of models that is on their computer and then they can just pick from the models?" -- `POST
+/admin/api/llm/discover` (llmweb.discover): every listening local port (/proc/net/tcp*, plus 8000 8080 11434 1234
+5000 5001 8188 7860 18300; below 1024 and the arcade's own port skipped) asked for /v1/models (vLLM, llama.cpp,
+Ollama, LM Studio, other OpenAI servers, named by owned_by/port) or /system_stats (ComfyUI, its models via
+imagegen); a server listing the same models as an earlier one is marked `same_as` (a proxy). No ComfyUI answering:
+a systemd user unit named *comfy* that is not running is offered with its wake command ("Wake it and look", node
+machine only). The "Your models" panel's ticks fill the server address and model ticks of the sections below. On
+a test machine: 71 ports in about 3 s. Test: test_llm.py::test_find_models_lists_every_model_server_on_this_computer.
+
 ### 2026-10-23 Exchange opens on LLMs; the LLMs tab's Sign in works on a public arcade; a new key fills the curl example (Claude)
 The operator: "I want the exchange tab to open directly to the LLM's market" -- `/exchange` (and an unknown tab) is
 `tab=llm` now; tests test_the_exchange_opens_on_llms, test_litecoin_network (asks ?tab=tokens). The tab's Sign in was a

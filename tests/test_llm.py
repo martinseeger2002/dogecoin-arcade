@@ -592,3 +592,55 @@ def test_a_scan_wakes_comfyui_with_the_wake_typed_at_the_node_machine(arcade, mo
     got = client.post("/admin/api/llm/images/scan", headers=h,
                       json={"url": "http://127.0.0.1:9", "wake_now": True, "wake": "true"}).json()
     assert woke == ["true"] and got["models"][0]["id"] == "qwen_image_x"
+
+
+def test_find_models_lists_every_model_server_on_this_computer(pictures, monkeypatch):
+    """2026-10-23: "a button that they can click to scan for all models and then it will just give them a list
+    of models that is on their computer" -- each local port asked whether it is an OpenAI server or ComfyUI."""
+    from arcade.web import llmweb
+    client, state, pubkey, jobs, comfy_url = pictures
+    text_url = llm.config(state)["url"]
+    ports = {int(text_url.rsplit(":", 1)[1]), int(comfy_url.rsplit(":", 1)[1]), 9}
+    monkeypatch.setattr(llmweb, "listening_ports", lambda: ports)
+    got = client.post("/admin/api/llm/discover", headers={"X-Arcade-Admin": "1"}, json={}).json()
+    assert [(g["url"], [m["id"] for m in g["models"]]) for g in got["text"]] == [(text_url, ["tiny"])]
+    assert got["images"][0]["url"] == comfy_url and got["images"][0]["models"][0]["label"] == "Qwen-Image 2.1"
+    assert got["asleep"] == [], "a ComfyUI that answers is not offered a wake"
+
+
+def test_the_chat_knows_the_docs_and_does_not_charge_for_them(arcade):
+    """2026-10-23: the browser chat is "an expert on Dogecoin arcade" with its documentation -- the parts that
+    bear on the question, not charged to the buyer."""
+    from arcade import llmdocs
+    client, state, pubkey, seen = arcade
+    parts = llmdocs.pick("how do I make a prize pool for my game")
+    assert parts and parts[0]["doc"] in ("prize-pools.md", "referee.md")
+    assert not any(p["doc"] in ("DECISIONS.md", "hosting-plan.md", "voice-plan.md") for s in [llmdocs.sections()[0]]
+                   for p in s), "public docs only"
+    state.llm_seller.books.credit("61" * 32, "main-coin", ADDR, llm.COIN)
+    said = client.post("/account/llm/chat", json={"seller": "here", "leg": "main-coin", "docs": True,
+                                                  "messages": [{"role": "user", "content": "how do prize pools work?"}]})
+    assert said.status_code == 200, said.text
+    sent = seen[-1]["messages"]
+    assert sent[0]["role"] == "system" and "DogecoinArcade" in sent[0]["content"] and "prize" in sent[0]["content"].lower()
+    end = _events(said.text)[-1]["arcade"]
+    assert end["docs_tokens"] > 0
+    # the fake server says 100 prompt tokens; the docs' share of them is not charged
+    assert end["cost"] == int((0.001 * max(0, 100 - end["docs_tokens"]) + 0.01 * 20) * llm.COIN)
+
+
+def test_an_operator_can_be_given_the_models_free(arcade, monkeypatch):
+    """2026-10-23: "share my model with Bigchiefenergy if I choose for free while simultaneously having it
+    listed" -- that operator's account only; names resolved on the chain, never taken as addresses from the form."""
+    from arcade.web import llmweb
+    client, state, pubkey, seen = arcade
+    h = {"X-Arcade-Admin": "1"}
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain: type("I", (), {
+        "address_of": lambda _s, tag: ADDR if tag == "bigchiefenergy" else None})())
+    assert client.post("/admin/api/llm", headers=h, json={"free_for": ["@nobodyhere"]}).status_code == 400
+    assert client.post("/admin/api/llm", headers=h, json={"free_for": ["@BigChiefEnergy"]}).status_code == 200
+    assert llm.config(state)["free_for"] == [{"tag": "bigchiefenergy", "address": ADDR}]
+    said = client.post("/account/llm/chat", json={"seller": "here", "leg": "main-coin",
+                                                  "messages": [{"role": "user", "content": "hi"}]})
+    assert said.status_code == 200 and _events(said.text)[-1]["arcade"]["free"] is True, "no credit, still served"
+    assert client.get("/account/llm/offers").json()["offers"][0]["prices"], "still listed for everybody else"

@@ -440,6 +440,19 @@
 @media (max-width:640px){.llmadm .pr{grid-template-columns:1fr 1fr}.llmadm .pr.h{display:none}}
 </style>
 <div class="llmadm">
+{#- 2026-10-23: "Can the operator just have a button that they can click to scan for all models and then it will
+   just give them a list of models that is on their computer and then they can just pick from the models?" #}
+<section class="panel" id="find-panel">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">
+    <div style="min-width:0"><h2 style="margin:0">Your models</h2>
+      <p class="muted" style="margin:2px 0 0">Look for every model server on this computer (vLLM, llama.cpp, Ollama, LM Studio, ComfyUI) and pick the
+        models to share. The addresses below fill in by themselves.</p></div>
+    <button type="button" id="find-go" style="height:44px;padding:0 20px">Find models on this computer</button>
+  </div>
+  <p class="muted" id="find-said" style="margin:10px 0 0" hidden></p>
+  <div id="find-out"></div>
+</section>
+
 <section class="panel">
   <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">
     <div style="min-width:0"><h2 style="margin:0">Sell your model</h2>
@@ -540,6 +553,23 @@
     <button type="button" id="img-save" style="height:42px;padding:0 24px">Save changes</button>
   </div>
   <p class="muted" id="img-said" style="margin:8px 0 0"></p>
+</section>
+
+{#- 2026-10-23: "you should be able to share your model with any other arcade operator. So I can share my model
+   with Bigchiefenergy if I choose for free while simultaneously having it listed on the LLM marketplace" -- that
+   operator's own account only (his choice). #}
+<section class="panel" id="ff-panel">
+  <h2 style="margin:0">Free for other operators</h2>
+  <p class="muted" style="margin:2px 0 10px">These accounts use your models free &mdash; words and pictures, in chat, apps and API keys &mdash;
+    while everyone else pays your prices on the marketplace.</p>
+  <div id="ff-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px">
+    <input id="ff-name" placeholder="@name" autocomplete="off" style="flex:1 1 200px;width:auto;max-width:280px" list="ff-ops">
+    <datalist id="ff-ops"></datalist>
+    <button type="button" class="small" id="ff-add" style="height:42px">Add</button>
+    <span class="muted" id="ff-said" style="font-size:.85rem"></span>
+  </div>
+  <div id="ff-suggest" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"></div>
 </section>
 
 <section class="panel">
@@ -654,6 +684,7 @@
       $('llm-atonce').value = c.at_once || 2; $('llm-maxout').value = c.max_out || 4096;
       chosen = c.models || []; prices = (c.prices || []).map(function (p) { return Object.assign({}, p); });
       drawOn(); drawModels(); drawPrices(); drawLoad(j.load); imgFill(j.images);
+      ff = (c.free_for || []).map(function (r) { return r.tag; }).filter(Boolean); ffDraw(j.operators || []);
       if (c.url && !scanned) scan(false);
       var e = j.earned || [];
       $('llm-earned').innerHTML = e.length ? e.map(function (r) {
@@ -681,6 +712,104 @@
       .then(function (j) { if (j) drawLoad(j); }).catch(function () {});
   }
   setInterval(pollLoad, 5000);
+
+  // --- free for other operators ---
+  var ff = [];
+  function ffDraw(ops) {
+    $('ff-list').innerHTML = ff.length ? ff.map(function (t, i) {
+      return '<span class="pill" style="display:inline-flex;gap:6px;align-items:center;font-size:.9rem;padding:6px 6px 6px 12px;background:color-mix(in srgb,var(--ok) 14%,var(--panel));color:var(--ok)">@' +
+        esc(t) + '<button type="button" class="x" data-ff="' + i + '" aria-label="Stop sharing with @' + esc(t) + '" style="width:28px;height:28px">\u00d7</button></span>';
+    }).join('') : '<span class="muted">Nobody yet.</span>';
+    if (ops) {
+      $('ff-ops').innerHTML = ops.map(function (t) { return '<option value="@' + esc(t) + '">'; }).join('');
+      var left = ops.filter(function (t) { return ff.indexOf(t) < 0; });
+      $('ff-suggest').innerHTML = left.length ? '<span class="muted" style="font-size:.85rem;align-self:center">Operators linked to this arcade:</span>' +
+        left.map(function (t) { return '<button type="button" class="small ghost" data-ffadd="' + esc(t) + '" style="height:32px">+ @' + esc(t) + '</button>'; }).join('') : '';
+    }
+  }
+  function ffSave(list, done) {
+    $('ff-said').textContent = 'Saving\u2026';
+    post('/admin/api/llm', {free_for: list}).then(function () {
+      ff = list; $('ff-said').textContent = done || 'Saved.'; ffDraw(data && data.operators);
+    }).catch(function (e) { $('ff-said').textContent = e.message; });
+  }
+  function ffAdd(t) {
+    t = String(t || '').trim().replace(/^@/, '').toLowerCase(); if (!t) return;
+    if (ff.indexOf(t) >= 0) { $('ff-said').textContent = '@' + t + ' is already on the list.'; return; }
+    ffSave(ff.concat([t]), '@' + t + ' now uses your models free.'); $('ff-name').value = '';
+  }
+  $('ff-add').onclick = function () { ffAdd($('ff-name').value); };
+  $('ff-name').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); ffAdd($('ff-name').value); } });
+  $('ff-suggest').addEventListener('click', function (e) { var b = e.target.closest('[data-ffadd]'); if (b) ffAdd(b.dataset.ffadd); });
+  $('ff-list').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-ff]'); if (!b) return;
+    var t = ff[Number(b.dataset.ff)]; ffSave(ff.filter(function (x) { return x !== t; }), '@' + t + ' pays again from now on.');
+  });
+
+  // --- finding the models on this computer ---
+  var found = null;
+  function findDraw() {
+    var out = [], f = found || {text: [], images: [], asleep: []};
+    function server(g, kind) {
+      var cur = kind === 'text' ? $('llm-url').value.trim() : $('img-url').value.trim();
+      var picked = kind === 'text' ? chosen : img.chosen;
+      return '<div class="model" style="flex-direction:column;align-items:stretch;gap:6px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+        '<b>' + esc(g.server) + ' <span class="muted mono" style="font-weight:400">' + esc(g.url.replace('http://', '')) + '</span>' +
+        (g.same_as ? ' <span class="muted" style="font-weight:400;font-size:.82rem">same models as ' + esc(g.same_as.replace('http://', '')) + ' (a proxy in front of it?)</span>' : '') + '</b>' +
+        '<span class="pill" style="background:var(--panel)">' + (kind === 'text' ? 'words' : 'pictures') + '</span></div>' +
+        (g.models.length ? g.models.map(function (m) {
+          var on = cur === g.url && picked.indexOf(m.id) >= 0;
+          return '<label style="display:flex;gap:10px;align-items:center;cursor:pointer"><input type="checkbox" data-kind="' + kind + '" data-url="' + esc(g.url) +
+            '" value="' + esc(m.id) + '"' + (on ? ' checked' : '') + ' style="width:20px;height:20px"><span style="min-width:0"><b class="mono" style="overflow-wrap:anywhere">' +
+            esc(m.label || m.id) + '</b>' + (m.ctx ? ' <span class="muted" style="font-size:.8rem">' + m.ctx.toLocaleString() + '-token context</span>' : '') + '</span></label>';
+        }).join('') : '<span class="muted">No model it can share' + (g.why ? ': ' + esc(g.why) : '') + '.</span>') + '</div>';
+    }
+    f.text.forEach(function (g) { out.push(server(g, 'text')); });
+    f.images.forEach(function (g) { out.push(server(g, 'image')); });
+    (f.asleep || []).forEach(function (a) {
+      out.push('<div class="model" style="justify-content:space-between;flex-wrap:wrap"><span><b>ComfyUI</b> <span class="muted">is asleep (' + esc(a.unit) +
+        '); it starts when a picture is asked for.</span></span>' + (f.local ? '<button type="button" class="small" data-wake="' + esc(a.wake) + '" data-url="' + esc(a.url) +
+        '" style="height:38px">Wake it and look</button>' : '<span class="muted">Wake it from the node machine.</span>') + '</div>');
+    });
+    $('find-out').innerHTML = out.join('');
+  }
+  function find(body) {
+    var b = $('find-go'); b.disabled = true;
+    $('find-said').hidden = false; $('find-said').textContent = body && body.wake ? 'Waking ComfyUI and looking\u2026 up to a minute or two.' : 'Looking at every port on this computer\u2026';
+    post('/admin/api/llm/discover', body || {}).then(function (j) {
+      found = j;
+      var n = j.text.reduce(function (a, g) { return a + g.models.length; }, 0) + j.images.reduce(function (a, g) { return a + g.models.length; }, 0);
+      $('find-said').textContent = n ? n + ' model' + (n === 1 ? '' : 's') + ' found on ' + (j.text.length + j.images.length) + ' server' +
+        (j.text.length + j.images.length === 1 ? '' : 's') + ' (' + j.ports + ' ports looked at). Tick the ones to share, set prices, then Save.'
+        : 'No model server answered on this computer' + ((j.asleep || []).length ? ', but ComfyUI is asleep.' : '. Start one, then look again.');
+      findDraw();
+    }).catch(function (e) { $('find-said').textContent = e.message; }).then(function () { b.disabled = false; });
+  }
+  $('find-go').onclick = function () { find({}); };
+  $('find-out').addEventListener('click', function (e) {
+    var w = e.target.closest('button[data-wake]'); if (!w) return;
+    $('img-url').value = w.dataset.url; if (!$('img-wake').disabled) $('img-wake').value = w.dataset.wake;
+    find({wake: w.dataset.wake, url: w.dataset.url});
+  });
+  $('find-out').addEventListener('change', function (e) {
+    var c = e.target.closest('input[data-kind]'); if (!c) return;
+    var g = ((found || {})[c.dataset.kind === 'text' ? 'text' : 'images'] || []).find(function (x) { return x.url === c.dataset.url; });
+    if (c.dataset.kind === 'text') {
+      keepTicks();
+      if ($('llm-url').value.trim() !== c.dataset.url) { $('llm-url').value = c.dataset.url; chosen = []; }
+      models = g ? g.models : []; scanned = c.dataset.url;
+      chosen = chosen.filter(function (m) { return m !== c.value; }); if (c.checked) chosen.push(c.value);
+      drawModels();
+      $('llm-tested').hidden = false; $('llm-tested').textContent = 'Picked from Your models';
+    } else {
+      imgKeep();
+      if ($('img-url').value.trim() !== c.dataset.url) { $('img-url').value = c.dataset.url; img.chosen = []; }
+      img.models = g ? g.models : []; img.scanned = c.dataset.url;
+      img.chosen = img.chosen.filter(function (m) { return m !== c.value; }); if (c.checked) img.chosen.push(c.value);
+      imgDrawModels();
+    }
+    findDraw();
+  });
 
   // --- pictures (arcade/imagegen.py) ---
   var img = {models: [], chosen: [], prices: [], scanned: ''};

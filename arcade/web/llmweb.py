@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import logging
 import time
 from typing import Any, Callable, Iterator
@@ -76,8 +77,26 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
         return account_address(state.operator, account_chain()) if state.operator else ""
 
     def free(buyer: str) -> bool:
+        """This arcade's own operator, and the accounts it chose to share with free (words and pictures alike)."""
         own = operator_address()
-        return bool(buyer) and (buyer == own or buyer == getattr(state, "derived_address", None))
+        if not buyer:
+            return False
+        if buyer == own or buyer == getattr(state, "derived_address", None):
+            return True
+        return any(r.get("address") == buyer for r in llmlib.config(state).get("free_for") or [])
+
+    def tag_address(tag: str) -> str:
+        """Who holds @tag on the tag chain, or LlmError."""
+        name = str(tag or "").strip().lstrip("@").lower()
+        if not re.fullmatch(r"[a-z0-9_]{2,24}", name):
+            raise llmlib.LlmError(f"@{name} is not a name")
+        try:
+            address = state.token_index(account_chain()).address_of(name)
+        except Exception:                                           # noqa: BLE001
+            address = None
+        if not address:
+            raise llmlib.LlmError(f"nobody holds @{name}")
+        return address
 
     def about() -> dict:
         tag = state.operator_tag() if hasattr(state, "operator_tag") else ""
@@ -86,6 +105,14 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
 
     seller = llmlib.Seller(lambda: llmlib.config(state), books, pay_to, scale, verify, free, about)
     seller.node_id = me_id
+
+    def arcade_name() -> str:
+        try:
+            from . import brand as brandlib
+            return brandlib.current().name
+        except Exception:                                           # noqa: BLE001
+            return "DogecoinArcade"
+    seller.arcade_name = arcade_name
     from .. import imagegen
     pictures = imagegen.ImageSeller(lambda: imagegen.config(state), books, pay_to, scale, free)
     seller.images = pictures
@@ -164,8 +191,14 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
             sc = scale(row["leg"])
             earned.append({**row, "text": llmlib.fmt(int(row["units"] or 0), sc)})
         kinds = [c for c in pay_choices(request) if c.get("kind") in ("coin", "token")]
+        try:
+            peers = dict(getattr(getattr(mesh(), "operators", None), "peers", {}) or {})
+        except Exception:                                           # noqa: BLE001
+            peers = {}
+        operators = sorted({str(p.get("tag")) for p in peers.values() if isinstance(p, dict) and p.get("tag")})
         return JSONResponse({"config": {**{k: v for k, v in cfg.items() if k != "key"}, "has_key": bool(cfg.get("key"))},
                              "earned": earned, "kinds": kinds, "selling": bool(seller.offer()), "load": load_now(),
+                             "operators": operators,
                              "images": images_admin(request)},
                             headers={"Cache-Control": "no-store"})
 
@@ -214,12 +247,47 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
                 return JSONResponse({"ok": False, "asleep": True,
                                      "detail": "ComfyUI is not running" + ("; press Scan again to wake it" if srv.wake
                                                                            else "; start it, or give a wake command")})
-            models = await asyncio.to_thread(srv.models)
+            try:
+                models = await asyncio.to_thread(srv.models)
+            except Exception:                                       # noqa: BLE001 -- stopped while asked: once more
+                if not srv.wake:
+                    raise
+                await asyncio.to_thread(srv.ensure_up)
+                models = await asyncio.to_thread(srv.models)
             return JSONResponse({"ok": True, "models": models, "ms": round((time.monotonic() - t) * 1000)})
         except llmlib.LlmError as exc:
             return refuse(exc)
         except Exception as exc:                                    # noqa: BLE001
             return refuse(f"ComfyUI did not answer: {exc}"[:300])
+
+    @app.post("/admin/api/llm/discover")
+    async def admin_llm_discover(request: Request):
+        """Every model server on this machine, found by itself (2026-10-23: "Can the operator just have a button
+        that they can click to scan for all models and then it will just give them a list of models that is on their
+        computer and then they can just pick from the models?"). Each listening local port is asked, briefly, whether
+        it is an OpenAI-compatible server (/v1/models) or ComfyUI (/system_stats); a ComfyUI that sleeps until asked
+        (a user unit named for it) is offered with its wake command."""
+        who = admin_check(request, write=True)
+        import asyncio
+        said = await body_of(request) if "json" in request.headers.get("content-type", "") else {}
+        own = {int(request.url.port or 0)} if request.url.port else set()
+        if said.get("wake") and who.get("local"):
+            srv = imagegen.ComfyServer(str(said.get("url") or "http://127.0.0.1:8188"), str(said["wake"])[:300])
+            try:
+                await asyncio.to_thread(srv.ensure_up)
+            except llmlib.LlmError as exc:
+                return refuse(exc)
+        found = await asyncio.to_thread(discover, own)
+        if said.get("wake") and who.get("local") and not found["images"]:
+            # woken, then stopped again before it was asked (the voice model took the slot): wake it once more
+            try:
+                await asyncio.to_thread(imagegen.ComfyServer(str(said.get("url") or "http://127.0.0.1:8188"),
+                                                            str(said["wake"])[:300]).ensure_up)
+                found = await asyncio.to_thread(discover, own)
+            except llmlib.LlmError:
+                pass
+        found["local"] = bool(who.get("local"))
+        return JSONResponse(found, headers={"Cache-Control": "no-store"})
 
     def load_now() -> dict:
         got = seller.load(fresh=True)
@@ -312,6 +380,9 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
         try:
             said = await body_of(request)
             kept = llmlib.config(state)
+            if "free_for" in said:                                  # names, resolved here (never an address from the form)
+                said["free_for"] = [{"tag": str(t).strip().lstrip("@").lower(), "address": tag_address(str(t))}
+                                    for t in said.get("free_for") or [] if str(t).strip()]
             state.set_setting(llmlib.SETTING, llmlib.clean(said, kept))
         except (llmlib.LlmError, ValueError, TypeError) as exc:
             return refuse(exc)
@@ -614,6 +685,116 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
             return JSONResponse(await asyncio.to_thread(whole, gen))
         except llmlib.LlmError as exc:
             return oai_error(str(exc), 502)
+
+
+# ------------------------------------------------------------------------------------------------ finding model servers
+
+COMMON_PORTS = (8000, 8080, 11434, 1234, 5000, 5001, 8188, 7860, 18300)
+SKIP_PORTS = frozenset({22, 53, 631})
+
+
+def listening_ports() -> set[int]:
+    """The TCP ports this machine listens on (Linux /proc/net), plus the usual model-server ports."""
+    ports = set(COMMON_PORTS)
+    for name in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(name) as fh:
+                next(fh, None)
+                for line in fh:
+                    f = line.split()
+                    if len(f) > 3 and f[3] == "0A":                 # LISTEN
+                        ports.add(int(f[1].rsplit(":", 1)[1], 16))
+        except OSError:
+            continue
+    return {p for p in ports if p >= 1024 and p not in SKIP_PORTS}
+
+
+def _server_name(port: int, models: list[dict]) -> str:
+    owners = {str(m.get("owned_by") or "").lower() for m in models}
+    if "vllm" in owners:
+        return "vLLM"
+    if "llamacpp" in owners or "llama.cpp" in owners:
+        return "llama.cpp"
+    if port == 11434 or "library" in owners or "ollama" in owners:
+        return "Ollama"
+    if port == 1234 or "organization_owner" in owners:
+        return "LM Studio"
+    return "OpenAI-compatible server"
+
+
+def probe(port: int) -> dict | None:
+    """What answers on 127.0.0.1:`port`: {"kind": "text"|"image", url, server, models} or None."""
+    import requests as rq
+    base = f"http://127.0.0.1:{port}"
+    try:
+        r = rq.get(f"{base}/v1/models", timeout=1.5)
+        if r.status_code == 200 and "json" in r.headers.get("content-type", ""):
+            data = (r.json() or {}).get("data")
+            if isinstance(data, list) and data and all(isinstance(m, dict) and m.get("id") for m in data):
+                return {"kind": "text", "url": base, "server": _server_name(port, data), "port": port,
+                        "models": [{"id": str(m["id"]),
+                                    "ctx": int(m.get("max_model_len") or m.get("context_length") or 0)}
+                                   for m in data[:50]]}
+    except Exception:                                               # noqa: BLE001
+        pass
+    try:
+        r = rq.get(f"{base}/system_stats", timeout=1.5)
+        if r.status_code == 200 and isinstance(r.json(), dict) and "system" in r.json():
+            from .. import imagegen
+            models, why = [], ""
+            for _ in range(2):                  # it can be stopped while asked (another model taking the GPU's slot)
+                try:
+                    models = imagegen.ComfyServer(base).models()
+                    why = "" if models else "it holds no Qwen-Image model (the one family that can be shared now)"
+                    break
+                except Exception as exc:                            # noqa: BLE001
+                    why = f"it stopped answering while asked ({type(exc).__name__}); look again"
+                    import time as _t
+                    _t.sleep(2)
+            return {"kind": "image", "url": base, "server": "ComfyUI", "port": port, **({"why": why} if why else {}),
+                    "models": [{"id": m["id"], "label": m["label"]} for m in models]}
+    except Exception:                                               # noqa: BLE001
+        pass
+    return None
+
+
+def sleeping_comfy() -> list[dict]:
+    """A ComfyUI that starts on demand: a systemd user unit named for it, not running (its wake command offered)."""
+    import shutil
+    import subprocess
+    if not shutil.which("systemctl"):
+        return []
+    try:
+        out = subprocess.run(["systemctl", "--user", "list-unit-files", "--no-legend", "--no-pager", "*comfy*"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except Exception:                                               # noqa: BLE001
+        return []
+    found = []
+    for line in out.splitlines():
+        unit = line.split()[0] if line.split() else ""
+        if not unit.endswith(".service") or "idle" in unit:
+            continue
+        active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", unit]).returncode == 0
+        if not active:
+            found.append({"unit": unit, "wake": f"systemctl --user start {unit[:-8]}", "url": "http://127.0.0.1:8188"})
+    return found
+
+
+def discover(skip: set[int] | None = None) -> dict:
+    from concurrent.futures import ThreadPoolExecutor
+    ports = sorted(listening_ports() - (skip or set()))
+    with ThreadPoolExecutor(max_workers=24) as pool:
+        got = [g for g in pool.map(probe, ports) if g]
+    text = [g for g in got if g["kind"] == "text"]
+    seen: dict[tuple, str] = {}
+    for g in text:                                  # a proxy in front of the same server lists the same models
+        key = tuple(sorted(m["id"] for m in g["models"]))
+        if key in seen:
+            g["same_as"] = seen[key]
+        else:
+            seen[key] = g["url"]
+    images = [g for g in got if g["kind"] == "image"]
+    return {"text": text, "images": images, "asleep": [] if images else sleeping_comfy(), "ports": len(ports)}
 
 
 def whole(gen: Iterator[dict]) -> dict:
