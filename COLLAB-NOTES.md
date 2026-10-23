@@ -119,6 +119,12 @@ were checked against a node of each on a test machine (genesis, versions, WIF wi
   Dogecoin's, Nintondo numbering). Luckycoin has no official indexer height, so `STARTS["lky"] = 88_554`: the first
   Doginals-style envelope on its chain, found by scanning every block from 0.
 - **Coins and colours:** `coin-bel.png` (the Bells Qt icon) and `coin-lky.png`; `--net-bel` / `--net-lky` and their tags.
+- **Bellinals and Luckinals (second commit):** Admin -> Ords lists both with walk / help / read / off, off until the
+  operator turns them on (nothing new: any chain in `STARTS`). The Wallet's NFTs tab shows each account's Bellinals
+  and Luckinals (`ORD_WORDS`, read through each chain's guard by `/account/doginal-txs`), view only: Send, List and
+  Swap go by the Doginals routes, which serve Dogecoin and Pepecoin mainnet. Walked on this machine's own nodes into a
+  scratch index: Luckycoin 88,554-129,654 gave 28,834 inscriptions in 2.5 minutes; Bellscoin 22,470-26,669 gave 14,124
+  in 6 minutes (its early blocks are full of them, block 30,000 alone has 779).
 - **Tests:** `tests/test_bells_luckycoin.py` (12), with real Luckycoin blocks in `tests/data/rawchain/bel-lky-blocks.json.gz`
   (read, work and Core's own decoding). A Bells block follows when that node passes the AuxPoW start.
   Four tests that pin source text were updated for the new lines (test_doginal_index STARTS, test_doginal_wallet
