@@ -39,7 +39,12 @@ RULES = 4                      # bump when what an index keeps changes: an index
 #: (2026-10-22, the operator: number reinscriptions "like nintondo" -- a second inscription on an inscribed coin is numbered;
 #: wonky-ord / ord-dogecoin never numbered one, so every Dogecoin number after the first differs; Litecoin, which also
 #: reads the Dogecoin dialect, keeps 4).
-RULES_BY_NET = {"doge": 5, "bel": 5}      # Bellscoin's official indexer is Nintondo's own ord (2026-10-22)
+#: Bellscoin 6 (2026-10-22): Nintondo's numbering like Dogecoin's 5, a reinscription numbered too -- under 5 the walk
+#: still waited for an uninscribed first koinu there, so it fell behind Nintondo's numbers from #38,879 (block 26,689).
+RULES_BY_NET = {"doge": 5, "bel": 6}
+#: Chains whose indexes number a reinscription (an inscription made on a coin that already carries one), as nintondo's
+#: indexers do (Dogecoin since rules 5; Bellscoin, whose official indexer IS nintondo's ord).
+NUMBERS_REINSCRIPTIONS = frozenset({"doge", "bel"})
 
 
 def rules_for(net: str) -> int:

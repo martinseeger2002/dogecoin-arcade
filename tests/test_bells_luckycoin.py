@@ -186,3 +186,27 @@ def test_raw_blocks_read_as_core_prints_them_and_carry_their_work(net):
     tx = next(r["tx"] for r in _raw_data()[net] if "tx" in r)
     mine = rawchain.read_tx(bytes.fromhex(tx["hex"]), tx["txid"]).verbose(params)
     assert mine == {k: v for k, v in tx.items() if k not in ("blockhash", "blocktime", "confirmations", "time")}
+
+
+# --- Bellinals and Luckinals: Admin -> Ords opt-ins, and the wallet's view (2026-10-22) ---------------------------
+
+def test_admin_ords_offers_each_chain_off_until_turned_on(client, monkeypatch):
+    app, state = client
+    _with(state, monkeypatch, "bel", "lky")
+    state.set_setting("public_hosts", ["node.dogecoinarcade.com"])
+    local, write = {"host": "127.0.0.1:8420"}, {"x-arcade-admin": "1"}
+    try:
+        rows = {r["net"]: r for r in app.get("/admin/api/ords", headers=local).json()["rows"]}
+        assert rows["bel"]["base"] == 22_470 and rows["lky"]["base"] == 88_554
+        assert "Nintondo" in rows["bel"]["source"] and rows["bel"]["mode"] == rows["lky"]["mode"] == "off"
+        for net in ("bel", "lky"):
+            assert app.post("/admin/api/ords", headers={**local, **write}, json={"net": net, "mode": "walk"}).json()["ok"]
+            assert state.ord_mode(net) == "walk"
+    finally:
+        state.set_setting("public_hosts", [])
+
+
+def test_the_wallet_shows_bellinals_and_luckinals_and_moves_none_yet():
+    page = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/my_wallet.html").read_text()
+    assert 'bel: ["Bellinal", "BEL", "Bellscoin"], lky: ["Luckinal", "LKY", "Luckycoin"]' in page
+    assert "!ORD_WORDS[c.network]" in page and 'const viewOnly = !doge && c.network !== "main";' in page

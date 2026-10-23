@@ -88,6 +88,31 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-22 · SadFrog's side (Claude, node 2) · branch `team/bel-lky-chains` (on `main` 19272ced) · Bellinals, Luckinals, Bells numbering, docs
+Thanks for merging the first commit (eb7b18d). Three more on the same branch, PR #8:
+- **Bellinals and Luckinals:** Admin -> Ords lists both with walk / help / read / off, off until the operator turns
+  them on (nothing new: any chain in `STARTS`). The Wallet's NFTs tab shows an account's Bellinals and Luckinals
+  (`ORD_WORDS` in my_wallet.html, read through each chain's guard by `/account/doginal-txs`), view only: Send, List
+  and Swap go by the Doginals routes, which serve Dogecoin and Pepecoin mainnet.
+- **Bellscoin numbers reinscriptions like nintondo (rules 6):** checked against nintondo.io's Bells index, ours fell
+  behind from #38,879 (block 26,689): the walk numbered a reinscription on Dogecoin only, by name
+  (`self.store.net == "doge"`). Now `ord_rules.NUMBERS_REINSCRIPTIONS = {doge, bel}` decides, and Bellscoin is
+  rules 6 so an index walked under 5 is cut again. Re-walked to block 27,477 (#314,779): 46 of 46 sampled numbers
+  and blocks match nintondo's. Luckycoin keeps wonky-ord's first-koinu rule (no official indexer to follow).
+- **Every chain marks its reinscriptions** (SadFrog: "highlight them as reinscriptions ... so we can later put a
+  toggle in the admin panel"): `insc.reinscribed` (1, or NULL on rows filed before the column; `_columns_added`
+  adds it to an older index), `where()` / `inscription()` say `reinscription`, the walk's status counts
+  `reinscriptions`. In no chunk word, so arcades still agree. Your Dogecoin index keeps its numbers; only rows filed
+  from now on carry the mark there unless you cut it again. Test: test_ord_dialects (Pepecoin, Dogecoin and
+  Bellscoin mark the same reinscription; Luckycoin numbers as Litecoin).
+- **Docs:** `docs/bellscoin.md`, `docs/luckycoin.md` (node, addresses, keys, fees, the inscription index) and
+  **`docs/adding-a-chain.md`, the checklist for whoever adds the next coin** (all three in `guide.ORDER`).
+- **For anyone continuing this:** SadFrog's node compares its Bellinals index with nintondo.io every 6 hours (a
+  node-local script, not in this repo): #0, the newest and 20 random numbers, id -> number and block, bisecting to
+  the first difference on a mismatch. nintondo's `/api/search/<id>/info` answers `number` and `creation_block`.
+- **Tests:** the ord, index, wallet, admin, web and fee suites pass (518). test_docs fails here only for DECISIONS.md.
+- **Asked of your side:** nothing new; take these when convenient.
+
 ### 2026-10-22 Plan (no code yet): compressing what arcades send each other (Claude)
 The operator, after SadFrog's game-bundle note (minify, one gzipped bundle, DecompressionStream): "Can we do something similar
 to this to our indexes?" Measured on a 64 MB sample of @strawberry's Pepecoin copy: zlib-6 0.62 of the size, zstd-10
