@@ -156,9 +156,19 @@ def test_a_wallet_imported_on_one_arcade_shows_on_another_with_its_balance(brows
     # --- on B: sign in by name only. B finds the account on A, brings it and its signed record over.
     browser.get(f"{base_b}/join")
     browser.delete_all_cookies()
+    # The sign-in first says what bringing a wallet here means (2026-10-23, wallet_js warnElsewhere). No: nothing is
+    # opened or kept here. Yes: it comes over.
+    browser.execute_script("window.arcadeAsk = function () { return Promise.resolve(false); };")
+    refused = _js(browser, "return (await w.signIn(args[0], args[1], {network: 'regtest', version: 111})).tag;",
+                  TAG, PASSWORD)
+    assert not refused["ok"] and "cancelled" in refused["error"], refused
+    assert b.imported_wallets().get(pubkey) is None, "a no kept nothing on B"
+    browser.execute_script("window.__asked = []; window.arcadeAsk = function (t, d) { __asked.push([t, d]); return Promise.resolve(true); };")
     signed = _js(browser, "return (await w.signIn(args[0], args[1], {network: 'regtest', version: 111})).tag;",
                  TAG, PASSWORD)
     assert signed["ok"], signed
+    asked = browser.execute_script("return window.__asked")
+    assert asked and asked[0][0].startswith("Sign in on ") and "keeps its own copy of your encrypted wallet" in asked[0][1], asked
     on_b = b.imported_wallets().get(pubkey)
     assert on_b and on_b["blob"] == record["blob"] and on_b["version"] == 1, "the record came over, as it was"
     # B's Wallet page registers the wallet by its key and brings its coins over from A.

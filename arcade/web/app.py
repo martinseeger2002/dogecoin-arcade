@@ -8164,6 +8164,15 @@ def create_app(state: AppState) -> FastAPI:
         return Response(body, media_type="application/javascript",
                         headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
 
+    @app.get("/r/access.js")
+    def r_access_js():
+        """The access shim an inscribed page loads (2026-10-23): arcade.access.status(), wallet() -- wallet access
+        asked over the game, the same card as the game card's switch -- nodes() and move(), playing on another
+        arcade. The viewer answers (_page_doors, the 'access' door)."""
+        body = (TEMPLATE_DIR / "access.js").read_text()
+        return Response(body, media_type="application/javascript",
+                        headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
+
     @app.get("/r/storage.js")
     def r_storage_js():
         """The storage shim an inscribed page loads (see pagestore.py).
@@ -12037,6 +12046,15 @@ def create_app(state: AppState) -> FastAPI:
         if signed_in(request) is None:
             return _to_join(request)
         return render(request, "my_contacts.html", chain=_account_chain())
+
+    @app.get("/me/access", response_class=HTMLResponse)
+    def my_access(request: Request):
+        """The games this browser has let use the wallet, the camera and microphone, or see the address book
+        (2026-10-23, with wallet access asked in the game): each with its publisher, and a way to take it back.
+        All of it is kept in this browser, per arcade (base.html), so the page reads it there; the node holds none."""
+        if signed_in(request) is None:
+            return _to_join(request)
+        return render(request, "my_access.html", chain=_account_chain())
 
     @app.get("/account/find")
     def account_find(request: Request, q: str = ""):

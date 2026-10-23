@@ -115,6 +115,7 @@ PUBLIC_PAGES = frozenset({
     "/me/messages",
     "/me/notifications",
     "/me/contacts",
+    "/me/access",             # the games this browser allowed, and turning them off (2026-10-23)
     "/me/backup",
     "/me/nfts",
     "/me/runs",

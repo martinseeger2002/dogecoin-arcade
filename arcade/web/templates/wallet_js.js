@@ -348,7 +348,10 @@ async function _signIn(tag, password, {network, version}) {
   if (!found.ok) throw new Error(said.detail || "no wallet by that name");
   // Made on another arcade: this one found it there by itself (2026-10-19: "It should just know
   // automatically"), and it is brought here the way an import is, so the same name and password open it here next.
-  if (said.elsewhere) return bringHere(said, password, {network, version});
+  if (said.elsewhere) {
+    await warnElsewhere(said);
+    return bringHere(said, password, {network, version});
+  }
   const phrase = await open(said.blob, password);
   const wallet = await walletFrom(phrase, network, version);
   await everyChain(wallet, await chains());
@@ -370,6 +373,24 @@ async function _signIn(tag, password, {network, version}) {
   return {...result, tag: said.tag, address: said.address, wallet};
 }
 
+/** Before a wallet made on another arcade is opened and filed here (2026-10-23, SadFrog: a game that switches node
+ *  should "sign into that node if needed again with the warning"): say what that means, and stop on a no. This
+ *  node then keeps its own copy of the sealed wallet, and its page is the one the password is typed into -- a
+ *  node trusted from now on as much as the one the wallet was made on. Nothing is opened or sent before the yes. */
+async function warnElsewhere(said) {
+  const from = String(said.from || "").replace(/^https?:\/\//, "") || "another arcade";
+  const here = location.host;
+  const title = `Sign in on ${here}?`;
+  const words = `Your wallet was made on ${from}, and ${here} does not hold it yet. If you go on, ${here} keeps its own `
+    + `copy of your encrypted wallet, and this page is where your password opens it: only go on if you trust ${here} `
+    + `as much as ${from}. Your coins and things stay where they are on the chain; game access and saves kept in your `
+    + `browser start fresh on this arcade.`;
+  const yes = typeof globalThis.arcadeAsk === "function"
+    ? await globalThis.arcadeAsk(title, words, `Sign in on ${here}`, "Cancel")
+    : globalThis.confirm(`${title}\n\n${words}`);
+  if (!yes) throw new Error("cancelled: nothing was opened or kept here");
+}
+
 /** Bring an account from another arcade (2026-09-30): its encrypted wallet,
  *  fetched there by name, opened here with its password, and filed with this
  *  node the way a sign-up is -- so the same name and password open it here
@@ -383,6 +404,7 @@ async function _importFrom(node, tag, password, {network, version}) {
                           + `&tag=${encodeURIComponent(String(tag).replace(/^@/, ""))}`);
   const said = await got.json();
   if (!got.ok) throw new Error(said.detail || "that arcade did not send the wallet");
+  await warnElsewhere({from: said.from || node, ...said});
   return bringHere(said, password, {network, version});
 }
 

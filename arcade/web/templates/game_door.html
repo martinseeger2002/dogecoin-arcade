@@ -71,6 +71,23 @@ input[type=text],input[type=password]{width:100%;padding:10px 12px;margin:4px 0;
   {% if free <= 0 %}<div class="msg">This server is full right now: all {{ seats }} places are taken.
     Please try again later.</div>{% endif %}
 
+  {# Sent here by a game moving to this arcade (2026-10-23, the 'access' door's move: ?from=<the arcade left>): what
+     signing in here means, said before the password is typed, and the sign-in shown first. #}
+  <div class="msg" id="moved" hidden></div>
+  <script>
+    (function(){
+      var from = new URLSearchParams(location.search).get('from') || '';
+      if (!/^[a-z0-9.-]{3,253}(:[0-9]{1,5})?$/i.test(from) || from === location.host) return;
+      var box = document.getElementById('moved'), here = location.host;
+      box.textContent = 'You came here from ' + from + ' to play on ' + here + '. Already have an account? Sign in with '
+        + 'the same name and password. ' + here + ' then keeps its own copy of your encrypted wallet, and this page is '
+        + 'where your password opens it, so only go on if you trust ' + here + '. Game access and saves kept in your '
+        + 'browser start fresh here.';
+      box.hidden = false;
+      document.addEventListener('DOMContentLoaded', function(){ var t = document.getElementById('to-in'); if (t) t.click(); });
+    })();
+  </script>
+
   <div id="forms" {% if not secure_enough or free <= 0 %}hidden{% endif %}>
     <div class="panel" id="make-panel">
       <h2>Make your account</h2>

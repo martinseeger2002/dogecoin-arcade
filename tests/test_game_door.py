@@ -79,3 +79,24 @@ def test_ashvale_says_its_assets_are_test_assets_before_anybody_signs_up(client)
     assert "test network" in body and "no monetary value" in body
     assert "take no responsibility" in body and "glitches" in body
     assert "Please read before you play" not in app.get("/play/ghost-fleet", headers=OUTSIDE).text
+
+
+def test_a_game_moving_here_says_what_signing_in_here_means(client):
+    """2026-10-23 (the 'access' door's move): a player sent from another arcade (?from=) is told, before typing a
+    password, that this arcade keeps its own copy of the encrypted wallet; the notice is drawn in the browser from the
+    query, never echoed by the server."""
+    app, state = client
+    _ashvale(state)
+    body = app.get(f"/play/{CARD}?from=elsewhere.example", headers=OUTSIDE).text
+    assert 'id="moved"' in body and "keeps its own copy of your encrypted wallet" in body
+    assert "elsewhere.example" not in body, "the place it came from is not written into the page by the server"
+
+
+def test_the_access_shim_is_served_to_any_page(client):
+    """/r/access.js (2026-10-23): arcade.access for an inscribed page, served with CORS like the other shims."""
+    app, _ = client
+    got = app.get("/r/access.js", headers=OUTSIDE)
+    assert got.status_code == 200 and "javascript" in got.headers["content-type"]
+    assert got.headers.get("access-control-allow-origin") == "*"
+    for op in ("status", "wallet", "nodes", "move"):
+        assert f"{op}: function" in got.text, op
