@@ -2272,12 +2272,19 @@ function dgPageGo(n) {
   if (dgUi) dgUi.head.scrollIntoView({block: "start", behavior: "smooth"});
 }
 
+//: The chains whose inscriptions the wallet shows: one word for one, its coin, and how its coins are named.
+const ORD_WORDS = {doge: ["Doginal", "DOGE", "Dogecoin"], main: ["Pepinal", "PEP", "PEP"],
+                   bel: ["Bellinal", "BEL", "Bellscoin"], lky: ["Luckinal", "LKY", "Luckycoin"]};
+
 async function drawDoginals() {
   const box = $("doginals");
   const c = chainNow();
-  if (NODE_SIDE || tab !== "nfts" || !c || (c.network !== "doge" && c.network !== "main")) { box.hidden = true; return; }
+  if (NODE_SIDE || tab !== "nfts" || !c || !ORD_WORDS[c.network]) { box.hidden = true; return; }
   box.hidden = false;
   const doge = c.network === "doge";
+  // Bellinals and Luckinals are shown, not moved yet (2026-10-22): sending, listing and swapping one go by the
+  // Doginals routes, which serve Dogecoin and Pepecoin mainnet.
+  const viewOnly = !doge && c.network !== "main";
   // An imported wallet's own Doginals too (they are shown; sending one from it comes later).
   const w = pickedNow(), addr = w ? w.address : "";
   if (dg.net !== c.network || (dg.addr || "") !== addr) {
@@ -2286,9 +2293,9 @@ async function drawDoginals() {
     dg = {net: c.network, addr, coins: null, answers: {}, failed: 0, asking: false, page};
     dgUi = null;
   }
-  // Pepinals (2026-10-17: "Add pepinals support"): the same ord inscriptions on Pepecoin mainnet.
-  const W = doge ? "Doginal" : "Pepinal", C = doge ? "DOGE" : "PEP";
-  const coinWord = doge ? "Dogecoin" : "PEP";
+  // Pepinals (2026-10-17: "Add pepinals support"): the same ord inscriptions on Pepecoin mainnet. Bellinals and
+  // Luckinals (2026-10-22) the same way, read through each chain's own guard (/account/doginal-txs).
+  const [W, C, coinWord] = ORD_WORDS[c.network];
   if (!dgUi || !box.contains(dgUi.head)) {
     const head = el("h2", "", `${W}s`); head.id = "dg-title";
     dgUi = {head, status: el("div", ""), notes: el("div", ""), stray: el("div", ""), grid: el("div", "wl-pieces"),
@@ -2364,7 +2371,10 @@ async function drawDoginals() {
   const sendShort = !w && free < Number(c.doginal_send_need || 0);
   const swapShort = !w && free < Number(c.doginal_lock_need || 0);
   const notes = [];
-  if (w && found.length) {
+  if (viewOnly && found.length) {
+    notes.push(el("p", "wl-note", `Your ${W}s, read from the chain. Sending, listing and swapping a ${W} from the `
+      + "arcade is not ready yet: they stay safe here, and an ordinary send never spends one."));
+  } else if (w && found.length) {
     notes.push(el("p", "wl-note", `These are ${w.name}'s. Sending or swapping a ${W} from an imported wallet is not `
       + "ready yet: choose your arcade wallet above to send one of its own."));
   } else if (found.length && (sendShort || swapShort)) {
@@ -2400,7 +2410,9 @@ async function drawDoginals() {
       card.dataset.doginal = g.id;
       const id = el("div", "wl-dgid", g.id); id.title = g.id;
       card.append(doginalPic(g), id);
-      if (!w && isListed(g)) {
+      if (viewOnly) {
+        // shown only (above)
+      } else if (!w && isListed(g)) {
         card.append(el("span", "wl-piecesend ghost", "Listed"));
       } else if (!w) {
         const send = el("button", "wl-piecesend", "Send"); send.type = "button";
