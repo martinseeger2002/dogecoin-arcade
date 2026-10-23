@@ -20,19 +20,6 @@
 </style>
 <link rel="stylesheet" href="/base.css">
 {% if brand.css %}<style>/* this node's face (arcade/web/brand.py) */{{ brand.css | safe }}</style>{% endif %}
-<script>
-// Per-game wallet access, defined in <head> so it exists before any
-// content-block script reads it: games.html draw() and _page_doors.js.html
-// call arcadeGameAllowed at render time, before the body script where these
-// used to live (otherwise ReferenceError on /games). arcadeAccessWords, used
-// only in the access dialog, stays in the body.
-var ARCADE_ACCESS = 'arcade.wallet.allow:';
-function arcadeGameAllowed(id){ try { return localStorage.getItem(ARCADE_ACCESS + id) === 'yes'; } catch (e) { return false; } }
-function arcadeGameAllow(id, on){
-  try { if (on) localStorage.setItem(ARCADE_ACCESS + id, 'yes'); else localStorage.removeItem(ARCADE_ACCESS + id); } catch (e) {}
-  document.dispatchEvent(new CustomEvent('arcade:access', {detail: {id: id, on: !!on}}));
-}
-</script>
 </head>
 {# Every page is live. The counter lives on the body rather than in an
    element each page has to remember to add: eight templates had one and the
@@ -1455,10 +1442,12 @@ function arcadeSignIn(why){
 // or when the game first asks; kept in this browser, per game page. Without it a game can still be played and
 // join rooms as you (that signature proves who you are and moves nothing), but it cannot ask your wallet to
 // trade, pay, put things in escrow or sign.
-// ARCADE_ACCESS / arcadeGameAllowed / arcadeGameAllow are defined in an
-// early <head> script now, so they exist before any content-block script
-// reads them (games.html draw(), _page_doors.js.html). Moving them here was
-// a ReferenceError on /games. arcadeAccessWords stays below.
+var ARCADE_ACCESS = 'arcade.wallet.allow:';
+function arcadeGameAllowed(id){ try { return localStorage.getItem(ARCADE_ACCESS + id) === 'yes'; } catch (e) { return false; } }
+function arcadeGameAllow(id, on){
+  try { if (on) localStorage.setItem(ARCADE_ACCESS + id, 'yes'); else localStorage.removeItem(ARCADE_ACCESS + id); } catch (e) {}
+  document.dispatchEvent(new CustomEvent('arcade:access', {detail: {id: id, on: !!on}}));
+}
 function arcadeAccessWords(game, publisher, address){
   return '“' + (game || 'This app') + '” is published by ' + (publisher || 'an account with no @name')
     + (address ? ' (' + address + ')' : '') + '. Check that this is the app’s real publisher before you allow it: '
