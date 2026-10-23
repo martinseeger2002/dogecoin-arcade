@@ -88,6 +88,39 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-23 · SadFrog's side (Claude, node 2) · branch `team/in-game-wallet-access` (on `main` 144d9b89) · wallet access asked in the game; node hops from the Affiliates list; a warning before a wallet comes from another arcade; Game access page
+SadFrog asked: "the wallet access option doesn't have to happen in the game card, it can happen in the game -- this
+way a player can sign into a game, a game can switch nodes based on location/ping, sign into that node if needed
+again with the warning ... or the game launcher can ask for wallet access", and node hops "using affiliate list".
+**This reverses your 2026-10-20 rule** (a game whose card box is off is stopped, never asked): your call whether to
+take it. What it does:
+- **THE GATE asks in place** (base.html `arcadeGameAskAccess`): the first time a game with its box off reaches for the
+  wallet, the same `arcadeAccessAsk` card (name, @publisher, address, lookalike warning) comes up over it, on the
+  viewer where the game cannot draw. Yes ticks the card's box (kept under `g.opens`, as the box is). No refuses that
+  one action with `ARCADE_GATE_SAYS`, the game runs on, and the tab does not ask again unprompted
+  (`sessionStorage arcade.wallet.no:<page>`). Games are no longer held before they start; Play on the card opens them.
+- **arcade.access** (`templates/access.js`, `/r/access.js`, the `access` door): `status()` (no card), `wallet()` (asks
+  outright, even after a no), `nodes()`, `move(base)`.
+- **Node hops come only from this arcade's Affiliates list** (new `/affiliates.json`, `affiliates.for_tab` as data;
+  in door.py's list): an affiliate that answers `/realtime/hello` is a move target; tunnels and chain-announced
+  domains are listed as relays only. `move` refuses anything not on the list, then shows a card naming who lists it
+  and what signing in there means; yes opens `<base>/play/<card>?from=<here>`.
+- **wallet.js `warnElsewhere`**: signing in with a wallet made on another arcade (or `importFrom`) first says this
+  arcade keeps its own copy of the encrypted wallet and is where the password opens it; no keeps nothing.
+  game_door.html says the same before the password when it arrives with `?from=`.
+- **/me/access**: every game this browser allowed (wallet, camera & microphone, address book) with Turn off; linked
+  from the Games tab and the access card's words. In door.py's list.
+- **Tests**: test_page_doors_browser (asked in place, no/yes, not held; the access door; Game access), test_imports_
+  everywhere_browser (the warning: no keeps nothing, yes brings it), test_game_door (the shim, the ?from notice,
+  /affiliates.json). Smoke, doors, auth and sign-in suites pass here (test_signup_browser's file upload fails here
+  only because a snap Firefox cannot read /tmp; it fails the same on main).
+- **ASHVALE uses it** (ASHVALE `main` 09a44b2, not yet pushed): the launcher asks once after the tutorial, and
+  Settings shows wallet access and a server picker from `nodes()`.
+- **Noticed while mapping, not changed here (please look):** (1) `shopSign` signs the buyer's half with
+  `coins.signInput` directly, so a mainnet shop buy skips `mainnetOk`'s review; (2) the realtime cert words are bound to
+  a node, not a game or room, so a relay a player is carried through can be that address in any room on the mesh for a
+  day; (3) the viewer ticket `?v=` is readable by the game from its own URL and could be passed out through a room.
+
 ### 2026-10-23 Camera & microphone per game card, and room.media (Claude, with the Cul-de-sac session)
 The operator: "Our user can allow an app camera and microphone in the same way that they allow an app Wallet access on the
 game card" (a video-call card, built by the Cul-de-sac session on this API), "fast track the camera access", "And

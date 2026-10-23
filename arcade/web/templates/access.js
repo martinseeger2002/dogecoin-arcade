@@ -8,12 +8,14 @@
 // wallet(): asks for wallet access, over the game: the card names the game, its @publisher and address, and warns
 //   about lookalike copies -- the same card as the Wallet access switch on the game's card, which it ticks.
 //   Resolves {ok, wallet, status}: status "allowed", "already" or "declined". Rejects "sign in first ...".
-// nodes(): the arcades and relays this arcade knows, each timed from this browser: [{base, host, ms, here,
-//   arcade}], this arcade first, then by ms (null: no answer). `arcade` true: a place to play (a domain announced
-//   on the chain); false: a relay that carries rooms only.
-// move(base): offers to play this game on another arcade from nodes(). The card says what signing in there means;
-//   yes leaves for its /play page (resolves {status: "moving"} just before). Also "declined" or "here". Only an
-//   arcade this one lists, never an address the game makes up.
+// nodes(): this arcade's Affiliates list and the mesh's relays, each timed from this browser: [{base, host, ms,
+//   here, arcade, affiliate, name, by}], this arcade first, then the arcades, then by ms (null: no answer).
+//   `arcade` true: a place a player can move to -- on this arcade's Affiliates list (the operator's own sites and
+//   the ones the operator ticked from linked arcades; `by` says who shares it) and answering as an arcade. A relay
+//   (affiliate false) carries rooms only.
+// move(base): offers to play this game on an arcade from nodes(). The card says who lists it and what signing in
+//   there means; yes leaves for its /play page (resolves {status: "moving"} just before). Also "declined" or "here".
+//   Only an arcade on this arcade's Affiliates list, never an address the game makes up.
 //
 //   <script src="/r/access.js"></script>
 //   arcade.access.status().then(function (s) { if (s.signedIn && !s.wallet) arcade.access.wallet(); });

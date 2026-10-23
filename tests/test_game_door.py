@@ -100,3 +100,15 @@ def test_the_access_shim_is_served_to_any_page(client):
     assert got.headers.get("access-control-allow-origin") == "*"
     for op in ("status", "wallet", "nodes", "move"):
         assert f"{op}: function" in got.text, op
+
+
+def test_the_affiliates_are_the_arcades_a_game_may_move_a_player_to(client):
+    """/affiliates.json (2026-10-23, SadFrog: "using affiliate list for node hops"): the Affiliates tab as data, the
+    operator's own sites first; the 'access' door's move offers only these."""
+    from arcade import affiliates as affiliateslib
+    app, state = client
+    affiliateslib.save(state, {"mine": [{"url": "https://other-arcade.example", "name": "Other Arcade", "about": "", "share": False}]})
+    got = app.get("/affiliates.json", headers=OUTSIDE)
+    assert got.status_code == 200
+    sites = got.json()["sites"]
+    assert sites[0] == {"url": "https://other-arcade.example", "name": "Other Arcade", "by": "this arcade"}, sites

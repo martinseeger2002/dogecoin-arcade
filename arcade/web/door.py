@@ -58,6 +58,7 @@ PUBLIC_PAGES = frozenset({
     "/guide",
     "/docs",
     "/affiliates",            # who the arcade works with (2026-10-15)
+    "/affiliates.json",       # the same, as data: the arcades a game may move a player to (2026-10-23)
     "/collections",
     "/tokens",
     "/nfts",

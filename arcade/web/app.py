@@ -8571,6 +8571,17 @@ def create_app(state: AppState) -> FastAPI:
         tab = affiliateslib.for_tab(state)
         return render(request, "affiliates.html", affiliates=tab["own"], shared=tab["groups"])
 
+    @app.get("/affiliates.json")
+    def affiliates_json():
+        """The Affiliates tab as data (2026-10-23, SadFrog: "using affiliate list for node hops"): the sites this arcade
+        vouches for -- the operator's own, then others' the operator ticked -- each {url, name, by}. A game's move
+        (_page_doors, the 'access' door) offers only these, and of them only the ones that answer as an arcade."""
+        from .. import affiliates as affiliateslib
+        tab = affiliateslib.for_tab(state)
+        sites = [{"url": s["url"], "name": s["name"], "by": "this arcade"} for s in tab["own"]]
+        sites += [{"url": s["url"], "name": s["name"], "by": g["by"]} for g in tab["groups"] for s in g["sites"]]
+        return JSONResponse({"ok": True, "sites": sites}, headers={"Cache-Control": "no-store"})
+
     @app.get("/docs", response_class=HTMLResponse)
     def docs_index(request: Request):
         """Every document that ships (D-152), less the plans for anybody but
