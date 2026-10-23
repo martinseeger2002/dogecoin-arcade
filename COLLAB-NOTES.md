@@ -88,6 +88,55 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-22 · SadFrog's side (Claude, node 2) · branch `team/bel-lky-chains` (on `main` c08324b) · Bellscoin and Luckycoin as add-on chains
+SadFrog: integrate Bellscoin (BEL) and Luckycoin (LKY) "as fully as Dogecoin is". Both are **Params alone** (your
+"every chain as data"): they live in `AppState.more`, get `--bel-*` / `--lky-*`, `core:` / `share:` and mesh peering
+for free, and sit grayed out until their node has synced. Values come from each Core's source at its release tag and
+were checked against a node of each on a test machine (genesis, versions, WIF with `signmessagewithprivkey`,
+`validateaddress`).
+- **`config.py`:** `BELLSCOIN` (Bells Core 3.0.0-rc2, Bitcoin-Core-based: Litecoin's relay shape, 0.0001 BEL/kB, no
+  soft dust, versions 25 "B" / 30, WIF 0x99, `bech32_hrp="bel"`, AuxPoW id 16) and `LUCKYCOIN` (5.0.1, Dogecoin 1.14's code:
+  Dogecoin's fees and soft dust, versions 47 / 5, WIF 0xAF, AuxPoW id 0x2013, no SegWit). Floors 1,289,000 and
+  1,153,000: each tip on 2026-10-22 rounded up about two days at one-minute blocks (D-004). Both `real_coins`;
+  swaps, takes and the rest stay `None`, as on every mainnet. Letters B and K (Litecoin has L).
+- **New field `auxpow_chain_mask`** (default 0xFFFF, so nothing else changes): Bells keeps versionbits beside its id, a
+  header of version 0x20100100 is chain 16 (its pureheader.h masks 0x1f). `rawchain.check_work(..., chain_mask)` and
+  `coreshare` pass it.
+- **One real hazard, said plainly:** Bellscoin's P2SH byte **30 is Dogecoin's P2PKH "D"**. `txbuild.p2pkh_script` has
+  no chain, so a Bells script hash would be paid as a key hash. So: `config.unpayable_versions` (only `bel: {30}`),
+  `_check_address` refuses a "D..." payee on Bellscoin with a clear message, and `config.require_p2sh_payable` makes
+  `htlc` / `escrow` / `referee.address_of` refuse to build a lock there. Arcade-made Bells coins are all "B...".
+  Lifting it means telling txbuild the chain it pays on -- your call whether that is worth it.
+- **Generalised where a chain was named** (behaviour for doge / ltc / ltctest unchanged, tests green):
+  `_account_chains` and the syncing messages loop over `state.addons`; `_chain_twin` (the same key's address by
+  Params) for `_tag_address`, `_pays_at`, holdings and @tag pays; the inscription guard is built for every add-on
+  but Dogecoin, each in `<net>-inscriptions.sqlite`, watching its script byte only where no other chain uses it;
+  `node_trader` guards any add-on chain's sends; `trade.Leg.tier` and `tierOf` go by `real_coins`; badge words by
+  `net_word`; `wallet_js` fee / BIG / payee tables (held to Python by `test_trade_fees`); `COIN_TYPE` 3 for both (one
+  key for every real-coin chain; their own wallets derive on 0, so SLIP-44 762 / 743 would match nothing); the
+  backup page lists both keys; the mainnet review card says "Real BEL" / "Real LKY".
+- **Ords:** `STARTS["bel"] = 22_470` (Nintondo/ord `first_inscription_height`; Bells is in `TAPROOT`, its rules 5 like
+  Dogecoin's, Nintondo numbering). Luckycoin has no official indexer height, so `STARTS["lky"] = 88_554`: the first
+  Doginals-style envelope on its chain, found by scanning every block from 0.
+- **Coins and colours:** `coin-bel.png` (the Bells Qt icon) and `coin-lky.png`; `--net-bel` / `--net-lky` and their tags.
+- **Bellinals and Luckinals (second commit):** Admin -> Ords lists both with walk / help / read / off, off until the
+  operator turns them on (nothing new: any chain in `STARTS`). The Wallet's NFTs tab shows each account's Bellinals
+  and Luckinals (`ORD_WORDS`, read through each chain's guard by `/account/doginal-txs`), view only: Send, List and
+  Swap go by the Doginals routes, which serve Dogecoin and Pepecoin mainnet. Walked on this machine's own nodes into a
+  scratch index: Luckycoin 88,554-129,654 gave 28,834 inscriptions in 2.5 minutes; Bellscoin 22,470-26,669 gave 14,124
+  in 6 minutes (its early blocks are full of them, block 30,000 alone has 779).
+- **Tests:** `tests/test_bells_luckycoin.py` (12), with real Luckycoin blocks in `tests/data/rawchain/bel-lky-blocks.json.gz`
+  (read, work and Core's own decoding). A Bells block follows when that node passes the AuxPoW start.
+  Four tests that pin source text were updated for the new lines (test_doginal_index STARTS, test_doginal_wallet
+  inscWord, test_litecoin_safety's coin words, test_trade_tab's BIG). Full run here: 3,191 pass; the 12 that fail
+  (test_installer x4, test_token_claims x4, test_escrow_web, test_gamestate, test_doginals_exchange, test_ord_slim)
+  fail the same on `main` on this machine.
+- **Not in this branch (on purpose):** coin pairs for BEL / LKY, the installer's downloads, Admin's node start / stop
+  switch and node-wallet cards (Litecoin-only today), bel-20 / lky-20 tokens.
+- **Asked of your side:** (1) is generalising over `state.addons` the direction you want, or would you rather fold
+  it into your own rework; (2) `swap_big:bel` / `swap_big:lky` are set low on purpose (200 BEL, 20 LKY) until you set
+  them; (3) please take the same floors, or our BEL / LKY indexes disagree from the first block.
+
 ### 2026-10-22 Token orders past what is free come off the book on every post (Claude)
 The operator: "My listing amount was only 1000 FRGY. I didn't have that much to list so how could I have listed that much
 anyways listing should be limited to what you have available" (and: "Probably because it's a divisible coin and you're

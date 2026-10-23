@@ -201,6 +201,11 @@ class Params:
     #: borrowed from another arcade (arcade/rawchain.py) cannot be another merge-mined coin's. None:
     #: not checked (a chain that is not merge-mined, or regtest).
     auxpow_chain_id: int | None = None
+    #: Which bits of the version's top half hold that chain id. Dogecoin's family reads the whole top half
+    #: (`nVersion >> 16`). Bellscoin 3 is Bitcoin-Core-based and also signals versionbits up there, so its
+    #: header masks the id to 0x1f (bells primitives/pureheader.h MASK_AUXPOW_CHAINID_SHIFTED): a block of
+    #: version 0x20100100 is chain 16, not 0x2010.
+    auxpow_chain_mask: int = 0xFFFF
     #: A test network's rule that a block found after a long gap may be at the easiest difficulty
     #: (`pow_limit_bits`) whatever the block before it was. rawchain's one-block difficulty check lets
     #: such a block through on these chains instead of refusing it.
@@ -521,7 +526,94 @@ LITECOIN_TESTNET = dataclasses.replace(
     node_dir=".litecoin-testnet", real_coins=False, bech32_hrp="tltc",
 )
 
-NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN, LITECOIN, LITECOIN_TESTNET)}
+# Bellscoin MAINNET (SadFrog's side, 2026-10-22: "integrate them as fully as Dogecoin"). An add-on chain like
+# Dogecoin, as Params alone. Bells Core 3.0.0-rc2 (github.com/BellsChain/bellscoin, kernel/chainparams.cpp) is
+# Bitcoin-Core-based, so its relay is Litecoin's shape: no soft-dust fee, a 1,000 sat/kB minimum relay fee and
+# Bitcoin's dust threshold (about 546 sat). Merge-mined with chain id 16 from block 144,000, masked to 0x1f
+# (`auxpow_chain_mask`). SegWit is buried at 144,000 ("bel1..."); Taproot was a BIP9 deployment from 188,000.
+# Policy: an 83-byte OP_RETURN and bare multisig relay, so the Class B layer carries over.
+#
+# CAUTION, address versions: a Bells P2SH address is version 30, which is Dogecoin's P2PKH "D...". From the
+# string alone a Bells script hash and a Dogecoin key hash are the same address, so txbuild cannot read 30 as
+# P2SH for every chain. The arcade pays Bells P2PKH ("B...", 25) and refuses a "D..." payee on Bellscoin
+# (`unpayable_versions`) rather than guess.
+#
+# The floor: the network tip on 2026-10-22 was about 1,285,370 (a public explorer whose genesis matches),
+# rounded up about two days ahead at one-minute blocks (the D-004 margin).
+BEL_MAINNET_FLOOR = 1_289_000
+
+BELLSCOIN = dataclasses.replace(
+    DOGECOIN,
+    name="bel",
+    rpc_port=19918,             # the ecosystem's port; the build's own default is still Bitcoin's 8332
+    p2p_port=19919,
+    activation_height=BEL_MAINNET_FLOOR,
+    messaging_start_height=BEL_MAINNET_FLOOR,
+    pubkeyhash_version=25,      # addresses start with "B"
+    scripthash_version=30,      # "D" -- see the CAUTION above
+    other_pubkeyhash_version=None,
+    coin="BEL",
+    label="Bellscoin",
+    min_fee_per_kb=10_000,      # 0.0001 BEL/kB: ten times Bells 3's minimum relay fee, as Litecoin's
+    soft_dust=False, dust_limit=10_000,     # no soft-dust fee; change from 0.0001 BEL
+    genesis="e5be24df57c43a82d15c2f06bda961296948f8f8eb48501bed1efb929afe0698",
+    auxpow_chain_id=16, auxpow_chain_mask=0x1F,
+    addon=True, node_dir=".bells", node_conf="bells.conf",
+    letter="B", family="BEL", net_word="bellscoin", real_coins=True, bech32_hrp="bel",
+)
+
+# Luckycoin MAINNET (SadFrog's side, 2026-10-22). Luckycoin Core 5.0.1 (github.com/LuckycoinFoundation/Luckycoin,
+# chainparams.cpp) is Dogecoin 1.14's code, so Dogecoin's Params fit: 0.01 LKY/kB, the 0.01 soft-dust line,
+# one wallet.dat. Merge-mined with chain id 0x2013 from block 176,000; no SegWit. Versions 47 ("K"/"L", not
+# Litecoin's 48) and P2SH 5 ("3", which txbuild already reads as P2SH for Litecoin's legacy addresses).
+# 5.0.1 is mandatory: it no longer talks to 4.0.x nodes. The floor: the tip on 2026-10-22 was 1,149,640
+# (this node's headers, and a public explorer), rounded up about two days ahead at one-minute blocks.
+LKY_MAINNET_FLOOR = 1_153_000
+
+LUCKYCOIN = dataclasses.replace(
+    DOGECOIN,
+    name="lky",
+    rpc_port=9918,
+    p2p_port=9917,
+    activation_height=LKY_MAINNET_FLOOR,
+    messaging_start_height=LKY_MAINNET_FLOOR,
+    pubkeyhash_version=47,
+    scripthash_version=5,
+    other_pubkeyhash_version=None,
+    coin="LKY",
+    label="Luckycoin",
+    genesis="9b7bce58999062b63bfb18586813c42491fa32f4591d8d3043cb4fa9e551541b",
+    auxpow_chain_id=0x2013,
+    addon=True, node_dir=".luckycoin", node_conf="luckycoin.conf",
+    # "K": Litecoin already wears the "L" badge.
+    letter="K", family="LKY", net_word="luckycoin", real_coins=True,
+)
+
+NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN, LITECOIN, LITECOIN_TESTNET,
+                                BELLSCOIN, LUCKYCOIN)}
+
+def unpayable_versions(params: "Params") -> frozenset:
+    """The version bytes of `params`' own script-hash addresses that another known chain uses for a key hash.
+
+    txbuild reads a version byte the same on every chain, and a byte that is one chain's P2PKH and another's
+    P2SH cannot be both: Bellscoin's P2SH 30 is Dogecoin's "D" (2026-10-22). A send on such a chain refuses a
+    payee of that byte (web/app.py _check_address) rather than pay a script hash as a key hash."""
+    # Duck-typed: a caller may hand over a stand-in with only the version bytes (tests do), which clashes with nothing.
+    name, version = getattr(params, "name", None), getattr(params, "scripthash_version", None)
+    if name not in NETWORKS or version is None:
+        return frozenset()
+    key_hashes = {p.pubkeyhash_version for p in NETWORKS.values() if p.name != name}
+    return frozenset({version} & key_hashes)
+
+
+def require_p2sh_payable(params: "Params") -> None:
+    """Refuse to make an arcade P2SH address (a swap lock, an escrow, a prize pool) on a chain whose script-hash
+    byte is another chain's key-hash byte (`unpayable_versions`, Bellscoin's 30): txbuild would fund it as a key
+    hash and the coins would be lost. Lifted once txbuild is told the chain it pays on."""
+    if unpayable_versions(params):
+        raise ValueError(f"{params.label} script (P2SH) addresses share their version byte with another chain's "
+                         f"ordinary addresses, so this arcade does not make one on {params.label} yet")
+
 
 #: Networks on which the Messenger may operate. Testnet only, permanently
 #: (docs/DECISIONS.md D-010). Enforced in code, not configuration.
@@ -657,6 +749,7 @@ CHAIN_NAMES = {
     "doge": "main",
     "ltc": "main",       # and so does Litecoin's
     "ltctest": "test",
+    "bel": "main", "lky": "main",   # Bellscoin and Luckycoin too
 }
 
 

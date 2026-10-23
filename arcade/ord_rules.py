@@ -39,7 +39,7 @@ RULES = 4                      # bump when what an index keeps changes: an index
 #: (2026-10-22, the operator: number reinscriptions "like nintondo" -- a second inscription on an inscribed coin is numbered;
 #: wonky-ord / ord-dogecoin never numbered one, so every Dogecoin number after the first differs; Litecoin, which also
 #: reads the Dogecoin dialect, keeps 4).
-RULES_BY_NET = {"doge": 5}
+RULES_BY_NET = {"doge": 5, "bel": 5}      # Bellscoin's official indexer is Nintondo's own ord (2026-10-22)
 
 
 def rules_for(net: str) -> int:
