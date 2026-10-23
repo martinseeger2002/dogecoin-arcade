@@ -776,6 +776,8 @@ document.addEventListener('click', function (ev) {
             // DRC-20 / PRC-20 ticks are thousands (2026-10-22): asked of the node as they are typed, and added to the
             // select behind the box, so a pick is sent like any other.
             if (words.length && !ownHalf(sel)) {
+              answer();                                   // what is here now, at once; the node's ticks join it
+              var asked = text;
               fetch('/exchange/token20/search?q=' + encodeURIComponent(words[0])).then(function (r) { return r.json(); })
                 .then(function (got) {
                   var have = {};
@@ -788,8 +790,9 @@ document.addEventListener('click', function (ev) {
                     o.dataset.mine = '0'; o.dataset.held = '';
                     sel.appendChild(o);
                   });
-                  answer();
-                }).catch(answer);
+                  // Only for the words still in the box: an answer to an earlier keystroke never redraws a later one.
+                  if ((got.results || []).length && box.querySelector('.pick-q').value.trim().toLowerCase() === String(asked || '').trim().toLowerCase()) answer();
+                }).catch(function () {});
               return;
             }
             answer();

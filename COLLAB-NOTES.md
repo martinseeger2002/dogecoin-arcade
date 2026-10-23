@@ -88,7 +88,61 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-10-22 · SadFrog's side (Claude, node 2) · branch `team/bel-lky-chains` (on `main` c08324b) · Bellscoin and Luckycoin as add-on chains
+### 2026-10-22 Plan (no code yet): compressing what arcades send each other (Claude)
+The operator, after SadFrog's game-bundle note (minify, one gzipped bundle, DecompressionStream): "Can we do something similar
+to this to our indexes?" Measured on a 64 MB sample of @strawberry's Pepecoin copy: zlib-6 0.62 of the size, zstd-10
+0.59, one 1 MB piece zlib-6 0.60 in 26 ms -- an index is mostly txids and hashes, which barely compress. Agreed, in order:
+1. **Whole-index copy pieces** (ord_snapshot): each 1 MB piece compressed on the wire, checked against the manifest's
+   hash of the RAW piece as now. About 40% less (the 3.1 GB copy ~1.9 GB) for far-behind arcades on slow links.
+2. **Borrowed Core reads** (mesh/coreshare): raw blocks and transactions go as HEX in the JSON header today (twice
+   their size); send them as raw bytes in the frame's blob (and compressed), about half the traffic of a borrowing
+   arcade -- how Bells would run on .25 without its own Core.
+3. **Arcade-to-arcade web replies** (imported-coin lists, /signin/... JSON): gzip.
+Each only once both ends say they read it (a flag in the "hi" / the request), so an updated arcade answers an older one
+the old way. Already compressed: chunk notes (ord_notes, zlib) and the shared order book (book_relay, zlib). Not worth
+it: index answers, hellos, leases (small). Keeping the local index compressed was weighed and left: SQLite has no
+built-in compression (sqlite_zstd_vfs / ZIPVFS would be a dependency in every arcade and slow the walker's writes);
+disk is not tight; where it ever is, filesystem compression (btrfs / ZFS with zstd) needs no code.
+
+### 2026-10-22 Two regressions of today's, caught by a full run (Claude)
+Running the whole suite (route-scoped gates had passed) found two of today's changes breaking older tests:
+* `funding.choose` skipped every in-flight coin at or under 0.01 where a guard runs (to keep a fresh DRC-20 / PRC-20
+  note from paying a fee) -- which also kept back the small coins a shopkeeper's take answer needs
+  (test_account_take: no answer made). Now only the notes themselves are skipped: `funding.NOTE_COINS`, the outpoint
+  of each note reveal the token20 routes broadcast (their done hooks add it).
+* The exchange's pick box waited for /exchange/token20/search before answering a keystroke, so an earlier answer stood
+  meanwhile (test_trade_tab_lists: "zzqqxx" showed 4 rows). It now answers from what the page has at once, and adds
+  the node's ticks when they come, only if the box still holds the words they were asked for.
+### 2026-10-22 · the operator's side (Claude) · the day in short, for the team (each item has its own entry below)
+* **Ord indexes:** Pepecoin complete on @strawberry; the walk now goes to 2 blocks under the tip (WALK_SETTLE; chunks
+  stay 12 under). Whole-index copies resume after a restart (pieces kept on disk), a far-behind arcade walks from its own
+  Core while it fetches, a stalled fetch is retried instead of dropped, and a holder never remakes a copy while someone
+  fetches it. Admin -> Ords shows each arcade's copy download. Pepecoin numbering matches nintondo to #8.57M.
+* **Doginals:** the old backwards trace is off where an ord index exists; small coins stay protected until a copy of
+  the index has walked past their block, then fill in live (GET /account/doginal-index). Text / JSON / JS
+  inscriptions are left out of the NFT cards.
+* **DRC-20 / PRC-20:** balances on the Tokens tab from the most complete index; one-press Send (commit, note reveal,
+  send -- the way pepeblocks and nintondo count it); a sent amount is held off the balance until the index reads it;
+  in the swap book as kind `token20` (whole orders, cross-chain; the token locked as a second transfer note landing
+  on the lock, funded by a first note sent to it -- arcade/token20_swap.py); exchange search "tick · PRC-20" looked
+  up as typed (GET /exchange/token20/search).
+* **Listings hold what they list:** DRC-20 / PRC-20 and Doginal swap orders and Doginals-tab listings are held off
+  sends and further listings (coins, Omni tokens and NFTs already move to the order's own address); a book that lists
+  more than is free has those orders taken off (/account/orders/post).
+* **Imported wallets:** the rescan is never sent twice; the wallet shows the Core's own rescan % from its debug.log;
+  imported balances show what can be sent, with Doginals and unchecked coins beside it; coins brought from another
+  arcade are checked in batches (no 5,000 cap); no new import on a chain with fewer than two Cores on the network
+  (Litecoin today); each address type is its own entry in the Wallet drop-down ("Wallet 1 · Native SegWit").
+* **Admin:** Core read times in exact ms; ord rings without @tags.
+* **Speed:** the imported wallet's balance line reads its coins in one query (1.45 s -> 0.03 s on .25, several times
+  an unlock); the exchange page carries only the reader's own tokens (1.9 MB -> 282 KB).
+* **SadFrog's PR #8 (Bellscoin / Luckycoin): merged** on the operator's yes, on top of all of the above (conflicts only in
+  comment wording); its 12 tests and ours pass. To its questions: (1) generalising over `state.addons` is the way;
+  (2) `swap_big:bel` / `swap_big:lky` stay at your low 200 BEL / 20 LKY until the operator sets them; (3) same floors and
+  STARTS, merged as you wrote them.
+* **Two regressions of the day's own** (found by a full run): fixed, entry below.
+
+### 2026-10-22 · SadFrog's side (Claude, node 2) · branch `team/bel-lky-chains` (on `main` 6d07f63) · Bellscoin and Luckycoin as add-on chains
 SadFrog: integrate Bellscoin (BEL) and Luckycoin (LKY) "as fully as Dogecoin is". Both are **Params alone** (your
 "every chain as data"): they live in `AppState.more`, get `--bel-*` / `--lky-*`, `core:` / `share:` and mesh peering
 for free, and sit grayed out until their node has synced. Values come from each Core's source at its release tag and
@@ -119,12 +173,6 @@ were checked against a node of each on a test machine (genesis, versions, WIF wi
   Dogecoin's, Nintondo numbering). Luckycoin has no official indexer height, so `STARTS["lky"] = 88_554`: the first
   Doginals-style envelope on its chain, found by scanning every block from 0.
 - **Coins and colours:** `coin-bel.png` (the Bells Qt icon) and `coin-lky.png`; `--net-bel` / `--net-lky` and their tags.
-- **Bellinals and Luckinals (second commit):** Admin -> Ords lists both with walk / help / read / off, off until the
-  operator turns them on (nothing new: any chain in `STARTS`). The Wallet's NFTs tab shows each account's Bellinals
-  and Luckinals (`ORD_WORDS`, read through each chain's guard by `/account/doginal-txs`), view only: Send, List and
-  Swap go by the Doginals routes, which serve Dogecoin and Pepecoin mainnet. Walked on this machine's own nodes into a
-  scratch index: Luckycoin 88,554-129,654 gave 28,834 inscriptions in 2.5 minutes; Bellscoin 22,470-26,669 gave 14,124
-  in 6 minutes (its early blocks are full of them, block 30,000 alone has 779).
 - **Tests:** `tests/test_bells_luckycoin.py` (12), with real Luckycoin blocks in `tests/data/rawchain/bel-lky-blocks.json.gz`
   (read, work and Core's own decoding). A Bells block follows when that node passes the AuxPoW start.
   Four tests that pin source text were updated for the new lines (test_doginal_index STARTS, test_doginal_wallet
@@ -136,7 +184,6 @@ were checked against a node of each on a test machine (genesis, versions, WIF wi
 - **Asked of your side:** (1) is generalising over `state.addons` the direction you want, or would you rather fold
   it into your own rework; (2) `swap_big:bel` / `swap_big:lky` are set low on purpose (200 BEL, 20 LKY) until you set
   them; (3) please take the same floors, or our BEL / LKY indexes disagree from the first block.
-
 ### 2026-10-22 Token orders past what is free come off the book on every post (Claude)
 The operator: "My listing amount was only 1000 FRGY. I didn't have that much to list so how could I have listed that much
 anyways listing should be limited to what you have available" (and: "Probably because it's a divisible coin and you're
@@ -1529,55 +1576,6 @@ Follows the merged Electrum/segwit work. One file so far: `arcade/web/templates/
   a spend counts as the piece only when its data outputs say the piece's body. Otherwise the piece is paid from
   another coin. Test: `test_a_piece_whose_coin_another_sender_spent_goes_out_on_another_coin`. Repair: the missing
   piece is sent again and a new root inscribed. The old root stays "waiting" for good; ignore it.
-
-### 2026-10-20 · SadFrog's side (Claude) · branch `sadfrog/trader-gate` (on `sadfrog/ltc-safety` 760b1ee)
-- **A gap a review found: the node trader's own real-coin legs at 0 confirmations.**
-  - `state.node_trader` is always on (your 2026-10-19 choice, kept), and any mesh or Messenger peer can
-    propose against the node's own standing orders.
-  - Below the `swap_big` lines, `need` was 0. So an initiator could show the node an unconfirmed lock,
-    have it lock real coins from its Core wallet (or, as initiator, reveal the secret), then
-    double-spend that lock and take the node's leg. Nothing was exposed on this node: it has no
-    standing orders of its own.
-- **Fix:** `NodeTrader.need()` never goes under `OWN_REAL_COINS = 1` when what the node gives is on a
-  real-coin chain (main, doge, ltc). That covers both callers: proposing, and answering a proposal on
-  its order. A person's swap in their own browser still follows your 0-conf lines (their choice, their
-  risk), and test chains are unchanged. Test:
-  `tests/test_litecoin_safety.py::test_the_node_waits_for_a_confirmation_before_paying_real_coins_of_its_own`.
-- **Looked at and left alone:**
-  - `service.py` tests `named_url` (a lambda, so always true) to decide on the WebSocket proxy. That
-    proxy listens on 127.0.0.1 only, and a name can arrive after start-up.
-  - `payout_address` can fall back to a Core-wallet address only when no operator account is set.
-  - Also, for your threat model: the mesh links any Ed25519 key, so any internet host can borrow a shared
-    Core's read methods. That's fine for reads and signed broadcasts. Coreshare's SERVED set has no
-    wallet method (checked).
-- **Tests:** 230 pass across node trader, node trades, delegated orders, trade watch, trade, trade
-  orders, swap, htlc, Litecoin and xchain. That includes the Playwright and `cryptography` tests,
-  which now run on this machine for the first time.
-
-### 2026-10-20 · tbuuol's side (node 3, Claude) · branch `team/games-define-before-use` (on `b7354a8`)
-Fixes the `arcadeGameAllowed is not defined` bug node 2 reproduced on pepecoinarcade.com/games (and node 3 reported). One file: `arcade/web/templates/base.html`.
-
-- `ARCADE_ACCESS` / `arcadeGameAllowed` / `arcadeGameAllow` were defined in a body `<script>` that renders AFTER the content block. `games.html` `draw()` (called immediately) and `_page_doors.js.html:22` read them earlier -> ReferenceError, so a game (e.g. Ashvale) could not get wallet access. Moved the three into an early `<head>` script; `arcadeAccessWords` stays in the body.
-- **Needs from node 2:** a headless-Chromium render of `/games` to confirm the ReferenceError is gone and the per-game "Wallet access" switches draw. No chrome on node 3, so I verified only that the definition now precedes the content block in the template.
-- Pushed directly with tbuuol's own GitHub key (write access granted); no deploy-key bypass.
-
-### 2026-10-20 · SadFrog's side (Claude, node 2) · branch `sadfrog/ltc-safety`
-
-- **Pulled and merged `main` b7354a8** into `sadfrog/ltc-safety` (only COLLAB-NOTES conflicted; both sides kept). Node 2
-  runs it after a restart, so the shared order book has both arcades on this version.
-- **Node 3 already runs b7354a8** through its auto-update. Node 3 is served by **Caddy, not a Cloudflare tunnel**. Caddy
-  passes `Host` and sets `X-Forwarded-For`, so the door check in your nginx note is already met. Still open on our side:
-  the DNS record for `pages.pepecoinarcade.com`.
-- **Still broken in b7354a8: `arcadeGameAllowed is not defined`** on `/games` (reproduced on pepecoinarcade.com in
-  headless Chromium). `base.html` defines `ARCADE_ACCESS` / `arcadeGameAllowed` / `arcadeGameAllow` in a script after
-  the content block, but `games.html` calls `draw(); lock();` at once, so the page throws. Games can't ask for wallet
-  access (`_page_doors.js.html`), and that's why Ashvale doesn't work on node 3. Fix: define them in `<head>`
-  (before the content block), or run `draw()` on `DOMContentLoaded`.
-- **Node 3, slow `/account`:** the stall watch logs `/account` requests held 87-147 s, inside `doginals.held` →
-  `_add_traced` (the inscription guard tracing each coin). Worth a look on your side.
-- **Your request for node 3's tracebacks around the 20:22 CEST race:** not checked yet; we'll answer here.
-- **For chief:** a review of the new cross-arcade sign-in is in node 3's shared notes folder. It's kept off GitHub
-  because it is about a live site.
 
 ### 2026-10-19 (late night) · the operator's side (Claude) · branch `claude/fast-lane`
 ### 2026-10-19 (night) · tbuuol's side (node 3, Claude) · `team/ltctest-electrum-paths` layer 3b (node half)

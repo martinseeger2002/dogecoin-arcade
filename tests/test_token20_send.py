@@ -76,8 +76,9 @@ def _envelope_of(op):
     return _envelope(TEXT, parts=((0, _json(op)),))
 
 
-def test_a_small_coin_on_its_way_never_pays_where_inscriptions_are_guarded(tmp_path, monkeypatch):
-    """A note's reveal lands its note on the sender's own address, unconfirmed: no send may take it to pay a fee."""
+def test_a_note_on_its_way_never_pays_and_other_small_coins_do(tmp_path, monkeypatch):
+    """A note's reveal lands its note on the sender's own address, unconfirmed: no send may take it to pay a fee. Only
+    that coin: a take's own small coins on their way still pay (2026-10-22)."""
     from arcade.db import Database
     from arcade.state import install_schema
     db = Database(tmp_path / "l.sqlite")
@@ -86,6 +87,9 @@ def test_a_small_coin_on_its_way_never_pays_where_inscriptions_are_guarded(tmp_p
     monkeypatch.setattr(funding, "guard_for", lambda a: type("G", (), {"spendable": lambda self, c: c})())
     note = {"txid": "ab" * 32, "vout": 0, "value": t20.POSTAGE, "address": address}
     big = {"txid": "cd" * 32, "vout": 1, "value": 300_000_000, "address": address}
+    small = {"txid": "ef" * 32, "vout": 2, "value": 1_000_000, "address": address}
+    monkeypatch.setattr(funding, "NOTE_COINS", {("ab" * 32, 0)})
     assert funding.choose(db, address, 50_000, extra=[note, big]) == [big]
     with pytest.raises(funding.FundingError):
         funding.choose(db, address, 50_000, extra=[note])
+    assert funding.choose(db, address, 50_000, extra=[small]) == [small], "any other small coin on its way still pays"

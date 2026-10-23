@@ -164,8 +164,9 @@ def guard_for(address: str):
     return None
 
 
-#: doginals.POSTAGE_MAX, said here so funding needs no import of it at load.
-POSTAGE_MAX_GUARDED = 1_000_000
+#: Outpoints of DRC-20 / PRC-20 notes this arcade revealed and has not seen in a block yet (token20 routes add them as
+#: each reveal goes out): `choose` never pays with one. In memory: after a restart the guard reads them from the chain.
+NOTE_COINS: set = set()
 
 
 def choose(db, address: str, target: int, exclude=frozenset(),
@@ -202,10 +203,10 @@ def choose(db, address: str, target: int, exclude=frozenset(),
         out = (coin["txid"], coin["vout"])
         if out in exclude or out in outpoints:
             continue
-        # A small coin on its way is not taken to pay where inscriptions are guarded: it may be the one an inscription
-        # was just put on (2026-10-22: a DRC-20 / PRC-20 note's reveal lands its note on this address, unconfirmed,
-        # and no index has read it yet). Never spent by an ordinary send until a block, and the guard, say what it is.
-        if guard is not None and int(coin["value"]) <= POSTAGE_MAX_GUARDED:
+        # A DRC-20 / PRC-20 note this arcade just revealed onto the address (token20_send / token20_swap), unconfirmed
+        # and read by no index yet: never taken to pay (it would carry its tokens into a fee). Named by outpoint, so
+        # every other coin on its way pays as before (2026-10-22: a rule on every small coin kept a take's own back).
+        if out in NOTE_COINS:
             continue
         available.append(dict(coin))
     big_enough = [u for u in available if u["value"] >= target]

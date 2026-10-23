@@ -14015,7 +14015,8 @@ def create_app(state: AppState) -> FastAPI:
                                         what=f"send {run['amount']} {run['tick']} to {run['to']} (2 of 3: the note)")
             run["step"] = "reveal"
             offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what,
-                                done=lambda t, r=run: r["txids"].__setitem__("reveal", t))
+                                done=lambda t, r=run: (r["txids"].__setitem__("reveal", t),
+                                                       fundinglib.NOTE_COINS.add((t, 0))))
             return {"step": "reveal", "of": 3, "offer": offer.id, "note": run["note"],
                     "chain": chain.network, **unsigned.as_json()}
         if step == "reveal":
@@ -17864,7 +17865,8 @@ def create_app(state: AppState) -> FastAPI:
                 what=f"lock {run['amount']} {run['tick']} for a swap (2 of 4: the note)")
             run["step"] = "reveal"
             offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what,
-                                done=lambda t, r=run: r["txids"].__setitem__("reveal", t))
+                                done=lambda t, r=run: (r["txids"].__setitem__("reveal", t),
+                                                       fundinglib.NOTE_COINS.add((t, 0))))
             return {"step": "reveal", "of": 4, "offer": offer.id, "note": run["note"], "chain": chain.network,
                     **unsigned.as_json()}
         if step == "reveal":
