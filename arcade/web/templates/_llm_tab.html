@@ -222,13 +222,18 @@ function draw() {
         ${o.free ? `<div class="llm-note"><b>Free for everyone.</b> Sign in and chat, or make an API key; nothing to pay.</div>` : `<div class="llm-prices"><span class="h">Coin</span><span class="h">In</span><span class="h">Out</span>
           ${o.prices.map((p) => `<span><b>${esc(short(p.label))}</b></span><span>${price(p.in)}</span><span>${price(p.out)}</span>`).join("")}</div>`}
         <div class="llm-foot"><div style="min-width:0"><small>Your credit</small><strong>${esc(c.big)}</strong>${c.small ? `<small>${esc(c.small)}</small>` : ""}</div>
-          <div style="display:flex;gap:8px">${book.signed_in ? `${o.free ? "" : `<button type="button" class="llm-btn" data-do="topup">Top up</button>`}<button type="button" class="llm-btn go" data-do="chat">Chat</button>` : `<a class="llm-btn go" href="/signin" style="display:inline-flex;align-items:center;text-decoration:none">Sign in</a>`}</div></div>
+          <div style="display:flex;gap:8px">${book.signed_in ? `${o.free ? "" : `<button type="button" class="llm-btn" data-do="topup">Top up</button>`}<button type="button" class="llm-btn go" data-do="chat">Chat</button>` : `<button type="button" class="llm-btn go" data-signin="1">Sign in</button>`}</div></div>
       </article>`;
     }).join("");
   }
   drawKeys();
 }
 
+// Sign in through the arcade's own sheet (a public arcade has no /signin page to link to).
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("button[data-signin]")) return;
+  if (window.arcadeSignIn) arcadeSignIn("Buying model time needs your wallet."); else location.href = "/join";
+});
 $("llm-offers").addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-do]"); if (!b) return;
   const o = book.offers.find((x) => x.seller === b.closest("[data-s]").dataset.s); if (!o) return;
@@ -293,7 +298,7 @@ function drawPictures() {
         ${im.prices.map((p) => `<span><b>${esc(short(p.label))}</b></span><span>${price(p.per)}</span>`).join("")}</div>
         <div style="font-size:.8rem;color:var(--muted)">1 credit per picture \u00b7 2 credits per edit</div>`}
       <div class="llm-foot"><div style="min-width:0"><small>Your credit</small><strong>${esc(c.big)}</strong>${c.small ? `<small>${esc(c.small)}</small>` : ""}</div>
-        <div style="display:flex;gap:8px">${book.signed_in ? `${im.free ? "" : `<button type="button" class="llm-btn" data-pic="topup">Top up</button>`}<button type="button" class="llm-btn go" data-pic="make">Make a picture</button>` : `<a class="llm-btn go" href="/signin" style="display:inline-flex;align-items:center;text-decoration:none">Sign in</a>`}</div></div>
+        <div style="display:flex;gap:8px">${book.signed_in ? `${im.free ? "" : `<button type="button" class="llm-btn" data-pic="topup">Top up</button>`}<button type="button" class="llm-btn go" data-pic="make">Make a picture</button>` : `<button type="button" class="llm-btn go" data-signin="1">Sign in</button>`}</div></div>
     </article>`;
   }).join("");
 }
@@ -511,7 +516,7 @@ $("llm-go").addEventListener("click", sendChat);
 $("llm-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
 
 // --- API keys ------------------------------------------------------------------------------------------------
-let keys = [];
+let keys = [], fresh = null;             // fresh: the key made just now, {key, seller}, shown once
 function drawKeys() {
   $("llm-base").textContent = book.api_base;
   $("llm-api").hidden = !book.signed_in;
@@ -524,8 +529,14 @@ function drawKeys() {
     keys.map((k) => `<code>…${esc(k.tail)}</code><span style="overflow-wrap:anywhere">${esc(k.name || "—")}</span><span>${esc(name(k.seller))} · ${esc(k.leg)}</span>
       <span style="color:var(--muted)">${k.used ? new Date(k.used * 1000).toLocaleString() : "never"}</span>
       <button type="button" class="llm-btn bad" data-drop="${esc(k.hash)}" style="height:36px">Revoke</button>`).join("") : "";
-  const model = (book.offers[0] && book.offers[0].models[0] && book.offers[0].models[0].id) || "MODEL";
-  $("llm-curl").textContent = `curl ${book.api_base}/chat/completions \\\n  -H "Authorization: Bearer sk-arcade-…" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hi"}]}'`;
+  // The key just made goes into the example, with a model of the seller it spends at (2026-10-23: "When a user
+  // generates a key, it should auto populate into the curl command example").
+  const ko = book.offers.find((o) => fresh && o.seller === fresh.seller) || book.offers.find((o) => o.models.length) || book.offers[0];
+  const text = !ko || ko.models.length, model = ko && ko.models.length ? ko.models[0].id : ko && ko.images ? (ko.images.models[0] || {}).id : "MODEL";
+  const k = fresh ? fresh.key : "sk-arcade-…";
+  $("llm-curl").textContent = text
+    ? `curl ${book.api_base}/chat/completions \\\n  -H "Authorization: Bearer ${k}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hi"}]}'`
+    : `curl ${book.api_base}/images/generations \\\n  -H "Authorization: Bearer ${k}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${model}", "prompt": "a red dragon", "size": "1024x1024"}'`;
 }
 async function loadKeys() { if (!book.signed_in) return; try { keys = (await getJSON("/account/llm/keys")).keys || []; } catch (e) { keys = []; } drawKeys(); }
 $("llm-key-make").addEventListener("click", async () => {
@@ -536,6 +547,7 @@ $("llm-key-make").addEventListener("click", async () => {
     if (o) await ensureGrant(o);
     const got = await postJSON("/account/llm/keys/new", {seller, leg, name: $("llm-key-name").value.trim()});
     $("llm-fresh").textContent = got.key; $("llm-fresh-box").hidden = false; $("llm-key-name").value = "";
+    fresh = {key: got.key, seller};
     loadKeys();
   } catch (err) { toast(err.message); }
 });

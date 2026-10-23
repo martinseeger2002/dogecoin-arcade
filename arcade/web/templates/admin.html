@@ -735,8 +735,10 @@
     var url = $('img-url').value.trim();
     if (!url || (!force && url === img.scanned)) return;
     img.scanned = url; imgKeep();
-    var t = $('img-scanned'); t.hidden = false; t.textContent = 'Looking\u2026'; t.style.cssText = 'background:var(--code)';
-    post('/admin/api/llm/images/scan', {url: url, wake_now: !!force}).then(function (j) {
+    var t = $('img-scanned'); t.hidden = false; t.style.cssText = 'background:var(--code)';
+    var wake = $('img-wake').disabled ? '' : $('img-wake').value.trim();
+    t.textContent = force && wake ? 'Waking ComfyUI\u2026 up to a minute or two' : 'Looking\u2026';
+    post('/admin/api/llm/images/scan', {url: url, wake_now: !!force, wake: wake}).then(function (j) {
       if (j.asleep) { t.textContent = j.detail; t.style.cssText = 'background:var(--code)'; imgDrawModels(); return; }
       img.models = j.models || [];
       t.textContent = img.models.length + ' model' + (img.models.length === 1 ? '' : 's') + ' found';
@@ -746,6 +748,8 @@
   $('img-scan').onclick = function () { imgScan(true); };
   var imgTimer = null;
   $('img-url').addEventListener('input', function () { clearTimeout(imgTimer); imgTimer = setTimeout(function () { imgScan(false); }, 900); });
+  $('img-url').addEventListener('change', function () { imgScan(true); });
+  $('img-wake').addEventListener('change', function () { if ($('img-url').value.trim()) imgScan(true); });
   $('img-save').onclick = function () {
     imgKeep();
     var body = {on: $('img-on').checked, url: $('img-url').value.trim(), name: $('img-name').value.trim(), models: img.chosen,

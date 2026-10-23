@@ -576,3 +576,19 @@ def test_a_big_answer_crosses_the_mesh_in_pieces():
         a._on_answer(h, blob)
     kind, ev = q.get_nowait()
     assert kind == "ev" and ev == big
+
+
+def test_a_scan_wakes_comfyui_with_the_wake_typed_at_the_node_machine(arcade, monkeypatch):
+    """2026-10-23: "when i scan it says comfy is not running" -- the wake in the box, not yet saved, is used."""
+    from arcade import imagegen
+    client, state, pubkey, seen = arcade
+    woke = []
+    monkeypatch.setattr(imagegen.ComfyServer, "up", lambda self: bool(woke))
+    monkeypatch.setattr(imagegen.ComfyServer, "ensure_up", lambda self: woke.append(self.wake))
+    monkeypatch.setattr(imagegen.ComfyServer, "models", lambda self: [{"id": "qwen_image_x", "label": "Qwen-Image"}])
+    h = {"X-Arcade-Admin": "1"}
+    asleep = client.post("/admin/api/llm/images/scan", headers=h, json={"url": "http://127.0.0.1:9"}).json()
+    assert asleep["asleep"] and not woke
+    got = client.post("/admin/api/llm/images/scan", headers=h,
+                      json={"url": "http://127.0.0.1:9", "wake_now": True, "wake": "true"}).json()
+    assert woke == ["true"] and got["models"][0]["id"] == "qwen_image_x"

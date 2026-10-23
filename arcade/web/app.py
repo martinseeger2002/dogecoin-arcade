@@ -31363,7 +31363,7 @@ def create_app(state: AppState) -> FastAPI:
         return RedirectResponse(_swap_back(back), status_code=303)
 
     @app.get("/exchange", response_class=HTMLResponse)
-    def exchange(request: Request, tab: str = "tokens", sort: str = "popular",
+    def exchange(request: Request, tab: str = "llm", sort: str = "popular",
                  show: str = "mix", count: int = 0):
         """Everything for sale on this chain, and what has been offered to you.
 
@@ -31374,7 +31374,8 @@ def create_app(state: AppState) -> FastAPI:
         # Tokens first (2026-10-11: "when they open the exchange tab,
         # it should open to tokens instead of launchpads"; it opened on the
         # mintpads from 2026-09-28), and anything unknown lands there too.
-        tab = tab if tab in EXCHANGE_TABS else "tokens"
+        # LLMs first since 2026-10-23 (the operator: "I want the exchange tab to open directly to the LLM's market").
+        tab = tab if tab in EXCHANGE_TABS else "llm"
         chain, index = _token_chain()
         # Each tab reads only what it draws (2026-10-13: "Make sure each tab only
         # loads what it needs to load and does lazy loading"). The node's status was read

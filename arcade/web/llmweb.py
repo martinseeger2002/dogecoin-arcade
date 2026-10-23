@@ -192,14 +192,19 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
     @app.post("/admin/api/llm/images/scan")
     async def admin_images_scan(request: Request):
         """The picture models ComfyUI holds, found by themselves (woken first when it sleeps and a wake is set)."""
-        admin_check(request, write=True)
+        who = admin_check(request, write=True)
         import asyncio
         try:
             said = await body_of(request)
             url = str(said.get("url") or "").strip().rstrip("/") or imagegen.config(state).get("url") or ""
             if not url:
                 raise llmlib.LlmError("name ComfyUI's address first")
-            srv = imagegen.ComfyServer(url, imagegen.config(state).get("wake") or "")
+            # The wake command typed in the box, not yet saved, is tried too -- at the node machine only, as saving it
+            # is (2026-10-23: "when i scan it says comfy is not running").
+            wake = imagegen.config(state).get("wake") or ""
+            if who.get("local") and str(said.get("wake") or "").strip():
+                wake = str(said["wake"]).strip()[:300]
+            srv = imagegen.ComfyServer(url, wake)
             t = time.monotonic()
             up = await asyncio.to_thread(srv.up)
             if not up and said.get("wake_now") and srv.wake:
@@ -207,8 +212,8 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
                 up = True
             if not up:
                 return JSONResponse({"ok": False, "asleep": True,
-                                     "detail": "ComfyUI is not running" + ("; it is woken when a picture is asked for"
-                                                                           if srv.wake else "")})
+                                     "detail": "ComfyUI is not running" + ("; press Scan again to wake it" if srv.wake
+                                                                           else "; start it, or give a wake command")})
             models = await asyncio.to_thread(srv.models)
             return JSONResponse({"ok": True, "models": models, "ms": round((time.monotonic() - t) * 1000)})
         except llmlib.LlmError as exc:
