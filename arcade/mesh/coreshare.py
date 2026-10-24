@@ -43,6 +43,7 @@ from collections import OrderedDict
 from typing import Any, Callable
 
 from .. import rawchain
+from ..config import NETWORKS
 from ..rpc import RpcClient, RpcError, RpcTransportError
 
 log = logging.getLogger("arcade.mesh")
@@ -360,7 +361,7 @@ class CoreShare:
         if net not in self.borrowing or net not in self.offers.get(peer, {}):
             return
         try:
-            tx = rawchain.read_tx(blob)
+            tx = rawchain.read_tx(blob, timed=getattr(NETWORKS.get(net), "tx_time", False))
         except Exception:                                      # noqa: BLE001 -- not a transaction: dropped
             return
         pool = self.pools.setdefault(net, OrderedDict())
@@ -610,7 +611,8 @@ class BorrowedRpc(RpcClient):
             return len(self._share.sharers(self.net))
         if method == "decoderawtransaction":
             try:
-                return rawchain.read_tx(bytes.fromhex(str(params[0]))).verbose(self._params, with_hex=False)
+                return rawchain.read_tx(bytes.fromhex(str(params[0])), timed=self._params.tx_time).verbose(
+                    self._params, with_hex=False)
             except Exception as exc:                           # noqa: BLE001
                 raise RpcError(-22, "TX decode failed") from exc
         if method == "validateaddress":
@@ -618,7 +620,7 @@ class BorrowedRpc(RpcClient):
         if method == "getrawtransaction" and params:
             raw = self._share.pools.get(self.net, {}).get(str(params[0]))
             if raw is not None:
-                tx = rawchain.read_tx(raw)
+                tx = rawchain.read_tx(raw, timed=self._params.tx_time)
                 return tx.verbose(self._params) if (params[1:] and params[1]) else raw.hex()
         return _ASK
 
@@ -644,7 +646,8 @@ class BorrowedRpc(RpcClient):
         p = self._params
         if method == "getblock":
             block_hash = str(params[0])
-            block = rawchain.read_block(bytes.fromhex(str(got[0])), block_hash, mweb=p.mweb)
+            block = rawchain.read_block(bytes.fromhex(str(got[0])), block_hash, mweb=p.mweb, timed=p.tx_time,
+                                        signed=p.block_sig)
             self._work(block)
             if len(got) == 1:
                 self._remember(block, None)
@@ -669,13 +672,13 @@ class BorrowedRpc(RpcClient):
         if method == "getrawtransaction":
             txid = str(params[0])
             if isinstance(got[0], dict):
-                tx = rawchain.read_tx(bytes.fromhex(str(got[0].get("hex", ""))), txid)
+                tx = rawchain.read_tx(bytes.fromhex(str(got[0].get("hex", ""))), txid, timed=p.tx_time)
                 said = tx.verbose(p)
                 for key in ("blockhash", "confirmations", "time", "blocktime"):
                     if key in got[0]:
                         said[key] = got[0][key]
                 return said
-            rawchain.read_tx(bytes.fromhex(str(got[0])), txid)
+            rawchain.read_tx(bytes.fromhex(str(got[0])), txid, timed=p.tx_time)
             return str(got[0])
         return got[0]
 

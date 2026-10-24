@@ -140,24 +140,27 @@ button.danger{background:var(--bad);border-color:var(--bad);color:#fff}
 /* One color per coin, everywhere (2026-10-13: "Change the P test color to green"
    -- PEP green on both its networks, DOGE yellow; "test"/"main" tells PEP's two apart). */
 :root{--net-test:#22a35a;--net-main:#22a35a;--net-doge:#d4a106;--net-ltc:#345d9d;
-  --net-bel:#b83280;--net-lky:#0f8a8a}      /* Bellscoin, Luckycoin (2026-10-22) */
-@media (prefers-color-scheme:dark){:root{--net-ltc:#7fa3dc;--net-bel:#e27bb6;--net-lky:#4cc3c3}}
+  --net-bel:#b83280;--net-lky:#0f8a8a;      /* Bellscoin, Luckycoin (2026-10-22) */
+  --net-kot:#c2410c}                        /* Kotia (2026-10-23) */
+@media (prefers-color-scheme:dark){:root{--net-ltc:#7fa3dc;--net-bel:#e27bb6;--net-lky:#4cc3c3;--net-kot:#fb8c55}}
 .tag.testnet{background:color-mix(in srgb,var(--net-test) 20%,transparent);color:var(--net-test)}
 .tag.mainnet{background:color-mix(in srgb,var(--net-main) 22%,transparent);color:var(--net-main)}
 .tag.dogecoin{background:color-mix(in srgb,var(--net-doge) 24%,transparent);color:var(--net-doge)}
 .tag.litecoin{background:color-mix(in srgb,var(--net-ltc) 22%,transparent);color:var(--net-ltc)}
 .tag.bellscoin{background:color-mix(in srgb,var(--net-bel) 22%,transparent);color:var(--net-bel)}
 .tag.luckycoin{background:color-mix(in srgb,var(--net-lky) 22%,transparent);color:var(--net-lky)}
+.tag.kotia{background:color-mix(in srgb,var(--net-kot) 22%,transparent);color:var(--net-kot)}
 /* Which coin, beside every testnet/mainnet word (2026-10-13): an uppercase P
    or D in the network's own color -- blue P testnet, green P mainnet, yellow D. */
 .netl{font-weight:800;font-style:normal;letter-spacing:0;margin-right:1px}
 .netl.testnet{color:var(--net-test)}.netl.mainnet{color:var(--net-main)}.netl.dogecoin{color:var(--net-doge)}.netl.litecoin{color:var(--net-ltc)}
-.netl.bellscoin{color:var(--net-bel)}.netl.luckycoin{color:var(--net-lky)}
+.netl.bellscoin{color:var(--net-bel)}.netl.luckycoin{color:var(--net-lky)}.netl.kotia{color:var(--net-kot)}
 .tag.testnet::before,.tag.mainnet::before{content:"P";font-weight:800;margin-right:3px;letter-spacing:0}
 .tag.dogecoin::before{content:"D";font-weight:800;margin-right:3px;letter-spacing:0}
 .tag.litecoin::before{content:"L";font-weight:800;margin-right:3px;letter-spacing:0}
 .tag.bellscoin::before{content:"B";font-weight:800;margin-right:3px;letter-spacing:0}
 .tag.luckycoin::before{content:"K";font-weight:800;margin-right:3px;letter-spacing:0}
+.tag.kotia::before{content:"T";font-weight:800;margin-right:3px;letter-spacing:0}
 /* A chain whose node is still syncing: shown, and grayed out (2026-10-13). */
 .chain-off{opacity:.45;filter:grayscale(1);cursor:not-allowed}
 a.chain-off,button.chain-off,span.chain-off.ex-chip{pointer-events:none}
@@ -174,6 +177,7 @@ a.chain-off,button.chain-off,span.chain-off.ex-chip{pointer-events:none}
 .netbadge.ltc{background:color-mix(in srgb,var(--net-ltc) 22%,transparent);color:var(--net-ltc)}
 .netbadge.bel{background:color-mix(in srgb,var(--net-bel) 22%,transparent);color:var(--net-bel)}
 .netbadge.lky{background:color-mix(in srgb,var(--net-lky) 22%,transparent);color:var(--net-lky)}
+.netbadge.kot{background:color-mix(in srgb,var(--net-kot) 22%,transparent);color:var(--net-kot)}
 .supplybadge{font-weight:600;letter-spacing:.02em;text-transform:none}
 .supplybadge.fixed{border:1px solid color-mix(in srgb,var(--muted) 45%,transparent);color:var(--muted)}
 .supplybadge.managed{border:1px solid color-mix(in srgb,var(--warn) 60%,transparent);color:var(--warn)}

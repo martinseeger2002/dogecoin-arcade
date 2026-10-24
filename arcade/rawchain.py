@@ -195,6 +195,8 @@ class Tx:
     vin: list[dict]               # {txid, vout, script, sequence, witness}; coinbase: txid "" and vout -1
     vout: list[tuple[int, bytes]]  # (koinu, script)
     stripped_size: int
+    #: `nTime` on a Peercoin-style chain (Params.tx_time); None elsewhere. Core does not print it.
+    time: int | None = None
 
     def verbose(self, params, *, with_hex: bool = True) -> dict[str, Any]:
         """The transaction as Core's `getrawtransaction t 1` prints its own part of it."""
@@ -226,11 +228,14 @@ class Tx:
 FLAG_WITNESS, FLAG_MWEB = 0x01, 0x08
 
 
-def _read_tx(r: _Reader, alone: bool = False) -> Tx:
+def _read_tx(r: _Reader, alone: bool = False, timed: bool = False) -> Tx:
     start = r.at
     version = r.i32()
+    # A Peercoin-style chain's `nTime` (Params.tx_time, Kotia): part of the id, and such a chain has no SegWit.
+    time = r.u32() if timed else None
+    head_end = r.at
     flags = 0
-    if r.data[r.at:r.at + 1] == b"\x00" and r.data[r.at + 1:r.at + 2] not in (b"", b"\x00"):
+    if not timed and r.data[r.at:r.at + 1] == b"\x00" and r.data[r.at + 1:r.at + 2] not in (b"", b"\x00"):
         flags = r.data[r.at + 1]
         if flags & ~(FLAG_WITNESS | FLAG_MWEB):
             raise RawError(f"a transaction with flags {flags:#04x}")
@@ -264,15 +269,17 @@ def _read_tx(r: _Reader, alone: bool = False) -> Tx:
             r.at = len(r.data) - 4
     locktime_bytes = r.take(4)
     raw = r.data[start:r.at]
-    stripped = r.data[start:start + 4] + r.data[body_start:body_end] + locktime_bytes
+    stripped = r.data[start:head_end] + r.data[body_start:body_end] + locktime_bytes
     return Tx(txid=sha256d(stripped)[::-1].hex(), wtxid=sha256d(raw)[::-1].hex(), raw=raw, version=version,
-              locktime=int.from_bytes(locktime_bytes, "little"), vin=ins, vout=outs, stripped_size=len(stripped))
+              locktime=int.from_bytes(locktime_bytes, "little"), vin=ins, vout=outs, stripped_size=len(stripped),
+              time=time)
 
 
-def read_tx(raw: bytes, txid: str | None = None) -> Tx:
-    """A raw transaction, read whole; with `txid`, proved to be that transaction."""
+def read_tx(raw: bytes, txid: str | None = None, timed: bool = False) -> Tx:
+    """A raw transaction, read whole; with `txid`, proved to be that transaction. `timed`: the chain's
+    transactions carry `nTime` (Params.tx_time)."""
     r = _Reader(raw)
-    tx = _read_tx(r, alone=True)
+    tx = _read_tx(r, alone=True, timed=timed)
     if r.at != len(raw):
         raise RawError("bytes left over after the transaction")
     if txid is not None and tx.txid != txid and not tx.vin and not tx.vout and len(raw) > 10 and raw[5] & FLAG_MWEB:
@@ -353,11 +360,12 @@ def _read_branch(r: _Reader) -> tuple[list[bytes], int]:
     return hashes, r.i32()
 
 
-def _read_header(r: _Reader) -> tuple[bytes, AuxPow | None]:
+def _read_header(r: _Reader, auxpow: bool = True) -> tuple[bytes, AuxPow | None]:
     header = r.take(80)
     version = int.from_bytes(header[:4], "little")
     aux = None
-    if version & AUXPOW_FLAG:
+    # `auxpow=False`: a chain that is never merge-mined (Kotia), where bit 8 is only a versionbits signal.
+    if auxpow and version & AUXPOW_FLAG:
         coinbase = _read_tx(r)
         parent_hash = r.take(32)
         branch, index = _read_branch(r)
@@ -397,14 +405,19 @@ def merkle_root(txids: list[str]) -> str:
     return level[0][::-1].hex()
 
 
-def read_block(raw: bytes, block_hash: str | None = None, mweb: bool = False) -> Block:
+def read_block(raw: bytes, block_hash: str | None = None, mweb: bool = False, timed: bool = False,
+               signed: bool = False) -> Block:
     """A raw block (`getblock h 0`), read whole and proved to be one block: its transactions hash up to
     the merkle root its header carries, and (with `block_hash`) that header is the block asked for. On an
     `mweb` chain (Litecoin) what follows the transactions is the block's MWEB extension, which the arcade
-    never reads: the merkle root is of the ordinary transactions, and the HogEx among them commits to it."""
+    never reads: the merkle root is of the ordinary transactions, and the HogEx among them commits to it.
+    `timed` and `signed` are a proof-of-stake chain's (Params.tx_time, Params.block_sig, Kotia): transactions
+    with `nTime`, and the staker's block signature after them, which is not in the hash and not checked here."""
     r = _Reader(raw)
-    header, aux = _read_header(r)
-    txs = [_read_tx(r) for _ in range(r.varint())]
+    header, aux = _read_header(r, auxpow=not signed)
+    txs = [_read_tx(r, timed=timed) for _ in range(r.varint())]
+    if signed:
+        r.blob()
     if r.at != len(raw) and not mweb:
         raise RawError("bytes left over after the block")
     block = Block(**_header_fields(header, aux), txs=txs, size=len(raw))

@@ -1217,7 +1217,7 @@ function arcadeMainnetReview(costs){
   // "Real PEP" there): `costs.chain` says which.
   var doge = costs.chain === 'doge', ltc = costs.chain === 'ltc';
   // Bellscoin and Luckycoin too (2026-10-22): a real-coin review never says PEP for another chain's coins.
-  var more = {bel: ['bellscoin', 'BEL'], lky: ['luckycoin', 'LKY']}[costs.chain];
+  var more = {bel: ['bellscoin', 'BEL'], lky: ['luckycoin', 'LKY'], kot: ['kotia', 'KOT']}[costs.chain];
   var coin = doge ? ' DOGE' : ltc ? ' LTC' : more ? ' ' + more[1] : ' PEP';
   var pep = function(sats){ return (Number(sats || 0) / 1e8).toLocaleString(undefined,
     {minimumFractionDigits: 2, maximumFractionDigits: 8}) + coin; };

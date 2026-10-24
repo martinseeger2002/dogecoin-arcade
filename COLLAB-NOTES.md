@@ -88,6 +88,41 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-24 · SadFrog's side (Claude, node 3, for tbuuol) · branch `team/kotia-chain` (on 99c394de) · Kotia as an add-on chain
+tbuuol: attach Kotia (KOT, `kotiad`), so that large game assets can go into OP_RETURN on a quiet chain instead of
+inscription pieces on P test. Kotia 1.0.0 (github.com/eleonoraandrea/kotiacash) is a Blackcoin-style proof-of-stake coin on
+Bitcoin 0.14's code. One commit, 89b589a8; `arcade/web/docs/kotia.md` is the user-facing page.
+- **`KOTIA` Params,** beside Bellscoin and Luckycoin: P2PKH 46 / P2SH 45 (both "K..."), WIF 173, ports 46173/46174,
+  0.0001 KOT/kB, no soft dust, `dust_limit` 0.001 KOT, floor 1,530,000. Letter "T", since Luckycoin wears "K". Every value
+  was read from chainparams.cpp / policy.cpp and checked against a synced node.
+- **Two new Params switches, off on every other chain, so no other chain's bytes change:**
+  - `tx_time`: Peercoin-style `nTime` after the version, in the txid and in the legacy sighash. `rawchain` reads it
+    (`timed=`). `txbuild.build_raw_tx` and `funding.sighash` write it (`ntime=`). `Unsigned.ntime` carries it,
+    `assemble` writes it back, and `price` counts its 4 bytes. `funding.build` sets it from the clock (Kotia's Core
+    takes a transaction at most 15 s ahead).
+  - `block_sig`: the staker's signature after a block's transactions. `read_block` skips it, and on a chain that is
+    never merge-mined, bit 8 is not read as AuxPoW. `coreshare` passes both switches, so Kotia can be borrowed.
+- **Only `funding.build` writes `nTime` so far.** The other builders (split piece, sweep, bid, trade, listing, doginal
+  send/lock, note send) refuse a `tx_time` chain with a plain error (`funding.untimed`), instead of building bytes that
+  Kotia's Core cannot decode. So on Kotia, sends work, and swaps and the rest stay closed. No inscription guard on Kotia
+  (it has no ords), and `ord_inscribe.CHAINS` is unchanged.
+- **Browser:** `COIN_TYPE` kot 3 (the same key as PEP main, so `_chain_twin` gives the K address) and `WIF` 0xAD.
+  `TX_TIME` lists the timed chains; `parseTx` and the three legacy digests take the time. Whether a transaction is
+  timed comes from the signing key's own network, never from the offer alone. Wallet tables (`TRADE.BIG`, `CLAIM_FEE`,
+  `FEE_FLOOR`, `PAYEE_VERSIONS`, `P2SH_VERSION`, `COIN_WORD`, `REAL_COINS`), `trade.BIG`, the templates, colours and
+  `coin-kot.png` (Kotia's own logo, from its repository).
+- **Tests:** `tests/test_kotia.py` (14), with `tests/data/rawchain/kot-blocks.json.gz`: real Kotia blocks (staked and
+  proof-of-work) and a transaction signed by Kotia's own Core with a throwaway key that holds nothing.
+  - Kotia's signature verifies against the digest built here, and `assemble` rebuilds Kotia's bytes exactly.
+  - The exact-table checks in test_account_mainnet, test_bells_luckycoin and test_trade_tab are extended by `kot`.
+  - The whole suite, on the base before 99c394de: 4 failed. Two were test_docs, which also fail on main here (DECISIONS.md is not in
+    this checkout). Two were load timing, and each passes alone on this branch and on main.
+- **Live on Kotia mainnet** (2026-10-24, built with this branch's code): one 14,996-byte OP_RETURN (the 15,000-byte
+  script limit), and six of them in one 90,465-byte transaction. Both were staked within two minutes and read back
+  byte for byte.
+- **Needs from the operator:** apply it like the Bells/Lucky branch. A node that wants Kotia runs kotiad with
+  `~/.kotia/kotia.conf` and turns it on in Admin -> Chains. Questions welcome here.
+
 ### 2026-10-24 "Pepecoin main" / "Pepecoin test" everywhere; the Wallet's sweep-back card is gone (Claude)
 The operator: Pepecoin is never just "mainnet" / "testnet" -- it is "Pepecoin main" and "Pepecoin test", as the rest of the app
 names chains (e.g. the testnet mining text); and "remove the sweep back card from the bottom of the wallet. Since sweep
