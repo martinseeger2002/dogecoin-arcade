@@ -44,7 +44,7 @@ PASSWORD = "a long enough password"
 
 
 def _page_bytes(node_key: str) -> bytes:
-    """The inscribed page: three doors, six buttons, nothing of its own.
+    """The inscribed page: four doors, ten buttons, nothing of its own.
 
     Every answer lands on `window` inside the frame, which is the shape a
     page has -- and the reason the test can only read it through the frame:
@@ -55,9 +55,12 @@ def _page_bytes(node_key: str) -> bytes:
         "<script src=\"/r/storage.js\"></script>"
         "<script src=\"/r/node.js\"></script>"
         "<script src=\"/r/owner.js\"></script>"
+        "<script src=\"/r/access.js\"></script>"
         "<button id=r>remember</button><button id=i>speak</button>"
         "<button id=s>say</button><button id=l>answers</button>"
-        "<button id=o>whose</button><button id=d>spend</button><script>"
+        "<button id=o>whose</button><button id=d>spend</button>"
+        "<button id=w>allow</button><button id=t>status</button>"
+        "<button id=n>nodes</button><button id=m>move</button><script>"
         "var NODE = '" + node_key + "';"
         "arcade.storage.ready.then(function (s) {"
         "  window.before = s.getItem('visits'); });"
@@ -89,6 +92,13 @@ def _page_bytes(node_key: str) -> bytes:
         "  arcade.owner.send({kind: 'coins', amount: '0.01', to: 'nobody'})"
         "    .then(function (r) { window.gone = r; },"
         "         function (e) { window.refuse = String(e.message || e); }); };"
+        "function keep(name, p) { p.then(function (r) { window[name] = r; },"
+        "  function (e) { window[name] = {error: String(e.message || e)}; }); }"
+        "document.getElementById('w').onclick = function () { keep('acc', arcade.access.wallet()); };"
+        "document.getElementById('t').onclick = function () { keep('st', arcade.access.status()); };"
+        "document.getElementById('n').onclick = function () { keep('nodes', arcade.access.nodes()); };"
+        "document.getElementById('m').onclick = function () {"
+        "  keep('mv', arcade.access.move('https://elsewhere.example')); };"
         "</script>").encode()
 
 
@@ -420,65 +430,152 @@ def test_a_page_speaks_under_the_accounts_own_key(browser, doors):
     assert _settled(browser, frame, "rep") == []
 
 
-def test_a_game_whose_card_box_is_off_is_stopped_not_asked(browser, doors):
-    """2026-10-20: a player "can't play a game that uses Wallet controls unless they check the wallet check
-    box on the game card". The same page, made a game by a card of its maker's whose Play opens it: the first door
-    that needs the key stops the game -- no ask, the frame emptied, a word pointing to the card -- and from then on
-    this browser holds it before it starts. Ticked on the card, it plays."""
+def _card_button(browser, text, timeout=30):
+    """The visible button `text` on the viewer's ask card (base.html arcadeAsk), or None."""
+    for _ in range(int(timeout * 4)):
+        found = [b for b in browser.find_elements(By.CSS_SELECTOR, ".askcard button") if b.is_displayed() and b.text == text]
+        if found:
+            return found[0]
+        time.sleep(0.25)
+    return None
+
+
+def _forget(browser, frame, name):
+    browser.switch_to.frame(frame)
+    try:
+        browser.execute_script(f"delete window.{name};")
+    finally:
+        browser.switch_to.default_content()
+
+
+def _as_game(doors, card, name):
+    """Make the doors page a game: a card of its maker's whose Play opens it."""
     import json as _json
     state, page = doors["state"], doors["page"]
     index = state.token_index(state.messaging)
     maker = index.inscription(page)["creator"]
-    card = "c9" * 32
     with index.open() as db:
         db.conn.execute(
             "INSERT OR REPLACE INTO inscription(txid,number,creator,owner,block_height,position,content_type,"
             "content_len,sha256,json,chunks,content) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (card, 99999, maker, maker, 10 ** 7, 0, "text/html", 2, "ab" * 32,
-             _json.dumps({"game": {"name": "Doors Game", "play": page}}), 1, b"hi"))
+             _json.dumps({"game": {"name": name, "play": page}}), 1, b"hi"))
         db.conn.commit()
     state.__dict__.get("_game_pages", {}).clear()
-    forget = "localStorage.removeItem('arcade.wallet.uses:' + arguments[0])"
+
+    def undo():
+        with index.open() as db:
+            db.conn.execute("DELETE FROM inscription WHERE txid=?", (card,))
+            db.conn.commit()
+        state.__dict__.get("_game_pages", {}).clear()
+    return undo
+
+
+def test_a_game_whose_card_box_is_off_is_asked_in_place(browser, doors):
+    """2026-10-23, SadFrog: "the wallet access option doesn't have to happen in the game card, it can happen in the
+    game". Before, a game with its card's box off was stopped (2026-10-20). Now the first door that needs the key
+    brings up the wallet access card over the game -- the card's own words, naming the game -- and the game keeps
+    running whatever the answer: no refuses that one action (and this tab does not ask again unprompted); a game that
+    uses the wallet is not held before it starts; yes ticks its card's box and it plays."""
+    page = doors["page"]
+    undo = _as_game(doors, "c9" * 32, "Doors Game")
+    forget = ("localStorage.removeItem('arcade.wallet.uses:' + arguments[0]);"
+              "sessionStorage.removeItem('arcade.wallet.no:' + arguments[0])")
     try:
         frame = _view(browser, doors, allow=False)
         browser.execute_script(forget, page)
         browser.refresh()
         frame = browser.find_elements(By.CSS_SELECTOR, "iframe.inscription-frame")[0]
         _click(browser, frame, "i")
-        gate = None
-        for _ in range(120):
-            shown = [g for g in browser.find_elements(By.CSS_SELECTOR, ".gamegate") if g.is_displayed()]
-            if shown:
-                gate = shown[0]
-                break
-            time.sleep(0.25)
-        assert gate is not None, "the game asked for the key and was not stopped"
-        assert "Doors Game uses your wallet" in gate.text and "Wallet access on its card" in gate.text
-        assert gate.find_element(By.TAG_NAME, "a").get_attribute("href").endswith(f"/apps#game-{card}")
-        assert not [c for c in browser.find_elements(By.CSS_SELECTOR, ".askcard") if c.is_displayed()], \
-            "a game is not asked: only its card's box opens the wallet to it"
-        assert browser.execute_script("return document.querySelector('iframe.inscription-frame').hidden")
+        no = _card_button(browser, "Cancel")
+        assert no is not None, "the game reached for the key and was not asked"
+        card = no.find_element(By.XPATH, "ancestor::*[contains(@class,'askcard')]")
+        assert "Allow this app to use your wallet?" in card.text and "Doors Game" in card.text
+        no.click()
+        said = _settled(browser, frame, "nid")
+        assert "Wallet access is off" in said.get("error", ""), said
+        assert not browser.execute_script("return !!document.querySelector('.gamegate')"), "it was stopped"
+        assert not browser.execute_script("return document.querySelector('iframe.inscription-frame').hidden")
         assert browser.execute_script("return localStorage.getItem('arcade.wallet.uses:' + arguments[0])",
                                       page) == "yes", "remembered: this game uses the wallet"
 
-        browser.get(f"{doors['base']}/inscriptions/{page}/full")      # held before it starts, full screen too
-        for _ in range(80):
-            if browser.execute_script("return !!document.querySelector('.gamegate')"):
-                break
-            time.sleep(0.25)
-        assert browser.execute_script("return !!document.querySelector('.gamegate')"), "it started anyway"
+        _forget(browser, frame, "nid")                                 # no again in this tab: not asked again
+        _click(browser, frame, "i")
+        said = _settled(browser, frame, "nid")
+        assert "Wallet access is off" in said.get("error", ""), said
+        assert _card_button(browser, "Allow wallet access", timeout=2) is None, "asked again after a no"
 
-        frame = _view(browser, doors, allow=True)                    # ticked on its card: it plays
+        browser.get(f"{doors['base']}/inscriptions/{page}/full")     # not held before it starts
+        time.sleep(3)
+        assert not browser.execute_script("return !!document.querySelector('.gamegate')"), "held before it started"
+
+        frame = _view(browser, doors, allow=False)                   # the game asks outright: yes
+        _click(browser, frame, "w")
+        yes = _card_button(browser, "Allow wallet access")
+        assert yes is not None, "arcade.access.wallet() did not ask, even after the earlier no"
+        yes.click()
+        got = _settled(browser, frame, "acc")
+        assert got.get("wallet") is True and got.get("status") == "allowed", got
+        assert browser.execute_script("return localStorage.getItem('arcade.wallet.allow:' + arguments[0])", page) == "yes"
         _click(browser, frame, "i")
         who = _settled(browser, frame, "nid")
         assert "error" not in who, who
-        assert not browser.execute_script("return !!document.querySelector('.gamegate')")
     finally:
-        with index.open() as db:
-            db.conn.execute("DELETE FROM inscription WHERE txid=?", (card,))
-            db.conn.commit()
-        state.__dict__.get("_game_pages", {}).clear()
+        undo()
         browser.execute_script(forget, page)
+        browser.execute_script("localStorage.removeItem('arcade.wallet.allow:' + arguments[0])", page)
+
+
+def test_the_access_door_says_where_it_stands_and_moves_only_to_known_arcades(browser, doors):
+    """arcade.access (2026-10-23): status without a card; nodes() lists this arcade first, timed; move() never goes
+    where the game names unless this arcade lists it."""
+    page = doors["page"]
+    undo = _as_game(doors, "c7" * 32, "Mover Game")
+    try:
+        frame = _view(browser, doors, allow=False)
+        _click(browser, frame, "t")
+        st = _settled(browser, frame, "st")
+        assert st.get("signedIn") is True and st.get("wallet") is False and st.get("game") is True, st
+        assert st.get("name") == "Mover Game" and st.get("node"), st
+        _click(browser, frame, "n")
+        nodes = _settled(browser, frame, "nodes")
+        assert isinstance(nodes, list) and nodes and nodes[0]["here"] is True and nodes[0]["arcade"] is True, nodes
+        _click(browser, frame, "m")
+        mv = _settled(browser, frame, "mv")
+        assert "not an arcade this node knows" in mv.get("error", ""), mv
+        assert _card_button(browser, "Stay here", timeout=1) is None, "a move card for a place the game made up"
+
+        _view(browser, doors, allow=True)
+        frame = browser.find_elements(By.CSS_SELECTOR, "iframe.inscription-frame")[0]
+        _click(browser, frame, "t")
+        assert _settled(browser, frame, "st").get("wallet") is True
+    finally:
+        undo()
+        browser.execute_script("localStorage.removeItem('arcade.wallet.allow:' + arguments[0])", page)
+
+
+def test_game_access_lists_what_was_allowed_and_turns_it_off(browser, doors):
+    """/me/access (2026-10-23): every game this browser allowed, with its name, and Turn off."""
+    page = doors["page"]
+    undo = _as_game(doors, "c6" * 32, "Listed Game")
+    try:
+        browsers.allow_wallet(browser, doors["base"], page)
+        browser.get(f"{doors['base']}/me/access")
+        row = None
+        for _ in range(40):
+            rows = [r for r in browser.find_elements(By.CSS_SELECTOR, "#access-list tr") if "Listed Game" in r.text]
+            if rows:
+                row = rows[0]
+                break
+            time.sleep(0.25)
+        assert row is not None, browser.find_element(By.ID, "access-list").text
+        assert "Wallet access" in row.text
+        row.find_element(By.TAG_NAME, "button").click()
+        time.sleep(0.5)
+        assert browser.execute_script("return localStorage.getItem('arcade.wallet.allow:' + arguments[0])", page) is None
+        assert "Listed Game" not in browser.find_element(By.ID, "access-list").text
+    finally:
+        undo()
 
 
 def test_a_ticked_wallet_access_box_stays_ticked_on_its_card(browser, doors):

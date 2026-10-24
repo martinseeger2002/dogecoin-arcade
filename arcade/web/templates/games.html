@@ -11,7 +11,8 @@
 {% set acts = viewer == 'wallet' or (mine_tag) %}
 <h1 style="margin-bottom:4px">Apps</h1>
 <p class="sub" style="margin-top:0">Games, calls and other apps people have inscribed on any chain.
-  Press Open to start one full screen in a new tab.</p>
+  Press Open to start one full screen in a new tab. An app that needs your wallet asks for it when it does, over the app;
+  <a href="/me/access">App access</a> lists every app you allowed.</p>
 
 <div class="row" style="gap:8px;margin:0 0 12px;flex-wrap:wrap;align-items:center">
   <a class="btn small {{ 'on' if sort != 'new' else 'ghost' }}" href="/apps">Popular</a>
@@ -238,25 +239,9 @@
       if (on || arcadeMediaUses(l.dataset.media)) l.hidden = false;
     });
   }
-  // Play holds a game that uses the wallet until its box is ticked (base.html, THE GATE): it says so on the card
-  // ("wallet": true) or this browser saw it ask.
-  document.addEventListener('click', function (e) {
-    var a = e.target.closest && e.target.closest('[data-play]'); if (!a) return;
-    var id = a.dataset.play;
-    if (arcadeGameAllowed(id) || !(a.dataset.wallet || arcadeGameUses(id))) return;
-    e.preventDefault();
-    var card = a.closest('.gamecard') || document;
-    var l = card.querySelector('.gameaccess');
-    var say = card.querySelector('.gamegate-say');
-    if (!say && l) {
-      say = document.createElement('p');
-      say.className = 'msg err gamegate-say';
-      say.style.margin = '8px 0 0';
-      l.closest('.lacts').after(say);
-    }
-    if (say) say.textContent = ARCADE_GATE_SAYS + ' Check its publisher first.';
-    if (l) { l.scrollIntoView({block: 'center', behavior: 'smooth'}); l.querySelector('input').focus(); }
-  });
+  // Play no longer holds a game that uses the wallet (2026-10-23, base.html, ASKED IN THE GAME): it opens, and the
+  // wallet access card comes up over the game when it first reaches for the wallet. The box here still allows it
+  // ahead of time, and turns it off.
   function lock() {
     arcadeWalletOpen().then(function (open) {
       document.querySelectorAll('[data-walletlock]').forEach(function (p) {

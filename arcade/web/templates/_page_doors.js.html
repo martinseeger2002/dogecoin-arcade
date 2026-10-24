@@ -18,8 +18,8 @@
     var gameName = {{ game_name(row.json)|tojson }};
     // Wallet access for THIS page (base.html, WALLET ACCESS, PER GAME): asked for once, with the publisher named,
     // before any door that uses the key -- trades, escrow, shops, signing. Joining rooms as yourself is not one.
-    // A GAME is not asked: with its card's box off it is stopped (base.html, THE GATE). Only a page that is not a
-    // game -- a shop, a mintpad, with no card to tick -- is asked here.
+    // A GAME with its card's box off is asked in place by the gate (base.html, ASKED IN THE GAME) and keeps running
+    // if the answer is no; a page that is not a game -- a shop, a mintpad, with no card to tick -- is asked here.
     function gameKeys(chain, why){
       if (arcadeGameAllowed(here)) return arcadeKeys(chain, why);
       return arcadeGameGate(here).then(function(open){
@@ -33,14 +33,11 @@
         });
       });
     }
-    // Held before it starts: a game whose card says it uses the wallet, or that this browser saw use it, and whose
-    // card's box is off, does not run here at all.
-    // After the page has parsed: base.html's gate is defined below this script.
-    function hold(){ arcadeGameOf(here).then(function(g){ if (arcadeGameHeld(here, g)) arcadeGameStop(here, g); }); }
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hold); else hold();
+    // No longer held before it starts (2026-10-23, ASKED IN THE GAME): a game that uses the wallet runs, and the
+    // wallet access card comes up over it when it first reaches for the wallet or asks (the 'access' door below).
     var CHAIN = {network: "{{chain.network}}",
                  version: {{chain.params.pubkeyhash_version}}};
-    var doors = {contacts: 'viewer', storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
+    var doors = {access: 'viewer', contacts: 'viewer', storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
                  realtime: '/realtime/', escrow: '/r/escrow/', state: '/r/state/', llm: 'viewer'};
 
     // Realtime rooms (arcade/web/realtime.py, templates/realtime.js): this page
@@ -1550,6 +1547,110 @@
       });
     }
 
+    // arcade.access (2026-10-23, SadFrog: wallet access asked "in the game"; a game that "can switch nodes based on
+    // location/ping, sign into that node if needed again with the warning"). templates/access.js is the page's side.
+    //   status  -> {wallet, signedIn, node, game, name}: what holds now; no card
+    //   wallet  -> asks for wallet access over the game (the same card as the game card's box), unless allowed already
+    //   nodes   -> this arcade's affiliates and the mesh's relays, each timed from here:
+    //              [{base, host, ms, here, arcade, affiliate, name, by}]
+    //   move    -> {to: base}: offers to play this game on another ARCADE -- one on this arcade's Affiliates list that
+    //              answered, never a place the game names -- with what signing in there means; yes opens its
+    //              /play/<card> page there
+    // Every card is the viewer's, never the game's; nothing of the wallet or the book goes back, only these statuses.
+    var accessCards = 0, ACCESS_NODES = null;
+    function accessGame(){ return arcadeGameOf(here).catch(function(){ return {game: false}; }); }
+    // Where a game may move a player (2026-10-23, SadFrog: "using affiliate list for node hops"): the arcades on THIS
+    // arcade's Affiliates list (/affiliates.json: the operator's own sites and the ones the operator ticked from linked
+    // arcades), and of them only those that answer as an arcade (a realtime hello, which every arcade serves). The
+    // mesh's other ways in (tunnels, domains on the chain) are listed too, as relays: rooms only, never a move.
+    function accessNodes(){
+      if (ACCESS_NODES && Date.now() - ACCESS_NODES.at < 120000) return Promise.resolve(ACCESS_NODES.list);
+      var json = function(u){ return fetch(u, {cache: 'no-store'}).then(function(r){ return r.ok ? r.json() : {}; }).catch(function(){ return {}; }); };
+      return Promise.all([json('/affiliates.json'), json('/realtime/nodes')]).then(function(got){
+        var aff = got[0], rt = got[1], seen = {}, list = [{base: location.origin, here: true, affiliate: true, name: 'this arcade'}];
+        seen[location.origin] = 1;
+        ((aff && aff.sites) || []).forEach(function(site){
+          var base; try { var u = new URL(site.url); base = u.protocol === 'https:' ? u.origin : ''; } catch (err) { base = ''; }
+          if (!base || seen[base]) return;
+          seen[base] = 1;
+          list.push({base: base, here: false, affiliate: true, name: site.name || '', by: site.by || ''});
+        });
+        ((rt && rt.nodes) || []).forEach(function(n){
+          if (!n.base || seen[n.base] || (n.node && rt && n.node === rt.self)) return;
+          seen[n.base] = 1;
+          list.push({base: n.base, here: false, affiliate: false, name: '', by: ''});
+        });
+        list = list.slice(0, 24);
+        return Promise.all(list.map(function(n){
+          return realtimeTime(n.here ? '' : n.base).then(function(a){ return realtimeTime(n.here ? '' : n.base).then(function(c){ return Math.min(a, c); }); });
+        })).then(function(ms){
+          list.forEach(function(n, i){
+            n.ms = isFinite(ms[i]) ? Math.round(ms[i]) : null;
+            n.host = n.base.replace(/^https?:\/\//, '');
+            n.arcade = n.here || (n.affiliate && n.ms != null);     // a move target: on the list and answering
+          });
+          list.sort(function(a, b){ return (b.here - a.here) || (b.arcade - a.arcade) || ((a.ms == null) - (b.ms == null)) || (a.ms - b.ms); });
+          ACCESS_NODES = {at: Date.now(), list: list};
+          return list;
+        });
+      }).catch(function(){ return [{base: location.origin, host: location.host, here: true, arcade: true, affiliate: true, ms: null}]; });
+    }
+    function accessDoor(m, answer){
+      var op = m.op || 'status';
+      var signed = viewer === 'account' && !!ARCADE_SIGNED;
+      if (op === 'status') {
+        accessGame().then(function(g){
+          answer({ok: true, wallet: g.game ? arcadeGameOn(here, g) : arcadeGameAllowed(here), signedIn: signed,
+                  node: location.host, game: !!g.game, name: (g && g.name) || gameName || ''});
+        });
+        return;
+      }
+      if (op === 'wallet') {
+        if (!signed) { answer({ok: false, error: 'sign in first: wallet access is for a player who is signed in'}); return; }
+        accessGame().then(function(g){
+          if (g.game ? arcadeGameOn(here, g) : arcadeGameAllowed(here)) return 'already';
+          var asked = g.game ? arcadeGameAskAccess(here, g, true) : arcadeAccessAsk(here, gameName, makerName, maker);
+          return asked.then(function(yes){ return yes ? 'allowed' : 'declined'; });
+        }).then(function(status){ answer({ok: true, wallet: status !== 'declined', status: status}); },
+                function(err){ answer({ok: false, error: String((err && err.message) || err || 'refused')}); });
+        return;
+      }
+      if (op === 'nodes') { accessNodes().then(function(list){ answer({ok: true, nodes: list}); }); return; }
+      if (op === 'move') {
+        var to = typeof m.to === 'string' ? m.to.trim().replace(/\/+$/, '') : '';
+        if (!/^https:\/\//.test(to)) to = to ? 'https://' + to.replace(/^\/+/, '') : '';
+        if (accessCards) { answer({ok: false, error: 'busy: a move card is already open; ask again after it is answered'}); return; }
+        Promise.all([accessGame(), accessNodes()]).then(function(r){
+          var g = r[0], node = r[1].filter(function(n){ return n.base === to; })[0];
+          if (!g.game || !g.card) throw new Error('only a game with a game card can move to another arcade');
+          if (!node) throw new Error('not an arcade this node knows: pick one from nodes()');
+          if (!node.affiliate) throw new Error('not on this arcade\'s Affiliates list: a game can only move you to an arcade the operator lists');
+          if (node.here) return {status: 'here'};
+          if (!node.arcade) throw new Error('that arcade did not answer: try again in a moment');
+          accessCards++;
+          var name = g.name || gameName || 'this game';
+          return arcadeAsk('Play ' + name + ' on ' + node.host + '?',
+              (node.name ? node.name + ' is ' : 'It is ') + 'on this arcade’s Affiliates list'
+              + (node.by && node.by !== 'this arcade' ? ', shared by ' + node.by : '') + '. '
+              + (node.ms != null ? 'It answers in about ' + node.ms + ' ms from here. ' : '')
+              + 'You will leave this arcade (' + location.host + ') and open ' + name + ' on ' + node.host + '. '
+              + 'If you are not signed in there, you sign in there with the same name and password: ' + node.host
+              + ' then keeps its own copy of your encrypted wallet, and its page is where your password opens it, so '
+              + 'only go on if you trust that arcade. Wallet access, saves kept in this browser and other choices are '
+              + 'kept per arcade: there you are asked again.', 'Go to ' + node.host, 'Stay here')
+            .then(function(yes){
+              accessCards--;
+              if (!yes) return {status: 'declined'};
+              setTimeout(function(){ location.href = node.base + '/play/' + g.card + '?from=' + encodeURIComponent(location.host); }, 50);
+              return {status: 'moving'};
+            }, function(err){ accessCards--; throw err; });
+        }).then(function(r){ answer({ok: true, status: r.status}); },
+                function(err){ answer({ok: false, error: String((err && err.message) || err || 'refused')}); });
+        return;
+      }
+      answer({ok: false, error: 'access: op is status, wallet, nodes or move'});
+    }
+
     window.addEventListener('message', function(e){
       if (!sandbox || e.source !== sandbox.contentWindow) return;
       var m = e.data || {};
@@ -1559,6 +1660,7 @@
         e.source.postMessage(body, '*');   // an opaque origin cannot be named
       }
       if (m.arcade === 'realtime') { realtimeDoor(m, answer, e.source); return; }
+      if (m.arcade === 'access') { accessDoor(m, answer); return; }
       if (m.arcade === 'contacts') { contactsDoor(m, answer); return; }
       if (m.arcade === 'llm') { llmDoor(m, answer, e.source); return; }
       if (m.arcade === 'escrow') { escrowDoor(m, answer); return; }

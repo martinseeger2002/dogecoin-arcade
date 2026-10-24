@@ -1,0 +1,62 @@
+{# The fastest arcade for this player (2026-10-23, SadFrog: "as a player loads in from ashvale.party after clicking play it
+   should bring them to the fastest node to the user with their permission, and only swap them to nodes listed in the
+   originating node's affiliate list"). For the game's front door (/play/<game>), signed in or not: this arcade and the
+   arcades on ITS Affiliates list (/affiliates.json), each timed from the browser with two realtime hellos (the better
+   counts; every arcade answers /realtime/hello, with CORS). `arcadeFastest()` resolves {best, here} where best is a
+   listed arcade clearly quicker than this one (under 70% of its time and 40 ms or more less), or null. A player who
+   chose to stay is not asked again for a week, and one who just hopped (?hop=1) is not offered another.
+   ?hop=test shows the choice even from close by (for trying it).
+   JavaScript only: include it inside a <script>. #}
+var ARCADE_HOP_STAY = 'arcade.hop.stay', ARCADE_HOP_WEEK = 7 * 86400000;
+function arcadeHopTime(base){
+  var t0 = performance.now();
+  return Promise.race([
+    fetch(base + '/realtime/hello', {cache: 'no-store', credentials: 'omit'}).then(function(r){ return r.json(); })
+      .then(function(h){ return h && h.online ? performance.now() - t0 : Infinity; }),
+    new Promise(function(res){ setTimeout(function(){ res(Infinity); }, 2500); })
+  ]).catch(function(){ return Infinity; });
+}
+function arcadeHopStayed(){ try { return Date.now() - Number(localStorage.getItem(ARCADE_HOP_STAY) || 0) < ARCADE_HOP_WEEK; } catch (e) { return false; } }
+function arcadeHopStay(){ try { localStorage.setItem(ARCADE_HOP_STAY, String(Date.now())); } catch (e) {} }
+function arcadeFastest(){
+  var q = new URLSearchParams(location.search);
+  // ?hop=test: offer the fastest listed arcade even when this one is quicker (to see the choice from close by);
+  // still only the Affiliates list, still the player's choice.
+  var testing = q.get('hop') === 'test';
+  if (q.get('hop') === '1' || (arcadeHopStayed() && !testing)) return Promise.resolve({best: null, here: null});
+  return fetch('/affiliates.json', {cache: 'no-store'}).then(function(r){ return r.ok ? r.json() : {}; }).catch(function(){ return {}; })
+    .then(function(aff){
+      var seen = {}, list = [{base: '', host: location.host, name: '', here: true}];
+      seen[location.origin] = 1;
+      ((aff && aff.sites) || []).forEach(function(s){
+        var u; try { u = new URL(s.url); } catch (e) { return; }
+        if (u.protocol !== 'https:' || seen[u.origin]) return;
+        seen[u.origin] = 1;
+        list.push({base: u.origin, host: u.host, name: s.name || '', by: s.by || '', here: false});
+      });
+      if (list.length < 2) return {best: null, here: null};
+      return Promise.all(list.slice(0, 12).map(function(n){
+        return arcadeHopTime(n.base).then(function(a){ return arcadeHopTime(n.base).then(function(b){ n.ms = Math.min(a, b); return n; }); });
+      })).then(function(timed){
+        var here = timed[0], best = null;
+        timed.slice(1).forEach(function(n){ if (isFinite(n.ms) && (!best || n.ms < best.ms)) best = n; });
+        if (!best) return {best: null, here: here};
+        var quicker = testing || !isFinite(here.ms) || (best.ms < here.ms * 0.7 && here.ms - best.ms >= 40);
+        return {best: quicker ? best : null, here: here};
+      });
+    });
+}
+// Where a hop goes: the same game's front door on that arcade, saying where the player came from (its door says what
+// signing in there means) and that this was a hop (no second one).
+function arcadeHopUrl(best, which){
+  return best.base + '/play/' + encodeURIComponent(which) + '?from=' + encodeURIComponent(location.host) + '&hop=1';
+}
+function arcadeHopWords(best, here, signedIn){
+  var ms = function(v){ return isFinite(v) ? Math.round(v) + ' ms' : 'no answer'; };
+  return (best.name ? best.name + ' (' + best.host + ')' : best.host) + ' answers fastest for you: ' + ms(best.ms)
+    + ', and ' + location.host + ' ' + ms(here.ms) + '. It is on ' + location.host + '’s list of affiliated arcades'
+    + (best.by && best.by !== 'this arcade' ? ', shared by ' + best.by : '') + '. '
+    + (signedIn ? 'There you sign in again with the same name and password, and ' + best.host
+                  + ' keeps its own copy of your encrypted wallet, so only go if you trust it.'
+                : 'Your account would be made, or opened, there: ' + best.host + ' keeps its copy of your encrypted wallet.');
+}

@@ -1454,7 +1454,7 @@ function arcadeAccessWords(game, publisher, address){
   return '“' + (game || 'This app') + '” is published by ' + (publisher || 'an account with no @name')
     + (address ? ' (' + address + ')' : '') + '. Check that this is the app’s real publisher before you allow it: '
     + 'anybody can publish a copy of an app under a lookalike name, and an app with wallet access can ask your wallet '
-    + 'to trade, pay and sign. You can turn it off again on the app’s card.';
+    + 'to trade, pay and sign. You can turn it off again on the app’s card, or under App access in your account.';
 }
 function arcadeAccessAsk(id, game, publisher, address){
   return arcadeAsk('Allow this app to use your wallet?', arcadeAccessWords(game, publisher, address), 'Allow wallet access')
@@ -1468,8 +1468,16 @@ function arcadeAccessAsk(id, game, publisher, address){
 // browser then remembers the game uses the wallet, so Play on its card and the game's own page hold it until the
 // box is ticked (as they do from the start for a card that says "wallet": true). A page that is not a game -- a
 // shop, a mintpad -- has no card to tick and keeps the ask (arcadeAccessAsk).
+// ASKED IN THE GAME (2026-10-23, SadFrog: "the wallet access option doesn't have to happen in the game card, it can
+// happen in the game"): a game whose box is off is no longer stopped. When it first reaches for the wallet -- or asks
+// outright, arcade.access.wallet() (the 'access' door) -- the same card the box shows comes up over the game, here on
+// the viewer where the game cannot draw: its name, its @publisher and address, the lookalike warning. Yes ticks its
+// card's box (kept under the page Play opens, as the box is); No refuses that one action and the game plays on, and
+// this tab does not ask again unprompted (the game may still ask outright, when the player chooses). The card's box
+// stays the place to see and change it, and /me/access (App access) lists every app allowed.
 var ARCADE_USES = 'arcade.wallet.uses:';
-var ARCADE_GATE_SAYS = 'This app uses your wallet. Turn on Wallet access on its card to open it.';
+var ARCADE_GATE_SAYS = 'Wallet access is off for this app: the player did not allow it. It can ask again (arcade.access.wallet()).';
+var ARCADE_ACCESS_NO = 'arcade.wallet.no:', _arcadeAccessAsking = {};
 var ARCADE_GAMES = '/games', _arcadeGames = {};
 function arcadeGameOf(page){
   if (!page) return Promise.resolve({game: false});
@@ -1510,7 +1518,24 @@ function arcadeGameStop(page, g){
     f.after(box);
   });
 }
-// true: the page may go on to the wallet. false: it is a game whose box is off, and it has been stopped.
+// Ask, in the game, for wallet access (ASKED IN THE GAME above). One card per game page at a time: a second ask while
+// one is open waits for the same answer. `prompted`: the player asked for it in the game (arcade.access.wallet()), so
+// an earlier No in this tab does not stand in the way.
+function arcadeGameAskAccess(page, g, prompted){
+  var key = (g && g.opens) || page;
+  if (_arcadeAccessAsking[key]) return _arcadeAccessAsking[key];
+  var saidNo = false;
+  try { saidNo = sessionStorage.getItem(ARCADE_ACCESS_NO + key) === 'yes'; } catch (e) {}
+  if (saidNo && !prompted) return Promise.resolve(false);
+  _arcadeAccessAsking[key] = arcadeAccessAsk(key, g && g.name, g && g.publisher, g && g.address).then(function(yes){
+    delete _arcadeAccessAsking[key];
+    try { if (yes) sessionStorage.removeItem(ARCADE_ACCESS_NO + key); else sessionStorage.setItem(ARCADE_ACCESS_NO + key, 'yes'); } catch (e) {}
+    return yes;
+  }, function(){ delete _arcadeAccessAsking[key]; return false; });
+  return _arcadeAccessAsking[key];
+}
+// true: the page may go on to the wallet. false: it is a game whose box is off and the player said no (or said no
+// before in this tab): this one action is refused, and the game keeps running.
 function arcadeGameGate(page){
   if (!page) return Promise.resolve(true);
   if (arcadeGameAllowed(page)) return Promise.resolve(true);
@@ -1518,8 +1543,7 @@ function arcadeGameGate(page){
     if (!g.game || arcadeGameOn(page, g)) return true;
     arcadeGameUsed(page);
     if (g.opens) arcadeGameUsed(g.opens);
-    arcadeGameStop(page, g);
-    return false;
+    return arcadeGameAskAccess(page, g, false);
   });
 }
 // CAMERA & MICROPHONE, PER GAME (2026-10-22: "Our user can allow an app camera and microphone in the same way

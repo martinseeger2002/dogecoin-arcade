@@ -8172,6 +8172,15 @@ def create_app(state: AppState) -> FastAPI:
         return Response(body, media_type="application/javascript",
                         headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
 
+    @app.get("/r/access.js")
+    def r_access_js():
+        """The access shim an inscribed page loads (2026-10-23): arcade.access.status(), wallet() -- wallet access
+        asked over the game, the same card as the game card's switch -- nodes() and move(), playing on another
+        arcade. The viewer answers (_page_doors, the 'access' door)."""
+        body = (TEMPLATE_DIR / "access.js").read_text()
+        return Response(body, media_type="application/javascript",
+                        headers={**contentlib.CORS, "Cache-Control": "public, max-age=3600"})
+
     @app.get("/r/llm.js")
     def r_llm_js():
         """The LLM shim an inscribed page loads: arcade.llm.offers() and arcade.llm.chat(), paid from the signed-in
@@ -8577,6 +8586,17 @@ def create_app(state: AppState) -> FastAPI:
         from .. import affiliates as affiliateslib
         tab = affiliateslib.for_tab(state)
         return render(request, "affiliates.html", affiliates=tab["own"], shared=tab["groups"])
+
+    @app.get("/affiliates.json")
+    def affiliates_json():
+        """The Affiliates tab as data (2026-10-23, SadFrog: "using affiliate list for node hops"): the sites this arcade
+        vouches for -- the operator's own, then others' the operator ticked -- each {url, name, by}. A game's move
+        (_page_doors, the 'access' door) offers only these, and of them only the ones that answer as an arcade."""
+        from .. import affiliates as affiliateslib
+        tab = affiliateslib.for_tab(state)
+        sites = [{"url": s["url"], "name": s["name"], "by": "this arcade"} for s in tab["own"]]
+        sites += [{"url": s["url"], "name": s["name"], "by": g["by"]} for g in tab["groups"] for s in g["sites"]]
+        return JSONResponse({"ok": True, "sites": sites}, headers={"Cache-Control": "no-store"})
 
     @app.get("/docs", response_class=HTMLResponse)
     def docs_index(request: Request):
@@ -12247,6 +12267,15 @@ def create_app(state: AppState) -> FastAPI:
         if signed_in(request) is None:
             return _to_join(request)
         return render(request, "my_contacts.html", chain=_account_chain())
+
+    @app.get("/me/access", response_class=HTMLResponse)
+    def my_access(request: Request):
+        """The games this browser has let use the wallet, the camera and microphone, or see the address book
+        (2026-10-23, with wallet access asked in the game): each with its publisher, and a way to take it back.
+        All of it is kept in this browser, per arcade (base.html), so the page reads it there; the node holds none."""
+        if signed_in(request) is None:
+            return _to_join(request)
+        return render(request, "my_access.html", chain=_account_chain())
 
     @app.get("/account/find")
     def account_find(request: Request, q: str = ""):
@@ -24614,9 +24643,14 @@ def create_app(state: AppState) -> FastAPI:
         game = found["game"]
         opens = f"/inscriptions/{game.get('opens') or found['txid']}/full"
         if signed_in(request) is not None:
-            return RedirectResponse(opens, status_code=303)
+            # Signed in: straight in, after a moment to find the fastest arcade on this one's Affiliates list (2026-10-23,
+            # game_hop.html); not when this was itself a hop (?hop=1), so a player is never passed along twice.
+            if request.query_params.get("hop") == "1":
+                return RedirectResponse(opens, status_code=303)
+            return render(request, "game_hop.html", game=game, card=found["txid"], opens=opens,
+                          skin=gameslib.door_skin(game), which=wanted)
         register = state.accounts()
-        return render(request, "game_door.html", chain=_account_chain(), game=game,
+        return render(request, "game_door.html", chain=_account_chain(), game=game, which=wanted,
                       card=found["txid"], opens=opens, skin=gameslib.door_skin(game),
                       notice=gameslib.door_notice(game),
                       seats=register.seats, free=register.free(),

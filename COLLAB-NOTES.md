@@ -88,6 +88,48 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-24 · SadFrog's side (Claude, node 2) · branch `team/in-game-wallet-access` (built 2026-10-23, merged with `main` 99c394de) · wallet access asked in the game; node hops from the Affiliates list; a warning before a wallet comes from another arcade; App access page
+SadFrog asked: "the wallet access option doesn't have to happen in the game card, it can happen in the game -- this
+way a player can sign into a game, a game can switch nodes based on location/ping, sign into that node if needed
+again with the warning ... or the game launcher can ask for wallet access", and node hops "using affiliate list".
+**This reverses your 2026-10-20 rule** (a game whose card box is off is stopped, never asked): your call whether to
+take it. What it does:
+- **THE GATE asks in place** (base.html `arcadeGameAskAccess`): the first time a game with its box off reaches for the
+  wallet, the same `arcadeAccessAsk` card (name, @publisher, address, lookalike warning) comes up over it, on the
+  viewer where the game cannot draw. Yes ticks the card's box (kept under `g.opens`, as the box is). No refuses that
+  one action with `ARCADE_GATE_SAYS`, the game runs on, and the tab does not ask again unprompted
+  (`sessionStorage arcade.wallet.no:<page>`). Games are no longer held before they start; Play on the card opens them.
+- **arcade.access** (`templates/access.js`, `/r/access.js`, the `access` door): `status()` (no card), `wallet()` (asks
+  outright, even after a no), `nodes()`, `move(base)`.
+- **Node hops come only from this arcade's Affiliates list** (new `/affiliates.json`, `affiliates.for_tab` as data;
+  in door.py's list): an affiliate that answers `/realtime/hello` is a move target; tunnels and chain-announced
+  domains are listed as relays only. `move` refuses anything not on the list, then shows a card naming who lists it
+  and what signing in there means; yes opens `<base>/play/<card>?from=<here>`.
+- **wallet.js `warnElsewhere`**: signing in with a wallet made on another arcade (or `importFrom`) first says this
+  arcade keeps its own copy of the encrypted wallet and is where the password opens it; no keeps nothing.
+  game_door.html says the same before the password when it arrives with `?from=`.
+- **/me/access (App access)**: every app this browser allowed (wallet, camera & microphone, address book) with Turn
+  off; linked from the Apps tab and the access card's words. In door.py's list. Your app-card switches (contacts,
+  notifications) are untouched: an app card's box still allows ahead of time and turns off.
+- **Tests**: test_page_doors_browser (asked in place, no/yes, not held; the access door; Game access), test_imports_
+  everywhere_browser (the warning: no keeps nothing, yes brings it), test_game_door (the shim, the ?from notice,
+  /affiliates.json). Smoke, doors, auth and sign-in suites pass here (test_signup_browser's file upload fails here
+  only because a snap Firefox cannot read /tmp; it fails the same on main).
+- **The fastest arcade at the game's front door** (SadFrog: "as a player loads in from ashvale.party after clicking
+  play it should bring them to the fastest node to the user with their permission, and only swap them to nodes listed
+  in the originating node's affiliate list"): `/play/<game>` times this arcade and the arcades on ITS Affiliates list
+  from the browser (`_fastest_arcade.js.html`: two realtime hellos each). One clearly quicker (under 70% of the time and
+  40 ms or more less, or this one not answering) is offered -- on the sign-up page before an account is made, and to a
+  signed-in player on a short `game_hop.html` step instead of the straight redirect -- naming who lists it and what
+  signing in there means. Yes opens `<base>/play/<game>?from=<here>&hop=1`; `hop=1` is never offered another. Stay is
+  remembered a week (`arcade.hop.stay`). `?hop=test` shows the choice even from close by. ashvale.party's Caddy must
+  route `/affiliates.json` and `/realtime/hello` to the arcade for its door to see the list.
+- **ASHVALE uses it** (ASHVALE `main` 09a44b2, not yet pushed): the launcher asks once after the tutorial, and
+  Settings shows wallet access and a server picker from `nodes()`.
+- **Noticed while mapping, not changed here (please look):** (1) `shopSign` signs the buyer's half with
+  `coins.signInput` directly, so a mainnet shop buy skips `mainnetOk`'s review; (2) the realtime cert words are bound to
+  a node, not a game or room, so a relay a player is carried through can be that address in any room on the mesh for a
+  day; (3) the viewer ticket `?v=` is readable by the game from its own URL and could be passed out through a room.
 ### 2026-10-24 "Pepecoin main" / "Pepecoin test" everywhere; the Wallet's sweep-back card is gone (Claude)
 The operator: Pepecoin is never just "mainnet" / "testnet" -- it is "Pepecoin main" and "Pepecoin test", as the rest of the app
 names chains (e.g. the testnet mining text); and "remove the sweep back card from the bottom of the wallet. Since sweep

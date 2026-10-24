@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Play {{ game.name }}</title>
+{% if game.cover %}<link rel="icon" href="/content/{{ game.cover }}">{% else %}<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">{% endif %}
+<meta name="theme-color" content="{{ skin.bg }}">
+<style>
+/* game_hop.html (2026-10-23): a signed-in player's way into a game from its front door (/play/<game>). A moment to find
+   the fastest arcade on this one's Affiliates list (_fastest_arcade.js.html); quicker elsewhere, the player is asked;
+   otherwise, or after Stay, straight into the game. */
+body{margin:0;min-height:100vh;background:{{ skin.bg }};color:{{ skin.fg }};font:17px/1.5 {{ skin.font }};display:flex;align-items:center;justify-content:center}
+.box{max-width:520px;margin:16px;padding:22px;background:{{ skin.panel }};border:3px solid #0d0905;border-radius:6px;box-shadow:inset 0 0 0 1px {{ skin.line }},0 8px 24px rgba(0,0,0,.6);text-align:center}
+h1{margin:0 0 8px;color:{{ skin.title }};letter-spacing:.06em;text-transform:uppercase}
+p{margin:8px 0}
+.small{font-size:14px;color:{{ skin.muted }}}
+button{font:inherit;padding:10px 16px;margin:6px 4px 0;border-radius:6px;border:2px solid #0d0905;cursor:pointer;background:{{ skin.accent }};color:{{ skin.accent_fg }}}
+button.ghost{background:transparent;color:{{ skin.fg }};border-color:{{ skin.line }}}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>{{ game.name }}</h1>
+  <p id="say">Finding the fastest server for you…</p>
+  <div id="ask" hidden>
+    <p id="words" class="small"></p>
+    <button id="go"></button><button id="stay" class="ghost"></button>
+  </div>
+</div>
+<script>
+{% include "_fastest_arcade.js.html" %}
+(function(){
+  var NEXT = {{ opens|tojson }}, WHICH = {{ which|tojson }};
+  var into = function(){ location.replace(NEXT); };
+  var gave = false, guard = setTimeout(function(){ gave = true; into(); }, 8000);   // never more than a few seconds
+  arcadeFastest().then(function(r){
+    if (gave) return;
+    clearTimeout(guard);
+    if (!r.best) { into(); return; }
+    document.getElementById('say').textContent = 'A faster server is available.';
+    document.getElementById('words').textContent = arcadeHopWords(r.best, r.here, true);
+    var go = document.getElementById('go'), stay = document.getElementById('stay');
+    go.textContent = 'Play on ' + r.best.host; stay.textContent = 'Stay on ' + location.host;
+    go.onclick = function(){ location.href = arcadeHopUrl(r.best, WHICH); };
+    stay.onclick = function(){ arcadeHopStay(); into(); };
+    document.getElementById('ask').hidden = false;
+  }, into);
+})();
+</script>
+</body>
+</html>
