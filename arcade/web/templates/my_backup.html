@@ -265,7 +265,7 @@ $("show-words").onclick = async () => {
       // Every chain's key (2026-10-18): what each chain's own Core imports.
       const seed = await signin.toSeed(phrase);
       for (const [label, network] of [["Pepecoin main and Dogecoin", "main"], ["Litecoin", "ltc"],
-                                      ["Bellscoin", "bel"], ["Luckycoin", "lky"],
+                                      ["Bellscoin", "bel"], ["Luckycoin", "lky"], ["Kotia", "kot"],
                                       ["Pepecoin test", "test"], ["Litecoin test", "ltctest"]]) {
         const one = await coins.coinKey(seed, network);
         const dt = document.createElement("dt"), dd = document.createElement("dd");

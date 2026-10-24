@@ -71,6 +71,8 @@ ORDER = (
      "Running a Bells node, its B and D addresses, fees, and Bellinals numbered like the official indexer."),
     ("luckycoin.md", "Luckycoin on this arcade",
      "Running a Luckycoin node, its K and L addresses, fees, and Luckinals."),
+    ("kotia.md", "Kotia on this arcade",
+     "Running a Kotia node, its K addresses, timed transactions, fees, and data outputs."),
     ("escrow.md", "Escrow: holding players' items for your game",
      "Put a player's NFTs and tokens at stake: your judge decides who gets them, the player can always take them back after the unlock time."),
     ("game-state.md", "Game state: a game's own record on each NFT",

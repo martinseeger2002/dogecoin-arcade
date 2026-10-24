@@ -31,6 +31,7 @@ another. Both ends verify, and neither is trusted alone.
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,7 +40,7 @@ from .config import Params
 from .script import (b58check_decode, hash160, p2sh_p2wpkh_address,
                      p2sh_p2wpkh_redeem, p2wpkh_script as _p2wpkh_script,
                      segwit_decode)
-from .txbuild import build_raw_tx, op_return_script, p2pkh_script, push, varint
+from .txbuild import build_raw_tx, op_return_script, p2pkh_script, push, time_field, varint
 
 #: What an input costs once it is signed: the outpoint, the sequence number
 #: and a P2PKH scriptSig. Not a guess dressed as a fact: it is recomputed
@@ -105,6 +106,9 @@ class Unsigned:
     #: where the inputs before it are the counterparty's and stay unsigned
     #: until the counterparty signs them.
     signed_from: int = 0
+    #: A Peercoin-style chain's transaction time (Params.tx_time, Kotia): in `raw`, in every sighash, and
+    #: written again by `assemble`. None on every other chain.
+    ntime: int | None = None
 
     def as_json(self) -> dict:
         return {
@@ -244,6 +248,8 @@ def price(inputs: int, outputs: list, rate: int, change: bool = False, params=No
     there are coins to spend at all.
     """
     raw = BYTES_OVERHEAD + inputs * BYTES_PER_INPUT
+    if getattr(params, "tx_time", False):
+        raw += 4                                    # a Peercoin-style chain's nTime (Kotia)
     sigops = 0
     for _value, script in outputs:
         raw += 8 + len(varint(len(script))) + len(script)
@@ -258,7 +264,8 @@ def price(inputs: int, outputs: list, rate: int, change: bool = False, params=No
 
 def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
             index: int, script: bytes, version: int = 1,
-            locktime: int = 0, sighash_type: int = SIGHASH_ALL) -> bytes:
+            locktime: int = 0, sighash_type: int = SIGHASH_ALL,
+            ntime: int | None = None) -> bytes:
     """The 32 bytes input `index` must sign.
 
     The legacy algorithm: serialise the transaction with every scriptSig
@@ -312,7 +319,8 @@ def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
             f"this builds a sighash for SIGHASH_ALL, ALL|ANYONECANPAY and "
             f"SINGLE|ANYONECANPAY, not for {sighash_type:#04x}")
 
-    raw = version.to_bytes(4, "little") + varint(len(inputs))
+    # A Peercoin-style chain (Kotia) signs its `nTime` too, right after the version (kotiacash interpreter.cpp).
+    raw = version.to_bytes(4, "little") + time_field(ntime) + varint(len(inputs))
     for n, coin in enumerate(inputs):
         raw += bytes.fromhex(coin["txid"])[::-1]
         raw += int(coin["vout"]).to_bytes(4, "little")
@@ -332,6 +340,22 @@ def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
     raw += locktime.to_bytes(4, "little")
     raw += sighash_type.to_bytes(4, "little")
     return hashlib.sha256(hashlib.sha256(raw).digest()).digest()
+
+
+def untimed(params: Params, what: str) -> None:
+    """Refuse a builder that does not write `nTime` yet on a chain whose transactions need one (Params.tx_time,
+    Kotia): only `build` does, so far. Without this the chain's Core refuses the bytes with a decode error."""
+    if getattr(params, "tx_time", False):
+        raise FundingError(f"a {what} is not open on {params.label} yet: only ordinary sends are")
+
+
+def tx_time(params: Params) -> int | None:
+    """The `nTime` a transaction built now carries on a Peercoin-style chain (Params.tx_time, Kotia), else None.
+
+    Now, by this machine's clock: Kotia's Core takes a transaction no more than 15 seconds ahead of its own
+    (main.cpp "time-too-new"), wants it no later than the block that holds it, and no earlier than any
+    transaction whose coins it spends -- coins this arcade spends were made before now."""
+    return int(time.time()) if getattr(params, "tx_time", False) else None
 
 
 def build(db, params: Params, address: str, payload_outputs: list,
@@ -374,7 +398,8 @@ def build(db, params: Params, address: str, payload_outputs: list,
         fee += max(0, change)
         change = 0
 
-    raw = build_raw_tx([(c["txid"], c["vout"]) for c in chosen], outputs)
+    ntime = tx_time(params)
+    raw = build_raw_tx([(c["txid"], c["vout"]) for c in chosen], outputs, ntime=ntime)
     hashes = []
     for n, coin in enumerate(chosen):
         if rule["kind"] in ("p2wpkh", "p2sh-p2wpkh"):
@@ -382,9 +407,9 @@ def build(db, params: Params, address: str, payload_outputs: list,
             hashes.append(sighash_witness(chosen, outputs, n, rule["script_code"],
                                           int(coin["value"])).hex())
         else:
-            hashes.append(sighash(chosen, outputs, n, rule["script_code"]).hex())
+            hashes.append(sighash(chosen, outputs, n, rule["script_code"], ntime=ntime).hex())
     return Unsigned(raw=raw, inputs=chosen, outputs=outputs, sighashes=hashes,
-                    fee=fee, change=change, what=what)
+                    fee=fee, change=change, what=what, ntime=ntime)
 
 
 def build_one(params: Params, address: str, coin: dict,
@@ -407,6 +432,7 @@ def build_one(params: Params, address: str, coin: dict,
     an outpoint, not a coin picked out of wherever the balance happens to be
     today, so the transaction comes out identical after a restart.
     """
+    untimed(params, "split piece")
     txid, vout = str(coin.get("txid") or ""), int(coin.get("vout", -1))
     value = int(coin.get("value", 0))
     if len(txid) != 64 or vout < 0 or value <= 0:
@@ -452,6 +478,7 @@ def build_sweep(db, params: Params, address: str, coins: list[dict], rate: int,
     coins are small, so when they cannot pay the fee and still leave a coin worth
     keeping, one more coin of the account's is added to pay for it.
     """
+    untimed(params, "sweep")
     given = []
     for coin in coins:
         txid, vout = str(coin.get("txid") or ""), int(coin.get("vout", -1))
@@ -535,6 +562,7 @@ def build_bid(db, params: Params, buyer: str, seller: str, payload: bytes,
     FINISHED transaction, the seller's input included, and the buyer pays it.
     A token price pays the seller no coins, so output 1 is only their coin back.
     """
+    untimed(params, "bid")
     payload_script = op_return_script(payload)
     seller_out = (int(price_sats) + EXACT_SELLER_COIN, p2pkh_script(seller))
     outputs = [(0, payload_script), seller_out]
@@ -660,6 +688,7 @@ def build_partial(db, params: Params, address: str, foreign: list,
     pubkey in every scriptSig and there was no way to offer a transaction
     whose first input belonged to someone else.
     """
+    untimed(params, "trade")
     given = []
     for piece in foreign:
         txid = str(piece.get("txid") or "")
@@ -767,7 +796,7 @@ def assemble(unsigned: Unsigned, signatures: list[str], pubkey: bytes) -> str:
             f"{len(signatures)} came back")
     if any(coin.get("segwit") for coin in unsigned.inputs):
         return _assemble_witness(unsigned, signatures, pubkey)
-    raw = (1).to_bytes(4, "little") + varint(len(unsigned.inputs))
+    raw = (1).to_bytes(4, "little") + time_field(unsigned.ntime) + varint(len(unsigned.inputs))
     for n, coin in enumerate(unsigned.inputs):
         script_sig = b""
         if n >= first and coin.get("multisig"):
@@ -962,6 +991,7 @@ def build_leg(params: Params, address: str, piece: dict, coins: int,
     reads a coin leg as what the seller NETS -- and `paste_leg` still refuses the
     transaction if the whole of it does not add up to what a block asks for.
     """
+    untimed(params, "listing")
     txid = str(piece.get("txid") or "")
     vout, value = int(piece.get("vout", -1)), int(piece.get("value", 0))
     if len(txid) != 64 or vout < 0 or value <= 0:
@@ -1049,6 +1079,7 @@ def build_doginal_send(db, params: Params, address: str, coin: dict, inscription
     coins (GUARD.spendable) added after it; change last, back to the sender. Refused unless the chain says this coin holds
     exactly this inscription at offset 0 -- a coin with two inscriptions, or one sitting further in, would need an
     alignment output first, and sending it plainly could hand the wrong piece away or burn it to fees."""
+    untimed(params, "doginal send")
     return _doginal_first(db, address, coin, inscription, p2pkh_script(to), [], rate, exclude, extra,
                           what=f"send Doginal {inscription} to {to}")
 
@@ -1059,6 +1090,7 @@ def build_doginal_lock(db, params: Params, address: str, coin: dict, inscription
     The send above with the lock as recipient: the inscribed coin input 0 and whole to the lock as output 0 (the inscription
     at offset 0 of the lock), then `reserve` clean coin to the SAME lock as output 1 -- what pays the claim or the refund
     later without touching the Doginal's own koinu (htlc.doginal_out) -- then change. Every coin after input 0 is clean."""
+    untimed(params, "doginal lock")
     return _doginal_first(db, address, coin, inscription, bytes(lock_script), [(int(reserve), bytes(lock_script))],
                           rate, exclude, extra, what=f"lock Doginal {inscription} for a swap")
 
@@ -1068,6 +1100,7 @@ def build_note_send(db, params: Params, address: str, note_coin: dict, to: str, 
     """A DRC-20 / PRC-20 transfer note's send (token20_send, step 3): the note's coin -- the reveal this same send
     built a moment ago, not yet in any block, so no index has read it -- as input 0, whole to `to` as output 0, as a
     Doginal is sent; clean coins pay the fee; change last."""
+    untimed(params, "note send")
     return _doginal_first(db, address, note_coin, "", p2pkh_script(to), [], rate, exclude, extra, what=what,
                           vouched=True)
 

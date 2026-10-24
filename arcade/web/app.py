@@ -865,7 +865,9 @@ def create_app(state: AppState) -> FastAPI:
             _others.setdefault(_p.scripthash_version, set()).add(_p.name)
         _others.setdefault(5, set()).add("ltc")            # Litecoin's legacy "3" P2SH
         for _lchain in state.addons:
-            if _lchain.network == "doge":
+            # Kotia (2026-10-23) has no ord envelopes on its coins, and the guard's reader does not know its
+            # timed transactions (Params.tx_time): no guard there, as on any chain without ords.
+            if _lchain.network == "doge" or _lchain.params.tx_time:
                 continue
             # Litecoin (2026-10-17, SadFrog's side): the same guard, reading Doginals-format envelopes
             # (arcade/ltc_ord.py) through the Litecoin node. On regtest a node's wallet carried an

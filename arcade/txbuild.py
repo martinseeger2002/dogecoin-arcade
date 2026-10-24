@@ -80,14 +80,21 @@ def multisig_script(pubkeys: list[bytes], required: int = 1) -> bytes:
     return bytes([0x50 + required]) + body + bytes([0x50 + len(pubkeys)]) + bytes([OP_CHECKMULTISIG])
 
 
+def time_field(ntime: int | None) -> bytes:
+    """A Peercoin-style chain's `nTime` as it sits after the version (Params.tx_time); b"" for every other chain."""
+    return b"" if ntime is None else int(ntime).to_bytes(4, "little")
+
+
 def build_raw_tx(
     inputs: list[tuple[str, int]],
     outputs: list[tuple[int, bytes]],
     version: int = 1,
     locktime: int = 0,
+    ntime: int | None = None,
 ) -> str:
-    """Serialize an unsigned transaction. `outputs` is [(value_sats, script)]."""
-    raw = version.to_bytes(4, "little") + varint(len(inputs))
+    """Serialize an unsigned transaction. `outputs` is [(value_sats, script)]. `ntime`: a Peercoin-style
+    chain's transaction time (Params.tx_time, Kotia), written after the version; None writes nothing."""
+    raw = version.to_bytes(4, "little") + time_field(ntime) + varint(len(inputs))
     for txid, index in inputs:
         raw += bytes.fromhex(txid)[::-1]          # txids display big-endian
         raw += index.to_bytes(4, "little")

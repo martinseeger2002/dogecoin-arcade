@@ -177,7 +177,8 @@ export async function address(pubkey, version) {
 //: m/44'/2'/..., which is why the backup page also hands out the key itself (`wif`).
 //: Bellscoin and Luckycoin (2026-10-22, SadFrog's side) the same way: one key for every real-coin chain.
 //: (Their registered types are 762 and 743/790, and their own wallets derive on 0, so neither would match.)
-export const COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3, ltc: 3, bel: 3, lky: 3};
+//: Kotia (2026-10-23, tbuuol's side) too: an account's KOT key is its Pepecoin mainnet key.
+export const COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3, ltc: 3, bel: 3, lky: 3, kot: 3};
 
 //: Litecoin's private-key text prefix (WIF, 0xB0: keys starting with "T"), for importing elsewhere.
 export const LTC_WIF = 0xb0;
@@ -186,8 +187,9 @@ export const LTC_WIF = 0xb0;
 //: `signmessagewithprivkey`: Pepecoin mainnet shares Dogecoin's 0x9E (keys start "Q"), both testnets
 //: of the Dogecoin family 0xF1, Litecoin 0xB0 ("T") and Litecoin testnet 0xEF ("c").
 //: Bellscoin 0x99 and Luckycoin 0xAF (2026-10-22, from their chainparams.cpp SECRET_KEY, checked the same way).
+//: Kotia 0xAD (2026-10-23, chainparams.cpp SECRET_KEY 173, checked with its Core's signmessagewithprivkey).
 export const WIF = {main: 0x9e, doge: 0x9e, ltc: LTC_WIF, test: 0xf1, regtest: 0xf1, ltctest: 0xef,
-                    bel: 0x99, lky: 0xaf};
+                    bel: 0x99, lky: 0xaf, kot: 0xad};
 
 //: Litecoin's other address kinds, for saying who a send pays (2026-10-20, tbuuol: L test pays P2SH and
 //: native SegWit). The script-hash version (config.py `scripthash_version`) and the bech32 prefix.
@@ -205,7 +207,7 @@ export async function wif(key, version) {
 const WIF_CHAIN = {main: "Pepecoin main or Dogecoin", doge: "Pepecoin main or Dogecoin",
                    ltc: "Litecoin mainnet", test: "a Pepecoin or Dogecoin test chain",
                    regtest: "a Pepecoin or Dogecoin test chain", ltctest: "Litecoin testnet",
-                   bel: "Bellscoin mainnet", lky: "Luckycoin mainnet"};
+                   bel: "Bellscoin mainnet", lky: "Luckycoin mainnet", kot: "Kotia mainnet"};
 
 /** A private key out of Wallet Import Format text, for `network` (plan item 18, importing a wallet): base58check,
  *  the version byte this chain's (WIF above), 32 bytes of key, and a trailing 0x01 when its public key is
@@ -405,12 +407,18 @@ export function noteText(envelope) {
   } catch (e) { return ""; }
 }
 
-/** Split an unsigned transaction into what it spends and what it pays. */
-export function parseTx(raw) {
+//: The chains whose transactions carry a time after the version (config.py `tx_time`, 2026-10-23: Kotia). It is
+//: in the id and in every signature there. Which chain an offer is for is this browser's own knowledge (the key
+//: it signs with), never the node's word: a transaction read in the wrong shape is refused, not signed.
+export const TX_TIME = new Set(["kot"]);
+
+/** Split an unsigned transaction into what it spends and what it pays. `timed`: a chain in TX_TIME. */
+export function parseTx(raw, timed = false) {
   const bytes = unhex(String(raw || ""));
-  let at = 4;
+  let at = timed ? 8 : 4;
   if (bytes.length < at + 1) throw new Error("that is not a transaction");
   const version = Number(readLE(bytes, 0, 4));
+  const time = timed ? Number(readLE(bytes, 4, 4)) : null;
   const inputs = [];
   let [count, next] = varint(bytes, at);
   at = next;
@@ -451,12 +459,17 @@ export function parseTx(raw) {
     throw new Error("that transaction has bytes left over that this browser "
       + "cannot account for");
   }
-  return {version, locktime, inputs, outputs};
+  return {version, time, locktime, inputs, outputs};
+}
+
+/** A timed transaction's time as it is signed, after the version (nothing on every other chain). */
+function timeField(tx) {
+  return tx.time == null ? [] : [writeLE(BigInt(tx.time), 4)];
 }
 
 /** The 32 bytes input `index` signs under SIGHASH_ALL, from the transaction. */
 export async function sighashAll(tx, index, scriptPubKey) {
-  const parts = [writeLE(tx.version, 4), sizeOf(BigInt(tx.inputs.length))];
+  const parts = [writeLE(tx.version, 4), ...timeField(tx), sizeOf(BigInt(tx.inputs.length))];
   tx.inputs.forEach((input, n) => {
     const script = n === index ? scriptPubKey : new Uint8Array(0);
     // The input's own sequence: always 0xffffffff for what this file builds,
@@ -498,7 +511,7 @@ export async function sighashLeg(tx, index, scriptPubKey) {
       + " a signature over it would authorise every transaction there is");
   }
   const input = tx.inputs[index];
-  const parts = [writeLE(tx.version, 4), sizeOf(1n),
+  const parts = [writeLE(tx.version, 4), ...timeField(tx), sizeOf(1n),
                  unhex(input.txid).reverse(), writeLE(input.vout, 4),
                  sizeOf(BigInt(scriptPubKey.length)), scriptPubKey,
                  writeLE(0xffffffffn, 4), sizeOf(BigInt(index + 1))];
@@ -731,7 +744,7 @@ export async function verifyOffer(offer, keys) {
     throw new Error("that offer has no transaction in it, so there is nothing "
       + "to check against. Nothing was signed.");
   }
-  const tx = parseTx(offer.raw);
+  const tx = parseTx(offer.raw, TX_TIME.has(keys.network || offer.chain));
   const named = offer.inputs || [];
   if (named.length !== tx.inputs.length) {
     throw new Error(`that offer lists ${named.length} coins and its `
@@ -1162,7 +1175,7 @@ export const ALL_ANYONECANPAY = 0x81;
  *  and every output. */
 export async function sighashAllAcp(tx, index, scriptPubKey) {
   const input = tx.inputs[index];
-  const parts = [writeLE(tx.version, 4), sizeOf(1n),
+  const parts = [writeLE(tx.version, 4), ...timeField(tx), sizeOf(1n),
                  unhex(input.txid).reverse(), writeLE(input.vout, 4),
                  sizeOf(BigInt(scriptPubKey.length)), scriptPubKey,
                  writeLE(0xffffffffn, 4), sizeOf(BigInt(tx.outputs.length))];

@@ -241,6 +241,13 @@ class Params:
     #: Litecoin's MimbleWimble extension blocks: a transaction may carry an MWEB part, a block an MWEB
     #: block after its transactions, and Core prints a few more fields ("ismweb", "nTx", "weight").
     mweb: bool = False
+    #: Peercoin-style transactions (Kotia, 2026-10-23): a 4-byte `nTime` right after the version, in the txid and
+    #: in the legacy sighash alike (kotiacash primitives/transaction.h, script/interpreter.cpp). A transaction built
+    #: without one is unreadable to such a chain's Core, so it is refused there rather than lost.
+    tx_time: bool = False
+    #: Proof-of-stake blocks: a block signature (varint length + DER) follows the transactions, empty on a
+    #: proof-of-work block (kotiacash primitives/block.h `vchBlockSig`).
+    block_sig: bool = False
 
     @property
     def index_start(self) -> int | None:
@@ -589,8 +596,42 @@ LUCKYCOIN = dataclasses.replace(
     letter="K", family="LKY", net_word="luckycoin", real_coins=True,
 )
 
+# Kotia MAINNET (tbuuol's side, 2026-10-23: large game assets in OP_RETURN, away from P test's single miner).
+# Kotia 1.0.0 (github.com/eleonoraandrea/kotiacash) is a Blackcoin-style proof-of-stake coin on Bitcoin 0.14's code:
+# Litecoin's relay shape without SegWit (0.0001 KOT/kB, no soft-dust fee), but Peercoin's transaction `nTime`
+# (`tx_time`) and a block signature after the transactions (`block_sig`). Proof of work ended at block 1,000,000, so
+# a block's work is not checked here (`pow_algo=""`); its hash is sha256d of the header (version > 6).
+# Versions from chainparams.cpp:169-171, each checked against the node: P2PKH 46 and P2SH 45 (both "K..."), WIF 173.
+# Neither byte is another chain's, so a Kotia P2SH address is read as one. Policy (policy.cpp, main.cpp): OP_RETURN
+# scripts up to 15,000 bytes, several per transaction while at most half the outputs are data; and the mempool refuses
+# a transaction with more than 10 outputs under 0.001 KOT (OP_RETURNs count), so change under 0.001 KOT is not made.
+# The floor: the tip on 2026-10-23 was 1,528,731, rounded up about two days ahead at ~142-second blocks.
+KOT_MAINNET_FLOOR = 1_530_000
+
+KOTIA = dataclasses.replace(
+    LITECOIN,
+    name="kot",
+    rpc_port=46173,
+    p2p_port=46174,
+    activation_height=KOT_MAINNET_FLOOR,
+    messaging_start_height=KOT_MAINNET_FLOOR,
+    pubkeyhash_version=46,
+    scripthash_version=45,
+    other_pubkeyhash_version=None,
+    coin="KOT",
+    label="Kotia",
+    min_fee_per_kb=10_000,      # 0.0001 KOT/kB: Kotia's minimum relay fee (main.h DEFAULT_MIN_RELAY_TX_FEE)
+    soft_dust=False, dust_limit=100_000,    # change from 0.001 KOT: the mempool's dust-output count (main.cpp:1246)
+    genesis="000008e4586479cd9dc5832b262414a60f152381e371cf7940ffe9f5aa4b80a0",
+    auxpow_chain_id=None, pow_algo="",
+    addon=True, node_dir=".kotia", node_conf="kotia.conf",
+    # "T": Luckycoin already wears the "K" badge.
+    letter="T", family="KOT", net_word="kotia", real_coins=True, bech32_hrp="", mweb=False,
+    tx_time=True, block_sig=True,
+)
+
 NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN, LITECOIN, LITECOIN_TESTNET,
-                                BELLSCOIN, LUCKYCOIN)}
+                                BELLSCOIN, LUCKYCOIN, KOTIA)}
 
 def unpayable_versions(params: "Params") -> frozenset:
     """The version bytes of `params`' own script-hash addresses that another known chain uses for a key hash.
@@ -750,6 +791,7 @@ CHAIN_NAMES = {
     "ltc": "main",       # and so does Litecoin's
     "ltctest": "test",
     "bel": "main", "lky": "main",   # Bellscoin and Luckycoin too
+    "kot": "main",                  # and Kotia
 }
 
 
