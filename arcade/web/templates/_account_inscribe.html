@@ -290,6 +290,25 @@ async function offerAndConfirm(where, body, says, done) {
 
 $("file").onchange = () => arcadePick($("file"), quotePicked);
 
+// A picture from the LLM tab's "Your pictures", already picked (2026-10-23: "add an inscribe now Button that brings
+// them to the file in [the inscriber] with the image that they just generated picked as the file"): ?pick=llm:<id> fetches
+// it from this account's own 24-hour cache and puts it in the box as if it had been chosen.
+(async () => {
+  const want = new URLSearchParams(location.search).get("pick") || "";
+  const m = /^llm:(\d{6,12}-[0-9a-f]{8})$/.exec(want);
+  if (!m) return;
+  try {
+    const r = await fetch(`/account/llm/pictures/${m[1]}.png`, {credentials: "same-origin"});
+    if (!r.ok) throw new Error(r.status === 404 ? "that picture is gone (pictures are kept 24 hours)" : `HTTP ${r.status}`);
+    const file = new File([await r.blob()], `arcade-${m[1]}.png`, {type: "image/png"});
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    $("file").files = dt.files;
+    $("inscribing").scrollIntoView({behavior: "smooth", block: "start"});
+    arcadePick($("file"), quotePicked);
+  } catch (e) { say("Could not pick that picture: " + String(e.message || e)); }
+})();
+
 /** What the file in the box will cost, said before anything is paid.
  *
  *  The picking, the measuring and the swapping are all shared with messages

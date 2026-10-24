@@ -78,10 +78,10 @@
       whichever node is looking, not by a website that can go away.</div></div>
   {% if public %}
   <button type="button" class="{{ 'danger' if chain.is_mainnet }}" id="create-offer">
-    {{ 'Review creation on mainnet' if chain.is_mainnet else 'Review creation' }}</button>
+    {{ 'Review creation on Pepecoin main' if chain.is_mainnet else 'Review creation' }}</button>
   {% else %}
   <button type="submit" class="{{ 'danger' if chain.is_mainnet }}">
-    {{ 'Review creation on mainnet' if chain.is_mainnet else 'Review creation' }}</button>
+    {{ 'Review creation on Pepecoin main' if chain.is_mainnet else 'Review creation' }}</button>
   {% endif %}
   <p class="muted" style="font-size:.84rem;margin:10px 0 0">
     A token is created by one transaction and exists for as long as the chain

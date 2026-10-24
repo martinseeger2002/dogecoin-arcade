@@ -576,7 +576,7 @@ class OmniRpc:
     def _identity(self) -> Any:
         if self.chain.is_mainnet:
             raise RpcError(MISC_ERROR,
-                           "node-to-node messages are testnet only: use /rpc/test")
+                           "node-to-node messages are Pepecoin test only: use /rpc/test")
         try:
             return self.state.ensure_identity()
         except Exception as exc:

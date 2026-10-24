@@ -34,14 +34,14 @@
   </form>
   <p class="muted" style="font-size:.84rem;margin:10px 0 0">
     Publishing puts three things on the chain under that name: your
-    <strong>{{ mine.chain.label|lower }} address</strong>, your
-    <strong>mainnet address</strong>, and your <strong>key</strong>, so anybody
+    <strong>{{ mine.chain.label }} address</strong>, your
+    <strong>Pepecoin main address</strong>, and your <strong>key</strong>, so anybody
     who searches for @{{ mine.tag or 'you' }} can pay you on either chain and
     message you without asking for anything. First claim wins, and what goes on
     the chain is public and permanent.</p>
 
   {% else %}
-  <p class="muted" style="margin:0">Waiting for the testnet node. Nothing to do.</p>
+  <p class="muted" style="margin:0">Waiting for the Pepecoin test node. Nothing to do.</p>
   {% endif %}
 
   {# Your face: any piece this wallet holds, on either chain. Published with
@@ -120,7 +120,7 @@
       <div style="margin-top:8px">Your addresses and your key are on the
         <a href="/wallet">Wallet</a> page. What is published is
         <span class="mono" style="font-size:.78rem">{{ mine.address or '—' }}</span>
-        and <span class="mono" style="font-size:.78rem">{{ other_address or 'no mainnet address in this wallet' }}</span>.</div>
+        and <span class="mono" style="font-size:.78rem">{{ other_address or 'no Pepecoin main address in this wallet' }}</span>.</div>
     </div>
   </details>
 </div>

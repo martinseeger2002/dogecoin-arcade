@@ -138,7 +138,7 @@ def test_a_wif_of_another_chain_is_refused_and_says_whose(browser, served, signe
     said = _js(browser, "return await c.fromWif(args[0], 'regtest');", _wif(key, 0xb0))
     assert not said["ok"] and "Litecoin mainnet" in said["error"], said
     said = _js(browser, "return await c.fromWif(args[0], 'ltc');", _wif(key, 0x9e))
-    assert not said["ok"] and "Dogecoin mainnet" in said["error"], said
+    assert not said["ok"] and "Pepecoin main or Dogecoin" in said["error"], said
 
 
 def test_a_mistyped_wif_is_refused_by_its_checksum(browser, served, signed_in):

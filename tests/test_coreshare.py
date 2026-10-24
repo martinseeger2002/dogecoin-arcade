@@ -286,7 +286,7 @@ def test_testnet_and_one_more_core_run_here():
     cores.check({"test": "here", "main": "borrow", "doge": "here"})
     with pytest.raises(cores.CoreRule, match="at least one more"):
         cores.check({"test": "here", "main": "borrow", "doge": "borrow"})
-    with pytest.raises(cores.CoreRule, match="testnet"):
+    with pytest.raises(cores.CoreRule, match="Pepecoin test"):
         cores.check({"test": "borrow", "main": "here"})
     with pytest.raises(cores.CoreRule, match="cannot be off"):
         cores.check({"test": "here", "main": "off", "doge": "here"})

@@ -186,7 +186,7 @@ def test_the_chain_named_by_the_request_is_the_chain_it_is_offered_on(seated):
     app, *_ = seated
     answer = _ask(app, name="Wrong Chain Token", supply="5", chain="main")
     assert answer.status_code == 400, answer.text
-    assert "no mainnet address" in answer.json()["detail"], answer.json()
+    assert "no mainnet address" in answer.json()["detail"].lower(), answer.json()
 
 
 def test_the_issue_dial_closes_this_door(seated):

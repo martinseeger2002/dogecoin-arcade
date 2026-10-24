@@ -202,15 +202,16 @@ def test_the_exchange_reads_the_chain_rather_than_a_list(client):
     assert "No offers yet." in offers, "said simply (2026-09-28)"
 
 
-def test_the_exchange_opens_on_tokens(client):
-    """2026-10-11: "when they open the exchange tab, it should open to
-    tokens instead of launchpads" (it opened on the mintpads from 2026-09-28).
-    A tab nobody has heard of lands there too."""
+def test_the_exchange_opens_on_llms(client):
+    """2026-10-23: "I want the exchange tab to open directly to the LLM's market" (it opened on Tokens from
+    2026-10-11, on the mintpads before). A tab nobody has heard of lands there too; Tokens is one tap away."""
     app, _ = client
-    for where in ("/exchange", "/exchange?tab=nonsense"):
+    body = app.get("/exchange").text
+    assert 'href="/exchange?tab=llm" aria-current="page"' in body
+    assert body.count('aria-current="page"') == 1
+    for where in ("/exchange?tab=tokens", "/exchange?tab=nonsense"):       # an old link's tab still lands on Tokens
         body = app.get(where).text
         assert 'href="/exchange?tab=tokens" aria-current="page"' in body, where
-        assert body.count('aria-current="page"') == 1, where
         assert "/exchange/swap/regtest-coin/main-coin" in body, where
 
 
@@ -3048,7 +3049,7 @@ def test_your_own_tag_is_shown_with_your_own_address(client):
     panel = body[body.index("You are"):body.index("Add somebody by @tag")]
     assert "nobody yet" in panel, "it says so plainly when you have no name"
     assert "not published" in panel, "and whether the chain has your key"
-    assert "mainnet address" in panel and "key" in panel, \
+    assert "Pepecoin main address" in panel and "key" in panel, \
         "and what publishing puts on the chain under that name (D-137)"
     # The claimed case wants a derived address and a tag on the chain it was
     # derived for, which this fixture has no node for; it is what the running

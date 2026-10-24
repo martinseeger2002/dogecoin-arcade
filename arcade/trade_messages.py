@@ -110,11 +110,11 @@ def leg_from(said: Any) -> Leg:
     if kind == "nft" and (not _HEX64.match(asset) or amount != 1):
         raise TradeMessageError("an nft leg names its inscription and moves exactly one")
     if kind == "doginal" and (network not in ("doge", "main") or not INSCRIPTION_ID.match(asset) or amount != 1):
-        raise TradeMessageError("a doginal (or pepinal) leg is on Dogecoin or Pepecoin mainnet, names its inscription id and moves exactly one")
+        raise TradeMessageError("a doginal (or pepinal) leg is on Dogecoin or Pepecoin main, names its inscription id and moves exactly one")
     if kind == "token20":
         from .trade_orders import TICK20, TOKEN20_MAX
         if network not in ("doge", "main") or not TICK20.match(asset) or amount > TOKEN20_MAX:
-            raise TradeMessageError("a DRC-20 / PRC-20 leg is on Dogecoin or Pepecoin mainnet, names its tick and moves "
+            raise TradeMessageError("a DRC-20 / PRC-20 leg is on Dogecoin or Pepecoin main, names its tick and moves "
                                     "a whole number of tokens")
     for side in ("giver_key", "taker_key"):
         if not isinstance(said.get(side), str) or not _KEY.match(said[side]):

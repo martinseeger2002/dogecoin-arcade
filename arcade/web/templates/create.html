@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Create · {{ brand.name }}{% endblock %}
+{% block title %}Creator · {{ brand.name }}{% endblock %}
 {% block body %}
 {# One tab for making things (2026-09-27: "Combine the NFTs and tokens
    tab into one tab called Create", with buttons to each and to the launchpad
    wizard). #}
-<h1>Create</h1>
+{# "Creator" since 2026-10-23 (the operator: "Change the create tab to the creator tab"), with ords beside the rest. #}
+<h1>Creator</h1>
 {# Testnet or mainnet, chosen here (2026-10-09: "enable the ability for people to
    create tokens NFT's and NFT collections on main net. It should be an option on
    the create tab"). The choice is this browser's own; the pages it opens carry it. #}
@@ -20,6 +21,11 @@
     <span class="ico" aria-hidden="true">&#129689;</span>
     <strong>Tokens</strong>
     <span class="muted">Make your own token, send it, and run one you issued.</span>
+  </a>
+  <a class="panel" href="/create/ord">
+    <span class="ico" aria-hidden="true">&#128220;</span>
+    <strong>Ords</strong>
+    <span class="muted">Inscribe a Doginal, Pepinal, Bellinal or Luckinal from your own wallet, and group them into a collection.</span>
   </a>
   <a class="panel" href="/mintpad/new">
     <span class="ico" aria-hidden="true">&#128640;</span>

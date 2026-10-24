@@ -116,7 +116,7 @@ def test_every_network_word_says_which_coin(client, monkeypatch):
     from arcade.web.app import TEMPLATES
     badge = TEMPLATES.env.globals["net_badge"]
     # As the chain's coin now (2026-10-18: "Use the icons ... rather than text badges"), named on hover.
-    assert 'src="/coin-pep-test.png" alt="PEP TEST"' in badge(False) and "Pepecoin testnet" in badge(False)
+    assert 'src="/coin-pep-test.png" alt="PEP TEST"' in badge(False) and "Pepecoin test" in badge(False)
     assert 'src="/coin-pep.png" alt="PEP"' in badge(True)
     assert 'src="/coin-doge.png"' in badge("doge") and 'src="/coin-doge.png"' in badge(state.doge)
     from test_web import _stylesheet

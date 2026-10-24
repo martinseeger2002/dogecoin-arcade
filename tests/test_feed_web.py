@@ -72,7 +72,7 @@ def test_you_need_a_name_before_you_can_post(client):
     # Refused, with a reason: no name here, or no node to claim one with.
     # Either way nothing was posted, which is the part that matters.
     after = " ".join(app.get("/feed").text.split())
-    assert "claim a @tag first" in after or "waiting for the testnet node" in after
+    assert "claim a @tag first" in after or "waiting for the Pepecoin test node" in after
     with state.store() as store:
         assert store.feed_posts(state.messaging.network) == []
 

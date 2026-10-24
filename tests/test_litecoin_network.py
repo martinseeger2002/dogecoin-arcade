@@ -194,10 +194,10 @@ def test_litecoin_trades_are_mainnet_with_their_own_big_line():
 def test_the_exchange_offers_an_l_main_chip(client, monkeypatch):
     app, state = client
     _with_ltc(state, monkeypatch, ready=False)
-    page = app.get("/exchange").text
+    page = app.get("/exchange?tab=tokens").text
     assert 'title="Litecoin (LTC) – Main opens when its node has synced (91.2% so far)"' in page, "grayed while syncing"
     _with_ltc(state, monkeypatch, ready=True)
-    page = app.get("/exchange").text
+    page = app.get("/exchange?tab=tokens").text
     assert "show=litecoin" in page and 'src="/coin-ltc.png" alt="LTC"' in page
     assert app.get("/exchange?show=litecoin").status_code == 200
 

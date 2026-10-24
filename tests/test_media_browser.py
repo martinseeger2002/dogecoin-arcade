@@ -163,7 +163,7 @@ def test_a_game_not_allowed_is_told_off_and_nothing_opens(tmp_path, no_nodes):
             _until(ga, "window.room && window.room.media && window.room.me", "in")
             ga.evaluate("window.said = null; window.room.media.start({video: true, audio: true})"
                         ".then(function (r) { window.said = r; }); 0")
-            pa.wait_for_selector("text=Allow this game to use your camera and microphone?", timeout=10000)
+            pa.wait_for_selector("text=Allow this app to use your camera and microphone?", timeout=10000)
             pa.get_by_role("button", name="Cancel").click()
             _until(ga, "window.said", "the answer")
             assert ga.evaluate("window.said") == {"ok": False, "error": "off"}
@@ -173,7 +173,7 @@ def test_a_game_not_allowed_is_told_off_and_nothing_opens(tmp_path, no_nodes):
             # Said yes: allowed from then on, and it opens.
             ga.evaluate("window.said = null; window.room.media.start({video: true, audio: true})"
                         ".then(function (r) { window.said = r; }); 0")
-            pa.wait_for_selector("text=Allow this game to use your camera and microphone?", timeout=10000)
+            pa.wait_for_selector("text=Allow this app to use your camera and microphone?", timeout=10000)
             pa.get_by_role("button", name="Allow camera & microphone").click()
             _until(ga, "window.said", "the answer")
             assert ga.evaluate("window.said")["ok"] is True
@@ -285,6 +285,25 @@ def test_voice_only_then_the_camera_joins_mid_call(tmp_path, no_nodes):
             ga.evaluate(f"window.room.media.share({idb!r}, {{video: false, audio: true}})")
             _until(gb, f"window.has[{ida!r}] && window.has[{ida!r}].audio && !window.has[{ida!r}].video",
                    "the picture stops, the voice goes on", timeout=20000)
+            chrome.close()
+    finally:
+        server.stop()
+        state.mesh.stop()
+
+
+def test_ring_and_ringed_answer_in_the_viewer(tmp_path, no_nodes):
+    """arcade.realtime.ring / ringed (arcade/ring.py) reach the viewer and come back: a page opened without a
+    notification's ring has none, and a guest cannot ring anybody."""
+    state, server, base = _server(tmp_path)
+    try:
+        with sync_api.sync_playwright() as pw:
+            chrome = _launch(pw)
+            pa, _, _ = _player(chrome, base)
+            ga = _game(pa)
+            _until(ga, "window.arcade && window.arcade.realtime && window.arcade.realtime.ringed", "loaded")
+            assert ga.evaluate("arcade.realtime.ringed()") is None
+            said = ga.evaluate("arcade.realtime.ring('nSomebody', {line: 'hi'})")
+            assert said["ok"] is False and "sign in" in said["error"], said
             chrome.close()
     finally:
         server.stop()

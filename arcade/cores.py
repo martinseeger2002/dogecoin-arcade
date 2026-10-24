@@ -58,14 +58,14 @@ def sharing(settings: dict, net: str) -> bool:
 def check(modes: dict[str, str], required: str = REQUIRED) -> None:
     """Raise CoreRule unless testnet runs here and at least one other chain does too."""
     if modes.get(required, HERE) != HERE:
-        raise CoreRule("Pepecoin testnet always runs on this machine: the Messenger and the @names live there")
+        raise CoreRule("Pepecoin test always runs on this machine: the Messenger and the @names live there")
     for net, m in modes.items():
         if m not in (HERE, BORROW, OFF):
             raise CoreRule(f"{net}: run here, borrow, or off")
         if m == OFF and net not in OPTIONAL and net != required:
             raise CoreRule(f"{net} cannot be off: it can be run here or borrowed")
     if not any(m == HERE for net, m in modes.items() if net != required):
-        raise CoreRule("run at least one more chain's Core here besides Pepecoin testnet -- "
+        raise CoreRule("run at least one more chain's Core here besides Pepecoin test -- "
                        "every arcade brings a Core as well as borrowing")
 
 

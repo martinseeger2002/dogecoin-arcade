@@ -13,6 +13,9 @@
    Offers with a count of what waits for an answer (the Exchange redesign, 2026-10-09). #}
 {% set waiting_offers = (offers_in | rejectattr('settled') | list | length) + ((x_in or []) | length) %}
 <nav class="ex-seg" aria-label="Exchange">
+  {#- LLM service (2026-10-23: "You can add the LLM exchange page to the rest of the exchange"; then "I want LLM to
+      be the first option and ... change it to LLM's"). #}
+  <a class="{{ 'on' if current == 'llm' }}" href="/exchange?tab=llm"{% if current == 'llm' %} aria-current="page"{% endif %}>LLMs</a>
   <a class="{{ 'on' if current == 'tokens' }}" href="/exchange?tab=tokens"{% if current == 'tokens' %} aria-current="page"{% endif %}>Tokens</a>
   <a class="{{ 'on' if current == 'market' }}" href="/exchange?tab=market"{% if current == 'market' %} aria-current="page"{% endif %}>NFTs</a>
   <a class="{{ 'on' if current == 'mintpads' }}" href="/exchange?tab=mintpads"{% if current == 'mintpads' %} aria-current="page"{% endif %}>Launchpad</a>
@@ -316,7 +319,7 @@ document.addEventListener('click', function (ev) {
        alt="{{ b.name }}" loading="lazy" onerror="this.remove()">{% else %}<span class="muted" style="display:grid;place-items:center;height:100%;font-size:.7rem">{{ (b.content_type.split('/')[-1] or 'file')[:6] }}</span>{% endif %}</a>
   {%- endmacro %}
   {% if x_in %}
-  <div class="ex-h">Offers in mainnet PEP for your things</div>
+  <div class="ex-h">Offers in Pepecoin main PEP for your things</div>
   <div class="ex-card" style="padding:4px 14px">
     {% for b in x_in %}
     <div class="offerrow">
@@ -616,6 +619,8 @@ document.addEventListener('click', function (ev) {
   {% endif %}
   {% endif %}
 
+{% elif tab == 'llm' %}
+{% include "_llm_tab.html" %}
 {% elif tab == 'tokens' %}
   {# The coin side is said as the coin, not the chain (2026-10-08: PEP, and PEP TEST on testnet). #}
   {% set coin_name = chain.params.coin %}

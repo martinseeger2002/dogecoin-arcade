@@ -1168,7 +1168,9 @@ def test_full_screen_carries_the_wallet_into_the_page(client):
         assert "Pull to refresh" not in full, "a game's touch controls stay the game's"
         assert 'class="fullscreen"' in full
         assert "maximum-scale=1" in full, "a text box in a game must not zoom the page around it"
-        assert "maximum-scale=1" not in app.get("/feed").text, "only the full-screen page"
+        assert "maximum-scale=1" in app.get("/feed").text, \
+            "2026-10-23: no page zooms when a field is tapped (the iPhone PWA)"
+        assert "viewport-fit=cover" not in app.get("/feed").text, "the edge-to-edge fit stays the full-screen page's"
         assert "position: fixed" not in full.split("<style>")[-1].split("</style>")[0]
         for bridge in ('m.arcade === "claim"', 'm.arcade !== "mint"'):
             assert bridge in full, f"the wallet bridge is still here: {bridge}"

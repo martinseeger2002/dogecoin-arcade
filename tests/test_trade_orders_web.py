@@ -198,3 +198,16 @@ def test_an_accounts_delegated_order_shows_to_the_operator(client, monkeypatch):
     _file(state, oid="order-held", node=_Mesh.node_id)
     page = app.get("/exchange?tab=tokens").text
     assert "No arcade is offering a swap right now" not in page
+
+
+def test_the_book_names_the_orders_it_holds_as_cancelled(tmp_path):
+    """2026-10-23: a tab kept re-posting two long-cancelled frgy orders; the book says which of a lister's are cancelled."""
+    import sqlite3
+    from arcade.trade_orders import OrderBook
+    book = OrderBook(tmp_path / "trade-orders.sqlite")
+    with sqlite3.connect(book.path) as conn:
+        for oid, gone in (("ord-a", 1), ("ord-b", 0)):
+            conn.execute("INSERT INTO trade_order(id, lister, network, inscription, body, node, expires, cancelled) "
+                         "VALUES (?, 'L', 'test', 'x', '{}', 'n', 9999999999, ?)", (oid, gone))
+    assert book.cancelled_of("L", ["ord-a", "ord-b", "ord-c"]) == ["ord-a"]
+    assert book.cancelled_of("someone-else", ["ord-a"]) == [], "another lister's order is never named"

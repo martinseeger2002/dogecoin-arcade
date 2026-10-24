@@ -33,6 +33,19 @@ self.addEventListener('push', event => {
       const r = await fetch('/account/push/news', {credentials: 'include', cache: 'no-store'});
       if (r.ok) news = (await r.json()).news || [];
     } catch (e) { /* the node is away: say something anyway */ }
+    // A ring (arcade/ring.py): an app calling, from somebody in the address book. It stays until answered or
+    // dismissed and buzzes long where the phone lets a page do that (Android); iPhone plays its one sound.
+    const rings = news.filter(n => n.kind === 'ring');
+    if (rings.length) {
+      const r = rings[rings.length - 1];
+      await Promise.all(rings.slice(0, -1).map(o => self.registration.showNotification(
+        'Missed: ' + o.from, {body: o.app, tag: 'arcade-missed', icon: '/icon-192.png', badge: '/icon-192.png',
+                              data: {url: o.url}})));
+      return self.registration.showNotification(r.from + ' \u00b7 ' + r.app, {
+        body: r.line || 'is ringing you. Tap to open.', tag: 'arcade-ring', renotify: true,
+        requireInteraction: true, vibrate: [600, 250, 600, 250, 600, 250, 600, 250, 600],
+        icon: '/icon-192.png', badge: '/icon-192.png', data: {url: r.url}});
+    }
     const fills = news.filter(n => n.kind === 'fill');
     if (fills.length) {
       return self.registration.showNotification('Your buy order can fill', {

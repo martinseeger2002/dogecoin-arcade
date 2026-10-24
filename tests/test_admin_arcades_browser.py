@@ -82,7 +82,8 @@ def test_the_arcades_panel_draws_a_row_per_arcade_with_coin_faces(browser, serve
                                   " function (i) { return i.complete && i.naturalWidth > 0; })"), "every face loads"
     unshared = rows[0].find_elements(By.CSS_SELECTOR, ".cores img.coin.unshared")
     assert unshared and float(unshared[0].value_of_css_property("opacity")) == pytest.approx(0.4)
-    card = browser.find_element(By.ID, "arcadescard").text
+    # Drawn by the Admin state's answer, which may come after the arcades' rows: waited for, not assumed.
+    card = WebDriverWait(browser, 15).until(lambda d: d.find_elements(By.ID, "arcadescard") or None)[0].text
     assert "2" in card and "running" in card and "1 linked to this one" in card
     cards = browser.find_element(By.ID, "cards").text
     assert "balance" not in cards and "notifications" not in cards

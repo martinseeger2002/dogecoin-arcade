@@ -258,6 +258,21 @@
     }
   };
 
+  // RINGING (arcade/ring.py, 2026-10-23): ring somebody while your app is closed on their phone. It wakes them only
+  // if they turned on Notifications on your app's card and you are in their address book.
+  //   arcade.realtime.ring(address, {line: 'Video call', link: 'call=x7'}) -> {ok, rung, why}
+  //   arcade.realtime.ringed() -> {from, tag, link, line, at} when a tapped notification opened your app, else null
+  function ring(address, options) {
+    options = options || {};
+    return ask({op: 'ring', room: '', to: String(address || ''), line: String(options.line || '').slice(0, 80),
+                link: String(options.link || '').slice(0, 200)}, 60000)
+      .then(function (said) { return {ok: true, rung: !!said.rung, why: said.why || ''}; },
+            function (err) { return {ok: false, error: err.message}; });
+  }
+  function ringed() {
+    return ask({op: 'ringed', room: ''}).then(function (said) { return said.ring || null; }, function () { return null; });
+  }
+
   // join(room, {game}): `game` defaults to this inscription, so only copies of
   // the same page meet. A game whose versions are separate inscriptions names
   // its family instead (its registry's id, say) and every version shares rooms.
@@ -380,5 +395,5 @@
   }
 
   window.arcade = window.arcade || {};
-  window.arcade.realtime = {join: join, area: area, MAX_BYTES: 512};
+  window.arcade.realtime = {join: join, area: area, ring: ring, ringed: ringed, MAX_BYTES: 512};
 })();

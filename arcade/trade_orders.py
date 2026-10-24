@@ -70,12 +70,12 @@ def _side(said: Any) -> dict:
     # inscription id, as ord-dogecoin writes it; one, on Dogecoin, locked by koinu order (htlc.doginal_out).
     # Pepinals too (2026-10-17: "Do the same for pepinals"): the same ord inscriptions on Pepecoin mainnet.
     if kind == "doginal" and (network not in ("doge", "main") or not INSCRIPTION_ID.match(asset) or amount != 1):
-        raise OrderError("a doginal (or pepinal) is on Dogecoin or Pepecoin mainnet, named by its inscription id, "
+        raise OrderError("a doginal (or pepinal) is on Dogecoin or Pepecoin main, named by its inscription id, "
                          "and moves exactly one")
     # A DRC-20 / PRC-20 token (2026-10-22: "Add prc 20 and drc 20 tokens to the token/coin exchange"): `asset`
     # its tick, `amount` WHOLE tokens; locked as a transfer note on the lock itself (arcade/token20_swap.py).
     if kind == "token20" and (network not in ("doge", "main") or not TICK20.match(asset) or amount > TOKEN20_MAX):
-        raise OrderError("a DRC-20 / PRC-20 token is on Dogecoin or Pepecoin mainnet, named by its tick (lower "
+        raise OrderError("a DRC-20 / PRC-20 token is on Dogecoin or Pepecoin main, named by its tick (lower "
                          "case), and moves a whole number of tokens")
     out = {"network": network, "kind": kind, "asset": asset, "amount": amount}
     # The lister's lock-fee terms for the side it locks (2026-10-21: "the sender of each lock script pay the
@@ -231,6 +231,16 @@ class OrderBook:
         with self._open() as conn:
             conn.execute("UPDATE trade_order SET cancelled=1 WHERE id=?", (order_id,))
         self._changed([order_id])
+
+    def cancelled_of(self, lister: str, ids: list[str]) -> list[str]:
+        """Which of `ids`, listed by `lister`, this book already holds as cancelled (a tab that still lists them should
+        forget them: 2026-10-23, @apple's tab re-posted two long-cancelled frgy orders with every new listing)."""
+        if not lister or not ids:
+            return []
+        with self._open() as conn:
+            return [r[0] for r in conn.execute(
+                f"SELECT id FROM trade_order WHERE cancelled=1 AND lister=? AND id IN ({','.join('?' * len(ids))})",
+                (lister, *ids))]
 
     def cancel_local(self, listers: list[str], ids: list[str]) -> int:
         """Mark `ids` cancelled, where one of `listers` listed them (its own withdraw, said to this node)."""

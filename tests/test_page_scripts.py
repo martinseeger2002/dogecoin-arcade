@@ -36,7 +36,7 @@ NODE = shutil.which("node")
 #: belongs in it -- which is the same bargain test_public makes about its own.
 PAGES = [
     "/", "/admin", "/admin/login", "/approvals", "/backup", "/clone", "/collections",
-    "/compose", "/contacts", "/create", "/docs", "/exchange", "/feed", "/games",
+    "/compose", "/contacts", "/create", "/create/ord", "/docs", "/exchange", "/feed", "/games",
     "/guide", "/inbox", "/inscriptions", "/inscriptions/collection", "/instances",
     "/join", "/join/keys", "/launch", "/launches", "/listings", "/me", "/me/accounts",
     "/me/backup", "/me/contacts", "/me/messages", "/me/nfts", "/me/notifications",

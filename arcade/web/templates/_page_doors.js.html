@@ -38,7 +38,7 @@
     var CHAIN = {network: "{{chain.network}}",
                  version: {{chain.params.pubkeyhash_version}}};
     var doors = {access: 'viewer', contacts: 'viewer', storage: '/storage/', node: '/node/', swap: '/swap/', owner: '/owner/',
-                 realtime: '/realtime/', escrow: '/r/escrow/', state: '/r/state/'};
+                 realtime: '/realtime/', escrow: '/r/escrow/', state: '/r/state/', llm: 'viewer'};
 
     // Realtime rooms (arcade/web/realtime.py, templates/realtime.js): this page
     // joins on the frame's behalf, holds the token and the stream, and passes
@@ -284,7 +284,8 @@
     var RTC = '\u001farcade-rtc:', FAST_WAIT = 12000, FAST_MAX = 16384, FAST_PEERS = 19, RTC_PIECE = 300;
     var fastIce = null;
     function fastServers(){
-      if (!fastIce) fastIce = fetch('/realtime/ice', {cache: 'no-store'}).then(function(r){ return r.json(); })
+      // Which app asks: the operator chooses the apps their relay serves (realtime.py relay_for, 2026-10-23).
+      if (!fastIce) fastIce = fetch('/realtime/ice?app=' + encodeURIComponent(here), {cache: 'no-store'}).then(function(r){ return r.json(); })
         .then(function(j){ return (j && j.iceServers) || []; })
         .catch(function(){ fastIce = null; return []; });
       return fastIce;
@@ -332,6 +333,7 @@
         if (!h.fast || h.fast.peers[peer.p.id] !== peer) throw new Error('gone');
         try { if (peer.pc) peer.pc.close(); } catch (err) {}
         var pc = peer.pc = new RTCPeerConnection({iceServers: servers});
+        pc._relay = servers.some(function(s){ return !!s.username; });
         peer.u = pc.createDataChannel('u', {negotiated: true, id: 0, ordered: false, maxRetransmits: 0});
         peer.r = pc.createDataChannel('r', {negotiated: true, id: 1, ordered: true});
         mediaPc(name, h, peer, pc);
@@ -356,27 +358,44 @@
         return pc;
       });
     }
+    // Until gathering is complete, or 2.5 s -- or, when a relay was handed out, until it has answered too (up to
+    // 6 s): a home behind Starlink's shared IPv4 is reached only through it (2026-10-23).
     function fastGathered(pc){
       return new Promise(function(done){
         if (pc.iceGatheringState === 'complete') return done();
-        var t = setTimeout(done, 2500);
+        var relayed = false, start = Date.now(), wantsRelay = !!pc._relay;
+        var finish = function(){ clearInterval(t); done(); };
+        var t = setInterval(function(){
+          var waited = Date.now() - start;
+          if (waited >= 6000 || (waited >= 2500 && (!wantsRelay || relayed))) finish();
+        }, 100);
+        pc.addEventListener('icecandidate', function(e){
+          if (e.candidate && / typ relay/.test(e.candidate.candidate)) relayed = true;
+        });
         pc.addEventListener('icegatheringstatechange', function(){
-          if (pc.iceGatheringState === 'complete') { clearTimeout(t); done(); }
+          if (pc.iceGatheringState === 'complete') finish();
         });
       });
     }
     // The description boiled down to what the other side needs (a full one is about 1 KB, the room takes 512 B):
-    // ICE user and password, the DTLS fingerprint and role, and the UDP candidates.
+    // ICE user and password, the DTLS fingerprint and role, and the UDP candidates -- at most 10, the relay's and
+    // the public ones first, so a machine with many local addresses never crowds out the ones another home can use.
+    var SDP_KEEP = {r: 3, s: 4, p: 2, h: 10}, SDP_MOST = 10;
     function sdpPack(sdp, kind){
-      var out = {t: kind, c: []};
+      var out = {t: kind, c: []}, found = {r: [], s: [], p: [], h: []};
       sdp.split(/\r?\n/).forEach(function(l){
         var m;
         if ((m = /^a=ice-ufrag:(.+)$/.exec(l))) out.u = m[1];
         else if ((m = /^a=ice-pwd:(.+)$/.exec(l))) out.p = m[1];
         else if ((m = /^a=fingerprint:sha-256 (.+)$/i.exec(l))) out.f = m[1].replace(/:/g, '');
         else if ((m = /^a=setup:(\w+)$/.exec(l))) out.s = m[1];
-        else if ((m = /^a=candidate:\S+ 1 udp \d+ (\S+) (\d+) typ (host|srflx|prflx|relay)/i.exec(l))
-                 && out.c.length < 8) out.c.push(m[1] + ' ' + m[2] + ' ' + m[3][0]);
+        else if ((m = /^a=candidate:\S+ 1 udp \d+ (\S+) (\d+) typ (host|srflx|prflx|relay)/i.exec(l))) {
+          var k = m[3][0].toLowerCase();
+          if (found[k].length < SDP_KEEP[k]) found[k].push(m[1] + ' ' + m[2] + ' ' + k);
+        }
+      });
+      ['r', 's', 'p', 'h'].forEach(function(k){
+        found[k].forEach(function(c){ if (out.c.length < SDP_MOST) out.c.push(c); });
       });
       return out;
     }
@@ -463,7 +482,7 @@
       var key = p.id + '/' + msg.k, got = h.fast.parts[key] || (h.fast.parts[key] = []);
       got[msg.i | 0] = msg.d;
       var n = msg.n | 0;
-      if (n < 1 || n > 8) { delete h.fast.parts[key]; return; }
+      if (n < 1 || n > 8) { delete h.fast.parts[key]; return; }   // 8 x RTC_PIECE: room for 10 candidates
       for (var i = 0; i < n; i++) if (got[i] == null) return;
       delete h.fast.parts[key];
       var o; try { o = JSON.parse(got.join('')); } catch (err) { return; }
@@ -539,6 +558,8 @@
       pc.ontrack = function(ev){
         if (peer.pc !== pc) return;
         var stream = peer.remote || (peer.remote = new MediaStream());
+        mediaOf(h);
+        mediaWatch();
         if (stream.getTracks().indexOf(ev.track) < 0) stream.addTrack(ev.track);
         var said = function(){ mediaRemoteSaid(name, h, peer); };
         ev.track.onunmute = said;
@@ -549,16 +570,36 @@
       };
     }
     // What the game is told of a player's picture and sound: 'media' {video, audio} while they send, 'media-off'.
-    function mediaRemoteSaid(name, h, peer){
-      var tracks = peer.remote ? peer.remote.getTracks().filter(function(t){ return t.readyState === 'live' && !t.muted; }) : [];
+    // Worked out again from the tracks themselves, never only from their events (2026-10-23, the Cul-de-sac session:
+    // with three in a call a picture played in the viewer and its game never heard 'media' -- a track that arrived
+    // muted and whose unmute was missed). Also on every picture's loadeddata and resize, and once a second (mediaCheck).
+    function mediaRemoteSaid(name, h, peer, quiet){
+      var tile = h.media && h.media.tiles[peer.p.id];
+      var tracks = peer.remote ? peer.remote.getTracks().filter(function(t){
+        return t.readyState === 'live' && (!t.muted || (t.kind === 'video' && tile && tile.videoWidth > 0));
+      }) : [];
       var video = tracks.some(function(t){ return t.kind === 'video'; }), audio = tracks.some(function(t){ return t.kind === 'audio'; });
       var was = peer.said || '', now = video || audio ? (video ? 'v' : '') + (audio ? 'a' : '') : '';
-      if (was === now) { mediaDraw(h); return; }
+      if (was === now) { if (!quiet) mediaDraw(h); return; }
       peer.said = now;
       if (now) mediaEvent(name, h, {type: 'media', member: peer.p, video: video, audio: audio});
       else mediaEvent(name, h, {type: 'media-off', member: peer.p});
       mediaDraw(h);
     }
+    var mediaChecking = null;
+    function mediaCheck(){
+      var any = false;
+      for (var k in rt) {
+        var h = rt[k];
+        if (!h.fast || !h.media) continue;
+        for (var id in h.fast.peers) {
+          var pr = h.fast.peers[id];
+          if (pr.remote) { any = true; mediaRemoteSaid(k, h, pr, true); }
+        }
+      }
+      if (!any && mediaChecking) { clearInterval(mediaChecking); mediaChecking = null; }
+    }
+    function mediaWatch(){ if (!mediaChecking) mediaChecking = setInterval(mediaCheck, 1000); }
     // A pair connected (again, after a dropped link: a new connection): what this player shares with them goes on it.
     function mediaPeerUp(name, h, peer){
       var md = h.media;
@@ -633,9 +674,11 @@
         var want = {video: !!m.video, audio: !!m.audio};
         if (!want.video && !want.audio) { answer({ok: false, error: 'ask for video, audio or both'}); return; }
         mediaAllowed().then(function(yes){
-          if (!yes) { answer({ok: false, error: 'off', why: 'Camera & microphone is off on this game’s card'}); return; }
+          if (!yes) { answer({ok: false, error: 'off', why: 'Camera & microphone is off on this app’s card'}); return; }
           return navigator.mediaDevices.getUserMedia({
-            video: want.video ? {width: {ideal: 640}, height: {ideal: 480}} : false, audio: want.audio
+            // No shape forced: a phone's camera stays portrait, a PC's landscape (2026-10-23: "All should
+            // maintain their aspect ratios"); only capped, for a call of up to 20.
+            video: want.video ? {width: {max: 1280}, height: {max: 1280}} : false, audio: want.audio
           }).then(function(stream){
             if (rt[name] !== h) { stream.getTracks().forEach(function(t){ t.stop(); }); throw new Error('left the room'); }
             var old = md.stream;                            // a second start: the new tracks replace the old
@@ -732,6 +775,8 @@
         v.autoplay = true; v.playsInline = true; v.setAttribute('playsinline', '');
         v.dataset.media = key;
         v.style.cssText = 'position:absolute;background:#000;border-radius:6px;display:none';
+        v.addEventListener('loadeddata', mediaCheck);
+        v.addEventListener('resize', mediaCheck);
         mediaLayer().appendChild(v);
       }
       return v;
@@ -760,7 +805,8 @@
           v.style.display = 'block';
           v.style.left = at.x + 'px'; v.style.top = at.y + 'px';
           v.style.width = at.w + 'px'; v.style.height = at.h + 'px';
-          v.style.objectFit = at.fit;
+          v.style.objectFit = at.fit;                 // cover: centre-cropped; contain: black bars; never stretched
+          v.style.objectPosition = 'center';
           v.style.transform = at.mirror ? 'scaleX(-1)' : '';
         } else v.style.display = 'none';
       });
@@ -800,11 +846,11 @@
       el.style.cssText = 'position:absolute;left:50%;top:16px;transform:translateX(-50%);max-width:min(520px,90%);'
         + 'pointer-events:auto;padding:12px 14px;text-align:center;z-index:3';
       var p = document.createElement('p'); p.style.margin = '0 0 8px';
-      p.textContent = '\u{1F3A5} ' + ((g && g.name) || 'This game') + ' wants your camera and microphone. '
-        + 'Turn on Camera & microphone on its game card to allow it.';
+      p.textContent = '\u{1F3A5} ' + ((g && g.name) || 'This app') + ' wants your camera and microphone. '
+        + 'Turn on Camera & microphone on its card to allow it.';
       var a = document.createElement('a'); a.className = 'btn small';
-      a.href = '/games#game-' + ((g && g.card) || here); a.target = '_blank'; a.rel = 'noopener';
-      a.textContent = 'Open its game card';
+      a.href = '/apps#game-' + ((g && g.card) || here); a.target = '_blank'; a.rel = 'noopener';
+      a.textContent = 'Open its card';
       var x = document.createElement('button'); x.type = 'button'; x.className = 'btn small'; x.textContent = 'Not now';
       x.style.marginLeft = '6px';
       x.onclick = function(){ el.remove(); mediaNoteEl = null; };
@@ -815,6 +861,37 @@
     window.addEventListener('storage', function(e){
       if (mediaNoteEl && e.key && e.key.indexOf(ARCADE_MEDIA) === 0 && e.newValue === 'yes') { mediaNoteEl.remove(); mediaNoteEl = null; }
     });
+    // RINGING (arcade/ring.py): the app asks to ring an address; the viewer adds who is ringing (the player's own
+    // certificate, as a realtime join proves it) and WHICH app -- this frame's page, never what the page says -- and
+    // the node passes it on. Whether it wakes anybody is the recipient's node's to decide (their switch, their book).
+    function ringDoor(m, answer){
+      if (viewer !== 'account') { answer({ok: false, error: 'sign in to ring anybody'}); return; }
+      var to = String(m.to || '').trim();
+      if (!to) { answer({ok: false, error: 'ring whom?'}); return; }
+      fetch('/realtime/hello', {cache: 'no-store'}).then(function(r){ return r.json(); })
+        .then(function(hello){ return realtimeProof(hello, ''); })
+        .then(function(proof){
+          if (!proof) throw new Error('unlock your wallet: a ring says who you are');
+          return fetch('/account/ring', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            credentials: 'same-origin', body: JSON.stringify({to: to, app: here, line: String(m.line || ''),
+              link: String(m.link || ''), sig: proof.sig, expires: proof.expires})});
+        })
+        .then(function(r){ return r.json(); })
+        .then(function(j){ answer(j.ok ? {ok: true, rung: !!j.rung, why: j.why || ''} : {ok: false, error: j.error || 'refused'}); })
+        .catch(function(err){ answer({ok: false, error: String((err && err.message) || err || 'refused')}); });
+    }
+    // The ring a tapped notification opened this page with (?ring=), for this app only.
+    function ringedDoor(answer){
+      var id = '';
+      try { id = new URLSearchParams(location.search).get('ring') || ''; } catch (err) {}
+      if (!/^[0-9a-f]{16}$/.test(id) || viewer !== 'account') { answer({ok: true, ring: null}); return; }
+      fetch('/account/ring/' + id, {cache: 'no-store', credentials: 'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+          answer({ok: true, ring: j.ok && j.app === here
+            ? {from: j.from, tag: j.tag || '', link: j.link || '', line: j.line || '', at: j.at} : null});
+        }).catch(function(){ answer({ok: true, ring: null}); });
+    }
     function realtimeDoor(m, answer, frame){
       var name = String(m.room || '');
       if (m.op === 'join') {
@@ -829,6 +906,8 @@
         });
         return;
       }
+      if (m.op === 'ring') { ringDoor(m, answer); return; }
+      if (m.op === 'ringed') { ringedDoor(answer); return; }
       var held = rt[name];
       if (m.op === 'fast') { if (held) fastSend(held, m); return; }   // many a second: never answered
       if (!held) { answer({ok: false, error: 'join the room first'}); return; }
@@ -1248,22 +1327,157 @@
       var op = m.op || 'list';
       if (op === 'add' || op === 'remove') { contactsChange(op, m, answer); return; }
       if (op !== 'list') { answer({ok: false, error: 'contacts: op is list, add or remove'}); return; }
-      if (viewer !== 'account') { answer({ok: true, contacts: []}); return; }
-      var slot = 'arcade.contacts.allow:' + here, said = null;
-      try { said = localStorage.getItem(slot); } catch (err) {}
-      var asked = said === 'yes' ? Promise.resolve(true) : said === 'no' ? Promise.resolve(false)
-        : (contactsCards++, arcadeAsk('Let this game see your contacts?',
-            'It will get the names and addresses in your address book, and nothing else of it. '
-            + 'A game can send what it gets to its own server: only say yes to a game you trust. '
-            + 'This browser remembers your answer for this game.', 'Allow'))
-          .then(function(yes){ contactsCards--; try { localStorage.setItem(slot, yes ? 'yes' : 'no'); } catch (err) {} return !!yes; });
+      // Empty, and why (the Cul-de-sac session 2026-10-23): 'operator' (the node's own wallet view has no book),
+      // 'guest' (not signed in), 'off' (the app's Contacts switch is off), 'no' (a page with no card, told no).
+      if (viewer !== 'account') { answer({ok: true, contacts: [], why: viewer === 'wallet' ? 'operator' : 'guest'}); return; }
+      if (typeof ARCADE_SIGNED !== 'undefined' && !ARCADE_SIGNED) { answer({ok: true, contacts: [], why: 'guest'}); return; }
+      var asked = arcadeContactsAllowed(here) ? Promise.resolve(true) : arcadeGameOf(here).then(function(g){
+        // An app with a card: its Contacts switch decides, and nothing is asked here (2026-10-23: "Allow
+        // access to Contacts should be another box on the card"). Off: the card shows the switch from now on.
+        if (g.game) {
+          if (arcadeContactsOn(here, g)) return true;
+          arcadeContactsUsed(here);
+          if (g.opens) arcadeContactsUsed(g.opens);
+          return 'off';
+        }
+        // A page with no card to tick asks, once a visit (a 'no' is not kept: it can say yes next time).
+        contactsCards++;
+        return arcadeContactsAsk(here, gameName, makerName, maker)
+          .then(function(yes){ contactsCards--; return yes || 'no'; });
+      });
       asked.then(function(yes){
-        if (!yes) { answer({ok: true, contacts: []}); return; }
+        if (yes !== true) { answer({ok: true, contacts: [], why: yes}); return; }
         return import('/messaging.js').then(function(mail){ return mail.book(); }).then(function(all){
           answer({ok: true, contacts: (all || []).filter(function(c){ return c && c.address; })
                   .map(function(c){ return {address: c.address, tag: c.tag || ''}; })});
         });
       }).catch(function(){ answer({ok: true, contacts: []}); });
+    }
+
+    // arcade.llm (arcade/llm.py, 2026-10-23: apps and players on every arcade buy model tokens). The signed-in
+    // player pays from the credit they hold with a seller (Exchange -> LLM); a page is let use it only after the
+    // player says yes once in this browser. Pieces of the reply go back to the frame as they are written
+    // ({part: true, delta}), then the whole answer.
+    var LLM_OK = 'arcade.llm.ok:';
+    function llmJSON(url, body){
+      return fetch(url, body ? {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify(body)} : {credentials: 'same-origin', cache: 'no-store'})
+        .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){
+          if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status)); return j; }); });
+    }
+    function llmGrant(o){
+      if (o.here || o.granted) return Promise.resolve();
+      return llmJSON('/account/llm/grant?seller=' + encodeURIComponent(o.seller)).then(function(said){
+        if (said.ok) return;
+        var net = said.sign.chain.network;
+        return import('/wallet.js').then(function(w){
+          return w.opened(said.sign.chain).then(function(k){
+            return k || arcadeKeys(said.sign.chain, 'To use another arcade\'s model, your wallet signs who you are, once a month.');
+          });
+        }).then(function(keys){
+          if (!keys || !keys.on || !keys.on[net]) throw new Error('unlock your wallet first');
+          return import('/coins.js').then(function(coins){ return coins.signMessage(keys.on[net].key, said.sign.message, said.sign.magic); });
+        }).then(function(sig){ return llmJSON('/account/llm/grant', {seller: o.seller, expires: said.sign.expires, sig: sig}); });
+      });
+    }
+    function llmPick(book, req){
+      var offers = book.offers || [];
+      var named = offers.filter(function(o){ return !req.seller || o.seller === req.seller || (req.seller === 'here' && o.here); });
+      if (!named.length) return Promise.reject(new Error(offers.length ? 'that seller sells no model now' : 'no arcade sells a model right now'));
+      // The seller and coin the player has credit with, this arcade's own first; else the first named.
+      var tries = named.filter(function(o){ return o.here || o.granted || o.free; });
+      function next(i){
+        if (i >= tries.length) return Promise.resolve({o: named[0], leg: req.leg || (named[0].free ? 'free' : named[0].prices[0].leg)});
+        var o = tries[i];
+        if (o.free) return Promise.resolve({o: o, leg: 'free'});
+        return llmJSON('/account/llm/balance?seller=' + encodeURIComponent(o.seller)).then(function(b){
+          if (b.free) return {o: o, leg: req.leg || (o.prices[0] ? o.prices[0].leg : 'free')};
+          var leg = req.leg || (o.prices.find(function(p){ return b.credit && b.credit[p.leg] && b.credit[p.leg].units > 0; }) || {}).leg;
+          return leg ? {o: o, leg: leg} : next(i + 1);
+        }, function(){ return next(i + 1); });
+      }
+      return next(0);
+    }
+    function llmDoor(m, answer, source){
+      var op = m.op || 'chat';
+      if (op === 'offers') {
+        llmJSON('/account/llm/offers').then(function(b){
+          answer({ok: true, offers: (b.offers || []).map(function(o){
+            return {seller: o.seller, here: o.here, free: !!o.free, name: o.name, tag: o.tag, models: o.models, prices: o.prices.map(function(p){
+              return {leg: p.leg, label: p.label, in: p.in, out: p.out}; }), max_out: o.max_out}; })});
+        }).catch(function(err){ answer({ok: false, error: String(err.message || err)}); });
+        return;
+      }
+      if (op !== 'chat' && op !== 'image') { answer({ok: false, error: 'llm: op is offers, chat or image'}); return; }
+      if (viewer !== 'account' || (typeof ARCADE_SIGNED !== 'undefined' && !ARCADE_SIGNED)) {
+        answer({ok: false, error: 'sign in first: the model is paid from your credit'}); return;
+      }
+      var req = (m.request && typeof m.request === 'object') ? m.request : {};
+      var ok;
+      try { ok = localStorage.getItem(LLM_OK + here) === '1'; } catch (err) { ok = false; }
+      var asked = ok ? Promise.resolve(true) : arcadeAsk((gameName ? '"' + String(gameName).slice(0, 60) + '"' : 'This page') + ' wants to use an AI model',
+        'Each reply is paid from the credit you hold with a seller on the Exchange\'s LLM tab. Allow it for this game?', 'Allow', 'Not now')
+        .then(function(yes){ if (yes) { try { localStorage.setItem(LLM_OK + here, '1'); } catch (err) {} } return yes; });
+      asked.then(function(yes){
+        if (!yes) throw new Error('declined');
+        return llmJSON('/account/llm/offers');
+      }).then(function(book){
+        if (op !== 'image') return llmPick(book, req);
+        // A picture: the first seller with pictures this player can pay for (free first, then any with credit).
+        var named = (book.offers || []).filter(function(o){ return o.images && (!req.seller || o.seller === req.seller); });
+        if (!named.length) throw new Error('no arcade shares pictures right now');
+        var o = named.find(function(x){ return x.images.free; }) || named[0];
+        return {o: o, leg: req.leg || (o.images.free ? 'free' : o.images.prices[0].leg)};
+      }).then(function(got){
+        return llmGrant(got.o).then(function(){ return got; });
+      }).then(function(got){
+        if (op === 'image') {
+          var pic = {seller: got.o.seller, leg: got.leg, prompt: req.prompt || '', size: req.size || '', image: req.image || '',
+                     model: req.model || (got.o.images.models[0] || {}).id};
+          return llmJSON('/account/llm/image', pic).then(function(r){
+            var a = r.arcade || {}, p = (got.o.images.prices || []).find(function(x){ return x.leg === a.leg; }) || {}, coin = String(p.label || '').split(' \u00b7 ')[0];
+            answer({ok: true, png: r.png, seed: r.seed, seller: got.o.seller, leg: a.leg,
+                    cost: a.free ? 'free' : a.cost_text + ' ' + coin, left: a.free ? '' : a.left_text + ' ' + coin});
+          });
+        }
+        var body = {};
+        Object.keys(req).forEach(function(k){ if (k !== 'seller' && k !== 'leg' && k !== 'stream') body[k] = req[k]; });
+        body.seller = got.o.seller; body.leg = got.leg;
+        if (!body.model && got.o.models[0]) body.model = got.o.models[0].id;
+        return fetch('/account/llm/chat', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                                           body: JSON.stringify(body)}).then(function(r){
+          if (!r.ok) return r.json().catch(function(){ return {}; }).then(function(j){ throw new Error(j.detail || ('HTTP ' + r.status)); });
+          var reader = r.body.getReader(), dec = new TextDecoder(), buf = '', content = '', reasoning = '', done = null;
+          function pump(){
+            return reader.read().then(function(step){
+              if (step.done) return;
+              buf += dec.decode(step.value, {stream: true});
+              var at;
+              while ((at = buf.indexOf('\n\n')) >= 0) {
+                var line = buf.slice(0, at).trim(); buf = buf.slice(at + 2);
+                if (line.indexOf('data:') !== 0) continue;
+                var data = line.slice(5).trim(); if (data === '[DONE]') continue;
+                var ev; try { ev = JSON.parse(data); } catch (err) { continue; }
+                if (ev.error) throw new Error(ev.error.message || 'failed');
+                if (ev.arcade) { done = ev.arcade; continue; }
+                (ev.choices || []).forEach(function(ch){
+                  var d = ch.delta || {};
+                  if (d.reasoning_content) reasoning += d.reasoning_content;
+                  if (d.content) { content += d.content; source.postMessage({arcade: 'llm', seq: m.seq, part: true, delta: d.content}, '*'); }
+                });
+              }
+              return pump();
+            });
+          }
+          return pump().then(function(){
+            var p = got.o.prices.find(function(x){ return x.leg === got.leg; }) || {}, coin = String(p.label || '').split(' \u00b7 ')[0];
+            answer({ok: true, content: content, reasoning: reasoning, seller: got.o.seller, leg: got.leg,
+                    usage: done ? {tokens_in: done.tokens_in, tokens_out: done.tokens_out} : {},
+                    cost: done ? (done.free ? 'free' : done.cost_text + ' ' + coin) : '',
+                    left: done && !done.free ? done.left_text + ' ' + coin : ''});
+          });
+        });
+      }).catch(function(err){ answer({ok: false, error: String(err.message || err)}); });
     }
 
     // arcade.contacts.add / remove (2026-10-21, asked for by ASHVALE: "able to add in game friends").
@@ -1448,6 +1662,7 @@
       if (m.arcade === 'realtime') { realtimeDoor(m, answer, e.source); return; }
       if (m.arcade === 'access') { accessDoor(m, answer); return; }
       if (m.arcade === 'contacts') { contactsDoor(m, answer); return; }
+      if (m.arcade === 'llm') { llmDoor(m, answer, e.source); return; }
       if (m.arcade === 'escrow') { escrowDoor(m, answer); return; }
       if (m.arcade === 'state' && m.op === 'update') {
         // Game state (arcade.state): anybody asks, the game's judge decides, so

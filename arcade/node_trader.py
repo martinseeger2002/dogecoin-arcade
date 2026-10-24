@@ -509,9 +509,20 @@ class NodeTrader:
             secret_hash=h.hex(), t1=t1, t2=t2))
         return trade
 
+    #: The least this node waits for when its own side is real coin (2026-10-20, SadFrog's side, after a
+    #: review): a person's swap below the swap_big line may go at 0 confirmations, the operator's choice and
+    #: that person's risk, but this node pays from its own Core wallet, by itself, for whoever proposes over
+    #: the mesh. At 0 an initiator could show this node a lock, have it lock (or reveal the secret), then
+    #: double-spend their unconfirmed lock and walk off with the node's leg.
+    OWN_REAL_COINS = 1
+
     def need(self, give: T.Leg, get: T.Leg) -> int:
-        """Confirmations this node waits for on a swap: the operator's lines (swap_big)."""
-        return T.confirmations_for(give, get, swap_big(self.state))
+        """Confirmations this node waits for on a swap: the operator's lines (swap_big), and never under
+        OWN_REAL_COINS when what this node gives (`give`) is on a real-coin chain."""
+        need = T.confirmations_for(give, get, swap_big(self.state))
+        if give.tier() == "mainnet":
+            need = max(need, self.OWN_REAL_COINS)
+        return need
 
     def leg(self, network: str, amount: int, taker_key: bytes, kind: str = "coin",
             asset: str = "") -> T.Leg:

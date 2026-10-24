@@ -54,7 +54,7 @@
         <label for="to">To an address, or a @tag</label>
         <input autocomplete="off" name="to" id="to" value="{{ to or '' }}"
                class="mono" spellcheck="false"
-               placeholder="{{ 'address on mainnet' if chain.is_mainnet else 'address, or @somebody' }}"
+               placeholder="{{ 'address on Pepecoin main' if chain.is_mainnet else 'address, or @somebody' }}"
                required>
       </div>
       <button type="submit">Review the transfer</button>

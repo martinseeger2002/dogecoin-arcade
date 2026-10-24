@@ -4,7 +4,7 @@
 {# One launch's whole discussion (2026-09-27): every comment, and the
    replies to each, the way the feed shows a thread. Anyone can read it; an
    account signs its own comments, replies and likes in its tab. #}
-<p class="back-link">{% if launch.kind == 'game' %}<a href="/games">&larr; all games</a>{% else %}<a href="/launches">&larr; all launches</a>{% endif %}</p>
+<p class="back-link">{% if launch.kind == 'game' %}<a href="/apps">&larr; all apps</a>{% else %}<a href="/launches">&larr; all launches</a>{% endif %}</p>
 <h1 style="margin-bottom:4px">{{ wall(launch.name, 'name') }}</h1>
 <p class="sub" style="margin-top:0">
   {{ 'A token' if launch.kind == 'token' else ('A game' if launch.kind == 'game' else 'A collection') }} by {{ launch.creator|who }}

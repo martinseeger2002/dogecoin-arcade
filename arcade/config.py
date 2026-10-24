@@ -193,7 +193,7 @@ class Params:
     #: What its coin is called on a page, and what the chain is called
     #: (2026-10-13, Dogecoin as the third network): "PEP TEST" / "PEP" / "DOGE".
     coin: str = "PEP"
-    label: str = "Pepecoin"
+    label: str = "Pepecoin main"
     #: Block 0's hash, where it tells this chain from another that answers to
     #: the same "main" in getblockchaininfo (Dogecoin and Pepecoin both do).
     genesis: str = ""
@@ -375,7 +375,7 @@ TESTNET = Params(
     datadir_subdir="testnet3",
     pubkeyhash_version=113,
     coin="PEP TEST",
-    label="Pepecoin testnet",
+    label="Pepecoin test",      # "Pepecoin test" and "Pepecoin main", as the rest of the app says it (2026-10-24)
     scripthash_version=196,
     other_pubkeyhash_version=56,    # Pepecoin mainnet
 )

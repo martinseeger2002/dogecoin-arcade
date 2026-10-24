@@ -260,6 +260,26 @@
 })();
 </script>
 
+{#- 2026-10-23: "In the users your arcade tab you should be able to disable the robot helper" (_helper.html). #}
+<div class="panel" style="margin-top:14px" id="helper-pref">
+  <h2 style="margin-top:0">Arcade helper</h2>
+  <p class="muted" style="margin-top:0">The robot in the corner of every page answers questions about the arcade. Its conversation is kept
+    in this browser only.</p>
+  <label class="switch"><input type="checkbox" id="helper-on"> Show the arcade helper</label>
+</div>
+<script>
+(function () {
+  var box = document.getElementById('helper-on'), OFF = 'arcade.helper.off';
+  try { box.checked = localStorage.getItem(OFF) !== '1'; } catch (e) { box.checked = true; }
+  box.addEventListener('change', function () {
+    try { if (box.checked) localStorage.removeItem(OFF); else localStorage.setItem(OFF, '1'); } catch (e) {}
+    var bot = document.getElementById('arc-bot'), dlg = document.getElementById('arc-bot-box');
+    if (!box.checked) { if (bot) bot.style.display = 'none'; if (dlg) dlg.style.display = 'none'; }
+    else location.reload();
+  });
+})();
+</script>
+
 <div class="panel" style="margin-top:14px"{% if node_side %} hidden{% endif %}>
   <h2 style="margin-top:0">Your usage</h2>
 <div id="room" hidden>

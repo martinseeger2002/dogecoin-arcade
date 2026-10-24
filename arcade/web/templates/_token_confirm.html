@@ -46,7 +46,7 @@
     <input type="hidden" name="confirmed" value="{{ prepared.txid }}">
     <div class="row">
       <button type="submit" {% if mainnet %}class="danger"{% endif %}>
-        {{ 'Broadcast on mainnet' if mainnet else 'Broadcast' }}</button>
+        {{ 'Broadcast on Pepecoin main' if mainnet else 'Broadcast' }}</button>
       <a class="muted" href="{{ back }}">Cancel</a>
     </div>
   </form>
@@ -91,7 +91,7 @@
     <input type="hidden" name="confirmed" value="{{ parts[0].txid }}">
     <div class="row">
       <button type="submit" {% if mainnet %}class="danger"{% endif %}>
-        {{ 'Broadcast all on mainnet' if mainnet else 'Broadcast all' }}</button>
+        {{ 'Broadcast all on Pepecoin main' if mainnet else 'Broadcast all' }}</button>
       <a class="muted" href="{{ back }}">Cancel</a>
     </div>
   </form>

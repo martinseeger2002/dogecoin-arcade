@@ -390,13 +390,13 @@ def test_a_page_speaks_under_the_accounts_own_key(browser, doors):
     sheet = None
     for _ in range(240):
         cards = [c for c in browser.find_elements(By.CSS_SELECTOR, ".askcard") if c.is_displayed()]
-        if cards and "Allow this game to use your wallet?" in cards[0].text:
+        if cards and "Allow this app to use your wallet?" in cards[0].text:
             sheet = cards[0]
             break
         time.sleep(0.25)
     assert sheet is not None, "the page asked for the key and nobody asked the player: " + str(browser.execute_script(
         "return [...document.querySelectorAll('.askcard, .askcard-back, dialog, [role=dialog]')].map(e => e.className + ':' + e.innerText.slice(0, 120))"))
-    assert "Check that this is the game" in sheet.text and "published by" in sheet.text, sheet.text
+    assert "Check that this is the app" in sheet.text and "published by" in sheet.text, sheet.text
     next(b for b in sheet.find_elements(By.TAG_NAME, "button") if b.text == "Allow wallet access").click()
     assert browser.execute_script("return localStorage.getItem('arcade.wallet.allow:' + arguments[0])",
                                   doors["page"]) == "yes", "remembered for this page"
@@ -490,7 +490,7 @@ def test_a_game_whose_card_box_is_off_is_asked_in_place(browser, doors):
         no = _card_button(browser, "Cancel")
         assert no is not None, "the game reached for the key and was not asked"
         card = no.find_element(By.XPATH, "ancestor::*[contains(@class,'askcard')]")
-        assert "Allow this game to use your wallet?" in card.text and "Doors Game" in card.text
+        assert "Allow this app to use your wallet?" in card.text and "Doors Game" in card.text
         no.click()
         said = _settled(browser, frame, "nid")
         assert "Wallet access is off" in said.get("error", ""), said
@@ -595,7 +595,7 @@ def test_a_ticked_wallet_access_box_stays_ticked_on_its_card(browser, doors):
         db.conn.commit()
     box = f'.gameaccess[data-access="{page}"] input'
     try:
-        browser.get(f"{doors['base']}/games")
+        browser.get(f"{doors['base']}/apps")
         browser.execute_script("localStorage.removeItem('arcade.wallet.allow:' + arguments[0])", page)
         browser.refresh()
         browser.execute_script("arguments[0].click()", browser.find_element(By.CSS_SELECTOR, box))
@@ -610,7 +610,7 @@ def test_a_ticked_wallet_access_box_stays_ticked_on_its_card(browser, doors):
         allow[0].click()
         time.sleep(0.5)
         assert browser.find_element(By.CSS_SELECTOR, box).is_selected()
-        for where in ("/games", "/games?sort=new"):
+        for where in ("/apps", "/apps?sort=new"):
             browser.get(doors["base"] + where)
             time.sleep(1)
             assert browser.find_element(By.CSS_SELECTOR, box).is_selected(), f"{where}: the box came back off"

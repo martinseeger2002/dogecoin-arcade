@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Game access · {{ brand.name }}{% endblock %}
+{% block title %}App access · {{ brand.name }}{% endblock %}
 {% block body %}
 {# Game access (2026-10-23, SadFrog: wallet access asked in the game, and "the allowed-games list"). Everything a
    game was allowed in this browser on this arcade: wallet access, camera and microphone, the address book. Kept in
    this browser's storage (base.html: arcade.wallet.allow:, arcade.media.allow:, arcade.contacts.allow:), so this
    page reads it here; another arcade, or another browser, has its own list. #}
-<h1>Game access</h1>
-<p class="sub">What the games you play may ask of you in this browser, on this arcade. A game asks when it needs it,
+<h1>App access</h1>
+<p class="sub">What the apps you use may ask of you in this browser, on this arcade. A game asks when it needs it,
   over the game, naming its publisher; this is where you see them all and take it back. Another arcade or another
   browser keeps its own list.</p>
 <div id="access-list"><p class="muted">Looking…</p></div>
@@ -41,7 +41,7 @@
   function draw() {
     var box = document.getElementById('access-list'), list = rows();
     box.innerHTML = '';
-    if (!list.length) { box.appendChild(el('p', 'No game has access to anything in this browser on this arcade.', 'muted')); return; }
+    if (!list.length) { box.appendChild(el('p', 'No app has access to anything in this browser on this arcade.', 'muted')); return; }
     var t = el('table');
     list.forEach(function (r) {
       var tr = el('tr'), name = el('td'), what = el('td', r.kind.label, 'what'), acts = el('td', null, 'acts');
@@ -51,7 +51,7 @@
       arcadeGameOf(r.id).then(function (g) {
         strong.textContent = (g && g.name) || ('Page ' + r.id.slice(0, 10) + '…');
         who.textContent = 'Published by ' + ((g && g.publisher) || 'an account with no @name') + (g && g.address ? ' (' + g.address + ')' : '');
-        if (g && g.card) { var a = el('a', ' game card'); a.href = '/games#game-' + g.card; who.appendChild(document.createTextNode(' ·')); who.appendChild(a); }
+        if (g && g.card) { var a = el('a', ' game card'); a.href = '/apps#game-' + g.card; who.appendChild(document.createTextNode(' ·')); who.appendChild(a); }
       });
       var b = el('button', 'Turn off', 'ghost btn small');
       b.onclick = function () { r.kind.off(r.id); draw(); };

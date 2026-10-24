@@ -1,0 +1,834 @@
+{#- The Exchange's LLM tab (arcade/llm.py, web/llmweb.py; 2026-10-23, approved mock-up "LLM Exchange Mock-up"):
+    the LLM service book across the mesh, a top-up paid straight to the seller, a chat, and API keys for the buyer's own
+    programs. Everything is drawn from /account/llm/offers by the script below. #}
+<style>
+.llm-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-end;margin:6px 0 12px}
+.llm-head p{margin:2px 0 0;color:var(--muted);font-size:.9rem}
+.llm-chips{display:flex;gap:6px;flex-wrap:wrap}
+.llm-chips button{font:inherit;font-size:.82rem;height:34px;padding:0 13px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
+.llm-chips button.on{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:650}
+.llm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));gap:14px}
+.llm-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.04)}
+.llm-card.picked{border:2px solid var(--accent);padding:17px}
+a.llm-card{color:inherit;text-decoration:none;transition:transform .12s,box-shadow .12s}
+a.llm-card:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(0,0,0,.05),0 12px 28px rgba(0,0,0,.08)}
+.llm-card .mname{font-size:1.05rem;font-weight:700;overflow-wrap:anywhere}
+.llm-kind{font-size:.72rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--code);color:var(--muted)}
+.llm-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.llm-stats div{background:var(--code);border-radius:10px;padding:8px 10px;min-width:0}
+.llm-stats small{display:block;color:var(--muted);font-size:.72rem}.llm-stats b{font-size:.92rem;overflow-wrap:anywhere}
+.llm-card .who{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.llm-card .who small{display:block;color:var(--muted);font-size:.8rem}
+.llm-pill{font-size:.75rem;font-weight:650;padding:3px 9px;border-radius:999px;background:color-mix(in srgb,var(--ok) 15%,var(--panel));color:var(--ok);white-space:nowrap}
+.llm-model{padding:9px 11px;border-radius:10px;background:var(--code);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:.88rem}
+.llm-model code{font-weight:650;overflow-wrap:anywhere}
+.llm-prices{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 14px;font-size:.88rem}
+.llm-prices .h{font-size:.72rem;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.llm-prices>span{padding:3px 0;border-top:1px solid var(--line)}.llm-prices>.h{border-top:0}
+.llm-foot{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--line);margin-top:auto}
+.llm-foot small{display:block;color:var(--muted);font-size:.75rem}
+.llm-btn{font:inherit;height:42px;padding:0 16px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--accent);font-weight:650;cursor:pointer}
+.llm-btn.go{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.llm-btn.bad{color:#a33;border-color:color-mix(in srgb,#a33 35%,var(--line))}
+.llm-btn:disabled{opacity:.55;cursor:default}
+.llm-row{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;margin-top:16px}
+.llm-panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:12px;min-width:0;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.04)}
+.llm-panel h3{margin:0;font-size:1.05rem}.llm-panel p.sub{margin:0;color:var(--muted);font-size:.88rem}
+.llm-panel label{display:flex;flex-direction:column;gap:5px;font-size:.8rem;font-weight:650;min-width:0}
+.llm-panel input,.llm-panel select,.llm-panel textarea{font:inherit;font-weight:400;width:100%;min-width:0;max-width:100%;box-sizing:border-box;height:42px;padding:0 11px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
+.llm-panel textarea{height:auto;padding:10px 12px;resize:vertical}
+.llm-note{padding:9px 11px;border-radius:10px;background:var(--code);font-size:.86rem}
+.llm-chat{flex:999 1 520px;padding:0;overflow:hidden;gap:0}
+.llm-chat .top{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center}
+.llm-msgs{padding:16px;display:flex;flex-direction:column;gap:12px;min-height:260px;max-height:60vh;overflow:auto}
+.llm-me{align-self:flex-end;max-width:82%;background:var(--accent);color:var(--accent-fg);border-radius:16px 16px 4px 16px;padding:9px 13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.llm-it{align-self:flex-start;max-width:82%;display:flex;flex-direction:column;gap:4px}
+.llm-it>div{background:var(--bg);border:1px solid var(--line);border-radius:16px 16px 16px 4px;padding:9px 13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.llm-it details{font-size:.8rem;color:var(--muted)}
+.llm-it small{color:var(--muted);font-size:.75rem;padding-left:4px}
+.llm-send{padding:12px 14px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:flex-end}
+.llm-send textarea{flex:1 1 auto;height:64px;min-height:46px}
+.llm-copy{display:flex;gap:8px}.llm-copy code{flex:1 1 auto;min-width:0;height:42px;display:flex;align-items:center;padding:0 11px;border-radius:10px;background:var(--code);border:1px solid var(--line);font-size:.86rem;overflow-x:auto;white-space:nowrap}
+.llm-copy code.fresh{background:color-mix(in srgb,#e6b400 16%,var(--panel));border-color:color-mix(in srgb,#e6b400 45%,var(--line))}
+.llm-keys{display:grid;grid-template-columns:minmax(0,.6fr) minmax(0,1.2fr) minmax(0,1.3fr) minmax(0,.8fr) 90px;gap:8px 12px;align-items:center;font-size:.86rem}
+.llm-keys .h{font-size:.72rem;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.llm-pre{margin:0;background:#141a26;color:#e3e8f1;padding:14px 16px;border-radius:12px;font-size:.8rem;line-height:1.6;overflow-x:auto}
+.llm-empty{padding:26px;border:1px dashed var(--line);border-radius:16px;color:var(--muted);text-align:center}
+@media (max-width:640px){.llm-keys{grid-template-columns:1fr 1fr}.llm-keys .h{display:none}}
+</style>
+
+{#- 2026-10-23: "The model exchange should just have cards for each of the models listed and the user credits
+    available and the cost and the tokens per second and other relevant data ... whenever you click on one of the models,
+    you should go to that specific models page to interact with it"; "favorite stars on the model exchange and the sort
+    features from the token exchange". `focus` (llm_model.html) is the one model a page is about. #}
+{% import "_exui.html" as exui %}{{ exui.fav_script() }}
+{% if focus %}
+<p style="margin:0 0 10px"><a href="/exchange?tab=llm">&larr; All models</a></p>
+<div id="llm-detail"><div class="llm-empty">Finding this model&hellip;</div></div>
+{% else %}
+<div class="llm-head">
+  <div>
+    <h2 style="margin:0">Model exchange</h2>
+    <p>AI models shared by arcades across the mesh. Tap one to use it. Prices are per token for words and per credit for pictures.</p>
+  </div>
+</div>
+<div class="ex-seg" id="llm-mode" role="group" aria-label="Which models" style="margin-bottom:10px">
+  <button type="button" data-mode="fav" aria-pressed="false">&#9733; Favorites</button>
+  <button type="button" data-mode="all" aria-pressed="true">All models</button>
+  <button type="button" data-mode="text" aria-pressed="false">Words</button>
+  <button type="button" data-mode="image" aria-pressed="false">Pictures</button>
+</div>
+<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+  <input autocomplete="off" id="llm-find" class="ex-find" type="search" placeholder="Search all models" aria-label="Search models" style="flex:1 1 240px;margin:0">
+  <label style="display:flex;gap:6px;align-items:center;font-size:.85rem;color:var(--muted)">Sort
+    <select id="llm-sort" style="height:38px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--fg);padding:0 8px">
+      <option value="popular">Most used</option><option value="cheap">Cheapest</option><option value="fast">Fastest</option>
+      <option value="idle">Least busy</option><option value="name">Name</option></select></label>
+</div>
+<div class="llm-chips" id="llm-chips" style="margin-bottom:12px"></div>
+<p class="ex-note" id="llm-fav-empty" hidden style="margin:0 4px 10px">Tap &#9734; on any model to keep it here. The model exchange
+  opens on your favorites, and searching always looks through every model.</p>
+<div class="llm-grid" id="llm-cards"><div class="llm-empty">Looking for models&hellip;</div></div>
+<div id="llm-sugg-head" hidden style="display:flex;justify-content:space-between;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:16px 4px 6px">
+  <span>Suggested</span><span>most used in the last hour</span></div>
+<div class="llm-grid" id="llm-sugg"></div>
+{% endif %}
+<div id="pic-wrap">
+  <section class="llm-panel" id="pic-make" style="margin-top:16px" hidden>
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
+      <div style="min-width:0"><h3>Make a picture</h3><code id="pic-who" style="font-size:.8rem;color:var(--muted)"></code></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="pic-leg" aria-label="Pay with" style="width:auto;height:34px;padding:0 8px;border-radius:999px"></select>
+        <span class="llm-pill" id="pic-left" style="background:color-mix(in srgb,var(--accent) 14%,var(--panel));color:var(--accent)"></span></div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
+      <div style="flex:1 1 320px;display:flex;flex-direction:column;gap:12px;min-width:0">
+        <label>What to draw, or what to change <textarea rows="3" id="pic-prompt" autocomplete="off" placeholder="e.g. a shiba inu playing an arcade cabinet, neon light"></textarea></label>
+        {#- Any size the person wants (2026-10-23: "The pixel ratio should be user defined"), up to the seller's
+            largest side; credits = longest side / 250, rounded up. #}
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <span style="font-size:.8rem;font-weight:650">Size, in pixels</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="number" id="pic-w" min="128" step="1" inputmode="numeric" autocomplete="off" aria-label="Width" style="flex:1 1 0">
+            <span style="color:var(--muted)">&times;</span>
+            <input type="number" id="pic-h" min="128" step="1" inputmode="numeric" autocomplete="off" aria-label="Height" style="flex:1 1 0">
+          </div>
+          <div class="llm-chips" id="pic-presets"></div>
+          <span id="pic-size-said" style="font-size:.8rem;color:var(--muted)"></span>
+        </div>
+        <label>Change a picture of yours <span style="font-weight:400;color:var(--muted)">(optional)</span>
+          <input type="file" id="pic-file" accept="image/png,image/jpeg,image/webp" style="height:auto;padding:8px"></label>
+        {#- 2026-10-23: "There should be a thumbnail of uploaded images when editing". #}
+        <div id="pic-up" hidden style="display:flex;gap:10px;align-items:center">
+          <img id="pic-up-thumb" alt="The picture to change" style="width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid var(--line)">
+          <span style="display:flex;flex-direction:column;gap:4px;font-size:.82rem;color:var(--muted)"><span id="pic-up-size"></span>
+            <button type="button" class="llm-btn" id="pic-up-clear" style="height:32px;padding:0 10px;width:fit-content">Remove</button></span>
+        </div>
+        <button type="button" class="llm-btn go" id="pic-go" style="height:46px">Make it</button>
+        <p class="sub" id="pic-said"></p>
+      </div>
+      <div style="flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+        <img id="pic-out" alt="" style="max-width:100%;border-radius:12px;border:1px solid var(--line);display:none">
+        <a id="pic-dl" class="llm-btn" download="arcade-picture.png" style="display:none;align-items:center;text-decoration:none">Download</a>
+      </div>
+    </div>
+  </section>
+  <section class="llm-panel" id="pic-gallery" style="margin-top:16px" hidden>
+    <div><h3>Your pictures</h3><p class="sub">Every picture you make is kept on your arcade for 24 hours, even if you close the page before it is done.</p></div>
+    <div id="pic-thumbs" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px"></div>
+  </section>
+</div>
+
+<div class="llm-row">
+  <section class="llm-panel" style="flex:1 1 300px" id="llm-topup" hidden>
+    <div><h3>Top up</h3><p class="sub" id="llm-topup-sub"></p></div>
+    <label>Pay with <select id="llm-pay"></select></label>
+    <label>Amount <input id="llm-amount" inputmode="decimal" autocomplete="off" placeholder="e.g. 10"></label>
+    <div class="llm-note" id="llm-buys">Enter an amount to see what it buys.</div>
+    <button type="button" class="llm-btn go" id="llm-send-pay" style="height:46px">Send</button>
+    <p class="sub" id="llm-topup-said">Your wallet shows the fee and asks before it signs. It counts as credit as soon as the seller's node sees the payment, usually within seconds.</p>
+  </section>
+
+  <section class="llm-panel llm-chat" id="llm-chat" hidden>
+    <div class="top">
+      <div style="min-width:0"><h3>Chat</h3><code id="llm-chat-who" style="font-size:.8rem;color:var(--muted)"></code></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="llm-chat-leg" aria-label="Pay with" style="width:auto;height:34px;padding:0 8px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--fg)"></select>
+        <span class="llm-pill" id="llm-left" style="background:color-mix(in srgb,var(--accent) 14%,var(--panel));color:var(--accent)"></span>
+        {#- 2026-10-23: "You should be able to disable the arcade context for the in page LLM chat". #}
+        <label style="display:flex;gap:6px;align-items:center;font-size:.8rem;font-weight:650;color:var(--muted);flex-direction:row" title="Add what DogecoinArcade's docs say about your question (free)">
+          <input type="checkbox" id="llm-docs" checked style="width:18px;height:18px;margin:0"> Arcade docs</label>
+        <button type="button" class="llm-btn" id="llm-new-chat" style="height:34px;padding:0 12px">New chat</button>
+      </div>
+    </div>
+    <div class="llm-msgs" id="llm-msgs"></div>
+    <div class="llm-send">
+      <textarea rows="2" id="llm-input" autocomplete="off" aria-label="Message" placeholder="Ask anything &mdash; it knows DogecoinArcade's docs&hellip;"></textarea>
+      <button type="button" class="llm-btn go" id="llm-go" style="height:46px">Send</button>
+    </div>
+  </section>
+</div>
+
+<section class="llm-panel" style="margin-top:16px" id="llm-api"{% if not focus %} hidden{% endif %}>
+  <div><h3>Use it from your own apps</h3>
+    <p class="sub">An OpenAI-compatible API on this arcade. Any local harness, chat app or script that takes a base URL and an API key works. Each key spends one seller's credit in one coin.</p></div>
+  <div class="llm-grid" style="grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:14px">
+    <div style="display:flex;flex-direction:column;gap:5px;min-width:0"><span style="font-size:.8rem;font-weight:650">Base URL</span>
+      <div class="llm-copy"><code id="llm-base"></code><button type="button" class="llm-btn" data-copy="llm-base">Copy</button></div></div>
+    <div style="display:flex;flex-direction:column;gap:5px;min-width:0" id="llm-fresh-box" hidden><span style="font-size:.8rem;font-weight:650">New key, shown once</span>
+      <div class="llm-copy"><code class="fresh" id="llm-fresh"></code><button type="button" class="llm-btn" data-copy="llm-fresh">Copy</button></div></div>
+  </div>
+  <div class="llm-keys" id="llm-keys"></div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;padding:14px;border-radius:12px;background:var(--code)">
+    <label style="flex:1 1 200px">Name <input id="llm-key-name" placeholder="e.g. desktop harness" autocomplete="off"></label>
+    <label style="flex:1 1 220px">Spends <select id="llm-key-on"></select></label>
+    <button type="button" class="llm-btn go" id="llm-key-make">Make a key</button>
+  </div>
+  <pre class="llm-pre" id="llm-curl"></pre>
+</section>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const COIN_NAMES = {};
+let book = {offers: [], me: "", signed_in: false, api_base: ""};
+let credit = {};                 // seller -> balance answer
+let picked = null, filter = "all", history = [], busy = false;
+const FOCUS = {{ (focus or none)|tojson }};          // {seller, kind, model} on a model's own page, null on the exchange
+let mode = "all", sortBy = "popular";
+
+async function getJSON(url) {
+  const r = await fetch(url, {credentials: "same-origin", cache: "no-store"});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+  return j;
+}
+async function postJSON(url, body) {
+  const r = await fetch(url, {method: "POST", credentials: "same-origin",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+  return j;
+}
+const toast = (t) => (window.arcadeToast ? arcadeToast(t) : alert(t));
+const legNet = (leg) => leg.split("-")[0];
+const legIsToken = (leg) => leg.includes("-token-");
+const short = (label) => String(label || "").split(" · ")[0];
+const num = (t) => Number(String(t).replace(/,/g, ""));
+
+function price(p) {                  // the dearest part shown plainly: no exponent for tiny prices
+  const n = Number(p); if (!n) return "free";
+  return n.toLocaleString(undefined, {maximumSignificantDigits: 8, maximumFractionDigits: 12});
+}
+function cheapness(o) { return o.free || !o.prices.length ? 0 : Math.min(...o.prices.map((p) => Number(p.out) || 0)); }
+const legsOf = (o) => o.free ? [{leg: "free", label: "Free", in: "0", out: "0"}] : o.prices;
+// How busy a model is (2026-10-23: "Users also need a way to know if one of the models is congested or being
+// frequently used"): the seller's own word for it on the book, said again whenever it changes.
+const WORDS = {idle: ["Idle", "var(--muted)"], steady: ["In use", "var(--ok)"], busy: ["Busy", "#b7791f"], full: ["Full: queue", "#a33"]};
+function loadPill(o) {
+  const w = WORDS[(o.load || {}).word] || WORDS.idle;
+  return `<span class="llm-pill" style="color:${w[1]};background:color-mix(in srgb,${w[1]} 14%,var(--panel))">${w[0]}</span>`;
+}
+function loadLine(o) {
+  const l = o.load || {}; if (!l.at_once) return "";
+  const bits = [`${l.active || 0} of ${l.at_once} running`];
+  if (l.waiting) bits.push(`${l.waiting} waiting`);
+  bits.push(`${(l.last_hour || 0).toLocaleString()} ${l.last_hour === 1 ? "reply" : "replies"} in the last hour`);
+  if (l.tok_s) bits.push(`${l.tok_s} tok/s`);
+  return `<div style="font-size:.8rem;color:var(--muted);margin-top:-4px">${bits.join(" \u00b7 ")}</div>`;
+}
+function sellerName(o) { return o.here ? (o.tag ? "@" + o.tag : "This arcade") : (o.tag ? "@" + o.tag : o.seller.slice(0, 10) + "…"); }
+
+function drawChips() {
+  const kinds = new Map([["all", "Any coin"]]);
+  if (book.offers.some((o) => o.free)) kinds.set("free", "Free");
+  book.offers.forEach((o) => o.prices.forEach((p) => kinds.set(legIsToken(p.leg) ? "tokens" : p.leg, legIsToken(p.leg) ? "Tokens" : short(p.label))));
+  $("llm-chips").innerHTML = [...kinds].map(([k, v]) => `<button type="button" data-k="${esc(k)}" class="${k === filter ? "on" : ""}">${esc(v)}</button>`).join("");
+}
+$("llm-chips") && $("llm-chips").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; filter = b.dataset.k; draw(); });
+
+function creditText(o) {
+  const c = credit[o.seller];
+  if (!book.signed_in) return {big: "Sign in", small: "to buy"};
+  if (o.free) return {big: "Free", small: "for everyone"};
+  if (c && c.own) return {big: "Free", small: o.here ? "your own model" : "shared with you"};
+  if (!c) return {big: o.here || o.granted ? "…" : "—", small: o.here || o.granted ? "" : "sign once to see"};
+  const rows = o.prices.map((p) => c.credit && c.credit[p.leg] ? `${c.credit[p.leg].text} ${short(p.label)}` : "").filter(Boolean);
+  return rows.length ? {big: rows[0], small: rows.slice(1).join(" · ")} : {big: "None yet", small: ""};
+}
+
+// --- the model exchange: one card per model -------------------------------------------------------------------
+function modelsOf() {
+  const out = [];
+  book.offers.forEach((o) => {
+    (o.models || []).forEach((m) => out.push({kind: "text", o, m}));
+    if (o.images) o.images.models.forEach((m) => out.push({kind: "image", o, m}));
+  });
+  return out;
+}
+const pageOf = (x) => `/exchange/llm/model?seller=${encodeURIComponent(x.o.seller)}&kind=${x.kind}&model=${encodeURIComponent(x.m.id)}`;
+const legsFor = (x) => x.kind === "image" ? (x.o.images.free ? [] : x.o.images.prices) : (x.o.free ? [] : x.o.prices);
+const freeFor = (x) => x.kind === "image" ? x.o.images.free : x.o.free;
+const loadOf = (x) => (x.kind === "image" ? x.o.images.load : x.o.load) || {};
+function priceLine(x) {
+  if (freeFor(x)) return "Free";
+  const p = legsFor(x)[0]; if (!p) return "—";
+  return x.kind === "image" ? `${price(p.per)} ${short(p.label)} / credit` : `${price(p.out)} ${short(p.label)} / token out`;
+}
+function speedLine(x) {
+  const l = loadOf(x);
+  return x.kind === "image" ? (l.avg_s ? `~${l.avg_s} s a picture` : "—") : (l.tok_s ? `${l.tok_s} tok/s` : "—");
+}
+function cheapOf(x) {
+  if (freeFor(x)) return 0;
+  const ps = legsFor(x).filter((p) => filter === "all" || p.leg === filter || (filter === "tokens" && legIsToken(p.leg)));
+  return ps.length ? Math.min(...ps.map((p) => Number(x.kind === "image" ? p.per : p.out) || 0)) : Infinity;
+}
+// Credit said as credits at the model's own rate (2026-10-23: "it should be listing the credits as credits with the
+// listed conversion rate"), whatever coins bought it: pictures in credits, words in the tokens it still writes.
+function creditsOf(x) {
+  const c = credit[x.o.seller] || {}, out = {n: 0, rate: []};
+  legsFor(x).forEach((p) => {
+    const e = c.credit && c.credit[p.leg]; if (!e || !e.units) return;
+    const sc = e.scale || 1e8;
+    if (x.kind === "image") { const per = Math.ceil(Number(p.per) * sc); if (per > 0) out.n += Math.floor(e.units / per); }
+    else if (Number(p.out) > 0) out.n += Math.floor(e.units / sc / Number(p.out));
+  });
+  out.rate = legsFor(x).map((p) => x.kind === "image" ? `1 credit = ${price(p.per)} ${short(p.label)}` : `${price(p.out)} ${short(p.label)} / token out`);
+  return out;
+}
+function creditLine(x) {
+  const c = credit[x.o.seller];
+  if (!book.signed_in) return {big: "Sign in to buy", small: ""};
+  if (freeFor(x)) return {big: "Free for everyone", small: ""};
+  if (c && c.own) return {big: "Free", small: x.o.here ? "your own model" : "shared with you"};
+  if (!c) return {big: x.o.here || x.o.granted ? "\u2026" : "\u2014", small: ""};
+  const got = creditsOf(x), r = got.rate.join(" \u00b7 ");
+  if (!got.n) return {big: "No credits yet", small: r};
+  return x.kind === "image" ? {big: `${got.n.toLocaleString()} credit${got.n === 1 ? "" : "s"}`, small: r}
+    : {big: `\u2248 ${got.n.toLocaleString()} tokens`, small: r};
+}
+function creditOf(x) { const l = creditLine(x); return l.big; }
+function card(x, link) {
+  const l = loadOf(x), w = WORDS[l.word] || WORDS.idle, key = pageOf(x);
+  const used = x.kind === "image" ? `${(l.last_hour || 0).toLocaleString()} in the last hour` : `${(l.last_hour || 0).toLocaleString()} ${l.last_hour === 1 ? "reply" : "replies"} / hour`;
+  const tag = link ? "a" : "div";
+  return `<${tag} class="llm-card"${link ? ` href="${esc(key)}"` : ""} data-s="${esc(x.o.seller)}">
+    <div class="who"><div style="min-width:0"><div class="mname">${esc(x.kind === "image" ? (x.m.label || x.m.id) : x.m.id)}</div>
+      <small>${esc(sellerName(x.o))}${x.o.host ? " · " + esc(x.o.host) : ""}</small></div>
+      <div style="display:flex;gap:4px;align-items:center;flex:none"><span class="llm-kind">${x.kind === "image" ? "Pictures" : "Words"}</span>
+        <button type="button" class="ex-star" data-fav="${esc(key)}" aria-pressed="false" aria-label="Favorite this model" title="Favorite">☆</button></div></div>
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
+      <span class="llm-pill" style="color:${w[1]};background:color-mix(in srgb,${w[1]} 14%,var(--panel))">${w[0]}</span>
+      <span style="font-size:.8rem;color:var(--muted)">${l.active || 0} of ${l.at_once || 1} ${x.kind === "image" ? "drawing" : "running"}${l.waiting ? ` · ${l.waiting} waiting` : ""}</span></div>
+    <div class="llm-stats">
+      <div><small>Price</small><b>${esc(priceLine(x))}</b></div>
+      <div><small>Speed</small><b>${esc(speedLine(x))}</b></div>
+      <div><small>Use</small><b>${esc(used)}</b></div>
+      <div><small>${x.kind === "image" ? "Largest side" : "Longest reply"}</small><b>${x.kind === "image" ? (x.o.images.max_side || 1024) + "px" : (x.o.max_out || 0).toLocaleString() + " tokens"}</b></div>
+    </div>
+    <div class="llm-foot" style="padding-top:8px"><div style="min-width:0"><small>Your credit</small><strong style="font-size:.95rem">${esc(creditLine(x).big)}</strong>${creditLine(x).small ? `<small>${esc(creditLine(x).small)}</small>` : ""}</div>
+      ${link ? `<span class="llm-btn go" style="display:inline-flex;align-items:center;height:38px">Open</span>` : ""}</div>
+  </${tag}>`;
+}
+const RANK = {idle: 0, steady: 1, busy: 2, full: 3};
+const speedOf = (x) => x.kind === "image" ? (loadOf(x).avg_s ? 1000 / loadOf(x).avg_s : 0) : (loadOf(x).tok_s || 0);
+function sorted(list) {
+  const by = {
+    popular: (a, b) => (loadOf(b).last_hour || 0) - (loadOf(a).last_hour || 0),
+    cheap: (a, b) => cheapOf(a) - cheapOf(b),
+    fast: (a, b) => speedOf(b) - speedOf(a),
+    idle: (a, b) => (RANK[loadOf(a).word] || 0) - (RANK[loadOf(b).word] || 0),
+    name: (a, b) => String(a.m.label || a.m.id).localeCompare(String(b.m.label || b.m.id)),
+  }[sortBy] || (() => 0);
+  return list.slice().sort((a, b) => by(a, b) || String(a.m.id).localeCompare(String(b.m.id)));
+}
+function draw() {
+  drawKeys();
+  if (FOCUS) { drawDetail(); return; }
+  drawChips();
+  const all = modelsOf(), want = ($("llm-find").value || "").trim().toLowerCase();
+  const fav = (x) => window.arcadeFavs && window.arcadeFavs.has(pageOf(x));
+  const coinOk = (x) => filter === "all" || (filter === "free" ? freeFor(x) : legsFor(x).some((p) => filter === "tokens" ? legIsToken(p.leg) : p.leg === filter));
+  let shown, sugg = [];
+  if (want) {                                       // search: every model, whatever the mode (as on the token exchange)
+    shown = all.filter((x) => [x.m.id, x.m.label, x.o.tag, x.o.host, x.o.name].join(" ").toLowerCase().includes(want));
+  } else if (mode === "fav") {
+    shown = all.filter(fav);
+    sugg = all.filter((x) => !fav(x)).sort((a, b) => (loadOf(b).last_hour || 0) - (loadOf(a).last_hour || 0)).slice(0, shown.length ? 3 : 6);
+  } else {
+    shown = all.filter((x) => mode === "all" || x.kind === mode);
+  }
+  shown = sorted(shown.filter(coinOk));
+  $("llm-fav-empty").hidden = !(mode === "fav" && !want && !shown.length);
+  $("llm-cards").innerHTML = shown.length ? shown.map((x) => card(x, true)).join("")
+    : (mode === "fav" && !want ? "" : `<div class="llm-empty">${all.length ? "No model matches." : "No arcade shares a model right now. Operators turn it on in Admin &rarr; LLM."}</div>`);
+  $("llm-sugg-head").hidden = !sugg.length;
+  $("llm-sugg").innerHTML = sugg.map((x) => card(x, true)).join("");
+  if (window.arcadeFavs) window.arcadeFavs.paint();
+}
+if (!FOCUS) {
+  document.querySelectorAll("#llm-mode [data-mode]").forEach((b) => b.addEventListener("click", () => {
+    mode = b.dataset.mode;
+    document.querySelectorAll("#llm-mode [data-mode]").forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+    draw();
+  }));
+  $("llm-find").addEventListener("input", draw);
+  $("llm-sort").addEventListener("change", () => { sortBy = $("llm-sort").value; try { localStorage.setItem("arcade.llm.sort", sortBy); } catch (e) {} draw(); });
+  try { sortBy = localStorage.getItem("arcade.llm.sort") || "popular"; $("llm-sort").value = sortBy; } catch (e) {}
+}
+let favOpened = false;
+function favStart() {                               // opens on the favorites when there are any (the token exchange's way)
+  if (FOCUS || favOpened || !window.arcadeFavs || !book.offers.length) return;
+  window.arcadeFavs.ready.then((set) => {
+    if (favOpened) return;
+    favOpened = true;
+    const some = modelsOf().some((x) => (set || []).indexOf(pageOf(x)) >= 0);
+    const b = document.querySelector(`#llm-mode [data-mode="${some ? "fav" : "all"}"]`); if (b) b.click();
+    window.arcadeFavs.onChange(() => draw());
+  });
+}
+
+// --- one model's own page ---------------------------------------------------------------------------------------
+let opened = false;
+function focusItem() {
+  return modelsOf().find((x) => x.kind === FOCUS.kind && x.m.id === FOCUS.model &&
+    (x.o.seller === FOCUS.seller || (FOCUS.seller === "here" && x.o.here)));
+}
+function drawDetail() {
+  const x = focusItem();
+  if (!x) { $("llm-detail").innerHTML = `<div class="llm-empty">This model is not shared right now (its arcade may be offline). <a href="/exchange?tab=llm">See every model</a>.</div>`; return; }
+  const legs = legsFor(x);
+  const title = document.getElementById("llm-title"); if (title) title.textContent = x.m.label || x.m.id;
+  const table = freeFor(x) ? `<div class="llm-note"><b>Free for everyone.</b> Sign in and use it; nothing to pay.</div>`
+    : x.kind === "image" ? `<div class="llm-prices" style="grid-template-columns:minmax(0,1fr) auto"><span class="h">Coin</span><span class="h">Per credit</span>
+        ${legs.map((p) => `<span><b>${esc(short(p.label))}</b></span><span>${price(p.per)}</span>`).join("")}</div>
+        <p class="sub" style="font-size:.82rem">1 credit for every 250 pixels of the longest side (250&times;250 = 1, 500&times;375 = 2, 1000&times;750 = 4). An edit counts your picture going up and the new one coming down.</p>`
+    : `<div class="llm-prices"><span class="h">Coin</span><span class="h">In</span><span class="h">Out</span>
+        ${legs.map((p) => `<span><b>${esc(short(p.label))}</b></span><span>${price(p.in)}</span><span>${price(p.out)}</span>`).join("")}</div>`;
+  const own = (credit[x.o.seller] || {}).own;
+  $("llm-detail").innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:stretch">
+    <div style="flex:1 1 320px;min-width:0;display:flex">${card(x, false)}</div>
+    <section class="llm-panel" style="flex:1 1 300px"><h3>Prices</h3>${table}
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${book.signed_in ? (freeFor(x) || own ? "" : `<button type="button" class="llm-btn" id="det-topup">Top up</button>`)
+        : `<button type="button" class="llm-btn go" data-signin="1">Sign in</button>`}</div></section></div>`;
+  const t = document.getElementById("det-topup");
+  if (t) t.onclick = async () => { picked = x.o; try { await ensureGrant(x.o); } catch (err) { toast(err.message); return; } openTopup(x.o, legs); };
+  if (window.arcadeFavs) window.arcadeFavs.paint();
+  if (!opened && book.signed_in) {
+    opened = true;
+    picked = x.o;
+    if (x.kind === "image") { picPicked = x.o; openPicture(x.o); } else openChat(x.o);
+  }
+}
+
+// Sign in through the arcade's own sheet (a public arcade has no /signin page to link to).
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("button[data-signin]")) return;
+  if (window.arcadeSignIn) arcadeSignIn("Buying model time needs your wallet."); else location.href = "/join";
+});
+// --- who the buyer is, at a seller that is not this arcade: their own key signs it, once a month ---------------
+async function keysFor(network, why) {
+  const w = await import("/wallet.js");
+  const chain = (await w.chains()).find((c) => c.network === network) || {network};
+  const keys = (await w.opened(chain)) || (window.arcadeKeys ? await arcadeKeys(chain, why) : null);
+  if (!keys || !keys.on || !keys.on[network]) throw new Error("Unlock your wallet first.");
+  return {w, keys, chain};
+}
+async function ensureGrant(o) {
+  if (o.here || o.granted) return;
+  const said = await getJSON(`/account/llm/grant?seller=${encodeURIComponent(o.seller)}`);
+  if (said.ok) { o.granted = true; return; }
+  const {keys} = await keysFor(said.sign.chain.network, "To use another arcade's model, your wallet signs who you are, once a month.");
+  const coins = await import("/coins.js");
+  const sig = await coins.signMessage(keys.on[said.sign.chain.network].key, said.sign.message, said.sign.magic);
+  await postJSON("/account/llm/grant", {seller: o.seller, expires: said.sign.expires, sig});
+  o.granted = true;
+  loadCredit(o);
+}
+
+async function loadCredit(o) {
+  if (!book.signed_in || !(o.here || o.granted)) return;
+  try { credit[o.seller] = await getJSON(`/account/llm/balance?seller=${encodeURIComponent(o.seller)}`); }
+  catch (err) { credit[o.seller] = null; }
+  draw(); if (picked && picked.seller === o.seller) { drawLeft(); drawBuys(); }
+  if (picPicked && picPicked.seller === o.seller) picLeft();
+}
+
+// --- pictures --------------------------------------------------------------------------------------------------
+let picPicked = null;
+function picCredit(o) {
+  const c = credit[o.seller], im = o.images;
+  if (!book.signed_in) return {big: "Sign in", small: "to buy"};
+  if (im.free) return {big: "Free", small: "for everyone"};
+  if (c && c.own) return {big: "Free", small: o.here ? "your own model" : "shared with you"};
+  if (!c) return {big: o.here || o.granted ? "\u2026" : "\u2014", small: o.here || o.granted ? "" : "sign once to see"};
+  const rows = im.prices.map((p) => c.credit && c.credit[p.leg] ? `${c.credit[p.leg].text} ${short(p.label)}` : "").filter(Boolean);
+  return rows.length ? {big: rows[0], small: rows.slice(1).join(" \u00b7 ")} : {big: "None yet", small: ""};
+}
+function openPicture(o) {
+  const im = o.images, side = im.max_side || 1024;
+  $("pic-make").hidden = false;
+  $("pic-who").textContent = `${(im.models[0] || {}).label || ""} \u00b7 ${sellerName(o)}`;
+  $("pic-leg").hidden = !!im.free;
+  $("pic-leg").innerHTML = (im.free ? [{leg: "free", label: "Free"}] : im.prices).map((p) => `<option value="${esc(p.leg)}">${esc(short(p.label))}</option>`).join("");
+  const c = credit[o.seller], has = im.prices.find((p) => c && c.credit && c.credit[p.leg] && c.credit[p.leg].units > 0);
+  if (has) $("pic-leg").value = has.leg;
+  picMost = side;
+  $("pic-w").max = $("pic-h").max = side;
+  const steps = [250, 500, 750, 1000, 1250, 1500].filter((n) => n <= side);
+  if (!steps.includes(side)) steps.push(side);
+  $("pic-presets").innerHTML = steps.map((n) => [["Square", n, n], ["Portrait", Math.round(n * 0.75), n], ["Landscape", n, Math.round(n * 0.75)]]
+      .map(([k, w, h]) => `<button type="button" data-w="${w}" data-h="${h}">${k} ${w}\u00d7${h}</button>`).join("")).join("");
+  if (!$("pic-w").value) { $("pic-w").value = Math.min(500, side); $("pic-h").value = Math.min(500, side); }
+  picCost();
+  picLeft();
+  $("pic-make").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+async function loadGallery() {
+  if (!book.signed_in || !$("pic-gallery")) return;
+  let got; try { got = await getJSON("/account/llm/pictures"); } catch (e) { return; }
+  const pics = got.pictures || [];
+  $("pic-gallery").hidden = !pics.length || !(FOCUS && FOCUS.kind === "image");
+  $("pic-thumbs").innerHTML = pics.map((p) => {
+    const left = Math.max(0, Math.round((p.until - Date.now() / 1000) / 3600));
+    return `<figure style="margin:0;display:flex;flex-direction:column;gap:4px;min-width:0">
+      <a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="${esc(p.prompt)}" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;border:1px solid var(--line)"></a>
+      <figcaption style="font-size:.75rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p.prompt)}">${esc(p.prompt || "picture")}</figcaption>
+      <span style="display:flex;justify-content:space-between;gap:6px;font-size:.72rem;color:var(--muted)"><span>${left} h left</span>
+        <span style="display:flex;gap:8px;flex-wrap:wrap"><a href="/nfts?pick=llm:${encodeURIComponent(p.id)}#inscribing" style="font-weight:650">Inscribe now</a>
+        <a href="${esc(p.url)}" download="arcade-${esc(p.id)}.png">Download</a>
+        <a href="#" data-del="${esc(p.id)}" style="color:#a33">Delete</a></span></span></figure>`;
+  }).join("");
+}
+document.addEventListener("click", async (e) => {
+  const d = e.target.closest("[data-del]"); if (!d) return;
+  e.preventDefault();
+  if (window.arcadeAsk && !(await arcadeAsk("Delete this picture?", "It is taken off your arcade now; download it first if you want to keep it.", "Delete"))) return;
+  try { await postJSON("/account/llm/pictures/delete", {id: d.dataset.del}); } catch (err) { toast(err.message); }
+  loadGallery();
+});
+function picLeft() {
+  if (!picPicked) return;
+  const im = picPicked.images, c = credit[picPicked.seller] || {};
+  $("pic-leg").hidden = true;                              // the credit pays, in whatever coin it is (2026-10-23)
+  const got = creditsOf({kind: "image", o: picPicked, m: im.models[0] || {}});
+  $("pic-left").textContent = im.free || c.images_free ? "Free" : got.n ? `${got.n.toLocaleString()} credit${got.n === 1 ? "" : "s"} left` : "No credits";
+}
+$("pic-leg").addEventListener("change", picLeft);
+let picMost = 1000, upSize = null;
+const creditsFor = (w, h) => Math.max(1, Math.ceil(Math.max(w, h) / 250));
+function picCost() {
+  const edit = !!$("pic-file").files.length;
+  $("pic-w").disabled = $("pic-h").disabled = edit;
+  let n, said;
+  if (edit && upSize) {
+    const side = Math.min(picMost, Math.max(upSize[0], upSize[1]));
+    n = creditsFor(upSize[0], upSize[1]) + creditsFor(side, side);
+    said = `Your picture is ${upSize[0]}\u00d7${upSize[1]} (${creditsFor(upSize[0], upSize[1])} to send up) and comes back up to ${side} on its longest side (${creditsFor(side, side)} to bring down).`;
+  } else {
+    let w = Math.round(num($("pic-w").value) || 0), h = Math.round(num($("pic-h").value) || 0);
+    if (w < 128 || h < 128) { $("pic-size-said").textContent = "At least 128 pixels each way."; $("pic-go").disabled = true; return; }
+    const k = Math.min(1, picMost / Math.max(w, h)); w = Math.round(w * k); h = Math.round(h * k);
+    n = creditsFor(w, h);
+    said = `${w}\u00d7${h}` + (k < 1 ? ` (this seller draws up to ${picMost} on a side)` : "") + ` \u00b7 1 credit per 250 pixels of the longest side.`;
+  }
+  $("pic-go").disabled = false;
+  $("pic-size-said").textContent = said;
+  $("pic-go").textContent = `${edit ? "Edit it" : "Make it"} \u00b7 ${n} credit${n === 1 ? "" : "s"}`;
+}
+$("pic-w").addEventListener("input", picCost); $("pic-h").addEventListener("input", picCost);
+$("pic-presets").addEventListener("click", (e) => { const b = e.target.closest("button[data-w]"); if (!b) return; $("pic-w").value = b.dataset.w; $("pic-h").value = b.dataset.h; picCost(); });
+$("pic-up-clear").addEventListener("click", () => {
+  $("pic-file").value = ""; upSize = null; $("pic-up").hidden = true; $("pic-up").style.display = "none"; picCost();
+});
+$("pic-file").addEventListener("change", () => {
+  upSize = null;
+  const f = $("pic-file").files[0];
+  if (!f) { $("pic-up").hidden = true; $("pic-up").style.display = "none"; picCost(); return; }
+  const img = new Image(), url = URL.createObjectURL(f);
+  img.onload = () => {
+    upSize = [img.naturalWidth, img.naturalHeight];
+    $("pic-up-thumb").src = url; $("pic-up").hidden = false; $("pic-up").style.display = "flex";
+    $("pic-up-size").textContent = `${f.name.slice(0, 40)} \u00b7 ${upSize[0]}\u00d7${upSize[1]}`;
+    picCost();
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); picCost(); };
+  img.src = url;
+  picCost();
+});
+$("pic-go").addEventListener("click", async () => {
+  const o = picPicked, prompt = $("pic-prompt").value.trim();
+  if (!o || !prompt) { toast("Say what to draw."); return; }
+  try { await ensureGrant(o); } catch (err) { toast(err.message); return; }
+  const btn = $("pic-go"); btn.disabled = true;
+  $("pic-said").textContent = "Drawing\u2026 a picture takes about half a minute, longer if the model has to wake up.";
+  try {
+    const body = {seller: o.seller, leg: "auto", model: (o.images.models[0] || {}).id, prompt, size: `${Math.round(num($("pic-w").value))}x${Math.round(num($("pic-h").value))}`};
+    const f = $("pic-file").files[0];
+    if (f) body.image = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+    const got = await postJSON("/account/llm/image", body);
+    const url = "data:image/png;base64," + got.png;
+    $("pic-out").src = url; $("pic-out").style.display = "block";
+    $("pic-dl").href = url; $("pic-dl").style.display = "inline-flex";
+    const a = got.arcade || {}, p = o.images.prices.find((x) => x.leg === a.leg);
+    $("pic-said").textContent = `Done in ${((a.ms || 0) / 1000).toFixed(0)} s \u00b7 ${got.credits || 1} credit${got.credits === 1 ? "" : "s"} \u00b7 ${a.free ? "free" : a.cost_text + " " + short(p && p.label)} \u00b7 kept 24 hours below`;
+    loadGallery();
+    if (!a.free) { credit[o.seller] = credit[o.seller] || {credit: {}}; credit[o.seller].credit = credit[o.seller].credit || {};
+      credit[o.seller].credit[a.leg] = {...(credit[o.seller].credit[a.leg] || {}), units: a.left, text: a.left_text}; picLeft(); }
+  } catch (err) { $("pic-said").textContent = String(err.message || err); }
+  finally { btn.disabled = false; draw(); }
+});
+
+// --- top up --------------------------------------------------------------------------------------------------
+function openTopup(o, legs) {
+  $("llm-topup").hidden = false;
+  $("llm-topup-sub").textContent = `With ${sellerName(o)}. Paid straight to the seller, whose arcade keeps your balance, so start small with sellers you don't know.`;
+  const all = [...(legs || o.prices)];
+  (o.images && !o.images.free ? o.images.prices : []).concat(o.prices).forEach((p) => { if (!all.some((x) => x.leg === p.leg)) all.push(p); });
+  $("llm-pay").innerHTML = all.map((p) => `<option value="${esc(p.leg)}">${esc(p.label)}</option>`).join("");
+  $("llm-pay").dataset.legs = JSON.stringify(all);
+  drawBuys();
+  $("llm-topup").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+function drawBuys() {
+  if (!picked) return;
+  const legs = JSON.parse($("llm-pay").dataset.legs || "[]"), p = legs.find((x) => x.leg === $("llm-pay").value), amt = num($("llm-amount").value);
+  const label = p ? short(p.label) : "";
+  $("llm-send-pay").textContent = amt > 0 ? `Send ${amt} ${label}` : "Send";
+  if (!p || !(amt > 0)) { $("llm-buys").textContent = "Enter an amount to see what it buys."; return; }
+  if (p.per !== undefined && p.in === undefined) {
+    const n = Number(p.per) ? Math.floor(amt / Number(p.per)) : 0;
+    $("llm-buys").innerHTML = n ? `Buys <b>${n.toLocaleString()} ${n === 1 ? "credit" : "credits"}</b>: ${n.toLocaleString()} ${n === 1 ? "picture" : "pictures"}, or ${Math.floor(n / 2).toLocaleString()} ${Math.floor(n / 2) === 1 ? "edit" : "edits"}` : "Pictures are free at this price."; return;
+  }
+  const out = Number(p.out) ? Math.floor(amt / Number(p.out)) : 0;
+  $("llm-buys").innerHTML = out ? `Buys about <b>${out.toLocaleString()} output tokens</b> (roughly ${Math.round(out * 0.75).toLocaleString()} words)` : "Output is free at this price.";
+}
+$("llm-pay").addEventListener("change", drawBuys); $("llm-amount").addEventListener("input", drawBuys);
+
+const PENDING = "arcade.llm.topups";
+function pending() { try { return JSON.parse(localStorage.getItem(PENDING) || "[]"); } catch (e) { return []; } }
+function keepPending(list) { try { localStorage.setItem(PENDING, JSON.stringify(list)); } catch (e) {} }
+
+$("llm-send-pay").addEventListener("click", async () => {
+  const o = picked, leg = $("llm-pay").value, amount = $("llm-amount").value.trim();
+  const p = o && JSON.parse($("llm-pay").dataset.legs || "[]").find((x) => x.leg === leg);
+  if (!p || !(num(amount) > 0)) { toast("Enter an amount."); return; }
+  const net = legNet(leg), btn = $("llm-send-pay");
+  btn.disabled = true;
+  try {
+    const {w, keys} = await keysFor(net, "Your wallet signs this payment.");
+    let offer;
+    if (legIsToken(leg)) {
+      const r = await fetch("/account/token/send", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({property_id: Number(leg.split("-token-")[1]), to: p.to, amount, chain: net})});
+      offer = await r.json(); if (!r.ok) throw new Error(offer.detail || "that cannot be sent");
+    } else {
+      offer = await w.offerSend(p.to, amount, net);
+    }
+    const shown = await w.checked(offer, keys);
+    const ok = window.arcadeAsk ? await arcadeAsk(`Pay ${amount} ${short(p.label)} to ${sellerName(o)}?`,
+      `For LLM credit, to ${p.to}. ${shown.says}`, "Yes, send it") : confirm(`Pay ${amount} ${short(p.label)}?`);
+    if (!ok) return;
+    const done = await w.confirm(keys, offer);
+    const words = await getJSON(`/account/llm/topup?seller=${encodeURIComponent(o.seller)}&leg=${encodeURIComponent(leg)}&txid=${done.txid}`);
+    const coins = await import("/coins.js");
+    const sig = await coins.signMessage(keys.on[net].key, words.message, words.magic);
+    keepPending([...pending(), {seller: o.seller, leg, txid: done.txid, sig, at: Date.now()}]);
+    $("llm-topup-said").textContent = "Sent. It counts as soon as the seller's node sees it, usually within seconds…";
+    claimPending();
+  } catch (err) { toast(err.message || String(err)); }
+  finally { btn.disabled = false; }
+});
+
+let claiming = false;
+async function claimPending() {
+  if (claiming) return; claiming = true;
+  try {
+    let list = pending();
+    for (const t of [...list]) {
+      try {
+        const got = await postJSON("/account/llm/topup", {seller: t.seller, leg: t.leg, txid: t.txid, sig: t.sig});
+        list = list.filter((x) => x.txid !== t.txid);
+        toast(got.again ? "That payment was already counted." : `Credit added: ${got.text || ""}`);
+        $("llm-topup-said").textContent = "Credit added.";
+        const o = book.offers.find((x) => x.seller === t.seller); if (o) loadCredit(o);
+      } catch (err) {
+        const m = String(err.message || err);
+        if (Date.now() - t.at > 6 * 3600e3 || /already counted|not sent from|another token|does not go|nothing to|not valid|does not check/.test(m)) {
+          list = list.filter((x) => x.txid !== t.txid); toast("Top-up not counted: " + m);
+        } else if (picked && picked.seller === t.seller) {
+          $("llm-topup-said").textContent = m;
+        }
+      }
+    }
+    keepPending(list);
+    if (list.length) setTimeout(claimPending, 15000);
+  } finally { claiming = false; }
+}
+
+// --- chat ----------------------------------------------------------------------------------------------------
+// The conversation kept in this browser, per account and model, the way the helper keeps its own (2026-10-23:
+// "have the models store their context window in the browser, the same way as the helper [bot] does").
+const CHAT_KEEP = 80;
+const chatKey = (o) => `arcade.llm.chat:${book.me || "guest"}:${o.seller}:${(o.models[0] || {}).id || ""}`;
+function keepChat() {
+  if (!picked) return;
+  try { localStorage.setItem(chatKey(picked), JSON.stringify(history.slice(-CHAT_KEEP))); } catch (e) {}
+}
+function drawChat() {
+  $("llm-msgs").innerHTML = "";
+  history.forEach((m) => {
+    if (m.role === "user") bubble("me", m.content);
+    else { const it = bubble("it"); const out = it.querySelector("div");
+           if (window.arcadeMd) out.innerHTML = arcadeMd(m.content); else out.textContent = m.content; }
+  });
+}
+function docsWord() { $("llm-input").placeholder = $("llm-docs").checked ? "Ask anything \u2014 it knows DogecoinArcade's docs\u2026" : "Ask anything\u2026"; }
+try { $("llm-docs").checked = localStorage.getItem("arcade.llm.docs") !== "off"; } catch (e) {}
+docsWord();
+$("llm-docs").addEventListener("change", () => { try { localStorage.setItem("arcade.llm.docs", $("llm-docs").checked ? "on" : "off"); } catch (e) {} docsWord(); });
+function openChat(o) {
+  $("llm-chat").hidden = false;
+  try { history = JSON.parse(localStorage.getItem(chatKey(o)) || "[]") || []; } catch (e) { history = []; }
+  drawChat();
+  $("llm-chat-who").textContent = `${o.models[0] ? o.models[0].id : ""} · ${sellerName(o)}`;
+  const c = credit[o.seller];
+  $("llm-chat-leg").hidden = !!o.free;
+  $("llm-chat-leg").innerHTML = legsOf(o).map((p) => `<option value="${esc(p.leg)}">${esc(short(p.label))}</option>`).join("");
+  const has = o.prices.find((p) => c && c.credit && c.credit[p.leg] && c.credit[p.leg].units > 0);
+  if (has) $("llm-chat-leg").value = has.leg;
+  drawLeft();
+  $("llm-chat").scrollIntoView({behavior: "smooth", block: "nearest"});
+  $("llm-input").focus();
+}
+function drawLeft() {
+  if (!picked) return;
+  const m = (picked.models[0] || {}), l = creditLine({kind: "text", o: picked, m});
+  $("llm-chat-leg").hidden = true;                          // the credit pays, in whatever coin it is (2026-10-23)
+  $("llm-left").textContent = l.big === "No credits yet" ? "No credit" : l.big + (l.big.startsWith("\u2248") ? " left" : "");
+}
+$("llm-chat-leg").addEventListener("change", drawLeft);
+$("llm-new-chat").addEventListener("click", () => { history = []; $("llm-msgs").innerHTML = ""; keepChat(); });
+
+function bubble(cls, text) {
+  const el = document.createElement("div");
+  if (cls === "me") { el.className = "llm-me"; el.textContent = text; }
+  else { el.className = "llm-it"; el.innerHTML = `<details hidden><summary>Thinking</summary><span></span></details><div></div><small></small>`; }
+  $("llm-msgs").appendChild(el); $("llm-msgs").scrollTop = 1e9; return el;
+}
+async function sendChat() {
+  const text = $("llm-input").value.trim();
+  if (!text || busy || !picked) return;
+  try { await ensureGrant(picked); } catch (err) { toast(err.message); return; }
+  busy = true; $("llm-go").disabled = true; $("llm-input").value = "";
+  history.push({role: "user", content: text}); bubble("me", text); keepChat();
+  const it = bubble("it"), out = it.querySelector("div"), think = it.querySelector("details"), small = it.querySelector("small");
+  let said = "", thought = "";
+  try {
+    const r = await fetch("/account/llm/chat", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"},
+      // docs: the seller adds what DogecoinArcade's documentation says about the question, free (llmdocs.py).
+      body: JSON.stringify({seller: picked.seller, leg: "auto", model: picked.models[0] && picked.models[0].id, messages: history.slice(-40), docs: $("llm-docs").checked})});
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || `HTTP ${r.status}`); }
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+    for (;;) {
+      const {value, done} = await reader.read(); if (done) break;
+      buf += dec.decode(value, {stream: true});
+      let at;
+      while ((at = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, at).trim(); buf = buf.slice(at + 2);
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim(); if (data === "[DONE]") continue;
+        let ev; try { ev = JSON.parse(data); } catch (e) { continue; }
+        if (ev.error) throw new Error(ev.error.message || "failed");
+        if (ev.arcade) {
+          const a = ev.arcade, p = picked.prices.find((x) => x.leg === a.leg);
+          const yours = Math.max(0, a.tokens_in - (a.docs_tokens || 0));
+          small.textContent = `${yours} in · ${a.tokens_out} out · ${a.free ? "free" : a.cost_text + " " + short(p && p.label)}` +
+            (a.docs_tokens ? ` · ${a.docs_tokens.toLocaleString()} tokens of DogecoinArcade docs, free` : "");
+          if (!a.free) { credit[picked.seller] = credit[picked.seller] || {credit: {}}; credit[picked.seller].credit = credit[picked.seller].credit || {};
+            credit[picked.seller].credit[a.leg] = {...(credit[picked.seller].credit[a.leg] || {}), units: a.left, text: a.left_text}; drawLeft(); }
+          continue;
+        }
+        for (const ch of ev.choices || []) {
+          const d = ch.delta || {};
+          if (d.reasoning_content) { thought += d.reasoning_content; think.hidden = false; think.querySelector("span").textContent = thought; }
+          if (d.content) { said += d.content; if (window.arcadeMd) out.innerHTML = arcadeMd(said.replace(/^\s+/, "")); else out.textContent = said.replace(/^\s+/, ""); }
+        }
+        $("llm-msgs").scrollTop = 1e9;
+      }
+    }
+    history.push({role: "assistant", content: said.replace(/^\s+/, "")}); keepChat();
+  } catch (err) {
+    out.textContent = said || "—"; small.textContent = String(err.message || err);
+    history.pop(); keepChat();
+  } finally { busy = false; $("llm-go").disabled = false; draw(); }
+}
+$("llm-go").addEventListener("click", sendChat);
+$("llm-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+
+// --- API keys ------------------------------------------------------------------------------------------------
+let keys = [], fresh = null;             // fresh: the key made just now, {key, seller}, shown once
+function drawKeys() {
+  $("llm-base").textContent = book.api_base;
+  $("llm-api").hidden = !book.signed_in || !FOCUS;          // keys belong to a model's own page
+  const on = [];
+  book.offers.forEach((o) => [{leg: "auto", label: "any of its coins"}].forEach((p) => on.push(`<option value="${esc(o.seller)}|${esc(p.leg)}">${esc(sellerName(o))} · ${esc(short(p.label))}</option>`)));
+  const keep = $("llm-key-on").value; $("llm-key-on").innerHTML = on.join(""); if (keep) $("llm-key-on").value = keep;
+  const name = (sid) => { const o = book.offers.find((x) => x.seller === sid); return o ? sellerName(o) : sid.slice(0, 10) + "…"; };
+  $("llm-keys").innerHTML = keys.length ? `<span class="h">Key</span><span class="h">Name</span><span class="h">Spends</span><span class="h">Last used</span><span></span>` +
+    keys.map((k) => `<code>…${esc(k.tail)}</code><span style="overflow-wrap:anywhere">${esc(k.name || "—")}</span><span>${esc(name(k.seller))} · ${esc(k.leg === "auto" ? "any coin" : k.leg)}</span>
+      <span style="color:var(--muted)">${k.used ? new Date(k.used * 1000).toLocaleString() : "never"}</span>
+      <button type="button" class="llm-btn bad" data-drop="${esc(k.hash)}" style="height:36px">Revoke</button>`).join("") : "";
+  // The key just made goes into the example, with a model of the seller it spends at (2026-10-23: "When a user
+  // generates a key, it should auto populate into the curl command example").
+  const fx = FOCUS ? focusItem() : null;
+  const ko = fx ? fx.o : book.offers.find((o) => fresh && o.seller === fresh.seller) || book.offers.find((o) => o.models.length) || book.offers[0];
+  const text = fx ? fx.kind === "text" : !ko || ko.models.length;
+  const model = fx ? fx.m.id : ko && ko.models.length ? ko.models[0].id : ko && ko.images ? (ko.images.models[0] || {}).id : "MODEL";
+  if (fx && !$("llm-key-on").dataset.preset) {             // the key spends at this model's seller
+    const first = [...$("llm-key-on").options].find((op) => op.value.startsWith(fx.o.seller + "|"));
+    if (first) { $("llm-key-on").value = first.value; $("llm-key-on").dataset.preset = "1"; }
+  }
+  const k = fresh ? fresh.key : "sk-arcade-…";
+  $("llm-curl").textContent = text
+    ? `curl ${book.api_base}/chat/completions \\\n  -H "Authorization: Bearer ${k}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hi"}]}'`
+    : `curl ${book.api_base}/images/generations \\\n  -H "Authorization: Bearer ${k}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${model}", "prompt": "a red dragon", "size": "1024x1024"}'`;
+}
+async function loadKeys() { if (!book.signed_in) return; try { keys = (await getJSON("/account/llm/keys")).keys || []; } catch (e) { keys = []; } drawKeys(); }
+$("llm-key-make").addEventListener("click", async () => {
+  const [seller, leg] = ($("llm-key-on").value || "").split("|");
+  if (!leg) { toast("No seller to make a key for yet."); return; }
+  const o = book.offers.find((x) => x.seller === seller);
+  try {
+    if (o) await ensureGrant(o);
+    const got = await postJSON("/account/llm/keys/new", {seller, leg, name: $("llm-key-name").value.trim()});
+    $("llm-fresh").textContent = got.key; $("llm-fresh-box").hidden = false; $("llm-key-name").value = "";
+    fresh = {key: got.key, seller};
+    loadKeys();
+  } catch (err) { toast(err.message); }
+});
+$("llm-keys").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-drop]"); if (!b) return;
+  if (window.arcadeAsk && !(await arcadeAsk("Revoke this key?", "Programs using it stop working at once.", "Revoke"))) return;
+  try { await postJSON("/account/llm/keys/drop", {hash: b.dataset.drop}); loadKeys(); } catch (err) { toast(err.message); }
+});
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-copy]"); if (!b) return;
+  navigator.clipboard.writeText($(b.dataset.copy).textContent).then(() => { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500); });
+});
+
+async function load() {
+  try { book = await getJSON("/account/llm/offers"); }
+  catch (err) { $(FOCUS ? "llm-detail" : "llm-cards").innerHTML = `<div class="llm-empty">${esc(err.message)}</div>`; return; }
+  if (picked) picked = book.offers.find((o) => o.seller === picked.seller) || null;
+  if (picPicked) picPicked = book.offers.find((o) => o.seller === picPicked.seller && o.images) || null;
+  draw();
+  favStart();
+  loadGallery();
+  book.offers.forEach(loadCredit);
+  loadKeys();
+}
+load(); claimPending();
+setInterval(() => { if (!document.hidden && !busy) getJSON("/account/llm/offers").then((b) => { book = b; if (picked) picked = b.offers.find((o) => o.seller === picked.seller) || picked; draw(); }).catch(() => {}); }, 10000);
+</script>

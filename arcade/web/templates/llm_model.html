@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}{{ focus.model }} · Model exchange · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- One model's page (web/llmweb.py llm_model_page): the model exchange's card for it, and everything to use it. #}
+<h1 style="margin:0 0 8px" id="llm-title">{{ focus.model }}</h1>
+{% include "_llm_tab.html" %}
+{% endblock %}

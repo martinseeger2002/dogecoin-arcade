@@ -1,4 +1,4 @@
-# Games: listing yours on the Games tab
+# Games: listing yours on the Apps tab
 
 The *Games* tab lists every game anyone has inscribed, on every arcade, ranked
 by what players say about them. Players can press *Play* to open a game full
@@ -89,7 +89,7 @@ A game can ask a player's wallet to trade, pay, put things in escrow or sign. An
 including a copy of yours under a lookalike name (an extra letter, a digit for a letter), so **no game gets
 wallet access until the player turns it on**:
 
-* Every card on the Games tab has a **Wallet access** switch, off until the player turns it on, next to
+* Every card on the Apps tab has a **Wallet access** switch, off until the player turns it on, next to
   whether their wallet is unlocked in that browser. Turning it on names the game's publisher (its @name and
   address) and asks the player to check that it is the real one.
 * **A game that uses the wallet does not play until the switch is on.** Say so on your card with
@@ -108,7 +108,7 @@ The switch belongs to the page Play opens (`play`, or the card itself), and the 
 **Lookalike cards are hidden.** Each arcade checks new cards against the games already listed. A card by a
 different publisher with a name that reads the same once the lookalike letters are taken out, or with the same
 cover, goes to the operator's model; if it looks made to be mistaken for the other game, it is left off the
-Games tab and its `/play` link until the operator has looked. The first publisher of a name counts as the real
+Apps tab and its `/play` link until the operator has looked. The first publisher of a name counts as the real
 one, unless the operator trusts another. Pick a name of your own and nothing here affects you.
 
 ## Camera and microphone (video calls, voice)
@@ -184,7 +184,7 @@ viewer, saves with `arcade.storage`, and can pay prizes through prize pools
 
 ### A card for a game you already inscribed
 
-A game inscribed before the Games tab existed has no `game` JSON, and JSON can
+A game inscribed before the Apps tab existed has no `game` JSON, and JSON can
 never be added afterwards. Give it a card by inscribing a tiny page, from the
 **same address** that inscribed the game, whose JSON names the game in `play`:
 

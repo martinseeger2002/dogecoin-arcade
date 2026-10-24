@@ -64,11 +64,13 @@ PUBLIC_PAGES = frozenset({
     "/nfts",
     "/create",
     "/create/chain",          # which chain this browser creates on (a cookie, no spending)
+    "/create/ord",            # inscribe an ord from the account's own wallet (signed in the tab)
     "/inscriptions",
     "/exchange",
     "/exchange/token20/search",       # DRC-20 / PRC-20 ticks as they are typed into the exchange's search boxes
     "/exchange/pairs",            # the "open a pair" box: two token ids to a token/token pair's page
-    "/games",                 # every inscribed game (arcade/games.py)
+    "/apps",                  # every inscribed app (arcade/games.py; the Apps tab since 2026-10-23)
+    "/games",                 # the old name: redirects to /apps
     "/account/escrows",       # an account's own escrows (needs a session)
     "/account/doginals",      # this account's own Doginals on Dogecoin, to list (needs a session)
     "/account/segwit/balance",  # the account's registered segwit address (native or P2SH), test chains (needs a session)
@@ -96,6 +98,7 @@ PUBLIC_PAGES = frozenset({
     "/offline",
     "/push/key",              # the key a browser subscribes to this node's pushes with
     "/account/push/news",     # what woke the phone: who wrote, never what (signed in)
+    "/account/ring/apps",     # the apps an account lets ring it (arcade/ring.py, signed in)
     "/admin/login",           # the remote admin password page (rate-limited)
     "/signin.js", "/base.css",
     "/coins.js",
@@ -137,6 +140,8 @@ PUBLIC_PAGES = frozenset({
     "/account/doginal-index",         # how far the chain's ord index has walked (the Doginals fill in as it goes)
     "/account/token20",               # this account's DRC-20 / PRC-20 balances, from the most complete ord index
     "/account/listed",                # what this account's standing listings hold (the Wallet shows them held)
+    "/account/ord/runs",              # this account's ords being inscribed, and the ones made here
+    "/account/ord/chains",            # the chains an ord is inscribed on here, each with its rules
     "/account/arcades",               # the arcades on the mesh, for the Your arcade page's Arcades card
     "/account/favorites",             # the markets this account starred (Exchange, 2026-10-17)
     "/account/orders/delegated",      # where this account's node-filled orders stand (2026-10-17)
@@ -153,6 +158,9 @@ PUBLIC_PAGES = frozenset({
 #: one is a promise about a whole subtree: nothing under these may ever
 #: learn to spend.
 PUBLIC_TREES = (
+    "/account/llm/",          # the Exchange's LLM tab: offers, the account's own balance, grant words and keys
+    "/exchange/llm/",         # one model's own page on the model exchange (2026-10-23)
+    "/v1/models",             # the LLM API's model list, for an API key
     "/signup/",               # is this name free
     "/signin/",               # somebody's encrypted wallet, by name
     "/vendor/",               # the two vendored crypto libraries
@@ -191,6 +199,7 @@ PUBLIC_TREES = (
 #: Nothing is disclosed on the page itself: `inscription_view` reads this
 #: node's wallet only when it is the operator's own copy of the page.
 PUBLIC_SHAPES = (
+    re.compile(r"^/account/ring/[0-9a-f]{16}$"),       # the ring a tapped notification opened (signed in)
     # Every chain's coin icon (2026-10-18: Litecoin's two joined PEP's and DOGE's); the route serves only files there.
     re.compile(r"^/coin-[a-z0-9-]{2,24}\.png$"),
     # One game's discussion: read-only, like the launch thread it is.
@@ -257,6 +266,11 @@ LINKED_FROM_PUBLIC = ("/content/", "/collections", "/feed", "/u/", "/docs",
 #: equally correct; it is named so that nobody reads that 405 as the door having
 #: opened something. (the door census, 2026-09-27)
 PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
+               # the LLM service (llmweb.py, 2026-10-23): each acts only for the signed-in account, its own grants,
+               # top-ups and keys; /v1 answers only an API key the account made
+               "/account/llm/grant", "/account/llm/topup", "/account/llm/chat", "/account/llm/keys/new",
+               "/account/llm/keys/drop", "/v1/chat/completions", "/account/llm/image", "/v1/images/generations", "/account/llm/helper", "/account/llm/pictures/delete",
+               "/v1/images/edits",
                # which chains' wallets an account's Wallet tab shows (2026-10-18)
                "/account/wallets",
                # a tab's own lock-script trades (2026-10-13)
@@ -442,6 +456,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # testnet's (D-010).
                "/account/talk",
                "/account/push/subscribe", "/account/push/unsubscribe",
+               # ringing a player whose app is closed (arcade/ring.py): ring, which apps may, who may
+               "/account/ring", "/account/ring/apps", "/account/ring/allow",
                "/account/token/send", "/account/token/create",
                "/account/token/manage",
                "/account/sign",
@@ -457,6 +473,10 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/doginal-txs",
                # a DRC-20 / PRC-20 send of the caller's own tokens: its three offers, one after the other
                "/account/token20/send",
+               # an ord from the caller's own wallet: its commit and reveals, one after the other; its list
+               "/account/ord/inscribe", "/account/ord/forget", "/account/ord/quote",
+               # an ord collection index worked out (nothing spent; the page inscribes it as the caller)
+               "/account/ord/collection",
                # a DRC-20 / PRC-20 token into the caller's own trade lock: its four offers, one after the other
                "/account/trade/lock20",
                # starring a market: the caller's own list of favorites, nothing else

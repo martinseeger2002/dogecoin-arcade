@@ -88,7 +88,7 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-10-23 · SadFrog's side (Claude, node 2) · branch `team/in-game-wallet-access` (on `main` 144d9b89) · wallet access asked in the game; node hops from the Affiliates list; a warning before a wallet comes from another arcade; Game access page
+### 2026-10-24 · SadFrog's side (Claude, node 2) · branch `team/in-game-wallet-access` (built 2026-10-23, merged with `main` 99c394de) · wallet access asked in the game; node hops from the Affiliates list; a warning before a wallet comes from another arcade; App access page
 SadFrog asked: "the wallet access option doesn't have to happen in the game card, it can happen in the game -- this
 way a player can sign into a game, a game can switch nodes based on location/ping, sign into that node if needed
 again with the warning ... or the game launcher can ask for wallet access", and node hops "using affiliate list".
@@ -108,8 +108,9 @@ take it. What it does:
 - **wallet.js `warnElsewhere`**: signing in with a wallet made on another arcade (or `importFrom`) first says this
   arcade keeps its own copy of the encrypted wallet and is where the password opens it; no keeps nothing.
   game_door.html says the same before the password when it arrives with `?from=`.
-- **/me/access**: every game this browser allowed (wallet, camera & microphone, address book) with Turn off; linked
-  from the Games tab and the access card's words. In door.py's list.
+- **/me/access (App access)**: every app this browser allowed (wallet, camera & microphone, address book) with Turn
+  off; linked from the Apps tab and the access card's words. In door.py's list. Your app-card switches (contacts,
+  notifications) are untouched: an app card's box still allows ahead of time and turns off.
 - **Tests**: test_page_doors_browser (asked in place, no/yes, not held; the access door; Game access), test_imports_
   everywhere_browser (the warning: no keeps nothing, yes brings it), test_game_door (the shim, the ?from notice,
   /affiliates.json). Smoke, doors, auth and sign-in suites pass here (test_signup_browser's file upload fails here
@@ -129,6 +130,464 @@ take it. What it does:
   `coins.signInput` directly, so a mainnet shop buy skips `mainnetOk`'s review; (2) the realtime cert words are bound to
   a node, not a game or room, so a relay a player is carried through can be that address in any room on the mesh for a
   day; (3) the viewer ticket `?v=` is readable by the game from its own URL and could be passed out through a room.
+### 2026-10-24 "Pepecoin main" / "Pepecoin test" everywhere; the Wallet's sweep-back card is gone (Claude)
+The operator: Pepecoin is never just "mainnet" / "testnet" -- it is "Pepecoin main" and "Pepecoin test", as the rest of the app
+names chains (e.g. the testnet mining text); and "remove the sweep back card from the bottom of the wallet. Since sweep
+backs are automatic ... we only sweep back a coin test and that sweep back card is displayed on all of the coins".
+- Labels at the source: the two Pepecoin ChainContexts (`__main__.py`) are "Pepecoin test" / "Pepecoin main";
+  `Params.label` default "Pepecoin main", TESTNET "Pepecoin test" (`ChainContext.title` strips " main"/" test", so
+  titles stay "Pepecoin (PEP) – Main/Test"). `{chain.label.lower()}` -> `{chain.label}` in app.py messages.
+- Visible copy: wallet mining note, admin swap panel, token create/confirm buttons, contacts, exchange, inscription
+  view/send, launchpad note, backup key list, my_wallet notes, xchain, base.html review tag, coins.js key names, the
+  Guide, server error strings (faucet, trade legs, node talk, shops, approvals). Other chains' names untouched.
+- my_wallet.html: the `#dust-panel` card and its script removed (`/account/dust` and the automatic sweep stay).
+Branch `claude/pep-names-sweep`.
+
+### 2026-10-23 Ords doc: the trait file's layout, and writing one with the helper (Claude)
+`docs/ords.md` gains "The trait file" (doggy.market layout: inscriptionId, name "X #n", attributes) and "Making the trait
+file with the arcade helper", so the helper (it answers from the public docs) writes one when asked. Docs only.
+Also: the Only Frogs index file (25 Pepinals from nintondo.io/pepe/collection/only-frogs, ids checked against our PEP
+index, no traits on Nintondo) was sent to @dondogecon to publish. Branch `claude/ord-inscriber`.
+
+### 2026-10-23 Ords: a whole HashLips collection, one ord at a time, then its index on P test (Claude)
+The operator: "it should be able to inscribe a hashlip collection just like the current NFTs one at a time ... pep test for
+indexing". `/create/ord` "Inscribe a collection": a folder read like the NFT run (_metadata.json or <n>.json, matched by
+edition / image), one approval (`/account/ord/quote` prices it), each picture its own ord, then the collection index
+(collection_json, per-piece name/number/traits) inscribed on `test` (P test) where the registry reads it. Re-choosing
+the folder skips done pieces (matched by sha256 against `/account/ord/runs`), resumes a half-done one, and does not
+write the same index twice. `_ord_chain_too_long` now asks the node's `getmempoolentry` ancestorcount (a collection's
+commits chain on each other), falling back on the run's own count; the page waits out "too-long-mempool-chain" and
+retries the same run. wallet.js `inscribeOrd` no longer retries a 4xx. Tests: test_ord_inscribe 55,
+test_ord_inscribe_browser 2 (a 3-picture HashLips build in real Firefox: 3 ords, the index's part + root checked, a
+re-run inscribes nothing twice). Branch `claude/ord-inscriber`.
+
+### 2026-10-23 Creator tab: inscribe an ord from your own wallet, each chain by its own rules (Claude)
+The operator: "I want to add the option to inscribe an ORD under the creator tab. Make sure that the inscriber follows the rules
+of each chain individually ... Change the create tab to the creator tab"; asked: DOGE, PEP, BEL, LKY first (LTC Taproot
+later), the player's own wallet signs, single ords plus the Doginal Dogs' collection index. Branch `claude/ord-inscriber`.
+- `arcade/ord_inscribe.py`: ~/doginal-mint/inscribe.py's layout (the Anti Doginal Dogs inscriber: 240-byte parts,
+  1,500 bytes a reveal, P2SH lock chain, id = reveal 1 + i0), but the commit pre-pays every reveal so each reveal is one
+  lock in, one lock (or the ord) out -- no wallet coin spent after the commit. `RULES` per chain: dialect (ord_rules),
+  empty file (PEP only), fees/soft dust from Params (BEL: 0.0001/kB, none). Every plan is read back with
+  `ord_rules.read` in that chain's dialect before anything is offered.
+- Routes: `/account/ord/inscribe` (commit, then `{run}` -> next reveal / `wait` past 20 unconfirmed / `need_content`
+  after a restart), `/account/ord/runs`, `/account/ord/forget`, `/account/ord/chains`, `/account/ord/collection`
+  (root + parts sized for one transaction each). Runs persist in `<home>/ord-runs.json`. Door entries added.
+- `wallet.js` `startOrd` / `inscribeOrd`: checks each reveal spends the coin the last made and pays only this key's own
+  next lock (`noteKey`) or own address; one mainnet review for the whole ord. Page `/create/ord`, card on /create,
+  nav "Create" -> "Creator". `collection_json.CHAINS` += bel, lky. Docs: `docs/ords.md`.
+- Tests: test_ord_inscribe (53: every chain x sizes read back, fees, a whole ord walked by our index, the routes incl.
+  waits and restart), test_ord_inscribe_browser (real Firefox: Creator -> review -> 5 signed txs, signatures verified).
+- Needs from SadFrog: nothing; Bellinal/Luckinal postage is 100,000 like the others -- say if Nintondo wants another.
+
+### 2026-10-23 The helper uses a shared model only once this arcade approves it (Claude)
+The operator: "I want to be able to choose, which shared models my arcade uses. Because [@yourfirstname] is sharing a 9B model
+which cannot keep the context ... If one arcade shares their model to another, the other arcade will need to approve the
+use of that model." `llm.helper_ok` ["<seller mesh id>|<model>"] and `llm.helper_off_own`; `helper_sources` lists one
+row per model (own: approved unless switched off; another arcade's free share: approved only when in helper_ok);
+`helper_pick` takes approved ones only, own first, then least busy. Admin -> LLM -> Arcade helper: a switch per model,
+"In use now" on the one the robot uses. On .25 Strawberry's qwen3.8-flash-next was approved by hand at release (the
+robot had been using it); @yourfirstname's qwen3.5-9b is not. Test: test_a_shared_model_is_used_by_the_helper_only_once_approved.
+
+### 2026-10-23 The helper robot can be dragged anywhere on a desktop (Claude)
+The operator: "When you click and drag the robot head in desktop mode, you should be able to move the robot head and text bubble
+to anywhere on the screen." `_helper.html`: a mouse drag (pointer events, 6 px before it counts, so a click stays a
+click) moves the robot; the spot is kept in `arcade.helper.pos` and clamped to the window on resize; the chat opens
+beside it -- above when there is room, else below, inside the window; a double-click puts it back in the corner. Touch
+screens keep the corner (no touch drag; on a phone the chat is full width as before).
+
+### 2026-10-23 A model page's chat: an "Arcade docs" switch, and the conversation kept in the browser (Claude)
+The operator: "You should be able to disable the arcade context for the in page LLM chat for the models in the LLM exchange.
+Also have the models store their context window in the browser, the same way as the helper [bot] does." `_llm_tab.html`:
+an Arcade docs checkbox (on by default, kept as `arcade.llm.docs`) sends `docs: true|false`; the chat lives in
+localStorage `arcade.llm.chat:<me>:<seller>:<model>` (last 80, last 40 sent), drawn again on opening the page, cleared by
+New chat. Test: test_llm.py::test_the_chat_can_leave_the_arcade_docs_out.
+
+### 2026-10-23 A listing no longer "fails" over an old order the node took off; tabs forget cancelled orders (Claude)
+Live, @apple listing 100,000 PEP test for PEP main: "that lists more frgy than this wallet has free ... that order is off
+the book". The tab posts its whole own book with every listing, and its localStorage still held two frgy orders that
+the book had long cancelled (one the 100,000,000,000-frgy listing from the 10^8 bug of 2026-10-22). `_listing_over`
+dropped them every time and `/account/orders/post` answered **409** although the new PEP listing WAS filed, and because
+the tab only tidies its list after a good answer, the dead orders rode along again on every post.
+* `/account/orders/post`: posted orders the book holds as cancelled (`OrderBook.cancelled_of`) are left out; the answer
+  is 200 with `forget` (cancelled or dropped ids) and, when something past what is free came off, `notice` + `dropped`.
+* wallet.js postNow: forgets `forget`/`dropped` ids from the tab's own list (and takes an older arcade's 409 with
+  `dropped` as filed); `listOrder` throws only when the listing just made is the one dropped, otherwise a toast notes
+  that an older listing came off. Tests: test_doginal_wallet (the 200 + forget answers), test_trade_orders_web
+  (cancelled_of).
+
+### 2026-10-23 "Inscribe now" on a picture from the LLM tab (Claude)
+The operator: "underneath each image in the [cache], add an inscribe now Button that brings them to the [inscriber] with the
+image that they just generated picked as the file that they want to inscribe". "Your pictures" has Inscribe now ->
+`/nfts?pick=llm:<id>#inscribing`; `_account_inscribe.html` fetches that picture from the account's own 24-hour cache
+(/account/llm/pictures/<id>.png), puts it in the file box (DataTransfer) and quotes it (arcadePick) as if chosen.
+
+### 2026-10-23 No page zooms when a field is tapped (Claude)
+The operator: "when I'm on my iPhone PWA and I click into a text input field it zoomed in. I don't like that." Every page's
+viewport says `maximum-scale=1` now (base.html, and game_door, tokenpad, mintpad, offline), not only the full-screen
+game page; `viewport-fit=cover` stays the full-screen page's. iOS still allows pinch zoom. test_public updated.
+
+### 2026-10-23 LLM credit shown as credits and spent in any coin; delete a cached picture; the upload's thumbnail (Claude)
+The operator: "it should be listing the credits as credits with the listed conversion rate"; "you shouldn't have to select the
+coin that you used to buy the credits it should just automatically deduct your credit"; "User should be able to delete
+generated images from the cache"; "There should be a thumbnail of uploaded images when editing". Branch claude/llm-credits.
+* Leg `auto` (also "" and a stale "free"): `Seller.pick_leg` -- a chat pays in the coin the buyer's credit buys most
+  in; a picture in the first coin whose balance covers its credits. The Exchange's chat and picture panels send `auto`
+  (no coin picker); a new API key spends `auto` ("any coin"); a key made while a model was free carries on once it
+  charges, from whatever credit there is. `Seller.balance` gives each coin's `scale`.
+* Cards, the model page and the panels say credit as credits at the model's rate: "10 credits · 1 credit = 0.5 PEP"
+  for pictures (sum over coins of units / ceil(per * scale)), "about 50,000 tokens · 0.0001 PEP / token out" for words.
+* `POST /account/llm/pictures/delete {id}` (door), a Delete on each picture in "Your pictures"; the chosen picture's
+  thumbnail, size and a Remove under "Change a picture of yours". Tests: test_llm.py (29).
+
+### 2026-10-23 The helper appears as soon as a shared model comes online (Claude)
+The operator: "the robot [should] become visible as soon as a shared model comes online". `_helper.html` asks
+`/account/llm/helper` every 20 s while the page is open (and on coming back to the tab), not once per page with a
+minute's cache: it shows within moments of a shared model's offer arriving (offers are said again every 15 s), and
+hides when none is left unless its chat is open. Live check first: dogecoinarcade.com's helper answered a stranger
+through @strawberry's Qwen, shared free with @bigchiefenergy (6,611 tokens of docs, 0 charged).
+
+### 2026-10-23 the operator's side (Claude) · SadFrog's PR #9 and PR #10 merged
+The operator: "check the GitHub for sad frogs PR check it, publish it and merge it with the main branch so that all arcades
+are updated." Applied as patches on the private master (cherry-picked: fab1489f, 92a827db, bef970f3 from
+`team/bel-lky-chains`; 6883082f from `team/node-trader-own-confirm`), on top of the day's LLM service work.
+* **#9:** Bellinals and Luckinals in Admin -> Ords (off until turned on) and the Wallet (view only); Bellscoin rules 6
+  (`ord_rules.NUMBERS_REINSCRIPTIONS = {doge, bel}`, a Bells index walked under 5 is cut again); `insc.reinscribed` on
+  every chain (an ALTER on open; in no chunk word); docs/bellscoin.md, luckycoin.md, adding-a-chain.md (public).
+  Conflicts were wording only (my_wallet.html's Pepinals comment, doginal_index.py's reinscription comment) and this
+  file's Log; your code is as you wrote it.
+* **#10:** `NodeTrader.need()` never under `OWN_REAL_COINS = 1` when the node's own leg is real coin. Agreed: the node
+  pays from its own wallet for whoever proposes, and a double-spent unconfirmed lock would cost it its leg.
+* Tests: test_bells_luckycoin, test_ord_dialects, test_litecoin_safety and the smoke set pass. With both on `main`,
+  node 2 can go back to the signed releases and auto-update, as you planned.
+
+### 2026-10-23 · SadFrog's side (Claude, node 2) · branch `team/node-trader-own-confirm` (on `main` f963448d) · the node waits for a confirmation before paying real coins of its own
+From a review on 2026-10-20; node 2 has run it since. `NodeTrader.need()` takes the operator's `swap_big` lines as before,
+but never less than `OWN_REAL_COINS = 1` when what THIS node gives is a real-coin leg (`give.tier() == "mainnet"`):
+- **Why:** this node pays from its own Core wallet, by itself, for whoever proposes over the mesh. At 0 confirmations an
+  initiator could show it an unconfirmed lock, have it lock its own coins (or reveal the secret), then double-spend
+  their lock and walk off with the node's leg.
+- **Not changed:** a person's swap below `swap_big` may still go at 0, the operator's choice and that person's risk.
+  The node *getting* real coins for test coins stays at 0, because its own risk there is test coins.
+- **Test:** `tests/test_litecoin_safety.py::test_the_node_waits_for_a_confirmation_before_paying_real_coins_of_its_own`.
+- **Asked of your side:** take it if you agree. It is the last code node 2 runs that `main` does not have, besides
+  PR #9. Once both are on `main`, node 2 goes back to your signed releases and auto-update.
+### 2026-10-22 · SadFrog's side (Claude, node 2) · branch `team/bel-lky-chains` (on `main` 19272ced) · Bellinals, Luckinals, Bells numbering, docs
+Thanks for merging the first commit (eb7b18d). Three more on the same branch, PR #8:
+- **Bellinals and Luckinals:** Admin -> Ords lists both with walk / help / read / off, off until the operator turns
+  them on (nothing new: any chain in `STARTS`). The Wallet's NFTs tab shows an account's Bellinals and Luckinals
+  (`ORD_WORDS` in my_wallet.html, read through each chain's guard by `/account/doginal-txs`), view only: Send, List
+  and Swap go by the Doginals routes, which serve Dogecoin and Pepecoin mainnet.
+- **Bellscoin numbers reinscriptions like nintondo (rules 6):** checked against nintondo.io's Bells index, ours fell
+  behind from #38,879 (block 26,689): the walk numbered a reinscription on Dogecoin only, by name
+  (`self.store.net == "doge"`). Now `ord_rules.NUMBERS_REINSCRIPTIONS = {doge, bel}` decides, and Bellscoin is
+  rules 6 so an index walked under 5 is cut again. Re-walked to block 27,477 (#314,779): 46 of 46 sampled numbers
+  and blocks match nintondo's. Luckycoin keeps wonky-ord's first-koinu rule (no official indexer to follow).
+- **Every chain marks its reinscriptions** (SadFrog: "highlight them as reinscriptions ... so we can later put a
+  toggle in the admin panel"): `insc.reinscribed` (1, or NULL on rows filed before the column; `_columns_added`
+  adds it to an older index), `where()` / `inscription()` say `reinscription`, the walk's status counts
+  `reinscriptions`. In no chunk word, so arcades still agree. Your Dogecoin index keeps its numbers; only rows filed
+  from now on carry the mark there unless you cut it again. Test: test_ord_dialects (Pepecoin, Dogecoin and
+  Bellscoin mark the same reinscription; Luckycoin numbers as Litecoin).
+- **Docs:** `docs/bellscoin.md`, `docs/luckycoin.md` (node, addresses, keys, fees, the inscription index) and
+  **`docs/adding-a-chain.md`, the checklist for whoever adds the next coin** (all three in `guide.ORDER`).
+- **For anyone continuing this:** SadFrog's node compares its Bellinals index with nintondo.io every 6 hours (a
+  node-local script, not in this repo): #0, the newest and 20 random numbers, id -> number and block, bisecting to
+  the first difference on a mismatch. nintondo's `/api/search/<id>/info` answers `number` and `creation_block`.
+- **Tests:** the ord, index, wallet, admin, web and fee suites pass (518). test_docs fails here only for DECISIONS.md.
+- **Asked of your side:** nothing new; take these when convenient.
+### 2026-10-23 The model exchange: a card per model and a page per model; pictures by size; 24-hour picture cache; refunds (Claude)
+* The operator: "The model exchange should just have cards for each of the models listed and the user credits available and
+  the cost and the tokens per second and other relevant data ... whenever you click on one of the models, you should go to
+  that specific models page"; "favorite stars on the model exchange and the sort features from the token exchange".
+  `_llm_tab.html` list mode: one `a.llm-card` per model (words or pictures) -- price, speed (tok/s or s a picture), use
+  in the last hour, longest reply / largest side, busy pill, your credit, a star (arcadeFavs; the key is the model page
+  URL, `/exchange[/?]...` as /account/favorites allows). ★ Favorites / All models / Words / Pictures, a search through
+  every model, Sort (most used, cheapest, fastest, least busy, name; kept in this browser), coin chips, Suggested when on
+  Favorites; opens on Favorites when there are any. **`/exchange/llm/model?seller&kind&model`** (llm_model.html):
+  the card, prices, Top up, Chat or Make a picture, API keys preset to it (curl for /v1/images on a picture model).
+* The operator: credits by size -- "250 pixels by 250 ... 251 ... two credits ... 500 ... two ... 501 ... three", the longest
+  side (his choice); "Same thing with image editing, per upload and download"; "The pixel ratio should be user defined".
+  `imagegen.credits_for(w, h) = ceil(max(w, h) / 250)`; a picture's credits from its requested size cut to max_side
+  (drawn at the multiple of 16 below it); an edit = its upload's credits + its result's (result no bigger than the
+  upload or max_side; charged on what came back, never past what was shown). Width and height boxes with presets and the
+  exact credits on the button. `max_side` defaults to 1000.
+* The operator: a picture whose page was closed "should be stored in a temporary cache for 24 hours where that user can
+  access it and download it": `/account/llm/image` runs the job in its own thread pool and keeps every result in
+  <home>/llm-pictures/<account hash>/ (24 h); `/account/llm/pictures` + `/account/llm/pictures/<id>.png`; the model
+  page shows "Your pictures".
+* The operator: "If there is an error, they should be refunded their credit": a chat reply that breaks off with an error is
+  not charged (logged ok=0); a reply the buyer stopped reading counts what was written; failed pictures never cost.
+* The helper's chat box is built by script (no <textarea>/<form> in any page's HTML: the front door's "no box for a
+  phrase", the listings page's "nothing to press"), its box is 16px (no iOS zoom), and it is not shown on /, sign-in,
+  join, backup, restore or any page with a password field. A bare /exchange opens on LLMs; an unknown tab (old links,
+  ?tab=swaps) still lands on Tokens.
+* Also: top-ups count at broadcast, the paid-pictures "Free" label (entry below), ComfyUI woken again when it dies
+  starting (CUDA out of memory as the voice model lets go). docs/llm.md says all of it. Tests: test_llm.py (28).
+
+### 2026-10-23 Top-ups count at broadcast; a paid picture model is no longer shown "Free" (Claude)
+Live, @apple on Strawberry's pictures: the card said "Free, your own model" (the arcade's LLM was free, and the pictures
+card read that flag), and 1 DOGE of credit waited for its block. The operator: "The credit should be available as soon as the
+transaction is broadcast." `llm.REAL_CONFIRMATIONS = 0`: a coin top-up counts once the seller's Core has it, mempool or
+block (an Omni token still once its index read it). `Seller.balance` says `own` (the buyer uses everything here free:
+operator or free_for), `free` (words free for everyone) and `images_free`; the tab reads each where it belongs.
+Tests: test_llm.py (26).
+
+### 2026-10-23 The arcade helper: a pixel robot in every page's corner (Claude)
+The operator: "a pixel art robot head ... in the lower right hand corner that persists across all tabs and pages. When you
+click on it. It should open a chat dialog box with that same Dogecoin arcade chat harness as From the LLM marketplace
+but using any LLM that is shared with the operator of that arcade"; "should have context on what tab the user is on";
+"its context window stored in the users arcade local storage"; "In the users your arcade tab you should be able to
+disable the robot helper". Branch claude/llm-images.
+* `_helper.html` (included by base.html; not on /inscriptions/<id>/full): a 16x16 SVG robot, a chat dialog, the
+  conversation in localStorage `arcade.helper.chat:<account|guest>` (last 60, last 16 sent), each question carrying
+  `page` (path, title, h1, open tabs, section headings, who is signed in). Hidden when `arcade.helper.off` (Your arcade
+  -> Arcade helper switch) or when no model is shared with the operator.
+* `/account/llm/helper` GET (available, model) / POST (stream): speaks AS the operator -- `state.operator`'s account,
+  or the node's identity where the operator IS the node (.25), whose grants the node signs itself with
+  keywallet.node_key. Sources: this arcade's own model, or another's whose offer lists the operator in `free_tags`
+  (offers now carry the names they share free with). Leg "free" only, so a seller that charges refuses (never a bill).
+  40 questions an hour per account, 15 per guest IP; 1,200 tokens out; `enable_thinking: false`; docs + page context
+  through llmdocs (`page`); usage `via` = helper. Admin -> LLM "Arcade helper" lists the sources ("Sign once" where an
+  operator account must sign a grant).
+* New public doc **docs/llm.md** ("AI models and pictures on the exchange") so the helper and the chat answer about the
+  LLM service itself; both chats render a little markdown (arcadeMd). Tests: test_llm.py (25).
+
+### 2026-10-23 The Exchange chat knows DogecoinArcade's docs; models free for chosen operators (Claude)
+* The operator: "that model should include a system prompt that it is an expert on Dogecoin arcade and it should have access to
+  all of the Dogecoin arcade documentation" -- his choice: the relevant parts, not charged. **arcade/llmdocs.py**: the
+  public docs (guide.pages(private=False), minus hosting-plan.md) cut at headings into <=2,400-char sections, BM25 on
+  the person's last three messages, the best up to 24,000 chars under a DogecoinArcade-expert system prompt. The
+  SELLER adds it (`docs: true` on a chat; the Exchange tab sends it, API keys and apps do not), counts it with vLLM's
+  /tokenize (chars/4 when the server cannot), and charges `max(0, prompt_tokens - docs)`; the end event says
+  `docs_tokens`. Live on a test machine Qwen: a prize-pool question got 6,536 tokens of referee/prize-pool docs free and a
+  correct answer citing /docs/referee.md.
+* The operator: "share my model with Bigchiefenergy if I choose for free while simultaneously having it listed" -- his choice:
+  that operator's account only. Setting `llm.free_for` [{tag, address}]; Admin -> LLM "Free for other operators"
+  (names typed or picked from the linked operators, each resolved on the tag chain by the server -- never an address
+  from the form); `free(buyer)` covers words and pictures. Tests: test_llm.py (23).
+
+### 2026-10-23 Finding ComfyUI's models when the voice model takes its slot (Claude)
+The operator: "ComfyUI 127.0.0.1:8188 pictures No model it can share." On a test machine only one of ComfyUI and the CSM voice
+model sits beside vLLM (~/bin/gpu-slot); a voice request 9 s after the wake stopped ComfyUI while it was being asked
+for its loaders, and the list came back empty with no reason. `probe` now asks twice and says why
+(`why`: stopped while asked / holds no Qwen-Image model); "Wake it and look" wakes once more when ComfyUI is gone
+again before it was asked; the images scan retries a wake when the model list fails. A picture in progress is never
+cut off (gpu-slot waits for ComfyUI's queue); an idle ComfyUI is unloaded for voice and woken again by the next order.
+
+### 2026-10-23 Admin -> LLM: "Find models on this computer" (Claude)
+The operator: "Can the operator just have a button that they can click to scan for all models and then it will just give
+them a list of models that is on their computer and then they can just pick from the models?" -- `POST
+/admin/api/llm/discover` (llmweb.discover): every listening local port (/proc/net/tcp*, plus 8000 8080 11434 1234
+5000 5001 8188 7860 18300; below 1024 and the arcade's own port skipped) asked for /v1/models (vLLM, llama.cpp,
+Ollama, LM Studio, other OpenAI servers, named by owned_by/port) or /system_stats (ComfyUI, its models via
+imagegen); a server listing the same models as an earlier one is marked `same_as` (a proxy). No ComfyUI answering:
+a systemd user unit named *comfy* that is not running is offered with its wake command ("Wake it and look", node
+machine only). The "Your models" panel's ticks fill the server address and model ticks of the sections below. On
+a test machine: 71 ports in about 3 s. Test: test_llm.py::test_find_models_lists_every_model_server_on_this_computer.
+
+### 2026-10-23 Exchange opens on LLMs; the LLMs tab's Sign in works on a public arcade; a new key fills the curl example (Claude)
+The operator: "I want the exchange tab to open directly to the LLM's market" -- `/exchange` (and an unknown tab) is
+`tab=llm` now; tests test_the_exchange_opens_on_llms, test_litecoin_network (asks ?tab=tokens). The tab's Sign in was a
+link to /signin, which a public arcade refuses (test_public caught it): it opens arcadeSignIn now. "When a user
+generates a key, it should auto populate into the curl command example": the example shows the key just made and a
+model of its seller (an image-only seller: /v1/images/generations). Measured the same day: pepecoinarcade.com's
+Tokens tab answers in 2.7-4.0 s against 0.7 s on .25 for a guest, the LLMs tab in 0.9 s -- @banana's machine, same code.
+
+### 2026-10-23 Image model scan wakes ComfyUI (Claude)
+The operator: "when i scan it says comfy is not running" -- an on-demand ComfyUI had idled off and the scan only used a SAVED
+wake command. `/admin/api/llm/images/scan` now takes the `wake` typed in the box (node machine only, as saving it is)
+and, on Scan again / leaving the address or wake box, wakes ComfyUI before listing its models ("Waking ComfyUI..").
+Test: test_llm.py::test_a_scan_wakes_comfyui_with_the_wake_typed_at_the_node_machine. Branch claude/llm-images.
+
+### 2026-10-23 Pictures on the LLM tab: share a ComfyUI image model, priced in credits (Claude)
+The operator: "I would like to also be able to share my image generation model" -- per image (his choice), make AND edit;
+then "it should be credits ... an edit should cost two credits and a plain picture should stay at one credit" ("it's
+a two-way upload and download"). Branch claude/llm-images (on claude/llm-stats).
+* **arcade/imagegen.py**: setting `llm_images` {on, url, wake, name, models, max_side, steps, at_once, prices [{leg,
+  label, per}]}; `per` is the price of one credit; a picture is `PLAIN_CREDITS` (1), an edit `EDIT_COUNTS` (2); no
+  asks (or only 0) = free. `ComfyServer`: models found from /object_info (UNETLoader + a Qwen CLIPLoader + VAELoader;
+  only the Qwen-Image family has workflows so far), /upload/image, /prompt, /history, /view. Workflows ported from
+  ~/qwen-tools/comfy_mcp.py (text: the encoder's square latent resized; edit: the FLAT "images.image_1" key).
+  `wake` is a command run when ComfyUI does not answer (on-demand ComfyUI); **set only from the node machine**
+  (clean(..., local)), never through the remote admin password. `ImageSeller.make` charges after the picture exists;
+  a failure costs nothing and is logged ok=0.
+* Same credit as the LLM (llm.Books), usage gains `images`; `Seller.paid_legs` lets a top-up be in any coin either
+  side asks for. The offer carries `images` {models, prices, free, max_side, edits, edit_counts, load}; an arcade
+  sharing only pictures says an offer with no text models. llmshare: what=image, and an event bigger than a frame
+  goes in `more` pieces (CHUNK) put back together by the buyer.
+* Web: Admin -> LLM "Share your image model" (scan, wake, sizes, steps, price per credit); Exchange -> LLM
+  "Pictures" (cards with load, Make a picture: words, size, optional picture to edit, download);
+  `/account/llm/image`; OpenAI `/v1/images/generations` (b64_json) and `/v1/images/edits` (multipart) for API keys;
+  `arcade.llm.image({prompt, size, image})` for apps. door.py lets the three POSTs through.
+* Live check on a test machine with the real ComfyUI (woken by `systemctl --user start comfyui`): a 1024x768 picture in
+  62 s for 1 credit, an edit (party hat) in 51 s for 2 credits; the browser made one in 32 s.
+* Tests: test_llm.py (19), with a fake ComfyUI.
+* Exchange: the tab is "LLMs" and comes first (the operator: "I want LLM to be the first option"); /exchange still opens on
+  Tokens.
+
+### 2026-10-23 LLM service: models found by themselves, how busy each is, a usage analytics page (Claude)
+The operator: "It should automatically scan the LLM service for the models that are available and then the admin should be
+able to just select which model they want to share"; "Users also need a way to know if one of the models is congested
+or being frequently used" -- "So should the admin"; "The admin should be able to [have] a link on their model that
+they're sharing and get all of the usage analytics"; "Straighten out the text input fields"; the share switch reads
+"Tick to share on the exchange". Branch claude/llm-stats (on claude/llm-exchange).
+* Admin -> LLM: the server's /v1/models is read on load and as the address is typed ("Scan again" by hand); every
+  model listed with a tick; a shared model no longer on the server says so. The three fields have the same rows (name,
+  box, a line under it). A "Right now" panel (polled every 5 s, `/admin/api/llm/load`) and a "Usage analytics" link.
+* `Seller.load()`: active, waiting, at_once, replies in the last 15 min and hour, failures, output tok/s, first-word
+  time; `Seller.word()` idle | steady | busy | full. Carried on the offer (`load`); llmshare says the offer again
+  every 15 s when it changed (`LOAD_EVERY`). The tab draws a pill and a line on each card and re-reads the book
+  every 10 s.
+* `usage` table gains `ms`, `first_ms`, `ok` (added to an existing table on open: checked on copies of .25's and
+  Strawberry's llm.sqlite); failed and timed-out replies are logged at no cost. `via` is web | api | <peer id>.
+* `/admin/llm/usage` (llm_usage.html) + `/admin/api/llm/usage?days=`: right now, totals, replies and output tokens
+  per 5 min / hour / day, by coin (earned), by way in, by model, top buyers, the last 50 replies, the series as a table.
+* Tests: test_llm.py (16).
+
+### 2026-10-23 LLM service: no asks = free for everyone (Claude)
+The operator: "Should be able to offer my model for free" and "if I offer my model for free, it should have all the same
+capabilities as a paid model. But I should be able to change it from free to pay at any time by adding an ask to my
+admin LLM page". `llm.is_free(cfg)`: no asks, or only asks of 0 in / 0 out. A free offer says `free: true` with no
+prices on the book; chat, API keys (leg `free`), arcade.llm and the mesh all work with no credit; a top-up is refused.
+Selling needs only the server and a model now. Adding an ask makes it paid at once (a `free` key then gets "this seller
+charges for its model now"); removing every ask makes it free again. Tab: a "Free" chip, a "Free for everyone" card
+with Chat only; Admin -> LLM shows "Free for everyone" while no ask is listed. Test:
+test_llm.py::test_a_model_can_be_offered_free_for_everyone. Branch claude/llm-exchange.
+
+### 2026-10-23 LLM service on the exchange: sell your own model per token, buy it from any arcade (Claude)
+The operator: "There should be a admin LLM tab, where I can enter my local LLM server and decide how much I want to charge per
+LLM token ... the bid would always be LLM service ... they could even accept Omni and PRC and DRC 20 tokens", then "A
+purchaser of model usage should be able to directly connect their local harness to the Dogecoin arcade LLM api". His
+choices: apps and players on every arcade buy (over the mesh); prepaid credit; an input and an output price per payment
+kind; one shared "LLM service" book the buyer picks from; top-ups paid straight to the selling operator, whose node keeps
+the balance. Mock-up approved before building. Branch claude/llm-exchange.
+* **arcade/llm.py**: setting `llm` {on, url, key, name, models, at_once, max_out, prices [{leg, label, in, out}]}; legs
+  are trade_orders' keys (`<net>-coin`, `<net>-token-<id>`). Prices are decimal text per token; balances integer units
+  (sats, or whole units for an indivisible token). `Books` = llm.sqlite (credit, topup once per txid, usage, the buyer
+  side's grants and API-key hashes). `Seller.chat` caps max_tokens to the operator's limit AND what the credit pays for,
+  streams the server's OpenAI chunks, charges from its `usage` after the reply (never below 0), `at_once` semaphore; the
+  operator's own account is free. Signatures are checked from the bytes (`recover_hash160`, key hash vs address, any
+  chain), no Core needed.
+* **Who a buyer is**: their tag-chain address. A remote seller serves it only with `grant_words(seller, address,
+  expires)` signed by that address's key (browser signs once a month per seller; the buyer's arcade keeps it).
+  **A top-up**: a normal wallet send to the seller's `payout_address`, then `topup_words(net, txid, seller, address)`
+  signed by the key that paid; the seller checks the payment (coins: getrawtransaction, signer's key among the inputs,
+  real coins need 1 conf; Omni: the token index's row, sender's key hash) and counts each txid once.
+  **DRC-20 / PRC-20 payments are not checked yet** (listed by the admin picker only as coins/Omni for now).
+* **mesh/llmshare.py**: kind "lm" -- offer {o}, q {id, what: chat|topup|balance} + zlib JSON, a {id, seq, end, err}
+  one event each. Wired in mesh/service.py for_state (`service.llmshare`).
+* **web/llmweb.py**: Admin -> LLM (`/admin/api/llm`, `/admin/api/llm/test`), the Exchange's LLM tab
+  (`/exchange?tab=llm`, `_llm_tab.html`; `/account/llm/{offers,balance,grant,topup,chat,keys,keys/new,keys/drop}`),
+  and an OpenAI-compatible `/v1/models` + `/v1/chat/completions` (stream or not, tool calls put back together) for
+  `sk-arcade-...` keys: one account, one seller, one payment kind; only the hash is kept. door.py lets them through.
+* **Apps**: `/r/llm.js` -> `arcade.llm.offers()`, `arcade.llm.chat({messages, onToken, seller?, leg?})`; the viewer
+  (_page_doors `llmDoor`) asks the player once per game, picks a seller and coin they hold credit with, streams pieces.
+* Tests: tests/test_llm.py (13). Live check against a test machine's vLLM: a /v1 call and a browser chat metered exactly.
+* **For SadFrog's side**: nothing to do; an operator turns it on in Admin -> LLM. Open: DRC-20/PRC-20 top-up checks,
+  a per-key spending cap, a seller track record on the book.
+
+### 2026-10-23 The operator chooses which apps get the relay; a relay subscription fee is planned (Claude)
+The operator: "Can I decide what clients are allowed to use the relay? Or what apps on my arcade are allowed to use my
+relay?" -- chose "Apps I choose, any account". The viewer's /realtime/ice now names its app (?app=<page>); relay_for
+hands logins only to apps in setting turn.apps (the page each card opens; none chosen yet: every app, so nothing
+broke). Admin -> Network -> Call relay -> "Apps that may use it": Every app / only the ticked ones, listed by
+/admin/api/relay-apps (on its own: listing every chain's apps slowed the Admin state answer, and
+test_admin_arcades_browser raced it -- it now waits for its card). A signed-in person could name an allowed app by
+hand to get a login: per-app is a choice of use, not a lock. And the operator: "a future subscription fee for this type of
+relay should be added" -- planned in hosting-plan.md 6a (who subscribes, per month or per GB, assets, lapse ->
+direct only: to be designed); Admin's Call relay card carries a short note saying it is coming. Test:
+test_stun.py::test_the_operator_chooses_which_apps_get_the_relay.
+
+### 2026-10-23 The relay's usage meter, and a stop at the monthly limit (Claude)
+The operator (calls work through the relay now): "I need some sort of usage meter on my node so that I don't go over the
+limit." Cloudflare bills TURN by egress and reports it only through its GraphQL analytics (callsTurnUsageAdaptiveGroups,
+filter keyId + date range), which takes an Account Analytics token, not the TURN key's. Admin -> Network -> Call relay
+-> Usage this month: account id + Analytics token (tried before kept) + a monthly limit (default 1000 GB, the free
+allowance); a bar and "X GB of Y GB since <1st>". The node asks Cloudflare at most every 10 minutes (relay_meter);
+at the limit /realtime/ice stops handing the relay out (direct links only) until the month turns -- logins already
+handed out (up to 6 h) still work, so it can run a little over. Direct-capable pairs never use the relay: its candidates
+rank last. Tests: test_stun.py (the query and its parse, an error says why, the stop at the limit).
+
+### 2026-10-23 Stars on app cards; reactions carry across an app's versions (Claude)
+The operator: "a star on app cards that bring the game app to the top of your favorites list. The star should persist across
+version changes so should hearts comments tips and dislikes." Each card has the exchange's star (_exui.fav_button,
+/account/favorites, which now also takes `app:<creator>:<name slug>` -- gameslib.app_key, the same for every version);
+starred apps come first on /apps (server-side for a signed-in account or the operator, and in the page at once).
+Versions are the tab's own rule (same maker and name, newest_per_game): _games_ranked counts every version's acts for
+the card shown (likes/dislikes by each person's last word across versions, comments, tips), and the discussion page
+(launch_thread) gathers every version's replies under the newest card (_app_versions). Tests:
+test_games.py::test_a_star_puts_an_app_first_and_stays_across_its_versions; checked in Chromium (star, reorder,
+kept after a reload).
+
+### 2026-10-23 A card-only inscription takes over a page that carries its own card; relay errors say why (Claude)
+The Cul-de-sac session: Video Call's launcher (a7ba0bc5...) carries its first card, and a new launcher would be a new
+page and reset every switch. A newer card by the same maker naming the page in `play` now replaces the page's own card
+for the viewer too (_game_of_page; the Apps tab already kept the newest per maker and name); an older one does not; an
+unconfirmed one counts as newest. Switches stay keyed on the page. And the operator's first relay key was refused with a bare
+"404": Cloudflare's words come through now ("cannot find specified key -- use the TURN key's own id"). Tests:
+test_games.py::test_a_card_only_inscription_takes_over_a_page_that_carries_its_own_card, test_stun.py.
+
+### 2026-10-23 A Contacts switch on the card; each switch shows only where it applies (Claude)
+The operator: "Allow access to Contacts should be another box on the card" (Video Call's book came up empty: a one-time
+"no" had been kept forever). Cards may say "contacts": true; the **Contacts** switch keeps the old answers' key
+(arcade.contacts.allow:<page>), so a yes stays a yes and a no is only the switch off. An app with a card is never asked
+in the page any more: off, `arcade.contacts.list()` gives [] with `.why` = 'off' (and the card shows the switch from
+then on); also 'guest', 'operator', 'no' (a page with no card, which is still asked, each visit), 'viewer'. And from
+the Cul-de-sac session: Wallet access (with its wallet-locked pill), Contacts and Camera & microphone show on a card
+only when it says it uses them, this browser saw it ask, or the switch is on -- Video Call no longer shows a Wallet
+box it never uses. Tests: test_contacts_add_browser.py::test_an_apps_contacts_switch_decides_and_an_empty_list_says_why.
+
+### 2026-10-23 The call relay: Cloudflare TURN for signed-in players (Claude)
+The operator, live test from two homes: "We can't hear or see each other. I can see myself." Gathering here was quick and
+complete, but this home's IPv4 is Starlink's shared one (129.222.x, carrier NAT): no direct link to another home gets
+through, and the fast lane had no relay. The operator chose "Cloudflare TURN". Admin -> Network -> Call relay: a TURN key's
+id and API token, tried with Cloudflare before it is kept (setting `turn`; the token never goes back to the page).
+/realtime/ice adds fresh logins (generate-ice-servers, 6 h, kept half that per player) for a signed-in player or the
+operator; a guest gets none ("relay": false), so strangers cannot spend it. The fast lane packs the relay's and public
+candidates before local ones (up to 10: relay 3, srflx 4, prflx 2, host the rest; a PC with many local addresses no
+longer crowds them out) and waits up to 6 s for the relay's when one was handed out. Tests: test_stun.py (both of
+Cloudflare's answer shapes, guests get none, kept not re-asked); the fast-lane and media browser tests still pass.
+
+### 2026-10-23 Ringing a player whose app is closed: a Notifications switch per app (Claude)
+The operator: call "at any time, even if the application is not open through push notifications as long as we have push
+notifications enabled for the app just like the Wallet access and camera and microphone access switches", "Keeping
+the game agnostic"; who may ring: "My contacts only". arcade/ring.py + routes in app.py: a card that says "notify":
+true shows a **Notifications** switch (account view; per ACCOUNT on its node, `ring:<pubkey>` apps, so every phone of
+the account rings). Turning it on asks (publisher named), turns this device's push on (the Messenger's VAPID push) and
+hands the node the addresses in this browser's address book (`allow`; the book lives in the browser; handed over again
+on signed-in pages when it changed). An app calls `arcade.realtime.ring(address, {line, link})`; the viewer adds the
+player's certificate and the TRUE app (its frame's page) and POSTs /account/ring. The callee's node holds a room
+`arcade!ring/<address>` for each account with a phone and an app on (`!` is no game name, so no page can join); the
+caller's node joins it as a guest and says the ring (a local callee is rung directly). The callee's node wakes the
+phone only if: the app is switched on, the caller is in the book, the caller's certificate checks against the node it
+came through, and not too often (15 s a pair, 30 an hour; 20 sends a minute a caller). The push is still empty; the
+worker shows "@caller · App" with the line, staying until answered, a long buzz on Android (iPhone: its one sound --
+no web page can ring like a phone while closed). Tapping opens /inscriptions/<app>/full?ring=<id>; the app reads it
+with `arcade.realtime.ringed()` ({from, tag, link, line}, for that app only). door.py lets the routes through. Tests:
+tests/test_ring.py, test_media_browser.py::test_ring_and_ringed_answer_in_the_viewer.
+
+### 2026-10-23 room.media: a playing picture always tells its game (Claude)
+The Cul-de-sac session's call test (three in a public room): a peer's picture played in the viewer and the game never
+heard 'media' for it -- a track arrived muted and its unmute was missed, and a player who had not started their own
+camera had no media state for the tiles at all. _page_doors works the 'media' / 'media-off' events out from the tracks
+again on each picture's loadeddata and resize and once a second while any remote media is live (mediaCheck), counts
+a video track with frames as sending whatever its muted flag says, and makes the media state on the first incoming
+track. ~/arcadecall tests/test_call_browser.py now passes every run (3 of 3; it failed every run before).
+
+### 2026-10-23 The Games tab is the Apps tab (Claude)
+The operator: "Change the games tab to the apps tab" ... "Keeping the game agnostic" ... "So now it's application agnostic"
+(a video-call card is coming). Nav Apps at /apps; /games 301s there (query kept); /games/<id> and /games/<id>/access
+stay as they are (the gate's own URL). A card may say {"app": {...}} -- games.MARKS, and the tab's query looks for
+either -- and every {"game": ...} card inscribed still lists. Words on the tab, the cards (Play -> Open) and the
+Wallet access / Camera & microphone asks and stops say "app" now. door.py lets /apps through. Tests:
+test_the_tab_is_apps_and_an_app_card_lists_like_a_game_card, and the quoted words in the door/games tests.
+
+### 2026-10-23 Camera pictures keep their own shape (Claude)
+The operator: "landscape should be cropped to fit into the portrait view ... portrait view on a PC should have extra black on
+the sides and no cropping. All should maintain their aspect ratios." The camera is asked for at most 1280 px each way
+and no shape (it asked for 640x480 before, which could turn a phone's portrait camera landscape); a tile is
+object-fit cover (centre-cropped) or contain (black bars), centred, never stretched -- the card chooses per layout.
 
 ### 2026-10-23 Camera & microphone per game card, and room.media (Claude, with the Cul-de-sac session)
 The operator: "Our user can allow an app camera and microphone in the same way that they allow an app Wallet access on the

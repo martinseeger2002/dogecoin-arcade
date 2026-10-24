@@ -264,7 +264,7 @@ def test_the_shop_door_refuses_what_it_should(shopfront, monkeypatch):
     # Never on mainnet.
     monkeypatch.setattr(state.messaging, "network", "main")
     r = app.post(door, json={"csrf_token": csrf, "op": "shop"})
-    assert r.status_code == 400 and "testnet only" in r.json()["error"]
+    assert r.status_code == 400 and "Pepecoin test only" in r.json()["error"]
 
 
 def test_the_owners_page_sends_without_asking(shopfront, monkeypatch):
@@ -281,7 +281,7 @@ def test_the_owners_page_sends_without_asking(shopfront, monkeypatch):
     door = f"/owner/{SHOP}"
     r = app.post(door, json={"csrf_token": csrf, "op": "send", "kind": "token",
                              "propertyid": 3, "amount": "1", "to": OTHER})
-    assert r.status_code == 400 and "testnet only" in r.json()["error"]
+    assert r.status_code == 400 and "Pepecoin test only" in r.json()["error"]
 
     state.token_chain_path.write_text("regtest")
     state._token_chain = None

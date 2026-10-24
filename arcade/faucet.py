@@ -151,7 +151,7 @@ class Faucet:
         now = int(now if now is not None else time.time())
         if self.given(pubkey) is not None:
             raise FaucetError(
-                "this account has already had its coins. They are testnet "
+                "this account has already had its coins. They are Pepecoin test "
                 "coins, so there is nothing to be gained by asking twice.")
         if self.left_today(now) < self.gift:
             raise DryToday(
@@ -182,7 +182,7 @@ def pour(chain, faucet: Faucet, pubkey: str, address: str, ip: str = "",
     """
     if chain.is_mainnet and not faucet.real_coins:
         raise FaucetError(
-            "this faucet gives testnet coins. Real ones are not given away "
+            "this faucet gives Pepecoin test coins. Real ones are not given away "
             "here -- an operator who wants that has to turn it on and say "
             "how much.")
     if chain.is_mainnet and faucet.gift > MAINNET_MOST:

@@ -460,7 +460,7 @@ def test_overview_lists_every_arcade_this_one_first_with_its_cores_ords_and_link
     cores = {c["net"]: c for c in mine["cores"]}
     assert cores["main"]["shared"] is True and cores["regtest"]["shared"] is False, "shared, or running unshared"
     assert cores["regtest"]["switch"] is False and cores["main"]["icon"] == "/coin-pep.png"
-    assert mine["ords"] == [{"net": "main", "label": "Pepecoin", "icon": "/coin-pep.png", "role": "walk", "pct": 100.0,
+    assert mine["ords"] == [{"net": "main", "label": "Pepecoin main", "icon": "/coin-pep.png", "role": "walk", "pct": 100.0,
                              "walked_to": base + 1000}]
     assert [r["node"] for r in rows[1:]] == [fast[:12], slow[:12], gone[:12]], "linked fastest first, then the rest"
     f, s, g = rows[1:]

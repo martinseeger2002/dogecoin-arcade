@@ -220,6 +220,7 @@ class MeshService:
         self.named_url = named_url
         self.core = None                        # corelink.CoreBridge, when Core rides the mesh
         self.coreshare = None                   # coreshare.CoreShare: Cores shared with, and borrowed from, other arcades
+        self.llmshare = None                    # llmshare.LlmShare: the LLM service with other arcades
         self.indexcheck = None                  # indexcheck.IndexCheck: indexes compared with other arcades'
         self.stun = None                        # stun.StunShare: STUN addresses for the fast lane, this node's and others'
         self.stun_port: int | None = None       # this node's own STUN server (UDP), or None
@@ -567,6 +568,11 @@ class MeshService:
         message = cert_message(self.network, origin, address, expires)
         return bool(await asyncio.to_thread(self.verify, address, sig, message))
 
+    def check_cert_from(self, origin: str, member: str, cred: dict) -> bool:
+        """Is this certificate good for `member` playing through the node `origin`? (A ring that came through
+        another node, arcade/ring.py: the caller proved who they are to THAT node.)"""
+        return bool(self._call(self._vouch(str(origin or ""), member, cred), timeout=15))
+
     def check_cert(self, member: str, cred: dict) -> bool:
         """Is this certificate good for `member` on THIS node? (Asked by the web
         layer before it lets its own player in under that name.)"""
@@ -845,6 +851,10 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
         from .importshare import ImportShare, StateRecords
         service.importshare = ImportShare(StateRecords(state))
         service.node.add_extension(service.importshare)
+    # The LLM service between arcades (llmshare.py, arcade/llm.py; 2026-10-23).
+    from .llmshare import LlmShare
+    service.llmshare = LlmShare(lambda: getattr(state, "llm_seller", None))
+    service.node.add_extension(service.llmshare)
     from . import coreshare
     coreshare.CURRENT = service.coreshare
     # STUN for the WebRTC fast lane (stun.py): served here when asked for, proved by other nodes before it is

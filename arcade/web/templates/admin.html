@@ -6,7 +6,7 @@
   <span class="pill {{ 'ok' if local else 'warn' }}">{{ 'at the node machine' if local else 'remote' }}</span>
   {% if not local %}<button type="button" class="ghost small" id="adminout">Lock the panel</button>{% endif %}
 </div>
-<p class="sub" style="margin-top:4px">Everything this node's operator runs, in seven tabs.</p>
+<p class="sub" style="margin-top:4px">Everything this node's operator runs, tab by tab.</p>
 <p class="msg" id="said" hidden></p>
 
 <nav class="admintabs" role="tablist">
@@ -16,6 +16,7 @@
   <button type="button" role="tab" data-tab="safety">Safety</button>
   <button type="button" role="tab" data-tab="network">Network</button>
   <button type="button" role="tab" data-tab="ords">Ords</button>
+  <button type="button" role="tab" data-tab="llm">LLM</button>
   <button type="button" role="tab" data-tab="affiliates">Affiliates</button>
   <button type="button" role="tab" data-tab="people">People &amp; brand</button>
 </nav>
@@ -171,12 +172,12 @@
 </section>
 
 <section class="panel" id="xchain">
-  <h2>Mainnet PEP swap</h2>
-  <p class="muted" style="margin-top:0">Trade testnet assets (tokens, testnet coins, NFTs) for Pepecoin on
+  <h2>Pepecoin main swap</h2>
+  <p class="muted" style="margin-top:0">Trade Pepecoin test assets (tokens, Pepecoin test coins, NFTs) for Pepecoin on
     <strong>mainnet</strong>. This node holds both sides while an order stands and pays them out itself,
     taking 0.5% of the PEP of each trade. <strong>Not trustless</strong>: every page that offers it tells
     people they are trusting you, the operator.</p>
-  <label class="switch"><input type="checkbox" id="xchain_enabled"> Open the mainnet PEP swap on this node</label>
+  <label class="switch"><input type="checkbox" id="xchain_enabled"> Open the Pepecoin main swap on this node</label>
   <div id="xchainstate" class="muted" style="font-size:.86rem;margin:8px 0"></div>
   <p class="muted" style="font-size:.8rem">Keep 1 to 2 PEP of your own in the mainnet wallet for network fees:
     a payout waits rather than spend what is held for somebody else. Saved with <em>Save switches</em>.</p>
@@ -295,6 +296,44 @@
   <div id="meshinfo" class="muted" style="font-size:.88rem">Loading&hellip;</div>
 </section>
 
+{# 2026-10-23: calls between homes need a relay (Starlink's shared IPv4); "Cloudflare TURN". #}
+<section class="panel" id="turnrelay">
+  <h2>Call relay</h2>
+  <p class="muted" style="margin-top:0">Video calls and fast games connect players&rsquo; browsers directly. Some homes
+    (Starlink, mobile data) cannot be reached that way; a relay carries their calls instead. Make a TURN key in
+    Cloudflare (Realtime &rarr; TURN Server &rarr; Create), then paste its id and API token here. Signed-in players get
+    short-lived logins to it; strangers do not. Cloudflare bills what it carries past its free allowance.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap">
+    <input autocomplete="off" id="turnid" placeholder="TURN key id (32 characters)" style="flex:2;min-width:220px">
+    <input autocomplete="new-password" type="password" id="turntoken" placeholder="API token" style="flex:2;min-width:200px">
+    <button type="button" class="small" id="turnsave">Save &amp; test</button>
+    <button type="button" class="small ghost" id="turnclear" hidden>Remove</button>
+  </div>
+  <p class="muted" id="turnsaid"></p>
+  {# 2026-10-23: a future subscription fee for this relay (hosting-plan.md 6a). #}
+  <p class="muted" style="font-size:.84rem;margin:4px 0 0">&#9432; Coming later: a subscription fee, so the apps (or
+    players) that use your relay pay you for it, instead of the whole bill being yours.</p>
+  <h3 style="margin:14px 0 4px;font-size:1rem">Apps that may use it</h3>
+  <label class="switch"><input type="radio" name="turnwhich" value="all" id="turnall"> Every app</label>
+  <label class="switch"><input type="radio" name="turnwhich" value="some" id="turnsome"> Only the apps ticked below</label>
+  <div id="turnapps" style="max-height:220px;overflow:auto;margin:6px 0 6px 28px;font-size:.9rem"></div>
+  <button type="button" class="small" id="turnappssave">Save apps</button>
+  <h3 style="margin:14px 0 4px;font-size:1rem">Usage this month</h3>
+  <div id="turnmeter" class="meterbar" style="height:14px;border-radius:7px;background:var(--line,#ddd);overflow:hidden;max-width:520px">
+    <div id="turnfill" style="height:100%;width:0;background:var(--ok,#2a2)"></div></div>
+  <p class="muted" id="turnusage" style="margin:6px 0 10px">Add the meter below to see it.</p>
+  <p class="muted" style="margin:0 0 6px;font-size:.86rem">Cloudflare counts the relay&rsquo;s traffic to players. To read it,
+    make an API token with <b>Account Analytics: Read</b> (My Profile &rarr; API Tokens &rarr; Create) and paste your
+    account&rsquo;s id (any Cloudflare page&rsquo;s overview shows it). At the limit the relay is no longer handed out:
+    calls go direct only until the month turns.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap">
+    <input autocomplete="off" id="turnacct" placeholder="Account ID (32 characters)" style="flex:2;min-width:220px">
+    <input autocomplete="new-password" type="password" id="turnanalytics" placeholder="Analytics token" style="flex:2;min-width:180px">
+    <input autocomplete="off" id="turnlimit" type="number" min="1" step="1" placeholder="limit, GB" style="width:110px">
+    <button type="button" class="small" id="turnmetersave">Save meter</button>
+  </div>
+</section>
+
 {# 2026-10-20: "a list of other operators" -- each linked arcade says who runs it (mesh/operators.py). #}
 <section class="panel" id="operators">
   <h2>Other operators</h2>
@@ -378,6 +417,555 @@
    checkmark to share on client side affiliate tab." Which URLs: "Arcade's names + ones I add". Then: "The second list
    should be a list of operators and their published URLs that they shared with the affiliates." arcade/affiliates.py;
    shared over the mesh in the operators "me" frame's `sites` (mesh/operators.py). #}
+{#- 2026-10-23: "There should be a admin LLM tab, where I can enter my local LLM server and decide how much I
+   want to charge per LLM token" (arcade/llm.py, web/llmweb.py; approved mock-up "LLM Exchange Mock-up"). #}
+<div class="admintab" data-tab="llm" aria-label="LLM">
+<style>
+.llmadm .lgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:14px}
+.llmadm label.f{display:flex;flex-direction:column;gap:5px;font-size:.82rem;font-weight:650;min-width:0}
+.llmadm label.f input,.llmadm select,.llmadm .pr input{font:inherit;font-weight:400;width:100%;min-width:0;max-width:100%;box-sizing:border-box;height:42px;padding:0 11px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
+.llmadm label.f span.h{font-weight:400;color:var(--muted)}
+.llmadm .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.llmadm .onoff{display:flex;gap:10px;align-items:center;font-weight:650;font-size:.9rem;padding:8px 14px;border-radius:999px;background:color-mix(in srgb,var(--ok) 14%,var(--panel));color:var(--ok)}
+.llmadm .onoff.off{background:var(--code);color:var(--muted)}
+.llmadm .model{display:flex;gap:12px;align-items:center;padding:10px 13px;border:1px solid var(--line);border-radius:12px;background:var(--code);margin-top:6px}
+.llmadm .pr{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr) minmax(0,.9fr) 42px;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.llmadm .pr.h{border-top:0;font-size:.72rem;font-weight:650;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding:4px 0}
+.llmadm .badge{width:30px;height:30px;flex:none;border-radius:50%;background:var(--code);font-size:.75rem;font-weight:700;display:flex;align-items:center;justify-content:center}
+.llmadm .x{width:42px;height:42px;border:0;background:transparent;color:#a33;font-size:1.2rem;cursor:pointer}
+.llmadm .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.llmadm .stat{border:1px solid var(--line);border-radius:12px;background:var(--code);padding:14px;display:flex;flex-direction:column;gap:2px}
+.llmadm .stat strong{font-size:1.4rem}
+.llmadm .pill{font-size:.78rem;font-weight:650;padding:3px 10px;border-radius:999px}
+@media (max-width:640px){.llmadm .pr{grid-template-columns:1fr 1fr}.llmadm .pr.h{display:none}}
+</style>
+<div class="llmadm">
+{#- 2026-10-23: "Can the operator just have a button that they can click to scan for all models and then it will
+   just give them a list of models that is on their computer and then they can just pick from the models?" #}
+<section class="panel" id="find-panel">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">
+    <div style="min-width:0"><h2 style="margin:0">Your models</h2>
+      <p class="muted" style="margin:2px 0 0">Look for every model server on this computer (vLLM, llama.cpp, Ollama, LM Studio, ComfyUI) and pick the
+        models to share. The addresses below fill in by themselves.</p></div>
+    <button type="button" id="find-go" style="height:44px;padding:0 20px">Find models on this computer</button>
+  </div>
+  <p class="muted" id="find-said" style="margin:10px 0 0" hidden></p>
+  <div id="find-out"></div>
+</section>
+
+<section class="panel">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">
+    <div style="min-width:0"><h2 style="margin:0">Sell your model</h2>
+      <p class="muted" style="margin:2px 0 0">Your own OpenAI-compatible server (vLLM, llama.cpp, Ollama), sold to players and apps on every arcade.
+        Buyers prepay credit to your address; each reply is charged from what your server says it used.</p></div>
+    <label class="onoff off" id="llm-onoff"><input type="checkbox" id="llm-on" style="width:20px;height:20px"> <span id="llm-onword">Tick to share on the exchange</span></label>
+  </div>
+  {#- Each field the same three rows -- its name, the box, a line under it -- so the boxes line up (2026-10-23:
+     "Straighten out the text input fields"). #}
+  <div class="lgrid" style="margin-top:16px">
+    <label class="f">Server address <input class="mono" id="llm-url" placeholder="http://127.0.0.1:8000" autocomplete="off">
+      <span class="h">Its models are found by themselves.</span></label>
+    <label class="f">API key <input type="password" id="llm-key" autocomplete="new-password" placeholder="Stays on this machine">
+      <span class="h">Only if your server needs one.</span></label>
+    <label class="f">Name buyers see <input id="llm-name" maxlength="60" placeholder="e.g. a test machine &middot; Qwen" autocomplete="off">
+      <span class="h">Shown on the Exchange's LLM tab.</span></label>
+  </div>
+  <div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    <span style="font-size:.82rem;font-weight:650">Models on your server <span class="muted" style="font-weight:400">&mdash; tick the ones to share</span></span>
+    <span style="display:flex;gap:8px;align-items:center"><span class="pill" id="llm-tested" hidden></span>
+      <button type="button" class="small ghost" id="llm-test" style="height:34px">Scan again</button></span></div>
+  <div id="llm-models"><p class="muted" style="margin:6px 0 0">Enter the server address to find its models.</p></div>
+  <div class="lgrid" style="margin-top:16px">
+    <label class="f">Replies at once <input type="number" min="1" max="32" id="llm-atonce" autocomplete="off">
+      <span class="h">Others wait in line, so your own use stays quick.</span></label>
+    <label class="f">Longest reply, in tokens <input type="number" min="16" max="65536" id="llm-maxout" autocomplete="off">
+      <span class="h">Shorter when a buyer's credit runs out first.</span></label>
+  </div>
+</section>
+
+{#- How busy it is (2026-10-23: "Users also need a way to know if one of the models is congested" -- "So should the
+   admin"), and the link to every number about it ("a link on their model that they're sharing and get all of the usage
+   analytics"). #}
+<section class="panel">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+    <div><h2 style="margin:0">Right now <span class="pill" id="llm-word" style="vertical-align:middle"></span></h2>
+      <p class="muted" style="margin:2px 0 0">What buyers see on the book, refreshed every few seconds.</p></div>
+    <a href="/admin/llm/usage" style="display:inline-flex;align-items:center;height:42px;padding:0 16px;border-radius:10px;border:1px solid var(--line);text-decoration:none;font-weight:650">Usage analytics &rarr;</a>
+  </div>
+  <div class="stats" id="llm-load" style="margin-top:12px"></div>
+</section>
+
+<section class="panel">
+  <h2 style="margin:0">Your prices</h2>
+  <p class="muted" style="margin:2px 0 8px">Per LLM token, in any coin or token the exchange trades. Input (the prompt) is cheap for your GPU;
+    output (the reply) is the real work. Your own account always uses it free.</p>
+  <div id="llm-paid">
+  <div class="pr h"><span>Paid in</span><span>Per input token</span><span>Per output token</span><span>1,000-word answer</span><span></span></div>
+  <div id="llm-prices"></div>
+  </div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;flex:1 1 340px;min-width:0">
+      <select id="llm-add" aria-label="Add a way to be paid" style="flex:1 1 240px;width:auto"></select>
+      <button type="button" class="small" id="llm-addbtn" style="height:42px">Add</button></div>
+    <button type="button" id="llm-save" style="height:42px;padding:0 24px">Save changes</button>
+  </div>
+  <p class="muted" id="llm-said" style="margin:8px 0 0"></p>
+</section>
+
+{#- 2026-10-23: "I would like to also be able to share my image generation model" -- per image, make and edit
+   (arcade/imagegen.py). ComfyUI, its models found by themselves; a wake command for one that starts on demand. #}
+<section class="panel" id="img-panel">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">
+    <div style="min-width:0"><h2 style="margin:0">Share your image model <span class="pill" id="img-word" style="vertical-align:middle"></span></h2>
+      <p class="muted" style="margin:2px 0 0">ComfyUI, sold in credits by size: 1 credit for every 250 pixels of a picture's longest side; an
+        edit counts the buyer's picture going up and the new one coming down. A failed picture costs nothing. Paid from the same balance as the LLM; no asks means free.</p></div>
+    <label class="onoff off" id="img-onoff"><input type="checkbox" id="img-on" style="width:20px;height:20px"> <span id="img-onword">Tick to share on the exchange</span></label>
+  </div>
+  <div class="lgrid" style="margin-top:16px">
+    <label class="f">ComfyUI address <input class="mono" id="img-url" placeholder="http://127.0.0.1:8188" autocomplete="off">
+      <span class="h">Its picture models are found by themselves.</span></label>
+    <label class="f">Wake command <input class="mono" id="img-wake" placeholder="systemctl --user start comfyui" autocomplete="off">
+      <span class="h" id="img-wake-h">Run when a picture is asked for and ComfyUI is asleep.</span></label>
+    <label class="f">Name buyers see <input id="img-name" maxlength="60" placeholder="e.g. a test machine &middot; Qwen-Image" autocomplete="off">
+      <span class="h">Shown on the Exchange's LLM tab.</span></label>
+  </div>
+  <div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    <span style="font-size:.82rem;font-weight:650">Picture models on ComfyUI <span class="muted" style="font-weight:400">&mdash; tick the ones to share</span></span>
+    <span style="display:flex;gap:8px;align-items:center"><span class="pill" id="img-scanned" hidden></span>
+      <button type="button" class="small ghost" id="img-scan" style="height:34px">Scan again</button></span></div>
+  <div id="img-models"><p class="muted" style="margin:6px 0 0">Enter ComfyUI's address to find its models.</p></div>
+  <div class="lgrid" style="margin-top:16px">
+    <label class="f">Largest side, in pixels <input type="number" min="256" max="1536" step="16" id="img-side" autocomplete="off">
+      <span class="h">Bigger asks are scaled down to this.</span></label>
+    <label class="f">Quality steps <input type="number" min="4" max="50" id="img-steps" autocomplete="off">
+      <span class="h">20 is a good balance of speed and detail.</span></label>
+    <label class="f">Pictures at once <input type="number" min="1" max="4" id="img-atonce" autocomplete="off">
+      <span class="h">Others wait in line.</span></label>
+  </div>
+  <h3 style="margin:18px 0 6px;font-size:1rem">Price per credit</h3>
+  <p class="muted" style="margin:0 0 6px;font-size:.85rem">250&times;250 = 1 credit, 500&times;500 = 2, 1000&times;750 = 4; an edit adds its upload's credits.</p>
+  <div class="pr h" style="grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,.9fr) 42px"><span>Paid in</span><span>Per credit</span><span>A 500&times;500 picture</span><span></span></div>
+  <div id="img-prices"></div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;flex:1 1 340px;min-width:0">
+      <select id="img-add" aria-label="Add a way to be paid for pictures" style="flex:1 1 240px;width:auto"></select>
+      <button type="button" class="small" id="img-addbtn" style="height:42px">Add</button></div>
+    <button type="button" id="img-save" style="height:42px;padding:0 24px">Save changes</button>
+  </div>
+  <p class="muted" id="img-said" style="margin:8px 0 0"></p>
+</section>
+
+{#- 2026-10-23: "you should be able to share your model with any other arcade operator. So I can share my model
+   with Bigchiefenergy if I choose for free while simultaneously having it listed on the LLM marketplace" -- that
+   operator's own account only (his choice). #}
+<section class="panel" id="ff-panel">
+  <h2 style="margin:0">Free for other operators</h2>
+  <p class="muted" style="margin:2px 0 10px">These accounts use your models free &mdash; words and pictures, in chat, apps and API keys &mdash;
+    while everyone else pays your prices on the marketplace.</p>
+  <div id="ff-list" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px">
+    <input id="ff-name" placeholder="@name" autocomplete="off" style="flex:1 1 200px;width:auto;max-width:280px" list="ff-ops">
+    <datalist id="ff-ops"></datalist>
+    <button type="button" class="small" id="ff-add" style="height:42px">Add</button>
+    <span class="muted" id="ff-said" style="font-size:.85rem"></span>
+  </div>
+  <div id="ff-suggest" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"></div>
+</section>
+
+{#- The robot in every page's corner (_helper.html): what it can use. #}
+<section class="panel" id="helper-panel">
+  <h2 style="margin:0">Arcade helper</h2>
+  <p class="muted" style="margin:2px 0 10px">The robot in the corner of every page answers your players' questions with the docs. Tick the models
+    it may use: your own, and any another operator shares with you free (each needs your approval) &mdash; never a paid one. It uses your own
+    first, then the least busy. Each player may ask 40 times an hour (guests 15).</p>
+  <div id="helper-list"></div>
+</section>
+
+<section class="panel">
+  <h2 style="margin:0">Earned in the last 30 days</h2>
+  <p class="muted" style="margin:2px 0 10px">Top-ups land in your operator account's Wallet like any other payment.</p>
+  <div class="stats" id="llm-earned"></div>
+</section>
+</div>
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var data = null, prices = [], kinds = [], models = [], chosen = [];
+  function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+  function post(path, body) {
+    return fetch(path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'},
+      body: JSON.stringify(body || {})}).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+        if (r.status === 401) location.href = '/admin/login';
+        if (!r.ok) throw new Error(j.detail || ('refused (' + r.status + ')')); return j; }); });
+  }
+  function said(t, bad) { $('llm-said').textContent = t; $('llm-said').style.color = bad ? '#a33' : ''; }
+  function short(label) { return String(label || '').split(' · ')[0]; }
+  function answer(p) {                                 // a 1,000-word answer: about 1,330 output tokens and a short prompt
+    var n = 1330 * (Number(p.out) || 0) + 200 * (Number(p.in) || 0);
+    return n ? '≈ ' + n.toLocaleString(undefined, {maximumSignificantDigits: 4}) + ' ' + short(p.label) : 'free';
+  }
+  function drawOn() {
+    var on = $('llm-on').checked;
+    $('llm-onoff').className = 'onoff' + (on ? '' : ' off');
+    // 2026-10-23: "The not selling checkbox is kind of confusing. It should say check to sell".
+    $('llm-onword').textContent = !on ? 'Tick to share on the exchange'
+      : data && data.selling ? 'Shared on the exchange' : 'Shared once you save';
+  }
+  function drawModels() {
+    var all = models.slice();
+    chosen.forEach(function (m) { if (!all.some(function (x) { return x.id === m; })) all.push({id: m, ctx: 0, gone: !!models.length}); });
+    $('llm-models').innerHTML = all.length ? all.map(function (m) {
+      return '<label class="model"><input type="checkbox" value="' + esc(m.id) + '"' + (chosen.indexOf(m.id) >= 0 ? ' checked' : '') +
+        ' style="width:20px;height:20px"><span style="display:flex;flex-direction:column;min-width:0"><b class="mono" style="overflow-wrap:anywhere">' +
+        esc(m.id) + '</b><span class="muted" style="font-size:.8rem">' + (m.gone ? 'no longer on the server' : m.ctx ? m.ctx.toLocaleString() + '-token context' : 'shared') + '</span></span></label>';
+    }).join('') : '<p class="muted" style="margin:6px 0 0">Enter the server address to find its models.</p>';
+  }
+  function drawPrices() {
+    $('llm-prices').innerHTML = prices.length ? prices.map(function (p, i) {
+      return '<div class="pr"><span style="display:flex;gap:10px;align-items:center;min-width:0"><span class="badge">' + esc(short(p.label).slice(0, 1)) +
+        '</span><b style="min-width:0;overflow-wrap:anywhere">' + esc(p.label) + '</b></span>' +
+        '<input autocomplete="off" data-i="' + i + '" data-f="in" value="' + esc(p.in) + '" inputmode="decimal" aria-label="' + esc(short(p.label)) + ' per input token">' +
+        '<input autocomplete="off" data-i="' + i + '" data-f="out" value="' + esc(p.out) + '" inputmode="decimal" aria-label="' + esc(short(p.label)) + ' per output token">' +
+        '<span class="muted" data-a="' + i + '">' + esc(answer(p)) + '</span>' +
+        '<button type="button" class="x" data-x="' + i + '" aria-label="Remove ' + esc(short(p.label)) + '">×</button></div>';
+    }).join('') : '<div class="model" style="margin:10px 0"><span style="display:flex;flex-direction:column"><b>Free for everyone</b>' +
+      '<span class="muted" style="font-size:.85rem">No asks, so any signed-in player, app or API key uses it free, with everything a paid model has. ' +
+      'Add an ask below to charge for it; remove every ask to make it free again.</span></span></div>';
+    var have = prices.map(function (p) { return p.leg; });
+    $('llm-add').innerHTML = '<option value="">Add a way to be paid…</option>' + kinds.filter(function (k) { return have.indexOf(k.key) < 0; })
+      .map(function (k) { return '<option value="' + esc(k.key) + '">' + esc(k.label) + '</option>'; }).join('');
+  }
+  $('llm-prices').addEventListener('input', function (e) {
+    var i = e.target.dataset.i; if (i == null) return;
+    prices[i][e.target.dataset.f] = e.target.value.trim();
+    var a = document.querySelector('#llm-prices [data-a="' + i + '"]'); if (a) a.textContent = answer(prices[i]);
+  });
+  $('llm-prices').addEventListener('click', function (e) {
+    var x = e.target.closest('[data-x]'); if (!x) return; prices.splice(Number(x.dataset.x), 1); drawPrices();
+  });
+  $('llm-addbtn').onclick = function () {
+    var k = kinds.find(function (k) { return k.key === $('llm-add').value; }); if (!k) return;
+    prices.push({leg: k.key, label: k.label, in: '0', out: '0'}); drawPrices();
+  };
+  $('llm-on').onchange = drawOn;
+
+  // The server's models, found by themselves (2026-10-23: "It should automatically scan the LLM service for the
+  // models that are available and then the admin should be able to just select which model they want to share").
+  function keepTicks() {
+    var box = document.querySelectorAll('#llm-models input');
+    if (box.length) chosen = Array.prototype.filter.call(box, function (c) { return c.checked; }).map(function (c) { return c.value; });
+  }
+  var scanned = '';
+  function scan(force) {
+    var url = $('llm-url').value.trim();
+    if (!url || (!force && url === scanned)) return;
+    scanned = url; keepTicks();
+    var t = $('llm-tested'); t.hidden = false; t.textContent = 'Looking…'; t.style.cssText = 'background:var(--code)';
+    post('/admin/api/llm/test', {url: url, key: $('llm-key').value.trim()}).then(function (j) {
+      models = j.models || [];
+      t.textContent = models.length + ' model' + (models.length === 1 ? '' : 's') + ' found · ' + j.ms + ' ms';
+      t.style.cssText = 'background:color-mix(in srgb,var(--ok) 15%,var(--panel));color:var(--ok)'; drawModels();
+    }).catch(function (e) { models = []; drawModels(); t.textContent = e.message; t.style.cssText = 'background:color-mix(in srgb,#a33 12%,var(--panel));color:#a33'; });
+  }
+  $('llm-test').onclick = function () { scan(true); };
+  var scanTimer = null;
+  $('llm-url').addEventListener('input', function () { clearTimeout(scanTimer); scanTimer = setTimeout(function () { scan(false); }, 900); });
+  $('llm-url').addEventListener('change', function () { scan(false); });
+  $('llm-key').addEventListener('change', function () { scan(true); });
+  $('llm-save').onclick = function () {
+    keepTicks();
+    var body = {on: $('llm-on').checked, url: $('llm-url').value.trim(), name: $('llm-name').value.trim(), models: chosen,
+                at_once: Number($('llm-atonce').value) || 1, max_out: Number($('llm-maxout').value) || 4096, prices: prices};
+    if ($('llm-key').value.trim()) body.key = $('llm-key').value.trim();
+    said('Saving…');
+    post('/admin/api/llm', body).then(function (j) {
+      said(j.selling ? 'Saved. Your model is on the exchange.' : 'Saved. Not shared: tick the box at the top to share it.'); $('llm-key').value = ''; load();
+    }).catch(function (e) { said(e.message, true); });
+  };
+  function load() {
+    fetch('/admin/api/llm', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) {
+      if (r.status === 401) location.href = '/admin/login'; return r.json();
+    }).then(function (j) {
+      data = j; var c = j.config || {}; kinds = j.kinds || [];
+      $('llm-on').checked = !!c.on; $('llm-url').value = c.url || ''; $('llm-name').value = c.name || '';
+      $('llm-key').placeholder = c.has_key ? 'Saved (type to replace)' : 'Stays on this machine';
+      $('llm-atonce').value = c.at_once || 2; $('llm-maxout').value = c.max_out || 4096;
+      chosen = c.models || []; prices = (c.prices || []).map(function (p) { return Object.assign({}, p); });
+      drawOn(); drawModels(); drawPrices(); drawLoad(j.load); imgFill(j.images);
+      ff = (c.free_for || []).map(function (r) { return r.tag; }).filter(Boolean); ffDraw(j.operators || []);
+      helperDraw(j.helper || [], j.helper_now);
+      if (c.url && !scanned) scan(false);
+      var e = j.earned || [];
+      $('llm-earned').innerHTML = e.length ? e.map(function (r) {
+        var k = prices.find(function (p) { return p.leg === r.leg; });
+        return '<div class="stat"><span class="muted" style="font-size:.8rem">' + esc(k ? short(k.label) : r.leg) + '</span><strong>' + esc(r.text) +
+          '</strong><span class="muted" style="font-size:.8rem">' + (r.replies || 0).toLocaleString() + ' replies · ' + (r.buyers || 0) + ' buyer' + (r.buyers === 1 ? '' : 's') +
+          ' · ' + ((r.tokens_in || 0) + (r.tokens_out || 0)).toLocaleString() + ' tokens</span></div>';
+      }).join('') : '<p class="muted" style="margin:0">Nothing sold yet.</p>';
+    }).catch(function (e) { said('Could not load: ' + e.message, true); });
+  }
+  var WORDS = {idle: ['Idle', 'var(--muted)'], steady: ['In use', 'var(--ok)'], busy: ['Busy', '#b7791f'], full: ['Full: buyers waiting', '#a33']};
+  function drawLoad(l) {
+    if (!l) return;
+    var w = WORDS[l.word] || WORDS.idle;
+    $('llm-word').textContent = w[0]; $('llm-word').style.cssText = 'color:' + w[1] + ';background:color-mix(in srgb,' + w[1] + ' 14%,var(--panel))';
+    function tile(name, big, small) { return '<div class="stat"><span class="muted" style="font-size:.8rem">' + name + '</span><strong>' + big + '</strong><span class="muted" style="font-size:.8rem">' + small + '</span></div>'; }
+    $('llm-load').innerHTML = tile('Replies running', l.active + ' of ' + l.at_once, l.waiting ? l.waiting + ' waiting' : 'none waiting') +
+      tile('Last 15 minutes', (l.last_15m || 0).toLocaleString(), 'replies') +
+      tile('Last hour', (l.last_hour || 0).toLocaleString(), (l.failed_hour ? l.failed_hour + ' failed' : 'no failures')) +
+      tile('Speed', l.tok_s ? l.tok_s + ' tok/s' : '—', l.first_ms ? 'first word in ' + (l.first_ms / 1000).toFixed(1) + ' s' : 'no replies yet');
+  }
+  function pollLoad() {
+    if (!document.querySelector('.admintab[data-tab="llm"].on') || document.hidden) return;
+    fetch('/admin/api/llm/load', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { if (j) drawLoad(j); }).catch(function () {});
+  }
+  setInterval(pollLoad, 5000);
+
+  // --- the arcade helper's sources: approved one by one (2026-10-23: "I want to be able to choose, which shared
+  // models my arcade uses ... the other arcade will need to approve the use of that model") ---
+  var helperRows = [];
+  function helperDraw(list, now) {
+    helperRows = list;
+    $('helper-list').innerHTML = list.length ? list.map(function (h, i) {
+      var inUse = now && now.seller === h.seller && now.model === h.model;
+      var who = h.here ? 'your own model' : 'shared with you free by @' + esc(h.tag || '?') + (h.host ? ' \u00b7 ' + esc(h.host) : '');
+      return '<label class="model" style="justify-content:space-between;flex-wrap:wrap;cursor:pointer">' +
+        '<span style="display:flex;gap:12px;align-items:center;min-width:0"><input type="checkbox" data-hok="' + i + '"' + (h.approved ? ' checked' : '') +
+        ' style="width:20px;height:20px"><span style="display:flex;flex-direction:column;min-width:0"><b class="mono" style="overflow-wrap:anywhere">' + esc(h.model) +
+        '</b><span class="muted" style="font-size:.8rem">' + who + (h.load ? ' \u00b7 ' + esc(h.load) : '') + '</span></span></span>' +
+        (inUse ? '<span class="pill" style="color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,var(--panel))">In use now</span>'
+          : h.approved && !h.ready ? '<button type="button" class="small" data-hsign="' + esc(h.seller) + '" style="height:36px">Sign once to use it</button>'
+          : h.approved ? '<span class="pill" style="background:var(--code)">Approved</span>'
+          : '<span class="muted" style="font-size:.8rem">' + (h.here ? 'switched off' : 'needs your approval') + '</span>') + '</label>';
+    }).join('') : '<p class="muted" style="margin:0">Nothing yet: share your own model above, or ask another operator to add you to their "Free for other operators". It shows here for you to approve.</p>';
+  }
+  $('helper-list').addEventListener('change', function (e) {
+    var c = e.target.closest('[data-hok]'); if (!c) return;
+    helperRows[Number(c.dataset.hok)].approved = c.checked;
+    var ok = helperRows.filter(function (h) { return !h.here && h.approved; }).map(function (h) { return h.key; });
+    var own = helperRows.filter(function (h) { return h.here; });
+    var body = {helper_ok: ok};
+    if (own.length) body.helper_off_own = !own.some(function (h) { return h.approved; });
+    post('/admin/api/llm', body).then(function () { load(); }).catch(function (err) { $('llm-said').textContent = err.message; });
+  });
+  $('helper-list').addEventListener('click', async function (e) {
+    var b = e.target.closest('[data-hsign]'); if (!b) return;
+    try {
+      var said = await (await fetch('/account/llm/grant?seller=' + encodeURIComponent(b.dataset.hsign), {credentials: 'same-origin'})).json();
+      if (said.detail) throw new Error(said.detail);
+      if (!said.ok) {
+        var w = await import('/wallet.js'), net = said.sign.chain.network;
+        var chain = (await w.chains()).find(function (c) { return c.network === net; }) || said.sign.chain;
+        var keys = (await w.opened(chain)) || (window.arcadeKeys ? await arcadeKeys(chain, 'Your wallet signs, once a month, that the helper may use this model as you.') : null);
+        if (!keys || !keys.on || !keys.on[net]) throw new Error('Sign in as this arcade\'s operator and unlock the wallet first.');
+        var coins = await import('/coins.js');
+        var sig = await coins.signMessage(keys.on[net].key, said.sign.message, said.sign.magic);
+        var r = await fetch('/account/llm/grant', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({seller: b.dataset.hsign, expires: said.sign.expires, sig: sig})});
+        if (!r.ok) throw new Error((await r.json()).detail || 'refused');
+      }
+      load();
+    } catch (err) { $('llm-said').textContent = err.message; }
+  });
+
+  // --- free for other operators ---
+  var ff = [];
+  function ffDraw(ops) {
+    $('ff-list').innerHTML = ff.length ? ff.map(function (t, i) {
+      return '<span class="pill" style="display:inline-flex;gap:6px;align-items:center;font-size:.9rem;padding:6px 6px 6px 12px;background:color-mix(in srgb,var(--ok) 14%,var(--panel));color:var(--ok)">@' +
+        esc(t) + '<button type="button" class="x" data-ff="' + i + '" aria-label="Stop sharing with @' + esc(t) + '" style="width:28px;height:28px">\u00d7</button></span>';
+    }).join('') : '<span class="muted">Nobody yet.</span>';
+    if (ops) {
+      $('ff-ops').innerHTML = ops.map(function (t) { return '<option value="@' + esc(t) + '">'; }).join('');
+      var left = ops.filter(function (t) { return ff.indexOf(t) < 0; });
+      $('ff-suggest').innerHTML = left.length ? '<span class="muted" style="font-size:.85rem;align-self:center">Operators linked to this arcade:</span>' +
+        left.map(function (t) { return '<button type="button" class="small ghost" data-ffadd="' + esc(t) + '" style="height:32px">+ @' + esc(t) + '</button>'; }).join('') : '';
+    }
+  }
+  function ffSave(list, done) {
+    $('ff-said').textContent = 'Saving\u2026';
+    post('/admin/api/llm', {free_for: list}).then(function () {
+      ff = list; $('ff-said').textContent = done || 'Saved.'; ffDraw(data && data.operators);
+    }).catch(function (e) { $('ff-said').textContent = e.message; });
+  }
+  function ffAdd(t) {
+    t = String(t || '').trim().replace(/^@/, '').toLowerCase(); if (!t) return;
+    if (ff.indexOf(t) >= 0) { $('ff-said').textContent = '@' + t + ' is already on the list.'; return; }
+    ffSave(ff.concat([t]), '@' + t + ' now uses your models free.'); $('ff-name').value = '';
+  }
+  $('ff-add').onclick = function () { ffAdd($('ff-name').value); };
+  $('ff-name').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); ffAdd($('ff-name').value); } });
+  $('ff-suggest').addEventListener('click', function (e) { var b = e.target.closest('[data-ffadd]'); if (b) ffAdd(b.dataset.ffadd); });
+  $('ff-list').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-ff]'); if (!b) return;
+    var t = ff[Number(b.dataset.ff)]; ffSave(ff.filter(function (x) { return x !== t; }), '@' + t + ' pays again from now on.');
+  });
+
+  // --- finding the models on this computer ---
+  var found = null;
+  function findDraw() {
+    var out = [], f = found || {text: [], images: [], asleep: []};
+    function server(g, kind) {
+      var cur = kind === 'text' ? $('llm-url').value.trim() : $('img-url').value.trim();
+      var picked = kind === 'text' ? chosen : img.chosen;
+      return '<div class="model" style="flex-direction:column;align-items:stretch;gap:6px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+        '<b>' + esc(g.server) + ' <span class="muted mono" style="font-weight:400">' + esc(g.url.replace('http://', '')) + '</span>' +
+        (g.same_as ? ' <span class="muted" style="font-weight:400;font-size:.82rem">same models as ' + esc(g.same_as.replace('http://', '')) + ' (a proxy in front of it?)</span>' : '') + '</b>' +
+        '<span class="pill" style="background:var(--panel)">' + (kind === 'text' ? 'words' : 'pictures') + '</span></div>' +
+        (g.models.length ? g.models.map(function (m) {
+          var on = cur === g.url && picked.indexOf(m.id) >= 0;
+          return '<label style="display:flex;gap:10px;align-items:center;cursor:pointer"><input type="checkbox" data-kind="' + kind + '" data-url="' + esc(g.url) +
+            '" value="' + esc(m.id) + '"' + (on ? ' checked' : '') + ' style="width:20px;height:20px"><span style="min-width:0"><b class="mono" style="overflow-wrap:anywhere">' +
+            esc(m.label || m.id) + '</b>' + (m.ctx ? ' <span class="muted" style="font-size:.8rem">' + m.ctx.toLocaleString() + '-token context</span>' : '') + '</span></label>';
+        }).join('') : '<span class="muted">No model it can share' + (g.why ? ': ' + esc(g.why) : '') + '.</span>') + '</div>';
+    }
+    f.text.forEach(function (g) { out.push(server(g, 'text')); });
+    f.images.forEach(function (g) { out.push(server(g, 'image')); });
+    (f.asleep || []).forEach(function (a) {
+      out.push('<div class="model" style="justify-content:space-between;flex-wrap:wrap"><span><b>ComfyUI</b> <span class="muted">is asleep (' + esc(a.unit) +
+        '); it starts when a picture is asked for.</span></span>' + (f.local ? '<button type="button" class="small" data-wake="' + esc(a.wake) + '" data-url="' + esc(a.url) +
+        '" style="height:38px">Wake it and look</button>' : '<span class="muted">Wake it from the node machine.</span>') + '</div>');
+    });
+    $('find-out').innerHTML = out.join('');
+  }
+  function find(body) {
+    var b = $('find-go'); b.disabled = true;
+    $('find-said').hidden = false; $('find-said').textContent = body && body.wake ? 'Waking ComfyUI and looking\u2026 up to a minute or two.' : 'Looking at every port on this computer\u2026';
+    post('/admin/api/llm/discover', body || {}).then(function (j) {
+      found = j;
+      var n = j.text.reduce(function (a, g) { return a + g.models.length; }, 0) + j.images.reduce(function (a, g) { return a + g.models.length; }, 0);
+      $('find-said').textContent = n ? n + ' model' + (n === 1 ? '' : 's') + ' found on ' + (j.text.length + j.images.length) + ' server' +
+        (j.text.length + j.images.length === 1 ? '' : 's') + ' (' + j.ports + ' ports looked at). Tick the ones to share, set prices, then Save.'
+        : 'No model server answered on this computer' + ((j.asleep || []).length ? ', but ComfyUI is asleep.' : '. Start one, then look again.');
+      findDraw();
+    }).catch(function (e) { $('find-said').textContent = e.message; }).then(function () { b.disabled = false; });
+  }
+  $('find-go').onclick = function () { find({}); };
+  $('find-out').addEventListener('click', function (e) {
+    var w = e.target.closest('button[data-wake]'); if (!w) return;
+    $('img-url').value = w.dataset.url; if (!$('img-wake').disabled) $('img-wake').value = w.dataset.wake;
+    find({wake: w.dataset.wake, url: w.dataset.url});
+  });
+  $('find-out').addEventListener('change', function (e) {
+    var c = e.target.closest('input[data-kind]'); if (!c) return;
+    var g = ((found || {})[c.dataset.kind === 'text' ? 'text' : 'images'] || []).find(function (x) { return x.url === c.dataset.url; });
+    if (c.dataset.kind === 'text') {
+      keepTicks();
+      if ($('llm-url').value.trim() !== c.dataset.url) { $('llm-url').value = c.dataset.url; chosen = []; }
+      models = g ? g.models : []; scanned = c.dataset.url;
+      chosen = chosen.filter(function (m) { return m !== c.value; }); if (c.checked) chosen.push(c.value);
+      drawModels();
+      $('llm-tested').hidden = false; $('llm-tested').textContent = 'Picked from Your models';
+    } else {
+      imgKeep();
+      if ($('img-url').value.trim() !== c.dataset.url) { $('img-url').value = c.dataset.url; img.chosen = []; }
+      img.models = g ? g.models : []; img.scanned = c.dataset.url;
+      img.chosen = img.chosen.filter(function (m) { return m !== c.value; }); if (c.checked) img.chosen.push(c.value);
+      imgDrawModels();
+    }
+    findDraw();
+  });
+
+  // --- pictures (arcade/imagegen.py) ---
+  var img = {models: [], chosen: [], prices: [], scanned: ''};
+  function imgDrawOn() {
+    var on = $('img-on').checked;
+    $('img-onoff').className = 'onoff' + (on ? '' : ' off');
+    $('img-onword').textContent = !on ? 'Tick to share on the exchange' : (data && data.images && data.images.sharing ? 'Shared on the exchange' : 'Shared once you save');
+  }
+  function imgKeep() {
+    var box = document.querySelectorAll('#img-models input');
+    if (box.length) img.chosen = Array.prototype.filter.call(box, function (c) { return c.checked; }).map(function (c) { return c.value; });
+  }
+  function imgDrawModels() {
+    var all = img.models.slice();
+    img.chosen.forEach(function (m) { if (!all.some(function (x) { return x.id === m; })) all.push({id: m, label: '', gone: !!img.models.length}); });
+    $('img-models').innerHTML = all.length ? all.map(function (m) {
+      return '<label class="model"><input type="checkbox" value="' + esc(m.id) + '"' + (img.chosen.indexOf(m.id) >= 0 ? ' checked' : '') +
+        ' style="width:20px;height:20px"><span style="display:flex;flex-direction:column;min-width:0"><b>' + esc(m.label || m.id) +
+        '</b><span class="muted mono" style="font-size:.78rem;overflow-wrap:anywhere">' + esc(m.gone ? 'no longer on ComfyUI' : m.id) + '</span></span></label>';
+    }).join('') : '<p class="muted" style="margin:6px 0 0">Enter ComfyUI\'s address to find its models.</p>';
+  }
+  function imgDrawPrices() {
+    $('img-prices').innerHTML = img.prices.length ? img.prices.map(function (p, i) {
+      return '<div class="pr" style="grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,.9fr) 42px"><span style="display:flex;gap:10px;align-items:center;min-width:0"><span class="badge">' +
+        esc(short(p.label).slice(0, 1)) + '</span><b style="min-width:0;overflow-wrap:anywhere">' + esc(p.label) + '</b></span>' +
+        '<input autocomplete="off" data-i="' + i + '" value="' + esc(p.per) + '" inputmode="decimal" aria-label="' + esc(short(p.label)) + ' per credit">' +
+        '<span class="muted" data-pa="' + i + '">' + picCost(p) + '</span>' +
+        '<button type="button" class="x" data-x="' + i + '" aria-label="Remove ' + esc(short(p.label)) + '">\u00d7</button></div>';
+    }).join('') : '<div class="model" style="margin:10px 0"><span style="display:flex;flex-direction:column"><b>Free for everyone</b>' +
+      '<span class="muted" style="font-size:.85rem">No asks, so pictures are free. Add an ask below to charge per credit.</span></span></div>';
+    var have = img.prices.map(function (p) { return p.leg; });
+    $('img-add').innerHTML = '<option value="">Add a way to be paid\u2026</option>' + kinds.filter(function (k) { return have.indexOf(k.key) < 0; })
+      .map(function (k) { return '<option value="' + esc(k.key) + '">' + esc(k.label) + '</option>'; }).join('');
+  }
+  function picCost(p) {
+    var n = Number(p.per) || 0; if (!n) return 'free';
+    var f = function (x) { return x.toLocaleString(undefined, {maximumSignificantDigits: 8}); };
+    return f(2 * n) + ' ' + esc(short(p.label)) + ' (2 credits)';
+  }
+  $('img-prices').addEventListener('input', function (e) {
+    var i = e.target.dataset.i; if (i == null) return;
+    img.prices[i].per = e.target.value.trim();
+    var a = document.querySelector('#img-prices [data-pa="' + i + '"]'); if (a) a.innerHTML = picCost(img.prices[i]);
+  });
+  $('img-prices').addEventListener('click', function (e) { var x = e.target.closest('[data-x]'); if (!x) return; img.prices.splice(Number(x.dataset.x), 1); imgDrawPrices(); });
+  $('img-addbtn').onclick = function () {
+    var k = kinds.find(function (k) { return k.key === $('img-add').value; }); if (!k) return;
+    img.prices.push({leg: k.key, label: k.label, per: '0'}); imgDrawPrices();
+  };
+  $('img-on').onchange = imgDrawOn;
+  function imgScan(force) {
+    var url = $('img-url').value.trim();
+    if (!url || (!force && url === img.scanned)) return;
+    img.scanned = url; imgKeep();
+    var t = $('img-scanned'); t.hidden = false; t.style.cssText = 'background:var(--code)';
+    var wake = $('img-wake').disabled ? '' : $('img-wake').value.trim();
+    t.textContent = force && wake ? 'Waking ComfyUI\u2026 up to a minute or two' : 'Looking\u2026';
+    post('/admin/api/llm/images/scan', {url: url, wake_now: !!force, wake: wake}).then(function (j) {
+      if (j.asleep) { t.textContent = j.detail; t.style.cssText = 'background:var(--code)'; imgDrawModels(); return; }
+      img.models = j.models || [];
+      t.textContent = img.models.length + ' model' + (img.models.length === 1 ? '' : 's') + ' found';
+      t.style.cssText = 'background:color-mix(in srgb,var(--ok) 15%,var(--panel));color:var(--ok)'; imgDrawModels();
+    }).catch(function (e) { img.models = []; imgDrawModels(); t.textContent = e.message; t.style.cssText = 'background:color-mix(in srgb,#a33 12%,var(--panel));color:#a33'; });
+  }
+  $('img-scan').onclick = function () { imgScan(true); };
+  var imgTimer = null;
+  $('img-url').addEventListener('input', function () { clearTimeout(imgTimer); imgTimer = setTimeout(function () { imgScan(false); }, 900); });
+  $('img-url').addEventListener('change', function () { imgScan(true); });
+  $('img-wake').addEventListener('change', function () { if ($('img-url').value.trim()) imgScan(true); });
+  $('img-save').onclick = function () {
+    imgKeep();
+    var body = {on: $('img-on').checked, url: $('img-url').value.trim(), name: $('img-name').value.trim(), models: img.chosen,
+                max_side: Number($('img-side').value) || 1024, steps: Number($('img-steps').value) || 20,
+                at_once: Number($('img-atonce').value) || 1, prices: img.prices};
+    if (data && data.images && data.images.local) body.wake = $('img-wake').value.trim();
+    $('img-said').textContent = 'Saving\u2026';
+    post('/admin/api/llm/images', body).then(function (j) {
+      $('img-said').textContent = j.sharing ? 'Saved. Your picture model is on the exchange.' : 'Saved. Not shared: tick the box at the top to share it.'; load();
+    }).catch(function (e) { $('img-said').textContent = e.message; });
+  };
+  function imgFill(im) {
+    if (!im) return;
+    var c = im.config || {};
+    $('img-on').checked = !!c.on; $('img-url').value = c.url || ''; $('img-name').value = c.name || '';
+    $('img-wake').value = im.local ? (c.wake || '') : ''; $('img-wake').disabled = !im.local;
+    $('img-wake').placeholder = im.local ? 'systemctl --user start comfyui' : (c.wake ? 'Set (change it at the node machine)' : 'Set at the node machine only');
+    $('img-wake-h').textContent = im.local ? 'Run when a picture is asked for and ComfyUI is asleep.' : 'It runs on this machine, so it is set at the node machine only.';
+    $('img-side').value = c.max_side || 1024; $('img-steps').value = c.steps || 20; $('img-atonce').value = c.at_once || 1;
+    img.chosen = c.models || []; img.prices = (c.prices || []).map(function (p) { return Object.assign({}, p); });
+    imgDrawOn(); imgDrawModels(); imgDrawPrices();
+    var l = im.load || {}, w = WORDS[l.word] || WORDS.idle;
+    $('img-word').textContent = c.on ? w[0] : ''; $('img-word').style.cssText = c.on ? 'color:' + w[1] + ';background:color-mix(in srgb,' + w[1] + ' 14%,var(--panel))' : 'display:none';
+    if (c.url && !img.scanned) imgScan(false);
+  }
+  document.querySelectorAll('.admintabs button[data-tab="llm"]').forEach(function (b) { b.addEventListener('click', load); });
+  if (location.hash === '#llm') load();
+})();
+</script>
+
 <div class="admintab" data-tab="affiliates" aria-label="Affiliates">
 <section class="panel" id="affmine">
   <h2>Your sites</h2>
@@ -745,8 +1333,8 @@ section.panel h2{margin-top:0}
     var lines = [];
     if (x.error) lines.push('Could not read the swap: ' + x.error);
     if (x.enabled && x.addresses) {
-      lines.push('Deposits go to: testnet ' + x.addresses.testnet + ' and mainnet ' + x.addresses.mainnet + '.');
-      lines.push('Mainnet wallet ' + (x.main_balance || 0).toFixed(4) + ' PEP; owed to people ' + (x.owed_pepe || 0).toFixed(4)
+      lines.push('Deposits go to: Pepecoin test ' + x.addresses.testnet + ' and Pepecoin main ' + x.addresses.mainnet + '.');
+      lines.push('Pepecoin main wallet ' + (x.main_balance || 0).toFixed(4) + ' PEP; owed to people ' + (x.owed_pepe || 0).toFixed(4)
                  + ' PEP' + (x.covered ? ' (covered, with room for fees).' : ' -- NOT covered: payouts wait until you top it up.'));
     }
     lines.push((x.open_orders || 0) + ' orders standing, ' + (x.waiting || 0) + ' payouts on their way, '
@@ -754,6 +1342,44 @@ section.panel h2{margin-top:0}
     (x.stuck || []).forEach(function (p) { lines.push('Stuck ' + p.id + ': ' + p.error); });
     xs.textContent = '';
     lines.forEach(function (l) { var div = document.createElement('div'); div.textContent = l; xs.appendChild(div); });
+    var turn = d.turn || {};
+    $('turnid').value = turn.key_id || '';
+    $('turntoken').value = '';
+    $('turntoken').placeholder = turn.has_token ? 'API token saved (type to replace)' : 'API token';
+    $('turnclear').hidden = !turn.key_id;
+    var chosen = Array.isArray(turn.apps) ? turn.apps : null;
+    $('turnall').checked = !chosen; $('turnsome').checked = !!chosen;
+    var box = $('turnapps');
+    if (!box.childElementCount) box.textContent = 'Loading the apps\u2026';
+    fetch('/admin/api/relay-apps', {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.json(); }).then(function (j) {
+        box.textContent = '';
+        (j.apps || []).forEach(function (a) {
+          var l = document.createElement('label'); l.className = 'switch'; l.style.display = 'block';
+          var c = document.createElement('input'); c.type = 'checkbox'; c.value = a.id;
+          c.checked = !!chosen && chosen.indexOf(a.id) >= 0;
+          l.append(c, ' ' + a.name + ' \u00b7 ' + a.publisher + (a.net ? ' (' + a.net + ')' : ''));
+          box.appendChild(l);
+        });
+        if (!(j.apps || []).length) box.textContent = 'No apps on the Apps tab yet.';
+      }).catch(function () { box.textContent = 'Could not list the apps.'; });
+    var m = turn.meter || {}, lim = m.limit_gb || 1000;
+    $('turnacct').value = turn.account_id || '';
+    $('turnanalytics').value = '';
+    $('turnanalytics').placeholder = turn.has_analytics ? 'Analytics token saved (type to replace)' : 'Analytics token';
+    $('turnlimit').value = lim;
+    if (m.metered) {
+      var pct = Math.min(100, (m.used_gb / lim) * 100);
+      $('turnfill').style.width = pct.toFixed(1) + '%';
+      $('turnfill').style.background = pct >= 100 ? 'var(--bad,#c33)' : pct >= 80 ? '#e0a020' : 'var(--ok,#2a2)';
+      $('turnusage').textContent = m.used_gb.toFixed(2) + ' GB of ' + lim + ' GB (' + pct.toFixed(1) + '%) since ' + m.since
+        + (m.over ? ' \u2014 limit reached: calls go direct only until the month turns.' : '')
+        + (m.error ? ' (last reading: ' + m.error + ')' : '');
+    } else {
+      $('turnfill').style.width = '0';
+      $('turnusage').textContent = m.error ? m.error : 'Add the meter below to see it.';
+    }
+    $('turnsaid').textContent = turn.key_id && turn.has_token ? 'The relay is on: signed-in players get it.' : 'No relay: direct links only.';
     $('modurl').value = (d.moderation && d.moderation.url) || '';
     $('modmodel').value = (d.moderation && d.moderation.model) || '';
     $('modkey').value = '';
@@ -1944,6 +2570,30 @@ section.panel h2{margin-top:0}
       moderation: {url: $('modurl').value.trim(), model: $('modmodel').value.trim(),
                    key: $('modkey').value.trim(), clear_key: $('modclear').checked}})
       .then(function () { say('Switches saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+
+  $('turnsave').onclick = function () {
+    $('turnsaid').textContent = 'Trying it with Cloudflare\u2026';
+    call('/admin/api/settings', {turn: {key_id: $('turnid').value.trim(), token: $('turntoken').value.trim()}})
+      .then(function () { say('Relay saved: Cloudflare took the key.'); load(); })
+      .catch(function (e) { $('turnsaid').textContent = e.message; say(e.message, 'err'); });
+  };
+  $('turnappssave').onclick = function () {
+    var apps = Array.prototype.map.call(document.querySelectorAll('#turnapps input:checked'), function (c) { return c.value; });
+    call('/admin/api/settings', {turn_apps: {all: $('turnall').checked, apps: apps}})
+      .then(function () { say($('turnall').checked ? 'Every app may use the relay.' : apps.length + ' app(s) may use the relay.'); load(); })
+      .catch(function (e) { say(e.message, 'err'); });
+  };
+  $('turnmetersave').onclick = function () {
+    $('turnusage').textContent = 'Asking Cloudflare\u2026';
+    call('/admin/api/settings', {turn_meter: {account_id: $('turnacct').value.trim(),
+                                              analytics: $('turnanalytics').value.trim(), limit_gb: $('turnlimit').value}})
+      .then(function () { say('Meter saved.'); load(); })
+      .catch(function (e) { $('turnusage').textContent = e.message; say(e.message, 'err'); });
+  };
+  $('turnclear').onclick = function () {
+    call('/admin/api/settings', {turn: {clear: true}}).then(function () { say('Relay removed.'); load(); })
+      .catch(function (e) { say(e.message, 'err'); });
   };
 
   $('saveflags').onclick = function () {

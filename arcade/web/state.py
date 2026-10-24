@@ -210,7 +210,8 @@ class ChainContext:
         name - Main or test ... Because we could be and will be adding many more blockchains", and "include the
         ticker alongside the name"; before, "P test", "D main").
         A new chain names itself once, in its Params (`chain_name`)."""
-        name = self.params.chain_name or self.params.label.removesuffix(" testnet").removesuffix(" regtest")
+        name = self.params.chain_name or self.params.label.removesuffix(" testnet").removesuffix(" regtest") \
+            .removesuffix(" main").removesuffix(" test")
         if name in ("Mainnet", "Testnet", "Regtest"):
             name = "Pepecoin"            # the arcade's own chain, whose Params were written before it had company
         return f"{name} ({self.params.family}) \u2013 {self.word.capitalize()}"
@@ -764,7 +765,7 @@ class AppState:
             address = funded_address(rpc, prefer=fee_address, mainnet=chain.is_mainnet)
             if address != fee_address:
                 raise ValueError(f"the fee address {fee_address} has no coins to broadcast "
-                                 "with: send it some testnet PEP")
+                                 "with: send it some Pepecoin test PEP")
             txid = sender.broadcast(sender.prepare(address, payload, change_address=address))
         with self.store() as store:
             store.add_node_broadcast(chain.network, txid, fee_address, topic, body, 0,

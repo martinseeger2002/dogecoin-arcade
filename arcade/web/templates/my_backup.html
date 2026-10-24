@@ -264,9 +264,9 @@ $("show-words").onclick = async () => {
       $("ltc-key").textContent = await coins.wif(ltc.key, coins.LTC_WIF);
       // Every chain's key (2026-10-18): what each chain's own Core imports.
       const seed = await signin.toSeed(phrase);
-      for (const [label, network] of [["Pepecoin and Dogecoin mainnet", "main"], ["Litecoin mainnet", "ltc"],
-                                      ["Bellscoin mainnet", "bel"], ["Luckycoin mainnet", "lky"],
-                                      ["Pepecoin testnet", "test"], ["Litecoin testnet", "ltctest"]]) {
+      for (const [label, network] of [["Pepecoin main and Dogecoin", "main"], ["Litecoin", "ltc"],
+                                      ["Bellscoin", "bel"], ["Luckycoin", "lky"],
+                                      ["Pepecoin test", "test"], ["Litecoin test", "ltctest"]]) {
         const one = await coins.coinKey(seed, network);
         const dt = document.createElement("dt"), dd = document.createElement("dd");
         dt.textContent = label;

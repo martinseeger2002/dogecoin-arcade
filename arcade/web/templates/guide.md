@@ -17,9 +17,9 @@ installations reading the same chain agree without talking to each other.
 | | |
 |---|---|
 | Interface | `http://127.0.0.1:8420`, bound to loopback because it can spend |
-| Chains | Pepecoin, mainnet and testnet — the two this arcade moves coins on, and the only two |
-| Messaging | **testnet only**, by design |
-| Tokens, inscriptions, @tags | mainnet and testnet |
+| Chains | Pepecoin main and Pepecoin test — the two this arcade moves coins on, and the only two |
+| Messaging | **Pepecoin test only**, by design |
+| Tokens, inscriptions, @tags | Pepecoin main and Pepecoin test |
 | Storage | your node's datadir for the chain; `~/.dogecoinarcade` for what the app remembers |
 
 ---
@@ -74,8 +74,8 @@ deleted — that is the point of them.
   as a private message but unsealed, so any node can reassemble one with no key
   and no identity.
 * **A picture is a post**: you can post one with nothing typed.
-* **No confirmation step on testnet**, for a post or a message: the coins are
-  free and what it cost is reported as it happens. Mainnet still shows the
+* **No confirmation step on Pepecoin test**, for a post or a message: the coins are
+  free and what it cost is reported as it happens. Pepecoin main still shows the
   bill first.
 * **A board open on another screen refreshes itself** when something is
   posted, rather than waiting to be reloaded.
@@ -90,9 +90,9 @@ deleted — that is the point of them.
 ---
 
 **Every page that shows one chain says which, and switches.** The
-mainnet/testnet tag is on the Wallet, its NFTs and Tokens tabs, the Tokens
+Pepecoin main / Pepecoin test tag is on the Wallet, its NFTs and Tokens tabs, the Tokens
 page and the Exchange, and pressing it stays where you are. A fresh wallet
-opens on the chain its own identity is on, not on mainnet.
+opens on the chain its own identity is on, not on Pepecoin main.
 
 **The address book is @tags.** Everybody in it has claimed a name on the
 chain, and that is the only way in — search for a tag and add it. What gets
@@ -102,10 +102,10 @@ made; addresses and key are one click away, because addresses are for
 machines. Somebody who has not claimed a tag cannot be added, and a key
 announced under no name is not offered.
 
-**Publishing your tag publishes three things**: your testnet address, your
-mainnet address and your messaging key, all under that name. One search then
+**Publishing your tag publishes three things**: your Pepecoin test address, your
+Pepecoin main address and your messaging key, all under that name. One search then
 gives somebody everything they need to pay you on either chain and write to
-you. The mainnet address is chosen once and kept, so republishing says the
+you. The Pepecoin main address is chosen once and kept, so republishing says the
 same thing.
 
 **A new wallet is asked what it is called.** The first page a wallet with no
@@ -128,7 +128,7 @@ Clicking a @tag anywhere goes to that person's page.
   and nothing in the format knows the difference.
 * **Edit and delete** your own. The words stay on the chain for ever —
   nothing can change that — and no arcade shows a deleted one.
-* **Tip a post** with coins, on testnet or mainnet. One transaction: the
+* **Tip a post** with coins, on Pepecoin test or Pepecoin main. One transaction: the
   coins move and the same transaction says which post they were for, so the
   post can show it and nobody pays twice. It goes to the address they
   published for that chain.
@@ -195,7 +195,7 @@ An Omni-style token ledger, indexed from the chain.
   agrees. A transaction the engine cannot understand stops the index rather
   than being skipped — a silently skipped transaction is how two nodes come to
   disagree about who owns what.
-* Mainnet and testnet are separate ledgers with their own start blocks. When
+* Pepecoin main and Pepecoin test are separate ledgers with their own start blocks. When
   a release moves a start block above everything a node has indexed, that
   index moves itself aside — kept, named after the new floor — and rebuilds
   from it. Nothing is deleted: a floor published wrong is undone by renaming
@@ -501,7 +501,7 @@ node listens; the page inscribed with it is the storefront.
   broadcasts at once, and the send is listed with the approvals as one that
   came from a page of your own.
 
-Testnet only, like the messages it travels on. Swaps are read from a
+Pepecoin test only, like the messages it travels on. Swaps are read from a
 starting height per chain (`swaps_from`), so a swap in a block before it is
 recorded as unread rather than as an old transaction meaning something new.
 
@@ -794,7 +794,7 @@ before it costs anything.
 Who is who, and where to pay them. Stored only on this computer — not
 published, not on any chain, and not visible to anyone you message.
 
-* A contact holds a name, a testnet address, a mainnet address, a contact code
+* A contact holds a name, a Pepecoin test address, a Pepecoin main address, a contact code
   and your own notes. The contact code is their identity and can only be set
   when the entry is created.
 * **Names found by scanning are kept apart from names you typed.** A name you
@@ -906,7 +906,7 @@ and anything built on top.
 * Methods: `da_identity`, `da_send`, `da_broadcast`, `da_inbox`, `da_markread`.
 * **An inscribed page can use it too**: `arcade.node` sends as the wallet the
   page runs in and reads only the answers to what that page sent. No key of
-  its own, no approval — a message moves nothing and lives on testnet — and
+  its own, no approval — a message moves nothing and lives on Pepecoin test — and
   thirty an hour per page, so a page in a loop is a nuisance and not a cost.
 
 On the chain rather than peer-to-peer because a custom P2P message does not
@@ -944,21 +944,21 @@ forwarding. The mempool already gossips to every node in seconds.
   address the page says so instead of half working.
 * **What an account can do.** Its own pages: *Your arcade*, *Messages*, the
   *address book* and the feed. From them it claims a @tag, publishes its
-  messaging key, takes the faucet's testnet coins once, sends coins, posts
+  messaging key, takes the faucet's Pepecoin test coins once, sends coins, posts
   and likes, and writes sealed messages. Every one of those is a
   transaction the node builds, the browser signs with a key the node has
   never seen, and the node broadcasts -- it broadcasts what it *offered*,
   not whatever came back signed.
 * **A wallet on each chain, from the same words.** The twelve words hold
-  coins on the test chain and on mainnet, at each chain's own coin type --
+  coins on the test chain and on Pepecoin main, at each chain's own coin type --
   two wallets, one secret, nothing extra to write down. The node is told
   which address belongs to which chain and checks the version byte rather
-  than believing it; the mainnet card says on itself that those coins are
-  real. Paying a @tag on mainnet uses the address its holder published
+  than believing it; the Pepecoin main card says on itself that those coins are
+  real. Paying a @tag on Pepecoin main uses the address its holder published
   with their key, and says so plainly when they have not published one.
-  The faucet pays out testnet coins; real ones are held back by a setting
+  The faucet pays out Pepecoin test coins; real ones are held back by a setting
   that is off, not by a rule that cannot be changed.
-* **Real coins are switched off for an account until it asks.** The mainnet
+* **Real coins are switched off for an account until it asks.** The Pepecoin main
   wallet exists from the minute the account does, and it can be paid into,
   but nothing can be spent out of it until the twelve words have been typed
   back on *Backup* -- the only place they are ever asked for, and they are
@@ -1023,8 +1023,8 @@ forwarding. The mempool already gossips to every node in seconds.
   of blocks, coins first, because a token cannot move off an address that
   cannot pay its own fee. It waits for anything else that is sending, so it
   cannot collide with a collection run part way through, and it never sees
-  an output held for an open offer. Testnet only: sweeping somebody's
-  mainnet coins without asking is spending their money for them.
+  an output held for an open offer. Pepecoin test only: sweeping somebody's
+  Pepecoin main coins without asking is spending their money for them.
 * **On a real chain, only the wallet this application made.** A node there is
   usually somebody's own wallet too, and those coins are not the arcade's to
   show, to spend or to gather; what the arcade made is filed under its own
@@ -1079,10 +1079,10 @@ forwarding. The mempool already gossips to every node in seconds.
   0.01 PEP/kB; a plain send is unchanged, an inscription chunk pays about
   0.004 PEP per data output, so data-heavy transactions are mined
   promptly.
-* **Mine a testnet block** from the wallet page, any time. The node hashes
+* **Mine a Pepecoin test block** from the wallet page, any time. The node hashes
   in batches of about thirty seconds, the page says how many hashes so far
   and how long a block takes at today's difficulty, and Stop mining stops
-  after the batch it is on. Testnet only, because mainnet has miners.
+  after the batch it is on. Pepecoin test only, because Pepecoin main has miners.
 * Your wallet **is** your identity. There is no passphrase and nothing to write
   down: back up `wallet.dat` and everything comes back with it — coins,
   messages and your published key.
@@ -1103,7 +1103,7 @@ when something is wrong.
 ## What it does not do
 
 * **No custom peer-to-peer protocol.** See above: it would not propagate.
-* **No encrypted messaging on mainnet.** Testnet only, deliberately.
+* **No encrypted messaging on Pepecoin main.** Pepecoin test only, deliberately.
 * **No send-to-owners** (Omni type 3). The engine does not implement it and a
   transaction of that type would stop the index.
 * **No automatic matching.** There is an order book, but the engine does not

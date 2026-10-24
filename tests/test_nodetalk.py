@@ -195,7 +195,7 @@ def test_a_page_may_send_thirty_an_hour_and_never_on_mainnet(monkeypatch, client
 
     monkeypatch.setattr(state.messaging, "network", "main")
     r = app.post(f"/node/{PAGE}", json={"csrf_token": csrf, "op": "send", "to": shop, "body": "x"})
-    assert r.status_code == 400 and "testnet only" in r.json()["error"]
+    assert r.status_code == 400 and "Pepecoin test only" in r.json()["error"]
     assert sent["n"] == N.MAX_PER_HOUR + 1
 
 

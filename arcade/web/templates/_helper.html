@@ -1,0 +1,239 @@
+{#- The arcade helper (2026-10-23): "a pixel art robot head that should appear as a small icon in the lower right
+    hand corner that persists across all tabs and pages. When you click on it. It should open a chat dialog box with that
+    same Dogecoin arcade chat harness as From the LLM marketplace but using any LLM that is shared with the operator of
+    that arcade"; "should have context on what tab the user is on"; "its context window stored in the users arcade local
+    storage"; "In the users your arcade tab you should be able to disable the robot helper" (me.html).
+    Shown only when a model is shared with this arcade's operator (/account/llm/helper); speaks through it as the
+    operator (web/llmweb.py). Not over a game in full screen. #}
+<style>
+#arc-bot{position:fixed;right:16px;bottom:16px;z-index:9000;width:52px;height:52px;border-radius:14px;border:2px solid var(--line);
+  background:var(--panel);box-shadow:0 6px 18px rgba(0,0,0,.18);display:none;align-items:center;justify-content:center;cursor:pointer;padding:0}
+#arc-bot:hover{transform:translateY(-1px);box-shadow:0 8px 22px rgba(0,0,0,.24)}
+@media (hover:hover) and (pointer:fine){ #arc-bot{cursor:grab;touch-action:none} }
+#arc-bot svg{width:40px;height:40px;image-rendering:pixelated}
+#arc-bot-box{position:fixed;right:16px;bottom:78px;z-index:9001;width:min(380px,calc(100vw - 32px));height:min(560px,calc(100vh - 110px));
+  background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.25);
+  display:none;flex-direction:column;overflow:hidden}
+#arc-bot-box header{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+#arc-bot-box header svg{width:28px;height:28px;flex:none}
+#arc-bot-box header b{display:block;font-size:.95rem}#arc-bot-box header small{color:var(--muted);font-size:.75rem}
+#arc-bot-box header button{font:inherit;border:0;background:transparent;color:var(--muted);cursor:pointer;height:34px;padding:0 8px;border-radius:8px}
+#arc-bot-box header button:hover{background:var(--code)}
+#arc-bot-msgs{flex:1 1 auto;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px;font-size:.9rem}
+#arc-bot-msgs .me{align-self:flex-end;max-width:85%;background:var(--accent);color:var(--accent-fg);border-radius:14px 14px 4px 14px;padding:8px 11px;white-space:pre-wrap;overflow-wrap:anywhere}
+#arc-bot-msgs .it{align-self:flex-start;max-width:90%;background:var(--bg);border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:8px 11px;white-space:pre-wrap;overflow-wrap:anywhere}
+#arc-bot-msgs .note{color:var(--muted);font-size:.78rem;text-align:center}
+#arc-bot-box form{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line)}
+#arc-bot-box textarea{flex:1 1 auto;min-width:0;font:inherit;font-size:16px;height:44px !important;min-height:44px !important;max-height:120px;resize:none;margin:0;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
+#arc-bot-box form button{font:inherit;font-weight:650;border:0;border-radius:10px;padding:0 14px;height:44px;align-self:flex-end;background:var(--accent);color:var(--accent-fg);cursor:pointer}
+@media (max-width:520px){ #arc-bot-box{right:8px;left:8px;width:auto;bottom:74px}}
+</style>
+{%- macro robot() -%}
+<svg viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">
+  <rect x="7" y="0" width="2" height="1" fill="#ff5a5a"/><rect x="7" y="1" width="2" height="1" fill="#e04848"/>
+  <rect x="7.5" y="2" width="1" height="2" fill="#2b2f3a"/>
+  <rect x="2" y="4" width="12" height="10" fill="#2b2f3a"/>
+  <rect x="3" y="5" width="10" height="8" fill="#c3cad6"/>
+  <rect x="3" y="5" width="10" height="1" fill="#e2e7ef"/>
+  <rect x="1" y="7" width="1" height="4" fill="#2b2f3a"/><rect x="14" y="7" width="1" height="4" fill="#2b2f3a"/>
+  <rect x="0" y="8" width="1" height="2" fill="#8a93a3"/><rect x="15" y="8" width="1" height="2" fill="#8a93a3"/>
+  <rect x="4" y="7" width="3" height="3" fill="#1d2230"/><rect x="9" y="7" width="3" height="3" fill="#1d2230"/>
+  <rect x="5" y="8" width="1" height="1" fill="#4fd1ff"/><rect x="10" y="8" width="1" height="1" fill="#4fd1ff"/>
+  <rect x="4" y="7" width="1" height="1" fill="#9be7ff"/><rect x="9" y="7" width="1" height="1" fill="#9be7ff"/>
+  <rect x="5" y="11" width="6" height="1" fill="#1d2230"/>
+  <rect x="6" y="11" width="1" height="1" fill="#ffd34d"/><rect x="8" y="11" width="1" height="1" fill="#ffd34d"/>
+  <rect x="2" y="14" width="12" height="1" fill="#2b2f3a"/><rect x="5" y="15" width="6" height="1" fill="#8a93a3"/>
+</svg>
+{%- endmacro %}
+<template id="arc-bot-face">{{ robot() }}</template>
+<script>
+(function () {
+  // Not over a game in full screen, not where a password or recovery words are typed (a chat box there is a box a phrase
+  // could be pasted into), and not when the person turned it off on their own page.
+  if (/^\/inscriptions\/[^/]+\/full/.test(location.pathname)) return;
+  if (/^\/(signin|join|backup|restore|recover|signup|admin\/login)\b/.test(location.pathname) || location.pathname === '/') return;
+  if (document.querySelector('input[type=password], #backup-file, #open-file')) return;
+  var OFF = 'arcade.helper.off';
+  try { if (localStorage.getItem(OFF) === '1') return; } catch (e) {}
+  // Built here, not in the page: a page's own HTML carries no box and no form of the helper's.
+  function make(tag, attrs, kids) {
+    var el = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) { if (k === 'text') el.textContent = attrs[k]; else el.setAttribute(k, attrs[k]); });
+    (kids || []).forEach(function (c) { el.appendChild(c); });
+    return el;
+  }
+  var face = function () { return document.getElementById('arc-bot-face').content.cloneNode(true); };
+  var bot = make('button', {type: 'button', id: 'arc-bot', 'aria-label': 'Ask the arcade helper', title: 'Ask the arcade helper'});
+  bot.appendChild(face());
+  var head = make('header', {}, []);
+  head.appendChild(face());
+  head.appendChild(make('div', {style: 'flex:1;min-width:0'}, [make('b', {text: 'Arcade helper'}), make('small', {id: 'arc-bot-who', text: 'Knows the docs'})]));
+  head.appendChild(make('button', {type: 'button', id: 'arc-bot-new', title: 'Start over', text: 'New'}));
+  head.appendChild(make('button', {type: 'button', id: 'arc-bot-x', 'aria-label': 'Close', text: '\u00d7'}));
+  var box = make('div', {id: 'arc-bot-box', role: 'dialog', 'aria-label': 'Arcade helper'}, [head,
+    make('div', {id: 'arc-bot-msgs', 'aria-live': 'polite'}),
+    make('form', {id: 'arc-bot-form'}, [make('textarea', {id: 'arc-bot-in', rows: '1', autocomplete: 'off', 'aria-label': 'Ask the helper',
+      placeholder: 'Ask about anything here\u2026'}), make('button', {type: 'submit', text: 'Ask'})])]);
+  document.body.appendChild(bot); document.body.appendChild(box);
+  var who = (typeof ARCADE_ME === 'string' && ARCADE_ME) ? ARCADE_ME : 'guest';
+  // The conversation lives in this browser's storage for this arcade, per account (the operator: "stored in the users arcade
+  // local storage"), so it follows the person from page to page and visit to visit.
+  var KEY = 'arcade.helper.chat:' + who, KEEP = 60, SEND = 16;
+  var msgs = [], busy = false;
+  try { msgs = JSON.parse(localStorage.getItem(KEY) || '[]') || []; } catch (e) { msgs = []; }
+  function keep() { try { localStorage.setItem(KEY, JSON.stringify(msgs.slice(-KEEP))); } catch (e) {} }
+  var list = document.getElementById('arc-bot-msgs');
+  function arcadeMd(text) {
+    // A little markdown, safely: escape everything, then **bold**, `code`, ``` blocks, headings and list bullets.
+    var esc = String(text || '').replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; });
+    var parts = esc.split(/```/);
+    return parts.map(function (p, i) {
+      if (i % 2) return '<pre style="white-space:pre-wrap;background:var(--code);padding:8px;border-radius:8px;margin:6px 0;font-size:.85em">' + p.replace(/^[a-z]*\n/, '') + '</pre>';
+      return p.replace(/`([^`\n]+)`/g, '<code style="background:var(--code);padding:0 4px;border-radius:4px">$1</code>')
+        .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+        .replace(/^#{1,4} (.*)$/gm, '<b>$1</b>')
+        .replace(/^\s*[-*] (.*)$/gm, '• $1');
+    }).join('');
+  }
+  window.arcadeMd = window.arcadeMd || arcadeMd;
+  function add(role, text) {
+    var el = document.createElement('div'); el.className = role === 'user' ? 'me' : role === 'note' ? 'note' : 'it';
+    if (role === 'assistant') el.innerHTML = arcadeMd(text); else el.textContent = text;
+    list.appendChild(el); list.scrollTop = 1e9; return el;
+  }
+  function drawAll() {
+    list.innerHTML = '';
+    if (!msgs.length) add('note', 'Ask anything about ' + document.title.split(' · ').pop() + ': games, tokens, swaps, prize pools, your wallet, running an arcade. It knows which page you are on.');
+    msgs.forEach(function (m) { add(m.role, m.content); });
+  }
+  // Where the person is: the page, its title, and the tab that is open on it (the operator: "context on what tab the user is on").
+  function where() {
+    var tabs = Array.prototype.map.call(document.querySelectorAll('nav a[aria-current=page], nav .on, .admintabs button.on, [role="tab"][aria-selected="true"]'),
+      function (el) { return (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40); }).filter(Boolean);
+    var h1 = document.querySelector('main h1, h1');
+    var heads = Array.prototype.map.call(document.querySelectorAll('h2'), function (h) { return h.textContent.trim().slice(0, 40); })
+      .filter(Boolean).slice(0, 6);
+    return ('Page ' + location.pathname + location.search + ' -- "' + document.title + '"' +
+      (h1 ? '; heading "' + h1.textContent.trim().slice(0, 60) + '"' : '') +
+      (tabs.length ? '; open tab(s): ' + Array.from(new Set(tabs)).join(' > ') : '') +
+      (heads.length ? '; sections on it: ' + heads.join(', ') : '') +
+      (who !== 'guest' ? '; signed in as @' + who : '; not signed in')).slice(0, 600);
+  }
+  // Dragged anywhere on a desktop (2026-10-23: "When you click and drag the robot head in desktop mode, you should
+  // be able to move the robot head and text bubble to anywhere on the screen"), the spot kept in this browser; the chat
+  // opens beside it, above when there is room, inside the window. On a touch screen it stays in its corner.
+  var POS = 'arcade.helper.pos', pos = null, dragged = false;
+  try { pos = JSON.parse(localStorage.getItem(POS) || 'null'); } catch (e) {}
+  function clampPos() {
+    if (!pos) return;
+    var w = bot.offsetWidth || 52, h = bot.offsetHeight || 52;
+    pos.x = Math.max(4, Math.min(window.innerWidth - w - 4, pos.x));
+    pos.y = Math.max(4, Math.min(window.innerHeight - h - 4, pos.y));
+  }
+  function place() {
+    if (pos) {
+      clampPos();
+      bot.style.left = pos.x + 'px'; bot.style.top = pos.y + 'px'; bot.style.right = 'auto'; bot.style.bottom = 'auto';
+    }
+    if (box.style.display !== 'flex') return;
+    if (!pos || window.innerWidth <= 520) { box.style.left = box.style.top = ''; box.style.right = box.style.bottom = ''; return; }
+    var r = bot.getBoundingClientRect(), bw = box.offsetWidth, bh = box.offsetHeight, gap = 10;
+    var top = r.top - bh - gap >= 4 ? r.top - bh - gap : Math.min(window.innerHeight - bh - 4, r.bottom + gap);
+    var left = Math.max(4, Math.min(window.innerWidth - bw - 4, r.right - bw));
+    box.style.left = left + 'px'; box.style.top = Math.max(4, top) + 'px'; box.style.right = 'auto'; box.style.bottom = 'auto';
+  }
+  bot.addEventListener('pointerdown', function (e) {
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    var r = bot.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top, sx = e.clientX, sy = e.clientY;
+    dragged = false;
+    function move(ev) {
+      if (!dragged && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 6) return;
+      dragged = true; bot.style.cursor = 'grabbing';
+      pos = {x: ev.clientX - dx, y: ev.clientY - dy}; place();
+    }
+    function up() {
+      document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up);
+      bot.style.cursor = '';
+      if (dragged) { try { localStorage.setItem(POS, JSON.stringify(pos)); } catch (err) {} }
+    }
+    document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
+  });
+  bot.addEventListener('dblclick', function () {                 // double-click: back to the corner
+    pos = null; try { localStorage.removeItem(POS); } catch (err) {}
+    bot.style.left = bot.style.top = ''; bot.style.right = bot.style.bottom = ''; place();
+  });
+  window.addEventListener('resize', place);
+  function open() { box.style.display = 'flex'; drawAll(); place(); document.getElementById('arc-bot-in').focus(); }
+  function close() { box.style.display = 'none'; }
+  bot.addEventListener('click', function (e) {
+    if (dragged) { dragged = false; e.preventDefault(); return; }   // the end of a drag is not a click
+    box.style.display === 'flex' ? close() : open();
+  });
+  place();
+  document.getElementById('arc-bot-x').addEventListener('click', close);
+  document.getElementById('arc-bot-new').addEventListener('click', function () { msgs = []; keep(); drawAll(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && box.style.display === 'flex') close(); });
+  var input = document.getElementById('arc-bot-in');
+  input.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('arc-bot-form').requestSubmit(); } });
+  document.getElementById('arc-bot-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var text = input.value.trim(); if (!text || busy) return;
+    busy = true; input.value = '';
+    if (!msgs.length) list.innerHTML = '';
+    msgs.push({role: 'user', content: text}); keep(); add('user', text);
+    var out = add('assistant', '…'), said = '';
+    try {
+      var r = await fetch('/account/llm/helper', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({messages: msgs.slice(-SEND), page: where()})});
+      if (!r.ok) { var j = await r.json().catch(function () { return {}; }); throw new Error(j.detail || ('HTTP ' + r.status)); }
+      var reader = r.body.getReader(), dec = new TextDecoder(), buf = '';
+      for (;;) {
+        var step = await reader.read(); if (step.done) break;
+        buf += dec.decode(step.value, {stream: true});
+        var at;
+        while ((at = buf.indexOf('\n\n')) >= 0) {
+          var line = buf.slice(0, at).trim(); buf = buf.slice(at + 2);
+          if (line.indexOf('data:') !== 0) continue;
+          var data = line.slice(5).trim(); if (data === '[DONE]') continue;
+          var ev; try { ev = JSON.parse(data); } catch (err) { continue; }
+          if (ev.error) throw new Error(ev.error.message || 'failed');
+          (ev.choices || []).forEach(function (ch) {
+            var d = ch.delta || {};
+            if (d.content) { said += d.content; out.innerHTML = arcadeMd(said.replace(/^\s+/, '')); list.scrollTop = 1e9; }
+            else if (d.reasoning_content && !said) out.textContent = 'Thinking\u2026';
+          });
+        }
+      }
+      said = said.trim();
+      if (said) { msgs.push({role: 'assistant', content: said}); keep(); } else { out.textContent = '—'; }
+    } catch (err) {
+      out.className = 'note'; out.textContent = String(err.message || err);
+      msgs.pop(); keep();
+    } finally { busy = false; }
+  });
+  // Shown only while a model is shared with this arcade's operator, and asked again every RECHECK seconds while the page
+  // is open (2026-10-23: "the robot [should] become visible as soon as a shared model comes online"): it appears
+  // within moments of one coming online, and goes when the last one does (unless its chat is open).
+  var RECHECK = 20000, STATE = 'arcade.helper.state';
+  function show(ok, label) {
+    if (!ok && box.style.display === 'flex') return;
+    bot.style.display = ok ? 'flex' : 'none';
+    if (label) document.getElementById('arc-bot-who').textContent = label;
+  }
+  function check() {
+    if (document.hidden) return;
+    fetch('/account/llm/helper', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j) return;
+        var label = j.available ? 'Knows the docs \u00b7 ' + j.model + (j.seller && j.seller !== 'This arcade' ? ' from ' + j.seller : '') : '';
+        try { sessionStorage.setItem(STATE, JSON.stringify({available: j.available, label: label, at: Date.now()})); } catch (e) {}
+        show(j.available, label);
+      }).catch(function () {});
+  }
+  var cached = null;
+  try { cached = JSON.parse(sessionStorage.getItem(STATE) || 'null'); } catch (e) {}
+  if (cached && Date.now() - cached.at < RECHECK) show(cached.available, cached.label); else check();
+  setInterval(check, RECHECK);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
+})();
+</script>

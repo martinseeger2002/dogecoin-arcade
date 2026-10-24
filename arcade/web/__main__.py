@@ -163,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         messaging=ChainContext(
             network=args.msg_network,
             role="messaging",
-            label="Testnet",
+            label="Pepecoin test",
             datadir=Path(args.msg_datadir).expanduser() if args.msg_datadir else None,
             conf=Path(args.msg_conf).expanduser() if args.msg_conf else None,
             marker=args.msg_marker,
@@ -172,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         ledger=ChainContext(
             network=args.ledger_network,
             role="ledger",
-            label="Mainnet",
+            label="Pepecoin main",
             datadir=Path(args.ledger_datadir).expanduser() if args.ledger_datadir else None,
             conf=Path(args.ledger_conf).expanduser() if args.ledger_conf else None,
             # Determined at runtime from whether the node answers getwalletinfo,

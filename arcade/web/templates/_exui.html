@@ -270,9 +270,9 @@ document.addEventListener("click", function (e) {
    user profile"): ☆ Favorite / ★ Favorited on a market page; `small` is the list row's bare star.
    Saved per account on this node (/account/favorites); a visitor who is not signed in keeps them
    in this browser. fav_script() once per page wires every [data-fav] on it. #}
-{% macro fav_button(key, small=false) -%}
+{% macro fav_button(key, small=false, what="market") -%}
 <button type="button" class="{{ 'ex-star' if small else 'ex-fav' }}" data-fav="{{ key }}" aria-pressed="false"
-        aria-label="Favorite this market" title="Favorite">{{ '☆' if small else '☆ Favorite' }}</button>
+        aria-label="Favorite this {{ what }}" title="Favorite">{{ '☆' if small else '☆ Favorite' }}</button>
 {%- endmacro %}
 {% macro fav_script() %}
 <style>

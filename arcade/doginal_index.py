@@ -271,12 +271,14 @@ TABLES = """
             -- so a protocol indexed later finds its own inscriptions by type or "p" (2026-10-20)
             -- its id is tx (the reveal's txid, 32 bytes as written in hex) and n ("<txid hex>i<n>"); ct: its content
             -- type's number in ctypes; delegate (every chain) and parent (Pepecoin): the inscription its tags name,
-            -- as id_blob (the txid's 32 bytes as written, then n in 4 bytes little-endian), NULL for none (rules 4)
+            -- as id_blob (the txid's 32 bytes as written, then n in 4 bytes little-endian), NULL for none (rules 4);
+            -- reinscribed: 1 when it was made on a koinu that already carried an inscription (2026-10-22), NULL when
+            -- not, or when it was filed before the mark existed
             CREATE TABLE IF NOT EXISTS insc (rid INTEGER PRIMARY KEY, tx BLOB NOT NULL, n INTEGER NOT NULL,
                                              number INTEGER NOT NULL, height INTEGER NOT NULL, txpos INTEGER NOT NULL,
                                              ct INTEGER NOT NULL, proto TEXT, size INTEGER,
                                              pieces INTEGER NOT NULL DEFAULT 1, burned INTEGER,
-                                             delegate BLOB, parent BLOB);
+                                             delegate BLOB, parent BLOB, reinscribed INTEGER);
             -- every content type seen, by number (a few hundred, for millions of inscriptions)
             CREATE TABLE IF NOT EXISTS ctypes (ct INTEGER PRIMARY KEY, ctype TEXT NOT NULL UNIQUE);
             -- where each one is now (walker): the output and the koinu inside it
@@ -483,6 +485,10 @@ class Store:
         for col in ("delegate", "parent"):
             if cols and col not in cols:
                 db.execute(f"ALTER TABLE main.insc ADD COLUMN {col} BLOB")
+        # A reinscription's mark (2026-10-22, SadFrog: "highlight them as reinscriptions ... so we can later put a toggle
+        # in the admin panel"): an index from before gains the column, NULL on the rows it already had.
+        if cols and "reinscribed" not in cols:
+            db.execute("ALTER TABLE main.insc ADD COLUMN reinscribed INTEGER")
 
     def q(self, sql: str, args: tuple = ()) -> list:
         """A read, on this thread's own connection: never waits for a write in progress (WAL lets readers through) nor
@@ -1022,9 +1028,11 @@ class Walker:
                 # inscription_updater.rs `if inscriptions.iter().all(|flotsam| flotsam.offset != 0)`). Pepecoin: in
                 # every transaction (ord-pepecoin's: "In Pepecoin, we always check for new inscriptions to support
                 # parent/child collection provenance" -- `if true`), rules 4.
-                # Dogecoin numbers a reinscription too since rules 5 (2026-10-22: "Number them like nintondo"),
-                # so only Litecoin's Doginals kind still waits for an uninscribed first koinu.
-                if (self.dialect == "pepecoin" or self.store.net == "doge" or all(c[1] != 0 for c in carried)) and tx.vin \
+                # Dogecoin numbers a reinscription too since rules 5 (2026-10-22: "Number them like nintondo"), and
+                # Bellscoin with it (ord_rules.NUMBERS_REINSCRIPTIONS), so only Litecoin's and Luckycoin's Doginals kind
+                # still waits for an uninscribed first koinu.
+                if (self.dialect == "pepecoin" or self.store.net in ord_rules.NUMBERS_REINSCRIPTIONS
+                        or all(c[1] != 0 for c in carried)) and tx.vin \
                         and tx.vin[0]["vout"] != -1:
                     prev = tx.vin[0]["txid"]
                     chain = w.get("pending", (prev,))
@@ -1054,13 +1062,16 @@ class Walker:
                             if parent is not None:
                                 returned = parent[1]
                             rid, next_rid = next_rid, next_rid + 1
+                            # Made on input 0's first koinu: a reinscription when an inscription already sits there.
+                            again = 1 if any(c[1] == 0 and not c[2] for c in carried) else None
                             w.put("insc", (rid,), {"rid": rid, "tx": otx, "n": 0, "number": next_number, "height": h,
                                                     "txpos": pos, "ct": self._ct(w.db, ctype.decode("utf-8", "replace")),
                                                     "proto": ord_rules.protocol_of(body) if got["body"] is not None
                                                     else None, "size": got["size"],
                                                     "pieces": got["pieces"], "burned": None,
                                                     "delegate": id_blob(got["delegate"]),
-                                                    "parent": id_blob(parent[0]) if parent else None})
+                                                    "parent": id_blob(parent[0]) if parent else None,
+                                                    "reinscribed": again})
                             next_number += 1
                             new.append((rid, iid, ctype, body, got["pieces"]))
                             carried.append((rid, 0, True, ""))
@@ -1070,13 +1081,16 @@ class Walker:
                                     (btx[:8], btx, b["n"])).fetchone():
                         continue
                     rid, next_rid = next_rid, next_rid + 1
+                    at_koinu = sum(sizes[:b["vin"]])
+                    again = 1 if any(c[1] == at_koinu and not c[2] for c in carried) else None
                     w.put("insc", (rid,), {"rid": rid, "tx": btx, "n": b["n"], "number": next_number, "height": h,
                                             "txpos": pos,
                                             "ct": self._ct(w.db, bytes.fromhex(b["ctype"]).decode("utf-8", "replace")),
                                             "proto": None, "size": None, "pieces": 1, "burned": None,
-                                            "delegate": id_blob(b.get("delegate")), "parent": None})
+                                            "delegate": id_blob(b.get("delegate")), "parent": None,
+                                            "reinscribed": again})
                     next_number += 1
-                    carried.append((rid, sum(sizes[:b["vin"]]), True, ""))
+                    carried.append((rid, at_koinu, True, ""))
                 if not carried:
                     continue
                 # Where each carried koinu lands: the outputs in order; past the last one, it went to the fee.
@@ -1985,8 +1999,8 @@ class DoginalIndex:
     def _count(self, walking: bool) -> dict:
         counts = {"found": self.store.q("SELECT COALESCE(SUM(n), 0) FROM block")[0][0]}
         if walking:
-            ins = self.store.q("SELECT COUNT(*), COUNT(burned) FROM insc")[0]
-            counts.update(inscriptions=ins[0], burned=ins[1],
+            ins = self.store.q("SELECT COUNT(*), COUNT(burned), COUNT(reinscribed) FROM insc")[0]
+            counts.update(inscriptions=ins[0], burned=ins[1], reinscriptions=ins[2],
                           tokens=self.store.q("SELECT COUNT(*) FROM tok")[0][0],
                           holders=self.store.q("SELECT COUNT(DISTINCT owner) FROM bal WHERE overall != '0'")[0][0],
                           names={rule: self.store.q(f"SELECT COUNT(DISTINCT {rule}) FROM names")[0][0]
@@ -2197,15 +2211,15 @@ class DoginalIndex:
         if key is None or self.store.old_layout:
             return None
         row = self.store.q("SELECT i.tx, i.n, i.number, i.height, c.ctype, i.proto, i.size, i.burned, a.tx, a.vout, "
-                           "a.off, i.delegate, i.parent FROM insc i JOIN ctypes c ON c.ct = i.ct "
+                           "a.off, i.delegate, i.parent, i.reinscribed FROM insc i JOIN ctypes c ON c.ct = i.ct "
                            "LEFT JOIN at a ON a.rid = i.rid WHERE substr(i.tx, 1, 8)=? AND i.tx=? AND i.n=?",
                            (key[0][:8],) + key)
         if not row:
             return None
-        tx, n, number, height, ctype, proto, size, burned, at, vout, off, delegate, parent = row[0]
+        tx, n, number, height, ctype, proto, size, burned, at, vout, off, delegate, parent, again = row[0]
         return {"id": iid_of(tx, n), "number": number, "height": height, "content_type": ctype, "protocol": proto,
                 "size": size, "burned": burned, "output": f"{bytes(at).hex()}:{vout}" if at else None, "offset": off,
-                "delegate": iid_of_blob(delegate), "parent": iid_of_blob(parent)}
+                "delegate": iid_of_blob(delegate), "parent": iid_of_blob(parent), "reinscription": bool(again)}
 
     def delegate(self, inscription: str) -> dict | None:
         """What /content serves for an inscription that names a delegate (2026-10-21): None when this walk does
@@ -2296,11 +2310,11 @@ class DoginalIndex:
             if rid < 1:
                 return out
         row = self.store.q("SELECT i.tx, i.n, i.number, i.height, c.ctype, i.proto, i.size, i.burned, i.pieces, a.tx, "
-                           "a.vout, a.off, a.height, i.delegate, i.parent FROM insc i JOIN ctypes c ON c.ct = i.ct "
-                           "LEFT JOIN at a ON a.rid = i.rid WHERE i.rid=?", (rid,))
+                           "a.vout, a.off, a.height, i.delegate, i.parent, i.reinscribed FROM insc i "
+                           "JOIN ctypes c ON c.ct = i.ct LEFT JOIN at a ON a.rid = i.rid WHERE i.rid=?", (rid,))
         if not row:
             return out
-        tx, n, num, height, ctype, proto, size, burned, pieces, at, vout, off, moved, delegate, parent = row[0]
+        tx, n, num, height, ctype, proto, size, burned, pieces, at, vout, off, moved, delegate, parent, again = row[0]
         txid = bytes(at).hex() if at else None
         out["inscription"] = {"id": iid_of(tx, n), "number": num, "height": height, "content_type": ctype,
                               "protocol": proto, "size": size, "pieces": pieces, "burned": bool(burned),
@@ -2310,6 +2324,8 @@ class DoginalIndex:
                               # delegate's content type -- what /content serves for it
                               "delegate": iid_of_blob(delegate), "parent": iid_of_blob(parent),
                               "delegate_content_type": self._ctype_of(bytes(delegate)) if delegate else None,
+                              # made on a koinu that already carried an inscription (None: filed before the mark)
+                              "reinscription": bool(again),
                               "note": SEEN_ELSEWHERE.get(self.net, {}).get(iid_of(tx, n))}
         return out
 

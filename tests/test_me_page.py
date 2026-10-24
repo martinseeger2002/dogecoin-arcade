@@ -340,8 +340,9 @@ def test_one_create_tab_and_backup_on_the_wallet_page(public):
     assert 'href="/me/backup"' not in nav
     assert 'href="/me/backup"' in page, "Backup is a button on the Wallet page"
     create = app.get("/create", headers=EDGE).text
-    for where in ('href="/nfts"', 'href="/tokens"', 'href="/mintpad/new"'):
+    for where in ('href="/nfts"', 'href="/tokens"', 'href="/mintpad/new"', 'href="/create/ord"'):
         assert where in create, where
+    assert '>Creator</a>' in nav, "the tab is called Creator (2026-10-23)"
     assert 'class="on" href="/create"' in app.get("/tokens", headers=EDGE).text, \
         "the Create tab stays lit on the pages behind it"
 

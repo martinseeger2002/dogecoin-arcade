@@ -193,7 +193,7 @@
     {# this piece for Pepecoin on mainnet, through lock scripts (2026-10-15; the node-held
        book of 2026-10-06 before that) #}
     <a class="btn ghost small" href="/exchange/x/nft/{{ row.txid }}"
-       title="Swap it for mainnet PEP through lock scripts: nobody holds either side">For mainnet PEP {{ net_badge(true) }}</a>
+       title="Swap it for Pepecoin main PEP through lock scripts: nobody holds either side">For Pepecoin main PEP {{ net_badge(true) }}</a>
     {% endif %}
     {% if mine %}
       {% if sale and sale.kind == 'ask' %}
@@ -617,7 +617,7 @@
   <p class="muted" style="margin:0 0 10px;font-size:.88rem">Settled through lock scripts on both chains:
     your PEP is locked so only the piece's holder can claim it, and only by handing you the piece; if they
     never do, it comes back to you by itself.</p>
-  <a class="btn" href="/exchange/x/nft/{{ row.txid }}?side=buy#x-form">Offer mainnet PEP</a>
+  <a class="btn" href="/exchange/x/nft/{{ row.txid }}?side=buy#x-form">Offer Pepecoin main PEP</a>
 </div>
 <h3 style="margin:14px 0 6px">Or offer PEP TEST {{ net_badge(false) }}</h3>
 {% endif %}

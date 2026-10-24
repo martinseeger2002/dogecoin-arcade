@@ -534,11 +534,19 @@ def test_a_listing_holds_what_it_lists_until_it_is_unlisted_or_taken(client, mon
     lister = b58check_encode(acct.params.pubkeyhash_version, hash160(_pubkey(int("31" * 32, 16))))
     assert app.post("/account/address", json={"address": lister, "chain": acct.network}).status_code == 200
     over = app.post("/account/orders/post", json={"orders": [order("ord-1", 10), order("ord-2", 6)]})
-    assert over.status_code == 409 and "more dogi than this wallet has free" in over.json()["detail"], over.text
+    # 2026-10-23: the rest of the book is filed, so it answers 200 and says what came off (a 409 told @apple a PEP
+    # listing had failed, over an old frgy order of theirs); the tab forgets what came off.
+    assert over.status_code == 200 and "more dogi than this wallet has free" in over.json()["notice"], over.text
     assert over.json()["dropped"] == ["ord-2"], "the first that fit stays; the one past what is free comes off"
+    assert "ord-2" in over.json()["forget"]
     # 2026-10-22: a 1,000 frgy listing went on as 100,000,000,000 -- a standing order past everything comes off.
     huge = app.post("/account/orders/post", json={"orders": [order("ord-9", 100_000_000_000)]})
-    assert huge.status_code == 409 and huge.json()["dropped"] == ["ord-9"]
+    assert huge.status_code == 200 and huge.json()["dropped"] == ["ord-9"]
+    # And once cancelled, a tab that still lists it is told to forget it -- it is not dropped again and again.
+    monkeypatch.setattr(type(state.trade_orders), "cancelled_of",          # the book holds ord-1 as cancelled
+                        lambda self, who, ids: [i for i in ids if i == "ord-1"])
+    again = app.post("/account/orders/post", json={"orders": [order("ord-1", 10)]})
+    assert again.status_code == 200 and again.json()["forget"] == ["ord-1"] and "notice" not in again.json(), again.text
     # The Doginal on a swap order cannot be sent meanwhile.
     held.append({"id": "ord-3", "give": {"network": "doge", "kind": "doginal", "asset": INS, "amount": 1},
                  "get": {"network": "main", "kind": "coin", "amount": 1}})

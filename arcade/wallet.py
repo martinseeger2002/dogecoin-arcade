@@ -110,7 +110,7 @@ def prepare_send(rpc: RpcClient, destination: str, amount_sats: int,
     if not validation.get("isvalid"):
         raise WalletError(
             f"{destination} is not a valid address on this chain. Check you have "
-            "not pasted a mainnet address into testnet, or the reverse."
+            "not pasted a Pepecoin main address into Pepecoin test, or the reverse."
         )
 
     amount = Decimal(amount_sats) / COIN

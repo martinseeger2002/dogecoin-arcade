@@ -202,7 +202,7 @@ export async function wif(key, version) {
 }
 
 /** Every chain's name, for saying whose a key is. */
-const WIF_CHAIN = {main: "Pepecoin or Dogecoin mainnet", doge: "Pepecoin or Dogecoin mainnet",
+const WIF_CHAIN = {main: "Pepecoin main or Dogecoin", doge: "Pepecoin main or Dogecoin",
                    ltc: "Litecoin mainnet", test: "a Pepecoin or Dogecoin test chain",
                    regtest: "a Pepecoin or Dogecoin test chain", ltctest: "Litecoin testnet",
                    bel: "Bellscoin mainnet", lky: "Luckycoin mainnet"};

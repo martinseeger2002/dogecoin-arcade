@@ -23,8 +23,12 @@ def test_the_door_is_read_only_asks_once_and_gives_a_guest_nothing():
     body = door[door.index("function contactsDoor"):door.index("function contactsChange")]
     assert "op is list, add or remove" in body
     assert "viewer !== 'account'" in body and "contacts: []" in body, "a guest gets an empty list"
-    assert "arcadeAsk('Let this game see your contacts?'" in body, "asked, not handed over"
-    assert "'arcade.contacts.allow:' + here" in body, "remembered per game"
+    assert "arcadeContactsAllowed(here)" in body and "arcadeContactsOn(here, g)" in body, \
+        "an app's Contacts switch decides (2026-10-23: a box on the card)"
+    assert "return 'off'" in body and "why: yes" in body, "off says why, and asks nothing"
+    assert "arcadeContactsAsk(here" in body, "a page with no card is asked, not handed over"
+    base = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/base.html").read_text()
+    assert "var ARCADE_CONTACTS = 'arcade.contacts.allow:'" in base, "the old answers' key: a yes stays a yes"
     assert "{address: c.address, tag: c.tag || ''}" in body, "names and addresses, nothing else"
     assert "contacts: 'viewer'" in door, "registered, or the message is dropped"
 

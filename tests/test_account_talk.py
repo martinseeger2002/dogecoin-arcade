@@ -226,7 +226,7 @@ def test_an_account_that_lives_on_mainnet_is_told_why_it_cannot(tmp_path):
     refused = app.post("/account/talk", json={"op": "identity"})
     assert refused.status_code == 400, refused.text
     said = refused.json()["detail"]
-    assert "testnet" in said and "mainnet" in said, said
+    assert "Pepecoin test" in said and "Pepecoin main" in said, said
 
 
 def test_the_hour_is_the_accounts_and_not_the_pages(seated):

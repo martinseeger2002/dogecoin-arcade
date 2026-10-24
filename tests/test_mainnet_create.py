@@ -127,7 +127,7 @@ def test_the_pages_follow_the_browsers_choice(client):
     page = app.get("/tokens").text
     assert "real PEP. Permanent and worth money: every transaction shows its full cost" in page
     assert state.token_chain.network != "main", "and the node's own switch is where it was"
-    assert "Launchpads are testnet only for now" in app.get("/mintpad/new").text
+    assert "Launchpads are Pepecoin test only for now" in app.get("/mintpad/new").text
 
 
 def test_a_bigger_piece_pays_its_half_percent(client, monkeypatch):

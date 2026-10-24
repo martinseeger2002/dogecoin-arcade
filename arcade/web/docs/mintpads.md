@@ -2,7 +2,7 @@
 
 A mintpad is a page that sells a collection or a token to whoever opens it:
 press the button, confirm, and a random piece of the collection (or a lot of
-the token) is yours. The *Launchpad wizard* (*Create → Launchpad wizard*)
+the token) is yours. The *Launchpad wizard* (*Creator → Launchpad wizard*)
 makes one from a set of ready-made looks. This guide is for building your own
 page instead: any design, any animation, anything a page can do, selling
 through the same wallet machinery.

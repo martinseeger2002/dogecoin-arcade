@@ -32,7 +32,7 @@
 {% if not live %}
 <div class="ex-card"><p class="msg err" style="margin:0">This market is not open on this node.</p>
   {% if viewer == 'wallet' %}<p class="muted" style="font-size:.8rem;margin:6px 0 0">The operator opens it on the
-    <a href="/admin#xchain">admin panel</a>, under Mainnet PEP swap.</p>{% endif %}
+    <a href="/admin#xchain">admin panel</a>, under Pepecoin main swap.</p>{% endif %}
 </div>
 {% endif %}
 
@@ -50,7 +50,7 @@
   {% elif viewer == 'nobody' %}<h3>Trade {{ aname }} for PEP</h3><p class="muted" style="margin:0">Sign in to trade.</p>
   {% elif viewer == 'account' and not (account_test and account_main) %}
     <h3>Trade {{ aname }} for PEP</h3>
-    <p class="muted" style="margin:0">This account needs an address on mainnet as well: open your Wallet and switch to Mainnet once.</p>
+    <p class="muted" style="margin:0">This account needs an address on Pepecoin main as well: open your Wallet and switch to Pepecoin main once.</p>
   {% else %}
   <form method="post" action="/exchange/x/order" id="x-form" class="ex-trade" style="margin:0">
     <input type="hidden" name="csrf_token" value="{{ csrf }}">

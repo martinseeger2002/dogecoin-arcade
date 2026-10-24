@@ -224,7 +224,7 @@ class Clerk:
                       for u in rpc.call("listunspent", 0, 0, [addr]) or [])
         if pending < self.FUEL:
             rpc.call("sendtoaddress", addr, self.TOP_UP)
-        raise RuntimeError("topping up the exchange address with testnet coins for fees; "
+        raise RuntimeError("topping up the exchange address with Pepecoin test coins for fees; "
                            "the payout goes out once that confirms")
 
     def build(self, payout: dict) -> tuple[str, str]:
