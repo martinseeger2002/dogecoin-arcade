@@ -368,7 +368,7 @@ class LockSeen:
     confirmations: int
     asset_ok: bool = True        # the ledger shows the token/NFT at the lock address (coin: True)
     spent_by_script_sig: str = ""   # hex input script of the spend, if it was spent
-    spent_by_me: bool = False
+    spent_by_me: bool = False       # the spend pays one of my addresses: shown only, next_step never decides on it
     reserve: int = 0             # a Doginal lock: the coin at output 1 that pays its spend
 
 
@@ -412,15 +412,25 @@ def check_lock(trade: Trade, seen: LockSeen, theirs: bool) -> str:
     return ""
 
 
+def _branch(seen: LockSeen, redeem: bytes) -> str:
+    """htlc.spend_branch of the spend `seen` shows, "" while unspent or unreadable."""
+    try:
+        return H.spend_branch(bytes.fromhex(seen.spent_by_script_sig), redeem) if seen.spent_by_script_sig else ""
+    except ValueError:
+        return ""
+
+
 def next_step(trade: Trade, facts: Facts, now: int) -> tuple[str, str]:
     """(step, why). The one thing this trader should do next, from the chains alone."""
     need = trade.need or confirmations_for(trade.give, trade.get)
     mine, theirs = facts.mine, facts.theirs
 
-    # Finished: I claimed theirs (the trade went through), or mine came back to me.
-    if theirs is not None and theirs.spent_by_me:
+    # Finished: I claimed theirs (the trade went through), or mine came back to me. Told by the BRANCH each spend
+    # took -- the claim of their lock is my key's, the refund of mine is my key's -- never by who its outputs pay:
+    # the other side's claim of mine (or refund of theirs) could pay me a crumb and pass for my own.
+    if theirs is not None and _branch(theirs, trade.their_redeem()) == H.CLAIM:
         return DONE, "I claimed their lock"
-    if mine is not None and mine.spent_by_me:
+    if mine is not None and _branch(mine, trade.my_redeem()) == H.REFUND:
         return DONE, "my lock came back to me (refunded)"
 
     # The other lock, if it is there, must be exactly what was agreed.
@@ -456,7 +466,7 @@ def next_step(trade: Trade, facts: Facts, now: int) -> tuple[str, str]:
             return ABORT, "too little time left to lock safely"
         return LOCK, "their lock is confirmed and agreed: lock mine"
     # Both locked. Has the initiator claimed mine (revealing the secret)?
-    if mine.spent_by_script_sig and not mine.spent_by_me:
+    if mine.spent_by_script_sig:
         secret = H.secret_from_script_sig(bytes.fromhex(mine.spent_by_script_sig), trade.my_redeem())
         if secret is None:
             return WAIT, "my lock was spent without the secret?"

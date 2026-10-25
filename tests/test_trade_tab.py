@@ -107,12 +107,21 @@ def _scenarios():
                 return T.LockSeen("ab" * 32, 0, leg.amount if value is None else value,
                                   H.p2sh_script(redeem).hex(), conf, True, spent, by_me)
             claim = H.claim_script_sig(b"\x30" * 70, secret, tr.my_redeem()).hex()
+            took = H.claim_script_sig(b"\x30" * 70, secret, tr.their_redeem()).hex()
+            back = H.refund_script_sig(b"\x30" * 70, tr.my_redeem()).hex()
+            gone = H.refund_script_sig(b"\x30" * 70, tr.their_redeem()).hex()
+            stray = H.claim_script_sig(b"\x30" * 70, secret, tr.my_redeem()).hex()   # a claim of the OTHER lock
             for facts in (T.Facts(), T.Facts(mine=seen(False)), T.Facts(theirs=seen(True)),
                           T.Facts(theirs=seen(True, conf=0)), T.Facts(mine=seen(False), theirs=seen(True)),
                           T.Facts(mine=seen(False), theirs=seen(True, value=1)),
                           T.Facts(mine=seen(False, spent=claim), theirs=seen(True)),
-                          T.Facts(mine=seen(False), theirs=seen(True, spent="00", by_me=True)),
-                          T.Facts(mine=seen(False, spent="00", by_me=True))):
+                          T.Facts(mine=seen(False), theirs=seen(True, spent=took)),
+                          T.Facts(mine=seen(False, spent=back)),
+                          # 2026-10-25: a spend that pays this trader is not therefore its own (the branch decides).
+                          T.Facts(mine=seen(False, spent=claim, by_me=True), theirs=seen(True)),
+                          T.Facts(mine=seen(False), theirs=seen(True, spent=gone, by_me=True)),
+                          T.Facts(mine=seen(False), theirs=seen(True, spent=stray, by_me=True)),
+                          T.Facts(mine=seen(False, spent="00", by_me=True), theirs=seen(True))):
                 out.append((tr, facts))
     # A token leg each way: the reserve, and the ledger's word on the asset.
     for role in (T.INITIATOR, T.RESPONDER):
@@ -197,6 +206,58 @@ def test_the_browser_decides_every_step_as_the_python_does(tmp_path):
     finally:
         server.should_exit = True
         thread.join(timeout=5)
+    assert len(got) == len(cases) > 40
+    for (_, _, want), have in zip(cases, got):
+        assert have == want, (have, want)
+
+
+# --- the same, run in Node (no browser needed) -------------------------------------------
+
+def run_wallet_js(tmp_path, body: str, data) -> object:
+    """Run `body` (an async function's body that sees `w` = wallet.js, `c` = coins.js and `data`, and returns JSON)
+    against the real wallet.js and coins.js in Node. Skips where Node is not installed."""
+    import json
+    import shutil
+    import subprocess
+    from arcade.web.app import TEMPLATE_DIR
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed here")
+    shutil.copytree(TEMPLATE_DIR.parent / "vendor", tmp_path / "vendor")
+    (tmp_path / "package.json").write_text('{"type":"module"}')
+    local = lambda text: (text.replace('"/vendor/', '"./vendor/').replace('"/coins.js"', '"./coins.js"')   # noqa: E731
+                          .replace('"/signin.js"', '"./signin.js"'))
+    for name, source in (("coins.js", "coins.js"), ("signin.js", "signin.js"), ("wallet.js", "wallet_js.js")):
+        (tmp_path / name).write_text(local((TEMPLATE_DIR / source).read_text()))
+    (tmp_path / "data.json").write_text(json.dumps(data))
+    (tmp_path / "run.js").write_text(
+        'import * as w from "./wallet.js";\nimport * as c from "./coins.js";\nimport {readFileSync} from "fs";\n'
+        'const data = JSON.parse(readFileSync("data.json", "utf8"));\n'
+        f'const out = await (async () => {{ {body} }})();\n'
+        'console.log(JSON.stringify(out));\nsetTimeout(() => process.exit(0), 0);\n')
+    done = subprocess.run(["node", "run.js"], cwd=tmp_path, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def test_wallet_js_decides_every_step_as_the_python_does_in_node(tmp_path):
+    import dataclasses
+    now = int(time.time())
+    cases = []
+    for tr, facts in _scenarios():
+        expected = T.next_step(dataclasses.replace(tr), facts, now)
+        js_trade = {"role": tr.role, "give": dataclasses.asdict(tr.give), "get": dataclasses.asdict(tr.get),
+                    "secret": tr.secret, "secretHash": tr.secret_hash, "t1": tr.initiator_locktime,
+                    "t2": tr.responder_locktime, "myRedeem": tr.my_redeem().hex(),
+                    "theirRedeem": tr.their_redeem().hex()}
+        js_facts = {k: (dataclasses.asdict(v) if v else None) for k, v in (("mine", facts.mine), ("theirs", facts.theirs))}
+        cases.append((js_trade, js_facts, list(expected)))
+    got = run_wallet_js(tmp_path, """
+        const out = [];
+        for (const [t, f] of data.cases) {
+          t.myRedeem = c.unhex(t.myRedeem); t.theirRedeem = c.unhex(t.theirRedeem);
+          out.push(await w.nextTradeStep(t, f, data.now));
+        }
+        return out;""", {"cases": [[c[0], c[1]] for c in cases], "now": now})
     assert len(got) == len(cases) > 40
     for (_, _, want), have in zip(cases, got):
         assert have == want, (have, want)

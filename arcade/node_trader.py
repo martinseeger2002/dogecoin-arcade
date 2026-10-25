@@ -111,6 +111,7 @@ def observe(rpc: Any, lock: dict | None, my_addresses: set[str],
         vin = next(v for v in spender["vin"]
                    if v.get("txid") == lock["txid"] and v.get("vout") == int(lock["vout"]))
         seen.spent_by_script_sig = vin["scriptSig"]["hex"]
+        # Shown only: who spent a lock is the branch its input script took (trade.next_step, htlc.spend_branch).
         seen.spent_by_me = any(a in my_addresses for o in spender["vout"]
                                for a in o["scriptPubKey"].get("addresses", []))
     return seen

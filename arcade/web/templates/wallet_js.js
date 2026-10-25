@@ -3091,8 +3091,9 @@ export async function nextTradeStep(trade, facts, now) {
   const mine = facts.mine, theirs = facts.theirs;
   const myTime = trade.role === "initiator" ? trade.t1 : trade.t2;
   const theirTime = trade.role === "initiator" ? trade.t2 : trade.t1;
-  if (theirs && theirs.spent_by_me) return ["done", "I claimed their lock"];
-  if (mine && mine.spent_by_me) return ["done", "my lock came back to me (refunded)"];
+  // Told by the branch each spend took, never by who its outputs pay (trade.next_step, htlc.spend_branch).
+  if (theirs && spendBranch(theirs.spent_by_script_sig, trade.theirRedeem) === "claim") return ["done", "I claimed their lock"];
+  if (mine && spendBranch(mine.spent_by_script_sig, trade.myRedeem) === "refund") return ["done", "my lock came back to me (refunded)"];
   if (theirs && !theirs.spent_by_script_sig) {
     const bad = await checkLock(trade, theirs, true);
     if (bad) {
@@ -3121,7 +3122,7 @@ export async function nextTradeStep(trade, facts, now) {
       return ["abort", "too little time left to lock safely"];
     return ["lock", "their lock is confirmed and agreed: lock mine"];
   }
-  if (mine.spent_by_script_sig && !mine.spent_by_me) {
+  if (mine.spent_by_script_sig) {
     const secret = await secretFromScriptSig(unhex(mine.spent_by_script_sig), trade.myRedeem);
     if (!secret) return ["wait", "my lock was spent without the secret?"];
     trade.secret = coinsHex(secret);
@@ -3132,22 +3133,52 @@ export async function nextTradeStep(trade, facts, now) {
   return ["wait", "waiting for the initiator to claim (that reveals the secret)"];
 }
 
-/** The secret a claim revealed (htlc.secret_from_script_sig): sig, secret, OP_1, script. */
-export async function secretFromScriptSig(scriptSig, redeem) {
-  const pushes = [];
+/** The stack an input script leaves (htlc._pushes): OP_0 empty, OP_1NEGATE and OP_1..OP_16 their numbers; null when
+ *  it is not push-only or runs off its end. */
+function scriptSigItems(scriptSig) {
+  const items = [];
   let at = 0;
   while (at < scriptSig.length) {
     const op = scriptSig[at++];
-    if (op === 0x00 || op === 0x51) { pushes.push(new Uint8Array([op])); continue; }
+    if (op === 0x00) { items.push(new Uint8Array(0)); continue; }
+    if (op === 0x4f) { items.push(new Uint8Array([0x81])); continue; }
+    if (op >= 0x51 && op <= 0x60) { items.push(new Uint8Array([op - 0x50])); continue; }
     let n;
     if (op >= 1 && op <= 75) n = op;
-    else if (op === 0x4c) n = scriptSig[at++];
-    else if (op === 0x4d) { n = scriptSig[at] | (scriptSig[at + 1] << 8); at += 2; }
-    else return null;
-    pushes.push(scriptSig.slice(at, at + n));
+    else if (op === 0x4c && at + 1 <= scriptSig.length) n = scriptSig[at++];
+    else if (op === 0x4d && at + 2 <= scriptSig.length) { n = scriptSig[at] | (scriptSig[at + 1] << 8); at += 2; }
+    else if (op === 0x4e && at + 4 <= scriptSig.length) {
+      n = (scriptSig[at] | (scriptSig[at + 1] << 8) | (scriptSig[at + 2] << 16)) + scriptSig[at + 3] * 2 ** 24; at += 4;
+    } else return null;
+    if (at + n > scriptSig.length) return null;
+    items.push(scriptSig.slice(at, at + n));
     at += n;
   }
-  if (pushes.length !== 4 || pushes[2].length !== 1 || pushes[2][0] !== 0x51) return null;
+  return items;
+}
+
+/** A stack item as OP_IF reads it (htlc._true, CastToBool). */
+function stackTrue(item) {
+  for (let n = 0; n < item.length; n++)
+    if (item[n]) return !(n === item.length - 1 && item[n] === 0x80);
+  return false;
+}
+
+/** "claim" | "refund" | "": which branch a spend (its input script, hex) took out of the lock `redeem`
+ *  (htlc.spend_branch). The chain lets only the claimer sign the one and only the refunder the other. */
+export function spendBranch(scriptSigHex, redeem) {
+  if (!scriptSigHex) return "";
+  let items;
+  try { items = scriptSigItems(unhex(scriptSigHex)); } catch (e) { return ""; }
+  if (!items || items.length < 2 || coinsHex(items[items.length - 1]) !== coinsHex(redeem) || !coins.htlcParse(redeem))
+    return "";
+  return stackTrue(items[items.length - 2]) ? "claim" : "refund";
+}
+
+/** The secret a claim revealed (htlc.secret_from_script_sig): sig, secret, OP_1, script. */
+export async function secretFromScriptSig(scriptSig, redeem) {
+  const pushes = scriptSigItems(scriptSig);
+  if (!pushes || pushes.length !== 4 || !stackTrue(pushes[2])) return null;
   if (coinsHex(pushes[3]) !== coinsHex(redeem)) return null;
   const lock = coins.htlcParse(redeem);
   const secret = pushes[1];

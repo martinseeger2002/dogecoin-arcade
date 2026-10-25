@@ -76,8 +76,56 @@ def test_the_responder_locks_only_after_the_initiator_and_claims_once_the_secret
     claimed_mine = H.claim_script_sig(b"\x30" * 70, secret, tr.my_redeem()).hex()
     facts = T.Facts(mine=_seen(tr, False, spent=claimed_mine), theirs=_seen(tr, True))
     assert T.next_step(tr, facts, now)[0] == T.CLAIM and tr.secret == secret.hex()
-    done = T.Facts(mine=_seen(tr, False, spent=claimed_mine), theirs=_seen(tr, True, spent="00", by_me=True))
+    claimed_theirs = H.claim_script_sig(b"\x30" * 70, secret, tr.their_redeem()).hex()
+    done = T.Facts(mine=_seen(tr, False, spent=claimed_mine), theirs=_seen(tr, True, spent=claimed_theirs))
     assert T.next_step(tr, done, now)[0] == T.DONE
+
+
+def test_done_is_told_by_the_branch_a_spend_took_never_by_who_it_pays():
+    """2026-10-25 hardening: a spend that pays this trader a little is not therefore this trader's own."""
+    tr, a, b, secret = _trade(T.RESPONDER)
+    now = int(time.time())
+    # The initiator's claim of MY lock, paying me a crumb on the way: still the secret to read, then my claim.
+    claimed_mine = H.claim_script_sig(b"\x30" * 70, secret, tr.my_redeem()).hex()
+    facts = T.Facts(mine=_seen(tr, False, spent=claimed_mine, by_me=True), theirs=_seen(tr, True))
+    assert T.next_step(tr, facts, now) == (T.CLAIM, "the secret is on the chain: claim their lock")
+    assert tr.secret == secret.hex()
+    # Mine refunded (the ELSE branch, my key): done, whoever the refund paid.
+    refunded_mine = H.refund_script_sig(b"\x30" * 70, tr.my_redeem()).hex()
+    assert T.next_step(tr, T.Facts(mine=_seen(tr, False, spent=refunded_mine), theirs=_seen(tr, True)),
+                       now + 4 * 3600)[0] == T.DONE
+    # The initiator: their lock refunded back to them, paying me a crumb, is not my claim of it.
+    ini, *_ = _trade(T.INITIATOR)
+    their_refund = H.refund_script_sig(b"\x30" * 70, ini.their_redeem()).hex()
+    facts = T.Facts(mine=_seen(ini, False), theirs=_seen(ini, True, spent=their_refund, by_me=True))
+    assert T.next_step(ini, facts, now)[0] == T.WAIT
+    assert T.next_step(ini, facts, now + 7 * 3600)[0] == T.REFUND
+    # A claim of some OTHER lock passed off as theirs is not my claim of theirs either.
+    other = H.redeem_script(H.make_secret()[1], bytes.fromhex(ini.get.taker_key), bytes.fromhex(ini.get.giver_key),
+                            ini.responder_locktime)
+    elsewhere = H.claim_script_sig(b"\x30" * 70, b"\x11" * 32, other).hex()
+    facts = T.Facts(mine=_seen(ini, False), theirs=_seen(ini, True, spent=elsewhere, by_me=True))
+    assert T.next_step(ini, facts, now + 7 * 3600)[0] == T.REFUND
+    # And the initiator's own claim of theirs: done.
+    mine_claim = H.claim_script_sig(b"\x30" * 70, bytes.fromhex(ini.secret), ini.their_redeem()).hex()
+    assert T.next_step(ini, T.Facts(mine=_seen(ini, False), theirs=_seen(ini, True, spent=mine_claim)),
+                       now)[0] == T.DONE
+
+
+def test_the_branch_of_a_spend_is_read_as_the_script_runs_it():
+    _, h = H.make_secret()
+    redeem = H.redeem_script(h, Key().pub, Key().pub, int(time.time()) + 3600)
+    sig = b"\x30" * 71
+    assert H.spend_branch(H.claim_script_sig(sig, b"\x22" * 32, redeem), redeem) == H.CLAIM
+    assert H.spend_branch(H.refund_script_sig(sig, redeem), redeem) == H.REFUND
+    from arcade.txbuild import push
+    # Any true selector takes the IF branch, any false one (an empty push, a zero, negative zero) the ELSE.
+    for selector, branch in ((b"\x52", H.CLAIM), (b"\x4f", H.CLAIM), (push(b"\x00\x01"), H.CLAIM),
+                             (push(b"\x00"), H.REFUND), (push(b"\x80"), H.REFUND), (push(b"\x00\x80"), H.REFUND)):
+        assert H.spend_branch(push(sig) + selector + push(redeem), redeem) == branch, selector
+    assert H.spend_branch(H.refund_script_sig(sig, redeem), redeem[:-1] + b"\x00") == ""
+    assert H.spend_branch(b"\x00", redeem) == "" and H.spend_branch(b"\x4c", redeem) == ""
+    assert H.spend_branch(b"\x76" + push(redeem), redeem) == "", "not push-only: no branch"
 
 
 def test_a_wrong_lock_is_refused_and_a_late_one_too():

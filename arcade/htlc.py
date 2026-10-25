@@ -162,7 +162,7 @@ def secret_from_script_sig(script_sig: bytes, redeem: bytes) -> bytes | None:
     The other side of a swap calls this on the claiming transaction it sees on the
     chain, and checks the result against the hash it locked to before using it."""
     pushes = _pushes(script_sig)
-    if len(pushes) != 4 or pushes[2] != bytes([OP_1]) or pushes[3] != redeem:
+    if pushes is None or len(pushes) != 4 or not _true(pushes[2]) or pushes[3] != redeem:
         return None
     said = parse(redeem)
     secret = pushes[1]
@@ -171,23 +171,58 @@ def secret_from_script_sig(script_sig: bytes, redeem: bytes) -> bytes | None:
     return secret
 
 
-def _pushes(script: bytes) -> list[bytes]:
-    """Each push of an input script, with OP_0/OP_1 kept as one-byte items."""
+CLAIM, REFUND = "claim", "refund"
+
+
+def spend_branch(script_sig: bytes, redeem: bytes) -> str:
+    """Which way `script_sig` spent the lock `redeem`: CLAIM (the IF branch, the claimer's key and the secret) or
+    REFUND (the ELSE branch, the refunder's key after the lock time) -- "" when it is not a spend of that lock.
+
+    The branch is what the script ran, so it is what the chain enforced: only the claimer can sign the IF branch and
+    only the refunder the ELSE branch. Who a spend's OUTPUTS pay says nothing (anybody can pay anybody a little), so a
+    trader decides "I claimed theirs" or "mine came back to me" from this, never from where the coins went."""
+    pushes = _pushes(script_sig)
+    if pushes is None or len(pushes) < 2 or pushes[-1] != redeem or parse(redeem) is None:
+        return ""
+    return CLAIM if _true(pushes[-2]) else REFUND
+
+
+def _true(item: bytes) -> bool:
+    """A stack item as OP_IF reads it (CastToBool): any non-zero byte, except a lone sign bit at the end."""
+    for n, byte in enumerate(item):
+        if byte:
+            return not (n == len(item) - 1 and byte == 0x80)
+    return False
+
+
+def _pushes(script: bytes) -> list[bytes] | None:
+    """The stack an input script leaves, item by item (OP_0 empty, OP_1NEGATE and OP_1..OP_16 their numbers) -- or
+    None when it is not push-only or runs off its end (a lock's spend is always push-only: P2SH)."""
     out, at = [], 0
     while at < len(script):
         op = script[at]
         at += 1
-        if op in (OP_0, OP_1):
-            out.append(bytes([op]))
+        if op == OP_0:
+            out.append(b"")
+            continue
+        if op == 0x4F:
+            out.append(b"\x81")
+            continue
+        if OP_1 <= op <= 0x60:
+            out.append(bytes([op - 0x50]))
             continue
         if 1 <= op <= 75:
             n = op
-        elif op == 0x4C:
+        elif op == 0x4C and at + 1 <= len(script):
             n, at = script[at], at + 1
-        elif op == 0x4D:
+        elif op == 0x4D and at + 2 <= len(script):
             n, at = int.from_bytes(script[at:at + 2], "little"), at + 2
+        elif op == 0x4E and at + 4 <= len(script):
+            n, at = int.from_bytes(script[at:at + 4], "little"), at + 4
         else:
-            raise HtlcError(f"an input script this file did not write (opcode {op:#x})")
+            return None
+        if at + n > len(script):
+            return None
         out.append(script[at:at + n])
         at += n
     return out
@@ -352,6 +387,6 @@ def refunded(inputs: list[dict], outputs: list[tuple[int, bytes]], redeem: bytes
 
 
 __all__ = ["HtlcError", "make_secret", "hash_of", "redeem_script", "parse", "address_of",
-           "p2sh_script", "claim_script_sig", "refund_script_sig", "secret_from_script_sig",
+           "p2sh_script", "claim_script_sig", "refund_script_sig", "secret_from_script_sig", "spend_branch",
            "pay_out", "move_out", "claimed", "refunded", "op_return_script", "DOGINAL_RESERVE",
            "doginal_lock_outputs", "doginal_out"]
