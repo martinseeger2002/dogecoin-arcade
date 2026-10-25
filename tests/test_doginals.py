@@ -359,3 +359,27 @@ def test_another_arcades_nothing_here_on_a_clean_coin_is_confirmed_by_the_chain(
                           rpc_factory=lambda: chain, index=lambda: index)
     assert g.held(chain.last) == {}
     assert g.spendable([{"txid": chain.last, "vout": 0, "value": 100_000}])
+
+
+def test_on_a_taproot_chain_a_peers_nothing_here_stays_protected_without_an_own_walk(tmp_path):
+    """The chain trace reads Doginals-style envelopes only, so on a Taproot chain (Bells, Litecoin) a coin it finds
+    clean may carry a witness-born inscription: an arcade that does not walk keeps it protected (2026-10-25)."""
+    chain = _clean(_IndexChain(3))
+    index = _Mesh(None, chain.tip)
+    g = doginals.Doginals(tmp_path / "d.sqlite", fetch=lambda t: {"txid": t, "inscriptions": []},
+                          rpc_factory=lambda: chain, index=lambda: index, taproot=True)
+    held = g.held(chain.last)
+    assert held[0][0]["unknown"], held
+    assert g.spendable([{"txid": chain.last, "vout": 0, "value": 100_000}]) == []
+
+
+def test_on_a_taproot_chain_with_no_index_a_clean_trace_is_only_unknown(tmp_path):
+    chain = _clean(_IndexChain(3))
+    g = doginals.Doginals(tmp_path / "d.sqlite", fetch=lambda t: {"txid": t, "inscriptions": []},
+                          rpc_factory=lambda: chain, taproot=True)
+    held = g.held(chain.last)
+    assert held and held[0][0]["unknown"], held
+    assert g.spendable([{"txid": chain.last, "vout": 0, "value": 100_000}]) == []
+    plain = doginals.Doginals(tmp_path / "p.sqlite", fetch=lambda t: {"txid": t, "inscriptions": []},
+                              rpc_factory=lambda: chain)
+    assert plain.held(chain.last) == {}, "a chain without Taproot still frees a coin its trace finds clean"

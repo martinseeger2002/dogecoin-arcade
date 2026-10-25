@@ -235,9 +235,12 @@ class Doginals:
                 # itself (traced, as before the index); never kept as final on the other arcade's word alone.
                 said = None
                 if own is None:
-                    trace_these.add(n)
-                    continue
-                if height is not None and height < own:
+                    # The chain trace reads Doginals-style envelopes only: on a Taproot chain a witness-born inscription
+                    # would trace as clean, so there it stays protected until this arcade walks (2026-10-25).
+                    if not self.taproot:
+                        trace_these.add(n)
+                        continue
+                elif height is not None and height < own:
                     try:
                         said = {**index.answer(question), "from": "this arcade", "walked_to": own}
                     except Exception:                       # noqa: BLE001 -- protected, asked again
@@ -276,6 +279,10 @@ class Doginals:
                             db.execute("DELETE FROM walk WHERE txid=? AND vout=?", (txid, n))
                     if found:
                         held[n] = found
+                    elif self.taproot:
+                        # Nothing found by a trace that cannot see witness-born inscriptions: on a Taproot chain that is
+                        # not "clean", only unknown, so the coin stays out of ordinary sends (2026-10-25).
+                        held[n] = [{"id": None, "offset": None, "unknown": True}]
         except Exception as exc:                            # noqa: BLE001 -- the node is the second opinion
             raise Unknown(f"the Dogecoin node could not trace {txid}: {exc}") from exc
 
