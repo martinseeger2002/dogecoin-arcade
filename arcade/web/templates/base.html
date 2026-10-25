@@ -1701,6 +1701,32 @@ async function arcadeKeys(chain, why){
 // inputs across the site had only a placeholder). One pass after the page is
 // drawn and after each in-place redraw: a field with no <label>, no aria-label
 // and no aria-labelledby is named by its placeholder, or its name.
+// A message list that follows what is written into it only while the reader is at its bottom (SadFrog, 2026-10-24: a
+// renter "cannot scroll up to see what it typed before; it keeps locked in on the active typing of the model"). Scrolling
+// up -- wheel, touch, keys -- stops following at once; scrolling back to the bottom resumes it. Returns toBottom(force):
+// call it after each change; force (the reader's own message, a redraw) jumps down and follows again. The Exchange's
+// LLM chat and the corner helper both use it.
+function arcadeFollow(list){
+  // Judged by which way the view moved, since text keeps landing between a scroll and its event: a move up is the
+  // reader leaving; a move down (or our own jump) that ends near the bottom -- within 120 px, for the text that landed
+  // meanwhile -- is following again, but not within 400 ms of the reader reaching up: a browser scrolls on the wheel
+  // before the page hears of it, so a piece of text may already have pulled the view back down by then.
+  var follow = true, last = 0, leftAt = 0;
+  function leave(){ follow = false; leftAt = Date.now(); }
+  list.addEventListener('scroll', function(){
+    if (list.scrollTop < last - 2) leave();
+    else if (list.scrollHeight - list.scrollTop - list.clientHeight < 120 && Date.now() - leftAt > 400) follow = true;
+    last = list.scrollTop;
+  }, {passive: true});
+  list.addEventListener('wheel', function(e){ if (e.deltaY < 0) leave(); }, {passive: true});
+  list.addEventListener('touchmove', leave, {passive: true});
+  list.addEventListener('keydown', function(e){ if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home') leave(); });
+  return function toBottom(force){
+    if (force) { follow = true; leftAt = 0; }
+    if (follow) { list.scrollTop = list.scrollHeight; last = list.scrollTop; }
+  };
+}
+
 function arcadeLabel(root){
   (root || document).querySelectorAll('input:not([type=hidden]),textarea,select').forEach(function(el){
     if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby')) return;

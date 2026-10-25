@@ -83,6 +83,7 @@
   try { msgs = JSON.parse(localStorage.getItem(KEY) || '[]') || []; } catch (e) { msgs = []; }
   function keep() { try { localStorage.setItem(KEY, JSON.stringify(msgs.slice(-KEEP))); } catch (e) {} }
   var list = document.getElementById('arc-bot-msgs');
+  var toBottom = arcadeFollow(list);                          // follows a reply only while the reader is at the bottom (base.html)
   function arcadeMd(text) {
     // A little markdown, safely: escape everything, then **bold**, `code`, ``` blocks, headings and list bullets.
     var esc = String(text || '').replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; });
@@ -99,12 +100,13 @@
   function add(role, text) {
     var el = document.createElement('div'); el.className = role === 'user' ? 'me' : role === 'note' ? 'note' : 'it';
     if (role === 'assistant') el.innerHTML = arcadeMd(text); else el.textContent = text;
-    list.appendChild(el); list.scrollTop = 1e9; return el;
+    list.appendChild(el); toBottom(role === 'user'); return el;
   }
   function drawAll() {
     list.innerHTML = '';
     if (!msgs.length) add('note', 'Ask anything about ' + document.title.split(' · ').pop() + ': games, tokens, swaps, prize pools, your wallet, running an arcade. It knows which page you are on.');
     msgs.forEach(function (m) { add(m.role, m.content); });
+    toBottom(true);
   }
   // Where the person is: the page, its title, and the tab that is open on it (the operator: "context on what tab the user is on").
   function where() {
@@ -199,7 +201,7 @@
           if (ev.error) throw new Error(ev.error.message || 'failed');
           (ev.choices || []).forEach(function (ch) {
             var d = ch.delta || {};
-            if (d.content) { said += d.content; out.innerHTML = arcadeMd(said.replace(/^\s+/, '')); list.scrollTop = 1e9; }
+            if (d.content) { said += d.content; out.innerHTML = arcadeMd(said.replace(/^\s+/, '')); toBottom(); }
             else if (d.reasoning_content && !said) out.textContent = 'Thinking\u2026';
           });
         }

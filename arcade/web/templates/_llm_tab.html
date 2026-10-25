@@ -683,6 +683,7 @@ function drawChat() {
     else { const it = bubble("it"); const out = it.querySelector("div");
            if (window.arcadeMd) out.innerHTML = arcadeMd(m.content); else out.textContent = m.content; }
   });
+  llmToBottom(true);                                       // a reopened conversation shows its last message
 }
 function docsWord() { $("llm-input").placeholder = $("llm-docs").checked ? "Ask anything \u2014 it knows DogecoinArcade's docs\u2026" : "Ask anything\u2026"; }
 try { $("llm-docs").checked = localStorage.getItem("arcade.llm.docs") !== "off"; } catch (e) {}
@@ -709,13 +710,14 @@ function drawLeft() {
   $("llm-left").textContent = l.big === "No credits yet" ? "No credit" : l.big + (l.big.startsWith("\u2248") ? " left" : "");
 }
 $("llm-chat-leg").addEventListener("change", drawLeft);
-$("llm-new-chat").addEventListener("click", () => { history = []; $("llm-msgs").innerHTML = ""; keepChat(); });
+$("llm-new-chat").addEventListener("click", () => { history = []; $("llm-msgs").innerHTML = ""; llmToBottom(true); keepChat(); });
 
+const llmToBottom = arcadeFollow($("llm-msgs"));      // follows a reply only while the reader is at the bottom (base.html)
 function bubble(cls, text) {
   const el = document.createElement("div");
   if (cls === "me") { el.className = "llm-me"; el.textContent = text; }
   else { el.className = "llm-it"; el.innerHTML = `<details hidden><summary>Thinking</summary><span></span></details><div></div><small></small>`; }
-  $("llm-msgs").appendChild(el); $("llm-msgs").scrollTop = 1e9; return el;
+  $("llm-msgs").appendChild(el); llmToBottom(cls === "me"); return el;
 }
 async function sendChat() {
   const text = $("llm-input").value.trim();
@@ -755,7 +757,7 @@ async function sendChat() {
           if (d.reasoning_content) { thought += d.reasoning_content; think.hidden = false; think.querySelector("span").textContent = thought; }
           if (d.content) { said += d.content; if (window.arcadeMd) out.innerHTML = arcadeMd(said.replace(/^\s+/, "")); else out.textContent = said.replace(/^\s+/, ""); }
         }
-        $("llm-msgs").scrollTop = 1e9;
+        llmToBottom();
       }
     }
     history.push({role: "assistant", content: said.replace(/^\s+/, "")}); keepChat();

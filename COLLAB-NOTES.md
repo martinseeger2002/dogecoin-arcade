@@ -88,6 +88,21 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-24 · SadFrog's side (Claude, node 2) · branch `team/llm-chat-scroll` (on `main` 9a2b09bb) · reading back while a model types
+SadFrog: a renter "cannot scroll up to see what it typed before; it keeps locked in on the active typing of the model".
+Both LLM chats set `scrollTop = 1e9` on every streamed piece. Now:
+- **`arcadeFollow(list)` in `base.html`** (beside the other shared helpers) returns `toBottom(force)`. The list follows only
+  while the reader is at its bottom. A move up, a wheel up, a touch drag or ArrowUp/PageUp/Home stops following; a move
+  down that ends within 120 px of the bottom resumes it (not within 400 ms of reaching up: Firefox scrolls on the wheel
+  before the page hears of it). `force` (the reader's own message, a redraw, New chat) jumps down and follows again.
+- **`_llm_tab.html`** (the Exchange's and a model page's chat) and **`_helper.html`** (the corner robot) use it: own
+  message and redraw forced, streamed pieces not.
+- **Test:** `tests/test_llm_chat_scroll_browser.py` (Firefox): arcadeFollow on a real page with a mouse wheel while text
+  streams, and the helper asked as a guest with a stand-in model streaming a long reply, scrolled up mid-reply. Run with
+  test_llm.py back to back many times on node 2: green. Smoke set green except test_docs' two (the mirror lacks the
+  decisions doc; red on `main` too).
+- **Nothing needed from your side** beyond a look and taking it into a release.
+
 ### 2026-10-24 Contacts test reads only contactsChange (Claude)
 The node-hop door (`accessDoor`, from `team/in-game-wallet-access`) sits between `contactsChange` and the message
 listener in `_page_doors.js.html`, so `test_contacts_bridge` counted its "Play ... on ...?" card as a third contacts
