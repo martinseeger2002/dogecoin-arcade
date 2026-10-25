@@ -261,3 +261,28 @@ def test_wallet_js_decides_every_step_as_the_python_does_in_node(tmp_path):
     assert len(got) == len(cases) > 40
     for (_, _, want), have in zip(cases, got):
         assert have == want, (have, want)
+
+
+def test_wallet_js_reads_a_secret_of_any_length_as_the_python_does(tmp_path):
+    """2026-10-25 (htlc.secret_from_script_sig): any item whose SHA-256 is the lock's hash, of any length."""
+    from arcade.txbuild import push
+    a, b = Key(), Key()
+    sig = a.sign(b"\x11" * 32)
+    cases = []
+    for secret in (b"\x05", b"\x81", b"\x00", b"\x07" * 31, b"\x07" * 32, b"\x07" * 33, b"\x07" * 64,
+                   b"\x07" * 76, b"\x07" * 256, b"\x07" * 520):
+        redeem = H.redeem_script(H.hash_of(secret), a.pub, b.pub, 1_800_000_000)
+        claim = H.claim_script_sig(sig, secret, redeem)
+        for script_sig in (claim, push(b"junk") + claim, H.refund_script_sig(sig, redeem), claim[:-1],
+                           H.claim_script_sig(sig, secret + b"\x01", redeem)):
+            said = H.secret_from_script_sig(script_sig, redeem)
+            cases.append((script_sig.hex(), redeem.hex(), None if said is None else said.hex()))
+    got = run_wallet_js(tmp_path, """
+        const out = [];
+        for (const [sig, redeem] of data) {
+          const s = await w.secretFromScriptSig(c.unhex(sig), c.unhex(redeem));
+          out.push(s ? c.hex(s) : null);
+        }
+        return out;""", [[c[0], c[1]] for c in cases])
+    assert [c[2] for c in cases] == got
+    assert sum(1 for c in cases if c[2] is not None) == 20, "every claim (bare and with an extra item) reads back"

@@ -3175,16 +3175,15 @@ export function spendBranch(scriptSigHex, redeem) {
   return stackTrue(items[items.length - 2]) ? "claim" : "refund";
 }
 
-/** The secret a claim revealed (htlc.secret_from_script_sig): sig, secret, OP_1, script. */
+/** The secret a claim revealed (htlc.secret_from_script_sig): any item the input script leaves, of any length,
+ *  whose SHA-256 is the lock's hash -- the script checks only the hash, so that is what opens it (2026-10-25). */
 export async function secretFromScriptSig(scriptSig, redeem) {
-  const pushes = scriptSigItems(scriptSig);
-  if (!pushes || pushes.length !== 4 || !stackTrue(pushes[2])) return null;
-  if (coinsHex(pushes[3]) !== coinsHex(redeem)) return null;
   const lock = coins.htlcParse(redeem);
-  const secret = pushes[1];
-  if (!lock || secret.length !== 32) return null;
-  if (coinsHex(await coins.sha256Of(secret)) !== coinsHex(lock.secretHash)) return null;
-  return secret;
+  const pushes = scriptSigItems(scriptSig);
+  if (!lock || !pushes || !pushes.length || coinsHex(pushes[pushes.length - 1]) !== coinsHex(redeem)) return null;
+  for (const item of pushes.slice(0, -1))
+    if (coinsHex(await coins.sha256Of(item)) === coinsHex(lock.secretHash)) return item;
+  return null;
 }
 
 /* --- the tab trader: one trade, run while this tab is open -----------------------

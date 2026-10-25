@@ -75,6 +75,27 @@ def test_a_claim_reveals_the_secret_and_only_the_right_one_reads_back():
         H.claimed([{"txid": "aa" * 32, "vout": 0}], [(1, b"\x51")], redeem, b"\x00" * 32, a.sign)
 
 
+def test_a_secret_of_any_length_reads_back_off_the_claim():
+    """2026-10-25 hardening: the script checks only the secret's hash, so any preimage that opens it must read back --
+    of any length, wherever it stands among the input script's items."""
+    a, b = Key(), Key()
+    sig = a.sign(b"\x11" * 32)
+    for secret in (b"\x05", b"\x10", b"\x81", b"\xff", b"\x00", b"\x07" * 16, b"\x07" * 31, b"\x07" * 33,
+                   b"\x07" * 64, b"\x07" * 75, b"\x07" * 76, b"\x07" * 255, b"\x07" * 256, b"\x07" * 520):
+        redeem = H.redeem_script(H.hash_of(secret), a.pub, b.pub, 1_800_000_000)
+        script_sig = H.claim_script_sig(sig, secret, redeem)
+        assert H.secret_from_script_sig(script_sig, redeem) == secret, len(secret)
+        assert H.secret_from_script_sig(push(b"junk") + script_sig, redeem) == secret, "an extra item before"
+        assert H.secret_from_script_sig(push(sig) + push(secret) + push(b"\x01") + push(redeem), redeem) == secret
+    # One byte 1..16 or 0x81 goes back as its own opcode (the standard push), and reads back the same.
+    assert H.claim_script_sig(sig, b"\x05", redeem)[len(push(sig))] == 0x55
+    assert H.claim_script_sig(sig, b"\x81", redeem)[len(push(sig))] == 0x4F
+    redeem = H.redeem_script(H.hash_of(b"\x07" * 64), a.pub, b.pub, 1_800_000_000)
+    assert H.secret_from_script_sig(H.claim_script_sig(sig, b"\x07" * 63, redeem), redeem) is None
+    assert H.secret_from_script_sig(H.claim_script_sig(sig, b"\x07" * 64, redeem)[:-1], redeem) is None
+    assert H.secret_from_script_sig(b"\x76" + push(redeem), redeem) is None, "not push-only"
+
+
 # --- on regtest ---------------------------------------------------------------------------
 
 def _lock(rpc, payer: Owner, redeem: bytes, amount: int) -> dict:
@@ -252,3 +273,27 @@ def test_a_small_litecoin_lock_pays_out_at_litecoins_own_fee():
         H.pay_out({**coin, "value": 1_000_000}, "PewhJb8x6769brR6kWgpBaUqSSMCUPx7qm", params=pep)
     with pytest.raises(H.HtlcError):
         H.pay_out({**coin, "value": 15_000}, to, params=ltc)
+
+
+def test_a_long_secret_claims_on_the_chain_and_the_other_side_claims_with_what_it_read(node):
+    """2026-10-25: the initiator claims with a secret that is not 32 bytes; the responder reads it off the chain and
+    its own claim, with what it read, relays and confirms too."""
+    app, state, rpc = node
+    for secret in (b"\x42" * 64, b"\x05"):
+        h = H.hash_of(secret)
+        alice, bob = Owner(state, rpc), Owner(state, rpc)
+        alice_key, bob_key = Key(), Key()
+        bobs = H.redeem_script(h, alice_key.pub, bob.pubkey, int(time.time()) + 3600)      # alice claims bob's
+        alices = H.redeem_script(h, bob_key.pub, alice.pubkey, int(time.time()) + 7200)    # bob claims alice's
+        coin_b, coin_a = _lock(rpc, bob, bobs, COIN), _lock(rpc, alice, alices, COIN)
+        rpc.call("generate", 1)
+        inputs, outputs = H.pay_out(coin_b, alice_key.address)
+        txid = rpc.call("sendrawtransaction", H.claimed(inputs, outputs, bobs, secret, alice_key.sign))
+        rpc.call("generate", 1)
+        script_sig = rpc.call("getrawtransaction", txid, 1)["vin"][0]["scriptSig"]["hex"]
+        read = H.secret_from_script_sig(bytes.fromhex(script_sig), bobs)
+        assert read == secret, len(secret)
+        inputs, outputs = H.pay_out(coin_a, bob_key.address)
+        rpc.call("sendrawtransaction", H.claimed(inputs, outputs, alices, read, bob_key.sign))
+        rpc.call("generate", 1)
+        assert rpc.call("gettxout", coin_a["txid"], coin_a["vout"]) is None, "the responder claimed too"

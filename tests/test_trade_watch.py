@@ -72,10 +72,20 @@ def test_a_held_claim_takes_the_secret_off_the_chain(node):
     """The responder's case: its own lock (B) is claimed by the initiator, which puts the
     secret on the chain; the node reads it there and sends the account's held claim of the
     initiator's lock (A) -- with the tab long closed."""
+    _held_claim(node, 82, H.make_secret()[0])
+
+
+def test_a_held_claim_takes_a_secret_of_any_length_off_the_chain(node):
+    """2026-10-25: the lock checks only the secret's hash, so a claim of B with a secret that is not 32 bytes opens it
+    -- and the node must read that secret all the same."""
+    _held_claim(node, 83, b"\x42" * 48)
+
+
+def _held_claim(node, seat, secret):
     app, state, rpc = node
-    who, secret_int, pubkey, address = _seated(app, state, rpc, 82, key=False)
+    who, secret_int, pubkey, address = _seated(app, state, rpc, seat, key=False)
     initiator = Owner(state, rpc)
-    secret, h = H.make_secret()
+    h = H.hash_of(secret)
     now = int(time.time())
     lock_a = H.redeem_script(h, pubkey, initiator.pubkey, now + 7200)       # pays the account
     lock_b = H.redeem_script(h, initiator.pubkey, pubkey, now + 3600)       # the account's own
@@ -98,7 +108,7 @@ def test_a_held_claim_takes_the_secret_off_the_chain(node):
     rpc.call("generate", 1)
     assert dict(_tick(state)).get(job) == "sent claim"
     rpc.call("generate", 1)
-    sent = state.trade_watch.jobs()[0]
+    sent = next(j for j in state.trade_watch.jobs() if j["id"] == job)
     tx = rpc.call("getrawtransaction", sent["sent_txid"], 1)
     assert [o["scriptPubKey"]["addresses"] for o in tx["vout"]] == [[address]]
     assert sent["secret"] == secret.hex()

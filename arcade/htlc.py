@@ -148,7 +148,17 @@ def p2sh_script(redeem: bytes) -> bytes:
 
 def claim_script_sig(sig: bytes, secret: bytes, redeem: bytes) -> bytes:
     """The IF branch: the claimer's signature, the secret, OP_1, the script."""
-    return push(sig) + push(secret) + bytes([OP_1]) + push(redeem)
+    return push(sig) + _push_item(secret) + bytes([OP_1]) + push(redeem)
+
+
+def _push_item(item: bytes) -> bytes:
+    """The standard (minimal) push of a stack item: a secret read off the other side's claim is put back exactly
+    as the network relays it, whatever its length -- a one-byte 1..16 or 0x81 is its own opcode, as policy requires."""
+    if len(item) == 1 and 1 <= item[0] <= 16:
+        return bytes([0x50 + item[0]])
+    if item == b"\x81":
+        return b"\x4f"
+    return push(item)
 
 
 def refund_script_sig(sig: bytes, redeem: bytes) -> bytes:
@@ -160,15 +170,17 @@ def secret_from_script_sig(script_sig: bytes, redeem: bytes) -> bytes | None:
     """The secret a claim revealed, read off its input script -- or None.
 
     The other side of a swap calls this on the claiming transaction it sees on the
-    chain, and checks the result against the hash it locked to before using it."""
-    pushes = _pushes(script_sig)
-    if pushes is None or len(pushes) != 4 or not _true(pushes[2]) or pushes[3] != redeem:
-        return None
+    chain, and checks the result against the hash it locked to before using it.
+
+    2026-10-25: ANY item the input script leaves whose SHA-256 is the lock's hash, of any length, wherever it stands --
+    the script itself checks only the hash (no OP_SIZE), so a claim with a secret of another length, or with extra
+    items, still opens the lock, and the other side must be able to read it all the same. (A later version of the
+    script could add `OP_SIZE 32 OP_EQUALVERIFY`; changing it now would strand the locks already made.)"""
     said = parse(redeem)
-    secret = pushes[1]
-    if said is None or len(secret) != SECRET_BYTES or hash_of(secret) != said["secret_hash"]:
+    pushes = _pushes(script_sig)
+    if said is None or not pushes or pushes[-1] != redeem:
         return None
-    return secret
+    return next((item for item in pushes[:-1] if hash_of(item) == said["secret_hash"]), None)
 
 
 CLAIM, REFUND = "claim", "refund"
