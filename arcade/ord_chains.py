@@ -29,6 +29,7 @@ class OrdWords:
     word: str        # one inscription: "Doginal"
     chain: str       # its chain, as a page says it: "Dogecoin"
     coins: str       # the wallet's word for that chain's coins: "Reading your PEP coins..."
+    slug: str = ""   # its Exchange tab, where the word is another chain's too: "pepinalstest"; else "doginals"
 
 
 #: Every chain whose ords the arcade reads, in the order a page offers them.
@@ -38,14 +39,19 @@ WORDS = {
     "bel": OrdWords("Bellinal", "Bellscoin", "Bellscoin"),
     "lky": OrdWords("Luckinal", "Luckycoin", "Luckycoin"),
     "wjk": OrdWords("Wojakinal", "Wojakcoin", "Wojakcoin"),
+    # Litecoin ords (ord-litecoin), mainnet and testnet: those held at a legacy "L..." / "m..." address (2026-10-25).
+    "ltc": OrdWords("LTC ordinal", "Litecoin", "Litecoin", "ltcordinals"),
+    "ltctest": OrdWords("LTC ordinal", "Litecoin testnet", "LTC TEST", "ltctestordinals"),
     # Pepecoin testnet, for the Creator tab's tries with coins that cost nothing.
-    "test": OrdWords("Pepinal", "Pepecoin test", "PEP TEST"),
+    "test": OrdWords("Pepinal", "Pepecoin test", "PEP TEST", "pepinalstest"),
 }
 
 #: The chains whose ords are sent, listed and bought here: Doginals, Pepinals, and Bellinals (2026-10-25; Bells 3 signs
-#: legacy inputs as Dogecoin does, so the SINGLE|ANYONECANPAY listing digest is the same). Kotia has no ords (timed
-#: transactions, Params.tx_time); Luckycoin and Wojakcoin are shown only.
-MOVED = ("doge", "main", "bel")
+#: legacy inputs as Dogecoin does, so the SINGLE|ANYONECANPAY listing digest is the same), then Luckinals, Wojakinals,
+#: Litecoin ords and Pepecoin testnet's the same way (legacy inputs, the same digest; Litecoin's proven on regtest,
+#: tests/test_ord_chains_more.py). Wojakinals are never swapped (no CLTV, `swappable`). Kotia has no ords
+#: (timed transactions, Params.tx_time).
+MOVED = ("doge", "main", "bel", "lky", "wjk", "ltc", "ltctest", "test")
 
 
 def word(net: str, default: str = "Inscription") -> str:
@@ -66,8 +72,9 @@ def coin(net: str) -> str:
 
 
 def tab(net: str) -> str:
-    """The Exchange tab its ords are listed on: "doginals", "pepinals", "bellinals"."""
-    return f"{word(net).lower()}s"
+    """The Exchange tab its ords are listed on: "doginals", "pepinals", "bellinals", "pepinalstest"."""
+    got = WORDS.get(str(net))
+    return (got.slug if got and got.slug else f"{word(net).lower()}s").replace(" ", "")
 
 
 def moved(net: str) -> bool:
@@ -117,7 +124,10 @@ def swap_nets() -> tuple[str, ...]:
 
 
 def counter(net: str) -> str:
-    """The coin an ord on `net` is first priced in on its swap market: the other of Dogecoin and Pepecoin mainnet."""
+    """The coin an ord on `net` is first priced in on its swap market: the other of Dogecoin and Pepecoin mainnet, and
+    on a testnet the other testnet (Pepecoin's and Litecoin's), so a test ord is never first priced in real coins."""
+    if net in NETWORKS and not NETWORKS[net].real_coins:
+        return "ltctest" if net == "test" else "test"
     return "main" if net == "doge" else "doge"
 
 
@@ -125,4 +135,4 @@ def wallet_table() -> dict:
     """What the Wallet's ord view needs, by chain: [word, coin, coins word] and what it may do with one."""
     return {n: {"words": [w.word, coin(n), w.coins], "send": moved(n), "list": moved(n), "swap": swappable(n),
                 "tab": tab(n), "counter": counter(n)}
-            for n, w in WORDS.items() if n != "test"}
+            for n, w in WORDS.items()}

@@ -62,7 +62,7 @@ def test_bellinals_are_moved_and_not_swapped():
     assert not ord_chains.swappable("bel"), "but its lock address cannot be made (P2SH byte 30 is Dogecoin's D)"
     table = ord_chains.wallet_table()
     assert (table["bel"]["send"], table["bel"]["list"], table["bel"]["swap"]) == (True, True, False)
-    assert not any(table[n][k] for n in ("lky", "wjk") for k in ("send", "list", "swap"))
+    assert (table["wjk"]["send"], table["wjk"]["swap"]) == (True, False), "Wojakinals moved, never swapped (no CLTV)"
 
 
 def test_a_bellinal_leg_waits_for_a_bells_lock_and_a_wojakinal_never_gets_one(monkeypatch):

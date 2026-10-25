@@ -2235,7 +2235,7 @@ async function drawDoginals() {
   if (NODE_SIDE || tab !== "nfts" || !c || !ORD_WORDS[c.network]) { box.hidden = true; return; }
   box.hidden = false;
   const doge = c.network === "doge";
-  // Shown only where the Doginals routes do not move them yet (ord_chains.MOVED; Luckinals, Wojakinals).
+  // Shown only where the Doginals routes do not move them (ord_chains.MOVED; every ord chain since 2026-10-25).
   const can = ORD[c.network];
   const viewOnly = !can.send;
   // An imported wallet's own Doginals too (they are shown; sending one from it comes later).

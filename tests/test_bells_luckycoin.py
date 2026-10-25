@@ -206,14 +206,15 @@ def test_admin_ords_offers_each_chain_off_until_turned_on(client, monkeypatch):
         state.set_setting("public_hosts", [])
 
 
-def test_the_wallet_moves_bellinals_and_shows_luckinals():
+def test_the_wallet_moves_bellinals_and_luckinals():
     from arcade import ord_chains
     page = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/my_wallet.html").read_text()
     table = ord_chains.wallet_table()
     assert table["bel"]["words"] == ["Bellinal", "BEL", "Bellscoin"] and table["lky"]["words"] == ["Luckinal", "LKY", "Luckycoin"]
     # Bellinals are sent and listed (2026-10-25) but not swapped: no lock is made on Bellscoin (its P2SH byte, above).
     assert (table["bel"]["send"], table["bel"]["list"], table["bel"]["swap"]) == (True, True, False)
-    assert not any(table[n][k] for n in ("lky", "wjk") for k in ("send", "list", "swap"))
-    assert all(table[n]["send"] and table[n]["list"] and table[n]["swap"] for n in ("doge", "main"))
+    # Luckinals and Wojakinals too (2026-10-25); Wojakinals never swapped (no CLTV).
+    assert all(table[n]["send"] and table[n]["list"] and table[n]["swap"] for n in ("doge", "main", "lky"))
+    assert (table["wjk"]["send"], table["wjk"]["list"], table["wjk"]["swap"]) == (True, True, False)
     assert "const ORD = {{ ord_wallet()|tojson }};" in page
     assert "!ORD_WORDS[c.network]" in page and "const viewOnly = !can.send;" in page
