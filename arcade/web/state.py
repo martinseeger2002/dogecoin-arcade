@@ -1563,6 +1563,24 @@ class AppState:
                 return chain
         raise ValueError(f"tokens are not indexed on {network!r}")
 
+    def utxoset(self, chain: ChainContext):
+        """The chain's whole unspent set (arcade/utxoset.py) in <home>/<net>-utxoset.sqlite, or None. KOTIA ONLY
+        for now (Params.full_utxo_set, 2026-10-25): what the wallet reads an account's coins and history back from
+        on a Core without `scantxoutset` / `importmulti`. The watcher builds and follows it."""
+        if not getattr(chain.params, "full_utxo_set", False) or getattr(self, "home", None) is None:
+            return None
+        kept = self.__dict__.setdefault("_utxosets", {})
+        if chain.network not in kept:
+            from ..utxoset import UtxoSet
+            kept[chain.network] = UtxoSet(Path(self.home) / f"{chain.network}-utxoset.sqlite", chain.params)
+        return kept[chain.network]
+
+    @property
+    def utxoset_progress(self) -> dict:
+        """What the watcher's pass over a chain is doing, by chain, for Admin -> Chains: {"phase": "building" |
+        "history" | "ready", "height", "tip"}."""
+        return self.__dict__.setdefault("_utxoset_progress", {})
+
     def token_index(self, chain: ChainContext) -> LedgerIndex:
         """The token index for `chain`, built on first use.
 

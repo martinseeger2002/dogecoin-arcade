@@ -88,6 +88,50 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-25 · SadFrog's side (Claude, node 3, for tbuuol) · branch `team/kotia-utxoset` (on 86e4371d) · Kotia's whole unspent set: wallet coins and history from block 0 (KOTIA ONLY)
+tbuuol: "Wir schreiben jetzt die utxo Datenbank, unspent only", with the blocks that carry OP_RETURNs kept apart for
+MoonBrix and assets, and wired into Admin and the Wallet, history included. The problem it solves: Kotia's Core has
+neither `scantxoutset` nor `importmulti`, so an account's KOT from below the floor (1,530,000) never showed. For example,
+1 KOT sent to @tbuuol's K address at block 1,529,529 was on the chain and absent from the Wallet.
+- **`arcade/utxoset.py` (new):** the chain's whole unspent set in `<home>/<net>-utxoset.sqlite`.
+  - `coins`: an address mapped to its packed 49-byte records (txid, vout, value, height, kind).
+  - `data_blocks`: a height mapped to its packed OP_RETURN txids (pointers only: the bytes stay on the chain).
+  - `history`: utxos.activity's rows, for the accounts only. Nothing spent is kept.
+  - It is built once from block 0 (through the Core, or straight from blk*.dat with `file_blocks`), then followed
+    block by block, with a 200-block undo for reorgs. It has a command line too: `python -m arcade.utxoset
+    build|follow|status|balance|data`.
+- **KOTIA ONLY: `Params.full_utxo_set`, true for KOTIA alone.** Another chain needs adapting before it is switched on:
+  - its size (Dogecoin's set would be gigabytes and take days)
+  - its header naming (new `Params.scrypt_headers_below`: Kotia names headers below version 7 by scrypt, so
+    rawchain does too)
+  - its block-file magic (`utxoset.MAGIC`)
+  - its transaction parts
+- **Watcher, `_keep_utxo_sets`:** builds the set on a thread of its own, paced (`UTXOSET_REST`, about 60% of one
+  core, about 30 minutes for Kotia), only from this arcade's own Core and never a borrowed one. After that it follows
+  every pass. It reads the history of accounts added later in a second pass, and then `_utxoset_seed` copies each
+  watched address's spendable coins (kind 0: P2PKH and P2SH, the `utxos.SPENDABLE` set) and its history into the
+  index the Wallet reads.
+  - Seeding happens once per address (`utxoset_seeded:<net>`), and only when the set is at or past the index.
+  - INSERT OR IGNORE, so the index's own rows win and the index carries on from there.
+  - Rows from below the index have no block time, so the Wallet files them under "Earlier" with their block.
+  - Kotia's staking rewards are P2PK: they count in the set (kind 1), but they are not seeded, because the Wallet
+    signs P2PKH.
+- **Admin -> Chains:** the Kotia row says "full unspent set: building x% (block … of …)", "reading new accounts'
+  history x%", or "at block …".
+- **Checked live** against Kotia 1.0.0: 1,529,856 blocks in 623 s unpaced, giving 79,022 coins and 64,943,418.9991 KOT.
+  That is the same as the Core's `gettxoutsetinfo` at the same block hash; after following three more blocks it was
+  still the same. The file is 4.8 MB; there are 71 data blocks with 294 OP_RETURN transactions.
+- **Tests:** `tests/test_utxoset.py` (10), using blocks made in Kotia's shape. They cover a scrypt-named genesis, only
+  the unspent being kept, spends inside a block, history rows matching `on_block`'s, more accounts' history without a
+  coin rebuild, staking rewards not being wallet coins, connect/disconnect, block files out of order with an orphan,
+  and the watcher seeding a real `LedgerIndex`. The watcher, utxo, web, coreshare and Kotia/Bells/Lucky files pass
+  too (345).
+- **End to end, live** (the watcher's own `_utxoset_pass` and `_utxoset_seed` against Kotia's node, into a scratch
+  wallet index watching two K addresses): built in 1,401 s at the watcher's pace; 79,022 coins and 64,943,778.9991 KOT,
+  the same as `gettxoutsetinfo` at block 1,529,874. The Wallet index then held @tbuuol's 1 KOT (1 coin, 1 history row)
+  and @liteworldsquest's 18.9788126 KOT (8 coins, 4 history rows). All of these are from below the floor.
+- **Needs from the operator:** apply it. A node that runs Kotia here builds the set by itself after the update.
+
 ### 2026-10-25 Ord walk: the coin filter kept on disk (Claude)
 Every start rebuilt the walk's Bloom filter (`_Seen`) from all of `at` -- 172 M rows on Dogecoin, ~an hour of one core,
 the walk standing still; each update restarted it. `Walker.save_seen` keeps it at `<index>.seen` (header + bits; ~512 MB

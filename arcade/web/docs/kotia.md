@@ -60,3 +60,22 @@ port=46174
 
 Kotia relays data outputs (OP_RETURN) of up to 15,000 bytes, several per transaction, as long as no
 more than half of a transaction's outputs carry data.
+
+## The whole unspent set (Kotia only)
+
+Kotia's Core has neither `scantxoutset` nor `importmulti`. That is how the arcade normally finds coins an address held
+before it was watched. Instead, a node that runs Kotia here keeps **Kotia's whole unspent set**, built once from block 0,
+in `<net>-utxoset.sqlite`:
+
+- **Building** reads all of Kotia's 1.5 million blocks through its Core, at a pace that keeps the pages answering
+  (about half an hour). Admin → Chains shows how far it has got. After that it follows the chain block by block.
+- **Every account** gets its coins and its history from block 0 from it, so KOT sent before the arcade started
+  watching shows in the Wallet. History from before the arcade's own index has no time, so the Wallet files it under
+  *Earlier* and gives its block.
+- **What is kept:** each address's unspent coins (49 bytes a coin), the history of the arcade's own accounts, and, for
+  every block that carries data (OP_RETURN), the ids of those transactions. Kotia's set is about 79,000 coins, a 5 MB
+  file.
+- **Staking rewards** are paid to a public key, not an address. They count in the set, but the Wallet does not spend
+  them, because it signs only ordinary address coins.
+- **Kotia only for now.** Another chain would need adapting first: its size, how its headers are named, its
+  block-file magic, and what its transactions carry.

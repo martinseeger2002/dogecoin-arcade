@@ -1,20 +1,29 @@
-"""A chain's whole unspent set, by address, and the blocks that carry data (tbuuol 2026-10-25, Kotia first).
+"""A chain's whole unspent set, by address, and the blocks that carry data (tbuuol 2026-10-25). KOTIA ONLY for now.
 
 The arcade's own index (utxos.py) keeps the coins of the addresses it watches, from the floor on, and reads back what
 an address held before through the Core (`scantxoutset`, `importmulti`). Kotia's Core has neither, so coins from
 below the floor never showed. For a small chain it is cheaper to keep every unspent output there is, built once
 from block 0: then any address's coins are one read, at any height, with no rescan.
 
-Two tables, both an array per key, which keeps them small:
-- `coins`: an address -> its unspent outputs, packed 48-byte records (txid, vout, value, height). A script with no
-  address (bare multisig, non-standard) is filed under "script:<hash160 of the script>".
+Kotia only (Params.full_utxo_set): built and checked against Kotia 1.0.0 (1.53 million blocks, 79,022 coins, 10 minutes
+through its Core, a 5 MB file). Another chain needs looking at before it is switched on: its size (Dogecoin's set
+would be gigabytes and days), its header naming (`scrypt_headers_below`), its block files' magic (MAGIC), and what
+its transactions carry (SegWit and MWEB parts are read by rawchain, but no chain with them has been built here).
+
+Tables, an array per key where it can be, which keeps them small:
+- `coins`: an address -> its unspent outputs, packed 49-byte records (txid, vout, value, height, kind). A script with
+  no address (bare multisig, non-standard) is filed under "script:<hash160 of the script>". `kind` 0 is what the
+  arcade's wallet can spend (pay-to-pubkey-hash, script hash: utxos.SPENDABLE); 1 a pay-to-pubkey output (Kotia's
+  staking rewards: the key's address, but not signed the way the wallet signs); 2 anything else.
 - `data_blocks`: a height -> the txids of its transactions that carry an OP_RETURN, packed 32-byte ids. Only where
   the data is: the bytes stay on the chain, and a reader of the data (MoonBrix, the arcade's assets) works through
   these blocks itself.
+- `history`: what each transaction did to the addresses asked for (`history_for`: the arcade's accounts), the same
+  rows as utxos.activity -- received, spent, paid out, the first other address. Every other address keeps no history.
 
-What is spent is gone: no history is kept. An OP_RETURN output is never a coin. Block 0's outputs are not coins either
-(Bitcoin's code never lets them be spent, and the Core does not count them). The last UNDO_DEPTH blocks keep what they
-changed, so a reorg is rolled back; a deeper one means building again.
+What is spent is gone. An OP_RETURN output is never a coin. Block 0's outputs are not coins either (Bitcoin's code
+never lets them be spent, and the Core does not count them). The last UNDO_DEPTH blocks keep what they changed, so a
+reorg is rolled back; a deeper one means building again.
 
 Building reads blocks through the Core (`rpc_blocks`) or straight from its blk*.dat files (`file_blocks`, which needs
 to run as the Core's user). Afterwards `connect` follows the chain block by block and asks the Core for the coin each
@@ -25,22 +34,31 @@ from __future__ import annotations
 import json
 import sqlite3
 import struct
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
 from . import rawchain
-from .script import classify_script, hash160
+from .script import OutputType, classify_script, hash160
 
-#: One unspent output inside an address's array: txid (display order), vout, value in sats, height.
-RECORD = struct.Struct("<32sIqI")
+#: One unspent output inside an address's array: txid (display order), vout, value in sats, height, kind.
+RECORD = struct.Struct("<32sIqIB")
 TXID = 32
+#: What a coin is, for whoever reads it: the wallet spends only WALLET coins (utxos.SPENDABLE's legacy kinds).
+WALLET, PUBKEY, OTHER = 0, 1, 2
+_KIND = {OutputType.PUBKEYHASH: WALLET, OutputType.SCRIPTHASH: WALLET, OutputType.PUBKEY: PUBKEY}
 #: Blocks whose changes are kept, so a reorg up to this deep is rolled back rather than built again.
 UNDO_DEPTH = 200
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS coins (address TEXT PRIMARY KEY, utxos BLOB NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS data_blocks (height INTEGER PRIMARY KEY, txids BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS history (
+    txid TEXT NOT NULL, address TEXT NOT NULL, height INTEGER NOT NULL, received INTEGER NOT NULL,
+    spent INTEGER NOT NULL, paid_out INTEGER NOT NULL, other TEXT NOT NULL, PRIMARY KEY (txid, address)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS history_address ON history(address, height);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS undo (height INTEGER PRIMARY KEY, hash TEXT NOT NULL, changes TEXT NOT NULL);
 """
@@ -50,10 +68,14 @@ class UtxoSetError(RuntimeError):
     """The set and the chain disagree (a block that does not follow, a coin that is not there)."""
 
 
+def classify(script: bytes, params) -> tuple[str, int]:
+    """(the key an output is filed under, its kind): its address, or "script:<hash160>" for a script without one."""
+    kind, address, *_ = classify_script(script, params)
+    return address or "script:" + hash160(script).hex(), _KIND.get(kind, OTHER)
+
+
 def owner(script: bytes, params) -> str:
-    """The key an output is filed under: its address, or "script:<hash160>" for a script that has none."""
-    _kind, address, *_ = classify_script(script, params)
-    return address or "script:" + hash160(script).hex()
+    return classify(script, params)[0]
 
 
 def _is_data(script: bytes) -> bool:
@@ -71,7 +93,7 @@ class UtxoSet:
     def __init__(self, path: str | Path, params) -> None:
         self.path = Path(path)
         self.params = params
-        self.conn = sqlite3.connect(str(self.path))
+        self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self.conn.executescript(SCHEMA)
 
     def close(self) -> None:
@@ -92,12 +114,18 @@ class UtxoSet:
     def best(self) -> str | None:
         return self._meta("best")
 
-    def unspent(self, address: str) -> list[dict[str, Any]]:
+    @property
+    def history_for(self) -> set[str]:
+        """The addresses whose history is kept (the arcade's accounts when it was built or last widened)."""
+        return set(json.loads(self._meta("history_for") or "[]"))
+
+    def unspent(self, address: str, wallet_only: bool = False) -> list[dict[str, Any]]:
         row = self.conn.execute("SELECT utxos FROM coins WHERE address=?", (address,)).fetchone()
         if not row:
             return []
-        return [{"txid": txid.hex(), "vout": vout, "value": value, "height": height}
-                for txid, vout, value, height in RECORD.iter_unpack(row[0])]
+        return [{"txid": txid.hex(), "vout": vout, "value": value, "height": height, "kind": kind}
+                for txid, vout, value, height, kind in RECORD.iter_unpack(row[0])
+                if not wallet_only or kind == WALLET]
 
     def balance(self, address: str) -> int:
         return sum(c["value"] for c in self.unspent(address))
@@ -108,35 +136,52 @@ class UtxoSet:
                 for h, blob in self.conn.execute("SELECT height, txids FROM data_blocks WHERE height>=? ORDER BY height",
                                                  (since,))]
 
+    def history(self, addresses: Iterable[str]) -> list[dict[str, Any]]:
+        """utxos.activity's rows for these addresses, oldest first."""
+        addresses = list(addresses)
+        if not addresses:
+            return []
+        marks = ",".join("?" for _ in addresses)
+        cols = ("txid", "address", "height", "received", "spent", "paid_out", "other")
+        return [dict(zip(cols, row)) for row in self.conn.execute(
+            f"SELECT {', '.join(cols)} FROM history WHERE address IN ({marks}) ORDER BY height, txid", addresses)]
+
     def stats(self) -> dict[str, Any]:
         coins = addresses = value = 0
         for (blob,) in self.conn.execute("SELECT utxos FROM coins"):
             addresses += 1
-            for _t, _v, amount, _h in RECORD.iter_unpack(blob):
+            for _t, _v, amount, _h, _k in RECORD.iter_unpack(blob):
                 coins += 1
                 value += amount
         data = self.conn.execute("SELECT COUNT(*), COALESCE(SUM(LENGTH(txids)), 0) FROM data_blocks").fetchone()
-        return {"height": self.height, "best": self.best, "coins": coins, "addresses": addresses,
-                "value": value, "data_blocks": data[0], "data_txs": data[1] // TXID}
+        return {"height": self.height, "best": self.best, "coins": coins, "addresses": addresses, "value": value,
+                "data_blocks": data[0], "data_txs": data[1] // TXID,
+                "history_rows": self.conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]}
 
     # --- building from block 0 -------------------------------------------------------------------------------
 
     def build(self, blocks: Iterable[tuple[int, str, rawchain.Block]], tip: int,
-              progress: Callable[[int, int], None] | None = None) -> dict[str, Any]:
-        """Read `blocks` (height, hash, block) from 0 to `tip` in order and write the set they leave. Everything is
-        held in memory meanwhile -- the unspent set of a small chain, not its history -- and written once."""
-        live: dict[tuple[bytes, int], tuple[str, int, int]] = {}      # (txid, vout) -> (owner, value, height)
+              history_for: Iterable[str] = (), progress: Callable[[int, int], None] | None = None,
+              coins: bool = True) -> dict[str, Any]:
+        """Read `blocks` (height, hash, block) from 0 to `tip` in order and write the set they leave, and the history
+        of `history_for`. Everything is held in memory meanwhile -- the unspent set of a small chain, not its
+        history -- and written once. `coins=False` writes only the history of `history_for` (more accounts on a
+        set already built: their past needs the whole chain read again, their coins do not)."""
+        wanted = set(history_for)
+        live: dict[tuple[bytes, int], tuple[str, int, int, int]] = {}  # (txid, vout) -> (owner, value, height, kind)
         data: dict[int, list[bytes]] = {}
         undo: list[tuple[int, str, dict]] = []
+        rows: list[tuple] = []
         expected, prev = 0, None
         for height, block_hash, block in blocks:
             if height != expected or (prev is not None and block.prev != prev):
                 raise UtxoSetError(f"block {height} ({block_hash}) does not follow block {expected - 1}")
-            spent, made, carried = self._changes(height, block, lambda key: live.pop(key, None))
+            spent, made, carried, moved = self._changes(height, block, lambda key: live.pop(key, None), wanted)
             for key, coin in made:
                 live[key] = coin
             if carried:
                 data[height] = carried
+            rows += moved
             if tip - height < UNDO_DEPTH:
                 undo.append((height, block_hash, _undo_record(spent, made, block.prev)))
             prev, expected = block_hash, height + 1
@@ -144,20 +189,29 @@ class UtxoSet:
                 progress(height, len(live))
         if expected != tip + 1:
             raise UtxoSetError(f"the blocks stopped at {expected - 1}, not at {tip}")
-        by_owner: dict[str, list[bytes]] = defaultdict(list)
-        for (txid, vout), (who, value, height) in live.items():
-            by_owner[who].append(RECORD.pack(txid, vout, value, height))
         with self.conn:
-            self.conn.execute("DELETE FROM coins")
-            self.conn.execute("DELETE FROM data_blocks")
-            self.conn.execute("DELETE FROM undo")
-            self.conn.executemany("INSERT INTO coins VALUES (?,?)",
-                                  ((who, b"".join(sorted(recs))) for who, recs in by_owner.items()))
-            self.conn.executemany("INSERT INTO data_blocks VALUES (?,?)",
-                                  ((h, b"".join(ids)) for h, ids in data.items()))
-            self.conn.executemany("INSERT INTO undo VALUES (?,?,?)",
-                                  ((h, bh, json.dumps(ch)) for h, bh, ch in undo))
-            self._set_tip(tip, prev)
+            if coins:
+                by_owner: dict[str, list[bytes]] = defaultdict(list)
+                for (txid, vout), (who, value, height, kind) in live.items():
+                    by_owner[who].append(RECORD.pack(txid, vout, value, height, kind))
+                self.conn.execute("DELETE FROM coins")
+                self.conn.execute("DELETE FROM data_blocks")
+                self.conn.execute("DELETE FROM undo")
+                self.conn.execute("DELETE FROM history")
+                self.conn.executemany("INSERT INTO coins VALUES (?,?)",
+                                      ((who, b"".join(sorted(recs))) for who, recs in by_owner.items()))
+                self.conn.executemany("INSERT INTO data_blocks VALUES (?,?)",
+                                      ((h, b"".join(ids)) for h, ids in data.items()))
+                self.conn.executemany("INSERT INTO undo VALUES (?,?,?)",
+                                      ((h, bh, json.dumps(ch)) for h, bh, ch in undo))
+                self._set_tip(tip, prev)
+                known = wanted
+            else:
+                if self.height != tip:
+                    raise UtxoSetError(f"the history was read to {tip}, but the set is at {self.height}")
+                known = self.history_for | wanted
+            self.conn.executemany("INSERT OR REPLACE INTO history VALUES (?,?,?,?,?,?,?)", rows)
+            self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('history_for', ?)", (json.dumps(sorted(known)),))
         return self.stats()
 
     # --- following the chain ---------------------------------------------------------------------------------
@@ -168,22 +222,23 @@ class UtxoSet:
         Core's getrawtransaction): an input names the coin it spends, not whose it was."""
         if self.height is None or height != self.height + 1 or block.prev != self.best:
             raise UtxoSetError(f"block {height} does not follow the set's tip {self.height} ({self.best})")
-        made_here: dict[tuple[bytes, int], tuple[str, int, int]] = {}
+        made_here: dict[tuple[bytes, int], tuple[str, int, int, int]] = {}
 
         def take(key):
             script, _value = spent_output(key[0].hex(), key[1])
-            who = owner(script, self.params)
+            who, _kind = classify(script, self.params)
             gone = self._remove(who, key)
             if gone is None:
                 raise UtxoSetError(f"block {height} spends {key[0].hex()}:{key[1]}, which is not in the set")
-            return who, gone[0], gone[1]
+            return (who,) + gone
 
-        spent, made, carried = self._changes(height, block, take, made_here)
+        spent, made, carried, moved = self._changes(height, block, take, self.history_for, made_here)
         with self.conn:
-            for key, (who, value, h) in made_here.items():
-                self._add(who, key, value, h)
+            for key, (who, value, h, kind) in made_here.items():
+                self._add(who, key, value, h, kind)
             if carried:
                 self.conn.execute("INSERT OR REPLACE INTO data_blocks VALUES (?,?)", (height, b"".join(carried)))
+            self.conn.executemany("INSERT OR REPLACE INTO history VALUES (?,?,?,?,?,?,?)", moved)
             self.conn.execute("INSERT OR REPLACE INTO undo VALUES (?,?,?)",
                               (height, block_hash, json.dumps(_undo_record(spent, made, block.prev))))
             self.conn.execute("DELETE FROM undo WHERE height<=?", (height - UNDO_DEPTH,))
@@ -197,50 +252,71 @@ class UtxoSet:
             raise UtxoSetError(f"block {height} has no undo kept; build the set again")
         changes = json.loads(row[0])
         with self.conn:
-            for who, txid, vout, _value, _h in changes["made"]:
+            for who, txid, vout, _value, _h, _kind in changes["made"]:
                 self._remove(who, (bytes.fromhex(txid), vout))
-            for who, txid, vout, value, h in changes["spent"]:
-                self._add(who, (bytes.fromhex(txid), vout), value, h)
+            for who, txid, vout, value, h, kind in changes["spent"]:
+                self._add(who, (bytes.fromhex(txid), vout), value, h, kind)
             self.conn.execute("DELETE FROM data_blocks WHERE height=?", (height,))
+            self.conn.execute("DELETE FROM history WHERE height=?", (height,))
             self.conn.execute("DELETE FROM undo WHERE height=?", (height,))
             self._set_tip(height - 1, changes["prev"])
 
     # --- internals -------------------------------------------------------------------------------------------
 
-    def _changes(self, height, block, take, made_here=None):
-        """What a block does: the coins it spends (via `take`), the coins it makes, and its data-carrying txids.
-        A coin made and spent inside the same block never reaches the set."""
+    def _changes(self, height, block, take, wanted, made_here=None):
+        """What a block does: the coins it spends (via `take`), the coins it makes, its data-carrying txids, and the
+        history rows of the `wanted` addresses. Transactions are taken in block order, so a coin made earlier in the
+        block is found in `made_here`: it never reaches the set and leaves nothing to undo, but its spend is still
+        history. History counts what the wallet can spend (WALLET coins), as utxos.on_block does."""
         made_here = {} if made_here is None else made_here
-        spent, carried = [], []
+        spent, carried, moved = [], [], []
         for tx in block.txs:
             txid = bytes.fromhex(tx.txid)
+            got: dict[str, list[int]] = {}
             for i in tx.vin:
                 if i["vout"] == -1:
                     continue
                 key = (bytes.fromhex(i["txid"]), i["vout"])
                 if key in made_here:
-                    del made_here[key]          # made and spent in this block: never in the set, nothing to undo
-                    continue
-                got = take(key)
-                if got is not None:
-                    spent.append((key, got))
-            data = False
+                    coin = made_here.pop(key)
+                else:
+                    coin = take(key)
+                    if coin is None:
+                        continue
+                    spent.append((key, coin))
+                who, value, _h, kind = coin
+                if kind == WALLET and who in wanted:
+                    got.setdefault(who, [0, 0])[1] += value
+            outs, data = [], False
             for n, (value, script) in enumerate(tx.vout):
                 if _is_data(script):
                     data = True
-                elif _coin(script) and height > 0:
-                    made_here[(txid, n)] = (owner(script, self.params), value, height)
+                    outs.append(("", value))
+                    continue
+                if not _coin(script):
+                    outs.append(("", value))
+                    continue
+                who, kind = classify(script, self.params)
+                outs.append((who if kind == WALLET else "", value))
+                if height > 0:
+                    made_here[(txid, n)] = (who, value, height, kind)
+                    if kind == WALLET and who in wanted and value > 0:
+                        got.setdefault(who, [0, 0])[0] += value
             if data:
                 carried.append(txid)
-        return spent, list(made_here.items()), carried
+            for who, (received, gave) in got.items():
+                others = [(a, v) for a, v in outs if a != who]
+                moved.append((tx.txid, who, height, received, gave, sum(v for _, v in others) if gave else 0,
+                              next((a for a, v in others if a and v > 0), "") if gave else ""))
+        return spent, list(made_here.items()), carried, moved
 
-    def _add(self, who: str, key: tuple[bytes, int], value: int, height: int) -> None:
+    def _add(self, who: str, key: tuple[bytes, int], value: int, height: int, kind: int) -> None:
         row = self.conn.execute("SELECT utxos FROM coins WHERE address=?", (who,)).fetchone()
-        blob = (row[0] if row else b"") + RECORD.pack(key[0], key[1], value, height)
+        blob = (row[0] if row else b"") + RECORD.pack(key[0], key[1], value, height, kind)
         self.conn.execute("INSERT OR REPLACE INTO coins VALUES (?,?)", (who, blob))
 
-    def _remove(self, who: str, key: tuple[bytes, int]) -> tuple[int, int] | None:
-        """Take a coin out of `who`'s array: (value, height), or None when it is not there."""
+    def _remove(self, who: str, key: tuple[bytes, int]) -> tuple[int, int, int] | None:
+        """Take a coin out of `who`'s array: (value, height, kind), or None when it is not there."""
         row = self.conn.execute("SELECT utxos FROM coins WHERE address=?", (who,)).fetchone()
         if not row:
             return None
@@ -254,7 +330,7 @@ class UtxoSet:
                               (b"".join(RECORD.pack(*r) for r in kept), who))
         else:
             self.conn.execute("DELETE FROM coins WHERE address=?", (who,))
-        return gone[2], gone[3]
+        return gone[2], gone[3], gone[4]
 
     def _set_tip(self, height: int, block_hash: str | None) -> None:
         self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('height', ?)", (str(height),))
@@ -262,8 +338,9 @@ class UtxoSet:
 
 
 def _undo_record(spent, made, prev: str) -> dict:
-    return {"prev": prev, "spent": [[who, key[0].hex(), key[1], value, h] for key, (who, value, h) in spent],
-            "made": [[who, key[0].hex(), key[1], value, h] for key, (who, value, h) in made]}
+    return {"prev": prev,
+            "spent": [[who, key[0].hex(), key[1], value, h, kind] for key, (who, value, h, kind) in spent],
+            "made": [[who, key[0].hex(), key[1], value, h, kind] for key, (who, value, h, kind) in made]}
 
 
 # --- reading blocks ---------------------------------------------------------------------------------------------
@@ -273,14 +350,19 @@ def _read(raw: bytes, block_hash: str | None, params) -> rawchain.Block:
                                scrypt_below=params.scrypt_headers_below)
 
 
-def rpc_blocks(rpc, params, start: int, end: int, step: int = 500) -> Iterator[tuple[int, str, rawchain.Block]]:
-    """Blocks `start`..`end` through the Core, raw (`getblock h false`) and proved by rawchain, in batches."""
+def rpc_blocks(rpc, params, start: int, end: int, step: int = 500,
+               rest: float = 0.0) -> Iterator[tuple[int, str, rawchain.Block]]:
+    """Blocks `start`..`end` through the Core, raw (`getblock h false`) and proved by rawchain, in batches. `rest`:
+    time slept after each batch, as a share of the time the batch took (0: as fast as the Core answers)."""
     for first in range(start, end + 1, step):
+        took = time.perf_counter()
         heights = list(range(first, min(first + step, end + 1)))
         hashes = rpc.batch([("getblockhash", [h]) for h in heights])
         raws = rpc.batch([("getblock", [h, False]) for h in hashes])
         for height, block_hash, raw in zip(heights, hashes, raws):
             yield height, block_hash, _read(bytes.fromhex(raw), block_hash, params)
+        if rest:
+            time.sleep(min(5.0, (time.perf_counter() - took) * rest))
 
 
 def file_blocks(blocks_dir: str | Path, params, magic: bytes, tip_hash: str,
@@ -340,11 +422,11 @@ def spent_output_by_rpc(rpc) -> Callable[[str, int], tuple[bytes, int]]:
     return look
 
 
-def follow(uset: UtxoSet, rpc, params) -> int:
-    """Bring the set to the Core's tip, block by block, rolling back first when its tip left the chain (a reorg).
-    Returns how many blocks were added."""
+def follow(uset: UtxoSet, rpc, params, upto: int | None = None) -> int:
+    """Bring the set to the Core's tip (or `upto`), block by block, rolling back first when its tip left the chain
+    (a reorg). Returns how many blocks were added."""
     added = 0
-    tip = int(rpc.call("getblockcount"))
+    tip = int(rpc.call("getblockcount")) if upto is None else int(upto)
     look = spent_output_by_rpc(rpc)
     while uset.height is not None:
         height = uset.height
@@ -358,6 +440,10 @@ def follow(uset: UtxoSet, rpc, params) -> int:
                                                    params), look)
         added += 1
     return added
+
+
+#: The network magic in front of every block in a Core's blk*.dat (chainparams.cpp pchMessageStart), by chain.
+MAGIC = {"kot": bytes.fromhex("3db58000")}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -379,6 +465,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--blocks", type=Path)
     args = ap.parse_args(argv)
     params = NETWORKS[args.net]
+    if not params.full_utxo_set:
+        raise SystemExit(f"{params.label}: the full unspent set is a Kotia-only feature for now (Params.full_utxo_set)")
     uset = UtxoSet(args.db, params)
     try:
         if args.action in ("build", "follow"):
@@ -391,8 +479,8 @@ def main(argv: list[str] | None = None) -> int:
                                          params.genesis or None)
                 else:
                     blocks = rpc_blocks(rpc, params, 0, tip)
-                said = uset.build(blocks, tip, progress=lambda h, n: print(f"{h:>9}  unspent {n:>8}  "
-                                                                           f"{time.time() - began:6.0f} s", flush=True))
+                said = uset.build(blocks, tip, progress=lambda h, n: print(
+                    f"{h:>9}  {100 * h / max(tip, 1):5.1f} %  unspent {n:>8}  {time.time() - began:6.0f} s", flush=True))
                 said["seconds"] = round(time.time() - began)
                 print(json.dumps(said, indent=1))
             else:
@@ -409,10 +497,6 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         uset.close()
     return 0
-
-
-#: The network magic in front of every block in a Core's blk*.dat (chainparams.cpp pchMessageStart), by chain.
-MAGIC = {"kot": bytes.fromhex("3db58000")}
 
 
 if __name__ == "__main__":

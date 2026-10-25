@@ -53,6 +53,10 @@ from ..messaging.scanner import (Scanner, repair_announcement_heights,
 
 log = logging.getLogger(__name__)
 
+#: Time slept per batch of blocks read for a chain's whole unspent set, as a share of the time the batch took
+#: (utxoset.rpc_blocks): about 60% of one core, so pages keep answering while Kotia's 1.5 million blocks are read.
+UTXOSET_REST = 0.7
+
 #: How often to ask the node for its height. Cheap: one RPC call per chain.
 POLL_SECONDS = 5.0
 
@@ -204,6 +208,7 @@ class BlockWatcher:
                       self._run_trader,
                       self._scan_collections,
                       self._watch_doge_accounts,
+                      self._keep_utxo_sets,
                       self._keep_faucets,
                       self._run_watch,
                       self._walk_home):
@@ -330,6 +335,84 @@ class BlockWatcher:
             if chain.network in backfilling or not self.state.chain_ready(chain):
                 continue
             self._watch_accounts_on(chain, backfilling)
+
+    def _keep_utxo_sets(self) -> None:
+        """KOTIA ONLY for now (Params.full_utxo_set, arcade/utxoset.py, 2026-10-25): the chain's whole unspent set,
+        built once from block 0 through this arcade's own Core, then followed every pass. Kotia's Core has neither
+        `scantxoutset` nor `importmulti`, so an account's coins and history from before the floor came from nowhere;
+        from the set they are seeded into the index the wallet reads (`_utxoset_seed`). Each pass runs on a thread
+        of its own, one per chain, so the watcher and the pages never wait for it."""
+        busy = self.__dict__.setdefault("_utxoset_busy", set())
+        for chain in list(getattr(self.state, "addons", None) or []):
+            if (not getattr(chain.params, "full_utxo_set", False) or chain.borrowed or chain.network in busy
+                    or not self.state.chain_ready(chain)):
+                continue
+            busy.add(chain.network)
+            threading.Thread(target=self._utxoset_pass, args=(chain, busy), daemon=True,
+                             name=f"arcade-utxoset-{chain.network}").start()
+
+    def _utxoset_pass(self, chain, busy: set) -> None:
+        from .. import utxos as utxoslib, utxoset as utxosetlib
+        net, params = chain.network, chain.params
+        progress = self.state.utxoset_progress.setdefault(net, {"phase": "waiting", "height": 0, "tip": 0})
+        try:
+            uset = self.state.utxoset(chain)
+            index = self.state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                watched = utxoslib.watching(db)
+            with chain.local_rpc() as rpc:
+                if uset.height is None:
+                    tip = int(rpc.call("getblockcount"))
+                    progress.update(phase="building", height=0, tip=tip)
+                    log.info("%s: building the whole unspent set from block 0 to %s", params.label, tip)
+                    uset.build(utxosetlib.rpc_blocks(rpc, params, 0, tip, rest=UTXOSET_REST), tip,
+                               history_for=watched, progress=lambda h, _n: progress.update(height=h))
+                utxosetlib.follow(uset, rpc, params)
+                new = watched - uset.history_for
+                if new:
+                    # Accounts added since: their coins are in the set already, their past needs the chain read again.
+                    tip = uset.height
+                    progress.update(phase="history", height=0, tip=tip)
+                    uset.build(utxosetlib.rpc_blocks(rpc, params, 0, tip, rest=UTXOSET_REST), tip, history_for=new,
+                               coins=False, progress=lambda h, _n: progress.update(height=h))
+            progress.update(phase="ready", height=uset.height, tip=uset.height)
+            self._utxoset_seed(chain, uset)
+        except Exception:                                      # noqa: BLE001 -- next pass tries again
+            progress["phase"] = "waiting"
+            log.warning("%s: the unspent set's pass failed", params.label, exc_info=True)
+        finally:
+            busy.discard(net)
+
+    def _utxoset_seed(self, chain, uset) -> None:
+        """Each watched address's coins (those the wallet can spend) and history from the set, into the index the
+        wallet reads, once per address. Only when the set is at or past the index: a coin the set still holds is then
+        unspent at every height the index has read, and the index takes over from there (INSERT OR IGNORE: a coin or
+        row it already has stays as it is)."""
+        net = chain.network
+        index = self.state.token_index(chain)
+        key = f"utxoset_seeded:{net}"
+        seeded = set(self.state.setting(key) or [])
+        with contextlib.closing(index.open()) as db:
+            from .. import utxos as utxoslib
+            if (uset.height or 0) < (index.indexed_height() or 0):
+                return
+            todo = sorted((utxoslib.watching(db) & uset.history_for) - seeded)
+            if not todo:
+                return
+            with db.conn:
+                for address in todo:
+                    db.conn.executemany(
+                        "INSERT OR IGNORE INTO utxo (txid, vout, address, value, height) VALUES (?,?,?,?,?)",
+                        [(c["txid"], c["vout"], address, c["value"], c["height"])
+                         for c in uset.unspent(address, wallet_only=True)])
+                    db.conn.executemany(
+                        "INSERT OR IGNORE INTO activity (txid, address, height, received, spent, paid_out, other) "
+                        "VALUES (?,?,?,?,?,?,?)",
+                        [(r["txid"], r["address"], r["height"], r["received"], r["spent"], r["paid_out"], r["other"])
+                         for r in uset.history([address])])
+        self.state.set_setting(key, sorted(seeded | set(todo)))
+        log.info("%s: %d accounts' coins and history read from the unspent set", chain.params.label, len(todo))
+        self.state.bump_generation()
 
     def _keep_faucets(self) -> None:
         """Every test chain's faucet, every ten minutes (the app's `keep_faucets`, 2026-10-18)."""

@@ -251,6 +251,11 @@ class Params:
     #: Headers of a version below this are named by their scrypt hash, newer ones by sha256d (Kotia 7, kotiacash
     #: block.cpp GetHash). 0: always sha256d.
     scrypt_headers_below: int = 0
+    #: Keep the chain's whole unspent set, by address, built from block 0 (arcade/utxoset.py, 2026-10-25): what the
+    #: wallet reads back an account's coins and history from when the Core has no `scantxoutset` / `importmulti`.
+    #: KOTIA ONLY for now -- a small chain (79,022 coins, 10 minutes to build). Another chain needs adapting first:
+    #: its size, header naming, block-file magic and transaction parts (utxoset.py's docstring says what).
+    full_utxo_set: bool = False
     #: Whether getblockchaininfo's verificationprogress can be trusted as "this node is done". True for a
     #: chain whose chainTxData matches its real traffic. False when that estimate is a stub: Wojakcoin's
     #: is 100 transactions a second, so the figure stays near 0.9 at a live tip and never reaches 0.9999.
@@ -639,6 +644,7 @@ KOTIA = dataclasses.replace(
     # "T": Luckycoin already wears the "K" badge.
     letter="T", family="KOT", net_word="kotia", real_coins=True, bech32_hrp="", mweb=False,
     tx_time=True, block_sig=True, scrypt_headers_below=7,
+    full_utxo_set=True,         # Kotia only (utxoset.py)
 )
 
 # Wojakcoin MAINNET. WojakCoin 1.21.3 (wojakcore chainparams.cpp / chainparamsbase.cpp) is Bitcoin Core's code:

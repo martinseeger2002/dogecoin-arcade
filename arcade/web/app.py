@@ -27438,6 +27438,16 @@ def create_app(state: AppState) -> FastAPI:
             if chain is not None and row["now"] != coreslib.OFF:
                 sync = state.chain_sync(chain)
                 row["sync"] = {k: sync.get(k) for k in ("ready", "progress", "blocks", "headers", "online")}
+            # The chain's whole unspent set (KOTIA ONLY for now, arcade/utxoset.py, 2026-10-25): building, reading an
+            # account's past, or ready, and how far.
+            row["utxoset"] = None
+            if chain is not None and getattr(chain.params, "full_utxo_set", False) and not chain.borrowed:
+                said = dict(state.utxoset_progress.get(row["net"]) or {"phase": "waiting", "height": 0, "tip": 0})
+                try:
+                    said["built"] = state.utxoset(chain).height
+                except Exception:                          # noqa: BLE001 -- never takes the panel down
+                    said["built"] = None
+                row["utxoset"] = said
         # Chains other arcades share that this arcade's version does not know yet (a newer chain).
         unknown = sorted((net, s.get("sharers", 0)) for net, s in status.items()
                          if net not in NETWORKS and s.get("sharers"))

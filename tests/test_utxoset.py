@@ -81,12 +81,12 @@ def test_build_keeps_only_what_is_unspent_by_address(tmp_path):
     s = U.UtxoSet(tmp_path / "u.sqlite", KOT)
     said = s.build(parsed(blocks), tip=3)
     assert s.balance(A) == 199_000_000                               # block 0's 50 is never a coin; 5 was spent
-    assert s.unspent(B) == [{"txid": ids["make"], "vout": 1, "value": 99_000_000, "height": 3}]   # its 3 went on
-    assert s.unspent(C) == [{"txid": ids["again"], "vout": 0, "value": 190_000_000, "height": 3}]
+    assert s.unspent(B) == [{"txid": ids["make"], "vout": 1, "value": 99_000_000, "height": 3, "kind": U.WALLET}]
+    assert s.unspent(C) == [{"txid": ids["again"], "vout": 0, "value": 190_000_000, "height": 3, "kind": U.WALLET}]
     assert said["coins"] == 3 and said["addresses"] == 3 and said["height"] == 3 and said["best"] == blocks[3][1]
     # Only the block whose transaction carries an OP_RETURN, as an array of its txids.
     assert s.data_blocks() == [(2, [ids["spend"]])]
-    # 48 bytes a coin, nothing else per coin.
+    # 49 bytes a coin, nothing else per coin.
     assert len(s.conn.execute("SELECT utxos FROM coins WHERE address=?", (B,)).fetchone()[0]) == U.RECORD.size
 
 
@@ -129,3 +129,86 @@ def test_building_from_block_files_follows_the_chain_not_the_file_order(tmp_path
     assert s.balance(C) == 190_000_000                               # the orphan's 7 KOT for C is not counted
     with pytest.raises(U.UtxoSetError):
         list(U.file_blocks(tmp_path, KOT, magic, blocks[3][1], genesis="11" * 32))
+
+
+def test_history_is_kept_for_the_addresses_asked_for(tmp_path):
+    """utxos.activity's rows: received, spent, paid out, the first other address -- for the accounts only."""
+    blocks, ids = chain()
+    s = U.UtxoSet(tmp_path / "u.sqlite", KOT)
+    s.build(parsed(blocks), tip=3, history_for={A, B})
+    rows = {(r["txid"], r["address"]): r for r in s.history([A, B, C])}
+    assert set(rows) == {(ids["cb1"], A), (ids["spend"], A), (ids["spend"], B), (ids["make"], B)}
+    assert rows[(ids["cb1"], A)] == {"txid": ids["cb1"], "address": A, "height": 1, "received": 5 * COIN, "spent": 0,
+                                     "paid_out": 0, "other": ""}
+    spend = rows[(ids["spend"], A)]                     # 5 in, 1.99 back: 3 to B (and the data output's nothing)
+    assert (spend["received"], spend["spent"], spend["paid_out"], spend["other"]) == (199_000_000, 5 * COIN, 3 * COIN, B)
+    # B's 3 went on in block 3 (to C and 0.99 back), C is not asked for and keeps no rows.
+    assert (rows[(ids["make"], B)]["spent"], rows[(ids["make"], B)]["received"]) == (3 * COIN, 99_000_000)
+    assert s.history_for == {A, B}
+
+
+def test_more_accounts_get_their_history_without_the_coins_being_built_again(tmp_path):
+    blocks, ids = chain()
+    s = U.UtxoSet(tmp_path / "u.sqlite", KOT)
+    s.build(parsed(blocks), tip=3, history_for={A})
+    s.build(parsed(blocks), tip=3, history_for={C}, coins=False)
+    assert s.history_for == {A, C}
+    assert {r["txid"] for r in s.history([C])} == {ids["make"], ids["again"]}
+    assert s.balance(C) == 190_000_000                  # the coins were not touched
+
+
+def test_a_staking_reward_is_a_coin_but_not_a_wallet_coin(tmp_path):
+    """Kotia pays stakers to their public key (P2PK): the key's address holds it, the wallet cannot sign it."""
+    blocks, _ = chain()
+    pub = bytes.fromhex("02" + "11" * 32)
+    stake = tx([None], [(0, b""), (20 * COIN, bytes([33]) + pub + b"\xac")])
+    h4, r4 = block(blocks[3][1], [stake])
+    s = U.UtxoSet(tmp_path / "u.sqlite", KOT)
+    s.build(parsed(blocks + [(4, h4, r4)]), tip=4)
+    key = b58check_encode(46, __import__("arcade.script", fromlist=["hash160"]).hash160(pub))
+    assert s.balance(key) == 20 * COIN and s.unspent(key)[0]["kind"] == U.PUBKEY
+    assert s.unspent(key, wallet_only=True) == []
+
+
+def test_the_full_set_is_kotia_only():
+    assert [n for n, p in NETWORKS.items() if p.full_utxo_set] == ["kot"]
+
+
+def test_the_watcher_seeds_account_coins_and_history_into_the_wallet_index(tmp_path):
+    """The set is what the wallet's index reads an account back from on Kotia: its wallet coins and its history,
+    once per address, and only when the set is at or past what the index has read."""
+    import contextlib
+    import types
+
+    from arcade import utxos
+    from arcade.ledger import LedgerIndex
+    from arcade.web.watcher import BlockWatcher
+
+    blocks, ids = chain()
+    s = U.UtxoSet(tmp_path / "kot-utxoset.sqlite", KOT)
+    s.build(parsed(blocks), tip=3, history_for={A, B})
+    index = LedgerIndex(tmp_path / "kot-ledger.sqlite", KOT, rpc_factory=lambda: None)
+    with contextlib.closing(index.open()) as db:
+        utxos.install(db)
+        for address in (A, B):
+            utxos.watch(db, address, 0, "account (derived)")
+        db.conn.commit()
+    settings, bumps = {}, []
+    state = types.SimpleNamespace(token_index=lambda chain: index, setting=lambda k, d=None: settings.get(k, d),
+                                  set_setting=settings.__setitem__, bump_generation=lambda: bumps.append(1))
+    me = types.SimpleNamespace(state=state)
+    kot = types.SimpleNamespace(network="kot", params=KOT)
+
+    index.indexed_height = lambda: 9                                # the index is past the set: not yet
+    BlockWatcher._utxoset_seed(me, kot, s)
+    assert not bumps
+    index.indexed_height = lambda: None                             # below the floor: nothing read yet
+    BlockWatcher._utxoset_seed(me, kot, s)
+    with contextlib.closing(index.open()) as db:
+        assert utxos.balance(db, A) == 199_000_000 and utxos.balance(db, B) == 99_000_000
+        rows = utxos.activity(db, [A])
+        assert {r["txid"] for r in rows} == {ids["cb1"], ids["spend"]}
+        assert next(r for r in rows if r["txid"] == ids["spend"])["net"] == 199_000_000 - 5 * COIN
+    assert settings["utxoset_seeded:kot"] == sorted([A, B]) and bumps == [1]
+    BlockWatcher._utxoset_seed(me, kot, s)                          # once per address
+    assert bumps == [1]

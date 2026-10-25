@@ -1776,6 +1776,16 @@ section.panel h2{margin-top:0}
                         : !sy.online ? 'not answering yet: closed in the Wallet'
                         : 'syncing ' + (100 * (sy.progress || 0)).toFixed(1) + '% (block ' + (sy.blocks || 0).toLocaleString()
                           + ' of ' + (sy.headers || 0).toLocaleString() + '): closed in the Wallet until done');
+      // The whole unspent set (Kotia only for now): the wallet's coins and history from block 0 (2026-10-25).
+      var us = r.utxoset;
+      if (us) {
+        var pct = us.tip ? (100 * (us.height || 0) / us.tip).toFixed(1) + '%' : '';
+        bits.push(us.phase === 'building' ? 'full unspent set: building ' + pct + ' (block ' + (us.height || 0).toLocaleString()
+                                            + ' of ' + (us.tip || 0).toLocaleString() + ')'
+                  : us.phase === 'history' ? 'full unspent set: reading new accounts\u2019 history ' + pct
+                  : us.built != null ? 'full unspent set at block ' + us.built.toLocaleString()
+                  : 'full unspent set: starts once the node has synced');
+      }
       if (m.sharing) bits.push('shared' + (m.borrowers ? ', ' + m.borrowers + ' borrowing' : ''));
       if (m.disagree) bits.push('SHARERS DISAGREE about the chain tip');
       if (r.chosen !== r.now) bits.push('becomes \u201c' + CORE_WORDS[r.chosen].toLowerCase() + '\u201d at the next restart');
