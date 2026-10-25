@@ -1,0 +1,603 @@
+{% extends "base.html" %}
+{% block title %}Explore · {{ brand.name }}{% endblock %}
+{% block body %}
+{# The Explore tab (2026-10-25, SadFrog): "lets make an explore tab that has tabs for every coin the node has
+   ordinals/omni on and if both seperate drop downs to view which protocol - starting with doginals, drc-20s, then
+   pepinals, then bellinals and then litecoin ordinals, litecoin omni, and then the rest ... a user should be able to
+   look up known collections, inscription id's, inscription numbers, file types." The questions Admin -> Ords ->
+   Explorer asks, read only and open to anybody, answered by the most complete index of each chain (/explore/api/*). #}
+{% include "_pick.html" %}
+<style>
+  .xp h1{margin:0 0 4px}
+  .xp .xpcoins{margin:10px 0 6px}
+  .xp .xpproto{display:flex;gap:8px;align-items:center;margin:8px 0 4px;flex-wrap:wrap}
+  .xp .xpproto select{font-size:16px}
+  .xp .xpcard{border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}
+  .xp .xpcard h2{font-size:1.05rem;margin:0 0 8px}
+  .xp .xprow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .xp .xprow input[type=search],.xp .xprow input[type=text]{flex:1 1 220px;min-width:0;font-size:16px}
+  .xp .xpsaid{margin:8px 0 0;font-size:.9rem}
+  .xp .xpnote{font-size:.84rem;margin:6px 0 0}
+  .xp .xpwarn{border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line));border-radius:10px;padding:10px 12px;
+    font-size:.9rem;margin:10px 0}
+  /* The viewer: the inscription big, its facts beside it (under it on a phone). */
+  .xp .xpnav{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+  .xp .xpjump{display:flex;gap:4px;align-items:center}
+  .xp .xpjump input{width:8.5em;font-size:16px}
+  .xp .xpbody{display:grid;grid-template-columns:minmax(0,440px) minmax(0,1fr);gap:16px;align-items:start}
+  .xp .xpframe{width:100%;aspect-ratio:1;border:1px solid var(--line);border-radius:10px;overflow:hidden;
+    background:color-mix(in srgb,var(--fg) 4%,transparent);display:flex;align-items:center;justify-content:center}
+  .xp .xpframe iframe{width:100%;height:100%;border:0;display:block;background:transparent}
+  .xp .xpframe pre{margin:0;padding:10px;width:100%;height:100%;box-sizing:border-box;overflow:auto;white-space:pre-wrap;
+    word-break:break-word;font-size:.8rem;align-self:stretch}
+  .xp .xpnone{padding:14px;text-align:center;font-size:.88rem}
+  .xp .xpfacts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 12px;margin:0;font-size:.92rem}
+  .xp .xpfacts dt{color:var(--muted)}
+  .xp .xpfacts dd{margin:0;overflow-wrap:anywhere;word-break:break-word}
+  .xp .xpfacts dd code{font-size:.82rem}
+  .xp .xplink{background:none;border:0;padding:0;box-shadow:none;min-height:0;color:var(--accent);cursor:pointer;
+    font:inherit;text-decoration:underline;overflow-wrap:anywhere;text-align:left}
+  /* A grid of pieces (a type, a collection): small frames, the number under each. */
+  .xp .xpgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:10px;margin-top:10px}
+  .xp .xptile{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:none;padding:0;cursor:pointer;
+    text-align:left;color:inherit;font:inherit;display:flex;flex-direction:column;min-height:0;box-shadow:none}
+  .xp .xptile .xpthumb{aspect-ratio:1;width:100%;display:flex;align-items:center;justify-content:center;
+    background:color-mix(in srgb,var(--fg) 4%,transparent);overflow:hidden;position:relative}
+  .xp .xptile iframe{width:100%;height:100%;border:0;pointer-events:none}
+  .xp .xptile .xptype{font-size:.75rem;color:var(--muted);padding:6px;text-align:center;word-break:break-all}
+  .xp .xptile .xpcap{font-size:.8rem;padding:5px 7px;border-top:1px solid var(--line)}
+  .xp .xptile:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .xp .xpcolls{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:10px}
+  .xp .xpcoll .xpcap b{display:block}
+  .xp .xpmore{margin-top:10px}
+  .xp .xprich{width:100%;border-collapse:collapse;font-size:.88rem;margin-top:8px}
+  .xp .xprich th,.xp .xprich td{text-align:left;padding:6px 8px;border-top:1px solid var(--line);vertical-align:top}
+  .xp .xprich td.n,.xp .xprich th.n{text-align:right;white-space:nowrap}
+  .xp .xprich td.addr{overflow-wrap:anywhere;word-break:break-all}
+  .xp .xppager{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+  @media (max-width:700px){
+    .xp .xpbody{grid-template-columns:minmax(0,1fr)}
+    .xp .xprich thead{display:none}
+    .xp .xprich,.xp .xprich tbody{display:block;width:auto}
+    .xp .xprich tr{display:flex;flex-wrap:wrap;gap:2px 12px;border-top:1px solid var(--line);padding:6px 0}
+    .xp .xprich td{display:block;border:0;padding:0}
+    .xp .xprich td.addr{flex:1 1 calc(100% - 4em);min-width:0}
+    .xp .xprich td.n{text-align:left;font-size:.84rem}
+    .xp .xprich td.n[data-l]::before{content:attr(data-l) " ";color:var(--muted)}
+  }
+</style>
+<section class="xp">
+  <h1>Explore</h1>
+  <p class="muted" style="margin:0">Inscriptions, tokens and collections on every chain this arcade reads, from the
+    most complete index of each: this arcade&rsquo;s own, or a linked arcade&rsquo;s.</p>
+  {% if not chains %}
+  <p class="xpwarn">This arcade reads no chain&rsquo;s inscriptions yet.</p>
+  {% else %}
+  <nav class="ex-seg xpcoins" id="xpcoins" aria-label="Coin">
+    {%- for c in chains %}
+    <a href="/explore?net={{ c.net }}" data-net="{{ c.net }}">{{ c.chain }}</a>
+    {%- endfor %}
+  </nav>
+  <div class="xpproto" id="xpprotobox" hidden>
+    <label for="xpproto">Protocol</label>
+    <select id="xpproto"></select>
+  </div>
+  <div id="xpstate"></div>
+
+  {# --- inscriptions --- #}
+  <div id="xpords">
+    <div class="xpcard">
+      <h2>Search</h2>
+      <div class="xprow">
+        <input id="xpq" type="search" autocomplete="off" placeholder="inscription number or id, txid:vout, address"
+               aria-label="Search inscriptions">
+        <button type="button" class="small" id="xpgo">Search</button>
+      </div>
+      <p class="muted xpnote">A number (<code>0</code>, <code>#1234</code>), an inscription id (<code>&lt;txid&gt;i0</code>),
+        a coin as <code>txid:vout</code> (what sits on it), an address (its token balances), or a name like
+        <code>jon.doge</code>.</p>
+      <div id="xpsaid" class="xpsaid" aria-live="polite"></div>
+    </div>
+
+    <div class="xpcard" id="xpview" aria-label="Inscription viewer">
+      <div class="xpnav">
+        <button type="button" class="small" id="xpprev" aria-label="Previous inscription">&lsaquo; Previous</button>
+        <label class="xpjump"><span>#</span><input autocomplete="off" type="number" id="xpnum" min="0" step="1"
+               inputmode="numeric" aria-label="Inscription number"></label>
+        <button type="button" class="small" id="xpjumpgo">Go</button>
+        <button type="button" class="small" id="xpnext" aria-label="Next inscription">Next &rsaquo;</button>
+      </div>
+      <div class="xpbody">
+        <div class="xpframe" id="xpframe"></div>
+        <dl class="xpfacts" id="xpfacts"><dt>&nbsp;</dt><dd class="muted">Loading&hellip;</dd></dl>
+      </div>
+    </div>
+
+    <div class="xpcard">
+      <h2>By file type</h2>
+      <div class="xprow">
+        <select id="xptype" aria-label="File type" style="font-size:16px">
+          <option value="image/">Any image</option>
+          <option value="image/png">PNG</option>
+          <option value="image/webp">WebP</option>
+          <option value="image/jpeg">JPEG</option>
+          <option value="image/gif">GIF</option>
+          <option value="image/svg+xml">SVG</option>
+          <option value="image/avif">AVIF</option>
+          <option value="text/html">HTML</option>
+          <option value="text/plain">Text</option>
+          <option value="application/json">JSON</option>
+          <option value="text/javascript">JavaScript</option>
+          <option value="audio/">Audio</option>
+          <option value="video/">Video</option>
+          <option value="model/">3D model</option>
+          <option value="">Another type&hellip;</option>
+        </select>
+        <input id="xptypeother" type="text" autocomplete="off" placeholder="e.g. application/pdf" aria-label="Content type"
+               hidden>
+        <label class="xpjump">from #<input id="xptypefrom" type="number" autocomplete="off" min="0" step="1" inputmode="numeric"
+               aria-label="Start at inscription number"></label>
+        <button type="button" class="small" id="xptypego">Show</button>
+      </div>
+      <div id="xptypesaid" class="xpsaid" aria-live="polite"></div>
+      <div class="xpgrid" id="xptypegrid"></div>
+      <button type="button" class="small xpmore" id="xptypemore" hidden>More</button>
+    </div>
+
+    <div class="xpcard">
+      <h2>Collections</h2>
+      <div class="xprow">
+        <input id="xpcollq" type="search" autocomplete="off" placeholder="Search known collections"
+               aria-label="Search collections">
+      </div>
+      <p class="muted xpnote">Collections published to the arcades&rsquo; collection registry.</p>
+      <div id="xpcollsaid" class="xpsaid" aria-live="polite"></div>
+      <div class="xpcolls" id="xpcolls"></div>
+      <div id="xpcoll" hidden>
+        <div class="xprow" style="margin-top:12px">
+          <button type="button" class="small" id="xpcollback">&lsaquo; All collections</button>
+          <b id="xpcollname"></b>
+        </div>
+        <p class="muted xpnote" id="xpcolldesc"></p>
+        <div class="xpgrid" id="xpcollgrid"></div>
+        <div class="xppager">
+          <button type="button" class="small" id="xpcollprev">&lsaquo; Previous</button>
+          <span class="muted" id="xpcollpage"></span>
+          <button type="button" class="small" id="xpcollnext">Next &rsaquo;</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# --- the -20 tokens --- #}
+  <div id="xptokens" hidden>
+    <div class="xpcard">
+      <h2 id="xptokh">Tokens</h2>
+      <div class="xprow">
+        <span class="pick" id="xptickpick"><input type="search" class="pick-q" placeholder="Search a ticker"
+              autocomplete="off" role="combobox" aria-expanded="false" aria-label="Token ticker"
+              style="font-size:16px"><span class="pick-list" role="listbox" hidden></span></span>
+      </div>
+      <div id="xptok" aria-live="polite"></div>
+    </div>
+  </div>
+
+  {# --- Omni --- #}
+  <div id="xpomni" hidden>
+    <div class="xpcard">
+      <h2>Omni on <span id="xpomnichain">Litecoin</span></h2>
+      <p>Omni Layer assets (OmniLite) are being connected: this arcade will read them from an OmniLite node, with the
+        same search and viewer as the inscriptions.</p>
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<script>
+(function () {
+  'use strict';
+  var CHAINS = {{ chains | tojson }};
+  if (!CHAINS.length) return;
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function num(n) { return n == null ? '' : Number(n).toLocaleString('en-US'); }
+  function bytes(n) { n = Number(n || 0); return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(2) + ' MB'; }
+  function link(label, go) { var b = el('button', 'xplink', label); b.type = 'button'; b.onclick = go; return b; }
+  var X = {chain: null, proto: null, number: 0, last: -1, tick: null, typeNext: null, typeAsked: '', coll: null, collAt: 0};
+
+  function api(path, args) {
+    var qs = Object.keys(args).map(function (k) { return k + '=' + encodeURIComponent(args[k]); }).join('&');
+    return fetch('/explore/api/' + path + '?' + qs, {headers: {'Accept': 'application/json'}, cache: 'no-store'})
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
+        return j;
+      }); });
+  }
+  function from(j) {
+    if (!j || !j.from) return el('span');
+    return el('div', 'muted xpnote', 'Answered by ' + j.from + (j.walked_to ? ', walked to block ' + num(j.walked_to) : ''));
+  }
+  function facts(dl, rows) {
+    dl.textContent = '';
+    rows.forEach(function (f) {
+      if (f[1] == null || f[1] === '') return;
+      dl.appendChild(el('dt', '', f[0]));
+      var dd = el('dd');
+      if (f[1] instanceof Node) dd.appendChild(f[1]); else dd.textContent = String(f[1]);
+      dl.appendChild(dd);
+    });
+  }
+
+  // --- the coin tabs and the protocol menu --------------------------------------------------------------------
+  function pickChain(net, proto, push) {
+    var c = CHAINS.filter(function (x) { return x.net === net; })[0] || CHAINS[0];
+    X.chain = c;
+    document.querySelectorAll('#xpcoins a').forEach(function (a) {
+      var on = a.getAttribute('data-net') === c.net;
+      a.classList.toggle('on', on);
+      if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    });
+    var sel = $('xpproto');
+    sel.textContent = '';
+    c.protocols.forEach(function (p) { var o = el('option', '', p.label); o.value = p.key; sel.appendChild(o); });
+    $('xpprotobox').hidden = c.protocols.length < 2;
+    var want = c.protocols.filter(function (p) { return p.key === proto; })[0] || c.protocols[0];
+    sel.value = want.key;
+    pickProto(want.key, push);
+  }
+  function pickProto(key, push) {
+    var c = X.chain, p = c.protocols.filter(function (x) { return x.key === key; })[0] || c.protocols[0];
+    X.proto = p;
+    if (push !== false) {
+      try { history.replaceState(null, '', '/explore?net=' + c.net + (p.key !== 'ords' ? '&p=' + p.key : '')); } catch (e) {}
+    }
+    $('xpords').hidden = p.kind !== 'ord';
+    $('xptokens').hidden = p.kind !== 'token';
+    $('xpomni').hidden = p.kind !== 'omni';
+    var st = $('xpstate'); st.textContent = '';
+    if (p.kind !== 'omni' && !c.answers) {
+      st.appendChild(el('p', 'xpwarn', c.chain + ' is not indexed on this arcade yet, and no linked arcade walking it is '
+        + 'heard just now: what is asked below may not be answered.'));
+    }
+    if (p.kind === 'ord') {
+      X.number = 0; X.last = -1; $('xpsaid').textContent = '';
+      $('xptypegrid').textContent = ''; $('xptypesaid').textContent = ''; $('xptypemore').hidden = true;
+      showNumber(0);
+      collections('');
+    } else if (p.kind === 'token') {
+      X.tick = null; $('xptok').textContent = ''; PICK.q.value = '';
+      $('xptokh').textContent = p.label + ' tokens on ' + c.chain;
+    } else {
+      $('xpomnichain').textContent = c.chain;
+    }
+  }
+  document.querySelectorAll('#xpcoins a').forEach(function (a) {
+    a.addEventListener('click', function (e) { e.preventDefault(); pickChain(a.getAttribute('data-net')); });
+  });
+  $('xpproto').onchange = function () { pickProto($('xpproto').value); };
+
+  // --- the viewer ---------------------------------------------------------------------------------------------
+  function contentInto(box, x, big) {
+    box.textContent = '';
+    var ct = String((x.delegate ? x.delegate_content_type : x.content_type) || '').toLowerCase(),
+      src = '/content/' + encodeURIComponent(x.id);
+    if (/^image\//.test(ct) || /^text\/html/.test(ct) || /svg/.test(ct)) {
+      // Sandboxed, scripts only, never this page's origin (as the Wallet and Admin -> Ords show one).
+      var frame = document.createElement('iframe');
+      frame.src = /^image\//.test(ct) ? src + '/fit' : src;
+      frame.title = 'Inscription ' + x.id; frame.loading = 'lazy';
+      frame.setAttribute('sandbox', 'allow-scripts'); frame.setAttribute('scrolling', 'no');
+      frame.setAttribute('referrerpolicy', 'no-referrer');
+      box.appendChild(frame);
+    } else if (big && (/^text\//.test(ct) || /json|javascript/.test(ct)) && (x.size || 0) <= 65536) {
+      var pre = el('pre', '', 'Reading…'); box.appendChild(pre);
+      fetch(src, {cache: 'force-cache'}).then(function (r) { if (!r.ok) throw new Error(); return r.text(); })
+        .then(function (t) {
+          if (/json/.test(ct) || /^\s*[{\[]/.test(t)) { try { t = JSON.stringify(JSON.parse(t), null, 2); } catch (e) { /* as it is */ } }
+          pre.textContent = t.length > 8000 ? t.slice(0, 8000) + '\n…' : t;
+        }).catch(function () { pre.textContent = 'The content could not be read here.'; });
+    } else {
+      var none = el('div', big ? 'xpnone muted' : 'xptype', (ct || 'unknown type') + (x.size ? ' · ' + bytes(x.size) : ''));
+      if (big) {
+        none.appendChild(el('br'));
+        var a = el('a', '', 'Open the content'); a.href = src; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        none.appendChild(a);
+      }
+      box.appendChild(none);
+    }
+  }
+  function drawOne(j) {
+    var x = j.number && j.number.inscription, last = j.number ? j.number.last : X.last;
+    X.last = last == null ? -1 : last;
+    var dl = $('xpfacts'), frame = $('xpframe');
+    if (!x) {
+      frame.textContent = '';
+      frame.appendChild(el('div', 'xpnone muted', X.last < 0 ? 'No inscriptions indexed on this chain yet.'
+        : 'No inscription #' + num(X.number) + ' yet: the last one known is #' + num(X.last) + '.'));
+      facts(dl, [['Number', '#' + num(X.number)], ['Last known', X.last < 0 ? 'none yet' : '#' + num(X.last)]]);
+    } else {
+      X.number = x.number;
+      contentInto(frame, x, true);
+      var id = el('a', '', x.id); id.href = '/content/' + encodeURIComponent(x.id); id.target = '_blank'; id.rel = 'noopener noreferrer';
+      var walked = j.walked_to || 0, moved = x.moved_at || x.height;
+      var current = !walked || moved <= walked;
+      facts(dl, [
+        ['Number', '#' + num(x.number) + (X.last >= 0 ? ' of ' + num(X.last) : '')],
+        ['Chain', X.chain.chain],
+        ['Inscription id', id],
+        ['Content type', x.content_type],
+        ['Size', x.size == null ? null : bytes(x.size) + (x.pieces > 1 ? ' in ' + x.pieces + ' pieces' : '')],
+        ['Inscribed at block', num(x.height)],
+        ['Protocol', x.protocol || null],
+        ['Delegate', x.delegate ? link(x.delegate, function () { showId(x.delegate); }) : null],
+        ['Parent', x.parent ? link(x.parent, function () { showId(x.parent); }) : null],
+        ['Reinscription', x.reinscription ? 'yes' : null],
+        ['Burned', x.burned ? 'yes' : null],
+        ['Holder', x.burned ? null : (x.owner || 'not known here')],
+        ['Sits on', x.burned ? null : (x.output ? el('code', '', x.output + (x.offset ? ' (offset ' + num(x.offset) + ')' : '')) : 'fees (no output)')],
+        ['Last moved at block', x.moved_at && x.moved_at !== x.height ? num(x.moved_at) : null],
+        ['Note', x.note || null]]);
+      if (walked && !current) dl.appendChild(el('dd', 'muted xpnote', 'Where it sits now may be newer than the walk.'));
+      var dd = el('dd'); dd.appendChild(from(j)); dl.appendChild(el('dt')); dl.appendChild(dd);
+    }
+    $('xpnum').value = X.number;
+    $('xpprev').disabled = X.number <= 0;
+    $('xpnext').disabled = X.last < 0 || X.number >= X.last;
+  }
+  function viewerError(e) {
+    $('xpframe').textContent = '';
+    $('xpframe').appendChild(el('div', 'xpnone muted', e.message));
+    facts($('xpfacts'), [['Number', '#' + num(X.number)]]);
+    $('xpprev').disabled = X.number <= 0; $('xpnext').disabled = false;
+  }
+  function showNumber(n) {
+    var net = X.chain.net;
+    X.number = Math.max(0, Number(n) || 0);
+    $('xpprev').disabled = $('xpnext').disabled = true;
+    api('inscription', {net: net, number: X.number})
+      .then(function (j) { if (net === X.chain.net) drawOne(j); })
+      .catch(function (e) { if (net === X.chain.net) viewerError(e); });
+  }
+  function showId(id, scroll) {
+    var net = X.chain.net;
+    api('inscription', {net: net, id: id})
+      .then(function (j) { if (net === X.chain.net) drawOne(j); })
+      .catch(function (e) { if (net === X.chain.net) viewerError(e); });
+    if (scroll !== false) $('xpview').scrollIntoView({block: 'start', behavior: 'smooth'});
+  }
+  $('xpprev').onclick = function () { if (X.number > 0) showNumber(X.number - 1); };
+  $('xpnext').onclick = function () { showNumber(X.number + 1); };
+  $('xpjumpgo').onclick = function () { showNumber($('xpnum').value); };
+  $('xpnum').onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); showNumber($('xpnum').value); } };
+
+  // --- search -------------------------------------------------------------------------------------------------
+  function said(j) {
+    var out = $('xpsaid'); out.textContent = '';
+    var card = el('div');
+    if ('number' in j || 'where' in j) {
+      var x = j.number ? j.number.inscription : j.where;
+      if (!x) card.appendChild(el('div', 'muted', 'Not found on ' + X.chain.chain + '.'));
+      else {
+        card.appendChild(el('div', '', 'Inscription #' + num(x.number) + ': shown below.'));
+        if (j.number) { drawOne(j); $('xpview').scrollIntoView({block: 'start', behavior: 'smooth'}); }
+        else showId(x.id);
+      }
+    } else if ('on' in j) {
+      var on = j.on || [];
+      card.appendChild(el('div', '', on.length ? on.length + ' inscription' + (on.length > 1 ? 's' : '') + ' on this coin:'
+        : 'No inscription sits on this coin.'));
+      on.forEach(function (x) { var row = el('div'); row.appendChild(link(x.id, function () { showId(x.id); })); card.appendChild(row); });
+      if (on.length) showId(on[0].id, false);
+    } else if ('token' in j) {
+      if (!j.token) card.appendChild(el('div', 'muted', 'No such tick on ' + X.chain.chain + '.'));
+      else {
+        card.appendChild(el('div', '', j.token.tick + ' is a token: '));
+        card.lastChild.appendChild(link('open it', function () { openTokens(j.token.tick); }));
+      }
+    } else if ('name' in j) {
+      var n = j.name || {};
+      card.appendChild(el('div', '', 'The name ' + (n.name || '') + ', under each reading:'));
+      Object.keys(n.readings || {}).forEach(function (rule) {
+        var w = n.readings[rule].winner, row = el('div', '', rule + ': ');
+        if (!w) row.appendChild(el('span', 'muted', 'unclaimed'));
+        else row.appendChild(link('#' + num(w.number), function () { showNumber(w.number); $('xpview').scrollIntoView({block: 'start'}); }));
+        card.appendChild(row);
+      });
+    } else if ('balances' in j) {
+      var bs = j.balances || [];
+      card.appendChild(el('div', '', bs.length ? 'Token balances of this address:' : 'This address holds no tokens here.'));
+      bs.forEach(function (b) {
+        var row = el('div'); row.appendChild(link(b.tick, function () { openTokens(b.tick); }));
+        row.appendChild(el('span', '', ': ' + units(b.units, b.decimals)));
+        card.appendChild(row);
+      });
+    }
+    card.appendChild(from(j));
+    out.appendChild(card);
+  }
+  function search() {
+    var q = $('xpq').value.trim(); if (!q) return;
+    $('xpsaid').textContent = 'Asking…';
+    api('lookup', {net: X.chain.net, q: q}).then(said).catch(function (e) { $('xpsaid').textContent = e.message; });
+  }
+  $('xpgo').onclick = search;
+  $('xpq').onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); search(); } };
+
+  // --- a grid of pieces ---------------------------------------------------------------------------------------
+  function tile(x, caption) {
+    var b = el('button', 'xptile'); b.type = 'button';
+    var thumb = el('div', 'xpthumb'); contentInto(thumb, x, false);
+    b.appendChild(thumb);
+    b.appendChild(el('div', 'xpcap', caption));
+    b.onclick = function () { showId(x.id); };
+    b.title = x.id;
+    return b;
+  }
+
+  // --- by file type -------------------------------------------------------------------------------------------
+  $('xptype').onchange = function () { $('xptypeother').hidden = $('xptype').value !== ''; };
+  function typed(more) {
+    var t = $('xptype').value || $('xptypeother').value.trim().toLowerCase();
+    if (!t) { $('xptypesaid').textContent = 'Name a content type, like application/pdf.'; return; }
+    var net = X.chain.net;
+    if (!more) {
+      X.typeAsked = t; $('xptypegrid').textContent = '';
+      var start = $('xptypefrom').value;
+      X.typeNext = start === '' ? null : Number(start) - 1;
+    }
+    $('xptypesaid').textContent = 'Reading…'; $('xptypemore').hidden = true;
+    var args = {net: net, type: X.typeAsked};
+    if (X.typeNext != null) args.after = X.typeNext;
+    api('typed', args).then(function (j) {
+      if (net !== X.chain.net) return;
+      var t = j.typed || {rows: [], next: null};
+      t.rows.forEach(function (x) { $('xptypegrid').appendChild(tile(x, '#' + num(x.number))); });
+      X.typeNext = t.next;
+      var shown = $('xptypegrid').children.length;
+      $('xptypesaid').textContent = shown ? shown + ' shown' + (t.next != null && !t.rows.length ? ' (none in this stretch: More reads on from #' + num(t.next) + ')' : '')
+        : (t.next != null ? 'None in this stretch: More reads on from #' + num(t.next) + '.' : 'None of this type.');
+      $('xptypesaid').appendChild(from(j));
+      $('xptypemore').hidden = t.next == null;
+    }).catch(function (e) { if (net === X.chain.net) $('xptypesaid').textContent = e.message; });
+  }
+  $('xptypego').onclick = function () { typed(false); };
+  $('xptypemore').onclick = function () { typed(true); };
+
+  // --- collections --------------------------------------------------------------------------------------------
+  var COLL_WAIT = null;
+  function collections(q) {
+    var net = X.chain.net;
+    $('xpcoll').hidden = true; $('xpcolls').hidden = false;
+    api('collections', {net: net, q: q}).then(function (j) {
+      if (net !== X.chain.net) return;
+      var box = $('xpcolls'); box.textContent = '';
+      var list = j.collections || [];
+      $('xpcollsaid').textContent = list.length ? '' : (q ? 'No known collection by that name on ' + X.chain.chain + '.'
+        : 'No known collections on ' + X.chain.chain + ' yet.');
+      list.forEach(function (c) {
+        var b = el('button', 'xptile xpcoll'); b.type = 'button';
+        var thumb = el('div', 'xpthumb');
+        if (c.cover) contentInto(thumb, {id: c.cover, content_type: 'image/'}, false);
+        b.appendChild(thumb);
+        var cap = el('div', 'xpcap'); cap.appendChild(el('b', '', c.name));
+        cap.appendChild(el('span', 'muted', num(c.count) + (c.supply ? ' of ' + num(c.supply) : '') + ' pieces'));
+        b.appendChild(cap);
+        b.onclick = function () { openCollection(c, 0); };
+        box.appendChild(b);
+      });
+    }).catch(function (e) { if (net === X.chain.net) $('xpcollsaid').textContent = e.message; });
+  }
+  $('xpcollq').oninput = function () {
+    clearTimeout(COLL_WAIT);
+    COLL_WAIT = setTimeout(function () { collections($('xpcollq').value.trim()); }, 200);
+  };
+  function openCollection(c, at) {
+    X.coll = c; X.collAt = Math.max(0, at);
+    $('xpcolls').hidden = true; $('xpcoll').hidden = false;
+    $('xpcollname').textContent = c.name;
+    $('xpcolldesc').textContent = c.description || '';
+    var grid = $('xpcollgrid'); grid.textContent = 'Reading…';
+    api('collection', {root: c.txid, offset: X.collAt}).then(function (j) {
+      grid.textContent = '';
+      (j.items || []).forEach(function (it) {
+        grid.appendChild(tile({id: it.id, content_type: 'image/'}, c.name + ' #' + num(it.number)));
+      });
+      var total = c.count || 0;
+      $('xpcollpage').textContent = total ? (X.collAt + 1) + '–' + Math.min(X.collAt + 48, total) + ' of ' + num(total) : '';
+      $('xpcollprev').disabled = X.collAt <= 0;
+      $('xpcollnext').disabled = X.collAt + 48 >= total;
+    }).catch(function (e) { grid.textContent = e.message; });
+  }
+  $('xpcollback').onclick = function () { $('xpcoll').hidden = true; $('xpcolls').hidden = false; };
+  $('xpcollprev').onclick = function () { openCollection(X.coll, X.collAt - 48); };
+  $('xpcollnext').onclick = function () { openCollection(X.coll, X.collAt + 48); };
+
+  // --- tokens -------------------------------------------------------------------------------------------------
+  function units(v, dec) {
+    try {
+      var b = BigInt(String(v)), u = BigInt(10) ** BigInt(dec || 0), w = (b / u).toString(), f = b % u;
+      w = w.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      return f ? w + '.' + f.toString().padStart(Number(dec), '0').replace(/0+$/, '') : w;
+    } catch (e) { return String(v); }
+  }
+  function amount(t) { var p = String(t == null ? '' : t).split('.'); return p[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (p[1] ? '.' + p[1] : ''); }
+  function pct(p) { return p == null ? '—' : (p >= 1 ? p.toFixed(2) : p >= 0.01 ? p.toFixed(3) : p > 0 ? '<0.01' : '0') + '%'; }
+  var TICK_WAIT = null;
+  var PICK = window.arcadePick($('xptickpick'), {
+    placeholder: 'Search a ticker',
+    shown: function () { return X.tick || ''; },
+    choose: function (row) { tick(row.value, 0); },
+    items: function (text, words, done) {
+      clearTimeout(TICK_WAIT);
+      TICK_WAIT = setTimeout(function () {
+        api('ticks', {net: X.chain.net, q: text}).then(function (j) {
+          var t = j.ticks || {first: [], count: 0};
+          done(t.first.map(function (x) { return {value: x.tick, label: x.tick, note: '#' + num(x.number) + ' · ' + pct(x.minted_pct) + ' minted'}; }),
+               t.count - t.first.length, text ? 'No tick starts with “' + text + '”.' : 'No tokens indexed yet.');
+        }).catch(function (e) { done([], 0, e.message); });
+      }, text ? 160 : 0);
+    }
+  });
+  function openTokens(t) {
+    var p = X.chain.protocols.filter(function (x) { return x.kind === 'token'; })[0];
+    if (!p) return;
+    $('xpproto').value = p.key; pickProto(p.key); tick(t, 0);
+  }
+  function tick(t, page) {
+    var net = X.chain.net, box = $('xptok');
+    X.tick = t; PICK.sync();
+    box.textContent = 'Reading…';
+    api('holders', {net: net, tick: t, page: page}).then(function (j) {
+      if (net !== X.chain.net || t !== X.tick) return;
+      box.textContent = '';
+      var tk = j.holders;
+      if (!tk) { box.appendChild(el('p', 'muted', 'No such tick on ' + X.chain.chain + '.')); return; }
+      var info = el('div'); info.appendChild(el('h2', '', tk.tick));
+      var dl = el('dl', 'xpfacts'); info.appendChild(dl);
+      facts(dl, [
+        ['Deploy', link(tk.deploy, function () { pickProto('ords'); $('xpproto').value = 'ords'; showId(tk.deploy); })],
+        ['Number', '#' + num(tk.number)],
+        ['Deployed at block', num(tk.height)],
+        ['Deployer', tk.deployer],
+        ['Max supply', amount(tk.supply)],
+        ['Mint limit', amount(tk.limit)],
+        ['Decimals', tk.decimals],
+        ['Minted', amount(tk.minted) + (tk.minted_pct == null ? '' : ' (' + pct(tk.minted_pct) + ' of supply)')],
+        ['Holders', num(tk.holders)]]);
+      box.appendChild(info);
+      box.appendChild(el('h2', '', 'Holders')).style.marginTop = '14px';
+      if (j.older) box.appendChild(el('p', 'xpwarn', j.older));
+      if (!tk.rows.length) box.appendChild(el('p', 'muted', 'Nobody holds any yet.'));
+      else {
+        var table = el('table', 'xprich'), head = el('thead'), hr = el('tr');
+        [['n', 'Rank'], ['', 'Address'], ['n', 'Balance'], ['n', 'Transferable'], ['n', '% of supply']].forEach(function (h) { hr.appendChild(el('th', h[0], h[1])); });
+        head.appendChild(hr); table.appendChild(head);
+        var body = el('tbody');
+        tk.rows.forEach(function (h) {
+          var tr = el('tr');
+          [['n', '', '#' + h.rank], ['addr', '', h.owner], ['n', 'Balance', amount(h.balance)],
+           ['n', 'Transferable', amount(h.transferable)], ['n', '% of supply', pct(h.pct)]].forEach(function (c) {
+            var td = el('td', c[0], c[2]); if (c[1]) td.setAttribute('data-l', c[1]); tr.appendChild(td);
+          });
+          body.appendChild(tr);
+        });
+        table.appendChild(body); box.appendChild(table);
+      }
+      var pager = el('div', 'xppager');
+      var prev = el('button', 'small', '‹ Previous'); prev.type = 'button'; prev.disabled = tk.page <= 0;
+      prev.onclick = function () { tick(t, tk.page - 1); };
+      var next = el('button', 'small', 'Next ›'); next.type = 'button'; next.disabled = tk.page + 1 >= tk.pages || !!j.older;
+      next.onclick = function () { tick(t, tk.page + 1); };
+      pager.appendChild(prev); pager.appendChild(el('span', 'muted', 'Page ' + (tk.page + 1) + ' of ' + num(tk.pages))); pager.appendChild(next);
+      box.appendChild(pager);
+      box.appendChild(from(j));
+    }).catch(function (e) { if (net === X.chain.net) box.textContent = e.message; });
+  }
+
+  var qs = new URLSearchParams(location.search);
+  pickChain(qs.get('net') || CHAINS[0].net, qs.get('p') || 'ords', false);
+  if (qs.get('id')) showId(qs.get('id'), false);
+  else if (qs.get('n')) showNumber(qs.get('n'));
+})();
+</script>
+{% endblock %}

@@ -455,6 +455,8 @@ NAV = [
     # "Change the create tab to the creator tab"), with ords beside them.
     ("/create",       "Creator",      "mainnet",   True),
     ("/exchange",     "Exchange",     "mainnet",   True),
+    # Every chain's ords, tokens and collections (2026-10-25: "lets make an explore tab").
+    ("/explore",      "Explore",      None,        True),
     # Who the arcade works with (2026-10-15: "Between the exchange and the Docs tab,
     # add an affiliate tab").
     ("/affiliates",   "Affiliates",   None,        True),
@@ -487,6 +489,7 @@ ACCOUNT_NAV = [
     # NFTs, Tokens and the launchpad wizard, behind one tab (2026-09-27).
     ("/create",          "Creator",      "mainnet",   True),
     ("/exchange",        "Exchange",     "mainnet",   True),
+    ("/explore",         "Explore",      None,        True),
     ("/affiliates",      "Affiliates",   None,        True),
     ("/docs",            "Docs",         None,        True),
 ]
@@ -27928,10 +27931,21 @@ def create_app(state: AppState) -> FastAPI:
         """Admin -> Ords -> Look up: an inscription id (where it is now) or txid:vout (what sits on it), from this
         arcade's own walk, or -- read only, or not walking -- a linked arcade that walks the chain (2026-10-20)."""
         _admin_check(request)
-        from ..doginals import INSCRIPTION_ID
         index = state.ord_indexes().get(net)
         if index is None:
             return JSONResponse({"detail": "this arcade does not read that chain"}, status_code=404)
+        question = _ords_question(q)
+        if question is None:
+            return JSONResponse({"detail": "an inscription number or id, a coin as txid:vout, a 4-character tick, a "
+                                           "name like jon.doge, an address, type:image/png, p:drc-20, or kinds"},
+                                status_code=400)
+        return _ords_ask(index, question)
+
+    def _ords_question(q: str, counts: bool = True) -> dict | None:
+        """What a search box's words ask an ord index (Admin -> Ords and the Explore tab), or None. `counts`: whether
+        type:/p:/kinds may be asked, which count every inscription of a kind (too slow for anybody on the internet:
+        the Explore tab pages a type with "typed" instead)."""
+        from ..doginals import INSCRIPTION_ID
         said = (q or "").strip()
         q = said.lower()
         if INSCRIPTION_ID.match(q):
@@ -27944,6 +27958,8 @@ def create_app(state: AppState) -> FastAPI:
             txid, vout = q.split(":")
             question = {"what": "on", "txid": txid, "vout": int(vout)}
         elif q.startswith("type:") or q.startswith("p:") or q == "kinds":     # by content type or JSON "p"
+            if not counts:
+                return None
             question = {"what": "kinds", "ctype": said[5:].strip() if q.startswith("type:") else "",
                         "proto": said[2:].strip() if q.startswith("p:") else ""}
         elif len(said.encode("utf-8")) == 4:                   # a DRC-20 / PRC-20 tick (2026-10-20)
@@ -27953,10 +27969,8 @@ def create_app(state: AppState) -> FastAPI:
         elif re.match(r"^[1-9A-HJ-NP-Za-km-z]{25,40}$", said):  # an address: its token balances
             question = {"what": "balances", "owner": said}
         else:
-            return JSONResponse({"detail": "an inscription number or id, a coin as txid:vout, a 4-character tick, a "
-                                           "name like jon.doge, an address, type:image/png, p:drc-20, or kinds"},
-                                status_code=400)
-        return _ords_ask(index, question)
+            return None
+        return question
 
     def _ords_ask(index, question: dict):
         """One question to a chain's index, answered by its own walk or a walking linked arcade (index.lookup); what
@@ -28036,6 +28050,149 @@ def create_app(state: AppState) -> FastAPI:
         if index is None or index.mode() != "walk":
             return JSONResponse({"detail": "only an arcade that walks this chain keeps its names"}, status_code=409)
         return JSONResponse({**index.name_disagreements(), "readings": ord_rules.NAME_RULES},
+                            headers={"Cache-Control": "no-store"})
+
+    # --- the Explore tab (2026-10-25) ---------------------------------------------------------------------------
+    #
+    # SadFrog: "lets make an explore tab that has tabs for every coin the node has ordinals/omni on and if both
+    # seperate drop downs to view which protocol ... a user should be able to look up known collections, inscription
+    # id's, inscription numbers, file types." Anybody may use it ("any should be able to use it for now"): the same
+    # questions as Admin -> Ords -> Explorer, read only, answered by the most complete index of each chain, minus
+    # the ones that count a whole chain (a type is paged with "typed" instead), and a few a minute per visitor.
+
+    #: Explore questions one visitor may ask a minute (each may be passed on to a linked arcade).
+    EXPLORE_ASKS = 120
+    _explore_seen: dict[str, list[float]] = {}
+
+    def _explore_limited(request: Request) -> bool:
+        who = (request.headers.get("cf-connecting-ip") or (request.headers.get("x-forwarded-for") or "").split(",")[0]
+               or (request.client.host if request.client else "")).strip()
+        now = time.monotonic()
+        times = [t for t in _explore_seen.get(who, ()) if now - t < 60]
+        if len(times) >= EXPLORE_ASKS:
+            _explore_seen[who] = times
+            return True
+        times.append(now)
+        _explore_seen[who] = times
+        if len(_explore_seen) > 5000:                    # forget the quiet ones
+            for k in [k for k, v in _explore_seen.items() if not v or now - v[-1] > 60]:
+                _explore_seen.pop(k, None)
+        return False
+
+    def _explore_chains() -> list[dict]:
+        """The Explore tab's coins: each chain this arcade has an ord index of, in ord_chains.EXPLORE_ORDER, with its
+        protocols and whether its index answers yet (walked here or by a linked arcade)."""
+        indexes = state.ord_indexes()
+        out = []
+        for net in ordchainslib.EXPLORE_ORDER:
+            index = indexes.get(net)
+            if index is None:
+                continue
+            try:
+                mode = index.mode()
+                answers = mode == "walk" or bool(index.walkers())
+            except Exception:                              # noqa: BLE001
+                mode, answers = "off", False
+            out.append({"net": net, "chain": ordchainslib.chain_name(net), "coin": ordchainslib.coin(net),
+                        "word": ordchainslib.word(net), "mode": mode, "answers": answers,
+                        "protocols": ordchainslib.explore_protocols(net)})
+        return out
+
+    @app.get("/explore", response_class=HTMLResponse)
+    def explore_page(request: Request):
+        return render(request, "explore.html", chains=_explore_chains())
+
+    def _explore_index(request: Request, net: str):
+        if _explore_limited(request):
+            raise HTTPException(status_code=429, detail="Too many questions in a minute: wait a moment.")
+        index = state.ord_indexes().get(net)
+        if index is None or net not in ordchainslib.EXPLORE_ORDER:
+            raise HTTPException(status_code=404, detail="this arcade does not read that chain")
+        return index
+
+    @app.get("/explore/api/inscription")
+    def explore_inscription(request: Request, net: str = "doge", number: str = "", id: str = ""):
+        """One inscription by number or id, as Admin -> Ords -> the explorer's viewer shows it."""
+        from ..doginals import INSCRIPTION_ID
+        index = _explore_index(request, net)
+        iid = (id or "").strip().lower()
+        if iid:
+            if not INSCRIPTION_ID.match(iid):
+                return JSONResponse({"detail": "an inscription id: <txid>i<n>"}, status_code=400)
+            return _ords_ask(index, {"what": "number", "id": iid})
+        said = (number or "0").strip().lstrip("#")
+        if not re.match(r"^[0-9]{1,12}$", said):
+            return JSONResponse({"detail": "an inscription number: 0, 1, 2 ..."}, status_code=400)
+        return _ords_ask(index, {"what": "number", "number": int(said)})
+
+    @app.get("/explore/api/lookup")
+    def explore_lookup(request: Request, net: str = "doge", q: str = ""):
+        """The search box: an inscription number or id, a coin (txid:vout), a tick, a name, or an address's tokens."""
+        index = _explore_index(request, net)
+        question = _ords_question(q, counts=False)
+        if question is None:
+            return JSONResponse({"detail": "an inscription number or id, a coin as txid:vout, a 4-character tick, a "
+                                           "name like jon.doge, or an address"}, status_code=400)
+        return _ords_ask(index, question)
+
+    @app.get("/explore/api/typed")
+    def explore_typed(request: Request, net: str = "doge", type: str = "", after: str = ""):
+        """A page of inscriptions of one content type (or a prefix: "image/"), by number, after `after`."""
+        index = _explore_index(request, net)
+        ctype = (type or "").strip().lower()
+        if not re.match(r"^[a-z0-9][a-z0-9.+/-]{0,80}$", ctype):
+            return JSONResponse({"detail": "a content type, like image/png or image/"}, status_code=400)
+        if after and not re.match(r"^-?[0-9]{1,12}$", after.strip()):
+            return JSONResponse({"detail": "after: an inscription number"}, status_code=400)
+        return _ords_ask(index, {"what": "typed", "ctype": ctype, "after": after.strip() or None})
+
+    @app.get("/explore/api/ticks")
+    def explore_ticks(request: Request, net: str = "doge", q: str = ""):
+        index = _explore_index(request, net)
+        said = (q or "").strip()
+        if len(said) > 8 or any(ord(c) < 32 for c in said):
+            return JSONResponse({"detail": "the start of a tick: up to 8 characters"}, status_code=400)
+        return _ords_ask(index, {"what": "ticks", "prefix": said})
+
+    @app.get("/explore/api/holders")
+    def explore_holders(request: Request, net: str = "doge", tick: str = "", page: str = "0"):
+        index = _explore_index(request, net)
+        said = (tick or "").strip()
+        if not said or len(said) > 8 or any(ord(c) < 32 for c in said):
+            return JSONResponse({"detail": "a tick"}, status_code=400)
+        if not re.match(r"^[0-9]{1,7}$", (page or "").strip()):
+            return JSONResponse({"detail": "a page number: 0, 1, 2 ..."}, status_code=400)
+        return _ords_ask(index, {"what": "holders", "tick": said, "page": int(page)})
+
+    @app.get("/explore/api/collections")
+    def explore_collections(request: Request, net: str = "doge", q: str = ""):
+        """Known collections of a chain: the ones published to the arcades' collection registry
+        (arcade/collection_registry.py), by name."""
+        if _explore_limited(request):
+            return JSONResponse({"detail": "Too many questions in a minute: wait a moment."}, status_code=429)
+        said = (q or "").strip().lower()[:80]
+        rows = [r for r in state.collection_registry().active()
+                if r.get("chain") == net and (not said or said in str(r.get("name") or "").lower())]
+        keep = ("txid", "number", "name", "chain", "supply", "description", "cover", "count", "traits")
+        return JSONResponse({"collections": [{k: r.get(k) for k in keep} for r in rows[:60]]},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/explore/api/collection")
+    def explore_collection(request: Request, root: str = "", offset: str = "0"):
+        """One known collection and a page of its pieces (48), by their number in the collection."""
+        if _explore_limited(request):
+            return JSONResponse({"detail": "Too many questions in a minute: wait a moment."}, status_code=429)
+        root = (root or "").strip().lower()
+        if not re.match(r"^[0-9a-f]{64}$", root) or not re.match(r"^[0-9]{1,7}$", (offset or "0").strip()):
+            return JSONResponse({"detail": "a collection (its root txid) and an offset"}, status_code=400)
+        reg = state.collection_registry()
+        found = reg.root(root)
+        if found is None or found.get("status") != "active":
+            return JSONResponse({"detail": "no such collection"}, status_code=404)
+        items = reg.items(root, offset=int(offset), limit=48)
+        keep = ("txid", "number", "name", "chain", "supply", "description", "cover", "traits")
+        return JSONResponse({"collection": {k: found.get(k) for k in keep},
+                             "items": [{"id": i["id"], "number": i["number"], "traits": i["traits"]} for i in items]},
                             headers={"Cache-Control": "no-store"})
 
     @app.get("/admin/api/operators")

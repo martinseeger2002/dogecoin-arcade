@@ -47,6 +47,7 @@ import urllib.parse
 #: Pages and files a stranger may read. Exact paths, matched whole.
 PUBLIC_PAGES = frozenset({
     "/",                      # the splash: seats, and how to join
+    "/explore",               # every chain's ords, tokens and collections, read only (2026-10-25)
     "/join",
     "/join/keys",
     "/clone",
@@ -168,6 +169,7 @@ PUBLIC_PAGES = frozenset({
 #: one is a promise about a whole subtree: nothing under these may ever
 #: learn to spend.
 PUBLIC_TREES = (
+    "/explore/api/",          # the Explore tab's lookups: GET only, read only, a few a minute per visitor
     "/account/llm/",          # the Exchange's LLM tab: offers, the account's own balance, grant words and keys
     "/exchange/llm/",         # one model's own page on the model exchange (2026-10-23)
     "/v1/models",             # the LLM API's model list, for an API key

@@ -136,3 +136,28 @@ def wallet_table() -> dict:
     return {n: {"words": [w.word, coin(n), w.coins], "send": moved(n), "list": moved(n), "swap": swappable(n),
                 "tab": tab(n), "counter": counter(n)}
             for n, w in WORDS.items()}
+
+
+#: The Explore tab (2026-10-25: "an explore tab that has tabs for every coin the node has ordinals/omni on and if
+#: both separate drop downs to view which protocol - starting with doginals, drc-20s, then pepinals, then bellinals
+#: and then litecoin ordinals, litecoin omni, and then the rest"): the coins in that order, each with its protocols.
+#: kind: "ord" (inscriptions), "token" (the JSON -20 tokens the chain's ord index reads), "omni" (Omni Layer).
+EXPLORE_ORDER = ("doge", "main", "bel", "ltc", "lky", "wjk", "ltctest", "test")
+OMNI_NETS = ("ltc", "ltctest")
+
+
+def token_word(net: str) -> str:
+    """The -20 tokens the ord index reads on `net` (doginal_index: PRC-20 on Pepecoin, the DRC-20 rules elsewhere)."""
+    return "PRC-20" if net in ("main", "test") else "DRC-20"
+
+
+def explore_protocols(net: str) -> list[dict]:
+    """`net`'s protocols on the Explore tab, in order: its ords, its tokens, then Omni where the chain has it."""
+    w = WORDS.get(str(net))
+    if w is None:
+        return []
+    out = [{"key": "ords", "label": f"{w.word}s", "kind": "ord"},
+           {"key": "tokens", "label": token_word(net), "kind": "token"}]
+    if net in OMNI_NETS:
+        out.append({"key": "omni", "label": "Omni", "kind": "omni"})
+    return out

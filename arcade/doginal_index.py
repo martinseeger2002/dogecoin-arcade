@@ -456,7 +456,7 @@ def _pct(part: Any, whole: Any) -> float | None:
 
 
 #: Questions the explorer asks (2026-10-21) that a walking arcade from before does not know.
-NEWER_QUESTIONS = ("number", "ticks", "holders", "note", "ticklist", "mesh", "mesh_directory")
+NEWER_QUESTIONS = ("number", "ticks", "holders", "note", "ticklist", "mesh", "mesh_directory", "typed")
 
 
 def _first_page_of(token: dict | None) -> dict | None:
@@ -2592,6 +2592,8 @@ class DoginalIndex:
             return {"holders": self.rich_list(str(question.get("tick") or ""), question.get("page") or 0)}
         if what == "kinds":
             return {"kinds": self.kinds(str(question.get("ctype") or ""), str(question.get("proto") or ""))}
+        if what == "typed":
+            return {"typed": self.typed(str(question.get("ctype") or ""), question.get("after"))}
         if what == "balances":
             return {"balances": self.balances(str(question.get("owner") or ""))}
         if what == "name":
@@ -2714,6 +2716,46 @@ class DoginalIndex:
                                       "GROUP BY i.ct ORDER BY n DESC LIMIT 25"),
                 "protocols": self.store.q("SELECT proto, COUNT(*) c FROM insc WHERE proto IS NOT NULL GROUP BY proto "
                                           "ORDER BY c DESC LIMIT 25")}
+
+    #: The Explore tab's pages of one content type (2026-10-25): how many a page, and how many rows one ask may read
+    #: past `after` looking for them (a rare type stops there and says where to go on from).
+    TYPED_PAGE = 24
+    TYPED_SCAN = 2_000_000
+    TYPED_WINDOW = 200_000
+
+    def typed(self, ctype: str, after=None, limit: int | None = None) -> dict:
+        """The next inscriptions of a content type (a prefix: "image/" for every image) after number `after`, by
+        number: {"rows": [{number, id, content_type, size}], "next": the number to go on after, or None at the end}.
+        Unlike `kinds`, nothing is counted, so it stays quick on a chain of a hundred million (the Explore tab)."""
+        limit = max(1, min(int(limit or self.TYPED_PAGE), 60))
+        try:
+            after = int(after) if after is not None and str(after) != "" else -1
+        except (TypeError, ValueError):
+            after = -1
+        ctype = ctype.replace("\\", "").replace("%", "")
+        if self.store.old_layout or not ctype:
+            return {"rows": [], "next": None}
+        wanted = ctype.replace("_", "\\_") + "%"
+        cts = {ct: name for ct, name in self.store.q("SELECT ct, ctype FROM ctypes WHERE ctype LIKE ? ESCAPE '\\'",
+                                                     (wanted,))}
+        if not cts:
+            return {"rows": [], "next": None}
+        top = self.store.q("SELECT MAX(rid) FROM insc")[0][0] or 0
+        marks = ",".join("?" * len(cts))
+        rows: list[dict] = []
+        lo = max(0, after + 1)                           # rid = number + 1: the rows after `after` start at rid after+2
+        while len(rows) < limit and lo < top and lo - (after + 1) < self.TYPED_SCAN:
+            hi = lo + self.TYPED_WINDOW
+            for number, tx, n, ct, size in self.store.q(
+                    f"SELECT number, tx, n, ct, size FROM insc WHERE rid > ? AND rid <= ? AND ct IN ({marks}) "
+                    f"ORDER BY rid LIMIT ?", (lo, hi, *cts, limit - len(rows))):
+                rows.append({"number": number, "id": iid_of(tx, n), "content_type": cts[ct], "size": size})
+            lo = hi
+        if len(rows) >= limit:
+            nxt = rows[-1]["number"]
+        else:
+            nxt = (lo - 1) if lo < top else None
+        return {"rows": rows, "next": nxt}
 
     def token(self, tick: str, top: int = 20) -> dict | None:
         """A DRC-20 / PRC-20 token: its deploy, how much is minted, and its biggest holders (units shown with its
