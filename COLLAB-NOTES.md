@@ -88,6 +88,42 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-25 · SadFrog's side (Claude, node 2) · branch `team/bells-index` · Bellscoin's ords read as Nintondo reads them
+SadFrog: "Start with Bells: index bel-20 tokens, keep Taproot births in input 0, read envelopes in every input like
+Nintondo, and show bel1q/bel1p owners." Found by checking node 2's index against nintondo.io the same day (67
+inscriptions and 10 ticks sampled; content, size, block and holders matched; these four did not).
+
+- **Every input** (`ord_rules.EVERY_INPUT`, Bellscoin only): an envelope complete in a later input is an inscription,
+  `txid i1, i2 ...` in input order. Nintondo has `6d110444...e809i1` (#14,234,881, a NOOK mint) and `52e3fa95...56f0`
+  i1..i344 (#15,853,039 to #15,853,382, no i345). We read input 0 only, so every Bells number from #14,234,881 on was
+  short by 1, then by 345.
+- **Taproot births in input 0** (`doginal_index.py`, the walk's `if b["n"] or b["vin"]`): every witness birth in
+  input 0 was counted in the chunk hash and filed nowhere. On Bells that means everything from Taproot's activation
+  (block 191,520). On Litecoin the walked index held no inscriptions at all. Births now carry a `kind`
+  ("p2sh"/"taproot"), and witness births keep their body (size, "p", token operations).
+- **bel-20** (`ord_rules.TOKEN_PROTOCOLS`): Bells was read as "drc-20", so its `tok` table was empty. Nintondo lists 415
+  ticks (nook, CATS, ondo ...). The real nook deploy and the izzy mints / rats transfers in witness envelopes now read
+  as bel-20 operations.
+- **bel1q / bel1p holders** (`Walker.owner_of`): SegWit v0 and Taproot outputs are named by their bech32/bech32m
+  address on a chain that has one (also ltc1q/ltc1p). This is the same as bellsd's `decoderawtransaction`, not
+  `script:<hash>`.
+- **Notes format 3** on Taproot chains (`ord_notes.WITNESS_VERSION`): those programs are kept whole, and on Bells a
+  later input's envelope script too. A walk stitched from notes therefore ends the same as one read from a Core. Doge and
+  PEP notes stay format 2, byte for byte.
+
+**Rules: Bellscoin 7, Litecoin 5.** Every Bells index is cut again and walked from 22,470. Litecoin's (off on node 2)
+is cut too, because its holders are named anew. Litecoin still differs from ord-litecoin (cursed numbering and the
+jubilee at 2,608,704, inscriptions sent to fees, the pointer, LTC-20). That comes in its own PR, checked against
+ord.chikun.market.
+
+Also in this branch: `test_doginal_swap` named Pepecoin testnet as a chain no doginal leg may be on. #22 swaps its ords
+now, so the test uses Wojakcoin (no CLTV), the chain that is never swapped.
+
+Tests: `tests/test_bells_index.py` (8; a made-up chain with two inputs, a witness mint and bel1q/bel1p/P2WSH outputs;
+stitched == walked). `test_ord_dialects` was updated for the rules numbers. The ord, wallet, trade and web suites give
+737 passed. The only failures are ones that fail on main too, or come from this machine (`test_doginals_at_the_testnet_key...`;
+`test_ord_slim` layout 1 needs sqlite's `unhex`; snap Firefox can't read `/tmp` uploads).
+
 ### 2026-10-25 Ord walk keeps every coin's value on disk; parallel lookups; Ords modes renamed (Claude)
 Strawberry walked Dogecoin at 0.02 blocks a second through borrowed Cores. Profiled: the time was all in
 `Walker._prefetch` (the values of coins spent ahead of an inscribed one). Each was a `getrawtransaction` on the
