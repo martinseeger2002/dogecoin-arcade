@@ -479,9 +479,10 @@ class BlockWatcher:
                 utxoslib.watch(db, address, tip, f"account {wanted[address][:12]} (derived)")
             first = db.conn.execute("SELECT MIN(height) FROM block").fetchone()[0]
             db.conn.commit()
-        if getattr(chain.params, "full_utxo_set", False):
-            # KOTIA ONLY: the whole unspent set already holds their coins, and their history starts now; nothing is
-            # read back (tbuuol 2026-10-25: no rescan, and none a user can set off). _keep_utxo_sets does the rest.
+        if getattr(chain.params, "full_utxo_set", False) and not chain.borrowed:
+            # KOTIA ONLY, its Core run here: the whole unspent set already holds their coins, and their history starts
+            # now; nothing is read back (tbuuol 2026-10-25: no rescan, and none a user can set off). _keep_utxo_sets
+            # does the rest. A borrowed Kotia keeps no set and reads back as every other chain does.
             if fresh:
                 log.info("watching %d more accounts' %s addresses (from the unspent set)", len(fresh), chain.params.label)
             return

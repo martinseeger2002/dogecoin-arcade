@@ -103,10 +103,14 @@ no rescan, none a user can set off. Kotia only.
   is gone, and `_watch_accounts_on` reads nothing back on Kotia (no `seed_from_core`/`backfill_many`).
 - Admin -> Chains -> Rebuild unchanged: the build reads every block anyway, so every account's history from block 0
   comes with it. The "reading new accounts' history" status is gone. `docs/kotia.md` says how it works now.
+- Only where Kotia's Core runs here: a borrowed Kotia keeps no set (`_keep_utxo_sets` skips it, and 1.5 million
+  blocks over the mesh would weigh on the sharer), so its index follows the coins and reads back as before
+  (`LedgerIndex.coins_from_set`, asked at every sync from `state.addon(net).borrowed`). A node switched from run-here to
+  borrowed is followed by its index from its own tip on; blocks it skipped while the set had them are not read back.
 - The floor (`KOT_MAINNET_FLOOR`) stays for the arcade's own features on Kotia; the Kotia wallet no longer depends on it.
 - On node 3 the next pass after the update puts @banana's and @tbuuol's rows right by itself (test
   `test_a_spend_after_the_first_pass_reaches_the_wallet` is that case).
-- Tests: test_utxoset 16, test_kotia, test_utxos, test_coinlist(_web), test_watcher, test_utxo_backfill,
+- Tests: test_utxoset 17, test_kotia, test_utxos, test_coinlist(_web), test_watcher, test_utxo_backfill,
   test_utxo_seed, test_wallet_imports: all pass.
 
 ### 2026-10-25 Coin lists between arcades, the shared walk, Admin -> Wallet imports; the PWA home always portrait (Claude)

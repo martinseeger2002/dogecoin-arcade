@@ -95,8 +95,11 @@ def is_cancel(rtx) -> bool:
 class ArcadeHandler:
     """BlockHandler that decodes and applies Arcade transactions."""
 
-    def __init__(self, rpc: RpcClient, params: Params):
+    def __init__(self, rpc: RpcClient, params: Params, coins_from_set: bool = False):
         self.params = params
+        #: The watched addresses' coins come from the chain's whole unspent set kept here (KOTIA ONLY,
+        #: Params.full_utxo_set, and only with its Core run here: a borrowed one keeps no set), not from these blocks.
+        self.coins_from_set = coins_from_set
         self.prevouts = PrevOutCache(rpc, params)
         self.stats = {"blocks": 0, "candidates": 0, "valid": 0, "invalid": 0, "unreadable": 0}
 
@@ -117,9 +120,10 @@ class ArcadeHandler:
         # sends far more often than by anything carrying a marker, and an
         # index that only saw its own transactions would show a balance
         # that is always too small (arcade/utxos.py).
-        # Not on a chain that keeps its whole unspent set (KOTIA ONLY, Params.full_utxo_set): there the set is the
-        # wallet's one source, from block 0, and the watcher writes these rows from it (watcher._utxoset_mirror).
-        watched = set() if getattr(self.params, "full_utxo_set", False) else utxos.watching(state.db)
+        # Not where the chain's whole unspent set is kept (KOTIA ONLY, Params.full_utxo_set, its Core run here): there
+        # the set is the wallet's one source, from block 0, and the watcher writes these rows from it
+        # (watcher._utxoset_mirror). A borrowed Kotia keeps no set, so its index follows the coins as before.
+        watched = set() if self.coins_from_set else utxos.watching(state.db)
         if watched:
             moved = utxos.on_block(state, height, block, self.params, watched)
             self.stats["coins_in"] = self.stats.get("coins_in", 0) + moved["added"]

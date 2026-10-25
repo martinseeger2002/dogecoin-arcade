@@ -159,6 +159,9 @@ class LedgerIndex:
         self.path = Path(path)
         self.params = params
         self._rpc = rpc_factory
+        #: Whether the watched addresses' coins come from the chain's whole unspent set rather than this index
+        #: (KOTIA ONLY; set by the web state, which knows whether the chain's Core runs here or is borrowed).
+        self.coins_from_set: Callable[[], bool] = lambda: False
         #: Only one sync at a time. The watcher is the only caller in
         #: practice, but a manual "sync now" must not race it.
         self._sync_lock = threading.Lock()
@@ -268,7 +271,7 @@ class LedgerIndex:
             return None
         try:
             with self._rpc() as rpc, self.open() as db:
-                handler = ArcadeHandler(rpc, self.params)
+                handler = ArcadeHandler(rpc, self.params, coins_from_set=self.coins_from_set())
                 follower = ChainFollower(rpc, db, self.params, handler)
                 result = follower.sync_once(max_blocks=max_blocks)
                 for key, value in handler.stats.items():

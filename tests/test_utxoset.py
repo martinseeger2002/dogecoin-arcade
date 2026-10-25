@@ -295,15 +295,31 @@ def test_the_index_leaves_kotia_coins_to_the_set(tmp_path, monkeypatch):
     from arcade import indexer, utxos
     from arcade.ledger import LedgerIndex
 
-    for params, wanted in ((KOT, 0), (NETWORKS["main"], 1)):
+    for n, (params, from_set, wanted) in enumerate(((KOT, True, 0), (KOT, False, 1), (NETWORKS["main"], False, 1))):
         seen = []
         monkeypatch.setattr(indexer.utxos, "on_block", lambda *a, **k: seen.append(1) or {"added": 0, "spent": 0})
-        index = LedgerIndex(tmp_path / f"{params.name}-ledger.sqlite", params, rpc_factory=lambda: None)
+        index = LedgerIndex(tmp_path / f"{n}-ledger.sqlite", params, rpc_factory=lambda: None)
         with contextlib.closing(index.open()) as db:
             utxos.install(db)
             utxos.watch(db, A, 0, "account (derived)")
-            indexer.ArcadeHandler(None, params).on_connect(db, params.activation_height, {"tx": []})
+            indexer.ArcadeHandler(None, params, coins_from_set=from_set).on_connect(
+                db, params.activation_height, {"tx": []})
         assert len(seen) == wanted
+
+
+def test_only_a_kotia_run_here_takes_its_coins_from_the_set(tmp_path):
+    """A borrowed Kotia keeps no set (_keep_utxo_sets skips it), so its index follows the coins as on any chain."""
+    import types
+
+    from arcade.web.state import AppState
+    kot = types.SimpleNamespace(network="kot", params=KOT, borrowed=False, rpc=lambda: None)
+    main = types.SimpleNamespace(network="main", params=NETWORKS["main"], borrowed=False, rpc=lambda: None)
+    me = types.SimpleNamespace(_ledger_indexes={}, addons=[kot], ledger_index_path=lambda c: tmp_path / c.network)
+    me.addon = lambda net: AppState.addon(me, net)
+    assert AppState.token_index(me, kot).coins_from_set() is True
+    kot.borrowed = True                                             # switched to borrowed in Admin -> Chains
+    assert AppState.token_index(me, kot).coins_from_set() is False
+    assert AppState.token_index(me, main).coins_from_set() is False
 
 
 class _Core:

@@ -1597,6 +1597,11 @@ class AppState:
         if index is None:
             index = LedgerIndex(self.ledger_index_path(chain),
                                 chain.params, chain.rpc)
+            if getattr(chain.params, "full_utxo_set", False):
+                # KOTIA ONLY: the set is the wallet's source while the chain's Core runs here; asked at every sync,
+                # since a chain can be switched between run here and borrowed.
+                index.coins_from_set = lambda net=chain.network: bool(
+                    (found := self.addon(net)) is not None and not found.borrowed)
             self._ledger_indexes[chain.network] = index
         return index
 
