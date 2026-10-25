@@ -84,6 +84,8 @@
   <input type="text" id="new-username" autocomplete="off" placeholder="username">
   <input type="password" id="new-password" autocomplete="new-password"
          placeholder="password">
+  <input type="password" id="new-password2" autocomplete="new-password"
+         placeholder="the same password again">
   <p class="muted small" id="password-rule"></p>
   <button class="btn primary" id="password-save">This node is mine</button>
 </div>
@@ -115,8 +117,10 @@
         <input type="checkbox" id="keep" checked>
         keep an encrypted copy in this browser
       </label>
-      <input type="password" id="password" autocomplete="new-password"
+      <input type="password" id="keep-password" autocomplete="new-password"
              placeholder="a password for this machine only">
+      <input type="password" id="keep-password2" autocomplete="new-password"
+             placeholder="the same password again">
       <p class="muted small">
         The password encrypts the words in this browser's own storage. It is
         never sent anywhere, so it cannot be reset — and it protects the copy
@@ -303,8 +307,14 @@ function wire() {
           + "to get wrong.");
       return;
     }
+    // Its own id (2026-10-25): this box was also id="password", like the owner's sign-in box above it, so
+    // $("password") read THAT one (usually empty) and the copy kept here was sealed with it. Typed twice.
+    if ($("keep").checked) {
+      if (!$("keep-password").value) { say("Choose a password for the copy kept here, or untick keeping one."); return; }
+      if ($("keep-password").value !== $("keep-password2").value) { say("The two passwords are not the same. Type the same password in both boxes."); return; }
+    }
     try {
-      if ($("keep").checked) await signer.keep(phrase, $("password").value);
+      if ($("keep").checked) await signer.keep(phrase, $("keep-password").value);
       await arrived(await signer.signIn(phrase, {join: true}), phrase);
     } catch (e) { say(String(e.message || e)); }
   };
@@ -359,6 +369,10 @@ function wire() {
 
   $("password-save").onclick = async () => {
     say("");
+    if ($("new-password").value !== $("new-password2").value) {
+      say("The two passwords are not the same. Type the same password in both boxes.");
+      return;
+    }
     const answer = await fetch("/auth/set-password", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({username: $("new-username").value,

@@ -131,6 +131,11 @@ input[type=text],input[type=password]{width:100%;padding:10px 12px;margin:4px 0;
           not us, not anybody. Anyone can try guesses against it, so make it long.</p>
         <p class="small" id="pw-says"></p>
       </div>
+      <div class="field">
+        <label for="pw2">Password again</label>
+        <input type="password" id="pw2" autocomplete="new-password" placeholder="the same password, once more">
+        <p class="small" id="pw2-says"></p>
+      </div>
       <button class="go" id="make">Play {{ game.name }}</button>
       <p class="switch small"><a href="#" id="to-in">I already have an account</a></p>
     </div>
@@ -214,8 +219,24 @@ function wire() {
   $("to-in").onclick = show(true);
   $("to-make").onclick = show(false);
 
+  // The password twice (2026-10-25): nobody can reset it, so a typo here would lock the account for good.
+  const pwSame = () => {
+    const a = $("pw").value, b = $("pw2").value;
+    $("pw2-says").textContent = !b ? "" : a === b ? "The two match." : "Not the same yet.";
+    $("pw2-says").style.color = a === b ? "var(--ok)" : "var(--warn)";
+    return !!a && a === b;
+  };
+  $("pw2").oninput = pwSame;
+  $("pw").addEventListener("input", () => { if ($("pw2").value) pwSame(); });
+
   $("make").onclick = async () => {
     say("");
+    if (!pwSame()) {
+      say($("pw2").value ? "The two passwords are not the same. Type the same password in both boxes."
+                         : "Type your password a second time, in the box under it.");
+      $("pw2").focus();
+      return;
+    }
     $("make").disabled = true;
     try {
       const made = await wallet.signUp($("tag").value.trim(), $("pw").value, CHAIN);

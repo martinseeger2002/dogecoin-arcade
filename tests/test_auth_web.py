@@ -287,3 +287,24 @@ def test_an_operator_can_close_signups(client, tmp_path):
     body = app.get("/join", headers=LOCAL).text
     assert "No open seats" in body
     assert _sign_in(app, SigningKey.generate()).status_code == 409
+
+
+def test_every_new_password_is_asked_for_twice(client):
+    """Sign-up on /join and /play/<game>, the node's own password and the copy kept
+    by /join/keys: each new password has a second box, because none of them can be
+    reset (2026-10-25)."""
+    app, state = client
+    body = app.get("/join", headers=LOCAL).text
+    assert 'id="pw2"' in body and "The two passwords are not the same" in body
+    keys = app.get("/join/keys", headers=LOCAL).text
+    assert 'id="new-password2"' in keys and 'id="keep-password2"' in keys
+
+
+def test_the_copy_kept_in_this_browser_has_a_password_box_of_its_own():
+    """join.html had two id="password" boxes, so $("password") read the owner's
+    sign-in box (usually empty) and the copy of the words kept in the browser was
+    sealed with that (2026-10-25)."""
+    import re
+    page = (pathlib.Path(__file__).resolve().parents[1] / "arcade" / "web" / "templates" / "join.html").read_text()
+    assert len(re.findall(r'<input[^>]*\bid="password"', page)) == 1
+    assert 'signer.keep(phrase, $("keep-password").value)' in page

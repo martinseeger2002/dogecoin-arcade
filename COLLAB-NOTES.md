@@ -88,6 +88,23 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-25 · SadFrog's side (Claude, node 2) · branch `team/signup-confirm-password` (on `main` 6be86223) · every new password typed twice
+SadFrog: "when someone makes an account ... they should have to type their password twice in case they type it
+incorrectly - this should also be applied to the arcade signups". Nobody can reset these passwords, so a typo at
+sign-up locks the account for good (the words still restore it, but only if they were written down).
+- **`signup.html` (/join) and `game_door.html` (/play/<game>)**: a second box, "The password again" (`#pw2`). As you
+  type it says "The two match." or "Not the same yet."; "Create my account" / "Play <game>" refuses two that differ, or an
+  empty second box, before anything is made: no seat taken, no wallet derived.
+- **`join.html` (/join/keys)**: the node's own password ("Make this node yours") and the password for the copy of the
+  words kept in this browser are each asked twice (`#new-password2`, `#keep-password2`).
+- **Bug fixed on the way (join.html)**: that keep-a-copy box was `id="password"`, the same id as the operator's sign-in
+  box above it, so `$("password")` read the sign-in box (normally empty) and `signer.keep()` sealed the words with that.
+  The box is `#keep-password` now, and keeping a copy needs a password.
+- Tests: test_signup_browser::test_two_different_passwords_make_no_account (new) and the sign-up fills in
+  test_signup_browser / test_setup_browser type the password twice; test_auth_web::test_every_new_password_is_asked_for_twice,
+  ::test_the_copy_kept_in_this_browser_has_a_password_box_of_its_own; test_game_door::test_the_door_asks_for_the_password_twice.
+- Nothing else changes: wallet.js, the server and the protocol are untouched.
+
 ### 2026-10-25 PRs #17 and #15 applied; #15's follow rule no longer stops by itself (Claude)
 The operator: "Go ahead and 17 and 15". Branch `claude/pr15-17` (on 7fd0a76): tbuuol's #17 (Kotia getblock with a boolean, rpc.py)
 and SadFrog's #15 (arcadeFollow) applied as their own commits, authors kept; the notes entries filed at the top, #17's test

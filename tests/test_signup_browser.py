@@ -283,11 +283,36 @@ def test_the_page_asks_for_two_things(loaded):
     _ready(browser, base)
     assert browser.find_element(By.ID, "tag").is_displayed()
     assert browser.find_element(By.ID, "pw").is_displayed()
+    assert browser.find_element(By.ID, "pw2").is_displayed(), "the password twice: nobody can reset it"
     assert browser.find_element(By.ID, "make").is_displayed()
     # And nothing about keys, seeds or derivation paths.
     body = browser.page_source.lower()
     assert "seed phrase" not in body.split("write these down")[0]
     assert "derivation" not in body and "secp256k1" not in body
+
+
+def test_two_different_passwords_make_no_account(loaded):
+    """Nobody can reset a password, so a typo at sign-up would lock the account
+    for good: the page asks for it twice and refuses two that differ (2026-10-25)."""
+    from selenium.webdriver.common.by import By
+
+    browser, base, state, home = loaded
+    _ready(browser, base)
+    free = state.accounts().free()
+    browser.find_element(By.ID, "tag").send_keys("twotypos")
+    browser.find_element(By.ID, "pw").send_keys("a long enough password")
+    browser.find_element(By.ID, "pw2").send_keys("a long enough pasword")
+    assert "Not the same" in browser.find_element(By.ID, "pw2-says").text
+    browser.find_element(By.ID, "make").click()
+    time.sleep(1)
+    trouble = browser.find_element(By.ID, "trouble")
+    assert trouble.is_displayed() and "not the same" in trouble.text
+    assert not browser.find_element(By.ID, "written").is_displayed()
+    assert state.accounts().free() == free, "no seat taken, no wallet made"
+    # Put right, it says so as they type.
+    box = browser.find_element(By.ID, "pw2")
+    box.clear(); box.send_keys("a long enough password")
+    assert "match" in browser.find_element(By.ID, "pw2-says").text
 
 
 def test_a_name_is_checked_as_it_is_typed(loaded):
@@ -312,6 +337,7 @@ def test_making_an_account_shows_the_words_once_and_asks(loaded):
     _ready(browser, base)
     browser.find_element(By.ID, "tag").send_keys("paperwork")
     browser.find_element(By.ID, "pw").send_keys("a long enough password")
+    browser.find_element(By.ID, "pw2").send_keys("a long enough password")
     browser.find_element(By.ID, "make").click()
 
     for _ in range(80):
@@ -357,6 +383,7 @@ def test_a_new_account_is_told_about_its_coins(loaded):
     _ready(browser, base)
     browser.find_element(By.ID, "tag").send_keys("thirsty")
     browser.find_element(By.ID, "pw").send_keys("a long enough password")
+    browser.find_element(By.ID, "pw2").send_keys("a long enough password")
     browser.find_element(By.ID, "make").click()
     for _ in range(80):
         if browser.find_element(By.ID, "written").is_displayed():

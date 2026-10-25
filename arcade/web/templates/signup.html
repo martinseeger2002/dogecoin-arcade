@@ -60,6 +60,12 @@
         type quickly is not a convenience.</p>
       <p class="small" id="pw-says"></p>
     </div>
+    <div class="field">
+      <label for="pw2">The password again</label>
+      <input type="password" id="pw2" autocomplete="new-password"
+             placeholder="type it once more, so a slip of the finger shows now">
+      <p class="small" id="pw2-says"></p>
+    </div>
     <button class="btn primary" id="make">Create my account</button>
   </div>
 
@@ -213,8 +219,25 @@ function wire() {
     }, 600);
   };
 
+  // The password twice (SadFrog, 2026-10-25): nobody can reset it, so a typo made
+  // here would lock the account for good. Said as they type, refused at the button.
+  const pwSame = () => {
+    const a = $("pw").value, b = $("pw2").value;
+    $("pw2-says").textContent = !b ? "" : a === b ? "The two match." : "Not the same yet.";
+    $("pw2-says").style.color = a === b ? "var(--ok)" : "var(--warn)";
+    return !!a && a === b;
+  };
+  $("pw2").oninput = pwSame;
+  $("pw").addEventListener("input", () => { if ($("pw2").value) pwSame(); });
+
   $("make").onclick = async () => {
     say("");
+    if (!pwSame()) {
+      say($("pw2").value ? "The two passwords are not the same. Type the same password in both boxes."
+                         : "Type your password a second time, in the box under it.");
+      $("pw2").focus();
+      return;
+    }
     $("make").disabled = true;
     try {
       const made = await wallet.signUp($("tag").value.trim(),

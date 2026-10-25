@@ -130,3 +130,10 @@ def test_the_door_offers_the_fastest_affiliated_arcade_before_signing_in(client)
     assert 'id="hop" hidden' in body and "fetch('/affiliates.json'" in body
     assert "var WHICH = \"ashvale\"" in body
     assert "&hop=1" in body, "a hop says so, and the next door does not offer another"
+
+
+def test_the_door_asks_for_the_password_twice(client):
+    app, state = client
+    _ashvale(state)
+    body = app.get("/play/ashvale", headers=OUTSIDE).text
+    assert 'id="pw2"' in body and "The two passwords are not the same" in body
