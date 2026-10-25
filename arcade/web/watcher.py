@@ -339,9 +339,11 @@ class BlockWatcher:
     def _keep_utxo_sets(self) -> None:
         """KOTIA ONLY for now (Params.full_utxo_set, arcade/utxoset.py, 2026-10-25): the chain's whole unspent set,
         built once from block 0 through this arcade's own Core, then followed every pass. Kotia's Core has neither
-        `scantxoutset` nor `importmulti`, so an account's coins and history from before the floor came from nowhere;
-        from the set they are seeded into the index the wallet reads (`_utxoset_seed`). Each pass runs on a thread
-        of its own, one per chain, so the watcher and the pages never wait for it."""
+        `scantxoutset` nor `importmulti`, so an account's coins and history from before the floor came from nowhere.
+        On such a chain the set is where the wallet's coins and history come from: every pass makes the index's
+        `utxo` and `activity` rows of the watched addresses what the set says (`_utxoset_mirror`), and the index
+        itself leaves them alone (indexer.py), so there is one source and no floor in between. Each pass runs on a
+        thread of its own, one per chain, so the watcher and the pages never wait for it."""
         busy = self.__dict__.setdefault("_utxoset_busy", set())
         for chain in list(getattr(self.state, "addons", None) or []):
             if (not getattr(chain.params, "full_utxo_set", False) or chain.borrowed or chain.network in busy
@@ -358,10 +360,8 @@ class BlockWatcher:
         try:
             uset = self.state.utxoset(chain)
             if net in self.state.utxoset_rebuild:
-                # Asked for in Admin -> Chains: everything again from block 0, and every account read back again
-                # (the index keeps what it has: INSERT OR IGNORE).
+                # Asked for in Admin -> Chains: everything again from block 0, every account's history with it.
                 uset.reset()
-                self.state.set_setting(f"utxoset_seeded:{net}", [])
                 self.state.utxoset_rebuild.discard(net)
                 log.info("%s: the unspent set is built again from block 0, as the operator asked", params.label)
             index = self.state.token_index(chain)
@@ -374,56 +374,57 @@ class BlockWatcher:
                     log.info("%s: building the whole unspent set from block 0 to %s", params.label, tip)
                     uset.build(utxosetlib.rpc_blocks(rpc, params, 0, tip, rest=UTXOSET_REST), tip,
                                history_for=watched, progress=lambda h, _n: progress.update(height=h))
+                # Accounts added since: their coins are in the set already; their history starts now (no rescan).
+                uset.watch(watched)
                 utxosetlib.follow(uset, rpc, params)
-                new = watched - uset.history_for
-                if new:
-                    # Accounts added since: their coins are in the set already, their past needs the chain read again.
-                    tip = uset.height
-                    progress.update(phase="history", height=0, tip=tip)
-                    uset.build(utxosetlib.rpc_blocks(rpc, params, 0, tip, rest=UTXOSET_REST), tip, history_for=new,
-                               coins=False, progress=lambda h, _n: progress.update(height=h))
             progress.update(phase="ready", height=uset.height, tip=uset.height)
-            self._utxoset_seed(chain, uset)
+            self._utxoset_mirror(chain, uset)
         except Exception:                                      # noqa: BLE001 -- next pass tries again
             progress["phase"] = "waiting"
             log.warning("%s: the unspent set's pass failed", params.label, exc_info=True)
         finally:
             busy.discard(net)
 
-    def _utxoset_seed(self, chain, uset) -> None:
-        """Each watched address's coins (those the wallet can spend) and history from the set, into the index the
-        wallet reads, once per address. Only when the set is at or past the index: a coin the set still holds is then
-        unspent at every height the index has read, and the index takes over from there (INSERT OR IGNORE: a coin or
-        row it already has stays as it is)."""
-        net = chain.network
+    def _utxoset_mirror(self, chain, uset) -> None:
+        """The watched addresses' coins (those the wallet can spend) and history in the index, made what the set says,
+        every pass (tbuuol 2026-10-25, after a send in the blocks between a one-time copy and the floor left a spent
+        coin in the wallet). What the index holds above the set's height is left: a coin a coin list checked at the
+        Core a block ago is the set's on its next pass. Written straight, not through the index's journal: the index
+        never writes these rows on this chain, so a block it takes back has none of them to give back."""
+        if uset.height is None:
+            return
+        from .. import coinlist as coinlistlib, utxos as utxoslib
+        top = int(uset.height)
         index = self.state.token_index(chain)
-        key = f"utxoset_seeded:{net}"
-        seeded = set(self.state.setting(key) or [])
+        changed = 0
         with contextlib.closing(index.open()) as db:
-            from .. import utxos as utxoslib
-            if (uset.height or 0) < (index.indexed_height() or 0):
-                return
-            todo = sorted((utxoslib.watching(db) & uset.history_for) - seeded)
-            if not todo:
-                return
             with db.conn:
-                for address in todo:
+                for address in sorted(utxoslib.watching(db) & uset.history_for):
+                    want = {(c["txid"], int(c["vout"])): c for c in uset.unspent(address, wallet_only=True)}
+                    have = {(r["txid"], int(r["vout"])): r for r in utxoslib.unspent(db, address)}
+                    gone = [k for k, r in have.items() if k not in want and int(r["height"]) <= top]
+                    new = [c for k, c in want.items() if k not in have]
+                    db.conn.executemany("DELETE FROM utxo WHERE txid=? AND vout=?", gone)
                     db.conn.executemany(
-                        "INSERT OR IGNORE INTO utxo (txid, vout, address, value, height) VALUES (?,?,?,?,?)",
-                        [(c["txid"], c["vout"], address, c["value"], c["height"])
-                         for c in uset.unspent(address, wallet_only=True)])
+                        "INSERT OR REPLACE INTO utxo (txid, vout, address, value, height) VALUES (?,?,?,?,?)",
+                        [(c["txid"], c["vout"], address, c["value"], c["height"]) for c in new])
+                    rows = {r["txid"]: r for r in uset.history([address])}
+                    kept = {t: h for t, h in db.conn.execute(
+                        "SELECT txid, height FROM activity WHERE address=?", (address,))}
+                    stale = [(t, address) for t, h in kept.items() if t not in rows and int(h) <= top]
+                    fresh = [r for t, r in rows.items() if t not in kept]
+                    db.conn.executemany("DELETE FROM activity WHERE txid=? AND address=?", stale)
                     db.conn.executemany(
-                        "INSERT OR IGNORE INTO activity (txid, address, height, received, spent, paid_out, other) "
+                        "INSERT OR REPLACE INTO activity (txid, address, height, received, spent, paid_out, other) "
                         "VALUES (?,?,?,?,?,?,?)",
-                        [(r["txid"], r["address"], r["height"], r["received"], r["spent"], r["paid_out"], r["other"])
-                         for r in uset.history([address])])
-            # The whole unspent set is complete from block 0 (coin lists, 2026-10-25): these addresses never need a walk.
-            from .. import coinlist as coinlistlib
-            for address in todo:
-                coinlistlib.mark_covered(db, address, [(0, int(uset.height))], "full unspent set")
-        self.state.set_setting(key, sorted(seeded | set(todo)))
-        log.info("%s: %d accounts' coins and history read from the unspent set", chain.params.label, len(todo))
-        self.state.bump_generation()
+                        [(r["txid"], address, r["height"], r["received"], r["spent"], r["paid_out"], r["other"])
+                         for r in fresh])
+                    # Complete from block 0 (coin lists, 2026-10-25): these addresses never need a walk.
+                    coinlistlib.mark_covered(db, address, [(0, top)], "full unspent set")
+                    changed += len(gone) + len(new) + len(stale) + len(fresh)
+        if changed:
+            log.info("%s: %d coin and history rows brought in line with the unspent set", chain.params.label, changed)
+            self.state.bump_generation()
 
     def _keep_faucets(self) -> None:
         """Every test chain's faucet, every ten minutes (the app's `keep_faucets`, 2026-10-18)."""
@@ -478,6 +479,12 @@ class BlockWatcher:
                 utxoslib.watch(db, address, tip, f"account {wanted[address][:12]} (derived)")
             first = db.conn.execute("SELECT MIN(height) FROM block").fetchone()[0]
             db.conn.commit()
+        if getattr(chain.params, "full_utxo_set", False):
+            # KOTIA ONLY: the whole unspent set already holds their coins, and their history starts now; nothing is
+            # read back (tbuuol 2026-10-25: no rescan, and none a user can set off). _keep_utxo_sets does the rest.
+            if fresh:
+                log.info("watching %d more accounts' %s addresses (from the unspent set)", len(fresh), chain.params.label)
+            return
         log.info("watching %d more accounts' %s addresses; reading back blocks %s..%s",
                  len(fresh), chain.params.label, first, tip)
 

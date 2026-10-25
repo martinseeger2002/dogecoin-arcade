@@ -117,7 +117,9 @@ class ArcadeHandler:
         # sends far more often than by anything carrying a marker, and an
         # index that only saw its own transactions would show a balance
         # that is always too small (arcade/utxos.py).
-        watched = utxos.watching(state.db)
+        # Not on a chain that keeps its whole unspent set (KOTIA ONLY, Params.full_utxo_set): there the set is the
+        # wallet's one source, from block 0, and the watcher writes these rows from it (watcher._utxoset_mirror).
+        watched = set() if getattr(self.params, "full_utxo_set", False) else utxos.watching(state.db)
         if watched:
             moved = utxos.on_block(state, height, block, self.params, watched)
             self.stats["coins_in"] = self.stats.get("coins_in", 0) + moved["added"]

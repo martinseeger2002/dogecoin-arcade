@@ -179,47 +179,131 @@ def test_the_full_set_is_kotia_only():
     assert [n for n, p in NETWORKS.items() if p.full_utxo_set] == ["kot"]
 
 
-def test_the_watcher_seeds_account_coins_and_history_into_the_wallet_index(tmp_path):
-    """The set is what the wallet's index reads an account back from on Kotia: its wallet coins and its history,
-    once per address, and only when the set is at or past what the index has read."""
+def _mirror_rig(tmp_path, watched):
     import contextlib
     import types
 
     from arcade import utxos
     from arcade.ledger import LedgerIndex
+
+    index = LedgerIndex(tmp_path / "kot-ledger.sqlite", KOT, rpc_factory=lambda: None)
+    with contextlib.closing(index.open()) as db:
+        utxos.install(db)
+        for address in watched:
+            utxos.watch(db, address, 0, "account (derived)")
+        db.conn.commit()
+    bumps = []
+    state = types.SimpleNamespace(token_index=lambda chain: index, bump_generation=lambda: bumps.append(1))
+    return index, types.SimpleNamespace(state=state), types.SimpleNamespace(network="kot", params=KOT), bumps
+
+
+def test_the_wallet_index_is_what_the_set_says_every_pass(tmp_path):
+    """The set is the wallet's one source on Kotia: the watched addresses' wallet coins and history, every pass, with
+    no floor in between and whatever the index has read."""
+    import contextlib
+
+    from arcade import coinlist, utxos
     from arcade.web.watcher import BlockWatcher
 
     blocks, ids = chain()
     s = U.UtxoSet(tmp_path / "kot-utxoset.sqlite", KOT)
     s.build(parsed(blocks), tip=3, history_for={A, B})
-    index = LedgerIndex(tmp_path / "kot-ledger.sqlite", KOT, rpc_factory=lambda: None)
-    with contextlib.closing(index.open()) as db:
-        utxos.install(db)
-        for address in (A, B):
-            utxos.watch(db, address, 0, "account (derived)")
-        db.conn.commit()
-    settings, bumps = {}, []
-    state = types.SimpleNamespace(token_index=lambda chain: index, setting=lambda k, d=None: settings.get(k, d),
-                                  set_setting=settings.__setitem__, bump_generation=lambda: bumps.append(1))
-    me = types.SimpleNamespace(state=state)
-    kot = types.SimpleNamespace(network="kot", params=KOT)
-
-    index.indexed_height = lambda: 9                                # the index is past the set: not yet
-    BlockWatcher._utxoset_seed(me, kot, s)
-    assert not bumps
-    index.indexed_height = lambda: None                             # below the floor: nothing read yet
-    BlockWatcher._utxoset_seed(me, kot, s)
+    index, me, kot, bumps = _mirror_rig(tmp_path, (A, B))
+    BlockWatcher._utxoset_mirror(me, kot, s)
     with contextlib.closing(index.open()) as db:
         assert utxos.balance(db, A) == 199_000_000 and utxos.balance(db, B) == 99_000_000
         rows = utxos.activity(db, [A])
         assert {r["txid"] for r in rows} == {ids["cb1"], ids["spend"]}
         assert next(r for r in rows if r["txid"] == ids["spend"])["net"] == 199_000_000 - 5 * COIN
-    assert settings["utxoset_seeded:kot"] == sorted([A, B]) and bumps == [1]
-    from arcade import coinlist
-    with contextlib.closing(index.open()) as db:                    # coin lists: complete from block 0, no walk
-        assert coinlist.covers(coinlist.coverage(db, A, s.height), 0, s.height)
-    BlockWatcher._utxoset_seed(me, kot, s)                          # once per address
+        assert coinlist.covers(coinlist.coverage(db, A, s.height), 0, s.height)     # coin lists: no walk
     assert bumps == [1]
+    BlockWatcher._utxoset_mirror(me, kot, s)                       # nothing new: nothing written, nothing redrawn
+    assert bumps == [1]
+
+
+def test_a_spend_after_the_first_pass_reaches_the_wallet(tmp_path):
+    """pepecoinarcade.com, 2026-10-25: the one-time copy ran at block 1,529,978, @banana sent 0.1 KOT in 1,529,979,
+    and the index (floor 1,530,000) never read that block: the spent coin stayed, the change and the payee's coin never
+    came. Now the next pass takes the spent coin out and brings the new ones and the send's history in."""
+    import contextlib
+
+    from arcade import utxos
+    from arcade.web.watcher import BlockWatcher
+
+    blocks, ids = chain()
+    s = U.UtxoSet(tmp_path / "kot-utxoset.sqlite", KOT)
+    s.build(parsed(blocks[:3]), tip=2, history_for={B})
+    index, me, kot, _bumps = _mirror_rig(tmp_path, (B, C))
+    s.watch({C})                                                   # signed up after the build: no history before
+    BlockWatcher._utxoset_mirror(me, kot, s)
+    with contextlib.closing(index.open()) as db:
+        assert [c["txid"] for c in utxos.unspent(db, B)] == [ids["spend"]]
+        assert utxos.activity(db, [C]) == []
+    h3, bh3, b3 = parsed(blocks)[3]
+    s.connect(h3, bh3, b3, lambda t, v: {(ids["spend"], 0): (p2pkh_script(B), 3 * COIN)}[(t, v)])
+    BlockWatcher._utxoset_mirror(me, kot, s)
+    with contextlib.closing(index.open()) as db:
+        assert utxos.unspent(db, B) == [{"txid": ids["make"], "vout": 1, "address": B, "value": 99_000_000,
+                                         "height": 3}]
+        assert utxos.balance(db, C) == 190_000_000
+        assert {r["txid"] for r in utxos.activity(db, [B])} == {ids["spend"], ids["make"]}
+        assert {r["txid"] for r in utxos.activity(db, [C])} == {ids["make"], ids["again"]}
+    s.disconnect()                                                 # a reorg: block 3 off, another block 3 on
+    other, raw = block(blocks[2][1], [tx([None], [(0, b"")], ntime=1_700_000_333)], time=1_700_000_333)
+    s.connect(3, other, U._read(raw, other, KOT), lambda t, v: None)
+    BlockWatcher._utxoset_mirror(me, kot, s)
+    with contextlib.closing(index.open()) as db:
+        assert [c["txid"] for c in utxos.unspent(db, B)] == [ids["spend"]] and utxos.balance(db, C) == 0
+        assert {r["txid"] for r in utxos.activity(db, [B])} == {ids["spend"]}
+
+
+def test_a_coin_above_the_set_is_left_for_its_next_pass(tmp_path):
+    """A coin a coin list checked at the Core a block ahead of the set is not taken out by a set that has not seen it."""
+    import contextlib
+
+    from arcade import utxos
+    from arcade.web.watcher import BlockWatcher
+
+    blocks, _ids = chain()
+    s = U.UtxoSet(tmp_path / "kot-utxoset.sqlite", KOT)
+    s.build(parsed(blocks), tip=3, history_for={A})
+    index, me, kot, _bumps = _mirror_rig(tmp_path, (A,))
+    with contextlib.closing(index.open()) as db:
+        db.conn.execute("INSERT INTO utxo VALUES (?,?,?,?,?)", ("ab" * 32, 0, A, 7, 4))
+        db.conn.execute("INSERT INTO utxo VALUES (?,?,?,?,?)", ("cd" * 32, 0, A, 9, 2))   # not in the set: gone
+        db.conn.commit()
+    BlockWatcher._utxoset_mirror(me, kot, s)
+    with contextlib.closing(index.open()) as db:
+        assert utxos.balance(db, A) == 199_000_000 + 7
+
+
+def test_a_new_account_is_watched_from_now_on_without_a_rescan(tmp_path):
+    blocks, ids = chain()
+    s = U.UtxoSet(tmp_path / "u.sqlite", KOT)
+    s.build(parsed(blocks[:3]), tip=2, history_for={A})
+    assert s.watch({A, C}) == {C} and s.history_for == {A, C}
+    assert s.history([C]) == [] and s.watch({C}) == set()
+    h3, bh3, b3 = parsed(blocks)[3]
+    s.connect(h3, bh3, b3, lambda t, v: {(ids["spend"], 0): (p2pkh_script(B), 3 * COIN)}[(t, v)])
+    assert {r["txid"] for r in s.history([C])} == {ids["make"], ids["again"]}
+
+
+def test_the_index_leaves_kotia_coins_to_the_set(tmp_path, monkeypatch):
+    """On Kotia the index does not write the wallet's coin rows (the set does); on every other chain it does."""
+    import contextlib
+
+    from arcade import indexer, utxos
+    from arcade.ledger import LedgerIndex
+
+    for params, wanted in ((KOT, 0), (NETWORKS["main"], 1)):
+        seen = []
+        monkeypatch.setattr(indexer.utxos, "on_block", lambda *a, **k: seen.append(1) or {"added": 0, "spent": 0})
+        index = LedgerIndex(tmp_path / f"{params.name}-ledger.sqlite", params, rpc_factory=lambda: None)
+        with contextlib.closing(index.open()) as db:
+            utxos.install(db)
+            utxos.watch(db, A, 0, "account (derived)")
+            indexer.ArcadeHandler(None, params).on_connect(db, params.activation_height, {"tx": []})
+        assert len(seen) == wanted
 
 
 class _Core:
@@ -264,16 +348,17 @@ def test_the_watcher_builds_the_set_and_builds_it_again_when_asked(tmp_path, mon
     kot = types.SimpleNamespace(network="kot", params=KOT, borrowed=False,
                                 local_rpc=lambda: contextlib.nullcontext(_Core(blocks)))
     me = types.SimpleNamespace(state=state)
-    me._utxoset_seed = lambda c, u: W.BlockWatcher._utxoset_seed(me, c, u)
+    me._utxoset_mirror = lambda c, u: W.BlockWatcher._utxoset_mirror(me, c, u)
     W.BlockWatcher._utxoset_pass(me, kot, set())
     assert progress["kot"]["phase"] == "ready" and uset.height == 3 and uset.balance(A) == 199_000_000
-    assert settings["utxoset_seeded:kot"] == [A]
+    with contextlib.closing(index.open()) as db:
+        assert utxos.balance(db, A) == 199_000_000
     uset.conn.execute("DELETE FROM coins")                          # something went wrong with it
     uset.conn.commit()
     rebuild.add("kot")                                               # Admin -> Chains -> Rebuild
     W.BlockWatcher._utxoset_pass(me, kot, set())
     assert not rebuild and uset.balance(A) == 199_000_000 and uset.height == 3
-    assert settings["utxoset_seeded:kot"] == [A]                     # read back again
+    assert uset.history_for == {A}                                   # history from block 0 again, with the build
 
 
 def test_admin_asks_for_a_rebuild_of_kotia_only(client, monkeypatch):

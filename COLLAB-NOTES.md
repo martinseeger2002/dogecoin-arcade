@@ -88,6 +88,27 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-26 · SadFrog's side (Claude, node 3, for tbuuol) · branch `team/kotia-wallet-direct` (on `main` 7745b201) · Kotia's wallet from the unspent set only (KOTIA ONLY)
+Found live on pepecoinarcade.com after #23: the one-time copy into the index (`_utxoset_seed`) ran at block 1,529,978
+while Kotia's index had read nothing (floor 1,530,000, tip 1,529,994). @banana sent 0.1 KOT in 1,529,979, between the
+two: the spent 1 KOT stayed in the wallet, the change and the payee's coin never came (1.8999 shown, 0.8999 held), and
+no confirmations. tbuuol: Pepecoin test is the main chain, Kotia only storage and a coin, so its wallet needs no floor;
+history only for arcade accounts, "if one is new he sees only what has happened on the address since his signup", and
+no rescan, none a user can set off. Kotia only.
+- `watcher._utxoset_mirror` replaces `_utxoset_seed`: every pass the watched addresses' `utxo` and `activity` rows are
+  made what the set says (rows above the set's height are left for its next pass; a reorg the set takes back is
+  undone on the next pass). Written straight, not journalled: the index no longer writes those rows on Kotia
+  (`indexer.py`: no `utxos.on_block` when `Params.full_utxo_set`). Coverage (coin lists) from block 0 as before.
+- New accounts: `UtxoSet.watch` adds them to `history_for` from the next block on; the history-only pass from block 0
+  is gone, and `_watch_accounts_on` reads nothing back on Kotia (no `seed_from_core`/`backfill_many`).
+- Admin -> Chains -> Rebuild unchanged: the build reads every block anyway, so every account's history from block 0
+  comes with it. The "reading new accounts' history" status is gone. `docs/kotia.md` says how it works now.
+- The floor (`KOT_MAINNET_FLOOR`) stays for the arcade's own features on Kotia; the Kotia wallet no longer depends on it.
+- On node 3 the next pass after the update puts @banana's and @tbuuol's rows right by itself (test
+  `test_a_spend_after_the_first_pass_reaches_the_wallet` is that case).
+- Tests: test_utxoset 16, test_kotia, test_utxos, test_coinlist(_web), test_watcher, test_utxo_backfill,
+  test_utxo_seed, test_wallet_imports: all pass.
+
 ### 2026-10-25 Coin lists between arcades, the shared walk, Admin -> Wallet imports; the PWA home always portrait (Claude)
 The operator: "each users valid, UTXO list should be stored alongside their encrypted wallet file ... also be stored in their
 arcade, browser local storage ... any of the current arcade accounts that are held by more than one arcade. Like @apple

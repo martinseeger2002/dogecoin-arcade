@@ -20,6 +20,8 @@ Tables, an array per key where it can be, which keeps them small:
   these blocks itself.
 - `history`: what each transaction did to the addresses asked for (`history_for`: the arcade's accounts), the same
   rows as utxos.activity -- received, spent, paid out, the first other address. Every other address keeps no history.
+  An account there when the set is built gets its history from block 0 (the build reads every block anyway); one
+  added later only from then on (`watch`), never by reading the chain again.
 
 What is spent is gone. An OP_RETURN output is never a coin. Block 0's outputs are not coins either (Bitcoin's code
 never lets them be spent, and the Core does not count them). The last UNDO_DEPTH blocks keep what they changed, so a
@@ -157,6 +159,17 @@ class UtxoSet:
         return {"height": self.height, "best": self.best, "coins": coins, "addresses": addresses, "value": value,
                 "data_blocks": data[0], "data_txs": data[1] // TXID,
                 "history_rows": self.conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]}
+
+    def watch(self, addresses: Iterable[str]) -> set[str]:
+        """Keep the history of more addresses from the next block on, and nothing from before (tbuuol 2026-10-25: "if
+        one is new he sees only what has happened on the address since his signup"; no rescan). Their coins are in the
+        set already, whatever their age. The ones that were new."""
+        new = set(addresses) - self.history_for
+        if new:
+            with self.conn:
+                self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('history_for', ?)",
+                                  (json.dumps(sorted(self.history_for | new)),))
+        return new
 
     def reset(self) -> None:
         """Forget everything (Admin -> Chains -> Rebuild): the next pass builds the set again from block 0."""

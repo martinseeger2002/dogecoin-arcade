@@ -69,9 +69,12 @@ in `<net>-utxoset.sqlite`:
 
 - **Building** reads all of Kotia's 1.5 million blocks through its Core, at a pace that keeps the pages answering
   (about half an hour). Admin → Chains shows how far it has got. After that it follows the chain block by block.
-- **Every account** gets its coins and its history from block 0 from it, so KOT sent before the arcade started
-  watching shows in the Wallet. History from before the arcade's own index has no time, so the Wallet files it under
-  *Earlier* and gives its block.
+- **The Wallet's Kotia coins and history come from it**, not from the arcade's index, so there is one source and no
+  floor in between. Every pass the arcade makes the Wallet's rows what the set says.
+- **Every account there when the set was built** gets its history from block 0, because building reads every block
+  anyway. **An account added later** sees its coins at once, whatever their age, but its history only from when it
+  was added. Nothing is read again for it, and nobody can set off such a read.
+- History from before the arcade's own index has no time, so the Wallet files it under *Earlier* and gives its block.
 - **What is kept:** each address's unspent coins (49 bytes a coin), the history of the arcade's own accounts, and, for
   every block that carries data (OP_RETURN), the ids of those transactions. Kotia's set is about 79,000 coins, a 5 MB
   file.

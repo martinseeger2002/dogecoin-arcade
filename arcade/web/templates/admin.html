@@ -1988,7 +1988,6 @@ section.panel h2{margin-top:0}
         var pct = us.tip ? (100 * (us.height || 0) / us.tip).toFixed(1) + '%' : '';
         bits.push(us.phase === 'building' ? 'full unspent set: building ' + pct + ' (block ' + (us.height || 0).toLocaleString()
                                             + ' of ' + (us.tip || 0).toLocaleString() + ')'
-                  : us.phase === 'history' ? 'full unspent set: reading new accounts\u2019 history ' + pct
                   : us.phase === 'queued' ? 'full unspent set: rebuild starts at the next pass'
                   : us.built != null ? 'full unspent set at block ' + us.built.toLocaleString()
                   : 'full unspent set: starts once the node has synced');
@@ -1997,7 +1996,7 @@ section.panel h2{margin-top:0}
       if (m.disagree) bits.push('SHARERS DISAGREE about the chain tip');
       if (r.chosen !== r.now) bits.push('becomes \u201c' + CORE_WORDS[r.chosen].toLowerCase() + '\u201d at the next restart');
       var said = text('td', bits.join(' \u00b7 '), m.disagree ? 'idx-bad' : 'muted');
-      if (us && us.built != null && us.phase !== 'building' && us.phase !== 'history' && us.phase !== 'queued') {
+      if (us && us.built != null && us.phase !== 'building' && us.phase !== 'queued') {
         // Build the whole unspent set again from block 0 (Kotia only for now, 2026-10-25).
         var rb = document.createElement('button');
         rb.type = 'button'; rb.className = 'small'; rb.textContent = 'Rebuild';
