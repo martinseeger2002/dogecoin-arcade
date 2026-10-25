@@ -146,3 +146,28 @@ def test_the_browser_knows_kotias_key_and_its_timed_transactions():
 def test_a_wif_decodes_as_kotias_secret_key():
     version, _payload = b58check_decode(FIX["tx"]["wif"])
     assert version == 173
+
+
+def test_a_synced_kotia_is_ready_though_its_core_never_says_initialblockdownload():
+    """Kotia's getblockchaininfo (Bitcoin 0.14) has no `initialblockdownload`; its progress decides (2026-10-25: the
+    chain stayed grayed out in Admin -> Chains while its node was synced)."""
+    import contextlib
+    import types
+    from arcade.web.state import AppState
+
+    def chain(info):
+        rpc = types.SimpleNamespace(get_blockchain_info=lambda: info)
+        return types.SimpleNamespace(network="kot", rpc=lambda: contextlib.nullcontext(rpc))
+
+    def ready(info):
+        me = types.SimpleNamespace(_sync={}, SYNC_SECONDS=60)
+        return AppState._sync_now(me, chain(info))["ready"]
+
+    kotia = {"chain": "main", "blocks": 1_529_499, "headers": 1_529_499, "verificationprogress": 1,
+             "difficulty": {"proof-of-work": 59.95, "proof-of-stake": 869273.09}}
+    assert ready(kotia)
+    assert not ready({**kotia, "verificationprogress": 0.42})
+    assert not ready({**kotia, "headers": kotia["blocks"] + 50})
+    # A Core that does say it still decides by it.
+    assert not ready({**kotia, "initialblockdownload": True})
+    assert ready({**kotia, "initialblockdownload": False})

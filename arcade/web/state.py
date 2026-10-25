@@ -1472,9 +1472,12 @@ class AppState:
                 info = rpc.get_blockchain_info()
             blocks, headers = int(info.get("blocks", 0)), int(info.get("headers", 0))
             progress = float(info.get("verificationprogress", 0) or 0)
+            # A Core older than Bitcoin 0.16 never says `initialblockdownload` (Kotia 1.0.0, 2026-10-25: grayed out for
+            # good while synced): there, its progress says it.
+            downloading = info.get("initialblockdownload", progress < 0.9999)
             said = {"online": True, "blocks": blocks, "headers": headers,
                     "progress": min(1.0, progress),
-                    "ready": (not info.get("initialblockdownload", True)
+                    "ready": (not downloading
                               and headers > 0 and headers - blocks <= 2
                               and progress >= 0.9999)}
         except Exception:

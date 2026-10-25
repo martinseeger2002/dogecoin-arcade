@@ -88,6 +88,16 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-25 · SadFrog's side (Claude, node 3, for tbuuol) · branch `team/kotia-ready` (on 9a2b09bb) · Kotia is grayed out while synced
+After #11 shipped, pepecoinarcade.com's Admin -> Chains kept Kotia grayed out although its node was at the tip. The cause:
+`AppState._sync_now` needs `initialblockdownload` to be false, and a Core older than Bitcoin 0.16 never sends that field
+(Kotia 1.0.0's `getblockchaininfo` has `blocks`, `headers`, `verificationprogress` and no `initialblockdownload`). A missing
+field read as "still downloading", so Kotia could never become ready. Now, when the field is missing, the progress decides
+(`< 0.9999` means downloading). Every Core that sends the field is read as before. One line in `arcade/web/state.py`.
+Test: `test_kotia.py::test_a_synced_kotia_is_ready_though_its_core_never_says_initialblockdownload`; it fails without the
+fix. The other readers of that field (core_catchup, app.py, litecoin.py) already treat a missing field as "not downloading",
+or are Litecoin's own.
+
 ### 2026-10-24 Contacts test reads only contactsChange (Claude)
 The node-hop door (`accessDoor`, from `team/in-game-wallet-access`) sits between `contactsChange` and the message
 listener in `_page_doors.js.html`, so `test_contacts_bridge` counted its "Play ... on ...?" card as a third contacts
