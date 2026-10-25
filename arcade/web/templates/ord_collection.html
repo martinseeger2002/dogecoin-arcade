@@ -46,7 +46,7 @@
     <button class="small ghost" type="submit">Find</button>
   </form>
 </div>
-<p class="muted" style="font-size:.82rem;margin-top:-4px">Tap a piece to make an offer in any coin or token you hold.</p>
+{% if swaps %}<p class="muted" style="font-size:.82rem;margin-top:-4px">Tap a piece to make an offer in any coin or token you hold.</p>{% endif %}
 <div class="oc-grid">
   {% for p in pieces %}
   <a class="oc-card" href="{{ p.offer }}" title="{{ p.id }}">

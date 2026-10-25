@@ -3981,7 +3981,7 @@ def create_app(state: AppState) -> FastAPI:
         be able to see doginals in others wallets. To make offers"). [{id, txid, vout, network, kind, market}]."""
         from .. import doginals as D
         guard = fundinglib.guard_for(address) if address else None
-        chain = next((c for c in state.token_chains if c.network in ("doge", "main")
+        chain = next((c for c in state.token_chains if _ord_chain(c)
                       and fundinglib.guard_for(address) is not None
                       and address and _addr_version(address) == c.params.pubkeyhash_version), None)
         if guard is None or chain is None:
@@ -20814,10 +20814,12 @@ def create_app(state: AppState) -> FastAPI:
         price_of = {r["inscription"]: r for r in listed}
         net = coll["chain"]
         other = ordchainslib.counter(net)
+        swaps = ordchainslib.swappable(net)
         for p in pieces:
             p["content"] = doginalslib.content_url(p["id"])
             p["frame"] = doginalslib.frame_url(p["id"])
-            p["offer"] = f"/exchange/swap/{net}-doginal-{quote(p['id'])}/{other}-coin"
+            # Its swap market where a lock can be made there (ord_chains.swappable); else the piece itself.
+            p["offer"] = f"/exchange/swap/{net}-doginal-{quote(p['id'])}/{other}-coin" if swaps else p["content"]
             p["listing"] = price_of.get(p["id"])
         looking = signed_in(request) if _account_view(request) else None
         data = {"coll": coll, "listed": listed, "pieces": pieces, "page": page, "pages": max(1, -(-total // per)),
@@ -20830,7 +20832,8 @@ def create_app(state: AppState) -> FastAPI:
                 "ord_net": net, "ord_word": _ord_word(oc) if oc is not None else "Doginal",
                 "ord_coin": NETWORKS[net].coin if net in NETWORKS else "",
                 "ord_chain_name": ordchainslib.chain_name(net),
-                "doge_version": oc.params.pubkeyhash_version if oc is not None else 30, "in_collection": True}
+                "doge_version": oc.params.pubkeyhash_version if oc is not None else 30, "in_collection": True,
+                "swaps": swaps}
         return render(request, "ord_collection.html", **data)
 
     @app.get("/account/doginals")
@@ -20998,7 +21001,7 @@ def create_app(state: AppState) -> FastAPI:
                                         status_code=409)
                 pubkey = bytes.fromhex(str(said.get("pubkey") or ""))
                 if not pubkey or hash160(pubkey) != b58check_decode(address)[1]:
-                    raise ValueError("that public key is not the key behind this account's Dogecoin address")
+                    raise ValueError(f"that public key is not the key behind this account's {chain.label} address")
                 raw = doginal_marketlib.assemble_purchase(
                     purchase, row, [str(x) for x in (said.get("signatures") or [])], pubkey)
                 _quota(account, "send")

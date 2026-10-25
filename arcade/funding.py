@@ -158,6 +158,18 @@ def guard_on(network: str):
     return GUARD_BY_NET.get(network) or (GUARD if network == "doge" else None)
 
 
+def ord_guard(address: str, params=None):
+    """The guard an ord send or listing from `address` is checked by: the one that watches it, else Dogecoin's GUARD --
+    never Dogecoin's for an address of another ord chain (`params`: Pepecoin mainnet, Bellscoin ...), whose coins it
+    has never read."""
+    got = guard_for(address)
+    if got is not None:
+        return got
+    from .ord_chains import MOVED
+    net = getattr(params, "name", None)
+    return None if net in MOVED and net != "doge" else GUARD
+
+
 def guard_for(address: str):
     """The inscription guard that watches `address`, or None."""
     if GUARD is not None and GUARD_APPLIES(address):
@@ -1111,7 +1123,7 @@ def _doginal_first(db, address: str, coin: dict, inscription: str, first: bytes,
     the fee; change last. `vouched`: the coin is one this node just built (a note's reveal) and is taken as it is.
     Priced on the chain `params` describes, as `build` is (2026-10-25: Bellinals; at Dogecoin's 0.01 a kB a Bells send
     overpaid a hundred times): its own minimum rate, its own soft-dust rule, its own least change."""
-    guard = guard_for(address) or GUARD          # Doginals on Dogecoin, Pepinals on Pepecoin mainnet
+    guard = ord_guard(address, params)          # Doginals on Dogecoin, Pepinals on Pepecoin mainnet, Bellinals ...
     if guard is None:
         raise FundingError("inscriptions are not checked on this chain here: nothing that carries one is sent")
     if not vouched:
@@ -1133,7 +1145,9 @@ def _doginal_first(db, address: str, coin: dict, inscription: str, first: bytes,
     if sum(c["value"] for c in fees_in) < owed + fee:
         fees_in = choose(db, address, owed + fee, exclude=keep_out, extra=extra)
         fee = price(1 + len(fees_in), paid, rate, change=True, params=params)
-    chosen = [dict(coin, vout=int(coin["vout"]))] + fees_in
+    # The coin as a listing row holds it ({txid, vout, value}) names no address: it is the sender's own, and the offer
+    # the tab signs says whose each input is (Unsigned.as_json; "Take it back" on the Doginals tab failed without it).
+    chosen = [dict(coin, vout=int(coin["vout"]), address=coin.get("address") or address)] + fees_in
     change = sum(c["value"] for c in fees_in) - owed - fee
     outputs = list(paid)
     if change >= fees.dust_limit(params):

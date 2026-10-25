@@ -42,9 +42,10 @@ WORDS = {
     "test": OrdWords("Pepinal", "Pepecoin test", "PEP TEST"),
 }
 
-#: The chains whose ords are sent, listed and bought here. Kotia has no ords (timed transactions, Params.tx_time);
-#: Luckycoin and Wojakcoin are shown only.
-MOVED = ("doge", "main")
+#: The chains whose ords are sent, listed and bought here: Doginals, Pepinals, and Bellinals (2026-10-25; Bells 3 signs
+#: legacy inputs as Dogecoin does, so the SINGLE|ANYONECANPAY listing digest is the same). Kotia has no ords (timed
+#: transactions, Params.tx_time); Luckycoin and Wojakcoin are shown only.
+MOVED = ("doge", "main", "bel")
 
 
 def word(net: str, default: str = "Inscription") -> str:

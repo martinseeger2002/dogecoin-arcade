@@ -293,3 +293,23 @@ def test_a_collection_page_loads_its_pieces_one_at_a_time(doge):
     frames = re.findall(r"<iframe[^>]*>", page)
     assert len(frames) == 25 and all("data-src=" in f and " src=" not in f for f in frames), frames[:2]
     assert 'querySelectorAll("iframe[data-src]")' in page
+
+
+def test_a_listing_is_taken_back_by_a_send_home(doge, monkeypatch):
+    """The tab's "Take it back" (2026-10-25: it failed with KeyError 'address': a listing row's coin names none)."""
+    app, state, chain, node = doge
+    real = utxos.unspent
+    monkeypatch.setattr(utxos, "unspent", lambda db, address: real(db, address) + (
+        [{"txid": CLEAN_TX, "vout": 7, "value": 2 * COIN, "address": SELLER}] if address == SELLER else []))
+    _seat(app, state, SELLER)
+    ask = app.post("/account/doginals/list", json={"txid": INS_TX, "vout": 0, "inscription": INSCRIPTION,
+                                                   "amount": "5"}).json()
+    sig = _sign(SELLER_KEY, bytes.fromhex(ask["digest"]), funding.SINGLE_ANYONECANPAY).hex()
+    listing = app.post("/account/doginals/list/sign", json={"txid": INS_TX, "vout": 0, "inscription": INSCRIPTION,
+                                                            "amount": "5", "signature": sig,
+                                                            "pubkey": _pubkey(SELLER_KEY).hex()}).json()["listed"]
+    back = app.post("/account/doginals/cancel", json={"listing": listing})
+    assert back.status_code == 200, back.text
+    back = back.json()
+    assert back["inputs"][0] == {"txid": INS_TX, "vout": 0, "value": 100_000, "address": SELLER}
+    assert back["chain"] == "doge" and "Doginal" in back["what"] and back["offer"]
