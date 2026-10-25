@@ -56,6 +56,8 @@ log = logging.getLogger(__name__)
 #: Time slept per batch of blocks read for a chain's whole unspent set, as a share of the time the batch took
 #: (utxoset.rpc_blocks): about 60% of one core, so pages keep answering while Kotia's 1.5 million blocks are read.
 UTXOSET_REST = 0.7
+#: How often a borrowed chain's wallet rows are asked of the sharer's set (utxoset.LentSet).
+UTXOSET_LENT_EVERY = 60.0
 
 #: How often to ask the node for its height. Cheap: one RPC call per chain.
 POLL_SECONDS = 5.0
@@ -345,13 +347,49 @@ class BlockWatcher:
         itself leaves them alone (indexer.py), so there is one source and no floor in between. Each pass runs on a
         thread of its own, one per chain, so the watcher and the pages never wait for it."""
         busy = self.__dict__.setdefault("_utxoset_busy", set())
+        lent_at = self.__dict__.setdefault("_utxoset_lent_at", {})
         for chain in list(getattr(self.state, "addons", None) or []):
-            if (not getattr(chain.params, "full_utxo_set", False) or chain.borrowed or chain.network in busy
+            if (not getattr(chain.params, "full_utxo_set", False) or chain.network in busy
                     or not self.state.chain_ready(chain)):
                 continue
+            if chain.borrowed:
+                # Borrowed (tbuuol 2026-10-26): no set of its own -- its block files are on the sharer's machine, and
+                # building through the sharer's Core would read 1.5 million blocks over the mesh. The sharer's set
+                # is asked instead, once a minute.
+                if time.time() - lent_at.get(chain.network, 0.0) < UTXOSET_LENT_EVERY:
+                    continue
+                lent_at[chain.network] = time.time()
+                target = self._utxoset_lent_pass
+            else:
+                target = self._utxoset_pass
             busy.add(chain.network)
-            threading.Thread(target=self._utxoset_pass, args=(chain, busy), daemon=True,
+            threading.Thread(target=target, args=(chain, busy), daemon=True,
                              name=f"arcade-utxoset-{chain.network}").start()
+
+    def _utxoset_lent_pass(self, chain, busy: set) -> None:
+        """A borrowed chain's wallet rows from the sharer's set (utxoset.LentSet). A sharer with no set (an older
+        arcade, or a chain it does not keep one of) answers "not found": then the index follows the coins itself,
+        as on any chain (state.utxoset_lent decides, indexer.ArcadeHandler.coins_from_set)."""
+        from .. import utxos as utxoslib, utxoset as utxosetlib
+        from ..rpc import RpcError
+        net = chain.network
+        try:
+            index = self.state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                watched = utxoslib.watching(db)
+            with chain.rpc() as rpc:
+                lent = utxosetlib.LentSet.fetch(rpc, watched)
+            self.state.utxoset_lent[net] = {"height": lent.height, "at": time.time()}
+            self._utxoset_mirror(chain, lent)
+        except (RpcError, utxosetlib.UtxoSetError) as exc:
+            if self.state.utxoset_lent.pop(net, None) is not None or not getattr(self, "_utxoset_lent_said", False):
+                log.info("%s: no unspent set lent by the sharer (%s); the index follows the coins itself",
+                         chain.params.label, exc)
+                self._utxoset_lent_said = True
+        except Exception:                                      # noqa: BLE001 -- next minute tries again
+            log.warning("%s: asking the sharer's unspent set failed", chain.params.label, exc_info=True)
+        finally:
+            busy.discard(net)
 
     def _utxoset_pass(self, chain, busy: set) -> None:
         from .. import utxos as utxoslib, utxoset as utxosetlib
@@ -397,9 +435,10 @@ class BlockWatcher:
         top = int(uset.height)
         index = self.state.token_index(chain)
         changed = 0
+        lent = getattr(uset, "lent", False)
         with contextlib.closing(index.open()) as db:
             with db.conn:
-                for address in sorted(utxoslib.watching(db) & uset.history_for):
+                for address in sorted(utxoslib.watching(db)):
                     want = {(c["txid"], int(c["vout"])): c for c in uset.unspent(address, wallet_only=True)}
                     have = {(r["txid"], int(r["vout"])): r for r in utxoslib.unspent(db, address)}
                     gone = [k for k, r in have.items() if k not in want and int(r["height"]) <= top]
@@ -408,10 +447,13 @@ class BlockWatcher:
                     db.conn.executemany(
                         "INSERT OR REPLACE INTO utxo (txid, vout, address, value, height) VALUES (?,?,?,?,?)",
                         [(c["txid"], c["vout"], address, c["value"], c["height"]) for c in new])
-                    rows = {r["txid"]: r for r in uset.history([address])}
+                    rows = {r["txid"]: r for r in uset.history([address])} if address in uset.history_for else {}
                     kept = {t: h for t, h in db.conn.execute(
                         "SELECT txid, height FROM activity WHERE address=?", (address,))}
-                    stale = [(t, address) for t, h in kept.items() if t not in rows and int(h) <= top]
+                    # A lent set's history starts where its sharer began keeping it (another sharer, another start):
+                    # rows are added from it, never taken away.
+                    stale = [] if lent or address not in uset.history_for else \
+                        [(t, address) for t, h in kept.items() if t not in rows and int(h) <= top]
                     fresh = [r for t, r in rows.items() if t not in kept]
                     db.conn.executemany("DELETE FROM activity WHERE txid=? AND address=?", stale)
                     db.conn.executemany(
@@ -479,10 +521,10 @@ class BlockWatcher:
                 utxoslib.watch(db, address, tip, f"account {wanted[address][:12]} (derived)")
             first = db.conn.execute("SELECT MIN(height) FROM block").fetchone()[0]
             db.conn.commit()
-        if getattr(chain.params, "full_utxo_set", False) and not chain.borrowed:
+        if getattr(chain.params, "full_utxo_set", False) and (not chain.borrowed or index.coins_from_set()):
             # KOTIA ONLY, its Core run here: the whole unspent set already holds their coins, and their history starts
             # now; nothing is read back (tbuuol 2026-10-25: no rescan, and none a user can set off). _keep_utxo_sets
-            # does the rest. A borrowed Kotia keeps no set and reads back as every other chain does.
+            # does the rest. Borrowed, the same while the sharer lends its set; without one it reads back as any chain.
             if fresh:
                 log.info("watching %d more accounts' %s addresses (from the unspent set)", len(fresh), chain.params.label)
             return

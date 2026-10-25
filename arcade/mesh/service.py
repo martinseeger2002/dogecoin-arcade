@@ -55,6 +55,7 @@ digits -- and a game can tell, because a guest carries no certificate.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -906,6 +907,7 @@ def shared_cores(state):
     borrows the chains it was told to (`core:<net>` = borrow, read at start)."""
     from .. import core_catchup
     from .. import cores as coreslib
+    from .. import utxoset as utxosetlib
     from ..rpc import RpcError
     from .coreshare import CoreShare
 
@@ -919,11 +921,31 @@ def shared_cores(state):
         out = []
         with chain.local_rpc() as rpc:          # never a sharer's: a Core catching up here is not offered at all
             for method, params in calls:
+                if method == utxosetlib.SHARE_METHOD:
+                    out.append(lent_set(chain, params))
+                    continue
                 try:
                     out.append({"r": rpc.call(method, *params)})
                 except RpcError as exc:
                     out.append({"e": [exc.code, exc.message]})
         return out
+
+    def lent_set(chain, params: list) -> dict:
+        """The chain's whole unspent set kept here, lent to a borrower (KOTIA ONLY, utxoset.answer)."""
+        try:
+            uset = state.utxoset(chain)
+            if uset is None:
+                return {"e": [-32601, f"no unspent set of {chain.params.label} here"]}
+            from .. import utxos as utxoslib
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                own = utxoslib.watching(db)
+            return {"r": utxosetlib.answer(uset, params[0] if params else {}, own)}
+        except utxosetlib.UtxoSetError as exc:
+            return {"e": [-32601, str(exc)]}
+        except Exception as exc:                           # noqa: BLE001 -- one ask, not the sharing
+            log.warning("lending the unspent set failed", exc_info=True)
+            return {"e": [-1, f"the unspent set could not be read: {exc}"]}
 
     def shared() -> dict:
         nets = {}

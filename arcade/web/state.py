@@ -1575,6 +1575,23 @@ class AppState:
             kept[chain.network] = UtxoSet(Path(self.home) / f"{chain.network}-utxoset.sqlite", chain.params)
         return kept[chain.network]
 
+    #: A sharer's lent set counts as the borrowed wallet's source while its last answer is younger than this.
+    UTXOSET_LENT_FRESH = 300.0
+
+    def _coins_from_set(self, net: str) -> bool:
+        found = self.addon(net)
+        if found is None:
+            return False
+        if not found.borrowed:
+            return True
+        lent = self.utxoset_lent.get(net) or {}
+        return time.time() - float(lent.get("at") or 0) < self.UTXOSET_LENT_FRESH
+
+    @property
+    def utxoset_lent(self) -> dict:
+        """A borrowed chain's set as its sharer last lent it: net -> {height, at} (KOTIA ONLY, watcher)."""
+        return self.__dict__.setdefault("_utxoset_lent", {})
+
     @property
     def utxoset_rebuild(self) -> set:
         """Chains whose unspent set the operator asked to build again (Admin -> Chains -> Rebuild): the watcher's
@@ -1598,10 +1615,10 @@ class AppState:
             index = LedgerIndex(self.ledger_index_path(chain),
                                 chain.params, chain.rpc)
             if getattr(chain.params, "full_utxo_set", False):
-                # KOTIA ONLY: the set is the wallet's source while the chain's Core runs here; asked at every sync,
-                # since a chain can be switched between run here and borrowed.
-                index.coins_from_set = lambda net=chain.network: bool(
-                    (found := self.addon(net)) is not None and not found.borrowed)
+                # KOTIA ONLY: the set is the wallet's source while the chain's Core runs here, or, borrowed, while the
+                # sharer lends its set (watcher._utxoset_lent_pass, answered within UTXOSET_LENT_FRESH). Asked at
+                # every sync, since a chain can be switched between run here and borrowed.
+                index.coins_from_set = lambda net=chain.network: self._coins_from_set(net)
             self._ledger_indexes[chain.network] = index
         return index
 

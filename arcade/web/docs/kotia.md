@@ -78,6 +78,12 @@ in `<net>-utxoset.sqlite`:
 - **What is kept:** each address's unspent coins (49 bytes a coin), the history of the arcade's own accounts, and, for
   every block that carries data (OP_RETURN), the ids of those transactions. Kotia's set is about 79,000 coins, a 5 MB
   file.
+- **Only with Kotia's Core run here.** Building needs the Core on this machine: through its RPC, or straight from its
+  block files, which only its own machine has. An arcade that **borrows** Kotia builds no set. It is **lent the
+  sharer's set** instead, once a minute, through the same shared Core: the coins of its accounts, and their history
+  from when the sharer began keeping it for them (the sharer keeps it from then on). That is the sharer's word, like
+  everything else a borrowed Core says that the blocks cannot prove. If the sharer lends no set (an older arcade), the
+  arcade's own index follows the coins as on any other chain. Admin → Chains says which.
 - **Staking rewards** are paid to a public key, not an address. They count in the set, but the Wallet does not spend
   them, because it signs only ordinary address coins.
 - **Kotia only for now.** Another chain would need adapting first: its size, how its headers are named, its

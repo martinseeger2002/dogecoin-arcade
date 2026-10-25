@@ -55,6 +55,9 @@ SERVED = frozenset({
     "getblockchaininfo", "getblockcount", "getbestblockhash", "getblockhash", "getblockheader", "getblock",
     "getrawtransaction", "getrawmempool", "getmempoolentry", "getmempoolinfo", "gettxout", "getdifficulty",
     "sendrawtransaction", "estimatefee", "estimatesmartfee", "verifymessage", "getnetworkinfo",
+    # Not a Core's: the sharer's whole unspent set (KOTIA ONLY, arcade/utxoset.py `answer`), lent to an arcade that
+    # borrows the chain instead of building its own through this Core (tbuuol 2026-10-26).
+    "arcade_utxoset",
 })
 #: Work for a miner, and its answer (2026-10-18: mine testnet LTC with another arcade's Core). Answered
 #: only for a chain of test coins (`may_mine`), and no more often than MINE_EVERY seconds per borrower and call:

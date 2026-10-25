@@ -88,7 +88,7 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-10-26 · SadFrog's side (Claude, node 3, for tbuuol) · branch `team/kotia-wallet-direct` (on `main` 7745b201) · Kotia's wallet from the unspent set only (KOTIA ONLY)
+### 2026-10-26 · SadFrog's side (Claude, node 3, for tbuuol) · branch `team/kotia-wallet-direct` (on `main` 7745b201) · Kotia's wallet from the unspent set only, lent to borrowers (KOTIA ONLY)
 Found live on pepecoinarcade.com after #23: the one-time copy into the index (`_utxoset_seed`) ran at block 1,529,978
 while Kotia's index had read nothing (floor 1,530,000, tip 1,529,994). @banana sent 0.1 KOT in 1,529,979, between the
 two: the spent 1 KOT stayed in the wallet, the change and the payee's coin never came (1.8999 shown, 0.8999 held), and
@@ -103,14 +103,25 @@ no rescan, none a user can set off. Kotia only.
   is gone, and `_watch_accounts_on` reads nothing back on Kotia (no `seed_from_core`/`backfill_many`).
 - Admin -> Chains -> Rebuild unchanged: the build reads every block anyway, so every account's history from block 0
   comes with it. The "reading new accounts' history" status is gone. `docs/kotia.md` says how it works now.
-- Only where Kotia's Core runs here: a borrowed Kotia keeps no set (`_keep_utxo_sets` skips it, and 1.5 million
-  blocks over the mesh would weigh on the sharer), so its index follows the coins and reads back as before
-  (`LedgerIndex.coins_from_set`, asked at every sync from `state.addon(net).borrowed`). A node switched from run-here to
-  borrowed is followed by its index from its own tip on; blocks it skipped while the set had them are not read back.
+- A borrowed Kotia builds no set (its block files are on the sharer's machine; 1.5 million blocks over the mesh
+  would weigh on the sharer). tbuuol: the borrower should borrow the set too. **It is lent over the shared Core:**
+  `arcade_utxoset` is in coreshare's SERVED, answered by the sharer from its set (`service.shared_cores` ->
+  `utxoset.answer`), never by a Core. One call per pass (`utxoset.LentSet.fetch`, `watcher._utxoset_lent_pass`, once
+  a minute): the borrower's watched addresses' wallet coins, and their history, which the sharer keeps from that first
+  ask on (`watch`, at most 5,000 addresses beyond its own; only Kotia key/script-hash addresses). The borrower mirrors
+  it like a set of its own, except that history rows are only ever added (another sharer may have begun later).
+  The sharer's word, like everything else borrowed that bytes cannot prove. `UtxoSet.lock` keeps the watcher's pass
+  and borrowers' asks apart on its one connection.
+- `LedgerIndex.coins_from_set` (asked at every sync): run here -> the set; borrowed -> the lent set while its last
+  answer is under 5 minutes old (`state.utxoset_lent`), else the index follows the coins and reads back as before (a
+  sharer on an older version answers "a shared Core does not answer arcade_utxoset"). Admin -> Chains says
+  "the sharer's, lent (block N)" or "the sharer lends none". Martin's arcade borrows Kotia from node 3 and shows 0 KOT
+  today; with this on both sides it gets node 3's set. Left open: blocks an index skipped while a set was the source
+  are not read back if the set later goes away.
 - The floor (`KOT_MAINNET_FLOOR`) stays for the arcade's own features on Kotia; the Kotia wallet no longer depends on it.
 - On node 3 the next pass after the update puts @banana's and @tbuuol's rows right by itself (test
   `test_a_spend_after_the_first_pass_reaches_the_wallet` is that case).
-- Tests: test_utxoset 17, test_kotia, test_utxos, test_coinlist(_web), test_watcher, test_utxo_backfill,
+- Tests: test_utxoset 21, test_coreshare, test_kotia, test_utxos, test_coinlist(_web), test_watcher, test_utxo_backfill,
   test_utxo_seed, test_wallet_imports: all pass.
 
 ### 2026-10-25 Coin lists between arcades, the shared walk, Admin -> Wallet imports; the PWA home always portrait (Claude)

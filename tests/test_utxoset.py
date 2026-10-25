@@ -308,14 +308,16 @@ def test_the_index_leaves_kotia_coins_to_the_set(tmp_path, monkeypatch):
 
 
 def test_only_a_kotia_run_here_takes_its_coins_from_the_set(tmp_path):
-    """A borrowed Kotia keeps no set (_keep_utxo_sets skips it), so its index follows the coins as on any chain."""
+    """A borrowed Kotia builds no set; with none lent its index follows the coins as on any chain."""
     import types
 
     from arcade.web.state import AppState
     kot = types.SimpleNamespace(network="kot", params=KOT, borrowed=False, rpc=lambda: None)
     main = types.SimpleNamespace(network="main", params=NETWORKS["main"], borrowed=False, rpc=lambda: None)
-    me = types.SimpleNamespace(_ledger_indexes={}, addons=[kot], ledger_index_path=lambda c: tmp_path / c.network)
+    me = types.SimpleNamespace(_ledger_indexes={}, addons=[kot], ledger_index_path=lambda c: tmp_path / c.network,
+                               UTXOSET_LENT_FRESH=AppState.UTXOSET_LENT_FRESH, utxoset_lent={})
     me.addon = lambda net: AppState.addon(me, net)
+    me._coins_from_set = lambda net: AppState._coins_from_set(me, net)
     assert AppState.token_index(me, kot).coins_from_set() is True
     kot.borrowed = True                                             # switched to borrowed in Admin -> Chains
     assert AppState.token_index(me, kot).coins_from_set() is False
@@ -395,3 +397,110 @@ def test_admin_asks_for_a_rebuild_of_kotia_only(client, monkeypatch):
     assert app.post("/admin/api/utxoset/rebuild", headers={**LOCAL, **WRITE}, json={"net": "kot"}).status_code == 409
     rows = {r["net"]: r for r in app.get("/admin/api/state", headers=LOCAL).json()["chains"]["rows"]}
     assert rows["kot"]["utxoset"]["phase"] == "building"
+
+
+def test_a_sharer_lends_its_set_and_keeps_a_borrowers_history_from_now_on(tmp_path, monkeypatch):
+    blocks, ids = chain()
+    s = U.UtxoSet(tmp_path / "u.sqlite", KOT)
+    s.build(parsed(blocks[:3]), tip=2, history_for={A})
+    said = U.answer(s, {"watch": [B, "not an address", "D" * 34], "addresses": [A, B, "junk"]}, own={A})
+    assert said["height"] == 2 and said["watching"] == [A, B]
+    assert said["coins"][A] == [[ids["spend"], 2, 199_000_000, 2]] and said["coins"][B] == [[ids["spend"], 0, 3 * COIN, 2]]
+    assert {r[0] for r in said["history"]} == {ids["cb1"], ids["spend"]}         # A's past; B's starts now
+    assert all(r[1] == A for r in said["history"])
+    assert s.history_for == {A, B}
+    monkeypatch.setattr(U, "SHARE_WATCH_MAX", 1)                                 # borrowers' room is full
+    assert U.answer(s, {"watch": [C], "addresses": [C]}, own={A})["watching"] == []
+    with pytest.raises(U.UtxoSetError):
+        U.answer(U.UtxoSet(tmp_path / "empty.sqlite", KOT), {"addresses": [A]})
+
+
+class _Lender:
+    """A shared Core whose sharer keeps a set: rpc.batch as BorrowedRpc hands it on, answered by utxoset.answer."""
+
+    def __init__(self, uset):
+        self.uset, self.asked = uset, []
+
+    def batch(self, calls):
+        self.asked.append(calls)
+        return [U.answer(self.uset, p[0]) for m, p in calls if m == U.SHARE_METHOD]
+
+
+def test_a_borrower_takes_its_wallet_rows_from_the_lent_set(tmp_path):
+    import contextlib
+
+    from arcade import utxos
+    from arcade.web.watcher import BlockWatcher
+
+    blocks, ids = chain()
+    s = U.UtxoSet(tmp_path / "sharer.sqlite", KOT)
+    s.build(parsed(blocks[:3]), tip=2, history_for={A})
+    lender = _Lender(s)
+    index, me, kot, _bumps = _mirror_rig(tmp_path, (A, B))
+    lent = U.LentSet.fetch(lender, {A, B})
+    assert len(lender.asked) == 1 and lent.lent and lent.history_for == {A, B}
+    BlockWatcher._utxoset_mirror(me, kot, lent)
+    with contextlib.closing(index.open()) as db:
+        assert utxos.balance(db, A) == 199_000_000 and utxos.balance(db, B) == 3 * COIN
+        assert {r["txid"] for r in utxos.activity(db, [A])} == {ids["cb1"], ids["spend"]}
+        assert utxos.activity(db, [B]) == []                                     # watched from now on
+        db.conn.execute("INSERT INTO activity VALUES (?,?,?,?,?,?,?)", ("ee" * 32, B, 1, 5, 0, 0, ""))
+        db.conn.commit()
+    h3, bh3, b3 = parsed(blocks)[3]
+    s.connect(h3, bh3, b3, lambda t, v: {(ids["spend"], 0): (p2pkh_script(B), 3 * COIN)}[(t, v)])
+    BlockWatcher._utxoset_mirror(me, kot, U.LentSet.fetch(lender, {A, B}))
+    with contextlib.closing(index.open()) as db:
+        assert utxos.balance(db, B) == 99_000_000
+        # B's send in block 3 came; a row the lent set never had (another sharer's, say) is kept.
+        assert {r["txid"] for r in utxos.activity(db, [B])} == {ids["make"], "ee" * 32}
+
+
+def test_a_borrowed_kotia_uses_the_lent_set_only_while_it_is_lent(tmp_path, monkeypatch):
+    import time
+    import types
+
+    from arcade.web.state import AppState
+    kot = types.SimpleNamespace(network="kot", params=KOT, borrowed=True, rpc=lambda: None)
+    me = types.SimpleNamespace(_ledger_indexes={}, addons=[kot], ledger_index_path=lambda c: tmp_path / c.network,
+                               UTXOSET_LENT_FRESH=AppState.UTXOSET_LENT_FRESH, utxoset_lent={})
+    me.addon = lambda net: AppState.addon(me, net)
+    me._coins_from_set = lambda net: AppState._coins_from_set(me, net)
+    index = AppState.token_index(me, kot)
+    assert index.coins_from_set() is False                          # the sharer lent nothing yet
+    me.utxoset_lent["kot"] = {"height": 5, "at": time.time()}
+    assert index.coins_from_set() is True
+    me.utxoset_lent["kot"]["at"] = time.time() - 3600              # a sharer that stopped answering
+    assert index.coins_from_set() is False
+
+
+def test_the_shared_core_answers_the_set_from_the_set_not_the_core(tmp_path):
+    import contextlib
+    import types
+
+    from arcade import utxos
+    from arcade.ledger import LedgerIndex
+    from arcade.mesh import coreshare
+    from arcade.mesh.service import shared_cores
+
+    assert U.SHARE_METHOD in coreshare.SERVED
+    blocks, ids = chain()
+    s = U.UtxoSet(tmp_path / "u.sqlite", KOT)
+    s.build(parsed(blocks), tip=3, history_for={A})
+    index = LedgerIndex(tmp_path / "kot-ledger.sqlite", KOT, rpc_factory=lambda: None)
+    with contextlib.closing(index.open()) as db:
+        utxos.install(db)
+        db.conn.commit()
+
+    class Core:
+        def call(self, method, *params):
+            raise AssertionError(f"the Core was asked {method}")
+
+    kot = types.SimpleNamespace(network="kot", params=KOT, borrowed=False, local_rpc=lambda: contextlib.nullcontext(Core()))
+    pep = types.SimpleNamespace(network="main", params=NETWORKS["main"], borrowed=False,
+                                local_rpc=lambda: contextlib.nullcontext(Core()))
+    state = types.SimpleNamespace(all_chains=[kot, pep], utxoset=lambda c: s if c is kot else None,
+                                  token_index=lambda c: index)
+    share = shared_cores(state)
+    got = share.serve("kot", [(U.SHARE_METHOD, [{"addresses": [C]}])])
+    assert got[0]["r"]["coins"][C] == [[ids["again"], 0, 190_000_000, 3]]
+    assert share.serve("main", [(U.SHARE_METHOD, [{"addresses": [C]}])])[0]["e"][0] == -32601

@@ -28126,7 +28126,12 @@ def create_app(state: AppState) -> FastAPI:
             # The chain's whole unspent set (KOTIA ONLY for now, arcade/utxoset.py, 2026-10-25): building, reading an
             # account's past, or ready, and how far.
             row["utxoset"] = None
-            if chain is not None and getattr(chain.params, "full_utxo_set", False) and not chain.borrowed:
+            if chain is not None and getattr(chain.params, "full_utxo_set", False) and chain.borrowed:
+                # Borrowed: the sharer's set, lent (watcher._utxoset_lent_pass), or none.
+                lent = state.utxoset_lent.get(row["net"]) or {}
+                row["utxoset"] = {"phase": "lent" if state._coins_from_set(row["net"]) else "unlent",
+                                  "height": lent.get("height") or 0, "tip": 0, "built": None}
+            elif chain is not None and getattr(chain.params, "full_utxo_set", False):
                 said = dict(state.utxoset_progress.get(row["net"]) or {"phase": "waiting", "height": 0, "tip": 0})
                 try:
                     said["built"] = state.utxoset(chain).height

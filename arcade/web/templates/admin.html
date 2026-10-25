@@ -1989,6 +1989,8 @@ section.panel h2{margin-top:0}
         bits.push(us.phase === 'building' ? 'full unspent set: building ' + pct + ' (block ' + (us.height || 0).toLocaleString()
                                             + ' of ' + (us.tip || 0).toLocaleString() + ')'
                   : us.phase === 'queued' ? 'full unspent set: rebuild starts at the next pass'
+                  : us.phase === 'lent' ? 'full unspent set: the sharer\u2019s, lent (block ' + (us.height || 0).toLocaleString() + ')'
+                  : us.phase === 'unlent' ? 'full unspent set: the sharer lends none, coins from this index'
                   : us.built != null ? 'full unspent set at block ' + us.built.toLocaleString()
                   : 'full unspent set: starts once the node has synced');
       }
