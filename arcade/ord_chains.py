@@ -147,8 +147,9 @@ OMNI_NETS = ("ltc", "ltctest")
 
 
 def token_word(net: str) -> str:
-    """The -20 tokens the ord index reads on `net` (doginal_index: PRC-20 on Pepecoin, the DRC-20 rules elsewhere)."""
-    return "PRC-20" if net in ("main", "test") else "DRC-20"
+    """The -20 tokens the ord index reads on `net` (ord_rules.token_protocol): PRC-20, BEL-20, DRC-20 ..."""
+    from .ord_rules import token_protocol
+    return token_protocol(net).upper()
 
 
 def explore_protocols(net: str) -> list[dict]:

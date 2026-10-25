@@ -23,6 +23,7 @@ def test_the_coins_in_sadfrogs_order_each_with_its_protocols():
     assert [p["label"] for p in ord_chains.explore_protocols("doge")] == ["Doginals", "DRC-20"]
     assert [p["label"] for p in ord_chains.explore_protocols("main")] == ["Pepinals", "PRC-20"]
     assert [p["kind"] for p in ord_chains.explore_protocols("ltc")] == ["ord", "token", "omni"], "Litecoin has Omni"
+    assert [p["label"] for p in ord_chains.explore_protocols("bel")] == ["Bellinals", "BEL-20"]
     assert ord_chains.explore_protocols("nope") == []
 
 
