@@ -194,10 +194,12 @@ def test_the_other_lock_is_read_from_the_coin_it_spent(tmp_path):
 def test_orders_and_messages_name_a_doginal_by_its_inscription_id():
     side = {"network": "doge", "kind": "doginal", "asset": INS, "amount": 1}
     assert O._side(side) == side
-    for bad in ({**side, "network": "test"}, {**side, "asset": T1}, {**side, "amount": 2}):
+    # Never on a chain no lock can be made on: Wojakcoin has no CLTV (ord_chains.swappable). Pepecoin testnet's ords
+    # are swapped since 2026-10-25, against Litecoin testnet's (tests/test_ord_chains_more.py).
+    for bad in ({**side, "network": "wjk"}, {**side, "asset": T1}, {**side, "amount": 2}):
         with pytest.raises(O.OrderError):
             O._side(bad)
     leg = {**side, "giver_key": REFUNDER.hex(), "taker_key": CLAIMER.hex()}
     assert M.leg_from(leg).asset == INS
     with pytest.raises(M.TradeMessageError):
-        M.leg_from({**leg, "network": "test"})
+        M.leg_from({**leg, "network": "wjk"})
