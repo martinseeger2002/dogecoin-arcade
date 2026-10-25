@@ -41,10 +41,30 @@ RULES = 4                      # bump when what an index keeps changes: an index
 #: reads the Dogecoin dialect, keeps 4).
 #: Bellscoin 6 (2026-10-22): Nintondo's numbering like Dogecoin's 5, a reinscription numbered too -- under 5 the walk
 #: still waited for an uninscribed first koinu there, so it fell behind Nintondo's numbers from #38,879 (block 26,689).
-RULES_BY_NET = {"doge": 5, "bel": 6}
+#: Bellscoin 7 (2026-10-25, checked against nintondo.io): an envelope in every input numbered (EVERY_INPUT), Taproot
+#: births in input 0 kept, "p":"bel-20" tokens (TOKEN_PROTOCOLS), SegWit and Taproot holders named by their bel1q /
+#: bel1p addresses. Litecoin 5 (main and test): its holders named by their ltc1q / ltc1p addresses the same way.
+RULES_BY_NET = {"doge": 5, "bel": 7, "ltc": 5, "ltctest": 5}
+#: Chains whose official indexer reads an envelope in EVERY input, not input 0 alone: Bellscoin (nintondo's ord,
+#: 2026-10-25: 6d110444...e809 at block 41,937 carries NOOK mints in inputs 0 and 1, #14,234,881 its i1). One that is
+#: complete in its own input is an inscription (txid i1, i2 ... in input order); a piece of a longer one is not.
+EVERY_INPUT = frozenset({"bel"})
+#: The JSON tokens a chain's ord index reads ("p"): PRC-20 on Pepecoin (reallyshadydev/pepecoin-ord-indexer), bel-20 on
+#: Bellscoin (nintondo's, 2026-10-25: nook, CATS, ondo ...), the DRC-20 rules elsewhere.
+TOKEN_PROTOCOLS = {"main": "prc-20", "test": "prc-20", "bel": "bel-20"}
 #: Chains whose indexes number a reinscription (an inscription made on a coin that already carries one), as nintondo's
 #: indexers do (Dogecoin since rules 5; Bellscoin, whose official indexer IS nintondo's ord).
 NUMBERS_REINSCRIPTIONS = frozenset({"doge", "bel"})
+
+
+def every_input(net: str) -> bool:
+    """Whether `net`'s envelopes are read in every input (EVERY_INPUT)."""
+    return (net or "") in EVERY_INPUT
+
+
+def token_protocol(net: str) -> str:
+    """The "p" of `net`'s JSON tokens (TOKEN_PROTOCOLS)."""
+    return TOKEN_PROTOCOLS.get(net or "", "drc-20")
 
 
 def rules_for(net: str) -> int:

@@ -37,13 +37,18 @@ from . import ord_rules, rawchain
 #: The notes format. Part of every digest, so notes in another format are never compared with these. 2 (2026-10-20):
 #: an envelope begun before the chunk is followed back to its first piece, and zeroed when it cannot matter.
 VERSION = 2
+#: The notes of a Taproot chain (Bellscoin, Litecoin; 2026-10-25): an output may be a SegWit or Taproot program, kept
+#: whole (_WITNESS_OWNER: its version, length and program) so its holder is named by its address after a walk from
+#: notes as after a walk from a Core; and, where the chain's indexer reads every input (Bellscoin), a later input's
+#: script that opens an envelope. Format 2 everywhere else, unchanged.
+WITNESS_VERSION = 3
 #: How far back (pieces) an envelope is followed to its first piece; further, it is kept whole.
 MAX_BACK = 5000
 #: An envelope that may matter is parsed again with each piece it gains; past this many pieces it is kept whole instead
 #: (2026-10-20: re-parsing hundreds of pieces, each time, held .25's web process for a minute).
 MAX_PARSED = 50
 
-_P2PKH, _P2SH, _HASHED = 0, 1, 2
+_P2PKH, _P2SH, _HASHED, _WITNESS_OWNER = 0, 1, 2, 3
 _COINBASE, _SCRIPT, _WITNESS = 1, 2, 4
 
 
@@ -231,16 +236,29 @@ def _blob(b: bytes) -> bytes:
     return _varint(len(b)) + b
 
 
-def _owner_bytes(script: bytes) -> bytes:
+def witness_program(script: bytes) -> tuple[int, bytes] | None:
+    """(version, program) of a SegWit v0 (20 or 32 bytes) or Taproot (v1, 32 bytes) output, else None -- the outputs
+    named by a bech32 / bech32m address (BIP 141, BIP 341)."""
+    if len(script) == 22 and script[:2] == b"\x00\x14" or len(script) == 34 and script[:2] == b"\x00\x20":
+        return 0, bytes(script[2:])
+    if len(script) == 34 and script[:2] == b"\x51\x20":
+        return 1, bytes(script[2:])
+    return None
+
+
+def _owner_bytes(script: bytes, witness: bool = False) -> bytes:
     from .script import hash160
     if len(script) == 25 and script[:3] == b"\x76\xa9\x14" and script[23:] == b"\x88\xac":
         return bytes([_P2PKH]) + script[3:23]
     if len(script) == 23 and script[:2] == b"\xa9\x14" and script[22:] == b"\x87":
         return bytes([_P2SH]) + script[2:22]
+    program = witness_program(script) if witness else None
+    if program is not None:
+        return bytes([_WITNESS_OWNER, program[0], len(program[1])]) + program[1]
     return bytes([_HASHED]) + hash160(script)
 
 
-def block_notes(block, taproot: bool = False, dialect: str = "dogecoin") -> list:
+def block_notes(block, taproot: bool = False, dialect: str = "dogecoin", every_input: bool = False) -> list:
     """One block's notes, before the chunk is finished: [header, [(txid, ins, outs)...]] with input 0's script kept
     whole where it may matter (the chunk's finish decides what is zeroed)."""
     txs = []
@@ -249,17 +267,19 @@ def block_notes(block, taproot: bool = False, dialect: str = "dogecoin") -> list
         for j, i in enumerate(tx.vin):
             coinbase = i["vout"] == -1
             script = i["script"] if (j == 0 and not coinbase and may_envelope(i["script"], dialect)) else None
+            if j and every_input and not coinbase and i["script"][:4] == b"\x03ord":
+                script = i["script"]                     # a later input's envelope (Bellscoin), kept whole
             witness = None
             if taproot and not coinbase and i.get("witness"):
                 from .doginal_index import taproot_envelopes
                 if taproot_envelopes(i["witness"]):
                     witness = list(i["witness"])
             ins.append((None if coinbase else i["txid"], i["vout"], script, witness))
-        txs.append((tx.txid, ins, [(v, _owner_bytes(s)) for v, s in tx.vout]))
+        txs.append((tx.txid, ins, [(v, _owner_bytes(s, taproot)) for v, s in tx.vout]))
     return [block.header, txs]
 
 
-def finish(blocks: list[bytes], lookup=None, dialect: str = "dogecoin") -> bytes:
+def finish(blocks: list[bytes], lookup=None, dialect: str = "dogecoin", taproot: bool = False) -> bytes:
     """A chunk's notes, canonical: its blocks' notes (`one_block`, in height order) with the content of every envelope
     that cannot matter zeroed. The bytes `digest` and `pack` are of. Every arcade finishes a chunk from the same block
     notes the same way, whether it walked the blocks or helped with them.
@@ -269,7 +289,7 @@ def finish(blocks: list[bytes], lookup=None, dialect: str = "dogecoin") -> bytes
     (raw transaction bytes, from a Core: 2026-10-20, PEP's big images in hundreds of pieces cross every chunk's edge,
     and kept whole they made the notes as big as the blocks). Without `lookup`, a piece of an envelope begun before
     the chunk is kept whole. A script zeroed that is no piece at all is never read by the walk anyway."""
-    parts = [_structure(b) for b in blocks]
+    parts = [_structure(b, taproot) for b in blocks]
     # Envelope chains inside the chunk, linked as the walk links them: a piece's input 0 spends the piece before it.
     chains: dict[str, dict] = {}                        # txid of the latest piece -> {"pieces", "first", "whole"}
     zero: dict[tuple[int, int], bool] = {}             # (block, tx) -> is it the genesis piece
@@ -307,16 +327,16 @@ def finish(blocks: list[bytes], lookup=None, dialect: str = "dogecoin") -> bytes
                 chains[txid] = chain
             elif state == "complete" and not content_matters(ctype, body):
                 zero.update({p: i == 0 for i, p in enumerate(pieces)})
-    return _encode(parts, zero, dialect)
+    return _encode(parts, zero, dialect, WITNESS_VERSION if taproot else VERSION)
 
 
-def one_block(block, taproot: bool = False, dialect: str = "dogecoin") -> bytes:
+def one_block(block, taproot: bool = False, dialect: str = "dogecoin", every_input: bool = False) -> bytes:
     """One block's notes as read (nothing zeroed yet): what a scanner keeps until its chunk is whole."""
-    return _encode([block_notes(block, taproot, dialect)], {})[1:]
+    return _encode([block_notes(block, taproot, dialect, every_input)], {})[1:]
 
 
-def _encode(parts: list, zero: dict, dialect: str = "dogecoin") -> bytes:
-    out = bytearray([VERSION])
+def _encode(parts: list, zero: dict, dialect: str = "dogecoin", version: int = VERSION) -> bytes:
+    out = bytearray([version])
     out += _varint(len(parts))
     for b, (header, txs) in enumerate(parts):
         out += header + _varint(len(txs))
@@ -340,7 +360,16 @@ def _encode(parts: list, zero: dict, dialect: str = "dogecoin") -> bytes:
     return bytes(out)
 
 
-def _structure(raw: bytes) -> list:
+def _owner_read(r, programs: bool) -> bytes:
+    """One output's owner bytes: 21 in format 2; in format 3 a witness program's own length."""
+    kind = r.take(1)
+    if programs and kind[0] == _WITNESS_OWNER:
+        head = r.take(2)
+        return kind + head + r.take(head[1])
+    return kind + r.take(20)
+
+
+def _structure(raw: bytes, programs: bool = False) -> list:
     """`one_block`'s bytes back to [header, [(txid, ins, outs)...]] (outs as their owner bytes)."""
     r = _R(b"\x01" + raw)
     r.take(1)
@@ -360,7 +389,7 @@ def _structure(raw: bytes) -> list:
         outs = []
         for _o in range(r.varint()):
             value = r.varint()
-            outs.append((value, r.take(21)))
+            outs.append((value, _owner_read(r, programs)))
         txs.append((txid, ins, outs))
     if r.at != len(r.data):
         raise NotesError("bytes left over after the block notes")
@@ -417,6 +446,8 @@ class _R:
 
 
 def _script_of(kind: int, h: bytes) -> bytes:
+    if kind == _WITNESS_OWNER:                          # version, length, program
+        return (b"\x00" if h[0] == 0 else bytes([0x50 + h[0]])) + bytes([h[1]]) + h[2:]
     if kind == _P2PKH:
         return b"\x76\xa9\x14" + h + b"\x88\xac"
     if kind == _P2SH:
@@ -431,7 +462,8 @@ def decode(notes: bytes) -> list[NoteBlock]:
     the header's merkle root (what is said of each transaction beyond its id is the scanners' word, which is why two of
     them must agree on `digest`)."""
     r = _R(notes)
-    if r.take(1)[0] != VERSION:
+    version = r.take(1)[0]
+    if version not in (VERSION, WITNESS_VERSION):
         raise NotesError("notes in another format")
     blocks = []
     for _ in range(r.varint()):
@@ -455,7 +487,7 @@ def decode(notes: bytes) -> list[NoteBlock]:
             vout = []
             for _o in range(r.varint()):
                 value = r.varint()
-                owner = r.take(21)
+                owner = _owner_read(r, version == WITNESS_VERSION)
                 vout.append((value, _script_of(owner[0], owner[1:])))
             txs.append(NoteTx(txid, vin, vout))
         if not txs or rawchain.merkle_root([t.txid for t in txs]) != fields["merkleroot"]:

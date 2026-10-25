@@ -114,10 +114,10 @@ def _parse(job: tuple) -> tuple[str, str, int, bytes]:
     """One block's (hash, line, births, notes) from its raw hex, in a worker process (a lane of a helper on many
     cores)."""
     from . import ord_notes
-    raw_hex, block_hash, taproot, mweb, dialect = job
+    raw_hex, block_hash, taproot, mweb, dialect, every = job
     block = rawchain.read_block(bytes.fromhex(raw_hex), block_hash, mweb=mweb)
-    found = births(block, taproot, dialect)
-    return block.hash, block_hash_of(block.hash, found), len(found), ord_notes.one_block(block, taproot, dialect)
+    found = births(block, taproot, dialect, every)
+    return block.hash, block_hash_of(block.hash, found), len(found), ord_notes.one_block(block, taproot, dialect, every)
 
 
 # --------------------------------------------------------------------------- reading a block
@@ -248,24 +248,35 @@ def _taproot_scan(witness: list[bytes], bodies: bool = False) -> list[dict]:
     return found
 
 
-def births_of(tx: rawchain.Tx, taproot: bool = False, dialect: str = "dogecoin") -> list[dict]:
-    """Every inscription `tx` gives birth to: {"n", "vin", "ctype", "done"}; the id is txid + "i" + n. The Doginals kind
-    (an input script opening with "ord", i0, read in the chain's dialect) and, on a Taproot chain, ord's witness
-    envelopes, numbered in input order (each with its "delegate", which no chunk hash covers)."""
+def births_of(tx: rawchain.Tx, taproot: bool = False, dialect: str = "dogecoin",
+              every_input: bool = False) -> list[dict]:
+    """Every inscription `tx` gives birth to: {"n", "vin", "ctype", "done", "kind"}; the id is txid + "i" + n. The
+    Doginals kind ("p2sh": an input script opening with "ord", read in the chain's dialect) in input 0 -- and, where the
+    chain's indexer reads every input (`every_input`, ord_rules.EVERY_INPUT: Bellscoin), in any later input whose
+    envelope is complete there -- and, on a Taproot chain, ord's witness envelopes ("taproot", each with "at", its
+    place among its input's envelopes, and its "delegate", which no chunk hash covers); numbered in input order."""
     out = []
-    b = birth_of(tx, dialect)
-    if b is not None:
-        out.append({"n": 0, **b})
-    if taproot:
-        for j, i in enumerate(tx.vin):
-            for ctype, delegate in taproot_read(i.get("witness") or []):
-                out.append({"n": len(out), "vin": j, "ctype": ctype, "done": True, "delegate": delegate})
+    for j, i in enumerate(tx.vin):
+        if j == 0:
+            b = birth_of(tx, dialect)
+            if b is not None:
+                out.append({"n": 0, **b, "kind": "p2sh"})
+        elif every_input and i["vout"] != -1 and i["script"][:4] == b"\x03ord":
+            g = ord_rules.genesis(i["script"], dialect)
+            if g is not None and g[0] == "complete":
+                out.append({"n": len(out), "vin": j, "ctype": g[1].hex(), "done": True, "kind": "p2sh"})
+        if taproot:
+            for at, (ctype, delegate) in enumerate(taproot_read(i.get("witness") or [])):
+                out.append({"n": len(out), "vin": j, "ctype": ctype, "done": True, "delegate": delegate,
+                            "kind": "taproot", "at": at})
     return out
 
 
-def births(block: rawchain.Block, taproot: bool = False, dialect: str = "dogecoin") -> list[tuple[str, int, int, str]]:
+def births(block: rawchain.Block, taproot: bool = False, dialect: str = "dogecoin",
+           every_input: bool = False) -> list[tuple[str, int, int, str]]:
     """(txid, n, envelope input, content type hex) for every birth in the block, in block order."""
-    return [(tx.txid, b["n"], b["vin"], b["ctype"]) for tx in block.txs for b in births_of(tx, taproot, dialect)]
+    return [(tx.txid, b["n"], b["vin"], b["ctype"]) for tx in block.txs
+            for b in births_of(tx, taproot, dialect, every_input)]
 
 
 def block_hash_of(block_hash: str, found: list[tuple[str, int, int, str]]) -> str:
@@ -755,10 +766,10 @@ class Store:
             return None
         lookup = (lambda txid: bytes.fromhex(rpc.call("getrawtransaction", txid, 0))) if rpc is not None else None
         try:
-            notes = ord_notes.finish([r[0] for r in rows], lookup, self.dialect)
+            notes = ord_notes.finish([r[0] for r in rows], lookup, self.dialect, taproot=self.net in TAPROOT)
         except Exception as exc:                         # noqa: BLE001 -- a Core that cannot say: kept whole
             log.warning("ord index: chunk %d's envelopes could not be followed back (%s): kept whole", c, exc)
-            notes = ord_notes.finish([r[0] for r in rows], dialect=self.dialect)
+            notes = ord_notes.finish([r[0] for r in rows], dialect=self.dialect, taproot=self.net in TAPROOT)
         nd, blob = ord_notes.digest(notes), ord_notes.pack(notes)
         with self.tx() as db:
             db.execute("INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?)", (c, blob, nd, "", time.time()))
@@ -924,6 +935,7 @@ class Walker:
                  token_protocol: str = "drc-20", dialect: str | None = None):
         self.store = store
         self.base, self.taproot, self.mweb = store.base, taproot, mweb
+        self.every_input = ord_rules.every_input(getattr(store, "net", ""))   # Bellscoin: every input's envelope
         #: "pepecoin" | "dogecoin" (ord_rules.dialect_of): how envelopes read, and when a new one is looked for.
         self.dialect = dialect or store.dialect
         self.params = params
@@ -1101,6 +1113,7 @@ class Walker:
 
     def owner_of(self, script: bytes) -> str:
         """Who holds an output: its address, or a script's hash when it has none (drc20 ScriptKey)."""
+        from . import ord_notes
         from .script import b58check_encode, hash160
         from .ord_notes import Hashed
         if isinstance(script, Hashed):                   # from spend notes: the script's hash, kept instead of it
@@ -1111,6 +1124,12 @@ class Walker:
                 return b58check_encode(p.pubkeyhash_version, script[3:23])
             if len(script) == 23 and script[:2] == b"\xa9\x14" and script[22:] == b"\x87":
                 return b58check_encode(p.scripthash_version, script[2:22])
+            # SegWit and Taproot (2026-10-25): bel1q / bel1p, ltc1q / ltc1p, as Core and the chain's explorers name
+            # them. The same programs the notes carry (ord_notes.witness_program), so a walk from notes names alike.
+            program = ord_notes.witness_program(script) if getattr(p, "bech32_hrp", "") else None
+            if program is not None:
+                from .script import segwit_encode
+                return segwit_encode(p.bech32_hrp, *program)
         return "script:" + hash160(script).hex()
 
     def step(self, rpc, tip: int, budget: float = 5.0, notes: Callable[[int], Any] | None = None) -> int:
@@ -1156,7 +1175,7 @@ class Walker:
         tracked = self.tracked
         assert tracked is not None
         moves: list[str] = []
-        born_here = births(block, self.taproot, self.dialect)
+        born_here = births(block, self.taproot, self.dialect, self.every_input)
         next_number = int(self.store.meta("next_number", 0))
         number_before = next_number
         next_rid = (self.store.q("SELECT COALESCE(MAX(rid), 0) FROM insc")[0][0]) + 1
@@ -1179,8 +1198,13 @@ class Walker:
                       if i["vout"] != -1 and _outpoint(i["txid"], i["vout"]) in tracked}
                 needs = [j for j, got in on.items() if got]
                 sizes_upto = max(needs, default=-1)
-                taproot = [b for b in births_of(tx, True, self.dialect) if b["n"] or b["vin"]] if self.taproot else []
-                sizes_upto = max([sizes_upto] + [b["vin"] for b in taproot])
+                # Births besides input 0's Doginals kind (2026-10-25): ord's witness envelopes on a Taproot chain --
+                # in input 0 too, which a filter on the birth's place used to drop (every Litecoin and Bellscoin one
+                # sampled sits there) -- and, where the chain's indexer reads every input (Bellscoin), a complete
+                # envelope in a later input.
+                more = [b for b in births_of(tx, self.taproot, self.dialect, self.every_input)
+                        if b["kind"] == "taproot" or b["vin"] > 0] if self.taproot or self.every_input else []
+                sizes_upto = max([sizes_upto] + [b["vin"] for b in more])
                 sizes = [self._value(rpc, i["txid"], i["vout"]) for i in tx.vin[:sizes_upto]] if sizes_upto > 0 else []
                 # (rid, koinu among the inputs, new here, the txid it sat in before this one)
                 carried: list[tuple[int, int, bool, str]] = []
@@ -1241,7 +1265,7 @@ class Walker:
                             next_number += 1
                             new.append((rid, iid, ctype, body, got["pieces"]))
                             carried.append((rid, 0, True, ""))
-                for b in taproot:                                    # Litecoin's witness envelopes
+                for b in more:                       # witness envelopes, and a later input's (Bellscoin)
                     btx = bytes.fromhex(tx.txid)
                     if w.db.execute("SELECT 1 FROM insc WHERE substr(tx, 1, 8)=? AND tx=? AND n=?",
                                     (btx[:8], btx, b["n"])).fetchone():
@@ -1249,13 +1273,22 @@ class Walker:
                     rid, next_rid = next_rid, next_rid + 1
                     at_koinu = sum(sizes[:b["vin"]])
                     again = 1 if any(c[1] == at_koinu and not c[2] for c in carried) else None
+                    ctype = bytes.fromhex(b["ctype"])
+                    # Its body, so its size and "p" are kept and a token operation in it is read (bel-20 mints in
+                    # witness envelopes, 2026-10-25); None past TAPROOT_BODY_MAX, or a body let go of in the notes.
+                    if b["kind"] == "taproot":
+                        found = taproot_bodies(tx.vin[b["vin"]].get("witness") or [])
+                        body = found[b["at"]]["body"] if b["at"] < len(found) else None
+                    else:
+                        body = ord_rules.parse([tx.vin[b["vin"]]["script"]], self.dialect)[2]
                     w.put("insc", (rid,), {"rid": rid, "tx": btx, "n": b["n"], "number": next_number, "height": h,
-                                            "txpos": pos,
-                                            "ct": self._ct(w.db, bytes.fromhex(b["ctype"]).decode("utf-8", "replace")),
-                                            "proto": None, "size": None, "pieces": 1, "burned": None,
-                                            "delegate": id_blob(b.get("delegate")), "parent": None,
+                                            "txpos": pos, "ct": self._ct(w.db, ctype.decode("utf-8", "replace")),
+                                            "proto": ord_rules.protocol_of(body) if body is not None else None,
+                                            "size": len(body) if body is not None else None, "pieces": 1,
+                                            "burned": None, "delegate": id_blob(b.get("delegate")), "parent": None,
                                             "reinscribed": again})
                     next_number += 1
+                    new.append((rid, f"{tx.txid}i{b['n']}", ctype, body if body is not None else b"", 1))
                     carried.append((rid, at_koinu, True, ""))
                 if not carried:
                     continue
@@ -1307,7 +1340,7 @@ class Walker:
             if own and isinstance(block, rawchain.Block):
                 from . import ord_notes
                 db.execute("INSERT OR REPLACE INTO pnote VALUES (?,?)",
-                           (h, ord_notes.one_block(block, self.taproot, self.dialect)))
+                           (h, ord_notes.one_block(block, self.taproot, self.dialect, self.every_input)))
         if own and (h + 1 - self.base) % CHUNK == 0:
             c = chunk_of(h, self.base)
             rows = self.store.q("SELECT line, n FROM block WHERE height>=? AND height<=? ORDER BY height",
@@ -1563,13 +1596,14 @@ def fetch_raw_many(rpc, txids: list[str], batch: int = 200) -> dict[str, bytes]:
 
 
 def scan_block(rpc, h: int, taproot: bool = False, mweb: bool = False,
-               dialect: str = "dogecoin") -> tuple[str, str, int, bytes]:
+               dialect: str = "dogecoin", every_input: bool = False) -> tuple[str, str, int, bytes]:
     """(block hash, its line, births in it, its spend notes) for one block, read raw and proved (rawchain)."""
     from . import ord_notes
     block_hash = rpc.call("getblockhash", h)
     block = rawchain.read_block(bytes.fromhex(rpc.call("getblock", block_hash, 0)), block_hash, mweb=mweb)
-    found = births(block, taproot, dialect)
-    return block.hash, block_hash_of(block.hash, found), len(found), ord_notes.one_block(block, taproot, dialect)
+    found = births(block, taproot, dialect, every_input)
+    return (block.hash, block_hash_of(block.hash, found), len(found),
+            ord_notes.one_block(block, taproot, dialect, every_input))
 
 
 # --------------------------------------------------------------------------- the worker
@@ -1591,6 +1625,7 @@ class DoginalIndex:
         self._pool_size = 0
         self.base = STARTS.get(net, BASE) if net != "doge" else BASE
         self.taproot, self.mweb = net in TAPROOT, mweb
+        self.every_input = ord_rules.every_input(net)    # Bellscoin: an envelope in every input (rules 7)
         # Each chain read as its own official indexer reads it (rules 4, 2026-10-21): births, completions, notes.
         self.dialect = ord_rules.dialect_of(net)
         self.store = Store(path, self.base, self.dialect, net)
@@ -1600,7 +1635,7 @@ class DoginalIndex:
         self.own_core = own_core
         from .config import NETWORKS
         self.walker = Walker(self.store, self.taproot, mweb, params=NETWORKS.get(net),
-                             token_protocol="prc-20" if net in ("main", "test") else "drc-20", dialect=self.dialect)
+                             token_protocol=ord_rules.token_protocol(net), dialect=self.dialect)
         self.chunks = Chunks(self.store)
         self.walker.fetch_many = self._fetch_many
         self.share: Any = None                       # DxShare, when the mesh runs
@@ -1879,7 +1914,8 @@ class DoginalIndex:
             blocks = ord_notes.decode(notes)
             if len(blocks) != CHUNK:
                 raise ord_notes.NotesError(f"{len(blocks)} blocks, not {CHUNK}")
-            if chunk_hash_of([block_hash_of(b.hash, births(b, self.taproot, self.dialect)) for b in blocks]) != hash_:
+            if chunk_hash_of([block_hash_of(b.hash, births(b, self.taproot, self.dialect, self.every_input))
+                              for b in blocks]) != hash_:
                 raise ord_notes.NotesError("its blocks do not make the hash it said")
         except ord_notes.NotesError as exc:
             log.warning("ord index: arcade %s sent chunk %d's notes that are wrong: %s", node[:12], c, exc)
@@ -2214,7 +2250,7 @@ class DoginalIndex:
         small = (os.cpu_count() or 1) < BIG_FROM_CORES
         heights = [h for h, _via in asked]
         if (len(asked) == 1 or self._lanes_wanted() == 1) and not small and not any(via for _h, via in asked):
-            return {h: scan_block(rpc, h, self.taproot, self.mweb, self.dialect) for h in heights}
+            return {h: scan_block(rpc, h, self.taproot, self.mweb, self.dialect, self.every_input) for h in heights}
         # A small machine reads every block in a worker process, even on one lane: parsed here, it held the web
         # process's threads (2026-10-20, .25 helping: pages waited a minute).
         from concurrent.futures import ThreadPoolExecutor
@@ -2241,7 +2277,7 @@ class DoginalIndex:
         if not raws:
             return {}
         pool = self._workers()
-        jobs = [(raw, block_hash, self.taproot, self.mweb, self.dialect) for block_hash, raw in raws]
+        jobs = [(raw, block_hash, self.taproot, self.mweb, self.dialect, self.every_input) for block_hash, raw in raws]
         return dict(zip(heights, pool.map(_parse, jobs)))
 
     def _workers(self):
