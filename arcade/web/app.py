@@ -18338,7 +18338,7 @@ def create_app(state: AppState) -> FastAPI:
                 raise refereelib.RefereeError("that game's referee is a node that did not say "
                                               "where it is, and it is not this one")
             try:
-                answer = requests.post(terms["node"] + "/r/escrow/release", timeout=60, json=said)
+                answer = _post_arcade(_peer_endpoint(terms["node"], "/r/escrow/release"), timeout=60, json=said)
                 body = answer.json()
             except Exception:                              # noqa: BLE001
                 raise refereelib.RefereeError("the game's referee did not answer; what is in "
@@ -19132,7 +19132,7 @@ def create_app(state: AppState) -> FastAPI:
                     raise refereelib.RefereeError("that game's publisher is another node that "
                                                   "did not say where it is")
                 try:
-                    answer = requests.post(terms["node"] + "/r/state/update", timeout=60, json=said)
+                    answer = _post_arcade(_peer_endpoint(terms["node"], "/r/state/update"), timeout=60, json=said)
                     return contentlib._json(answer.json(), status=answer.status_code)
                 except Exception:                      # noqa: BLE001
                     raise refereelib.RefereeError("the game's publisher did not answer; try "
@@ -33054,6 +33054,18 @@ def _coins_from(state, source: str, tag: str, chain, address: str) -> int | None
     if not isinstance(said, dict) or said.get("address") != address:
         return None
     return _file_checked_coins(state, chain, address, said.get("coins"))
+
+
+def _peer_endpoint(base: str, path: str) -> str:
+    """`path` on another node named by a game's terms -- inscribed, so anybody's words (SadFrog's side, 2026-10-25):
+    a plain https address and nothing else (no query or fragment to bend the path, no credentials). `node + path` was
+    posted as given, so a game naming http://127.0.0.1:8420/... made a node post a stranger's body to its own
+    loopback, where a request counts as the operator's. Posted with `_post_arcade`: public addresses only."""
+    parts = urllib.parse.urlsplit(str(base or "").strip())
+    if (parts.scheme != "https" or not parts.hostname or parts.query or parts.fragment
+            or parts.username or parts.password):
+        raise ValueError("that node is not named by a plain https address")
+    return f"https://{parts.netloc}{parts.path.rstrip('/')}{path}"
 
 
 def _post_arcade(url: str, **kwargs):
