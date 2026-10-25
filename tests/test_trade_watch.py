@@ -114,6 +114,34 @@ def _held_claim(node, seat, secret):
     assert sent["secret"] == secret.hex()
 
 
+def test_a_held_claim_of_a_swap_with_a_data_asset_waits_a_confirmation(node):
+    """2026-10-25 (SadFrog): "data assets like ordinals should always have a conf." The initiator's held claim (it
+    carries the secret) of a coin-only swap below the line goes out from the mempool as before; in a swap with a token,
+    NFT or Doginal on either leg the node holds it to one confirmation, whatever min_conf the tab asked."""
+    app, state, rpc = node
+    who, secret_int, pubkey, address = _seated(app, state, rpc, 84, key=False)
+    responder = Owner(state, rpc)
+    jobs = {}
+    for name, extra in (("coin", {}), ("nft", {"other": {"kind": "nft"}}), ("doginal", {"leg": {"kind": "coin"},
+                                                                                       "other": {"kind": "doginal"}})):
+        secret, h = H.make_secret()
+        lock = H.redeem_script(h, pubkey, responder.pubkey, int(time.time()) + 3600)    # pays the account
+        coin = _lock(rpc, responder, lock, COIN)                                       # left unconfirmed
+        said = {"chain": "regtest", "redeem": lock.hex(), "txid": coin["txid"], "vout": coin["vout"], "kind": "claim"}
+        raw, sig = _presign(who, secret_int, said)
+        answer = _hold(who, said, raw, sig, secret=secret.hex(), min_conf=0, **extra)
+        assert answer.status_code == 200, answer.text
+        jobs[name] = answer.json()["job"]
+    held = {j["id"]: j for j in state.trade_watch.jobs()}
+    assert [held[jobs[n]]["min_conf"] for n in ("coin", "nft", "doginal")] == [0, 1, 1]
+    done = dict(_tick(state))
+    assert done.get(jobs["coin"]) == "sent claim", "coin below the line: the mempool is enough"
+    assert jobs["nft"] not in done and jobs["doginal"] not in done, "an asset swap waits for its block"
+    rpc.call("generate", 1)
+    done = dict(_tick(state))
+    assert done.get(jobs["nft"]) == "sent claim" and done.get(jobs["doginal"]) == "sent claim"
+
+
 def test_the_node_holds_only_the_accounts_own_good_spends(node):
     app, state, rpc = node
     who, secret_int, pubkey, address = _seated(app, state, rpc, 83, key=False)

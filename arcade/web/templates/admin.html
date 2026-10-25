@@ -189,8 +189,9 @@
   <p class="muted" style="margin-top:0">Swaps between two chains (PEP for DOGE and the like), settled by
     lock scripts: <strong>trustless</strong> -- nobody holds anybody's coins. People's tabs hand this node
     their own pre-signed claims and refunds so a swap finishes with the tab closed; it can only send
-    those, paying the person who signed them. A swap acts on a lock as soon as it is in the mempool; one
-    at or above these lines waits for 1 confirmation (2026-10-17):</p>
+    those, paying the person who signed them. A coin swap acts on a lock as soon as it is in the mempool; one
+    at or above these lines waits for 1 confirmation (2026-10-17). A swap with a token, NFT or inscription on
+    either side always waits for 1 confirmation, whatever these lines say (2026-10-25):</p>
   <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
     <span id="swapbiglines" class="row" style="gap:8px;flex-wrap:wrap;align-items:center"></span>
     <button type="button" class="small" id="saveswapbig">Save</button>

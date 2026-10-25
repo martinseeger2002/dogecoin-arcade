@@ -309,3 +309,76 @@ def test_wallet_js_accepts_the_lock_times_the_python_does(tmp_path):
                         [c[:5] for c in cases])
     assert got == [c[5] for c in cases]
     assert sum(1 for c in cases if c[5] == "") == 12, "this code's own proposals, and the edges that are fine"
+
+
+def test_wallet_js_waits_a_confirmation_for_a_data_asset_as_the_python_does(tmp_path):
+    """2026-10-25 (SadFrog): "swaps can be instant with a cap -- data assets like ordinals should always have a conf."
+    confirmationsFor and nextTradeStep agree with trade.confirmations_for / next_step for coin and asset legs, under
+    any "big" lines -- including lines a node could answer in /account (0, huge, junk): those move the coin rule
+    only, never the asset one, which is fixed in wallet.js (ASSET_CONFIRMATIONS)."""
+    import dataclasses
+    import itertools
+    k = "02" + "11" * 32
+    legs = [T.Leg("doge", "coin", "", 10 * COIN, k, k), T.Leg("doge", "coin", "", T.BIG["doge"], k, k),
+            T.Leg("main", "coin", "", 5 * COIN, k, k), T.Leg("main", "coin", "", T.BIG["main"] + 1, k, k),
+            T.Leg("regtest", "coin", "", 10 ** 15, k, k), T.Leg("ltc", "coin", "", 1, k, k),
+            T.Leg("main", "token", "7", 1, k, k), T.Leg("main", "nft", "ab" * 32, 1, k, k),
+            T.Leg("doge", "doginal", "ab" * 32 + "i0", 1, k, k), T.Leg("doge", "token20", "dogi", 1, k, k),
+            T.Leg("regtest", "nft", "cd" * 32, 1, k, k), T.Leg("test", "token", "3", 1, k, k)]
+    lines = [None, {}, {"doge": 0, "main": 0, "ltc": 0}, {"doge": 5 * COIN, "main": 1},
+             {"doge": 10 ** 18, "main": 10 ** 18, "ltc": 10 ** 18}]
+    cases = []
+    for (give, get), big in itertools.product(itertools.product(legs, legs), lines):
+        want = T.confirmations_for(give, get, big)
+        if give.kind != "coin" or get.kind != "coin":
+            assert want >= 1, (give, get, big)
+        elif big is None and give.amount < T.BIG.get(give.network, 10 ** 30) \
+                and get.amount < T.BIG.get(get.network, 10 ** 30):
+            assert want == 0, (give, get)
+        cases.append((dataclasses.asdict(give), dataclasses.asdict(get), big, want))
+    got = run_wallet_js(tmp_path, """
+        if (w.ASSET_CONFIRMATIONS !== 1) throw new Error("the asset rule moved");
+        return data.map(([g, t, big]) => big === null ? w.confirmationsFor(g, t) : w.confirmationsFor(g, t, big));""",
+                        [c[:3] for c in cases])
+    assert got == [c[3] for c in cases]
+    assert sum(1 for c in cases if c[3] == 0) > 20 and sum(1 for c in cases if c[3] == 1) > 100
+
+    # The state machine, on a trade whose stored need is 0: an asset swap waits for its lock's confirmation.
+    a, b = Key(), Key()
+    now = int(time.time())
+    steps = []
+    for role, side, kind, conf in itertools.product((T.INITIATOR, T.RESPONDER), ("give", "get"),
+                                                     ("coin", "nft", "token"), (0, 1)):
+        secret, h = H.make_secret()
+        give = T.Leg("regtest", "coin", "", 3 * COIN, a.pub.hex(), b.pub.hex())
+        get = T.Leg("regtest", "coin", "", 2 * COIN, b.pub.hex(), a.pub.hex())
+        tr = T.Trade(id="t", role=role, give=give, get=get, secret_hash=h.hex(),
+                     secret=secret.hex() if role == T.INITIATOR else "",
+                     initiator_locktime=now + 6 * 3600, responder_locktime=now + 3 * 3600, need=0)
+        if kind != "coin":
+            leg = getattr(tr, side)
+            tr = dataclasses.replace(tr, **{side: dataclasses.replace(
+                leg, kind=kind, asset=("ab" * 32 if kind == "nft" else "7"), amount=1 if kind == "nft" else 40)})
+        theirs = T.LockSeen("cd" * 32, 0, T.lock_value(tr.get, tr.give), H.p2sh_script(tr.their_redeem()).hex(), conf)
+        mine = T.LockSeen("ef" * 32, 0, T.lock_value(tr.give, tr.get), H.p2sh_script(tr.my_redeem()).hex(), 0)
+        for facts in (T.Facts(theirs=theirs), T.Facts(mine=mine, theirs=theirs)):
+            expected = list(T.next_step(dataclasses.replace(tr), facts, now))
+            if kind != "coin" and conf == 0 and not (role == T.INITIATOR and facts.mine is None):  # it locks first
+                assert expected[0] == T.WAIT, (role, side, kind, expected)
+            js_trade = {"role": tr.role, "give": dataclasses.asdict(tr.give), "get": dataclasses.asdict(tr.get),
+                        "secret": tr.secret, "secretHash": tr.secret_hash, "t1": tr.initiator_locktime,
+                        "t2": tr.responder_locktime, "myRedeem": tr.my_redeem().hex(),
+                        "theirRedeem": tr.their_redeem().hex(), "need": 0}
+            js_facts = {"mine": dataclasses.asdict(facts.mine) if facts.mine else None,
+                        "theirs": dataclasses.asdict(facts.theirs)}
+            steps.append((js_trade, js_facts, expected))
+    got = run_wallet_js(tmp_path / "steps", """
+        const out = [];
+        for (const [t, f] of data.cases) {
+          t.myRedeem = c.unhex(t.myRedeem); t.theirRedeem = c.unhex(t.theirRedeem);
+          out.push(await w.nextTradeStep(t, f, data.now));
+        }
+        return out;""", {"cases": [s[:2] for s in steps], "now": now})
+    for (t, _, want), have in zip(steps, got):
+        assert have == want, (t["role"], t["give"]["kind"], t["get"]["kind"], have, want)
+    assert any(s[2][0] == T.CLAIM for s in steps) and any(s[2][0] == T.LOCK for s in steps)

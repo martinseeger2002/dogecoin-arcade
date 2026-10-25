@@ -18893,11 +18893,17 @@ def create_app(state: AppState) -> FastAPI:
                     raise ValueError("the secret's lock is not this account's own")
                 where = {"network": wnet, "txid": str(where.get("txid") or "").lower(),
                          "vout": int(where.get("vout") or 0), "redeem": str(where["redeem"]).lower()}
+            min_conf = max(0, min(int(said.get("min_conf") or 0), 10))
+            # A swap with a data asset on either leg waits at least trade.ASSET_CONFIRMATIONS (2026-10-25), whatever
+            # the tab asked: this node never claims for it -- revealing the secret -- off an unconfirmed asset swap.
+            if kind == "claim" and any(str((x if isinstance(x, dict) else {}).get("kind") or "coin") != "coin"
+                                       for x in (said.get("leg"), said.get("other"))):
+                min_conf = max(min_conf, tradelib.ASSET_CONFIRMATIONS)
             job = state.trade_watch.hold(
                 account=account.pubkey, trade=str(said.get("trade") or "")[:64], network=chain.network,
                 txid=txid, vout=vout, kind=kind, redeem=redeem.hex(), raw=raw.hex(),
                 signature=",".join(x.hex() for x in signatures), secret=secret, secret_lock=where,
-                min_conf=max(0, min(int(said.get("min_conf") or 0), 10)),
+                min_conf=min_conf,
                 not_after=int(said.get("not_after") or 0))
         except (ValueError, WatchError, RpcError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)

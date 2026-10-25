@@ -5,6 +5,7 @@ regtest chains with nothing but `next_step` and what each chain shows -- once to
 end, once with the responder vanishing so the initiator refunds.
 """
 
+import dataclasses
 import pathlib
 import sys
 import time
@@ -296,6 +297,54 @@ def test_one_confirmation_and_three_for_a_big_swap():
     assert T.confirmations_for(test, test) == 0, "testnet coins never count as big"
     assert T.confirmations_for(small, pep, {"doge": 5 * COIN}) == 1, "the operator's own line"
     assert T.LOCK_SECONDS["mainnet"] == 2 * 3600, "the operator: 2 h locks"
+
+
+def test_a_data_asset_always_waits_a_confirmation():
+    """2026-10-25 (SadFrog): "swaps can be instant with a cap -- data assets like ordinals should always have a conf."
+    Coin legs are as before (0 below the line, 1 at or above it); a token, NFT, Doginal or DRC-20 leg waits at least
+    one confirmation, however small, on any chain, and no operator line lowers that."""
+    k = "02" + "11" * 32
+    small = T.Leg("doge", "coin", "", 10 * COIN, k, k)
+    big = T.Leg("doge", "coin", "", T.BIG["doge"], k, k)
+    pep = T.Leg("main", "coin", "", 5 * COIN, k, k)
+    test = T.Leg("regtest", "coin", "", 1 * COIN, k, k)
+    assets = [T.Leg("main", "token", "7", 1, k, k), T.Leg("main", "nft", "ab" * 32, 1, k, k),
+              T.Leg("doge", "doginal", "ab" * 32 + "i0", 1, k, k), T.Leg("doge", "token20", "dogi", 1, k, k),
+              T.Leg("regtest", "nft", "cd" * 32, 1, k, k), T.Leg("test", "token", "3", 1, k, k)]
+    assert T.confirmations_for(small, pep) == 0 and T.confirmations_for(test, test) == 0, "coin below the line: 0"
+    assert T.confirmations_for(big, pep) == 1 and T.confirmations_for(pep, big) == 1, "coin at the line: 1"
+    for asset in assets:
+        for give, get in ((asset, small), (small, asset), (asset, test), (asset, asset), (asset, big)):
+            assert T.confirmations_for(give, get) == 1, (give.kind, give.network, get.kind)
+            for lines in ({}, {"doge": 0, "main": 0}, {"doge": 10 ** 18, "main": 10 ** 18}):
+                assert T.confirmations_for(give, get, lines) >= T.ASSET_CONFIRMATIONS == 1, (give.kind, lines)
+    # The state machine: a stored `need` of 0 never lets an asset swap go on an unconfirmed lock -- whichever leg the
+    # asset is -- while a coin-only swap still claims from the mempool.
+    now = int(time.time())
+    for role in (T.INITIATOR, T.RESPONDER):
+        tr, *_ = _trade(role)
+        assert tr.need == 0
+        coin_only = T.Facts(mine=_seen(tr, False, conf=0), theirs=_seen(tr, True, conf=0))
+        want = T.CLAIM if role == T.INITIATOR else T.WAIT          # the responder waits for the secret either way
+        assert T.next_step(tr, coin_only, now)[0] == want, role
+        for side in ("get", "give"):
+            other = getattr(tr, side)
+            nft = dataclasses.replace(other, kind="nft", asset="ab" * 32, amount=1)
+            at = dataclasses.replace(tr, **{side: nft})
+            value = T.lock_value(at.get, at.give)
+            zero = T.Facts(mine=_seen(at, False, conf=0, value=T.lock_value(at.give, at.get)),
+                           theirs=_seen(at, True, conf=0, value=value))
+            one = T.Facts(mine=zero.mine, theirs=_seen(at, True, conf=1, value=value))
+            step, why = T.next_step(at, zero, now)
+            assert step == T.WAIT and "confirm" in why, (role, side, step, why)
+            if role == T.INITIATOR:
+                assert T.next_step(at, one, now)[0] == T.CLAIM, (side, T.next_step(at, one, now))
+    # Before its own lock, the responder never locks against an unconfirmed asset swap.
+    tr, *_ = _trade(T.RESPONDER)
+    nft = dataclasses.replace(tr, give=dataclasses.replace(tr.give, kind="nft", asset="ab" * 32, amount=1))
+    assert T.next_step(tr, T.Facts(theirs=_seen(tr, True, conf=0)), now)[0] == T.LOCK
+    assert T.next_step(nft, T.Facts(theirs=_seen(nft, True, conf=0)), now)[0] == T.WAIT
+    assert T.next_step(nft, T.Facts(theirs=_seen(nft, True, conf=1)), now)[0] == T.LOCK
 
 
 # --- the lock times a responder accepts (2026-10-25) ------------------------------------------

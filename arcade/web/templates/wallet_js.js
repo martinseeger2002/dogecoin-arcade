@@ -2926,6 +2926,9 @@ export async function tradePresign(wallet, {chain, redeem, txid, vout, kind, sec
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({chain: said.chain, redeem, txid, vout, kind, raw: said.raw, signature: signatures[0], signatures,
                           leg: legWhat(leg, other),
+                          // The other leg's kind: the node holds a claim of a swap with a data asset to at least
+                          // ASSET_CONFIRMATIONS (app account_trade_watch), whichever lock carries it.
+                          other: other ? {kind: other.kind || "coin"} : null,
                           secret: secret || "", secret_lock: secret_lock || null,
                           min_conf: min_conf || 0, not_after: not_after || 0, trade: trade || ""}),
   });
@@ -2993,15 +2996,32 @@ const REAL_COINS = new Set(["main", "doge", "ltc", "bel", "lky", "kot", "wjk"]);
 const NO_CLTV = new Set(["wjk"]);
 const tierOf = (leg) => REAL_COINS.has(leg.network) ? "mainnet" : "testnet";
 
-/** 0, or 1 when a mainnet coin leg is at or above its line (trade.confirmations_for). */
+//: A swap with a data asset on either leg (a token, an NFT, a Doginal / ordinal, a DRC-20 / PRC-20 note: any leg that
+//: is not plain coin) waits at least this many confirmations, whatever its value (2026-10-25, SadFrog: "data assets
+//: like ordinals should always have a conf"; trade.ASSET_CONFIRMATIONS). Fixed here in the code: never read from the
+//: node's /account (swap_big) or anything else a server says.
+export const ASSET_CONFIRMATIONS = 1;
+const carriesAsset = (leg) => !!leg && (leg.kind || "coin") !== "coin";
+
+/** 0; 1 when a mainnet coin leg is at or above its line; never under ASSET_CONFIRMATIONS with a data asset on
+ *  either leg, whatever `big` says (trade.confirmations_for). */
 export function confirmationsFor(give, get, big = TRADE.BIG) {
-  // A DRC-20 / PRC-20 lock counts only once a copy of the ord index has read its note (token20_swap): never 0-conf.
-  if (give.kind === "token20" || get.kind === "token20") return Math.max(TRADE.CONFIRMATIONS_BIG, 1);
+  let need = TRADE.CONFIRMATIONS;
   for (const leg of [give, get]) {
-    const line = big[leg.network];
-    if (leg.kind === "coin" && tierOf(leg) === "mainnet" && line && leg.amount >= Number(line)) return TRADE.CONFIRMATIONS_BIG;
+    const line = (big || {})[leg.network];
+    if (leg.kind === "coin" && tierOf(leg) === "mainnet" && line && leg.amount >= Number(line))
+      need = Math.max(need, TRADE.CONFIRMATIONS_BIG);
   }
-  return TRADE.CONFIRMATIONS;
+  // A token, NFT or Doginal lock -- and a DRC-20 / PRC-20 one, counted only once a copy of the ord index has read its
+  // note (token20_swap) -- is never acted on from the mempool.
+  if (carriesAsset(give) || carriesAsset(get)) need = Math.max(need, ASSET_CONFIRMATIONS);
+  return need;
+}
+
+/** What a trade waits for: its stored `need` (or confirmationsFor), never under the asset rule (trade.next_step). */
+function tradeNeed(trade) {
+  const need = trade.need || confirmationsFor(trade.give, trade.get);
+  return (carriesAsset(trade.give) || carriesAsset(trade.get)) ? Math.max(need, ASSET_CONFIRMATIONS) : need;
 }
 
 /** {initiatorLocktime, responderLocktime} for a trade starting now (trade.plan_locktimes). */
@@ -3155,7 +3175,7 @@ export async function lockFeeOf(network) {
 /** [step, why]: "lock" | "wait" | "claim" | "refund" | "done" | "abort" (trade.next_step).
  *  `trade` = {role, give, get, secret?, secretHash, t1, t2, myRedeem, theirRedeem}. */
 export async function nextTradeStep(trade, facts, now) {
-  const need = trade.need || confirmationsFor(trade.give, trade.get);
+  const need = tradeNeed(trade);
   const mine = facts.mine, theirs = facts.theirs;
   const myTime = trade.role === "initiator" ? trade.t1 : trade.t2;
   const theirTime = trade.role === "initiator" ? trade.t2 : trade.t1;
@@ -3493,7 +3513,8 @@ export async function takeOrder(wallet, order, options = {}) {
   return trade;
 }
 
-//: The node's "big swap" lines (/account swap_big): at or above one, a swap waits 1 confirmation; below, none.
+//: The node's "big swap" lines (/account swap_big): at or above one, a coin swap waits 1 confirmation; below, none.
+//: Only the coin lines: a swap with a data asset waits ASSET_CONFIRMATIONS whatever these say (confirmationsFor).
 let bigKnown = null;
 async function swapBig() {
   if (!bigKnown) {
@@ -3781,7 +3802,7 @@ async function holdSpends(wallet, trade, view, facts) {
   const theirTime = trade.role === "initiator" ? trade.t2 : trade.t1;
   const base = {chain: trade.get.network, redeem: hex(view.theirRedeem), txid: trade.theirLock.txid,
                 vout: trade.theirLock.vout, kind: "claim", leg: trade.get, other: trade.give, trade: trade.id};
-  const need = trade.need || confirmationsFor(trade.give, trade.get);
+  const need = tradeNeed(trade);
   if (trade.role === "initiator") {
     // A token or NFT is only known to be in the lock once the ledger has read it confirmed;
     // claiming an empty one would hand over the secret for nothing.

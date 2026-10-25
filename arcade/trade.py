@@ -46,11 +46,16 @@ LOCK_SECONDS = {"mainnet": 2 * 3600, "testnet": 2 * 3600}
 #: ("Allow 0-conf for less than 1000 doge and 1000000 pep") -- a lock seen in the mempool, and
 #: exactly the one the terms say, is enough, so a small swap is as quick as its messages. The
 #: risk he accepted: whoever locks first could double-spend an unconfirmed lock, up to the line.
-#: A token or NFT lock counts unconfirmed when the pool shows its own transaction moving exactly
-#: that asset in (asset_at); a Doginal lock already reads from the coin it spent (doginal_at).
+#: That is for COIN only (below): a lock carrying a data asset always waits (ASSET_CONFIRMATIONS).
 CONFIRMATIONS = 0
 #: At or above the line, one confirmation (2026-10-17: "1 conf above the threshold").
 CONFIRMATIONS_BIG = 1
+#: 2026-10-25 (SadFrog): "swaps can be instant with a cap -- data assets like ordinals should always have a conf."
+#: A swap with a data asset on either leg -- a token, an NFT, a Doginal / ordinal / inscription, a DRC-20 / PRC-20
+#: note: any leg that is not plain coin -- waits at least this many confirmations, whatever its value. It is fixed in
+#: code here and in wallet_js.js (ASSET_CONFIRMATIONS): no operator line (swap_big) and no node's /account answer lowers
+#: it. The asset readers (asset_at, doginal_at, token20_seen) still check the lock holds exactly that asset.
+ASSET_CONFIRMATIONS = 1
 BIG = {"main": 1_000_000 * 100_000_000, "doge": 1_000 * 100_000_000,
        # Litecoin (2026-10-17, SadFrog's side): 2 LTC, about the value of the Dogecoin line;
         # The operator moves it with swap_big:ltc like the others.
@@ -69,18 +74,25 @@ CLAIM_MARGIN = 20 * 60
 LOCK_MARGIN = 30 * 60
 
 
+def carries_asset(leg: "Leg") -> bool:
+    """Whether a leg's lock holds a data asset (anything but plain coin): a token, an NFT, a Doginal, a DRC-20 note."""
+    return (leg.kind or "coin") != "coin"
+
+
 def confirmations_for(give: "Leg", get: "Leg", big: dict | None = None) -> int:
-    """0 (the lock seen in the mempool), or 1 when a mainnet coin leg is at or above its BIG line."""
+    """0 (the lock seen in the mempool); 1 when a mainnet coin leg is at or above its BIG line; and never under
+    ASSET_CONFIRMATIONS when either leg carries a data asset (whatever `big` says)."""
     big = BIG if big is None else big
-    # A DRC-20 / PRC-20 lock counts only once a copy of the ord index has read its note (token20_swap.token20_seen):
-    # never from the mempool.
-    if "token20" in (give.kind, get.kind):
-        return max(CONFIRMATIONS_BIG, 1)
+    need = CONFIRMATIONS
     for leg in (give, get):
         line = big.get(leg.network)
         if leg.kind == "coin" and leg.tier() == "mainnet" and line and leg.amount >= int(line):
-            return CONFIRMATIONS_BIG
-    return CONFIRMATIONS
+            need = max(need, CONFIRMATIONS_BIG)
+    # A token, NFT or Doginal lock -- and a DRC-20 / PRC-20 one, which counts only once a copy of the ord index has
+    # read its note (token20_swap.token20_seen) -- is never acted on from the mempool.
+    if carries_asset(give) or carries_asset(get):
+        need = max(need, ASSET_CONFIRMATIONS)
+    return need
 
 # The steps next_step can answer.
 LOCK, WAIT, CLAIM, REFUND, DONE, ABORT = "lock", "wait", "claim", "refund", "done", "abort"
@@ -451,6 +463,8 @@ def _branch(seen: LockSeen, redeem: bytes) -> str:
 def next_step(trade: Trade, facts: Facts, now: int) -> tuple[str, str]:
     """(step, why). The one thing this trader should do next, from the chains alone."""
     need = trade.need or confirmations_for(trade.give, trade.get)
+    if carries_asset(trade.give) or carries_asset(trade.get):
+        need = max(need, ASSET_CONFIRMATIONS)            # a stored `need` never lowers the asset rule
     mine, theirs = facts.mine, facts.theirs
 
     # Finished: I claimed theirs (the trade went through), or mine came back to me. Told by the BRANCH each spend
