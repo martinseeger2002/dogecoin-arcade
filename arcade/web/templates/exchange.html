@@ -19,20 +19,15 @@
   <a class="{{ 'on' if current == 'tokens' }}" href="/exchange?tab=tokens"{% if current == 'tokens' %} aria-current="page"{% endif %}>Tokens</a>
   <a class="{{ 'on' if current == 'market' }}" href="/exchange?tab=market"{% if current == 'market' %} aria-current="page"{% endif %}>NFTs</a>
   <a class="{{ 'on' if current == 'mintpads' }}" href="/exchange?tab=mintpads"{% if current == 'mintpads' %} aria-current="page"{% endif %}>Launchpad</a>
-  {# Doginals for DOGE on a tab of their own (2026-10-14), grayed out while Dogecoin syncs. #}
-  {%- set dg = (chain_menu()|selectattr('doge')|list or [none])[0] %}
-  {%- if dg and dg.ready %}
-  <a class="{{ 'on' if current == 'doginals' }}" href="/exchange?tab=doginals"{% if current == 'doginals' %} aria-current="page"{% endif %}>Doginals</a>
-  {%- elif dg %}
-  <span class="chain-off" aria-disabled="true" title="Doginals open when the Dogecoin node has synced ({{ dg.progress }}% so far)">Doginals</span>
+  {# Doginals for DOGE on a tab of their own (2026-10-14), grayed out while Dogecoin syncs; Pepinals for PEP
+     (2026-10-17) the same way, and every other chain whose ords are listed here (arcade/ord_chains.py). #}
+  {%- for o in ord_tabs() %}
+  {%- if o.ready %}
+  <a class="{{ 'on' if current == o.tab }}" href="/exchange?tab={{ o.tab }}"{% if current == o.tab %} aria-current="page"{% endif %}>{{ o.word }}s</a>
+  {%- else %}
+  <span class="chain-off" aria-disabled="true" title="{{ o.word }}s open when the {{ o.chain }} node has synced ({{ o.progress }}% so far)">{{ o.word }}s</span>
   {%- endif %}
-  {#- Pepinals for PEP (2026-10-17): the same ord inscriptions on Pepecoin mainnet. #}
-  {%- set pm = (chain_menu()|selectattr('network', 'equalto', 'main')|list or [none])[0] %}
-  {%- if pm and pm.ready %}
-  <a class="{{ 'on' if current == 'pepinals' }}" href="/exchange?tab=pepinals"{% if current == 'pepinals' %} aria-current="page"{% endif %}>Pepinals</a>
-  {%- elif pm %}
-  <span class="chain-off" aria-disabled="true" title="Pepinals open when the Pepecoin node has synced ({{ pm.progress }}% so far)">Pepinals</span>
-  {%- endif %}
+  {%- endfor %}
   <a id="ex-offers-tab" class="{{ 'on' if current == 'offers' }}" href="/exchange?tab=offers"{% if current == 'offers' %} aria-current="page"{% endif %}>Offers
     {%- if waiting_offers %}<span class="nav-count" aria-label="{{ waiting_offers }} waiting">{{ waiting_offers if waiting_offers < 100 else '99+' }}</span>{% endif %}</a>
 </nav>
@@ -450,7 +445,7 @@ document.addEventListener('click', function (ev) {
   </div>
   {% endif %}
 
-{% elif tab in ('doginals', 'pepinals') %}
+{% elif tab in ord_tab_names() %}
 {% include "_doginals_tab.html" %}
 {% elif tab == 'mintpads' %}
   {# Every mintpad, NFT and token alike, drawn as the feed draws it and ranked

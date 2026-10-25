@@ -41,6 +41,7 @@ from dataclasses import dataclass
 
 from . import fees, ltc_ord, ord_rules
 from .funding import FundingError, Unsigned, sighash
+from .ord_chains import word as _word
 from .script import b58check_encode, hash160
 from .txbuild import build_raw_tx, p2pkh_script, push
 
@@ -66,14 +67,15 @@ MAX_UNCONFIRMED = 20
 #: The biggest file this inscriber takes: 400 kB is some 270 transactions, a few hours of blocks at most.
 MAX_BYTES = 400_000
 
+#: Each chain's word for one is ord_chains.WORDS's, the one the wallet, the Exchange and the swaps say too.
 RULES = {
-    "doge": Rules("Doginal", "dogecoin", 240, False, "wonky-ord / ord-dogecoin"),
-    "main": Rules("Pepinal", "pepecoin", 240, True, "ord-pepecoin"),
-    "bel": Rules("Bellinal", "dogecoin", 240, False, "Nintondo ord (Doginals kind)"),
-    "lky": Rules("Luckinal", "dogecoin", 240, False, "Doginals-kind indexers"),
-    "wjk": Rules("Wojakinal", "dogecoin", 240, False, "wojakinals (Doginals kind)"),
+    "doge": Rules(_word("doge"), "dogecoin", 240, False, "wonky-ord / ord-dogecoin"),
+    "main": Rules(_word("main"), "pepecoin", 240, True, "ord-pepecoin"),
+    "bel": Rules(_word("bel"), "dogecoin", 240, False, "Nintondo ord (Doginals kind)"),
+    "lky": Rules(_word("lky"), "dogecoin", 240, False, "Doginals-kind indexers"),
+    "wjk": Rules(_word("wjk"), "dogecoin", 240, False, "wojakinals (Doginals kind)"),
     # Pepecoin testnet, for trying it with coins that cost nothing.
-    "test": Rules("Pepinal", "pepecoin", 240, True, "pepecoin-ord-indexer"),
+    "test": Rules(_word("test"), "pepecoin", 240, True, "pepecoin-ord-indexer"),
 }
 #: The ones the page offers first (the operator's answer); test chains are added where the arcade runs them.
 CHAINS = ("doge", "main", "bel", "lky", "wjk")

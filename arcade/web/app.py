@@ -66,6 +66,7 @@ from ..messaging import mempool as mempoollib
 from ..messaging import envelope as envelopelib
 from .. import inscriptions as inscriptionlib
 from .. import doginal_market as doginal_marketlib
+from .. import ord_chains as ordchainslib
 from . import guide as guidelib
 from .. import charts as chartlib
 from .. import fees
@@ -14222,7 +14223,7 @@ def create_app(state: AppState) -> FastAPI:
                 out["doginal"].add((str(give.get("network")), str(give.get("asset")).lower()))
                 out.setdefault("doginal_swap", set()).add((str(give.get("network")), str(give.get("asset")).lower()))
         for chain in state.token_chains:
-            if chain.network not in ("doge", "main"):
+            if not _ord_chain(chain):
                 continue
             mine = _account_address(account.pubkey, chain)
             try:
@@ -14244,7 +14245,7 @@ def create_app(state: AppState) -> FastAPI:
         seen_dg: set = set()
         tab_book: set = set()
         for chain in state.token_chains:
-            if chain.network in ("doge", "main"):
+            if _ord_chain(chain):
                 mine = _account_address(account.pubkey, chain)
                 try:
                     tab_book |= {(chain.network, str(r["inscription"]).lower())
@@ -14945,7 +14946,7 @@ def create_app(state: AppState) -> FastAPI:
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         if not _ord_chain(chain):
-            return JSONResponse({"detail": "Doginals live on Dogecoin and Pepinals on Pepecoin main: this is a "
+            return JSONResponse({"detail": f"{ordchainslib.said(verb='live on')}: this is a "
                                            f"{chain.label} send"}, status_code=400)
         address = _account_address(account.pubkey, chain)
         if not address:
@@ -20629,18 +20630,20 @@ def create_app(state: AppState) -> FastAPI:
     # (`node_trades`, 2026-10-13): off, the tab shows what is listed and nobody lists or buys.
 
     def _ord_chain(chain) -> bool:
-        """Whether this node reads ord inscriptions on `chain`: Doginals on Dogecoin, Pepinals on Pepecoin main
-        (2026-10-17: "Add pepinals support"; the same envelopes, read by the same code, doginals.py)."""
-        return bool(chain is not None and (chain.is_doge or chain.network == "main"))
+        """Whether ord inscriptions on `chain` are sent, listed and bought here: Doginals on Dogecoin, Pepinals on
+        Pepecoin main (2026-10-17: "Add pepinals support"; the same envelopes, read by the same code, doginals.py),
+        and any other chain ord_chains.MOVED names."""
+        return bool(chain is not None and ordchainslib.moved(chain.network))
 
     def _ord_word(chain) -> str:
-        return "Doginal" if chain.is_doge else "Pepinal"
+        return ordchainslib.word(chain.network, "Doginal")
 
     def _doge_asked(said: dict):
-        """The chain an inscription route is about: Dogecoin (Doginals, the default) or Pepecoin mainnet (Pepinals)."""
+        """The chain an inscription route is about: Dogecoin (Doginals, the default) or another ord chain
+        (ord_chains.MOVED: Pepinals on Pepecoin mainnet ...)."""
         chain = _chain_asked({"chain": str((said or {}).get("chain") or "doge")})
         if not _ord_chain(chain):
-            raise ValueError("Doginals are on Dogecoin and Pepinals on Pepecoin main")
+            raise ValueError(ordchainslib.said(verb="are on"))
         return chain
 
     def _doginal_row(chain, row: dict) -> dict:
@@ -20807,7 +20810,7 @@ def create_app(state: AppState) -> FastAPI:
             pieces = reg.items(root, offset=(page - 1) * per, limit=per)
         price_of = {r["inscription"]: r for r in listed}
         net = coll["chain"]
-        other = "main" if net == "doge" else "doge"
+        other = ordchainslib.counter(net)
         for p in pieces:
             p["content"] = doginalslib.content_url(p["id"])
             p["frame"] = doginalslib.frame_url(p["id"])
@@ -20823,7 +20826,7 @@ def create_app(state: AppState) -> FastAPI:
                 "doge_me": _account_address(looking.pubkey, oc) if looking and oc is not None else "",
                 "ord_net": net, "ord_word": _ord_word(oc) if oc is not None else "Doginal",
                 "ord_coin": NETWORKS[net].coin if net in NETWORKS else "",
-                "ord_chain_name": "Dogecoin" if net == "doge" else "Pepecoin",
+                "ord_chain_name": ordchainslib.chain_name(net),
                 "doge_version": oc.params.pubkeyhash_version if oc is not None else 30, "in_collection": True}
         return render(request, "ord_collection.html", **data)
 
@@ -28389,7 +28392,20 @@ def create_app(state: AppState) -> FastAPI:
 
     # --- the exchange ---------------------------------------------------------
 
-    EXCHANGE_TABS = ("offers", "mintpads", "tokens", "market", "doginals", "pepinals", "llm")
+    #: One tab of ords for each chain whose ords are listed here (ord_chains: "doginals", "pepinals", ...).
+    ORD_TABS = ordchainslib.tab_nets()
+    EXCHANGE_TABS = ("offers", "mintpads", "tokens", "market", *ORD_TABS, "llm")
+
+    def _ord_tabs() -> list[dict]:
+        """The Exchange's ord tabs, for its menu: each chain this node runs, grayed out while it syncs."""
+        menu = {c["network"]: c for c in _chain_menu()}
+        return [{"tab": t, "net": n, "word": ordchainslib.word(n), "chain": ordchainslib.chain_name(n),
+                 "ready": bool(menu[n]["ready"]), "progress": menu[n]["progress"]}
+                for t, n in ORD_TABS.items() if n in menu]
+
+    TEMPLATES.env.globals["ord_tabs"] = _ord_tabs
+    TEMPLATES.env.globals["ord_tab_names"] = lambda: tuple(ORD_TABS)
+    TEMPLATES.env.globals["ord_wallet"] = ordchainslib.wallet_table
 
     def _coins_each(price: Any, divisible: bool) -> float:
         """The book's price ratio as coins per whole token.
@@ -30324,8 +30340,9 @@ def create_app(state: AppState) -> FastAPI:
         if chain is None:
             raise ValueError("this node does not run that chain yet")
         if leg["kind"] == "doginal":
-            if not (chain.is_doge or chain.network == "main"):
-                raise ValueError("a Doginal is on Dogecoin, a Pepinal on Pepecoin main")
+            if not ordchainslib.swappable(chain.network):
+                raise ValueError(f"{ordchainslib.said(ordchainslib.swap_nets(), verb='are swapped on')}, "
+                                 f"not {ordchainslib.word(chain.network)}s on {chain.label}")
             return {**leg, "divisible": False, "name": _doginal_name(leg["asset"]), "prop": None,
                     "chain": chain, "ready": True, "key": f"{net}-doginal-{leg['asset']}"}
         if leg["kind"] == "token20":
@@ -30364,7 +30381,7 @@ def create_app(state: AppState) -> FastAPI:
         if b["kind"] == "nft":
             return f"/inscriptions/{b['asset']}"
         if b["kind"] == "doginal":
-            return "/exchange?tab=doginals"          # a Doginal for DOGE: the Doginals tab, one transaction
+            return f"/exchange?tab={ordchainslib.tab(b['network'])}"   # a Doginal for DOGE: its tab, one transaction
         if q["kind"] == "coin":
             return f"/exchange/pair/{b['asset']}"
         return f"/exchange/pairs/{b['asset']}/{q['asset']}"
@@ -32212,9 +32229,8 @@ def create_app(state: AppState) -> FastAPI:
                 # exchange"): a row each, its floor the cheapest listed, opening its own market.
                 data["ord_rows"] = []
                 if data["show"] in ("mix", "mainnet", "dogecoin"):
-                    for oc, word, tab_ in ((state.doge, "Doginals", "doginals"),
-                                           (next((c for c in state.all_chains if c.network == "main"), None),
-                                            "Pepinals", "pepinals")):
+                    for tab_, net_ in ORD_TABS.items():
+                        oc, word = _ord_chain_of(net_), f"{ordchainslib.word(net_)}s"
                         if oc is None or not state.chain_ready(oc) or (data["show"] == "dogecoin" and not oc.is_doge):
                             continue
                         live = _doginals_live(oc)
@@ -32230,12 +32246,11 @@ def create_app(state: AppState) -> FastAPI:
         # Doginals for DOGE, on their own tab (2026-10-14); only once Dogecoin's node has synced. Pepinals for PEP
         # the same way on Pepecoin mainnet (2026-10-17: "Add pepinals support").
         data["doginals"], data["doge_ready"], data["doge_version"] = [], False, 30
-        ord_chain = (state.doge if tab == "doginals" else
-                     next((c for c in state.all_chains if c.network == "main"), None) if tab == "pepinals" else None)
+        ord_chain = _ord_chain_of(ORD_TABS[tab]) if tab in ORD_TABS else None
         if ord_chain is not None:
             data["ord_net"], data["ord_word"] = ord_chain.network, _ord_word(ord_chain)
             data["ord_coin"] = NETWORKS[ord_chain.network].coin
-            data["ord_chain_name"] = "Dogecoin" if ord_chain.is_doge else "Pepecoin"
+            data["ord_chain_name"] = ordchainslib.chain_name(ord_chain.network)
             data["doge_version"] = ord_chain.params.pubkeyhash_version
             data["doge_ready"] = state.chain_ready(ord_chain)
             if data["doge_ready"]:

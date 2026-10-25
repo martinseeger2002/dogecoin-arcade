@@ -24,7 +24,7 @@
   {% if coll.cover %}<iframe class="oc-cover" data-src="{{ doginal_frame(coll.cover) }}" title="" sandbox="allow-scripts" scrolling="no" style="border:0;pointer-events:none"></iframe>{% endif %}
   <div style="min-width:0">
     <h1 style="margin:0">{{ coll.name }}</h1>
-    <div class="muted" style="font-size:.84rem">{{ net_badge(net) }} {{ word }}s on {{ 'Dogecoin' if net == 'doge' else 'Pepecoin' }}
+    <div class="muted" style="font-size:.84rem">{{ net_badge(net) }} {{ word }}s on {{ ord_chain_name }}
       &middot; published by {{ coll.publisher|who }}</div>
   </div>
 </div>

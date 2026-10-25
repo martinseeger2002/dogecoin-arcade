@@ -30,6 +30,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from . import ord_chains
 from .config import NETWORKS
 from .doginals import INSCRIPTION_ID
 
@@ -69,9 +70,10 @@ def _side(said: Any) -> dict:
     # [Claude 2026-10-15] A Doginal (the operator: "use the atomic swap feature we have to trade doginals"): `asset` names its
     # inscription id, as ord-dogecoin writes it; one, on Dogecoin, locked by koinu order (htlc.doginal_out).
     # Pepinals too (2026-10-17: "Do the same for pepinals"): the same ord inscriptions on Pepecoin mainnet.
-    if kind == "doginal" and (network not in ("doge", "main") or not INSCRIPTION_ID.match(asset) or amount != 1):
-        raise OrderError("a doginal (or pepinal) is on Dogecoin or Pepecoin main, named by its inscription id, "
-                         "and moves exactly one")
+    # Any chain whose ords are moved here and on which a lock can be made (ord_chains.swappable).
+    if kind == "doginal" and (not ord_chains.swappable(network) or not INSCRIPTION_ID.match(asset) or amount != 1):
+        raise OrderError(f"a doginal (or pepinal) is on {ord_chains.chains_said(ord_chains.swap_nets())}, named by "
+                         "its inscription id, and moves exactly one")
     # A DRC-20 / PRC-20 token (2026-10-22: "Add prc 20 and drc 20 tokens to the token/coin exchange"): `asset`
     # its tick, `amount` WHOLE tokens; locked as a transfer note on the lock itself (arcade/token20_swap.py).
     if kind == "token20" and (network not in ("doge", "main") or not TICK20.match(asset) or amount > TOKEN20_MAX):
@@ -437,8 +439,9 @@ def one_chain_offer(a: dict, b: dict) -> bool:
     DOGE for a Doginal -- Dogecoin's own one-transaction market is listings only, the seller naming the price, so an offer
     goes through the same two locks a cross-chain swap does, both on Dogecoin)."""
     kinds = {a.get("kind"), b.get("kind")}
-    return a.get("network") == b.get("network") and a.get("network") in ("doge", "main") and \
-        kinds in ({"doginal", "coin"}, {"token20", "coin"})
+    net = a.get("network")
+    return net == b.get("network") and ((kinds == {"doginal", "coin"} and ord_chains.swappable(net)) or
+                                         (kinds == {"token20", "coin"} and net in ("doge", "main")))
 
 
 def leg_key(side: dict) -> str:

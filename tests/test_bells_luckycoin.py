@@ -207,6 +207,11 @@ def test_admin_ords_offers_each_chain_off_until_turned_on(client, monkeypatch):
 
 
 def test_the_wallet_shows_bellinals_and_luckinals_and_moves_none_yet():
+    from arcade import ord_chains
     page = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/my_wallet.html").read_text()
-    assert 'bel: ["Bellinal", "BEL", "Bellscoin"], lky: ["Luckinal", "LKY", "Luckycoin"]' in page
-    assert "!ORD_WORDS[c.network]" in page and 'const viewOnly = !doge && c.network !== "main";' in page
+    table = ord_chains.wallet_table()
+    assert table["bel"]["words"] == ["Bellinal", "BEL", "Bellscoin"] and table["lky"]["words"] == ["Luckinal", "LKY", "Luckycoin"]
+    assert not any(table[n][k] for n in ("bel", "lky", "wjk") for k in ("send", "list", "swap"))
+    assert all(table[n]["send"] and table[n]["list"] and table[n]["swap"] for n in ("doge", "main"))
+    assert "const ORD = {{ ord_wallet()|tojson }};" in page
+    assert "!ORD_WORDS[c.network]" in page and "const viewOnly = !can.send;" in page

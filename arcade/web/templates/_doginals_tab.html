@@ -13,6 +13,7 @@
 {#- The same tab for Pepinals for PEP on Pepecoin mainnet (2026-10-17: "Add pepinals support"). #}
 {%- set W = ord_word|default('Doginal') %}{%- set CN = ord_chain_name|default('Dogecoin') %}
 {%- set C = ord_coin|default('DOGE') %}{%- set NET = ord_net|default('doge') %}
+{%- set OC = ord_wallet().get(NET, {}) %}
 {% if not doge_ready %}
   <div class="panel empty"><p>{{ W }}s open here when this arcade's {{ CN }} node has synced.</p></div>
 {% else %}
@@ -60,6 +61,8 @@
   <script type="module">
   const CHAIN = {network: {{ NET|tojson }}, version: {{ doge_version }}};
   const W = {{ W|tojson }}, C = {{ C|tojson }}, CN = {{ CN|tojson }};
+  // Whether one may also be priced in another coin through lock scripts, and in which first (arcade/ord_chains.py).
+  const SWAP = {{ (OC.swap or false)|tojson }}, COUNTER = {{ (OC.counter or "doge")|tojson }};
   const post = async (path, body) => {
     const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"},
                                  credentials: "same-origin", body: JSON.stringify({chain: CHAIN.network, ...body})});
@@ -201,14 +204,14 @@
           // Or for any other coin or token, through lock scripts (2026-10-15: "list for any of the coins and any
           // of the tokens that they possess"): its swap market, where the price is picked.
           const other = Object.assign(document.createElement("a"), {className: "small",
-            href: `/exchange/swap/${CHAIN.network}-doginal-${encodeURIComponent(id)}/${CHAIN.network === "doge" ? "main" : "doge"}-coin`,
+            href: `/exchange/swap/${CHAIN.network}-doginal-${encodeURIComponent(id)}/${COUNTER}-coin`,
             textContent: "Price in another coin or token"});
           if (swapShort) {
             other.removeAttribute("href"); other.setAttribute("aria-disabled", "true");
             other.style.cssText = "opacity:.45"; other.title = needText;
           }
           card.append(input, go);
-          card.append(other);   // any coin or token, through lock scripts (Pepinals too, 2026-10-17)
+          if (SWAP) card.append(other);   // any coin or token, through lock scripts (Pepinals too, 2026-10-17)
         } else if (!d.unknown) {
           card.append(Object.assign(document.createElement("div"), {className: "muted dg-note",
             textContent: `Not listable here: this coin carries more than one ${W}, or one away from its start.`}));

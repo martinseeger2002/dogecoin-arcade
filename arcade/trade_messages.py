@@ -28,6 +28,7 @@ import json
 import re
 from typing import Any
 
+from . import ord_chains
 from .config import NETWORKS
 from .doginals import INSCRIPTION_ID
 from .trade import Leg
@@ -109,8 +110,9 @@ def leg_from(said: Any) -> Leg:
         raise TradeMessageError("a token leg names its property id")
     if kind == "nft" and (not _HEX64.match(asset) or amount != 1):
         raise TradeMessageError("an nft leg names its inscription and moves exactly one")
-    if kind == "doginal" and (network not in ("doge", "main") or not INSCRIPTION_ID.match(asset) or amount != 1):
-        raise TradeMessageError("a doginal (or pepinal) leg is on Dogecoin or Pepecoin main, names its inscription id and moves exactly one")
+    if kind == "doginal" and (not ord_chains.swappable(network) or not INSCRIPTION_ID.match(asset) or amount != 1):
+        raise TradeMessageError(f"a doginal (or pepinal) leg is on {ord_chains.chains_said(ord_chains.swap_nets())}, "
+                                "names its inscription id and moves exactly one")
     if kind == "token20":
         from .trade_orders import TICK20, TOKEN20_MAX
         if network not in ("doge", "main") or not TICK20.match(asset) or amount > TOKEN20_MAX:

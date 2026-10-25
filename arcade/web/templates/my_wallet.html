@@ -1334,7 +1334,7 @@ function openSend(prefill = "", piece = null) {
   if (!c) return;
   const s = sheet();
   const what = piece && piece.doginal ? {kind: "doginal", doginal: piece,
-                                         name: `${(chainNow() || {}).network === "doge" ? "Doginal" : "Pepinal"} ${short(piece.id)}`}
+                                         name: `${(ORD_WORDS[(chainNow() || {}).network] || ["Doginal"])[0]} ${short(piece.id)}`}
     : piece ? {kind: "nft", piece, name: piece.name || `#${piece.number}`}
     : asset ? {kind: asset.token20 ? "token20" : "token", ...asset} : {kind: "coin"};
   // from the card's address type, when it is not the ordinary one: coins only
@@ -2224,10 +2224,10 @@ function dgPageGo(n) {
   if (dgUi) dgUi.head.scrollIntoView({block: "start", behavior: "smooth"});
 }
 
-//: The chains whose inscriptions the wallet shows: one word for one, its coin, and how its coins are named.
-const ORD_WORDS = {doge: ["Doginal", "DOGE", "Dogecoin"], main: ["Pepinal", "PEP", "PEP"],
-                   bel: ["Bellinal", "BEL", "Bellscoin"], lky: ["Luckinal", "LKY", "Luckycoin"],
-                   wjk: ["Wojakinal", "WJK", "Wojakcoin"]};
+//: The chains whose inscriptions the wallet shows (arcade/ord_chains.py): one word for one, its coin, how its coins are
+//: named, and whether one is sent, listed (on which Exchange tab) and swapped (priced first in which coin) from here.
+const ORD = {{ ord_wallet()|tojson }};
+const ORD_WORDS = Object.fromEntries(Object.entries(ORD).map(([net, o]) => [net, o.words]));
 
 async function drawDoginals() {
   const box = $("doginals");
@@ -2235,9 +2235,9 @@ async function drawDoginals() {
   if (NODE_SIDE || tab !== "nfts" || !c || !ORD_WORDS[c.network]) { box.hidden = true; return; }
   box.hidden = false;
   const doge = c.network === "doge";
-  // Bellinals and Luckinals are shown, not moved yet (2026-10-22): sending, listing and swapping one go by the
-  // Doginals routes, which serve Dogecoin and Pepecoin mainnet.
-  const viewOnly = !doge && c.network !== "main";
+  // Shown only where the Doginals routes do not move them yet (ord_chains.MOVED; Luckinals, Wojakinals).
+  const can = ORD[c.network];
+  const viewOnly = !can.send;
   // An imported wallet's own Doginals too (they are shown; sending one from it comes later).
   const w = pickedNow(), addr = w ? w.address : "";
   if (dg.net !== c.network || (dg.addr || "") !== addr) {
@@ -2373,20 +2373,23 @@ async function drawDoginals() {
         send.onclick = () => openSend("", g);
         if (sendShort) { send.disabled = true; send.title = `Needs ${C} besides the ${W} for the network fee`; }
         card.append(send);
-        if (!doge) {
-          // Sold for PEP on the Exchange's Pepinals tab (the seller signs once; the buyer completes it).
+        if (!doge && can.list) {
+          // Sold for its own coin on the Exchange's tab for it (the seller signs once; the buyer completes it).
           const list = el("a", "wl-piecesend ghost", "List");
-          list.href = "/exchange?tab=pepinals"; list.setAttribute("aria-label", `List Pepinal ${g.id}`);
+          list.href = `/exchange?tab=${can.tab}`; list.setAttribute("aria-label", `List ${W} ${g.id}`);
           card.append(list);
         }
         // Priced in any coin or token through lock scripts (2026-10-15; Pepinals too, 2026-10-17): its own market.
-        const swap = el("a", "wl-piecesend ghost", "Swap");
-        swap.setAttribute("aria-label", `Swap ${W} ${g.id}`);
-        if (swapShort) {
-          swap.setAttribute("aria-disabled", "true"); swap.style.cssText = "opacity:.45;pointer-events:none";
-          swap.title = `Needs ${C} besides the ${W} for the network fee`;
-        } else swap.href = `/exchange/swap/${c.network}-doginal-${encodeURIComponent(g.id)}/${doge ? "doge" : "main"}-coin`;
-        card.append(swap);
+        // Only where a lock can be made (ord_chains.swappable).
+        if (can.swap) {
+          const swap = el("a", "wl-piecesend ghost", "Swap");
+          swap.setAttribute("aria-label", `Swap ${W} ${g.id}`);
+          if (swapShort) {
+            swap.setAttribute("aria-disabled", "true"); swap.style.cssText = "opacity:.45;pointer-events:none";
+            swap.title = `Needs ${C} besides the ${W} for the network fee`;
+          } else swap.href = `/exchange/swap/${c.network}-doginal-${encodeURIComponent(g.id)}/${can.counter}-coin`;
+          card.append(swap);
+        }
       }
       cards.push(card);
     }

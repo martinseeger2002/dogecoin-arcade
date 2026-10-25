@@ -38,7 +38,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
-from . import fees, funding, utxos
+from . import fees, funding, ord_chains, utxos
+from .config import NETWORKS
 from .listings import _serialise
 from .script import b58check_decode, hash160
 from .txbuild import build_raw_tx, p2pkh_script, push
@@ -76,11 +77,18 @@ def _guard(address: str = ""):
     return guard
 
 
-def names(address: str) -> tuple[str, str]:
-    """("Doginal", "DOGE") on Dogecoin, ("Pepinal", "PEP") on Pepecoin: what the words say for `address`'s chain."""
-    if any(applies(address) for applies, _ in funding.GUARDS):
-        return "Pepinal", "PEP"
-    return "Doginal", "DOGE"
+def names(address: str, params=None) -> tuple[str, str]:
+    """("Doginal", "DOGE") on Dogecoin, ("Pepinal", "PEP") on Pepecoin ...: what the words say for the chain `params`
+    names, else for `address`'s (by its version byte, among the ord chains: ord_chains.WORDS); Dogecoin's otherwise."""
+    net = getattr(params, "name", None)
+    if net not in ord_chains.WORDS:
+        try:
+            version = b58check_decode(str(address))[0]
+        except Exception:                                  # noqa: BLE001 -- words only
+            version = None
+        net = next((n for n in ord_chains.WORDS if n in NETWORKS and NETWORKS[n].pubkeyhash_version == version),
+                   "doge")
+    return ord_chains.word(net, "Doginal"), ord_chains.coin(net) or "DOGE"
 
 
 def holds_exactly(coin: dict, inscription: str, address: str = "") -> None:
