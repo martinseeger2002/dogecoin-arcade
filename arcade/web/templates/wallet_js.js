@@ -2972,6 +2972,9 @@ export const TRADE = {
   CONFIRMATIONS: 0, CONFIRMATIONS_BIG: 1,       // 0 below the big line, 1 at or above it (2026-10-17; trade.py)
   BIG: {main: 1_000_000 * 100_000_000, doge: 1_000 * 100_000_000, ltc: 2 * 100_000_000,
        bel: 200 * 100_000_000, lky: 20 * 100_000_000, kot: 100 * 100_000_000, wjk: 100 * 100_000_000},
+  // The most one delegated order may give (node_trader.DELEGATE_CAP, 2026-10-25): its key goes to the node, so the
+  // operator could spend it. Another real-coin chain: its BIG line; a test chain: no cap.
+  DELEGATE_CAP: {doge: 1_000 * 100_000_000, main: 100_000 * 100_000_000, ltc: 1 * 100_000_000},
   CLAIM_MARGIN: 20 * 60, LOCK_MARGIN: 30 * 60,
   LOCK_GAP_FLOOR: 3600,                         // trade.LOCK_GAP_FLOOR (2026-10-25)
   LOCK_RESERVE: 2_000_000,          // htlc.SPEND_FEE + htlc.DUST (trade.LOCK_RESERVE)
@@ -3513,6 +3516,36 @@ export async function takeOrder(wallet, order, options = {}) {
   return trade;
 }
 
+/** Every real-coin chain's delegated-order cap as this page knows it with no node to ask (node_trader.delegate_caps
+ *  at its defaults). */
+export function delegateCapDefaults() {
+  const out = {};
+  for (const net of new Set([...Object.keys(TRADE.DELEGATE_CAP), ...Object.keys(TRADE.BIG)])) {
+    if (REAL_COINS.has(net)) out[net] = TRADE.DELEGATE_CAP[net] ?? TRADE.BIG[net] ?? 0;
+  }
+  return out;
+}
+//: The node's own caps (/account delegate_cap: the operator may move them), else the defaults.
+let capsKnown = null;
+async function delegateCaps() {
+  if (!capsKnown) {
+    try { capsKnown = (await (await fetch("/account")).json()).delegate_cap || null; } catch (e) { /* defaults */ }
+  }
+  return capsKnown || delegateCapDefaults();
+}
+/** Why `give` may not be a delegated order here, or "" (node_trader.check_delegate_cap, word for word): the node
+ *  holds a delegated order's key, so a coin side over its chain's cap is refused before the key leaves this page.
+ *  `caps`: {network: sats}, the node's when not given. */
+export async function delegateOver(give, caps = null) {
+  if ((give.kind || "coin") !== "coin" || !REAL_COINS.has(give.network)) return "";
+  const cap = Number((caps || await delegateCaps())[give.network] || 0);
+  if (Number(give.amount) <= cap) return "";
+  const coin = COIN_WORD[give.network] || give.network;
+  if (cap <= 0) return `this arcade takes no delegated ${coin} orders (it would hold their key)`;
+  return `this arcade holds a delegated order's key, so it takes at most `
+    + `${(cap / 1e8).toLocaleString("en-US", {maximumFractionDigits: 8})} ${coin} per order: list less, or split it`;
+}
+
 //: The node's "big swap" lines (/account swap_big): at or above one, a coin swap waits 1 confirmation; below, none.
 //: Only the coin lines: a swap with a data asset waits ASSET_CONFIRMATIONS whatever these say (confirmationsFor).
 let bigKnown = null;
@@ -3897,6 +3930,8 @@ async function postNow(wallet) {
  *  which then answers, locks and claims for it -- the seller can close every page. Proceeds go to the wallet's own
  *  address on the chain it is paid on. */
 export async function delegateOrder(wallet, id, give, get, approved) {
+  const over = await delegateOver(give);              // never more than the cap, and refused before the key is sent
+  if (over) throw new Error(`You can't list this swap: ${over}.`);
   const k = await coins.orderKey(wallet.seed, id);
   const giveKeys = keysOn(wallet, give.network);
   const deposit = await coins.address(k.pubkey, giveKeys.version);
@@ -3942,6 +3977,9 @@ export async function delegateOrder(wallet, id, give, get, approved) {
 /** List a swap from this tab: give `give` {network, kind?, asset?, amount}, get `get` (coin, token or NFT).
  *  `options.delegated`: its node finishes it with the seller away (delegateOrder). */
 export async function listOrder(wallet, give, get, options = {}) {
+  const over = options.delegated ? await delegateOver({network: give.network, kind: give.kind || "coin",
+                                                       amount: Math.round(Number(give.amount))}) : "";
+  if (over) throw new Error(`You can't list this swap: ${over}.`);
   const short = await canFund({network: give.network, kind: give.kind || "coin", asset: String(give.asset || ""),
                                amount: Number(give.amount)}, get);
   if (short) throw new Error(`You can't list this swap yet: ${short}.`);

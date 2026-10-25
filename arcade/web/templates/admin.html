@@ -196,6 +196,13 @@
     <span id="swapbiglines" class="row" style="gap:8px;flex-wrap:wrap;align-items:center"></span>
     <button type="button" class="small" id="saveswapbig">Save</button>
   </div>
+  <p class="muted" style="margin:12px 0 6px">A <strong>delegated</strong> order (one this node fills with its seller's
+    page closed) is not trustless: its key is held here, so you could spend its deposit. One order gives at most
+    (0: none delegated on that chain):</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+    <span id="delegatecaplines" class="row" style="gap:8px;flex-wrap:wrap;align-items:center"></span>
+    <button type="button" class="small" id="savedelegatecap">Save</button>
+  </div>
   <h3 style="margin:14px 0 6px">Now <span class="muted" id="swapcounts" style="font-weight:500;font-size:.86rem"></span></h3>
   <div id="swaplist" class="muted" style="font-size:.84rem">Loading&hellip;</div>
 </section>
@@ -1645,6 +1652,17 @@ section.panel h2{margin-top:0}
         lines.appendChild(lab);
       });
     }
+    // The most one delegated order may give, per real-coin chain (2026-10-25; node_trader.delegate_caps).
+    if (d.delegate_cap) {
+      var caps = $('delegatecaplines'); caps.textContent = '';
+      Object.keys(d.delegate_cap).forEach(function (net) {
+        var lab = document.createElement('label'); lab.style.margin = '0';
+        var inp = document.createElement('input'); inp.autocomplete = 'off'; inp.inputMode = 'decimal';
+        inp.className = 'delegatecap'; inp.dataset.net = net; inp.style.width = '120px'; inp.value = d.delegate_cap[net];
+        lab.append(inp, ' ' + ({main: 'PEP', doge: 'DOGE', ltc: 'LTC', bel: 'BEL', lky: 'LKY', kot: 'KOT', wjk: 'WJK'}[net] || net));
+        caps.appendChild(lab);
+      });
+    }
     // the mainnet PEP swap: its switch and how it stands
     var x = d.xchain || {}, xs = $('xchainstate');
     $('xchain_enabled').checked = !!x.enabled;
@@ -2074,6 +2092,12 @@ section.panel h2{margin-top:0}
     document.querySelectorAll('.swapbig').forEach(function (i) { big[i.dataset.net] = i.value; });
     call('/admin/api/settings', {swap_big: big})
       .then(function () { say('Big-swap lines saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+  $('savedelegatecap').onclick = function () {
+    var cap = {};
+    document.querySelectorAll('.delegatecap').forEach(function (i) { cap[i.dataset.net] = i.value; });
+    call('/admin/api/settings', {delegate_cap: cap})
+      .then(function () { say('Delegated-order caps saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
   function loadSwaps() {
     fetch('/admin/api/swaps', {headers: {'Accept': 'application/json'}}).then(function (r) { return r.json(); })

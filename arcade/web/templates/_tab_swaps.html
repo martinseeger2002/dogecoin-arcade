@@ -146,6 +146,7 @@
         }
         return alert("A swap is one coin for another, on two different chains.");
       }
+      if (await overCap(give)) return;
       const ok = await arcadeAsk("List this swap?",
         `${amt(give)} for ${amt(get)}. ` + listWords(give) + await wallet.swapFees(give, get), "List it");
       if (!ok) { step("cancelled"); return; }
@@ -224,10 +225,19 @@
     // account's node finishes it (wallet.js delegateOrder). A Doginal still settles from a page.
     // A DRC-20 / PRC-20 token too (2026-10-22): its lock is four steps from the page (token20_swap), none by the node.
     function delegates(give) { return !["doginal", "token20"].includes(give.kind || "coin"); }
+    // Not trustless, said before the press (2026-10-25): the node holds a delegated order's key (wallet.js
+    // delegateOrder), so it is capped per order (node_trader.DELEGATE_CAP).
+    const HELD_WORDS = "This arcade holds this order's key while it trades for you: its operator could spend what you "
+      + "deposit. Only delegate amounts you'd trust this arcade with.";
+    async function overCap(give) {
+      const over = delegates(give) ? await wallet.delegateOver(give).catch(() => "") : "";
+      if (over) alert(`You can't list this swap: ${over}.`);
+      return !!over;
+    }
     function listWords(give) {
       return delegates(give)
         ? "Yours moves to this order's own address now, and your arcade's node fills the order for you -- you can close "
-          + "every page. Cancel sends it straight back. "
+          + "every page. Cancel sends it straight back. " + HELD_WORDS + " "
         : "It stands while an arcade page is open here; it settles through lock scripts on both chains. ";
     }
     if (!document.getElementById("cant-css")) {
@@ -373,6 +383,7 @@
       const label = B.label;
       const kind = B.kind;
       const [give, get] = f.dataset.pairSide === "sell" ? [base, quote] : [quote, base];
+      if (await overCap(give)) return;
       const ok = await arcadeAsk(f.dataset.pairSide === "sell" ? "List this sale?" : "List this bid?",
         `${amt(give)} for ${amt(get)} (${price} ${Q.label} ${kind === "nft" || kind === "doginal" ? "for it" : "per " + label}). `
         + listWords(give) + await wallet.swapFees(give, get), "List it");
@@ -413,6 +424,7 @@
       if (!(b.amount > 0)) return alert(`That comes to less than one unit of ${B.name}.`);
       const selling = box2.side.value === "sell";
       const [give, get] = selling ? [a, b] : [b, a];
+      if (await overCap(give)) return;
       const ok = await arcadeAsk(selling ? "List this ask?" : "List this bid?",
         `${amt(give)} for ${amt(get)} (${price} ${B.name} per ${A.kind === "nft" ? "it" : A.name}). `
         + listWords(give) + await wallet.swapFees(give, get), "List it");

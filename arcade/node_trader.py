@@ -129,6 +129,61 @@ def swap_big(state: Any) -> dict:
     return out
 
 
+#: The most one delegated order may hand this node, per mainnet network, in sats (2026-10-25, SadFrog: "label it
+#: plainly and cap delegated amounts"). A delegated order is CUSTODIAL: its key comes to the node (delegate), so the
+#: operator could spend its deposit. A real-coin chain not listed here is capped at its swap BIG line (trade.BIG, the
+#: default, not the operator's current swap_big setting); the operator moves any of them with delegate_cap:<net>.
+#: Test chains are not capped. wallet_js.js TRADE.DELEGATE_CAP mirrors this (tests/test_delegate_cap.py).
+DELEGATE_CAP = {"doge": 1_000 * COIN, "main": 100_000 * COIN, "ltc": 1 * COIN}
+
+
+def _real_coins(network: str) -> bool:
+    """trade.Leg.tier's rule: Pepecoin main and every real-coin chain are mainnet tier."""
+    params = NETWORKS.get(network)
+    return network == "main" or (params is not None and bool(params.real_coins))
+
+
+def delegate_caps(state: Any) -> dict:
+    """The delegated-order cap of every real-coin network the swaps know, in sats (admin: delegate_cap:<net>)."""
+    out = {}
+    for network in sorted(set(DELEGATE_CAP) | set(T.BIG)):
+        if not _real_coins(network):
+            continue
+        default = DELEGATE_CAP.get(network, T.BIG.get(network, 0))
+        set_to = state.setting(f"delegate_cap:{network}", None)
+        try:
+            out[network] = default if set_to in (None, "") else max(0, int(set_to))   # 0: none delegated there
+        except (TypeError, ValueError):
+            out[network] = default
+    return out
+
+
+def delegate_cap(state: Any, network: str) -> int | None:
+    """The most one delegated order may give on `network`, in sats: None on a test chain (no cap), 0 on a real-coin
+    chain with no cap at all (no delegated order there)."""
+    if not _real_coins(network):
+        return None
+    return delegate_caps(state).get(network, 0)
+
+
+def check_delegate_cap(state: Any, give: dict) -> None:
+    """Raises ValueError when a delegated order's coin side is over its chain's cap. A token's or an NFT's side is
+    not priced here, so only a coin side is capped (the page says the key is held either way)."""
+    if (give.get("kind") or "coin") != "coin":
+        return
+    network, amount = str(give.get("network", "")), int(give.get("amount", 0))
+    cap = delegate_cap(state, network)
+    if cap is None or amount <= cap:
+        return
+    coin = getattr(NETWORKS.get(network), "coin", "") or network
+    if cap <= 0:
+        raise ValueError(f"this arcade takes no delegated {coin} orders (it would hold their key)")
+    whole, part = divmod(cap, COIN)
+    said = f"{whole:,}" + (f".{part:08d}".rstrip("0") if part else "")
+    raise ValueError(f"this arcade holds a delegated order's key, so it takes at most {said} {coin} "
+                     f"per order: list less, or split it")
+
+
 #: How long a chain's payee address is kept before it is asked again (lock_fee): /account asks on every page.
 PAYEE_FOR = 600
 _payees: dict[str, tuple[float, str]] = {}
@@ -326,6 +381,7 @@ class NodeTrader:
         """Take on a seller's order to finish it with its own key (HeldKey): answer proposals, lock from the deposit,
         claim to the seller's payout address. Returns the order key's public key."""
         import json
+        check_delegate_cap(self.state, give)              # the operator could spend it: never more than the cap
         key = HeldKey(key_hex)
         if give["network"] not in deposit or get["network"] not in payout:
             raise ValueError("a deposit on the giving chain and a payout on the getting chain are needed")

@@ -3,7 +3,9 @@
 The Exchange lets you swap coins, tokens and NFTs between two different chains
 (Pepecoin for Dogecoin, for example) with somebody on any arcade, without
 trusting them, the arcade you use, or theirs. Nobody ever holds your coins:
-every swap is settled by **lock scripts** on both chains.
+every swap is settled by **lock scripts** on both chains. The one exception is a
+swap you **list** for your arcade to fill with your pages closed: see
+[Listing your own swap](#listing-your-own-swap).
 
 Swaps on a **single** chain (a token for PEP, an NFT priced in a token) do not
 need any of this. They settle instantly in one transaction on that chain's own
@@ -102,9 +104,19 @@ approves locking your side when the time comes; you are not asked again.
 ## Listing your own swap
 
 On the Exchange, under **Swaps between arcades** (or on a coin pair's market,
-such as PEP/DOGE), choose what you offer and what you want. Your listing shows
-on other arcades while an arcade page is open in your browser; close them all
-and it stops being shown within the hour. Withdraw it whenever you like.
+such as PEP/DOGE), choose what you offer and what you want. A Doginal or
+DRC-20 / PRC-20 listing shows on other arcades while an arcade page is open in
+your browser; close them all and it stops being shown within the hour. Withdraw
+it whenever you like.
+
+A coin, token or NFT you list is filled by your arcade's node, with every page
+closed: what you offer moves to the listing's own address, and **your arcade
+holds that listing's key** while it trades for you. That is not trustless: its
+operator could spend what you deposit. Only list amounts you would trust that
+arcade with. So each listing is capped: at most **1,000 DOGE**, **100,000 PEP**
+or **1 LTC** (on Bellscoin, Luckycoin, Kotia and Wojakcoin, the big-swap line),
+unless the operator sets other caps (Admin, Trading). Test coins have no cap.
+Withdraw sends it straight back.
 
 What you list is held for the listing until you withdraw it or it is taken. A listed DRC-20 / PRC-20
 amount is off your balance, so it cannot be sent or listed again meanwhile, and a listed Doginal cannot

@@ -12197,6 +12197,10 @@ def create_app(state: AppState) -> FastAPI:
         from ..node_trader import swap_big
         return swap_big(state)
 
+    def _delegate_caps() -> dict:
+        from ..node_trader import delegate_caps
+        return delegate_caps(state)
+
     #: /account asked again for the same account while an answer is being worked out waits for that answer instead of
     #: working it out again (2026-10-20: a page asks from several of its parts at once -- 22 times a minute for one
     #: phone, ~1.3 s each on .25). Nothing is reused afterwards, so no change can be missed: a 3-second reuse was
@@ -12258,6 +12262,8 @@ def create_app(state: AppState) -> FastAPI:
             "mesh_node": getattr(mesh, "node_id", "") if mesh is not None else "",
             # Where a swap waits 1 confirmation instead of none (node_trader.swap_big; 2026-10-17).
             "swap_big": _swap_big_lines(),
+            # The most one delegated order may give per real-coin chain (node_trader.delegate_caps; 2026-10-25).
+            "delegate_cap": _delegate_caps(),
             "pubkey": account.pubkey, "network": chain.network,
             "version": chain.params.pubkeyhash_version,
             "address": "", "balance": 0, "watching": None, "tag": "",
@@ -26817,6 +26823,7 @@ def create_app(state: AppState) -> FastAPI:
                      "public_hosts": list(state.public_hosts)},
             "xchain": _admin_xchain(),
             "swap_big": {k: v / COIN for k, v in _swap_big_lines().items()},
+            "delegate_cap": {k: v / COIN for k, v in _delegate_caps().items()},
             "flags": _admin_flags(),
             "chains": _admin_chains(),
             "brand": {"current": brandlib.current().key, "locked": brandlib.FROM_ENV,
@@ -27360,6 +27367,19 @@ def create_app(state: AppState) -> FastAPI:
                         if sats <= 0:
                             raise ValueError("a big-swap line is more than nothing")
                         state.set_setting(f"swap_big:{network}", int(sats))
+            if isinstance(said.get("delegate_cap"), dict):
+                # The most one delegated order may give (node_trader.delegate_caps; 2026-10-25): this node holds its
+                # key, so its operator could spend it. In whole coins; 0 takes no delegated order on that chain.
+                from decimal import Decimal, InvalidOperation
+                from ..node_trader import delegate_caps
+                for network, text in said["delegate_cap"].items():
+                    text = str(text).strip()
+                    if network in delegate_caps(state) and text:
+                        try:
+                            zero = Decimal(text.replace(",", "")) == 0
+                        except InvalidOperation:
+                            zero = False
+                        state.set_setting(f"delegate_cap:{network}", 0 if zero else walletlib.parse_amount(text))
             if "brand" in said and said["brand"] != brandlib.current().key:
                 # The face, at once and kept (brand.py). A face fixed by the service stays fixed.
                 if brandlib.FROM_ENV:
@@ -31528,7 +31548,7 @@ def create_app(state: AppState) -> FastAPI:
         "filled without the counterparty being on Arcade"; node_trader.delegate). The deposit must be the key's own
         address on the giving chain, and the proceeds go to this account's own address on the getting chain -- the
         node checks both, so a page cannot be talked into sending them anywhere else."""
-        from ..node_trader import HeldKey
+        from ..node_trader import HeldKey, check_delegate_cap
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         try:
@@ -31547,6 +31567,9 @@ def create_app(state: AppState) -> FastAPI:
                 if kind not in allowed or amount <= 0:
                     raise ValueError(f"the order's {side} side cannot be a {kind} here")
                 legs[side] = {"network": net, "kind": kind, "asset": str(leg.get("asset", "")), "amount": amount}
+            # Its key comes here, so its operator could spend the deposit: no more than the cap (2026-10-25), refused
+            # before anything else is looked at (node_trader.delegate checks again).
+            check_delegate_cap(state, legs["give"])
             give_chain = next(c for c in state.token_chains if c.network == legs["give"]["network"])
             get_chain = next(c for c in state.token_chains if c.network == legs["get"]["network"])
             if give_chain is get_chain:
