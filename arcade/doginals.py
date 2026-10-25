@@ -56,8 +56,11 @@ class Unknown(Exception):
 class Doginals:
     """What sits on each output of a transaction, read from the chain (and an ord-style server, when set), remembered."""
 
-    def __init__(self, path: Path, fetch=None, rpc_factory=None, index=None):
+    def __init__(self, path: Path, fetch=None, rpc_factory=None, index=None, taproot: bool = False):
         self.path = Path(path)
+        # A chain whose ords are mostly ord's own Taproot kind (doginal_index.TAPROOT: Litecoin, Bellscoin): their
+        # content is read from the reveal's witness too (`content`, 2026-10-25).
+        self.taproot = taproot
         self.fetch = fetch or self._fetch
         # The Dogecoin node, when this arcade runs one: each small output is traced back to its inscription on the chain
         # itself (no index), 2026-10-15: Anti Doginal Dog #1089 on a 0.01 DOGE coin, which an outside index did not know.
@@ -290,7 +293,7 @@ class Doginals:
             raise Unknown("the chain is busy reading other inscriptions; try again")
         try:
             with self.rpc_factory() as rpc:
-                ctype, body = content(rpc, inscription)
+                ctype, body = content(rpc, inscription, taproot=self.taproot)
         finally:
             _READING.release()
         home.mkdir(parents=True, exist_ok=True)
@@ -557,17 +560,23 @@ def _pushes(raw: bytes) -> list:
 _READING = threading.BoundedSemaphore(2)
 
 
-def content(rpc, inscription: str, look: int = 30) -> tuple[str, bytes]:
+def content(rpc, inscription: str, look: int = 30, taproot: bool = False) -> tuple[str, bytes]:
     """(content type, bytes) of an ord inscription, read from the chain: the genesis transaction's envelope ("ord", the
     part count, the content type, then (count, data) pairs down to 0), continued -- when the parts run on -- in the
     transaction that spends output 0 next, found in the blocks after it (no index). A part count is a push of at most
-    three bytes; the signature and redeem script that close each transaction's input end its parts."""
+    three bytes; the signature and redeem script that close each transaction's input end its parts.
+
+    `taproot` (a chain in doginal_index.TAPROOT): an inscription that is not that kind's i0 is read from ord's witness
+    envelope instead (`witness_content`), numbered as the chain's ord index numbers it (doginal_index.births_of)."""
     if not INSCRIPTION_ID.match(inscription):
         raise ValueError("that is not an inscription id")
-    txid = inscription.split("i")[0]
+    txid, n = inscription.split("i")[0], int(inscription.split("i")[1])
     tx = rpc.call("getrawtransaction", txid, 1)
-    pushes = _pushes(bytes.fromhex(tx["vin"][0]["scriptSig"]["hex"]))
-    if not pushes or pushes[0] != b"ord" or len(pushes) < 3 or pushes[2] is None:
+    pushes = _pushes(bytes.fromhex(((tx.get("vin") or [{}])[0].get("scriptSig") or {}).get("hex") or ""))
+    doginal = bool(pushes) and pushes[0] == b"ord" and len(pushes) >= 3 and pushes[2] is not None
+    if taproot and (n > 0 or not doginal):
+        return witness_content(tx, n)
+    if not doginal:
         raise ValueError("no ord envelope in that transaction")
     ctype, body, data, here = pushes[2].decode("utf-8", "replace"), b"", pushes[3:], tx
     height = rpc.call("getblockheader", tx["blockhash"])["height"] if tx.get("blockhash") else None
@@ -585,6 +594,40 @@ def content(rpc, inscription: str, look: int = 30) -> tuple[str, bytes]:
         if here is None:
             raise ValueError("could not find the rest of that inscription")
         data = _pushes(bytes.fromhex(here["vin"][0]["scriptSig"]["hex"]))
+
+
+def witness_content(tx: dict, n: int) -> tuple[str, bytes]:
+    """(content type, bytes) of inscription `n` of a reveal transaction (`getrawtransaction <txid> 1` as the node says
+    it) on a Taproot chain: ord's witness envelope -- OP_FALSE OP_IF "ord" <fields> OP_0 <body pushes> OP_ENDIF in the
+    tapscript of a script-path spend (doginal_index.taproot_bodies) -- numbered across the transaction as the chain's ord
+    index numbers its births (doginal_index.births_of: a Doginals-kind i0 first, then every witness envelope in input
+    order). The body is the pushes joined; pointer, parent, metadata and other tags are passed over; an inscription
+    that names a delegate is served the delegate's content by the caller (the web's /content), not here."""
+    from . import doginal_index as dx, rawchain
+    vin = []
+    for i in tx.get("vin") or []:
+        if "coinbase" in i:
+            vin.append({"txid": "", "vout": -1, "script": b"", "sequence": 0, "witness": []})
+            continue
+        vin.append({"txid": i.get("txid", ""), "vout": int(i.get("vout", 0)),
+                    "script": bytes.fromhex((i.get("scriptSig") or {}).get("hex") or ""), "sequence": 0,
+                    "witness": [bytes.fromhex(w) for w in i.get("txinwitness") or []]})
+    t = rawchain.Tx(txid=str(tx.get("txid", "")), wtxid="", raw=b"", version=0, locktime=0, vin=vin, vout=[],
+                    stripped_size=0)
+    found = dx.births_of(t, taproot=True)
+    born = next((b for b in found if b["n"] == n), None)
+    if born is None or "delegate" not in born:              # none, or the Doginals kind (read by `content`)
+        raise ValueError("no ord witness envelope for that inscription in that transaction")
+    k = sum(1 for b in found if b["vin"] == born["vin"] and "delegate" in b and b["n"] < n)
+    envelopes = dx.taproot_bodies(vin[born["vin"]]["witness"])
+    if k >= len(envelopes):
+        raise ValueError("no ord witness envelope for that inscription in that transaction")
+    e = envelopes[k]
+    if e["big"]:
+        raise ValueError(f"that inscription's body is over {dx.TAPROOT_BODY_MAX} bytes")
+    if e["body"] is None:
+        raise ValueError("that inscription has no body")    # ord: no body tag, no content
+    return e["ctype"].decode("utf-8", "replace"), e["body"]
 
 
 def _spender(rpc, txid: str, height: int, look: int):

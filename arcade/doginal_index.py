@@ -185,6 +185,27 @@ def taproot_read(witness: list[bytes]) -> list[tuple[str, str | None]]:
     """(content type hex, delegate id or None) of each of ord's witness envelopes in one input. The delegate as
     ord-litecoin reads it (src/inscriptions/envelope.rs `Tag::Delegate.take(&mut fields)`: the first value of tag 11,
     tag.rs `Delegate = 11`; inscription.rs `inscription_id_field`, as wonky-ord's)."""
+    return [(e["ctype"].hex(), ord_rules.id_from_tag(e["delegate"], "dogecoin")) for e in _taproot_scan(witness)]
+
+
+#: The most body one witness envelope is read for (doginals.content): a tapscript fits in one block's witness, so
+#: Litecoin's and Bellscoin's 4,000,000 weight units (witness bytes weigh 1) bound it; past this it is not served.
+TAPROOT_BODY_MAX = 4_000_000
+
+
+def taproot_bodies(witness: list[bytes]) -> list[dict]:
+    """Each of ord's witness envelopes in one input, in order, as taproot_read finds them, with its body:
+    {"ctype": bytes, "delegate": raw tag bytes or None, "body": bytes, or None when the envelope has no body tag,
+    "big": over TAPROOT_BODY_MAX (its body then None too)}. The body is every push after the OP_0 that ends the
+    fields, joined, to OP_ENDIF (ord's `Inscription.body`); other tags (pointer 2, parent 3, metadata 5, ...) are
+    passed over."""
+    return _taproot_scan(witness, bodies=True)
+
+
+def _taproot_scan(witness: list[bytes], bodies: bool = False) -> list[dict]:
+    """ord's witness envelopes in the tapscript of a script-path spend: the second-to-last witness item, or the
+    third-to-last when the last is an annex (0x50 first). OP_FALSE OP_IF "ord", (tag, value) pairs, OP_0, the body's
+    pushes, OP_ENDIF. The body is gathered only when `bodies` (the block scan needs only the fields)."""
     w = [x for x in witness or []]
     if len(w) >= 2 and w[-1][:1] == b"\x50":                  # an annex
         w = w[:-1]
@@ -195,20 +216,27 @@ def taproot_read(witness: list[bytes]) -> list[tuple[str, str | None]]:
     i = 0
     while i + 2 < len(ops):
         if ops[i][0] == 0x00 and ops[i + 1][0] == 0x63 and ops[i + 2][1] == b"ord":
-            ctype, delegate, j = b"", None, i + 3
+            ctype, delegate, body, big, j = b"", None, None, False, i + 3
             while j < len(ops) and ops[j][0] != 0x68:
                 tag = ops[j][1]
                 if tag == b"":                                    # the body: pushes to OP_ENDIF
                     j += 1
+                    parts, size = [], 0
                     while j < len(ops) and ops[j][0] != 0x68:
+                        piece = ops[j][1]
+                        if bodies and not big and isinstance(piece, bytes):
+                            size += len(piece)
+                            big = size > TAPROOT_BODY_MAX
+                            parts.append(piece)
                         j += 1
+                    body = None if big or not bodies else b"".join(parts)
                     break
                 if tag == b"\x01" and j + 1 < len(ops) and isinstance(ops[j + 1][1], bytes):
                     ctype = ops[j + 1][1]
                 if tag == b"\x0b" and delegate is None and j + 1 < len(ops) and isinstance(ops[j + 1][1], bytes):
                     delegate = ops[j + 1][1]
                 j += 2
-            found.append((ctype.hex(), ord_rules.id_from_tag(delegate, "dogecoin")))
+            found.append({"ctype": ctype, "delegate": delegate, "body": body, "big": big})
             i = j + 1
         else:
             i += 1

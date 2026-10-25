@@ -44,6 +44,8 @@ What that means for you:
 - **The arcade's ord index for Litecoin reads both kinds.** Turn it on in **Admin → Ords**. It
   starts at block 2,424,429 (2,669,127 on Litecoin testnet), as ord-litecoin does, and reads Taproot
   envelopes as well as the Doginals kind.
+- **Taproot inscriptions show here.** `/content/<id>` reads a Taproot inscription's content from the
+  reveal transaction's witness, through this arcade's own Litecoin node.
 - **This arcade cannot yet move inscriptions on Taproot (`ltc1p…`) addresses.** Use a Taproot
   wallet for those.
 - **Nothing is converted.** Content already on the chain never changes. An inscription made here is

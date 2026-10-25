@@ -848,7 +848,7 @@ def create_app(state: AppState) -> FastAPI:
     fundinglib.GUARD_BY_NET = {}
     if getattr(state, "home", None) is not None:
         from .. import doginals as _doginals, rpc as _rpclib
-        from ..doginal_index import STARTS as _ORD_STARTS
+        from ..doginal_index import STARTS as _ORD_STARTS, TAPROOT as _ORD_TAPROOT
         _guards = []
 
         def _ord_index_of(net: str):
@@ -900,7 +900,8 @@ def create_app(state: AppState) -> FastAPI:
             # its script-hash byte only where no other chain uses it (Bellscoin's 30 is Dogecoin's "D",
             # Luckycoin's 5 is Litecoin's legacy "3"): the guard is found by the address alone.
             _ltc = _doginals.Doginals(Path(state.home) / f"{_lchain.network}-inscriptions.sqlite",
-                                      rpc_factory=_lchain.rpc, index=_ord_index_of(_lchain.network))
+                                      rpc_factory=_lchain.rpc, index=_ord_index_of(_lchain.network),
+                                      taproot=_lchain.network in _ORD_TAPROOT)
             _ltc_versions = {_lchain.params.pubkeyhash_version}
             if _others.get(_lchain.params.scripthash_version, set()) <= {_lchain.network}:
                 _ltc_versions.add(_lchain.params.scripthash_version)

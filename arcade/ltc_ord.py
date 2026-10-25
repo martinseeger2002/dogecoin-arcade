@@ -14,8 +14,8 @@ push, OP_TRUE. The inscription is born on the reveal transaction's first output'
 
 Compatibility, said plainly (shown to users too, `TAPROOT_NOTE`): an inscription written here is seen by
 this arcade and by Doginals-style indexers pointed at Litecoin; Litecoin's Taproot ord indexers and
-marketplaces do not see it. Existing Taproot inscriptions are untouched; reading them is a separate,
-Litecoin-only adapter (a later phase), never `doginals.py`.
+marketplaces do not see it. Existing Taproot inscriptions are untouched. Their content is read from the
+reveal's witness (doginals.witness_content, 2026-10-25); moving them needs a Taproot wallet (a later phase).
 
 Its envelope writer (`plan`, `envelope_pushes`) is the Doginals format every chain of this family reads, so
 arcade/token20_send.py writes DRC-20 / PRC-20 transfer notes with it too (2026-10-22); the rest stays Litecoin's.
