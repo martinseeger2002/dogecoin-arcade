@@ -3486,6 +3486,156 @@ async function sayAccept(wallet, trade) {
   keepTrade(wallet, kept);
 }
 
+/* --- what a lock's funding pays, read off its own bytes (2026-10-25) ---------------------------------------------
+ *
+ * A lock is funded by an ordinary send (a coin) or by a transaction the node builds (a token, an NFT, a Doginal, a
+ * DRC-20 / PRC-20 note), and a swap said yes to in the Take or List dialog is signed without asking again
+ * ({reviewed: true}). verifyOffer checks that the signatures are over these bytes, not where the bytes send the coins;
+ * and the node's own `lock`, `to` and `amount` fields are its word. So before a funding is signed the transaction is
+ * read here: exactly one output pays the lock's own script (OP_HASH160 <hash160 of the redeem this tab built>
+ * OP_EQUAL) exactly what the swap puts in; a token's or an NFT's payload is exactly the one agreed; and every other
+ * output is this wallet's own change. Anything else is refused and nothing is signed. A delegated order's deposit is
+ * read the same way, its "lock" the order's own key's address (delegateOrder).
+ */
+const SAME_BYTES = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+//: What a token or NFT send pays its recipient beside the payload (messaging/sender.py OUTPUT_VALUE).
+export const TOKEN_OUTPUT_VALUE = 1_000_000;
+//: A DRC-20 / PRC-20 note's coin (token20_send.POSTAGE): note 2's coin in a token lock.
+export const NOTE_POSTAGE = 100_000;
+
+/** The OP_RETURN a token send writes: "arcd", an Omni Simple Send (version 0, type 0), the property and the units,
+ *  big-endian (tokens.send_payload, Class C). */
+export function tokenSendScript(propertyId, units) {
+  const data = [0x61, 0x72, 0x63, 0x64, 0, 0, 0, 0];
+  const id = BigInt(propertyId), n = BigInt(units);
+  for (let i = 3; i >= 0; i--) data.push(Number((id >> BigInt(8 * i)) & 0xffn));
+  for (let i = 7; i >= 0; i--) data.push(Number((n >> BigInt(8 * i)) & 0xffn));
+  return new Uint8Array([0x6a, data.length, ...data]);
+}
+
+/** The OP_RETURN an NFT send writes: "arcd", AnyData (version 0, type 200), "INSC" v1 Transfer, the piece's txid
+ *  (inscriptions.Transfer, wrapped by _class_c_or_b). */
+export function nftTransferScript(txid) {
+  const id = unhex(String(txid || "").toLowerCase());
+  if (id.length !== 32) throw new Error("an NFT is named by its 32-byte txid. Nothing was signed.");
+  const data = [0x61, 0x72, 0x63, 0x64, 0, 0, 0, 0xc8, 0x49, 0x4e, 0x53, 0x43, 1, 2, ...id];
+  return new Uint8Array([0x6a, data.length, ...data]);
+}
+
+/** Refuse `offer` unless its transaction pays exactly `want` and nothing but this key's own change besides.
+ *  `want.pays`: [{script, value, at?, what}] -- each paid by exactly one output of exactly `value` (null: any value),
+ *  at output `at` when given; `want.data`: OP_RETURN scripts it must write, each exactly once, and no other;
+ *  `want.oneChange`: at most one change output (a token's or NFT's ledger takes the last output not the sender's
+ *  first, so a second one back to the sender could be read as the recipient). Returns the parsed transaction. */
+export async function checkFunding(offer, keys, want, network = "") {
+  if (!offer || !offer.raw) throw new Error("that offer has no transaction in it. Nothing was signed.");
+  const tx = coins.parseTx(offer.raw, coins.TX_TIME.has(network || keys.network || offer.chain));
+  const h = await coins.hash160(keys.pubkey);
+  const segwit = coins.p2wpkhScript(h);
+  const mine = [coins.p2pkh(h), segwit, new Uint8Array([0xa9, 0x14, ...await coins.hash160(segwit), 0x87])];
+  const pays = (want.pays || []).map((p) => ({...p, used: false}));
+  const data = (want.data || []).map((script) => ({script, used: false}));
+  let change = 0;
+  tx.outputs.forEach((out, i) => {
+    if (out.script[0] === 0x6a) {
+      const d = data.find((x) => !x.used && SAME_BYTES(x.script, out.script));
+      if (!d || out.value !== 0n) throw new Error("that transaction writes something on the chain that the swap did not agree. Nothing was signed.");
+      d.used = true;
+      return;
+    }
+    const p = pays.find((x) => !x.used && SAME_BYTES(x.script, out.script) && (x.at == null || x.at === i)
+                               && (x.value == null || BigInt(x.value) === out.value));
+    if (p) { p.used = true; return; }
+    if (pays.some((x) => SAME_BYTES(x.script, out.script))) {
+      throw new Error(`that transaction pays the ${pays.find((x) => SAME_BYTES(x.script, out.script)).what || "lock"} `
+        + "a different amount, or at a different place, than the swap agreed. Nothing was signed.");
+    }
+    if (mine.some((m) => SAME_BYTES(m, out.script))) { change++; return; }
+    throw new Error("that transaction pays somebody other than the lock and you. Nothing was signed.");
+  });
+  const missing = pays.find((x) => !x.used);
+  if (missing) throw new Error(`that transaction does not pay the ${missing.what || "lock"} what the swap agreed. Nothing was signed.`);
+  if (data.some((x) => !x.used)) throw new Error("that transaction does not write the token or NFT the swap agreed. Nothing was signed.");
+  if (want.oneChange && change > 1) throw new Error("that transaction pays you back twice, so the ledger could read it as sent back to you. Nothing was signed.");
+  return tx;
+}
+
+/** Put this tab's side of a swap into its lock (the "lock" step of tradeTick): built by the node, read here byte by
+ *  byte (checkFunding), then signed -- without asking again when the swap was approved in its dialog. The sent
+ *  transaction ({txid, ...}). */
+export async function fundMyLock(wallet, trade, myRedeem, address = null) {
+  const give = trade.give, get = trade.get, net = give.network;
+  const kind = give.kind || "coin";
+  address = address || await coins.htlcAddress(myRedeem, await p2shOf(net));
+  const lock = await coins.htlcScript(myRedeem);
+  const keys = keysOn(wallet, net);
+  const ok = trade.approved ? {reviewed: true} : null;
+  const checkedSign = async (offer, want) => {
+    await checkFunding(offer, keys, want, net);
+    return confirm(wallet, offer, ok);
+  };
+  // The sender pays (2026-10-21): the claim's network fee and this arcade's operator fee go in on top, so the
+  // other side receives exactly the amount agreed (fundValue).
+  if (kind === "coin") {
+    const value = fundValue(give, get);
+    const offer = await offerSend(address, coinsText(value), net);
+    return checkedSign(offer, {pays: [{script: lock, value, what: "lock"}]});
+  }
+  if (kind === "token20") {
+    // A DRC-20 / PRC-20 token (token20_swap): four offers -- note 1's commit and reveal, the tokens to the lock with
+    // note 2's commit, then note 2 on the lock -- each checked and signed here; the last is the lock.
+    let step20 = await token20Post({chain: net, redeem: coinsHex(myRedeem), leg: legWhat(give, get)}, "/account/trade/lock20");
+    if (step20.lock !== address) throw new Error("the node built a different lock. Nothing was signed.");
+    const lid = step20.lock20;
+    let noteScript = null;           // the note's commit script, once its reveal named the note (verifyOffer checks it is ours)
+    for (let n = 0; n < 4 && step20.step !== "done"; n++) {
+      const named = (step20.inputs || [])[0] || {};
+      if (named.redeem && coins.noteKey(unhex(String(named.redeem)))) {
+        noteScript = new Uint8Array([0xa9, 0x14, ...await coins.hash160(unhex(String(named.redeem))), 0x87]);
+      }
+      if (step20.step === "reveal") {
+        await checkedSign(step20, {pays: []});                                     // the note to this wallet only
+      } else if (step20.step === "fund") {
+        // Note 1 whole to the lock as output 0; note 2's commit (this note's own script) beside it; change.
+        if (!noteScript) throw new Error("the token lock's funding came before its note. Nothing was signed.");
+        await checkedSign(step20, {pays: [{script: lock, value: NOTE_POSTAGE, at: 0, what: "lock"},
+                                          {script: noteScript, value: null, at: 1, what: "note's commit"}]});
+      } else if (step20.step === "lock") {
+        await checkedSign(step20, {pays: [{script: lock, value: NOTE_POSTAGE, at: 0, what: "lock"},
+                                          {script: lock, value: doginalReserve(give, get), at: 1, what: "lock"}]});
+      } else {
+        // Note 1's commit: its script is not said until its reveal, so it is read by verifyOffer alone (an open item).
+        await confirm(wallet, step20, ok);
+      }
+      step20 = await token20Post({lock20: lid}, "/account/trade/lock20");
+    }
+    if (step20.step !== "done") throw new Error("the token lock did not finish: " + (step20.detail || step20.step));
+    return {txid: step20.lock_txid};
+  }
+  // A token, an NFT or a Doginal: the node builds it (payload, then the lock with the coin that pays its way out,
+  // last); this tab checks and signs it like any other offer.
+  const asked = await fetch("/account/trade/lock", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({chain: net, redeem: coinsHex(myRedeem), leg: legWhat(give, get)}),
+  });
+  const offer = await asked.json();
+  if (!asked.ok) throw new Error(offer.detail || "the node could not build that lock");
+  if (offer.lock !== address) throw new Error("the node built a different lock. Nothing was signed.");
+  if (kind === "doginal") {
+    // The inscribed coin whole as output 0 (its value is the coin's own), its reserve beside it as output 1
+    // (funding.build_doginal_lock), then change.
+    const first = (offer.inputs || [])[0];
+    if (!first) throw new Error("that lock spends no coin. Nothing was signed.");
+    return checkedSign(offer, {pays: [{script: lock, value: BigInt(String(first.value || 0)), at: 0, what: "lock"},
+                                      {script: lock, value: doginalReserve(give, get), at: 1, what: "lock"}]});
+  }
+  if (kind !== "token" && kind !== "nft") throw new Error(`a ${kind} cannot be locked here. Nothing was signed.`);
+  return checkedSign(offer, {
+    pays: [{script: lock, value: fundValue(give, get), what: "lock"}],
+    data: [kind === "token" ? tokenSendScript(give.asset, give.amount) : nftTransferScript(give.asset)],
+    oneChange: true});
+}
+
 /** One pass of one trade: read answers, read the chains, take the one safe step. */
 export async function tradeTick(wallet, id) {
   let trade = tradesOf(wallet)[id];
@@ -3543,38 +3693,7 @@ export async function tradeTick(wallet, id) {
   trade.note = why;
   if (step === "lock") {
     const address = await coins.htlcAddress(myRedeem, await p2shOf(trade.give.network));
-    const sent = await spending(async () => {
-    let offer;
-    // The sender pays (2026-10-21): the claim's network fee and this arcade's operator fee go in on top, so the
-    // other side receives exactly the amount agreed (fundValue).
-    if (trade.give.kind === "coin") offer = await offerSend(address, coinsText(fundValue(trade.give, trade.get)), trade.give.network);
-    else if (trade.give.kind === "token20") {
-      // A DRC-20 / PRC-20 token (token20_swap): four offers -- note 1's commit and reveal, the tokens to the lock with
-      // note 2's commit, then note 2 on the lock -- each checked and signed here; the last is the lock.
-      let step20 = await token20Post({chain: trade.give.network, redeem: coinsHex(myRedeem),
-                                      leg: legWhat(trade.give, trade.get)}, "/account/trade/lock20");
-      if (step20.lock !== address) throw new Error("the node built a different lock. Nothing was signed.");
-      const lid = step20.lock20;
-      for (let n = 0; n < 4 && step20.step !== "done"; n++) {
-        await confirm(wallet, step20, trade.approved ? {reviewed: true} : null);
-        step20 = await token20Post({lock20: lid}, "/account/trade/lock20");
-      }
-      if (step20.step !== "done") throw new Error("the token lock did not finish: " + (step20.detail || step20.step));
-      return {txid: step20.lock_txid};
-    } else {
-      // A token or NFT: the node builds it (payload, then the lock with the coin that pays
-      // its way out, last); this tab checks and signs it like any other offer.
-      const asked = await fetch("/account/trade/lock", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({chain: trade.give.network, redeem: coinsHex(myRedeem), leg: legWhat(trade.give, trade.get)}),
-      });
-      offer = await asked.json();
-      if (!asked.ok) throw new Error(offer.detail || "the node could not build that lock");
-      if (offer.lock !== address) throw new Error("the node built a different lock. Nothing was signed.");
-    }
-    // Approved in the Take or List dialog (amounts and fees shown there): not asked again.
-    return confirm(wallet, offer, trade.approved ? {reviewed: true} : null);
-    });
+    const sent = await spending(() => fundMyLock(wallet, trade, myRedeem, address));
     const script = coinsHex(await coins.htlcScript(myRedeem));
     // A Doginal's lock is output 0 (its reserve output 1, under the same script).
     let vout = trade.give.kind === "doginal" || trade.give.kind === "token20" ? 0 : -1;
@@ -3718,15 +3837,24 @@ async function postNow(wallet) {
 /** A delegated order (2026-10-17): its side moved to the order's own key, the key handed to this account's node,
  *  which then answers, locks and claims for it -- the seller can close every page. Proceeds go to the wallet's own
  *  address on the chain it is paid on. */
-async function delegateOrder(wallet, id, give, get, approved) {
+export async function delegateOrder(wallet, id, give, get, approved) {
   const k = await coins.orderKey(wallet.seed, id);
   const giveKeys = keysOn(wallet, give.network);
   const deposit = await coins.address(k.pubkey, giveKeys.version);
+  // The deposit as its bytes must show it (checkFunding): the order key's own address, worked out here.
+  const depositScript = coins.p2pkh(await coins.hash160(k.pubkey));
   const ok = approved ? {reviewed: true} : null;
-  const send = async (url, body) => {
+  const send = async (url, body, data) => {
     const {ok: good, said} = await askJson(url, body);
     if (!good) throw new Error(said.detail || "the deposit could not be made");
+    await checkFunding(said, giveKeys, {pays: [{script: depositScript, value: TOKEN_OUTPUT_VALUE, what: "order's deposit"}],
+                                        data: [data], oneChange: true}, give.network);
     return confirm(wallet, said, ok);
+  };
+  const sendCoins = async (value) => {
+    const offer = await offerSend(deposit, coinsText(value), give.network);
+    await checkFunding(offer, giveKeys, {pays: [{script: depositScript, value, what: "order's deposit"}]}, give.network);
+    return confirm(wallet, offer, ok);
   };
   // The node is told first (it starts watching the deposit address), then the side goes there.
   const {ok: told, said} = await askJson("/account/orders/delegate", {
@@ -3738,14 +3866,15 @@ async function delegateOrder(wallet, id, give, get, approved) {
   const fee = said.lock_fee || {};
   const lockNeeds = fundValue(withFee(give, fee), get);
   if (give.kind === "coin") {
-    await confirm(wallet, await offerSend(deposit, coinsText(lockNeeds + DELEGATED_FEES), give.network), ok);
+    await sendCoins(lockNeeds + DELEGATED_FEES);
   } else {
     if (give.kind === "token") {
-      await send("/account/token/send", {property_id: give.asset, to: deposit, units: give.amount, chain: give.network});
+      await send("/account/token/send", {property_id: give.asset, to: deposit, units: give.amount, chain: give.network},
+                 tokenSendScript(give.asset, give.amount));
     } else {
-      await send("/account/nft/send", {piece: give.asset, to: deposit, chain: give.network});
+      await send("/account/nft/send", {piece: give.asset, to: deposit, chain: give.network}, nftTransferScript(give.asset));
     }
-    await confirm(wallet, await offerSend(deposit, coinsText(lockNeeds + DELEGATED_FEES), give.network), ok);
+    await sendCoins(lockNeeds + DELEGATED_FEES);
   }
   return {trade_key: coinsHex(k.pubkey), take_key: coinsHex(k.pubkey), msg_key: said.msg_key, node: said.node,
           deposit, lock_fee: fee};
