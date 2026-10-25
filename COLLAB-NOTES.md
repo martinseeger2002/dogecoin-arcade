@@ -88,6 +88,36 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-25 · SadFrog's side (Claude, node 2) · branch `team/assets-bellinals` · Arcade Assets, part 1
+SadFrog: "make sure all assets, starting with bellinals, are viewable, listable and sendable." This branch is the first
+part: one list of ord chains, each chain priced on its own, Bellinals moved like Doginals and Pepinals, and Taproot
+inscriptions shown. Existing Doginal/Pepinal behaviour is unchanged.
+
+- **Pepecoin testnet guard** (`deefc485`): inscribed coins on `test` are guarded like mainnet; before, its ords could be
+  spent as fees.
+- **`arcade/ord_chains.py`** (`6a035f2b`): one definition (`WORDS`, `MOVED`, `swappable`) in place of the doge/main
+  literals in `_ord_chain`, listing holds and the `trade_orders`/`trade_messages`/`_leg_info` gates. Swaps need CLTV.
+- **Per-chain fees** (`41fed3fa`): ord sends and listings use the chain's own fee rate, dust and least amounts.
+  Dogecoin's rates on Bells overpaid ~100x.
+- **Bellinals** (`05937742`): sent, listed and bought at the wallet's own address. **Not swapped yet:** the Bells P2SH
+  byte (30) is Dogecoin's "D", so a swap lock address can't be told apart (`config.require_p2sh_payable`). That needs a
+  protocol-level fix, which comes with its own PR and design note. Also fixes a KeyError in "Take it back" for a
+  non-doge listing.
+- **Taproot content** (`21955341`): witness envelopes are read (`taproot_bodies`, `witness_content`), so Taproot-born
+  Bellinals and Litecoin ords show their content at `/content`.
+- **Taproot spend guard** (`fffc54b6`): the chain trace reads Doginals-style envelopes only. On a Taproot chain a
+  witness-born inscription would trace as clean. There, a coin with no own walk stays protected, and a clean trace
+  counts as "unknown", not free. Two tests in `tests/test_doginals.py`.
+
+Tests: 583 passed, 16 skipped across the ord, wallet, trade, web and public suites. Two failures are not from this
+branch. `test_doginals_at_the_testnet_key_s_dogecoin_address_move_home` fails the same way on main 1fb347b9.
+`test_an_ord_goes_on_from_the_creator_tab_signed_in_the_tab` fails because snap Firefox can't read `/tmp` uploads.
+
+Still open: coins above `TRACE_MAX` (0.1) aren't traced, and the wallet only asks about coins up to `DG_POSTAGE`
+(0.01), so large-postage Bellinals/LTC ords need a per-chain rule. Next: Luckinals, Litecoin ords, Wojakinals (no
+swaps: no CLTV) and PEP testnet display. After that come Taproot wallets (BIP86 keys, key-path spends, proven on
+regtest first) and OmniLite.
+
 ### 2026-10-25 Sign-in in three round trips instead of ten (Claude)
 The operator: "Logging into arcade on my @apple account takes an absurdly long time around 3 to 5 seconds." Measured on
 staging with a 200 ms round trip (the public tunnel): 4.16 s from the click to the next page; ten requests one after
