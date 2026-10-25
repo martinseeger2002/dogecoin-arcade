@@ -88,6 +88,64 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-25 · SadFrog's side (Claude, node 2) · branch `team/content-cache-race` · the content cache race, and a round-up
+SadFrog: "add everything into a new github update for him". One code fix in this branch; the rest is what node 2 and
+node 3 found or changed over 10-23 to 10-25 that touches your side, gathered in one place.
+
+**In this branch: `LedgerIndex`'s content cache is thread-safe** (`arcade/ledger.py`).
+- Node 3 logged `RuntimeError: dictionary keys changed during iteration` from `_remember` (via `content()` →
+  `inscription_content`) while a player's browser fetched a game's ~460 module files in parallel.
+- `_cached` moves an entry to the end (pop and re-insert) on one request thread while `_remember` sums
+  `cache.values()` on another. Two threads popping the same entry could also lose it.
+- Now every move in the cache happens under `self._content_lock`, and `_remember` keeps a running byte total
+  (`_content_held`) instead of re-summing the whole cache on every fill. The floor-move reset clears both under the
+  lock. Least-recently-used order and the `CACHE_BYTES` limit are unchanged.
+- Test: `tests/test_ledger_content_cache.py` (3). Eight threads read and fill a 64 KB cache 3,000 times each; on the
+  old code it fails every time with "dictionary changed size during iteration". Also LRU order, and a refill of the
+  same file counted once.
+
+**Please merge when you can: ASHVALE PR martinseeger2002/ashvale#9** ("Never a new character over a saved hero").
+A signed-in player whose Bank answered after the 20 s load timeout got a new character. The device kept it as
+"newer" (no `base`, compared by clock), and the next load synced it over the real hero. It happened to a player on
+2026-10-24; the hero was restored from the browser's page history. The PR: a never-synced local save never outranks
+the Bank's; a signed-in player with no synced save waits up to 90 s for the Bank (the loading screen counts); a fresh
+character after a timeout says nothing is kept. All 81 JS tests pass. It is not in `main` or the live registry yet.
+
+**Automatic updates, and what we do instead.** Node 3 installed 32 updates on 10-23 (about every 15 min during your
+working hours). Since the supervisor (10-20) each hands over to a new worker without 502s, but long-lived streams
+(realtime rooms, live pages) still reconnect each time. We understand D-078 (a node that misses a consensus-rule
+release reads blocks wrongly), so we did not change the updater. On node 2 and node 3 the Overview's automatic updates
+are off, and we run the signed update ourselves twice a day (09:15 and 19:15 UTC), only when a newer release is
+published (`arcade.update --check` first, since `arcade.update` reinstalls and restarts even when current). A wish,
+your call against D-078: an "update when no rooms are active" option (wait for empty rooms up to a limit, then
+install anyway), or a release flag that marks a consensus change as "install now".
+
+**Ashvale filming.** SadFrog's side now makes Ashvale promo videos automatically from a local copy of
+`dist/ashvale3d.html` (never a live arcade). Today that means patching the game from outside, so we have built a
+small film API in ASHVALE. It is a local commit, not pushed; it comes as its own ASHVALE PR when SadFrog says so. It
+adds `ASH.film.camera({eye, look, fov})` / `release` / `hud` / `hour`, `?nohud`, `?hour=` (local hour),
+`ASH.enter(zone, floor)` / `?enter=`, `ASH.zonesReady(ms)`, `ASH.music.play/auto/start/state`, documented `_inject`
+fields (`l` is the floor: we sent `l: 40` and our characters were hidden as "off floor"), and lit dungeons. It also
+fixes three things you may want to know about now:
+- `ASH.sky()` uses `Date.now()`, but the world is lit from `skyNow()` (with `?skyday`), so it reports a different sun.
+- The see-through circle is drawn around the player even when the player is hidden.
+- Fog is placed from the player by `cam.dist`, which is wrong for a camera far from the player.
+
+**Cloudflare caching for `/content/`** (any operator behind Cloudflare). Inscription files are sent
+`public, max-age=31536000, immutable`, but Cloudflare does not cache paths without a file extension. So every new
+player fetched ~460 files from the node through Cloudflare (`cf-cache-status: DYNAMIC`), about 15 s before the game
+connected. A Cache Rule (URI path starts with `/content/`: eligible for cache, edge TTL 1 day, 404 not cached) gave
+464 of 464 cache hits and 3-5 s. Maybe worth a line in the operator docs. The edge TTL is 1 day, not a year, so a
+screened inscription stops being served within a day.
+
+**What node 3 runs that differs from stock** (so nothing surprises you there):
+- For ashvale.party and pepecoinarcade.com, `/realtime/nodes` is answered by a small read-only filter in front of
+  the arcade. It lists only ways in on node 3's Affiliates list (by domain, with a mesh node id). If it is down,
+  players stay on node 3.
+- Automatic updates off, with the twice-a-day timer above. The ashvale.party landing page sits in front of the arcade.
+
+**Asked of your side:** take this branch; merge ashvale#9; say what you think of the update wish.
+
 ### 2026-10-25 Broadcasts fan out to every sharer; collections inscribe on lanes (Claude)
 The operator: "Build both. Make sure they work and then publish them."
 - Broadcast fan-out: `rpc.FAN_OUT` (set to `coreshare.fan_out`) runs after every successful `sendrawtransaction` of a

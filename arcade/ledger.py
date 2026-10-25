@@ -167,6 +167,13 @@ class LedgerIndex:
         #: this class, txids are only unique within a chain, and a shared
         #: cache would hand one chain's bytes to the other.
         self._content_cache: dict[str, bytes] = {}
+        #: Request threads read and fill it at once (a game page asks for its
+        #: few hundred modules in parallel): every move in it happens under
+        #: this lock, and `_content_held` keeps its size so a fill does not
+        #: re-add the whole cache (2026-10-25: node 3 logged "dictionary keys
+        #: changed during iteration" from `_remember` while a player loaded).
+        self._content_lock = threading.Lock()
+        self._content_held = 0
         self.stopped: Stopped | None = None
         self.last_sync: float | None = None
         self.last_result: SyncResult | None = None
@@ -329,7 +336,9 @@ class LedgerIndex:
                     self.params.name, f"{floor:,}", kept.name, f"{floor:,}")
         self.stopped = None
         self.stats = {}
-        self._content_cache = {}
+        with self._content_lock:
+            self._content_cache = {}
+            self._content_held = 0
 
     def _stop(self, exc: Exception) -> None:
         """Record why the index halted, at the height it was working on."""
@@ -1050,18 +1059,23 @@ class LedgerIndex:
 
 
     def _cached(self, txid: str) -> bytes | None:
-        found = self._content_cache.get(txid)
-        if found is not None:
-            # Newest last, so trimming takes the least recently wanted.
-            self._content_cache[txid] = self._content_cache.pop(txid)
-        return found
+        with self._content_lock:
+            found = self._content_cache.pop(txid, None)
+            if found is not None:
+                # Newest last, so trimming takes the least recently wanted.
+                self._content_cache[txid] = found
+            return found
 
     def _remember(self, txid: str, content: bytes) -> None:
-        cache = self._content_cache
-        cache[txid] = content
-        held = sum(len(v) for v in cache.values())
-        while held > self.CACHE_BYTES and len(cache) > 1:
-            held -= len(cache.pop(next(iter(cache))))
+        with self._content_lock:
+            cache = self._content_cache
+            old = cache.pop(txid, None)
+            if old is not None:
+                self._content_held -= len(old)
+            cache[txid] = content
+            self._content_held += len(content)
+            while self._content_held > self.CACHE_BYTES and len(cache) > 1:
+                self._content_held -= len(cache.pop(next(iter(cache))))
 
     def inscription_count(self, owner: str | None = None,
                           creator: str | None = None,
