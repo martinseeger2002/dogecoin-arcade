@@ -88,6 +88,12 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-25 · reallyshadydev · branch `node-map` · a Node Map of arcades and chain peers
+A tab between Affiliates and Approvals (and between Affiliates and Docs for an account). It draws every arcade this node has heard and every peer of a chain it runs. A dot is the country that address was allocated to, shifted so two nodes in one country do not stack. The page is not given an address.
+- The countries are this site's own drawing (`world-land.svg`, Natural Earth 50m). Scroll zooms, drag pans, a country or a dot can be clicked, and the list filters by chain or by what is typed.
+- The country of an address comes from the public RIR allocation files, packed in `arcade/data/ip4.cc.gz` and `ip6.cc.gz`.
+- `/nodes`, `/nodes.json` and `/world-land.svg` are public. `/nodes.json` is countries and points only.
+
 ### 2026-10-24 Home screen red counts stay fresh; the phone's app icon shows them (Claude)
 `GET /account/badges` -> {tab href: count}, the tab strip's numbers; /home polls it every 30 s, on return and after a
 window closes or is minimized, and sets `navigator.setAppBadge` to new messages + notifications.

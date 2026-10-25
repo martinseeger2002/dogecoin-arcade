@@ -41,7 +41,7 @@ PAGES = [
     "/join", "/join/keys", "/launch", "/launches", "/listings", "/me", "/me/accounts",
     "/me/backup", "/me/contacts", "/me/messages", "/me/nfts", "/me/notifications",
     "/me/runs", "/me/wallet", "/me/wallet/tokens", "/messages", "/mintpad/new",
-    "/nfts", "/restore", "/tokens", "/tokens/launchpad/preview", "/wallet",
+    "/nfts", "/nodes", "/restore", "/tokens", "/tokens/launchpad/preview", "/wallet",
     "/wallet/nfts", "/wallet/tokens",
 ]
 
