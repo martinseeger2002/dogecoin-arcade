@@ -210,22 +210,44 @@ class Doginals:
                 height = self._tip() - confirmations + 1
             except Exception:                               # noqa: BLE001
                 height = None
+        try:
+            own = (index.walker.next_height() if index.mode() == "walk" and not index.store.old_layout else None)
+        except Exception:                                   # noqa: BLE001
+            own = None
+        trace_these: set[int] = set()
         for n in small:
             said = None
+            question = {"what": "on", "txid": txid, "vout": n}
             if height is not None and walked is not None and height < walked:
                 try:
-                    said = index.lookup({"what": "on", "txid": txid, "vout": n})
+                    said = index.lookup(question)
                 except Exception:                           # noqa: BLE001 -- no copy answered: protected, asked again
                     said = None
                 if said is not None and int(said.get("walked_to") or 0) <= height:
                     said = None                             # answered by a copy not past this coin's block yet
+            if said is not None and not said.get("on") and (said.get("node") or said.get("from") != "this arcade"):
+                # Another arcade's answer may add protection, never take it away: how far it has walked is only its
+                # own word. "Nothing on it" is taken from this arcade's own walk once that is past the coin's block
+                # (protected, waiting for it, until then), or -- on an arcade that does not walk -- from the chain
+                # itself (traced, as before the index); never kept as final on the other arcade's word alone.
+                said = None
+                if own is None:
+                    trace_these.add(n)
+                    continue
+                if height is not None and height < own:
+                    try:
+                        said = {**index.answer(question), "from": "this arcade", "walked_to": own}
+                    except Exception:                       # noqa: BLE001 -- protected, asked again
+                        said = None
             if said is None:
                 held[n] = [{"id": None, "offset": None, "unknown": True, "wait": "index", "h": height}]
             elif said.get("on"):
                 held[n] = [{"id": i.get("id"), "offset": i.get("offset"),
                             **({"ctype": str(i["ctype"])} if i.get("ctype") else {})} for i in said["on"]]
+        if trace_these:
+            self._add_traced(txid, held, only=trace_these)
 
-    def _add_traced(self, txid: str, held: dict[int, list[dict]]) -> None:
+    def _add_traced(self, txid: str, held: dict[int, list[dict]], only: set[int] | None = None) -> None:
         """Add what the chain itself says sits on each small output of `txid` that nothing was named on yet: an
         inscription found by tracing the output's koinu back (`trace`), or -- when the trace could not finish -- a marker
         that keeps the coin out of every ordinary send without naming anything ({"id": None, "unknown": True})."""
@@ -234,7 +256,7 @@ class Doginals:
                 tx = rpc.call("getrawtransaction", txid, 1)
                 for out in tx.get("vout") or []:
                     n, value = int(out["n"]), round(float(out["value"]) * 1e8)
-                    if held.get(n) or value > TRACE_MAX:
+                    if held.get(n) or value > TRACE_MAX or (only is not None and n not in only):
                         continue
                     with self._lock, self._db() as db:
                         row = db.execute("SELECT state FROM walk WHERE txid=? AND vout=?", (txid, n)).fetchone()

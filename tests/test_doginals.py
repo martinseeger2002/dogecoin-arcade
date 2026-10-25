@@ -174,20 +174,25 @@ class _IndexChain(_Chain):
 class _Index:
     """A DoginalIndex as the guard sees it: its own walk, linked walkers, and the "on" answer."""
 
-    def __init__(self, walked, tip=5000, on=None):
-        self.walked, self.tip, self.on, self.asked = walked, tip, on or {}, []
+    def __init__(self, walked, tip=5000, on=None, own=False):
+        self.walked, self.tip, self.on, self.asked, self.own = walked, tip, on or {}, [], own
         self.store = type("S", (), {"old_layout": False})()
         self.walker = type("W", (), {"next_height": lambda _s: self.walked})()
 
     def mode(self):
-        return "help"
+        return "walk" if self.own else "help"
 
     def walkers(self):
-        return [("peer", self.walked)]
+        return [] if self.own else [("peer", self.walked)]
+
+    def answer(self, q):
+        assert self.own, "only a walking arcade answers from its own walk"
+        return {"on": self.on.get((q["txid"], q["vout"]), [])}
 
     def lookup(self, q):
         self.asked.append((q["txid"], q["vout"]))
-        return {"on": self.on.get((q["txid"], q["vout"]), []), "walked_to": self.walked}
+        whose = {"from": "this arcade"} if self.own else {"from": "arcade peer", "node": "peer"}
+        return {"on": self.on.get((q["txid"], q["vout"]), []), "walked_to": self.walked, **whose}
 
 
 def test_with_an_ord_index_no_coin_is_traced_and_small_ones_wait_protected_until_it_is_complete(tmp_path, monkeypatch):
@@ -218,7 +223,7 @@ def test_with_an_ord_index_no_coin_is_traced_and_small_ones_wait_protected_until
 
 def test_a_coin_newer_than_the_complete_index_waits_for_it_and_a_clean_one_may_go(tmp_path, monkeypatch):
     chain = _IndexChain(3)
-    index = _Index(walked=chain.tip - 12)
+    index = _Index(walked=chain.tip - 12, own=True)         # this arcade's own walk: its "nothing here" frees the coin
     g = doginals.Doginals(tmp_path / "d.sqlite", fetch=lambda t: {"txid": t, "inscriptions": []},
                           rpc_factory=lambda: chain, index=lambda: index)
     chain.txs[chain.last]["confirmations"] = 2              # mined after the index's last block
@@ -275,3 +280,82 @@ def test_the_index_says_each_inscriptions_content_type_and_the_guard_keeps_it(tm
     (tmp_path / "inscription-content").mkdir()
     (tmp_path / "inscription-content" / ("ab" * 32 + "i0.type")).write_text("image/png")
     assert g.ctype_of("ab" * 32 + "i0") == "image/png" and g.ctype_of("not an id") is None
+
+
+class _Mesh(_Index):
+    """This arcade (its own walk, or none) linked to another arcade that says how far it has walked and what is on a
+    coin: its own word only. Asked first when it says it is further, as DoginalIndex.lookup does."""
+
+    def __init__(self, own_walked, peer_walked, own_on=None, peer_on=None):
+        super().__init__(own_walked, on=own_on, own=own_walked is not None)
+        self.peer_walked, self.peer_on = peer_walked, peer_on or {}
+
+    def walkers(self):
+        return [("peer", self.peer_walked)]
+
+    def lookup(self, q):
+        self.asked.append((q["txid"], q["vout"]))
+        if self.own and self.walked >= self.peer_walked:
+            return {"on": self.on.get((q["txid"], q["vout"]), []), "walked_to": self.walked, "from": "this arcade"}
+        return {"on": self.peer_on.get((q["txid"], q["vout"]), []), "walked_to": self.peer_walked,
+                "from": "arcade peer", "node": "peer"}
+
+
+def _clean(chain):
+    chain.txs["g0" * 32]["vin"][0]["scriptSig"]["hex"] = "47"      # no inscription anywhere back along the coin
+    return chain
+
+
+def test_another_arcades_nothing_here_never_frees_an_inscribed_coin(tmp_path, monkeypatch):
+    """Another arcade's answer may add protection, never take it away: how far it has walked is only its word. An
+    arcade without its own walk checks the chain itself, which finds the Doginal."""
+    chain = _IndexChain(3)
+    index = _Mesh(None, 10 ** 9)
+    g = doginals.Doginals(tmp_path / "d.sqlite", fetch=lambda t: {"txid": t, "inscriptions": []},
+                          rpc_factory=lambda: chain, index=lambda: index)
+    assert g.held(chain.last) == {0: [{"id": "g0" * 32 + "i0", "offset": 0}]}
+    assert index.asked == [(chain.last, 0)]
+    assert g.spendable([{"txid": chain.last, "vout": 0, "value": 100_000}]) == []
+
+
+def test_another_arcades_nothing_here_waits_for_this_arcades_own_walk_and_is_not_kept(tmp_path, monkeypatch):
+    chain = _IndexChain(3)
+    height = chain.tip - chain.txs[chain.last]["confirmations"] + 1
+    index = _Mesh(height - 5, 10 ** 9)                       # this arcade walks, not past the coin yet
+    g = doginals.Doginals(tmp_path / "d.sqlite", fetch=lambda t: {"txid": t, "inscriptions": []},
+                          rpc_factory=lambda: chain, index=lambda: index)
+    assert g.held(chain.last) == {0: [{"id": None, "offset": None, "unknown": True, "wait": "index", "h": height}]}
+    assert g.spendable([{"txid": chain.last, "vout": 0, "value": 100_000}]) == []
+    assert g.kept(chain.last)[0][0]["unknown"], "not kept as free"
+    monkeypatch.setattr(doginals, "UNKNOWN_RETRY", 0)
+    index.walked = height + 1                                # its own walk past the coin: its own index answers
+    index.on = {(chain.last, 0): [{"id": "g0" * 32 + "i0", "offset": 0}]}
+    assert g.held(chain.last) == {0: [{"id": "g0" * 32 + "i0", "offset": 0}]}
+
+
+def test_another_arcades_nothing_here_is_checked_against_this_arcades_own_walk(tmp_path):
+    chain = _IndexChain(3)
+    index = _Mesh(chain.tip, 10 ** 9)                        # own walk past the coin, says nothing is on it either
+    g = doginals.Doginals(tmp_path / "d.sqlite", fetch=lambda t: {"txid": t, "inscriptions": []},
+                          rpc_factory=lambda: chain, index=lambda: index)
+    assert g.held(chain.last) == {}
+    reads = chain.reads
+    assert g.held(chain.last) == {} and chain.reads == reads, "this arcade's own answer is kept"
+
+
+def test_another_arcade_naming_an_inscription_protects_the_coin(tmp_path):
+    chain = _clean(_IndexChain(3))
+    index = _Mesh(None, 10 ** 9, peer_on={(chain.last, 0): [{"id": "ab" * 32 + "i0", "offset": 0}]})
+    g = doginals.Doginals(tmp_path / "d.sqlite", fetch=lambda t: {"txid": t, "inscriptions": []},
+                          rpc_factory=lambda: chain, index=lambda: index)
+    assert g.held(chain.last) == {0: [{"id": "ab" * 32 + "i0", "offset": 0}]}
+    assert g.spendable([{"txid": chain.last, "vout": 0, "value": 100_000}]) == []
+
+
+def test_another_arcades_nothing_here_on_a_clean_coin_is_confirmed_by_the_chain(tmp_path):
+    chain = _clean(_IndexChain(3))
+    index = _Mesh(None, chain.tip)
+    g = doginals.Doginals(tmp_path / "d.sqlite", fetch=lambda t: {"txid": t, "inscriptions": []},
+                          rpc_factory=lambda: chain, index=lambda: index)
+    assert g.held(chain.last) == {}
+    assert g.spendable([{"txid": chain.last, "vout": 0, "value": 100_000}])
