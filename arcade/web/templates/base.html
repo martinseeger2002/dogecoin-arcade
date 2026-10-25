@@ -1340,17 +1340,23 @@ function arcadeMainnetReview(costs){
     line('Network fee', costs.network);
     line('Coins written into the inscription or token outputs', costs.data);
     line('Paid to others', costs.others);
+    // Each payment as the transaction's own bytes say it (wallet.js mainnetCosts), not the node's words.
+    (costs.to || []).forEach(function(p){
+      line('to ' + p.to, p.value);
+      if (p.value && rows.lastChild) rows.lastChild.firstChild.style.wordBreak = 'break-all';
+    });
     if (costs.operator) {
       var f = costs.fee || {};
       line('Operator fee (' + ((f.permille || 5) / 10) + '%' + (f.minimum ? ', minimum ' + pep(f.minimum) : '')
            + (costs.count ? ' a piece' : '') + ')', costs.operator);
     }
-    line(costs.count ? 'Total for the run' : 'Total leaving your wallet', costs.total, true);
+    line(costs.count ? 'Total for the run' : costs.leg ? 'Set aside for the fee when it is taken'
+         : 'Total leaving your wallet', costs.total, true);
     var warn = document.createElement('p'); warn.className = 'mr-warn';
     warn.textContent = 'These are real coins on mainnet. Once sent this cannot be undone.';
     var row = document.createElement('div'); row.className = 'row';
     var ok = document.createElement('button'); ok.type = 'button'; ok.className = 'danger';
-    ok.textContent = (costs.count ? 'Start: about ' : 'Pay ') + pep(costs.total);
+    ok.textContent = costs.leg ? 'Sign the trade' : (costs.count ? 'Start: about ' : 'Pay ') + pep(costs.total);
     var no = document.createElement('button'); no.type = 'button'; no.className = 'ghost'; no.textContent = 'Cancel';
     row.append(ok, no);
     card.append(h, what, rows, warn, row); back.append(card); document.body.append(back);

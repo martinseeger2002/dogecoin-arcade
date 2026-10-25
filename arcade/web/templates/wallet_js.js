@@ -679,13 +679,15 @@ export async function offerSend(to, amount, chain, from = "") {
  * `approveMainnet` leaves an allowance in this tab that each of its pieces
  * draws down without asking; a piece that would go past it asks again.
  */
-let mainnetNets = null;
-async function isMainnet(network) {
-  if (!network) return false;
-  if (!mainnetNets) {
-    mainnetNets = new Set((await chains()).filter((c) => c.mainnet).map((c) => c.network));
-  }
-  return mainnetNets.has(network);
+//: Which chains carry real coins is decided HERE, by the network's name (2026-10-25, security review): the node's
+//: /account `mainnet` flag is its own word, and a node that marked Dogecoin `mainnet: false` skipped the review. The
+//: names are config.py NETWORKS (`real_coins`; tests/test_mainnet_review_names.py holds them to it). A name this file
+//: does not know is mainnet too: asked about, never waved through. The test chains also sign with the m/44'/1' key
+//: (coins.COIN_TYPE), which holds no mainnet coin, so a node calling a mainnet chain "test" gets a signature for nothing.
+export const MAINNETS = new Set(["main", "doge", "ltc", "bel", "lky", "kot", "wjk"]);
+export const TESTNETS = new Set(["test", "regtest", "ltctest"]);
+export function isMainnet(network) {
+  return !TESTNETS.has(String(network || ""));
 }
 const ALLOWANCE = "arcade.mainnet.allowance";
 /** Let up to `sats` of mainnet spending through without asking, for `minutes`. */
@@ -711,13 +713,29 @@ export function mainnetCosts(offer, shown) {
     else others += Number(p.value);
   }
   const network = Number(shown.fee || 0);
-  return {network, data, others, operator, total: network + data + others + operator,
-          fee: offer.operator_fee || null, what: shown.what || offer.what || "",
+  let total = network + data + others + operator;
+  // Signed beside somebody else's coins (a buy, a shop's half: the inputs before `signed_from`, or after `signed_to`,
+  // are theirs): what leaves this wallet is its own coins in, less what comes back to it.
+  const named = offer.inputs || [];
+  const from = Number(offer.signed_from || 0);
+  const to = offer.signed_to != null ? Number(offer.signed_to) : named.length;
+  if (from > 0 || to < named.length) {
+    let mineIn = 0;
+    for (let n = from; n < to; n++) mineIn += Number((named[n] || {}).value || 0);
+    total = Math.max(0, mineIn - Number(shown.change || 0));
+    others = Math.max(0, total - network - data - operator);
+  }
+  // Who is paid and how much, and the sentence, are read off the transaction's own bytes (verifyOffer), never the
+  // node's `what` (2026-10-25).
+  const paid = (shown.pays || []).filter((p) => !p.mine && p.bytes === undefined)
+    .map((p) => ({to: String(p.to), value: Number(p.value)}));
+  return {network, data, others, operator, total, to: paid,
+          fee: offer.operator_fee || null, what: shown.says || "",
           chain: offer.chain || ""};
 }
 async function mainnetOk(offer, shown, network, options) {
-  if (!(await isMainnet(network))) return;
-  const costs = mainnetCosts(offer, shown);
+  if (!isMainnet(network)) return;
+  const costs = {...mainnetCosts(offer, shown), chain: network};
   if (options && options.reviewed) return;     // the page's own review listed these costs
   let allowed = null;
   try { allowed = JSON.parse(sessionStorage.getItem(ALLOWANCE) || "null"); } catch (e) {}
@@ -1693,6 +1711,19 @@ export async function reclaimEscrow(wallet, escrow, chain) {
  * the node refuses a leg whose bytes say any other trade. A leg in clear is a
  * promise anybody holding it could take up, so it only ever travels sealed.
  */
+/** A leg on mainnet is said from its own bytes before either signature (2026-10-25): what it gives, what it takes,
+ *  and what of this wallet's coins is set aside for the fee when it is taken. Never broadcast here, so no allowance. */
+async function legOk(shown, network) {
+  if (!isMainnet(network)) return;
+  const ask = globalThis.arcadeMainnetReview;
+  const costs = {chain: network, leg: true, what: `A trade signed for one player: it ${shown.says}.`,
+                 network: Number(shown.reserved || 0), data: 0, others: 0, operator: 0,
+                 total: Number(shown.reserved || 0), to: []};
+  if (typeof ask !== "function" || !(await ask(costs))) {
+    throw new Error("Not signed: this mainnet trade was not confirmed. Nothing was signed.");
+  }
+}
+
 export async function tradeLeg(wallet, t) {
   return working(async () => {
     const ask = () => fetch("/account/trade/leg", {
@@ -1706,9 +1737,10 @@ export async function tradeLeg(wallet, t) {
       asked = await ask(); said = await asked.json();
       if (!asked.ok) throw new Error(said.detail || "that trade cannot be signed");
     }
-    const keys = keysOn(wallet, said.chain || t.chain
-                        || (wallet.on && Object.keys(wallet.on)[0]));
+    const network = said.chain || t.chain || (wallet.on && Object.keys(wallet.on)[0]);
+    const keys = keysOn(wallet, network);
     const shown = await coins.verifyLeg(said, keys);
+    await legOk(shown, network);
     const signatures = [];
     for (const sighash of shown.hashes) {
       signatures.push(coinsHex(await coins.signInput(
@@ -1938,11 +1970,14 @@ export async function claimHash(phrase) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export async function buy(wallet, offer) {
+export async function buy(wallet, offer, options = null) {
   return working(async () => {
-    const keys = keysOn(wallet, offer.chain
-                        || (wallet.on && Object.keys(wallet.on)[0]));
+    const network = offer.chain || (wallet.on && Object.keys(wallet.on)[0]);
+    const keys = keysOn(wallet, network);
     const shown = await coins.verifyOffer(offer, keys);
+    // On mainnet, said from the bytes before it is signed, like every send (2026-10-25): the page's own card names
+    // the price as the node put it.
+    await mainnetOk(offer, shown, network, options);
     const signatures = [];
     for (const sighash of shown.hashes) {
       signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
@@ -2065,8 +2100,11 @@ export async function shopDoor(wallet, shop, ask) {
 async function shopSign(wallet, shop, offer) {
   const half = await askShop(shop, {op: "accept", offer});
   const coins = await import("/coins.js");
-  const keys = keysOn(wallet, half.chain || (wallet.on && Object.keys(wallet.on)[0]));
+  const network = half.chain || (wallet.on && Object.keys(wallet.on)[0]);
+  const keys = keysOn(wallet, network);
   const shown = await coins.verifyOffer(half, keys);
+  // Not broadcast here, but the shop finishes it: on mainnet it is said from its bytes first (2026-10-25).
+  await mainnetOk(half, shown, network, null);
   const signatures = [];
   for (const sighash of shown.hashes) {
     signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
