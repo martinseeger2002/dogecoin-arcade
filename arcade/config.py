@@ -248,6 +248,9 @@ class Params:
     #: Proof-of-stake blocks: a block signature (varint length + DER) follows the transactions, empty on a
     #: proof-of-work block (kotiacash primitives/block.h `vchBlockSig`).
     block_sig: bool = False
+    #: Headers of a version below this are named by their scrypt hash, newer ones by sha256d (Kotia 7, kotiacash
+    #: block.cpp GetHash). 0: always sha256d.
+    scrypt_headers_below: int = 0
     #: Whether getblockchaininfo's verificationprogress can be trusted as "this node is done". True for a
     #: chain whose chainTxData matches its real traffic. False when that estimate is a stub: Wojakcoin's
     #: is 100 transactions a second, so the figure stays near 0.9 at a live tip and never reaches 0.9999.
@@ -635,7 +638,7 @@ KOTIA = dataclasses.replace(
     addon=True, node_dir=".kotia", node_conf="kotia.conf",
     # "T": Luckycoin already wears the "K" badge.
     letter="T", family="KOT", net_word="kotia", real_coins=True, bech32_hrp="", mweb=False,
-    tx_time=True, block_sig=True,
+    tx_time=True, block_sig=True, scrypt_headers_below=7,
 )
 
 # Wojakcoin MAINNET. WojakCoin 1.21.3 (wojakcore chainparams.cpp / chainparamsbase.cpp) is Bitcoin Core's code:

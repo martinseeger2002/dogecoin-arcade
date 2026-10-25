@@ -374,8 +374,11 @@ def _read_header(r: _Reader, auxpow: bool = True) -> tuple[bytes, AuxPow | None]
     return header, aux
 
 
-def _header_fields(header: bytes, aux: AuxPow | None) -> dict:
-    return dict(hash=sha256d(header)[::-1].hex(), header=header,
+def _header_fields(header: bytes, aux: AuxPow | None, scrypt_below: int = 0) -> dict:
+    # `scrypt_below` (Params.scrypt_headers_below, Kotia 7): an older header's id is its scrypt hash (block.cpp GetHash).
+    version = int.from_bytes(header[:4], "little", signed=True)
+    named = scrypt_hash(header) if version < scrypt_below else sha256d(header)
+    return dict(hash=named[::-1].hex(), header=header,
                 version=int.from_bytes(header[:4], "little", signed=True), prev=header[4:36][::-1].hex(),
                 merkleroot=header[36:68][::-1].hex(), time=int.from_bytes(header[68:72], "little"),
                 bits=int.from_bytes(header[72:76], "little"), nonce=int.from_bytes(header[76:80], "little"),
@@ -406,7 +409,7 @@ def merkle_root(txids: list[str]) -> str:
 
 
 def read_block(raw: bytes, block_hash: str | None = None, mweb: bool = False, timed: bool = False,
-               signed: bool = False) -> Block:
+               signed: bool = False, scrypt_below: int = 0) -> Block:
     """A raw block (`getblock h 0`), read whole and proved to be one block: its transactions hash up to
     the merkle root its header carries, and (with `block_hash`) that header is the block asked for. On an
     `mweb` chain (Litecoin) what follows the transactions is the block's MWEB extension, which the arcade
@@ -420,7 +423,7 @@ def read_block(raw: bytes, block_hash: str | None = None, mweb: bool = False, ti
         r.blob()
     if r.at != len(raw) and not mweb:
         raise RawError("bytes left over after the block")
-    block = Block(**_header_fields(header, aux), txs=txs, size=len(raw))
+    block = Block(**_header_fields(header, aux, scrypt_below), txs=txs, size=len(raw))
     if block_hash is not None and block.hash != block_hash:
         raise RawError(f"the block sent as {block_hash} hashes to {block.hash}")
     if merkle_root([t.txid for t in txs]) != block.merkleroot:

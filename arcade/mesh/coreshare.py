@@ -747,7 +747,7 @@ class BorrowedRpc(RpcClient):
         if method == "getblock":
             block_hash = str(params[0])
             block = rawchain.read_block(bytes.fromhex(str(got[0])), block_hash, mweb=p.mweb, timed=p.tx_time,
-                                        signed=p.block_sig)
+                                        signed=p.block_sig, scrypt_below=p.scrypt_headers_below)
             self._work(block)
             if len(got) == 1:
                 self._remember(block, None)
