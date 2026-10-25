@@ -1576,6 +1576,12 @@ class AppState:
         return kept[chain.network]
 
     @property
+    def utxoset_rebuild(self) -> set:
+        """Chains whose unspent set the operator asked to build again (Admin -> Chains -> Rebuild): the watcher's
+        next pass forgets the set and builds it from block 0."""
+        return self.__dict__.setdefault("_utxoset_rebuild", set())
+
+    @property
     def utxoset_progress(self) -> dict:
         """What the watcher's pass over a chain is doing, by chain, for Admin -> Chains: {"phase": "building" |
         "history" | "ready", "height", "tip"}."""

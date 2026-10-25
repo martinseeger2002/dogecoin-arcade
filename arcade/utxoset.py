@@ -158,6 +158,12 @@ class UtxoSet:
                 "data_blocks": data[0], "data_txs": data[1] // TXID,
                 "history_rows": self.conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]}
 
+    def reset(self) -> None:
+        """Forget everything (Admin -> Chains -> Rebuild): the next pass builds the set again from block 0."""
+        with self.conn:
+            for table in ("coins", "data_blocks", "history", "meta", "undo"):
+                self.conn.execute(f"DELETE FROM {table}")
+
     # --- building from block 0 -------------------------------------------------------------------------------
 
     def build(self, blocks: Iterable[tuple[int, str, rawchain.Block]], tip: int,

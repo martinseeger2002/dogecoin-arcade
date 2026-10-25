@@ -2,6 +2,8 @@
 2026-10-25). Blocks here are made in Kotia's own shape -- nTime in every transaction, a block signature after them --
 and read through rawchain, as the real ones are."""
 import hashlib
+import pathlib
+import sys
 
 import pytest
 
@@ -9,6 +11,9 @@ from arcade import rawchain, utxoset as U
 from arcade.config import NETWORKS
 from arcade.script import b58check_encode
 from arcade.txbuild import op_return_script, p2pkh_script, varint
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from test_web import app_state, client                          # noqa: F401,E402
 
 KOT = NETWORKS["kot"]
 A, B, C = (b58check_encode(46, bytes([n]) * 20) for n in (1, 2, 3))
@@ -212,3 +217,77 @@ def test_the_watcher_seeds_account_coins_and_history_into_the_wallet_index(tmp_p
     assert settings["utxoset_seeded:kot"] == sorted([A, B]) and bumps == [1]
     BlockWatcher._utxoset_seed(me, kot, s)                          # once per address
     assert bumps == [1]
+
+
+class _Core:
+    """A Kotia Core holding `chain()`'s blocks, as the watcher's pass asks it (getblockcount, getblockhash, raw
+    blocks in batches)."""
+
+    def __init__(self, blocks):
+        self.blocks = blocks
+
+    def call(self, method, *args):
+        if method == "getblockcount":
+            return len(self.blocks) - 1
+        if method == "getblockhash":
+            return self.blocks[args[0]][1]
+        raise AssertionError(method)
+
+    def batch(self, calls):
+        by_hash = {bh: raw for _h, bh, raw in self.blocks}
+        return [self.call(m, *p) if m != "getblock" else by_hash[p[0]].hex() for m, p in calls]
+
+
+def test_the_watcher_builds_the_set_and_builds_it_again_when_asked(tmp_path, monkeypatch):
+    import contextlib
+    import types
+
+    from arcade import utxos
+    from arcade.ledger import LedgerIndex
+    from arcade.web import watcher as W
+
+    monkeypatch.setattr(W, "UTXOSET_REST", 0)
+    blocks, _ids = chain()
+    index = LedgerIndex(tmp_path / "kot-ledger.sqlite", KOT, rpc_factory=lambda: None)
+    with contextlib.closing(index.open()) as db:
+        utxos.install(db)
+        utxos.watch(db, A, 0, "account (derived)")
+        db.conn.commit()
+    uset = U.UtxoSet(tmp_path / "kot-utxoset.sqlite", KOT)
+    settings, progress, rebuild = {}, {}, set()
+    state = types.SimpleNamespace(token_index=lambda c: index, setting=lambda k, d=None: settings.get(k, d),
+                                  set_setting=settings.__setitem__, bump_generation=lambda: None,
+                                  utxoset=lambda c: uset, utxoset_progress=progress, utxoset_rebuild=rebuild)
+    kot = types.SimpleNamespace(network="kot", params=KOT, borrowed=False,
+                                local_rpc=lambda: contextlib.nullcontext(_Core(blocks)))
+    me = types.SimpleNamespace(state=state)
+    me._utxoset_seed = lambda c, u: W.BlockWatcher._utxoset_seed(me, c, u)
+    W.BlockWatcher._utxoset_pass(me, kot, set())
+    assert progress["kot"]["phase"] == "ready" and uset.height == 3 and uset.balance(A) == 199_000_000
+    assert settings["utxoset_seeded:kot"] == [A]
+    uset.conn.execute("DELETE FROM coins")                          # something went wrong with it
+    uset.conn.commit()
+    rebuild.add("kot")                                               # Admin -> Chains -> Rebuild
+    W.BlockWatcher._utxoset_pass(me, kot, set())
+    assert not rebuild and uset.balance(A) == 199_000_000 and uset.height == 3
+    assert settings["utxoset_seeded:kot"] == [A]                     # read back again
+
+
+def test_admin_asks_for_a_rebuild_of_kotia_only(client, monkeypatch):
+    import pathlib
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from test_admin import LOCAL, WRITE
+    from arcade.web.state import ChainContext
+
+    app, state = client
+    kot = ChainContext(network="kot", role="ledger", label="Kotia", conf=pathlib.Path("/nonexistent/kotia.conf"))
+    monkeypatch.setattr(state, "more", {"kot": kot}, raising=False)
+    assert app.post("/admin/api/utxoset/rebuild", headers=LOCAL, json={"net": "kot"}).status_code in (401, 403)
+    assert app.post("/admin/api/utxoset/rebuild", headers={**LOCAL, **WRITE}, json={"net": "doge"}).status_code == 400
+    assert app.post("/admin/api/utxoset/rebuild", headers={**LOCAL, **WRITE}, json={"net": "kot"}).json()["ok"]
+    assert "kot" in state.utxoset_rebuild and state.utxoset_progress["kot"]["phase"] == "queued"
+    state.utxoset_progress["kot"] = {"phase": "building", "height": 5, "tip": 10}
+    assert app.post("/admin/api/utxoset/rebuild", headers={**LOCAL, **WRITE}, json={"net": "kot"}).status_code == 409
+    rows = {r["net"]: r for r in app.get("/admin/api/state", headers=LOCAL).json()["chains"]["rows"]}
+    assert rows["kot"]["utxoset"]["phase"] == "building"

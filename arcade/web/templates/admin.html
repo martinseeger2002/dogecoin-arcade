@@ -1783,13 +1783,30 @@ section.panel h2{margin-top:0}
         bits.push(us.phase === 'building' ? 'full unspent set: building ' + pct + ' (block ' + (us.height || 0).toLocaleString()
                                             + ' of ' + (us.tip || 0).toLocaleString() + ')'
                   : us.phase === 'history' ? 'full unspent set: reading new accounts\u2019 history ' + pct
+                  : us.phase === 'queued' ? 'full unspent set: rebuild starts at the next pass'
                   : us.built != null ? 'full unspent set at block ' + us.built.toLocaleString()
                   : 'full unspent set: starts once the node has synced');
       }
       if (m.sharing) bits.push('shared' + (m.borrowers ? ', ' + m.borrowers + ' borrowing' : ''));
       if (m.disagree) bits.push('SHARERS DISAGREE about the chain tip');
       if (r.chosen !== r.now) bits.push('becomes \u201c' + CORE_WORDS[r.chosen].toLowerCase() + '\u201d at the next restart');
-      tr.appendChild(text('td', bits.join(' \u00b7 '), m.disagree ? 'idx-bad' : 'muted'));
+      var said = text('td', bits.join(' \u00b7 '), m.disagree ? 'idx-bad' : 'muted');
+      if (us && us.built != null && us.phase !== 'building' && us.phase !== 'history' && us.phase !== 'queued') {
+        // Build the whole unspent set again from block 0 (Kotia only for now, 2026-10-25).
+        var rb = document.createElement('button');
+        rb.type = 'button'; rb.className = 'small'; rb.textContent = 'Rebuild';
+        rb.style.marginLeft = '8px';
+        rb.title = 'Build the full unspent set again from block 0 (about half an hour); the Wallet keeps working meanwhile';
+        rb.onclick = function () {
+          if (!confirm('Build ' + r.title + '\u2019s full unspent set again from block 0? It takes about half an hour; '
+                       + 'accounts\u2019 coins and history are read back from it when it is done.')) return;
+          rb.disabled = true;
+          call('/admin/api/utxoset/rebuild', {net: r.net}).then(function () { load(); })
+            .catch(function (e) { rb.disabled = false; say(e.message, 'err'); });
+        };
+        said.appendChild(rb);
+      }
+      tr.appendChild(said);
       tb.appendChild(tr);
     });
     var un = c.unknown || [];

@@ -357,6 +357,13 @@ class BlockWatcher:
         progress = self.state.utxoset_progress.setdefault(net, {"phase": "waiting", "height": 0, "tip": 0})
         try:
             uset = self.state.utxoset(chain)
+            if net in self.state.utxoset_rebuild:
+                # Asked for in Admin -> Chains: everything again from block 0, and every account read back again
+                # (the index keeps what it has: INSERT OR IGNORE).
+                uset.reset()
+                self.state.set_setting(f"utxoset_seeded:{net}", [])
+                self.state.utxoset_rebuild.discard(net)
+                log.info("%s: the unspent set is built again from block 0, as the operator asked", params.label)
             index = self.state.token_index(chain)
             with contextlib.closing(index.open()) as db:
                 watched = utxoslib.watching(db)

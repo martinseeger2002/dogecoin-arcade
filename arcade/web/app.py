@@ -27534,6 +27534,22 @@ def create_app(state: AppState) -> FastAPI:
         running = {r["net"]: r["now"] for r in _admin_chains()["rows"]}
         return JSONResponse({"ok": True, "restart": any(modes[n] != running.get(n) for n in modes)})
 
+    @app.post("/admin/api/utxoset/rebuild")
+    def admin_utxoset_rebuild(request: Request, payload: Any = Body(None)):
+        """Build a chain's whole unspent set again from block 0 (KOTIA ONLY for now, arcade/utxoset.py, 2026-10-25):
+        after a reorg deeper than its undo, or whenever it is not trusted. The watcher's next pass does it."""
+        _admin_check(request, write=True)
+        net = str((payload if isinstance(payload, dict) else {}).get("net") or "")
+        chain = state.addon(net)
+        if chain is None or not getattr(chain.params, "full_utxo_set", False) or chain.borrowed:
+            return JSONResponse({"detail": "this arcade keeps no whole unspent set for that chain (Kotia only, "
+                                           "and only from a Core run here)"}, status_code=400)
+        if (state.utxoset_progress.get(net) or {}).get("phase") in ("building", "history"):
+            return JSONResponse({"detail": "it is being built already"}, status_code=409)
+        state.utxoset_rebuild.add(net)
+        state.utxoset_progress[net] = {"phase": "queued", "height": 0, "tip": 0}
+        return JSONResponse({"ok": True})
+
     # --- mining test coins on this machine's CPU (arcade/blockminer.py, 2026-10-18) ---------------
     _cpu_mining: dict[str, Any] = {}
 

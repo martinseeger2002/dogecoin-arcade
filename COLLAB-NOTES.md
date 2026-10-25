@@ -117,7 +117,10 @@ neither `scantxoutset` nor `importmulti`, so an account's KOT from below the flo
   - Kotia's staking rewards are P2PK: they count in the set (kind 1), but they are not seeded, because the Wallet
     signs P2PKH.
 - **Admin -> Chains:** the Kotia row says "full unspent set: building x% (block … of …)", "reading new accounts'
-  history x%", or "at block …".
+  history x%", or "at block …". It also has a **Rebuild** button, for after a reorg deeper than the undo or whenever the
+  set is not trusted. `POST /admin/api/utxoset/rebuild {net}` needs admin write access, answers 409 while a build
+  runs, and is refused for any chain without the set. The watcher's next pass then forgets the set, builds it from
+  block 0 again, and reads every account back (`utxoset_seeded:<net>` cleared; the index keeps its rows).
 - **Checked live** against Kotia 1.0.0: 1,529,856 blocks in 623 s unpaced, giving 79,022 coins and 64,943,418.9991 KOT.
   That is the same as the Core's `gettxoutsetinfo` at the same block hash; after following three more blocks it was
   still the same. The file is 4.8 MB; there are 71 data blocks with 294 OP_RETURN transactions.
