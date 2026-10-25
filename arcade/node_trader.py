@@ -692,6 +692,11 @@ class NodeTrader:
             courier.send(self.state, self.messaging, bytes.fromhex(peer),
                          M.build("cancel", said["id"], reason="those are not this order's terms"))
             return
+        # The lock times too (2026-10-25): far enough apart to claim in time, and not too far off.
+        late = T.locktimes_fit(they_give, they_get, said["t1"], said["t2"], int(time.time()))
+        if late:
+            courier.send(self.state, self.messaging, bytes.fromhex(peer), M.build("cancel", said["id"], reason=late))
+            return
         trade = T.Trade(id=said["id"], role=T.RESPONDER, give=they_get, get=they_give,
                         secret_hash=said["secret_hash"],
                         initiator_locktime=said["t1"], responder_locktime=said["t2"],

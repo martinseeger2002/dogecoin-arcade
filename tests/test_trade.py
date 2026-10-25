@@ -296,3 +296,66 @@ def test_one_confirmation_and_three_for_a_big_swap():
     assert T.confirmations_for(test, test) == 0, "testnet coins never count as big"
     assert T.confirmations_for(small, pep, {"doge": 5 * COIN}) == 1, "the operator's own line"
     assert T.LOCK_SECONDS["mainnet"] == 2 * 3600, "the operator: 2 h locks"
+
+
+# --- the lock times a responder accepts (2026-10-25) ------------------------------------------
+
+def _legs(give_net="regtest", get_net="doge"):
+    a, b = Key(), Key()
+    return (T.Leg(give_net, "coin", "", 3 * COIN, a.pub.hex(), b.pub.hex()),
+            T.Leg(get_net, "coin", "", 2 * COIN, b.pub.hex(), a.pub.hex()))
+
+
+def test_a_responder_accepts_only_lock_times_it_can_finish_under():
+    give, get = _legs()
+    now = int(time.time())
+    for g, t in ((give, get), (T.Leg("test", "coin", "", 1, give.giver_key, give.taker_key), get)):
+        t1, t2 = T.plan_locktimes(g, t, T.INITIATOR, now)
+        assert T.locktimes_fit(g, t, t1, t2, now) == "", "this code's own proposals pass"
+        assert T.locktimes_fit(t, g, t1, t2, now + 25 * 60) == "", "from either side, a while after they were made"
+    t1, t2 = T.plan_locktimes(give, get, T.INITIATOR, now)
+    assert "too close" in T.locktimes_fit(give, get, t2 + 1, t2, now), "a second apart: no time to claim"
+    assert "too close" in T.locktimes_fit(give, get, t2 + T.LOCK_GAP_FLOOR - 1, t2, now)
+    assert T.locktimes_fit(give, get, t2 + T.LOCK_GAP_FLOOR, t2, now) == ""
+    assert "too close" in T.locktimes_fit(give, get, t2 - 10, t2, now), "the responder's after the initiator's"
+    assert "too little time" in T.locktimes_fit(give, get, now + 3 * 3600, now + T.LOCK_MARGIN, now)
+    lock = T.LOCK_SECONDS["mainnet"]
+    assert T.locktimes_fit(give, get, now + 2 * lock + 3600, now + 2 * lock, now) == ""
+    assert "too far" in T.locktimes_fit(give, get, now + 2 * lock + 3601, now + 2 * lock + 1, now)
+    assert "too far" in T.locktimes_fit(give, get, 2 ** 32 - 1, 2 ** 32 - 3601, now), "years off"
+    assert T.locktimes_fit(give, get, float(t1), t2, now) and T.locktimes_fit(give, get, True, t2, now)
+
+
+def test_the_node_trader_turns_down_lock_times_it_cannot_finish_under(tmp_path, monkeypatch):
+    import json
+    from arcade import node_trader as NT, trade_courier
+    from arcade import trade_messages as M
+
+    class State:
+        home = tmp_path
+
+        def setting(self, key, default=None):
+            return default
+
+    sent = []
+    monkeypatch.setattr(trade_courier, "send", lambda state, messaging, peer, raw: sent.append(raw))
+    trader = NT.NodeTrader(State(), {}, None)
+    with trader._db() as conn:
+        conn.execute("INSERT INTO standing_order(id, give, get) VALUES(?,?,?)", (
+            "order-times", json.dumps({"network": "doge", "kind": "coin", "asset": "", "amount": 2 * COIN}),
+            json.dumps({"network": "regtest", "kind": "coin", "asset": "", "amount": 3 * COIN})))
+    taker = Key()
+    mine = trader.key.pubkey.hex()
+    give = T.Leg("regtest", "coin", "", 3 * COIN, taker.pub.hex(), mine)       # the taker gives
+    get = T.Leg("doge", "coin", "", 2 * COIN, mine, taker.pub.hex())           # this node gives
+    now = int(time.time())
+    t1, t2 = T.plan_locktimes(give, get, T.INITIATOR, now)
+    peer = "02" + "33" * 32
+    for n, (a, b) in enumerate(((t2 + 1, t2), (now + 30 * 3600, now + 29 * 3600), (t1, t2))):
+        said = {"step": "propose", "id": f"tr-times{n}", "order": "order-times", "give": M.leg_json(give),
+                "get": M.leg_json(get), "secret_hash": "ab" * 32, "t1": a, "t2": b}
+        trader._consider(said, peer)
+    answers = [M.parse(raw) if isinstance(raw, (bytes, str)) else raw for raw in sent]
+    steps = [(x["id"], x["step"]) for x in answers]
+    assert steps == [("tr-times0", "cancel"), ("tr-times1", "cancel"), ("tr-times2", "accept")], answers
+    assert trader.book.get("tr-times0") is None and trader.book.get("tr-times2") is not None

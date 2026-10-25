@@ -155,6 +155,7 @@ def test_the_browser_keeps_the_same_reserve():
     assert num(r"kot: ([0-9_ *]+)[,}]") == T.BIG["kot"], "and Kotia's (2026-10-23)"
     assert num(r"wjk: ([0-9_ *]+)\}") == T.BIG["wjk"], "and Wojakcoin's"
     assert num(r"CLAIM_MARGIN: ([0-9 *]+),") == T.CLAIM_MARGIN and num(r"LOCK_MARGIN: ([0-9 *]+),") == T.LOCK_MARGIN
+    assert num(r"LOCK_GAP_FLOOR: ([0-9 *]+),") == T.LOCK_GAP_FLOOR
 
 
 def test_the_browser_decides_every_step_as_the_python_does(tmp_path):
@@ -286,3 +287,25 @@ def test_wallet_js_reads_a_secret_of_any_length_as_the_python_does(tmp_path):
         return out;""", [[c[0], c[1]] for c in cases])
     assert [c[2] for c in cases] == got
     assert sum(1 for c in cases if c[2] is not None) == 20, "every claim (bare and with an extra item) reads back"
+
+
+def test_wallet_js_accepts_the_lock_times_the_python_does(tmp_path):
+    """2026-10-25 (trade.locktimes_fit): a lister's tab answers a proposal's lock times as a node does."""
+    import dataclasses
+    a, b = Key(), Key()
+    now = int(time.time())
+    cases = []
+    for give_net, get_net in (("regtest", "regtest"), ("regtest", "doge"), ("main", "test")):
+        give = T.Leg(give_net, "coin", "", 3 * COIN, a.pub.hex(), b.pub.hex())
+        get = T.Leg(get_net, "coin", "", 2 * COIN, b.pub.hex(), a.pub.hex())
+        t1, t2 = T.plan_locktimes(give, get, T.INITIATOR, now)
+        for x1, x2, at in ((t1, t2, now), (t1, t2, now + 1700), (t1, t2, now + 1800), (t2 + 1, t2, now),
+                           (t2 + 3599, t2, now), (t2 + 3600, t2, now), (t2 - 5, t2, now), (t2, t2, now),
+                           (now + 4 * 3600 + 3600, now + 4 * 3600, now), (now + 6 * 3600, now + 4 * 3600 + 1, now),
+                           (2 ** 32 - 1, 2 ** 32 - 3601, now), (t1, None, now), ("x", t2, now)):
+            cases.append((dataclasses.asdict(give), dataclasses.asdict(get), x1, x2, at,
+                          T.locktimes_fit(give, get, x1, x2, at)))
+    got = run_wallet_js(tmp_path, "return data.map(([g, t, t1, t2, now]) => w.locktimesFit(g, t, t1, t2, now));",
+                        [c[:5] for c in cases])
+    assert got == [c[5] for c in cases]
+    assert sum(1 for c in cases if c[5] == "") == 12, "this code's own proposals, and the edges that are fine"

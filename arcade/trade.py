@@ -379,13 +379,41 @@ class Facts:
     theirs: LockSeen | None = None
 
 
+def _tier(give: Leg, get: Leg) -> str:
+    return "mainnet" if "mainnet" in (give.tier(), get.tier()) else "testnet"
+
+
 def plan_locktimes(give: Leg, get: Leg, role: str, now: int) -> tuple[int, int]:
     """(initiator's T1, responder's T2) for a trade starting now. The tier of a cross
     chain trade is the stricter of the two (any mainnet leg -> mainnet times)."""
-    tier = "mainnet" if "mainnet" in (give.tier(), get.tier()) else "testnet"
+    tier = _tier(give, get)
     t1 = int(now) + LOCK_SECONDS[tier]
     t2 = int(now) + LOCK_SECONDS[tier] // 2
     return t1, t2
+
+
+#: The least time a responder accepts between the two lock times (2026-10-25): after the initiator's claim shows the
+#: secret -- as late as T2 -- the responder must still claim the initiator's lock before T1 opens its refund. Half the
+#: lock duration, as plan_locktimes makes it, and never under an hour.
+LOCK_GAP_FLOOR = 3600
+
+
+def locktimes_fit(give: Leg, get: Leg, t1: Any, t2: Any, now: int) -> str:
+    """"" when a proposal's lock times are ones a responder may lock under, else why not (2026-10-25). Checked
+    wherever a proposal is accepted (node_trader._consider; wallet.js locktimesFit in answerProposals): T2 before T1
+    by at least the gap plan_locktimes leaves (LOCK_GAP_FLOOR at least); T2 far enough off to lock in time
+    (LOCK_MARGIN); and T2 no further off than twice the normal lock duration, so a responder's coins are never held
+    for long by a counterparty that vanishes. The legs are either side's: the tier is the stricter of the two."""
+    lock = LOCK_SECONDS[_tier(give, get)]
+    if not (isinstance(t1, int) and isinstance(t2, int)) or isinstance(t1, bool) or isinstance(t2, bool):
+        return "lock times are whole seconds"
+    if t1 - t2 < max(LOCK_GAP_FLOOR, lock // 2):
+        return "the two lock times are too close together to finish the swap safely"
+    if t2 - LOCK_MARGIN <= int(now):
+        return "too little time is left before the responder's lock time"
+    if t2 - int(now) > 2 * lock:
+        return "the responder's lock time is too far off"
+    return ""
 
 
 def check_lock(trade: Trade, seen: LockSeen, theirs: bool) -> str:

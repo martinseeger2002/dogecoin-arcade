@@ -2917,6 +2917,7 @@ export const TRADE = {
   BIG: {main: 1_000_000 * 100_000_000, doge: 1_000 * 100_000_000, ltc: 2 * 100_000_000,
        bel: 200 * 100_000_000, lky: 20 * 100_000_000, kot: 100 * 100_000_000, wjk: 100 * 100_000_000},
   CLAIM_MARGIN: 20 * 60, LOCK_MARGIN: 30 * 60,
+  LOCK_GAP_FLOOR: 3600,                         // trade.LOCK_GAP_FLOOR (2026-10-25)
   LOCK_RESERVE: 2_000_000,          // htlc.SPEND_FEE + htlc.DUST (trade.LOCK_RESERVE)
   DOGINAL_RESERVE: 2_000_000,       // htlc.DOGINAL_RESERVE
   // Who pays a lock's fees (2026-10-21; trade.py "who pays the fees of a lock"): the claim's network fee per
@@ -2955,6 +2956,20 @@ export function planLocktimes(give, get, now) {
   const tier = (tierOf(give) === "mainnet" || tierOf(get) === "mainnet") ? "mainnet" : "testnet";
   return {t1: Math.floor(now) + TRADE.LOCK_SECONDS[tier],
           t2: Math.floor(now) + Math.floor(TRADE.LOCK_SECONDS[tier] / 2)};
+}
+
+/** "" when a proposal's lock times are ones this lister may lock under, else why not (trade.locktimes_fit,
+ *  2026-10-25): T2 before T1 by at least the gap planLocktimes leaves, T2 far enough off to lock in time, and no
+ *  further off than twice the normal lock duration. */
+export function locktimesFit(give, get, t1, t2, now) {
+  const tier = (tierOf(give) === "mainnet" || tierOf(get) === "mainnet") ? "mainnet" : "testnet";
+  const lock = TRADE.LOCK_SECONDS[tier];
+  if (!Number.isInteger(t1) || !Number.isInteger(t2)) return "lock times are whole seconds";
+  if (t1 - t2 < Math.max(TRADE.LOCK_GAP_FLOOR, Math.floor(lock / 2)))
+    return "the two lock times are too close together to finish the swap safely";
+  if (t2 - TRADE.LOCK_MARGIN <= Math.floor(now)) return "too little time is left before the responder's lock time";
+  if (t2 - Math.floor(now) > 2 * lock) return "the responder's lock time is too far off";
+  return "";
 }
 
 /** Is `seen` exactly the lock the terms say? "" if so, else why not (trade.check_lock). "Holds at least": a lock
@@ -3827,8 +3842,7 @@ export async function answerProposals(wallet) {
       && p.give.network === mine.get.network && p.give.kind === mine.get.kind
       && (p.give.asset || "") === mine.get.asset && p.give.amount >= mine.get.amount
       && p.give.taker_key === mine.take_key
-      && Number.isInteger(p.t1) && Number.isInteger(p.t2) && p.t2 < p.t1
-      && p.t2 - TRADE.LOCK_MARGIN > now && /^[0-9a-f]{64}$/.test(p.secret_hash || "")
+      && locktimesFit(p.give, p.get, p.t1, p.t2, now) === "" && /^[0-9a-f]{64}$/.test(p.secret_hash || "")
       // The operator fee in this lister's own lock: none, or exactly what it listed; the taker's own terms well formed,
       // or the claim of the taker's lock could not be built (2026-10-21).
       && feeTermsFit(p.get, mine.give) && await feeTermsOk(p.give) && await feeTermsOk(p.get);
