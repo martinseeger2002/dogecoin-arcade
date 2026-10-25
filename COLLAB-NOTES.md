@@ -88,6 +88,19 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-25 · SadFrog's side (Claude, node 3, for tbuuol) · branch `team/kotia-getblock` (on 9a2b09bb) · Kotia's index reads its blocks
+Kotia's Core (1.0.0, Bitcoin 0.14) refuses `getblock h 0|1|2` with "JSON value is not a boolean as expected". So the
+arcade's Kotia token index never read a block, and an account had no KOT balance or history, even once the chain shows
+as ready (that part is `team/kotia-ready`, PR #13). The fix: `RpcClient.call` learns this once per client, the same way
+as `signrawtransaction` on newer Cores. It then answers 0 with `getblock h false`, 1 with `getblock h true`, and 2 with
+`true` plus each transaction's `getrawtransaction t 1`, batched (Kotia runs `txindex=1`), without the per-transaction
+fields that a verbosity-2 entry lacks. Every other Core answers the numeric call as before and never sees this path.
+- Checked live against Kotia blocks, including one with six OP_RETURNs: the txids match the raw block, and the
+  outputs parse as usual.
+- Test: `test_kotia.py::test_getblock_with_a_number_is_answered_on_a_core_that_takes_a_boolean`; it fails without the fix.
+- Known limit, not changed: Kotia's Core has neither `scantxoutset` nor `importmulti`, so coins an address got below
+  the floor (1,530,000) are not read back. Coins from the floor on are indexed as usual.
+
 ### 2026-10-24 Contacts test reads only contactsChange (Claude)
 The node-hop door (`accessDoor`, from `team/in-game-wallet-access`) sits between `contactsChange` and the message
 listener in `_page_doors.js.html`, so `test_contacts_bridge` counted its "Play ... on ...?" card as a third contacts

@@ -44,6 +44,11 @@ class RpcTransportError(Exception):
     """The node could not be reached, or returned something that is not JSON-RPC."""
 
 
+def _numbered(params: tuple) -> bool:
+    """getblock asked with a numeric verbosity (0, 1, 2), not a boolean: what a Bitcoin-0.14 Core refuses."""
+    return len(params) >= 2 and isinstance(params[1], int) and not isinstance(params[1], bool)
+
+
 class RpcClient:
     """A synchronous JSON-RPC client with batch support.
 
@@ -78,10 +83,19 @@ class RpcClient:
             BROADCAST_EPOCH += 1
         if method == "signrawtransaction" and getattr(self, "_modern_signing", False) and len(params) == 1:
             method = "signrawtransactionwithwallet"
+        if method == "getblock" and _numbered(params) and getattr(self, "_boolean_getblock", False):
+            return self._getblock_boolean(params[0], int(params[1]))
         payload = {"jsonrpc": "1.0", "id": next(self._ids), "method": method, "params": list(params)}
         data = self._post(payload)
         if data.get("error"):
             err = data["error"]
+            # A Core of Bitcoin 0.14's code (Kotia 1.0.0, 2026-10-25) takes getblock's verbosity as a boolean only:
+            # 0, 1 and 2 are refused, and its index never read a block. Learned once per client, then answered
+            # from `getblock h false|true` and, for 2, each transaction's getrawtransaction.
+            if (method == "getblock" and _numbered(params)
+                    and "not a boolean" in str(err.get("message", ""))):
+                self._boolean_getblock = True
+                return self._getblock_boolean(params[0], int(params[1]))
             # Newer Cores (Litecoin 0.21, 2026-10-17) removed `signrawtransaction`; the wallet-only
             # form takes the same single argument. Learned once per client, then asked directly.
             if (err.get("code") == -32601 and method == "signrawtransaction" and len(params) == 1):
@@ -100,6 +114,23 @@ class RpcClient:
             except Exception:                         # noqa: BLE001 -- never fail a send that went
                 pass
         return data.get("result")
+
+    def _getblock_boolean(self, block_hash: str, verbosity: int) -> Any:
+        """`getblock h <verbosity>` on a Core that takes a boolean (see `call`): 0 the raw hex, 1 the block with
+        its txids, 2 the block with each transaction decoded as verbosity 2 has it (txindex=1 is needed there)."""
+        if verbosity <= 0:
+            return self.call("getblock", block_hash, False)
+        block = self.call("getblock", block_hash, True)
+        if verbosity >= 2 and block and block.get("tx"):
+            txids = list(block["tx"])
+            decoded: list[Any] = []
+            for at in range(0, len(txids), 500):
+                decoded += self.batch([("getrawtransaction", [txid, 1]) for txid in txids[at:at + 500]])
+            for tx in decoded:
+                for key in ("blockhash", "confirmations", "time", "blocktime"):     # not in a verbosity-2 entry
+                    tx.pop(key, None)
+            block["tx"] = decoded
+        return block
 
     def batch(self, calls: list[tuple[str, list[Any]]]) -> list[Any]:
         """Issue many calls in one round trip.

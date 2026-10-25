@@ -146,3 +146,43 @@ def test_the_browser_knows_kotias_key_and_its_timed_transactions():
 def test_a_wif_decodes_as_kotias_secret_key():
     version, _payload = b58check_decode(FIX["tx"]["wif"])
     assert version == 173
+
+
+def test_getblock_with_a_number_is_answered_on_a_core_that_takes_a_boolean():
+    """Kotia 1.0.0 (Bitcoin 0.14) refuses getblock's numeric verbosity: "JSON value is not a boolean as expected"
+    (2026-10-25: its index never read a block, so no balance or history). The client learns it once and answers
+    0, 1 and 2 from `getblock h false|true` and getrawtransaction."""
+    from arcade.config import RpcCredentials
+    from arcade.rpc import RpcClient
+    block = FIX["blocks"][0]
+    asked = []
+
+    class Kotia(RpcClient):
+        def _post(self, payload):
+            if isinstance(payload, list):
+                asked.append(("batch", len(payload)))
+                return [{"id": p["id"], "error": None,
+                         "result": {"txid": p["params"][0], "vout": [], "hex": "", "blockhash": block["hash"],
+                                    "confirmations": 9, "time": 1, "blocktime": 1}} for p in payload]
+            method, params = payload["method"], payload["params"]
+            asked.append((method, params[1:]))
+            if method == "getblock" and len(params) > 1 and not isinstance(params[1], bool):
+                return {"id": payload["id"], "result": None,
+                        "error": {"code": -1, "message": "JSON value is not a boolean as expected"}}
+            if method == "getblock":
+                return {"id": payload["id"], "error": None,
+                        "result": {"hash": block["hash"], "tx": block["tx"]} if params[1] else block["raw"]}
+            raise AssertionError(method)
+
+    fields = RpcCredentials.__dataclass_fields__
+    creds = RpcCredentials(**{k: v for k, v in {"host": "127.0.0.1", "port": 1, "user": "u", "password": "p"}.items()
+                              if k in fields})
+    rpc = Kotia(creds)
+    assert rpc.get_block_hex(block["hash"]) == block["raw"]
+    assert asked[:2] == [("getblock", [0]), ("getblock", [False])]
+    asked.clear()
+    v2 = rpc.get_block(block["hash"], 2)                  # learned: no numeric ask any more
+    assert asked[0] == ("getblock", [True]) and asked[1] == ("batch", len(block["tx"]))
+    assert [t["txid"] for t in v2["tx"]] == block["tx"]
+    assert all("blockhash" not in t and "confirmations" not in t for t in v2["tx"])
+    assert rpc.call("getblock", block["hash"], True)["tx"] == block["tx"]      # a boolean passes straight through
