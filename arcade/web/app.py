@@ -731,13 +731,14 @@ def the_door(state: AppState):
     return guard
 
 
-def _above_dust(sats: int, what: str) -> None:
+def _above_dust(sats: int, what: str, params=None) -> None:
     """Refuse an amount the network will not carry. An output under the dust limit
     must pay 0.01 more in fee or no peer relays the transaction, so it would sit
-    "waiting for its block" for good (fees.DUST_LIMIT)."""
-    if sats < fees.DUST_LIMIT:
+    "waiting for its block" for good (fees.DUST_LIMIT; with `params`, that chain's own line)."""
+    least = fees.dust_limit(params)
+    if sats < least:
         raise ValueError(f"the smallest {what} the network will carry is "
-                         f"{fees.DUST_LIMIT / 100_000_000:g} -- anything less is dust, "
+                         f"{least / 100_000_000:g} -- anything less is dust, "
                          f"and nobody would relay it")
 
 
@@ -11428,16 +11429,18 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:                                  # noqa: BLE001 -- no fee rather than no page
             return {}
 
-    def _doginal_needs() -> dict:
+    def _doginal_needs(params=None) -> dict:
         """What Dogecoin a wallet needs ON TOP of its Doginals to move one (2026-10-15: "If the user doesn't have any
         Dogecoin in their wallet, and their only Doge coin is a Doginal they can't make a swap. Those buttons should be
         grayed out unless they have a balance of Dogecoin on top of their asset. To pay the miner fee"): a send pays its fee
         (the Doginal's own coin goes whole to the recipient), a swap's lock pays its fee and the reserve that later moves the
-        Doginal out (htlc.DOGINAL_RESERVE). Listing on the Doginals tab costs the seller nothing: the buyer pays."""
+        Doginal out (htlc.DOGINAL_RESERVE). Listing on the Doginals tab costs the seller nothing: the buyer pays.
+        At the chain's own rate and dust rule (`params`; Dogecoin's without)."""
         from .. import htlc as htlclib
-        send = fundinglib.price(2, [(100_000, b"\x00" * 25)], fees.MIN_FEE_PER_KB, change=True)
+        rate = fees.rate_for(params, fees.MIN_FEE_PER_KB)
+        send = fundinglib.price(2, [(100_000, b"\x00" * 25)], rate, change=True, params=params)
         lock = htlclib.DOGINAL_RESERVE + fundinglib.price(
-            2, [(100_000, b"\x00" * 23), (htlclib.DOGINAL_RESERVE, b"\x00" * 23)], fees.MIN_FEE_PER_KB, change=True)
+            2, [(100_000, b"\x00" * 23), (htlclib.DOGINAL_RESERVE, b"\x00" * 23)], rate, change=True, params=params)
         return {"doginal_send_need": send, "doginal_lock_need": lock}
 
     def _spendable(row: dict) -> None:
@@ -12386,7 +12389,7 @@ def create_app(state: AppState) -> FastAPI:
                         row["held"] = _held(account.pubkey, one.network, db, here)
                         row["inscribed"] = _inscribed(db, here)
                     if _ord_chain(one):
-                        row.update(_doginal_needs())
+                        row.update(_doginal_needs(one.params))
                 except Exception:
                     pass                   # a node still catching up says 0
             _spendable(row)
@@ -20879,14 +20882,15 @@ def create_app(state: AppState) -> FastAPI:
         if (chain.network, str(said.get("inscription") or "").lower()) in _listed_holds(account).get("doginal_swap", ()):
             raise ValueError(f"that {_ord_word(chain)} is listed in one of your swaps: cancel that swap first")
         price = parse_amount(str(said.get("amount", "")), True)
-        _above_dust(price, "price")
+        _above_dust(price, "price", chain.params)
         coin = {"txid": str(said.get("txid") or "").lower(), "vout": int(said.get("vout", -1))}
         with chain.rpc() as rpc:
             held = rpc.call("gettxout", coin["txid"], coin["vout"], True)
         if not held or str((held.get("scriptPubKey") or {}).get("hex") or "") != txbuild.p2pkh_script(address).hex():
             raise ValueError("that coin is not this account's to list (spent, or somebody else's)")
         coin["value"] = int(round(float(held.get("value", 0)) * COIN))
-        return chain, address, doginal_marketlib.build_ask(address, coin, str(said.get("inscription") or ""), price)
+        return chain, address, doginal_marketlib.build_ask(address, coin, str(said.get("inscription") or ""), price,
+                                                           chain.params)
 
     @app.post("/account/doginals/list")
     def account_doginals_list(request: Request, payload: Any = Body(None)):
@@ -20914,7 +20918,7 @@ def create_app(state: AppState) -> FastAPI:
                 row = state.doginal_book.register(
                     rpc, network=chain.network, seller=address, coin=ask.coin, inscription=ask.inscription,
                     price=ask.price, signature=str(said.get("signature") or ""),
-                    pubkey=bytes.fromhex(str(said.get("pubkey") or "")))
+                    pubkey=bytes.fromhex(str(said.get("pubkey") or "")), params=chain.params)
         except (doginal_marketlib.MarketError, fundinglib.FundingError, AmountError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         # The coin is promised from now on: nothing this account sends may spend it from under its own listing.

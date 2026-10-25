@@ -1081,7 +1081,7 @@ def build_doginal_send(db, params: Params, address: str, coin: dict, inscription
     alignment output first, and sending it plainly could hand the wrong piece away or burn it to fees."""
     untimed(params, "doginal send")
     return _doginal_first(db, address, coin, inscription, p2pkh_script(to), [], rate, exclude, extra,
-                          what=f"send Doginal {inscription} to {to}")
+                          what=f"send Doginal {inscription} to {to}", params=params)
 
 
 def build_doginal_lock(db, params: Params, address: str, coin: dict, inscription: str, lock_script: bytes,
@@ -1092,7 +1092,7 @@ def build_doginal_lock(db, params: Params, address: str, coin: dict, inscription
     later without touching the Doginal's own koinu (htlc.doginal_out) -- then change. Every coin after input 0 is clean."""
     untimed(params, "doginal lock")
     return _doginal_first(db, address, coin, inscription, bytes(lock_script), [(int(reserve), bytes(lock_script))],
-                          rate, exclude, extra, what=f"lock Doginal {inscription} for a swap")
+                          rate, exclude, extra, what=f"lock Doginal {inscription} for a swap", params=params)
 
 
 def build_note_send(db, params: Params, address: str, note_coin: dict, to: str, rate: int,
@@ -1102,13 +1102,15 @@ def build_note_send(db, params: Params, address: str, note_coin: dict, to: str, 
     Doginal is sent; clean coins pay the fee; change last."""
     untimed(params, "note send")
     return _doginal_first(db, address, note_coin, "", p2pkh_script(to), [], rate, exclude, extra, what=what,
-                          vouched=True)
+                          vouched=True, params=params)
 
 
 def _doginal_first(db, address: str, coin: dict, inscription: str, first: bytes, more: list, rate: int,
-                   exclude, extra, what: str, vouched: bool = False) -> Unsigned:
+                   exclude, extra, what: str, vouched: bool = False, params: Params | None = None) -> Unsigned:
     """The inscribed coin as input 0, whole to `first` as output 0; `more` outputs after it; clean coins pay for them and
-    the fee; change last. `vouched`: the coin is one this node just built (a note's reveal) and is taken as it is."""
+    the fee; change last. `vouched`: the coin is one this node just built (a note's reveal) and is taken as it is.
+    Priced on the chain `params` describes, as `build` is (2026-10-25: Bellinals; at Dogecoin's 0.01 a kB a Bells send
+    overpaid a hundred times): its own minimum rate, its own soft-dust rule, its own least change."""
     guard = guard_for(address) or GUARD          # Doginals on Dogecoin, Pepinals on Pepecoin mainnet
     if guard is None:
         raise FundingError("inscriptions are not checked on this chain here: nothing that carries one is sent")
@@ -1124,16 +1126,17 @@ def _doginal_first(db, address: str, coin: dict, inscription: str, first: bytes,
     paid = [piece] + list(more)
     owed = sum(v for v, _ in more)
     keep_out = set(exclude) | {(coin["txid"], int(coin["vout"]))}
-    fee = price(2, paid, rate, change=True)
+    rate = fees.rate_for(params, rate)              # this chain's own minimum
+    fee = price(2, paid, rate, change=True, params=params)
     fees_in = choose(db, address, owed + fee, exclude=keep_out, extra=extra)
-    fee = price(1 + len(fees_in), paid, rate, change=True)
+    fee = price(1 + len(fees_in), paid, rate, change=True, params=params)
     if sum(c["value"] for c in fees_in) < owed + fee:
         fees_in = choose(db, address, owed + fee, exclude=keep_out, extra=extra)
-        fee = price(1 + len(fees_in), paid, rate, change=True)
+        fee = price(1 + len(fees_in), paid, rate, change=True, params=params)
     chosen = [dict(coin, vout=int(coin["vout"]))] + fees_in
     change = sum(c["value"] for c in fees_in) - owed - fee
     outputs = list(paid)
-    if change >= fees.DUST_LIMIT:
+    if change >= fees.dust_limit(params):
         outputs.append((change, p2pkh_script(address)))
     else:
         fee += max(0, change)

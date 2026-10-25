@@ -22,7 +22,9 @@ marketplace layout, adapted to Dogecoin's legacy sighash [Claude 2026-10-15]:
 
 A buyer without two small clean coins first gets a "prepare" transaction that pays two DUMMY_VALUE coins to itself.
 Every output is at least MIN_OUT (Dogecoin 1.14's hard dust limit); an output under fees.DUST_LIMIT costs the soft dust
-fee, which `funding.price` already adds.
+fee, which `funding.price` already adds. Each number is the chain's own (2026-10-25, Bellinals: Bells 3 relays as
+Bitcoin Core does, with no soft-dust fee and 1/100 of Dogecoin's fee rate): `min_out`, `dummy_value`, `dummy_max`,
+`least_price`, and fees.rate_for / fees.dust_limit, from the chain's Params; with none, Dogecoin's.
 
 The seller's signature lives in this node's book (`Book`) until the coin moves -- which is the only way to cancel one, as
 with every other pre-signed listing (arcade/listings.py).
@@ -40,6 +42,7 @@ from typing import Any, Iterator
 
 from . import fees, funding, ord_chains, utxos
 from .config import NETWORKS
+from .doginals import POSTAGE_MAX
 from .listings import _serialise
 from .script import b58check_decode, hash160
 from .txbuild import build_raw_tx, p2pkh_script, push
@@ -55,6 +58,30 @@ MIN_OUT = 100_000
 DUMMY_VALUE = 2 * fees.DUST_LIMIT
 #: The largest coin used as a dummy: a dummy only travels back to its owner in output 0, but a big one makes a big output 0.
 DUMMY_MAX = 10 * fees.DUST_LIMIT
+
+
+def min_out(params=None) -> int:
+    """The smallest output a listing or a purchase makes: Dogecoin 1.14's hard dust limit (MIN_OUT) on the Dogecoin
+    family (soft dust); elsewhere the chain's own least change (Params.dust_limit: 0.0001 BEL, over Bells' 546)."""
+    return MIN_OUT if params is None or getattr(params, "soft_dust", True) else fees.dust_limit(params)
+
+
+def dummy_value(params=None) -> int:
+    """A dummy the prepare transaction splits off: at or over the chain's soft dust line (no dust fee) and over
+    doginals.POSTAGE_MAX, a bound in coins on every chain, so the guard takes it as clean before its block."""
+    return max(2 * fees.dust_limit(params), 2 * POSTAGE_MAX)
+
+
+def dummy_max(params=None) -> int:
+    """The largest coin used as a dummy."""
+    return max(10 * fees.dust_limit(params), 5 * dummy_value(params))
+
+
+def least_price(params=None) -> int:
+    """The smallest price: the chain's own dust line (fees.dust_limit)."""
+    return fees.dust_limit(params)
+
+
 #: How long a Doginal listing is shown when the seller does not say. Not a term of the signature (there is no lock time):
 #: the coin moving is what ends it.
 LISTED_FOR = 30 * 24 * 60 * 60
@@ -129,16 +156,18 @@ class Ask:
                 "sighash_type": funding.SINGLE_ANYONECANPAY, "signed_by": "account", "what": self.what}
 
 
-def build_ask(seller: str, coin: dict, inscription: str, price: int) -> Ask:
-    """The digest a seller signs to list `inscription` (on `coin`) for `price` koinu. Checks the Doginal first."""
+def build_ask(seller: str, coin: dict, inscription: str, price: int, params=None) -> Ask:
+    """The digest a seller signs to list `inscription` (on `coin`) for `price` koinu on the chain `params` describes
+    (Dogecoin's numbers without it). Checks the Doginal first."""
     coin = {"txid": str(coin["txid"]), "vout": int(coin["vout"]), "value": int(coin["value"])}
     if len(coin["txid"]) != 64:
         raise MarketError("a coin is a 32-byte txid and an index")
-    if coin["value"] < MIN_OUT:
-        raise MarketError(f"that coin is {coin['value']} koinu, under the {MIN_OUT} the network carries as an output")
-    word, ticker = names(seller)
-    if int(price) < fees.DUST_LIMIT:
-        raise MarketError(f"the smallest price is {fees.DUST_LIMIT / COIN:g} {ticker} -- less is dust")
+    if coin["value"] < min_out(params):
+        raise MarketError(f"that coin is {coin['value']} koinu, under the {min_out(params)} the network carries as an "
+                          "output")
+    word, ticker = names(seller, params)
+    if int(price) < least_price(params):
+        raise MarketError(f"the smallest price is {least_price(params) / COIN:g} {ticker} -- less is dust")
     holds_exactly(coin, inscription, seller)
     digest = listing_digest(seller, coin, int(price))
     return Ask(seller=seller, coin=coin, inscription=inscription, price=int(price), digest=digest.hex(),
@@ -175,23 +204,25 @@ def _clean(db, address: str, exclude=frozenset(), extra: list | None = None) -> 
     return clean, {(u["txid"], u["vout"]) for u in listed} - ok
 
 
-def dummies(db, address: str, exclude=frozenset(), extra: list | None = None) -> list[dict]:
-    """The buyer's two smallest clean coins between MIN_OUT and DUMMY_MAX, or NeedDummies."""
+def dummies(db, address: str, exclude=frozenset(), extra: list | None = None, params=None) -> list[dict]:
+    """The buyer's two smallest clean coins between min_out and dummy_max, or NeedDummies."""
     clean, _ = _clean(db, address, exclude, extra)
-    small = sorted((c for c in clean if MIN_OUT <= int(c["value"]) <= DUMMY_MAX), key=lambda c: int(c["value"]))
+    least, most = min_out(params), dummy_max(params)
+    small = sorted((c for c in clean if least <= int(c["value"]) <= most), key=lambda c: int(c["value"]))
     if len(small) < 2:
-        word, ticker = names(address)
-        raise NeedDummies(f"buying a {word} takes two small coins of your own (up to {DUMMY_MAX / COIN:g} {ticker} each) "
+        word, ticker = names(address, params)
+        raise NeedDummies(f"buying a {word} takes two small coins of your own (up to {most / COIN:g} {ticker} each) "
                           f"in front of the seller's, and this address has {len(small)}: split two off first")
     return small[:2]
 
 
 def build_prepare(db, params, buyer: str, rate: int, exclude=frozenset(), extra: list | None = None) -> funding.Unsigned:
-    """Two DUMMY_VALUE coins from the buyer to itself, paid from clean coins only."""
+    """Two dummy_value coins from the buyer to itself, paid from clean coins only."""
     clean, unclean = _clean(db, buyer, exclude, extra)
     script = p2pkh_script(buyer)
-    return funding.build(db, params, buyer, [(DUMMY_VALUE, script), (DUMMY_VALUE, script)], rate,
-                         what=f"split two small coins off, to buy a {names(buyer)[0]} with",
+    each = dummy_value(params)
+    return funding.build(db, params, buyer, [(each, script), (each, script)], rate,
+                         what=f"split two small coins off, to buy a {names(buyer, params)[0]} with",
                          exclude=set(exclude) | unclean, extra=_fresh(db, buyer, clean))
 
 
@@ -232,23 +263,24 @@ def build_purchase(db, params, buyer: str, listing: dict, rate: int, exclude=fro
     if buyer == seller:
         raise MarketError("that listing is your own")
     keep_out = set(exclude) | {(coin["txid"], int(coin["vout"]))}
-    two = dummies(db, buyer, keep_out, extra)
+    two = dummies(db, buyer, keep_out, extra, params)
     keep_out |= {(c["txid"], c["vout"]) for c in two}
     clean, unclean = _clean(db, buyer, keep_out, extra)
     mine = p2pkh_script(buyer)
     outs = [(int(two[0]["value"]) + int(two[1]["value"]), mine),          # 0: the dummies, back
             (int(coin["value"]), mine),                                     # 1: the Doginal, at offset 0
             (price, p2pkh_script(seller))]                                  # 2: the seller's price
-    fee = funding.price(4, outs, rate, change=True)
+    rate = fees.rate_for(params, rate)              # this chain's own minimum
+    fee = funding.price(4, outs, rate, change=True, params=params)
     fresh = _fresh(db, buyer, clean)
     paying = funding.choose(db, buyer, price + fee, exclude=keep_out | unclean, extra=fresh)
-    fee = funding.price(3 + len(paying), outs, rate, change=True)
+    fee = funding.price(3 + len(paying), outs, rate, change=True, params=params)
     if sum(int(c["value"]) for c in paying) < price + fee:
         paying = funding.choose(db, buyer, price + fee, exclude=keep_out | unclean, extra=fresh)
-        fee = funding.price(3 + len(paying), outs, rate, change=True)
+        fee = funding.price(3 + len(paying), outs, rate, change=True, params=params)
     change = sum(int(c["value"]) for c in paying) - price - fee
     outputs = list(outs)
-    if change >= fees.DUST_LIMIT:
+    if change >= fees.dust_limit(params):
         outputs.append((change, mine))
     else:
         fee += max(0, change)
@@ -262,8 +294,8 @@ def build_purchase(db, params, buyer: str, listing: dict, rate: int, exclude=fro
     signs = [n for n in range(len(inputs)) if n != SELLER_AT]
     hashes = [funding.sighash(inputs, outputs, n, mine).hex() for n in signs]
     return Purchase(raw=raw, inputs=inputs, outputs=outputs, buyer_inputs=signs, sighashes=hashes, fee=fee,
-                    change=change, what="buy %s %s for %g %s" % (names(buyer)[0], listing['inscription'], price / COIN,
-                                                                  names(buyer)[1]))
+                    change=change, what="buy %s %s for %g %s" % (names(buyer, params)[0], listing['inscription'],
+                                                                  price / COIN, names(buyer, params)[1]))
 
 
 def assemble_purchase(purchase: Purchase, listing: dict, signatures: list[str], pubkey: bytes) -> str:
@@ -332,7 +364,7 @@ class Book:
             conn.close()
 
     def register(self, rpc: Any, *, network: str, seller: str, coin: dict, inscription: str, price: int,
-                 signature: str, pubkey: bytes, seconds: float = LISTED_FOR) -> dict:
+                 signature: str, pubkey: bytes, seconds: float = LISTED_FOR, params=None) -> dict:
         """File a signed listing, or say why not. Nothing from the request is believed that the chain, the Doginal source
         and the signature do not say: the coin's value and owner come from `gettxout`, the inscription from the chain,
         and the signature is checked against the digest worked out here."""
@@ -348,7 +380,7 @@ class Book:
         if str((held.get("scriptPubKey") or {}).get("hex") or "") != p2pkh_script(seller).hex():
             raise MarketError("that coin is not the seller's")
         value = int(round(float(held.get("value", 0)) * COIN))
-        ask = build_ask(seller, {"txid": txid, "vout": vout, "value": value}, inscription, int(price))
+        ask = build_ask(seller, {"txid": txid, "vout": vout, "value": value}, inscription, int(price), params)
         if not verify_signature(bytes.fromhex(ask.digest), sig[:-1], bytes(pubkey)):
             raise MarketError("that signature is not over this coin at this price")
         now = time.time()
