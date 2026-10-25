@@ -1,0 +1,496 @@
+{% extends "base.html" %}
+{% block title %}Node Map · {{ brand.name }}{% endblock %}
+{% block body %}
+{# Every arcade this node has heard, and every peer of a chain it runs, on one map.
+   The countries are this site's own drawing (world-land.svg). A dot is a country,
+   shifted so two nodes in one country do not stack. No address is sent to the page. #}
+<style>
+.mapwrap{background:color-mix(in srgb,var(--accent) 8%,var(--panel));border:1px solid var(--line);
+  border-radius:12px;overflow:hidden;position:relative;height:min(68vh,640px);min-height:280px}
+.mapwrap svg{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+.mapwrap svg.dragging{cursor:grabbing}
+.mapwrap .ocean{fill:color-mix(in srgb,var(--accent) 16%,var(--bg))}
+.mapwrap .grid line{stroke:color-mix(in srgb,var(--fg) 16%,transparent);stroke-width:.6px;vector-effect:non-scaling-stroke}
+.mapwrap .country{fill:color-mix(in srgb,var(--fg) 18%,var(--panel));stroke:var(--bg);
+  stroke-width:1px;vector-effect:non-scaling-stroke;cursor:pointer}
+.mapwrap .country:hover,.mapwrap .country.hot{fill:color-mix(in srgb,var(--accent) 48%,var(--panel));stroke:var(--accent)}
+.mapwrap .pin{stroke:var(--bg);stroke-width:1.4px;vector-effect:non-scaling-stroke;cursor:pointer}
+.mapwrap .pin.peer{fill:#7eb6ff}
+.mapwrap .pin.arcade{fill:var(--ok,#3dbe7a)}
+.mapwrap .pin.me{fill:var(--accent)}
+.mapwrap .pin.dim{opacity:.16}
+.mapwrap .pin.on{stroke:var(--fg);stroke-width:2.4px}
+.maptools{position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:6px}
+.maptools button{width:36px;height:36px;border-radius:8px;border:1px solid var(--line);background:var(--panel);
+  color:inherit;font:inherit;font-size:1.1rem;cursor:pointer}
+.mapcard{position:absolute;left:10px;bottom:10px;max-width:min(420px,calc(100% - 20px));
+  padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);font-size:.88rem}
+.mapnote{margin:8px 0 0}
+.mapfilters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+.mapfilters input[type=search]{flex:1;min-width:160px;font:inherit;padding:7px 10px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel);color:inherit}
+.nodedots{display:flex;flex-wrap:wrap;gap:14px 18px;margin:0 0 12px;font-size:.85rem}
+.nodedots span{display:inline-flex;align-items:center;gap:7px}
+.swatch{width:10px;height:10px;border-radius:50%;display:inline-block}
+.swatch.me{background:var(--accent)}
+.swatch.arcade{background:var(--ok,#3dbe7a)}
+.swatch.peer{background:#7eb6ff}
+#nodelist{display:grid;gap:6px;margin-top:8px}
+.noderow{display:grid;grid-template-columns:1.4fr .9fr 1.2fr auto;gap:10px;align-items:center;
+  padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;
+  text-align:left;width:100%;font:inherit;cursor:pointer}
+.noderow.on{border-color:var(--accent)}
+.noderow .who{font-weight:650}
+.noderow .sub{color:var(--muted);font-size:.82rem}
+@media (max-width:720px){
+  .noderow{grid-template-columns:1fr auto;grid-template-areas:"who link" "where where"}
+  .noderow .who{grid-area:who}
+  .noderow .where{grid-area:where}
+  .noderow .link{grid-area:link}
+}
+</style>
+<h1>Node Map</h1>
+<p class="sub">Every arcade this node has heard, and every peer of a chain it runs. Scroll to zoom, drag to move, and click a country or a dot. A dot is the country that address was allocated to, not a street.</p>
+<div class="mapwrap" id="mapwrap">
+  <svg viewBox="0 0 360 180" role="img" aria-label="World map of nodes">
+    <rect class="ocean" id="ocean" x="0" y="0" width="360" height="180"/>
+    <g id="grid" class="grid"></g>
+    <g id="countries"></g>
+    <g id="pins"></g>
+  </svg>
+  <div class="maptools">
+    <button type="button" id="zin" aria-label="Zoom in">+</button>
+    <button type="button" id="zout" aria-label="Zoom out">&minus;</button>
+    <button type="button" id="zfit" aria-label="Show the whole world">Fit</button>
+  </div>
+  <div class="mapcard" id="mapcard" hidden></div>
+</div>
+<p class="muted mapnote" id="mapnote">Looking&hellip;</p>
+<div class="mapfilters">
+  <input id="nodeq" type="search" placeholder="Name, country, or chain" aria-label="Filter nodes">
+  <div id="filters"></div>
+  <button type="button" class="pillpick" id="countrychip" hidden></button>
+</div>
+<div class="nodedots" aria-hidden="true">
+  <span><i class="swatch me"></i> This arcade</span>
+  <span><i class="swatch arcade"></i> Arcade</span>
+  <span><i class="swatch peer"></i> Chain peer</span>
+</div>
+<div id="nodelist"></div>
+<script>
+(function () {
+  var svg = document.querySelector("#mapwrap svg");
+  var pins = document.getElementById("pins");
+  var countries = document.getElementById("countries");
+  var list = document.getElementById("nodelist");
+  var note = document.getElementById("mapnote");
+  var card = document.getElementById("mapcard");
+  var filtersBox = document.getElementById("filters");
+  var countryChip = document.getElementById("countrychip");
+  var query = document.getElementById("nodeq");
+  var grid = document.getElementById("grid");
+  var view = {x: 0, y: 0, w: 360, h: 180};
+  var last = null;
+  var pickedKey = "";
+  var filters = {kind: "all", chain: "", country: "", countryName: "", q: ""};
+  var filterSig = "";
+  var hoverText = "";
+  var drag = null;
+  var pointers = {};
+
+  for (var lon = -150; lon <= 180; lon += 30) {
+    var v = line(lon + 180, 0, lon + 180, 180);
+    grid.appendChild(v);
+  }
+  for (var lat = -60; lat <= 60; lat += 30) {
+    grid.appendChild(line(0, 90 - lat, 360, 90 - lat));
+  }
+  function line(x1, y1, x2, y2) {
+    var node = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    node.setAttribute("x1", String(x1));
+    node.setAttribute("y1", String(y1));
+    node.setAttribute("x2", String(x2));
+    node.setAttribute("y2", String(y2));
+    return node;
+  }
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+  function kind(row) {
+    if (row.me) return "me";
+    if (row.arcade) return "arcade";
+    return "peer";
+  }
+  function keyOf(row) {
+    return row.name + "|" + row.country + "|" + row.lat + "|" + row.lon;
+  }
+  function where(row) {
+    var bits = [];
+    if (row.country) bits.push(row.country);
+    if (row.chains && row.chains.length) bits.push(row.chains.join(", "));
+    if (row.linked) bits.push("linked");
+    if (row.lat == null) bits.push("no public address");
+    return bits.join(" · ");
+  }
+  function summary(row) {
+    return row.name + (where(row) ? " · " + where(row) : "");
+  }
+  function nodes() {
+    return (last && last.nodes) || [];
+  }
+  function everyone() {
+    return nodes().concat((last && last.unplaced) || []);
+  }
+  function match(row) {
+    if (filters.country && row.code !== filters.country) return false;
+    if (filters.kind === "arcade" && !row.arcade) return false;
+    if (filters.chain && (row.chains || []).indexOf(filters.chain) < 0) return false;
+    if (filters.q) {
+      var hay = (row.name + " " + (row.country || "") + " " + (row.chains || []).join(" ")).toLowerCase();
+      if (hay.indexOf(filters.q) < 0) return false;
+    }
+    return true;
+  }
+  function clampView() {
+    if (view.w >= 360) {
+      view.x = 0; view.y = 0; view.w = 360; view.h = 180;
+      return;
+    }
+    view.h = view.w / 2;
+    if (view.x < 0) view.x = 0;
+    if (view.y < 0) view.y = 0;
+    if (view.x + view.w > 360) view.x = 360 - view.w;
+    if (view.y + view.h > 180) view.y = 180 - view.h;
+  }
+  function applyView() {
+    svg.setAttribute("viewBox", view.x.toFixed(2) + " " + view.y.toFixed(2) + " " + view.w.toFixed(2) + " " + view.h.toFixed(2));
+    var scale = view.w / 360;
+    Array.prototype.forEach.call(pins.children, function (pin) {
+      var base = pin.classList.contains("me") ? 6.4 : 4.6;
+      if (pin.classList.contains("on")) base *= 1.55;
+      pin.setAttribute("r", (base * scale).toFixed(3));
+    });
+  }
+  function zoomAt(px, py, factor) {
+    var nw = Math.min(360, Math.max(8, view.w * factor));
+    var rx = (px - view.x) / view.w;
+    var ry = (py - view.y) / view.h;
+    view.w = nw;
+    view.h = nw / 2;
+    view.x = px - rx * nw;
+    view.y = py - ry * view.h;
+    clampView();
+    applyView();
+  }
+  function zoomBox(x, y, w, h) {
+    var cx = x + w / 2, cy = y + h / 2;
+    var nw = Math.min(360, Math.max(8, Math.max(w, h * 2) * 1.28));
+    view.w = nw;
+    view.h = nw / 2;
+    view.x = cx - nw / 2;
+    view.y = cy - view.h / 2;
+    clampView();
+    applyView();
+  }
+  function svgPoint(ev) {
+    var pt = svg.createSVGPoint();
+    pt.x = ev.clientX;
+    pt.y = ev.clientY;
+    var ctm = svg.getScreenCTM();
+    if (!ctm) return {x: view.x + view.w / 2, y: view.y + view.h / 2};
+    var p = pt.matrixTransform(ctm.inverse());
+    return {x: p.x, y: p.y};
+  }
+  function showCard(text) {
+    if (!text) { card.hidden = true; return; }
+    card.hidden = false;
+    card.textContent = text;
+  }
+  function pickedRow() {
+    var found = null;
+    nodes().forEach(function (row) {
+      if (keyOf(row) === pickedKey) found = row;
+    });
+    return found;
+  }
+  function refreshCard() {
+    if (hoverText) { showCard(hoverText); return; }
+    var row = pickedRow();
+    if (row) { showCard(summary(row)); return; }
+    if (filters.country) {
+      var n = 0;
+      everyone().forEach(function (one) { if (one.code === filters.country) n += 1; });
+      showCard(filters.countryName + " · " + n + (n === 1 ? " node" : " nodes"));
+      return;
+    }
+    showCard("");
+  }
+  function markCountries() {
+    Array.prototype.forEach.call(countries.querySelectorAll("path"), function (path) {
+      path.classList.toggle("hot", path.getAttribute("data-code") === filters.country);
+    });
+  }
+  function markFilters() {
+    Array.prototype.forEach.call(filtersBox.querySelectorAll("button"), function (button) {
+      var on = false;
+      if (button.dataset.chain) on = filters.chain === button.dataset.chain;
+      else if (button.dataset.kind === "arcade") on = filters.kind === "arcade" && !filters.chain;
+      else on = filters.kind === "all" && !filters.chain;
+      button.classList.toggle("on", on);
+    });
+    if (filters.country) {
+      countryChip.hidden = false;
+      countryChip.textContent = filters.countryName + " \u00d7";
+    } else {
+      countryChip.hidden = true;
+    }
+  }
+  function addChip(label, attrs, onClick) {
+    var button = el("button", "pillpick", label);
+    button.type = "button";
+    Object.keys(attrs).forEach(function (key) { button.dataset[key] = attrs[key]; });
+    button.addEventListener("click", onClick);
+    filtersBox.appendChild(button);
+  }
+  function buildFilters() {
+    var chains = [];
+    everyone().forEach(function (row) {
+      (row.chains || []).forEach(function (chain) {
+        if (chains.indexOf(chain) < 0) chains.push(chain);
+      });
+    });
+    var sig = chains.join("|");
+    if (sig === filterSig && filtersBox.children.length) {
+      markFilters();
+      return;
+    }
+    filterSig = sig;
+    filtersBox.replaceChildren();
+    addChip("All", {kind: "all"}, function () {
+      filters.kind = "all"; filters.chain = ""; paint();
+    });
+    addChip("Arcades", {kind: "arcade"}, function () {
+      filters.kind = "arcade"; filters.chain = ""; paint();
+    });
+    chains.forEach(function (chain) {
+      addChip(chain, {chain: chain}, function () {
+        filters.kind = "all";
+        filters.chain = filters.chain === chain ? "" : chain;
+        paint();
+      });
+    });
+    markFilters();
+  }
+  function pickCountry(code, name) {
+    filters.country = code;
+    filters.countryName = name || code;
+    var box = null;
+    Array.prototype.forEach.call(countries.querySelectorAll('path[data-code="' + code + '"]'), function (path) {
+      var b = path.getBBox();
+      if (!box) box = {x: b.x, y: b.y, x2: b.x + b.width, y2: b.y + b.height};
+      else {
+        box.x = Math.min(box.x, b.x); box.y = Math.min(box.y, b.y);
+        box.x2 = Math.max(box.x2, b.x + b.width); box.y2 = Math.max(box.y2, b.y + b.height);
+      }
+    });
+    if (box) zoomBox(box.x, box.y, box.x2 - box.x, box.y2 - box.y);
+    paint();
+  }
+  function focusPin(row) {
+    if (!row || row.lat == null) return;
+    var cx = row.lon + 180, cy = 90 - row.lat;
+    var nw = Math.min(view.w, 32);
+    view.w = nw;
+    view.h = nw / 2;
+    view.x = cx - nw / 2;
+    view.y = cy - view.h / 2;
+    clampView();
+    applyView();
+  }
+  function paint() {
+    var rows = nodes();
+    var all = everyone();
+    var counts = (last && last.counts) || {};
+    var shown = all.filter(match);
+    note.textContent = shown.length + " shown, " + (counts.on_map || 0) + " on the map, "
+      + (counts.arcades || 0) + " of them arcades"
+      + (counts.unplaced ? ". " + counts.unplaced + " more have no public address." : ".");
+    pins.replaceChildren();
+    list.replaceChildren();
+    rows.forEach(function (row) {
+      var pin = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      pin.setAttribute("cx", String(row.lon + 180));
+      pin.setAttribute("cy", String(90 - row.lat));
+      pin.setAttribute("class", "pin " + kind(row) + (match(row) ? "" : " dim") + (keyOf(row) === pickedKey ? " on" : ""));
+      pin.dataset.key = keyOf(row);
+      var title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      title.textContent = summary(row);
+      pin.appendChild(title);
+      pins.appendChild(pin);
+    });
+    shown.forEach(function (row) {
+      var button = el("button", "noderow" + (keyOf(row) === pickedKey ? " on" : ""));
+      button.type = "button";
+      button.dataset.key = keyOf(row);
+      var who = el("div", "who");
+      who.append(el("span", "", row.name));
+      if (row.me) who.append(el("span", "pill", "this arcade"));
+      button.append(who, el("div", "where sub", where(row)), el("div", "link sub", row.arcade ? "arcade" : "peer"));
+      button.addEventListener("click", function () {
+        if (row.lat == null) return;
+        pickedKey = keyOf(row);
+        focusPin(row);
+        paint();
+        var on = list.querySelector(".noderow.on");
+        if (on) on.scrollIntoView({block: "nearest"});
+      });
+      list.appendChild(button);
+    });
+    if (!shown.length) {
+      list.appendChild(el("p", "muted", all.length
+        ? "Nothing matches."
+        : "No nodes yet. Arcades show up after they announce, and chain peers when a node here is connected."));
+    }
+    buildFilters();
+    markCountries();
+    applyView();
+    refreshCard();
+  }
+  function load() {
+    fetch("/nodes.json").then(function (r) { return r.json(); }).then(function (said) {
+      last = said;
+      paint();
+    }).catch(function () {
+      note.textContent = "The map could not be loaded.";
+    });
+  }
+  fetch("/world-land.svg?v=2").then(function (r) { return r.text(); }).then(function (text) {
+    var doc = new DOMParser().parseFromString(text, "image/svg+xml");
+    Array.prototype.forEach.call(doc.querySelectorAll("path"), function (path) {
+      var node = document.importNode(path, true);
+      node.setAttribute("class", "country");
+      countries.appendChild(node);
+    });
+    markCountries();
+  }).catch(function () {});
+  svg.addEventListener("wheel", function (ev) {
+    ev.preventDefault();
+    var p = svgPoint(ev);
+    zoomAt(p.x, p.y, ev.deltaY > 0 ? 1.25 : 0.8);
+  }, {passive: false});
+  svg.addEventListener("dblclick", function (ev) {
+    var p = svgPoint(ev);
+    zoomAt(p.x, p.y, 0.5);
+  });
+  svg.addEventListener("pointerdown", function (ev) {
+    if (ev.button != null && ev.button !== 0) return;
+    pointers[ev.pointerId] = {x: ev.clientX, y: ev.clientY};
+    svg.setPointerCapture(ev.pointerId);
+    drag = {id: ev.pointerId, x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y, moved: false};
+  });
+  svg.addEventListener("pointermove", function (ev) {
+    if (pointers[ev.pointerId]) pointers[ev.pointerId] = {x: ev.clientX, y: ev.clientY};
+    var ids = Object.keys(pointers);
+    if (ids.length >= 2) {
+      var a = pointers[ids[0]], b = pointers[ids[1]];
+      var dist = Math.hypot(a.x - b.x, a.y - b.y);
+      if (drag && drag.pinch) {
+        var mid = svgPoint(ev);
+        zoomAt(mid.x, mid.y, drag.pinch / Math.max(dist, 1));
+      }
+      if (drag) drag.pinch = dist;
+      return;
+    }
+    if (!drag || ev.pointerId !== drag.id) {
+      var target = ev.target;
+      if (target.classList && target.classList.contains("pin")) hoverText = target.querySelector("title").textContent;
+      else if (target.getAttribute && target.getAttribute("data-code")) {
+        var code = target.getAttribute("data-code");
+        var n = 0;
+        everyone().forEach(function (row) { if (row.code === code) n += 1; });
+        hoverText = target.getAttribute("data-name") + " · " + n + (n === 1 ? " node" : " nodes");
+      } else hoverText = "";
+      refreshCard();
+      return;
+    }
+    var dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    if (Math.hypot(dx, dy) > 4) drag.moved = true;
+    if (!drag.moved) return;
+    svg.classList.add("dragging");
+    var rect = svg.getBoundingClientRect();
+    view.x = drag.vx - dx / rect.width * view.w;
+    view.y = drag.vy - dy / rect.height * view.h;
+    clampView();
+    applyView();
+  });
+  function endDrag(ev) {
+    delete pointers[ev.pointerId];
+    if (!drag || ev.pointerId !== drag.id) return;
+    var moved = drag.moved;
+    drag = null;
+    svg.classList.remove("dragging");
+    if (moved || Object.keys(pointers).length) return;
+    var target = ev.target;
+    if (target.classList && target.classList.contains("pin")) {
+      pickedKey = target.dataset.key;
+      focusPin(nodes().filter(function (row) { return keyOf(row) === pickedKey; })[0]);
+      paint();
+      var on = list.querySelector(".noderow.on");
+      if (on) on.scrollIntoView({block: "nearest"});
+      return;
+    }
+    var code = target.getAttribute && target.getAttribute("data-code");
+    if (code) {
+      pickCountry(code, target.getAttribute("data-name"));
+      return;
+    }
+    if (target.classList && target.classList.contains("ocean")) {
+      filters.country = "";
+      filters.countryName = "";
+      hoverText = "";
+      paint();
+    }
+  }
+  svg.addEventListener("pointerup", endDrag);
+  svg.addEventListener("pointercancel", endDrag);
+  document.getElementById("zin").addEventListener("click", function () {
+    zoomAt(view.x + view.w / 2, view.y + view.h / 2, 0.7);
+  });
+  document.getElementById("zout").addEventListener("click", function () {
+    zoomAt(view.x + view.w / 2, view.y + view.h / 2, 1.4);
+  });
+  document.getElementById("zfit").addEventListener("click", function () {
+    view = {x: 0, y: 0, w: 360, h: 180};
+    applyView();
+  });
+  countryChip.addEventListener("click", function () {
+    filters.country = "";
+    filters.countryName = "";
+    paint();
+  });
+  query.addEventListener("input", function () {
+    filters.q = query.value.trim().toLowerCase();
+    paint();
+  });
+  document.addEventListener("keydown", function (ev) {
+    var tag = (ev.target && ev.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea") return;
+    if (ev.key === "Escape") {
+      filters.country = ""; filters.countryName = ""; pickedKey = ""; hoverText = ""; paint();
+    } else if (ev.key === "+" || ev.key === "=") {
+      zoomAt(view.x + view.w / 2, view.y + view.h / 2, 0.7);
+    } else if (ev.key === "-" || ev.key === "_") {
+      zoomAt(view.x + view.w / 2, view.y + view.h / 2, 1.4);
+    } else if (ev.key === "0") {
+      view = {x: 0, y: 0, w: 360, h: 180};
+      applyView();
+    }
+  });
+  load();
+  setInterval(function () { if (!document.hidden) load(); }, 60000);
+})();
+</script>
+{% endblock %}

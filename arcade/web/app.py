@@ -451,6 +451,8 @@ NAV = [
     # Who the arcade works with (2026-10-15: "Between the exchange and the Docs tab,
     # add an affiliate tab").
     ("/affiliates",   "Affiliates",   None,        True),
+    # Every arcade this node has heard, and every peer of a chain it runs.
+    ("/nodes",        "Node Map",     None,        True),
     ("/approvals",    "Approvals",    None,        True),
     ("/docs",         "Docs",         None,        True),
 ]
@@ -481,6 +483,7 @@ ACCOUNT_NAV = [
     ("/create",          "Creator",      "mainnet",   True),
     ("/exchange",        "Exchange",     "mainnet",   True),
     ("/affiliates",      "Affiliates",   None,        True),
+    ("/nodes",           "Node Map",     None,        True),
     ("/docs",            "Docs",         None,        True),
 ]
 
@@ -8612,6 +8615,24 @@ def create_app(state: AppState) -> FastAPI:
         sites = [{"url": s["url"], "name": s["name"], "by": "this arcade"} for s in tab["own"]]
         sites += [{"url": s["url"], "name": s["name"], "by": g["by"]} for g in tab["groups"] for s in g["sites"]]
         return JSONResponse({"ok": True, "sites": sites}, headers={"Cache-Control": "no-store"})
+
+    @app.get("/nodes", response_class=HTMLResponse)
+    def node_map(request: Request):
+        """Node Map: every arcade this node has heard, and every peer of a chain it runs."""
+        return render(request, "nodemap.html")
+
+    @app.get("/nodes.json")
+    def node_map_json():
+        """The map's dots. Countries and points only — an address is not part of the answer."""
+        from ..nodemap import collect
+        return JSONResponse(collect(state), headers={"Cache-Control": "no-store"})
+
+    @app.get("/world-land.svg")
+    def world_land():
+        """The Node Map's countries, served from here so the page does not fetch a map from anywhere else."""
+        return Response((TEMPLATE_DIR / "world-land.svg").read_text(),
+                        media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/docs", response_class=HTMLResponse)
     def docs_index(request: Request):
