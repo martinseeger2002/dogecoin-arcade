@@ -637,11 +637,14 @@ def test_the_pages_host_never_speaks_for_the_operator_from_outside(client):
         assert app.get("/r/send/abc", headers=edge).status_code == 403
         # The rest of the page API is still there for pages.
         assert app.get("/r/blockheight", headers=edge).status_code != 403
-        # Here, on the operator's own machine, it is still their wallet.
+        # Here, on the operator's own machine, it is still their wallet -- when
+        # that name is one of this machine's own (local_hosts, door.from_outside).
+        state.set_setting("local_hosts", ["pages.example"])
         local = app.get("/r/wallet", headers={"host": "pages.example"})
         assert local.status_code != 403 or "wallet" not in local.json()
     finally:
         state.set_setting("pages_host", "")
+        state.set_setting("local_hosts", [])
 
 
 def test_the_page_api_wallet_is_whoever_is_looking(client):

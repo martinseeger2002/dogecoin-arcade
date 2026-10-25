@@ -10,6 +10,12 @@ import pytest
 
 from arcade.db import Database, StateDB, register_journalled_table
 from arcade.regtest import RegtestNode, reap_leftovers, reap_stale_basetemps
+from arcade.web import door as _door
+
+# Starlette's TestClient connects from the made-up peer "testclient" to the made-up host "testserver". In the suite
+# they stand for a browser on the node's own machine (door.from_outside); uvicorn never reports either.
+_door.LOOPBACK_PEERS += ("testclient",)
+_door.LOOPBACK_HOSTS += ("testserver",)
 
 # A toy state table, used to prove the undo journal works without waiting for the
 # real protocol tables that arrive in M2.

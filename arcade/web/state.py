@@ -996,6 +996,18 @@ class AppState:
                      for name in said if str(name).strip())
 
     @property
+    def local_hosts(self) -> tuple[str, ...]:
+        """Extra names that mean this machine (`local_hosts` in settings.json),
+        besides localhost and the loopback addresses (door.from_outside). Only
+        for a name the operator's own machine resolves to itself; a request
+        must still come over a loopback connection to be local."""
+        said = self.setting("local_hosts", [])
+        if isinstance(said, str):
+            said = [said]
+        return tuple(str(name).rsplit(":", 1)[0].strip().lower()
+                     for name in said if str(name).strip())
+
+    @property
     def pages_hostname(self) -> str:
         """Just the name, for comparing against a Host header.
 

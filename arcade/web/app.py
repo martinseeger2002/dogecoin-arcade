@@ -591,6 +591,15 @@ def locked(title: str, detail: str, status: int = 403) -> HTMLResponse:
                         status_code=status)
 
 
+def _request_outside(state, request) -> bool:
+    """door.from_outside for one request: its headers, Host and TCP peer."""
+    client = getattr(request, "client", None)
+    return doorlib.from_outside(request.headers, request.headers.get("host", ""),
+                                state.public_hosts,
+                                peer=client.host if client else None,
+                                local_hosts=getattr(state, "local_hosts", ()))
+
+
 def the_door(state: AppState):
     """The one guard, registered as middleware so it covers every route.
 
@@ -634,9 +643,7 @@ def the_door(state: AppState):
             if doorlib.speaks_for_the_operator(path) and path.rstrip("/") != "/r/wallet" \
                     and not asks_reader \
                     and request.method != "OPTIONS" and (
-                    state.public or doorlib.from_outside(
-                        request.headers, request.headers.get("host", ""),
-                        state.public_hosts)):
+                    state.public or _request_outside(state, request)):
                 return contentlib._json(
                     {"wallet": "off",
                      "error": "this wallet does not tell inscriptions who is looking"},
@@ -646,9 +653,18 @@ def the_door(state: AppState):
             return locked("Not here", "Nothing is served at this address but "
                           "inscribed pages.", status=404)
 
-        outside = doorlib.from_outside(
-            request.headers, request.headers.get("host", ""),
-            state.public_hosts)
+        outside = _request_outside(state, request)
+
+        # Being on the operator's machine needs no cookie, so a page on any
+        # other site the operator has open could otherwise post to this one as
+        # them. A change made with local trust comes from this origin (or from
+        # a program, which sends neither header); the page API and the
+        # realtime rooms take other origins' requests by design.
+        if (not outside and request.method.upper() not in doorlib.SAFE_METHODS
+                and not path.startswith(doorlib.CROSS_SITE_PATHS)
+                and doorlib.cross_site(request.headers, request.headers.get("host", ""))):
+            return JSONResponse({"detail": "that request came from another site"},
+                                status_code=403)
 
         # Claiming a node is the one thing that is about WHERE you are
         # rather than what the instance is: a public node on somebody's
@@ -952,9 +968,7 @@ def create_app(state: AppState) -> FastAPI:
 
 
     def _from_outside(request: Request) -> bool:
-        return doorlib.from_outside(request.headers,
-                                    request.headers.get("host", ""),
-                                    state.public_hosts)
+        return _request_outside(state, request)
 
     def _public_request(request: Request) -> bool:
         """Whether THIS request is being served publicly (arcade/web/door.py).
@@ -7168,8 +7182,7 @@ def create_app(state: AppState) -> FastAPI:
         # outside anybody could loop it (one anonymous POST sent 9be3f7f7...,
         # 2026-09-26). An account's page asks with its own key, via the
         # frame's arcade.node door, which the account signs and pays for.
-        if state.public or doorlib.from_outside(
-                request.headers, request.headers.get("host", ""), state.public_hosts):
+        if state.public or _request_outside(state, request):
             return contentlib._json(
                 {"error": "that piece is held on another node, and this public "
                           "node does not pay to ask it for you"}, status=403)
@@ -7624,8 +7637,7 @@ def create_app(state: AppState) -> FastAPI:
         it is the operator's wallet, as it always was, and can be turned off.
         """
         chain, index = _token_chain()
-        outside = state.public or doorlib.from_outside(
-            request.headers, request.headers.get("host", ""), state.public_hosts)
+        outside = state.public or _request_outside(state, request)
         if outside:
             address = _viewer_of(request, chain)
             if not address:
@@ -7858,8 +7870,7 @@ def create_app(state: AppState) -> FastAPI:
         except ValueError as exc:
             return contentlib._json({"error": str(exc)}, status=400)
         chain, _ = _token_chain()
-        if state.public or doorlib.from_outside(request.headers, request.headers.get("host", ""),
-                                                state.public_hosts):
+        if state.public or _request_outside(state, request):
             # The reader's own wallet is the scope; nobody signed in has none, and is
             # told so by _ask_the_reader as before.
             scope, source = _viewer_of(request, chain), "reader"
@@ -26516,6 +26527,13 @@ def create_app(state: AppState) -> FastAPI:
         where the node is. Changing it later is the same act, from the same
         place, or signed in as the operator.
         """
+        # Only the sign-in page's own request: JSON (which another site's page
+        # cannot send without asking first) from this very origin.
+        kind = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if kind != "application/json" or doorlib.cross_site(
+                request.headers, request.headers.get("host", "")):
+            return JSONResponse({"detail": "this is set from the sign-in page"},
+                                status_code=403)
         signed_in_as = signed_in(request)
         outside = _from_outside(request)
         already = state.operator

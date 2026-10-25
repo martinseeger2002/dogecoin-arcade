@@ -40,7 +40,9 @@ refusal is about the ROUTE and not about the visitor.
 
 from __future__ import annotations
 
+import ipaddress
 import re
+import urllib.parse
 
 #: Pages and files a stranger may read. Exact paths, matched whole.
 PUBLIC_PAGES = frozenset({
@@ -554,7 +556,51 @@ def pages_path(path: str) -> bool:
 EDGE_HEADERS = ("cf-ray", "cdn-loop", "cf-connecting-ip", "x-forwarded-for")
 
 
-def from_outside(headers, host: str, public_hosts: tuple[str, ...]) -> bool:
+#: Host names that are this machine whatever DNS says: a browser resolves
+#: `localhost` and `*.localhost` itself, and an IP literal is not looked up.
+#: Anything else -- a name somebody's DNS points at 127.0.0.1 -- is not here.
+LOOPBACK_HOSTS = ("localhost",)
+#: Peers that are this machine besides the loopback addresses (the test suite
+#: adds Starlette's made-up "testclient"; uvicorn only ever reports an IP).
+LOOPBACK_PEERS: tuple[str, ...] = ()
+
+
+def host_name(host: str) -> str:
+    """The name in a Host header: lower case, no port, no IPv6 brackets."""
+    host = (host or "").strip().lower()
+    if host.startswith("["):
+        return host[1:host.find("]")] if "]" in host else ""
+    if host.count(":") == 1:
+        host = host.split(":", 1)[0]
+    return host.rstrip(".")
+
+
+def _loopback_ip(text: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return (mapped or ip).is_loopback
+
+
+def loopback_host(host: str, local_hosts: tuple[str, ...] = ()) -> bool:
+    """Is this Host header one of this machine's own names?"""
+    name = host_name(host)
+    if not name:
+        return False
+    return (name in LOOPBACK_HOSTS or name.endswith(".localhost")
+            or name in local_hosts or _loopback_ip(name))
+
+
+def loopback_peer(peer) -> bool:
+    """Did the connection itself come from this machine?"""
+    peer = str(peer or "")
+    return bool(peer) and (peer in LOOPBACK_PEERS or _loopback_ip(peer))
+
+
+def from_outside(headers, host: str, public_hosts: tuple[str, ...],
+                 peer=None, local_hosts: tuple[str, ...] = ()) -> bool:
     """Did this request arrive from the internet rather than from here?
 
     One machine is both things at once: the operator's wallet, sitting on his
@@ -563,19 +609,57 @@ def from_outside(headers, host: str, public_hosts: tuple[str, ...]) -> bool:
     it to the world -- and two processes over one state directory is how a
     database gets two writers.
 
-    So publicness is decided per REQUEST, by where it came from:
+    So publicness is decided per REQUEST, by where it came from. It is from
+    outside when any of these holds:
 
-    * the Host is one of the names published for this node, or
-    * the request carries a header only an edge adds.
+    * the Host is one of the names published for this node;
+    * the request carries a header only an edge or a proxy adds;
+    * the connection (`peer`, the TCP address) is not a loopback one;
+    * the Host is not one of this machine's own names: localhost,
+      *.localhost, a loopback IP, or a name listed in `local_hosts`.
 
-    Either is enough, and the second is the one that matters: a request that
-    crossed Cloudflare is from outside whatever Host it claims, so a name
-    nobody remembered to configure still lands on the public side. The
-    failure that leaves is a local request wrongly called public, which
-    shows the operator a splash instead of their wallet -- visible, and
-    harmless.
+    Local is the narrow case -- a loopback connection, naming the machine by
+    a loopback name, through nothing -- so anything not foreseen (a proxy
+    that adds no headers, a name nobody configured, a web page whose name
+    resolves to 127.0.0.1) lands on the public side. The failure that leaves
+    is a local request wrongly called public, which shows the operator a
+    splash instead of their wallet -- visible, and harmless.
     """
-    name = (host or "").rsplit(":", 1)[0].strip().lower()
+    name = host_name(host)
     if name and name in public_hosts:
         return True
-    return any(header in headers for header in EDGE_HEADERS)
+    if any(header in headers for header in EDGE_HEADERS):
+        return True
+    if not loopback_peer(peer):
+        return True
+    return not loopback_host(host, local_hosts)
+
+
+#: Methods that change nothing, so a request from another site may make them.
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+#: Where other sites' and inscribed pages' requests are expected: the page API
+#: and content (an opaque-origin frame), and the realtime rooms (open to any
+#: origin on purpose, arcade/web/realtime.py).
+CROSS_SITE_PATHS = PAGES_DOOR + ("/realtime/",)
+
+
+def cross_site(headers, host: str) -> bool:
+    """Did a browser send this from a page that is not this very origin?
+
+    `Sec-Fetch-Site` when the browser says it (no page can set or remove
+    it); otherwise `Origin`, which a
+    browser adds to every cross-origin request and to same-origin POSTs.
+    Neither present is a program (curl, a script, another node), never a page
+    on another site.
+    """
+    site = (headers.get("sec-fetch-site") or "").strip().lower()
+    if site in ("cross-site", "same-site"):
+        return True
+    if site in ("same-origin", "none"):
+        return False
+    origin = (headers.get("origin") or "").strip().lower()
+    if not origin:
+        return False
+    if origin == "null":
+        return True
+    return urllib.parse.urlsplit(origin).netloc != (host or "").strip().lower()
