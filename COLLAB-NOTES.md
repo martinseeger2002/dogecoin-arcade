@@ -88,6 +88,43 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-25 · SadFrog's side (Claude, node 2) · branch `team/security-review-2026-10-25` (on `main` 966c0efd) · fixes from a full security review
+SadFrog asked for a full review of the arcade (accounts and keys, inscribed games, trust between nodes, trades and swaps,
+web and updates) and for the critical findings fixed now, everything else left as it is. One commit per fix, each with
+its tests, so they apply as patches one by one:
+1. **Sign-up with a key that already has an account** (`980da33e`): `/signup` proves nothing about holding the key, so
+   a second sign-up under a new name gave a session as the key's owner (reproduced on a test arcade). A key with a vault
+   row or a seat here is refused ("sign in instead"). test_signup_existing_key.
+2. **Escrow release / game state forwarding** (`7b664927`): `terms["node"] + path` from a game's inscribed terms was
+   posted as given, including to this node's own loopback. Now `_peer_endpoint` (plain https, no query, fragment or
+   credentials) + `_post_arcade` (public addresses only, no redirects). test_peer_endpoint.
+3. **Doginals spend guard** (`7c640a5b`): another arcade's index answer may add protection, never remove it. A peer's
+   "nothing on it" (it is asked first by its own claimed walk) is taken only from this arcade's own walk once past the
+   block, or traced on the chain; never cached as final. The explorer's "most complete index" is untouched.
+   test_doginals (5 new; one old test changed: it freed a coin on a peer's empty answer).
+4. **Swaps, who spent a lock** (`e394dca7`): decided by the branch the input script took (htlc.spend_branch), not by
+   an output paying one of my addresses, which a counterparty could pay a crumb to. Python and wallet.js.
+5. **Swaps, secrets of any length** (`4dcafdb0`): any pushed item whose SHA-256 matches the hash lock is the secret
+   (Python, wallet.js, the watchtower); `claim_script_sig` pushes it minimally. The script is unchanged (a future v2
+   could add `OP_SIZE 32 OP_EQUALVERIFY`).
+6. **Swaps, lock times** (`619112d0`): `trade.locktimes_fit` / `locktimesFit` where proposals are accepted
+   (node_trader._consider, answerProposals): T1 - T2 at least max(1 h, half the lock), T2 more than LOCK_MARGIN away
+   and at most twice the lock duration off. The code's own proposals pass.
+7. **"Local" decided by the connection and the name** (`050c1d6d`): local trust now needs a loopback TCP peer AND a
+   loopback Host (localhost, *.localhost, IP literals, or names in `local_hosts`), with no edge headers; a name that
+   merely resolves to 127.0.0.1 is outside. State-changing requests with local trust are refused when cross-site
+   (Origin / Sec-Fetch-Site), except the page API and realtime paths; `/auth/set-password` takes only JSON from its own
+   origin. test_operator_trust.
+- **Node 3** runs 1 + 2 as a stopgap since 2026-10-25 ~06:00 UTC, with its update timer paused until a release has them.
+- **Also found, not changed here** (high/medium, for a later round): the login challenge's origin comes from the server
+  (a node can relay a user's sign-in to another node); several message signatures are made without showing the text
+  (realtime certs, LLM grants and top-ups, with server-chosen words); mainnet review depends on the server's `mainnet`
+  flag; lock-funding transactions are signed without checking their outputs; swaps settle at zero confirmations below
+  the BIG lines; borrowed-Core facts (confirmations) are one sharer's word; orders carry no lister signature; the
+  camera layer sits above arcade prompts; send requests can surface over another game; the mesh's per-origin limits
+  reset with fresh keys. Happy to take any of these on.
+- **Need from your side:** a look, and taking it into a release (then we resume node 3's updates).
+
 ### 2026-10-25 PWA: a menu on a held icon; no robot over an open app (Claude)
 home.html: holding an icon (450 ms) opens a menu -- Edit Home Screen, Open (Go back to it when running), Close (when
 running), Remove from Home Screen (apps); moving the held finger on drags as before. `#arc-bot` is hidden while a window
