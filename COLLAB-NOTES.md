@@ -88,6 +88,33 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-25 · SadFrog's side (Claude, node 2) · branch `team/hardening-r2-wave1` (on `main` 6aa40cdf) · Arcade Hardening round 2, wave 1: money safety
+Wave 1 of SadFrog's "Arcade Hardening, Round 2" (the open items from the security review). One commit per change, each with tests:
+1. **Lock funding read off its own bytes** (`b08d2f79`): before signing a lock's funding (coin, token/NFT, Doginal,
+   DRC-20/PRC-20) or a delegated deposit, wallet.js parses the transaction (`checkFunding`): exactly one output paying the
+   lock script built in the tab (or the order key's p2pkh) with exactly the agreed value, any OP_RETURN exactly the agreed
+   payload, everything else to the user's own keys; otherwise "Nothing was signed." `fundMyLock` and `delegateOrder`
+   exported for tests. test_lock_funding_checks (Node, run_wallet_js).
+2. **Mainnet decided by name; buys, shop halves and trade legs reviewed** (`3879a276`): `isMainnet` from
+   `MAINNETS`/`TESTNETS` (a test fails if config.NETWORKS gains a chain not listed; unknown = mainnet), not the server's flag.
+   `buy`, `shopSign` and `tradeLeg` go through the review on mainnet; the review lists recipients read from the bytes.
+   test_mainnet_review_names.
+3. **Data assets always wait a confirmation** (`b08d2f79`): SadFrog: "swaps can be instant with a cap --
+   data assets like ordinals should always have a conf." `trade.ASSET_CONFIRMATIONS = 1` for any non-coin leg (token, NFT,
+   Doginal, DRC-20/PRC-20), fixed in code and in wallet.js (no swap_big line or /account answer lowers it); coin legs keep
+   0 below the line / 1 at it. Held claims in /account/trade/watch too. Tests in test_trade, test_trade_tab (720 pairings,
+   JS parity), test_trade_watch (regtest).
+4. **Delegated orders: plain warning and per-order caps** (`9f6ea2c4`): the List dialogs say the arcade holds
+   the order's key; caps 1,000 DOGE / 100,000 PEP / 1 LTC (other real-coin chains default to their trade.BIG line;
+   operator setting `delegate_cap:<net>`, 0 = none), enforced in wallet.js before the key leaves the page and in
+   node_trader.delegate / /account/orders/delegate. docs/swaps.md updated. test_delegate_cap.
+- Combined run on this branch: 487 passed, 16 skipped (trade, trade_tab(+browser), trade_watch, delegated_orders,
+  node_trader, doginal_tab_swap, coin/asset pair, trade_fees, shop_browser, account_mainnet, web, public, new files).
+- Left open: DRC-20 lock step 1's commit output is checked only by verifyOffer (the node doesn't send the note's redeem);
+  fill/signTake/bundle/claimPrize still sign without the mainnet review; token/NFT delegated orders get the warning but no
+  cap. Next waves: accounts (split names across arcades, login origin from the browser, 12-character passwords, sessions),
+  honest prompts in games, then trust between nodes.
+
 ### 2026-10-25 Sign-in in three round trips instead of ten (Claude)
 The operator: "Logging into arcade on my @apple account takes an absurdly long time around 3 to 5 seconds." Measured on
 staging with a 200 ms round trip (the public tunnel): 4.16 s from the click to the next page; ten requests one after
