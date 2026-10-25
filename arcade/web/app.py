@@ -11607,6 +11607,11 @@ def create_app(state: AppState) -> FastAPI:
             if owner and owner != address and wanted != _fruit_here(request):
                 raise ValueError(f"@{wanted} is claimed on the chain by another address")
             register = state.accounts()
+            # A key that already has an account here signs in (/auth/login) instead (SadFrog's side, 2026-10-25):
+            # nothing here proves the caller holds the key, so a second sign-up under a new name was a session as
+            # that account's owner, and the address and wallet behind it could then be changed.
+            if state.vault().by_pubkey(pubkey) is not None or register.account(pubkey) is not None:
+                raise ValueError("this key already has an account on this arcade: sign in instead")
             register.join(pubkey)         # a seat, and it may say there is none
             state.vault().put(wanted, pubkey, address, json.dumps(blob))
         except accountslib.SeatsFull as full:
