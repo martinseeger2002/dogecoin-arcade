@@ -178,7 +178,8 @@ export async function address(pubkey, version) {
 //: Bellscoin and Luckycoin (2026-10-22, SadFrog's side) the same way: one key for every real-coin chain.
 //: (Their registered types are 762 and 743/790, and their own wallets derive on 0, so neither would match.)
 //: Kotia (2026-10-23, tbuuol's side) too: an account's KOT key is its Pepecoin mainnet key.
-export const COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3, ltc: 3, bel: 3, lky: 3, kot: 3};
+//: Wojakcoin (2026-10-25) the same way: an account's WJK key is its Pepecoin mainnet key.
+export const COIN_TYPE = {main: 3, test: 1, regtest: 1, doge: 3, ltc: 3, bel: 3, lky: 3, kot: 3, wjk: 3};
 
 //: Litecoin's private-key text prefix (WIF, 0xB0: keys starting with "T"), for importing elsewhere.
 export const LTC_WIF = 0xb0;
@@ -188,8 +189,9 @@ export const LTC_WIF = 0xb0;
 //: of the Dogecoin family 0xF1, Litecoin 0xB0 ("T") and Litecoin testnet 0xEF ("c").
 //: Bellscoin 0x99 and Luckycoin 0xAF (2026-10-22, from their chainparams.cpp SECRET_KEY, checked the same way).
 //: Kotia 0xAD (2026-10-23, chainparams.cpp SECRET_KEY 173, checked with its Core's signmessagewithprivkey).
+//: Wojakcoin 0xC9 (2026-10-25, chainparams.cpp SECRET_KEY 201, checked with its Core's signmessagewithprivkey).
 export const WIF = {main: 0x9e, doge: 0x9e, ltc: LTC_WIF, test: 0xf1, regtest: 0xf1, ltctest: 0xef,
-                    bel: 0x99, lky: 0xaf, kot: 0xad};
+                    bel: 0x99, lky: 0xaf, kot: 0xad, wjk: 0xc9};
 
 //: Litecoin's other address kinds, for saying who a send pays (2026-10-20, tbuuol: L test pays P2SH and
 //: native SegWit). The script-hash version (config.py `scripthash_version`) and the bech32 prefix.
@@ -207,7 +209,8 @@ export async function wif(key, version) {
 const WIF_CHAIN = {main: "Pepecoin main or Dogecoin", doge: "Pepecoin main or Dogecoin",
                    ltc: "Litecoin mainnet", test: "a Pepecoin or Dogecoin test chain",
                    regtest: "a Pepecoin or Dogecoin test chain", ltctest: "Litecoin testnet",
-                   bel: "Bellscoin mainnet", lky: "Luckycoin mainnet", kot: "Kotia mainnet"};
+                   bel: "Bellscoin mainnet", lky: "Luckycoin mainnet", kot: "Kotia mainnet",
+                   wjk: "Wojakcoin mainnet"};
 
 /** A private key out of Wallet Import Format text, for `network` (plan item 18, importing a wallet): base58check,
  *  the version byte this chain's (WIF above), 32 bytes of key, and a trailing 0x01 when its public key is

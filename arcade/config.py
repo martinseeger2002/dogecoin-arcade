@@ -248,6 +248,10 @@ class Params:
     #: Proof-of-stake blocks: a block signature (varint length + DER) follows the transactions, empty on a
     #: proof-of-work block (kotiacash primitives/block.h `vchBlockSig`).
     block_sig: bool = False
+    #: Whether getblockchaininfo's verificationprogress can be trusted as "this node is done". True for a
+    #: chain whose chainTxData matches its real traffic. False when that estimate is a stub: Wojakcoin's
+    #: is 100 transactions a second, so the figure stays near 0.9 at a live tip and never reaches 0.9999.
+    trust_progress: bool = True
 
     @property
     def index_start(self) -> int | None:
@@ -630,8 +634,40 @@ KOTIA = dataclasses.replace(
     tx_time=True, block_sig=True,
 )
 
+# Wojakcoin MAINNET. WojakCoin 1.21.3 (wojakcore chainparams.cpp / chainparamsbase.cpp) is Bitcoin Core's code:
+# Litecoin's relay shape without SegWit (0.0001 WJK/kB, ten times the 1,000 sat/kB minimum relay fee; no soft-dust
+# fee), sha256d proof of work (CBlockHeader::GetHash is SerializeHash), and no AuxPoW. SegWit and Taproot are
+# compiled in but never activate (SegwitHeight and the Taproot deployment are both max/NEVER_ACTIVE), so the
+# "wj" bech32 prefix in chainparams is not used here. Versions, each checked against this chain's own node:
+# P2PKH 73 ("W..."), P2SH 5 ("3...", the same byte Luckycoin and Litecoin's legacy script addresses use, and not
+# any chain's key-hash byte), WIF 201. Policy: an 83-byte OP_RETURN and bare multisig relay (policy.h, policy.cpp).
+# The floor: the tip on 2026-10-25 was 226,542, rounded up about two days ahead at two-minute blocks.
+WJK_MAINNET_FLOOR = 228_000
+
+WOJAKCOIN = dataclasses.replace(
+    LITECOIN,
+    name="wjk",
+    rpc_port=20760,
+    p2p_port=20759,
+    activation_height=WJK_MAINNET_FLOOR,
+    messaging_start_height=WJK_MAINNET_FLOOR,
+    pubkeyhash_version=73,
+    scripthash_version=5,
+    other_pubkeyhash_version=None,
+    coin="WJK",
+    label="Wojakcoin",
+    min_fee_per_kb=10_000,      # 0.0001 WJK/kB: ten times validation.h DEFAULT_MIN_RELAY_TX_FEE (1,000 sat/kB)
+    soft_dust=False, dust_limit=10_000,     # no soft-dust fee; change from 0.0001 WJK (dust relay is 3,000 sat/kB)
+    genesis="000000004536a4f8fa9d88f0001ca9f9825f8d9fd3ba6383a2f030c0427bf085",
+    auxpow_chain_id=None, pow_algo="sha256d", pow_limit_bits=0x1D00FFFF,
+    addon=True, node_dir=".wojakcoin", node_conf="wojakcoin.conf",
+    # "W": no other chain wears it.
+    letter="W", family="WJK", net_word="wojakcoin", real_coins=True, bech32_hrp="", mweb=False,
+    trust_progress=False,
+)
+
 NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN, LITECOIN, LITECOIN_TESTNET,
-                                BELLSCOIN, LUCKYCOIN, KOTIA)}
+                                BELLSCOIN, LUCKYCOIN, KOTIA, WOJAKCOIN)}
 
 def unpayable_versions(params: "Params") -> frozenset:
     """The version bytes of `params`' own script-hash addresses that another known chain uses for a key hash.
@@ -792,6 +828,7 @@ CHAIN_NAMES = {
     "ltctest": "test",
     "bel": "main", "lky": "main",   # Bellscoin and Luckycoin too
     "kot": "main",                  # and Kotia
+    "wjk": "main",                  # and Wojakcoin
 }
 
 

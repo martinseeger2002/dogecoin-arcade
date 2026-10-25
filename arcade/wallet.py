@@ -100,6 +100,51 @@ def receive_address(rpc: RpcClient, label: str = "") -> str:
         raise WalletError(f"could not get an address: {exc}") from None
 
 
+def kept_address(rpc: RpcClient, label: str = "arcade-identity", *, legacy: bool = False) -> str:
+    """The address this wallet keeps under `label`, the same one on every call.
+
+    Dogecoin-family nodes answer `getaccountaddress`. Bitcoin Core 0.17 and later
+    (Wojakcoin) dropped accounts: the label's existing plain address is reused,
+    and a new one is made only when the label is empty. `legacy` asks for a
+    base58 address on a chain whose SegWit never activates, so the wallet does
+    not hand out a bech32 address the chain will not pay.
+    """
+    from .rpc import RpcError
+
+    try:
+        return str(rpc.call("getaccountaddress", label))
+    except RpcError as exc:
+        if exc.code != -32601:
+            raise
+    got: dict = {}
+    try:
+        found = rpc.call("getaddressesbylabel", label) or {}
+        if isinstance(found, dict):
+            got = found
+    except RpcError as exc:
+        if exc.code != -11:                       # no addresses filed under this label yet
+            raise
+    plain = []
+    for index, addr in enumerate(got):
+        info: dict = {}
+        try:
+            info = rpc.call("getaddressinfo", addr) or {}
+        except RpcError:
+            info = {}
+        if info.get("iswitness") or info.get("isscript"):
+            continue
+        # The earliest address under the label, not the one that sorts first. A new address that
+        # sorts earlier must not become the wallet's address (the same slip getaccountaddress had).
+        when = info.get("timestamp")
+        plain.append((int(when) if isinstance(when, (int, float)) and when else None, index, str(addr)))
+    if plain:
+        plain.sort(key=lambda item: (item[0] is None, item[0] or 0, item[1]))
+        return plain[0][2]
+    if got and not legacy:
+        return next(iter(got))
+    return str(rpc.call("getnewaddress", label, "legacy") if legacy else rpc.call("getnewaddress", label))
+
+
 def prepare_send(rpc: RpcClient, destination: str, amount_sats: int,
                  subtract_fee: bool = False) -> PreparedSend:
     """Build, fund and sign a payment. Does NOT broadcast."""

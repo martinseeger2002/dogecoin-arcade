@@ -4492,7 +4492,8 @@ def create_app(state: AppState) -> FastAPI:
         if ctx is state.messaging and state.derived_address:
             return state.derived_address
         with ctx.rpc() as rpc:
-            return str(rpc.call("getaccountaddress", "arcade-identity"))
+            return walletlib.kept_address(
+                rpc, legacy=not bool(getattr(ctx.params, "bech32_hrp", "")))
 
     def _node_addresses(ctx, which: str) -> list[str]:
         if which.startswith("key:"):
@@ -4508,6 +4509,7 @@ def create_app(state: AppState) -> FastAPI:
             row: dict[str, Any] = {"network": ctx.network, "label": ctx.label, "title": ctx.title,
                                    "coin": ctx.params.coin, "mainnet": bool(ctx.is_mainnet),
                                    "version": ctx.params.pubkeyhash_version, "which": which,
+                                   "net": ctx.net, "letter": ctx.letter,
                                    "doge": bool(ctx.is_doge), "ltc": bool(ctx.is_ltc),
                                    "ltctest": bool(ctx.is_ltc_test)}
             try:

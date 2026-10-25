@@ -143,7 +143,8 @@ def test_the_browser_keeps_the_same_reserve():
     assert num(r"ltc: ([0-9_ *]+)[,}]") == T.BIG["ltc"], "Litecoin's big line, the same both sides"
     assert num(r"bel: ([0-9_ *]+)[,}]") == T.BIG["bel"] and num(r"lky: ([0-9_ *]+)[,}]") == T.BIG["lky"], \
         "Bellscoin's and Luckycoin's too (2026-10-22)"
-    assert num(r"kot: ([0-9_ *]+)\}") == T.BIG["kot"], "and Kotia's (2026-10-23)"
+    assert num(r"kot: ([0-9_ *]+)[,}]") == T.BIG["kot"], "and Kotia's (2026-10-23)"
+    assert num(r"wjk: ([0-9_ *]+)\}") == T.BIG["wjk"], "and Wojakcoin's"
     assert num(r"CLAIM_MARGIN: ([0-9 *]+),") == T.CLAIM_MARGIN and num(r"LOCK_MARGIN: ([0-9 *]+),") == T.LOCK_MARGIN
 
 

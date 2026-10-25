@@ -1,4 +1,4 @@
-"""Inscribing an ord -- a Doginal, a Pepinal, a Bellinal or a Luckinal -- from the account's own wallet (the operator
+"""Inscribing an ord -- a Doginal, a Pepinal, a Bellinal, a Luckinal or a Wojakinal -- from the account's own wallet (the operator
 2026-10-23: "We created a Doge ord inscriber for completing the anti doginal dogs collection I want to add the option to
 inscribe an ORD under the creator tab. Make sure that the inscriber follows the rules of each chain individually because
 some of them are different"; asked, DOGE, PEP, BEL and LKY first, the player's own wallet signs).
@@ -71,11 +71,12 @@ RULES = {
     "main": Rules("Pepinal", "pepecoin", 240, True, "ord-pepecoin"),
     "bel": Rules("Bellinal", "dogecoin", 240, False, "Nintondo ord (Doginals kind)"),
     "lky": Rules("Luckinal", "dogecoin", 240, False, "Doginals-kind indexers"),
+    "wjk": Rules("Wojakinal", "dogecoin", 240, False, "wojakinals (Doginals kind)"),
     # Pepecoin testnet, for trying it with coins that cost nothing.
     "test": Rules("Pepinal", "pepecoin", 240, True, "pepecoin-ord-indexer"),
 }
 #: The ones the page offers first (the operator's answer); test chains are added where the arcade runs them.
-CHAINS = ("doge", "main", "bel", "lky")
+CHAINS = ("doge", "main", "bel", "lky", "wjk")
 
 
 class OrdError(ValueError):
@@ -85,7 +86,7 @@ class OrdError(ValueError):
 def rules_of(net: str) -> Rules:
     got = RULES.get(net)
     if got is None:
-        raise OrdError("ords are inscribed on Dogecoin, Pepecoin, Bellscoin and Luckycoin")
+        raise OrdError("ords are inscribed on Dogecoin, Pepecoin, Bellscoin, Luckycoin and Wojakcoin")
     return got
 
 

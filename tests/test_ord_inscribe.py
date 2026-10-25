@@ -13,7 +13,7 @@ from test_doginal_index import FUND, Chain, _tx_to  # noqa: E402
 
 PUBKEY = bytes.fromhex("02" + "11" * 32)
 PARAMS = {"doge": config.DOGECOIN, "main": config.MAINNET, "bel": config.BELLSCOIN, "lky": config.LUCKYCOIN,
-          "test": config.TESTNET}
+          "wjk": config.WOJAKCOIN, "test": config.TESTNET}
 
 
 def _to(net):
@@ -54,7 +54,7 @@ def test_the_layout_is_the_anti_doginal_dogs_inscribers():
 
 
 def test_an_empty_file_is_an_inscription_only_on_pepecoin():
-    for net in ("doge", "bel", "lky"):
+    for net in ("doge", "bel", "lky", "wjk"):
         with pytest.raises(oi.OrdError):
             oi.plan(net, PARAMS[net], "text/plain", b"", PUBKEY, _to(net))
     p = oi.plan("main", PARAMS["main"], "text/plain", b"", PUBKEY, _to("main"))
@@ -66,14 +66,14 @@ def test_fees_follow_each_chain():
     none. Every lock holds exactly what the reveals after it pay plus the postage."""
     data = os.urandom(5000)
     got = {}
-    for net in ("doge", "main", "bel", "lky"):
+    for net in ("doge", "main", "bel", "lky", "wjk"):
         p = oi.plan(net, PARAMS[net], "image/png", data, PUBKEY, _to(net))
         for i in range(p.reveals):
             assert p.values[i] - p.fees[i] == p.out_value(i)
         assert p.out_value(p.reveals - 1) == oi.POSTAGE
         got[net] = p.fees[-1]
     assert got["doge"] == got["main"] == got["lky"] > 1_000_000, "the soft-dust fee on the ord's coin"
-    assert got["bel"] < 100_000, "Bellscoin: Bitcoin Core's relay, no soft dust"
+    assert got["bel"] < 100_000 and got["wjk"] < 100_000, "Bellscoin and Wojakcoin: Bitcoin Core's relay, no soft dust"
 
 
 def test_too_big_is_refused():

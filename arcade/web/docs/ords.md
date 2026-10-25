@@ -1,7 +1,7 @@
 # Inscribing ords from your wallet
 
-**Creator → Ords** inscribes a file as an ord on Dogecoin (a Doginal), Pepecoin (a Pepinal), Bellscoin (a Bellinal) or
-Luckycoin (a Luckinal). Your own wallet pays and signs, and the ord lands on your own address on that chain.
+**Creator → Ords** inscribes a file as an ord on Dogecoin (a Doginal), Pepecoin (a Pepinal), Bellscoin (a Bellinal),
+Luckycoin (a Luckinal) or Wojakcoin (a Wojakinal). Your own wallet pays and signs, and the ord lands on your own address on that chain.
 
 ## How it works
 
@@ -32,6 +32,7 @@ planned transactions back under those rules.
 | Pepecoin | Pepinal | ord-pepecoin | 240 bytes | 0.01 PEP a kB, plus the soft-dust fee | allowed |
 | Bellscoin | Bellinal | Nintondo ord (the Doginals kind) | 240 bytes | 0.0001 BEL a kB, no soft-dust fee | not an inscription |
 | Luckycoin | Luckinal | Doginals-kind indexers | 240 bytes | 0.01 LKY a kB, plus the soft-dust fee | not an inscription |
+| Wojakcoin | Wojakinal | wojakinals (the Doginals kind) | 240 bytes | 0.0001 WJK a kB, no soft-dust fee | not an inscription |
 
 Files up to 400 kB are taken.
 

@@ -59,7 +59,9 @@ BIG = {"main": 1_000_000 * 100_000_000, "doge": 1_000 * 100_000_000,
         # confirmation early until the operator sets swap_big:bel / swap_big:lky to the coins' worth.
         "bel": 200 * 100_000_000, "lky": 20 * 100_000_000,
         # Kotia (2026-10-23, tbuuol's side): low on purpose too, until the operator sets swap_big:kot.
-        "kot": 100 * 100_000_000}
+        "kot": 100 * 100_000_000,
+        # Wojakcoin (2026-10-25): low on purpose too, until the operator sets swap_big:wjk.
+        "wjk": 100 * 100_000_000}
 #: Never claim the responder's lock when less than this is left on it: the responder
 #: must still have time to see the secret and claim the initiator's lock before T1.
 CLAIM_MARGIN = 20 * 60

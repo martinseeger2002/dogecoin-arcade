@@ -19,7 +19,7 @@
     let held = null;
     const keys = async () => held || (held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN));
     const coinName = (n) => n === "doge" ? "DOGE" : n === "main" ? "PEP" : n === "ltc" ? "LTC"
-      : n === "ltctest" ? "LTC TEST" : n === "bel" ? "BEL" : n === "lky" ? "LKY" : n === "kot" ? "KOT" : "PEP TEST";
+      : n === "ltctest" ? "LTC TEST" : n === "bel" ? "BEL" : n === "lky" ? "LKY" : n === "kot" ? "KOT" : n === "wjk" ? "WJK" : "PEP TEST";
     const amt = (leg) => leg.label || (leg.kind === "doginal" ? `Doginal ${String(leg.asset).slice(0, 8)}\u2026${String(leg.asset).replace(/^[0-9a-f]{64}/, "")}`
       : leg.kind === "token" ? `${leg.amount} of token #${leg.asset}`
       : leg.kind === "token20" ? `${leg.amount} ${leg.asset}`

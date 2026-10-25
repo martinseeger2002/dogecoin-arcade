@@ -919,7 +919,7 @@ function drawHead() {
   if (c.held) bits.push(["out", `${coinsOf(c.held)} held for your offers`]);
   // Coins carrying an inscription are held, not spendable (2026-10-15): said beside the number they are left out of.
   const inscWord = c.network === "doge" ? "Doginals" : (c.network === "ltc" || c.network === "ltctest") ? "Litecoin inscriptions" : c.network === "main" ? "Pepinals"
-    : c.network === "bel" ? "Bellinals" : c.network === "lky" ? "Luckinals" : "inscriptions";
+    : c.network === "bel" ? "Bellinals" : c.network === "lky" ? "Luckinals" : c.network === "wjk" ? "Wojakinals" : "inscriptions";
   // An imported wallet's own (2026-10-22): its number is what it can send; what is held is said beside it.
   const held1 = w ? (w.status || {}) : c;
   if (held1.inscribed) bits.push(["out", `${coinsOf(held1.inscribed)} held in ${inscWord}`]);
@@ -1443,10 +1443,11 @@ async function step1(s, d) {
     // Which coin a payment code names, against the one picked (Litecoin: "litecoin:" / "ltc:", 2026-10-17).
     const family = (s) => s.startsWith("doge") ? "doge" : (s.startsWith("lite") || s.startsWith("ltc")) ? "ltc"
       : (s.startsWith("bel")) ? "bel" : (s.startsWith("lucky") || s.startsWith("lky")) ? "lky"
-      : (s.startsWith("kotia") || s.startsWith("kot")) ? "kot" : "pep";
-    const named = {doge: "Dogecoin", ltc: "Litecoin", pep: "Pepecoin", bel: "Bellscoin", lky: "Luckycoin", kot: "Kotia"};
+      : (s.startsWith("kotia") || s.startsWith("kot")) ? "kot"
+      : (s.startsWith("wojak") || s.startsWith("wjk")) ? "wjk" : "pep";
+    const named = {doge: "Dogecoin", ltc: "Litecoin", pep: "Pepecoin", bel: "Bellscoin", lky: "Luckycoin", kot: "Kotia", wjk: "Wojakcoin"};
     const here = c.network === "doge" ? "doge" : (c.network === "ltc" || c.network === "ltctest") ? "ltc"
-      : (c.network === "bel" || c.network === "lky" || c.network === "kot") ? c.network : "pep";
+      : (c.network === "bel" || c.network === "lky" || c.network === "kot" || c.network === "wjk") ? c.network : "pep";
     if (got.coin && family(got.coin) !== here)
       toast(`That code asks for ${named[family(got.coin)]}: switch coins at the top first.`);
     to.value = got.to;
@@ -2225,7 +2226,8 @@ function dgPageGo(n) {
 
 //: The chains whose inscriptions the wallet shows: one word for one, its coin, and how its coins are named.
 const ORD_WORDS = {doge: ["Doginal", "DOGE", "Dogecoin"], main: ["Pepinal", "PEP", "PEP"],
-                   bel: ["Bellinal", "BEL", "Bellscoin"], lky: ["Luckinal", "LKY", "Luckycoin"]};
+                   bel: ["Bellinal", "BEL", "Bellscoin"], lky: ["Luckinal", "LKY", "Luckycoin"],
+                   wjk: ["Wojakinal", "WJK", "Wojakcoin"]};
 
 async function drawDoginals() {
   const box = $("doginals");

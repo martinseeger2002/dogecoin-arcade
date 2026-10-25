@@ -88,6 +88,23 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-25 · the operator's side · branch `add-wojakcoin-mainnet` · Wojakcoin mainnet as an add-on chain
+Wojakcoin (WJK), Wojak Core 1.21.3, added the same way as Bellscoin, Luckycoin and Kotia. `WOJAKCOIN` is
+`LITECOIN` with the Bitcoin-Core values from chainparams: P2PKH 73 (`W`), P2SH 5, WIF 201, ports 20760/20759,
+sha256d, no AuxPoW, no SegWit (the `wj` bech32 prefix is compiled in and never activates). Floor 228,000.
+Swaps and takes stay `None`. `trust_progress=False`: its chainTxData is a 100 tx/s stub, so
+`verificationprogress` sits near 0.9 at a caught-up tip and the wallet would otherwise leave the chain gray.
+- Wallet: Wojak Core has no `getaccountaddress`. The node Wallet drops a chain whose address comes back empty,
+  so the coins were in the Core wallet and missing from the page. `wallet.kept_address` uses the label on a
+  Core without accounts, keeps the earliest legacy address, and is what the node wallet, `home_address` and
+  `payout_address` ask. The state row also carries `net` and `letter`.
+- Ord: Doginals dialect, `STARTS["wjk"]=1` (ord-wojakcoin `first_inscription_height`), word Wojakinal. The index
+  stays off until Admin → Ords. Sends of coins work; swaps and Wojakinal sends stay closed.
+- Docs `wojakcoin.md`, icon `coin-wjk.png` (the Qt icon, not the recolored Bitcoin mark), `tests/test_wojakcoin.py`
+  plus the exact-table checks in the Bells, account, trade, doginal and ord tests.
+- Needs from the other side: apply it like the Bells/Lucky/Kotia branch. A node that wants Wojakcoin runs
+  wojakcoind with `~/.wojakcoin/wojakcoin.conf`. Checked live: the node Wallet lists WJK with a `W` address.
+
 ### 2026-10-24 Contacts test reads only contactsChange (Claude)
 The node-hop door (`accessDoor`, from `team/in-game-wallet-access`) sits between `contactsChange` and the message
 listener in `_page_doors.js.html`, so `test_contacts_bridge` counted its "Play ... on ...?" card as a third contacts

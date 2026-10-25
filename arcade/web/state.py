@@ -1472,11 +1472,14 @@ class AppState:
                 info = rpc.get_blockchain_info()
             blocks, headers = int(info.get("blocks", 0)), int(info.get("headers", 0))
             progress = float(info.get("verificationprogress", 0) or 0)
+            # verificationprogress is an estimate. A chain whose chainTxData is a stub (Wojakcoin: 100 tx/s)
+            # never reaches 0.9999 at a live tip, so caught-up headers are what "ready" means there.
+            progress_ok = progress >= 0.9999 or not getattr(chain.params, "trust_progress", True)
             said = {"online": True, "blocks": blocks, "headers": headers,
                     "progress": min(1.0, progress),
                     "ready": (not info.get("initialblockdownload", True)
                               and headers > 0 and headers - blocks <= 2
-                              and progress >= 0.9999)}
+                              and progress_ok)}
         except Exception:
             pass
         self._sync[chain.network] = (now + self.SYNC_SECONDS, said)
@@ -1888,7 +1891,8 @@ class AppState:
             if found:
                 return found
         with chain.rpc() as rpc:
-            return str(rpc.call("getaccountaddress", "arcade-identity"))
+            from ..wallet import kept_address
+            return kept_address(rpc, legacy=not bool(getattr(chain.params, "bech32_hrp", "")))
 
     def payout_address(self, chain: Any) -> str:
         """Where this arcade is paid on `chain` when no Core wallet of its own there holds an address: a sharer's
@@ -1916,7 +1920,8 @@ class AppState:
         if not getattr(chain, "borrowed", False):
             try:
                 with chain.rpc() as rpc:
-                    return str(rpc.call("getaccountaddress", "arcade-identity"))
+                    from ..wallet import kept_address
+                    return kept_address(rpc, legacy=not bool(getattr(chain.params, "bech32_hrp", "")))
             except Exception:                                  # noqa: BLE001 -- a Core without accounts
                 pass
         # Its identity key's address there, which Admin -> The node's coins spends (keywallet.py).
