@@ -69,3 +69,32 @@ def test_the_pepinals_tab_lists_for_pep(client):
     tab = app.get("/exchange?tab=pepinals").text
     assert "Pepinals listed for PEP" in tab and "No Pepinals are listed yet" in tab
     assert "Doginal" not in tab.split("<main", 1)[1].split("</main>", 1)[0].replace("doginal", "")
+
+
+def test_pepecoin_testnet_coins_are_guarded_by_their_own(app_state, monkeypatch):
+    """Pepecoin testnet's ords are indexed and inscribed here too (2026-10-25), so an ordinary send there keeps an
+    inscribed coin out like mainnet's: its own guard, found by its key byte (113) alone."""
+    from fastapi.testclient import TestClient
+    from arcade.web.app import create_app
+    from arcade.web.state import ChainContext
+    monkeypatch.setattr(funding, "GUARD", None)
+    monkeypatch.setattr(funding, "GUARDS", [])
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {})
+    monkeypatch.setattr(app_state, "messaging", ChainContext(network="test", role="messaging", label="Testnet",
+                                                             datadir=pathlib.Path("/nonexistent")))
+    TestClient(create_app(app_state))
+    main, test = funding.guard_on("main"), funding.guard_on("test")
+    assert main is not None and test is not None and main is not test
+    tpep = b58check_encode(NETWORKS["test"].pubkeyhash_version, hash160(_pubkey(0x7E57)))
+    assert funding.guard_for(tpep) is test and funding.guard_for(SELLER) is main
+    for other in (30, 111, 196, 48):            # Dogecoin, L test / regtest keys, P2SH 196, Litecoin
+        assert funding.guard_for(b58check_encode(other, bytes(range(20)))) is not test
+    # The installed guard reads a fake index: the small inscribed coin stays put, the clean one pays.
+    fake = _guard(pathlib.Path(app_state.home), {INS_TX: [(0, INSCRIPTION, 0)]})
+    test.index, test.rpc_factory, test.fetch = None, None, fake.fetch
+    coins = [{"txid": INS_TX, "vout": 0, "value": 100_000}, {"txid": CLEAN_TX, "vout": 0, "value": 200_000}]
+    monkeypatch.setattr(utxos, "unspent", lambda db, address: [dict(c) for c in coins])
+    got = funding.choose(None, tpep, 150_000)
+    assert [(c["txid"], c["vout"]) for c in got] == [(CLEAN_TX, 0)], "the inscribed coin is never chosen"
+    with pytest.raises(funding.FundingError):
+        funding.choose(None, tpep, 250_000)     # only the inscribed coin could cover it: refused, not spent

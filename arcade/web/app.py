@@ -859,19 +859,23 @@ def create_app(state: AppState) -> FastAPI:
                                                     index=_ord_index_of("doge"))
             fundinglib.GUARD_BY_NET["doge"] = fundinglib.GUARD
             _guards.append(fundinglib.GUARD)
-        _main = next((c for c in state.all_chains if c.network == "main"), None)
-        if _main is not None:
-            _pep = _doginals.Doginals(Path(state.home) / "pep-inscriptions.sqlite", rpc_factory=_main.rpc,
-                                      index=_ord_index_of("main"))
-            _version = NETWORKS["main"].pubkeyhash_version
+        # Pepecoin testnet the same way (2026-10-25): its ord index walks it and ords are inscribed there, so an
+        # ordinary send there keeps inscribed coins out too. Its key byte 113 is its own; like mainnet's guard it
+        # watches that byte alone (its P2SH 196 is L test's older one too).
+        for _pnet, _pfile in (("main", "pep-inscriptions.sqlite"), ("test", "test-inscriptions.sqlite")):
+            _pchain = next((c for c in state.all_chains if c.network == _pnet), None)
+            if _pchain is None:
+                continue
+            _pep = _doginals.Doginals(Path(state.home) / _pfile, rpc_factory=_pchain.rpc,
+                                      index=_ord_index_of(_pnet))
 
-            def _on_pep_main(address: str, _v=_version) -> bool:
+            def _on_pep(address: str, _v=NETWORKS[_pnet].pubkeyhash_version) -> bool:
                 try:
                     return b58check_decode(str(address))[0] == _v
                 except Exception:
                     return False
-            fundinglib.GUARDS = [(_on_pep_main, _pep)]
-            fundinglib.GUARD_BY_NET["main"] = _pep
+            fundinglib.GUARDS = [*fundinglib.GUARDS, (_on_pep, _pep)]
+            fundinglib.GUARD_BY_NET[_pnet] = _pep
             _guards.append(_pep)
         # Every other add-on chain the same way (2026-10-22, SadFrog's side: Bellscoin and Luckycoin beside
         # Litecoin), each in its own <net>-inscriptions.sqlite.
