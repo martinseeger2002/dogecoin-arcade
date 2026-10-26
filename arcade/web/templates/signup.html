@@ -25,6 +25,14 @@
 {% endif %}
 
 <div id="forms" {% if not secure_enough or free <= 0 %}hidden{% endif %}>
+  {# Issue #15 (2026-10-25): players who "Played on another arcade" made a new character here, with a new empty
+     wallet, under their own name. The way to their real account is said first. #}
+  <div class="panel" id="played-elsewhere" style="border-color:var(--accent)">
+    <p style="margin:0"><strong>Played on another arcade?</strong>
+      <a href="#in-tag" id="to-signin">Sign in</a> with the same name and password: this arcade finds your account
+      there and brings it here. A new account here is a new, empty wallet.</p>
+  </div>
+
   <div class="panel" id="make">
     <h2 style="margin-top:0">Make an account</h2>
     <div class="field">
@@ -195,8 +203,22 @@ function wire() {
         ? `@${said.tag} is free`
         : (said.detail || "that name cannot be used");
       $("tag-said").style.color = said.free ? "var(--ok)" : "var(--bad)";
+      // Held on another arcade (issue #15): its sign-in, one click away, with the name filled in.
+      if (said.elsewhere) {
+        const go = document.createElement("a");
+        go.href = "#in-tag";
+        go.textContent = ` Sign in as @${said.tag}`;
+        go.onclick = (e) => { e.preventDefault(); toSignIn(said.tag); };
+        $("tag-said").appendChild(go);
+      }
     }, 300);
   };
+  const toSignIn = (name) => {
+    if (name) $("in-tag").value = name;
+    $("in-tag").scrollIntoView({block: "center"});
+    ($("in-tag").value ? $("in-pw") : $("in-tag")).focus();
+  };
+  $("to-signin").onclick = (e) => { e.preventDefault(); toSignIn($("tag").value.trim().replace(/^@/, "")); };
 
   // What they have chosen, said plainly, as they type. Below twelve characters it says the rule, and "Create my
   // account" refuses it (2026-10-25, issue #12, SadFrog: "12-character minimum for new passwords"; wallet.js signUp).

@@ -11728,12 +11728,29 @@ def create_app(state: AppState) -> FastAPI:
             on_chain = state.token_index(_account_chain()).address_of(wanted) or ""
         except Exception:
             pass                          # a node still catching up says nothing
+        # Held on another arcade (issue #15, 2026-10-25: players "Played on another arcade" and then made a new
+        # character here, with a new empty wallet, under the name of their real one): the arcades this one knows are
+        # asked, a few seconds at most, and the answer kept a while. Only for a name free here and on the chain; and
+        # past 20 new names in 5 minutes from one address, not asked, so this check is no way to make this arcade
+        # send many requests. Arcades that do not answer in time say nothing, as a node still reading the chain.
+        elsewhere = None
+        if not here and not on_chain and wanted != _fruit_here(request):
+            register = state.accounts()
+            who = f"namecheck:{request.client.host if request.client else ''}"
+            now = int(time.time())
+            limited = register._rate_limited(who, now)
+            if not limited:
+                register._attempt(who, now)
+            elsewhere = _vault_elsewhere(wanted, wait=NAME_CHECK_WAIT, ask=not limited)
+        there = (elsewhere or {}).get("from", "").removeprefix("https://")
         return JSONResponse({
-            "tag": wanted, "free": not here and not on_chain,
-            "here": here, "on_chain": bool(on_chain),
+            "tag": wanted, "free": not here and not on_chain and not there,
+            "here": here, "on_chain": bool(on_chain), "elsewhere": there,
             "detail": (f"@{wanted} is already signed up on this node"
                        if here else
-                       f"@{wanted} is claimed on the chain" if on_chain else ""),
+                       f"@{wanted} is claimed on the chain" if on_chain else
+                       f"@{wanted} already has an account on {there}: sign in instead, with the same name and "
+                       f"password, and this arcade brings it here" if there else ""),
         })
 
     @app.post("/signup")
@@ -11768,6 +11785,18 @@ def create_app(state: AppState) -> FastAPI:
             # (arcade/fruit.py, mesh/fruitshare.py; 2026-10-20).
             if owner and owner != address and wanted != _fruit_here(request):
                 raise ValueError(f"@{wanted} is claimed on the chain by another address")
+            # A name another arcade holds under another key is not signed up fresh here either (issue #15,
+            # 2026-10-25): its player would get a new empty wallet and lose their way to the real one. The same key
+            # is the same person bringing their account (wallet.js `bringHere`), and is filed. Only for a name the
+            # chain does not settle already; the arcades get a few seconds, the answer is kept a while, and when none
+            # is known or none answers in time the sign-up goes ahead as before (the chain's first claim still
+            # decides who holds the name).
+            if not owner and wanted != _fruit_here(request) and not state.vault().taken(wanted):
+                held = _vault_elsewhere(wanted, wait=SIGNUP_ELSEWHERE_WAIT)
+                if held and held.get("pubkey") and held["pubkey"] != pubkey:
+                    there = str(held.get("from") or "").removeprefix("https://")
+                    raise ValueError(f"@{wanted} already has an account on {there}: sign in instead, with the "
+                                     f"same name and password, and this arcade brings it here")
             register = state.accounts()
             # A key that already has an account here signs in (/auth/login) instead (SadFrog's side, 2026-10-25):
             # nothing here proves the caller holds the key, so a second sign-up under a new name was a session as
@@ -12263,46 +12292,73 @@ def create_app(state: AppState) -> FastAPI:
                 hosts.append(h)
         return hosts[:16]
 
-    def _vault_elsewhere(tag: str) -> dict | None:
+    def _ask_vault(host: str, name: str, owner: str = "", timeout: float = 8) -> dict | None:
+        """One arcade's sealed wallet for a name, or None: `?here=1`, so it never asks on. With `owner` (the address
+        the chain says holds the @name), only that address's wallet is taken."""
+        got = _ask_arcade(f"https://{host}/signin/{urllib.parse.quote(name)}?here=1", timeout=timeout,
+                           headers={"User-Agent": "arcade-node"})
+        if got.status_code == 429:
+            raise ArcadeBusy(host)                          # its sign-in limit: not a "no"
+        said = got.json() if got.status_code == 200 else None
+        blob = said.get("blob") if isinstance(said, dict) else None
+        if not isinstance(blob, dict) or not blob.get("sealed"):
+            return None
+        if owner and str(said.get("address") or "") != owner:
+            return None
+        return {"tag": str(said.get("tag") or name), "pubkey": str(said.get("pubkey") or "").lower(),
+                "address": str(said.get("address") or ""), "blob": blob, "from": f"https://{host}",
+                "elsewhere": True}
+
+    def _vault_elsewhere(tag: str, wait: float | None = None, ask: bool = True) -> dict | None:
         """An account's sealed wallet from whichever known arcade holds it, or None. When the chain says who holds
         the @name, only that address's wallet is taken; either way the browser opens it with the password, so a
-        wrong one opens nothing. Kept a few minutes, so a sign-in page is not a way to make many requests."""
+        wrong one opens nothing. Kept a few minutes, so a sign-in page is not a way to make many requests.
+
+        `wait`: the most seconds a caller that cannot wait gives the arcades (the name check and sign-up, issue #15,
+        2026-10-25: "Played on another arcade" then a new character). An answer that comes later is still kept, for
+        the next ask; None in the meantime. `ask=False`: only an answer kept already."""
         name = str(tag or "").strip().lstrip("@").lower()
         if not re.fullmatch(r"[a-z0-9_.\-]{1,40}", name):
             return None
         kept = _elsewhere_kept.get(name)
         if kept and time.time() - kept[0] < (600 if kept[1] else 60):
             return kept[1]
+        if not ask:
+            return None
         try:
             owner = state.token_index(_account_chain()).address_of(name) or ""
         except Exception:                                   # noqa: BLE001
             owner = ""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as Late, as_completed
 
-        def ask(host: str) -> dict | None:
-            got = _ask_arcade(f"https://{host}/signin/{urllib.parse.quote(name)}?here=1", timeout=8,
-                               headers={"User-Agent": "arcade-node"})
-            said = got.json() if got.status_code == 200 else None
-            blob = said.get("blob") if isinstance(said, dict) else None
-            if not isinstance(blob, dict) or not blob.get("sealed"):
-                return None
-            if owner and str(said.get("address") or "") != owner:
-                return None
-            return {"tag": str(said.get("tag") or name), "pubkey": str(said.get("pubkey") or ""),
-                    "address": str(said.get("address") or ""), "blob": blob, "from": f"https://{host}",
-                    "elsewhere": True}
+        def keep_late(job) -> None:
+            try:
+                got = job.result()
+            except Exception:                               # noqa: BLE001 -- that arcade did not answer
+                return
+            if got:
+                _elsewhere_kept[name] = (time.time(), got)
 
         found = None
         hosts = _arcade_hosts()
         if hosts:
-            with ThreadPoolExecutor(max_workers=min(8, len(hosts))) as pool:
-                for job in as_completed([pool.submit(ask, h) for h in hosts]):
+            pool = ThreadPoolExecutor(max_workers=min(8, len(hosts)))
+            jobs = [pool.submit(_ask_vault, h, name, owner) for h in hosts]
+            try:
+                for job in as_completed(jobs, timeout=wait):
                     try:
                         found = job.result()
                     except Exception:                       # noqa: BLE001 -- that arcade did not answer
                         found = None
                     if found:
                         break
+            except Late:
+                _elsewhere_kept[name] = (time.time(), None)
+                for job in jobs:
+                    job.add_done_callback(keep_late)
+                return None
+            finally:
+                pool.shutdown(wait=wait is None)
         _elsewhere_kept[name] = (time.time(), found)
         return found
 
@@ -27848,6 +27904,98 @@ def create_app(state: AppState) -> FastAPI:
                       "choices": [[b.key, b.name] for b in brandlib.BRANDS.values()]},
         }, headers={"Cache-Control": "no-store"})
 
+    # --- names another arcade holds under another key (issue #15, 2026-10-25) ------------------------------------
+    # SadFrog: "Existing split names: decide case by case after the admin check lists them". One pass at a time, in
+    # the background: every name this arcade keeps a wallet for, asked of every arcade it knows (`?here=1`), each of
+    # them at most once every SPLIT_ASK_PACE seconds, so the pass never uses up their sign-in limit. Read only:
+    # nothing here is changed or removed; the operator decides each name.
+    _split: dict = {"running": False, "began": 0, "finished": 0, "names": 0, "hosts": [], "asked": 0, "busy": 0,
+                    "quiet": [], "held": {}}
+    _split_lock = threading.Lock()
+
+    def _split_pass(rows: list[dict], hosts: list[str]) -> None:
+        def walk(host: str) -> None:
+            missed, answered = 0, False
+            for i, row in enumerate(rows):
+                if i:
+                    time.sleep(SPLIT_ASK_PACE)
+                said, busy = None, False
+                for attempt in range(2):
+                    try:
+                        said, busy = _ask_vault(host, row["tag"]), False
+                    except ArcadeBusy:
+                        busy = True
+                        if attempt == 0:
+                            time.sleep(SPLIT_ASK_PACE * 10)     # its limit is 5 minutes long
+                            continue
+                    except Exception:                       # noqa: BLE001 -- did not answer
+                        said = False
+                    break
+                with _split_lock:
+                    _split["asked"] += 1
+                    if busy:
+                        _split["busy"] += 1
+                    elif said is False:
+                        missed += 1
+                        if missed >= 3 and not answered:    # three in a row, never an answer: not asked on
+                            _split["quiet"].append(host)
+                            return
+                    else:
+                        missed, answered = 0, True
+                        if said and said.get("pubkey") and said["pubkey"] != str(row["pubkey"]).lower():
+                            _split["held"].setdefault(row["tag"], []).append(
+                                {"host": host, "pubkey": said["pubkey"], "address": said["address"]})
+
+        try:
+            lanes = [threading.Thread(target=walk, args=(h,), name=f"split-{h}", daemon=True) for h in hosts]
+            for lane in lanes:
+                lane.start()
+            for lane in lanes:
+                lane.join()
+        finally:
+            with _split_lock:
+                _split["running"], _split["finished"] = False, int(time.time())
+
+    @app.get("/admin/api/split-names")
+    def admin_split_names(request: Request, again: int = 0):
+        """Admin -> People & brand: the names this arcade keeps a wallet for that another arcade holds under another
+        key (issue #15), so the operator can decide case by case. The first look starts a pass; `again=1` starts a
+        new one. Each name: this arcade's copy (key, address, made, claim, last seen), each other arcade's, and which
+        address the chain says holds the @name."""
+        _admin_check(request)
+        with _split_lock:
+            start = not _split["running"] and (bool(again) or not _split["began"])
+            if start:
+                rows = state.vault().names()
+                hosts = _arcade_hosts()
+                _split.update(running=True, began=int(time.time()), finished=0, names=len(rows), hosts=hosts,
+                              asked=0, busy=0, quiet=[], held={})
+        if start:
+            threading.Thread(target=_split_pass, args=(rows, hosts), name="split-names", daemon=True).start()
+        with _split_lock:
+            seen = {k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v)
+                    for k, v in _split.items()}
+        register = state.accounts()
+        names = []
+        for tag, there in sorted(seen.pop("held").items()):
+            mine = state.vault().get(tag)
+            if mine is None:
+                continue                                    # gone from here since
+            try:
+                owner = state.token_index(_account_chain()).address_of(tag) or ""
+            except Exception:                               # noqa: BLE001 -- a node still reading the chain
+                owner = ""
+            account = register.account(mine["pubkey"])
+            names.append({
+                "tag": tag, "pubkey": mine["pubkey"], "address": mine["address"], "made": mine["made"],
+                "claimed": mine["claimed"], "seen": account.seen if account else None,
+                "elsewhere": there, "on_chain": owner,
+                "chain_says": ("here" if owner and owner == mine["address"] else
+                               "there" if owner and any(t["address"] == owner for t in there) else
+                               "another" if owner else ""),
+            })
+        return JSONResponse({**seen, "pace": SPLIT_ASK_PACE, "split": names}, headers={"Cache-Control": "no-store"})
+
     @app.get("/admin/api/relay-apps")
     def admin_relay_apps(request: Request):
         """The apps the Call relay's choice lists (asked on its own: listing every chain's apps is not quick)."""
@@ -34171,6 +34319,19 @@ def _host_is_public(host: str) -> bool:
         return bool(found) and all(ipaddress.ip_address(a).is_global for a in found)
     except ValueError:
         return False
+
+
+class ArcadeBusy(Exception):
+    """Another arcade said 429: its limit for this one, not an answer."""
+
+
+#: The most seconds the name check (GET /signup/<name>) and the sign-up (POST /signup) give other arcades to say they
+#: hold a name (issue #15, 2026-10-25). An answer that comes later is kept for the next ask.
+NAME_CHECK_WAIT = 2.5
+SIGNUP_ELSEWHERE_WAIT = 4.0
+#: Admin's check of split names: seconds between two asks of one arcade. Its sign-in limit is 20 asks in 5 minutes
+#: from one address, and this arcade's own players signing in from there share it, so half of that at most.
+SPLIT_ASK_PACE = 30.0
 
 
 def _ask_arcade(url: str, **kwargs):

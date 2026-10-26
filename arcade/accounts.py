@@ -1067,6 +1067,12 @@ class Vault:
     def taken(self, tag: str) -> bool:
         return self.get(tag) is not None
 
+    def names(self) -> list[dict]:
+        """Every wallet's name, key, address, when it was made and its claim; never the blob (Admin's check of names
+        another arcade holds under another key, issue #15, 2026-10-25)."""
+        rows = self.conn.execute("SELECT tag, pubkey, address, made, claimed FROM vault ORDER BY tag").fetchall()
+        return [dict(r) for r in rows]
+
     def put(self, tag: str, pubkey: str, address: str, blob: str,
             now: int | None = None) -> dict:
         """Write down a new wallet. Refuses a name this node already holds.

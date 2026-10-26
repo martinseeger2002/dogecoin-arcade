@@ -41,6 +41,7 @@ input[type=text],input[type=password]{width:100%;padding:10px 12px;margin:4px 0;
   box-shadow:inset 0 0 0 2px rgba(255,255,255,.18),0 3px 0 #0d0905;text-shadow:1px 1px 0 rgba(0,0,0,.5)}
 .go:disabled{opacity:.55;cursor:default}
 .go.quiet{font-size:17px;padding:9px}
+.go.alt{color:var(--fg);background:transparent;text-shadow:none;margin-bottom:14px}
 .switch{text-align:center;margin:14px 0 0}
 .switch a,.foot a,.panel a{color:inherit}
 .msg{background:#3a1515;color:#ffd9d9;border-radius:6px;padding:10px 12px;margin-bottom:16px}
@@ -116,6 +117,11 @@ input[type=text],input[type=password]{width:100%;padding:10px 12px;margin:4px 0;
 
   <div id="forms" {% if not secure_enough or free <= 0 %}hidden{% endif %}>
     <div class="panel" id="make-panel">
+      {# Issue #15 (2026-10-25): players who "Played on another arcade" made a new character here, with a new empty
+         wallet, under their own name. The way to their real account comes first. #}
+      <button class="go quiet alt" id="to-in-top" type="button">Played on another arcade? Sign in</button>
+      <p class="small" style="margin:-8px 0 14px">The same name and password work here: this arcade finds your
+        account there. A new account here is a new, empty wallet.</p>
       <h2>Make your account</h2>
       <div class="field">
         <label for="tag">Your name</label>
@@ -205,6 +211,14 @@ function wire() {
       const said = await wallet.available(wanted);
       $("tag-said").textContent = said.free ? `@${said.tag} is free` : (said.detail || "that name cannot be used");
       $("tag-said").style.color = said.free ? "var(--ok)" : "var(--bad)";
+      // Held on another arcade (issue #15): its sign-in, one click away, with the name filled in.
+      if (said.elsewhere) {
+        const go = document.createElement("a");
+        go.href = "#";
+        go.textContent = ` Sign in as @${said.tag}`;
+        go.onclick = (e) => { show(true)(e); $("in-tag").value = said.tag; $("in-pw").focus(); };
+        $("tag-said").appendChild(go);
+      }
     }, 300);
   };
   $("pw").oninput = () => {
@@ -217,6 +231,12 @@ function wire() {
     $("make-panel").hidden = signIn; $("in-panel").hidden = !signIn;
   };
   $("to-in").onclick = show(true);
+  $("to-in-top").onclick = (e) => {
+    show(true)(e);
+    const typed = $("tag").value.trim().replace(/^@/, "");
+    if (typed && !$("in-tag").value) $("in-tag").value = typed;
+    ($("in-tag").value ? $("in-pw") : $("in-tag")).focus();
+  };
   $("to-make").onclick = show(false);
 
   // The password twice (2026-10-25): nobody can reset it, so a typo here would lock the account for good.

@@ -1560,6 +1560,66 @@ if (location.hash === "#meshtastic") start();
   </table></div>
 </section>
 
+{#- Issue #15 (2026-10-25), SadFrog: "Existing split names: decide case by case after the admin check lists them".
+   The names this arcade keeps a wallet for that another arcade holds under another key. Read only. #}
+<section class="panel" id="split-names">
+  <h2>Names held on other arcades under another key</h2>
+  <p class="muted" style="margin-top:0;font-size:.86rem">Every name this arcade keeps a wallet for, asked of the
+    other arcades it knows. A name listed here is two different accounts: a player who played there and then signed
+    up here got a new, empty wallet. Nothing is changed or removed here; decide each one. The chain says who holds
+    the @name once it is claimed.</p>
+  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+    <button type="button" class="small" id="split-again">Check again</button>
+    <span class="muted" id="split-line" aria-live="polite"></span>
+  </div>
+  <div class="tablewrap"><table class="admintable">
+    <thead><tr><th>Name</th><th>Here</th><th>Elsewhere</th><th>The chain says</th></tr></thead>
+    <tbody id="split-rows"></tbody>
+  </table></div>
+</section>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function cell(tr, lines) {
+    var td = document.createElement('td');
+    lines.forEach(function (l, i) { if (i) td.appendChild(document.createElement('br')); td.appendChild(document.createTextNode(l)); });
+    tr.appendChild(td);
+  }
+  function day(t) { return t ? new Date(t * 1000).toLocaleDateString() : '—'; }
+  function draw(d) {
+    var line = !d.hosts.length ? 'No other arcade is known yet, so there is nobody to ask.'
+      : (d.running ? 'Asking ' + d.hosts.length + ' arcades about ' + d.names + ' names (one ask each every ' + d.pace + ' s): ' + d.asked + ' of ' + d.names * d.hosts.length + ' asked.'
+        : 'Asked ' + d.hosts.length + ' arcades about ' + d.names + ' names' + (d.finished ? ', ' + new Date(d.finished * 1000).toLocaleString() : '') + '.')
+      + (d.busy ? ' ' + d.busy + ' asks met a busy arcade.' : '') + (d.quiet.length ? ' Not answering: ' + d.quiet.join(', ') + '.' : '');
+    $('split-line').textContent = line + (d.split.length ? '' : (d.running ? '' : ' No split names.'));
+    var body = $('split-rows'); body.textContent = '';
+    d.split.forEach(function (n) {
+      var tr = document.createElement('tr');
+      cell(tr, ['@' + n.tag]);
+      cell(tr, [n.address, 'key ' + n.pubkey.slice(0, 16) + '…', 'made ' + day(n.made) + ', last seen ' + day(n.seen), n.claimed ? 'claimed here ' + n.claimed.slice(0, 16) + '…' : 'no claim filed here']);
+      cell(tr, [].concat.apply([], n.elsewhere.map(function (e) { return [e.host + ': ' + e.address, 'key ' + e.pubkey.slice(0, 16) + '…']; })));
+      cell(tr, [n.chain_says === 'here' ? 'this arcade\'s copy holds it' : n.chain_says === 'there' ? 'the other arcade\'s copy holds it'
+        : n.chain_says === 'another' ? 'another address holds it: ' + n.on_chain : 'not claimed yet (or not read yet)']);
+      body.appendChild(tr);
+    });
+  }
+  var timer = null;
+  function load(again) {
+    fetch('/admin/api/split-names' + (again ? '?again=1' : ''), {credentials: 'same-origin', headers: {'X-Arcade-Admin': '1'}})
+      .then(function (r) { if (r.status === 401) location.href = '/admin/login'; return r.json(); })
+      .then(function (d) {
+        draw(d);
+        clearTimeout(timer);
+        if (d.running) timer = setTimeout(function () { if (document.querySelector('.admintab[data-tab="people"].on')) load(); }, 10000);
+      })
+      .catch(function (e) { $('split-line').textContent = 'Could not load: ' + e.message; });
+  }
+  $('split-again').addEventListener('click', function () { load(true); });
+  document.querySelectorAll('.admintabs button[data-tab="people"]').forEach(function (b) { b.addEventListener('click', function () { load(); }); });
+  window.addEventListener('load', function () { if (document.querySelector('.admintab[data-tab="people"].on')) load(); });
+})();
+</script>
+
 <section class="panel">
   <h2>What each seat may do</h2>
   <p class="muted" style="margin-top:0">Per account, per hour (bytes: per day). 0 closes that
