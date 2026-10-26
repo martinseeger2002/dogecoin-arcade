@@ -88,6 +88,52 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-26 · SadFrog's side (Claude, node 2) · branch `team/hardening-r2-wave2` · Arcade Hardening round 2, wave 2: accounts
+Wave 2 of "Arcade Hardening, Round 2", the account issues from the 2026-10-25 review. SadFrog's decisions: "12-character
+minimum for new passwords, and existing short-password users are asked to change"; sessions "14 days, renewed by use,
+plus 'sign out everywhere'". One commit per issue, each with its own tests.
+
+- **#12 passwords** (`6d3b74b0`): a new password is at least 12 characters, counted as a person counts them, wherever
+  one is chosen: sign-up, the game door, restore, join (the node's own and keep-a-copy), and the admin password.
+  - An account's password never reaches the node, so for accounts the floor is in the browser (`signin.js
+    MIN_PASSWORD`, `wallet_js.js` before every `seal`). The operator's password is also refused by the node
+    (`accounts.MIN_PASSWORD`, `Credentials.set`, `/admin/api/password`).
+  - A shorter existing password still signs in. That tab then shows a "Set a new password" bar (dismissible, nothing
+    stored but a mark in sessionStorage).
+  - This supersedes D-157's "nothing here will stop you".
+  - A gap remains: the only change-password path for accounts is /restore, which needs the twelve words. A re-seal of
+    the wallet already open in the tab would close it.
+- **#13 sessions** (`20ca2a02`): `SESSION_DAYS` 14, renewed by use.
+  - The DB is written at most once a day. The cookie is now sent again on renewal by `_SessionRenewal`; before, it
+    kept its first max_age.
+  - Existing sessions take 16 days off once, at the first open (`user_version` 1).
+  - `POST /auth/logout-everywhere` and a "Sign out everywhere" button on /me.
+  - A re-sealed wallet (`/account/vault`) or a changed operator password ends the account's OTHER sessions.
+- **#6 sign-in relay** (`52eb598e`): the browser signs its own address (`location.origin`) in the login text, and the
+  node refuses one signed for any address not its own (`_signs_in_here`). Its own addresses are:
+  - `public_hosts`;
+  - the hostnames in its cloudflared config;
+  - localhost and loopback on its own machine;
+  - the IP a LAN connection arrived at.
+  The pages host is never one of them. Nonce and expiry are unchanged. **Before release: every name a node serves must
+  be in `public_hosts` or its tunnel config.** A node behind Caddy or nginx serving several names (pepecoinarcade.com
+  with ashvale.party) would otherwise refuse sign-ins on the unlisted ones.
+- **#15 split accounts** (`dac5a509`): `GET /signup/<name>` also asks other arcades (`_vault_elsewhere`, at most
+  2.5 s, 20 uncached checks per client per 5 minutes) and says "@x already has an account on <host>: sign in
+  instead".
+  - `POST /signup` refuses a name another arcade holds under a different key (at most 4 s; the same key is the same
+    person bringing their account). With no arcade answering, sign-up goes ahead as before.
+  - The join page and the game door say "Played on another arcade? Sign in".
+  - Admin -> People & brand lists names held elsewhere under another key, read-only, paced at one ask per arcade per
+    30 s.
+  - Open: an announced arcade answering for every name could block fresh sign-ups of unclaimed names. A claim on the
+    chain still wins, and the refusal names the host, but there is no way yet to distrust a host.
+
+Tests: `test_password_floor.py`, `test_session_life.py`, 12 new in `test_auth_web.py` / `test_accounts.py` /
+`test_tunnel.py`, and `test_split_names.py`, plus every sign-in, sign-up, door, session, password, web, public and admin
+file: 681 passed. The only failure is `test_signup_browser`'s /tmp upload, which snap Firefox can't read on this
+machine.
+
 ### 2026-10-26 The Browser: every name's site; pictures on .mesh pages (Claude)
 The operator: "Instead of mesh browser call the app browser. When it's installed on a T deck it should be the .mesh domains
 only; when it is opened on the PWA or website it should be able to explore all p:dns names", "small size images on
