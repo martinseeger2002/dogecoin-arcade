@@ -93,7 +93,7 @@
                aria-label="Search inscriptions">
         <button type="button" class="small" id="xpgo">Search</button>
       </div>
-      <p class="muted xpnote">A number (<code>0</code>, <code>#1234</code>), an inscription id (<code>&lt;txid&gt;i0</code>),
+      <p class="muted xpnote">A number (<code>0</code>, <code>#1234</code>, <code>-5</code> for a cursed one), an inscription id (<code>&lt;txid&gt;i0</code>),
         a coin as <code>txid:vout</code> (what sits on it), an address (its token balances), or a name like
         <code>jon.doge</code>.</p>
       <div id="xpsaid" class="xpsaid" aria-live="polite"></div>
@@ -102,7 +102,7 @@
     <div class="xpcard" id="xpview" aria-label="Inscription viewer">
       <div class="xpnav">
         <button type="button" class="small" id="xpprev" aria-label="Previous inscription">&lsaquo; Previous</button>
-        <label class="xpjump"><span>#</span><input autocomplete="off" type="number" id="xpnum" min="0" step="1"
+        <label class="xpjump"><span>#</span><input autocomplete="off" type="number" id="xpnum" step="1"
                inputmode="numeric" aria-label="Inscription number"></label>
         <button type="button" class="small" id="xpjumpgo">Go</button>
         <button type="button" class="small" id="xpnext" aria-label="Next inscription">Next &rsaquo;</button>
@@ -360,6 +360,8 @@
         ['Delegate', x.delegate ? link(x.delegate, function () { showId(x.delegate); }) : null],
         ['Parent', x.parent ? link(x.parent, function () { showId(x.parent); }) : null],
         ['Reinscription', x.reinscription ? 'yes' : null],
+        // ord's charms on a chain read as ord itself (Litecoin): cursed, vindicated, unbound, lost ...
+        ['Charms', x.charms && x.charms.length ? x.charms.join(', ') : null],
         ['Burned', x.burned ? 'yes' : null],
         ['Holder', x.burned ? null : (x.owner || 'not known here')],
         ['Sits on', x.burned ? null : (x.output ? el('code', '', x.output + (x.offset ? ' (offset ' + num(x.offset) + ')' : '')) : 'fees (no output)')],
@@ -380,7 +382,7 @@
   }
   function showNumber(n) {
     var net = X.chain.net;
-    X.number = Math.max(0, Number(n) || 0);
+    X.number = Math.trunc(Number(n)) || 0;          // below zero: a cursed one (Litecoin)
     $('xpprev').disabled = $('xpnext').disabled = true;
     api('inscription', {net: net, number: X.number})
       .then(function (j) { if (net === X.chain.net) drawOne(j); })

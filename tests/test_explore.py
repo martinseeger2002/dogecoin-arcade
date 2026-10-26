@@ -180,3 +180,23 @@ def test_the_arcades_own_assets_on_a_chain_by_name_and_category(walking, monkeyp
     assert app.get("/explore/api/asset?net=main&id=99", headers=EDGE).status_code == 404
     assert app.get("/explore/api/asset?net=main&id=x", headers=EDGE).status_code == 400
     assert app.get("/explore/api/assets?net=doge", headers=EDGE).status_code == 404, "no ledger of that chain here"
+
+
+def test_a_linked_arcades_answer_gets_its_holder_from_our_own_core(tmp_path, monkeypatch):
+    from test_ord_explorer import _walked
+    _chain, index = _walked(tmp_path)
+    monkeypatch.setattr(index, "_owner_at", lambda txid, vout: f"D-holder-of-{txid[:4]}:{vout}")
+    said = index._own_owners({"from": "arcade x", "number": {"inscription": {"id": "x", "output": "ab" * 32 + ":1",
+                                                                              "owner": None, "burned": False}}})
+    assert said["number"]["inscription"]["owner"] == "D-holder-of-abab:1"
+    kept = index._own_owners({"where": {"output": "cd" * 32 + ":0", "owner": "Dalready", "burned": False}})
+    assert kept["where"]["owner"] == "Dalready", "an answer that names its holder is left as it is"
+    burned = index._own_owners({"where": {"output": None, "burned": True}})
+    assert "owner" not in burned["where"]
+
+
+def test_negative_numbers_are_asked_and_odd_types_said_plainly(walking):
+    app, _state = walking
+    assert app.get("/explore/api/inscription?net=main&number=-1", headers=EDGE).status_code == 200
+    assert app.get("/explore/api/lookup?net=main&q=-3", headers=EDGE).status_code == 200
+    assert app.get("/explore/api/inscription?net=main&number=--1", headers=EDGE).status_code == 400

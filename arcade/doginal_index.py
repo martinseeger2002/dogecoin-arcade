@@ -2636,8 +2636,8 @@ class DoginalIndex:
             if node is None:
                 return {**self.answer(question), "from": "this arcade", "walked_to": own}
             try:
-                return {"from": f"arcade {node[:12]}", "walked_to": height, **self.share.ask(question, node=node),
-                        "node": node}
+                return self._own_owners({"from": f"arcade {node[:12]}", "walked_to": height,
+                                         **self.share.ask(question, node=node), "node": node})
             except Exception as exc:                     # noqa: BLE001 -- that arcade could not say: the next one
                 said = str(exc)
                 if "no such question" in said and question.get("what") in NEWER_QUESTIONS:
@@ -2818,6 +2818,8 @@ class DoginalIndex:
             return out
         tx, n, num, height, ctype, proto, size, burned, pieces, at, vout, off, moved, delegate, parent, again = row[0]
         txid = bytes(at).hex() if at else None
+        if ctype and any(ord(ch) < 32 or ord(ch) == 127 for ch in ctype):   # bytes where a type should be (PEP: two)
+            ctype = "unreadable (not a content type)"
         out["inscription"] = {"id": iid_of(tx, n), "number": num, "height": height, "content_type": ctype,
                               "protocol": proto, "size": size, "pieces": pieces, "burned": bool(burned),
                               "output": f"{txid}:{vout}" if txid else None, "offset": off, "moved_at": moved,
@@ -2837,6 +2839,19 @@ class DoginalIndex:
         row = self.store.q("SELECT c.ctype FROM insc i JOIN ctypes c ON c.ct = i.ct WHERE substr(i.tx, 1, 8)=? AND "
                            "i.tx=? AND i.n=?", (tx[:8], tx, n))
         return row[0][0] if row else None
+
+    def _own_owners(self, said: dict) -> dict:
+        """A linked arcade's answer with who holds each coin it names filled in from this arcade's own Core, where it
+        left that out (2026-10-25: an arcade walking on borrowed Cores has none to ask, so the Explore tab showed no
+        holder for most Dogecoin inscriptions)."""
+        for key in ("number", "where"):
+            part = said.get(key)
+            x = part.get("inscription") if key == "number" and isinstance(part, dict) else part
+            if isinstance(x, dict) and not x.get("owner") and x.get("output") and not x.get("burned"):
+                txid, _, vout = str(x["output"]).partition(":")
+                if vout.isdigit():
+                    x["owner"] = self._owner_at(txid, int(vout))
+        return said
 
     def _owner_at(self, txid: str, vout: int) -> str | None:
         """Who holds a coin: its address (Walker.owner_of), read from this arcade's Core; None without one (a walk

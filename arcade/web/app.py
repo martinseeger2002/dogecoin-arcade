@@ -27950,7 +27950,8 @@ def create_app(state: AppState) -> FastAPI:
         q = said.lower()
         if INSCRIPTION_ID.match(q):
             question = {"what": "where", "id": q}
-        elif re.match(r"^#?[0-9]{1,12}$", said):             # an inscription number (2026-10-21)
+        elif re.match(r"^#?-?[0-9]{1,12}$", said):           # an inscription number (2026-10-21; Litecoin's cursed
+            # ones are below zero, 2026-10-26)
             question = {"what": "number", "number": int(said.lstrip("#"))}
         elif q.startswith("tick:") and said[5:].strip():      # a tick of digits, which a plain number is not
             question = {"what": "token", "tick": said[5:].strip()}
@@ -28126,8 +28127,9 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"detail": "an inscription id: <txid>i<n>"}, status_code=400)
             return _ords_ask(index, {"what": "number", "id": iid})
         said = (number or "0").strip().lstrip("#")
-        if not re.match(r"^[0-9]{1,12}$", said):
-            return JSONResponse({"detail": "an inscription number: 0, 1, 2 ..."}, status_code=400)
+        if not re.match(r"^-?[0-9]{1,12}$", said):
+            return JSONResponse({"detail": "an inscription number: 0, 1, 2 ... (or -1, -2 ... for a cursed one)"},
+                                status_code=400)
         return _ords_ask(index, {"what": "number", "number": int(said)})
 
     @app.get("/explore/api/lookup")
