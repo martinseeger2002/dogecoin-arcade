@@ -88,6 +88,46 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-26 · SadFrog's side (Claude, node 2) · branch `team/hardening-r2-wave3` · Arcade Hardening round 2, wave 3: honest prompts
+Wave 3 of "Arcade Hardening, Round 2": the two issues where a player can be tricked into approving something. One
+commit per issue, each with its own tests.
+
+- **#5 blind signing** (`b112d833`): the wallet now builds every text it signs, and never signs one the arcade hands it.
+  - `coins.js` no longer exports `signMessage`. `signWords` signs three fixed shapes only: `realtimeWords` (mesh
+    `arcade-<chain>`, a 64-hex node id, expiry at most 25 h ahead), `grantWords` (seller id, at most 90 days) and
+    `topupWords` (chain, txid, seller id or ""). The words must name the key's own address and no field may hold a
+    newline. The magic is fixed in the page and no longer read from the server.
+  - All 7 places that signed now go through these: `realtimeProof`, `realtimeProofThere`, `llmGrant` (in apps), the
+    LLM tab's grant and top-up, admin's "Sign once", and `service.CertRoom.join` (which checks the same shape with
+    its own magic).
+  - The wallet keeps the first node id it sees on this origin. A different one shows the exact words (`arcadeAsk`'s
+    new `verbatim`) and signs only on a click; with no dialog, nothing is signed.
+  - Server checks are unchanged: they already rebuilt each text from their own data. `/realtime/hello`,
+    `/account/llm/grant` and `/account/llm/topup` no longer send `magic`.
+  - Left: an arcade hostile from a player's first visit can still name another node in a realtime certificate (at
+    most about a day, testnet mesh). `coinsDigest` still signs the server's `asker` host (a hashed, one-minute,
+    lookup-only digest; checking `location.host` would break visits under another name).
+- **#7 prompts over games** (`3807c153`), all five pieces:
+  - (a) The camera layer is at z-index 50 (`MEDIA_Z`): over the game's frame, under the arcade's cards, and hidden
+    while any card is open.
+  - (b) `pageSends()` only answers requests from the page framed here (`arcadeFramed`), and names the requester from
+    the chain (`arcadeRequester`: the game card's name and the publisher's @tag, else the address). The game's
+    `label` is no longer shown to players; its `note` shows as `The page says: "…"`. The inscribe card names it the
+    same way.
+  - (c) A page with no game card is asked with the Wallet access card, and a yes is kept per page. A frame with no
+    inscription id is asked every time. `_game_of_page` returns `{game: false, publisher, address}` for it.
+  - (d) `arcadeAsk` focuses Cancel. On a page that frames an inscription, the approve button stays disabled for
+    800 ms (`arcadeArm`).
+  - (e) Full screen keeps a trusted strip under the game's frame: "🔒 <brand> never asks for your password inside a
+    game". The frame is shortened by its height, so the game can't draw over it.
+  - Behaviour change: shops and mintpads now ask for wallet access once per page before their first mint or send.
+    The operator's approvals page still shows "calling itself <label>" (the operator's view, marked as the page's
+    own words).
+- Docs: `inscription-api.md` (players no longer see `label`), `games.md` (the strip and the cards).
+- Tests: new test_blind_signing (9), test_game_prompts (2) and test_game_prompts_browser (6). The browser tests that
+  click approve now wait for it to be enabled; the inscribe_bridge and page_autosign tests allow wallet access for
+  their no-card page first.
+
 ### 2026-10-26 The Browser: every name's site; pictures on .mesh pages (Claude)
 The operator: "Instead of mesh browser call the app browser. When it's installed on a T deck it should be the .mesh domains
 only; when it is opened on the PWA or website it should be able to explore all p:dns names", "small size images on
