@@ -114,9 +114,9 @@ def _parse(job: tuple) -> tuple[str, str, int, bytes]:
     """One block's (hash, line, births, notes) from its raw hex, in a worker process (a lane of a helper on many
     cores)."""
     from . import ord_notes
-    raw_hex, block_hash, taproot, mweb, dialect, every = job
+    raw_hex, block_hash, taproot, mweb, dialect, every, lite = job
     block = rawchain.read_block(bytes.fromhex(raw_hex), block_hash, mweb=mweb)
-    found = births(block, taproot, dialect, every)
+    found = births(block, taproot, dialect, every, lite)
     return block.hash, block_hash_of(block.hash, found), len(found), ord_notes.one_block(block, taproot, dialect, every)
 
 
@@ -249,12 +249,19 @@ def _taproot_scan(witness: list[bytes], bodies: bool = False) -> list[dict]:
 
 
 def births_of(tx: rawchain.Tx, taproot: bool = False, dialect: str = "dogecoin",
-              every_input: bool = False) -> list[dict]:
+              every_input: bool = False, ord_lite: bool = False) -> list[dict]:
     """Every inscription `tx` gives birth to: {"n", "vin", "ctype", "done", "kind"}; the id is txid + "i" + n. The
     Doginals kind ("p2sh": an input script opening with "ord", read in the chain's dialect) in input 0 -- and, where the
     chain's indexer reads every input (`every_input`, ord_rules.EVERY_INPUT: Bellscoin), in any later input whose
     envelope is complete there -- and, on a Taproot chain, ord's witness envelopes ("taproot", each with "at", its
-    place among its input's envelopes, and its "delegate", which no chunk hash covers); numbered in input order."""
+    place among its input's envelopes, and its "delegate", which no chunk hash covers); numbered in input order.
+    `ord_lite` (Litecoin, ord_rules.ORD_LITE): ord's witness envelopes alone, read by arcade/ord_envelope.py (each with
+    its parsed "env"); ord-litecoin never sees the Doginals kind."""
+    if ord_lite:
+        from . import ord_envelope
+        return [{"n": k, "vin": e.input, "ctype": (e.content_type or b"").hex(), "done": True, "kind": "taproot",
+                 "at": e.offset, "delegate": ord_rules.id_from_tag(e.delegate, "dogecoin"), "env": e}
+                for k, e in enumerate(ord_envelope.envelopes(tx.vin))]
     out = []
     for j, i in enumerate(tx.vin):
         if j == 0:
@@ -273,10 +280,10 @@ def births_of(tx: rawchain.Tx, taproot: bool = False, dialect: str = "dogecoin",
 
 
 def births(block: rawchain.Block, taproot: bool = False, dialect: str = "dogecoin",
-           every_input: bool = False) -> list[tuple[str, int, int, str]]:
+           every_input: bool = False, ord_lite: bool = False) -> list[tuple[str, int, int, str]]:
     """(txid, n, envelope input, content type hex) for every birth in the block, in block order."""
     return [(tx.txid, b["n"], b["vin"], b["ctype"]) for tx in block.txs
-            for b in births_of(tx, taproot, dialect, every_input)]
+            for b in births_of(tx, taproot, dialect, every_input, ord_lite)]
 
 
 def block_hash_of(block_hash: str, found: list[tuple[str, int, int, str]]) -> str:
@@ -345,6 +352,9 @@ TABLES = """
             CREATE TABLE IF NOT EXISTS xfer (rid INTEGER PRIMARY KEY, tick TEXT NOT NULL, amt TEXT NOT NULL,
                                              owner TEXT NOT NULL, reveal TEXT NOT NULL);
             -- name claims ("p":"dns"), each with the name it makes under every reading (NULL: not a claim there)
+            -- ord's charms of an inscription on a chain read as ord itself (ord_rules.ORD_LITE: Litecoin): bits as ord
+            -- numbers them (CHARMS: cursed, lost, reinscription, unbound, vindicated, burned); other chains keep none
+            CREATE TABLE IF NOT EXISTS charm (rid INTEGER PRIMARY KEY, bits INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS names (rid INTEGER PRIMARY KEY, number INTEGER NOT NULL, height INTEGER NOT NULL,
                                               kind TEXT NOT NULL, raw TEXT NOT NULL, spec TEXT, json TEXT,
                                               doge2023 TEXT);
@@ -518,6 +528,8 @@ class Store:
         self.upgrading = ""
         if not self.old_layout:
             self._db.executescript(SCHEMA)
+            if ord_rules.ord_lite(self.net):         # numbers below zero, and given out of birth order: looked up by
+                self._db.execute("CREATE INDEX IF NOT EXISTS insc_num_lite ON insc (number)")   # number (Litecoin)
             if self.meta("layout") is None:
                 self.set_meta("layout", LAYOUT)
             self._names_without_maps(self._db)
@@ -795,7 +807,8 @@ class Store:
         return nd, len(blob)
 
     #: What a reset clears: everything the walk built. The words (`seen`) stay -- what each arcade said is still so.
-    BUILT = ("insc", "at", "pending", "tok", "bal", "xfer", "names", "undo", "block", "notes", "pnote", "stitched")
+    BUILT = ("insc", "at", "pending", "tok", "bal", "xfer", "names", "charm", "undo", "block", "notes", "pnote",
+             "stitched")
 
     def reset(self) -> None:
         """Start the index again from the chain's first block (its words kept)."""
@@ -879,7 +892,9 @@ def carry(chain: dict | None, script: bytes, dialect: str = "dogecoin") -> dict:
 
 #: The key of each table a block's walk writes, for its undo (every row's old value is kept before it changes).
 KEYS = {"insc": ("rid",), "at": ("rid",), "pending": ("txid",), "tok": ("tick",), "bal": ("owner", "tick"),
-        "xfer": ("rid",), "names": ("rid",)}
+        "xfer": ("rid",), "names": ("rid",), "charm": ("rid",)}
+#: ord's Charm bits (src/inscriptions/charm.rs order), the ones a walk sets.
+CHARMS = {"cursed": 1, "lost": 4, "reinscription": 7, "unbound": 8, "vindicated": 10, "burned": 12}
 
 
 class _Seen:
@@ -954,6 +969,7 @@ class Walker:
         self.store = store
         self.base, self.taproot, self.mweb = store.base, taproot, mweb
         self.every_input = ord_rules.every_input(getattr(store, "net", ""))   # Bellscoin: every input's envelope
+        self.ord_lite = ord_rules.ord_lite(getattr(store, "net", ""))         # Litecoin: ord itself
         #: "pepecoin" | "dogecoin" (ord_rules.dialect_of): how envelopes read, and when a new one is looked for.
         self.dialect = dialect or store.dialect
         self.params = params
@@ -1193,7 +1209,7 @@ class Walker:
         tracked = self.tracked
         assert tracked is not None
         moves: list[str] = []
-        born_here = births(block, self.taproot, self.dialect, self.every_input)
+        born_here = births(block, self.taproot, self.dialect, self.every_input, self.ord_lite)
         next_number = int(self.store.meta("next_number", 0))
         number_before = next_number
         next_rid = (self.store.q("SELECT COALESCE(MAX(rid), 0) FROM insc")[0][0]) + 1
@@ -1203,7 +1219,10 @@ class Walker:
             log.debug("ord index: prefetch for block %d failed", h, exc_info=True)
         with self.store.tx() as db:
             w = _Block(db)
-            for pos, tx in enumerate(block.txs):
+            if self.ord_lite:                    # Litecoin: ord itself, coinbase last (_ord_block)
+                cursed_before = int(self.store.meta("next_cursed", 0))
+                next_number = self._ord_block(w, rpc, h, block, tracked, moves, next_number, next_rid)
+            for pos, tx in enumerate(() if self.ord_lite else block.txs):
                 for n, (v, _s) in enumerate(tx.vout):
                     if v <= 100_000_000:
                         self._keep(_outpoint(tx.txid, n), v)
@@ -1351,7 +1370,8 @@ class Walker:
             moved = hashlib.sha256("".join(moves).encode()).hexdigest()
             db.execute("INSERT OR REPLACE INTO block VALUES (?,?,?,?,?)", (h, block.hash, line, len(born_here), moved))
             db.execute("INSERT OR REPLACE INTO undo VALUES (?,?)",
-                       (h, _pack({"rows": w.old, "next_number": number_before})))
+                       (h, _pack({"rows": w.old, "next_number": number_before,
+                                  **({"next_cursed": cursed_before} if self.ord_lite else {})})))
             db.execute("DELETE FROM undo WHERE height<?", (h - UNDO_BLOCKS,))
             db.execute("INSERT OR REPLACE INTO meta VALUES ('walk_next', ?)", (json.dumps(h + 1),))
             db.execute("INSERT OR REPLACE INTO meta VALUES ('next_number', ?)", (json.dumps(next_number),))
@@ -1370,6 +1390,219 @@ class Walker:
         if self.disk is not None:
             self.disk.block(block.txs, h)
         return moves
+
+    # --- ord itself (Litecoin) ---------------------------------------------------------------------------------
+
+    def _ord_block(self, w: _Block, rpc, h: int, block, tracked, moves: list[str], blessed: int, next_rid: int) -> int:
+        """One block as ord-litecoin's InscriptionUpdater walks it (src/index/updater/inscription_updater.rs; ord
+        indexes the coinbase LAST, src/index/updater.rs). Returns the next blessed number; the next cursed one is kept
+        in meta "next_cursed". 2026-10-26: Litecoin's index to match ord.chikun.market and litescribe.io.
+
+        Per transaction: the inscriptions its inputs carry and the envelopes it opens float at their litoshi among the
+        inputs (a pointer moves a new one, if it points inside the outputs); a new one is cursed by the first of ord's
+        curses that applies -- before the jubilee it is numbered below zero, after it "vindicated" and numbered on --
+        and unbound when its input is worth nothing or a field is unknown and even. They land in the outputs in
+        litoshi order, and a new one is numbered as it lands; what lands past the last output floats on to the
+        coinbase, at the block's reward so far plus its litoshi past the outputs, and is numbered there, after every
+        other one in the block; past the coinbase's outputs it is lost."""
+        from . import ord_envelope   # noqa: F401 -- births_of(ord_lite=True) reads with it
+        jubilant = h >= ord_rules.ORD_LITE.get(self.store.net, 0)
+        state = {"blessed": blessed, "cursed": int(self.store.meta("next_cursed", 0)), "rid": next_rid}
+        fee_bound: list[tuple[int, int, dict]] = []      # (block position, litoshi past the outputs, flotsam)
+
+        for pos, tx in enumerate(block.txs):
+            for n, (v, _s) in enumerate(tx.vout):
+                if v <= 100_000_000:
+                    self._keep(_outpoint(tx.txid, n), v)
+            if pos == 0:
+                continue
+            on = {j: self._on(w.db, i["txid"], i["vout"]) for j, i in enumerate(tx.vin)
+                  if i["vout"] != -1 and _outpoint(i["txid"], i["vout"]) in tracked}
+            on = {j: got for j, got in on.items() if got}
+            born = births_of(tx, True, self.dialect, ord_lite=True)
+            if not on and not born:
+                continue
+            upto = max(list(on) + [b["vin"] for b in born])
+            values = [self._value(rpc, i["txid"], i["vout"]) for i in tx.vin[:upto + 1]]
+            total_out = sum(v for v, _s in tx.vout)
+            floating: list[dict] = []
+            inscribed: dict[int, list] = {}                 # litoshi -> [first rid there (an old one), how many]
+            total_in = 0
+            for j in range(upto + 1):
+                for rid, off in sorted(on.get(j, ())):        # by sequence number, as ord sorts them
+                    at = total_in + off
+                    floating.append({"old": True, "rid": rid, "offset": at, "was": tx.vin[j]["txid"]})
+                    inscribed.setdefault(at, [rid, 0])[1] += 1
+                offset, value = total_in, values[j]
+                total_in += value
+                for b in (b for b in born if b["vin"] == j):
+                    e = b["env"]
+                    curse = self._ord_curse(w, e, offset, inscribed)
+                    ptr = e.pointer()
+                    land = ptr if ptr is not None and ptr < total_out else offset
+                    floating.append({"old": False, "n": b["n"], "offset": land, "env": e, "txpos": pos,
+                                     "cursed": curse is not None and not jubilant,
+                                     "vindicated": curse is not None and jubilant,
+                                     "unbound": value == 0 or e.unrecognized_even_field,
+                                     "reinscription": land in inscribed})
+                    inscribed.setdefault(land, [None, 0])[1] += 1
+            floating.sort(key=lambda f: f["offset"])                 # stable, as Rust's sort_by_key
+            new: list[tuple[int, str, bytes, bytes, int]] = []
+            carried: list[tuple[int, int, bool, str]] = []
+            landed: dict[int, tuple[int | None, str | None]] = {}
+            end, k = 0, 0
+            outs = []
+            for v, spk in tx.vout:
+                outs.append((end, end + v, spk))
+                end += v
+            for f in floating:
+                while k < len(outs) and f["offset"] >= outs[k][1]:
+                    k += 1
+                if k >= len(outs):
+                    fee_bound.append((pos, f["offset"] - total_out, f))
+                    continue
+                spk = outs[k][2]
+                rid = self._ord_land(w, h, tx.txid, k, f["offset"] - outs[k][0], spk, f, tracked, moves, state)
+                if f["old"]:
+                    carried.append((rid, f["offset"], False, f["was"]))
+                else:
+                    carried.append((rid, f["offset"], True, ""))
+                    e = f["env"]
+                    if e.body is not None:
+                        new.append((rid, f"{tx.txid}i{f['n']}", e.content_type or b"", e.body, 1))
+                landed[rid] = (k, self.owner_of(spk))
+            for f in floating:                                       # old ones gone to the fee: carried, not landed
+                if f["old"] and not any(c[0] == f["rid"] for c in carried):
+                    carried.append((f["rid"], f["offset"], False, f["was"]))
+            self._tokens(w, h, tx, new, carried, landed)
+            self._names(w, h, new)
+
+        if fee_bound:
+            self._ord_coinbase(w, rpc, h, block, fee_bound, tracked, moves, state)
+        w.db.execute("INSERT OR REPLACE INTO meta VALUES ('next_cursed', ?)", (json.dumps(state["cursed"]),))
+        return state["blessed"]
+
+    def _ord_curse(self, w: _Block, e, offset: int, inscribed: dict) -> str | None:
+        """The first of ord's curses that applies to a new envelope (inscription_updater.rs, in its order)."""
+        if e.unrecognized_even_field:
+            return "UnrecognizedEvenField"
+        if e.duplicate_field:
+            return "DuplicateField"
+        if e.incomplete_field:
+            return "IncompleteField"
+        if e.input != 0:
+            return "NotInFirstInput"
+        if e.offset != 0:
+            return "NotAtOffsetZero"
+        if e.pointer_raw is not None:
+            return "Pointer"
+        if e.pushnum:
+            return "Pushnum"
+        if e.stutter:
+            return "Stutter"
+        there = inscribed.get(offset)
+        if there is None:
+            return None
+        if there[1] > 1 or there[0] is None:
+            return "Reinscription"
+        first = w.get("insc", (there[0],))
+        bits = (w.get("charm", (there[0],)) or {}).get("bits", 0)
+        if first is not None and (first["number"] < 0 or bits & (1 << CHARMS["vindicated"])):
+            return None                                   # the sat's first inscription was cursed or vindicated
+        return "Reinscription"
+
+    def _ord_land(self, w: _Block, h: int, txid: str, vout: int | None, off: int, spk: bytes | None, f: dict, tracked,
+                  moves: list[str], state: dict) -> int:
+        """inscription_updater.rs `update_inscription_location`: an old one moved, a new one numbered and filed where it
+        landed (vout None: lost, past the coinbase's outputs). Returns its rid."""
+        burned = spk is not None and spk[:1] == b"\x6a"
+        if f["old"]:
+            rid = f["rid"]
+            iid = iid_of(*w.db.execute("SELECT tx, n FROM insc WHERE rid=?", (rid,)).fetchone())
+            if vout is None:
+                w.put("at", (rid,), None)
+                bits = (w.get("charm", (rid,)) or {}).get("bits", 0) | (1 << CHARMS["lost"])
+                w.put("charm", (rid,), {"rid": rid, "bits": bits})
+                moves.append(f"L {iid}\n")
+                return rid
+            w.put("at", (rid,), {"rid": rid, "tx": bytes.fromhex(txid), "vout": vout, "off": off, "height": h})
+            tracked.add(_outpoint(txid, vout))
+            if burned:
+                row = w.get("insc", (rid,))
+                w.put("insc", (rid,), {**row, "burned": h})
+                bits = (w.get("charm", (rid,)) or {}).get("bits", 0) | (1 << CHARMS["burned"])
+                w.put("charm", (rid,), {"rid": rid, "bits": bits})
+            moves.append(f"M {iid} {txid}:{vout}:{off}\n")
+            return rid
+        e = f["env"]
+        if f["cursed"]:
+            state["cursed"] += 1
+            number = -state["cursed"]
+        else:
+            number = state["blessed"]
+            state["blessed"] += 1
+        rid = state["rid"]
+        state["rid"] += 1
+        btx = bytes.fromhex(f["birth_txid"]) if "birth_txid" in f else bytes.fromhex(txid)
+        iid = iid_of(btx, f["n"])
+        body = e.body
+        parents = [p for p in (ord_rules.id_from_tag(x, "dogecoin") for x in e.parents) if p]
+        w.put("insc", (rid,), {"rid": rid, "tx": btx, "n": f["n"], "number": number, "height": h, "txpos": f["txpos"],
+                                "ct": self._ct(w.db, (e.content_type or b"").decode("utf-8", "replace")),
+                                "proto": ord_rules.protocol_of(body) if body is not None else None,
+                                "size": len(body) if body is not None else 0, "pieces": 1,
+                                "burned": h if burned else None,
+                                "delegate": id_blob(ord_rules.id_from_tag(e.delegate, "dogecoin")),
+                                "parent": id_blob(parents[0]) if parents else None,
+                                "reinscribed": 1 if f["reinscription"] else None})
+        bits = 0
+        for name in ("cursed", "reinscription", "unbound", "vindicated"):
+            if f[name]:
+                bits |= 1 << CHARMS[name]
+        if burned:
+            bits |= 1 << CHARMS["burned"]
+        if vout is None:
+            bits |= 1 << CHARMS["lost"]
+        if bits:
+            w.put("charm", (rid,), {"rid": rid, "bits": bits})
+        if f["unbound"] or vout is None:
+            moves.append(f"{'U' if f['unbound'] else 'L'} {iid} #{number}\n")
+            return rid
+        w.put("at", (rid,), {"rid": rid, "tx": bytes.fromhex(txid), "vout": vout, "off": off, "height": h})
+        tracked.add(_outpoint(txid, vout))
+        moves.append(f"B {iid} #{number} {txid}:{vout}:{off}\n")
+        return rid
+
+    def _ord_coinbase(self, w: _Block, rpc, h: int, block, fee_bound: list, tracked, moves: list[str],
+                      state: dict) -> None:
+        """What floated past its transaction's outputs lands in the coinbase (indexed last), at the reward so far --
+        the subsidy and every earlier transaction's fee -- plus its litoshi past those outputs; past the coinbase's
+        outputs it is lost. The fees are read only for a block that has one (each input's value)."""
+        last = max(p for p, _o, _f in fee_bound)
+        reward_before: dict[int, int] = {}
+        reward = ord_rules.subsidy(h)
+        for pos, tx in enumerate(block.txs[:last + 1]):
+            if pos == 0:
+                continue
+            reward_before[pos] = reward
+            ins = sum(self._value(rpc, i["txid"], i["vout"]) for i in tx.vin if i["vout"] != -1)
+            reward += ins - sum(v for v, _s in tx.vout)
+        coinbase = block.txs[0]
+        floating = sorted(((reward_before[pos] + past, pos, f) for pos, past, f in fee_bound), key=lambda t: t[0])
+        end, outs = 0, []
+        for v, spk in coinbase.vout:
+            outs.append((end, end + v, spk))
+            end += v
+        k = 0
+        for at, pos, f in floating:
+            while k < len(outs) and at >= outs[k][1]:
+                k += 1
+            if not f["old"]:
+                f["birth_txid"] = block.txs[pos].txid
+            if k >= len(outs):
+                self._ord_land(w, h, coinbase.txid, None, 0, None, f, tracked, moves, state)
+            else:
+                self._ord_land(w, h, coinbase.txid, k, at - outs[k][0], outs[k][2], f, tracked, moves, state)
 
     def _parent(self, w: _Block, claimed: list[str], carried: list) -> tuple[str, list[int]] | None:
         """Pepecoin: the parents a new inscription's tags claim that stand -- (the first one's id, every one's rid) --
@@ -1402,6 +1635,8 @@ class Walker:
             if op is None:
                 continue
             number = w.get("insc", (rid,))["number"]
+            if number < 0:
+                continue                                      # a cursed inscription is no token operation (BRC-20)
             try:
                 self._token_op(w, h, rid, iid, number, op, landed[rid][1], tx.txid)
             except ord_rules.TokenError:
@@ -1517,6 +1752,8 @@ class Walker:
             db.execute("DELETE FROM notes WHERE chunk>=? AND src=''", (chunk_of(h, self.base),))
             db.execute("INSERT OR REPLACE INTO meta VALUES ('walk_next', ?)", (json.dumps(h),))
             db.execute("INSERT OR REPLACE INTO meta VALUES ('next_number', ?)", (json.dumps(undo["next_number"]),))
+            if "next_cursed" in undo:
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('next_cursed', ?)", (json.dumps(undo["next_cursed"]),))
         log.warning("ord index: block %d was replaced (reorg); walked back", h)
         self.tracked = None
         self._load()
@@ -1614,12 +1851,13 @@ def fetch_raw_many(rpc, txids: list[str], batch: int = 200) -> dict[str, bytes]:
 
 
 def scan_block(rpc, h: int, taproot: bool = False, mweb: bool = False,
-               dialect: str = "dogecoin", every_input: bool = False) -> tuple[str, str, int, bytes]:
+               dialect: str = "dogecoin", every_input: bool = False,
+               ord_lite: bool = False) -> tuple[str, str, int, bytes]:
     """(block hash, its line, births in it, its spend notes) for one block, read raw and proved (rawchain)."""
     from . import ord_notes
     block_hash = rpc.call("getblockhash", h)
     block = rawchain.read_block(bytes.fromhex(rpc.call("getblock", block_hash, 0)), block_hash, mweb=mweb)
-    found = births(block, taproot, dialect, every_input)
+    found = births(block, taproot, dialect, every_input, ord_lite)
     return (block.hash, block_hash_of(block.hash, found), len(found),
             ord_notes.one_block(block, taproot, dialect, every_input))
 
@@ -1647,6 +1885,7 @@ class DoginalIndex:
         self.base = STARTS.get(net, BASE) if net != "doge" else BASE
         self.taproot, self.mweb = net in TAPROOT, mweb
         self.every_input = ord_rules.every_input(net)    # Bellscoin: an envelope in every input (rules 7)
+        self.ord_lite = ord_rules.ord_lite(net)          # Litecoin: ord itself (rules 6)
         # Each chain read as its own official indexer reads it (rules 4, 2026-10-21): births, completions, notes.
         self.dialect = ord_rules.dialect_of(net)
         self.store = Store(path, self.base, self.dialect, net)
@@ -1940,7 +2179,8 @@ class DoginalIndex:
             blocks = ord_notes.decode(notes)
             if len(blocks) != CHUNK:
                 raise ord_notes.NotesError(f"{len(blocks)} blocks, not {CHUNK}")
-            if chunk_hash_of([block_hash_of(b.hash, births(b, self.taproot, self.dialect, self.every_input))
+            if chunk_hash_of([block_hash_of(b.hash, births(b, self.taproot, self.dialect, self.every_input,
+                                                           self.ord_lite))
                               for b in blocks]) != hash_:
                 raise ord_notes.NotesError("its blocks do not make the hash it said")
         except ord_notes.NotesError as exc:
@@ -2276,7 +2516,8 @@ class DoginalIndex:
         small = (os.cpu_count() or 1) < BIG_FROM_CORES
         heights = [h for h, _via in asked]
         if (len(asked) == 1 or self._lanes_wanted() == 1) and not small and not any(via for _h, via in asked):
-            return {h: scan_block(rpc, h, self.taproot, self.mweb, self.dialect, self.every_input) for h in heights}
+            return {h: scan_block(rpc, h, self.taproot, self.mweb, self.dialect, self.every_input, self.ord_lite)
+                    for h in heights}
         # A small machine reads every block in a worker process, even on one lane: parsed here, it held the web
         # process's threads (2026-10-20, .25 helping: pages waited a minute).
         from concurrent.futures import ThreadPoolExecutor
@@ -2303,7 +2544,8 @@ class DoginalIndex:
         if not raws:
             return {}
         pool = self._workers()
-        jobs = [(raw, block_hash, self.taproot, self.mweb, self.dialect, self.every_input) for block_hash, raw in raws]
+        jobs = [(raw, block_hash, self.taproot, self.mweb, self.dialect, self.every_input, self.ord_lite)
+                for block_hash, raw in raws]
         return dict(zip(heights, pool.map(_parse, jobs)))
 
     def _workers(self):
@@ -2743,7 +2985,11 @@ class DoginalIndex:
     # --- the explorer (Admin -> Ords, 2026-10-21) -----------------------------------------------------------
 
     def last_number(self) -> int:
-        """The highest inscription number this walk knows (-1: none yet). Rows are numbered rid = number + 1."""
+        """The highest inscription number this walk knows (-1: none yet). Rows are numbered rid = number + 1 (on a chain
+        read as ord itself, numbers are given where inscriptions land, cursed ones below zero: the highest number)."""
+        if self.ord_lite:
+            got = self.store.q("SELECT MAX(number) FROM insc")[0][0]
+            return int(got) if got is not None else -1
         got = self.store.q("SELECT MAX(rid) FROM insc")[0][0]
         return int(got) - 1 if got else -1
 
@@ -2767,7 +3013,12 @@ class DoginalIndex:
                 rid = int(number) + 1
             except (TypeError, ValueError):
                 raise ValueError("an inscription number") from None
-            if rid < 1:
+            if self.ord_lite:                            # by its number, which may be below zero (insc_num_lite)
+                rows = self.store.q("SELECT rid FROM insc WHERE number=?", (rid - 1,))
+                if not rows:
+                    return out
+                rid = rows[0][0]
+            elif rid < 1:
                 return out
         row = self.store.q("SELECT i.tx, i.n, i.number, i.height, c.ctype, i.proto, i.size, i.burned, i.pieces, a.tx, "
                            "a.vout, a.off, a.height, i.delegate, i.parent, i.reinscribed FROM insc i "
@@ -2787,6 +3038,9 @@ class DoginalIndex:
                               # made on a koinu that already carried an inscription (None: filed before the mark)
                               "reinscription": bool(again),
                               "note": SEEN_ELSEWHERE.get(self.net, {}).get(iid_of(tx, n))}
+        if self.ord_lite:                               # ord's charms: cursed, vindicated, unbound, lost ...
+            bits = (self.store.q("SELECT bits FROM charm WHERE rid=?", (rid,)) or [(0,)])[0][0]
+            out["inscription"]["charms"] = [name for name, bit in CHARMS.items() if bits & (1 << bit)]
         return out
 
     def _ctype_of(self, blob: bytes) -> str | None:

@@ -44,17 +44,39 @@ RULES = 4                      # bump when what an index keeps changes: an index
 #: Bellscoin 7 (2026-10-25, checked against nintondo.io): an envelope in every input numbered (EVERY_INPUT), Taproot
 #: births in input 0 kept, "p":"bel-20" tokens (TOKEN_PROTOCOLS), SegWit and Taproot holders named by their bel1q /
 #: bel1p addresses. Litecoin 5 (main and test): its holders named by their ltc1q / ltc1p addresses the same way.
-RULES_BY_NET = {"doge": 5, "bel": 7, "ltc": 5, "ltctest": 5}
+#: Litecoin 6 (2026-10-26): read as ord-litecoin reads it (ORD_LITE), to match ord.chikun.market and litescribe.io.
+RULES_BY_NET = {"doge": 5, "bel": 7, "ltc": 6, "ltctest": 6}
+#: Chains whose index follows ord itself (ynohtna92/ord-litecoin 0.20, src/index/updater/inscription_updater.rs) rather
+#: than the Doginals readings: witness envelopes only (arcade/ord_envelope.py), numbered where they land, cursed ones
+#: below zero until the jubilee height and "vindicated" with a number after it, inscriptions sent to the fee landing in
+#: the coinbase, the pointer field, unbound ones. {chain: jubilee height} (src/chain.rs `jubilee_height`).
+ORD_LITE = {"ltc": 2_608_704, "ltctest": 3_096_576}
+#: Litecoin's block reward (src/chain.rs: ord-litecoin's Height::subsidy, 50 LTC halved every 840,000 blocks).
+LTC_SUBSIDY, LTC_HALVING = 50 * 100_000_000, 840_000
 #: Chains whose official indexer reads an envelope in EVERY input, not input 0 alone: Bellscoin (nintondo's ord,
 #: 2026-10-25: 6d110444...e809 at block 41,937 carries NOOK mints in inputs 0 and 1, #14,234,881 its i1). One that is
 #: complete in its own input is an inscription (txid i1, i2 ... in input order); a piece of a longer one is not.
 EVERY_INPUT = frozenset({"bel"})
 #: The JSON tokens a chain's ord index reads ("p"): PRC-20 on Pepecoin (reallyshadydev/pepecoin-ord-indexer), bel-20 on
 #: Bellscoin (nintondo's, 2026-10-25: nook, CATS, ondo ...), the DRC-20 rules elsewhere.
-TOKEN_PROTOCOLS = {"main": "prc-20", "test": "prc-20", "bel": "bel-20"}
+TOKEN_PROTOCOLS = {"main": "prc-20", "test": "prc-20", "bel": "bel-20", "ltc": "ltc-20", "ltctest": "ltc-20"}
+#: Tokens read by BRC-20's rules rather than wonky-ord's DRC-20 (LTC-20 on Litecoin, 2026-10-26: "p":"ltc-20" as
+#: litescribe and chikun read it -- the LITE deploy #224,061): no shortest body (wonky-ord's 40 characters).
+BRC20_STYLE = frozenset({"ltc-20"})
 #: Chains whose indexes number a reinscription (an inscription made on a coin that already carries one), as nintondo's
 #: indexers do (Dogecoin since rules 5; Bellscoin, whose official indexer IS nintondo's ord).
 NUMBERS_REINSCRIPTIONS = frozenset({"doge", "bel"})
+
+
+def ord_lite(net: str) -> bool:
+    """Whether `net`'s index follows ord itself (ORD_LITE: Litecoin)."""
+    return (net or "") in ORD_LITE
+
+
+def subsidy(height: int) -> int:
+    """ord-litecoin's Height::subsidy: the block reward at `height`, in litoshis."""
+    halvings = height // LTC_HALVING
+    return LTC_SUBSIDY >> halvings if halvings < 64 else 0
 
 
 def every_input(net: str) -> bool:
@@ -387,7 +409,7 @@ def token_op(protocol: str, ctype: bytes, body: bytes) -> dict | None:
         text = body.decode("utf-8")
     except UnicodeDecodeError:
         return None
-    if len(text) < 40:
+    if len(text) < 40 and protocol not in BRC20_STYLE:
         return None
     t = ctype.decode("utf-8", "replace")
     if not (t.startswith("text/plain") or t.startswith("application/json")):

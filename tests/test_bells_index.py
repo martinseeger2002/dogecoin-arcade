@@ -176,5 +176,5 @@ def test_other_chains_notes_stay_format_2(tmp_path):
 
 def test_bells_and_litecoin_indexes_are_cut_again_for_the_new_reading():
     assert ord_rules.rules_for("bel") == 7
-    assert ord_rules.rules_for("ltc") == ord_rules.rules_for("ltctest") == 5, "their holders are named anew"
+    assert ord_rules.rules_for("ltc") == ord_rules.rules_for("ltctest") == 6, "read as ord-litecoin (test_ord_lite.py)"
     assert ord_rules.rules_for("doge") == 5 and ord_rules.rules_for("main") == ord_rules.RULES == 4, "the rest as before"

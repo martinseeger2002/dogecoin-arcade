@@ -229,18 +229,18 @@ def test_pepecoin_looks_for_a_new_inscription_even_on_an_inscribed_first_koinu(t
     for idx in (pep, doge, ltc):
         idx.walker.step(chain, dx.BASE + 3, budget=60)
     assert _numbers(pep) == {f"{first[1]}i0": 0, f"{again[1]}i0": 1, f"{later[1]}i0": 2}
-    # Dogecoin numbers the reinscription too since rules 5 (2026-10-22: "Number them like nintondo");
-    # Litecoin's Doginals kind keeps wonky-ord's first-koinu rule.
+    # Dogecoin numbers the reinscription too since rules 5 (2026-10-22: "Number them like nintondo"). Litecoin reads
+    # ord's witness envelopes alone since rules 6 (2026-10-26, as ord-litecoin): no Doginals kind at all.
     assert _numbers(doge) == {f"{first[1]}i0": 0, f"{again[1]}i0": 1, f"{later[1]}i0": 2}
-    assert _numbers(ltc) == {f"{first[1]}i0": 0, f"{later[1]}i0": 1}
+    assert _numbers(ltc) == {}
     assert pep.where(f"{first[1]}i0")["output"] == pep.where(f"{again[1]}i0")["output"] == f"{again[1]}:0"
-    # Bellscoin numbers it as nintondo's ord does (rules 6); Luckycoin keeps wonky-ord's rule, as Litecoin (2026-10-22).
+    # Bellscoin numbers it as nintondo's ord does (rules 6); Luckycoin keeps wonky-ord's first-koinu rule.
     monkeypatch.setitem(dx.STARTS, "bel", dx.BASE)
     monkeypatch.setitem(dx.STARTS, "lky", dx.BASE)
     bel, lky = _index(tmp_path, chain, "bel", name="b"), _index(tmp_path, chain, "lky", name="k")
     for idx in (bel, lky):
         idx.walker.step(chain, dx.BASE + 3, budget=60)
-    assert _numbers(bel) == _numbers(doge) and _numbers(lky) == _numbers(ltc)
+    assert _numbers(bel) == _numbers(doge) and _numbers(lky) == {f"{first[1]}i0": 0, f"{later[1]}i0": 1}
     # Each is marked for what it is (2026-10-22: "highlight them as reinscriptions"), wherever it is numbered.
     for idx in (pep, doge, bel):
         assert idx.where(f"{again[1]}i0")["reinscription"] is True
@@ -470,7 +470,7 @@ def test_each_chain_has_its_own_rules_version_and_only_dogecoin_is_cut_again(tmp
     assert ord_rules.rules_for("doge") == 5 and ord_rules.rules_for("main") == 4
     # Bellscoin 7 and Litecoin 5 since 2026-10-25 (every input, Taproot births, bel-20, bech32 holders):
     # tests/test_bells_index.py.
-    assert ord_rules.rules_for("bel") == 7 and ord_rules.rules_for("ltc") == 5
+    assert ord_rules.rules_for("bel") == 7 and ord_rules.rules_for("ltc") == 6
     assert ord_rules.NUMBERS_REINSCRIPTIONS == {"doge", "bel"}
     for net, kept in (("doge", False), ("main", True)):
         path = tmp_path / f"{net}.sqlite"
