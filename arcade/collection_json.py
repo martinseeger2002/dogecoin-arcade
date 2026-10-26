@@ -35,7 +35,7 @@ ROOT, PART = "arcade-collection", "arcade-collection-items"
 VERSION = 1
 #: Items per part: ~90 bytes each, so a part is ~45 KB -- a few transactions, not a hundred.
 PER_PART = 500
-CHAINS = ("doge", "main", "bel", "lky", "wjk", "test", "regtest")   # bel, lky, wjk: the Creator tab's ords
+CHAINS = ("doge", "main", "bel", "lky", "wjk", "dgb", "test", "regtest")   # bel, lky, wjk, dgb: the Creator tab's ords
 ITEM_ID = re.compile(r"^[0-9a-f]{64}i[0-9]{1,6}$")
 TXID = re.compile(r"^[0-9a-f]{64}$")
 

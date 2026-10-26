@@ -465,7 +465,7 @@ def test_ords_witness_envelopes_are_read_on_a_taproot_chain():
 
 def test_each_chain_starts_at_its_official_first_inscription_height(tmp_path):
     assert dx.STARTS == {"doge": 4_600_000, "main": 186_920, "test": 34_237, "ltc": 2_424_429, "ltctest": 2_669_127,
-                         "bel": 22_470, "lky": 88_554, "wjk": 1}
+                         "bel": 22_470, "lky": 88_554, "wjk": 1, "dgb": 0}
     ltc = dx.DoginalIndex(tmp_path / "ltc.sqlite", None, lambda: "off", net="ltc", mweb=True)
     assert ltc.base == 2_424_429 and ltc.taproot and ltc.walker.mweb
     assert dx.chunk_range(0, ltc.base) == (2_424_429, 2_424_429 + dx.CHUNK)

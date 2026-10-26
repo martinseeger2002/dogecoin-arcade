@@ -81,6 +81,8 @@ ORDER = (
      "Running a Kotia node, its K addresses, timed transactions, fees, and data outputs."),
     ("wojakcoin.md", "Wojakcoin on this arcade",
      "Running a Wojakcoin node, its W addresses, fees, and Wojakinals."),
+    ("digibyte.md", "DigiByte on this arcade",
+     "Running a DigiByte node, its D and S addresses, fees, and why its proof of work is the sharer's word."),
     ("escrow.md", "Escrow: holding players' items for your game",
      "Put a player's NFTs and tokens at stake: your judge decides who gets them, the player can always take them back after the unlock time."),
     ("game-state.md", "Game state: a game's own record on each NFT",

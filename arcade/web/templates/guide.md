@@ -17,7 +17,7 @@ installations reading the same chain agree without talking to each other.
 | | |
 |---|---|
 | Interface | `http://127.0.0.1:8420`, bound to loopback because it can spend |
-| Chains | Pepecoin main, Pepecoin test and Dogecoin main; Litecoin, Bellscoin, Luckycoin, Kotia and Wojakcoin as add-on chains, turned on in **Admin → Coins & chains**, each run on this machine or borrowed from another arcade that shares its Core |
+| Chains | Pepecoin main, Pepecoin test and Dogecoin main; Litecoin, Bellscoin, Luckycoin, Kotia, Wojakcoin and DigiByte as add-on chains, turned on in **Admin → Coins & chains**, each run on this machine or borrowed from another arcade that shares its Core |
 | Messaging | **Pepecoin test only**, by design |
 | Tokens, inscriptions, @tags | Pepecoin main and Pepecoin test |
 | Storage | your node's datadir for the chain; `~/.dogecoinarcade` for what the app remembers |

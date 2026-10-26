@@ -39,6 +39,8 @@ WORDS = {
     "bel": OrdWords("Bellinal", "Bellscoin", "Bellscoin"),
     "lky": OrdWords("Luckinal", "Luckycoin", "Luckycoin"),
     "wjk": OrdWords("Wojakinal", "Wojakcoin", "Wojakcoin"),
+    # DigiByte ordinals (2026-10-25): wonky-ord-digibyte's, inscribed the Doginals way (digibyteordinals.js).
+    "dgb": OrdWords("DigiByte ordinal", "DigiByte", "DigiByte", "dgbordinals"),
     # Litecoin ords (ord-litecoin), mainnet and testnet: those held at a legacy "L..." / "m..." address (2026-10-25).
     "ltc": OrdWords("LTC ordinal", "Litecoin", "Litecoin", "ltcordinals"),
     "ltctest": OrdWords("LTC ordinal", "Litecoin testnet", "LTC TEST", "ltctestordinals"),
@@ -48,10 +50,11 @@ WORDS = {
 
 #: The chains whose ords are sent, listed and bought here: Doginals, Pepinals, and Bellinals (2026-10-25; Bells 3 signs
 #: legacy inputs as Dogecoin does, so the SINGLE|ANYONECANPAY listing digest is the same), then Luckinals, Wojakinals,
-#: Litecoin ords and Pepecoin testnet's the same way (legacy inputs, the same digest; Litecoin's proven on regtest,
-#: tests/test_ord_chains_more.py). Wojakinals are never swapped (no CLTV, `swappable`). Kotia has no ords
+#: DigiByte ordinals, Litecoin ords and Pepecoin testnet's the same way (legacy inputs, the same digest; Litecoin's
+#: proven on regtest, tests/test_ord_chains_more.py, and DigiByte signs legacy inputs with Bitcoin Core's code as
+#: Litecoin does). Wojakinals are never swapped (no CLTV, `swappable`). Kotia has no ords
 #: (timed transactions, Params.tx_time).
-MOVED = ("doge", "main", "bel", "lky", "wjk", "ltc", "ltctest", "test")
+MOVED = ("doge", "main", "bel", "lky", "wjk", "dgb", "ltc", "ltctest", "test")
 
 
 def word(net: str, default: str = "Inscription") -> str:

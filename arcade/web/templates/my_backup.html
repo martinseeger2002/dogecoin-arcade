@@ -266,7 +266,7 @@ $("show-words").onclick = async () => {
       const seed = await signin.toSeed(phrase);
       for (const [label, network] of [["Pepecoin main and Dogecoin", "main"], ["Litecoin", "ltc"],
                                       ["Bellscoin", "bel"], ["Luckycoin", "lky"], ["Kotia", "kot"],
-                                      ["Wojakcoin", "wjk"],
+                                      ["Wojakcoin", "wjk"], ["DigiByte", "dgb"],
                                       ["Pepecoin test", "test"], ["Litecoin test", "ltctest"]]) {
         const one = await coins.coinKey(seed, network);
         const dt = document.createElement("dt"), dd = document.createElement("dd");

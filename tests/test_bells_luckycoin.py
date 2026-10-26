@@ -142,10 +142,10 @@ def test_they_trade_at_the_mainnet_tier_with_their_own_lines():
 def test_the_browser_has_their_keys_and_tables():
     root = pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates"
     coins = (root / "coins.js").read_text()
-    assert "bel: 3, lky: 3, kot: 3, wjk: 3}" in coins, "one key for every real-coin chain"
-    assert "bel: 0x99, lky: 0xaf, kot: 0xad, wjk: 0xc9}" in coins, "each Core's own WIF byte (SECRET_KEY 153 and 175)"
+    assert "bel: 3, lky: 3, kot: 3, wjk: 3, dgb: 3}" in coins, "one key for every real-coin chain"
+    assert "bel: 0x99, lky: 0xaf, kot: 0xad, wjk: 0xc9, dgb: 0x80}" in coins, "each Core's own WIF byte (SECRET_KEY 153 and 175)"
     wallet = (root / "wallet_js.js").read_text()
-    assert 'REAL_COINS = new Set(["main", "doge", "ltc", "bel", "lky", "kot", "wjk"])' in wallet
+    assert 'REAL_COINS = new Set(["main", "doge", "ltc", "bel", "lky", "kot", "wjk", "dgb"])' in wallet
     for icon in ("coin-bel.png", "coin-lky.png"):
         assert (root / icon).read_bytes()[:4] == b"\x89PNG"
 

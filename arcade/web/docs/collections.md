@@ -9,7 +9,7 @@ There are three ways to get a collection onto the arcade. Pick the one that fits
 | You have | Use | Where |
 |---|---|---|
 | Pictures, and you want them inscribed on the arcade's own chain (Pepecoin test, or a real coin chosen at the top of the page) | **Run a collection** | **Creator → NFTs** |
-| Pictures, and you want them inscribed as ords (Doginals, Pepinals, Bellinals, Luckinals, Wojakinals) | **Inscribe a collection** | **Creator → Ords** |
+| Pictures, and you want them inscribed as ords (Doginals, Pepinals, Bellinals, Luckinals, Wojakinals, DigiByte ordinals) | **Inscribe a collection** | **Creator → Ords** |
 | Ords that are already inscribed (yours, or a collection inscribed elsewhere) | **Make a collection index** | **Creator → Ords** |
 
 Each is described step by step below. Everything here is signed in your own browser, by your own account, and

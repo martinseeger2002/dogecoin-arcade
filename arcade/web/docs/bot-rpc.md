@@ -12,7 +12,7 @@ so anyone who has scripted against Omni knows it already. The code is
 
 | | |
 |---|---|
-| URL | `http://127.0.0.1:8420/rpc/test` for testnet, `http://127.0.0.1:8420/rpc/main` for mainnet. An add-on chain this arcade runs or borrows answers at `/rpc/<its short name>` (`doge`, `ltc`, `ltctest`, `bel`, `lky`, `kot`, `wjk`) once its Core is ready; any other name is a `404` |
+| URL | `http://127.0.0.1:8420/rpc/test` for testnet, `http://127.0.0.1:8420/rpc/main` for mainnet. An add-on chain this arcade runs or borrows answers at `/rpc/<its short name>` (`doge`, `ltc`, `ltctest`, `bel`, `lky`, `kot`, `wjk`, `dgb`) once its Core is ready; any other name is a `404` |
 | Auth | HTTP basic auth with the contents of `~/.dogecoinarcade/rpc.cookie` (`__cookie__:<secret>`, mode 0600, rewritten at every start of arcade-web) |
 | Body | `{"id": 1, "method": "omni_getbalance", "params": ["nAddress", 3]}` — positional or named params, batches as a list |
 | Answer | `{"result": ..., "error": null, "id": 1}`; on failure `error` is `{"code", "message"}` in bitcoind's codes (`src/rpc/protocol.h`): -32601 unknown method, -32602 wrong arguments, -8 bad value, -5 bad address, -4 not this wallet's address |

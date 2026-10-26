@@ -75,7 +75,9 @@ from the bytes:
   hash up to the header's merkle root, and the header must carry the proof of work its difficulty
   asks for: scrypt (SHA-256 on Wojakcoin), or for a merge-mined chain (Dogecoin, Pepecoin mainnet,
   Bellscoin, Luckycoin) a parent block that commits to it. A block whose difficulty falls more than
-  fourfold from the block under it is refused.
+  fourfold from the block under it is refused. DigiByte's work is not checked: it is mined with five
+  algorithms, so its borrowed blocks are proved by hash, merkle root and linkage only, and the work is
+  the sharer's word.
 - **Kotia's blocks** (staked since block 1,000,000) are not checked for work or stake. Their hash,
   merkle root and link to the block under them are proved; the rest is taken on the sharer's word.
   **Admin → Chains** says so on a borrowed chain whose work is not checked.

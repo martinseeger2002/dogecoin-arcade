@@ -89,7 +89,9 @@ def test_wallet_js_works_out_every_cap_and_refusal_as_the_node_does(tmp_path):
         return ""
     assert got["plain"] == [python(g) for g in cases], "refused alike, word for word"
     assert sum(1 for r in got["plain"] if r) == len(NT.delegate_caps(_State(tmp_path))), "just the one over each cap"
-    assert "at most 1,000 DOGE per order" in got["plain"][[c["amount"] for c in cases].index(1_000 * COIN + 1)]
+    # By chain and amount: DigiByte's line is 1,000 coins too, and "dgb" sorts before "doge".
+    assert "at most 1,000 DOGE per order" in got["plain"][[(c["network"], c["amount"]) for c in cases].index(
+        ("doge", 1_000 * COIN + 1))]
     settings = {f"delegate_cap:{k}": v for k, v in zero.items()}
     assert got["set"] == [python(g, settings) for g in cases_zero]
     assert got["set"][0].startswith("this arcade takes no delegated DOGE orders") and "at most 0.5 PEP" in got["set"][2]

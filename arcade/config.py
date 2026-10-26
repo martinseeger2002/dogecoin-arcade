@@ -682,8 +682,45 @@ WOJAKCOIN = dataclasses.replace(
     cltv_enforced=False,
 )
 
+# DigiByte MAINNET (SadFrog's side, 2026-10-25: "get digibyte setup for the arcade"; the operator's "Eventually, we want
+# to add Digi bite"). DigiByte Core 9.26.7 (DigiByte-Core/digibyte, src/kernel/chainparams.cpp and chainparamsbase.cpp
+# at tag v9.26.7) is Bitcoin Core's code, so Litecoin's relay shape: no soft-dust fee, a 100,000 sat/kB minimum relay fee
+# (policy.h DEFAULT_MIN_RELAY_TX_FEE, 0.001 DGB/kB) and a 30,000 sat/kB dust relay fee (P2PKH dust 5,460 satoshis).
+# FIVE proof-of-work algorithms (sha256d, scrypt, skein, qubit and odocrypt, picked by bits of the block version), so
+# `pow_algo` is "": a borrowed block is proved by hash, merkle root and linkage, and the admin panel says the work is
+# the sharer's word. Not merge-mined. 15-second blocks. Buried soft forks, as its node reports them (getdeploymentinfo):
+# BIP34/65/66, CSV and SegWit at 4,394,880 (so CHECKLOCKTIMEVERIFY is enforced and swaps can lock), Taproot at
+# 21,168,000, and 9.x's DigiDollar and AlgoLock at 23,869,440. Versions: P2PKH 30 ("D...", the SAME byte as Dogecoin's:
+# the same key's address is the same string on both chains, and a coin sent to it is that key's on either chain, so
+# nothing is lost by pasting one for the other; each page still names its chain), P2SH 63 ("S...", no other chain's
+# key-hash byte; the old "3", version 5, is still valid there and read as P2SH too: txbuild), WIF 128, bech32 "dgb".
+# Policy: an 83-byte OP_RETURN and bare multisig relay (policy.h MAX_OP_RETURN_RELAY, DEFAULT_PERMIT_BAREMULTISIG).
+# The floor: the tip on 2026-10-25 was about 24,449,834 (a node's peers), rounded up about two days at 15-second blocks.
+DGB_MAINNET_FLOOR = 24_462_000
+
+DIGIBYTE = dataclasses.replace(
+    LITECOIN,
+    name="dgb",
+    rpc_port=14022,
+    p2p_port=12024,
+    activation_height=DGB_MAINNET_FLOOR,
+    messaging_start_height=DGB_MAINNET_FLOOR,
+    pubkeyhash_version=30,
+    scripthash_version=63,
+    other_pubkeyhash_version=None,
+    coin="DGB",
+    label="DigiByte",
+    min_fee_per_kb=1_000_000,   # 0.01 DGB/kB: ten times the 0.001 DGB/kB minimum relay fee, and its wallet's fallback fee
+    soft_dust=False, dust_limit=10_000,     # no soft-dust fee; change from 0.0001 DGB (P2PKH dust is 5,460 satoshis)
+    genesis="7497ea1b465eb39f1c8f507bc877078fe016d6fcb6dfad3a64c98dcc6e1e8496",
+    auxpow_chain_id=None, pow_algo="",
+    addon=True, node_dir=".digibyte", node_conf="digibyte.conf",
+    # "G": "D" is Dogecoin's badge.
+    letter="G", family="DGB", net_word="digibyte", real_coins=True, bech32_hrp="dgb", mweb=False,
+)
+
 NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN, LITECOIN, LITECOIN_TESTNET,
-                                BELLSCOIN, LUCKYCOIN, KOTIA, WOJAKCOIN)}
+                                BELLSCOIN, LUCKYCOIN, KOTIA, WOJAKCOIN, DIGIBYTE)}
 
 def unpayable_versions(params: "Params") -> frozenset:
     """The version bytes of `params`' own script-hash addresses that another known chain uses for a key hash.
@@ -854,6 +891,7 @@ CHAIN_NAMES = {
     "bel": "main", "lky": "main",   # Bellscoin and Luckycoin too
     "kot": "main",                  # and Kotia
     "wjk": "main",                  # and Wojakcoin
+    "dgb": "main",                  # and DigiByte
 }
 
 

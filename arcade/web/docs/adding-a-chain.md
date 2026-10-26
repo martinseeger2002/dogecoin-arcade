@@ -3,9 +3,9 @@
 For whoever adds the next coin, person or agent. Most of a chain is data, its `Params` in
 `arcade/config.py`: the launcher flags, `core:` / `share:`, mesh Core peering, borrowing, discovery,
 fees, dust and the ord index all follow from them. This page lists what still needs a hand, learned
-from adding Bellscoin and Luckycoin (2026-10-22), Kotia and Wojakcoin (2026-10-24). Use Dogecoin
-(`doge`), Bellscoin (`bel`), Luckycoin (`lky`), Kotia (`kot`) and Wojakcoin (`wjk`) as the worked
-examples.
+from adding Bellscoin and Luckycoin (2026-10-22), Kotia and Wojakcoin (2026-10-24) and DigiByte (2026-10-25).
+Use Dogecoin (`doge`), Bellscoin (`bel`), Luckycoin (`lky`), Kotia (`kot`), Wojakcoin (`wjk`) and DigiByte
+(`dgb`, a chain whose work cannot be checked) as the worked examples.
 
 ## 1. Read the coin's own source, at the release tag the arcade will run
 
@@ -25,8 +25,12 @@ From its `chainparams.cpp` and `chainparamsbase.cpp`:
 
 Then check every value against a node of that chain:
 - `getblockhash 0`
-- `validateaddress` on an address of each kind
+- `validateaddress` on an address of each kind, made by the arcade's own encoders, not typed by hand
 - `signmessagewithprivkey` with a throwaway key in its WIF
+- `getdeploymentinfo` for the soft forks' real heights
+
+Trust the node over the source: DigiByte's chainparams still list the old P2SH byte 5 ("3..."),
+but its Core refuses a `3...` address, so the arcade refuses one there too.
 
 ## 2. Write its `Params`
 
@@ -66,7 +70,9 @@ quieter clashes too: Luckycoin's P2SH 5 is Litecoin's legacy "3".
 - **`wallet_js.js`:** `TRADE.BIG`, `CLAIM_FEE`, `FEE_FLOOR`, `PAYEE_VERSIONS`, `P2SH_VERSION`, `COIN_WORD`,
   `REAL_COINS`. `tests/test_trade_fees.py` holds the fee tables to Python's.
 - **`trade.py`:** `BIG`. Set it low until the operator sets `swap_big:<net>`.
-- **`txbuild.py`:** `SCRIPTHASH_VERSIONS`, only for a byte that clashes with nothing.
+- **`txbuild.py`:** `SCRIPTHASH_VERSIONS`: the chain's P2SH byte goes in, unless it clashes with another chain's
+  P2PKH byte (then `unpayable_versions` refuses it). Leave it out and a send to the chain's script address
+  gets a key-hash script, and the coins are lost. DigiByte's 63 is in.
 - **`doginal_index.py`:** `STARTS` (the official indexer's `first_inscription_height`, or the first
   envelope found by scanning the chain), `SOURCES`, `TAPROOT`.
 - **`ord_rules.py`:** `RULES_BY_NET` and `NUMBERS_REINSCRIPTIONS`. Follow the chain's official

@@ -15,7 +15,7 @@ Each chain is data, its `Params` in `arcade/config.py`.
 |---|---|
 | Pepecoin testnet | The Messenger, the @names and the mesh's own checks. Every arcade runs this Core itself. |
 | Pepecoin mainnet | The ledger: the arcade's tokens, NFTs and inscriptions. Run here or borrowed, never off. |
-| Dogecoin, Litecoin, Litecoin testnet, Bellscoin, Luckycoin, Kotia, Wojakcoin | Add-on chains. The operator runs each one here, borrows it from an arcade that shares its Core, or leaves it off (**Admin → Chains**). |
+| Dogecoin, Litecoin, Litecoin testnet, Bellscoin, Luckycoin, Kotia, Wojakcoin, DigiByte | Add-on chains. The operator runs each one here, borrows it from an arcade that shares its Core, or leaves it off (**Admin → Chains**). |
 
 Each add-on chain has its own page in the docs, with what works on it and what does not yet.
 Swaps between chains are refused on Wojakcoin, which never enforces lock times (see the swaps page).

@@ -23,7 +23,7 @@ text and interactive HTML pages) are stored in the transactions themselves.
 The home chain is **Pepecoin**, a Dogecoin Core fork. The installer also sets
 up **Dogecoin** mainnet, and the protocol works the same there. An operator
 can add more chains on **Admin → Coins & chains**: Litecoin, Bellscoin,
-Luckycoin, Kotia and Wojakcoin. Each one runs on the arcade's own machine, or
+Luckycoin, Kotia, Wojakcoin and DigiByte. Each one runs on the arcade's own machine, or
 is borrowed from another arcade that shares its Core (see
 [Shared Cores](shared-cores.html)).
 

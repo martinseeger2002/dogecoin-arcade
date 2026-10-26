@@ -114,7 +114,7 @@ closed: what you offer moves to the listing's own address, and **your arcade
 holds that listing's key** while it trades for you. That is not trustless: its
 operator could spend what you deposit. Only list amounts you would trust that
 arcade with. So each listing is capped: at most **1,000 DOGE**, **100,000 PEP**
-or **1 LTC** (on Bellscoin, Luckycoin, Kotia and Wojakcoin, the big-swap line),
+or **1 LTC** (on Bellscoin, Luckycoin, Kotia, Wojakcoin and DigiByte, the big-swap line),
 unless the operator sets other caps (Admin, Trading). Test coins have no cap.
 Withdraw sends it straight back.
 
