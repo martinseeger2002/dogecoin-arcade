@@ -154,7 +154,7 @@ def _press(driver, label, timeout=60):
     end = time.time() + timeout
     while time.time() < end:
         for button in driver.find_elements(By.CSS_SELECTOR, ".askcard button"):
-            if button.text.strip() == label:
+            if button.text.strip() == label and button.is_enabled():     # armed after a moment (issue #7)
                 button.click()
                 driver.switch_to.frame(driver.find_element(By.CSS_SELECTOR, ".inscription-frame"))
                 return

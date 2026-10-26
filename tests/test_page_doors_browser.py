@@ -397,7 +397,7 @@ def test_a_page_speaks_under_the_accounts_own_key(browser, doors):
     assert sheet is not None, "the page asked for the key and nobody asked the player: " + str(browser.execute_script(
         "return [...document.querySelectorAll('.askcard, .askcard-back, dialog, [role=dialog]')].map(e => e.className + ':' + e.innerText.slice(0, 120))"))
     assert "Check that this is the app" in sheet.text and "published by" in sheet.text, sheet.text
-    next(b for b in sheet.find_elements(By.TAG_NAME, "button") if b.text == "Allow wallet access").click()
+    _card_button(browser, "Allow wallet access").click()      # armed a moment after it opens (issue #7)
     assert browser.execute_script("return localStorage.getItem('arcade.wallet.allow:' + arguments[0])",
                                   doors["page"]) == "yes", "remembered for this page"
     who = _settled(browser, frame, "nid")
@@ -431,9 +431,11 @@ def test_a_page_speaks_under_the_accounts_own_key(browser, doors):
 
 
 def _card_button(browser, text, timeout=30):
-    """The visible button `text` on the viewer's ask card (base.html arcadeAsk), or None."""
+    """The visible button `text` on the viewer's ask card (base.html arcadeAsk), or None. Once it can be pressed: over a
+    game the yes is armed only after a moment (2026-10-26, issue #7)."""
     for _ in range(int(timeout * 4)):
-        found = [b for b in browser.find_elements(By.CSS_SELECTOR, ".askcard button") if b.is_displayed() and b.text == text]
+        found = [b for b in browser.find_elements(By.CSS_SELECTOR, ".askcard button")
+                 if b.is_displayed() and b.text == text and b.is_enabled()]
         if found:
             return found[0]
         time.sleep(0.25)

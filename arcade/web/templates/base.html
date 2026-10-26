@@ -474,12 +474,12 @@ async function inscribeFor(source, m, page = "", own = false) {
     if (!r.ok) throw new Error(offer.detail || "this cannot be inscribed");
     if (offer.part) throw new Error("that needs more than one transaction; a page may inscribe one");
     const shown = await wallet.checked(offer, held);
-    const who = m.label ? `"${String(m.label).slice(0, 60)}"` : "This page";
+    const who = await arcadeRequester(page);       // from the chain, never the page's own label (issue #7)
     // A game saving its own data, said yes to without a card (arcadeAutoSigns).
     const auto = own && arcadeAutoSigns(page, shown, AUTO_INSCRIBE_MOST);
     if (!auto && m.silent === true) throw new Error(ARCADE_SAY_SO);
     const ok = auto || await arcadeAsk(`${who} asks to inscribe ${bytes.length.toLocaleString()} bytes`,
-      (m.note ? `"${String(m.note).slice(0, 200)}" ` : "")
+      (m.note ? `The page says: "${String(m.note).slice(0, 200)}" ` : "")
       + `${type}${json.attested ? ", with its result verified by the game's judge" : ""}. `
       + "It goes on the chain for good, as yours. " + shown.says, "Inscribe it");
     if (!ok) { answer({error: "Cancelled."}); return; }
@@ -503,14 +503,16 @@ async function pageSends() {
   let said;
   try { said = await (await fetch("/account/pagesends", {cache: "no-store"})).json(); }
   catch (e) { return; }
-  const ask = (said.requests || []).find((r) => !pageSendSeen.has(r.id));
+  // Only the framed page's own questions (2026-10-26, issue #7): a question another game filed for this account
+  // waits for that game's own page, and is never shown over a different one.
+  const ask = (said.requests || []).find((r) => !pageSendSeen.has(r.id) && arcadeFramed(r.page));
   if (!ask) return;
   pageSendSeen.add(ask.id);
   pageSendBusy = true;
   const answer = (body) => fetch("/account/pagesends/answer", {method: "POST",
     headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: ask.id, ...body})});
   try {
-    if (ask.page && !(await arcadeGameGate(ask.page))) {   // a game whose card's Wallet access is off: stopped
+    if (!(await arcadeGameGate(ask.page))) {   // not allowed (a game's box off, or a page with no card) and said no
       await answer({status: "failed", error: ARCADE_GATE_SAYS});
       return;
     }
@@ -536,7 +538,7 @@ async function pageSends() {
     const shown = await wallet.checked(offer, held);
     const what = ask.kind === "token" ? `${ask.amount} ${ask.name}`
       : ask.kind === "inscription" ? (ask.name || "an inscription") : `${ask.amount} coins`;
-    const who = ask.label ? `"${ask.label}"` : "This page";
+    const who = await arcadeRequester(ask.page);   // from the chain, never the page's own label (issue #7)
     // The creator allowance (2026-10-04): a game's own asset going back to the
     // game -- a token the page's creator issued, or a piece it inscribed, sent
     // to that creator -- needs no card, from a page open as itself, within the
@@ -553,7 +555,7 @@ async function pageSends() {
       return;
     }
     const ok = silent || await arcadeAsk(`${who} asks you to send ${what}`,
-      (ask.note ? `"${ask.note}" ` : "") + `To ${ask.to}. ${shown.says}`, "Yes, send it");
+      (ask.note ? `The page says: "${ask.note}" ` : "") + `To ${ask.to}. ${shown.says}`, "Yes, send it");
     if (!ok) { await answer({status: "denied"}); return; }
     const done = await wallet.confirm(held, offer);
     await answer({status: "sent", txid: done.txid});
@@ -579,7 +581,8 @@ window.addEventListener("message", async (e) => {
   // The page as itself (the viewer, or full screen), not a frame in somebody's post.
   const pageId = (/\/content\/([0-9a-f]{64})/.exec(frame.getAttribute("src") || "") || [])[1] || "";
   const own = !!pageId && !frame.classList.contains("postmedia");
-  // Every one of these reaches the wallet: a game whose card's Wallet access is off is stopped (arcadeGameGate).
+  // Every one of these reaches the wallet: a game whose card's Wallet access is off, or a page with no card, is asked
+  // first (arcadeGameGate; 2026-10-26, issue #7).
   if (["take", "inscribe", "claim", "mint"].includes(m.arcade) && typeof m.seq === "number"
       && !(await arcadeGameGate(pageId))) {
     e.source.postMessage({arcade: m.arcade, seq: m.seq, error: ARCADE_GATE_SAYS}, "*");
@@ -1316,8 +1319,20 @@ function arcadeAsk(title, detail, yes = "Yes", nope = "Cancel", verbatim = ""){
     ok.onclick = function(){ done(true); };
     no.onclick = function(){ done(false); };
     back.onclick = function(e){ if (e.target === back) done(false); };
-    ok.focus();
+    no.focus();
+    arcadeArm(ok);
   });
+}
+// KEYS MEANT FOR THE GAME (2026-10-26, Arcade Hardening round 2, wave 3, issue #7; SadFrog: "all five"): a player
+// mashing Enter or Space in a game said yes to a card they never saw, because the yes had the focus. A card opens
+// with Cancel focused, and over a page that frames an inscription its yes works only after ARCADE_ARM_MS, so a press
+// or a tap meant for the game lands on nothing.
+var ARCADE_ARM_MS = 800;
+function arcadeArm(ok){
+  if (!document.querySelector('iframe.inscription-frame')) return;
+  ok.disabled = true;
+  ok.dataset.arming = '1';
+  setTimeout(function(){ ok.disabled = false; delete ok.dataset.arming; }, ARCADE_ARM_MS);
 }
 
 // Real PEP, said honestly, before anything on mainnet is signed (the operator,
@@ -1386,6 +1401,7 @@ function arcadeMainnetReview(costs){
     no.onclick = function(){ done(false); };
     back.onclick = function(e){ if (e.target === back) done(false); };
     no.focus();
+    arcadeArm(ok);                                  // issue #7: not a key or a tap meant for the game
   });
 }
 
@@ -1655,14 +1671,43 @@ function arcadeGameAskAccess(page, g, prompted){
 }
 // true: the page may go on to the wallet. false: it is a game whose box is off and the player said no (or said no
 // before in this tab): this one action is refused, and the game keeps running.
+// A PAGE WITH NO CARD ASKS TOO (2026-10-26, Arcade Hardening round 2, wave 3, issue #7; SadFrog: "all five"): a page
+// that is no game -- a shop, a mintpad, a page the node could not look up -- used to go straight to the wallet,
+// so a hostile page only had to be one with no card. Now it is untrusted until the player says yes on the same card,
+// naming who inscribed it; yes is kept for that page as a game's box is. A frame the arcade cannot tell the
+// inscription of is asked every time.
 function arcadeGameGate(page){
-  if (!page) return Promise.resolve(true);
+  if (!page) return arcadeAsk('Allow this page to use your wallet?', 'The arcade cannot tell which inscription this '
+    + 'page is, so it cannot say who published it. Only allow it if you trust it: a page with wallet access can ask '
+    + 'your wallet to trade, pay and sign. You are asked again every time.', 'Allow this once');
   if (arcadeGameAllowed(page)) return Promise.resolve(true);
   return arcadeGameOf(page).then(function(g){
-    if (!g.game || arcadeGameOn(page, g)) return true;
-    arcadeGameUsed(page);
-    if (g.opens) arcadeGameUsed(g.opens);
+    if (g.game && arcadeGameOn(page, g)) return true;
+    if (g.game) {
+      arcadeGameUsed(page);
+      if (g.opens) arcadeGameUsed(g.opens);
+    }
     return arcadeGameAskAccess(page, g, false);
+  });
+}
+// Whether this page frames that inscription (its frame's address names it): a send request is shown only over the
+// game that filed it (2026-10-26, issue #7).
+function arcadeFramed(page){
+  if (!page) return false;
+  return [].some.call(document.querySelectorAll('iframe.inscription-frame'), function(f){
+    return ((/\/content\/([0-9a-f]{64})/.exec(f.getAttribute('src') || '') || [])[1]) === page;
+  });
+}
+// WHO IS ASKING (2026-10-26, issue #7): a card over a game names the page that asks as the arcade knows it from the
+// chain -- its card's name and its publisher's @tag -- never words the page sent with the ask (a page could call
+// itself "Your wallet", or another game). Resolves the words, e.g. '“Ghost Fleet” (published by @maker)'.
+function arcadeRequester(page){
+  return arcadeGameOf(page).then(function(g){
+    g = g || {};
+    var by = g.publisher || (g.address ? g.address : '');
+    var name = g.game && g.name ? '“' + g.name + '”' : !page ? 'An unknown page'
+      : g.unknown ? 'A page the arcade could not look up' : 'A page with no app card';
+    return name + (by ? ' (published by ' + by + ')' : ' (publisher unknown)');
   });
 }
 // CAMERA & MICROPHONE, PER GAME (2026-10-22: "Our user can allow an app camera and microphone in the same way

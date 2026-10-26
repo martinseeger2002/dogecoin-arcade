@@ -25287,6 +25287,12 @@ def create_app(state: AppState) -> FastAPI:
                         "contacts": bool(card["game"].get("contacts")),
                         "opens": _game_opens(ix, creator, card["txid"], card["game"]),
                         "publisher": f"@{tag}" if tag else "", "address": creator}
+            else:
+                # A page with no card -- a shop, a mintpad, a stranger's page (2026-10-26, Arcade Hardening round 2,
+                # wave 3, issue #7; SadFrog: "all five"): no card to tick, so the browser asks before it reaches the
+                # wallet, and names the page by who inscribed it, as the chain says.
+                tag = _name_of(row["creator"])
+                said = {"game": False, "publisher": f"@{tag}" if tag else "", "address": row["creator"]}
             break
         pages[page] = (time.time(), said)
         return said

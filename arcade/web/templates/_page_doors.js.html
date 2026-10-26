@@ -19,18 +19,13 @@
     // Wallet access for THIS page (base.html, WALLET ACCESS, PER GAME): asked for once, with the publisher named,
     // before any door that uses the key -- trades, escrow, shops, signing. Joining rooms as yourself is not one.
     // A GAME with its card's box off is asked in place by the gate (base.html, ASKED IN THE GAME) and keeps running
-    // if the answer is no; a page that is not a game -- a shop, a mintpad, with no card to tick -- is asked here.
+    // if the answer is no; a page that is not a game -- a shop, a mintpad, with no card to tick -- was asked here, and
+    // is asked by the gate itself since 2026-10-26 (issue #7: every bridge, not only these doors), so once, there.
     function gameKeys(chain, why){
       if (arcadeGameAllowed(here)) return arcadeKeys(chain, why);
       return arcadeGameGate(here).then(function(open){
         if (!open) throw new Error(ARCADE_GATE_SAYS);
-        return arcadeGameOf(here);
-      }).then(function(g){
-        if (g.game) return arcadeKeys(chain, why);            // ticked on its card
-        return arcadeAccessAsk(here, gameName, makerName, maker).then(function(yes){
-          if (!yes) throw new Error('Wallet access is off for this page. Check its publisher, then allow it when it asks.');
-          return arcadeKeys(chain, why);
-        });
+        return arcadeKeys(chain, why);
       });
     }
     // No longer held before it starts (2026-10-23, ASKED IN THE GAME): a game that uses the wallet runs, and the
@@ -750,19 +745,26 @@
     }
     // The layer over the game's frame: the pictures where the game placed them, every voice the game hears (a
     // picture not placed still plays its sound), and the on-air pill with its Stop.
+    // UNDER THE ARCADE'S CARDS (2026-10-26, Arcade Hardening round 2, wave 3, issue #7; SadFrog: "all five"): it sat at
+    // the top of every layer, over the cards that ask the player (.askcard-back, z-index 60), so a game could place a
+    // picture over a card's words or its buttons. It is above the game's frame and below the cards now, and hidden
+    // while a card is open.
+    var MEDIA_Z = 50;
     function mediaLayer(){
       if (mediaLayerEl) return mediaLayerEl;
       var el = mediaLayerEl = document.createElement('div');
       el.className = 'arcade-media-layer';
-      el.style.cssText = 'position:fixed;pointer-events:none;overflow:hidden;z-index:2147483000;left:0;top:0;width:0;height:0';
+      el.style.cssText = 'position:fixed;pointer-events:none;overflow:hidden;z-index:' + MEDIA_Z + ';left:0;top:0;width:0;height:0';
       document.body.appendChild(el);
       var fit = function(){
         if (!sandbox) return;
         var b = sandbox.getBoundingClientRect();
         el.style.left = b.left + 'px'; el.style.top = b.top + 'px';
         el.style.width = b.width + 'px'; el.style.height = b.height + 'px';
-        el.hidden = !!sandbox.hidden;
+        el.hidden = !!sandbox.hidden || !!document.querySelector('.askcard-back');
       };
+      // A card comes and goes as a child of the body: the layer hides and comes back at once, not at the next second.
+      if (typeof MutationObserver === 'function') new MutationObserver(fit).observe(document.body, {childList: true});
       window.addEventListener('resize', fit);
       window.addEventListener('scroll', fit, true);
       if (typeof ResizeObserver === 'function' && sandbox) new ResizeObserver(fit).observe(sandbox);

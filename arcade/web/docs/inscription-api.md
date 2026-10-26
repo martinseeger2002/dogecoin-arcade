@@ -408,7 +408,7 @@ preflight is answered):
 | `propertyid` | for `token` |
 | `inscription` | for `inscription`: its number or id. It must be this wallet's |
 | `from` | optional: which of the wallet's addresses pays. Left out, the wallet chooses |
-| `label` | optional: what your page calls itself, shown in quotes to the person |
+| `label` | optional: what your page calls itself. The operator's approval says it as the page's own words; a player's card names your page from the chain instead (its app card's name and your @tag) |
 | `note` | optional: why, in a sentence, shown in quotes to the person |
 | `ref` | optional: your page's own name for this send, a string of 1 to 64 characters (anything else is a `400`). Asked again with the same `ref`, by the same wallet on the same chain, within 7 days, nothing new is filed or sent: see *Asking again safely* below |
 | `silent` | optional: `true` and the person is never shown a card. What a test chain lets a game do unasked -- a token its creator issued, or a piece its creator inscribed, sent back to that creator, from the page open as itself -- goes through; anything else fails at once with `this needs the player's say-so`. The same flag works on `claim` and `inscribe` messages |
@@ -464,7 +464,7 @@ and deals with it.
 
 **On a public arcade,** the request goes to whoever is signed in and looking
 at your page, never to the node's own wallet. They see it on their own
-confirmation card (your `label` and `note`, the amount, who it pays, the fee),
+confirmation card (your page as the chain names it, your `note`, the amount, who it pays, the fee),
 and their browser signs it; your polling of `/r/send/<id>` sees `sent`,
 `denied` or `failed` the same way. Nobody signed in means nobody to ask, and
 the request is refused with a sentence saying so. Coins and tokens can be
@@ -527,7 +527,7 @@ parent.postMessage({arcade: "inscribe", seq: 1,
 | `data` | the content: a string, or JSON, or base64 with `encoding: "base64"` |
 | `contenttype` | what it is; `text/plain` by default |
 | `json` | optional: the inscription's metadata, an object |
-| `label`, `note` | shown on the card, in quotes |
+| `note` | shown on the card, in quotes, as your page's words. The card names your page from the chain (its app card's name and your @tag); a `label` is not shown |
 | `verify` | optional: have the result checked by the game's judge first — see [The referee](referee.md), "Verified results" |
 
 The arcade shows its own card — what, how big, the fee — and the person's

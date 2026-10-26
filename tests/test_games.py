@@ -233,8 +233,11 @@ def test_the_wallet_gate_knows_which_pages_are_games_and_which_card(client):
     assert app.get(f"/games/{card}/access").json()["opens"] == real, "the card's box is kept under what Play opens"
     mine = app.get(f"/games/{own}/access").json()
     assert mine["game"] and mine["card"] == own and mine["wallet"] is False
-    assert app.get(f"/games/{shop}/access").json() == {"game": False}, "a shop has no card: it keeps the ask"
-    assert app.get(f"/games/{theirs}/access").json() == {"game": False}, \
+    # A page with no card is named by who inscribed it (2026-10-26, issue #7): the browser asks before its wallet
+    # is reached, and says whose page it is from the chain, never from the page.
+    assert app.get(f"/games/{shop}/access").json() == {"game": False, "publisher": "", "address": MAKER}, \
+        "a shop has no card: it keeps the ask"
+    assert app.get(f"/games/{theirs}/access").json() == {"game": False, "publisher": "", "address": OTHER}, \
         "a card cannot make somebody else's page its game"
     assert app.get(f"/games/{'00' * 32}/access").json() == {"game": False}
     assert app.get("/games/nothex/access").json() == {"game": False}

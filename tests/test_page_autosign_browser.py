@@ -18,6 +18,7 @@ pytest.importorskip("selenium",
                     reason="browser tests need selenium: pip install .[dev]")
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import browsers                                                       # noqa: E402
 from test_page_doors_browser import (browser, served, _click, _landed,  # noqa: E402,F401
                                      _load_libs, _opened, _settled, PASSWORD)
 from test_inscribe_bridge_browser import _inscribe_here, _yes, JUDGE, _page  # noqa: E402
@@ -74,6 +75,8 @@ def test_a_game_saves_without_a_card_where_autosign_is_on(browser, served):
     browser.get(f"{base}/inscriptions/{page}/view")
     time.sleep(4)
     _opened(state, daemon)
+    # A page with no app card asks for wallet access first (2026-10-26, issue #7): allowed, as its player would.
+    browsers.allow_wallet(browser, base, page)
 
     state.set_setting("page_autosign", True)
     try:

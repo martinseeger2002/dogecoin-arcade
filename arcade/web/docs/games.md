@@ -6,6 +6,10 @@ shop, a tool: any HTML page with a card. Players press **Open** to run it full s
 comment on it and tip its maker. On a phone with the arcade installed, the same list is the home screen's **App Store**,
 and an app added from there gets its own icon.
 
+In full screen the arcade keeps one thin strip of its own under your app (22 pixels, 32 on a phone), saying that it
+never asks for a password inside a game; your frame is that much shorter. The arcade's own cards (a send, a trade,
+Wallet access) always come up over your app with Cancel ready, and their yes works a moment after they appear.
+
 An app gets onto the tab by saying so in its own JSON. There is nothing to register, nobody to ask, and no fee beyond
 the inscription itself: every arcade reads the same chain, so an app you inscribe appears on all of them.
 

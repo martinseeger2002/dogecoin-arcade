@@ -20,6 +20,7 @@ pytest.importorskip("selenium",
                     reason="browser tests need selenium: pip install .[dev]")
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import browsers                                                       # noqa: E402
 from test_page_doors_browser import (browser, served, _click, _landed,  # noqa: E402,F401
                                      _load_libs, _opened, _settled, PASSWORD)
 from selenium.webdriver.common.by import By                           # noqa: E402
@@ -86,7 +87,7 @@ def _yes(browser, timeout=60):
     while time.time() < deadline:
         if browser.execute_script(
                 "const b = document.querySelectorAll('.askcard button');"
-                "if (!b.length) return false; b[0].click(); return true;"):
+                "if (!b.length || b[0].disabled) return false; b[0].click(); return true;"):   # armed: issue #7
             return
         time.sleep(0.3)
     raise AssertionError("the arcade never showed its card")
@@ -116,6 +117,8 @@ def test_a_page_inscribes_a_save_and_a_verified_result(browser, served):
     browser.get(f"{base}/inscriptions/{page}/view")
     time.sleep(4)
     _opened(state, daemon)
+    # A page with no app card asks for wallet access first (2026-10-26, issue #7): allowed, as its player would.
+    browsers.allow_wallet(browser, base, page)
     browser.get(f"{base}/inscriptions/{page}/view")
     frame = browser.find_elements(By.CSS_SELECTOR, "iframe.inscription-frame")[0]
     _click(browser, frame, "p")

@@ -144,7 +144,12 @@ def _cards(browser):
 
 
 def _press(card, label):
-    next(b for b in card.find_elements(By.TAG_NAME, "button") if b.text.strip() == label).click()
+    button = next(b for b in card.find_elements(By.TAG_NAME, "button") if b.text.strip() == label)
+    for _ in range(40):                       # over a game the yes is armed after a moment (2026-10-26, issue #7)
+        if button.is_enabled():
+            break
+        time.sleep(0.1)
+    button.click()
 
 
 def _book(browser):
