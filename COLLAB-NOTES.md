@@ -88,6 +88,44 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-26 · SadFrog's side (Claude, node 2) · branch `team/explore-pr` · Explore: every chain's ords, tokens, assets and known collections
+SadFrog: "lets make an explore tab that has tabs for every coin the node has ordinals/omni on ... a user should be able
+to look up known collections, inscription id's, inscription numbers, file types"; then "pepinals, doginals and bellinals
+collections pulled from known collections and searchable from our indexes and arcades - the known collections should be
+shared across arcades to be agreed upon" (over the mesh, not on chain); then "sorting and filters and lazy loading one
+at a time on demand". Running on node 2 since 10-25.
+
+- **The Explore tab** (`/explore`, open to anybody, GET only, 120 questions a minute per visitor):
+  - a tab per coin this arcade has an ord index of (`ord_chains.EXPLORE_ORDER`: Dogecoin, Pepecoin, Bellscoin,
+    Litecoin, then the rest);
+  - a protocol menu per coin: ords, the chain's -20 tokens (`ord_rules.token_protocol`), Omni on Litecoin (a
+    placeholder until OmniLite is wired), and "Arcade assets (Omni)", the arcade's own tokens and NFTs from the
+    chain's ledger;
+  - search by number (negative ones too), id, txid:vout, address or name, and a large viewer with previous/next;
+  - pages of one content type (`DoginalIndex.typed`, a NEWER_QUESTION: counts nothing, reads windows by number);
+  - token pages with holder lists.
+  The Admin -> Ords explorer's questions sit behind `/explore/api/*`, sharing `_ords_question` (minus the ones that
+  count a whole chain). A linked arcade's answer gets its holder from this arcade's own Core (`_own_owners`). Bytes
+  posing as a content type are said as unreadable.
+- **Known collections** (`arcade/known_collections.py`, `arcade/mesh/collectionshare.py`):
+  - **Import:** from Nintondo's public search API (`/pub/collections`, `/pub/search`). It is the operator's opt-in
+    (Admin -> Ords -> Known collections, off by default), since the 2026-10-15 rule stopped reading ords from outside
+    APIs. One request a second per host, resumable, refreshed daily.
+  - **Demand mode (the default):** every collection is listed (name, supply, holders, height, number range), and a
+    collection's pieces are fetched only when someone opens it. "all" imports everything (~885k pieces: Dogecoin 700k,
+    Bells 156k, Pepecoin 27.5k; about 310 MB).
+  - **Fingerprint:** `sha256(chain\nslug\n + sorted ids)`.
+  - **Agreement over the mesh** (frame kind "kc"): arcades trade per-chain digests and indexes, and count agreement as
+    the arcades holding the same fingerprint. A list fetched from a peer comes in 60 KB parts and is kept only if it
+    hashes to the fingerprint. In demand mode the mesh fetches only held or wanted collections.
+  - **In Explore:** collections are searchable with sorting (size, name, holders, newest, agreed) and filters (source,
+    complete, size, agreement), loaded 30 at a time as you scroll. A collection's pieces come 48 at a time; one not
+    fetched yet shows "Fetching from Nintondo: N of M" while it comes. The viewer says "In collection: Name #k".
+
+Tests: `tests/test_explore.py`, `tests/test_known_collections.py`, plus the explorer, index, web, public, admin and mesh
+files: 517 passed before the search work, and its own 36 since. One mesh test failed once under heavy load and passed
+on every rerun.
+
 ### 2026-10-26 The Browser: every name's site; pictures on .mesh pages (Claude)
 The operator: "Instead of mesh browser call the app browser. When it's installed on a T deck it should be the .mesh domains
 only; when it is opened on the PWA or website it should be able to explore all p:dns names", "small size images on
