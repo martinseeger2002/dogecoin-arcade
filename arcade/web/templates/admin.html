@@ -956,10 +956,10 @@
         var chain = (await w.chains()).find(function (c) { return c.network === net; }) || said.sign.chain;
         var keys = (await w.opened(chain)) || (window.arcadeKeys ? await arcadeKeys(chain, 'Your wallet signs, once a month, that the helper may use this model as you.') : null);
         if (!keys || !keys.on || !keys.on[net]) throw new Error('Sign in as this arcade\'s operator and unlock the wallet first.');
-        var coins = await import('/coins.js');
-        var sig = await coins.signMessage(keys.on[net].key, said.sign.message, said.sign.magic);
+        // Built in the wallet for this seller, not the words the node offers (2026-10-26, issue #5).
+        var g = await w.llmGrantSign(keys.on[net], b.dataset.hsign);
         var r = await fetch('/account/llm/grant', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({seller: b.dataset.hsign, expires: said.sign.expires, sig: sig})});
+          body: JSON.stringify({seller: b.dataset.hsign, expires: g.expires, sig: g.sig})});
         if (!r.ok) throw new Error((await r.json()).detail || 'refused');
       }
       load();

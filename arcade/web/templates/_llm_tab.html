@@ -439,10 +439,10 @@ async function ensureGrant(o) {
   if (o.here || o.granted) return;
   const said = await getJSON(`/account/llm/grant?seller=${encodeURIComponent(o.seller)}`);
   if (said.ok) { o.granted = true; return; }
-  const {keys} = await keysFor(said.sign.chain.network, "To use another arcade's model, your wallet signs who you are, once a month.");
-  const coins = await import("/coins.js");
-  const sig = await coins.signMessage(keys.on[said.sign.chain.network].key, said.sign.message, said.sign.magic);
-  await postJSON("/account/llm/grant", {seller: o.seller, expires: said.sign.expires, sig});
+  const {w, keys} = await keysFor(said.sign.chain.network, "To use another arcade's model, your wallet signs who you are, once a month.");
+  // The words are built in the wallet for the seller picked here, not taken from the node (2026-10-26, issue #5).
+  const g = await w.llmGrantSign(keys.on[said.sign.chain.network], o.seller);
+  await postJSON("/account/llm/grant", {seller: o.seller, expires: g.expires, sig: g.sig});
   o.granted = true;
   loadCredit(o);
 }
@@ -631,9 +631,10 @@ $("llm-send-pay").addEventListener("click", async () => {
       `For LLM credit, to ${p.to}. ${shown.says}`, "Yes, send it") : confirm(`Pay ${amount} ${short(p.label)}?`);
     if (!ok) return;
     const done = await w.confirm(keys, offer);
-    const words = await getJSON(`/account/llm/topup?seller=${encodeURIComponent(o.seller)}&leg=${encodeURIComponent(leg)}&txid=${done.txid}`);
-    const coins = await import("/coins.js");
-    const sig = await coins.signMessage(keys.on[net].key, words.message, words.magic);
+    // Built in the wallet from this payment, this chain, this address and the seller picked here; this arcade's
+    // words are asked for its own id only, and held to everything else (2026-10-26, issue #5: llmTopupSign).
+    const words = o.here ? await getJSON(`/account/llm/topup?seller=${encodeURIComponent(o.seller)}&leg=${encodeURIComponent(leg)}&txid=${done.txid}`) : null;
+    const sig = await w.llmTopupSign(keys.on[net], {seller: o.seller, here: !!o.here, network: net, txid: done.txid}, words);
     keepPending([...pending(), {seller: o.seller, leg, txid: done.txid, sig, at: Date.now()}]);
     $("llm-topup-said").textContent = "Sent. It counts as soon as the seller's node sees it, usually within seconds…";
     claimPending();

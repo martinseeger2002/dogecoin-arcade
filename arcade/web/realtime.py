@@ -53,7 +53,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from ..mesh.node import MAX_PAYLOAD, MeshError
 
 log = logging.getLogger("arcade.realtime")
-from ..mesh.service import GUEST, MESSAGE_MAGIC, cert_message
+from ..mesh.service import GUEST, cert_message
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 GAME = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
@@ -227,14 +227,15 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
         # play together with no peer at all, and peers come and go mid-game.
         out = {"ok": True, **svc.status(), "online": True,
                "who": {"kind": kind, "address": address or None, "tag": tag_of(address)}}
-        # The words a player signed in on ANOTHER node signs to be themselves here (see the notes).
-        out["cert"] = {"network": svc.network, "node": svc.node_id, "expires": svc.expiry(),
-                       "magic": MESSAGE_MAGIC}
+        # The words a player signed in on ANOTHER node signs to be themselves here (see the notes). No magic is
+        # sent any more (2026-10-26, issue #5, blind signing): the wallet pins it per chain (coins.js) and builds
+        # the words itself from these fields; `message` is said only so it can check this node agrees.
+        out["cert"] = {"network": svc.network, "node": svc.node_id, "expires": svc.expiry()}
         if kind == "account":
             expires = svc.expiry()
             chain = account_chain()
             out["sign"] = {"message": cert_message(svc.network, svc.node_id, address, expires),
-                           "expires": expires, "magic": MESSAGE_MAGIC,
+                           "expires": expires,
                            "chain": {"network": chain.network,
                                      "version": chain.params.pubkeyhash_version}}
         return JSONResponse(out)

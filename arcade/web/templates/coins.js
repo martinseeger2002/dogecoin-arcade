@@ -337,7 +337,8 @@ export function varint(bytes, at) {
  * signature, and handed over as Core hands its own -- 65 bytes, base64, the
  * first byte saying which of four keys to recover and that it is compressed.
  * Used for the realtime certificate (arcade/mesh/service.py), which is how a
- * player's own address vouches for them on nodes that have never seen them.
+ * player's own address vouches for them on nodes that have never seen them,
+ * and for LLM grants and top-ups (arcade/llm.py) -- through `signWords` only.
  */
 function compactSize(n) {
   if (n < 0xfd) return Uint8Array.of(n);
@@ -350,13 +351,107 @@ export async function messageHash(message, magic) {
   return hash256(join([compactSize(m.length), m, compactSize(b.length), b]));
 }
 
-export async function signMessage(priv, message, magic) {
+async function signMessage(priv, message, magic) {
   const sig = await secp.signAsync(await messageHash(message, magic), priv, {lowS: true});
   const out = new Uint8Array(65);
   out[0] = 27 + sig.recovery + 4;                  // +4: the key is compressed
   out.set(beBytes(sig.r, 32), 1);
   out.set(beBytes(sig.s, 32), 33);
   return btoa(String.fromCharCode(...out));
+}
+
+/* --- the only words an arcade key signs as a message (2026-10-26) ---------
+ *
+ * Issue #5, blind signing (Arcade Hardening round 2, wave 3). SadFrog approved "A. build every signed text in the
+ * browser from fixed templates; check node/seller ids equal this arcade's own; pin the signing magic per chain. B. as
+ * a fallback, show the exact text and require a click for anything unusual." Before, the page signed whatever
+ * /realtime/hello, /account/llm/grant and /account/llm/topup said, with the magic they said, so a hostile arcade
+ * could have had a player's key sign any words at all. Now there are three shapes of words, built here field by
+ * field, each field checked; the magic is fixed here per chain and never read from a server; and `signWords`
+ * signs nothing else (signMessage is no longer exported). The server rebuilds the same words from its own data:
+ * arcade/mesh/service.py cert_message, arcade/llm.py grant_words / topup_words.
+ */
+export const ARCADE_MAGIC = "Pepecoin Signed Message:\n";
+// Pinned per use, the same on every chain: a realtime certificate (mesh network "arcade-<chain>") is checked by the
+// messaging chain's own Core (`verifymessage`), and messaging is Pepecoin's (config.MESSAGING_NETWORKS), so it is
+// Pepecoin's magic whichever chain the key is on; LLM grants and top-ups are checked from the bytes with one magic
+// for every chain (arcade/llm.py MAGIC). Neither is ever read from a server.
+const REALTIME_MAGIC = ARCADE_MAGIC;
+const LLM_MAGIC = ARCADE_MAGIC;
+const MESH_NET = /^arcade-[a-z0-9]{2,16}$/;
+/** The longest a certificate may run: arcade/mesh/service.py CERT_DAYS, plus the hour `expiry` rounds up to. */
+export const CERT_MOST = 86400 + 3600;
+/** The longest a grant may run: arcade/llm.py GRANT_DAYS_MOST. */
+export const GRANT_MOST = 90 * 86400;
+const NODE_ID = /^[0-9a-f]{64}$/;                // a mesh node id: its Ed25519 key, hex
+const TXID = /^[0-9a-f]{64}$/;
+const NET = /^[a-z0-9]{2,16}$/;
+const ADDR = /^[0-9A-Za-z]{20,90}$/;             // base58 or bech32: never a newline, never a space
+
+function wordsRefused(why) { throw new Error(`Nothing was signed: ${why}.`); }
+
+function untilOk(expires, most, now) {
+  if (!Number.isSafeInteger(expires) || !(expires > now) || expires > now + most) wordsRefused("the expiry is not one this wallet signs");
+  return expires;
+}
+
+/** What a player's key signs to be `address` on mesh node `node` until `expires` (cert_message). */
+export function realtimeWords(network, node, address, expires, now = Date.now() / 1000) {
+  if (!MESH_NET.test(network)) wordsRefused("that is not a mesh network");
+  if (!NODE_ID.test(node)) wordsRefused("that is not a node id");
+  if (!ADDR.test(address)) wordsRefused("that is not an address");
+  return `arcade-realtime\n${network}\n${node}\n${address}\n${untilOk(expires, CERT_MOST, now)}`;
+}
+
+/** What a buyer's key signs so that seller `seller` serves `address` until `expires` (llm.grant_words). */
+export function grantWords(seller, address, expires, now = Date.now() / 1000) {
+  if (!NODE_ID.test(seller)) wordsRefused("that is not another arcade's node id");
+  if (!ADDR.test(address)) wordsRefused("that is not an address");
+  return `arcade-llm\n${seller}\n${address}\n${untilOk(expires, GRANT_MOST + 600, now)}`;
+}
+
+/** What the key that paid signs so payment `txid` counts as `address`'s credit at `seller` (llm.topup_words).
+ *  `seller` may be "": an arcade with no mesh sells under no id. */
+export function topupWords(network, txid, seller, address) {
+  if (!NET.test(network)) wordsRefused("that is not a chain");
+  if (!TXID.test(txid)) wordsRefused("that is not a transaction id");
+  if (seller !== "" && !NODE_ID.test(seller)) wordsRefused("that is not a node id");
+  if (!ADDR.test(address)) wordsRefused("that is not an address");
+  return `arcade-llm-topup\n${network}\n${txid}\n${seller}\n${address}`;
+}
+
+/** `message` read back as one of the three shapes ({kind, magic, address, ...its fields}), or null for anything
+ *  else. Each is built again from what was read, so only words the builders above would make come through. */
+export function arcadeWords(message, now = Date.now() / 1000) {
+  const text = String(message);
+  let m;
+  try {
+    if ((m = /^arcade-realtime\n([^\n]*)\n([^\n]*)\n([^\n]*)\n([0-9]{1,12})$/.exec(text))) {
+      const [, network, node, address, expires] = m;
+      if (realtimeWords(network, node, address, Number(expires), now) !== text) return null;
+      return {kind: "realtime", magic: REALTIME_MAGIC, network, node, address, expires: Number(expires)};
+    }
+    if ((m = /^arcade-llm\n([^\n]*)\n([^\n]*)\n([0-9]{1,12})$/.exec(text))) {
+      const [, seller, address, expires] = m;
+      if (grantWords(seller, address, Number(expires), now) !== text) return null;
+      return {kind: "grant", magic: LLM_MAGIC, seller, address, expires: Number(expires)};
+    }
+    if ((m = /^arcade-llm-topup\n([^\n]*)\n([^\n]*)\n([^\n]*)\n([^\n]*)$/.exec(text))) {
+      const [, network, txid, seller, address] = m;
+      if (topupWords(network, txid, seller, address) !== text) return null;
+      return {kind: "topup", magic: LLM_MAGIC, network, txid, seller, address};
+    }
+  } catch (e) { return null; }
+  return null;
+}
+
+/** Sign `words` with `mine` ({key, address}: a key this page derived): only words of the three shapes, naming
+ *  mine.address, with the magic pinned above for their chain -- Core's `signmessage` base64. */
+export async function signWords(mine, words, now = Date.now() / 1000) {
+  const read = arcadeWords(words, now);
+  if (!read) wordsRefused("those are not words this wallet signs");
+  if (!mine || !mine.key || read.address !== mine.address) wordsRefused("the words name another address");
+  return signMessage(mine.key, words, read.magic);
 }
 
 export function p2pkh(hash) {

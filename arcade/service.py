@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -298,10 +299,16 @@ class CertRoom(Room):
             raise ServiceError(f"the room is offline: {hello.get('why')}")
         cert = hello["cert"]
         expires = int(cert["expires"])
-        words = f"arcade-realtime\n{cert['network']}\n{cert['node']}\n{self.address}\n{expires}"
+        # Each field held to its shape and the magic pinned here, never the node's (2026-10-26, issue #5, blind
+        # signing): a node can have this key sign a realtime certificate and nothing else.
+        network, node = str(cert.get("network") or ""), str(cert.get("node") or "")
+        if (not re.fullmatch(r"arcade-[a-z0-9]{2,16}", network) or not re.fullmatch(r"[0-9a-f]{64}", node)
+                or not time.time() < expires <= time.time() + 86400 + 3600):
+            raise ServiceError("the node's certificate is not one this key signs")
+        words = f"arcade-realtime\n{network}\n{node}\n{self.address}\n{expires}"
         out = self._post("/realtime/join", {"game": self.game, "room": self.room, "address": self.address,
                                             "expires": expires,
-                                            "sig": sign_message(self._secret, words, cert.get("magic") or MESSAGE_MAGIC)})
+                                            "sig": sign_message(self._secret, words, MESSAGE_MAGIC)})
         self.token, self.me, self.members = out["token"], out["me"], out.get("members", [])
         self.joined_at = time.time()
         if (self.me or {}).get("address") != self.address:

@@ -89,39 +89,42 @@
         }).catch(function(){ return ''; });
     }
     function realtimeForget(){ try { sessionStorage.removeItem(RT_PICK); } catch (err) {} }
+    // The words are built by wallet.js from the hello's own node and network and the player's own address, never
+    // taken as the node says them (2026-10-26, issue #5, blind signing: realtimeSign).
     function realtimeProof(hello, base){
       if (base) return realtimeProofThere(hello);
       if (!hello.sign || !hello.who || hello.who.kind !== 'account') return Promise.resolve(null);
-      var slot = 'arcade-rt-cert:' + hello.sign.message;
+      return realtimeSigned(hello, hello, false);
+    }
+    // Another node: who the player is comes from THIS node's hello; the node and network named from that one's.
+    function realtimeProofThere(there){
+      if (!there.cert) return Promise.resolve(null);
+      return fetch('/realtime/hello', {cache: 'no-store'}).then(function(r){ return r.json(); }).then(function(own){
+        if (!own.sign || !own.who || own.who.kind !== 'account' || !own.who.address) return null;
+        return realtimeSigned(own, there, true).then(function(p){ return p && {sig: p.sig, expires: p.expires, address: own.who.address}; });
+      }).catch(function(){ return null; });
+    }
+    // `own`: this node's hello (who the player is, which chain's key); `hello`: the node the certificate is for.
+    function realtimeSigned(own, hello, there){
+      var expires = there ? (hello.cert || {}).expires : own.sign.expires;
+      var slot = 'arcade-rt-cert:' + [hello.network, hello.node, own.who.address, expires].join(':');
       try {
         var kept = JSON.parse(sessionStorage.getItem(slot) || 'null');
         if (kept && kept.sig) return Promise.resolve(kept);
       } catch (err) {}
       return import('/wallet.js').then(function(w){
-        return w.opened(hello.sign.chain).then(function(keys){
-          return keys || arcadeKeys(hello.sign.chain, 'Join this game as you? Your wallet signs who you are, once a day.');
+        return w.opened(own.sign.chain).then(function(keys){
+          return keys || arcadeKeys(own.sign.chain, 'Join this game as you? Your wallet signs who you are, once a day.');
+        }).then(function(keys){
+          var mine = keys && keys.on && keys.on[own.sign.chain.network];
+          if (!mine || mine.address !== own.who.address) return null;
+          return w.realtimeSign(mine, hello, {there: there}).then(function(p){
+            var proof = {sig: p.sig, expires: p.expires};
+            try { sessionStorage.setItem(slot, JSON.stringify(proof)); } catch (err) {}
+            return proof;
+          });
         });
-      }).then(function(keys){
-        var mine = keys && keys.on && keys.on[hello.sign.chain.network];
-        if (!mine || mine.address !== hello.who.address) return null;
-        return import('/coins.js').then(function(coins){
-          return coins.signMessage(mine.key, hello.sign.message, hello.sign.magic);
-        }).then(function(sig){
-          var proof = {sig: sig, expires: hello.sign.expires};
-          try { sessionStorage.setItem(slot, JSON.stringify(proof)); } catch (err) {}
-          return proof;
-        });
-      }).catch(function(){ return null; });        // locked or refused: a guest
-    }
-    // Another node: who the player is comes from THIS node's hello; the words to sign from that one's.
-    function realtimeProofThere(there){
-      if (!there.cert) return Promise.resolve(null);
-      return fetch('/realtime/hello', {cache: 'no-store'}).then(function(r){ return r.json(); }).then(function(own){
-        if (!own.sign || !own.who || own.who.kind !== 'account' || !own.who.address) return null;
-        var c = there.cert, words = 'arcade-realtime\n' + c.network + '\n' + c.node + '\n' + own.who.address + '\n' + c.expires;
-        return realtimeProof({sign: {message: words, expires: c.expires, magic: c.magic, chain: own.sign.chain},
-                              who: own.who}, '').then(function(p){ return p && {sig: p.sig, expires: p.expires, address: own.who.address}; });
-      }).catch(function(){ return null; });
+      }).catch(function(){ return null; });        // locked, refused or not words the wallet signs: a guest
     }
     function realtimePost(path, body, base){
       base = base || '';
@@ -1373,11 +1376,12 @@
         return import('/wallet.js').then(function(w){
           return w.opened(said.sign.chain).then(function(k){
             return k || arcadeKeys(said.sign.chain, 'To use another arcade\'s model, your wallet signs who you are, once a month.');
+          }).then(function(keys){
+            if (!keys || !keys.on || !keys.on[net]) throw new Error('unlock your wallet first');
+            // Built in the wallet for the seller this page asked about, not the words the node offers (issue #5).
+            return w.llmGrantSign(keys.on[net], o.seller);
           });
-        }).then(function(keys){
-          if (!keys || !keys.on || !keys.on[net]) throw new Error('unlock your wallet first');
-          return import('/coins.js').then(function(coins){ return coins.signMessage(keys.on[net].key, said.sign.message, said.sign.magic); });
-        }).then(function(sig){ return llmJSON('/account/llm/grant', {seller: o.seller, expires: said.sign.expires, sig: sig}); });
+        }).then(function(g){ return llmJSON('/account/llm/grant', {seller: o.seller, expires: g.expires, sig: g.sig}); });
       });
     }
     function llmPick(book, req){

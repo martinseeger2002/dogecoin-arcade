@@ -1280,7 +1280,9 @@ function arcadeAutoSigns(page, shown, most){
   return true;
 }
 // `nope` names the other button (2026-10-21: a page adding a contact asks "Add" / "No"); "Cancel" when left out.
-function arcadeAsk(title, detail, yes = "Yes", nope = "Cancel"){
+// `verbatim`: words shown exactly as they are, line by line (2026-10-26, issue #5: "show the exact text and require
+// a click for anything unusual" -- wallet.js askToSign).
+function arcadeAsk(title, detail, yes = "Yes", nope = "Cancel", verbatim = ""){
   return new Promise(function(answer){
     var back = document.createElement('div');
     back.className = 'askcard-back';
@@ -1299,7 +1301,15 @@ function arcadeAsk(title, detail, yes = "Yes", nope = "Cancel"){
     var no = document.createElement('button');
     no.type = 'button'; no.className = 'ghost'; no.textContent = nope;
     row.append(ok, no);
-    card.append(h, p, row);
+    card.append(h, p);
+    if (verbatim) {
+      var pre = document.createElement('pre');
+      pre.className = 'mono';
+      pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;background:var(--code);padding:10px;border-radius:8px;max-height:40vh;overflow:auto';
+      pre.textContent = String(verbatim);
+      card.append(pre);
+    }
+    card.append(row);
     back.append(card);
     document.body.append(back);
     var done = function(v){ back.remove(); answer(v); };

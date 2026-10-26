@@ -461,8 +461,10 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
             return JSONResponse({"ok": True})
         expires = int(time.time()) + 30 * 86400
         chain = account_chain()
+        # The wallet builds the words itself for the seller it asked about, with its own expiry and its pinned
+        # magic (2026-10-26, issue #5, blind signing: wallet.js llmGrantSign); this says only that a grant is needed
+        # and which chain's key signs it. POST below checks the words rebuilt from this arcade's own data.
         return JSONResponse({"sign": {"message": llmlib.grant_words(seller, address, expires), "expires": expires,
-                                      "magic": llmlib.MAGIC,
                                       "chain": {"network": chain.network,
                                                 "version": chain.params.pubkeyhash_version}}})
 
@@ -489,9 +491,10 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
             network = llmlib.leg_parts(leg)[0]
         except llmlib.LlmError as exc:
             return refuse(exc)
+        # Read by the wallet for this arcade's own id only, every other field held to its own (wallet.js
+        # llmTopupSign); no magic (2026-10-26, issue #5). The seller checks the words rebuilt from its own data.
         sid = me_id() if is_here(seller) else seller
-        return JSONResponse({"message": llmlib.topup_words(network, txid.strip().lower(), sid, address),
-                             "magic": llmlib.MAGIC})
+        return JSONResponse({"message": llmlib.topup_words(network, txid.strip().lower(), sid, address)})
 
     @app.post("/account/llm/topup")
     async def llm_topup(request: Request):

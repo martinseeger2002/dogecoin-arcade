@@ -664,6 +664,80 @@ export async function offerSend(to, amount, chain, from = "") {
  * key is used -- which is the only place the refusal can be effective. A
  * node that can choose what you sign does not need your key.
  */
+/* --- words a key signs for an arcade: certificates, LLM grants and top-ups (2026-10-26) --------------------------
+ *
+ * Issue #5, blind signing (Arcade Hardening round 2, wave 3; coins.js `signWords`). Each text is built here from what
+ * this page can check: the player's own address (from the key), the seller the player picked, the txid of the
+ * payment this page just sent, an expiry this page chose or bounded. The words the server offers are not signed;
+ * where they disagree with what is built here, nothing is. A node id is held to the one this browser first saw for
+ * this arcade (localStorage, per origin); another one is the fallback's "anything unusual": the exact words are shown
+ * and signed only on a click.
+ */
+const SELF_NODE = "arcade.node.self";
+
+function keptNode() { try { return localStorage.getItem(SELF_NODE) || ""; } catch (e) { return ""; } }
+function keepNode(id) { try { if (id) localStorage.setItem(SELF_NODE, id); } catch (e) { /* asked again next time */ } }
+const notSigned = (why) => new Error(`Nothing was signed: ${why}.`);
+
+/** Ask before signing anything unusual, with the exact `words` shown. No dialog to ask with: refused. */
+async function askToSign(why, words) {
+  const ask = globalThis.arcadeAsk;
+  if (typeof ask !== "function") return false;
+  return !!(await ask("Sign these exact words?", why, "Sign them", "Don't sign", words));
+}
+
+/** Whether `node` may be named as this arcade's own mesh node: the one kept here, or a first, or a change the player
+ *  said yes to after seeing `words`. */
+export async function ownNode(node, words) {
+  const kept = keptNode();
+  if (!node || kept === node) return true;
+  if (!kept) { keepNode(node); return true; }
+  const yes = await askToSign(`This arcade now calls itself node ${node.slice(0, 16)}…, not ${kept.slice(0, 16)}… as `
+    + "before. Sign only if its operator told you its node changed.", words);
+  if (yes) keepNode(node);
+  return yes;
+}
+
+/** A realtime certificate for `mine` ({key, address} on the certificate's chain). `hello` is a node's /realtime/hello:
+ *  this arcade's own, or with `there` another node's, fetched from it (whose certificate names that node). The words
+ *  are built from the hello's own node and network, which must agree with its `cert` (and `sign`) parts. */
+export async function realtimeSign(mine, hello, {there = false} = {}) {
+  const cert = (hello && hello.cert) || {}, node = String((hello && hello.node) || ""), network = String((hello && hello.network) || "");
+  if (cert.node !== node || cert.network !== network) throw notSigned("that node names another node in its certificate");
+  const expires = Number(!there && hello.sign ? hello.sign.expires : cert.expires);
+  const words = coins.realtimeWords(network, node, mine.address, expires);
+  if (!there && hello.sign && hello.sign.message !== words) throw notSigned("this arcade's words are not the certificate this wallet builds");
+  if (!there && !await ownNode(node, words)) throw notSigned("you said no");
+  return {sig: await coins.signWords(mine, words), expires, words};
+}
+
+/** A grant for `seller`, the other arcade the player picked: `mine` lets it serve the player for `days`. */
+export async function llmGrantSign(mine, seller, days = 30) {
+  seller = String(seller || "");
+  if (seller && seller === keptNode()) throw notSigned("that seller is this arcade, which needs no grant");
+  const expires = Math.floor(Date.now() / 1000) + days * 86400;
+  const words = coins.grantWords(seller, mine.address, expires);
+  return {seller, expires, sig: await coins.signWords(mine, words)};
+}
+
+/** The top-up signature for payment `txid` on `network`, sent by this page, to `seller` (`here`: this arcade).
+ *  This arcade's own id is the one thing taken from its words (`said`, /account/llm/topup): read back to the shape,
+ *  every other field equal to this page's, the id held to the one kept here. */
+export async function llmTopupSign(mine, {seller = "", here = false, network, txid}, said = null) {
+  let sid = String(seller || "");
+  if (here) {
+    const read = coins.arcadeWords(said && said.message);
+    if (!read || read.kind !== "topup") throw notSigned("this arcade's top-up words are not ones this wallet signs");
+    sid = read.seller;
+  } else if (!sid) throw notSigned("which arcade is paid?");
+  const words = coins.topupWords(String(network || ""), String(txid || "").toLowerCase(), sid, mine.address);
+  if (here) {
+    if (said.message !== words) throw notSigned("this arcade's words name another payment or address");
+    if (!await ownNode(sid, words)) throw notSigned("you said no");
+  }
+  return coins.signWords(mine, words);
+}
+
 /* --- real coins: every mainnet transaction is said before it is signed -------
  *
  * 2026-10-09: "make sure any main net transactions are verified by the
@@ -4585,7 +4659,9 @@ async function changeImports(wallet, change, password, {tidy = false} = {}) {
       }
       if (!body) continue;                 // sealed under a password this page does not have: folded in later
       foldImports(wallets, gone, body);
-      merged.push(one.digest);
+      // The copy's hash worked out here from the bytes just opened, never the node's word for it: the key signs that
+      // THIS copy was folded in (2026-10-26, issue #5, blind signing; wallet_imports.blob_hash).
+      merged.push(await sha256Hex(enc.encode(String(one.blob))));
     }
     if (tidy && said.signed && !merged.length) return null;
     if (tidy && said.signed && JSON.stringify([wallets, gone]) === before) {
