@@ -28093,9 +28093,14 @@ def create_app(state: AppState) -> FastAPI:
                 answers = mode == "walk" or bool(index.walkers())
             except Exception:                              # noqa: BLE001
                 mode, answers = "off", False
+            protocols = ordchainslib.explore_protocols(net)
+            # The arcade's own Omni-format tokens and NFTs on that chain, where this node keeps its ledger (2026-10-25,
+            # SadFrog: "there should also be an section to explor pepecoin test omni assets like the ashvale game
+            # assets").
+            if any(c.network == net for c in state.token_chains):
+                protocols = protocols + [{"key": "assets", "label": "Arcade assets (Omni)", "kind": "assets"}]
             out.append({"net": net, "chain": ordchainslib.chain_name(net), "coin": ordchainslib.coin(net),
-                        "word": ordchainslib.word(net), "mode": mode, "answers": answers,
-                        "protocols": ordchainslib.explore_protocols(net)})
+                        "word": ordchainslib.word(net), "mode": mode, "answers": answers, "protocols": protocols})
         return out
 
     @app.get("/explore", response_class=HTMLResponse)
@@ -28163,6 +28168,55 @@ def create_app(state: AppState) -> FastAPI:
         if not re.match(r"^[0-9]{1,7}$", (page or "").strip()):
             return JSONResponse({"detail": "a page number: 0, 1, 2 ..."}, status_code=400)
         return _ords_ask(index, {"what": "holders", "tick": said, "page": int(page)})
+
+    def _explore_ledger(request: Request, net: str):
+        if _explore_limited(request):
+            raise HTTPException(status_code=429, detail="Too many questions in a minute: wait a moment.")
+        chain = next((c for c in state.token_chains if c.network == net), None)
+        if chain is None:
+            raise HTTPException(status_code=404, detail="this arcade keeps no token ledger of that chain")
+        return chain, state.token_index(chain)
+
+    def _explore_asset_row(prop: dict, face: dict) -> dict:
+        return {"id": prop["property_id"], "name": prop.get("name") or "", "category": prop.get("category") or "",
+                "subcategory": prop.get("subcategory") or "", "supply": prop.get("total_display"),
+                "holders": prop.get("holder_count"), "divisible": bool(prop.get("divisible")),
+                "test_ecosystem": bool(prop.get("test_ecosystem")), "managed": bool(prop.get("managed")),
+                "icon": face.get("icon") or "", "about": str(face.get("about") or "")[:400]}
+
+    @app.get("/explore/api/assets")
+    def explore_assets(request: Request, net: str = "test", q: str = "", category: str = ""):
+        """The arcade's own tokens and NFTs on a chain (its Omni-format ledger): by name, by category."""
+        _chain, index = _explore_ledger(request, net)
+        said, cat = (q or "").strip().lower()[:80], (category or "").strip().lower()[:80]
+        props = index.properties()
+        counts: dict[str, int] = {}
+        for p in props:
+            counts[p.get("category") or ""] = counts.get(p.get("category") or "", 0) + 1
+        shown = [p for p in props if (not said or said in str(p.get("name") or "").lower())
+                 and (not cat or str(p.get("category") or "").lower() == cat)][:200]
+        faces = _faces_for(index, shown)
+        return JSONResponse({"assets": [_explore_asset_row(p, faces.get(p["property_id"], {})) for p in shown],
+                             "count": len(props),
+                             "categories": sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/explore/api/asset")
+    def explore_asset(request: Request, net: str = "test", id: str = ""):
+        """One arcade token or NFT: what it is, who issued it, and its 50 biggest holders."""
+        chain, index = _explore_ledger(request, net)
+        if not re.match(r"^[0-9]{1,10}$", (id or "").strip()):
+            return JSONResponse({"detail": "a token's number"}, status_code=400)
+        prop = index.property(int(id))
+        if prop is None:
+            return JSONResponse({"detail": "no such token on this chain"}, status_code=404)
+        face = _faces_for(index, [prop]).get(prop["property_id"], {})
+        row = {**_explore_asset_row(prop, face), "about": _about_of(prop.get("data")),
+               "issuer": prop.get("issuer"), "created_at": prop.get("creation_block"),
+               "created_in": prop.get("creation_txid"), "url": face.get("url") or "",
+               "page": f"/tokens/{prop['property_id']}?chain={chain.network}"}
+        holders = [{"address": h["address"], "held": h["display"]} for h in index.holders(int(id))[:50]]
+        return JSONResponse({"asset": row, "holders": holders}, headers={"Cache-Control": "no-store"})
 
     @app.get("/explore/api/collections")
     def explore_collections(request: Request, net: str = "doge", q: str = ""):

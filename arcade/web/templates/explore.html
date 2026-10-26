@@ -182,6 +182,29 @@
     </div>
   </div>
 
+  {# --- the arcade's own tokens and NFTs (Omni-format, its ledger of the chain) --- #}
+  <div id="xpassets" hidden>
+    <div class="xpcard">
+      <h2 id="xpassetsh">Arcade assets</h2>
+      <div class="xprow">
+        <input id="xpassetq" type="search" autocomplete="off" placeholder="Search by name" aria-label="Search assets">
+        <select id="xpassetcat" aria-label="Category" style="font-size:16px"><option value="">Every category</option></select>
+      </div>
+      <p class="muted xpnote">Tokens and NFTs made in arcades on this chain (game items, coins, collectibles), from this
+        arcade&rsquo;s ledger of it.</p>
+      <div id="xpassetsaid" class="xpsaid" aria-live="polite"></div>
+      <div class="xpgrid" id="xpassetgrid"></div>
+    </div>
+    <div class="xpcard" id="xpasset" hidden>
+      <div class="xpbody">
+        <div class="xpframe" id="xpassetframe"></div>
+        <dl class="xpfacts" id="xpassetfacts"></dl>
+      </div>
+      <h2 style="margin-top:14px">Holders</h2>
+      <div id="xpassetholders"></div>
+    </div>
+  </div>
+
   {# --- Omni --- #}
   <div id="xpomni" hidden>
     <div class="xpcard">
@@ -254,8 +277,9 @@
     $('xpords').hidden = p.kind !== 'ord';
     $('xptokens').hidden = p.kind !== 'token';
     $('xpomni').hidden = p.kind !== 'omni';
+    $('xpassets').hidden = p.kind !== 'assets';
     var st = $('xpstate'); st.textContent = '';
-    if (p.kind !== 'omni' && !c.answers) {
+    if ((p.kind === 'ord' || p.kind === 'token') && !c.answers) {
       st.appendChild(el('p', 'xpwarn', c.chain + ' is not indexed on this arcade yet, and no linked arcade walking it is '
         + 'heard just now: what is asked below may not be answered.'));
     }
@@ -267,6 +291,10 @@
     } else if (p.kind === 'token') {
       X.tick = null; $('xptok').textContent = ''; PICK.q.value = '';
       $('xptokh').textContent = p.label + ' tokens on ' + c.chain;
+    } else if (p.kind === 'assets') {
+      $('xpassetsh').textContent = 'Arcade assets on ' + c.chain;
+      $('xpasset').hidden = true; $('xpassetq').value = '';
+      assets(true);
     } else {
       $('xpomnichain').textContent = c.chain;
     }
@@ -592,6 +620,75 @@
       box.appendChild(pager);
       box.appendChild(from(j));
     }).catch(function (e) { if (net === X.chain.net) box.textContent = e.message; });
+  }
+
+  // --- the arcade's own tokens and NFTs ------------------------------------------------------------------------
+  var ASSET_WAIT = null;
+  function iconInto(box, icon, big) {
+    box.textContent = '';
+    if (icon) contentInto(box, {id: icon, content_type: 'image/'}, big);
+    else box.appendChild(el('div', big ? 'xpnone muted' : 'xptype', 'no picture'));
+  }
+  function assets(fresh) {
+    var net = X.chain.net, cat = $('xpassetcat');
+    api('assets', {net: net, q: $('xpassetq').value.trim(), category: fresh ? '' : cat.value}).then(function (j) {
+      if (net !== X.chain.net) return;
+      if (fresh) {
+        cat.textContent = ''; var all = el('option', '', 'Every category'); all.value = ''; cat.appendChild(all);
+        (j.categories || []).forEach(function (k) {
+          var o = el('option', '', (k[0] || 'uncategorised') + ' (' + num(k[1]) + ')'); o.value = k[0]; cat.appendChild(o);
+        });
+      }
+      var grid = $('xpassetgrid'); grid.textContent = '';
+      var list = j.assets || [];
+      $('xpassetsaid').textContent = list.length ? list.length + ' of ' + num(j.count) + ' shown'
+        : (j.count ? 'None match.' : 'No arcade assets on ' + X.chain.chain + ' yet.');
+      list.forEach(function (a) {
+        var b = el('button', 'xptile'); b.type = 'button';
+        var thumb = el('div', 'xpthumb'); iconInto(thumb, a.icon, false); b.appendChild(thumb);
+        var cap = el('div', 'xpcap'); cap.appendChild(el('b', '', a.name || ('#' + a.id)));
+        cap.appendChild(el('div', 'muted', '#' + a.id + (a.category ? ' · ' + a.category : '')));
+        b.appendChild(cap); b.title = a.about || a.name;
+        b.onclick = function () { asset(a.id); };
+        grid.appendChild(b);
+      });
+    }).catch(function (e) { if (net === X.chain.net) $('xpassetsaid').textContent = e.message; });
+  }
+  $('xpassetq').oninput = function () { clearTimeout(ASSET_WAIT); ASSET_WAIT = setTimeout(function () { assets(false); }, 200); };
+  $('xpassetcat').onchange = function () { assets(false); };
+  function asset(id) {
+    var net = X.chain.net, box = $('xpasset');
+    box.hidden = false;
+    api('asset', {net: net, id: id}).then(function (j) {
+      if (net !== X.chain.net) return;
+      var a = j.asset;
+      iconInto($('xpassetframe'), a.icon, true);
+      var page = el('a', '', 'Open its token page'); page.href = a.page;
+      facts($('xpassetfacts'), [
+        ['Name', a.name], ['Token', '#' + a.id], ['Chain', X.chain.chain],
+        ['Category', [a.category, a.subcategory].filter(Boolean).join(' · ') || null],
+        ['About', a.about || null], ['Supply', a.supply], ['Holders', num(a.holders)],
+        ['Kind', (a.divisible ? 'divisible' : 'whole units') + (a.managed ? ', managed (its issuer can grant more)' : ', fixed supply')],
+        ['Issuer', a.issuer], ['Created at block', num(a.created_at)],
+        ['Created in', a.created_in ? el('code', '', a.created_in) : null],
+        ['Link', a.url ? (function () { var l = el('a', '', a.url); l.href = a.url; l.target = '_blank'; l.rel = 'noopener noreferrer'; return l; })() : null],
+        ['', page]]);
+      var hb = $('xpassetholders'); hb.textContent = '';
+      if (!j.holders.length) { hb.appendChild(el('p', 'muted', 'Nobody holds any.')); return; }
+      var table = el('table', 'xprich'), head = el('thead'), hr = el('tr');
+      [['n', 'Rank'], ['', 'Address'], ['n', 'Holds']].forEach(function (h) { hr.appendChild(el('th', h[0], h[1])); });
+      head.appendChild(hr); table.appendChild(head);
+      var body = el('tbody');
+      j.holders.forEach(function (h, i) {
+        var tr = el('tr');
+        [['n', '', '#' + (i + 1)], ['addr', '', h.address], ['n', 'Holds', h.held]].forEach(function (c) {
+          var td = el('td', c[0], c[2]); if (c[1]) td.setAttribute('data-l', c[1]); tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+      table.appendChild(body); hb.appendChild(table);
+      box.scrollIntoView({block: 'start', behavior: 'smooth'});
+    }).catch(function (e) { if (net === X.chain.net) { $('xpassetfacts').textContent = e.message; } });
   }
 
   var qs = new URLSearchParams(location.search);

@@ -135,3 +135,48 @@ def test_a_visitor_asking_too_fast_waits(walking):
     assert codes[:120] == [200] * 120 and codes[-1] == 429
     other = {**EDGE, "cf-connecting-ip": "203.0.113.10"}
     assert app.get("/explore/api/inscription?net=main&number=0", headers=other).status_code == 200, "each their own"
+
+
+# --------------------------------------------------------------------------- the arcade's own tokens and NFTs
+
+def test_the_arcades_own_assets_on_a_chain_by_name_and_category(walking, monkeypatch):
+    """2026-10-25, SadFrog: "a section to explor pepecoin test omni assets like the ashvale game assets"."""
+    app, state = walking
+    from types import SimpleNamespace
+    props = [{"property_id": 26, "name": "ASHVALE GOLD", "category": "", "subcategory": "", "total_display": "152,936",
+              "holder_count": 9, "divisible": False, "test_ecosystem": True, "managed": True, "issuer": "nIssuer",
+              "creation_block": 900, "creation_txid": "ab" * 32, "data": '{"about":"The coin of the valley","icon":"'
+              + "cd" * 32 + '"}'},
+             {"property_id": 36, "name": "ASHVALE BRONZE ARROWS", "category": "ammo", "subcategory": "arrow",
+              "total_display": "823", "holder_count": 3, "divisible": False, "test_ecosystem": True, "managed": True,
+              "issuer": "nIssuer", "creation_block": 901, "creation_txid": "ef" * 32, "data": '{"about":"Arrows"}'}]
+
+    class Ledger:
+        def properties(self):
+            return props
+
+        def property(self, pid):
+            return next((p for p in props if p["property_id"] == pid), None)
+
+        def holders(self, pid):
+            return [{"address": f"n{k}", "display": str(100 - k)} for k in range(60)]
+
+        def inscription(self, key):
+            return {"held": True, "content_type": "image/png"}
+    chain = SimpleNamespace(network="main")
+    monkeypatch.setattr(type(state), "token_chains", property(lambda self: [chain]))
+    monkeypatch.setattr(state, "token_index", lambda c: Ledger())
+    page = app.get("/explore?net=main", headers=EDGE).text
+    assert '"Arcade assets (Omni)"' in page and 'id="xpassets"' in page
+    got = app.get("/explore/api/assets?net=main", headers=EDGE).json()
+    assert [a["name"] for a in got["assets"]] == ["ASHVALE GOLD", "ASHVALE BRONZE ARROWS"] and got["count"] == 2
+    assert got["assets"][0]["icon"] == "cd" * 32 and got["assets"][0]["about"] == "The coin of the valley"
+    assert ["ammo", 1] in got["categories"]
+    assert [a["id"] for a in app.get("/explore/api/assets?net=main&category=ammo", headers=EDGE).json()["assets"]] == [36]
+    assert [a["id"] for a in app.get("/explore/api/assets?net=main&q=gold", headers=EDGE).json()["assets"]] == [26]
+    one = app.get("/explore/api/asset?net=main&id=36", headers=EDGE).json()
+    assert one["asset"]["page"] == "/tokens/36?chain=main" and one["asset"]["about"] == "Arrows"
+    assert len(one["holders"]) == 50 and one["holders"][0] == {"address": "n0", "held": "100"}
+    assert app.get("/explore/api/asset?net=main&id=99", headers=EDGE).status_code == 404
+    assert app.get("/explore/api/asset?net=main&id=x", headers=EDGE).status_code == 400
+    assert app.get("/explore/api/assets?net=doge", headers=EDGE).status_code == 404, "no ledger of that chain here"
