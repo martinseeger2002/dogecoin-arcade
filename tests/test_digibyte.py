@@ -172,3 +172,23 @@ def test_a_real_digibyte_block_is_read_and_its_work_is_not_judged_by_one_algorit
         assert "work does not meet" in str(exc)
     else:
         raise AssertionError("a sha256d DigiByte block does not carry scrypt work: one algorithm cannot judge them all")
+
+
+def test_every_chains_script_address_is_paid_as_a_script_or_refused():
+    """Each chain's P2SH byte is either one txbuild pays as a script hash, or one the payee check refuses because it is
+    another chain's key-hash byte (config.unpayable_versions: Bellscoin's 30). Anything else is a send that _check_address
+    lets through and txbuild turns into a key-hash script, and the coins are lost. Kotia's 45 was that until 2026-10-25."""
+    from arcade.web.app import _check_address
+    body = bytes(range(20))
+    for name, p in NETWORKS.items():
+        v = p.scripthash_version
+        if v in config.unpayable_versions(p):
+            continue
+        assert v in txbuild.SCRIPTHASH_VERSIONS, f"{name}: a {v} address would get a key-hash script"
+        assert txbuild.p2pkh_script(b58check_encode(v, body)) == b"\xa9\x14" + body + b"\x87", name
+    key_hashes = {p.pubkeyhash_version for p in NETWORKS.values()}
+    assert not (txbuild.SCRIPTHASH_VERSIONS & key_hashes), "a script byte read the same on every chain is nobody's key"
+
+    class Kotia:
+        network, params, label = "kot", NETWORKS["kot"], "Kotia"
+    assert _check_address(b58check_encode(45, body), mainnet=Kotia()) is None, "a Kotia script address is paid"

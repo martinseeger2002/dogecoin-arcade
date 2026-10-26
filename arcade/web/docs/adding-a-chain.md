@@ -72,7 +72,7 @@ quieter clashes too: Luckycoin's P2SH 5 is Litecoin's legacy "3".
 - **`trade.py`:** `BIG`. Set it low until the operator sets `swap_big:<net>`.
 - **`txbuild.py`:** `SCRIPTHASH_VERSIONS`: the chain's P2SH byte goes in, unless it clashes with another chain's
   P2PKH byte (then `unpayable_versions` refuses it). Leave it out and a send to the chain's script address
-  gets a key-hash script, and the coins are lost. DigiByte's 63 is in.
+  gets a key-hash script, and the coins are lost. DigiByte's 63 is in; `tests/test_digibyte.py` holds every chain to it.
 - **`doginal_index.py`:** `STARTS` (the official indexer's `first_inscription_height`, or the first
   envelope found by scanning the chain), `SOURCES`, `TAPROOT`.
 - **`ord_rules.py`:** `RULES_BY_NET` and `NUMBERS_REINSCRIPTIONS`. Follow the chain's official
