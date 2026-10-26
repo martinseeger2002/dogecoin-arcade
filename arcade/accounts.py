@@ -682,8 +682,16 @@ class Accounts:
 
     def login(self, pubkey: str, nonce: str, signature: str, *,
               origin: str = "", ip: str = "", join: bool = False,
+              signed: str = "", accept=None,
               now: int | None = None) -> str:
         """Check a signed challenge and open a session. Returns the token.
+
+        `signed` is the origin the browser says it signed: its own address (`location.origin`), not one this node
+        handed it (issue #6, SadFrog's side, 2026-10-25). Before, the text named whatever origin the server's
+        challenge said, so another arcade could fetch a challenge here, have a player sign it on its own page, and
+        bring the signature here. Without `signed` (a LoRa device, an older tab) it is the challenge's own origin,
+        as before. `accept(origin)` says whether that origin is one of this node's own names; one that is not is
+        refused before the signature is even looked at.
 
         The token is returned rather than stored: this is the only moment it
         exists in a readable form, and the caller's job is to put it in a
@@ -722,9 +730,13 @@ class Accounts:
         self.conn.execute("DELETE FROM challenge WHERE nonce = ?", (nonce,))
         if row["expires"] < now:
             raise AccountError("that challenge has expired. Try again.")
-        want = origin or row["origin"]
+        want = signed or origin or row["origin"]
         if row["origin"] and origin and row["origin"] != origin:
             raise AccountError("that challenge was issued for another address")
+        if accept is not None and not accept(want):
+            raise AccountError(
+                f"that sign-in was signed for {want[:120]}, which is not this arcade's address. Nothing was opened. "
+                "Sign in on the page of the arcade you want to be signed in to.")
         try:
             VerifyKey(bytes.fromhex(pubkey)).verify(
                 login_message(want, nonce), bytes.fromhex(signature or ""))

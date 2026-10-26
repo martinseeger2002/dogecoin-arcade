@@ -146,6 +146,29 @@ def test_a_signature_for_another_node_does_not_open_this_one(register):
     assert "does not match the key" in str(refused.value)
 
 
+def test_the_origin_the_browser_signed_must_be_one_this_node_accepts(register):
+    """Issue #6 (2026-10-25): the browser signs its own address (`signed`), and `accept` says whether it is one of
+    this node's names. Another arcade's address is refused with the nonce spent; this node's opens."""
+    key = _key()
+    pubkey = key.verify_key.encode().hex()
+    mine = {"https://ashvale.party", "https://pepecoinarcade.com"}
+    challenge = register.challenge("https://ashvale.party")
+    relayed = key.sign(login_message("https://evil.example", challenge["nonce"])).signature
+    with pytest.raises(AccountError) as refused:
+        register.login(pubkey, challenge["nonce"], relayed.hex(), origin="https://ashvale.party",
+                       signed="https://evil.example", accept=mine.__contains__, join=True)
+    assert "not this arcade's address" in str(refused.value)
+    with pytest.raises(AccountError) as again:
+        register.login(pubkey, challenge["nonce"], relayed.hex(), origin="https://ashvale.party",
+                       signed="https://evil.example", accept=lambda o: True, join=True)
+    assert "waiting for" in str(again.value)
+    for origin in sorted(mine):
+        challenge = register.challenge("https://ashvale.party")
+        good = key.sign(login_message(origin, challenge["nonce"])).signature
+        assert register.login(pubkey, challenge["nonce"], good.hex(), origin="https://ashvale.party",
+                              signed=origin, accept=mine.__contains__, join=True)
+
+
 def test_a_wrong_signature_spends_the_nonce_anyway(register):
     key = _key()
     challenge = register.challenge("https://node")

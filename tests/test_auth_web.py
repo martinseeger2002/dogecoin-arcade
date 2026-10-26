@@ -190,7 +190,9 @@ def test_the_cookie_is_httponly_and_not_secure_on_localhost(client):
 
 
 def test_over_https_the_cookie_is_secure(client):
-    app, _ = client
+    app, state = client
+    # A name a sign-in is signed for has to be one of this node's own (issue #6, 2026-10-25).
+    state.set_setting("public_hosts", ["wallet.example.com"])
     answer = _sign_in(app, SigningKey.generate(), headers=TUNNEL)
     assert "Secure" in answer.headers["set-cookie"]
 
@@ -208,6 +210,130 @@ def test_a_signature_for_another_origin_is_refused(client):
         "nonce": challenge["nonce"], "signature": elsewhere.hex(), "join": True})
     assert answer.status_code == 403
     assert "signature" in answer.json()["detail"]
+
+
+# --- issue #6 (SadFrog's side, 2026-10-25): the browser signs its own address -----------------------------------
+#
+# Another arcade could fetch a challenge here, show it as its own sign-in and bring the player's signature back.
+# Now the page signs `location.origin` and says so (`origin` in the body), and only this node's own names open.
+
+EDGE = {"cf-connecting-ip": "203.0.113.9", "x-forwarded-proto": "https"}
+
+
+def _sign_for(app, key, origin, headers=LOCAL, say=True):
+    """What signin.js does: a challenge from here, signed for the page's own address."""
+    challenge = app.get("/auth/challenge", headers=headers).json()
+    signature = key.sign(accounts.login_message(origin, challenge["nonce"])).signature
+    body = {"pubkey": key.verify_key.encode().hex(), "nonce": challenge["nonce"],
+            "signature": signature.hex(), "join": True}
+    if say:
+        body["origin"] = origin
+    return app.post("/auth/login", headers=headers, json=body)
+
+
+def test_a_sign_in_signed_on_another_arcade_is_refused_here(client):
+    """The relay: arcade B's page signs for B, and B posts it here under this node's own name."""
+    app, state = client
+    state.set_setting("public_hosts", ["ashvale.party"])
+    here = {"host": "ashvale.party", **EDGE}
+    answer = _sign_for(app, SigningKey.generate(), "https://evil-arcade.example", headers=here)
+    assert answer.status_code == 403
+    assert "not this arcade's address" in answer.json()["detail"]
+    assert "set-cookie" not in answer.headers
+
+
+def test_a_relay_naming_itself_in_the_host_is_refused(client):
+    """B asks with its own name in the Host, so the challenge itself names B: B is still not one of this node's
+    names, whether the body says the origin or leaves it to the challenge (an old tab, a LoRa device)."""
+    app, state = client
+    state.set_setting("public_hosts", ["ashvale.party"])
+    relayed = {"host": "evil-arcade.example", **EDGE}
+    for say in (True, False):
+        answer = _sign_for(app, SigningKey.generate(), "https://evil-arcade.example", headers=relayed, say=say)
+        assert answer.status_code == 403, say
+        assert "not this arcade's address" in answer.json()["detail"]
+
+
+def test_every_one_of_the_nodes_own_names_signs_in(client):
+    """One node, several public names (node 3: ashvale.party, pepecoinarcade.com): each one opens, through its
+    edge, and the node's own machine opens by its loopback names."""
+    app, state = client
+    state.set_setting("public_hosts", ["ashvale.party", "pepecoinarcade.com"])
+    for name in ("ashvale.party", "pepecoinarcade.com"):
+        answer = _sign_for(app, SigningKey.generate(), f"https://{name}", headers={"host": name, **EDGE})
+        assert answer.status_code == 200, (name, answer.text)
+        assert answer.json()["pubkey"]
+    for host in ("127.0.0.1:8420", "localhost:8420"):
+        answer = _sign_for(app, SigningKey.generate(), f"http://{host}", headers={"host": host})
+        assert answer.status_code == 200, (host, answer.text)
+
+
+def test_the_page_on_one_name_may_post_through_another_of_the_same_node(client):
+    """Both names are this node's, so a signature for either is a sign-in here: nothing to relay."""
+    app, state = client
+    state.set_setting("public_hosts", ["ashvale.party", "pepecoinarcade.com"])
+    answer = _sign_for(app, SigningKey.generate(), "https://pepecoinarcade.com",
+                       headers={"host": "ashvale.party", **EDGE})
+    assert answer.status_code == 200
+
+
+def test_loopback_names_open_only_on_the_nodes_own_machine(client):
+    """`http://127.0.0.1:8420` is this node only for a request made on this machine; from outside it is any
+    machine's own address, so a relay could name it."""
+    app, state = client
+    state.set_setting("public_hosts", ["ashvale.party"])
+    answer = _sign_for(app, SigningKey.generate(), "http://127.0.0.1:8420",
+                       headers={"host": "ashvale.party", **EDGE})
+    assert answer.status_code == 403
+    assert "not this arcade's address" in answer.json()["detail"]
+
+
+def test_the_inscribed_pages_name_is_never_a_sign_in_address(client):
+    app, state = client
+    state.set_setting("public_hosts", ["ashvale.party", "pages.ashvale.party"])
+    state.set_setting("pages_host", "pages.ashvale.party")
+    answer = _sign_for(app, SigningKey.generate(), "https://pages.ashvale.party",
+                       headers={"host": "ashvale.party", **EDGE})
+    assert answer.status_code == 403
+
+
+def test_a_name_the_tunnel_brings_here_signs_in(client, monkeypatch):
+    """A name the machine's Cloudflare tunnel serves but nobody put in `public_hosts` still opens, so its players
+    are not locked out; a name it does not serve does not."""
+    from arcade import tunnel
+    monkeypatch.setattr(tunnel.Wizard, "names", lambda self: ["play.example.org"])
+    app, _ = client
+    headers = {"host": "play.example.org", **EDGE}
+    assert _sign_for(app, SigningKey.generate(), "https://play.example.org", headers=headers).status_code == 200
+    assert _sign_for(app, SigningKey.generate(), "https://other.example.org", headers=headers).status_code == 403
+
+
+def test_the_address_the_connection_came_to_signs_in(app_state):
+    """A LAN address typed in (http://192.168.1.5:8420): the connection itself arrived there, through no edge."""
+    from fastapi.testclient import TestClient
+    from arcade.web.app import create_app
+    app = TestClient(create_app(app_state), base_url="http://192.168.1.5:8420")
+    answer = _sign_for(app, SigningKey.generate(), "http://192.168.1.5:8420", headers=LAN)
+    assert answer.status_code == 200, answer.text
+    answer = _sign_for(app, SigningKey.generate(), "http://192.168.1.77:8420", headers=LAN)
+    assert answer.status_code == 403
+
+
+def test_an_origin_that_is_not_an_origin_is_refused(client):
+    app, _ = client
+    for origin in ("http://127.0.0.1:8420/path", "javascript://127.0.0.1", "http://x@127.0.0.1:8420", ""):
+        answer = _sign_for(app, SigningKey.generate(), origin or "nothing")
+        assert answer.status_code == 403, origin
+
+
+def test_the_browser_signs_its_own_address_not_the_challenges():
+    """signin.js and wallet.js build the text from `location.origin`; neither signs `challenge.origin`."""
+    root = pathlib.Path(__file__).resolve().parent.parent / "arcade" / "web" / "templates"
+    signin, wallet = (root / "signin.js").read_text(), (root / "wallet_js.js").read_text()
+    assert "location.origin" in signin
+    for text in (signin, wallet):
+        assert "challenge.origin" not in text
+        assert "loginOrigin()" in text
 
 
 def test_rubbish_is_refused_without_a_traceback(client):

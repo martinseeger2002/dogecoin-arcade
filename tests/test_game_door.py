@@ -55,6 +55,7 @@ def test_somebody_signed_in_goes_straight_to_the_game(client):
     _ashvale(state)
     assert app.get("/play/ashvale", headers=LOCAL, follow_redirects=False).status_code == 200, \
         "the node's own machine, signed out, gets the sign-up like anybody"
+    state.set_setting("public_hosts", ["wallet.example.com"])     # a sign-in names one of its own (issue #6)
     joined = _sign_in(app, SigningKey.generate(), headers=OUTSIDE)
     assert joined.status_code == 200
     # the session cookie is https-only, and the test client speaks http: hand it back

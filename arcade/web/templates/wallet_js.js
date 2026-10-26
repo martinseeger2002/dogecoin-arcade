@@ -586,11 +586,12 @@ async function _restore(phrase, password, {network, version}) {
 async function seatWith(wallet, {join = true, challenge: asked = null, tell = true} = {}) {
   let challenge = asked ? await asked.catch(() => null) : null;
   if (!challenge || !challenge.nonce) challenge = await (await fetch("/auth/challenge")).json();
-  const signature = await wallet.sign(
-    signer.loginMessage(challenge.origin, challenge.nonce));
+  // Signed for this page's own address, not the one the challenge names (issue #6, 2026-10-25: signin.js).
+  const origin = signer.loginOrigin();
+  const signature = await wallet.sign(signer.loginMessage(origin, challenge.nonce));
   const opened = await fetch("/auth/login", {
     method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({pubkey: wallet.pubkey, nonce: challenge.nonce,
+    body: JSON.stringify({pubkey: wallet.pubkey, nonce: challenge.nonce, origin,
                           signature: hex(signature), join}),
   });
   const result = await opened.json();

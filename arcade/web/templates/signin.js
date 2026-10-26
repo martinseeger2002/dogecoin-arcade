@@ -200,20 +200,31 @@ function b64urlBytes(text) {
  * the signature. The message is built here rather than taken from the
  * server's answer so that a server cannot ask this key to sign something
  * of its choosing.
+ *
+ * The origin in it is this page's own address, never the one the challenge
+ * names (issue #6, SadFrog's side, 2026-10-25): an arcade that fetched a
+ * challenge from another arcade could otherwise have its players sign in
+ * THERE without knowing. The node checks the address is one of its own names.
  */
 export function loginMessage(origin, nonce) {
   return enc.encode(`DogecoinArcade login\n${origin}\n${nonce}`);
+}
+
+/** The address this page is on, which is what a sign-in here is signed for. */
+export function loginOrigin() {
+  return globalThis.location.origin;
 }
 
 export async function signIn(phrase, {join = false, passphrase = ""} = {}) {
   const seed = await toSeed(phrase, passphrase);
   const key = await accountKey(seed);
   const challenge = await (await fetch("/auth/challenge")).json();
-  const signature = await key.sign(loginMessage(challenge.origin, challenge.nonce));
+  const origin = loginOrigin();
+  const signature = await key.sign(loginMessage(origin, challenge.nonce));
   const answer = await fetch("/auth/login", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({pubkey: key.pubkey, nonce: challenge.nonce,
+    body: JSON.stringify({pubkey: key.pubkey, nonce: challenge.nonce, origin,
                           signature: hex(signature), join: !!join}),
   });
   const said = await answer.json();

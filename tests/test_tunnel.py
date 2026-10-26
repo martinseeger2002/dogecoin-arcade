@@ -79,6 +79,18 @@ def test_the_config_points_both_names_at_this_node(tmp_path):
     assert text.rstrip().endswith("service: http_status:404")
 
 
+def test_the_names_the_tunnels_bring_here_are_read_without_running_cloudflared(tmp_path):
+    """What a sign-in may be signed for besides `public_hosts` (issue #6, 2026-10-25): both configs' names."""
+    cf = tmp_path / ".cloudflared"
+    cf.mkdir()
+    (cf / "config.yml").write_text("ingress:\n  - hostname: App.Mine.com\n    service: http://127.0.0.1:8420\n")
+    w = wizard(tmp_path)
+    w.write_config(ID, ["ashvale.party", "pepecoinarcade.com"], 8420)
+    assert w.names() == ["app.mine.com", "ashvale.party", "pepecoinarcade.com"]
+    assert not w._run.calls
+    assert tunnel.Wizard(home=tmp_path / "nothing").names() == []
+
+
 def test_the_check_tells_the_public_page_from_the_wallet():
     ok = tunnel.verify("app.a.com", fetch=lambda url: "<p>12 of 100 seats open</p>")
     assert ok["ok"]

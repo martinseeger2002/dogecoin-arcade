@@ -103,6 +103,19 @@ class Wizard:
             "quick_url": self._quick_url if (self._quick and self._quick.poll() is None) else "",
         }
 
+    def names(self) -> list[str]:
+        """The names this machine's tunnels bring here, read from their config files (and the temporary name while
+        it runs). No cloudflared is run, so it is cheap enough for every sign-in: they are among the names a
+        sign-in may be signed for (app.py `_signs_in_here`, issue #6, 2026-10-25), so a name the tunnel serves
+        but nobody wrote into `public_hosts` does not lock its players out."""
+        out = []
+        for config in (self.cf / "config.yml", self.cf / CONFIG_NAME):
+            if config.exists():
+                out += hostnames_in(config)
+        if self._quick and self._quick.poll() is None and self._quick_url:
+            out.append(self._quick_url.split("://", 1)[-1])
+        return [n.strip().lower().rstrip(".") for n in out if n.strip()]
+
     # --- 1. cloudflared --------------------------------------------------------------
 
     def install(self) -> str:

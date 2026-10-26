@@ -10700,14 +10700,58 @@ def create_app(state: AppState) -> FastAPI:
     # Strict was protecting here; the admin cookie stays Strict.
 
     def _origin(request: Request) -> str:
-        """What the browser thinks it is talking to, which is what gets signed.
+        """What the browser seems to be talking to, by the request's own headers.
 
-        `x-forwarded-proto` first: behind a proxy that terminates TLS,
+        Since 2026-10-25 (issue #6) the browser signs its own address instead and this is only the fallback for a
+        client that does not say (a LoRa device, an older tab); either way `_signs_in_here` decides whether it is
+        this node's. `x-forwarded-proto` first: behind a proxy that terminates TLS,
         uvicorn sees http on a loopback socket while the browser sees https,
         and a signature over the wrong one of those would never verify.
         """
         proto = request.headers.get("x-forwarded-proto") or request.url.scheme
         return f"{proto}://{request.headers.get('host', '')}"
+
+    def _signs_in_here(request: Request, origin: str) -> bool:
+        """Whether a sign-in signed for `origin` is a sign-in to THIS arcade (issue #6, SadFrog's side, 2026-10-25).
+
+        The browser signs its own address now (signin.js `loginMessage(location.origin, ...)`), so what is checked
+        here is that the address is one of this node's own names -- never what the request's Host says, which
+        whoever sends the request chooses. Another arcade relaying a player's sign-in brings a signature naming
+        ITSELF, and that is refused. This node's names:
+
+        * every name in `public_hosts` (one node can serve several: ashvale.party, pepecoinarcade.com, ...);
+        * the names this machine's Cloudflare tunnels route here, and the wizard's temporary name while it runs;
+        * this machine's own names (localhost, *.localhost, loopback addresses, `local_hosts`), only for a request
+          made on this machine (door.from_outside);
+        * the IP address the connection itself arrived at, when no edge stands between (a LAN address typed in).
+
+        Never the inscribed pages' name: that sandbox is not a place to sign in.
+        """
+        try:
+            parts = urllib.parse.urlsplit(str(origin or "").strip())
+        except ValueError:
+            return False
+        if parts.scheme not in ("http", "https") or parts.path or parts.query or parts.fragment \
+                or "@" in parts.netloc:
+            return False
+        name = doorlib.host_name(parts.netloc)
+        if not name or name == state.pages_hostname:
+            return False
+        if name in state.public_hosts:
+            return True
+        try:
+            if name in _wizard().names():
+                return True
+        except Exception:                                  # noqa: BLE001 -- no tunnel config to read
+            pass
+        if not _request_outside(state, request):
+            return doorlib.loopback_host(name, state.local_hosts)
+        server = str((request.scope.get("server") or ("",))[0] or "")
+        try:
+            ipaddress.ip_address(name)
+        except ValueError:
+            return False
+        return name == doorlib.host_name(server) and not any(h in request.headers for h in doorlib.EDGE_HEADERS)
 
     def _over_https(request: Request) -> bool:
         return (request.headers.get("x-forwarded-proto")
@@ -10875,7 +10919,10 @@ def create_app(state: AppState) -> FastAPI:
                 str(said.get("signature", "")),
                 origin=_origin(request),
                 ip=(request.client.host if request.client else ""),
-                join=bool(said.get("join")))
+                join=bool(said.get("join")),
+                # The address the browser signed, its own (issue #6, 2026-10-25), and only this node's names do.
+                signed=str(said.get("origin") or "")[:300],
+                accept=lambda signed: _signs_in_here(request, signed))
         except accountslib.SeatsFull as full:
             return JSONResponse({"detail": str(full),
                                  "seats": register.seats, "free": 0},
