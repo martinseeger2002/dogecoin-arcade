@@ -467,7 +467,8 @@ def test_each_chain_has_its_own_rules_version_and_only_dogecoin_is_cut_again(tmp
     """2026-10-22: Dogecoin's rules moved to 5 alone (reinscriptions numbered); Pepecoin and Litecoin stay on 4, so
     their indexes are not rebuilt for it. A Dogecoin index of rules 4 is cut again; a Pepecoin one of 4 is kept."""
     from arcade import ord_rules
-    assert ord_rules.rules_for("doge") == 5 and ord_rules.rules_for("main") == 4
+    # Dogecoin 6 since 2026-10-26 (no token operation in a reinscription): tests/test_doginal_index.py.
+    assert ord_rules.rules_for("doge") == 6 and ord_rules.rules_for("main") == 4
     # Bellscoin 7 and Litecoin 5 since 2026-10-25 (every input, Taproot births, bel-20, bech32 holders):
     # tests/test_bells_index.py.
     assert ord_rules.rules_for("bel") == 7 and ord_rules.rules_for("ltc") == 5

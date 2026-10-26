@@ -1552,3 +1552,54 @@ def test_lanes_bring_in_the_coins_of_blocks_walked_before_the_values_file(tmp_pa
     first_tx = rawchain.read_block(born, chain.blocks[0][0]).txs[1]
     assert disk.get(ord_values.key(first_tx.txid, 0)) == 100_000, "a coin from the first block, brought in"
     assert not [f for f in posted if f.get("op") in ("ls", "ld") and f["c"] < 3], "values lanes are never leased"
+
+
+def _reinscribed_transfer_chain():
+    """A token deployed and 100 minted; then the minter inscribes a transfer of 40 on the very coin that carries its
+    mint (a reinscription), and later a plain transfer of 30 on a coin of its own."""
+    chain = Chain()
+    deploy = _tx([(FUND, 1, _envelope(b"text/plain", parts=((0, _json(
+        {"p": "drc-20", "op": "deploy", "tick": "woof", "max": "1000", "lim": "100"})),)))], [100_000], tag=b"dp")
+    mint = _tx([(FUND, 2, _envelope(b"text/plain", parts=((0, _json(
+        {"p": "drc-20", "op": "mint", "tick": "woof", "amt": "100"})),)))], [100_000], tag=b"mt")
+    chain.add([deploy, mint])                                                   # block 0
+    holder = rawchain.read_tx(mint[0]).vout[0][1]
+    again = _tx_to([(mint[1], 0, _envelope(b"text/plain", parts=((0, _json(
+        {"p": "drc-20", "op": "transfer", "tick": "woof", "amt": "40"})),)))], [(100_000, holder)])
+    chain.add([again])                                                          # block 1: on the mint's own coin
+    coin = _tx_to([(FUND, 9, SIG)], [(100_000, holder)])
+    chain.add([coin])                                                           # block 2
+    plain = _tx_to([(coin[1], 0, _envelope(b"text/plain", parts=((0, _json(
+        {"p": "drc-20", "op": "transfer", "tick": "woof", "amt": "30"})),)))], [(100_000, holder)])
+    chain.add([plain])                                                          # block 3
+    return chain, holder, again[1], plain[1]
+
+
+def _walk_tokens(tmp_path, monkeypatch, net):
+    from arcade import ord_rules
+    if net != "doge":                     # a chain whose token rules read reinscriptions, on the same chain
+        monkeypatch.setattr(ord_rules, "TOKENS_SKIP_REINSCRIPTIONS", frozenset())
+    chain, holder, again, plain = _reinscribed_transfer_chain()
+    index = _walker(tmp_path, chain)
+    index.walker.step(chain, dx.BASE + 3, budget=60)
+    assert index.walker.next_height() == dx.BASE + 4
+    numbered = {r[0].hex(): r[1] for r in index.store.q("SELECT tx, reinscribed FROM insc")}
+    assert numbered[again] == 1, "the transfer on the mint's coin is numbered, as a reinscription"
+    assert numbered[plain] is None
+    [bal] = index.store.q("SELECT overall, transferable FROM bal WHERE tick='woof'")
+    return [int(b) // 10 ** 18 for b in bal]
+
+
+def test_on_dogecoin_a_reinscriptions_drc20_operation_counts_for_nothing(tmp_path, monkeypatch):
+    """2026-10-26, against nintondo's DRC-20 index: 65b82e23...i0, a 314,000 dogi transfer inscribed at block 4,741,449
+    on a coin that already carried an inscription, is in no nintondo history, and nor were 14 more reinscribed
+    transfers; under rules 5 this index moved them. Numbered still, but no operation: only the plain 30 is set aside."""
+    assert _walk_tokens(tmp_path, monkeypatch, "doge") == [100, 30]
+
+
+def test_where_reinscriptions_carry_tokens_the_same_transfer_is_set_aside(tmp_path, monkeypatch):
+    """Bellscoin's nintondo counts a reinscription's bel-20 operation (14 of 14 reinscribed nook mints in its
+    histories): there both transfers are set aside."""
+    from arcade import ord_rules
+    assert ord_rules.tokens_in_reinscriptions("bel") and not ord_rules.tokens_in_reinscriptions("doge")
+    assert _walk_tokens(tmp_path, monkeypatch, "bel") == [100, 70]

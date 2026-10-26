@@ -1401,7 +1401,10 @@ class Walker:
             op = ord_rules.token_op(self.token_protocol, ctype, body)
             if op is None:
                 continue
-            number = w.get("insc", (rid,))["number"]
+            insc = w.get("insc", (rid,))
+            if insc.get("reinscribed") and not ord_rules.tokens_in_reinscriptions(self.store.net):
+                continue                                      # on Dogecoin a reinscription is no token operation (rules 6)
+            number = insc["number"]
             try:
                 self._token_op(w, h, rid, iid, number, op, landed[rid][1], tx.txid)
             except ord_rules.TokenError:

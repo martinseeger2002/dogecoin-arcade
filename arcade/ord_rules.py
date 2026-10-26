@@ -44,7 +44,9 @@ RULES = 4                      # bump when what an index keeps changes: an index
 #: Bellscoin 7 (2026-10-25, checked against nintondo.io): an envelope in every input numbered (EVERY_INPUT), Taproot
 #: births in input 0 kept, "p":"bel-20" tokens (TOKEN_PROTOCOLS), SegWit and Taproot holders named by their bel1q /
 #: bel1p addresses. Litecoin 5 (main and test): its holders named by their ltc1q / ltc1p addresses the same way.
-RULES_BY_NET = {"doge": 5, "bel": 7, "ltc": 5, "ltctest": 5}
+#: Dogecoin 6 (2026-10-26, against doge-mainnet-tokens.nintondo.io): a DRC-20 operation in a reinscription is no
+#: operation (TOKENS_SKIP_REINSCRIPTIONS); under 5 one moved 314,000 dogi nintondo never moved.
+RULES_BY_NET = {"doge": 6, "bel": 7, "ltc": 5, "ltctest": 5}
 #: Chains whose official indexer reads an envelope in EVERY input, not input 0 alone: Bellscoin (nintondo's ord,
 #: 2026-10-25: 6d110444...e809 at block 41,937 carries NOOK mints in inputs 0 and 1, #14,234,881 its i1). One that is
 #: complete in its own input is an inscription (txid i1, i2 ... in input order); a piece of a longer one is not.
@@ -55,6 +57,11 @@ TOKEN_PROTOCOLS = {"main": "prc-20", "test": "prc-20", "bel": "bel-20"}
 #: Chains whose indexes number a reinscription (an inscription made on a coin that already carries one), as nintondo's
 #: indexers do (Dogecoin since rules 5; Bellscoin, whose official indexer IS nintondo's ord).
 NUMBERS_REINSCRIPTIONS = frozenset({"doge", "bel"})
+#: Chains whose token rules read no operation in a reinscription, though it is numbered: Dogecoin, as nintondo's DRC-20
+#: index reads it (2026-10-26: none of 15 reinscribed transfers in its histories, 12 of them backed by the sender's
+#: balance -- 65b82e23...i0, 314,000 dogi at block 4,741,449, the first found; wonky-ord made no reinscription at all).
+#: Bellscoin's nintondo counts them (14 of 14 reinscribed "nook" mints in its histories), so it is not here.
+TOKENS_SKIP_REINSCRIPTIONS = frozenset({"doge"})
 
 
 def every_input(net: str) -> bool:
@@ -65,6 +72,11 @@ def every_input(net: str) -> bool:
 def token_protocol(net: str) -> str:
     """The "p" of `net`'s JSON tokens (TOKEN_PROTOCOLS)."""
     return TOKEN_PROTOCOLS.get(net or "", "drc-20")
+
+
+def tokens_in_reinscriptions(net: str) -> bool:
+    """Whether a reinscription's token operation counts on `net` (not on TOKENS_SKIP_REINSCRIPTIONS)."""
+    return (net or "") not in TOKENS_SKIP_REINSCRIPTIONS
 
 
 def rules_for(net: str) -> int:
