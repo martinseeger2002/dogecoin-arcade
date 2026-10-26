@@ -88,6 +88,40 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-26 · SadFrog's side (Claude, node 2) · branch `team/ltc-ord` · Litecoin's ords read as ord-litecoin reads them
+SadFrog asked for Litecoin ordinals to match chikun.market. ord.chikun.market (also ordinalslite.com) and litescribe's
+ordliteverse.com both run stock ynohtna92/ord-litecoin 0.20, and they agree with each other exactly. Our walk recorded
+no Taproot inscriptions on Litecoin at all; #24 fixed that, and this makes the rest match ord itself. Rules: Litecoin 6,
+main and test.
+
+- **`arcade/ord_envelope.py`:** envelope.rs, tag.rs and inscription.rs `pointer()` ported. It reads every input's
+  tapscript; a script that does not parse drops its input; OP_1NEGATE and OP_1..16 count as pushes (pushnum); it
+  handles stutter, incomplete, duplicate and unrecognized even fields, and the body after the first even empty push.
+  Its tests are envelope.rs's own.
+- **`Walker._ord_block`** (`ord_rules.ORD_LITE`), inscription_updater.rs:
+  - witness envelopes alone (ord-litecoin never sees the Doginals kind);
+  - ord's nine curses, in its order;
+  - cursed numbers below zero before the jubilee (2,608,704; testnet 3,096,576), "vindicated" and numbered on after;
+  - numbered where they land, in litoshi order; a pointer inside the outputs moves a new one;
+  - unbound (a worthless input, an unknown even field) has no place;
+  - what lands past the outputs floats to the coinbase (indexed last) and is numbered after the rest of the block;
+    past the coinbase's outputs it is lost. The fees for that are read only in a block that needs them.
+  - ord's charms are kept in a `charm` table, and numbers are looked up by `insc_num_lite`.
+- **LTC-20** (`"p":"ltc-20"`) by BRC-20's rules: no shortest body, and a cursed inscription is no token operation.
+  Whether vindicated ones count, as chikun counts them, is not yet checked against /v1/ltc20 transactions.
+
+**Checked against ord.chikun.market, every inscription in order and every number:**
+- From Litecoin's first inscription block, walked with this code to 2,470,500, then whole blocks compared one
+  inscription at a time: 2,425,370 / 2,425,898 / 2,425,902 / 2,426,272 / 2,431,418 / **2,467,075 and 2,467,078 (the
+  first cursed)** / 2,470,485. That is 1,978 inscriptions, 0 wrong.
+- After the jubilee (counter seeded from chikun, sampled numbers): 2,608,704 (the jubilee: 1,645 of 1,645 in order),
+  2,620,839 (1,055), 2,700,000 (293), 2,721,818 (245), 3,201,097 (84), 3,201,257.
+
+Tests: `tests/test_ord_envelope.py` (11), `tests/test_ord_lite.py` (6: curses, landing, pointer, unbound, the
+coinbase, the jubilee, a reinscription on a cursed sat, stitched == walked). Older tests that used Litecoin for the
+Doginals kind now use Luckycoin. The ord, Bells, explorer, web and public suites give 556 passed.
+`test_a_lender_that_goes_quiet_rests_and_the_other_lanes_go_on` failed once under load and passes alone, on main too.
+
 ### 2026-10-26 The Browser: every name's site; pictures on .mesh pages (Claude)
 The operator: "Instead of mesh browser call the app browser. When it's installed on a T deck it should be the .mesh domains
 only; when it is opened on the PWA or website it should be able to explore all p:dns names", "small size images on
