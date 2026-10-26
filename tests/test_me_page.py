@@ -201,8 +201,8 @@ def test_signing_in_opens_the_wallet(client):
 
 
 def test_a_new_tab_says_why_it_is_asking(client):
-    """A session cookie lasts thirty days and a tab does not, so this is
-    the one time a password is wanted twice -- and the page says which of
+    """A session cookie lasts while it is used (14 idle days end it) and a
+    tab does not, so this is the one time a password is wanted twice -- and the page says which of
     the two situations it is in rather than looking like a second login."""
     app, _ = client
     _seat(app)

@@ -836,6 +836,9 @@ document.body.dataset.meReady = "yes";
    2026-09-28). #}
 <div style="text-align:center;margin:40px 0 10px"{% if node_side %} hidden{% endif %}>
   <button type="button" class="small ghost" id="sign-out">Sign out</button>
+  {# Every device at once (2026-10-25, issue #13, SadFrog: "14 days, renewed by use, plus 'sign out
+     everywhere'"). #}
+  <button type="button" class="small ghost" id="sign-out-everywhere">Sign out everywhere</button>
 </div>
   <script type="module">
   // Sign out, so somebody can join or sign in as another account here (the operator,
@@ -849,6 +852,17 @@ document.body.dataset.meReady = "yes";
     button.disabled = true; button.textContent = "Signing out\u2026";
     const wallet = await import("/wallet.js");
     await wallet.signOut(typeof ARCADE_CHAIN !== "undefined" ? ARCADE_CHAIN : null);
+    location.href = "/join";
+  };
+  // Every session of this account ends: this browser, and every phone or computer it is signed in on.
+  document.getElementById("sign-out-everywhere").onclick = async (e) => {
+    const button = e.currentTarget;
+    if (!(await arcadeAsk("Sign out everywhere?", "This account is signed out on every device it is "
+        + "signed in on, this one too. Each one asks for your name and password again. Your wallet, "
+        + "messages and address book are kept safely, sealed.", "Sign out everywhere"))) return;
+    button.disabled = true; button.textContent = "Signing out\u2026";
+    const wallet = await import("/wallet.js");
+    await wallet.signOut(typeof ARCADE_CHAIN !== "undefined" ? ARCADE_CHAIN : null, {everywhere: true});
     location.href = "/join";
   };
   </script>

@@ -34,6 +34,7 @@ PyNaCl's `VerifyKey` takes, and its signature is the same 64.
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import re
@@ -57,7 +58,21 @@ IDLE_DAYS = 90
 
 #: How long a session lasts without being used. Shorter than the seat by an
 #: order of magnitude: a forgotten browser tab is not a claim on anything.
-SESSION_DAYS = 30
+#: 2026-10-25 (issue #13), SadFrog: "14 days, renewed by use, plus 'sign out
+#: everywhere'". It was 30; a session that has not been used for 14 days ends,
+#: and one in use is renewed (Accounts.session, at most once a day).
+SESSION_DAYS = 14
+
+#: What SESSION_DAYS was before issue #13. A session row written then expires
+#: 30 days after it was last renewed; the upgrade takes the difference off once
+#: (Accounts._sessions_to_14_days), so an old cookie ends 14 days after its last use.
+OLD_SESSION_DAYS = 30
+
+#: The session tokens Accounts.session renewed during one request, so the web
+#: layer can send the cookie again with a fresh lifetime (arcade/web/app.py
+#: `_SessionRenewal`). None outside a request: nothing to send it to.
+RENEWED: "contextvars.ContextVar[set | None]" = contextvars.ContextVar(
+    "arcade_session_renewed", default=None)
 
 #: A challenge is answered in the same breath it is asked for. Two minutes
 #: is generous for a phone that has to wake a key up first, and short
@@ -396,6 +411,24 @@ class Accounts:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript(SCHEMA)
+        self._sessions_to_14_days()
+
+    def _sessions_to_14_days(self) -> None:
+        """Once per file: shorten the sessions written when they lasted 30 days.
+
+        Before issue #13 a row's `expires` was its last renewal plus 30 days;
+        now it is plus 14. Taking the 16 days off every row that was there at
+        the upgrade puts each old session where the new rule would have it, so
+        a long-lived cookie stops working 14 days after it was last used, and
+        one already idle that long ends at once (2026-10-25). `user_version`
+        says it was done, so a restart does not take the days off again.
+        """
+        done = self.conn.execute("PRAGMA user_version").fetchone()
+        if done is not None and int(done[0]) >= 1:
+            return
+        self.conn.execute("UPDATE session SET expires = expires - ?",
+                          ((OLD_SESSION_DAYS - SESSION_DAYS) * 86400,))
+        self.conn.execute("PRAGMA user_version = 1")
 
     def close(self) -> None:
         self.conn.close()
@@ -740,6 +773,12 @@ class Accounts:
             self.conn.execute(
                 "UPDATE session SET expires = ? WHERE token_hash = ?",
                 (now + SESSION_DAYS * 86400, row["token_hash"]))
+            # The browser's cookie is renewed with it (2026-10-25, issue #13):
+            # a cookie that kept its first max_age would end 14 days after
+            # sign-in however much it was used.
+            renewed = RENEWED.get()
+            if renewed is not None:
+                renewed.add(token)
         if now - account.seen > 3600:
             self.touch(account.pubkey, now)
             account = self.account(account.pubkey)
@@ -749,6 +788,25 @@ class Accounts:
         if token:
             self.conn.execute("DELETE FROM session WHERE token_hash = ?",
                               (_hash(token),))
+
+    def end_sessions(self, pubkey: str, keep: str = "") -> int:
+        """End every session of one account, on every device, or every one but
+        `keep` (the token of the browser asking). How many were ended.
+
+        2026-10-25 (issue #13), SadFrog: "sign out everywhere"; and a new
+        password ends the account's other sessions, so a browser signed in
+        before the change is not still signed in after it.
+        """
+        if not pubkey:
+            return 0
+        if keep:
+            cur = self.conn.execute(
+                "DELETE FROM session WHERE lower(pubkey) = ? AND token_hash != ?",
+                (pubkey.lower(), _hash(keep)))
+        else:
+            cur = self.conn.execute(
+                "DELETE FROM session WHERE lower(pubkey) = ?", (pubkey.lower(),))
+        return max(0, int(getattr(cur, "rowcount", 0) or 0))
 
 
 def _hash(token: str) -> str:

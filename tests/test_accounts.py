@@ -217,10 +217,11 @@ def test_a_session_expires(register):
     key = _key()
     now = int(time.time())
     token = _sign_in(register, key, now=now)
-    assert register.session(token, now=now + 29 * 86400) is not None
+    # 14 days, renewed by use (issue #13, 2026-10-25; it was 30).
+    assert register.session(token, now=now + 13 * 86400) is not None
     # Reading it moved it along, which is what using the wallet should do.
-    assert register.session(token, now=now + 55 * 86400) is not None
-    assert register.session(token, now=now + 120 * 86400) is None
+    assert register.session(token, now=now + 26 * 86400) is not None
+    assert register.session(token, now=now + 41 * 86400) is None
 
 
 def test_logging_out_ends_it(register):

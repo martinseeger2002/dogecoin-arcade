@@ -2718,8 +2718,10 @@ export function remember(phrase) {
 /** Sign out of this node on this browser (2026-09-28): save what is not
  *  yet saved (the sealed mailbox), then forget this browser's copy, the unlocked
  *  wallet in every tab, and the session. What the account owns stays on the
- *  chain and in its sealed copy on the node; signing in again brings it back. */
-export async function signOut(chain) {
+ *  chain and in its sealed copy on the node; signing in again brings it back.
+ *  `everywhere` (2026-10-25, issue #13: "sign out everywhere") ends every session of
+ *  the account, on every device, not only this browser's. */
+export async function signOut(chain, {everywhere = false} = {}) {
   try {
     const held = chain ? await opened(chain) : null;
     if (held) {
@@ -2730,7 +2732,9 @@ export async function signOut(chain) {
   try { (await import("/messaging.js")).wipeLocal && await (await import("/messaging.js")).wipeLocal(); } catch (e) {}
   forgetOpen();
   try { sessionStorage.removeItem(SHORT_PASSWORD); sessionStorage.removeItem(SHORT_DISMISSED); } catch (e) {}
-  await fetch("/auth/logout", {method: "POST"});
+  const ended = await fetch(everywhere ? "/auth/logout-everywhere" : "/auth/logout", {method: "POST"});
+  // Refused (this browser's session had already run out): the plain sign-out still clears the cookie here.
+  if (everywhere && !ended.ok) await fetch("/auth/logout", {method: "POST"});
 }
 
 export function forgetOpen() {
@@ -2807,7 +2811,7 @@ export async function opened(chain) {
 
 /** Unlock with a password. The same thing as signing in, because it is.
  *
- * A session cookie lasts thirty days and a tab does not, so somebody who
+ * A session cookie lasts while it is used (14 idle days end it) and a tab does not, so somebody who
  * comes back tomorrow is signed in with no wallet open. That is the only
  * time a password is asked for twice, and the page says which of the two
  * situations it is in rather than looking like a second login.

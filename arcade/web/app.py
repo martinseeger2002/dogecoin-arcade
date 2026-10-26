@@ -428,6 +428,49 @@ class _BrowserChain:
         finally:
             if token is not None:
                 _BROWSER_CHAIN.reset(token)
+
+
+def _session_cookie_headers(token: str, secure: bool) -> list[tuple[bytes, bytes]]:
+    """The Set-Cookie header of a session cookie, shaped exactly as the sign-in routes set it."""
+    shaped = Response()
+    shaped.set_cookie(SESSION, token, max_age=accountslib.SESSION_DAYS * 86400,
+                      httponly=True, samesite="lax", secure=secure)
+    return [h for h in shaped.raw_headers if h[0] == b"set-cookie"]
+
+
+class _SessionRenewal:
+    """ASGI middleware sending the session cookie again when this request renewed its session.
+
+    2026-10-25 (issue #13), SadFrog: "14 days, renewed by use". The node renews a session at most once a day
+    (accounts.Accounts.session); the browser's cookie has to be renewed with it, or it ends 14 days after
+    sign-in however much it was used. The renewal is told through `accounts.RENEWED`, set here for one
+    request; a response that sets or clears the session cookie itself (sign-in, sign-out) is left alone."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        renewed: set = set()
+        mark = accountslib.RENEWED.set(renewed)
+        asked = Request(scope)
+        token = asked.cookies.get(SESSION, "")
+        secure = (asked.headers.get("x-forwarded-proto") or scope.get("scheme")) == "https"
+        own = SESSION.encode() + b"="
+
+        async def sending(message):
+            if message["type"] == "http.response.start" and token and token in renewed:
+                headers = list(message.get("headers") or [])
+                if not any(k.lower() == b"set-cookie" and v.startswith(own) for k, v in headers):
+                    message = {**message, "headers": headers + _session_cookie_headers(token, secure)}
+            await send(message)
+
+        try:
+            await self.app(scope, receive, sending)
+        finally:
+            accountslib.RENEWED.reset(mark)
 #: The operator's fee on a mainnet creation, in thousandths of what it costs
 #: (`mainnet_create_fee_permille` in settings.json): 0.5%, the exchange's own cut.
 MAINNET_CREATE_FEE_PERMILLE = 5
@@ -5413,6 +5456,9 @@ def create_app(state: AppState) -> FastAPI:
         return None
 
     app.add_middleware(_BrowserChain, pick=_per_browser_chain)
+    # Outside every other middleware, so a session renewed anywhere in a request (the door's look, the chain
+    # pick, the route) sends the cookie again (issue #13, 2026-10-25).
+    app.add_middleware(_SessionRenewal)
 
     @app.get("/create/chain")
     def create_chain(request: Request, to: str = "", back: str = "/create"):
@@ -10859,6 +10905,22 @@ def create_app(state: AppState) -> FastAPI:
     def auth_logout(request: Request):
         state.accounts().logout(request.cookies.get(SESSION_COOKIE, ""))
         answer = JSONResponse({"pubkey": None})
+        answer.delete_cookie(SESSION_COOKIE)
+        if not _public_request(request):                   # signed out on purpose: not the operator again at once
+            answer.set_cookie(OUT_COOKIE, "1", max_age=365 * 86400, httponly=True, samesite="strict")
+        return answer
+
+    @app.post("/auth/logout-everywhere")
+    def auth_logout_everywhere(request: Request):
+        """Sign this account out on every device: every one of its sessions ends, this browser's too.
+
+        2026-10-25 (issue #13), SadFrog: "14 days, renewed by use, plus 'sign out everywhere'". For a phone
+        that was lost, or a computer somebody else now uses. Guarded like every account POST: the door refuses
+        another site's request on the node's own machine, and the cookie is SameSite=Lax, so no other site's
+        POST carries it."""
+        account = _signed_in_account(request)
+        ended = state.accounts().end_sessions(account.pubkey)
+        answer = JSONResponse({"pubkey": None, "ended": ended})
         answer.delete_cookie(SESSION_COOKIE)
         if not _public_request(request):                   # signed out on purpose: not the operator again at once
             answer.set_cookie(OUT_COOKIE, "1", max_age=365 * 86400, httponly=True, samesite="strict")
@@ -24449,7 +24511,11 @@ def create_app(state: AppState) -> FastAPI:
                     status_code=404)
         except accountslib.AccountError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        return JSONResponse({"ok": True})
+        # A new password ends the account's other sessions (2026-10-25, issue #13): whoever was signed in
+        # with the old one, on another device, is signed out. This browser, which just proved the words,
+        # stays signed in.
+        ended = state.accounts().end_sessions(account.pubkey, keep=request.cookies.get(SESSION_COOKIE, ""))
+        return JSONResponse({"ok": True, "ended": ended})
 
     @app.post("/account/split")
     def account_split(request: Request, payload: Any = Body(None)):
@@ -27495,6 +27561,11 @@ def create_app(state: AppState) -> FastAPI:
         if not already:
             register.join(pubkey)
             state.claim_operator(pubkey)
+        else:
+            # A new password ends the operator's other sessions, as a re-sealed wallet does (2026-10-25,
+            # issue #13); the browser that changed it stays signed in. From the machine itself, with no
+            # session of its own, that is every one.
+            register.end_sessions(pubkey, keep=request.cookies.get(SESSION_COOKIE, ""))
         return JSONResponse({"username": name, "operator": pubkey})
 
     @app.get("/auth/door")

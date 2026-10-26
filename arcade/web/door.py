@@ -282,6 +282,8 @@ LINKED_FROM_PUBLIC = ("/content/", "/collections", "/feed", "/u/", "/docs",
 #: equally correct; it is named so that nobody reads that 405 as the door having
 #: opened something. (the door census, 2026-09-27)
 PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
+               # every session of the signed-in account ends, its own only (issue #13, 2026-10-25)
+               "/auth/logout-everywhere",
                # the LLM service (llmweb.py, 2026-10-23): each acts only for the signed-in account, its own grants,
                # top-ups and keys; /v1 answers only an API key the account made
                "/account/llm/grant", "/account/llm/topup", "/account/llm/chat", "/account/llm/keys/new",
