@@ -48,7 +48,7 @@ def test_pushes_are_read_as_the_indexers_read_them_quirk_and_all():
 
 
 def test_only_input_0_and_no_new_number_on_an_inscribed_first_koinu(tmp_path, monkeypatch):
-    monkeypatch.setitem(dx.STARTS, "ltc", dx.BASE)            # the fake chain starts where a Dogecoin one does
+    monkeypatch.setitem(dx.STARTS, "lky", dx.BASE)            # the fake chain starts where a Dogecoin one does
     chain = Chain()
     first = _tx([(FUND, 0, _envelope())], [100_000], tag=b"a")
     second_input = _tx([(FUND, 1, SIG), (FUND, 2, _envelope())], [100_000], tag=b"b")   # envelope in input 1
@@ -56,9 +56,9 @@ def test_only_input_0_and_no_new_number_on_an_inscribed_first_koinu(tmp_path, mo
     # Spends the inscribed coin as input 0 and carries an envelope too: the first koinu is inscribed, so no new one.
     again = _tx([(first[1], 0, _envelope(b"text/html"))], [100_000], tag=b"c")
     chain.add([again])
-    # Litecoin's Doginals kind (wonky-ord's rule): no new number on an inscribed first koinu. Dogecoin numbers it since
-    # rules 5 (tests/test_ord_dialects.py).
-    index = dx.DoginalIndex(tmp_path / "ltc.sqlite", lambda: chain, lambda: "walk", net="ltc")
+    # Luckycoin's Doginals kind (wonky-ord's rule): no new number on an inscribed first koinu. Dogecoin numbers it
+    # since rules 5 (tests/test_ord_dialects.py); Litecoin reads ord's own envelopes since rules 6 (test_ord_lite.py).
+    index = dx.DoginalIndex(tmp_path / "lky.sqlite", lambda: chain, lambda: "walk", net="lky")
     index.walker.step(chain, dx.BASE + 1, budget=60)
     ids = [dx.iid_of(*r) for r in index.store.q("SELECT tx, n FROM insc ORDER BY number")]
     assert ids == [f"{first[1]}i0"], ids
