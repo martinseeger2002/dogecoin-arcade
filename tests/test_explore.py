@@ -200,3 +200,135 @@ def test_negative_numbers_are_asked_and_odd_types_said_plainly(walking):
     assert app.get("/explore/api/inscription?net=main&number=-1", headers=EDGE).status_code == 200
     assert app.get("/explore/api/lookup?net=main&q=-3", headers=EDGE).status_code == 200
     assert app.get("/explore/api/inscription?net=main&number=--1", headers=EDGE).status_code == 400
+
+
+# --------------------------------------------------------------------------- the collection search (2026-10-26)
+#
+# SadFrog: "can you make the collection search more in depth with sorting and filters and lazy loading one at a time on
+# demand." Every known collection is listed, held or not; a page at a time; one not held is fetched when opened.
+
+def _line(store, chain, slug, name, supply, owners=None, height=None, first=None, last=None):
+    """A line of Nintondo's listing, as the importer keeps it."""
+    with store._db() as conn:
+        conn.execute("INSERT INTO kc_listing (chain, slug, name, supply, sig, owners, height, first, last, size) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?)", (chain, slug, name, supply, f"{supply}|{first}|{last}|0", owners,
+                                                      height, first, last, 0))
+
+
+def _ids(k0, n):
+    return [{"id": f"{k0 + k:064x}i0", "name": f"P #{k + 1}"} for k in range(n)]
+
+
+@pytest.fixture
+def searched(walking, monkeypatch):
+    app, state = walking
+    store = state.known_collections()
+    _line(store, "doge", "frogs", "Doge Frogs", 3, owners=50, height=5_000_000, first=10, last=12)
+    _line(store, "doge", "apes", "Apes", 12_000, owners=900, height=4_000_000)
+    _line(store, "doge", "bone", "Bone", 57_951, owners=3_000, height=4_500_000)
+    _line(store, "doge", "zebra-club", "Zebra Club", 500, owners=10, height=5_100_000)
+    _line(store, "doge", "toads", "Toads", 4, owners=5, height=4_800_000)
+    store.put("doge", "frogs", "Doge Frogs", 3, _ids(1, 3), "nintondo", sig="3|10|12|0")
+    store.put("doge", "toads", "Toads", 4, _ids(10, 2), "nintondo", sig="x")            # held, two of four
+    store.put("doge", "mesh-only", "Mesh Only", 2, _ids(20, 2), "mesh:" + "a" * 12, sig="2|7|8|99")
+
+    class Reg:
+        def active(self):
+            return [{"txid": "ab" * 32, "number": 9, "name": "Registry Frogs", "chain": "doge", "supply": 2000,
+                     "description": "", "cover": "", "count": 2000, "traits": [], "status": "active"}]
+    monkeypatch.setattr(state, "collection_registry", lambda: Reg())
+    return app, state, store
+
+
+def _ask(app, **args):
+    import urllib.parse
+    got = app.get("/explore/api/collections?" + urllib.parse.urlencode({"net": "doge", **args}),
+                  headers={**EDGE, "cf-connecting-ip": "198.51.100.7"})
+    assert got.status_code == 200, (args, got.text)
+    return got.json()
+
+
+def _slugs(j):
+    return [c.get("slug") or c["name"] for c in j["collections"]]
+
+
+def test_the_search_lists_every_known_collection_held_or_not(searched):
+    app, _state, _store = searched
+    j = _ask(app)
+    assert j["total"] == 7 and j["offset"] == 0 and j["limit"] == 30
+    assert _slugs(j) == ["bone", "apes", "Registry Frogs", "zebra-club", "toads", "frogs", "mesh-only"], \
+        "biggest first by default"
+    by = {c.get("slug") or c["name"]: c for c in j["collections"]}
+    assert by["bone"]["imported"] is False and by["bone"]["count"] == 0 and by["bone"]["owners"] == 3000 \
+        and by["bone"]["agreed"] == 0 and by["bone"]["cover"] == "" and by["bone"]["kind"] == "known"
+    assert by["frogs"]["imported"] is True and by["frogs"]["count"] == 3 and by["frogs"]["agreed"] == 1 \
+        and by["frogs"]["cover"] == f"{1:064x}i0" and (by["frogs"]["first"], by["frogs"]["last"]) == (10, 12)
+    assert by["mesh-only"]["imported"] and by["mesh-only"]["source"].startswith("mesh:") \
+        and (by["mesh-only"]["first"], by["mesh-only"]["last"], by["mesh-only"]["size"]) == (7, 8, 99), \
+        "a linked arcade's list, its numbers read from its line"
+    assert by["Registry Frogs"]["kind"] == "registry"
+    page = app.get("/explore", headers=EDGE).text
+    for control in ("xpcollq", "xpcollsort", "xpcollsrc", "xpcollcomplete", "xpcollsize", "xpcollagreed",
+                    "xpcollsend", "xpcollsmore", "xpcollgridend", "xpcollmore"):
+        assert f'id="{control}"' in page, control
+    assert "IntersectionObserver" in page and "not fetched yet" in page and "Fetching from Nintondo" in page
+
+
+def test_the_search_sorts_filters_and_pages(searched):
+    app, _state, _store = searched
+    assert _slugs(_ask(app, sort="name")) == ["apes", "bone", "frogs", "mesh-only", "Registry Frogs", "toads",
+                                              "zebra-club"]
+    assert _slugs(_ask(app, sort="holders"))[:5] == ["bone", "apes", "frogs", "zebra-club", "toads"]
+    assert _slugs(_ask(app, sort="newest"))[:5] == ["zebra-club", "frogs", "toads", "bone", "apes"]
+    assert _slugs(_ask(app, sort="agreed"))[:3] == ["toads", "frogs", "mesh-only"], "held here first, then by size"
+    assert _slugs(_ask(app, source="registry")) == ["Registry Frogs"]
+    assert "Registry Frogs" not in _slugs(_ask(app, source="known"))
+    assert _slugs(_ask(app, q="FROG")) == ["Registry Frogs", "frogs"], "any case"
+    assert _slugs(_ask(app, q="zebra-cl")) == ["zebra-club"], "by slug too"
+    assert _slugs(_ask(app, complete="1")) == ["Registry Frogs", "frogs", "mesh-only"], "held whole only"
+    assert _slugs(_ask(app, max="999")) == ["zebra-club", "toads", "frogs", "mesh-only"]
+    assert _slugs(_ask(app, min="1000", max="10000")) == ["Registry Frogs"]
+    assert _slugs(_ask(app, min="10001")) == ["bone", "apes"]
+    assert _slugs(_ask(app, agreed="1")) == ["toads", "frogs", "mesh-only"]
+    assert _ask(app, agreed="2")["collections"] == []
+    first, rest = _ask(app, sort="name", limit="3"), _ask(app, sort="name", limit="3", offset="3")
+    assert _slugs(first) == ["apes", "bone", "frogs"] and _slugs(rest) == ["mesh-only", "Registry Frogs", "toads"]
+    assert first["total"] == rest["total"] == 7 and _ask(app, offset="7")["collections"] == []
+    assert _ask(app, q="nothing like it") == {"collections": [], "total": 0, "offset": 0, "limit": 30}
+
+
+def test_the_search_refuses_nonsense(searched):
+    app, _state, _store = searched
+    for bad in ("sort=biggest", "source=nintondo", "complete=yes", "min=-1", "max=lots", "min=5&max=4", "agreed=x",
+                "agreed=1000", "offset=-1", "offset=x", "limit=0", "limit=61", "limit=x", "q=" + "a" * 81,
+                "q=%01", "net=../x", "net="):
+        got = app.get("/explore/api/collections?" + ("net=doge&" if "net=" not in bad else "") + bad, headers=EDGE)
+        assert got.status_code == 400, bad
+    assert app.get("/explore/api/collections?net=doge&limit=60", headers=EDGE).status_code == 200
+
+
+def test_a_collection_not_held_is_fetched_when_opened_then_paged(searched):
+    app, state, store = searched
+    url = "/explore/api/collection?net=doge&slug=zebra-club&offset=0"
+    j = app.get(url, headers=EDGE).json()
+    assert j["loading"] is True and j["items"] == [] and j["have"] == 0 and j["of"] == 500
+    assert j["collection"]["name"] == "Zebra Club" and j["collection"]["imported"] is False
+    assert "zebra-club" in store.wants("doge"), "queued"
+    assert state.known_importer().wake.is_set(), "and the importer woken"
+    with store._db() as conn:                                  # the importer part way through
+        conn.executemany("INSERT INTO kc_pending (chain, slug, id, name, position, number) VALUES (?,?,?,?,?,?)",
+                         [("doge", "zebra-club", f"{900 + k:064x}i0", "", None, None) for k in range(120)])
+    assert app.get(url, headers=EDGE).json()["have"] == 120, "how many pieces have come so far"
+    store.put("doge", "zebra-club", "Zebra Club", 500, _ids(1000, 50), "nintondo")
+    assert store.wants("doge") == {}
+    held = app.get(url, headers=EDGE).json()
+    assert held["loading"] is False and len(held["items"]) == 48 and held["collection"]["imported"] is True \
+        and held["collection"]["owners"] == 10
+    more = app.get(url.replace("offset=0", "offset=48"), headers=EDGE).json()
+    assert [i["name"] for i in more["items"]] == ["P #49", "P #50"]
+    _line(store, "doge", "giant", "Giant", 250_000)
+    big = app.get("/explore/api/collection?net=doge&slug=giant", headers=EDGE).json()
+    assert big["loading"] is False and "more than" in big["skipped"] and "giant" not in store.wants("doge"), \
+        "too big to keep: said so, not queued"
+    assert app.get("/explore/api/collection?net=doge&slug=nope", headers=EDGE).status_code == 404
+    assert app.get("/explore/api/collection?net=doge&slug=zebra-club&offset=x", headers=EDGE).status_code == 400

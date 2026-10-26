@@ -28245,42 +28245,157 @@ def create_app(state: AppState) -> FastAPI:
         holders = [{"address": h["address"], "held": h["display"]} for h in index.holders(int(id))[:50]]
         return JSONResponse({"asset": row, "holders": holders}, headers={"Cache-Control": "no-store"})
 
-    def _known_row(r: dict, agreed: dict) -> dict:
+    _KNOWN_FACTS = ("owners", "height", "created", "first", "last", "size")
+
+    def _known_row(r: dict, agreed: int | None) -> dict:
+        """A known collection as Explore shows it (2026-10-26): held or not ("imported"), with Nintondo's listing
+        details when the arcade read them."""
         return {"kind": "known", "slug": r["slug"], "name": r["name"], "chain": r["chain"], "supply": r["supply"],
-                "count": r["count"], "cover": r["cover"], "source": r["source"], "fp": r["fp"],
-                "fetched_at": r["fetched_at"], "agreed": agreed.get(r["slug"], 1)}
+                "count": r.get("count") or 0, "imported": bool(r.get("imported", True)), "cover": r.get("cover") or "",
+                "source": r.get("source") or "", "fp": r.get("fp") or "", "fetched_at": r.get("fetched_at"),
+                "agreed": agreed, **{k: r.get(k) for k in _KNOWN_FACTS}}
+
+    def _known_share():
+        return getattr(getattr(state, "mesh", None), "collectionshare", None)
 
     def _known_agreed(net: str) -> dict:
-        share = getattr(getattr(state, "mesh", None), "collectionshare", None)
+        share = _known_share()
         try:
             return share.agreements(net) if share is not None else {}
         except Exception:                                      # noqa: BLE001 -- said as this arcade's alone
             return {}
 
+    def _known_offers(net: str) -> dict:
+        share = _known_share()
+        try:
+            return share.offers(net) if share is not None else {}
+        except Exception:                                      # noqa: BLE001
+            return {}
+
+    def _known_catalog(store, net: str) -> list[dict]:
+        """Every known collection of a chain (2026-10-26): Nintondo's listing, held or not; held lists; and the ones
+        linked arcades hold that this arcade has not fetched -- each with how many arcades agree on it."""
+        agreed, offers = _known_agreed(net), _known_offers(net)
+        rows = store.catalog(net)
+        seen = {r["slug"] for r in rows}
+        for slug, o in offers.items():
+            if slug not in seen:
+                row = o["row"]
+                rows.append({"chain": net, "slug": slug, "name": row["name"], "supply": row["supply"],
+                             "imported": False, "count": 0, "cover": "", "fp": "", "source": "mesh",
+                             "fetched_at": None, "owners": None, "height": None, "created": None,
+                             **knownlib.sig_details(row.get("sig") or "")})
+        return [_known_row(r, agreed.get(r["slug"], 1) if r["imported"]
+                           else (offers.get(r["slug"]) or {}).get("agree", 0)) for r in rows]
+
+    #: The collection search's choices (2026-10-26, SadFrog: "more in depth with sorting and filters and lazy loading
+    #: one at a time on demand").
+    COLLECTION_SORTS = ("size", "name", "holders", "newest", "agreed")
+    COLLECTION_SOURCES = ("all", "registry", "known")
+    COLLECTIONS_PAGE, COLLECTIONS_MOST = 30, 60
+
+    def _collection_key(sort: str):
+        def name(c):
+            return (str(c.get("name") or "").casefold(), str(c.get("slug") or c.get("txid") or ""))
+
+        def most(v):                                       # biggest first, the unknown last
+            return (v is None, -(v or 0))
+        if sort == "name":
+            return name
+        if sort == "holders":
+            return lambda c: (most(c.get("owners")), name(c))
+        if sort == "newest":
+            return lambda c: (most(c.get("height")), most(c.get("created")), name(c))
+        if sort == "agreed":
+            return lambda c: (most(c.get("agreed")), most(c.get("supply")), name(c))
+        return lambda c: (most(c.get("supply")), name(c))
+
+    def _whole(said: str, most: int) -> int | None:
+        """A whole number 0..most said in a query, or None."""
+        said = (said or "").strip()
+        if not re.match(r"^[0-9]{1,9}$", said) or int(said) > most:
+            return None
+        return int(said)
+
     @app.get("/explore/api/collections")
-    def explore_collections(request: Request, net: str = "doge", q: str = ""):
-        """Known collections of a chain: the ones published to the arcades' collection registry
-        (arcade/collection_registry.py), by name; then the known collections of Doginals, Pepinals and Bellinals
-        (arcade/known_collections.py, 2026-10-26: "searchable from our indexes and arcades"), each with where its list
-        came from and how many arcades agree on it."""
+    def explore_collections(request: Request, net: str = "doge", q: str = "", sort: str = "size", source: str = "all",
+                            complete: str = "", agreed: str = "", offset: str = "0", limit: str = ""):
+        """Collections of a chain, searched, sorted, filtered and paged (2026-10-26: "more in depth with sorting and
+        filters and lazy loading"): the ones published to the arcades' collection registry
+        (arcade/collection_registry.py, kind "registry") and every known collection of Doginals, Pepinals and Bellinals
+        (arcade/known_collections.py, kind "known"), held here or not yet ("imported"), each with where its list came
+        from and how many arcades agree on it. `q` a name or slug; `sort` size (supply, the default), name, holders,
+        newest, agreed; `source` all, registry, known; `complete=1` only collections held whole; `min`/`max` bounds on
+        the supply; `agreed` the fewest arcades agreeing; `offset`/`limit` (at most 60) a page; `total` all that
+        match."""
         if _explore_limited(request):
             return JSONResponse({"detail": "Too many questions in a minute: wait a moment."}, status_code=429)
-        said = (q or "").strip().lower()[:80]
-        rows = [r for r in state.collection_registry().active()
-                if r.get("chain") == net and (not said or said in str(r.get("name") or "").lower())]
-        keep = ("txid", "number", "name", "chain", "supply", "description", "cover", "count", "traits")
-        out = [{**{k: r.get(k) for k in keep}, "kind": "registry", "source": "registry"} for r in rows[:60]]
-        known = []
+        said = (q or "").strip()
+        bad = None
+        if not re.match(r"^[a-z0-9_-]{1,20}$", net or ""):
+            bad = "net: a chain, like doge"
+        elif len(said) > 80 or any(ord(ch) < 32 for ch in said):
+            bad = "q: a name or slug, up to 80 characters"
+        elif sort not in COLLECTION_SORTS:
+            bad = "sort: one of " + ", ".join(COLLECTION_SORTS)
+        elif source not in COLLECTION_SOURCES:
+            bad = "source: one of " + ", ".join(COLLECTION_SOURCES)
+        elif complete not in ("", "0", "1"):
+            bad = "complete: 1 for collections held whole, else 0"
+        bounds = {k: _whole(v, 10 ** 9) if v.strip() else -1                # `min`/`max` (not shadowing the builtins)
+                  for k, v in ((k, request.query_params.get(k, "")) for k in ("min", "max"))}
+        least = _whole(agreed, 999) if agreed.strip() else 0
+        at = _whole(offset or "0", 10 ** 7)
+        size = _whole(limit, COLLECTIONS_MOST) if limit.strip() else COLLECTIONS_PAGE
+        if bad is None and (None in bounds.values() or (bounds["min"] >= 0 and bounds["max"] >= 0
+                                                         and bounds["min"] > bounds["max"])):
+            bad = "min and max: whole numbers of pieces, min no more than max"
+        elif bad is None and least is None:
+            bad = "agreed: the fewest arcades agreeing, 0 to 999"
+        elif bad is None and (at is None or not size):
+            bad = f"offset: 0, 30, 60 ...; limit: 1 to {COLLECTIONS_MOST}"
+        if bad is not None:
+            return JSONResponse({"detail": bad}, status_code=400)
+        low = said.lower()
+        found: list[dict] = []
+        if source in ("all", "registry"):
+            keep = ("txid", "number", "name", "chain", "supply", "description", "cover", "count", "traits")
+            found += [{**{k: r.get(k) for k in keep}, "kind": "registry", "source": "registry", "imported": True,
+                       "agreed": None, "owners": None, "height": None, "created": None}
+                      for r in state.collection_registry().active()
+                      if r.get("chain") == net and (not low or low in str(r.get("name") or "").lower())]
         store = state.known_collections() if hasattr(state, "known_collections") else None
-        if store is not None and net in knownlib.CHAINS:
-            agreed = _known_agreed(net)
-            known = [_known_row(r, agreed) for r in store.collections(net, said, limit=60)]
-        return JSONResponse({"collections": out + known}, headers={"Cache-Control": "no-store"})
+        if source in ("all", "known") and store is not None and net in knownlib.CHAINS:
+            found += [r for r in _known_catalog(store, net)
+                      if not low or low in str(r["name"] or "").lower() or low in r["slug"].lower()]
+        lo, hi = bounds["min"], bounds["max"]
+        found = [c for c in found
+                 if (complete != "1" or (c.get("supply") and (c.get("count") or 0) == c["supply"]))
+                 and (lo < 0 or (c.get("supply") is not None and c["supply"] >= lo))
+                 and (hi < 0 or (c.get("supply") is not None and c["supply"] <= hi))
+                 and (not least or (c.get("agreed") or 0) >= least)]
+        found.sort(key=_collection_key(sort))
+        return JSONResponse({"collections": found[at:at + size], "total": len(found), "offset": at, "limit": size},
+                            headers={"Cache-Control": "no-store"})
+
+    def _known_wanted(store, net: str, slug: str) -> None:
+        """Somebody opened a collection this arcade does not hold: queued, and the importer and the mesh told now."""
+        store.want(net, slug)
+        importer = state.known_importer() if hasattr(state, "known_importer") else None
+        if importer is not None:
+            importer.wake.set()
+        share = _known_share()
+        try:
+            if share is not None:
+                share.poke()
+        except Exception:                                      # noqa: BLE001 -- the next minute's turn asks
+            pass
 
     @app.get("/explore/api/collection")
     def explore_collection(request: Request, root: str = "", offset: str = "0", net: str = "", slug: str = ""):
         """One known collection and a page of its pieces (48), by their number in the collection: a registry one by
-        its root txid, or a known one by its chain and slug (2026-10-26)."""
+        its root txid, or a known one by its chain and slug (2026-10-26). A known one not held yet is fetched now (on
+        demand): the answer says "loading", with how many pieces have come so far, until it is held."""
         if _explore_limited(request):
             return JSONResponse({"detail": "Too many questions in a minute: wait a moment."}, status_code=429)
         if slug:
@@ -28288,11 +28403,26 @@ def create_app(state: AppState) -> FastAPI:
             if net not in knownlib.CHAINS or not knownlib.SLUG.match(slug) \
                     or not re.match(r"^[0-9]{1,7}$", (offset or "0").strip()):
                 return JSONResponse({"detail": "a chain, a collection's slug and an offset"}, status_code=400)
-            found = store.collection(net, slug) if store is not None else None
-            if found is None:
+            if store is None:
                 return JSONResponse({"detail": "no such collection"}, status_code=404)
+            row = next((r for r in _known_catalog(store, net) if r["slug"] == slug), None)
+            if row is None:
+                return JSONResponse({"detail": "no such collection"}, status_code=404)
+            if not row["imported"]:
+                line = store.listed(net, slug) or {}
+                skipped = line.get("skipped") or ""
+                if not skipped and (row["supply"] or 0) > knownlib.MAX_ITEMS:
+                    skipped = f"{row['supply']:,} pieces, more than {knownlib.MAX_ITEMS:,}"
+                if skipped:
+                    return JSONResponse({"collection": row, "items": [], "loading": False, "skipped": skipped},
+                                        headers={"Cache-Control": "no-store"})
+                _known_wanted(store, net, slug)
+                return JSONResponse({"collection": row, "items": [], "loading": True,
+                                     "have": store.fetching(net, slug), "of": row["supply"],
+                                     "importing": bool(state.setting(knownlib.SETTING))},
+                                    headers={"Cache-Control": "no-store"})
             items = store.items(net, slug, offset=int(offset), limit=48)
-            return JSONResponse({"collection": _known_row(found, _known_agreed(net)),
+            return JSONResponse({"collection": row, "loading": False,
                                  "items": [{"id": i["id"], "name": i["name"], "number": i["position"],
                                             "inscription_number": i["number"]} for i in items]},
                                 headers={"Cache-Control": "no-store"})
@@ -28335,7 +28465,7 @@ def create_app(state: AppState) -> FastAPI:
         importer = state.known_importer() if hasattr(state, "known_importer") else None
         if importer is None:
             return JSONResponse({"on": False, "chains": [], "detail": "this arcade keeps no files"})
-        share = getattr(getattr(state, "mesh", None), "collectionshare", None)
+        share = _known_share()
         return JSONResponse({**importer.status(), "mesh": share is not None,
                              "fetched": [{"net": n, "slug": s, "from": p[:12], "ok": ok}
                                          for n, s, p, ok in (share.fetched if share is not None else [])][-10:]},
@@ -28343,14 +28473,29 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/admin/api/known-collections")
     def admin_known_collections_set(request: Request, payload: Any = Body(None)):
+        """The import switch ({"import": true|false}) and what it fetches ({"mode": "demand"|"all"}, 2026-10-26: "lazy
+        loading one at a time on demand": a collection's pieces when somebody opens it, or every collection)."""
         _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
-        if not isinstance(said.get("import"), bool):
+        if "import" not in said and "mode" not in said:
+            return JSONResponse({"detail": "import: true or false; mode: demand or all"}, status_code=400)
+        if "import" in said and not isinstance(said["import"], bool):
             return JSONResponse({"detail": "import: true or false"}, status_code=400)
-        state.set_setting(knownlib.SETTING, said["import"])
-        if said["import"]:
-            _start_known_import()
-        return JSONResponse({"ok": True, "import": said["import"]})
+        if "mode" in said and said["mode"] not in knownlib.MODES:
+            return JSONResponse({"detail": "mode: demand or all"}, status_code=400)
+        out: dict = {"ok": True}
+        if "mode" in said:
+            state.set_setting(knownlib.MODE_SETTING, said["mode"])
+            out["mode"] = said["mode"]
+            importer = state.known_importer() if hasattr(state, "known_importer") else None
+            if importer is not None:
+                importer.wake.set()
+        if "import" in said:
+            state.set_setting(knownlib.SETTING, said["import"])
+            out["import"] = said["import"]
+            if said["import"]:
+                _start_known_import()
+        return JSONResponse(out)
 
     @app.get("/admin/api/operators")
     def admin_operators(request: Request):

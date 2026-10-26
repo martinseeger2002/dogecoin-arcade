@@ -851,7 +851,11 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
     # (collectionshare.py, arcade/known_collections.py; 2026-10-26, SadFrog: "shared across arcades to be agreed upon").
     if hasattr(state, "known_collections"):
         from .collectionshare import CollectionShare
-        service.collectionshare = CollectionShare(state.known_collections)
+        from .. import known_collections as kclib
+
+        def kc_mode() -> str:                              # "demand" (the default) or "all", Admin -> Ords
+            return kclib.mode_of(state.setting(kclib.MODE_SETTING)) if hasattr(state, "setting") else "demand"
+        service.collectionshare = CollectionShare(state.known_collections, mode=kc_mode)
         service.node.add_extension(service.collectionshare)
     # Each account's imported wallets, to every arcade that holds the account (importshare.py, 2026-10-21).
     if hasattr(state, "imported_wallets"):

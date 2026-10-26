@@ -377,9 +377,21 @@
     <h3>Known collections</h3>
     <p class="muted" style="margin-top:0;font-size:.84rem">The collections of Doginals, Pepinals and Bellinals, shown
       and searchable on Explore. Linked arcades share the lists they hold, each checked against its fingerprint. Switched
-      on, this arcade also reads them from Nintondo&rsquo;s public search: one request a second at most, the whole of
-      Dogecoin&rsquo;s lists in a few hours, then once a day only the collections that changed.</p>
+      on, this arcade also reads them from Nintondo&rsquo;s public search: one request a second at most. On demand (the
+      default) it reads each chain&rsquo;s listing once a day and a collection&rsquo;s pieces when somebody opens it
+      (from a linked arcade first, when one holds it); every collection takes Dogecoin&rsquo;s lists in a few hours,
+      then once a day only the collections that changed.</p>
     <label class="switch"><input type="checkbox" id="kcimport"> Import known collections from Nintondo</label>
+    {# 2026-10-26, SadFrog: "can you make the collection search more in depth with sorting and filters and lazy loading
+       one at a time on demand" -- every list of Nintondo's is about 885,000 pieces (some 310 MB), so by default a
+       collection's pieces come when somebody opens it on Explore. #}
+    <div style="margin-top:8px">
+      <label for="kcmode">Fetch the pieces of</label>
+      <select id="kcmode" style="font-size:16px;max-width:100%">
+        <option value="demand">a collection when somebody opens it (on demand)</option>
+        <option value="all">every collection (about 310 MB in all)</option>
+      </select>
+    </div>
     <div id="kcsaid" class="muted" style="font-size:.84rem;margin-top:6px"></div>
   </div>
   {# 2026-10-21: "In the ord admin panel The Explorer on the bottom should be picked by the coin type at the top
@@ -2691,17 +2703,21 @@ section.panel h2{margin-top:0}
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (document.activeElement !== $('kcimport')) $('kcimport').checked = !!d.on;
+        if (d.mode && document.activeElement !== $('kcmode')) $('kcmode').value = d.mode;
         var out = $('kcsaid'); out.textContent = '';
         (d.chains || []).forEach(function (c) {
           var line = (KC_NAMES[c.net] || c.net) + ': ' + Number(c.collections || 0).toLocaleString() + ' collections, '
             + Number(c.pieces || 0).toLocaleString() + ' pieces held';
           if (d.on) {
             line += c.phase === 'list' ? ' \u2014 reading the list, page ' + c.page
+              : c.phase === 'want' ? ' \u2014 fetching what visitors opened' + (c.slug ? ', now ' + c.slug + ' page '
+                + c.page + (c.pages ? ' of ' + c.pages : '') : '')
               : c.phase === 'items' ? ' \u2014 ' + Number(c.waiting || 0).toLocaleString() + ' of '
                 + Number(c.listed || 0).toLocaleString() + ' to read' + (c.slug ? ', now ' + c.slug + ' page ' + c.page
                 + (c.pages ? ' of ' + c.pages : '') : '')
               : c.next_round ? ' \u2014 up to date; read again ' + new Date(c.next_round * 1000).toLocaleString() : '';
           }
+          if (c.wanted) line += '; ' + Number(c.wanted).toLocaleString() + ' opened and waiting';
           if (c.error) line += ' (last error: ' + c.error + ')';
           var row = document.createElement('div'); row.textContent = line; out.appendChild(row);
         });
@@ -2715,6 +2731,11 @@ section.panel h2{margin-top:0}
   $('kcimport').onchange = function () {
     call('/admin/api/known-collections', {'import': $('kcimport').checked})
       .then(function (j) { $('kcsaid').textContent = j['import'] ? 'Importing from Nintondo.' : 'Import switched off.'; loadKnown(); })
+      .catch(function (e) { $('kcsaid').textContent = e.message; });
+  };
+  $('kcmode').onchange = function () {
+    call('/admin/api/known-collections', {mode: $('kcmode').value})
+      .then(function (j) { $('kcsaid').textContent = j.mode === 'all' ? 'Fetching every collection.' : 'Fetching collections when opened.'; loadKnown(); })
       .catch(function (e) { $('kcsaid').textContent = e.message; });
   };
   function loadOrds(force) {

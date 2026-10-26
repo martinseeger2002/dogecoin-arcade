@@ -11,6 +11,13 @@ Importing from the source is the operator's own choice (Admin -> Ords, setting `
 default): the operator's side stopped reading ords from outside APIs on 2026-10-15, so nothing here asks Nintondo unless
 an operator switched it on. An arcade with it off still holds what linked arcades share.
 
+On demand (2026-10-26, SadFrog: "can you make the collection search more in depth with sorting and filters and lazy
+loading one at a time on demand"): every collection of Nintondo's runs to about 885,000 pieces, some 310 MB, so by
+default (setting `known_collections_mode` "demand") the importer reads only the listings (cheap: a few pages a chain,
+each collection's line with its owners, height, numbers and supply), and a collection's pieces when somebody opens it
+on Explore (a want, table `kc_want`), plus the ones already held whose line changed. "all" is the old way: every
+collection, wanted ones first.
+
 What a list is worth: a fingerprint covers the inscription ids alone, so two arcades that agree hold the same pieces.
 The names ("Name #k") and positions travel with them and are shown, never checked.
 
@@ -47,6 +54,8 @@ SOURCES = {
 }
 CHAINS = tuple(SOURCES)
 SETTING = "known_collections_import"
+MODE_SETTING = "known_collections_mode"
+MODES = ("demand", "all")
 
 ID = re.compile(r"^[0-9a-f]{64}i[0-9]{1,6}$")
 SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
@@ -62,6 +71,8 @@ PAGE_SIZE = 100              # the search's most a page (500 is refused with a 4
 LIST_PAGE_SIZE = 50
 REFRESH = 24 * 3600          # a chain's listing read again once a day
 BACKOFF_MAX = 3600.0
+MESH_FIRST = 60.0            # a want a linked arcade can meet is left to it this long before Nintondo is asked
+WANT_TTL = 7 * 24 * 3600     # a want nobody met is forgotten after a week
 USER_AGENT = "DogecoinArcade known-collections (+https://github.com/dogecoinarcade)"
 
 SCHEMA = """
@@ -90,9 +101,13 @@ CREATE TABLE IF NOT EXISTS kc_item (
 CREATE INDEX IF NOT EXISTS kc_item_id ON kc_item (chain, id);
 CREATE INDEX IF NOT EXISTS kc_item_order ON kc_item (chain, slug, position, number);
 -- the importer's own progress, so a restart goes on where it stopped
+-- (the listing's other details, added 2026-10-26, are LISTING_COLUMNS below: a file from before gets them at open)
 CREATE TABLE IF NOT EXISTS kc_listing (
     chain TEXT NOT NULL, slug TEXT NOT NULL, name TEXT NOT NULL, supply INTEGER, sig TEXT NOT NULL,
     done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (chain, slug));
+-- collections somebody opened on Explore and this arcade does not hold yet (2026-10-26: "lazy loading ... on demand")
+CREATE TABLE IF NOT EXISTS kc_want (
+    chain TEXT NOT NULL, slug TEXT NOT NULL, asked_at REAL NOT NULL, PRIMARY KEY (chain, slug));
 CREATE TABLE IF NOT EXISTS kc_pending (
     chain TEXT NOT NULL, slug TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, position INTEGER, number INTEGER,
     PRIMARY KEY (chain, slug, id));
@@ -100,6 +115,66 @@ CREATE TABLE IF NOT EXISTS kc_progress (
     chain TEXT PRIMARY KEY, phase TEXT NOT NULL, page INTEGER NOT NULL DEFAULT 1, slug TEXT, pages INTEGER,
     count INTEGER, round_at REAL NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '');
 """
+
+
+#: Nintondo's listing line kept whole (2026-10-26): added in place to a file that lacks them, never dropped.
+LISTING_COLUMNS = (
+    ("owners", "INTEGER"),                       # holders
+    ("height", "INTEGER"),                       # the block of its first piece
+    ("created", "INTEGER"),                      # when, unix seconds
+    ("first", "INTEGER"), ("last", "INTEGER"),   # its lowest and highest inscription number
+    ("size", "INTEGER"),                         # bytes, all pieces
+    ("stale", "INTEGER NOT NULL DEFAULT 0"),     # not seen yet in the round's listing (dropped when it ends)
+    ("skipped", "TEXT NOT NULL DEFAULT ''"),     # why this round's fetch kept nothing ("more than 100,000 pieces")
+)
+
+
+def mode_of(said: Any) -> str:
+    """The setting's value as one of MODES: "demand" unless the operator chose "all"."""
+    return said if said in MODES else "demand"
+
+
+def _int(v: Any) -> int | None:
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float) and v == v and abs(v) < 1e18:
+        return int(v)
+    return None
+
+
+def _when(v: Any) -> int | None:
+    """`created` as unix seconds: a number (milliseconds when that big) or an ISO date; None otherwise."""
+    n = _int(v)
+    if n is None and isinstance(v, str) and v:
+        import datetime
+        try:
+            d = datetime.datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=datetime.timezone.utc)
+        return int(d.timestamp())
+    return n // 1000 if n is not None and n > 100_000_000_000 else n
+
+
+def listing_details(c: dict) -> dict:
+    """One line of Nintondo's /pub/collections as kept: owners, height, created, first, last, size."""
+    nums = c.get("numbers") if isinstance(c.get("numbers"), list) else []
+    first, last = (nums + [None, None])[:2]
+    return {"owners": _int(c.get("owners")), "height": _int(c.get("height")), "created": _when(c.get("created")),
+            "first": _int(first), "last": _int(last), "size": _int(c.get("size"))}
+
+
+def sig_details(sig: str) -> dict:
+    """first, last and size from a listing line's signature ("supply|first|last|size"), for a list a linked arcade
+    sent without the line itself."""
+    parts = (str(sig or "").split("|") + ["", "", "", ""])[:4]
+
+    def num(x):
+        return int(x) if re.match(r"^-?[0-9]{1,15}$", x) else None
+    return {"first": num(parts[1]), "last": num(parts[2]), "size": num(parts[3])}
 
 
 def fingerprint(chain: str, slug: str, ids: Iterable[str]) -> str:
@@ -147,6 +222,10 @@ class KnownCollections:
         with self._db() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
+            have = {r[1] for r in conn.execute("PRAGMA table_info(kc_listing)")}
+            for col, kind in LISTING_COLUMNS:            # a file from before 2026-10-26: its rows kept, columns added
+                if col not in have:
+                    conn.execute(f"ALTER TABLE kc_listing ADD COLUMN {col} {kind}")
 
     @contextlib.contextmanager
     def _db(self):
@@ -184,7 +263,67 @@ class KnownCollections:
                          (chain, slug, str(name or slug)[:NAME_MAX], supply if isinstance(supply, int) else None,
                           ordered[0]["id"] if ordered else "", len(rows), fp, str(source)[:80], str(sig)[:80],
                           time.time() if now is None else now))
+            conn.execute("DELETE FROM kc_want WHERE chain=? AND slug=?", (chain, slug))     # held: the want is met
         return fp
+
+    # ---------------------------------------------------------------- wants (2026-10-26: "on demand")
+    def want(self, chain: str, slug: str, now: float | None = None) -> None:
+        """Somebody opened this collection: fetch it. Asked again, it keeps its place (oldest first)."""
+        if chain not in CHAINS or not SLUG.match(slug or ""):
+            raise ValueError("not a known chain and slug")
+        now = time.time() if now is None else now
+        with self._lock, self._db() as conn:
+            conn.execute("DELETE FROM kc_want WHERE asked_at < ?", (now - WANT_TTL,))
+            if conn.execute("SELECT COUNT(*) FROM kc_want WHERE chain=?", (chain,)).fetchone()[0] >= MAX_COLLECTIONS:
+                return
+            conn.execute("INSERT OR IGNORE INTO kc_want (chain, slug, asked_at) VALUES (?,?,?)", (chain, slug, now))
+
+    def unwant(self, chain: str, slug: str) -> None:
+        with self._db() as conn:
+            conn.execute("DELETE FROM kc_want WHERE chain=? AND slug=?", (chain, slug))
+
+    def wants(self, chain: str) -> dict:
+        """{slug: asked at} of a chain's wants."""
+        with self._db() as conn:
+            return {r[0]: r[1] for r in conn.execute("SELECT slug, asked_at FROM kc_want WHERE chain=?", (chain,))}
+
+    def listed(self, chain: str, slug: str) -> dict | None:
+        """The collection's line in the source's listing, as last read."""
+        with self._db() as conn:
+            row = conn.execute("SELECT * FROM kc_listing WHERE chain=? AND slug=?", (chain, slug)).fetchone()
+        return dict(row) if row else None
+
+    def fetching(self, chain: str, slug: str) -> int:
+        """Pieces of a collection read so far by a fetch still going."""
+        with self._db() as conn:
+            return conn.execute("SELECT COUNT(*) FROM kc_pending WHERE chain=? AND slug=?", (chain, slug)).fetchone()[0]
+
+    def catalog(self, chain: str) -> list[dict]:
+        """Every collection of a chain this arcade knows of: each line of the listing, held or not, and each held list
+        the listing lacks (a linked arcade's). One row each: the held list's facts with the listing's details."""
+        with self._db() as conn:
+            listed = {r["slug"]: dict(r) for r in conn.execute("SELECT * FROM kc_listing WHERE chain=?", (chain,))}
+            held = {r["slug"]: dict(r) for r in conn.execute("SELECT * FROM kc WHERE chain=?", (chain,))}
+        out = []
+        for slug in set(listed) | set(held):
+            line, mine = listed.get(slug), held.get(slug)
+            row = {"chain": chain, "slug": slug, "imported": mine is not None}
+            if line is not None:
+                row.update(name=line["name"], supply=line["supply"],
+                           **{k: line.get(k) for k in ("owners", "height", "created", "first", "last", "size")},
+                           listed=True, skipped=line.get("skipped") or "")
+            else:
+                row.update(name=mine["name"], supply=mine["supply"], owners=None, height=None, created=None,
+                           listed=False, skipped="", **sig_details(mine["sig"]))
+            if mine is not None:
+                row.update(count=mine["count"], cover=mine["cover"], fp=mine["fp"], source=mine["source"],
+                           fetched_at=mine["fetched_at"])
+                if row["supply"] is None:
+                    row["supply"] = mine["supply"]
+            else:
+                row.update(count=0, cover="", fp="", source="nintondo", fetched_at=None)
+            out.append(row)
+        return out
 
     # ---------------------------------------------------------------- reading
     def collection(self, chain: str, slug: str) -> dict | None:
@@ -270,20 +409,61 @@ def _sig(c: dict) -> str:
 
 
 class Importer:
-    """Nintondo's lists of each chain, a request at a time: the listing (50 collections a page), then each collection
-    new or changed since (100 pieces a page). At most one request a second to each host; every page's progress kept, so
-    a restart goes on from it; once a chain is through, it rests a day and reads its listing again, fetching only the
-    collections whose line in it (supply, first and last number, size) changed."""
+    """Nintondo's lists of each chain, a request at a time: the listing (50 collections a page), then the collections to
+    fetch (100 pieces a page). At most one request a second to each host; every page's progress kept, so a restart goes
+    on from it; once a chain is through, it rests a day and reads its listing again.
+
+    Which collections (2026-10-26, "lazy loading one at a time on demand"): in mode "demand" the ones somebody opened
+    (oldest want first) and the ones held whose line in the listing (supply, first and last number, size) changed; in
+    mode "all" the wanted ones first, then every one new or changed. A want is served while a chain rests too (phase
+    "want", the day's round left as it was). A want a linked arcade can meet (`offered(chain, slug)`) is left to the
+    mesh for MESH_FIRST seconds: faster, and no load on Nintondo."""
 
     def __init__(self, store: KnownCollections, enabled: Callable[[], bool], fetch: Callable[..., dict] = fetch_json,
                  clock: Callable[[], float] = time.monotonic, now: Callable[[], float] = time.time,
-                 sleep: Callable[[float], None] = time.sleep, sources: dict | None = None):
+                 sleep: Callable[[float], None] | None = None, sources: dict | None = None,
+                 mode: Callable[[], str] = lambda: "demand",
+                 offered: Callable[[str, str], bool] | None = None):
         self.store, self.enabled, self.fetch = store, enabled, fetch
         self.clock, self.now, self.sleep = clock, now, sleep
+        self.mode, self.offered = mode, offered
         self.sources = dict(sources or SOURCES)
         self._last: dict[str, float] = {}         # host -> when it was last asked (clock)
         self._backoff: dict[str, tuple[float, int]] = {}   # host -> (not before, failures in a row)
         self.requests = 0
+        self.wake = threading.Event()             # set by a new want: the wait between steps cut short
+
+    def _mode(self) -> str:
+        try:
+            return mode_of(self.mode())
+        except Exception:                                    # noqa: BLE001
+            return "demand"
+
+    def _next_want(self, chain: str) -> tuple[dict | None, float | None]:
+        """The oldest want to fetch now from the source, and the seconds until one left to the mesh is ours. Wants met
+        (held) or tried this round and not kept (skipped) are cleared on the way."""
+        now = self.now()
+        with self.store._db() as conn:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT w.slug, w.asked_at, l.supply, l.done, k.slug IS NOT NULL AS held FROM kc_want w "
+                "JOIN kc_listing l ON l.chain=w.chain AND l.slug=w.slug LEFT JOIN kc k ON k.chain=w.chain AND "
+                "k.slug=w.slug WHERE w.chain=? ORDER BY w.asked_at, w.slug", (chain,))]
+        wait = None
+        for r in rows:
+            if r["held"] or r["done"]:
+                self.store.unwant(chain, r["slug"])
+                continue
+            left = r["asked_at"] + MESH_FIRST - now
+            if left > 0 and self.offered is not None:
+                try:
+                    theirs = bool(self.offered(chain, r["slug"]))
+                except Exception:                            # noqa: BLE001
+                    theirs = False
+                if theirs:
+                    wait = left if wait is None else min(wait, left)
+                    continue
+            return r, wait
+        return None, wait
 
     # ---------------------------------------------------------------- progress
     def _progress(self, chain: str) -> dict:
@@ -310,11 +490,17 @@ class Importer:
                 if st["phase"] == "rest":
                     left = st["round_at"] + REFRESH - self.now()
                     if left > 0:
-                        waits.append(left)
-                        break
-                    st.update(phase="list", page=1, slug=None, pages=None, count=None)
-                    with self.store._db() as conn:
-                        conn.execute("DELETE FROM kc_listing WHERE chain=?", (chain,))
+                        want, later = self._next_want(chain)
+                        if want is None:                     # resting, nobody waiting
+                            waits.append(left if later is None else min(left, later))
+                            break
+                        st.update(phase="want", page=1, slug=None, pages=None, count=None)
+                    else:
+                        # The listing is read again over the old lines, so search keeps them meanwhile; a line the new
+                        # listing lacks is dropped when it ends.
+                        st.update(phase="list", page=1, slug=None, pages=None, count=None)
+                        with self.store._db() as conn:
+                            conn.execute("UPDATE kc_listing SET done=0 WHERE chain=?", (chain,))
                     self._save(st)
                 host = self.sources[chain]
                 t = self.clock()
@@ -352,26 +538,43 @@ class Importer:
                 if not isinstance(c, dict) or not SLUG.match(str(c.get("slug") or "")):
                     continue
                 supply = c.get("supply") if isinstance(c.get("supply"), int) else None
-                rows.append((chain, c["slug"], str(c.get("name") or c["slug"])[:NAME_MAX], supply, _sig(c)))
+                d = listing_details(c)
+                rows.append((chain, c["slug"], str(c.get("name") or c["slug"])[:NAME_MAX], supply, _sig(c),
+                             d["owners"], d["height"], d["created"], d["first"], d["last"], d["size"]))
             with self.store._db() as conn:
-                conn.executemany("INSERT OR REPLACE INTO kc_listing (chain, slug, name, supply, sig, done) "
-                                 "VALUES (?,?,?,?,?,0)", rows[:MAX_COLLECTIONS])
+                if st["page"] == 1:                          # a round's listing begins: every old line not seen yet
+                    conn.execute("UPDATE kc_listing SET stale=1 WHERE chain=?", (chain,))
+                conn.executemany(
+                    "INSERT INTO kc_listing (chain, slug, name, supply, sig, done, owners, height, created, first, "
+                    "last, size, stale, skipped) VALUES (?,?,?,?,?,0,?,?,?,?,?,?,0,'') ON CONFLICT (chain, slug) DO "
+                    "UPDATE SET name=excluded.name, supply=excluded.supply, sig=excluded.sig, done=0, "
+                    "owners=excluded.owners, height=excluded.height, created=excluded.created, first=excluded.first, "
+                    "last=excluded.last, size=excluded.size, stale=0, skipped=''", rows[:MAX_COLLECTIONS])
             pages = int(got.get("pages") or 0)
             if not rows or st["page"] >= pages or st["page"] >= MAX_COLLECTIONS // LIST_PAGE_SIZE:
+                with self.store._db() as conn:          # the round's listing read: lines it no longer has, dropped
+                    if conn.execute("SELECT 1 FROM kc_listing WHERE chain=? AND stale=0 LIMIT 1", (chain,)).fetchone():
+                        conn.execute("DELETE FROM kc_listing WHERE chain=? AND stale=1", (chain,))
                 st.update(phase="items", page=1, slug=None, pages=None, count=None)
             else:
                 st["page"] += 1
             st["error"] = ""
             self._save(st)
             return True
-        # phase "items": the collection being fetched, or the next one new or changed
+        # phase "items" (the round) or "want" (resting, somebody waiting): the collection being fetched, or the next
         if not st["slug"]:
-            with self.store._db() as conn:
-                row = conn.execute("SELECT l.slug, l.supply FROM kc_listing l LEFT JOIN kc k ON k.chain=l.chain AND "
-                                   "k.slug=l.slug WHERE l.chain=? AND l.done=0 AND (k.sig IS NULL OR k.sig<>l.sig) "
-                                   "ORDER BY l.slug LIMIT 1", (chain,)).fetchone()
+            row, _later = self._next_want(chain)
+            if row is None and st["phase"] == "items":
+                held_only = "" if self._mode() == "all" else "k.sig IS NOT NULL AND "
+                with self.store._db() as conn:
+                    row = conn.execute("SELECT l.slug, l.supply FROM kc_listing l LEFT JOIN kc k ON k.chain=l.chain "
+                                       "AND k.slug=l.slug WHERE l.chain=? AND l.done=0 AND " + held_only +
+                                       "(k.sig IS NULL OR k.sig<>l.sig) ORDER BY l.slug LIMIT 1", (chain,)).fetchone()
             if row is None:
-                st.update(phase="rest", round_at=self.now(), slug=None, page=1, error="")
+                if st["phase"] == "items":
+                    st.update(phase="rest", round_at=self.now(), slug=None, page=1, error="")
+                else:                                        # the wants met: back to the rest, its day unchanged
+                    st.update(phase="rest", slug=None, page=1)
                 self._save(st)
                 return False
             if (row["supply"] or 0) > MAX_ITEMS:
@@ -422,11 +625,12 @@ class Importer:
         # left unsaid so tomorrow's round reads it again.
         if isinstance(st.get("count"), int) and len(items) != st["count"]:
             sig = ""
+        why = None
         try:
             self.store.put(chain, slug, name, supply, items, "nintondo", sig=sig)
         except ValueError as exc:
-            st["error"] = f"{slug}: {exc}"
-        self._done(chain, slug, None)
+            st["error"] = why = f"{slug}: {exc}"
+        self._done(chain, slug, why)
         st.update(slug=None, page=1, pages=None, count=None)
         self._save(st)
 
@@ -434,8 +638,9 @@ class Importer:
         if why:
             log.info("known collections: %s: skipped %s", chain, why)
         with self.store._db() as conn:
-            conn.execute("UPDATE kc_listing SET done=1 WHERE chain=? AND slug=?", (chain, slug))
+            conn.execute("UPDATE kc_listing SET done=1, skipped=? WHERE chain=? AND slug=?", (why or "", chain, slug))
             conn.execute("DELETE FROM kc_pending WHERE chain=? AND slug=?", (chain, slug))
+            conn.execute("DELETE FROM kc_want WHERE chain=? AND slug=?", (chain, slug))     # stored, or skipped
 
     # ---------------------------------------------------------------- running
     def run(self, stop: Callable[[], bool] = lambda: False) -> None:
@@ -445,20 +650,32 @@ class Importer:
             except Exception:                                # noqa: BLE001 -- never stop for good
                 log.exception("known collections")
                 wait = 60.0
-            self.sleep(min(wait, 30.0))
+            self.pause(min(wait, 30.0))
+
+    def pause(self, seconds: float) -> None:
+        """The wait between steps; a new want (`wake`) ends it early."""
+        if self.sleep is not None:
+            self.sleep(seconds)
+        elif self.wake.wait(seconds):
+            self.wake.clear()
 
     def status(self) -> dict:
         counts = self.store.counts()
-        out = {"on": bool(self.enabled()), "requests": self.requests, "chains": []}
+        mode = self._mode()
+        out = {"on": bool(self.enabled()), "mode": mode, "requests": self.requests, "chains": []}
         with self.store._db() as conn:
-            listed = {r[0]: (r[1], r[2] or 0) for r in conn.execute(
-                "SELECT l.chain, COUNT(*), SUM(l.done=0 AND (k.sig IS NULL OR k.sig<>l.sig)) FROM kc_listing l "
+            listed = {r[0]: (r[1], r[2] or 0, r[3] or 0) for r in conn.execute(
+                "SELECT l.chain, COUNT(*), SUM(l.done=0 AND (k.sig IS NULL OR k.sig<>l.sig)), "
+                "SUM(l.done=0 AND k.sig IS NOT NULL AND k.sig<>l.sig) FROM kc_listing l "
                 "LEFT JOIN kc k ON k.chain=l.chain AND k.slug=l.slug GROUP BY l.chain")}
+            wanted = {r[0]: r[1] for r in conn.execute("SELECT chain, COUNT(*) FROM kc_want GROUP BY chain")}
         for chain in self.sources:
             st = self._progress(chain)
-            total, waiting = listed.get(chain, (0, 0))
+            total, every, changed = listed.get(chain, (0, 0, 0))
+            waiting = every if mode == "all" else changed + wanted.get(chain, 0)
             out["chains"].append({"net": chain, "phase": st["phase"], "page": st["page"], "pages": st["pages"],
-                                  "slug": st["slug"], "listed": total, "waiting": waiting, "error": st["error"],
+                                  "slug": st["slug"], "listed": total, "waiting": waiting,
+                                  "wanted": wanted.get(chain, 0), "error": st["error"],
                                   "round_at": st["round_at"] or None,
                                   "next_round": (st["round_at"] + REFRESH) if st["phase"] == "rest" else None,
                                   **counts.get(chain, {"collections": 0, "pieces": 0})})

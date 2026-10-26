@@ -18,6 +18,10 @@ On the wire (frames of kind "kc" on an ordinary link, never flooded; every one u
                                                        "busy" when asked too often (asked again a minute later)
 
 A frame names no other arcade: what a link carries is that arcade's own word (the link proves who it is).
+
+On demand (2026-10-26, SadFrog: "lazy loading one at a time on demand"; setting `known_collections_mode`, "demand" by
+default): an arcade fetches from linked arcades only the collections it holds (to follow the agreement as before) and
+the ones somebody opened here (its wants, met from a linked arcade first when one holds it). In mode "all", every one.
 """
 from __future__ import annotations
 
@@ -88,9 +92,11 @@ def _row(r: Any) -> dict | None:
 class CollectionShare:
     kinds = ("kc",)
 
-    def __init__(self, store: Callable[[], Any], clock: Callable[[], float] = time.monotonic):
+    def __init__(self, store: Callable[[], Any], clock: Callable[[], float] = time.monotonic,
+                 mode: Callable[[], str] = lambda: "demand"):
         self._store = store                     # the arcade's KnownCollections (made when first asked), or None
         self.clock = clock
+        self.mode = mode                        # "demand" or "all" (the setting known_collections_mode)
         self.node = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.peers: dict[str, dict] = {}        # peer -> {net: {"digest", "at", "rows": {slug: row}}}
@@ -150,15 +156,65 @@ class CollectionShare:
                     out[slug] += 1
         return out
 
+    def offers(self, net: str) -> dict:
+        """What linked arcades hold on a chain: {slug: {fp, agree, row}}, the fingerprint most of them hold (and this
+        arcade, when it holds the same), for search to show a collection this arcade has not fetched."""
+        store = self.store()
+        mine = {r["slug"]: r["fp"] for r in store.index(net)} if store is not None else {}
+        now, linked = self.clock(), self._linked()
+        by: dict[str, dict[str, list]] = {}
+        for peer, nets in self.peers.items():
+            said = nets.get(net)
+            if peer not in linked or not said or now - said["at"] >= PEER_TTL:
+                continue
+            for slug, row in said["rows"].items():
+                by.setdefault(slug, {}).setdefault(row["fp"], []).append(row)
+        out = {}
+        for slug, fps in by.items():
+            agree = {fp: len(rows) + (1 if mine.get(slug) == fp else 0) for fp, rows in fps.items()}
+            best = max(sorted(agree), key=lambda fp: agree[fp])
+            out[slug] = {"fp": best, "agree": agree[best], "row": fps[best][0]}
+        return out
+
+    def offered(self, net: str, slug: str) -> bool:
+        """A linked arcade holds this collection and has not sent a list that failed its fingerprint lately: a want
+        the mesh can meet before the importer asks Nintondo."""
+        now, linked = self.clock(), self._linked()
+        for peer, nets in self.peers.items():
+            said = nets.get(net)
+            if peer not in linked or not said or now - said["at"] >= PEER_TTL:
+                continue
+            row = said["rows"].get(slug)
+            if row is not None and self._bad.get((peer, net, slug, row["fp"]), 0) <= now:
+                return True
+        return False
+
+    def _mode(self) -> str:
+        try:
+            return kclib.mode_of(self.mode())
+        except Exception:                                      # noqa: BLE001
+            return "demand"
+
+    def poke(self) -> bool:
+        """A new want: ask for it now rather than at the next minute's turn. Not waited for; False when the mesh is
+        not running."""
+        if self.loop is None or self.loop.is_closed():
+            return False
+        asyncio.run_coroutine_threadsafe(self._next_fetch(), self.loop)
+        return True
+
     def wanted(self) -> list[dict]:
-        """Collections to fetch from a linked arcade, most agreed first: {net, slug, fp, peers, row}."""
+        """Collections to fetch from a linked arcade, this arcade's wants first, then most agreed: {net, slug, fp,
+        peers, row}. In mode "demand" only the ones held here (to follow the agreement) or wanted."""
         store = self.store()
         if store is None:
             return []
         now, linked = self.clock(), self._linked()
+        demand = self._mode() == "demand"
         out = []
         for net in kclib.CHAINS:
             mine = {r["slug"]: r for r in store.index(net)}
+            asked = store.wants(net) if hasattr(store, "wants") else {}
             offers: dict[str, dict[str, list]] = {}
             rows: dict[tuple, dict] = {}
             for peer, nets in self.peers.items():
@@ -170,6 +226,8 @@ class CollectionShare:
                     rows.setdefault((slug, row["fp"]), row)
             for slug, by_fp in offers.items():
                 have = mine.get(slug)
+                if have is None and demand and slug not in asked:
+                    continue                                   # nobody here opened it: not fetched
                 agree = {fp: len(ps) + (1 if have is not None and have["fp"] == fp else 0) for fp, ps in by_fp.items()}
                 best = max(sorted(agree), key=lambda fp: agree[fp])
                 if have is not None:
@@ -182,8 +240,8 @@ class CollectionShare:
                 peers = [p for p in by_fp[best] if self._bad.get((p, net, slug, best), 0) <= now]
                 if peers:
                     out.append({"net": net, "slug": slug, "fp": best, "peers": peers, "row": rows[(slug, best)],
-                                "agree": agree[best]})
-        out.sort(key=lambda w: (-w["agree"], w["net"], w["slug"]))
+                                "agree": agree[best], "asked": asked.get(slug)})
+        out.sort(key=lambda w: (w["asked"] is None, w["asked"] or 0, -w["agree"], w["net"], w["slug"]))
         return out
 
     # ---------------------------------------------------------------- hooks

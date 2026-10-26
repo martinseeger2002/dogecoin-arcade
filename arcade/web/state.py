@@ -819,8 +819,13 @@ class AppState:
         (`known_collections_import`, Admin -> Ords) is off."""
         held = getattr(self, "_known_importer", None)
         if held is None and self.known_collections() is not None:
-            from ..known_collections import SETTING, Importer
-            held = self._known_importer = Importer(self.known_collections(), lambda: bool(self.setting(SETTING)))
+            from ..known_collections import MODE_SETTING, SETTING, Importer, mode_of
+
+            def offered(net: str, slug: str) -> bool:   # a want a linked arcade can meet goes to the mesh first
+                share = getattr(getattr(self, "mesh", None), "collectionshare", None)
+                return bool(share is not None and share.offered(net, slug))
+            held = self._known_importer = Importer(self.known_collections(), lambda: bool(self.setting(SETTING)),
+                                                   mode=lambda: mode_of(self.setting(MODE_SETTING)), offered=offered)
         return held
 
     def talk_relay(self):

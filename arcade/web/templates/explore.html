@@ -49,6 +49,21 @@
   .xp .xptile:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .xp .xpcolls{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:10px}
   .xp .xpcoll .xpcap b{display:block}
+  /* The collection search's controls (2026-10-26): a wrapping row, one control a line on a phone. */
+  .xp .xpfilters{display:flex;gap:8px 14px;flex-wrap:wrap;align-items:center;margin-top:8px;font-size:.9rem}
+  .xp .xpfilters label{display:flex;gap:6px;align-items:center;white-space:nowrap}
+  .xp .xpfilters select{font-size:16px;max-width:100%}
+  .xp .xpfilters .xpcheck input{width:auto;min-height:0;margin:0}
+  .xp .xpcoll .xpcap .xpline{display:block}
+  .xp .xpmark{display:inline-block;font-size:.72rem;border:1px solid var(--line);border-radius:999px;padding:0 6px;
+    margin-top:3px;color:var(--muted)}
+  .xp .xpend{height:1px}
+  .xp .xptile .xpthumb.xpnocover{aspect-ratio:auto;height:44px}
+  @media (max-width:520px){
+    .xp .xpcolls{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
+    .xp .xpfilters label:not(.xpcheck){flex:1 1 100%;display:grid;grid-template-columns:5.5em minmax(0,1fr)}
+    .xp .xpfilters select{min-width:0;width:100%}
+  }
   .xp .xpmore{margin-top:10px}
   .xp .xprich{width:100%;border-collapse:collapse;font-size:.88rem;margin-top:8px}
   .xp .xprich th,.xp .xprich td{text-align:left;padding:6px 8px;border-top:1px solid var(--line);vertical-align:top}
@@ -144,28 +159,62 @@
       <button type="button" class="small xpmore" id="xptypemore" hidden>More</button>
     </div>
 
+    {# 2026-10-26, SadFrog: "can you make the collection search more in depth with sorting and filters and lazy loading
+       one at a time on demand." Every known collection is listed, held here or not; 30 come at a time as the list is
+       scrolled, a collection's pieces 48 at a time, and one not fetched yet is fetched when it is opened. #}
     <div class="xpcard">
       <h2>Collections</h2>
       <div class="xprow">
-        <input id="xpcollq" type="search" autocomplete="off" placeholder="Search known collections"
+        <input id="xpcollq" type="search" autocomplete="off" maxlength="80" placeholder="Search collections by name"
                aria-label="Search collections">
       </div>
+      <div class="xpfilters" id="xpcollfilters">
+        <label>Sort <select id="xpcollsort">
+          <option value="size">Biggest</option>
+          <option value="holders">Most holders</option>
+          <option value="newest">Newest</option>
+          <option value="agreed">Most agreed</option>
+          <option value="name">Name</option>
+        </select></label>
+        <label>Source <select id="xpcollsrc">
+          <option value="all">All</option>
+          <option value="known">Known (Nintondo, arcades)</option>
+          <option value="registry">Collection registry</option>
+        </select></label>
+        <label>Size <select id="xpcollsize">
+          <option value="">Any</option>
+          <option value="0-999">Under 1,000</option>
+          <option value="1000-10000">1,000 to 10,000</option>
+          <option value="10001-">Over 10,000</option>
+        </select></label>
+        <label>Agreed by <select id="xpcollagreed">
+          <option value="">Any</option>
+          <option value="1">1 arcade or more</option>
+          <option value="2">2 or more</option>
+          <option value="3">3 or more</option>
+          <option value="5">5 or more</option>
+        </select></label>
+        <label class="xpcheck"><input type="checkbox" id="xpcollcomplete"> Complete only</label>
+      </div>
       <p class="muted xpnote">Collections published to the arcades&rsquo; collection registry, and the known
-        collections of Doginals, Pepinals and Bellinals each arcade holds, with where the list came from and how many
-        linked arcades hold the very same list.</p>
+        collections of Doginals, Pepinals and Bellinals, with where the list came from and how many arcades hold the
+        very same list. One marked &ldquo;not fetched yet&rdquo; is fetched when you open it.</p>
       <div id="xpcollsaid" class="xpsaid" aria-live="polite"></div>
       <div class="xpcolls" id="xpcolls"></div>
+      <div class="xpend" id="xpcollsend" aria-hidden="true"></div>
+      <button type="button" class="small xpmore" id="xpcollsmore" hidden>More collections</button>
       <div id="xpcoll" hidden>
         <div class="xprow" style="margin-top:12px">
           <button type="button" class="small" id="xpcollback">&lsaquo; All collections</button>
           <b id="xpcollname"></b>
         </div>
         <p class="muted xpnote" id="xpcolldesc"></p>
+        <div id="xpcollwait" class="xpsaid" aria-live="polite"></div>
         <div class="xpgrid" id="xpcollgrid"></div>
+        <div class="xpend" id="xpcollgridend" aria-hidden="true"></div>
         <div class="xppager">
-          <button type="button" class="small" id="xpcollprev">&lsaquo; Previous</button>
+          <button type="button" class="small" id="xpcollmore" hidden>More pieces</button>
           <span class="muted" id="xpcollpage"></span>
-          <button type="button" class="small" id="xpcollnext">Next &rsaquo;</button>
         </div>
       </div>
     </div>
@@ -289,7 +338,8 @@
       X.number = 0; X.last = -1; $('xpsaid').textContent = '';
       $('xptypegrid').textContent = ''; $('xptypesaid').textContent = ''; $('xptypemore').hidden = true;
       showNumber(0);
-      collections('');
+      $('xpcollq').value = '';
+      collections();
     } else if (p.kind === 'token') {
       X.tick = null; $('xptok').textContent = ''; PICK.q.value = '';
       $('xptokh').textContent = p.label + ' tokens on ' + c.chain;
@@ -500,63 +550,158 @@
   $('xptypemore').onclick = function () { typed(true); };
 
   // --- collections --------------------------------------------------------------------------------------------
-  var COLL_WAIT = null;
-  function collections(q) {
-    var net = X.chain.net;
-    $('xpcoll').hidden = true; $('xpcolls').hidden = false;
-    api('collections', {net: net, q: q}).then(function (j) {
-      if (net !== X.chain.net) return;
-      var box = $('xpcolls'); box.textContent = '';
-      var list = j.collections || [];
-      $('xpcollsaid').textContent = list.length ? '' : (q ? 'No known collection by that name on ' + X.chain.chain + '.'
-        : 'No known collections on ' + X.chain.chain + ' yet.');
-      list.forEach(function (c) {
-        var b = el('button', 'xptile xpcoll'); b.type = 'button';
-        var thumb = el('div', 'xpthumb');
-        if (c.cover) contentInto(thumb, {id: c.cover, content_type: 'image/'}, false);
-        b.appendChild(thumb);
-        var cap = el('div', 'xpcap'); cap.appendChild(el('b', '', c.name));
-        cap.appendChild(el('span', 'muted', num(c.count) + (c.supply ? ' of ' + num(c.supply) : '') + ' pieces'));
-        if (c.kind === 'known') { cap.appendChild(el('br')); cap.appendChild(el('span', 'muted', knownSaid(c))); }
-        b.appendChild(cap);
-        b.onclick = function () { openCollection(c, 0); };
-        box.appendChild(b);
-      });
-    }).catch(function (e) { if (net === X.chain.net) $('xpcollsaid').textContent = e.message; });
+  // 2026-10-26, SadFrog: "can you make the collection search more in depth with sorting and filters and lazy loading
+  // one at a time on demand." The list comes 30 at a time as it is scrolled (a sentinel at its end, the More button
+  // where that is not seen), a collection's pieces 48 at a time the same way; one not fetched yet is asked for and
+  // looked at again every 3 seconds until its pieces are here.
+  var COLL_WAIT = null, LIST = {gen: 0, next: 0, total: 0, busy: false, done: false},
+    OPEN = {gen: 0, next: 0, total: 0, busy: false, done: false, waiting: false, poll: null};
+  function collArgs() {
+    var a = {net: X.chain.net, q: $('xpcollq').value.trim(), sort: $('xpcollsort').value, source: $('xpcollsrc').value};
+    var size = $('xpcollsize').value.split('-');
+    if (size[0]) a.min = size[0];
+    if (size[1]) a.max = size[1];
+    if ($('xpcollagreed').value) a.agreed = $('xpcollagreed').value;
+    if ($('xpcollcomplete').checked) a.complete = 1;
+    return a;
   }
+  function collections() {
+    LIST = {gen: LIST.gen + 1, next: 0, total: 0, busy: false, done: false, args: collArgs()};
+    closeCollection();
+    $('xpcolls').textContent = ''; $('xpcollsmore').hidden = true;
+    moreCollections();
+  }
+  function moreCollections() {
+    if (!LIST.args || LIST.busy || LIST.done) return;
+    var mine = LIST.gen, net = LIST.args.net, args = Object.assign({}, LIST.args);
+    LIST.busy = true; args.offset = LIST.next; args.limit = 30;
+    $('xpcollsaid').textContent = 'Reading…';
+    api('collections', args).then(function (j) {
+      if (mine !== LIST.gen || net !== X.chain.net) return;
+      var list = j.collections || [], box = $('xpcolls');
+      LIST.total = j.total || 0; LIST.next += list.length; LIST.busy = false;
+      LIST.done = !list.length || LIST.next >= LIST.total;
+      list.forEach(function (c) { box.appendChild(collCard(c)); });
+      var filtered = args.q || args.min || args.max || args.agreed || args.complete || args.source !== 'all';
+      $('xpcollsaid').textContent = LIST.total ? num(Math.min(LIST.next, LIST.total)) + ' of ' + num(LIST.total) + ' shown'
+        : (filtered ? 'No collection like that on ' + X.chain.chain + '.' : 'No known collections on ' + X.chain.chain + ' yet.');
+      $('xpcollsmore').hidden = LIST.done;
+      if (list.length) nearEnd($('xpcollsend'), $('xpcolls'), moreCollections);
+    }).catch(function (e) {
+      if (mine !== LIST.gen) return;
+      LIST.busy = false; $('xpcollsaid').textContent = e.message; $('xpcollsmore').hidden = false;
+    });
+  }
+  function collCard(c) {
+    var b = el('button', 'xptile xpcoll'); b.type = 'button';
+    var thumb = el('div', 'xpthumb' + (c.cover ? '' : ' xpnocover'));   // no cover until its pieces are here
+    if (c.cover) contentInto(thumb, {id: c.cover, content_type: 'image/'}, false);
+    b.appendChild(thumb);
+    var cap = el('div', 'xpcap'); cap.appendChild(el('b', '', c.name));
+    var pieces = c.supply != null ? num(c.supply) + ' pieces' : num(c.count) + ' pieces';
+    if (c.imported && c.supply && c.count !== c.supply) pieces = num(c.count) + ' of ' + num(c.supply) + ' pieces';
+    cap.appendChild(el('span', 'muted xpline', pieces));
+    if (c.owners != null) cap.appendChild(el('span', 'muted xpline', num(c.owners) + ' holder' + (c.owners === 1 ? '' : 's')));
+    if (c.kind === 'known' && c.agreed) cap.appendChild(el('span', 'muted xpline', 'agreed by ' + num(c.agreed)));
+    if (c.kind === 'known' && !c.imported) cap.appendChild(el('span', 'xpmark', 'not fetched yet'));
+    b.appendChild(cap);
+    b.onclick = function () { openCollection(c); };
+    return b;
+  }
+  // Another page wanted when the end of a grid is in sight: the sentinel watched, and looked at again after each page
+  // (a page that did not fill the screen moves nothing, so the watcher would not say so).
+  var SEEN = typeof IntersectionObserver === 'function' ? new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      if (e.target.id === 'xpcollsend' && !$('xpcolls').hidden) moreCollections();
+      if (e.target.id === 'xpcollgridend' && !$('xpcoll').hidden) morePieces();
+    });
+  }, {rootMargin: '300px 0px'}) : null;
+  if (SEEN) { SEEN.observe($('xpcollsend')); SEEN.observe($('xpcollgridend')); }
+  function nearEnd(end, box, more) {
+    if (!SEEN || box.hidden) return;
+    setTimeout(function () {
+      var r = end.getBoundingClientRect();
+      if (!box.hidden && r.top < (window.innerHeight || 800) + 300) more();
+    }, 50);
+  }
+  ['xpcollsort', 'xpcollsrc', 'xpcollsize', 'xpcollagreed', 'xpcollcomplete'].forEach(function (id) {
+    $(id).onchange = function () { collections(); };
+  });
+  $('xpcollsmore').onclick = function () { moreCollections(); };
   $('xpcollq').oninput = function () {
     clearTimeout(COLL_WAIT);
-    COLL_WAIT = setTimeout(function () { collections($('xpcollq').value.trim()); }, 200);
+    COLL_WAIT = setTimeout(collections, 250);
   };
   // A known collection (2026-10-26): where its list came from, and how many arcades hold the very same list.
   function knownSaid(c) {
-    var src = c.source === 'nintondo' ? 'from Nintondo' : String(c.source || '').indexOf('mesh:') === 0
-      ? 'from arcade ' + c.source.slice(5) : (c.source || '');
-    return src + ' · agreed by ' + num(c.agreed || 1) + ' arcade' + ((c.agreed || 1) === 1 ? '' : 's');
+    var src = c.imported === false ? 'not fetched yet' : c.source === 'nintondo' ? 'from Nintondo'
+      : String(c.source || '').indexOf('mesh:') === 0 ? 'from arcade ' + c.source.slice(5) : (c.source || '');
+    var bits = [src];
+    if (c.agreed) bits.push('agreed by ' + num(c.agreed) + ' arcade' + (c.agreed === 1 ? '' : 's'));
+    if (c.owners != null) bits.push(num(c.owners) + ' holders');
+    if (c.first != null && c.last != null) bits.push('inscriptions #' + num(c.first) + ' to #' + num(c.last));
+    return bits.filter(Boolean).join(' · ');
   }
-  function openCollection(c, at) {
-    X.coll = c; X.collAt = Math.max(0, at);
-    $('xpcolls').hidden = true; $('xpcoll').hidden = false;
+  function closeCollection() {
+    clearTimeout(OPEN.poll);
+    OPEN = {gen: OPEN.gen + 1, next: 0, total: 0, busy: false, done: false, waiting: false, poll: null};
+    $('xpcoll').hidden = true; $('xpcolls').hidden = false; $('xpcollfilters').hidden = false; $('xpcollsaid').hidden = false;
+  }
+  function openCollection(c) {
+    closeCollection();
+    X.coll = c;
+    $('xpcolls').hidden = true; $('xpcollsmore').hidden = true; $('xpcollfilters').hidden = true; $('xpcollsaid').hidden = true;
+    $('xpcoll').hidden = false;
     $('xpcollname').textContent = c.name;
     $('xpcolldesc').textContent = c.kind === 'known' ? knownSaid(c) : (c.description || '');
-    var grid = $('xpcollgrid'); grid.textContent = 'Reading…';
-    var args = c.kind === 'known' ? {net: X.chain.net, slug: c.slug, offset: X.collAt} : {root: c.txid, offset: X.collAt};
+    $('xpcollgrid').textContent = ''; $('xpcollwait').textContent = 'Reading…'; $('xpcollpage').textContent = '';
+    $('xpcollmore').hidden = true;
+    morePieces();
+  }
+  function morePieces(again) {
+    var c = X.coll, mine = OPEN.gen;
+    if (!c || OPEN.busy || OPEN.done || (OPEN.waiting && again !== true)) return;
+    OPEN.busy = true;
+    var args = c.kind === 'known' ? {net: X.chain.net, slug: c.slug, offset: OPEN.next} : {root: c.txid, offset: OPEN.next};
     api('collection', args).then(function (j) {
-      grid.textContent = '';
-      (j.items || []).forEach(function (it) {
+      if (mine !== OPEN.gen) return;
+      OPEN.busy = false;
+      if (c.kind === 'known' && j.collection) { c = X.coll = j.collection; $('xpcolldesc').textContent = knownSaid(c); }
+      if (j.loading) {                                   // not held yet: being fetched, looked at again in 3 s
+        $('xpcollwait').textContent = (j.importing === false ? 'Asking linked arcades for it' : 'Fetching from Nintondo')
+          + ': ' + num(j.have || 0) + (j.of ? ' of ' + num(j.of) : '') + ' pieces';
+        OPEN.waiting = true;
+        OPEN.poll = setTimeout(function () { if (mine === OPEN.gen) morePieces(true); }, 3000);
+        return;
+      }
+      OPEN.waiting = false;
+      if (j.skipped) { OPEN.done = true; $('xpcollwait').textContent = 'Not fetched: ' + j.skipped; return; }
+      $('xpcollwait').textContent = '';
+      var items = j.items || [], grid = $('xpcollgrid');
+      items.forEach(function (it) {
         grid.appendChild(tile({id: it.id, content_type: 'image/'},
           it.name || (c.name + (it.number != null ? ' #' + num(it.number) : ''))));
       });
-      if (c.kind === 'known' && j.collection) { c = X.coll = j.collection; $('xpcolldesc').textContent = knownSaid(c); }
-      var total = c.count || 0;
-      $('xpcollpage').textContent = total ? (X.collAt + 1) + '–' + Math.min(X.collAt + 48, total) + ' of ' + num(total) : '';
-      $('xpcollprev').disabled = X.collAt <= 0;
-      $('xpcollnext').disabled = X.collAt + 48 >= total;
-    }).catch(function (e) { grid.textContent = e.message; });
+      OPEN.next += items.length;
+      OPEN.total = c.count || 0;
+      if (!items.length) OPEN.total = OPEN.next;           // nothing more where more was said: the end
+      OPEN.done = OPEN.next >= OPEN.total;
+      $('xpcollpage').textContent = OPEN.total ? num(Math.min(OPEN.next, OPEN.total)) + ' of ' + num(OPEN.total) + ' shown' : '';
+      $('xpcollmore').hidden = OPEN.done;
+      if (items.length) nearEnd($('xpcollgridend'), $('xpcoll'), morePieces);
+    }).catch(function (e) {
+      if (mine !== OPEN.gen) return;
+      OPEN.busy = false; $('xpcollwait').textContent = e.message;
+      if (OPEN.waiting) OPEN.poll = setTimeout(function () { if (mine === OPEN.gen) morePieces(true); }, 3000);
+      else $('xpcollmore').hidden = false;
+    });
   }
-  $('xpcollback').onclick = function () { $('xpcoll').hidden = true; $('xpcolls').hidden = false; };
-  $('xpcollprev').onclick = function () { openCollection(X.coll, X.collAt - 48); };
-  $('xpcollnext').onclick = function () { openCollection(X.coll, X.collAt + 48); };
+  $('xpcollmore').onclick = function () { morePieces(); };
+  $('xpcollback').onclick = function () {
+    closeCollection();
+    $('xpcollsmore').hidden = LIST.done;
+  };
 
   // --- tokens -------------------------------------------------------------------------------------------------
   function units(v, dec) {

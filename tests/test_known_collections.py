@@ -122,7 +122,8 @@ class Nintondo:
             shown = rows[(page - 1) * size: page * size]
             return {"collections": [{"id": k, "name": c["name"], "slug": slug, "supply": len(c["items"]),
                                      "numbers": [c["items"][0]["number"], c["items"][-1]["number"]] if c["items"] else [],
-                                     "size": 100 * len(c["items"]), "owners": 3}
+                                     "size": 100 * len(c["items"]), "owners": c.get("owners", 3),
+                                     "height": c.get("height", 4_000_000 + k), "created": c.get("created")}
                                     for k, (slug, c) in enumerate((s, colls[s]) for s in shown)],
                     "count": len(rows), "pages": pages}
         assert u.path == "/pub/search" and method == "POST" and body["page_size"] <= 100
@@ -149,10 +150,12 @@ def _source(slugs: dict) -> dict:
 DOGE, PEPE = kc.SOURCES["doge"], kc.SOURCES["main"]
 
 
-def _importer(tmp_path, clock, fake, on=lambda: True):
+def _importer(tmp_path, clock, fake, on=lambda: True, mode="all", offered=None):
+    """The tests before 2026-10-26 read every collection: mode "all" (the default setting is "demand")."""
     store = kc.KnownCollections(tmp_path / "kc.sqlite")
     return store, kc.Importer(store, on, fetch=fake, clock=clock, now=clock, sleep=clock.sleep,
-                              sources={"doge": DOGE, "main": PEPE})
+                              sources={"doge": DOGE, "main": PEPE}, mode=lambda: mode if isinstance(mode, str) else mode(),
+                              offered=offered)
 
 
 def _run(imp, clock, steps):
@@ -252,10 +255,10 @@ class Node:
 
 
 class Arcade:
-    def __init__(self, tmp_path, name):
+    def __init__(self, tmp_path, name, mode="all"):
         self.name = name
         self.store = kc.KnownCollections(tmp_path / f"{name}.sqlite")
-        self.share = cs.CollectionShare(lambda: self.store)
+        self.share = cs.CollectionShare(lambda: self.store, mode=lambda: mode)
         self.share.node = Node()
 
 
@@ -423,3 +426,185 @@ def test_admin_switches_the_import_on_and_off(client):
     app.post("/admin/api/known-collections", headers={**LOCAL, **WRITE}, json={"import": False})
     assert state.setting(kc.SETTING) is False
     assert 'id="kcimport"' in app.get("/admin", headers=LOCAL).text
+
+
+# --------------------------------------------------------------------------- on demand (2026-10-26)
+#
+# SadFrog: "can you make the collection search more in depth with sorting and filters and lazy loading one at a time on
+# demand." Every collection of Nintondo's is about 885,000 pieces, so by default only the listings are read, and a
+# collection's pieces when somebody opens it (a want).
+
+def _searched(fake, since=0):
+    return [json.loads(c[3])["collection"] for c in fake.calls[since:] if c[2] == "/pub/search"]
+
+
+def test_the_listing_details_are_kept_and_an_old_file_is_upgraded_in_place(tmp_path):
+    import sqlite3
+    path = tmp_path / "kc.sqlite"
+    old = sqlite3.connect(path)                               # a file as an arcade wrote it before 2026-10-26
+    old.executescript("""CREATE TABLE kc_listing (chain TEXT NOT NULL, slug TEXT NOT NULL, name TEXT NOT NULL,
+        supply INTEGER, sig TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (chain, slug));
+        INSERT INTO kc_listing VALUES ('doge', 'old-frogs', 'Old Frogs', 7, '7|1|7|700', 1);""")
+    old.commit()
+    old.close()
+    store = kc.KnownCollections(path)
+    line = store.listed("doge", "old-frogs")
+    assert line["name"] == "Old Frogs" and line["done"] == 1 and line["owners"] is None and line["skipped"] == "", \
+        "its row kept, the new columns added"
+    kc.KnownCollections(path)                                 # opened again: nothing added twice
+    clock = Clock()
+    chain = _source({"frogs": 4, "toads": 2})
+    chain["frogs"].update(owners=41, height=5_000_123, created="2024-03-01T12:00:00Z")
+    fake = Nintondo(clock, {DOGE: chain, PEPE: _source({})})
+    imp = kc.Importer(store, lambda: True, fetch=fake, clock=clock, now=clock, sleep=clock.sleep,
+                      sources={"doge": DOGE, "main": PEPE})
+    _run(imp, clock, 30)
+    frogs = store.listed("doge", "frogs")
+    assert (frogs["owners"], frogs["height"], frogs["created"], frogs["first"], frogs["last"], frogs["size"]) == \
+        (41, 5_000_123, 1709294400, 5000, 5003, 400), "every detail of the listing line"
+    assert store.listed("doge", "old-frogs") is None, "a line the new listing lacks is dropped once it is read"
+    assert _searched(fake) == [], "on demand by default: nothing opened, no pieces asked"
+    assert {r["slug"]: r["imported"] for r in store.catalog("doge")} == {"frogs": False, "toads": False}
+    assert kc.listing_details({"created": 1_709_294_400_000, "owners": True})["created"] == 1709294400, "milliseconds"
+    assert kc.listing_details({"created": "soon", "owners": True}) == \
+        {"owners": None, "height": None, "created": None, "first": None, "last": None, "size": None}
+
+
+def test_on_demand_only_wanted_and_changed_held_collections_are_fetched(tmp_path, monkeypatch):
+    clock = Clock()
+    chain = _source({"a": 5, "b": 5, "c": 5, "huge": 9})
+    fake = Nintondo(clock, {DOGE: chain, PEPE: _source({})})
+    store, imp = _importer(tmp_path, clock, fake, mode="demand")
+    store.put("doge", "b", "B", 5, chain["b"]["items"][:4], "nintondo", sig="4|old")   # held, its line since changed
+    _run(imp, clock, 40)
+    assert _searched(fake) == ["b"], "only the held one whose line changed"
+    assert store.collection("doge", "b")["count"] == 5
+    assert store.collection("doge", "a") is None and store.collection("doge", "c") is None
+    before = len(fake.calls)
+    store.want("doge", "c", now=clock())
+    store.want("doge", "a", now=clock() + 1)
+    store.want("doge", "c", now=clock() + 2)                  # asked again: keeps its place
+    assert set(store.wants("doge")) == {"a", "c"}
+    _run(imp, clock, 40)
+    assert _searched(fake, before) == ["c", "a"], "wanted ones, oldest want first"
+    assert store.collection("doge", "a")["count"] == 5 and store.wants("doge") == {}, "met wants are cleared"
+    monkeypatch.setattr(kc, "MAX_ITEMS", 6)
+    before = len(fake.calls)
+    store.want("doge", "huge", now=clock())
+    _run(imp, clock, 20)
+    assert _searched(fake, before) == [] and store.wants("doge") == {}, "too big: skipped, the want cleared"
+    assert "more than 6" in store.listed("doge", "huge")["skipped"]
+    assert imp.status()["mode"] == "demand"
+
+
+def test_mode_all_reads_every_collection_wanted_ones_first(tmp_path):
+    clock = Clock()
+    fake = Nintondo(clock, {DOGE: _source({"a": 3, "b": 3, "c": 3}), PEPE: _source({})})
+    store, imp = _importer(tmp_path, clock, fake, mode="all")
+    imp.step()                                                # the listing's one page
+    store.want("doge", "c", now=clock())
+    _run(imp, clock, 40)
+    assert _searched(fake) == ["c", "a", "b"], "the wanted one, then the rest as before"
+    assert store.counts()["doge"] == {"collections": 3, "pieces": 9}
+
+
+def test_a_want_is_served_while_the_chain_rests(tmp_path):
+    clock = Clock()
+    fake = Nintondo(clock, {DOGE: _source({"a": 3, "b": 150}), PEPE: _source({})})
+    store, imp = _importer(tmp_path, clock, fake, mode="demand")
+    _run(imp, clock, 20)
+    st = imp._progress("doge")
+    assert st["phase"] == "rest" and store.counts() == {}
+    rested_at = st["round_at"]
+    clock.t += 3600
+    store.want("doge", "b", now=clock())
+    started = clock()
+    _run(imp, clock, 20)
+    assert store.collection("doge", "b")["count"] == 150 and clock() - started < 10, "fetched at once, not tomorrow"
+    st = imp._progress("doge")
+    assert st["phase"] == "rest" and st["round_at"] == rested_at, "the day's round left as it was"
+    before = len(fake.calls)
+    clock.t = rested_at + kc.REFRESH + 1
+    _run(imp, clock, 20)
+    assert any(c[2].startswith("/pub/collections") for c in fake.calls[before:]), "the next round on time"
+
+
+def test_a_want_a_linked_arcade_holds_is_left_to_the_mesh_a_minute(tmp_path):
+    clock = Clock()
+    fake = Nintondo(clock, {DOGE: _source({"a": 3}), PEPE: _source({})})
+    store, imp = _importer(tmp_path, clock, fake, mode="demand", offered=lambda net, slug: slug == "a")
+    _run(imp, clock, 20)
+    store.want("doge", "a", now=clock())
+    asked_at = clock()
+    for _ in range(10):
+        clock.t += min(imp.step(), 30)
+        if clock() - asked_at > kc.MESH_FIRST - 5:
+            break
+    assert _searched(fake) == [], "a linked arcade holds it: the mesh first"
+    _run(imp, clock, 20)
+    assert _searched(fake) == ["a"] and clock() - asked_at >= kc.MESH_FIRST, "then Nintondo, when the mesh did not"
+
+
+def test_a_new_want_wakes_the_importer(tmp_path):
+    import threading
+    import time as _time
+    store = kc.KnownCollections(tmp_path / "kc.sqlite")
+    imp = kc.Importer(store, lambda: False)
+    threading.Timer(0.1, imp.wake.set).start()
+    t = _time.monotonic()
+    imp.pause(20)
+    assert _time.monotonic() - t < 5 and not imp.wake.is_set()
+
+
+def test_on_demand_the_mesh_fetches_only_held_or_wanted_collections(tmp_path):
+    a, c = Arcade(tmp_path, "a" * 64), Arcade(tmp_path, "c" * 64)
+    b = Arcade(tmp_path, "b" * 64, mode="demand")
+    new = _frogs(a.store, extra=[_id(900)])
+    _frogs(c.store, extra=[_id(900)])
+    for x in (a, c):
+        x.store.put("doge", "toads", "Toads", 3, _pieces("Toads", [_id(300 + j) for j in range(3)]), "nintondo")
+        x.store.put("doge", "newts", "Newts", 2, _pieces("Newts", [_id(400 + j) for j in range(2)]), "nintondo")
+    _frogs(b.store, source="mesh:" + "d" * 12)               # b holds an older list of frogs
+    pairs = [(a, b), (c, b)]
+    links = [_link(x, y) for x, y in pairs]
+
+    async def turn():
+        await b.share.rebalance()
+        await _settle()
+
+    async def go():
+        for (x, y), (to_y, to_x) in zip(pairs, links):
+            await x.share.link_up(to_y)
+            await y.share.link_up(to_x)
+        await _settle()
+        for _ in range(3):
+            await turn()
+    asyncio.run(go())
+    assert b.store.collection("doge", "frogs")["fp"] == new, "a held one follows the agreement as before"
+    assert b.store.collection("doge", "toads") is None and b.store.collection("doge", "newts") is None, \
+        "nobody here opened them: not fetched"
+    assert b.share.offered("doge", "toads") and not b.share.offered("doge", "frogs-nope")
+    assert b.share.offers("doge")["toads"]["agree"] == 2
+    b.store.want("doge", "toads")
+    asyncio.run(turn())
+    got = b.store.collection("doge", "toads")
+    assert got is not None and got["source"].startswith("mesh:") and b.store.wants("doge") == {}, \
+        "a want met from a linked arcade, and cleared"
+    assert b.store.collection("doge", "newts") is None
+
+
+def test_admin_chooses_on_demand_or_every_collection(client):
+    app, state = client
+    got = app.get("/admin/api/known-collections", headers=LOCAL).json()
+    assert got["mode"] == "demand", "on demand by default"
+    assert app.post("/admin/api/known-collections", headers=LOCAL, json={"mode": "all"}).status_code == 403
+    for bad in ({"mode": "some"}, {"mode": 1}, {}, {"import": True, "mode": "x"}):
+        assert app.post("/admin/api/known-collections", headers={**LOCAL, **WRITE}, json=bad).status_code == 400, bad
+    said = app.post("/admin/api/known-collections", headers={**LOCAL, **WRITE}, json={"mode": "all"}).json()
+    assert said == {"ok": True, "mode": "all"} and state.setting(kc.MODE_SETTING) == "all"
+    assert app.get("/admin/api/known-collections", headers=LOCAL).json()["mode"] == "all"
+    assert state.setting(kc.SETTING) is None, "the import switch untouched"
+    app.post("/admin/api/known-collections", headers={**LOCAL, **WRITE}, json={"mode": "demand"})
+    assert state.setting(kc.MODE_SETTING) == "demand"
+    page = app.get("/admin", headers=LOCAL).text
+    assert 'id="kcmode"' in page and 'value="demand"' in page
