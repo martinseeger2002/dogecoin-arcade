@@ -25,7 +25,7 @@
 
   <label for="new-pw">A new password</label>
   <input type="password" id="new-pw" autocomplete="new-password"
-         placeholder="longer is safer: twelve characters or more">
+         placeholder="at least twelve characters">
   <p class="small" id="pw-says"></p>
   <label for="new-pw2">The new password again</label>
   <input type="password" id="new-pw2" autocomplete="new-password">
@@ -71,7 +71,7 @@ $("new-pw").oninput = () => {
   const said = wallet.strength($("new-pw").value);
   $("pw-says").textContent = said.says;
   $("pw-says").style.color = said.ok ? "var(--ok)"
-    : said.level === "instantly" ? "var(--bad)" : "var(--warn)";
+    : said.short ? "var(--bad)" : "var(--warn)";
 };
 
 $("go").onclick = async () => {

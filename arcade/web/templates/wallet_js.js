@@ -20,12 +20,15 @@
 import * as signer from "/signin.js";
 import * as coins from "/coins.js";
 
-/* No minimum (D-157). A floor stops the person who would have chosen
- * something short and stops nobody else -- an attacker does not type
- * passwords into a form, they take the blob and try it offline. What the
- * page owes somebody is the truth about what they have chosen, not a
- * refusal; `strength` below is what it says. */
-export const MIN_PASSWORD = 1;
+/* Twelve characters at least for every new password (2026-10-25, issue #12, SadFrog: "12-character minimum for new
+ * passwords, and existing short-password users are asked to change"). Until then there was no floor (D-157). The
+ * sealed wallet is handed to anybody who asks for the name and copied between arcades, so it can be guessed at offline
+ * for as long as somebody likes; a 1-character password fell at once. The node never sees the password, so this is
+ * enforced HERE, in every path that seals a wallet under a new one (signUp, restore; the copy kept in this browser in
+ * signin.js `keep`). An account made earlier with a shorter one still opens: signing in with it raises `shortPassword`
+ * below, and every page then asks, once and dismissibly, for a new one. */
+export const MIN_PASSWORD = signer.MIN_PASSWORD;
+export const tooShort = signer.tooShort;
 
 /* A password that has already leaked is refused (2026-10-20, answering SadFrog's review: "check a leaked
  * password api and make sure whatever password they use is not on the leaked password list"). Not a floor: a
@@ -76,18 +79,21 @@ const GUESSES_A_SECOND = 100000;
 export function strength(password) {
   const text = password || "";
   if (!text) return {ok: false, says: ""};
+  // Below the floor the meter says the rule, not a guess at the time (2026-10-25, issue #12). At twelve characters
+  // or more even digits alone take months, so "in seconds" no longer happens to a password that is let through.
+  const have = signer.characters(text);
+  if (have < MIN_PASSWORD) {
+    return {ok: false, short: true, level: "too short", says:
+      `Too short: at least ${MIN_PASSWORD} characters (${MIN_PASSWORD - have} more). Somebody who knows your name can `
+      + "take your encrypted wallet from this node and try passwords on it as long as they like; a short one falls "
+      + "in seconds. A few words in a row are long and easy to remember."};
+  }
   let alphabet = 0;
   if (/[a-z]/.test(text)) alphabet += 26;
   if (/[A-Z]/.test(text)) alphabet += 26;
   if (/[0-9]/.test(text)) alphabet += 10;
   if (/[^a-zA-Z0-9]/.test(text)) alphabet += 33;
   const seconds = Math.pow(alphabet, text.length) / 2 / GUESSES_A_SECOND;
-  if (seconds < 60) {
-    return {ok: false, level: "instantly", says:
-      "Somebody who knows your name can take your encrypted wallet from "
-      + "this node and open it in seconds. Your coins and your messages "
-      + "with it. Use it if you mean to \u2014 nothing here will stop you."};
-  }
   if (seconds < 86400 * 365) {
     return {ok: false, level: "in a while", says:
       "This would take somebody with your encrypted wallet and a graphics "
@@ -298,10 +304,9 @@ export async function signUp(tag, password, options) {
 }
 
 async function _signUp(tag, password, {network, version}) {
-  if (!(password || "")) {
-    throw new Error("a password, please -- even a short one. It is what "
-      + "opens your wallet from anywhere, and nobody can reset it.");
-  }
+  // Refused before anything is made: no words, no seat (2026-10-25, issue #12).
+  const short = tooShort(password);
+  if (short) throw new Error(short + " It opens your wallet from anywhere, and nobody can reset it.");
   const phrase = await signer.generate();
   const wallet = await walletFrom(phrase, network, version);
   // The same words on every chain this node runs, derived before signing
@@ -384,6 +389,7 @@ async function _signIn(tag, password, {network, version}) {
   // already done costs the node nothing (2026-10-19).
   fetch("/account/coins/backfill", {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"})
     .catch(() => {});
+  noteShort(password);
   return {...result, tag: said.tag, address: said.address, wallet};
 }
 
@@ -461,6 +467,7 @@ async function bringHere(said, password, {network, version}) {
   // against this account's key, then opened with the same password.
   await bringImports(said.from || "");
   await openImportsWith(wallet, password);
+  noteShort(password);
   return {...result, tag: said.tag, wallet};
 }
 
@@ -497,7 +504,40 @@ async function _openFile(said, password, {network, version}) {
   const result = await seatWith(wallet);
   await openImportsWith(wallet, password);
   fetch("/account/coins/backfill", {method: "POST"}).catch(() => {});
+  noteShort(password);
   return {...result, tag: (said && said.tag) || "", wallet};
+}
+
+/* --- a password from before the floor (2026-10-25, issue #12) ---------------
+ * SadFrog: "existing short-password users are asked to change". Asked, not forced: a wallet sealed under a shorter
+ * password still opens, and a sign-in with one marks this tab. base.html then shows a bar on every page saying so,
+ * with the way to a new password and a "Not now". "Not now" holds for this tab; the next sign-in asks again. Only the
+ * fact "shorter than twelve" is kept, in this tab's sessionStorage -- never the password, its length or a hash. */
+export const SHORT_PASSWORD = "arcade-short-password";
+const SHORT_DISMISSED = "arcade-short-password-not-now";
+
+/** Mark this tab when the password just used to sign in is below the floor (`who` is "account" or "operator", which
+ *  decides where the bar sends them); clear it when the password is long enough. Returns whether it was short. */
+export function noteShort(password, who = "account") {
+  const short = signer.characters(password) < MIN_PASSWORD;
+  try {
+    if (!short) sessionStorage.removeItem(SHORT_PASSWORD);
+    else if (!sessionStorage.getItem(SHORT_DISMISSED)) sessionStorage.setItem(SHORT_PASSWORD, who);
+  } catch (e) { /* no storage, no bar: the sign-in itself is what matters */ }
+  return short;
+}
+
+/** "account", "operator", or "" when this tab has nothing to ask. */
+export function shortPassword() {
+  try { return sessionStorage.getItem(SHORT_PASSWORD) || ""; } catch (e) { return ""; }
+}
+
+/** "Not now": no more asking in this tab. A new password clears it the same way (restore.html). */
+export function dismissShort({changed = false} = {}) {
+  try {
+    sessionStorage.removeItem(SHORT_PASSWORD);
+    if (!changed) sessionStorage.setItem(SHORT_DISMISSED, "1");
+  } catch (e) {}
 }
 
 /** Forgot the password: the twelve words open the account, and the wallet is
@@ -516,7 +556,9 @@ export async function restore(phrase, password, options) {
 async function _restore(phrase, password, {network, version}) {
   const wrong = await signer.complaint(phrase);
   if (wrong) throw new Error(wrong);
-  if (!(password || "")) throw new Error("a new password, please.");
+  // The new password follows the same rule as a sign-up's (2026-10-25, issue #12); checked before the words sign in.
+  const short = tooShort(password);
+  if (short) throw new Error("the new password: " + short);
   const wallet = await walletFrom(signer.normalise(phrase), network, version);
   await everyChain(wallet, await chains());
   let result;
@@ -534,6 +576,7 @@ async function _restore(phrase, password, {network, version}) {
   });
   const said = await stored.json();
   if (!stored.ok) throw new Error(said.detail || "the new password was not saved");
+  noteShort(password);                      // a new password is long enough: nothing left to ask in this tab
   return {...result, wallet};
 }
 
@@ -2686,6 +2729,7 @@ export async function signOut(chain) {
   } catch (e) { /* nothing unsaved is worth staying signed in for */ }
   try { (await import("/messaging.js")).wipeLocal && await (await import("/messaging.js")).wipeLocal(); } catch (e) {}
   forgetOpen();
+  try { sessionStorage.removeItem(SHORT_PASSWORD); sessionStorage.removeItem(SHORT_DISMISSED); } catch (e) {}
   await fetch("/auth/logout", {method: "POST"});
 }
 

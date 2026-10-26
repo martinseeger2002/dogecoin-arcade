@@ -60,14 +60,29 @@ def test_it_cannot_be_claimed_from_outside(named):
     assert app.get("/auth/door", headers=EDGE).json()["settable"] is False
 
 
-def test_a_short_password_is_allowed(named):
-    """No floor (D-157). A minimum stops the person who would have chosen
-    something short and stops nobody else -- an attacker does not type
-    passwords into a form. What the page owes somebody is the truth about
-    what they picked, not a refusal, and this is their wallet."""
+def test_a_new_password_shorter_than_twelve_characters_is_refused(named):
+    """Issue #12 (2026-10-25, SadFrog: "12-character minimum for new
+    passwords"). Until then one character was enough (D-157). The node sees
+    this password, so it refuses it itself, whatever the page did."""
     app, state = named
+    assert accounts.MIN_PASSWORD == 12
+    for short in ("1234", "x" * 11, "\U0001f600" * 11):
+        refused = _claim(app, password=short)
+        assert refused.status_code == 400, short
+        assert "at least 12 characters" in refused.json()["detail"]
+        assert state.operator == "", "nothing was claimed"
+    assert _claim(app, password="x" * 12).status_code == 200, "twelve is enough"
+
+
+def test_a_short_password_set_before_the_floor_still_signs_in(named, monkeypatch):
+    """Existing short-password users are asked to change, not locked out
+    (SadFrog, 2026-10-25): the floor is on new passwords only, and the page
+    asks after the sign-in (wallet.js noteShort, base.html)."""
+    app, state = named
+    monkeypatch.setattr(accounts, "MIN_PASSWORD", 1)              # as it was before 2026-10-25
     assert _claim(app, password="1234").status_code == 200
-    assert state.operator != ""
+    monkeypatch.undo()
+    assert accounts.MIN_PASSWORD == 12
     app.cookies.clear()
     opened = app.post("/auth/password", headers=EDGE,
                       json={"username": "robin", "password": "1234"})
@@ -80,7 +95,7 @@ def test_no_password_at_all_is_still_refused(named):
     app, state = named
     refused = _claim(app, password="")
     assert refused.status_code == 400
-    assert "even a short one" in refused.json()["detail"]
+    assert "at least 12 characters" in refused.json()["detail"]
     assert state.operator == ""
 
 

@@ -154,6 +154,20 @@ def test_a_new_password_signs_every_remote_session_out(public):
     assert app.get("/admin/api/state", headers=EDGE).status_code == 401
 
 
+def test_the_admin_password_is_twelve_characters_at_least(public):
+    """Was 10 until 2026-10-25; now the floor every new password has (issue #12)."""
+    from arcade import accounts
+
+    app, state = public
+    _operator(app, state)
+    refused = app.post("/admin/api/password", headers={**LOCAL, **WRITE}, json={"password": "x" * 11})
+    assert refused.status_code == 400 and "at least 12 characters" in refused.json()["detail"]
+    assert app.post("/admin/login", headers=EDGE, json={"password": PASSWORD}).status_code == 200, \
+        "the old one still opens"
+    assert app.post("/admin/api/password", headers={**LOCAL, **WRITE},
+                    json={"password": "x" * accounts.MIN_PASSWORD}).status_code == 200
+
+
 def test_the_startup_window_points_at_the_panel_and_installs(tmp_path, monkeypatch):
     monkeypatch.setattr(adminwindow.platform, "system", lambda: "Linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))

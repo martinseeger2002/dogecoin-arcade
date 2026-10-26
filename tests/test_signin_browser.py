@@ -211,7 +211,7 @@ def test_a_short_password_is_refused_before_anything_is_written(browser, served)
           catch (e) { refused = String(e.message || e); }
           done({refused, kept: await window.signer.kept()});
         })();""")
-    assert "eight characters" in said["refused"]
+    assert "at least 12 characters" in said["refused"]   # eight until 2026-10-25 (issue #12)
     assert said["kept"] is None
 
 

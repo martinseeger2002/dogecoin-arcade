@@ -893,6 +893,50 @@ document.addEventListener("click", async (event) => {
   if (bar) bar.hidden = !!keys;
 </script>
 {% endif %}
+{% if not stranger_here and not embed and not fullscreen and path != '/restore' %}
+{# A password from before the 12-character floor (2026-10-25, issue #12, SadFrog: "existing short-password users are
+   asked to change"). Asked, not forced: wallet.js noteShort marks this tab when a sign-in used one, and this bar says
+   so on every page until a new password is set or "Not now" is pressed (for this tab; the next sign-in asks again).
+   Only "shorter than twelve" is kept, never the password. Read straight from sessionStorage, so it shows as the page
+   draws; the key names are wallet.js SHORT_PASSWORD and SHORT_DISMISSED. #}
+<div id="shortpwbar" class="unlockbar shortpwbar" role="alert" hidden>
+  <span id="shortpw-said"></span>
+  <a class="btn small" id="shortpw-go" href="/restore">Set a new password</a>
+  <button type="button" class="small" id="shortpw-later">Not now</button>
+</div>
+<script>
+(function () {
+  var who = "", bar = document.getElementById("shortpwbar");
+  try { who = sessionStorage.getItem("arcade-short-password") || ""; } catch (e) {}
+  if (!bar || !who) return;
+  var go = document.getElementById("shortpw-go");
+  if (who === "operator") {
+    {% if operator_here %}
+    document.getElementById("shortpw-said").textContent = "This node's password is shorter than 12 characters. "
+      + "Anybody who tries it from outside gets more chances than a longer one would give them. Choose a new one in "
+      + "Admin, at the node machine (Operator & remote access).";
+    go.textContent = "Open Admin";
+    go.href = "/admin";
+    {% else %}
+    return;                // only the operator's own pages say where that is changed
+    {% endif %}
+  } else {
+    document.getElementById("shortpw-said").textContent = "Your password is shorter than 12 characters. Anybody "
+      + "can take your encrypted wallet from this node and guess at it offline, and a short password falls quickly. "
+      + "Choose a new one with your twelve words.";
+    go.href = "/restore?next=" + encodeURIComponent(location.pathname + location.search);
+  }
+  bar.hidden = false;
+  document.getElementById("shortpw-later").onclick = function () {
+    try {
+      sessionStorage.removeItem("arcade-short-password");
+      sessionStorage.setItem("arcade-short-password-not-now", "1");
+    } catch (e) {}
+    bar.hidden = true;
+  };
+})();
+</script>
+{% endif %}
 <script>
 (function () {
   var h = document.querySelector('header');
@@ -2301,6 +2345,8 @@ function arcadeFileCost(bytes){
 .unlockbar{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;
   padding:8px 16px;background:color-mix(in srgb,var(--accent) 14%,var(--panel));
   border-bottom:1px solid var(--line);font-size:.9rem}
+.shortpwbar{background:color-mix(in srgb,var(--warn) 16%,var(--panel))}
+.shortpwbar span{max-width:60em}
 .signbar{margin:0}
 .signbar input{width:100%;box-sizing:border-box;margin:0;padding:6px 10px;font-size:16px}
 .signbar-name,.signbar #signbar-pw{flex:1 1 140px;max-width:220px}

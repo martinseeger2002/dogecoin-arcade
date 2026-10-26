@@ -47,8 +47,9 @@
     <div class="field">
       <label for="pw">A password</label>
       <input type="password" id="pw" autocomplete="new-password"
-             placeholder="longer is safer: twelve characters or more">
-      <p class="muted small">It opens your wallet from any device, and
+             placeholder="at least twelve characters">
+      <p class="muted small">At least twelve characters; a few words in a row are easy to remember.
+        It opens your wallet from any device, and
         <strong>nobody can reset it</strong> &mdash; not us, not anybody.
         You will get twelve words afterwards, which are the only way back.</p>
       <p class="muted small">This password is the only thing standing between
@@ -197,15 +198,14 @@ function wire() {
     }, 300);
   };
 
-  // What they have chosen, said plainly, as they type. Not a refusal:
-  // a floor stops the person who would have picked something short and
-  // stops nobody else, and this is their wallet (D-157).
+  // What they have chosen, said plainly, as they type. Below twelve characters it says the rule, and "Create my
+  // account" refuses it (2026-10-25, issue #12, SadFrog: "12-character minimum for new passwords"; wallet.js signUp).
   let checking = null;
   $("pw").oninput = () => {
     const said = wallet.strength($("pw").value);
     $("pw-says").textContent = said.says;
     $("pw-says").style.color = said.ok ? "var(--ok)"
-      : said.level === "instantly" ? "var(--bad)" : "var(--warn)";
+      : said.short ? "var(--bad)" : "var(--warn)";
     // Leaked already? Said as they type (2026-10-20); "Create my account" refuses it either way.
     clearTimeout(checking);
     const typed = $("pw").value;

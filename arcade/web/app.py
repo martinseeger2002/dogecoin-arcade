@@ -29034,9 +29034,10 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": "name the operator account first"},
                                 status_code=400)
         password = str((payload or {}).get("password", ""))
-        if len(password) < 10:
-            return JSONResponse({"detail": "at least 10 characters -- this guards the "
-                                           "node's coins from anywhere"}, status_code=400)
+        # 10 until 2026-10-25; now the floor every new password has (issue #12, accounts.MIN_PASSWORD).
+        if len(password) < accountslib.MIN_PASSWORD:
+            return JSONResponse({"detail": f"at least {accountslib.MIN_PASSWORD} characters -- this "
+                                           "guards the node's coins from anywhere"}, status_code=400)
         creds = state.credentials()
         name = adminlib.username_for(creds, operator) or "operator"
         try:

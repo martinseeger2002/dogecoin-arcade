@@ -23,11 +23,17 @@
     document.getElementById('adminlogin').onsubmit = function () {
       var trouble = document.getElementById('admintrouble');
       trouble.hidden = true;
+      var typed = document.getElementById('adminpw').value;
       fetch('/admin/login', {method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({password: document.getElementById('adminpw').value})})
+            body: JSON.stringify({password: typed})})
         .then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); })
         .then(function (x) {
-          if (x[0]) { location.href = '/admin'; return; }
+          if (x[0]) {
+            // A password set before the 12-character floor (2026-10-25, issue #12): in all the same, and asked to change.
+            import('/wallet.js').then(function (w) { w.noteShort(typed, 'operator'); }, function () {})
+              .then(function () { location.href = '/admin'; });
+            return;
+          }
           trouble.textContent = x[1].detail || 'That did not work.'; trouble.hidden = false;
         });
       return false;

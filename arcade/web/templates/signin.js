@@ -237,6 +237,25 @@ export async function signIn(phrase, {join = false, passphrase = ""} = {}) {
 export const KDF_ITERATIONS = 600000;
 const DB = "arcade-wallet", SHELF = "seed", ONLY = "me";
 
+/* The shortest new password, counted in characters as typed (2026-10-25, issue #12, SadFrog: "12-character minimum
+ * for new passwords, and existing short-password users are asked to change"). A sealed wallet can be taken away and
+ * guessed at offline, so the length is the only thing that slows that down. wallet.js uses this same number for the
+ * account's password; it is here because the copy of the words kept in this browser (`keep`) is sealed here too. */
+export const MIN_PASSWORD = 12;
+
+/** How many characters a password has, as a person counts them: an emoji is one, not two UTF-16 halves. The server
+ *  counts the operator's password the same way (Python `len`). */
+export const characters = (password) => [...String(password || "")].length;
+
+/** Why this new password is refused, or "" when it is long enough. */
+export function tooShort(password) {
+  const have = characters(password);
+  if (have >= MIN_PASSWORD) return "";
+  return `a password of at least ${MIN_PASSWORD} characters, please` + (have ? ` (this one has ${have})` : "")
+    + ". Anybody can take the encrypted wallet away and guess at it as long as they like; a longer password is what "
+    + "makes that hopeless. A few words in a row are easy to remember.";
+}
+
 function shelf(mode) {
   return new Promise((ok, no) => {
     const open = indexedDB.open(DB, 1);
@@ -265,8 +284,9 @@ async function passwordKey(password, salt, iterations) {
 }
 
 export async function keep(phrase, password) {
-  if (!password || password.length < 8)
-    throw new Error("a password of at least eight characters, please");
+  // Eight characters until 2026-10-25; now the same twelve as every new password (issue #12).
+  const short = tooShort(password);
+  if (short) throw new Error(short);
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const key = await passwordKey(password, salt, KDF_ITERATIONS);

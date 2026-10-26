@@ -781,19 +781,25 @@ SCRYPT_N = 1 << 15
 SCRYPT_R = 8
 SCRYPT_P = 1
 
-#: One character. Not a recommendation -- a decision (D-157).
+#: Twelve characters, counted as Python counts them (`len`), for every new
+#: password (2026-10-25, issue #12, SadFrog: "12-character minimum for new
+#: passwords, and existing short-password users are asked to change").
 #:
-#: A floor stops the person who would have chosen something short and
-#: stops nobody else: an attacker does not type passwords into a form,
-#: they take what is stored and try it offline. What a floor does reliably
-#: is refuse somebody their own wallet on their own node.
+#: Until then it was one character (D-157): a floor stops nobody who takes
+#: what is stored and tries it offline. But that is exactly what a short
+#: password is open to -- an account's sealed wallet is handed to whoever
+#: asks for the name and copied between arcades -- so the floor is what
+#: makes the offline guessing hopeless.
 #:
-#: So the rule is replaced by a sentence. Both pages say exactly what a
-#: weak password means where it is typed -- and they differ, because the
-#: consequences differ: the operator's guards a wallet on their own
-#: machine, and an account's guards a blob this node hands to whoever asks
-#: for that name.
-MIN_PASSWORD = 1
+#: Where it is enforced: here, in `Credentials.set`, for the operator's own
+#: password (/auth/set-password and the admin password, /admin/api/password),
+#: because the node sees that one. An account's password never reaches the
+#: node -- it is handed only the sealed blob, which says nothing about the
+#: password's length -- so for accounts the same number is enforced in the
+#: browser (signin.js MIN_PASSWORD, used by wallet.js signUp / restore and
+#: the copy kept in a browser). A password set before the floor still opens
+#: what it opens; signing in with one asks for a new one (base.html).
+MIN_PASSWORD = 12
 
 CREDENTIAL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS credential (
@@ -849,14 +855,17 @@ class Credentials:
 
         Refuses a short password rather than accepting one and hoping: this
         is the only thing between somebody who found the address and a
-        wallet, and the page says the rule before it is broken.
+        wallet, and the page says the rule before it is broken. Only a NEW
+        password comes through here; one set before the floor still signs in
+        (`check`), and the page asks for a new one.
         """
         name = name_of(username)
         if not name or not name.replace("_", "").replace("-", "").isalnum():
             raise AccountError(
                 "a username is letters, digits, - and _, with no spaces")
-        if not (password or ""):
-            raise AccountError("a password, please -- even a short one")
+        if len(password or "") < MIN_PASSWORD:
+            raise AccountError(f"a password of at least {MIN_PASSWORD} characters, please"
+                               + (f" (this one has {len(password)})" if password else ""))
         if not is_pubkey(pubkey):
             raise AccountError("that is not a public key")
         now = int(now if now is not None else time.time())

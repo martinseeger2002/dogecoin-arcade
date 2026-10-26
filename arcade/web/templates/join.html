@@ -83,7 +83,7 @@
   </p>
   <input type="text" id="new-username" autocomplete="off" placeholder="username">
   <input type="password" id="new-password" autocomplete="new-password"
-         placeholder="password">
+         placeholder="password (at least twelve characters)">
   <input type="password" id="new-password2" autocomplete="new-password"
          placeholder="the same password again">
   <p class="muted small" id="password-rule"></p>
@@ -118,7 +118,7 @@
         keep an encrypted copy in this browser
       </label>
       <input type="password" id="keep-password" autocomplete="new-password"
-             placeholder="a password for this machine only">
+             placeholder="a password for this machine only (at least twelve characters)">
       <input type="password" id="keep-password2" autocomplete="new-password"
              placeholder="the same password again">
       <p class="muted small">
@@ -311,6 +311,8 @@ function wire() {
     // $("password") read THAT one (usually empty) and the copy kept here was sealed with it. Typed twice.
     if ($("keep").checked) {
       if (!$("keep-password").value) { say("Choose a password for the copy kept here, or untick keeping one."); return; }
+      // Twelve characters at least, like every new password (2026-10-25, issue #12); signer.keep refuses it too.
+      if (signer.tooShort($("keep-password").value)) { say("For the copy kept here: " + signer.tooShort($("keep-password").value)); return; }
       if ($("keep-password").value !== $("keep-password2").value) { say("The two passwords are not the same. Type the same password in both boxes."); return; }
     }
     try {
@@ -364,6 +366,8 @@ function wire() {
                             password: $("password").value})});
     const said = await answer.json();
     if (!answer.ok) { say(said.detail); return; }
+    // Set before the floor (2026-10-25, issue #12): signed in all the same, and every page asks for a new one.
+    try { (await import("/wallet.js")).noteShort($("password").value, "operator"); } catch (e) {}
     location.href = "/";
   };
 
@@ -373,6 +377,8 @@ function wire() {
       say("The two passwords are not the same. Type the same password in both boxes.");
       return;
     }
+    // The node refuses it too (accounts.Credentials.set); said here first, with nothing sent.
+    if (signer.tooShort($("new-password").value)) { say(signer.tooShort($("new-password").value)); return; }
     const answer = await fetch("/auth/set-password", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({username: $("new-username").value,

@@ -195,35 +195,97 @@ def test_a_name_somebody_has_is_refused_before_a_wallet_is_made(loaded):
     assert "already signed up" in again["error"]
 
 
-def test_a_short_password_is_allowed_and_the_page_says_what_it_costs(loaded):
-    """Somebody who wants `1234` gets `1234` (D-157). What they also get is
-    a sentence saying their encrypted wallet can be taken from this node
-    and opened in seconds -- because that is true, and refusing them would
-    not have made it less so. (2026-10-20: a password on the leaked-password lists IS refused -- `1234` would be
-    in real life; the suite runs with that check off, so this is a short password the list has not seen.)"""
+def test_a_password_shorter_than_twelve_characters_makes_no_account(loaded):
+    """Issue #12 (2026-10-25, SadFrog: "12-character minimum for new passwords"). Until then `1234` made an
+    account (D-157). The node never sees the password, so wallet.js refuses it, before any words are made or any
+    seat is taken; the meter says the rule as it is typed."""
     browser, base, state, home = loaded
-    said = _sign_up(browser, "brief", password="1234")
-    assert "error" not in said, said
-    assert state.vault().get("brief") is not None, "the account exists"
+    free = state.accounts().free()
+    for short in ("1234", "x" * 11, "\U0001f600" * 11):
+        said = _sign_up(browser, "brief", password=short)
+        assert "at least 12 characters" in said.get("error", ""), said
+    assert state.vault().get("brief") is None, "no account"
+    assert state.accounts().free() == free, "and no seat"
+    assert "error" not in _sign_up(browser, "brief", password="x" * 12), "twelve is enough"
 
     _w(browser)
     told = browser.execute_async_script("""
         const done = arguments[0];
-        done({weak: window.w.strength("1234"),
-              middling: window.w.strength("correct horse"),
+        done({min: window.w.MIN_PASSWORD, weak: window.w.strength("1234"),
+              eleven: window.w.strength("correct hor"),
+              middling: window.w.strength("correcthorse"),
               strong: window.w.strength("correct horse battery staple!")});""")
-    assert told["weak"]["ok"] is False
-    assert told["weak"]["level"] == "instantly"
-    assert "in seconds" in told["weak"]["says"]
-    assert "nothing here will stop you" in told["weak"]["says"]
+    assert told["min"] == 12
+    assert told["weak"]["ok"] is False and told["weak"]["short"] is True
+    assert told["weak"]["level"] == "too short"
+    assert "at least 12 characters (8 more)" in told["weak"]["says"]
+    assert told["eleven"]["short"] is True and "(1 more)" in told["eleven"]["says"]
+    assert not told["middling"].get("short"), "twelve characters are past the floor"
     assert told["strong"]["ok"] is True
 
 
 def test_no_password_at_all_is_still_refused(loaded):
     browser, base, state, home = loaded
     said = _sign_up(browser, "empty", password="")
-    assert "even a short one" in said["error"]
+    assert "at least 12 characters" in said["error"]
     assert state.vault().get("empty") is None
+
+
+def test_a_short_password_from_before_the_floor_signs_in_and_is_asked_to_change(loaded):
+    """SadFrog, 2026-10-25: "existing short-password users are asked to change". An account whose wallet was sealed
+    under `1234` before the floor still signs in; every page then shows a bar with the way to a new password, until
+    "Not now" (for this tab). A sign-in with a long password asks nothing."""
+    import json
+    from selenium.webdriver.common.by import By
+
+    browser, base, state, home = loaded
+    state.accounts().seats = max(state.accounts().seats, 40)
+    assert "error" not in _sign_up(browser, "newlong", password="a long enough password")
+    made = _sign_up(browser, "oldshort", password="a long enough password")
+    assert "error" not in made, made
+    # Sealed again under a short password, as a sign-up before 2026-10-25 could have.
+    blob = browser.execute_async_script("""
+        const done = arguments[1];
+        window.w.seal(arguments[0], "1234").then(done);""", made["phrase"])
+    assert state.vault().replace_blob(made["pubkey"], json.dumps(blob))
+
+    browser.delete_all_cookies()
+    browser.execute_script("sessionStorage.clear()")
+    browser.get(f"{base}/join")
+    _w(browser)
+    said = browser.execute_async_script("""
+        const done = arguments[2];
+        window.w.signIn(arguments[0], arguments[1], {network: "regtest", version: 111})
+          .then((r) => done({pubkey: r.pubkey, short: window.w.shortPassword()}),
+                (e) => done({error: String(e.message || e)}));""", "oldshort", "1234")
+    assert said.get("pubkey") == made["pubkey"], "not blocked"
+    assert said["short"] == "account"
+
+    browser.get(f"{base}/me")
+    bar = browser.find_element(By.ID, "shortpwbar")
+    assert bar.is_displayed()
+    assert "shorter than 12 characters" in bar.text
+    go = browser.find_element(By.ID, "shortpw-go")
+    assert go.get_attribute("href").startswith(f"{base}/restore?next=")
+    browser.find_element(By.ID, "shortpw-later").click()
+    assert not bar.is_displayed(), "dismissible"
+    browser.get(f"{base}/me")
+    assert not browser.find_element(By.ID, "shortpwbar").is_displayed(), "and it stays dismissed in this tab"
+
+    # The next sign-in asks again; a long password asks nothing.
+    browser.delete_all_cookies()
+    browser.execute_script("sessionStorage.clear()")
+    browser.get(f"{base}/join")
+    _w(browser)
+    again = browser.execute_async_script("""
+        const done = arguments[0];
+        const chain = {network: "regtest", version: 111};
+        window.w.signIn("oldshort", "1234", chain).then(() => {
+          const first = window.w.shortPassword();
+          return window.w.signIn("newlong", "a long enough password", chain)
+            .then(() => done({first, second: window.w.shortPassword()}));
+        }, (e) => done({error: String(e.message || e)}));""")
+    assert again == {"first": "account", "second": ""}, again
 
 
 def test_a_free_name_can_be_checked_before_typing_a_password(loaded):
@@ -539,6 +601,21 @@ def test_restore_with_words_that_are_not_an_account_takes_no_seat(loaded):
 
     said = _restore(browser, "apple apple apple", "x")
     assert "12, 15, 18, 21 or 24 words" in said.get("error", ""), said
+
+
+def test_restore_refuses_a_new_password_shorter_than_twelve(loaded):
+    """The new password a restore seals under follows the sign-up rule (issue #12), and is refused before the words
+    sign in: the wallet on the node stays as it was."""
+    browser, base, state, home = loaded
+    state.accounts().seats = max(state.accounts().seats, 40)
+    made = _sign_up(browser, "restoreshort", password="the old password")
+    assert "error" not in made, made
+    before = state.vault().get("restoreshort")["blob"]
+    browser.delete_all_cookies()
+    browser.get(f"{base}/join")
+    said = _restore(browser, made["phrase"], "short one")
+    assert "at least 12 characters" in said.get("error", ""), said
+    assert state.vault().get("restoreshort")["blob"] == before, "nothing was sealed again"
 
 
 def test_the_vault_cannot_be_replaced_without_signing_in(served):
