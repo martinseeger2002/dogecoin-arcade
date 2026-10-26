@@ -70,6 +70,7 @@ from ..messaging import envelope as envelopelib
 from .. import inscriptions as inscriptionlib
 from .. import doginal_market as doginal_marketlib
 from .. import ord_chains as ordchainslib
+from .. import known_collections as knownlib
 from . import guide as guidelib
 from .. import charts as chartlib
 from .. import fees
@@ -959,6 +960,10 @@ def create_app(state: AppState) -> FastAPI:
             _start_filler()
         except Exception as exc:              # noqa: BLE001 -- never block startup
             log.info("filler not started: %s", exc)
+        try:                                  # known collections from Nintondo, when the operator switched it on
+            _start_known_import()
+        except Exception as exc:              # noqa: BLE001 -- never block startup
+            log.info("known collections not started: %s", exc)
         try:                                  # mail for phones already subscribed
             push = state.push()
             if push is not None:              # notes every account's mail
@@ -27973,14 +27978,20 @@ def create_app(state: AppState) -> FastAPI:
             return None
         return question
 
-    def _ords_ask(index, question: dict):
+    def _ords_ask(index, question: dict, add: Any = None):
         """One question to a chain's index, answered by its own walk or a walking linked arcade (index.lookup); what
         went wrong said in a 409 the box shows. The most complete index of the chain answers (DoginalIndex.lookup,
-        2026-10-21); a linked arcade's answer is said as its @tag when the mesh knows one ("Answered by")."""
+        2026-10-21); a linked arcade's answer is said as its @tag when the mesh knows one ("Answered by"). `add`: more
+        said beside the answer (Explore's "In collection")."""
         try:
             said = index.lookup(question)
         except Exception as exc:                               # noqa: BLE001 -- said in the box
             return JSONResponse({"detail": str(exc)[:300]}, status_code=409)
+        if add is not None:
+            try:
+                said.update(add(said) or {})
+            except Exception:                                  # noqa: BLE001 -- the answer without it
+                log.debug("ords answer addition", exc_info=True)
         node = str(said.pop("node", "") or "")
         if node:
             try:
@@ -28125,12 +28136,26 @@ def create_app(state: AppState) -> FastAPI:
         if iid:
             if not INSCRIPTION_ID.match(iid):
                 return JSONResponse({"detail": "an inscription id: <txid>i<n>"}, status_code=400)
-            return _ords_ask(index, {"what": "number", "id": iid})
+            return _ords_ask(index, {"what": "number", "id": iid}, add=lambda j: _known_piece(net, j))
         said = (number or "0").strip().lstrip("#")
         if not re.match(r"^-?[0-9]{1,12}$", said):
             return JSONResponse({"detail": "an inscription number: 0, 1, 2 ... (or -1, -2 ... for a cursed one)"},
                                 status_code=400)
-        return _ords_ask(index, {"what": "number", "number": int(said)})
+        return _ords_ask(index, {"what": "number", "number": int(said)}, add=lambda j: _known_piece(net, j))
+
+    def _known_piece(net: str, answer: dict) -> dict:
+        """The viewer's "In collection: Name #k" (2026-10-26): the known collection holding the inscription shown."""
+        x = (answer.get("number") or {}).get("inscription") if isinstance(answer.get("number"), dict) else None
+        store = state.known_collections() if hasattr(state, "known_collections") else None
+        if not isinstance(x, dict) or not x.get("id") or store is None:
+            return {}
+        found = store.in_collection(net, str(x["id"]))
+        if found is None:
+            return {}
+        return {"collection": {"slug": found["slug"], "collection": found["collection"], "position": found["position"],
+                               "name": found["name"] or (found["collection"] + (f" #{found['position']}"
+                                                                                if found["position"] else "")),
+                               "source": found["source"]}}
 
     @app.get("/explore/api/lookup")
     def explore_lookup(request: Request, net: str = "doge", q: str = ""):
@@ -28220,24 +28245,57 @@ def create_app(state: AppState) -> FastAPI:
         holders = [{"address": h["address"], "held": h["display"]} for h in index.holders(int(id))[:50]]
         return JSONResponse({"asset": row, "holders": holders}, headers={"Cache-Control": "no-store"})
 
+    def _known_row(r: dict, agreed: dict) -> dict:
+        return {"kind": "known", "slug": r["slug"], "name": r["name"], "chain": r["chain"], "supply": r["supply"],
+                "count": r["count"], "cover": r["cover"], "source": r["source"], "fp": r["fp"],
+                "fetched_at": r["fetched_at"], "agreed": agreed.get(r["slug"], 1)}
+
+    def _known_agreed(net: str) -> dict:
+        share = getattr(getattr(state, "mesh", None), "collectionshare", None)
+        try:
+            return share.agreements(net) if share is not None else {}
+        except Exception:                                      # noqa: BLE001 -- said as this arcade's alone
+            return {}
+
     @app.get("/explore/api/collections")
     def explore_collections(request: Request, net: str = "doge", q: str = ""):
         """Known collections of a chain: the ones published to the arcades' collection registry
-        (arcade/collection_registry.py), by name."""
+        (arcade/collection_registry.py), by name; then the known collections of Doginals, Pepinals and Bellinals
+        (arcade/known_collections.py, 2026-10-26: "searchable from our indexes and arcades"), each with where its list
+        came from and how many arcades agree on it."""
         if _explore_limited(request):
             return JSONResponse({"detail": "Too many questions in a minute: wait a moment."}, status_code=429)
         said = (q or "").strip().lower()[:80]
         rows = [r for r in state.collection_registry().active()
                 if r.get("chain") == net and (not said or said in str(r.get("name") or "").lower())]
         keep = ("txid", "number", "name", "chain", "supply", "description", "cover", "count", "traits")
-        return JSONResponse({"collections": [{k: r.get(k) for k in keep} for r in rows[:60]]},
-                            headers={"Cache-Control": "no-store"})
+        out = [{**{k: r.get(k) for k in keep}, "kind": "registry", "source": "registry"} for r in rows[:60]]
+        known = []
+        store = state.known_collections() if hasattr(state, "known_collections") else None
+        if store is not None and net in knownlib.CHAINS:
+            agreed = _known_agreed(net)
+            known = [_known_row(r, agreed) for r in store.collections(net, said, limit=60)]
+        return JSONResponse({"collections": out + known}, headers={"Cache-Control": "no-store"})
 
     @app.get("/explore/api/collection")
-    def explore_collection(request: Request, root: str = "", offset: str = "0"):
-        """One known collection and a page of its pieces (48), by their number in the collection."""
+    def explore_collection(request: Request, root: str = "", offset: str = "0", net: str = "", slug: str = ""):
+        """One known collection and a page of its pieces (48), by their number in the collection: a registry one by
+        its root txid, or a known one by its chain and slug (2026-10-26)."""
         if _explore_limited(request):
             return JSONResponse({"detail": "Too many questions in a minute: wait a moment."}, status_code=429)
+        if slug:
+            store = state.known_collections() if hasattr(state, "known_collections") else None
+            if net not in knownlib.CHAINS or not knownlib.SLUG.match(slug) \
+                    or not re.match(r"^[0-9]{1,7}$", (offset or "0").strip()):
+                return JSONResponse({"detail": "a chain, a collection's slug and an offset"}, status_code=400)
+            found = store.collection(net, slug) if store is not None else None
+            if found is None:
+                return JSONResponse({"detail": "no such collection"}, status_code=404)
+            items = store.items(net, slug, offset=int(offset), limit=48)
+            return JSONResponse({"collection": _known_row(found, _known_agreed(net)),
+                                 "items": [{"id": i["id"], "name": i["name"], "number": i["position"],
+                                            "inscription_number": i["number"]} for i in items]},
+                                headers={"Cache-Control": "no-store"})
         root = (root or "").strip().lower()
         if not re.match(r"^[0-9a-f]{64}$", root) or not re.match(r"^[0-9]{1,7}$", (offset or "0").strip()):
             return JSONResponse({"detail": "a collection (its root txid) and an offset"}, status_code=400)
@@ -28250,6 +28308,49 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"collection": {k: found.get(k) for k in keep},
                              "items": [{"id": i["id"], "number": i["number"], "traits": i["traits"]} for i in items]},
                             headers={"Cache-Control": "no-store"})
+
+    # --- known collections from Nintondo (2026-10-26) ----------------------------------------------------------------
+    #
+    # SadFrog: "I'd like to have pepinals, doginals and bellinals collections pulled from known collections and
+    # searchable from our indexes and arcades". The operator's side stopped reading ords from outside APIs on 2026-10-15,
+    # so the import is the operator's own choice: Admin -> Ords, off until switched on. One thread, a request a second
+    # to each host at most; it asks nothing while the switch is off.
+    _known_thread: dict = {}
+
+    def _start_known_import() -> None:
+        if _known_thread.get("thread") is not None or os.environ.get("ARCADE_NO_KNOWN_COLLECTIONS"):
+            return
+        importer = state.known_importer() if hasattr(state, "known_importer") else None
+        if importer is None:
+            return
+        _known_thread["thread"] = threading.Thread(
+            target=importer.run, kwargs={"stop": lambda: bool(getattr(state, "shutting_down", False))},
+            name="known-collections", daemon=True)
+        _known_thread["thread"].start()
+
+    @app.get("/admin/api/known-collections")
+    def admin_known_collections(request: Request):
+        """Admin -> Ords -> Known collections: the switch, and how far each chain's import is."""
+        _admin_check(request)
+        importer = state.known_importer() if hasattr(state, "known_importer") else None
+        if importer is None:
+            return JSONResponse({"on": False, "chains": [], "detail": "this arcade keeps no files"})
+        share = getattr(getattr(state, "mesh", None), "collectionshare", None)
+        return JSONResponse({**importer.status(), "mesh": share is not None,
+                             "fetched": [{"net": n, "slug": s, "from": p[:12], "ok": ok}
+                                         for n, s, p, ok in (share.fetched if share is not None else [])][-10:]},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/known-collections")
+    def admin_known_collections_set(request: Request, payload: Any = Body(None)):
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        if not isinstance(said.get("import"), bool):
+            return JSONResponse({"detail": "import: true or false"}, status_code=400)
+        state.set_setting(knownlib.SETTING, said["import"])
+        if said["import"]:
+            _start_known_import()
+        return JSONResponse({"ok": True, "import": said["import"]})
 
     @app.get("/admin/api/operators")
     def admin_operators(request: Request):

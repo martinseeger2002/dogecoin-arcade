@@ -368,6 +368,20 @@
   <div class="ordcoins" id="ordcoins" role="tablist" aria-label="Chain"></div>
   <div id="ordchain"><p class="muted">Loading&hellip;</p></div>
   <span class="muted" id="ordsaid"></span>
+  {# 2026-10-26, SadFrog: "I'd like to have pepinals, doginals and bellinals collections pulled from known collections
+     and searchable from our indexes and arcades - the known collections should be shared across arcades to be agreed
+     upon." Reading Nintondo's public search is the operator's own choice (off by default: ords are not read from
+     outside APIs otherwise, 2026-10-15); the lists linked arcades share come in either way (arcade/known_collections.py,
+     mesh/collectionshare.py). #}
+  <div class="ordcard" id="kccard">
+    <h3>Known collections</h3>
+    <p class="muted" style="margin-top:0;font-size:.84rem">The collections of Doginals, Pepinals and Bellinals, shown
+      and searchable on Explore. Linked arcades share the lists they hold, each checked against its fingerprint. Switched
+      on, this arcade also reads them from Nintondo&rsquo;s public search: one request a second at most, the whole of
+      Dogecoin&rsquo;s lists in a few hours, then once a day only the collections that changed.</p>
+    <label class="switch"><input type="checkbox" id="kcimport"> Import known collections from Nintondo</label>
+    <div id="kcsaid" class="muted" style="font-size:.84rem;margin-top:6px"></div>
+  </div>
   {# 2026-10-21: "In the ord admin panel The Explorer on the bottom should be picked by the coin type at the top
      you should be able to search by number as well as TXID utxo:index. Or whatever it is already. Below the search
      should display ord 0 of the chain that is selected with arrows to navigate by ord number. Below that should be PRC
@@ -2670,8 +2684,42 @@ section.panel h2{margin-top:0}
     more.appendChild(lines(ordDetails(r), 'muted'));
     box.appendChild(more);
   }
+  // Known collections (2026-10-26): the import switch and how far each chain is.
+  var KC_NAMES = {doge: 'Dogecoin', main: 'Pepecoin', bel: 'Bellscoin'};
+  function loadKnown() {
+    fetch('/admin/api/known-collections', {headers: {'Accept': 'application/json'}, cache: 'no-store'})
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (document.activeElement !== $('kcimport')) $('kcimport').checked = !!d.on;
+        var out = $('kcsaid'); out.textContent = '';
+        (d.chains || []).forEach(function (c) {
+          var line = (KC_NAMES[c.net] || c.net) + ': ' + Number(c.collections || 0).toLocaleString() + ' collections, '
+            + Number(c.pieces || 0).toLocaleString() + ' pieces held';
+          if (d.on) {
+            line += c.phase === 'list' ? ' \u2014 reading the list, page ' + c.page
+              : c.phase === 'items' ? ' \u2014 ' + Number(c.waiting || 0).toLocaleString() + ' of '
+                + Number(c.listed || 0).toLocaleString() + ' to read' + (c.slug ? ', now ' + c.slug + ' page ' + c.page
+                + (c.pages ? ' of ' + c.pages : '') : '')
+              : c.next_round ? ' \u2014 up to date; read again ' + new Date(c.next_round * 1000).toLocaleString() : '';
+          }
+          if (c.error) line += ' (last error: ' + c.error + ')';
+          var row = document.createElement('div'); row.textContent = line; out.appendChild(row);
+        });
+        (d.fetched || []).slice(-3).forEach(function (f) {
+          var row = document.createElement('div');
+          row.textContent = (f.ok ? 'From' : 'Refused from') + ' arcade ' + f.from + ': ' + f.slug + ' (' + (KC_NAMES[f.net] || f.net) + ')';
+          out.appendChild(row);
+        });
+      }).catch(function () { $('kcsaid').textContent = 'Could not read the known collections.'; });
+  }
+  $('kcimport').onchange = function () {
+    call('/admin/api/known-collections', {'import': $('kcimport').checked})
+      .then(function (j) { $('kcsaid').textContent = j['import'] ? 'Importing from Nintondo.' : 'Import switched off.'; loadKnown(); })
+      .catch(function (e) { $('kcsaid').textContent = e.message; });
+  };
   function loadOrds(force) {
     if (!force && !document.querySelector('.admintab[data-tab="ords"].on')) return;
+    loadKnown();
     if (document.activeElement && document.activeElement.id === 'ordcores') return;   // typing: redraw later
     fetch('/admin/api/ords', {headers: {'Accept': 'application/json'}, cache: 'no-store'}).then(function (r) { return r.json(); })
       .then(function (d) {

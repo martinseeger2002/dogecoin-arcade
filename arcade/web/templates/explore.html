@@ -150,7 +150,9 @@
         <input id="xpcollq" type="search" autocomplete="off" placeholder="Search known collections"
                aria-label="Search collections">
       </div>
-      <p class="muted xpnote">Collections published to the arcades&rsquo; collection registry.</p>
+      <p class="muted xpnote">Collections published to the arcades&rsquo; collection registry, and the known
+        collections of Doginals, Pepinals and Bellinals each arcade holds, with where the list came from and how many
+        linked arcades hold the very same list.</p>
       <div id="xpcollsaid" class="xpsaid" aria-live="polite"></div>
       <div class="xpcolls" id="xpcolls"></div>
       <div id="xpcoll" hidden>
@@ -359,6 +361,10 @@
         ['Protocol', x.protocol || null],
         ['Delegate', x.delegate ? link(x.delegate, function () { showId(x.delegate); }) : null],
         ['Parent', x.parent ? link(x.parent, function () { showId(x.parent); }) : null],
+        // 2026-10-26: the known collection it is a piece of, opened below with a click.
+        ['In collection', j.collection ? link(j.collection.name, function () {
+          openCollection({kind: 'known', slug: j.collection.slug, name: j.collection.collection, source: j.collection.source}, 0);
+          $('xpcollgrid').scrollIntoView({block: 'start', behavior: 'smooth'}); }) : null],
         ['Reinscription', x.reinscription ? 'yes' : null],
         // ord's charms on a chain read as ord itself (Litecoin): cursed, vindicated, unbound, lost ...
         ['Charms', x.charms && x.charms.length ? x.charms.join(', ') : null],
@@ -511,6 +517,7 @@
         b.appendChild(thumb);
         var cap = el('div', 'xpcap'); cap.appendChild(el('b', '', c.name));
         cap.appendChild(el('span', 'muted', num(c.count) + (c.supply ? ' of ' + num(c.supply) : '') + ' pieces'));
+        if (c.kind === 'known') { cap.appendChild(el('br')); cap.appendChild(el('span', 'muted', knownSaid(c))); }
         b.appendChild(cap);
         b.onclick = function () { openCollection(c, 0); };
         box.appendChild(b);
@@ -521,17 +528,26 @@
     clearTimeout(COLL_WAIT);
     COLL_WAIT = setTimeout(function () { collections($('xpcollq').value.trim()); }, 200);
   };
+  // A known collection (2026-10-26): where its list came from, and how many arcades hold the very same list.
+  function knownSaid(c) {
+    var src = c.source === 'nintondo' ? 'from Nintondo' : String(c.source || '').indexOf('mesh:') === 0
+      ? 'from arcade ' + c.source.slice(5) : (c.source || '');
+    return src + ' · agreed by ' + num(c.agreed || 1) + ' arcade' + ((c.agreed || 1) === 1 ? '' : 's');
+  }
   function openCollection(c, at) {
     X.coll = c; X.collAt = Math.max(0, at);
     $('xpcolls').hidden = true; $('xpcoll').hidden = false;
     $('xpcollname').textContent = c.name;
-    $('xpcolldesc').textContent = c.description || '';
+    $('xpcolldesc').textContent = c.kind === 'known' ? knownSaid(c) : (c.description || '');
     var grid = $('xpcollgrid'); grid.textContent = 'Reading…';
-    api('collection', {root: c.txid, offset: X.collAt}).then(function (j) {
+    var args = c.kind === 'known' ? {net: X.chain.net, slug: c.slug, offset: X.collAt} : {root: c.txid, offset: X.collAt};
+    api('collection', args).then(function (j) {
       grid.textContent = '';
       (j.items || []).forEach(function (it) {
-        grid.appendChild(tile({id: it.id, content_type: 'image/'}, c.name + ' #' + num(it.number)));
+        grid.appendChild(tile({id: it.id, content_type: 'image/'},
+          it.name || (c.name + (it.number != null ? ' #' + num(it.number) : ''))));
       });
+      if (c.kind === 'known' && j.collection) { c = X.coll = j.collection; $('xpcolldesc').textContent = knownSaid(c); }
       var total = c.count || 0;
       $('xpcollpage').textContent = total ? (X.collAt + 1) + '–' + Math.min(X.collAt + 48, total) + ' of ' + num(total) : '';
       $('xpcollprev').disabled = X.collAt <= 0;

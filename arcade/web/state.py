@@ -803,6 +803,26 @@ class AppState:
             self._collection_registry = held
         return held
 
+    def known_collections(self):
+        """Known collections of Doginals, Pepinals and Bellinals (arcade/known_collections.py), made once; None with no
+        home."""
+        if getattr(self, "home", None) is None:
+            return None
+        held = getattr(self, "_known_collections", None)
+        if held is None:
+            from ..known_collections import KnownCollections
+            held = self._known_collections = KnownCollections(Path(self.home) / "known-collections.sqlite")
+        return held
+
+    def known_importer(self):
+        """The importer from Nintondo's public search, made once; it asks nothing while the operator's switch
+        (`known_collections_import`, Admin -> Ords) is off."""
+        held = getattr(self, "_known_importer", None)
+        if held is None and self.known_collections() is not None:
+            from ..known_collections import SETTING, Importer
+            held = self._known_importer = Importer(self.known_collections(), lambda: bool(self.setting(SETTING)))
+        return held
+
     def talk_relay(self):
         """Swap messages over the mesh (arcade/talk_relay.py), made once."""
         from .. import talk_relay as relaylib

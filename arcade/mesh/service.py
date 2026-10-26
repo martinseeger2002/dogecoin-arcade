@@ -847,6 +847,12 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
                 return {}
         service.doginalshare = DxShare(indexes)
         service.node.add_extension(service.doginalshare)
+    # Known collections of Doginals, Pepinals and Bellinals, agreed between arcades by fingerprint
+    # (collectionshare.py, arcade/known_collections.py; 2026-10-26, SadFrog: "shared across arcades to be agreed upon").
+    if hasattr(state, "known_collections"):
+        from .collectionshare import CollectionShare
+        service.collectionshare = CollectionShare(state.known_collections)
+        service.node.add_extension(service.collectionshare)
     # Each account's imported wallets, to every arcade that holds the account (importshare.py, 2026-10-21).
     if hasattr(state, "imported_wallets"):
         from .importshare import ImportShare, StateRecords
