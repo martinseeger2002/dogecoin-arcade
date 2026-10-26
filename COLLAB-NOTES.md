@@ -88,6 +88,38 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-26 · SadFrog's side (Claude, node 2) · branch `team/digibyte` (on `main` 366b78e) · DigiByte as an add-on chain, DigiByte ordinals; Kotia script addresses
+The operator's "Eventually, we want to add Digi bite" (2026-10-18), done the way of the Bells/Lucky/Kotia/Wojakcoin branches.
+Three commits, each self-contained, plus this entry:
+- **54c2083 DigiByte (DGB).** `DIGIBYTE` = `LITECOIN` with DigiByte Core 9.26.7's chainparams: P2PKH 30 (`D`, the same byte as
+  Dogecoin's: the same key gives the same `D...` string on both chains, so nothing is refused for it), P2SH 63 (`S`), WIF 128,
+  bech32 `dgb`, ports 14022/12024. **`pow_algo=""`:** five algorithms, picked by version bits; a borrowed block is proved by hash,
+  merkle root and linkage, and Admin says the work is the sharer's word (the existing rawchain rule, first used here). BIP65/CSV/
+  SegWit buried at 4,394,880, so `cltv_enforced` stays True and swaps lock (at an `S` address). Floor 24,462,000. Swaps and takes
+  `None`. Checked on a DigiByte 9.26.7 node: block 0, `getdeploymentinfo` (Taproot 21,168,000, DigiDollar/AlgoLock 23,869,440),
+  the arcade's own `D`/`S`/`dgb1q`/`dgb1p` encodings valid, WIF 128 signs and verifies. **A `3` address (v5) is refused by the
+  node although chainparams still list it as SCRIPT_ADDRESS_OLD**, so the payee check refuses it too.
+  - `txbuild.SCRIPTHASH_VERSIONS += 63`: without it an `S` payee got a key-hash script.
+  - **DigiByte ordinals** follow reallyshadydev/wonky-ord-digibyte (`first_inscription_height` 0, the first input's script,
+    0 parts is nothing, a new inscription only when none sits at offset 0) and digibyteordinals.js (240-byte parts): Doginals
+    dialect, `STARTS["dgb"]=0`, reinscriptions not numbered, MOVED and swappable, Creator -> Ords. Its index is off until
+    Admin -> Ords, and from block 0 it is a 24-million-block walk.
+  - Browser tables, BIG 1,000 DGB, badge `G`, `coin-dgb.png` (DigiByte Core's Qt icon), docs `digibyte.md`, `tests/test_digibyte.py`
+    with a real block (24,450,197, sha256d, fetched from a peer with `getblockfrompeer`).
+- **b3b1440 Kotia script addresses (a fix, apart from DigiByte).** Kotia's P2SH 45 was in neither `SCRIPTHASH_VERSIONS` nor
+  `unpayable_versions`, so `_check_address` let a `K...` script address through and `p2pkh_script` paid it as a key hash: lost
+  coins. 45 is no chain's key byte, so it is added; a test now holds every chain's P2SH byte to "paid as a script or refused".
+- **0feeefa DigiByte tokens are `dgb-20`.** wonky-ord-digibyte runs DRC-20's code under its own `"p"` (src/drc20/params.rs
+  `PROTOCOL_LITERAL = "dgb-20"`). Without `TOKEN_PROTOCOLS["dgb"]` the index read `drc-20` inscriptions as DigiByte tokens and
+  missed every `dgb-20` one. No index has walked DigiByte yet, so no rules bump.
+- **Tests:** the 63 files the change touches, on this branch and on `main` 2d15953 side by side: no failure on the branch that is
+  not on `main`. Main's own six fail here too: test_docs (twice: the private DECISIONS.md is not in the mirror),
+  test_doginals_exchange, test_doginal_swap, test_escrow_web and test_ord_slim (one each). Rebased onto 366b78e (2026-10-27): the DigiByte, ord, table, wallet, docs and web files (796 tests)
+  pass but for main's own three (test_docs twice, test_ord_slim once), which fail on `main` 816c1e6 the same way.
+- **Needs from the other side:** apply the two commits like the Wojakcoin branch. A node that wants DigiByte runs digibyted 9.26.7
+  with `~/.digibyte/digibyte.conf` (`txindex=1`, RPC on 127.0.0.1:14022). Open question: a scanned first-envelope height for the
+  DGB ord index would shorten the walk, but changing `STARTS` needs a new protocol word, so it stays at the indexer's 0.
+
 ### 2026-10-26 The Browser: every name's site; pictures on .mesh pages (Claude)
 The operator: "Instead of mesh browser call the app browser. When it's installed on a T deck it should be the .mesh domains
 only; when it is opened on the PWA or website it should be able to explore all p:dns names", "small size images on
