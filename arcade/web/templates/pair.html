@@ -265,9 +265,10 @@
         const aside = set.reduce((n, p) => n + p.value, 0);
         if (!(await arcadeAsk(`Buy ${said.standing.amount} ${said.standing.name} at ${said.standing.price} while you're away?`,
             `This sets aside ${shown.coinsOf(aside)} coins of yours in ${set.length} lot`
-            + `${set.length === 1 ? "" : "s"}, still at your own address. Only this server can use `
-            + "them, only to fill this order, and each lot can spend no more than its own price. "
-            + `Network fee ${shown.coinsOf(shown.fee)}.`, "Set it up"))) return;
+            + `${set.length === 1 ? "" : "s"}, still at your own address, and signs each one ahead so this `
+            + "server can fill the order while you're away: each lot can spend no more than its own price, "
+            + "and you trust this server with that much until the order fills or you cancel it (cancelling "
+            + `moves the lots back to you). Network fee ${shown.coinsOf(shown.fee)}.`, "Set it up"))) return;
         await wallet.confirm(held, said);
         const lots = await (await fetch("/account/standing/lots", {method: "POST",
           headers: {"Content-Type": "application/json"},
@@ -288,7 +289,22 @@
           const r = await fetch("/account/standing/cancel", {method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({standing: b.dataset.standingCancel})});
-          if (r.ok) location.reload(); else { b.disabled = false; say((await r.json()).detail); }
+          const said = await r.json();
+          if (!r.ok) { b.disabled = false; say(said.detail); return; }
+          // The order is stopped. Its lots were signed ahead, and a signature is only undone when its coin moves:
+          // one small transaction back to this address (2026-10-27).
+          if (said.offer) {
+            try {
+              const held = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+              const shown = await wallet.checked(said, held);
+              if (await arcadeAsk("Move the order's coins back to you?",
+                  "The buy order is cancelled. Its lots were signed ahead of time, and the way to undo a "
+                  + "signature for good is to move the coins it was made over, back to yourself: one small "
+                  + `transaction, ${shown.coinsOf(shown.fee)} in fees.`, "Move them back"))
+                await wallet.confirm(held, said);
+            } catch (e) { say(e.message || String(e)); }
+          }
+          location.reload();
         };
       }
       // Arriving from Offers' "Sell to them": the sell form, filled in.

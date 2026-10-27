@@ -16391,22 +16391,65 @@ def create_app(state: AppState) -> FastAPI:
         s = _standing.get(str(said.get("standing") or ""))
         if not s or s["account"] != account.pubkey:
             return JSONResponse({"detail": "no buy order of yours by that id"}, status_code=404)
+        signatures = [str(x) for x in (said.get("signatures") or [])]
         try:
-            _standing.sign_lots(s["id"], [str(x) for x in (said.get("signatures") or [])])
-        except standinglib.StandingError as exc:
+            chain = _chain_asked({"chain": s["network"]})
+            pubkey = _coin_pubkey(account.pubkey, chain)
+            if hash160(pubkey) != b58check_decode(s["buyer"])[1]:
+                raise standinglib.StandingError("this account's key is not the buy order's address")
+            # Each lot's signature is kept only once it is the buyer's, SINGLE|ANYONECANPAY, over that lot's own digest
+            # (2026-10-27: anything else -- a weaker sighash above all, as in the Doginal Dogs theft elsewhere -- was
+            # kept as it came).
+            change_script = txbuild.p2pkh_script(s["buyer"])
+            lots = _standing.lots(s["id"], standinglib.LOT_UNSIGNED)
+            for lot, sig_hex in zip(lots, signatures):
+                sig = bytes.fromhex(sig_hex)
+                digest = fundinglib.sighash(
+                    [{"txid": lot["txid"], "vout": lot["vout"], "value": lot["value"], "address": s["buyer"]}],
+                    [(lot["change"], change_script)], 0, change_script, sighash_type=fundinglib.SINGLE_ANYONECANPAY)
+                if not sig or sig[-1] != fundinglib.SINGLE_ANYONECANPAY \
+                        or not doginal_marketlib.verify_signature(digest, sig[:-1], pubkey):
+                    raise standinglib.StandingError("a lot's signature is not this account's SINGLE|ANYONECANPAY "
+                                                    "signature over that lot: nothing was kept")
+            _standing.sign_lots(s["id"], signatures)
+        except (standinglib.StandingError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         return JSONResponse({"standing": s["id"], "status": "open"})
 
     @app.post("/account/standing/cancel")
     def account_standing_cancel(request: Request, payload: Any = Body(None)):
-        """Stop a buy order and forget its signatures; its lots are plain coins again."""
+        """Stop a buy order, forget its signatures, and offer the one small transaction that moves its signed lots back
+        to the buyer: forgetting a signature here does not unmake it, and a copy of one (a leaked database, a backup)
+        could still spend its lot until that coin moves (2026-10-27, as pre-signed inputs were swept in the Doginal
+        Dogs theft elsewhere). Nothing is broadcast here; the tab signs it as usual."""
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         s = _standing.get(str(said.get("standing") or ""))
         if not s or s["account"] != account.pubkey:
             return JSONResponse({"detail": "no buy order of yours by that id"}, status_code=404)
+        signed = [{"txid": lot["txid"], "vout": int(lot["vout"]), "value": int(lot["value"])}
+                  for lot in _standing.lots(s["id"], standinglib.LOT_OPEN)]
         _standing.cancel(s["id"])
-        return JSONResponse({"standing": s["id"], "status": "cancelled"})
+        done = {"standing": s["id"], "status": "cancelled"}
+        if not signed:
+            return JSONResponse(done)
+        try:
+            chain = _chain_asked({"chain": s["network"]})
+            with chain.rpc() as rpc:
+                unspent = [c for c in signed if rpc.call("gettxout", c["txid"], c["vout"], True)]
+            if not unspent:
+                return JSONResponse(done)
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                unsigned = fundinglib.build_sweep(
+                    db, chain.params, s["buyer"], unspent, rate=fees.MIN_FEE_PER_KB,
+                    what=f"move the {len(unspent)} coin{'s' if len(unspent) != 1 else ''} this buy order signed back to you",
+                    exclude=_flights.spent_by(account.pubkey, chain.network),
+                    extra=_flights.change_for(account.pubkey, chain.network))
+        except Exception as exc:                          # noqa: BLE001 -- cancelled here either way
+            return JSONResponse({**done, "sweep_error": str(exc)[:200]})
+        offer = _offers.add(account.pubkey, chain.network, unsigned, unsigned.what)
+        return JSONResponse({**done, "offer": offer.id, "chain": chain.network, **unsigned.as_json()})
 
     @app.get("/account/standing/fillable")
     def account_standing_fillable(request: Request):

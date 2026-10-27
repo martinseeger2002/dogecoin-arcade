@@ -126,3 +126,33 @@ def test_a_token_creator_sees_buy_orders_on_offers(node):
         state.public = False
     assert f'data-bid-decline="{key}"' not in page
     assert "fills when they are back" in book, "the order itself stays on the book"
+
+
+def test_a_lot_is_kept_only_with_its_buyers_single_anyonecanpay_signature_and_cancel_moves_it_back(node):
+    """2026-10-27, after leaked pre-signed inputs (SIGHASH_NONE|ANYONECANPAY) emptied 194 wallets of Doginal Dogs
+    elsewhere: a lot's signature was kept as it came. Now only the buyer's own SINGLE|ANYONECANPAY over that lot is
+    kept. And forgetting a signature does not unmake it, so cancelling offers the one transaction that moves the
+    signed lots back to the buyer."""
+    maker = _bookcoin(node, 76)
+    app, state, rpc = node
+    buyer, bsecret, bpubkey, baddr = _seated(app, state, rpc, 77, coins=(8.0, 1.0))
+    placed = buyer.post("/account/standing", json={
+        "property_id": maker["pid"], "amount": "10", "price": "0.1", "away": True, "lots": 1})
+    sid = placed.json()["standing"]["id"]
+    _signed(buyer, bsecret, bpubkey, placed)
+    lots = buyer.post("/account/standing/lots", json={"standing": sid}).json()["lots"]
+    digest = bytes.fromhex(lots[0]["digest"])
+    weak = _sign(bsecret, digest, 0x82).hex()                           # NONE|ANYONECANPAY byte
+    refused = buyer.post("/account/standing/sign", json={"standing": sid, "signatures": [weak]})
+    assert refused.status_code == 400 and "nothing was kept" in refused.text, refused.text
+    stranger = _sign(7, digest, funding.SINGLE_ANYONECANPAY).hex()
+    assert buyer.post("/account/standing/sign", json={"standing": sid, "signatures": [stranger]}).status_code == 400
+    good = _sign(bsecret, digest, funding.SINGLE_ANYONECANPAY).hex()
+    assert buyer.post("/account/standing/sign", json={"standing": sid, "signatures": [good]}).status_code == 200
+    _settled(state, rpc)
+    cancelled = buyer.post("/account/standing/cancel", json={"standing": sid})
+    assert cancelled.status_code == 200, cancelled.text
+    said = cancelled.json()
+    assert said["status"] == "cancelled" and said.get("offer"), said
+    moved = {(i["txid"], int(i["vout"])) for i in said["inputs"]}
+    assert (lots[0]["txid"], int(lots[0]["vout"])) in moved, "the signed lot is what moves back"
