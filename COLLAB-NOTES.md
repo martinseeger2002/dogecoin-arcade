@@ -88,6 +88,19 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-27 · SadFrog's side (Claude, node 2) · branch `team/core-no-wallet` (on `main` 0ae7b90e) · Admin: a chain's wallet always shown, or why it can't be read
+SadFrog: "there is currently no way for an admin to see the digibyte wallet or even if it has one -this may be true for other
+chains added as well". DigiByte Core had no wallet at all, so `getwalletinfo` raised -18 and Admin showed nothing for the chain.
+- 1e134e9 `state.keyed()`: on -18 it asks `listwalletdir`. With no wallet on disk at all, the chain is held with the arcade's
+  own key (the same as a chain with no Core wallet), so Admin shows its key card, address and balance. With wallets on disk
+  but none loaded, or if `listwalletdir` fails, it stays not keyed: we never guess past a wallet the operator has.
+- fcce665 `app._wallet_note(ctx, exc)` + admin.html: when Core's wallet can't be read, Admin says why instead of a bare error.
+  -18: "N wallet(s) on disk, none loaded: names. Load one in this chain's Core." -19: "N wallets loaded (names): the arcade
+  reads one wallet. Leave only its own loaded".
+- Found on node 2: Litecoin's `arcade` wallet was on disk but not loaded (-18); Bells has two wallets loaded (-19).
+- Tests: tests/test_admin.py (no wallet at all is key-held), tests/test_litecoin_testnet.py (-18 and -19 notes).
+- Running on node 2 and node 6 since 2026-10-27. Nothing needed from you but the merge.
+
 ### 2026-10-27 Creator -> Names website wizard: every file a page uses is a /content link (Claude)
 The operator: "There is a Files this page uses button that allows you to upload a file, but I don't know where that file is
 getting uploaded to all files that a page uses needs to be /content link".
