@@ -250,6 +250,8 @@ class Group:
     #: The comment itself, for a row about a comment, so the link opens the post
     #: WITH that comment shown (2026-09-28). Empty for everything else.
     comment: str = ""
+    #: The event's own extras, for a row the page draws differently by them (a welcome ask's `can_send`, 2026-10-27).
+    extra: dict = field(default_factory=dict)
 
 
 #: The kinds a feed REPLY is shown as, on my post and on one I follow.
@@ -276,7 +278,8 @@ def grouped(events: Iterable[Event]) -> list[Group]:
                         about_mine=ev.about_mine, unread=ev.unread,
                         comment=str((ev.extra or {}).get("txid") or "")
                         if (ev.source == "feed" and ev.kind in REPLIED)
-                        or ev.kind == "mentioned you in a comment" else "")
+                        or ev.kind == "mentioned you in a comment" else "",
+                        extra=dict(ev.extra or {}))
             rows.append(row)
             if key:
                 index[key] = row

@@ -108,9 +108,18 @@ def test_the_first_paid_block_and_all_of_its_payments():
 # ---------------------------------------------------------------- this arcade's side
 
 
+FREE = {"txid": "f" * 64, "vout": 0, "amount": 5.0}           # a wallet coin that carries no ord
+INSCRIBED = {"txid": "e" * 64, "vout": 0, "amount": 50.0}     # one an ord sits on (OrdGuard says so)
+
+
+class OrdGuard:
+    def spendable_known(self, coins):
+        return [c for c in coins if c["txid"] != INSCRIBED["txid"]]
+
+
 class Rpc:
-    def __init__(self, txs=None, balance=0.0):
-        self.txs, self.balance, self.calls = txs or {}, balance, []
+    def __init__(self, txs=None, balance=0.0, unspent=(FREE,)):
+        self.txs, self.balance, self.unspent, self.calls = txs or {}, balance, list(unspent), []
 
     def __enter__(self):
         return self
@@ -128,6 +137,10 @@ class Rpc:
             return {"height": {B1: 11, B2: 12}[args[0]]}
         if method == "getbalance":
             return self.balance
+        if method == "listunspent":
+            return [dict(u) for u in self.unspent]
+        if method == "lockunspent":
+            return True
         if method == "sendtoaddress":
             return TX[7]
         raise AssertionError(method)
@@ -201,6 +214,29 @@ def test_one_click_pays_one_pep_test_from_the_node_wallet_once(coins):
         welcoming.send(_state(rpc), book, asker, _id(asker))
     with pytest.raises(welcoming.WelcomeError, match="closed or gone"):
         welcoming.send(_state(rpc), book, me, "ab" * 32)
+
+
+def test_send_is_only_from_coins_free_of_ords(coins, monkeypatch):
+    """SadFrog, 2026-10-27: "the send button should hide if senders wallet is empty or only has ords"."""
+    from arcade import funding
+    from arcade.config import NETWORKS
+    monkeypatch.setattr(funding, "guard_on", lambda network: OrdGuard())
+    asker, me = SigningKey.generate(), SigningKey.generate()
+    addr = b58check_encode(NETWORKS["test"].pubkeyhash_version, bytes(20))
+    book = W.Book(None)
+    book.add(_ask(asker, at=int(time.time()), addr=addr))
+    for unspent in ((), (INSCRIBED,), ({**FREE, "amount": 1.0},)):   # empty, only an ord, no room for the fee
+        rpc = Rpc(unspent=unspent)
+        assert welcoming.can_send(_state(rpc)) is False
+        with pytest.raises(welcoming.WelcomeError, match="free of ords"):
+            welcoming.send(_state(rpc), book, me, _id(asker))
+        assert not any(m == "sendtoaddress" for m, _ in rpc.calls)
+    rpc = Rpc(unspent=(INSCRIBED, FREE))
+    assert welcoming.can_send(_state(rpc)) is True
+    welcoming.send(_state(rpc), book, me, _id(asker))
+    ords = [{"txid": INSCRIBED["txid"], "vout": 0}]
+    assert [c for c in rpc.calls if c[0] in ("lockunspent", "sendtoaddress")] == \
+        [("lockunspent", (False, ords)), ("sendtoaddress", (addr, 1.0)), ("lockunspent", (True, ords))]
 
 
 def test_asking_again_by_hand_only_once_the_first_is_gone(coins):
@@ -285,12 +321,17 @@ def test_admin_shows_the_asks_and_the_board_and_pays_in_one_click(meshed, monkey
     assert 'id="welcome"' in page and "Mine a block" in page and "Welcomers" in page
 
 
-def test_an_open_ask_is_in_the_operators_notifications_with_its_send_button(meshed):
+def test_an_open_ask_is_in_the_operators_notifications_with_its_send_button(meshed, monkeypatch):
     app, state, share = meshed
     asker = SigningKey.generate()
     share.book.add(_ask(asker, at=int(time.time()), tag="newbie"))
+    monkeypatch.setattr(state.messaging, "rpc", lambda: Rpc())
     page = app.get("/notifications", headers=LOCAL).text
     assert "asks for 1 PEP test" in page and f'data-ask="{_id(asker)}"' in page and "/admin#welcome" in page
+    monkeypatch.setattr(state.messaging, "rpc", lambda: Rpc(unspent=()))
+    page = app.get("/notifications", headers=LOCAL).text
+    assert "asks for 1 PEP test" in page and f'data-ask="{_id(asker)}"' not in page and "free of ords" in page
+    assert app.get("/admin/api/welcome", headers=LOCAL).json()["can_send"] is False
 
 
 def test_mine_a_block_is_one_block_at_most_a_hundred(meshed):

@@ -64,6 +64,7 @@
       if (a.paid_by.length) w.append(el('div', 'Sent by ' + a.paid_by.join(', '), 'muted'));
       row.append(w);
       if (a.paid_by_me) row.append(el('span', 'You sent one', 'muted'));
+      else if (!d.can_send) row.append(el('span', 'Your node wallet has no PEP test free of ords to send', 'muted'));
       else {
         var b = el('button', 'Send 1 PEP test', 'small'); b.type = 'button';
         b.onclick = function () {

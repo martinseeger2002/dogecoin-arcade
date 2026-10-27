@@ -8,7 +8,9 @@ paying another arcade's ask from the node's own wallet.
 - **Paid** (`tick` too): the asker looks at each payment it was told of with its own Core (or the one it borrows while
   it catches up): one in a block that pays its address closes the ask, with every such payment in that first block.
   Coins that came another way (a block it mined) close it with no payments named, so nobody scores.
-- **Paying** (`send`): 1 PEP test from the node's Core wallet on the messaging chain, then the `sent` record.
+- **Paying** (`send`): 1 PEP test from the node's Core wallet on the messaging chain, then the `sent` record. Only
+  from coins that carry no ord (SadFrog, 2026-10-27: "the send button should hide if senders wallet is empty or only
+  has ords"): `free_coins` is what Send may use, and the wallet's other coins are locked for the one send.
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ from .. import welcome as welcomelib
 log = logging.getLogger("arcade.web")
 
 ASKED = "welcome:asked"
+FEE_ROOM = 1_000_000                                 # 0.01 PEP test beside the 1 sent: the fee, with room
 
 
 class WelcomeError(ValueError):
@@ -58,6 +61,34 @@ def wallet_coins(state) -> int:
             return int(round(float(rpc.call("getbalance")) * 100_000_000))
     except Exception:                                  # noqa: BLE001
         return 0
+
+
+def _wallet_split(state, rpc) -> tuple[list[dict], list[dict]]:
+    """(free, kept) of the node wallet's coins on the messaging chain: free carries no ord, by what the chain's
+    inscription guard already knows (doginals.spendable_known, the rule node_trader's sends keep); kept is the rest."""
+    from .. import funding
+    coins = [{"txid": u["txid"], "vout": int(u["vout"]), "value": int(round(float(u["amount"]) * 100_000_000))}
+             for u in rpc.call("listunspent", 1) or [] if u.get("spendable", True)]
+    guard = funding.guard_on(state.messaging.network)
+    if guard is None:
+        return coins, []
+    clean = {(c["txid"], c["vout"]) for c in guard.spendable_known(coins)}
+    return ([c for c in coins if (c["txid"], c["vout"]) in clean],
+            [c for c in coins if (c["txid"], c["vout"]) not in clean])
+
+
+def free_coins(state) -> int:
+    """What the node wallet holds on the messaging chain in coins that carry no ord (koinu); 0 when it cannot be read."""
+    try:
+        with state.messaging.rpc() as rpc:
+            return sum(c["value"] for c in _wallet_split(state, rpc)[0])
+    except Exception:                                  # noqa: BLE001
+        return 0
+
+
+def can_send(state) -> bool:
+    """Whether Send is offered: 1 PEP test and its fee in coins free of ords."""
+    return free_coins(state) >= welcomelib.AMOUNT + FEE_ROOM
 
 
 def funded(state) -> bool:
@@ -169,7 +200,21 @@ def send(state, book: welcomelib.Book, key, asker: str, now: float | None = None
         raise WelcomeError(f"that ask's address is not a Pepecoin test address: {exc}") from exc
     try:
         with state.messaging.rpc() as rpc:
-            txid = str(rpc.call("sendtoaddress", ask["addr"], welcomelib.AMOUNT / 100_000_000))
+            free, kept = _wallet_split(state, rpc)
+            if sum(c["value"] for c in free) < welcomelib.AMOUNT + FEE_ROOM:
+                raise WelcomeError("the node's wallet has no 1 PEP test free of ords to send")
+            # sendtoaddress picks its own coins: every coin carrying an ord (or not yet judged) is locked for this
+            # one send and let go after, so only free coins can go.
+            keep = [{"txid": c["txid"], "vout": c["vout"]} for c in kept]
+            if keep:
+                rpc.call("lockunspent", False, keep)
+            try:
+                txid = str(rpc.call("sendtoaddress", ask["addr"], welcomelib.AMOUNT / 100_000_000))
+            finally:
+                if keep:
+                    rpc.call("lockunspent", True, keep)
+    except WelcomeError:
+        raise
     except Exception as exc:                          # noqa: BLE001
         raise WelcomeError(f"the node's wallet could not pay: {exc}") from exc
     rec = book.add(welcomelib.sign({"k": "sent", "at": int(now), "ask": asker, "txid": txid,
@@ -188,7 +233,7 @@ def view(state, book: welcomelib.Book | None, key, now: float | None = None) -> 
     if book is None or key is None:
         return {"mesh": False, "net": state.messaging.network, "address": address, "coins": coins,
                 "funded": funded(state),
-                "mine": None, "open": [], "scores": []}
+                "mine": None, "open": [], "scores": [], "can_send": False}
     me = bytes(key.verify_key).hex()
     tags = book.tags()
     ask, closed = book.ask_of(me), book.closed_of(me)
@@ -207,10 +252,11 @@ def view(state, book: welcomelib.Book | None, key, now: float | None = None) -> 
         rows.append({"node": a["a"], "tag": a["tag"], "address": a["addr"], "at": a["at"],
                      "paid_by_me": any(s["a"] == me for s in paid),
                      "paid_by": [tags.get(s["a"]) or s["a"][:12] for s in paid]})
+    sendable = can_send(state) if rows else False
     board = welcomelib.scores(book.all())
     for row in board:
         row["me"] = row["node"] == me
         row["node"] = row["node"][:12]
     return {"mesh": True, "me": me[:12], "net": state.messaging.network, "address": address, "coins": coins,
             "funded": funded(state),
-            "mine": mine, "open": rows, "scores": board, "amount": welcomelib.AMOUNT}
+            "mine": mine, "open": rows, "scores": board, "amount": welcomelib.AMOUNT, "can_send": sendable}

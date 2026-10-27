@@ -93,7 +93,7 @@ SadFrog: "make it easy for someone new running an arcade to get setup": a new ar
 1 PEP test, any operator pays it in one click from the notification, "One ask, closes when paid", a popup that nothing
 works until PEP test arrives with a Mine a block button usable before the node syncs, and "a highscores list for
 operators ... of people "welcoming" new operators - if 2 operators send a pep test in the same block, count it for both".
-One commit, 7e07abd, plus this entry:
+Commit 7e07abd, this entry, and the follow-up commit that adds the **Send only from coins free of ords** line below:
 - **Records (arcade/welcome.py):** `ask {addr, tag}`, `sent {ask, txid, tag}`, `closed {block, height, txids}`, each
   signed by the writing arcade's mesh node key (`a` = its node id), kept in `<home>/welcome.json` (5,000 at most; open
   asks 14 days, the rest a year). A record is refused whole when anything in it would need changing (a badly shaped
@@ -122,11 +122,17 @@ One commit, 7e07abd, plus this entry:
   work comes from that sharer then.
 - **Pepecoin test is still never "borrow":** the borrowing a new arcade needs is the catch-up borrowing that is already
   there, so `cores.REQUIRED` is untouched.
-- **Tests:** tests/test_welcome.py (16, including a three-arcade mesh a - b - c). tests/test_admin.py, test_notifications,
+- **Tests:** tests/test_welcome.py (17, including a three-arcade mesh a - b - c). tests/test_admin.py, test_notifications,
   test_mesh, test_core_catchup, test_litecoin_testnet, test_shared_revenue, test_ring, test_page_scripts and the smoke
   set pass, but for main's own two in test_docs.
-- **Needs from the other side:** apply the commit. Open question: is 1 PEP test the right amount, and should a node
-  wallet with no coins at all be allowed to show Send (it fails with the wallet's own error now)?
+- **Send only from coins free of ords** (SadFrog's answer, 2026-10-27: "yes 1 pep is correct and the send button should
+  hide if senders wallet is empty or only has ords"): `welcoming.free_coins` is the node wallet's `listunspent 1` less
+  every coin the messaging chain's inscription guard (funding.guard_on) does not already know is clean
+  (`spendable_known`, node_trader's rule). `can_send` needs 1 PEP test plus FEE_ROOM (0.01) of those; the view's
+  `can_send` and each welcome notification's `extra.can_send` (notify.Group now keeps an event's `extra`) hide the
+  button, and say why, without it. `send` refuses the same way and locks every other wallet coin around its one
+  `sendtoaddress`, so Core cannot pick an ord's coin.
+- **Needs from the other side:** apply the commits. 1 PEP test is the amount (SadFrog).
 
 ### 2026-10-27 Dogecoin's token rule from PR #32, without cutting the index; a backfill beside it (Claude)
 The operator: "I would like to keep what we have index if we can and if we are missing anything, I'd like to use sad frogs PR

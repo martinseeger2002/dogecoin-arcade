@@ -10623,11 +10623,15 @@ def create_app(state: AppState) -> FastAPI:
                 book, key, _ = _welcome()
                 if book is not None:
                     me = bytes(key.verify_key).hex()
-                    for a in book.open_asks():
-                        if a["a"] == me or any(s["a"] == me for s in book.sent_to(a["a"])):
-                            continue
+                    asks = [a for a in book.open_asks()
+                            if a["a"] != me and not any(s["a"] == me for s in book.sent_to(a["a"]))]
+                    # No Send button while the node wallet has no 1 PEP test free of ords (SadFrog, 2026-10-27).
+                    from . import welcoming
+                    sendable = welcoming.can_send(state) if asks else False
+                    for a in asks:
                         events.append(notify.Event(source="welcome", seq=int(a["at"]), kind="asks for 1 PEP test",
-                                                   actor=a["addr"], target=a["a"], at=int(a["at"]), text=a["tag"]))
+                                                   actor=a["addr"], target=a["a"], at=int(a["at"]), text=a["tag"],
+                                                   extra={"can_send": sendable}))
             except Exception as exc:                      # noqa: BLE001
                 log.info("notifications: welcome: %s", exc)
         return notify.merge(events, seen)

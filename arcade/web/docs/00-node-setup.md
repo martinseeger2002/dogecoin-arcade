@@ -79,6 +79,8 @@ sending a message and telling other operators who you are each cost a little of 
     your payout address on Pepecoin test. It asks once.
   - The ask shows in each operator's **Notifications** and in **Admin → Overview → Welcome new
     operators**, with a **Send 1 PEP test** button. One click pays it from that operator's node wallet.
+    The button shows only while that wallet holds 1 PEP test in coins that carry no ords; an ord's coin is
+    never spent to pay an ask.
   - The ask closes on the first block with a payment in it. Every operator paid in that block scores a
     point on the **Welcomers** board, so two operators who send in the same block both score.
   - If nobody answers within 14 days, the sheet offers **Ask again**, once.

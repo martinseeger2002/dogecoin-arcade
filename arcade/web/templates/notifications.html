@@ -43,8 +43,8 @@
         {{ 'to' if r.kind == 'sold' else 'from' }} {{ name(who) }} &middot; swap done
       {% elif r.source == 'welcome' %}
         <b>A new arcade{% if r.text %} run by {{ wall('@' ~ r.text) }}{% endif %} asks for 1 PEP test</b> to get
-        started. <button type="button" class="small nwelcome" data-ask="{{ r.target }}">Send 1 PEP test</button>
-        <span class="nwelcomesaid muted"></span>
+        started.{% if r.extra.can_send %} <button type="button" class="small nwelcome" data-ask="{{ r.target }}">Send 1 PEP test</button>
+        <span class="nwelcomesaid muted"></span>{% else %} <span class="muted">Your node wallet has no PEP test free of ords to send.</span>{% endif %}
       {% elif r.source == 'cardwatch' %}
         <b>A game card was hidden until you look at it.</b> {{ r.text }} (by {{ name(who) }})
       {% elif r.source == 'fill' %}
