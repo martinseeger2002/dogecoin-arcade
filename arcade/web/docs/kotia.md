@@ -6,10 +6,14 @@ arcade that shares its Kotia Core over the mesh (see *Shared Cores*). It is show
 until its node has synced.
 
 **Status:**
-- **In the wallet,** on the same key as PEP, DOGE and LTC: receive and send KOT.
+- **In the wallet,** on the same key as PEP, DOGE and LTC: receive and send KOT. The operator's sends
+  from the node key (Admin, when Kotia is borrowed or its Core has no wallet) write the transaction
+  time too (`keywallet.prepare`, 2026-10-27; before, Kotia's Core refused them).
 - **Swaps, trades, listings, bids, sweeps and inscription sends are refused on Kotia for now.** They
   do not write Kotia's transaction time yet (below), and the arcade says so instead of building
-  something Kotia's Core cannot read.
+  something Kotia's Core cannot read. A swap order with a Kotia side is refused when it is listed, by
+  the browser and by every node (`config.require_untimed`, 2026-10-27): before, it was listed, and a
+  lock funded on Kotia could never have been claimed or refunded. See *Exchange safety*.
 
 ## Running the node
 
@@ -46,6 +50,9 @@ port=46174
 - **Ordinary addresses and script (P2SH) addresses both start with `K`.** Their version bytes are
   46 and 45, which no other chain here uses. A Luckycoin `K…` (version 47) is a different chain,
   and the arcade refuses it in a Kotia send.
+- **A send to a Kotia script address pays a script hash** (`txbuild.SCRIPTHASH_VERSIONS` holds 45).
+  Until 2026-10-27 it did not: such a send was built as if to an ordinary address, and the coins
+  would have been lost.
 - **Kotia has no SegWit.**
 
 ## Keys and fees

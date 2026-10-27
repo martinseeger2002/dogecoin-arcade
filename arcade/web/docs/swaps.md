@@ -25,7 +25,7 @@ market: the seller signs their half ahead of time and the buyer completes it.
 * You do **not** have to keep the page open. Your own node finishes your side
   with transactions you signed in your browser in advance.
 * If the other side disappears part-way, your coins come back to you
-  automatically after at most **two hours**.
+  automatically after at most **eight hours** (see [Why eight hours](#why-eight-hours)).
 
 ## Which chains can swap
 
@@ -39,9 +39,11 @@ through CHECKLOCKTIMEVERIFY: the owner may take it back only after its time has 
   keep both. Your browser and every node refuse a swap order, a swap lock or an escrow with a Wojakcoin
   side. Swaps on one chain, which need no lock, are not affected.
 * **Bellscoin cannot swap yet.** Its script addresses share their version byte with ordinary Dogecoin
-  addresses, so the arcade makes no lock there.
+  addresses, so the arcade makes no lock there. Your browser and every node refuse a Bellscoin swap order
+  before anything is locked (`config.require_p2sh_payable`).
 * **Kotia cannot swap yet.** Every Kotia transaction carries a time, and the arcade writes it only for
-  ordinary sends so far.
+  ordinary sends so far: a lock's claim and refund would be refused by Kotia's Core and the coins would stay
+  locked. Your browser and every node refuse a Kotia swap order, lock or escrow (`config.require_untimed`).
 * **Luckycoin swaps are not open yet** (see its own page).
 
 ## Step by step
@@ -52,10 +54,10 @@ Say Alice lists 1,000 PEP for 300 DOGE and Bob takes it.
   (a hash) is shared.
 * **2. Bob locks his 300 DOGE** on the Dogecoin chain in a lock script that says:
   *Alice may take this if she shows the secret; otherwise Bob may take it back
-  after two hours.*
+  after eight hours.*
 * **3.** As soon as that lock is in the mempool, **Alice's browser locks her 1,000 PEP** on
   the Pepecoin chain: *Bob may take this with the same secret; otherwise Alice
-  may take it back after one hour.*
+  may take it back after four hours.*
 * **4.** As soon as that lock is in the mempool, **Bob claims the PEP**. To do it he has to
   put the secret on the Pepecoin chain, where anyone can read it.
 * **5. Alice claims the DOGE** with the secret she just read off the chain.
@@ -64,6 +66,27 @@ Because Bob can only take the PEP by revealing the secret, and the secret is all
 Alice needs to take the DOGE, the two claims stand or fall together. Alice's
 lock runs out before Bob's, so she always has time to claim after he does, and
 neither side can take the other's coins and keep their own.
+
+Every swap uses a **new secret**. Your browser and every node refuse a proposal whose secret's
+fingerprint they have seen before: a lock names the fingerprint, the two keys and the time but not
+an amount, so two swaps sharing one fingerprint would share one lock, and whoever made it could claim
+both of the other side's (`trade.Book.knows_secret_hash`, 2026-10-27).
+
+### Why eight hours
+
+On Dogecoin, Pepecoin and their family, a lock's time is checked against the time written in the
+block, and a miner may write a time up to **two hours ahead**. With short locks (they were two hours
+and one hour until 2026-10-27), one block stamped early could open a refund just after the other side's
+claim had shown the secret, and whoever mined it would keep both sides. So:
+
+* the locks are **eight hours** (the first side's) and **four hours** (the second side's);
+* the first side claims only while the second side's lock is **more than two hours and twenty minutes**
+  from its time (`trade.FUTURE_DRIFT` + `CLAIM_MARGIN`), so no early block can refund it under the claim;
+* a proposal whose times leave less than that is refused (`trade.locktimes_fit`).
+
+The cost: when the other side vanishes, your coins come back after up to eight hours instead of two.
+An arcade from before this change still takes these proposals; its own two-hour proposals are refused
+here as too close together.
 
 ## Why it is safe to close the page
 
@@ -143,3 +166,5 @@ Then your side is locked, and the swap finishes by itself.
   only once the ord index has read that note as valid, so it waits for the index, not only for the
   mempool.
 * The swap book is shared by every arcade. When two people take the same listing, the first one wins.
+* What every pre-signed thing on the exchange may and may not sign, and why, is on
+  [Exchange safety](exchange-safety.md).

@@ -71,6 +71,9 @@ ORDER = (
      "Rooms where players meet in your game, and trades between them: arcade.realtime and arcade.swap.trade."),
     ("swaps.md", "Swaps between chains: how a trade works here",
      "Trade PEP for DOGE and more with anyone, trustlessly: lock scripts, two minutes, nothing held."),
+    ("exchange-safety.md", "Exchange safety: what may be signed ahead, and why",
+     "For whoever changes the exchange: the rules that keep pre-signed listings, lots and swap locks from being "
+     "taken, learned from the Doginal Dogs theft (2026-10-26)."),
     ("litecoin.md", "Litecoin on this arcade",
      "What works on Litecoin, inscriptions and Taproot, and what to know before exchanging across chains."),
     ("bellscoin.md", "Bellscoin on this arcade",

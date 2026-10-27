@@ -16421,7 +16421,8 @@ def create_app(state: AppState) -> FastAPI:
         """Stop a buy order, forget its signatures, and offer the one small transaction that moves its signed lots back
         to the buyer: forgetting a signature here does not unmake it, and a copy of one (a leaked database, a backup)
         could still spend its lot until that coin moves (2026-10-27, as pre-signed inputs were swept in the Doginal
-        Dogs theft elsewhere). Nothing is broadcast here; the tab signs it as usual."""
+        Dogs theft elsewhere). Nothing is broadcast here; the tab signs it as usual. Rule 2 of
+        docs/exchange-safety.md."""
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         s = _standing.get(str(said.get("standing") or ""))
@@ -17296,7 +17297,7 @@ def create_app(state: AppState) -> FastAPI:
         A new leg is built over other coins, so the open one stays a signed, announced trade that any buyer can still
         complete while the seller holds the piece: listing again for more would leave the old price buyable (2026-10-27,
         after leaked pre-signed inputs emptied 194 wallets of Doginal Dogs elsewhere). Cancelling moves the coins its
-        signatures stand on, and then any price is fine."""
+        signatures stand on, and then any price is fine. Rule 1 of docs/exchange-safety.md."""
         def mine():
             return [r for r in state.listings.open_listings(chain.network, limit=1000, claims=True)
                     if r["owner"] == address and _sold_piece(r) == str(piece["txid"]).lower()]

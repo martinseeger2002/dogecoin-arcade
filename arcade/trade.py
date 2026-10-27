@@ -46,7 +46,8 @@ INITIATOR, RESPONDER = "initiator", "responder"
 LOCK_SECONDS = {"mainnet": 8 * 3600, "testnet": 8 * 3600}
 #: How far ahead of the real time a block may be stamped and still be taken (MAX_FUTURE_BLOCK_TIME on every chain here).
 #: Nobody claims the other lock unless its refund is further off than this, so no early block can open that refund
-#: before the claim is buried.
+#: before the claim is buried. Rule 4 of docs/exchange-safety.md: do not shorten LOCK_SECONDS below about
+#: 2 x FUTURE_DRIFT + margins without redoing that arithmetic.
 FUTURE_DRIFT = 2 * 3600
 #: Confirmations a lock needs before the other side acts on it. 2026-10-13: one, and
 #: three for a big one (reorg safety), "big" being a coin leg at or above BIG[network]; the
@@ -572,7 +573,8 @@ class Book:
     def knows_secret_hash(self, secret_hash: str) -> bool:
         """Whether any trade here, in any state, used this secret hash. A lock commits to the hash, the two keys and
         the lock time, not to an amount: two trades sharing a hash could share one counterparty lock, and whoever
-        made it would claim both of this trader's (2026-10-27). So a hash is used once."""
+        made it would claim both of this trader's (2026-10-27). So a hash is used once. Rule 3 of
+        docs/exchange-safety.md."""
         needle = str(secret_hash).lower()
         with self._open() as conn:
             rows = conn.execute("SELECT body FROM trade WHERE body LIKE ?", (f"%{needle}%",)).fetchall()

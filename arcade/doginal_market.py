@@ -392,7 +392,8 @@ class Book:
             # A newer listing of the same coin is the one shown. The older signature still stands until the coin moves,
             # so a price may only come down that way: a dearer one would leave the cheaper signature buyable by
             # whoever got hold of it (2026-10-27, after leaked pre-signed inputs emptied 194 wallets of Doginal Dogs
-            # elsewhere). Raising it means moving the coin first, which stills every older signature.
+            # elsewhere). Raising it means moving the coin first, which stills every older signature. Rule 1 of
+            # docs/exchange-safety.md.
             cheaper = conn.execute("SELECT MIN(price) FROM doginal_listing WHERE txid=? AND vout=? AND status='open'",
                                    (txid, vout)).fetchone()[0]
             if cheaper is not None and int(price) > int(cheaper):

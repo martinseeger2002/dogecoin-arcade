@@ -35,7 +35,9 @@ port=19919
 - **A Bellscoin script (P2SH) address starts with `D`,** exactly like an ordinary *Dogecoin*
   address, with the same version byte. The arcade cannot tell the two apart from the text, so on
   Bellscoin it **refuses a `D…` payee** rather than risk paying it the wrong way. For the same reason
-  it makes no swap lock, escrow or prize pool on Bellscoin yet. Ask for a `B…` address.
+  it makes no swap lock, escrow or prize pool on Bellscoin yet. Ask for a `B…` address. A swap
+  order with a Bellscoin side is refused when it is listed (2026-10-27; before, it was listed and failed
+  only once someone took it). See *Exchange safety*.
 - **`bel1…` (SegWit) and Taproot addresses are not paid yet.** The page says so if you paste one.
 
 ## Keys
