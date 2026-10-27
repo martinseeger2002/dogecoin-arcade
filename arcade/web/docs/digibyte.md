@@ -77,6 +77,8 @@ DigiByte, but its ordinals are not Taproot envelopes, so the index reads the Dog
 - **Numbering follows wonky-ord, as on Dogecoin's Doginals kind:** a new inscription is looked for only
   when no inscription already sits on the first unit of the coin it is made on, and an envelope of 0 parts
   is not an inscription.
+- **Tokens are `dgb-20`:** DRC-20's rules under DigiByte's own `"p":"dgb-20"`, as `wonky-ord-digibyte` reads
+  them. A `drc-20` inscription on DigiByte is not a token there.
 - **In the wallet:** your DigiByte ordinals are shown, and they can be sent, listed and bought like
   Doginals. An ordinary DGB send never spends a coin that carries one.
 - **Inscribing:** **Creator → Ords** inscribes one from your own wallet in 240-byte parts, as

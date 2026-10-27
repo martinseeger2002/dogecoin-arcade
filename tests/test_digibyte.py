@@ -192,3 +192,13 @@ def test_every_chains_script_address_is_paid_as_a_script_or_refused():
     class Kotia:
         network, params, label = "kot", NETWORKS["kot"], "Kotia"
     assert _check_address(b58check_encode(45, body), mainnet=Kotia()) is None, "a Kotia script address is paid"
+
+
+def test_digibyte_tokens_are_dgb_20():
+    """wonky-ord-digibyte reads DRC-20's rules under "p":"dgb-20" (src/drc20/params.rs PROTOCOL_LITERAL): a "drc-20"
+    inscription on DigiByte is no token there, and a "dgb-20" one is."""
+    from arcade import ord_rules
+    assert ord_rules.token_protocol("dgb") == "dgb-20"
+    body = b'{"p":"dgb-20","op":"deploy","tick":"digi","max":"21000000","lim":"1000"}'
+    assert ord_rules.token_op("dgb-20", b"text/plain", body)["op"] == "deploy"
+    assert ord_rules.token_op("dgb-20", b"text/plain", body.replace(b"dgb-20", b"drc-20")) is None

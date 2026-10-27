@@ -50,8 +50,9 @@ RULES_BY_NET = {"doge": 5, "bel": 7, "ltc": 5, "ltctest": 5}
 #: complete in its own input is an inscription (txid i1, i2 ... in input order); a piece of a longer one is not.
 EVERY_INPUT = frozenset({"bel"})
 #: The JSON tokens a chain's ord index reads ("p"): PRC-20 on Pepecoin (reallyshadydev/pepecoin-ord-indexer), bel-20 on
-#: Bellscoin (nintondo's, 2026-10-25: nook, CATS, ondo ...), the DRC-20 rules elsewhere.
-TOKEN_PROTOCOLS = {"main": "prc-20", "test": "prc-20", "bel": "bel-20"}
+#: Bellscoin (nintondo's, 2026-10-25: nook, CATS, ondo ...), dgb-20 on DigiByte (wonky-ord-digibyte src/drc20/params.rs
+#: PROTOCOL_LITERAL, 2026-10-26: its DRC-20 code with its own "p"), the DRC-20 rules elsewhere.
+TOKEN_PROTOCOLS = {"main": "prc-20", "test": "prc-20", "bel": "bel-20", "dgb": "dgb-20"}
 #: Chains whose indexes number a reinscription (an inscription made on a coin that already carries one), as nintondo's
 #: indexers do (Dogecoin since rules 5; Bellscoin, whose official indexer IS nintondo's ord).
 NUMBERS_REINSCRIPTIONS = frozenset({"doge", "bel"})
