@@ -717,6 +717,15 @@ def require_p2sh_payable(params: "Params") -> None:
                          f"ordinary addresses, so this arcade does not make one on {params.label} yet")
 
 
+def require_untimed(params: "Params") -> None:
+    """Refuse a swap lock or an escrow on a Peercoin-style chain whose transactions carry a time (`Params.tx_time`,
+    Kotia): the lock's claim and refund are built without `nTime`, so that chain's Core would refuse them and the coins
+    would stay locked (2026-10-27). Lifted once those builders write the time."""
+    if getattr(params, "tx_time", False):
+        raise ValueError(f"{params.label} transactions carry a time this arcade's lock claims and refunds do not write "
+                         f"yet, so it makes no swap or escrow lock on {params.label}")
+
+
 #: Networks on which the Messenger may operate. Testnet only, permanently
 #: (docs/DECISIONS.md D-010). Enforced in code, not configuration.
 MESSAGING_NETWORKS = frozenset({TESTNET.name, REGTEST.name})

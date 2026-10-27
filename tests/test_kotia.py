@@ -211,3 +211,62 @@ def test_getblock_with_a_number_is_answered_on_a_core_that_takes_a_boolean():
     assert [t["txid"] for t in v2["tx"]] == block["tx"]
     assert all("blockhash" not in t and "confirmations" not in t for t in v2["tx"])
     assert rpc.call("getblock", block["hash"], True)["tx"] == block["tx"]      # a boolean passes straight through
+
+
+def test_the_node_keys_own_send_carries_the_time(monkeypatch):
+    """2026-10-27: the operator's send from the node key (keywallet.prepare) wrote no nTime, so Kotia's Core would
+    refuse it. Its digest is now Kotia's own (the one Kotia's Core signed above), and its bytes read back timed."""
+    from types import SimpleNamespace
+    from arcade import escrow, keywallet as K
+    from arcade.node_trader import HeldKey
+    from arcade.script import hash160
+    t, prev, outputs = _tx()
+    coin = {"txid": prev["txid"], "vout": prev["vout"]}
+    script = bytes.fromhex(prev["scriptPubKey"])
+    assert escrow.sighash([coin], outputs, 0, script, ntime=t["ntime"]) == \
+        funding.sighash([coin], outputs, 0, script, ntime=t["ntime"])
+    key = HeldKey("11" * 32)
+    mine = b58check_encode(NETWORKS["kot"].pubkeyhash_version, hash160(key.pubkey))
+    chain = SimpleNamespace(params=NETWORKS["kot"], network="kot")
+    monkeypatch.setattr(K, "coins", lambda st, c: [{"txid": "ab" * 32, "vout": 0, "value": 5 * 10 ** 8}])
+    monkeypatch.setattr(K.time, "time", lambda: 1_800_000_000)
+    prepared = K.prepare(SimpleNamespace(key_address=lambda c: mine), chain, mine, 10 ** 8, key=key)
+    tx = rawchain.read_tx(bytes.fromhex(prepared.raw), timed=True)
+    assert tx.time == 1_800_000_000 and len(tx.vin) == 1
+    script_sig = tx.vin[0]["script"]
+    sig = script_sig[1:1 + script_sig[0]]
+    paid = [(int(v), bytes(s)) for v, s in tx.vout]
+    digest = funding.sighash([{"txid": "ab" * 32, "vout": 0}], paid, 0, bytes.fromhex(
+        "76a914" + hash160(key.pubkey).hex() + "88ac"), ntime=1_800_000_000)
+    assert verify_signature(digest, sig[:-1], key.pubkey), "signed over Kotia's timed digest"
+
+
+def test_no_swap_lock_or_escrow_is_made_where_it_could_not_settle():
+    """2026-10-27: a Kotia cross-chain order could be listed and its lock funded, but the lock's claim and refund are
+    built without Kotia's nTime, so its Core would refuse both and the coins would stay locked. Bellscoin orders were
+    listed and failed only when taken (its script addresses share Dogecoin's "D"). Both are refused in every
+    cross-chain order, in the server's lock builders, and in the browser before anything is locked."""
+    import time
+    from arcade import escrow, htlc, trade_orders
+    from arcade.config import MAINNET
+    with pytest.raises(ValueError, match="carry a time"):
+        config.require_untimed(KOT)
+    config.require_untimed(MAINNET)
+    with pytest.raises(ValueError, match="carry a time"):
+        htlc.address_of(bytes(40), KOT)
+    with pytest.raises(ValueError, match="carry a time"):
+        escrow.address_of(bytes(40), KOT)
+    order = {"id": "kot-order-1", "trade_key": "02" + "11" * 32, "msg_key": "22" * 32, "node": "33" * 32,
+             "expires": int(time.time()) + 3600,
+             "give": {"network": "kot", "kind": "coin", "asset": "", "amount": 100_000_000},
+             "get": {"network": "main", "kind": "coin", "asset": "", "amount": 100_000_000}}
+    for give in ("kot", "bel"):
+        with pytest.raises(trade_orders.OrderError):
+            trade_orders.check_order({**order, "give": {**order["give"], "network": give}})
+        with pytest.raises(trade_orders.OrderError):
+            trade_orders.check_order({**order, "give": order["get"], "get": {**order["give"], "network": give}})
+    assert trade_orders.check_order({**order, "give": {**order["give"], "network": "doge"}})
+    wallet = (TEMPLATES / "wallet_js.js").read_text()
+    assert 'const NO_LOCK = new Set(["bel", "kot"]);' in wallet
+    body = wallet[wallet.index("async function redeemsOf(trade) {"):]
+    assert body.index("NO_LOCK.has(leg.network)") < body.index("coins.htlcRedeem("), "refused before a lock is made"

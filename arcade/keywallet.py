@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import time
 from dataclasses import dataclass
 
 from .escrow import serialize, sighash
@@ -111,12 +112,15 @@ def prepare(state, chain, to: str, sats: int, key=None) -> Prepared:
         fee += change                                      # too small to keep: it goes to the miner
     key = key or node_key(state)
     script = p2pkh_script(mine)
+    # Kotia's transactions carry a time, in the bytes and in what each input signs (Params.tx_time): without it its
+    # Core refused the node's own send (2026-10-27).
+    ntime = int(time.time()) if getattr(chain.params, "tx_time", False) else None
     inputs = [{"txid": c["txid"], "vout": int(c["vout"]), "sequence": 0xFFFFFFFF} for c in chosen]
     signed = []
     for n, coin in enumerate(inputs):
-        sig = key.sign(sighash(inputs, outputs, n, script))
+        sig = key.sign(sighash(inputs, outputs, n, script, ntime=ntime))
         signed.append({**coin, "script_sig": push(sig) + push(key.pubkey)})
-    raw = serialize(signed, outputs)
+    raw = serialize(signed, outputs, ntime=ntime)
     txid = hashlib.sha256(hashlib.sha256(raw).digest()).digest()[::-1].hex()
     return Prepared(raw=raw.hex(), txid=txid, fee_sats=fee, to=to, sats=sats)
 

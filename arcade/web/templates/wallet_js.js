@@ -3040,6 +3040,9 @@ const REAL_COINS = new Set(["main", "doge", "ltc", "bel", "lky", "kot", "wjk"]);
 //: Chains whose consensus never enforces CHECKLOCKTIMEVERIFY (config.Params.cltv_enforced): a swap lock there refunds
 //: at any moment, so the side that locked could take it back after the other side claimed. No lock is made on them.
 const NO_CLTV = new Set(["wjk"]);
+//: Chains where no lock is made for another reason (config.require_p2sh_payable, config.require_untimed): Bellscoin's
+//: script addresses share Dogecoin's "D" byte, and Kotia's lock claims and refunds would lack its transaction time.
+const NO_LOCK = new Set(["bel", "kot"]);
 const tierOf = (leg) => REAL_COINS.has(leg.network) ? "mainnet" : "testnet";
 
 //: A swap with a data asset on either leg (a token, an NFT, a Doginal / ordinal, a DRC-20 / PRC-20 note: any leg that
@@ -3604,6 +3607,8 @@ async function redeemsOf(trade) {
   for (const leg of [trade.give, trade.get]) {
     if (leg && NO_CLTV.has(leg.network))
       throw new Error(`${COIN_WORD[leg.network] || leg.network} does not enforce lock times, so it can't be swapped across chains. Nothing was locked.`);
+    if (leg && NO_LOCK.has(leg.network))
+      throw new Error(`${COIN_WORD[leg.network] || leg.network} can't hold a swap lock on this arcade yet, so it can't be swapped across chains. Nothing was locked.`);
   }
   const h = unhex(trade.secretHash);
   const myTime = trade.role === "initiator" ? trade.t1 : trade.t2;

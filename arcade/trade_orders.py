@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import ord_chains
-from .config import NETWORKS
+from .config import NETWORKS, require_p2sh_payable, require_untimed
 from .doginals import INSCRIPTION_ID
 
 CONTENT_TYPE = "application/vnd.arcade.orders+json"
@@ -114,6 +114,14 @@ def check_order(said: Any, now: float | None = None) -> dict:
             params = NETWORKS.get(side["network"])
             if params is not None and not getattr(params, "cltv_enforced", True):
                 raise OrderError(f"{params.label} does not enforce lock times, so it can't be swapped across chains")
+            # Nor where the lock itself can't be made or spent (2026-10-27): an order that can never settle stays out of
+            # the book, rather than failing once somebody takes it.
+            try:
+                if params is not None:
+                    require_p2sh_payable(params)
+                    require_untimed(params)
+            except ValueError as exc:
+                raise OrderError(str(exc)) from None
     for field, pattern in (("trade_key", _KEY33), ("msg_key", _HEX32), ("node", _HEX32)):
         if not isinstance(said.get(field), str) or not pattern.match(said[field]):
             raise OrderError(f"an order's {field} is hex of the right length")

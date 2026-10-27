@@ -41,8 +41,8 @@ from typing import Any
 
 from . import encoding, inscriptions as I, payload as P
 from .script import b58check_encode, hash160
-from .config import require_cltv, require_p2sh_payable
-from .txbuild import op_return_script, p2pkh_script, push, varint
+from .config import require_cltv, require_p2sh_payable, require_untimed
+from .txbuild import op_return_script, p2pkh_script, push, time_field, varint
 
 OP_0, OP_1 = 0x00, 0x51
 OP_IF, OP_ELSE, OP_ENDIF = 0x63, 0x67, 0x68
@@ -147,6 +147,7 @@ def parse(redeem: bytes) -> dict | None:
 def address_of(redeem: bytes, params: Any) -> str:
     require_cltv(params)                  # the owner's branch is CHECKLOCKTIMEVERIFY (config.require_cltv)
     require_p2sh_payable(params)
+    require_untimed(params)
     return b58check_encode(params.scripthash_version, hash160(redeem))
 
 
@@ -173,9 +174,11 @@ def token_payload(property_id: int, units: int) -> bytes:
 
 # --- transactions out of an escrow ------------------------------------------------------
 
-def serialize(inputs: list[dict], outputs: list[tuple[int, bytes]], locktime: int = 0) -> bytes:
-    """inputs: [{txid, vout, script_sig (bytes), sequence}], outputs: [(sats, script)]."""
-    raw = (1).to_bytes(4, "little") + varint(len(inputs))
+def serialize(inputs: list[dict], outputs: list[tuple[int, bytes]], locktime: int = 0,
+              ntime: int | None = None) -> bytes:
+    """inputs: [{txid, vout, script_sig (bytes), sequence}], outputs: [(sats, script)]. `ntime`: a Peercoin-style
+    chain's transaction time (Params.tx_time, Kotia), after the version; None writes nothing."""
+    raw = (1).to_bytes(4, "little") + time_field(ntime) + varint(len(inputs))
     for coin in inputs:
         raw += bytes.fromhex(coin["txid"])[::-1] + int(coin["vout"]).to_bytes(4, "little")
         sig = coin.get("script_sig", b"")
@@ -188,10 +191,10 @@ def serialize(inputs: list[dict], outputs: list[tuple[int, bytes]], locktime: in
 
 
 def sighash(inputs: list[dict], outputs: list[tuple[int, bytes]], index: int,
-            redeem: bytes, locktime: int = 0) -> bytes:
-    """SIGHASH_ALL for input `index`, spending the escrow (`redeem` as its script)."""
+            redeem: bytes, locktime: int = 0, ntime: int | None = None) -> bytes:
+    """SIGHASH_ALL for input `index`, spending the escrow (`redeem` as its script); `ntime` as in `serialize`."""
     blank = [{**c, "script_sig": redeem if n == index else b""} for n, c in enumerate(inputs)]
-    raw = serialize(blank, outputs, locktime) + SIGHASH_ALL.to_bytes(4, "little")
+    raw = serialize(blank, outputs, locktime, ntime) + SIGHASH_ALL.to_bytes(4, "little")
     return hashlib.sha256(hashlib.sha256(raw).digest()).digest()
 
 
