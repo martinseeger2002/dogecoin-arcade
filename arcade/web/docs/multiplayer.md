@@ -191,6 +191,32 @@ viewer asks for it with your app's id, and gets it only:
 A pair that connects through the relay is `'direct'` like any other. Nothing
 changes for your page.
 
+**Many players: one host, a star.** By default every pair of players links (up to
+20 in a room), and every fast send goes to all of them. A game with a host (a
+server-like player that keeps the world) can link a star instead, so each player
+holds one connection and hears only what is meant for them:
+
+```js
+arcade.realtime.join('zone-1', {fast: true, link: []}).then(function (room) {
+  room.fast.link([hostId]);                        // a player: link with the host only
+  // the host: room.fast.link(null, {max: 60})     // everybody, up to 60 links
+  room.fast.send(bytes, {to: playerId});           // one player only (an id or an array)
+  room.fast.on('message', function (data, p) {      // an ArrayBuffer when bytes were sent
+    if (data instanceof ArrayBuffer) readPacket(new DataView(data));
+  });
+});
+```
+
+* **`join(name, {fast: true, link: [ids]})`** and **`room.fast.link(ids, {max})`**:
+  link only with these players (`null` = everybody again, the default). A pair
+  links only when both want to; to the other side a player who will not is
+  `'gone'`. `max` raises the number of links from 19 up to 60.
+* **`room.fast.send(value, {to})`**: only those players get it; the others never
+  see it.
+* **Bytes:** send an `ArrayBuffer` or a typed array and it arrives as an
+  `ArrayBuffer`. To a player in state `'room'` only up to 300 bytes go (as the
+  room carries them).
+
 The connections are made by the viewer, not your page. Your page still reaches
 nothing but the viewer, and the other players' addresses are never shown to it.
 

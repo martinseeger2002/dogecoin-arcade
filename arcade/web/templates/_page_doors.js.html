@@ -154,11 +154,11 @@
         });
       });
     }
-    function realtimeOpen(name, frame, j, game, fast){
+    function realtimeOpen(name, frame, j, game, fast, link, max){
       var base = j.base || '';
       var es = new EventSource(base + '/realtime/stream?token=' + encodeURIComponent(j.token));
       var h = rt[name] = {token: j.token, es: es, me: j.me, members: {}, game: game, base: base, frame: frame,
-                          wantFast: !!fast};
+                          wantFast: !!fast, link: fastLinkList(link), fastMax: fastMaxOf(max)};
       (j.members || []).forEach(function(p){ h.members[p.id] = p; });
       if (fast) fastStart(name, h);
       es.onmessage = function(ev){
@@ -247,7 +247,7 @@
             return;
           }
           if (!j || !j.ok || !j.online || !j.token) throw new Error('not yet');
-          var before = h.members, now = realtimeOpen(name, frame, j, h.game, h.wantFast);
+          var before = h.members, now = realtimeOpen(name, frame, j, h.game, h.wantFast, h.link, h.fastMax);
           // The page's own seat was replaced: say so, every time, so a game can send its
           // state again -- the others saw this player leave and come back (2026-10-13).
           frame.postMessage({arcade: 'realtime', event: {type: 'rejoined', room: name, member: now.me}}, '*');
@@ -280,6 +280,48 @@
     // public one); there is no relay unless the game's builder pays for one, so a pair that cannot connect
     // directly carries that link over the room instead, as often as the room allows (state 'room').
     var RTC = '\u001farcade-rtc:', FAST_WAIT = 12000, FAST_MAX = 16384, FAST_PEERS = 19, RTC_PIECE = 300;
+    // WHO TO LINK WITH, TO WHOM TO SEND, AND BYTES (2026-10-27, SadFrog's side for an MMO: "one host, many players").
+    // By default every pair links (up to FAST_PEERS) and a send goes to everybody, as text. A game may instead
+    //  - link only with the players it names (join {fast: true, link: [ids]}, or room.fast.link(ids) later; null =
+    //    everybody again), so a host and its players make a star: each player one connection, the host one per
+    //    player, up to FAST_PEERS_MAX for a host that asks (room.fast.link(null, {max: 60}));
+    //  - send to some players only (fast.send(value, {to: id | [ids]})), the rest never see it;
+    //  - send bytes (an ArrayBuffer or a typed array), which arrive as an ArrayBuffer; through the room (a pair
+    //    without a link) only up to 300 bytes, as base64.
+    // A pair only links when both want to: a viewer that does not link with the one offering says so ('n'), and the
+    // offerer lets that peer go instead of carrying it over the room; one that starts wanting a link with somebody
+    // whose id is lower (who would offer) asks them to ('h').
+    var FAST_PEERS_MAX = 60, FAST_TO_MAX = 64;
+    function fastLinkList(link){
+      return Array.isArray(link) ? link.slice(0, FAST_PEERS_MAX).map(String) : null;
+    }
+    function fastMaxOf(max){
+      return Math.max(1, Math.min(FAST_PEERS_MAX, (max | 0) || FAST_PEERS));
+    }
+    function fastLinks(h, id){ return !h.link || h.link.indexOf(String(id)) >= 0; }
+    function fastLink(name, h, link, max){
+      h.link = fastLinkList(link); h.fastMax = fastMaxOf(max);
+      if (!h.fast) return;
+      for (var id in h.fast.peers) if (!fastLinks(h, id)) {
+        var p = h.fast.peers[id].p; fastDrop(h, id); fastSay(name, h, p, 'gone');
+        fastSignal(name, h, p.id, {t: 'n'});
+      }
+      for (var mid in h.members) {
+        var had = !!h.fast.peers[mid];
+        fastMeet(name, h, h.members[mid]);
+        if (!had && h.fast.peers[mid] && mid < h.me.id) fastSignal(name, h, mid, {t: 'h'});   // they offer: ask them to
+      }
+    }
+    function fastB64(buf){
+      var u = new Uint8Array(buf), s = '';
+      for (var i = 0; i < u.length; i++) s += String.fromCharCode(u[i]);
+      return btoa(s);
+    }
+    function fastUnB64(text){
+      var t = atob(text), u = new Uint8Array(t.length);
+      for (var i = 0; i < t.length; i++) u[i] = t.charCodeAt(i);
+      return u.buffer;
+    }
     var fastIce = null;
     function fastServers(){
       // Which app asks: the operator chooses the apps their relay serves (realtime.py relay_for, 2026-10-23).
@@ -307,7 +349,8 @@
     }
     function fastMeet(name, h, p){
       if (!h.fast || !h.me || p.id === h.me.id || h.fast.peers[p.id]) return;
-      if (Object.keys(h.fast.peers).length >= FAST_PEERS) return;
+      if (!fastLinks(h, p.id)) return;                        // the game does not want this link
+      if (Object.keys(h.fast.peers).length >= (h.fastMax || FAST_PEERS)) return;
       var peer = h.fast.peers[p.id] = {p: p, state: '', tries: 0};
       fastSay(name, h, p, 'connecting');
       if (h.me.id < p.id) fastOffer(name, h, peer);
@@ -341,6 +384,7 @@
             clearTimeout(peer.timer);
             fastSay(name, h, peer.p, 'direct');
           };
+          dc.binaryType = 'arraybuffer';
           dc.onmessage = function(ev){ fastHeard(name, h, peer.p, ev.data); };
         });
         pc.onconnectionstatechange = function(){
@@ -423,7 +467,7 @@
     function fastAnswer(name, h, p, o){
       var peer = h.fast.peers[p.id];
       if (!peer) { fastMeet(name, h, p); peer = h.fast.peers[p.id]; }
-      if (!peer) return;
+      if (!peer) { if (!fastLinks(h, p.id)) fastSignal(name, h, p.id, {t: 'n'}); return; }   // not this link: say so
       fastPc(name, h, peer).then(function(pc){
         return pc.setRemoteDescription(sdpUnpack(o))
           .then(function(){ return pc.createAnswer(); })
@@ -448,8 +492,11 @@
         if (!h.fast || rt[name] !== h) return;
         var msg = h.fast.out.shift();
         if (!msg && fastViaRoom(h)) {
-          if (h.fast.reliable.length) msg = {f: 1, r: 1, d: h.fast.reliable.shift()};
-          else if (h.fast.latest != null) { msg = {f: 1, d: h.fast.latest}; h.fast.latest = null; }
+          var it = null;
+          if (h.fast.reliable.length) { it = h.fast.reliable.shift(); msg = {f: 1, r: 1, d: it.d}; }
+          else if (h.fast.latest != null) { it = h.fast.latest; msg = {f: 1, d: it.d}; h.fast.latest = null; }
+          if (it && it.b) msg.b = 1;
+          if (it && it.t) msg.t = it.t;
         }
         if (!msg) {
           if (!fastViaRoom(h)) { clearInterval(h.fast.pump); h.fast.pump = null; }
@@ -473,7 +520,8 @@
       if (msg.f) {                               // fast data carried by the room: only for those without a link
         var peer = h.fast.peers[p.id];
         if (peer && peer.state === 'direct') return;
-        if (typeof msg.d === 'string') fastHeard(name, h, p, msg.d);
+        if (msg.t && (!Array.isArray(msg.t) || msg.t.indexOf(h.me.id) < 0)) return;   // sent to others only
+        if (typeof msg.d === 'string') { try { fastHeard(name, h, p, msg.b ? fastUnB64(msg.d) : msg.d); } catch (err) {} }
         return;
       }
       if (msg.to !== h.me.id || typeof msg.d !== 'string') return;
@@ -484,6 +532,16 @@
       for (var i = 0; i < n; i++) if (got[i] == null) return;
       delete h.fast.parts[key];
       var o; try { o = JSON.parse(got.join('')); } catch (err) { return; }
+      if (o.t === 'n') {                       // they do not link with us: let them go, do not carry them over the room
+        if (h.fast.peers[p.id]) { fastDrop(h, p.id); fastSay(name, h, p, 'gone'); }
+        return;
+      }
+      if (o.t === 'h') {                       // they want the link now and wait for our offer (our id is lower)
+        if (!h.fast.peers[p.id]) fastMeet(name, h, p);
+        var ph = h.fast.peers[p.id];
+        if (ph && ph.state !== 'direct' && h.me.id < p.id) fastOffer(name, h, ph);
+        return;
+      }
       if (o.t === 'o') fastAnswer(name, h, p, o);
       else if (o.t === 'a') {
         var pr = h.fast.peers[p.id];
@@ -493,18 +551,26 @@
     // The game's fast.send: to every peer directly, and through the room to those without a link.
     function fastSend(h, m){
       if (!h.fast) return;
-      var data = String(m.data == null ? '' : m.data);
-      if (data.length > FAST_MAX) return;
+      var bin = m.data instanceof ArrayBuffer;
+      var data = bin ? m.data : String(m.data == null ? '' : m.data);
+      if ((bin ? data.byteLength : data.length) > FAST_MAX) return;
+      var to = Array.isArray(m.to) ? m.to.slice(0, FAST_TO_MAX).map(String) : null;
       var reliable = !!m.reliable, viaRoom = false;
       for (var id in h.fast.peers) {
+        if (to && to.indexOf(id) < 0) continue;
         var peer = h.fast.peers[id], dc = reliable ? peer.r : peer.u;
         if (peer.state === 'direct' && dc && dc.readyState === 'open') {
           try { dc.send(data); } catch (err) {}
         } else if (peer.state === 'room') viaRoom = true;
       }
-      if (viaRoom && data.length <= 400) {
-        if (reliable) { if (h.fast.reliable.length < 50) h.fast.reliable.push(data); }
-        else h.fast.latest = data;
+      if (viaRoom) {
+        var d = bin ? fastB64(data) : data, it = {d: d};
+        if (bin) it.b = 1;
+        if (to) it.t = to;
+        if (d.length <= 400 && JSON.stringify(it).length <= 470) {
+          if (reliable) { if (h.fast.reliable.length < 50) h.fast.reliable.push(it); }
+          else h.fast.latest = it;
+        }
       }
     }
     // CAMERA & MICROPHONE (2026-10-22: a game card can be allowed the camera and microphone "in the same way
@@ -904,7 +970,7 @@
         realtimeConnect(name, game, '').then(function(j){
           if (j.ok && j.online === false && !j.token) { answer(j); return; }
           if (!j.ok) { answer({ok: false, error: j.error || 'refused'}); return; }
-          var h = realtimeOpen(name, frame, j, game, !!m.fast);
+          var h = realtimeOpen(name, frame, j, game, !!m.fast, m.link, m.max);
           answer({ok: true, online: true, me: h.me, members: j.members, fast: !!h.fast, media: !!h.fast});
         }).catch(function(err){
           answer({ok: false, error: String((err && err.message) || err || 'refused')});
@@ -916,6 +982,7 @@
       var held = rt[name];
       if (m.op === 'fast') { if (held) fastSend(held, m); return; }   // many a second: never answered
       if (!held) { answer({ok: false, error: 'join the room first'}); return; }
+      if (m.op === 'fastlink') { fastLink(name, held, m.link, m.max); answer({ok: true, fast: !!held.fast}); return; }
       if (m.op === 'media') { mediaDoor(name, held, m, answer); return; }
       if (m.op === 'send') {
         realtimePost('/realtime/send', {token: held.token, data: String(m.data || '')}, held.base)

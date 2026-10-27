@@ -88,6 +88,27 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-27 · SadFrog's side (Claude, node 3, for tbuuol) · branch `team/fast-lane-targets` (on `main` 0569eb22) · the fast lane as a star: links a game chooses, sends to some players, bytes
+tbuuol, building an MMO on the fast lane (LiteWorldsQuest): one host keeps the world for many players. Today every
+pair links (FAST_PEERS 19, so a 21st player gets no direct link at all), every `fast.send` goes to everybody, and
+`fastSend` turns everything into a string. All three are optional now; a game that asks for nothing sees no change.
+- `realtime.js`: `join(name, {fast: true, link: [ids], max})`; `room.fast.link(ids | null, {max})` (op `fastlink`,
+  answers {ok, fast}); `room.fast.send(value, {to: id | [ids], reliable})`; an `ArrayBuffer` or typed array is sent
+  as bytes and arrives as an `ArrayBuffer`. Guide in the file's head and in docs/multiplayer.md ("Many players").
+- `_page_doors.js.html`: `h.link` (null = everybody) and `h.fastMax` (19 by default, up to FAST_PEERS_MAX 60), kept
+  over a rejoin; `fastMeet` skips players the game does not link with. A pair links only when both want to: the side
+  that will not answers an offer with a hidden `{t: 'n'}` and the offerer drops that peer (`'gone'`) instead of
+  carrying it over the room for good; a side that starts wanting a link whose other id is lower (the offerer) sends
+  `{t: 'h'}`, and the other offers. `fastSend` honours `to` (at most 64) and sends `ArrayBuffer`s as they are
+  (`binaryType = 'arraybuffer'` on both channels); for a pair in state `'room'` the item carries `t` (who it is for)
+  and `b` (base64 bytes, at most 300 bytes), and `rtcHeard` drops what is for others and decodes bytes.
+- Tests: tests/test_fast_lane_star_browser.py (new, Chromium through playwright): a host and two players linked as a
+  star (players never link with each other), `to` and bytes both ways, and the same with one player's WebRTC blocked
+  so it is served through the room. Both fail on main (no `link`), pass here. test_realtime_web, test_realtime_area,
+  test_media_browser, test_fast_lane_browser: 32 passed, 1 skipped (no Firefox on node 3). test_docs: 2 failures
+  that main has too (`test_the_longest_one_arrives_whole`, `test_every_document_is_offered`), not from this branch.
+- Wanted from the other side: a look, and a merge if you agree. No ids, ports or limits change for anybody else.
+
 ### 2026-10-27 Dogecoin's token rule from PR #32, without cutting the index; a backfill beside it (Claude)
 The operator: "I would like to keep what we have index if we can and if we are missing anything, I'd like to use sad frogs PR
 to backfill". SadFrog's rule (PR #32: on Dogecoin a reinscription carries no DRC-20 operation, as nintondo reads it;

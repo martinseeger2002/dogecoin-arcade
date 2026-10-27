@@ -60,6 +60,21 @@
 // order and of the rest only the latest, so the game keeps working, slower, for those two. `room.fast` is null
 // where the viewer has no WebRTC: use room.send then.
 //
+// A HOST AND ITS PLAYERS (2026-10-27): for more players than everybody-to-everybody can carry, link a star.
+//
+//   arcade.realtime.join('zone-1', {fast: true, link: []}).then(function (room) {   // link with nobody yet
+//     room.fast.link([hostId]);                         // a player: one connection, to the host
+//     // the host instead: room.fast.link(null, {max: 60})   -- everybody, up to 60
+//     room.fast.send(bytes, {to: playerId});            // to that player only (an id or an array of ids)
+//     room.fast.on('message', function (data, p) {       // data: an ArrayBuffer when bytes were sent
+//       if (data instanceof ArrayBuffer) readPacket(new DataView(data));
+//     });
+//   });
+//
+// A pair links only when both want to; a player who will not is 'gone' to the other. Bytes (an ArrayBuffer or a
+// typed array) arrive as an ArrayBuffer, up to 16 KB; to a player with no direct link (state 'room') only up to
+// 300 bytes go, as the room carries them.
+//
 // CAMERA & MICROPHONE (2026-10-22), for a video call or a game with voice. The card says "media": true and the
 // player turns on Camera & microphone on it. A page cannot open the camera itself; the viewer does, and draws:
 //
@@ -192,9 +207,21 @@
     return this;
   };
   Fast.prototype.send = function (value, options) {
-    var text = typeof value === 'string' ? value : JSON.stringify(value);
-    window.parent.postMessage({arcade: 'realtime', seq: 0, op: 'fast', room: this.room.name, data: text,
-                               reliable: !!(options && options.reliable)}, '*');
+    options = options || {};
+    var data;
+    if (value instanceof ArrayBuffer) data = value.slice(0);
+    else if (ArrayBuffer.isView(value)) data = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+    else data = typeof value === 'string' ? value : JSON.stringify(value);
+    var m = {arcade: 'realtime', seq: 0, op: 'fast', room: this.room.name, data: data, reliable: !!options.reliable};
+    if (options.to != null) m.to = [].concat(options.to).map(String);
+    window.parent.postMessage(m, '*');
+  };
+  // With whom this player links directly: an array of player ids, or null for everybody (the default). max: how
+  // many links at most (19 unless a host asks for more, up to 60). Answers {ok, fast}.
+  Fast.prototype.link = function (ids, options) {
+    return ask({op: 'fastlink', room: this.room.name, link: ids == null ? null : [].concat(ids).map(String),
+                max: (options && options.max) | 0}).then(function (said) { return {ok: true, fast: !!said.fast}; },
+                                                         function (err) { return {ok: false, error: err.message}; });
   };
   // {player id: 'connecting' | 'direct' | 'room'}
   Fast.prototype.peers = function () {
@@ -278,7 +305,10 @@
   // its family instead (its registry's id, say) and every version shares rooms.
   function joinOne(name, options) {
     if (rooms[name]) return Promise.resolve(rooms[name]);
-    return ask({op: 'join', room: name, game: options.game || '', fast: !!options.fast}).then(function (said) {
+    var m = {op: 'join', room: name, game: options.game || '', fast: !!options.fast};
+    if (Array.isArray(options.link)) m.link = options.link.map(String);
+    if (options.max) m.max = options.max | 0;
+    return ask(m).then(function (said) {
       var room = new Room(name, said);
       if (room.online) rooms[name] = room;
       return room;
