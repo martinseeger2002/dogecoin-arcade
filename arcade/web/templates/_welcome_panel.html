@@ -1,0 +1,156 @@
+{#- Admin -> Overview -> Welcome, and the first-run sheet (2026-10-27, arcade/welcome.py; SadFrog: "a popup telling
+    them they cant do anything until they get pep test - and that they should start mining a block (put the mine a
+    block button in that popup ...)", "a highscores list for operators to see on the overview of people "welcoming" new
+    operators"). /admin/api/welcome; its own script scope. -#}
+<style>
+#welcome .wrow{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line)}
+#welcome .wrow:last-child{border-bottom:0}
+#welcome .wrow .who{flex:1 1 220px;min-width:0;overflow-wrap:anywhere}
+#welcome .wboard{width:100%;border-collapse:collapse;margin-top:4px}
+#welcome .wboard td,#welcome .wboard th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+#welcome .wboard th{color:var(--muted);font-weight:600;font-size:.82rem}
+#welcome .wboard td.n{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+#welcome .wboard tr.me td{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+#welcome h3{margin:16px 0 4px;font-size:1rem}
+.wsheet{max-width:560px}
+.wsheet ol{margin:6px 0 0;padding-left:20px}
+.wsheet li{margin:4px 0}
+.wsheet .wstep{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:10px 0}
+.wsheet .wstep h4{margin:0 0 4px}
+</style>
+<section class="panel" id="welcome">
+  <h2>Welcome new operators</h2>
+  <p class="muted" style="margin:0 0 6px;font-size:.86rem">A new arcade asks every operator on the mesh for 1 PEP test
+    to get started. Send one and you score a point when it lands in the first block that pays them; two operators
+    paid in the same block both score.</p>
+  <div id="welcomemine" class="muted"></div>
+  <div id="welcomeopen"></div>
+  <h3>Welcomers</h3>
+  <div id="welcomeboard" class="muted">Looking&hellip;</div>
+</section>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var said = null, sheetShown = false, mineTimer = null;
+  function el(tag, txt, cls) { var e = document.createElement(tag); if (txt != null) e.textContent = txt; if (cls) e.className = cls; return e; }
+  function post(path, body) {
+    return fetch(path, {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'}, body: JSON.stringify(body || {})})
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error(j.detail || ('refused (' + r.status + ')')); return j; }); });
+  }
+  function who(tag, node) { return tag ? '@' + tag : 'arcade ' + node.slice(0, 12); }
+  function ago(t) {
+    var s = Math.max(0, Date.now() / 1000 - t);
+    return s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' days ago';
+  }
+  function mineLine(m) {
+    if (!m) return '';
+    var w = m.mine && m.mine.asked;
+    var line = !said.mesh ? 'The mesh is off, so no other arcade can be asked.'
+      : m.closed ? 'This arcade was welcomed' + (m.welcomed_by.length ? ' by ' + m.welcomed_by.map(function (t) { return '@' + t; }).join(', ') : '') + '.'
+      : m.open ? 'This arcade asked every operator for 1 PEP test ' + ago(m.at) + (m.senders.length ? '; sent by ' + m.senders.join(', ') + ', waiting for a block' : '; nobody has sent yet') + '.'
+      : m.asked ? 'This arcade’s ask went unanswered.'
+      : said.funded ? '' : 'This arcade asks for 1 PEP test as soon as it links to another arcade.';
+    return line;
+  }
+  function draw() {
+    var d = said; if (!d) return;
+    $('welcomemine').textContent = mineLine(d.mine);
+    var open = $('welcomeopen'); open.replaceChildren();
+    (d.open || []).forEach(function (a) {
+      var row = el('div', null, 'wrow'), w = el('div', null, 'who');
+      w.append(el('b', who(a.tag, a.node)), document.createTextNode(' asks for 1 PEP test · ' + ago(a.at)));
+      if (a.paid_by.length) w.append(el('div', 'Sent by ' + a.paid_by.join(', '), 'muted'));
+      row.append(w);
+      if (a.paid_by_me) row.append(el('span', 'You sent one', 'muted'));
+      else {
+        var b = el('button', 'Send 1 PEP test', 'small'); b.type = 'button';
+        b.onclick = function () {
+          b.disabled = true;
+          post('/admin/api/welcome/send', {ask: a.node}).then(function (r) { b.replaceWith(el('span', 'Sent: ' + r.txid.slice(0, 12) + '…', 'muted')); load(); })
+            .catch(function (e) { b.disabled = false; row.append(el('span', e.message, 'muted')); });
+        };
+        row.append(b);
+      }
+      open.append(row);
+    });
+    if (!(d.open || []).length) open.append(el('div', 'No new arcade is asking right now.', 'muted'));
+    var board = $('welcomeboard'); board.replaceChildren();
+    if (!(d.scores || []).length) { board.textContent = 'Nobody has welcomed a new arcade yet.'; }
+    else {
+      var t = el('table', null, 'wboard'), h = el('tr');
+      ['#', 'Operator', 'Welcomed'].forEach(function (x) { h.append(el('th', x)); });
+      t.append(h);
+      d.scores.forEach(function (s, i) {
+        var r = el('tr', null, s.me ? 'me' : '');
+        r.append(el('td', String(i + 1)), el('td', who(s.tag, s.node) + (s.me ? ' (you)' : '')), el('td', String(s.points), 'n'));
+        t.append(r);
+      });
+      board.append(t);
+    }
+    if (!d.funded && !sheetShown) sheet();
+  }
+  function sheet() {
+    // Shown at every visit to Admin until the first PEP test is here; "Later" closes it until the next one.
+    sheetShown = true;
+    var d = said, back = el('div', null, 'askcard-back'), card = el('div', null, 'panel askcard wsheet');
+    card.setAttribute('role', 'dialog'); card.setAttribute('aria-modal', 'true');
+    card.append(el('h3', 'First, this arcade needs some Pepecoin test'));
+    card.append(el('p', 'Until it has PEP test, this arcade can do almost nothing: claiming your @name, sending a message, '
+      + 'and telling other operators who you are each cost a little of it. There are two ways to get it.', 'muted'));
+    var s1 = el('div', null, 'wstep');
+    s1.append(el('h4', '1. Another operator sends you 1 PEP test'));
+    var ml = el('p', null, 'muted'); ml.style.margin = '0';
+    ml.textContent = mineLine(d.mine) || 'This arcade asks every operator on the mesh as soon as it links to one.';
+    s1.append(ml);
+    if (d.mine && d.mine.can_ask && d.mine.asked) {
+      var again = el('button', 'Ask again', 'small ghost'); again.type = 'button';
+      again.onclick = function () { again.disabled = true; post('/admin/api/welcome/ask').then(function () { ml.textContent = 'Asked again.'; load(); }).catch(function (e) { ml.textContent = e.message; }); };
+      s1.append(again);
+    }
+    var s2 = el('div', null, 'wstep');
+    s2.append(el('h4', '2. Mine a block yourself'));
+    s2.append(el('p', 'This computer works out a Pepecoin test block. Your own Pepecoin test node does not need to be synced: '
+      + 'until it is, the work comes from an arcade you borrow from, which is paid a tenth of the block. Mined coins can be '
+      + 'spent only once many more blocks are built on top of yours, so an operator’s 1 PEP test is the quicker start.', 'muted'));
+    var mine = el('button', 'Mine a block'); mine.type = 'button';
+    var ms = el('span', '', 'muted'); ms.style.marginLeft = '8px';
+    mine.onclick = function () {
+      mine.disabled = true; ms.textContent = 'Starting…';
+      post('/admin/api/mine', {net: d.net, blocks: 1}).then(function () { watchMine(ms, mine); })
+        .catch(function (e) { mine.disabled = false; ms.textContent = e.message; });
+    };
+    s2.append(mine, ms);
+    var s3 = el('div', null, 'wstep');
+    s3.append(el('h4', 'Then tell other operators who you are'));
+    var ol = el('ol');
+    [['Claim your @name', '/me', ': the name other operators see beside your arcade.'],
+     ['Publish your key', '/me/contacts', ' so other operators can find you and message you.'],
+     ['Welcome the next new operator', '#welcome', ': their ask shows in your Notifications and on the Overview.']]
+      .forEach(function (x) { var li = el('li'), a = el('a', x[0]); a.href = x[1]; li.append(a, document.createTextNode(x[2])); ol.append(li); });
+    s3.append(ol);
+    var row = el('div', null, 'row'), later = el('button', 'Later', 'ghost'); later.type = 'button';
+    later.onclick = function () { back.remove(); clearInterval(mineTimer); };
+    row.append(later);
+    card.append(s1, s2, s3, row);
+    back.append(card); document.body.append(back);
+  }
+  function watchMine(ms, button) {
+    clearInterval(mineTimer);
+    mineTimer = setInterval(function () {
+      fetch('/admin/api/mine', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); }).then(function (m) {
+        if (m.running) { ms.textContent = 'Mining… ' + (m.tries ? Number(m.tries).toLocaleString() + ' tries' + (m.rate ? ', ' + Number(m.rate).toLocaleString() + ' a second' : '') : ''); return; }
+        clearInterval(mineTimer); button.disabled = false;
+        ms.textContent = m.blocks ? 'Block found at height ' + m.found[m.found.length - 1].height + '! Its coins can be spent after many more blocks.' : (m.note || 'Stopped.');
+        load();
+      }).catch(function () {});
+    }, 3000);
+  }
+  function load() {
+    fetch('/admin/api/welcome', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); })
+      .then(function (j) { said = j; draw(); }).catch(function () { $('welcomeboard').textContent = 'Could not be read.'; });
+  }
+  load(); setInterval(function () { if (!document.hidden) load(); }, 60000);
+})();
+</script>

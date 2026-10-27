@@ -68,6 +68,36 @@ as `--update`; it also accepts `--dry-run` and `--check`.
 | macOS (Intel and Apple silicon) | supported, untested |
 | Windows 64-bit | supported, untested (`curl.exe -O ...` then `py install.py` in PowerShell) |
 
+## Your first Pepecoin test
+
+A new arcade can do almost nothing until it holds some Pepecoin test (PEP test): claiming your @name,
+sending a message and telling other operators who you are each cost a little of it. Until it has some,
+**Admin** opens with a sheet that says so, and it offers two ways to get it.
+
+- **Another operator sends you 1 PEP test.**
+  - As soon as your arcade links to another one, it asks every operator on the mesh for 1 PEP test, at
+    your payout address on Pepecoin test. It asks once.
+  - The ask shows in each operator's **Notifications** and in **Admin → Overview → Welcome new
+    operators**, with a **Send 1 PEP test** button. One click pays it from that operator's node wallet.
+  - The ask closes on the first block with a payment in it. Every operator paid in that block scores a
+    point on the **Welcomers** board, so two operators who send in the same block both score.
+  - If nobody answers within 14 days, the sheet offers **Ask again**, once.
+- **Mine a block yourself.** The sheet's **Mine a block** button mines one Pepecoin test block on this
+  computer.
+  - Your own Pepecoin test node does not need to be synced first. Until it is, the work comes from an
+    arcade you are linked to, and that arcade is paid a tenth of the block.
+  - Coins from a mined block can be spent only once many more blocks have been built on top of it, so
+    an operator's 1 PEP test is the quicker start.
+
+**Once your PEP test arrives:**
+1. **Claim your @name** on your account page (`/me`). It is the name other operators see beside your
+   arcade.
+2. **Publish your key** (`/me/contacts`), so other operators can find you and message you.
+3. **Welcome the next new operator:** their ask shows in your Notifications.
+
+The board, the asks and the payments are each arcade's own signed word, passed across the mesh. They
+are a welcome board, and nothing else trusts them.
+
 ## What the installer does
 
 1. **Checks the machine** — operating system, architecture, Python version.

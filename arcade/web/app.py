@@ -10617,6 +10617,19 @@ def create_app(state: AppState) -> FastAPI:
                                                text=f"“{r['name']}” looks like “{r['like_name']}”: {r['why']}"))
             except Exception as exc:                      # noqa: BLE001
                 log.info("notifications: card watch: %s", exc)
+            # A new arcade asks for its first PEP test (2026-10-27, arcade/welcome.py): one row per open ask this arcade
+            # has not paid, with its one-click Send on the row.
+            try:
+                book, key, _ = _welcome()
+                if book is not None:
+                    me = bytes(key.verify_key).hex()
+                    for a in book.open_asks():
+                        if a["a"] == me or any(s["a"] == me for s in book.sent_to(a["a"])):
+                            continue
+                        events.append(notify.Event(source="welcome", seq=int(a["at"]), kind="asks for 1 PEP test",
+                                                   actor=a["addr"], target=a["a"], at=int(a["at"]), text=a["tag"]))
+            except Exception as exc:                      # noqa: BLE001
+                log.info("notifications: welcome: %s", exc)
         return notify.merge(events, seen)
 
     def _swap_amount(leg: dict, n: int) -> str:
@@ -29409,6 +29422,13 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": f"mine for up to {MINE_HOURS_MAX} hours, or leave it blank"},
                                 status_code=400)
         until = time.time() + hours * 3600 if hours else None
+        # {"blocks": n}: stop after n blocks (2026-10-27, the first-run sheet's "Mine a block").
+        try:
+            blocks = int(said.get("blocks") or 0)
+        except (TypeError, ValueError):
+            blocks = -1
+        if not 0 <= blocks <= 100:
+            return JSONResponse({"detail": "mine up to 100 blocks, or leave it blank"}, status_code=400)
         to_faucet = said.get("pay") == "faucet"
         if to_faucet and chain.borrowed:
             return JSONResponse({"detail": "a borrowed chain has no faucet wallet here"}, status_code=400)
@@ -29437,7 +29457,7 @@ def create_app(state: AppState) -> FastAPI:
             try:
                 blockminer.mine(call, chain.params, address, share_to=lambda: _work_share(chain), workers=workers,
                                 stop=lambda: bool(_cpu_mining.get("stop")) or bool(until and time.time() >= until),
-                                progress=progress, on_found=found)
+                                progress=progress, on_found=found, **({"blocks": blocks} if blocks else {}))
             except Exception as exc:                       # noqa: BLE001 -- said in the panel
                 progress.note = str(exc)[:300]
                 log.warning("mining %s stopped: %s", chain.network, exc)
@@ -29498,6 +29518,62 @@ def create_app(state: AppState) -> FastAPI:
         out["stun_mine"] = [f"{h}:{p}" for h, p in stun.mine()] if stun is not None else []
         out["stun_known"] = len(stun.known()) if stun is not None else 0
         return JSONResponse(out)
+
+    def _welcome() -> tuple:
+        """(book, signing key, share) of the welcome (arcade/welcome.py), or Nones while the mesh is off."""
+        svc = getattr(state, "mesh", None)
+        share = getattr(svc, "welcome", None)
+        node = getattr(share, "node", None)
+        if share is None or node is None:
+            return None, None, None
+        return share.book, node.key, share
+
+    def _welcome_spread(share, record: dict) -> None:
+        try:
+            state.mesh._call(share.spread([record]))
+        except Exception:                                  # noqa: BLE001 -- kept here; the next link-up passes it on
+            log.info("welcome: could not pass a record on now", exc_info=True)
+
+    @app.get("/admin/api/welcome")
+    def admin_welcome(request: Request):
+        """Admin -> Overview's Welcome panel and the first-run sheet (2026-10-27, arcade/welcome.py): this arcade's
+        own ask for its first PEP test, the open asks of other arcades, and the board of who welcomed most."""
+        _admin_check(request)
+        from . import welcoming
+        book, key, _ = _welcome()
+        return JSONResponse(welcoming.view(state, book, key), headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/welcome/send")
+    def admin_welcome_send(request: Request, payload: Any = Body(None)):
+        """Pay another arcade's ask 1 PEP test from the node's wallet, in one click (test coins: no password, as the
+        faucet sends without one). {"ask": its arcade's mesh id}."""
+        _admin_check(request, write=True)
+        from . import welcoming
+        book, key, share = _welcome()
+        if book is None:
+            return JSONResponse({"detail": "the mesh is off: no ask can be paid"}, status_code=400)
+        said = payload if isinstance(payload, dict) else {}
+        try:
+            rec = welcoming.send(state, book, key, str(said.get("ask") or "").lower())
+        except welcoming.WelcomeError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        _welcome_spread(share, rec)
+        return JSONResponse({"ok": True, "txid": rec["txid"]})
+
+    @app.post("/admin/api/welcome/ask")
+    def admin_welcome_ask(request: Request):
+        """Ask the mesh again, by hand, once this arcade's first ask went unanswered (or was never made)."""
+        _admin_check(request, write=True)
+        from . import welcoming
+        book, key, share = _welcome()
+        if book is None:
+            return JSONResponse({"detail": "the mesh is off: turn it on to ask other arcades"}, status_code=400)
+        try:
+            rec = welcoming.ask_again(state, book, key)
+        except welcoming.WelcomeError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+        _welcome_spread(share, rec)
+        return JSONResponse({"ok": True})
 
     @app.get("/admin/api/arcades")
     def admin_arcades(request: Request):
@@ -30168,8 +30244,10 @@ def create_app(state: AppState) -> FastAPI:
             return answer(code=-1, message=str(exc)[:300], status=500)
 
     def _work_share(chain) -> str | None:
-        """Where a tenth of a block mined on `chain` is owed: the sharer of a borrowed chain, else nobody."""
-        if not chain.borrowed:
+        """Where a tenth of a block mined on `chain` is owed: the sharer of a borrowed chain, or of a chain run here
+        whose Core is still catching up (its work comes from that sharer then: core_catchup), else nobody."""
+        from .. import core_catchup
+        if not chain.borrowed and not core_catchup.borrowing(chain):
             return None
         from ..mesh import coreshare
         from .. import blockminer

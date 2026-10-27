@@ -836,6 +836,15 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
     service.operators = OperatorsShare(lambda: operator_about(state),
                                        lambda peer, tag, sites: affiliateslib.record(state, peer, tag, sites))
     service.node.add_extension(service.operators)
+    # Welcoming new operators (welcomeshare.py, arcade/welcome.py, 2026-10-27): a new arcade's ask for 1 PEP test,
+    # who paid it, and the welcome board, across the whole mesh.
+    from .welcomeshare import WelcomeShare
+    from .. import welcome as welcomelib
+    from ..web import welcoming
+    book = welcomelib.Book(Path(state.home) / "welcome.json")
+    service.welcome = WelcomeShare(book, lambda: welcoming.tick(state, book, service.node.key,
+                                                                len(service.node.links)))
+    service.node.add_extension(service.welcome)
     # The ord indexes' shared chunks, one per chain (doginalshare.py, 2026-10-20).
     if hasattr(state, "ord_indexes"):
         from .doginalshare import DxShare

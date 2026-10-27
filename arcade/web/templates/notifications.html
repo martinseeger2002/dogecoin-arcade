@@ -14,7 +14,7 @@
 {%- endmacro %}
 
 {% macro row(r) %}
-{% set link = ('/admin#gamecards' if r.source == 'cardwatch' else '/exchange/pair/' ~ r.target if r.source == 'fill' else '/me/messages' if r.source == 'message'
+{% set link = ('/admin#gamecards' if r.source == 'cardwatch' else '/admin#welcome' if r.source == 'welcome' else '/exchange/pair/' ~ r.target if r.source == 'fill' else '/me/messages' if r.source == 'message'
                else ('/feed?post=' ~ (r.comment or r.target) if r.source in ('feed', 'mention', 'mention_reply')
                else ('/inscriptions/' ~ r.target ~ '/view' if r.source == 'swap'
                else ('/exchange/swap-trade/' ~ r.target if r.source == 'lockswap' else ('/me/nfts' if public else '/wallet/nfts'))))) %}
@@ -41,6 +41,10 @@
       {% elif r.source == 'lockswap' %}
         <b>You {{ 'sold' if r.kind == 'sold' else 'bought' }} {{ r.text }}</b>
         {{ 'to' if r.kind == 'sold' else 'from' }} {{ name(who) }} &middot; swap done
+      {% elif r.source == 'welcome' %}
+        <b>A new arcade{% if r.text %} run by {{ wall('@' ~ r.text) }}{% endif %} asks for 1 PEP test</b> to get
+        started. <button type="button" class="small nwelcome" data-ask="{{ r.target }}">Send 1 PEP test</button>
+        <span class="nwelcomesaid muted"></span>
       {% elif r.source == 'cardwatch' %}
         <b>A game card was hidden until you look at it.</b> {{ r.text }} (by {{ name(who) }})
       {% elif r.source == 'fill' %}
@@ -94,6 +98,25 @@
 {% endif %}
 
 <script>
+// A new arcade's ask, paid from the node's wallet in one click (2026-10-27, arcade/welcome.py). The row is a link
+// to Admin's Welcome panel; the button pays without leaving the page.
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest(".nwelcome");
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  var said = b.parentNode.querySelector(".nwelcomesaid");
+  b.disabled = true;
+  fetch("/admin/api/welcome/send", {method: "POST", credentials: "same-origin",
+        headers: {"Content-Type": "application/json", "X-Arcade-Admin": "1"},
+        body: JSON.stringify({ask: b.dataset.ask})})
+    .then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); })
+    .then(function (got) {
+      if (got[0]) { b.remove(); said.textContent = "Sent: " + got[1].txid.slice(0, 12) + "…"; }
+      else { b.disabled = false; said.textContent = got[1].detail || "not sent"; }
+    })
+    .catch(function () { b.disabled = false; said.textContent = "not sent: try Admin → Overview"; });
+}, true);
+
 // The next page as the reader reaches the foot of this one (2026-09-29).
 // The link works on its own too: scrolling is a convenience, not the only way.
 (function () {
@@ -154,6 +177,8 @@
 .nquote.said{white-space:normal;color:var(--fg);background:var(--code);border-radius:10px;
   padding:6px 10px;font-size:.9rem;display:-webkit-box;-webkit-line-clamp:3;
   -webkit-box-orient:vertical}
+.nwelcome{margin-left:6px}
+.nwelcomesaid{font-size:.85rem}
 .ntime{flex:none;color:var(--muted);font-size:.78rem;margin-top:2px}
 .nrow.new .ntime{color:var(--accent);font-weight:650}
 .nempty{text-align:center;padding:34px 20px}
