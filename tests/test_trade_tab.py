@@ -299,16 +299,22 @@ def test_wallet_js_accepts_the_lock_times_the_python_does(tmp_path):
         give = T.Leg(give_net, "coin", "", 3 * COIN, a.pub.hex(), b.pub.hex())
         get = T.Leg(get_net, "coin", "", 2 * COIN, b.pub.hex(), a.pub.hex())
         t1, t2 = T.plan_locktimes(give, get, T.INITIATOR, now)
-        for x1, x2, at in ((t1, t2, now), (t1, t2, now + 1700), (t1, t2, now + 1800), (t2 + 1, t2, now),
-                           (t2 + 3599, t2, now), (t2 + 3600, t2, now), (t2 - 5, t2, now), (t2, t2, now),
-                           (now + 4 * 3600 + 3600, now + 4 * 3600, now), (now + 6 * 3600, now + 4 * 3600 + 1, now),
-                           (2 ** 32 - 1, 2 ** 32 - 3601, now), (t1, None, now), ("x", t2, now)):
+        half = T.LOCK_SECONDS["mainnet"] // 2
+        edge = T.LOCK_MARGIN + T.CLAIM_MARGIN + T.FUTURE_DRIFT          # the least time T2 leaves (2026-10-27)
+        for x1, x2, at in ((t1, t2, now), (t1, t2, now + 1700), (t1, t2, t2 - edge), (t2 + 1, t2, now),
+                           (t2 + half - 1, t2, now), (t2 + half, t2, now), (t2 - 5, t2, now), (t2, t2, now),
+                           (now + 16 * 3600 + half, now + 16 * 3600, now),
+                           (now + 16 * 3600 + half + 1, now + 16 * 3600 + 1, now),
+                           (2 ** 32 - 1, 2 ** 32 - 1 - half, now), (t1, None, now), ("x", t2, now)):
             cases.append((dataclasses.asdict(give), dataclasses.asdict(get), x1, x2, at,
                           T.locktimes_fit(give, get, x1, x2, at)))
     got = run_wallet_js(tmp_path, "return data.map(([g, t, t1, t2, now]) => w.locktimesFit(g, t, t1, t2, now));",
                         [c[:5] for c in cases])
     assert got == [c[5] for c in cases]
     assert sum(1 for c in cases if c[5] == "") == 12, "this code's own proposals, and the edges that are fine"
+    assert all(c[5] for c in cases
+               if isinstance(c[3], int) and c[4] == c[3] - T.LOCK_MARGIN - T.CLAIM_MARGIN - T.FUTURE_DRIFT), \
+        "too late to leave the initiator its claim time"
 
 
 def test_wallet_js_waits_a_confirmation_for_a_data_asset_as_the_python_does(tmp_path):

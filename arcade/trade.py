@@ -39,7 +39,15 @@ INITIATOR, RESPONDER = "initiator", "responder"
 #: 2026-10-13: 2 h. Short, because nobody has to be online to finish a swap: each
 #: side's node holds its pre-signed claim and refund (arcade/trade_watch.py), so the lock
 #: time only bounds how long coins sit when the other side vanishes.
-LOCK_SECONDS = {"mainnet": 2 * 3600, "testnet": 2 * 3600}
+#: 2026-10-27: 8 h (the responder's 4 h). A time lock is checked against the block's own time where BIP113 is not active
+#: (Dogecoin, Pepecoin and their family), and a miner may stamp a block up to FUTURE_DRIFT ahead: with 2 h and 1 h, both
+#: refunds could be opened by one early block, so whoever could mine one on a cheap chain could refund after the other
+#: side's claim showed the secret and take both legs. Every lock time now stands beyond that reach while it matters.
+LOCK_SECONDS = {"mainnet": 8 * 3600, "testnet": 8 * 3600}
+#: How far ahead of the real time a block may be stamped and still be taken (MAX_FUTURE_BLOCK_TIME on every chain here).
+#: Nobody claims the other lock unless its refund is further off than this, so no early block can open that refund
+#: before the claim is buried.
+FUTURE_DRIFT = 2 * 3600
 #: Confirmations a lock needs before the other side acts on it. 2026-10-13: one, and
 #: three for a big one (reorg safety), "big" being a coin leg at or above BIG[network]; the
 #: operator sets the real line (admin, swap_big_*). 2026-10-17: none below that line
@@ -421,7 +429,8 @@ def locktimes_fit(give: Leg, get: Leg, t1: Any, t2: Any, now: int) -> str:
         return "lock times are whole seconds"
     if t1 - t2 < max(LOCK_GAP_FLOOR, lock // 2):
         return "the two lock times are too close together to finish the swap safely"
-    if t2 - LOCK_MARGIN <= int(now):
+    if t2 - LOCK_MARGIN - CLAIM_MARGIN - FUTURE_DRIFT <= int(now):
+        # The initiator claims only while T2 is more than FUTURE_DRIFT off (next_step): leave it the time to.
         return "too little time is left before the responder's lock time"
     if t2 - int(now) > 2 * lock:
         return "the responder's lock time is too far off"
@@ -492,7 +501,7 @@ def next_step(trade: Trade, facts: Facts, now: int) -> tuple[str, str]:
             return WAIT, "waiting for the other lock to confirm"
         if theirs.spent_by_script_sig:
             return WAIT if now < trade.my_locktime else REFUND, "their lock went back to them"
-        if now < trade.their_locktime - CLAIM_MARGIN:
+        if now < trade.their_locktime - CLAIM_MARGIN - FUTURE_DRIFT:
             return CLAIM, "their lock is confirmed and agreed: claim it (this reveals the secret)"
         if now >= trade.my_locktime:
             return REFUND, "too late to claim safely; my lock time has passed"

@@ -69,6 +69,21 @@ def test_the_initiator_never_claims_too_close_to_the_responders_time():
     assert T.next_step(tr, facts, now + 7201)[0] == T.REFUND
 
 
+def test_the_initiator_never_claims_while_an_early_block_could_open_the_responders_refund():
+    """2026-10-27 (lock-script review): without BIP113 a time lock is checked against the block's own time, and a block
+    may be stamped up to 2 h ahead. Claiming while T2 is within that reach let the responder mine one early block with
+    its refund, after the claim showed the secret, and take both legs. So the claim waits for T2 to be beyond it."""
+    now = int(time.time())
+    t2 = now + T.FUTURE_DRIFT + T.CLAIM_MARGIN
+    tr, *_ = _trade(T.INITIATOR, t1=t2 + 4 * 3600, t2=t2)
+    facts = T.Facts(mine=_seen(tr, False), theirs=_seen(tr, True))
+    assert T.next_step(tr, facts, now)[0] == T.WAIT, "an early block could still refund their lock"
+    assert T.next_step(tr, facts, now - 1)[0] == T.CLAIM
+    t1, t2 = T.plan_locktimes(tr.give, tr.get, T.INITIATOR, now)
+    assert t2 - now > T.FUTURE_DRIFT + T.CLAIM_MARGIN + T.LOCK_MARGIN, "a new swap leaves time to lock and claim"
+    assert t1 - t2 > T.FUTURE_DRIFT, "and the responder's claim stays out of reach of the initiator's early refund"
+
+
 def test_the_responder_locks_only_after_the_initiator_and_claims_once_the_secret_shows():
     tr, a, b, secret = _trade(T.RESPONDER)
     now = int(time.time())
@@ -296,7 +311,7 @@ def test_one_confirmation_and_three_for_a_big_swap():
     assert T.confirmations_for(pep, big) == 1, "either leg at its line: one confirmation (2026-10-17)"
     assert T.confirmations_for(test, test) == 0, "testnet coins never count as big"
     assert T.confirmations_for(small, pep, {"doge": 5 * COIN}) == 1, "the operator's own line"
-    assert T.LOCK_SECONDS["mainnet"] == 2 * 3600, "the operator: 2 h locks"
+    assert T.LOCK_SECONDS["mainnet"] == 8 * 3600, "8 h locks (2026-10-27): beyond a block stamped 2 h ahead"
 
 
 def test_a_data_asset_always_waits_a_confirmation():
@@ -363,15 +378,20 @@ def test_a_responder_accepts_only_lock_times_it_can_finish_under():
         assert T.locktimes_fit(g, t, t1, t2, now) == "", "this code's own proposals pass"
         assert T.locktimes_fit(t, g, t1, t2, now + 25 * 60) == "", "from either side, a while after they were made"
     t1, t2 = T.plan_locktimes(give, get, T.INITIATOR, now)
-    assert "too close" in T.locktimes_fit(give, get, t2 + 1, t2, now), "a second apart: no time to claim"
-    assert "too close" in T.locktimes_fit(give, get, t2 + T.LOCK_GAP_FLOOR - 1, t2, now)
-    assert T.locktimes_fit(give, get, t2 + T.LOCK_GAP_FLOOR, t2, now) == ""
-    assert "too close" in T.locktimes_fit(give, get, t2 - 10, t2, now), "the responder's after the initiator's"
-    assert "too little time" in T.locktimes_fit(give, get, now + 3 * 3600, now + T.LOCK_MARGIN, now)
     lock = T.LOCK_SECONDS["mainnet"]
-    assert T.locktimes_fit(give, get, now + 2 * lock + 3600, now + 2 * lock, now) == ""
-    assert "too far" in T.locktimes_fit(give, get, now + 2 * lock + 3601, now + 2 * lock + 1, now)
-    assert "too far" in T.locktimes_fit(give, get, 2 ** 32 - 1, 2 ** 32 - 3601, now), "years off"
+    half = lock // 2
+    assert "too close" in T.locktimes_fit(give, get, t2 + 1, t2, now), "a second apart: no time to claim"
+    assert "too close" in T.locktimes_fit(give, get, t2 + half - 1, t2, now)
+    assert T.locktimes_fit(give, get, t2 + half, t2, now) == ""
+    assert "too close" in T.locktimes_fit(give, get, t2 - 10, t2, now), "the responder's after the initiator's"
+    assert "too little time" in T.locktimes_fit(give, get, now + T.LOCK_MARGIN + half, now + T.LOCK_MARGIN, now)
+    # 2026-10-27: the initiator claims only while T2 is more than FUTURE_DRIFT off, so T2 must leave it that time.
+    edge = now + T.LOCK_MARGIN + T.CLAIM_MARGIN + T.FUTURE_DRIFT
+    assert "too little time" in T.locktimes_fit(give, get, edge + half, edge, now)
+    assert T.locktimes_fit(give, get, edge + 1 + half, edge + 1, now) == ""
+    assert T.locktimes_fit(give, get, now + 2 * lock + half, now + 2 * lock, now) == ""
+    assert "too far" in T.locktimes_fit(give, get, now + 2 * lock + half + 1, now + 2 * lock + 1, now)
+    assert "too far" in T.locktimes_fit(give, get, 2 ** 32 - 1, 2 ** 32 - 1 - half, now), "years off"
     assert T.locktimes_fit(give, get, float(t1), t2, now) and T.locktimes_fit(give, get, True, t2, now)
 
 

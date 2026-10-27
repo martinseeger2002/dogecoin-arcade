@@ -3011,7 +3011,8 @@ function legWhat(leg, other = null) {
 /* The trade state machine: arcade/trade.py's next_step, rule for rule (tests compare
  * them). Pure: what the chains show in, the one thing to do next out. */
 export const TRADE = {
-  LOCK_SECONDS: {mainnet: 2 * 3600, testnet: 2 * 3600},
+  LOCK_SECONDS: {mainnet: 8 * 3600, testnet: 8 * 3600},   // trade.LOCK_SECONDS (2026-10-27: 8 h)
+  FUTURE_DRIFT: 2 * 3600,                       // trade.FUTURE_DRIFT: how far ahead a block may be stamped
   CONFIRMATIONS: 0, CONFIRMATIONS_BIG: 1,       // 0 below the big line, 1 at or above it (2026-10-17; trade.py)
   BIG: {main: 1_000_000 * 100_000_000, doge: 1_000 * 100_000_000, ltc: 2 * 100_000_000,
        bel: 200 * 100_000_000, lky: 20 * 100_000_000, kot: 100 * 100_000_000, wjk: 100 * 100_000_000},
@@ -3089,7 +3090,8 @@ export function locktimesFit(give, get, t1, t2, now) {
   if (!Number.isInteger(t1) || !Number.isInteger(t2)) return "lock times are whole seconds";
   if (t1 - t2 < Math.max(TRADE.LOCK_GAP_FLOOR, Math.floor(lock / 2)))
     return "the two lock times are too close together to finish the swap safely";
-  if (t2 - TRADE.LOCK_MARGIN <= Math.floor(now)) return "too little time is left before the responder's lock time";
+  if (t2 - TRADE.LOCK_MARGIN - TRADE.CLAIM_MARGIN - TRADE.FUTURE_DRIFT <= Math.floor(now))
+    return "too little time is left before the responder's lock time";
   if (t2 - Math.floor(now) > 2 * lock) return "the responder's lock time is too far off";
   return "";
 }
@@ -3246,7 +3248,7 @@ export async function nextTradeStep(trade, facts, now) {
       return ["wait", "waiting for the other lock to confirm"];
     }
     if (theirs.spent_by_script_sig) return [now < myTime ? "wait" : "refund", "their lock went back to them"];
-    if (now < theirTime - TRADE.CLAIM_MARGIN) return ["claim", "their lock is confirmed and agreed: claim it (this reveals the secret)"];
+    if (now < theirTime - TRADE.CLAIM_MARGIN - TRADE.FUTURE_DRIFT) return ["claim", "their lock is confirmed and agreed: claim it (this reveals the secret)"];
     if (now >= myTime) return ["refund", "too late to claim safely; my lock time has passed"];
     return ["wait", "too close to their lock time to claim safely; waiting to refund"];
   }
@@ -3889,7 +3891,7 @@ async function holdSpends(wallet, trade, view, facts) {
     // claiming an empty one would hand over the secret for nothing.
     if (trade.get.kind !== "coin" && !(facts.theirs.confirmations >= need && facts.theirs.asset_ok)) return;
     await tradePresign(wallet, {...base, secret: trade.secret, min_conf: need,
-                                not_after: theirTime - TRADE.CLAIM_MARGIN});
+                                not_after: theirTime - TRADE.CLAIM_MARGIN - TRADE.FUTURE_DRIFT});
   } else {
     if (!trade.myLock) return;
     await tradePresign(wallet, {...base, not_after: theirTime,
