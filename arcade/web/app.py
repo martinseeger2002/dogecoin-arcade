@@ -27909,6 +27909,25 @@ def create_app(state: AppState) -> FastAPI:
         answer.delete_cookie(ADMIN_COOKIE, path="/admin")
         return answer
 
+    def _wallet_note(ctx, exc: Exception) -> str:
+        """What Admin says of a Core wallet it cannot read (2026-10-27: Litecoin's `arcade` wallet on disk but not
+        loaded, and Bells with two wallets loaded, both read "no wallet on this node yet"). The arcade loads or picks
+        no wallet itself: which wallet holds what is the operator's to say."""
+        code = getattr(exc, "code", None)
+        try:
+            with ctx.rpc() as rpc:
+                if code == -18:
+                    names = [w.get("name", "") for w in (rpc.call("listwalletdir") or {}).get("wallets") or []]
+                    return (f"{len(names)} wallet{'' if len(names) == 1 else 's'} on disk, none loaded: "
+                            + ", ".join(n or "(default)" for n in names) + ". Load one in this chain's Core.")
+                if code == -19:
+                    names = rpc.call("listwallets") or []
+                    return (f"{len(names)} wallets loaded ({', '.join(n or '(default)' for n in names)}): the arcade "
+                            "reads one wallet. Leave only its own loaded in this chain's Core.")
+        except Exception:                               # noqa: BLE001 -- the plain error stands
+            pass
+        return ""
+
     def _admin_wallets() -> list[dict]:
         out = []
         wallets = [("messaging", state.messaging)]
@@ -27935,6 +27954,7 @@ def create_app(state: AppState) -> FastAPI:
                 row.update({k: str(v) for k, v in got.items()})
             except Exception as exc:                    # noqa: BLE001 -- node away
                 row["error"] = str(exc)[:200]
+                row["note"] = _wallet_note(ctx, exc)
             out.append(row)
         # Every add-on chain: the node's own key address there, where it is paid with no Core wallet of its own
         # -- a sharer's tenth, fees on a borrowed chain, mined coins -- and spent from here, signed by this

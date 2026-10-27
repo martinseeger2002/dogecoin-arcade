@@ -691,6 +691,33 @@ def test_a_chain_whose_core_runs_here_has_one_node_wallet_card(client, monkeypat
     assert any(w.get("keyed") for w in cards()), "a borrowed chain's coins are the key's"
 
 
+def test_a_core_wallet_admin_cannot_read_says_why(client, monkeypatch):
+    """2026-10-27: Litecoin's `arcade` wallet sat on disk unloaded, and Bells had two wallets loaded; Admin read "no
+    wallet on this node yet" for both. Each card now says what the Core has, and the arcade loads or picks none."""
+    from arcade.rpc import RpcError
+    app, state = client
+    t, rpc = _l_test_node(state, monkeypatch, wallet={"balance": 0.0, "immature": 0.0})
+    real, have = rpc.call, {}
+
+    def call(method, *args):
+        if method == "getwalletinfo":
+            raise RpcError(have["code"], "wallet trouble", method)
+        if method in ("listwalletdir", "listwallets"):
+            return have[method]
+        return real(method, *args)
+    monkeypatch.setattr(rpc, "call", call)
+
+    def note():
+        state.__dict__.pop("_keyed_seen", None)
+        return [w for w in app.get("/admin/api/state", headers=LOCAL).json()["wallets"]
+                if w["network"] == "ltctest" and not w.get("keyed")][0]["note"]
+    have.update(code=-18, listwalletdir={"wallets": [{"name": "arcade"}]})
+    assert note() == "1 wallet on disk, none loaded: arcade. Load one in this chain's Core."
+    have.update(code=-19, listwallets=["home-2024", "ssd-2024"])
+    assert note().startswith("2 wallets loaded (home-2024, ssd-2024): the arcade reads one wallet.")
+    assert "w.note ||" in app.get("/admin", headers=LOCAL).text
+
+
 def test_a_test_add_on_chain_is_mined_in_short_batches_so_a_new_tip_is_taken_up_quickly():
     from arcade.messaging import miner as M
 

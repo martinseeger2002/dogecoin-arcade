@@ -1929,7 +1929,7 @@ section.panel h2{margin-top:0}
       }
       var left = document.createElement('div');
       left.appendChild(text('div', w.label + (w.coin ? ' · ' + w.coin : ''), 'muted'));
-      left.appendChild(text('div', w.error ? (/wallet/i.test(w.error) ? 'no wallet on this node yet' : 'node unreachable') :
+      left.appendChild(text('div', w.error ? (w.note || (/wallet/i.test(w.error) ? 'no wallet on this node yet' : 'node unreachable')) :
         Number(w.spendable).toLocaleString() + (w.unconfirmed && Number(w.unconfirmed) ?
           '  (+' + Number(w.unconfirmed).toLocaleString() + ' on its way)' : '') +
         // Mined coins wait 100 blocks (240 on Pepecoin) before they can be spent (2026-10-18: L test read
