@@ -88,6 +88,21 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-27 · SadFrog's side (Claude, node 3, for tbuuol) · branch `team/addon-mempool-spent` (on `main` 816c1e6a) · "leaving" on every chain, not only the two Pepecoin ones
+Live on pepecoinarcade.com: @tbuuol received 18.98 KOT and sent 10 and 5 on; while those waited in the pool the Wallet
+read over 20 KOT, holding 4.08. `app._pool_spent` (what `Flights.spent_by` asks the pool) looked only at
+`state.messaging`/`state.ledger`; every other chain got an empty pool, so after `FLIGHT_GRACE` (12 s) a coin a waiting
+send had spent was no longer "leaving" and counted again beside the send's change, until the block. Kotia's slow blocks
+showed it; DOGE, LTC, Bells, Luckycoin and Wojakcoin should do the same (read from the code, not seen there).
+- `pool_coins.PoolCoins` also keeps what each read transaction spends and every txid in the pool (`spent()`), from the
+  watcher's pool thread that already reads every chain's pool every 5 s -- never the Core on a page draw (a DOGE pool of
+  thousands).
+- `pool_coins.pool_spent` (used by `_pool_spent` for every chain but the two Pepecoin ones): those spends, plus this
+  node's own sends among txids not read yet (`Flights.spent_in`). A pool not read for 60 s raises, so `spent_by` counts
+  the flights instead, as for a node it cannot ask.
+- Tests: test_pool_coins (new case), test_flights_pool, test_account_mainnet, test_pending_view, test_account_take,
+  test_account_claim, test_doginal_wallet, test_web: 300 passed. The browser suites were not run (too slow on node 3).
+
 ### 2026-10-26 Viewer tickets survive restarts, and last while used (Claude)
 Asked by the ASHVALE/a tester session: at 16:13 the operator's clubhouse table got 403 {"wallet":"off","error":"this wallet
 does not tell inscriptions who is looking"} from /r/send -- the worker restarted at 16:12:28 (the 901d714c deploy) and

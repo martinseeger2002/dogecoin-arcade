@@ -54,3 +54,47 @@ def test_the_wallet_says_what_is_arriving_on_each_chain(client):
 
 
 from test_web import app_state, client   # noqa: E402,F401
+
+
+def _spending(prev, *outs):
+    tx = _tx(*outs)
+    tx["vin"] = [{"txid": t, "vout": v} for t, v in prev] + [{"coinbase": "00"}]
+    return tx
+
+
+def test_what_a_waiting_transaction_spends_is_leaving_on_every_chain():
+    """2026-10-27: on Kotia (and every chain but the two Pepecoin ones) the wallet's "leaving" read an empty pool, so a
+    coin a waiting send had spent counted again beside the send's change: over 20 KOT shown, 4.08 held."""
+    import time
+
+    from arcade.pool_coins import pool_spent
+    from arcade.web.account import Flights
+    from arcade.funding import Unsigned
+
+    rpc, pool = Pool(), PoolCoins("kot")
+    coin = ("cc" * 32, 1)
+    rpc.txs["dd" * 32] = _spending([coin], (BOB, 10), (ALICE, 8.97))
+    rpc.txs["ee" * 32] = _spending([("ff" * 32, 0)], (BOB, 1))
+    pool.refresh(rpc, TESTNET)
+    flights = Flights()
+    assert pool.spent() == (frozenset({coin, ("ff" * 32, 0)}), frozenset())
+    assert pool_spent(pool, flights, "kot") == {coin, ("ff" * 32, 0)}
+    # Our own send, in the pool but not read through yet (a pool of thousands): its coins are leaving all the same.
+    ours = ("12" * 32, 0)
+    flights.add("ab" * 32, "34" * 32, Unsigned(raw="", inputs=[{"txid": ours[0], "vout": 0, "value": 5}],
+                                               outputs=[]), ALICE, network="kot")
+    pool._ids = pool._ids | {"34" * 32}
+    assert ours in pool_spent(pool, flights, "kot")
+    # Mined: it leaves the pool, and with it what it spent.
+    del rpc.txs["dd" * 32]
+    pool.refresh(rpc, TESTNET)
+    assert coin not in pool_spent(pool, flights, "kot")
+    # A pool the watcher has not read lately is not believed: the flights count instead (Flights.spent_by).
+    pool.read_at = time.time() - 3600
+    import pytest
+    with pytest.raises(LookupError):
+        pool_spent(pool, flights, "kot")
+    book = Flights(pool=lambda net: pool_spent(pool, flights, net))
+    book.add("ab" * 32, "56" * 32, Unsigned(raw="", inputs=[{"txid": "78" * 32, "vout": 2, "value": 5}], outputs=[]),
+             ALICE, network="kot")
+    assert ("78" * 32, 2) in book.spent_by("ab" * 32, "kot")

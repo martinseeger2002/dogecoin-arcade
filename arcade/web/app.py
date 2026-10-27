@@ -10967,7 +10967,14 @@ def create_app(state: AppState) -> FastAPI:
         ctx = next((c for c in (state.messaging, state.ledger)
                     if c.network == network), None)
         if ctx is None:
-            return frozenset()
+            # Every other chain (2026-10-27: these got an empty pool, so after FLIGHT_GRACE a coin a waiting send spent
+            # counted again beside its change -- @tbuuol's Kotia wallet read over 20 KOT holding 4.08): what the
+            # watcher's pool thread read (arcade/pool_coins.py), never the Core on a page draw, and this node's own
+            # sends among what it has not read yet. A pool not read lately is not known: the flights count instead.
+            from ..pool_coins import pool_spent
+            spent = pool_spent(state.pool_coins(network), _flights, network, now)
+            _pool_cache[network] = (now, spent)
+            return spent
         out: set = set()
         with ctx.rpc() as rpc:
             pool = list(rpc.call("getrawmempool"))

@@ -297,6 +297,13 @@ class Flights:
             made=tuple(made)))
         self.sweep()
 
+    def spent_in(self, txids, network: str = "") -> frozenset:
+        """The outpoints this node's own broadcasts among `txids` spend (any account's): a send in a pool not read
+        through yet still spends its coins."""
+        wanted = set(txids)
+        return frozenset(o for f in self._all if f.txid in wanted and (not network or not f.network
+                                                                         or f.network == network) for o in f.spent)
+
     def forget(self, txid: str) -> None:
         # A committed leg has no txid to forget by, and forgetting on an empty
         # one would drop every other account's note with it.
