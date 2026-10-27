@@ -360,6 +360,49 @@ def test_a_core_here_with_its_wallet_switched_off_is_held_with_the_arcades_own_k
     assert AppState.keyed(holder, borrowed) is True
 
 
+def test_a_core_here_with_no_wallet_at_all_is_held_with_the_arcades_own_key():
+    """2026-10-27: DigiByte Core 9.26 (like every Core from Bitcoin's 0.21 on) makes no default wallet; getwalletinfo
+    answered -18 "No wallet is loaded", the chain was taken for a Core wallet, and Admin showed "no wallet on this node
+    yet" with nothing to receive on. With no wallet in its directory the arcade's own key holds the coins; a wallet
+    that is there but not loaded stays the Core's."""
+    from arcade.rpc import RpcError
+    from arcade.web.state import AppState
+
+    class Rpc:
+        def __init__(self, on_disk):
+            self.on_disk = on_disk
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def call(self, method, *params):
+            if method == "listwalletdir":
+                if self.on_disk is None:
+                    raise RpcError(-32601, "Method not found", method)
+                return {"wallets": [{"name": n} for n in self.on_disk]}
+            raise RpcError(-18, "No wallet is loaded. Load a wallet using loadwallet or create a new one with "
+                                "createwallet. (Note: A default wallet is no longer automatically created)", method)
+
+    class Chain:
+        is_addon, borrowed = True, False
+
+        def __init__(self, net, on_disk):
+            self.network, self._on_disk = net, on_disk
+
+        def rpc(self):
+            return Rpc(self._on_disk)
+
+    class Holder:
+        KEYED_SECONDS = 300
+        messaging = Chain("test", on_disk=[])
+    assert AppState.keyed(Holder(), Chain("dgb", on_disk=[])) is True, "no wallet at all: the key's"
+    assert AppState.keyed(Holder(), Chain("ltc", on_disk=["old"])) is False, "a wallet to load stays the Core's"
+    assert AppState.keyed(Holder(), Chain("doge", on_disk=None)) is False, "no listwalletdir: as before"
+
+
 def test_the_offered_fruit_passes_the_claimed_name_check_and_nothing_else_does(public, monkeypatch):
     """SadFrog's /signup refuses a name the chain says another address holds (team/signin-hardening). The operator's
     offered fruit is held on the chain by the fruit stand until it is sent, so it alone goes through (2026-10-20)."""

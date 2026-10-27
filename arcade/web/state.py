@@ -1746,7 +1746,9 @@ class AppState:
         """Does this arcade hold its coins on `chain` with its own key (keywallet.py) rather than a Core wallet: a
         borrowed chain, or a Core here run with its wallet switched off (2026-10-20: a test machine's Dogecoin Core has
         `disablewallet=1`, every wallet call answered "Method not found", and the operator's Wallet showed no
-        Dogecoin)."""
+        Dogecoin), or a Core here that has no wallet at all (2026-10-27: DigiByte Core 9.26, like every Core from
+        Bitcoin's 0.21 on, makes no default wallet; Admin said "no wallet on this node yet" and showed no DigiByte to
+        receive on). A wallet that exists but is not loaded is still the Core's, so it is not taken for none."""
         if getattr(chain, "borrowed", False):
             return True
         if chain.network == self.messaging.network:
@@ -1764,7 +1766,14 @@ class AppState:
             with chain.rpc() as rpc:
                 rpc.call("getwalletinfo")
         except RpcError as exc:
-            keyed = getattr(exc, "code", None) == -32601          # no wallet methods at all
+            code = getattr(exc, "code", None)
+            keyed = code == -32601                                # no wallet methods at all
+            if code == -18:                                       # no wallet loaded: is there one to load?
+                try:
+                    with chain.rpc() as rpc:
+                        keyed = not (rpc.call("listwalletdir") or {}).get("wallets")
+                except Exception:                                 # noqa: BLE001 -- an older Core: keep its wallet
+                    keyed = False
         except Exception:                                         # noqa: BLE001 -- node away: ask again soon
             return False
         cache[chain.network] = (time.monotonic() + self.KEYED_SECONDS, keyed)
