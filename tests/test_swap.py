@@ -200,6 +200,8 @@ class FakeNode:
         if method == "sendrawtransaction":
             self.sent.append(args[0])
             return decode(args[0])["txid"]
+        if method == "validateaddress":
+            return {"isvalid": True, "address": args[0], "ismine": args[0] in self.mine}
         raise AssertionError(f"unexpected rpc {method}")
 
 
@@ -428,6 +430,13 @@ def test_the_seller_signs_nothing_it_did_not_offer(world):
     refused([seller_in], fair, "seller's input and the buyer's")
     refused([seller_in, ("1" * 64, 0), buyer_in], fair, "is the seller's")
     refused([seller_in, ("3" * 64, 0)], fair, "not the buyer's")
+    # 2026-10-27: signrawtransaction signs every input this node's wallet holds a key for. Another of its coins, at an
+    # address that is not the offer's seller, slipped into the buyer's half would be spent too: refused.
+    seller.mine.add(OTHER)
+    try:
+        refused([seller_in, buyer_in, ("3" * 64, 0)], fair, "this node's own coin")
+    finally:
+        seller.mine.discard(OTHER)
     refused([seller_in, buyer_in], [(0, ret), (int(1.9 * COIN), p2pkh_script(SELLER))],
             "paid 1.90000000, not the 2.02000000")
     refused([seller_in, buyer_in], fair[1:], "exactly one OP_RETURN")

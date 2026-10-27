@@ -1085,6 +1085,11 @@ def countersign(rpc: Any, index: Any, offers: Offers, offer: dict, hex_: str) ->
         addresses = prev.get("scriptPubKey", {}).get("addresses") or []
         if seller in addresses:
             raise SwapError(f"input {n} is the seller's; only the offered output may be")
+        # signrawtransaction below signs every input this node's wallet holds a key for, not only the offered one:
+        # a buyer's half that slipped in another coin of this wallet would be paid out of it (2026-10-27).
+        for address in addresses:
+            if (rpc.call("validateaddress", address) or {}).get("ismine"):
+                raise SwapError(f"input {n} is this node's own coin; only the offered output may be")
         if n == 1 and buyer not in addresses:
             raise SwapError("the first input after the seller's is not the buyer's")
 
