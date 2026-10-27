@@ -299,7 +299,8 @@ $("nm-go").onclick = async () => {
     const label = `Claim ${name} on ${c.label}: ${commas(first.of)} transactions, signed here without asking again. `
       + `${coins(k.postage, c.chain)} stays yours as the name's own coin: whoever holds it holds the name.`;
     const ok = c.mainnet
-      ? await arcadeMainnetReview({label, network, data: 0, others: 0, operator: 0, total: network + Number(k.postage), chain: c.chain})
+      ? await arcadeMainnetReview({label, network, data: 0, others: 0, operator: Number(k.operator_fee || 0), fee: first.operator_fee || null,
+                                   total: network + Number(k.operator_fee || 0) + Number(k.postage), chain: c.chain})
       : await arcadeAsk(`Claim ${name}?`, `${label} Network fees: ${coins(network, c.chain)}.`, "Claim it");
     if (!ok) return;
     busy = true; draw();
@@ -441,7 +442,8 @@ $("mp-go").onclick = async () => {
     const network = Number(shown.fee || 0) + Number(k.reveal_fees || 0);
     const label = `Publish ${site.name}'s site (${commas(draft.size)} bytes) on ${c.label}: ${commas(first.of)} transactions. `
       + `${coins(k.postage, c.chain)} stays yours as the site's own coin.`;
-    if (!(await arcadeMainnetReview({label, network, data: 0, others: 0, operator: 0, total: network + Number(k.postage), chain: c.chain}))) return;
+    if (!(await arcadeMainnetReview({label, network, data: 0, others: 0, operator: Number(k.operator_fee || 0), fee: first.operator_fee || null,
+                                   total: network + Number(k.operator_fee || 0) + Number(k.postage), chain: c.chain}))) return;
     busy = true; drawPreview();
     const stay = (e) => { e.preventDefault(); e.returnValue = ""; };
     window.addEventListener("beforeunload", stay);
@@ -660,7 +662,9 @@ $("ws-go").onclick = async () => {
   const label = `Inscribe a website for ${ws.name} on ${c.label}: ${commas(n)} ords, about ${commas(quote.txs)} transactions `
     + `signed here without asking again. ${coins(quote.postage * n, c.chain)} stays yours as the ords' own coins.`;
   const ok = c.mainnet
-    ? await arcadeMainnetReview({label, network: quote.fees, data: 0, others: 0, operator: 0, total: quote.fees + quote.postage * n, chain: c.chain, estimate: true})
+    ? await arcadeMainnetReview({label, network: quote.fees, data: 0, others: 0, operator: Number(quote.operator || 0),
+                                 fee: quote.operator ? {value: Math.round(quote.operator / n)} : null,
+                                 total: quote.fees + Number(quote.operator || 0) + quote.postage * n, chain: c.chain, estimate: true})
     : await arcadeAsk(`Inscribe ${ws.name}'s website?`, `${label} Network fees: about ${coins(quote.fees, c.chain)}.`, "Inscribe");
   if (!ok) return;
   wsBusy = true; $("ws-go").disabled = true; $("ws-back3").disabled = true; $("ws-progress").hidden = false;

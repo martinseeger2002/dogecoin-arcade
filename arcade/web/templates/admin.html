@@ -175,6 +175,32 @@
   <button type="button" class="small saveswitches">Save switches</button>
 </section>
 
+{# The operator's fee on every inscription made through this arcade on a mainnet chain (app._operator_fee; 2026-10-27,
+   SadFrog: "The node operator should collect a fee of any inscription being inscribed - maybe 2 cents worth of the
+   what ever crypto is being used to inscribe"). One output of the inscription's first transaction, shown in the
+   wallet's review on its own line before anything is signed. #}
+<section class="panel" id="inscribefee">
+  <h2>Inscription fee</h2>
+  <p class="muted" style="margin:0 0 8px;font-size:.84rem">What a person pays you for each inscription made on this
+    arcade on a mainnet chain: a file, a collection's piece, an ord, a token or a name. It is paid once, in the
+    inscription's first transaction, to your address on that chain, and shown in the review before they sign.
+    Testnet pays nothing, and neither does your own account. It is the larger of the rate and the amount below.</p>
+  <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+    <label for="inscribefeerate" class="muted">Rate, of what the inscription costs in network fees</label>
+    <select id="inscribefeerate" style="width:auto">
+      <option value="0">Off: the amount alone</option><option value="1">0.1%</option><option value="2">0.2%</option>
+      <option value="5">0.5%</option><option value="10">1%</option><option value="20">2%</option>
+    </select>
+  </div>
+  <p class="muted" style="margin:6px 0 6px;font-size:.84rem">The least each inscription pays, per chain. About 2 cents
+    is a fair amount: look up the coin's price and divide (at $0.20 a DOGE, 2 cents is 0.1 DOGE). Left empty, it is
+    the chain's dust line, the smallest amount a transaction can pay.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+    <span id="inscribefeelines" class="row" style="gap:8px;flex-wrap:wrap;align-items:center"></span>
+    <button type="button" class="small" id="saveinscribefee">Save</button>
+  </div>
+</section>
+
 <section class="panel" id="xchain">
   <h2>Pepecoin main swap</h2>
   <p class="muted" style="margin-top:0">Trade Pepecoin test assets (tokens, Pepecoin test coins, NFTs) for Pepecoin on
@@ -2035,6 +2061,26 @@ section.panel h2{margin-top:0}
         lines.appendChild(lab);
       });
     }
+    // The inscription fee: the rate and each mainnet chain's amount (2026-10-27; app._operator_fee).
+    if (d.inscribe_fee) {
+      var ifee = d.inscribe_fee, irate = $('inscribefeerate'), ilines = $('inscribefeelines');
+      if (![].some.call(irate.options, function (o) { return o.value === String(ifee.permille); })) {
+        var other = document.createElement('option'); other.value = String(ifee.permille);
+        other.textContent = (ifee.permille / 10) + '%'; irate.appendChild(other);
+      }
+      irate.value = String(ifee.permille);
+      ilines.textContent = '';
+      Object.keys(ifee.chains || {}).forEach(function (net) {
+        var c = ifee.chains[net];
+        var lab = document.createElement('label'); lab.style.margin = '0';
+        var inp = document.createElement('input'); inp.autocomplete = 'off'; inp.inputMode = 'decimal';
+        inp.className = 'inscribefee'; inp.dataset.net = net; inp.style.width = '110px';
+        inp.value = c.set ? String(c.set) : ''; inp.placeholder = String(c.dust);
+        lab.title = c.to ? 'Paid to ' + c.to : 'This arcade has no address on ' + c.label + ': nothing is charged there';
+        lab.append(inp, ' ' + c.coin);
+        ilines.appendChild(lab);
+      });
+    }
     // The most one delegated order may give, per real-coin chain (2026-10-25; node_trader.delegate_caps).
     if (d.delegate_cap) {
       var caps = $('delegatecaplines'); caps.textContent = '';
@@ -2558,6 +2604,12 @@ section.panel h2{margin-top:0}
     document.querySelectorAll('.swapbig').forEach(function (i) { big[i.dataset.net] = i.value; });
     call('/admin/api/settings', {swap_big: big})
       .then(function () { say('Big-swap lines saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+  $('saveinscribefee').onclick = function () {
+    var chains = {};
+    document.querySelectorAll('.inscribefee').forEach(function (i) { chains[i.dataset.net] = i.value; });
+    call('/admin/api/settings', {inscribe_fee: {permille: $('inscribefeerate').value, chains: chains}})
+      .then(function () { say('Inscription fee saved.'); load(); }).catch(function (e) { say(e.message, 'err'); });
   };
   $('savedelegatecap').onclick = function () {
     var cap = {};

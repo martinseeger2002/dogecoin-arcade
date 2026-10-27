@@ -70,6 +70,33 @@ nothing. Every picture you make is kept on your own arcade for **24 hours** -- e
 done -- under **Your pictures** on the model's page, to view, download or delete.
 The same balance with a seller pays for words and pictures.
 
+#### Inscribing a picture you made
+
+Every picture under **Your pictures** can go on the chain from there:
+
+- **Inscribe now** opens **Creator -> NFTs** with the picture already chosen and **This picture's details** filled in.
+  Everything is optional:
+  - a name;
+  - a collection and its number, which name it "collection #number";
+  - a description;
+  - traits;
+  - the model, kept as a trait (ticked by default);
+  - the prompt (not ticked: it would be public on the chain for ever).
+
+  The details go on the chain with the picture as its JSON, the same JSON every collection on the arcade uses, so its
+  name and traits show in every wallet and on the Exchange. The page shows exactly what goes up.
+- **As an ord** opens **Creator -> Ords** with the picture chosen, for Doginals, Pepinals, Bellinals and the other ord
+  chains. An ord is the picture alone. To give ords a name and traits, inscribe them as a collection (below), even a
+  collection of one.
+- **A small collection.** Tick **For a collection** on each picture you want in it: a picked picture is kept for **a
+  week** instead of a day (at most 40 at once), so a set can be made over a few days. Then press **Inscribe as NFTs**
+  or **Inscribe as ords** on the bar above the pictures. The inscriber opens with every picked picture chosen, in the
+  order you made them, numbered 1, 2, 3 ... Give the collection a name, a description and any traits every piece
+  shares; it then goes on exactly as a folder of pictures would (see the [collections guide](collections.md)).
+
+Inscribing costs the network's fees, and on a mainnet chain the operator's inscription fee too, if the arcade charges
+one (Admin -> Trading -> Inscription fee). The wallet names both on their own lines before you sign.
+
 ### Using a model from your own programs (API keys)
 
 A model's page has **Use it from your own apps**, which gives an **OpenAI-compatible API** on your own arcade:

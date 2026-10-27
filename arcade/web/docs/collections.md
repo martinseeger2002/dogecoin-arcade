@@ -16,6 +16,18 @@ Each is described step by step below. Everything here is signed in your own brow
 paid from your own coins: the node never holds your key. Try a small set on testnet first. An inscription cannot be
 taken back.
 
+**Pictures made with an AI model on the LLM tab** need no folder: tick **For a collection** on them under **Your
+pictures** and press **Inscribe as NFTs** or **Inscribe as ords**. The pictures arrive already chosen, and a details
+form writes their JSON (see [the LLM service](llm.md), "Inscribing a picture you made").
+
+## The operator's inscription fee
+
+On a mainnet chain an arcade may charge an **inscription fee** (Admin -> Trading -> Inscription fee). It is the larger
+of a rate (0.5% of the network fees by default, or Off) and an amount the operator sets for each chain, for example
+about 2 cents' worth; unset, that amount is the chain's dust line. It is paid once per inscription, in its first
+transaction: once per piece of a collection, once per ord (on its commit, never on a reveal). The wallet shows it on its
+own line, and the collection's estimate counts it. Testnet never pays it, and neither does the operator's own account.
+
 ## Getting the folder ready
 
 All three start from the same kind of folder. The easiest is a **HashLips Art Engine** `build` folder, used as it

@@ -12641,6 +12641,26 @@ def create_app(state: AppState) -> FastAPI:
         from ..node_trader import delegate_caps
         return delegate_caps(state)
 
+    def _admin_inscribe_fee() -> dict:
+        """Admin -> Trading -> Inscription fee (2026-10-27): the rate (`mainnet_create_fee_permille`) and, for every
+        mainnet chain this arcade inscribes on, the fixed amount set (`inscribe_fee:<net>`, 0: none), the least any
+        inscription pays there (the dust line when none is set), in whole coins, and where it is paid."""
+        from ..node_trader import fee_payee
+        try:
+            permille = int(state.setting("mainnet_create_fee_permille", MAINNET_CREATE_FEE_PERMILLE))
+        except (TypeError, ValueError):
+            permille = MAINNET_CREATE_FEE_PERMILLE
+        chains = {}
+        for chain in [state.messaging, *state.token_chains]:
+            if not getattr(chain, "is_mainnet", False) or chain.network in chains:
+                continue
+            chains[chain.network] = {"coin": chain.params.coin, "label": chain.label,
+                                     "set": _inscribe_fee_set(chain) / COIN,
+                                     "floor": _inscribe_fee_floor(chain) / COIN,
+                                     "dust": fees.dust_limit(chain.params) / COIN,
+                                     "to": fee_payee(state, chain)}
+        return {"permille": permille, "chains": chains}
+
     #: /account asked again for the same account while an answer is being worked out waits for that answer instead of
     #: working it out again (2026-10-20: a page asks from several of its parts at once -- 22 times a minute for one
     #: phone, ~1.3 s each on .25). Nothing is reused afterwards, so no change can be missed: a 3-second reuse was
@@ -13192,6 +13212,19 @@ def create_app(state: AppState) -> FastAPI:
         return (stream[:at], at, size,
                 [b[max(0, at - n * size):] for n, b in enumerate(bodies)])
 
+    def _inscribe_fee_floor(chain) -> int:
+        """The least an inscription on `chain` pays this operator, in satoshis: Admin's "Inscription fee" for the
+        chain (settings `inscribe_fee:<network>`, 2026-10-27), else the chain's dust line. Never under the dust line:
+        an output under it does not relay (or, on the Dogecoin family, costs the soft-dust fee on top)."""
+        return max(_inscribe_fee_set(chain), fees.dust_limit(chain.params))
+
+    def _inscribe_fee_set(chain) -> int:
+        """Admin's "Inscription fee" for `chain` in satoshis, 0 when it is not set."""
+        try:
+            return max(0, int(state.setting(f"inscribe_fee:{chain.network}", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
     def _operator_fee(chain, payer: str, cost: int) -> tuple[list, dict | None]:
         """The operator's fee for one creation on mainnet: (outputs, said).
 
@@ -13200,11 +13233,24 @@ def create_app(state: AppState) -> FastAPI:
         arcade/xchain.py's FEE_PERMILLE) of what the creation costs -- its network fee
         and the coins in its data outputs, in satoshis (the plan's estimate is in
         PEP, so converted where it is called) -- rounded up
-        to a whole satoshi, and never below the dust limit, because an output under
-        it cannot exist. Paid to the node's own mainnet address as one more output
-        of the first transaction, so the review in the tab reads it off the bytes
-        and names it on its own line. Testnet never pays it, nor does the operator
-        creating from its own address.
+        to a whole satoshi, and never below the floor (_inscribe_fee_floor). Paid to
+        the node's own address on that chain as one more output of the first
+        transaction, so the review in the tab reads it off the bytes and names it on
+        its own line. Testnet never pays it, nor does the operator creating from its
+        own address or its own account.
+
+        2026-10-27 (SadFrog: "The node operator should collect a fee of any inscription being inscribed - maybe 2
+        cents worth of the what ever crypto is being used to inscribe"):
+          * The floor is a fixed amount per chain that the operator sets in Admin -> Fees -> Inscription fee
+            (`inscribe_fee:<network>`, satoshis), so a small inscription pays about 2 cents whatever the coin is
+            worth. Unset, it is that chain's own dust line. Before, it was 0.01 coin on every chain: about 80 cents
+            on Litecoin, a hundredth of a cent on DigiByte. There is no price feed: the operator picks the amount.
+          * With the rate at 0 and a floor set, the fee is the floor alone: a flat fee.
+          * Paid to the node's own address on THAT chain (node_trader.fee_payee, as a lock's fee is). Before, every
+            chain paid the messaging chain's address, read on a Dogecoin or Litecoin chain as a script nobody watched.
+          * Every way in charges it once: one file, a split (and the split rebuilt, _inscribe_again), a collection
+            run's piece, a token, and an ord's commit (/account/ord/inscribe). Never a piece after the split or an
+            ord's reveal: those are paid from coins the first transaction set aside.
         """
         if not chain.is_mainnet:
             return [], None
@@ -13213,18 +13259,23 @@ def create_app(state: AppState) -> FastAPI:
                                          MAINNET_CREATE_FEE_PERMILLE))
         except (TypeError, ValueError):
             permille = MAINNET_CREATE_FEE_PERMILLE
-        if permille <= 0:
+        floor = _inscribe_fee_floor(chain)
+        if permille <= 0 and not _inscribe_fee_set(chain):
             return [], None
-        try:
-            to = state.home_address(state.ledger)
-        except Exception:
-            return [], None
+        from ..node_trader import fee_payee
+        to = fee_payee(state, chain)
         if not to or to == payer:
             return [], None
-        share = -(-max(0, int(cost)) * permille // 1000)
-        sats = max(share, fees.DUST_LIMIT)
-        said = {"address": to, "value": sats, "permille": permille,
-                "minimum": fees.DUST_LIMIT, "at_minimum": share < fees.DUST_LIMIT}
+        if state.operator:
+            try:
+                if _account_address(state.operator, chain) == payer:
+                    return [], None
+            except Exception:                              # noqa: BLE001 -- no operator address on this chain
+                pass
+        share = -(-max(0, int(cost)) * max(0, permille) // 1000)
+        sats = max(share, floor)
+        said = {"address": to, "value": sats, "permille": max(0, permille),
+                "minimum": floor, "at_minimum": share < floor}
         cut, payee = _sharer_cut(chain, sats)
         if cut:
             said["sharer"] = {"address": payee, "value": cut, "percent": SHARER_PERCENT}
@@ -13524,17 +13575,21 @@ def create_app(state: AppState) -> FastAPI:
                 "chain": row["network"], "resumed": True}
         if row["split_txid"]:
             return JSONResponse(said)
+        # The split it replaces carried the operator's fee (_inscribe_start), so the rebuilt one does too: before
+        # 2026-10-27 asking again was a way round it.
+        fee_out, fee_said = _operator_fee(chain, address,
+                                          int(round((float(row["fee"] or 0) + float(row["dust"] or 0)) * COIN)))
         unsigned = _spend_now(
             account, chain, address,
             [(int(row["piece"]), txbuild.p2pkh_script(address))]
-            * int(row["chunks"]),
+            * int(row["chunks"]) + fee_out,
             f"split into {int(row['chunks']):,} outputs, to inscribe "
             f"{row['name']} in {int(row['chunks']):,} transactions")
         offer = _offers.add(
             account.pubkey, chain.network, unsigned, unsigned.what,
             done=lambda txid, job=row["id"]: _parts.note_split(job, txid))
         return JSONResponse({**said, "offer": offer.id, "split": "offered",
-                             **unsigned.as_json()})
+                             "operator_fee": fee_said, **unsigned.as_json()})
 
     def _inscribe_piece(account, chain, address: str, said: dict,
                         content: bytes):
@@ -14261,7 +14316,10 @@ def create_app(state: AppState) -> FastAPI:
                                  "bytes": int(piece["size"]), "chunks": int(piece["chunks"] or 1),
                                  "sha256": piece.get("sha256") or "",
                                  "content_type": piece["content_type"],
-                                 "json": piece["json"], "chain": chain.network})
+                                 "json": piece["json"], "chain": chain.network,
+                                 # What the page's one review of the run quotes (approveRun); charged per piece
+                                 # where its first transaction is built (_inscribe_start).
+                                 "operator_fee": _operator_fee(chain, run["address"], 0)[1]})
         if piece is None:
             if run["failed_pieces"]:
                 # Not finished. It is the run that stopped, not the work, and
@@ -14298,7 +14356,8 @@ def create_app(state: AppState) -> FastAPI:
                                  "name": piece["name"], "bytes": int(piece["size"]),
                                  "chunks": int(piece["chunks"]),
                                  "content_type": piece["content_type"],
-                                 "json": piece["json"], "chain": chain.network})
+                                 "json": piece["json"], "chain": chain.network,
+                                 "operator_fee": _operator_fee(chain, run["address"], 0)[1]})
         try:
             content = (Path(run["folder"]) / piece["image"]).read_bytes()
             plan = inscribelib.plan(content, piece["content_type"],
@@ -15363,7 +15422,11 @@ def create_app(state: AppState) -> FastAPI:
                     every = {(u["txid"], u["vout"]) for u in utxoslib.unspent(db, address)} | \
                         {(u["txid"], u["vout"]) for u in extra}
                     spent = frozenset(set(spent) | (every - {want}))
-                unsigned = fundinglib.build(db, chain.params, address, [(p.commit_value, oi.p2sh(p.locks[0]))],
+                # The operator's fee rides on the commit, once per ord (2026-10-27, _operator_fee): never on a
+                # reveal, which the tab requires to be one coin in and one out (wallet.ordCheck).
+                fee_out, fee_said = _operator_fee(chain, address, int(oi.costs(p)["reveal_fees"]))
+                unsigned = fundinglib.build(db, chain.params, address,
+                                            [(p.commit_value, oi.p2sh(p.locks[0]))] + fee_out,
                                             rate=fees.MIN_FEE_PER_KB,
                                             what=f"inscribe {str(said.get('name') or kind)[:60]} as a "
                                                  f"{oi.rules_of(chain.network).label} (1 of {p.reveals + 1})",
@@ -15389,8 +15452,10 @@ def create_app(state: AppState) -> FastAPI:
             change_vout = next((n for n, (_v, s) in enumerate(unsigned.outputs) if s == mine), None)
             return JSONResponse({"run": rid, "step": 0, "of": p.reveals + 1, "offer": offer.id, "chain": chain.network,
                                  "label": oi.rules_of(chain.network).label, "next_lock": p.locks[0].hex(),
-                                 "change_vout": change_vout,
-                                 "costs": {**c, "commit_fee": unsigned.fee}, **unsigned.as_json()})
+                                 "change_vout": change_vout, "operator_fee": fee_said,
+                                 "costs": {**c, "commit_fee": unsigned.fee,
+                                           "operator_fee": int((fee_said or {}).get("value") or 0)},
+                                 **unsigned.as_json()})
         except (fundinglib.FundingError, oi.OrdError, ValueError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         except Exception as exc:                          # noqa: BLE001 -- the node did not answer
@@ -15476,13 +15541,14 @@ def create_app(state: AppState) -> FastAPI:
         reveal fees and transactions (ord_inscribe.plan on that many bytes; the bytes themselves do not change the
         fee), and an estimate of each commit's own fee (one coin in, the lock and change out)."""
         from .. import ord_inscribe as oi
-        _signed_in_account(request)
+        account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         try:
             chain = next((c for c in state.token_chains if c.network == str(said.get("chain") or "")
                           and c.network in oi.RULES), None)
             if chain is None:
                 raise ValueError("this arcade does not run that chain, or ords are not inscribed on it")
+            payer = _account_address(account.pubkey, chain) or ""
             files = list(said.get("files") or [])[:20000]
             key = bytes.fromhex("02" + "11" * 32)
             to = b58check_encode(chain.params.pubkeyhash_version, hash160(key))
@@ -15495,11 +15561,16 @@ def create_app(state: AppState) -> FastAPI:
                 kind = str(f.get("content_type") or "application/octet-stream")[:80]
                 if (size, kind) not in sizes:
                     p = oi.plan(chain.network, chain.params, kind, b"\x00" * size, key, to)
-                    sizes[(size, kind)] = {"txs": p.reveals + 1, "reveal_fees": sum(p.fees)}
+                    # Each ord's commit also pays the operator's fee (_operator_fee, 2026-10-27): quoted here so the
+                    # collection's coins are set aside with it, and said apart from the network's fees.
+                    _out, fee_said = _operator_fee(chain, payer, sum(p.fees))
+                    sizes[(size, kind)] = {"txs": p.reveals + 1, "reveal_fees": sum(p.fees),
+                                           "operator_fee": int((fee_said or {}).get("value") or 0)}
                 out.append(sizes[(size, kind)])
             return JSONResponse({"chain": chain.network, "files": out, "commit_fee": commit, "postage": oi.POSTAGE,
                                  "txs": sum(x["txs"] for x in out),
-                                 "fees": sum(x["reveal_fees"] for x in out) + commit * len(out)})
+                                 "fees": sum(x["reveal_fees"] for x in out) + commit * len(out),
+                                 "operator": sum(x["operator_fee"] for x in out)})
         except (oi.OrdError, fundinglib.FundingError, ValueError, TypeError) as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
 
@@ -28141,6 +28212,7 @@ def create_app(state: AppState) -> FastAPI:
             "xchain": _admin_xchain(),
             "swap_big": {k: v / COIN for k, v in _swap_big_lines().items()},
             "delegate_cap": {k: v / COIN for k, v in _delegate_caps().items()},
+            "inscribe_fee": _admin_inscribe_fee(),
             "flags": _admin_flags(),
             "chains": _admin_chains(),
             "brand": {"current": brandlib.current().key, "locked": brandlib.FROM_ENV,
@@ -29338,6 +29410,26 @@ def create_app(state: AppState) -> FastAPI:
                         except InvalidOperation:
                             zero = False
                         state.set_setting(f"delegate_cap:{network}", 0 if zero else walletlib.parse_amount(text))
+            if isinstance(said.get("inscribe_fee"), dict):
+                # Admin -> Trading -> Inscription fee (_operator_fee, 2026-10-27): `permille` (0-20, thousandths of
+                # what an inscription costs) and `chains` {network: whole coins, "" or 0: none, the dust line}.
+                got = said["inscribe_fee"]
+                if got.get("permille") not in (None, ""):
+                    permille = int(got["permille"])
+                    if not 0 <= permille <= 20:
+                        raise ValueError("the inscription fee's rate is 0 to 2%")
+                    state.set_setting("mainnet_create_fee_permille", permille)
+                known = _admin_inscribe_fee()["chains"]
+                for network, text in (got.get("chains") or {}).items():
+                    if network not in known:
+                        continue
+                    text = str(text or "").strip().replace(",", "")
+                    from decimal import Decimal, InvalidOperation
+                    try:
+                        none = not text or Decimal(text) == 0
+                    except InvalidOperation:
+                        raise ValueError(f"{text} is not an amount") from None
+                    state.set_setting(f"inscribe_fee:{network}", 0 if none else walletlib.parse_amount(text))
             if "brand" in said and said["brand"] != brandlib.current().key:
                 # The face, at once and kept (brand.py). A face fixed by the service stays fixed.
                 if brandlib.FROM_ENV:

@@ -300,3 +300,96 @@ def test_a_big_collection_goes_on_lanes_each_paid_from_a_coin_of_its_own(browser
     assert len(chained) == len(commits) == 8, "every commit paid from its lane: the split's coin or a commit's change"
     ords = [t for t in new if t.vout and t.vout[0] == (oi.POSTAGE, mine)]
     assert len(ords) == 8
+
+
+def _png(shade: int) -> bytes:
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    rows = b"".join(b"\x00" + bytes([shade, 40, 90]) * 8 for _ in range(8))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 8, 8, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+def _pictures(browser, state, n: int) -> list[str]:
+    """`n` pictures in this account's own picture cache, as the LLM tab's image model leaves them (llmweb.keep_picture)."""
+    import hashlib
+    import json
+    me = browser.execute_async_script('fetch("/account").then((r) => r.json()).then(arguments[0])')
+    folder = pathlib.Path(state.home) / "llm-pictures" / hashlib.sha256(me["pubkey"].encode()).hexdigest()[:32]
+    folder.mkdir(parents=True, exist_ok=True)
+    ids = []
+    for i in range(n):
+        pid = f"{int(time.time()) + i}-{i:08x}"
+        (folder / f"{pid}.png").write_bytes(_png(30 * i))
+        (folder / f"{pid}.json").write_text(json.dumps({"id": pid, "at": time.time(), "prompt": f"a frog number {i}",
+                                                        "model": "qwen_image_2.1_int8.safetensors"}))
+        ids.append(pid)
+    return ids
+
+
+def test_ai_pictures_open_the_ord_inscriber_as_a_collection_with_their_details(browser, served, signed_in):
+    """2026-10-27, SadFrog: "when a model makes an image for a user there should be a pipeline that easily allows them
+    to inscribe right there. Have a prefilled template of a metadata that they can optionally fill out incase they want
+    to make a small collection". Picked pictures arrive in the collection's folder box as 1.png, 2.png ... with the
+    _metadata.json the details form writes; the operator's inscription fee is quoted with them."""
+    base, state, _fake = served
+    browser.get(f"{base}/create/ord")
+    ids = _pictures(browser, state, 3)
+    state.set_setting("inscribe_fee:doge", 10_000_000)            # 0.1 DOGE
+    from arcade import node_trader
+    real = node_trader.fee_payee
+    node_trader.fee_payee = lambda st, chain: "DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L" if chain.network == "doge" else ""
+    try:
+        browser.get(f"{base}/create/ord?pick=llm:{','.join(ids)}#ord-set")
+        _wait(browser, 'return !document.getElementById("pic-set-details").hidden')
+        files = browser.execute_script('return [...document.getElementById("set-folder").files].map((f) => f.name)')
+        assert files == ["1.png", "2.png", "3.png"], "no name yet: no JSON, numbered in the order they were made"
+        box = browser.find_element(By.ID, "pic-set-details")
+        assert "qwen image 2.1 int8" in box.text and "public on the chain for ever" in box.text
+        box.find_element(By.CSS_SELECTOR, '[data-f="collection"]').send_keys("Night Frogs")
+        box.find_element(By.CSS_SELECTOR, '[data-f="description"]').send_keys("three calm frogs")
+        preview = box.find_element(By.CSS_SELECTOR, "[data-preview]").text
+        assert '"name":"Night Frogs #1"' in preview and '"edition":1' in preview and "prompt" not in preview, preview
+        assert '{"trait_type":"Model","value":"qwen image 2.1 int8"}' in preview
+        box.find_element(By.CSS_SELECTOR, '[data-f="prompt"]').click()
+        assert '"prompt":"a frog number 0"' in box.find_element(By.CSS_SELECTOR, "[data-preview]").text
+        _wait(browser, 'return [...document.getElementById("set-folder").files].some((f) => f.name === "_metadata.json")')
+        meta = browser.execute_async_script("""
+            const f = [...document.getElementById("set-folder").files].find((f) => f.name === "_metadata.json");
+            f.text().then((t) => arguments[0](JSON.parse(t)))""")
+        assert [m["name"] for m in meta] == ["Night Frogs #1", "Night Frogs #2", "Night Frogs #3"]
+        assert [m["image"] for m in meta] == ["1.png", "2.png", "3.png"] and meta[2]["prompt"] == "a frog number 2"
+        assert browser.find_element(By.ID, "set-name").get_attribute("value") == "Night Frogs"
+        browser.execute_script('const s = document.getElementById("set-chain"); s.value = "doge"; s.dispatchEvent(new Event("change"))')
+        said = _wait(browser, 'const p = document.getElementById("set-picked"); return /operator/.test(p.textContent) && p.textContent')
+        assert "3 pictures" in said and "JSON for 3" in said and "0.3 DOGE to this arcade's operator" in said, said
+        if os.environ.get("ARCADE_SHOT"):
+            browser.set_window_size(1100, 1300)
+            browser.execute_script('document.getElementById("ord-set").scrollIntoView()')
+            time.sleep(0.5)
+            browser.save_screenshot(os.environ["ARCADE_SHOT"])
+    finally:
+        node_trader.fee_payee = real
+        state.set_setting("inscribe_fee:doge", 0)
+
+
+def test_one_ai_picture_opens_the_nft_inscriber_with_its_details_as_the_json(browser, served, signed_in):
+    base, state, _fake = served
+    browser.get(f"{base}/nfts")
+    [pid] = _pictures(browser, state, 1)
+    browser.get(f"{base}/nfts?pick=llm:{pid}#inscribing")
+    _wait(browser, 'return document.getElementById("file").files.length === 1')
+    box = browser.find_element(By.ID, "pic-details")
+    _wait(browser, 'return !document.getElementById("pic-details").hidden')
+    assert browser.find_element(By.ID, "json-field").get_attribute("value") \
+        == '{"attributes":[{"trait_type":"Model","value":"qwen image 2.1 int8"}]}', "the model, ticked by default"
+    box.find_element(By.CSS_SELECTOR, '[data-f="model"]').click()
+    assert browser.find_element(By.ID, "json-field").get_attribute("value") == "", "nothing filled in: a bare file"
+    box.find_element(By.CSS_SELECTOR, '[data-f="name"]').send_keys("Moon Frog")
+    box.find_element(By.CSS_SELECTOR, '[data-f="collection"]').send_keys("Night Frogs")
+    box.find_element(By.CSS_SELECTOR, '[data-f="number"]').send_keys("4")
+    assert browser.find_element(By.ID, "json-field").get_attribute("value") \
+        == '{"name":"Night Frogs #4","edition":4}', "a collection and a number name it"

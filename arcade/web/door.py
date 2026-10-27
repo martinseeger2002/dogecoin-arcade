@@ -292,6 +292,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # top-ups and keys; /v1 answers only an API key the account made
                "/account/llm/grant", "/account/llm/topup", "/account/llm/chat", "/account/llm/keys/new",
                "/account/llm/keys/drop", "/v1/chat/completions", "/account/llm/image", "/v1/images/generations", "/account/llm/helper", "/account/llm/pictures/delete",
+               "/account/llm/pictures/keep",
                "/v1/images/edits",
                # which chains' wallets an account's Wallet tab shows (2026-10-18)
                "/account/wallets",

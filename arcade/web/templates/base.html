@@ -1424,9 +1424,12 @@ function arcadeMainnetReview(costs){
       if (p.value && rows.lastChild) rows.lastChild.firstChild.style.wordBreak = 'break-all';
     });
     if (costs.operator) {
-      var f = costs.fee || {};
-      line('Operator fee (' + ((f.permille || 5) / 10) + '%' + (f.minimum ? ', minimum ' + pep(f.minimum) : '')
-           + (costs.count ? ' a piece' : '') + ')', costs.operator);
+      // 0.5% with a minimum, or (permille 0, 2026-10-27) a flat amount per inscription set in Admin -> Fees.
+      var f = costs.fee || {}, how = [];
+      if (f.permille) how.push((f.permille / 10) + '%' + (f.minimum ? ', minimum ' + pep(f.minimum) : ''));
+      else if (f.permille === 0 && f.minimum) how.push('a flat ' + pep(f.minimum));
+      if (costs.count) how.push('a piece');
+      line('Operator fee' + (how.length ? ' (' + how.join(' ') + ')' : ''), costs.operator);
     }
     line(costs.count ? 'Total for the run' : costs.leg ? 'Set aside for the fee when it is taken'
          : 'Total leaving your wallet', costs.total, true);

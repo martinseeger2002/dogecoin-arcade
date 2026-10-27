@@ -46,10 +46,10 @@
       <input autocomplete="off" data-f="description" maxlength="400" placeholder="description" style="width:100%;margin-top:6px">
       <div data-rows style="margin-top:6px"></div>
       <button type="button" class="ghost small" data-add>Add a trait</button>
-      <label style="display:block;margin-top:6px;font-size:.88rem"><input type="checkbox" data-f="model"${models.length ? " checked" : " disabled"}>
-        Model: <b>${esc(models.join(", ") || "not known")}</b>, as a trait</label>
-      <label style="display:block;font-size:.88rem"><input type="checkbox" data-f="prompt">
-        ${many ? "Each picture's prompt" : "The prompt"} too <span class="muted">(public on the chain for ever)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;margin:8px 0 2px;font-size:.88rem"><input type="checkbox" data-f="model"${models.length ? " checked" : " disabled"} style="width:auto;margin:0">
+        <span>Model: <b>${esc(models.join(", ") || "not known")}</b>, as a trait</span></label>
+      <label style="display:flex;align-items:center;gap:6px;margin:2px 0;font-size:.88rem"><input type="checkbox" data-f="prompt" style="width:auto;margin:0">
+        <span>${many ? "Each picture's prompt" : "The prompt"} too <span class="muted">(public on the chain for ever)</span></span></label>
       <pre data-preview class="mono" style="font-size:.78rem;white-space:pre-wrap;max-height:180px;overflow:auto;margin:8px 0 0"></pre>`;
     const f = (k) => box.querySelector(`[data-f="${k}"]`);
     const addRow = (t = "", v = "") => {

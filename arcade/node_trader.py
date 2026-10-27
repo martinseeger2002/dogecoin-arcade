@@ -206,6 +206,16 @@ def lock_fee(state: Any, chain: Any) -> dict:
         return {}
     if bps <= 0:
         return {}
+    to = fee_payee(state, chain)
+    if not to:
+        return {}
+    return {"bps": bps, "to": to}
+
+
+def fee_payee(state: Any, chain: Any) -> str:
+    """Where this arcade is paid its fees on `chain` -- a lock's (lock_fee) and, since 2026-10-27, an inscription's
+    (app._operator_fee, which before paid the messaging chain's address on every chain) -- or "" when it has no
+    address there. Kept PAYEE_FOR seconds, so a busy page does not ask Core every time."""
     network = getattr(chain, "network", "")
     kept = _payees.get(f"{getattr(state, 'home', '')}:{network}")
     if kept is not None and kept[0] > time.monotonic():
@@ -222,9 +232,7 @@ def lock_fee(state: Any, chain: Any) -> dict:
         except Exception:                                  # noqa: BLE001 -- a chain with no address here
             to = ""
         _payees[f"{getattr(state, 'home', '')}:{network}"] = (time.monotonic() + PAYEE_FOR, to)
-    if not T.payee_ok(to):
-        return {}
-    return {"bps": bps, "to": to}
+    return to if T.payee_ok(to) else ""
 
 
 def fee_terms_fit(proposed: T.Leg, stood: dict) -> bool:

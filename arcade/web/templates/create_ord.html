@@ -207,10 +207,13 @@ $("ord-go").onclick = async () => {
     const first = await wallet.startOrd(held, {chain: c.chain, content: b64(bytes), content_type: f.type, name: f.name});
     const k = first.costs, shown = await wallet.checked(first, held);
     const network = Number(shown.fee || 0) + Number(k.reveal_fees || 0);
+    // The operator's fee is an output of the commit (2026-10-27, app._operator_fee), named on its own line.
+    const operator = Number(k.operator_fee || 0);
     const label = `Inscribe ${f.name} (${commas(f.size)} bytes) as a ${first.label}: ${commas(first.of)} transactions, `
       + `signed here without asking again. ${coins(k.postage, c.chain)} stays yours as the ord's own coin.`;
     const ok = c.mainnet
-      ? await arcadeMainnetReview({label, network, data: 0, others: 0, operator: 0, total: network + Number(k.postage), chain: c.chain})
+      ? await arcadeMainnetReview({label, network, data: 0, others: 0, operator, fee: first.operator_fee || null,
+                                   total: network + operator + Number(k.postage), chain: c.chain})
       : await arcadeAsk(`Inscribe ${f.name}?`, `${label} Network fees: ${coins(network, c.chain)}.`, "Inscribe");
     if (!ok) return;
     await run(first, f, bytes);
@@ -372,7 +375,8 @@ async function drawSet() {
   $("set-picked").hidden = false;
   $("set-picked").textContent = `${commas(read.items.length)} pictures, ${commas(bytes)} bytes, `
     + `${read.json ? `JSON for ${commas(read.json)}` : "no JSON (numbered in file order, no traits)"}`
-    + (quote ? ` · ${commas(quote.txs)} transactions, about ${coins(quote.fees, c.chain)} in fees` : "")
+    + (quote ? ` · ${commas(quote.txs)} transactions, about ${coins(quote.fees, c.chain)} in fees`
+        + (quote.operator ? ` and ${coins(quote.operator, c.chain)} to this arcade's operator` : "") : "")
     + (big ? ` · ${commas(big)} too big for this inscriber` : "");
   $("set-go").disabled = busy || big > 0 || !c;
 }
@@ -448,12 +452,14 @@ $("set-go").onclick = async () => {
   const plan = setPlan, c = plan && plan.chain, name = $("set-name").value.trim();
   if (!plan || !c) return;
   if (!name) { say("give the collection a name"); return; }
-  const n = plan.items.length, q = plan.quote || {fees: 0, txs: 0};
+  const n = plan.items.length, q = plan.quote || {fees: 0, txs: 0}, operator = Number(q.operator || 0);
   const label = `Inscribe ${name}: ${commas(n)} pictures as ${c.ord}s, about ${commas(q.txs)} transactions signed here without `
     + `asking again, then its collection index on ${TAG.network === "test" ? "Pepecoin test" : "this arcade's chain"}. `
     + `${coins(q.postage * n, c.chain)} stays yours as the ords' own coins.`;
   const ok = c.mainnet
-    ? await arcadeMainnetReview({label, network: q.fees, data: 0, others: 0, operator: 0, total: q.fees + q.postage * n, chain: c.chain, estimate: true})
+    ? await arcadeMainnetReview({label, network: q.fees, data: 0, others: 0, operator,
+                                 fee: operator ? {value: Math.round(operator / n)} : null,
+                                 total: q.fees + operator + q.postage * n, chain: c.chain, estimate: true})
     : await arcadeAsk(`Inscribe ${name}?`, `${label} Network fees: about ${coins(q.fees, c.chain)}.`, "Inscribe");
   if (!ok) return;
   busy = true; stopAsked = false; drawPicked();
@@ -471,7 +477,7 @@ $("set-go").onclick = async () => {
     const lanes = [];
     if (L > 1) {
       try {
-        const per = (Number(q.fees) + Number(q.postage) * n) / n;
+        const per = (Number(q.fees) + operator + Number(q.postage) * n) / n;   // each ord's commit pays the operator too
         const each = Math.ceil(per * Math.ceil(n / L) * 1.25) + 2000000;
         $("set-says").textContent = `Making ${L} lanes, a coin each, so ${L} ords go at once…`;
         const split = await postJSON("/account/ord/split", {chain: c.chain, lanes: L, each});

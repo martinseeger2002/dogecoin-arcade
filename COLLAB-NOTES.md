@@ -88,6 +88,45 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-28 · SadFrog's side (Claude, node 2) · branch `team/picture-inscribe` (on `main` c903042) · AI pictures inscribed from the LLM tab; the inscription fee per chain, on ords too
+SadFrog: "when a model makes an image for a user there should be a pipeline that easily allows them to inscribe right
+there. Have a prefilled template of a metadata that they can optionally fill out incase they want to make a small
+collection they can. The node operator should collect a fee of any inscription being inscribed - maybe 2 cents worth
+of the what ever crypto is being used to inscribe". SadFrog's answers: the operator sets the amount in coins (no price
+feed); every inscription pays it; the prompt goes on the chain only if ticked.
+
+**Pictures** (llmweb.py, _llm_tab.html, new _picture_details.html, _account_inscribe.html, create_ord.html):
+- "Your pictures": **For a collection** keeps a picture a week instead of a day (`/account/llm/pictures/keep`,
+  `kept_until` in its JSON, at most 40). **As an ord** sits beside **Inscribe** (your rebuilt page kept; only these added to it). A bar opens either inscriber with
+  every picked picture: `?pick=llm:<id>,<id>...`.
+- `_picture_details.html`: `arcadePictureDetails(box, pictures, onChange, many)` writes the HashLips JSON that
+  `inscriptions.collection_of` already files (name "C #n", edition, description, attributes). The model is a trait,
+  ticked by default; the prompt is not ticked. `arcadePickedPictures()` reads the account's cache.
+- One picture on /nfts: the form writes `#json-field`. Several: 1.png..N.png plus the `_metadata.json` it writes go
+  in `#build`, and the run goes on as for a folder (no JSON until a name is given, so the run's own wizard is still
+  offered). On /create/ord: one picture goes in `#ord-file` (an ord carries no JSON, and a note says so); several go in
+  `#set-folder` with `_metadata.json`, and `#set-name` is filled.
+
+**Inscription fee** (app._operator_fee, `_inscribe_fee_floor`, node_trader.fee_payee, admin.html):
+- The floor is now per chain: Admin -> Trading -> **Inscription fee**, saved as `inscribe_fee:<net>` (sats). Unset,
+  it is that chain's dust line; before, it was `fees.DUST_LIMIT` (0.01 coin) everywhere, about 80 cents on LTC. The
+  rate (`mainnet_create_fee_permille`) has a selector there too; Off with an amount set makes a flat fee.
+- The payee is the node's address on THAT chain (`fee_payee`, split out of `lock_fee`). Before, it was
+  `home_address(state.ledger)` on every chain. The operator's own account pays nothing.
+- **Ords now pay it**, once, as an output of the commit (`/account/ord/inscribe`), never on a reveal
+  (wallet.ordCheck). `/account/ord/quote` gives `operator` and per-file `operator_fee`. create_ord / create_name
+  reviews name it, and lane coins are sized with it.
+- `_inscribe_again` (the same file asked again before its split went out) rebuilt the split without the fee; now it
+  includes it.
+- `/account/run/piece`'s answers without an offer (`held: browser`, `big`) carry `operator_fee`, so approveRun quotes
+  it. approveRun no longer assumes 0.5% when no fee is given, and the review label reads "a flat X" for a flat fee.
+
+Docs: llm.md "Inscribing a picture you made", collections.md "The operator's inscription fee".
+Tests: tests/test_inscribe_fee.py (new, 5); test_llm `test_pictures_picked_for_a_collection_are_kept_a_week`;
+test_ord_inscribe_browser (two new: a set of AI pictures as ords with their JSON and the fee quoted, one picture on /nfts).
+Nothing needed from you but the merge. Your call: whether order batches (vnd.arcade.orders+json) should stay charged,
+as they were before this change.
+
 ### 2026-10-27 LLM credits per model (Claude)
 The operator: "Credits should not be shared across models each model has their own credit, and those credits are stored by
 The operator of that model"; "If an operator has multiple LLM's on their computer, they should all be able to be priced
