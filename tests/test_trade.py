@@ -408,3 +408,43 @@ def test_the_node_trader_turns_down_lock_times_it_cannot_finish_under(tmp_path, 
     steps = [(x["id"], x["step"]) for x in answers]
     assert steps == [("tr-times0", "cancel"), ("tr-times1", "cancel"), ("tr-times2", "accept")], answers
     assert trader.book.get("tr-times0") is None and trader.book.get("tr-times2") is not None
+
+
+def test_the_node_trader_never_takes_a_secret_hash_twice(tmp_path, monkeypatch):
+    """2026-10-27 (lock-script review): a lock commits to the secret hash, the two keys and the lock time, not to an
+    amount. Two proposals on one hash, against two of this node's orders, had identical lock scripts: the taker locked
+    once, named that one lock for both, and claimed both of this node's locks. A hash is used once."""
+    import json
+    from arcade import node_trader as NT, trade_courier
+    from arcade import trade_messages as M
+
+    class State:
+        home = tmp_path
+
+        def setting(self, key, default=None):
+            return default
+
+    sent = []
+    monkeypatch.setattr(trade_courier, "send", lambda state, messaging, peer, raw: sent.append(raw))
+    trader = NT.NodeTrader(State(), {}, None)
+    with trader._db() as conn:
+        for oid in ("order-a", "order-b"):
+            conn.execute("INSERT INTO standing_order(id, give, get) VALUES(?,?,?)", (
+                oid, json.dumps({"network": "doge", "kind": "coin", "asset": "", "amount": 2 * COIN}),
+                json.dumps({"network": "regtest", "kind": "coin", "asset": "", "amount": 3 * COIN})))
+    taker = Key()
+    mine = trader.key.pubkey.hex()
+    give = T.Leg("regtest", "coin", "", 3 * COIN, taker.pub.hex(), mine)
+    get = T.Leg("doge", "coin", "", 2 * COIN, mine, taker.pub.hex())
+    t1, t2 = T.plan_locktimes(give, get, T.INITIATOR, int(time.time()))
+    for n, (oid, h) in enumerate((("order-a", "cd" * 32), ("order-b", "CD" * 32), ("order-b", "ef" * 32))):
+        trader._consider({"step": "propose", "id": f"tr-hash{n}", "order": oid, "give": M.leg_json(give),
+                          "get": M.leg_json(get), "secret_hash": h, "t1": t1, "t2": t2}, "02" + "33" * 32)
+    answers = [M.parse(raw) if isinstance(raw, (bytes, str)) else raw for raw in sent]
+    assert [(x["id"], x["step"]) for x in answers] == [
+        ("tr-hash0", "accept"), ("tr-hash1", "cancel"), ("tr-hash2", "accept")], answers
+    assert "used before" in answers[1].get("reason", ""), answers[1]
+    wallet = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/wallet_js.js").read_text()
+    body = wallet[wallet.index("export async function answerProposals(wallet) {"):]
+    assert body.index("that secret hash was used before") < body.index("const short = await canFund("), \
+        "the browser refuses a used hash before it locks anything"

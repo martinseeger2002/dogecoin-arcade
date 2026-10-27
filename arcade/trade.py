@@ -560,6 +560,15 @@ class Book:
             row = conn.execute("SELECT body FROM trade WHERE id=?", (trade_id,)).fetchone()
         return _load(row["body"]) if row else None
 
+    def knows_secret_hash(self, secret_hash: str) -> bool:
+        """Whether any trade here, in any state, used this secret hash. A lock commits to the hash, the two keys and
+        the lock time, not to an amount: two trades sharing a hash could share one counterparty lock, and whoever
+        made it would claim both of this trader's (2026-10-27). So a hash is used once."""
+        needle = str(secret_hash).lower()
+        with self._open() as conn:
+            rows = conn.execute("SELECT body FROM trade WHERE body LIKE ?", (f"%{needle}%",)).fetchall()
+        return any(json.loads(r["body"]).get("secret_hash", "").lower() == needle for r in rows)
+
     def open_trades(self) -> list[Trade]:
         with self._open() as conn:
             rows = conn.execute("SELECT body FROM trade WHERE state NOT IN ('done','aborted')").fetchall()

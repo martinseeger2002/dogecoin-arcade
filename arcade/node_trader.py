@@ -748,6 +748,12 @@ class NodeTrader:
             courier.send(self.state, self.messaging, bytes.fromhex(peer),
                          M.build("cancel", said["id"], reason="those are not this order's terms"))
             return
+        # A secret hash is used once (2026-10-27): two trades on one hash, keys and lock time share one lock script,
+        # so a single counterparty lock would satisfy both while this node locked twice.
+        if self.book.knows_secret_hash(said["secret_hash"]):
+            courier.send(self.state, self.messaging, bytes.fromhex(peer),
+                         M.build("cancel", said["id"], reason="that secret hash was used before"))
+            return
         # The lock times too (2026-10-25): far enough apart to claim in time, and not too far off.
         late = T.locktimes_fit(they_give, they_get, said["t1"], said["t2"], int(time.time()))
         if late:

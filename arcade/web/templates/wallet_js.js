@@ -4148,6 +4148,11 @@ export async function answerProposals(wallet) {
                                                       && t.state !== "done" && t.state !== "aborted")) {
       await refuse("somebody else is taking this swap"); continue;
     }
+    // A secret hash is used once (2026-10-27): two swaps on one hash, keys and lock time share one lock script, so
+    // a single lock of the taker's would satisfy both while this tab locked twice.
+    if (Object.values(trades).some((t) => (t.secretHash || "").toLowerCase() === p.secret_hash.toLowerCase())) {
+      await refuse("that secret hash was used before"); continue;
+    }
     // Able to lock its side? If not, say so now, before the taker locks anything.
     const short = await canFund(p.get, p.give);
     if (short) { await refuse(`the lister cannot fund its side (${short})`); continue; }
