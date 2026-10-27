@@ -88,6 +88,46 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-27 · SadFrog's side (Claude, node 2) · branch `team/onboarding` (on `main` 0569eb2) · Welcoming new operators: one ask for 1 PEP test, one click to pay it, a Welcomers board
+SadFrog: "make it easy for someone new running an arcade to get setup": a new arcade asks every operator on the mesh for
+1 PEP test, any operator pays it in one click from the notification, "One ask, closes when paid", a popup that nothing
+works until PEP test arrives with a Mine a block button usable before the node syncs, and "a highscores list for
+operators ... of people "welcoming" new operators - if 2 operators send a pep test in the same block, count it for both".
+One commit, 7e07abd, plus this entry:
+- **Records (arcade/welcome.py):** `ask {addr, tag}`, `sent {ask, txid, tag}`, `closed {block, height, txids}`, each
+  signed by the writing arcade's mesh node key (`a` = its node id), kept in `<home>/welcome.json` (5,000 at most; open
+  asks 14 days, the rest a year). A record is refused whole when anything in it would need changing (a badly shaped
+  tag, unsorted txids), because a changed record no longer carries its signature. One ask an arcade; a closed one is
+  never opened again; one `sent` an arcade per ask.
+- **The whole mesh (arcade/mesh/welcomeshare.py, kind "wl"):** a record new to an arcade is kept and sent to every
+  other link, so it crosses the mesh once; on link-up each side sends all it keeps, so an arcade that joins later still
+  hears an open ask. A link brings at most 30 new asks an hour. Registered in `service.for_state` after operators.
+- **This arcade (arcade/web/welcoming.py, every minute from the extension's rebalance):** asks once (setting
+  `welcome:asked`) when it links to another arcade and neither its payout address on the messaging chain (by the index)
+  nor its node wallet holds 1 PEP test. It then looks at every payment it was told of with `getrawtransaction`
+  (through the sharer while it catches up: core_catchup) and closes on the first block that pays its address, with every
+  such payment in that block. Coins that came another way (it mined) close it with no payments, so nobody scores.
+- **Paying:** `POST /admin/api/welcome/send {ask}` sends 1 PEP test from the node's Core wallet on the messaging chain
+  (`sendtoaddress`), admin write check, no password (test coins, as the faucet). `GET /admin/api/welcome` is the view;
+  `POST /admin/api/welcome/ask` is the one ask by hand once the first is gone (14 days unanswered).
+- **Board:** one point per closed ask for each arcade whose txid is in its `txids`; a txid counts for whoever said it
+  first. All of it is each arcade's own word, like the operator tags: nothing pays, permits or vouches by it.
+- **UI:** Admin -> Overview -> "Welcome new operators" (`_welcome_panel.html`): open asks with Send 1 PEP test, this
+  arcade's own ask, the Welcomers table. The first-run sheet opens on every Admin visit until the arcade is funded:
+  why, the ask's status (Ask again when allowed), **Mine a block**, and the next steps (claim the @name on /me, publish
+  the key on /me/contacts, welcome the next one). Notifications (node and operator account) get a `welcome` row per
+  open ask not yet paid by this arcade, with its own Send button.
+- **Mining:** `/admin/api/mine` takes `{"blocks": n}` (0-100; passed to blockminer only when set). `_work_share` now
+  pays the sharer its tenth while a chain run here is catching up (core_catchup.borrowing), as on a borrowed chain: the
+  work comes from that sharer then.
+- **Pepecoin test is still never "borrow":** the borrowing a new arcade needs is the catch-up borrowing that is already
+  there, so `cores.REQUIRED` is untouched.
+- **Tests:** tests/test_welcome.py (16, including a three-arcade mesh a - b - c). tests/test_admin.py, test_notifications,
+  test_mesh, test_core_catchup, test_litecoin_testnet, test_shared_revenue, test_ring, test_page_scripts and the smoke
+  set pass, but for main's own two in test_docs.
+- **Needs from the other side:** apply the commit. Open question: is 1 PEP test the right amount, and should a node
+  wallet with no coins at all be allowed to show Send (it fails with the wallet's own error now)?
+
 ### 2026-10-27 Dogecoin's token rule from PR #32, without cutting the index; a backfill beside it (Claude)
 The operator: "I would like to keep what we have index if we can and if we are missing anything, I'd like to use sad frogs PR
 to backfill". SadFrog's rule (PR #32: on Dogecoin a reinscription carries no DRC-20 operation, as nintondo reads it;
