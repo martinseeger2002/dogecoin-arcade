@@ -142,7 +142,9 @@ def wallet_table() -> dict:
 #: both separate drop downs to view which protocol - starting with doginals, drc-20s, then pepinals, then bellinals
 #: and then litecoin ordinals, litecoin omni, and then the rest"): the coins in that order, each with its protocols.
 #: kind: "ord" (inscriptions), "token" (the JSON -20 tokens the chain's ord index reads), "omni" (Omni Layer).
-EXPLORE_ORDER = ("doge", "main", "bel", "ltc", "lky", "wjk", "ltctest", "test")
+#: DigiByte (2026-10-26) with the rest, before the testnets: a chain whose index this arcade does not have is skipped, so it
+#: is listed before DigiByte's chain lands (PR #29).
+EXPLORE_ORDER = ("doge", "main", "bel", "ltc", "lky", "wjk", "dgb", "ltctest", "test")
 OMNI_NETS = ("ltc", "ltctest")
 
 

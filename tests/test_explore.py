@@ -25,6 +25,8 @@ def test_the_coins_in_sadfrogs_order_each_with_its_protocols():
     assert [p["kind"] for p in ord_chains.explore_protocols("ltc")] == ["ord", "token", "omni"], "Litecoin has Omni"
     assert [p["label"] for p in ord_chains.explore_protocols("bel")] == ["Bellinals", "BEL-20"]
     assert ord_chains.explore_protocols("nope") == []
+    order = ord_chains.EXPLORE_ORDER
+    assert order.index("wjk") < order.index("dgb") < order.index("ltctest"), "DigiByte with the rest, before the testnets"
 
 
 def test_explore_is_open_to_anybody_for_reading_only():
