@@ -88,6 +88,32 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-27 Exchange safety after the Doginal Dogs theft: stale listings, lots, swap locks, Kotia (Claude)
+The theft on the Doginal Dogs marketplace (2026-10-26): six transactions swept 201 Dogs from 194 wallets to one address,
+every one of their 264 inputs signed SIGHASH_NONE|ANYONECANPAY -- a signature over no output, which whoever holds it can
+put in any transaction. Checked against the arcade, which never signs or files NONE (listings and Doginals are
+SINGLE|ANYONECANPAY, refused otherwise), then a review of every lock script and every chain's send/receive/exchange:
+- **Stale listings** (`app._no_dearer_relist`, `doginal_market.Book.register`): a listing stays good until its coins
+  move, so listing a piece again for MORE left the cheaper one buyable (exchange legs are announced to every node).
+  Refused until cancelled; for less is fine. Replaced/expired Doginal rows keep no signature.
+- **Buy-order lots** (`/account/standing/sign`, `/cancel`, pair.html): a lot signs only its change, so its holder can
+  spend it. Only the buyer's own SINGLE|ANYONECANPAY over that lot is kept now, cancel offers the sweep that moves the
+  lots back, and the prompt says what is trusted.
+- **One secret hash per swap** (`trade.Book.knows_secret_hash`, node_trader, wallet.js answerProposals): a lock commits
+  to hash, keys and lock time but no amount, so two trades on one hash shared one counterparty lock.
+- **Lock times beyond a miner's reach** (`trade.LOCK_SECONDS` 8 h, `FUTURE_DRIFT` 2 h, next_step / wallet.js /
+  locktimes_fit): without BIP113 a time lock is checked against the block's own time, which may run 2 h ahead; 2 h / 1 h
+  locks let one early block refund after the other side's claim showed the secret. Older arcades still take the new
+  proposals; theirs (2 h) are refused here as too close.
+- **Kotia / Bellscoin locks** (`config.require_untimed`, `trade_orders.check_order`, wallet.js NO_LOCK): Kotia lock
+  claims/refunds lack nTime and Bellscoin's P2SH is unpayable, so no cross-chain order or lock is made on either.
+  `keywallet.prepare` writes Kotia's nTime; `txbuild.SCRIPTHASH_VERSIONS` += 45 (a K script address was paid as a key).
+- **Shop countersign** (`swap.countersign`): a buyer input the node's wallet owns is refused (signrawtransaction signs
+  them all). Testnet only.
+- Not changed, for the operator: zero-conf swaps below the big line (2026-10-17) stay as decided; bids'
+  ALL|ANYONECANPAY signatures need the database and the seller together.
+- Tests: test_account_list, test_doginal_market, test_standing, test_trade, test_trade_tab, test_kotia, test_swap.
+
 ### 2026-10-26 The Browser: every name's site; pictures on .mesh pages (Claude)
 The operator: "Instead of mesh browser call the app browser. When it's installed on a T deck it should be the .mesh domains
 only; when it is opened on the PWA or website it should be able to explore all p:dns names", "small size images on
