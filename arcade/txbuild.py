@@ -40,7 +40,9 @@ def push(data: bytes) -> bytes:
 #: pubkey-hash version on those chains, so the byte alone says which script.
 #: Litecoin (2026-10-17): 50 ("M") and its legacy 5 ("3") on mainnet, 58 ("Q") on regtest -- without
 #: them an M-address got a pubkey-hash script and the coins were lost.
-SCRIPTHASH_VERSIONS = frozenset({22, 196, 50, 5, 58})
+#: Kotia's 45 ("K", 2026-10-27): missing since Kotia was added, so _check_address took a Kotia script address and this
+#: gave it a key-hash script, and the coins were lost. 45 is no chain's key-hash byte (Kotia's own is 46).
+SCRIPTHASH_VERSIONS = frozenset({22, 196, 50, 5, 58, 45})
 
 
 def p2pkh_script(address: str) -> bytes:

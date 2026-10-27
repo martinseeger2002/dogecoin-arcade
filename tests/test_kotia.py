@@ -270,3 +270,17 @@ def test_no_swap_lock_or_escrow_is_made_where_it_could_not_settle():
     assert 'const NO_LOCK = new Set(["bel", "kot"]);' in wallet
     body = wallet[wallet.index("async function redeemsOf(trade) {"):]
     assert body.index("NO_LOCK.has(leg.network)") < body.index("coins.htlcRedeem("), "refused before a lock is made"
+
+
+def test_every_chains_script_address_is_paid_as_a_script_or_refused():
+    """2026-10-27: Kotia's P2SH byte 45 was in neither txbuild.SCRIPTHASH_VERSIONS nor unpayable_versions, so a send
+    to a "K..." script address paid its hash as a key hash and the coins were lost. Every chain's script byte is now
+    paid as a script, or refused as a payee where it is another chain's key byte."""
+    from arcade import txbuild
+    from arcade.script import b58check_encode
+    for name, params in NETWORKS.items():
+        version = params.scripthash_version
+        if version in config.unpayable_versions(params):
+            continue
+        address = b58check_encode(version, bytes(range(20)))
+        assert txbuild.p2pkh_script(address) == bytes([0xA9, 0x14]) + bytes(range(20)) + bytes([0x87]), name
