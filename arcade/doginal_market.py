@@ -389,9 +389,19 @@ class Book:
                "pubkey": bytes(pubkey).hex(), "status": "open", "created": now, "expires": now + float(seconds),
                "spent_by": ""}
         with self._open() as conn:
-            # A newer listing of the same coin is the one shown. The older signature still stands until the coin moves.
-            conn.execute("UPDATE doginal_listing SET status='replaced' WHERE txid=? AND vout=? AND status='open'",
-                         (txid, vout))
+            # A newer listing of the same coin is the one shown. The older signature still stands until the coin moves,
+            # so a price may only come down that way: a dearer one would leave the cheaper signature buyable by
+            # whoever got hold of it (2026-10-27, after leaked pre-signed inputs emptied 194 wallets of Doginal Dogs
+            # elsewhere). Raising it means moving the coin first, which stills every older signature.
+            cheaper = conn.execute("SELECT MIN(price) FROM doginal_listing WHERE txid=? AND vout=? AND status='open'",
+                                   (txid, vout)).fetchone()[0]
+            if cheaper is not None and int(price) > int(cheaper):
+                raise MarketError(f"this coin is listed for {int(cheaper) / COIN:g} already, and that signature stays "
+                                  "good until the coin moves: cancel the listing first (it moves the coin back to "
+                                  "you), then list it for more")
+            # A replaced row is never sold from, so its signature is not kept to leak.
+            conn.execute("UPDATE doginal_listing SET status='replaced', signature='' "
+                         "WHERE txid=? AND vout=? AND status='open'", (txid, vout))
             conn.execute("INSERT INTO doginal_listing(id, network, seller, inscription, txid, vout, value, price, "
                          "signature, pubkey, status, created, expires, spent_by) "
                          "VALUES(:id,:network,:seller,:inscription,:txid,:vout,:value,:price,:signature,:pubkey,"
@@ -405,7 +415,7 @@ class Book:
 
     def open_listings(self, network: str, limit: int = 200) -> list[dict]:
         with self._open() as conn:
-            conn.execute("UPDATE doginal_listing SET status='expired' WHERE status='open' AND expires<=?",
+            conn.execute("UPDATE doginal_listing SET status='expired', signature='' WHERE status='open' AND expires<=?",
                          (time.time(),))
             rows = conn.execute("SELECT * FROM doginal_listing WHERE network=? AND status='open' "
                                 "ORDER BY created DESC LIMIT ?", (network, int(limit))).fetchall()

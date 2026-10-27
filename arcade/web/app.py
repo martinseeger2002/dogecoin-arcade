@@ -17247,6 +17247,29 @@ def create_app(state: AppState) -> FastAPI:
                         "waiting for its block. Nothing was spent.")
         return lane, ""
 
+    def _no_dearer_relist(chain, address: str, piece: dict, price: int) -> None:
+        """Refuse a new listing of a piece this owner has listed already, unless it is cheaper in coins.
+
+        A new leg is built over other coins, so the open one stays a signed, announced trade that any buyer can still
+        complete while the seller holds the piece: listing again for more would leave the old price buyable (2026-10-27,
+        after leaked pre-signed inputs emptied 194 wallets of Doginal Dogs elsewhere). Cancelling moves the coins its
+        signatures stand on, and then any price is fine."""
+        def mine():
+            return [r for r in state.listings.open_listings(chain.network, limit=1000, claims=True)
+                    if r["owner"] == address and _sold_piece(r) == str(piece["txid"]).lower()]
+        older = mine()
+        if older:
+            _sweep_book(chain, force=True)           # a listing already spent does not hold the piece back
+            older = mine()
+        if not older:
+            return
+        cheapest = min(int(r.get("price") or 0) for r in older)
+        if price > 0 and cheapest > 0 and price < cheapest:
+            return
+        raise ValueError(f"#{piece['number']} is listed already, and that signed listing stays good until its coins "
+                         f"move: cancel it first (it moves them back to you), then list it again"
+                         + (" for more" if price > 0 and cheapest > 0 else ""))
+
     def _sold_piece(row: dict) -> str:
         """The inscription a listing's payload sells, or "" when it names none."""
         try:
@@ -17533,6 +17556,7 @@ def create_app(state: AppState) -> FastAPI:
                 raise ValueError(
                     "only whoever holds a piece can price it, and this one "
                     f"is held by {row['owner']}")
+            _no_dearer_relist(chain, address, row, price)
             naming = _ask_payload(row, take)
             piece = swaplib.describe_leg(swaplib.leg_json(
                 swaplib.leg_of({"inscription": row["txid"]}, index), index))

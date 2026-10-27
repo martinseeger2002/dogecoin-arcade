@@ -164,6 +164,32 @@ def test_the_book_files_only_a_signature_over_this_coin_and_price(market, tmp_pa
     assert book.live(rpc, "doge") == [] and book.get(filed["id"])["status"] == "gone"
 
 
+def test_a_listed_coin_is_listed_again_only_for_less_and_the_old_signature_is_not_kept(market, tmp_path):
+    """2026-10-27: leaked pre-signed inputs emptied 194 wallets of Doginal Dogs elsewhere. An older listing's signature
+    stays good until the coin moves, so relisting for MORE would leave the cheaper one buyable: refused until the
+    coin moves. For less is fine, and the row it replaces keeps no signature to leak; neither does an expired one."""
+    rpc = _Chain({(INS_TX, 0): (100_000, p2pkh_script(SELLER))})
+    book = M.Book(tmp_path / "book.sqlite")
+
+    def file(price):
+        _, row = _listing(price)
+        return book.register(rpc, network="doge", seller=SELLER, coin=row["coin"], inscription=INSCRIPTION,
+                             price=price, signature=row["signature"], pubkey=_pubkey(SELLER_KEY))
+    first = file(5 * COIN)
+    with pytest.raises(M.MarketError, match="cancel the listing first"):
+        file(9 * COIN)
+    assert book.get(first["id"])["status"] == "open" and book.get(first["id"])["signature"]
+    second = file(3 * COIN)
+    old = book.get(first["id"])
+    assert old["status"] == "replaced" and old["signature"] == "", "a replaced signature is not kept"
+    assert [r["id"] for r in book.live(rpc, "doge")] == [second["id"]]
+    with book._open() as conn:
+        conn.execute("UPDATE doginal_listing SET expires=0 WHERE id=?", (second["id"],))
+    assert book.open_listings("doge") == []
+    assert book.get(second["id"])["status"] == "expired" and book.get(second["id"])["signature"] == ""
+    file(9 * COIN)                                # nothing open any more: any price
+
+
 # --- end to end, on a real Dogecoin --------------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")

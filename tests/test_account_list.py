@@ -441,6 +441,22 @@ def test_a_listing_put_on_the_chain_is_filed_by_a_node_that_never_saw_it(shop):
     assert la.import_announced(state, state.messaging) == 0, "read once, filed once"
 
 
+def test_a_listed_piece_is_listed_again_only_for_less(shop):
+    """2026-10-27: leaked pre-signed inputs emptied 194 wallets of Doginal Dogs elsewhere. A second listing is built
+    over other coins, so the first stays a signed, announced trade anyone can finish: listing again for more would
+    leave the old price buyable. Refused, with the way out (cancel moves its coins); for less is fine."""
+    app, state, rpc = shop
+    secret, pubkey, mine = _seated(app, state, rpc, 8, coins=(4.0, 1.0, 2.0, 3.0, 1.5))
+    piece = _inscribed(app, state, rpc, secret, pubkey, "a piece priced once")
+    first = _signed(app, secret, pubkey, app.post("/account/list", json={"piece": piece, "amount": "2"}).json(),
+                    amount="2")
+    assert first.status_code == 200, first.text
+    dearer = app.post("/account/list", json={"piece": piece, "amount": "5"})
+    assert dearer.status_code == 400 and "cancel it first" in dearer.text, dearer.text
+    cheaper = app.post("/account/list", json={"piece": piece, "amount": "1"})
+    assert cheaper.status_code == 200, cheaper.text
+
+
 def test_a_listing_keeps_its_coins_after_a_restart(shop):
     """2026-09-27: listings on a mintpad went "spent" because the only thing
     keeping the seller's own sends off a listing's coins lived in memory, and
