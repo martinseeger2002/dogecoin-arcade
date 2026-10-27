@@ -88,6 +88,19 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-26 Dogecoin rules 6: a reinscription's DRC-20 operation counts for nothing (Claude)
+dogi balances drifted from nintondo's DRC-20 index (doge-mainnet-tokens.nintondo.io): one holder showed 314,000 that
+nintondo never gave it, and ten more top holders were off by 1,000 to 452,750. Cause: rules 5 (2026-10-22) numbers
+reinscriptions as nintondo does, and from then on the walker read DRC-20 ops in reinscriptions too -- nintondo does not on
+Dogecoin (it does on Bells, where bel-20 reinscriptions count).
+- `arcade/ord_rules.py`: doge rules 5 -> 6; `TOKENS_SKIP_REINSCRIPTIONS = {"doge"}` and `tokens_in_reinscriptions(net)`.
+- `arcade/doginal_index.py` `Walker._tokens`: a reinscription's op is skipped where the chain says so.
+- Checked: a full dogi replay from its deploy to 4,752,800 with this rule, against nintondo's history of each address at
+  that height: all 11 holders that drifted now match, and the top 30 holders match.
+- The bump re-walks the Doge index on each node that takes it (as every rules bump does); Bells, Litecoin unchanged.
+- Tests: test_doginal_index (two new: Dogecoin skips the reinscription's transfer; a chain that counts them sets it
+  aside), rule numbers in test_ord_dialects / test_bells_index.
+
 ### 2026-10-26 The Browser: every name's site; pictures on .mesh pages (Claude)
 The operator: "Instead of mesh browser call the app browser. When it's installed on a T deck it should be the .mesh domains
 only; when it is opened on the PWA or website it should be able to explore all p:dns names", "small size images on
