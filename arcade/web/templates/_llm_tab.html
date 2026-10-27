@@ -302,6 +302,11 @@
     </div>
     <section id="pic-gallery" hidden style="display:flex;flex-direction:column;gap:10px">
       <div class="aim-sizehead"><b style="font-size:1rem">Your pictures</b><span class="aim-fine">kept 24 hours on your arcade</span></div>
+      <span class="aim-fine" style="text-align:left">Tick <b>For a collection</b> to keep a picture a week and inscribe several together as one small collection.</span>
+      <div id="pic-set-bar" hidden><div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px">
+        <span id="pic-set-says" class="aim-fine"></span>
+        <a id="pic-set-nft" class="aim-ghost" style="display:inline-flex;align-items:center;text-decoration:none">Inscribe as NFTs</a>
+        <a id="pic-set-ord" class="aim-ghost" style="display:inline-flex;align-items:center;text-decoration:none">Inscribe as ords</a></div></div>
       <div class="aim-gal" id="pic-thumbs"></div>
     </section>
   </section>
@@ -984,16 +989,38 @@ async function loadGallery() {
   const pics = got.pictures || [];
   $("pic-gallery").hidden = !pics.length;
   $("pic-thumbs").innerHTML = pics.map((p) => {
-    const left = Math.max(0, Math.round((p.until - Date.now() / 1000) / 3600));
+    const hours = Math.max(0, Math.round((p.until - Date.now() / 1000) / 3600));
+    const left = hours > 48 ? `${Math.round(hours / 24)} days left` : `${hours} h left`;
+    const one = encodeURIComponent(p.id);
     return `<figure>
       <a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="${esc(p.prompt)}" loading="lazy"></a>
-      <figcaption title="${esc(p.prompt)}">${esc(p.prompt || "picture")} · ${left} h left</figcaption>
-      <span class="acts"><a href="/nfts?pick=llm:${encodeURIComponent(p.id)}#inscribing">Inscribe</a>
+      <figcaption title="${esc(p.prompt)}">${esc(p.prompt || "picture")} · ${left}</figcaption>
+      <label style="display:flex;align-items:center;gap:5px;font-size:.76rem"><input type="checkbox" data-keep="${esc(p.id)}"${p.kept ? " checked" : ""} style="width:auto;margin:0"> For a collection</label>
+      <span class="acts"><a href="/nfts?pick=llm:${one}#inscribing" title="An NFT on this arcade's chain, with its name and traits">Inscribe</a>
+        <a href="/create/ord?pick=llm:${one}" title="An ord: Doginals, Pepinals, Bellinals and the other ord chains">As an ord</a>
         <a href="${esc(p.url)}" download="arcade-${esc(p.id)}.png">Download</a>
         <button type="button" data-change="${esc(p.url)}">Change it</button>
         <button type="button" class="del" data-del="${esc(p.id)}">Delete</button></span></figure>`;
   }).join("");
+  picSetBar(pics.filter((p) => p.kept));
 }
+/** The pictures picked for a collection, oldest first (the order they are numbered in), and the two ways to
+ *  inscribe them together: the inscriber opens with every one of them chosen and the details template filled in. */
+function picSetBar(kept) {
+  const bar = $("pic-set-bar");
+  bar.hidden = !kept.length;
+  if (!kept.length) return;
+  const ids = kept.map((p) => p.id).sort().join(",");
+  $("pic-set-says").textContent = `${kept.length} ${kept.length === 1 ? "picture" : "pictures"} picked for a collection`;
+  $("pic-set-nft").href = `/nfts?pick=llm:${encodeURIComponent(ids)}#running`;
+  $("pic-set-ord").href = `/create/ord?pick=llm:${encodeURIComponent(ids)}#ord-set`;
+}
+document.addEventListener("change", async (e) => {
+  const k = e.target.closest("[data-keep]"); if (!k) return;
+  try { await postJSON("/account/llm/pictures/keep", {ids: [k.dataset.keep], keep: k.checked}); }
+  catch (err) { k.checked = !k.checked; toast(err.message); }
+  loadGallery();
+});
 document.addEventListener("click", async (e) => {
   const ch = e.target.closest("[data-change]");
   if (ch) { e.preventDefault(); changeThis(ch.dataset.change, "my-picture.png"); window.scrollTo({top: 0, behavior: "smooth"}); return; }

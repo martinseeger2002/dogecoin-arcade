@@ -1,0 +1,121 @@
+{# The details of an AI picture, filled in before it is inscribed (2026-10-27, SadFrog: "when a model makes an image for
+   a user there should be a pipeline that easily allows them to inscribe right there. Have a prefilled template of a
+   metadata that they can optionally fill out incase they want to make a small collection they can").
+
+   Included by the NFT inscriber (_account_inscribe.html) and the ord inscriber (create_ord.html). Both open it only
+   when a picture came from the LLM tab's "Your pictures" (?pick=llm:<id>[,<id>...]); a file chosen from the disk gets
+   none of this.
+
+   What it writes is the JSON every collection on the arcade already uses (docs/collections.md, HashLips' shape:
+   `inscriptions.collection_of` files a piece by a `name` of "Collection #12" and an integer `edition`), so a set made
+   here is filed, listed and counted exactly like a set inscribed from a folder:
+
+     {"name": "Night Frogs #2", "edition": 2, "description": "...",
+      "attributes": [{"trait_type": "Model", "value": "qwen image 2.1"}, {"trait_type": "Mood", "value": "calm"}],
+      "prompt": "..."}
+
+   * Everything is optional. With nothing filled in and the model unticked there is no JSON at all, and a single
+     picture goes on as a bare file, the same as before.
+   * The model is a trait, ticked by default: it says how the picture was made, and costs a few bytes.
+   * The prompt is NOT ticked by default (SadFrog, 2026-10-27): it stays on the chain for ever, and people may not
+     expect what they typed to become public. Ticked, each piece carries its own prompt.
+   * Every byte is paid for on the chain, so the preview shows the JSON exactly as it will go up. #}
+<script>
+(() => {
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+  /** A model's file name read as a name: "qwen_image_2.1_int8.safetensors" -> "qwen image 2.1 int8". */
+  const modelLabel = (m) => String(m || "").replace(/^.*[\\/]/, "").replace(/\.(safetensors|ckpt|gguf|bin|pt|pth)$/i, "")
+    .replace(/[_]+/g, " ").trim().slice(0, 60);
+
+  /** Draw the details form into `box` for `pictures` ([{id, model, prompt}], in the order they are numbered) and
+   *  call `onChange(entries)` with one JSON object per picture (or null for a picture that carries none) on every
+   *  edit, and once at the start. `many`: a collection (a collection name is asked, every piece numbered); otherwise
+   *  one picture, which may still be given a collection and a number of its own. Returns {entries(), name()}. */
+  window.arcadePictureDetails = (box, pictures, onChange, many) => {
+    const models = [...new Set(pictures.map((p) => modelLabel(p.model)).filter(Boolean))];
+    box.innerHTML = `
+      <h4 style="margin:0 0 4px">${many ? "The collection's details" : "This picture's details"} <span class="muted" style="font-weight:400">(optional)</span></h4>
+      <p class="muted" style="font-size:.84rem;margin:0 0 8px">${many
+        ? `Your ${pictures.length} pictures become one collection: each piece is named "collection #number", in the order you made them. They go on the chain with the details below. Leave a field empty to leave it out.`
+        : "Filled in from the picture. These details go on the chain with it, so its name and traits show in every wallet and on the Exchange. Give it a collection and a number to start a small set, and add more pictures to it later under the same name."}</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px">
+        ${many ? "" : `<input autocomplete="off" data-f="name" maxlength="60" placeholder="name (a collection and number name it for you)">`}
+        <input autocomplete="off" data-f="collection" maxlength="60" placeholder="${many ? "collection name (every piece is &quot;name #number&quot;)" : "collection (optional)"}">
+        <input autocomplete="off" data-f="number" inputmode="numeric" maxlength="7" placeholder="${many ? "first number (1)" : "number in the collection"}">
+      </div>
+      <input autocomplete="off" data-f="description" maxlength="400" placeholder="description" style="width:100%;margin-top:6px">
+      <div data-rows style="margin-top:6px"></div>
+      <button type="button" class="ghost small" data-add>Add a trait</button>
+      <label style="display:block;margin-top:6px;font-size:.88rem"><input type="checkbox" data-f="model"${models.length ? " checked" : " disabled"}>
+        Model: <b>${esc(models.join(", ") || "not known")}</b>, as a trait</label>
+      <label style="display:block;font-size:.88rem"><input type="checkbox" data-f="prompt">
+        ${many ? "Each picture's prompt" : "The prompt"} too <span class="muted">(public on the chain for ever)</span></label>
+      <pre data-preview class="mono" style="font-size:.78rem;white-space:pre-wrap;max-height:180px;overflow:auto;margin:8px 0 0"></pre>`;
+    const f = (k) => box.querySelector(`[data-f="${k}"]`);
+    const addRow = (t = "", v = "") => {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:6px;margin-bottom:4px";
+      row.innerHTML = `<input autocomplete="off" data-t maxlength="40" placeholder="trait" value="${esc(t)}" style="flex:1">
+        <input autocomplete="off" data-v maxlength="60" placeholder="value" value="${esc(v)}" style="flex:1">
+        <button type="button" class="ghost small" aria-label="Remove this trait" data-rm>&times;</button>`;
+      box.querySelector("[data-rows]").append(row);
+    };
+    const val = (k) => (f(k) && f(k).value || "").trim();
+    const entries = () => {
+      const collection = val("collection"), name = many ? "" : val("name");
+      const first = parseInt(val("number"), 10);
+      const traits = [...box.querySelectorAll("[data-rows] > div")]
+        .map((r) => [r.querySelector("[data-t]").value.trim(), r.querySelector("[data-v]").value.trim()])
+        .filter(([t, v]) => t && v).map(([t, v]) => ({trait_type: t, value: v}));
+      return pictures.map((p, i) => {
+        const e = {};
+        const n = many ? (Number.isInteger(first) && first > 0 ? first : 1) + i : (Number.isInteger(first) && first > 0 ? first : null);
+        if (collection && n) { e.name = `${collection} #${n}`; e.edition = n; }
+        else if (collection) e.collection = collection;
+        if (name && !e.name) e.name = name;                // a collection and a number name it "collection #number"
+        if (val("description")) e.description = val("description");
+        const attrs = [...(f("model").checked && modelLabel(p.model) ? [{trait_type: "Model", value: modelLabel(p.model)}] : []), ...traits];
+        if (attrs.length) e.attributes = attrs;
+        if (f("prompt").checked && p.prompt) e.prompt = String(p.prompt).slice(0, 500);
+        return Object.keys(e).length ? e : null;
+      });
+    };
+    const changed = () => {
+      const got = entries();
+      box.querySelector("[data-preview]").textContent = got[0] ? (many ? `#1 of ${got.length}: ` : "") + JSON.stringify(got[0]) : "No details: the picture goes on by itself.";
+      onChange(got);
+    };
+    box.addEventListener("input", changed);
+    box.addEventListener("change", changed);
+    box.addEventListener("click", (e) => {
+      if (e.target.closest("[data-add]")) { addRow(); return; }
+      const rm = e.target.closest("[data-rm]");
+      if (rm) { rm.parentElement.remove(); changed(); }
+    });
+    box.hidden = false;
+    changed();
+    return {entries, name: () => val("collection")};
+  };
+
+  /** The pictures a page was opened with (?pick=llm:<id>,<id>...), each as {id, model, prompt, file}, read from
+   *  this account's own picture cache. [] when the page was not opened from the LLM tab. Throws what went wrong. */
+  window.arcadePickedPictures = async () => {
+    const want = new URLSearchParams(location.search).get("pick") || "";
+    const m = /^llm:([\d,a-f-]+)$/.exec(want);
+    if (!m) return [];
+    const ids = m[1].split(",").filter((id) => /^\d{6,12}-[0-9a-f]{8}$/.test(id)).slice(0, 40);
+    const r = await fetch("/account/llm/pictures", {cache: "no-store", credentials: "same-origin"});
+    const known = new Map(((r.ok && (await r.json()).pictures) || []).map((p) => [p.id, p]));
+    const out = [];
+    for (const [i, id] of ids.entries()) {
+      const got = await fetch(`/account/llm/pictures/${id}.png`, {credentials: "same-origin"});
+      if (!got.ok) throw new Error(got.status === 404 ? "a picture is gone (pictures are kept 24 hours, a week when picked for a collection)" : `HTTP ${got.status}`);
+      const p = known.get(id) || {};
+      // Named by their number in a collection (1.png, 2.png ...): that is how both inscribers match a picture to its JSON.
+      const file = new File([await got.blob()], ids.length > 1 ? `${i + 1}.png` : `arcade-${id}.png`, {type: "image/png"});
+      out.push({id, model: p.model || "", prompt: p.prompt || "", file});
+    }
+    return out;
+  };
+})();
+</script>

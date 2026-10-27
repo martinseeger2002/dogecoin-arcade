@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import re
 import secrets
 from concurrent.futures import ThreadPoolExecutor
@@ -640,6 +641,12 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
     # page that asked is still there to receive it.
     PICS = Path(state.home) / "llm-pictures"
     PICS_KEEP = 24 * 3600
+    # A picture picked for a collection is kept a week instead (2026-10-27, SadFrog: "Have a prefilled template of a
+    # metadata that they can optionally fill out incase they want to make a small collection"): a small set is
+    # usually made over a few days, and the inscriber reads the pictures from here. At most PICS_KEPT_MOST per account,
+    # so the cache stays small.
+    PICS_KEPT = 7 * 24 * 3600
+    PICS_KEPT_MOST = 40
     jobs = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm-picture")
 
     def pics_dir(account) -> Path:
@@ -647,11 +654,24 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def pic_until(meta: dict) -> float:
+        """When a picture leaves the cache: a day after it was made, or the week it was kept for."""
+        return float(meta.get("kept_until") or 0) or float(meta.get("at") or 0) + PICS_KEEP
+
     def pics_tidy(d: Path) -> None:
-        cut = time.time() - PICS_KEEP
+        now = time.time()
+        kept = set()
+        for f in d.glob("*.json"):
+            try:
+                meta = json.loads(f.read_text())
+            except (OSError, ValueError):
+                continue
+            if meta.get("kept_until") and pic_until(meta) > now:
+                kept.add(f.stem)
+        cut = now - PICS_KEEP
         for f in d.glob("*"):
             try:
-                if f.stat().st_mtime < cut:
+                if f.stem not in kept and f.stat().st_mtime < cut:
                     f.unlink()
             except OSError:
                 pass
@@ -705,8 +725,50 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
                 continue
             if (d / f"{meta['id']}.png").exists():
                 out.append({**meta, "url": f"/account/llm/pictures/{meta['id']}.png",
-                            "until": meta["at"] + PICS_KEEP})
+                            "until": pic_until(meta), "kept": bool(meta.get("kept_until"))})
         return JSONResponse({"pictures": out}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/account/llm/pictures/keep")
+    async def llm_picture_keep(request: Request):
+        """Pick pictures for a collection, or put them back: `ids`, `keep` true or false. A picked picture is kept
+        PICS_KEPT from now (at most PICS_KEPT_MOST at once); put back, it leaves a day after it was made, as before."""
+        try:
+            account, _ = need_account(request)
+            said = await body_of(request)
+            ids = said.get("ids") if isinstance(said.get("ids"), list) else [said.get("id")]
+            ids = [str(i or "") for i in ids][:PICS_KEPT_MOST]
+            if not ids or not all(re.fullmatch(r"\d{6,12}-[0-9a-f]{8}", i) for i in ids):
+                raise llmlib.LlmError("no such picture")
+            keep = bool(said.get("keep", True))
+            d = pics_dir(account)
+            pics_tidy(d)
+            metas = {}
+            for f in d.glob("*.json"):
+                try:
+                    metas[f.stem] = json.loads(f.read_text())
+                except (OSError, ValueError):
+                    continue
+            already = {k for k, m in metas.items() if m.get("kept_until")}
+            if keep and len(already | set(ids)) > PICS_KEPT_MOST:
+                raise llmlib.LlmError(f"at most {PICS_KEPT_MOST} pictures are kept at once; put some back first")
+            changed = []
+            for pid in ids:
+                meta = metas.get(pid)
+                if meta is None or not (d / f"{pid}.png").exists():
+                    raise llmlib.LlmError("that picture is gone (pictures are kept 24 hours)")
+                if keep:
+                    meta["kept_until"] = time.time() + PICS_KEPT
+                else:
+                    meta.pop("kept_until", None)
+                (d / f"{pid}.json").write_text(json.dumps(meta))
+                if not keep:
+                    # Back to "a day after it was made": the files' own age is what pics_tidy goes by.
+                    for f in (d / f"{pid}.png", d / f"{pid}.json"):
+                        os.utime(f, (meta["at"], meta["at"]))
+                changed.append({"id": pid, "until": pic_until(meta), "kept": keep})
+        except llmlib.LlmError as exc:
+            return refuse(exc)
+        return JSONResponse({"pictures": changed})
 
     @app.post("/account/llm/pictures/delete")
     async def llm_picture_delete(request: Request):

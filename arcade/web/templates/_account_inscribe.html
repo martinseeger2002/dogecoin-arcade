@@ -14,6 +14,7 @@
    page is drawn for. Nothing here spends anything the tab has not been shown
    and agreed to: every transaction is offered unsigned by this node, read back
    by `wallet.checked` out of the transaction's own bytes, and signed here. #}
+{% include "_picture_details.html" %}
 {# Inscriptions of this account's that still owe pieces, with Finish and Give
    up (a tester, 2026-09-27). Drawn by drawUnfinished(), below. #}
 <div id="unfinished" data-client></div>
@@ -35,7 +36,8 @@
   </div>
   <p class="muted picked" id="picked-file" hidden><span id="picked-text"></span>
     <span id="picked-sizes" class="sizes" hidden></span></p>
-  <details style="margin-top:8px"><summary class="muted">JSON beside the file (optional)</summary>
+  <div id="pic-details" class="setbox" hidden style="margin-top:8px"></div>
+  <details style="margin-top:8px" id="json-box"><summary class="muted">JSON beside the file (optional)</summary>
     <p class="muted" style="font-size:.84rem;margin:6px 0">Metadata that goes on the chain
       with it: a name, or the <code>mintpad</code> / <code>tokenpad</code> object that makes
       a page of your own design a mintpad (see the Mintpads guide).</p>
@@ -74,6 +76,7 @@
       and traits &mdash; the same for every piece, or each piece's own from a
       spreadsheet.</p>
   </details>
+  <div id="pic-set-details" class="setbox" hidden style="margin:0 0 8px"></div>
   <div class="row">
     <div style="flex:1"><input type="file" id="build" webkitdirectory
       directory multiple></div>
@@ -291,23 +294,46 @@ async function offerAndConfirm(where, body, says, done) {
 
 $("file").onchange = () => arcadePick($("file"), quotePicked);
 
-// A picture from the LLM tab's "Your pictures", already picked (2026-10-23: "add an inscribe now Button that brings
-// them to the file in [the inscriber] with the image that they just generated picked as the file"): ?pick=llm:<id> fetches
-// it from this account's own 24-hour cache and puts it in the box as if it had been chosen.
+// Pictures from the LLM tab's "Your pictures", already picked (2026-10-23: "add an inscribe now Button that brings
+// them to the file in [the inscriber] with the image that they just generated picked as the file"): ?pick=llm:<id>
+// fetches it from this account's own picture cache and puts it in the box as if it had been chosen.
+//
+// 2026-10-27 (SadFrog: "Have a prefilled template of a metadata that they can optionally fill out incase they want to
+// make a small collection"): the details template (_picture_details.html) opens with it and writes the JSON field.
+// Several ids (?pick=llm:<id>,<id>... from "Inscribe as NFTs") are a collection: the pictures go in the run's folder
+// box as 1.png, 2.png ... with a _metadata.json the template writes, and the run goes on exactly as for a folder.
 (async () => {
-  const want = new URLSearchParams(location.search).get("pick") || "";
-  const m = /^llm:(\d{6,12}-[0-9a-f]{8})$/.exec(want);
-  if (!m) return;
-  try {
-    const r = await fetch(`/account/llm/pictures/${m[1]}.png`, {credentials: "same-origin"});
-    if (!r.ok) throw new Error(r.status === 404 ? "that picture is gone (pictures are kept 24 hours)" : `HTTP ${r.status}`);
-    const file = new File([await r.blob()], `arcade-${m[1]}.png`, {type: "image/png"});
+  let pics;
+  try { pics = await arcadePickedPictures(); }
+  catch (e) { say("Could not pick those pictures: " + String(e.message || e)); return; }
+  if (pics.length === 1) {
     const dt = new DataTransfer();
-    dt.items.add(file);
+    dt.items.add(pics[0].file);
     $("file").files = dt.files;
+    arcadePictureDetails($("pic-details"), pics, ([e]) => {
+      $("json-field").value = e ? JSON.stringify(e) : "";
+      $("json-box").open = !!e;
+    }, false);
     $("inscribing").scrollIntoView({behavior: "smooth", block: "start"});
     arcadePick($("file"), quotePicked);
-  } catch (e) { say("Could not pick that picture: " + String(e.message || e)); }
+  } else if (pics.length > 1) {
+    let first = true, later = 0;
+    const put = (entries) => {
+      const meta = entries.map((e, i) => e && {...e, image: `${i + 1}.png`}).filter(Boolean);
+      const dt = new DataTransfer();
+      for (const p of pics) dt.items.add(p.file);
+      // No name, no JSON: the run's own check then says so and offers its wizard, as for a folder of bare pictures.
+      if (meta.length === pics.length && meta.every((e) => Number.isInteger(e.edition)))
+        dt.items.add(new File([JSON.stringify(meta)], "_metadata.json", {type: "application/json"}));
+      $("build").files = dt.files;
+      if (first) { first = false; measureBuild(); return; }
+      // Re-measuring re-encodes the pictures; the name and the JSON are all an edit changes.
+      clearTimeout(later);
+      later = setTimeout(() => { const files = [...$("build").files]; lookUpSet(files); checkJson(files); }, 400);
+    };
+    arcadePictureDetails($("pic-set-details"), pics, put, true);
+    $("running").scrollIntoView({behavior: "smooth", block: "start"});
+  }
 })();
 
 /** What the file in the box will cost, said before anything is paid.

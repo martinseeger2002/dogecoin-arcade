@@ -910,3 +910,39 @@ def test_a_model_sold_only_in_credits_is_on_the_book(arcade):
                                                    "credit_prices": [{"leg": "main-coin", "label": "PEP", "per": "1"}]})
     (o,) = client.get("/account/llm/offers").json()["offers"]
     assert [m["id"] for m in o["models"]] == ["tiny"] and not o["free"] and o["credit_prices"][0]["per"] == "1"
+
+
+def test_pictures_picked_for_a_collection_are_kept_a_week(pictures):
+    """2026-10-27, SadFrog: "Have a prefilled template of a metadata that they can optionally fill out incase they want
+    to make a small collection": a picture picked for a collection outlives the 24-hour cache (a week), put back it
+    leaves on the day it was made, and only so many are kept at once."""
+    import os as _os
+    import time as _time
+    client, state, pubkey, jobs, url = pictures
+    h = {"X-Arcade-Admin": "1"}
+    client.post("/admin/api/llm/images", headers=h, json={
+        "on": True, "url": url, "models": ["qwen_image_2.1_int8_convrot.safetensors"]})
+    for _ in range(2):
+        got = client.post("/account/llm/image", json={"seller": "here", "prompt": "a frog", "size": "250x250"})
+        assert got.status_code == 200, got.text
+    a, b = client.get("/account/llm/pictures").json()["pictures"]
+    assert not a["kept"] and a["until"] - a["at"] == 24 * 3600
+    got = client.post("/account/llm/pictures/keep", json={"ids": [a["id"]], "keep": True})
+    assert got.status_code == 200 and got.json()["pictures"][0]["kept"], got.text
+    # Two days on: the kept one is still there, the other is gone.
+    from pathlib import Path
+    folder = next((Path(state.home) / "llm-pictures").iterdir())
+    old = _time.time() - 2 * 24 * 3600
+    import json as _json
+    for f in folder.iterdir():
+        if f.suffix == ".json":
+            f.write_text(_json.dumps({**_json.loads(f.read_text()), "at": old}))
+        _os.utime(f, (old, old))
+    left = client.get("/account/llm/pictures").json()["pictures"]
+    assert [p["id"] for p in left] == [a["id"]] and left[0]["until"] - _time.time() > 4 * 24 * 3600
+    assert client.get(left[0]["url"]).status_code == 200
+    # Put back: it leaves a day after it was made, which was two days ago.
+    assert client.post("/account/llm/pictures/keep", json={"ids": [a["id"]], "keep": False}).status_code == 200
+    assert client.get("/account/llm/pictures").json()["pictures"] == []
+    assert client.post("/account/llm/pictures/keep", json={"ids": ["../../etc"]}).status_code == 400
+    assert client.post("/account/llm/pictures/keep", json={"ids": [b["id"]]}).status_code == 400, "gone"
