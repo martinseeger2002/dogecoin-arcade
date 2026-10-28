@@ -808,10 +808,11 @@ class Store:
     def note_block(self, h: int, raw: bytes) -> None:
         self.x("INSERT OR REPLACE INTO pnote VALUES (?,?)", (h, raw))
 
-    def finish_notes(self, c: int, rpc=None) -> tuple[str, int] | None:
+    def finish_notes(self, c: int, rpc=None, deadline: float | None = None) -> tuple[str, int] | None | bool:
         """Chunk c's notes from its blocks' (when all of them are here): kept as this arcade's own, the block notes
         let go. (digest, packed size), or None. With `rpc`, an envelope begun before the chunk is followed back to its
-        first piece (ord_notes.finish); should that fail, its pieces are kept whole."""
+        first piece (ord_notes.finish); should that fail, its pieces are kept whole. False when `deadline`
+        (time.monotonic()) came first: nothing is kept or let go, and the chunk is finished at a later ask."""
         from . import ord_notes
         lo, hi = chunk_range(c, self.base)
         rows = self.q("SELECT raw FROM pnote WHERE height>=? AND height<? ORDER BY height", (lo, hi))
@@ -819,7 +820,10 @@ class Store:
             return None
         lookup = (lambda txid: bytes.fromhex(rpc.call("getrawtransaction", txid, 0))) if rpc is not None else None
         try:
-            notes = ord_notes.finish([r[0] for r in rows], lookup, self.dialect, taproot=self.net in TAPROOT)
+            notes = ord_notes.finish([r[0] for r in rows], lookup, self.dialect, taproot=self.net in TAPROOT,
+                                     deadline=deadline)
+        except ord_notes.OutOfTime:
+            return False
         except Exception as exc:                         # noqa: BLE001 -- a Core that cannot say: kept whole
             log.warning("ord index: chunk %d's envelopes could not be followed back (%s): kept whole", c, exc)
             notes = ord_notes.finish([r[0] for r in rows], dialect=self.dialect, taproot=self.net in TAPROOT)
@@ -1995,6 +1999,9 @@ class DoginalIndex:
     #: How often the walk's coin filter is kept on disk (Walker.save_seen): a start adds only what came after.
     SEEN_EVERY = 900.0
 
+    #: Seconds a pass spends at most following back the envelopes of chunks its lanes finished (_help).
+    FINISH_SECONDS = 20.0
+
     #: The window the walk's pace is measured over (seconds of wall time, its rests and waits for notes included).
     PACE_WINDOW = 120.0
 
@@ -2510,13 +2517,29 @@ class DoginalIndex:
                 break
         if done:
             self.help_rate = done / max(time.monotonic() - start, 1e-6)
+        # A chunk's envelopes begun before it are followed back through the Core (ord_notes.finish), for at most
+        # FINISH_SECONDS a pass: the walk comes after, on this thread (2026-10-28: Bellscoin's lanes finished two
+        # chunks of early 2024 -- ~8,400 follow-backs each, a coin at a time from a hard disk -- and the walk stood still
+        # 14 hours). Unfinished, the lane keeps its chunk and the next pass goes on where this one stopped.
+        finish_by = time.monotonic() + self.FINISH_SECONDS
         for lane in list(lanes):
             c = lane["c"]
             if lane["at"] >= chunk_range(c, self.base)[1]:
                 got = self.store.chunk_line(c)
                 if got is not None:
                     kept = self.store.notes_of(c)
-                    nd = kept[1] if kept and kept[2] == "" else (self.store.finish_notes(c, rpc) or (None,))[0]
+                    if kept and kept[2] == "":
+                        nd = kept[1]
+                    else:
+                        finished = self.store.finish_notes(c, rpc, deadline=finish_by)
+                        if finished is False:
+                            said = self.__dict__.setdefault("_finishing_said", set())
+                            if c not in said:
+                                said.add(c)
+                                log.info("ord index %s: chunk %d's envelopes are followed back over several passes",
+                                         self.net, c)
+                            continue
+                        nd = (finished or (None,))[0]
                     self.store.say(c, "", got[0], got[1], nd)
                     self.helped += 1
                     self.store.set_meta("helped", self.helped)

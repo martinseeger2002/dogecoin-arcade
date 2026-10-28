@@ -28,6 +28,7 @@ chunk beside its births hash, and two arcades agreeing on it means the notes are
 from __future__ import annotations
 
 import hashlib
+import time
 import zlib
 from dataclasses import dataclass, field
 from typing import Any
@@ -131,6 +132,14 @@ def _multisig_spend(script: bytes, dialect: str = "dogecoin") -> bool:
 
 
 _GENESIS: dict[str, Any] = {}                  # txid of a piece -> its envelope's first piece (or "none"), kept
+#: Pieces kept in _GENESIS at most (2026-10-28: Bellscoin's chunks of early 2024 each carry ~8,400 envelopes begun before
+#: them, followed back ~37 pieces each; at 200,000 the first chunk's answers were let go before the next one asked).
+GENESIS_KEPT = 500_000
+
+
+class OutOfTime(Exception):
+    """`finish` ran past its deadline: the chunk is not finished yet, and is asked again (what was followed back so
+    far is kept in _GENESIS, so the next try goes on from there)."""
 
 
 def genesis_before(txid: str, lookup, dialect: str = "dogecoin") -> Any:
@@ -156,9 +165,13 @@ def genesis_before(txid: str, lookup, dialect: str = "dogecoin") -> Any:
         return None
     for t in seen:
         _GENESIS[t] = found
-    while len(_GENESIS) > 200_000:
-        _GENESIS.pop(next(iter(_GENESIS)))
+    _trim_genesis()
     return found
+
+
+def _trim_genesis() -> None:
+    while len(_GENESIS) > GENESIS_KEPT:
+        _GENESIS.pop(next(iter(_GENESIS)))
 
 
 def _tag_values(script: bytes, genesis: bool, dialect: str) -> set[int] | None:
@@ -279,7 +292,8 @@ def block_notes(block, taproot: bool = False, dialect: str = "dogecoin", every_i
     return [block.header, txs]
 
 
-def finish(blocks: list[bytes], lookup=None, dialect: str = "dogecoin", taproot: bool = False) -> bytes:
+def finish(blocks: list[bytes], lookup=None, dialect: str = "dogecoin", taproot: bool = False,
+           deadline: float | None = None) -> bytes:
     """A chunk's notes, canonical: its blocks' notes (`one_block`, in height order) with the content of every envelope
     that cannot matter zeroed. The bytes `digest` and `pack` are of. Every arcade finishes a chunk from the same block
     notes the same way, whether it walked the blocks or helped with them.
@@ -288,7 +302,13 @@ def finish(blocks: list[bytes], lookup=None, dialect: str = "dogecoin", taproot:
     first piece says so (may_matter) -- known here when it began here, else by following it back with `lookup(txid)`
     (raw transaction bytes, from a Core: 2026-10-20, PEP's big images in hundreds of pieces cross every chunk's edge,
     and kept whole they made the notes as big as the blocks). Without `lookup`, a piece of an envelope begun before
-    the chunk is kept whole. A script zeroed that is no piece at all is never read by the walk anyway."""
+    the chunk is kept whole. A script zeroed that is no piece at all is never read by the walk anyway.
+
+    `deadline` (time.monotonic()): OutOfTime when it has passed before an envelope is followed back -- never in the
+    middle of one, so each one followed is kept in _GENESIS and the next try goes on past it (2026-10-28: Bellscoin's
+    walk stood still 14 hours behind one chunk's ~8,400 follow-backs, read a coin at a time from a hard disk). Every
+    envelope the chunk carries on is kept in _GENESIS too, so the next chunk follows each back one piece, not to its
+    first."""
     parts = [_structure(b, taproot) for b in blocks]
     # Envelope chains inside the chunk, linked as the walk links them: a piece's input 0 spends the piece before it.
     chains: dict[str, dict] = {}                        # txid of the latest piece -> {"pieces", "first", "whole"}
@@ -308,6 +328,8 @@ def finish(blocks: list[bytes], lookup=None, dialect: str = "dogecoin", taproot:
                 if lookup is None or _multisig_spend(script, dialect):
                     continue                            # no way to look, or no piece at all: kept whole
                 else:
+                    if deadline is not None and time.monotonic() > deadline:
+                        raise OutOfTime(f"followed back until the deadline; {len(_GENESIS)} pieces known")
                     found = genesis_before(prev, lookup, dialect)
                     if found is None:
                         continue                        # too far back to follow: kept whole
@@ -327,6 +349,10 @@ def finish(blocks: list[bytes], lookup=None, dialect: str = "dogecoin", taproot:
                 chains[txid] = chain
             elif state == "complete" and not content_matters(ctype, body):
                 zero.update({p: i == 0 for i, p in enumerate(pieces)})
+    if lookup is not None:
+        for txid, chain in chains.items():              # carried on past the chunk: the next one asks from here
+            _GENESIS[txid] = chain["first"]
+        _trim_genesis()
     return _encode(parts, zero, dialect, WITNESS_VERSION if taproot else VERSION)
 
 
