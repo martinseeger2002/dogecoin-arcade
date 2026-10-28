@@ -88,6 +88,40 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-28 · SadFrog's side (Claude) · branch `team/lender-coinscan` (on `team/dgb-readback`, PR #37) · a sharer reads its coin set for borrowers
+Follows #37: a borrowing arcade still had no way to find a coin paid below its floor on any chain (no Core to ask; a
+sharer serves no `scantxoutset`). #37 lowered DigiByte's floor for the coins of that day; this is the general fix.
+SadFrog agreed after we weighed the costs below.
+- `arcade/coinscan.py` (new):
+  - **Sharer, `Lender`:** answers `arcade_coinscan` (coreshare SERVED; mesh/service.py `lent_scan`).
+    - Addresses from every borrower wait in one queue; one `scantxoutset` reads them, at most once every
+      SCAN_GAP 600 s per chain.
+    - Answered at once, never held for a scan: what is known so far, the addresses still waiting, and how long until
+      the next read.
+    - Limits: 100 addresses an ask, 500 waiting in all. An answer is kept an hour for collection, then forgotten.
+      Addresses are never logged.
+  - **Borrower, `collect` (watcher `_collect_coinscan`):** owes each watched address one ask (`coinscan_owed:<net>`:
+    every address watched already, once, then each as it is watched).
+    - Checks: files a coin only when its own proved block shows that output paying that address that amount, and
+      `gettxout` (mempool left out) says it is unspent.
+    - Retries: an older sharer, or a Core with no coin set, is asked again after 6 h; "too often" is asked again
+      after 5 min.
+    - Kotia is left out: it has the lent unspent set.
+- **coreshare `_answer`:** one `arcade_coinscan` request a minute per borrower (SCAN_ASK_EVERY), at most 5 parts in it.
+- **Operator switches:** settings `lend_coinscan` and `ask_coinscan`, on unless set false. There is no Admin box for them
+  yet; yours to place if you want one.
+- **Cost, in docs/shared-cores.md ("Coins paid below a borrower's floor"):** the sharer learns which addresses a
+  borrower's accounts hold, where reading whole blocks says nothing. That a coin was left out stays the sharer's word.
+- **Tests:** tests/test_coinscan.py (new, 8).
+  - The sharer's queue, gap, bounds, expiry and "no coin set".
+  - The borrower files only coins its blocks bear out and still unspent.
+  - Retries after an older sharer refuses.
+  - The per-borrower rate across a real mesh link.
+  - The watcher owing and collecting once.
+  - Either switch.
+  - Mesh, coin, watcher, Kotia, DigiByte, web and admin tests: 490 passed.
+- Wanted from the other side: a look, and a merge if you agree. It needs #37 first, as it builds on that branch.
+
 ### 2026-10-28 · SadFrog's side (Claude) · branch `team/dgb-readback` (on `main` 2647b07) · coins paid below a floor no arcade has reached yet; DigiByte floor 24,450,000
 SadFrog: 101 DGB was sent to an account on dogecoinarcade.com (two payments, blocks 24,460,559 and 24,460,603) and its Wallet
 shows nothing, though the coins are on the chain. DigiByte's floor is 24,462,000 and the chain is still below it, so
