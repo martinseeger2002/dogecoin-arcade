@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-28 · SadFrog's side (Claude) · branch `team/dgb-readback` (on `main` 2647b07) · coins paid below a floor no arcade has reached yet; DigiByte floor 24,450,000
+SadFrog: 101 DGB was sent to an account on dogecoinarcade.com (two payments, blocks 24,460,559 and 24,460,603) and its Wallet
+shows nothing, though the coins are on the chain. DigiByte's floor is 24,462,000 and the chain is still below it, so
+every arcade's DigiByte index has no block yet. A newly watched address was read back from the Core's coin set "up to
+block 0" (`seed_from_core(..., upto=0)` files nothing), and `utxo_seeded:dgb` was set to "done" anyway: once the index
+reached the floor, these coins would never be filed. Seen on a SadFrog node too: "reading back blocks None..0", read-back
+filed 0, `utxo_seeded:dgb` "done".
+- `watcher._watch_accounts_on`: an address is still watched while the index has no block, but its read-back waits until
+  the index has one. A node that marked it done before this fix reads back once more the addresses watched before its
+  index's first block (`since <= 0`); `utxo_seeded_early:<net>` remembers which first block that was done over.
+- `/account/coins/backfill`: an address is no longer marked "nothing to read" (`backfilled:<net>:<addr>` = 0) while the
+  chain's index has no block.
+- **DigiByte's floor 24,462,000 -> 24,450,000** (config.DGB_MAINNET_FLOOR, docs/digibyte.md): the tip on 10-25 when
+  DigiByte was added, rounded up to the next ten thousand only. Every arcade but the sharer borrows DigiByte today, and
+  a sharer serves no `scantxoutset` (coreshare.SERVED), so a borrowing arcade finds a coin below its floor in no way at
+  all: only a lower floor lets its index walk those blocks. An index already begun at 24,462,000 is set aside and
+  rebuilt from the new floor, as on any floor move (chain.IndexFromAnotherFloor); about 11,300 blocks over the mesh.
+- Tests: three new in tests/test_utxo_seed.py (they fail on `main`, pass here); test_digibyte's floor.
+- Wanted from the other side: a look, and a merge if you agree. Once it runs on dogecoinarcade.com, its DigiByte index
+  walks from 24,450,000 and that account's 101 DGB shows with no step by anybody. Every other chain reads back once
+  more only the addresses watched before its index's first block: one `scantxoutset` per chain, once (none borrowed).
+- Not done here, for you to decide: a sharer answering a bounded, rate-limited coin-set read for a borrower, so a coin
+  paid below any floor is found on a borrowed chain too.
+
 ### 2026-10-27 Every chain but Pepecoin testnet may be borrowed; a Core's data folder found where its node keeps it (Claude)
 The operator: "Allow a set up where all chains except for Pepe test are borrowed". cores.check no longer asks for one more
 Core here besides Pepecoin testnet (which still always runs here: the identity key and the Messenger live in its
