@@ -506,7 +506,12 @@ MAX_EASIER = 4
 
 def too_easy(bits: int, before_bits: int, params=None) -> bool:
     """A target more than MAX_EASIER times easier than the block before's -- except, on a test network,
-    a block at the network's easiest difficulty, which its rules allow after a long gap."""
+    a block at the network's easiest difficulty, which its rules allow after a long gap. Never on a chain whose work
+    is not checked (`pow_algo` ""): its bits prove nothing, and DigiByte's five algorithms each keep a difficulty of
+    their own, so an honest block is often far easier than the one under it (2026-10-28: every borrowing arcade's
+    DigiByte index stopped at block 24,450,003, "its difficulty fell more than 4x in one block")."""
+    if params is not None and not getattr(params, "pow_algo", "scrypt"):
+        return False
     if params is not None and getattr(params, "min_difficulty_blocks", False) \
             and target_of(bits) <= target_of(params.pow_limit_bits):
         return False

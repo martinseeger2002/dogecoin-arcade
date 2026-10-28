@@ -202,3 +202,13 @@ def test_digibyte_tokens_are_dgb_20():
     body = b'{"p":"dgb-20","op":"deploy","tick":"digi","max":"21000000","lim":"1000"}'
     assert ord_rules.token_op("dgb-20", b"text/plain", body)["op"] == "deploy"
     assert ord_rules.token_op("dgb-20", b"text/plain", body.replace(b"dgb-20", b"drc-20")) is None
+
+
+def test_a_borrowed_block_far_easier_than_the_one_under_it_is_not_refused():
+    """2026-10-28: DigiByte's five algorithms each keep their own difficulty, so a borrowed block may be far easier than
+    the one under it. Its work is not checked (pow_algo ""), so neither is how far its difficulty fell; on a chain whose
+    work is checked it still is."""
+    from arcade import rawchain
+    hard, easy = 0x1A00FFFF, 0x1D00FFFF
+    assert not rawchain.too_easy(easy, hard, DGB)
+    assert rawchain.too_easy(easy, hard, NETWORKS["ltc"])
