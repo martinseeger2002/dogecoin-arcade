@@ -193,3 +193,32 @@ def test_the_account_backfill_is_not_marked_done_before_the_index_has_a_block(cl
     monkeypatch.setattr(LedgerIndex, "indexed_height", lambda self: 0)
     app.post("/account/coins/backfill", json={})
     assert list(marked().values()) and set(marked().values()) == {0}, "a block read, and nothing before the watch"
+
+
+def test_a_coin_set_too_slow_to_read_is_not_asked_again(client, monkeypatch):
+    """2026-10-28: Bellscoin's coin set took longer than SCAN_SECONDS to read on a hard disk. The Core reads on anyway,
+    and each pass set off another read, without end, while its ord index stood still behind the disk."""
+    from arcade.rpc import RpcTransportError
+    from arcade.web.watcher import BlockWatcher
+    _app, state = client
+
+    class Slow(_Core):
+        def call(self, method, *args):
+            if method == "scantxoutset":
+                self.asked.append(args)
+                raise RpcTransportError("127.0.0.1:19918 did not respond in 1200s -- the node may still be starting")
+            return super().call(method, *args)
+
+    core = Slow([])
+    chain = _litecoin(state, monkeypatch, core)
+    with contextlib.closing(state.token_index(chain).open()) as db:
+        utxos.watch(db, A, 0, "watched before the index had a block")
+        db.conn.commit()
+    state.set_setting("utxo_seeded:ltc", "done")
+    watcher = BlockWatcher(state)
+    watcher._watch_doge_accounts()
+    assert len(core.asked) == 1
+    watcher._doge_watch_at = 0
+    watcher._watch_doge_accounts()
+    assert len(core.asked) == 1, "not asked again"
+    assert state.setting("utxo_seeded:ltc") == "done"

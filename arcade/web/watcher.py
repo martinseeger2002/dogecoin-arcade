@@ -505,6 +505,7 @@ class BlockWatcher:
 
     def _watch_accounts_on(self, chain, backfilling: set) -> None:
         from .. import utxos as utxoslib
+        from ..rpc import RpcTransportError
         from ..script import b58check_decode, b58check_encode
         prefix = "address:main:" if chain.is_mainnet else "address:"
         wanted = {}
@@ -602,6 +603,19 @@ class BlockWatcher:
                             if again:
                                 self.state.set_setting(seeded_key, "no scantxoutset" if filed is None else "done")
                                 self.state.set_setting(early_key, str(first))
+                        except RpcTransportError as exc:
+                            if "did not respond" not in str(exc):             # the Core not there: next pass
+                                log.warning("%s coin-set read-back failed: %s", chain.params.label, exc)
+                            else:
+                                # Longer than utxos.SCAN_SECONDS: the Core reads on to the end anyway, and asking
+                                # again sets off another as long. Not asked again (2026-10-28: Bellscoin's coin set,
+                                # millions of inscription outputs on a hard disk, was read without end, once every
+                                # pass, and its ord index stood still behind the disk).
+                                log.warning("%s: its coin set takes longer than %d s to read; not asked again",
+                                            chain.params.label, utxoslib.SCAN_SECONDS)
+                                if again:
+                                    self.state.set_setting(seeded_key, self.state.setting(seeded_key) or "too slow")
+                                    self.state.set_setting(early_key, str(first))
                         except Exception:                      # noqa: BLE001 -- a scan already running: next pass
                             log.warning("%s coin-set read-back failed", chain.params.label, exc_info=True)
                     if filed is None and fresh:
