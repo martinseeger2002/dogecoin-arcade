@@ -25,7 +25,7 @@ class _Guard:
     def __init__(self, kind, body):
         self.kind, self.body = kind, body
 
-    def content(self, key):
+    def content(self, key, follow=True):
         if key != ID:
             raise doginals.Unknown("not here")
         return self.kind, self.body

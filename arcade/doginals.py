@@ -72,6 +72,7 @@ class Doginals:
         self.index = index
         self._tip_at = (0.0, 0)
         self._lock = threading.Lock()
+        self._reading = threading.BoundedSemaphore(2)       # chain reads of content at once (`content`)
         with self._db() as db:
             # `tx2`: answers that include the chain's own reading. The old `tx` table held an outside index's word alone.
             db.execute("CREATE TABLE IF NOT EXISTS tx2 (txid TEXT PRIMARY KEY, held TEXT NOT NULL, at REAL NOT NULL)")
@@ -286,27 +287,58 @@ class Doginals:
         except Exception as exc:                            # noqa: BLE001 -- the node is the second opinion
             raise Unknown(f"the Dogecoin node could not trace {txid}: {exc}") from exc
 
-    def content(self, inscription: str) -> tuple[str, bytes]:
-        """An inscription's content from the chain (`content`), kept on disk for good beside the answers."""
+    def content(self, inscription: str, follow: bool = True) -> tuple[str, bytes]:
+        """An inscription's content from the chain (`read`), kept on disk for good beside the answers. `follow`: an
+        inscription that names a delegate gives the delegate's content (False: its caller already followed it)."""
         if self.rpc_factory is None:
             raise Unknown("this node reads no inscriptions from its chain")
         home = self.path.parent / "inscription-content"
         name = home / inscription
         if name.exists() and (home / (inscription + ".type")).exists():
-            return (home / (inscription + ".type")).read_text(), name.read_bytes()
-        # Two at a time (2026-10-17): a page of 60 uncached Doginals asked all at once, each walking blocks, filled
-        # dogecoind's RPC work queue ("Work queue depth exceeded") and every Dogecoin call on the node failed with it.
-        if not _READING.acquire(timeout=25):
+            kept = (home / (inscription + ".type")).read_text(), name.read_bytes()
+            # No type and no bytes was a delegate read before delegates were followed (2026-10-28): read it again.
+            if kept[0] or kept[1]:
+                return kept
+        # Not on this chain: said at once, without waiting for a turn (2026-10-28: /content tries every chain's guard in
+        # turn, so a Bells piece queued behind Dogecoin's reads first -- one took 225 s on node 2 while a collection page
+        # of 48 waited, each holding a web worker).
+        try:
+            with self.rpc_factory() as rpc:
+                rpc.call("getrawtransaction", inscription.split("i")[0])
+        except Exception as exc:                            # noqa: BLE001 -- not here, or the node cannot say now
+            raise Unknown(f"not on this chain: {exc}") from exc
+        # Two at a time on each chain (2026-10-17): a page of 60 uncached Doginals asked all at once, each walking
+        # blocks, filled dogecoind's RPC work queue ("Work queue depth exceeded") and every Dogecoin call on the node
+        # failed with it. Each chain its own two since 2026-10-28: one node's queue is not another's.
+        if not self._reading.acquire(timeout=25):
             raise Unknown("the chain is busy reading other inscriptions; try again")
         try:
             with self.rpc_factory() as rpc:
-                ctype, body = content(rpc, inscription, taproot=self.taproot)
+                ctype, body, delegate = read(rpc, inscription, taproot=self.taproot, dialect=self._dialect())
+                if follow and delegate and delegate != inscription:
+                    # An inscription that names a delegate shows the delegate's content and type, once (as /content
+                    # does from the ord index): read from the chain here when the index has not walked that far
+                    # (2026-10-28: the Dogecoin "bone" pieces are delegates, and came back empty).
+                    ctype, body, further = read(rpc, delegate, taproot=self.taproot, dialect=self._dialect())
+                    if further and self._dialect() == "pepecoin":
+                        # ord-pepecoin's into_body() is None for a delegate naming a delegate of its own.
+                        raise ValueError("its delegate names a delegate of its own")
+                if body is None:
+                    raise ValueError("that inscription has no body")    # ord: no body tag, no content
         finally:
-            _READING.release()
+            self._reading.release()
         home.mkdir(parents=True, exist_ok=True)
         (home / (inscription + ".type")).write_text(ctype)
         name.write_bytes(body)
         return ctype, body
+
+    def _dialect(self) -> str:
+        """How this chain's envelopes read (ord_rules): its ord index's word, else Dogecoin's."""
+        try:
+            index = self.index() if self.index is not None else None
+        except Exception:                                   # noqa: BLE001 -- no index: the Doginals rules
+            index = None
+        return str(getattr(index, "dialect", "") or "dogecoin")
 
     def ctype_of(self, inscription: str, read: bool = True) -> str | None:
         """An inscription's content type: kept beside its content once read (`content`), else read from the chain now
@@ -563,12 +595,20 @@ def _pushes(raw: bytes) -> list:
     return out
 
 
-#: Chain reads of inscription content at once, across every page (see Doginals.content).
-_READING = threading.BoundedSemaphore(2)
-
 
 def content(rpc, inscription: str, look: int = 30, taproot: bool = False) -> tuple[str, bytes]:
-    """(content type, bytes) of an ord inscription, read from the chain: the genesis transaction's envelope ("ord", the
+    """(content type, bytes) of an ord inscription's own envelope, read from the chain (`read`, without its delegate)."""
+    ctype, body, delegate = read(rpc, inscription, look, taproot)
+    if body is None:
+        raise ValueError("that inscription has no body")    # ord: no body tag, no content
+    return ctype, body
+
+
+def read(rpc, inscription: str, look: int = 30, taproot: bool = False,
+         dialect: str = "dogecoin") -> tuple[str, bytes | None, str | None]:
+    """(content type, bytes, delegate) of an ord inscription, read from the chain -- the delegate its tags name (an id,
+    or None), read as the chain's ord index reads it (ord_rules, by `dialect`); body None only for a witness envelope
+    with no body tag. The envelope: the genesis transaction's envelope ("ord", the
     part count, the content type, then (count, data) pairs down to 0), continued -- when the parts run on -- in the
     transaction that spends output 0 next, found in the blocks after it (no index). A part count is a push of at most
     three bytes; the signature and redeem script that close each transaction's input end its parts.
@@ -582,10 +622,13 @@ def content(rpc, inscription: str, look: int = 30, taproot: bool = False) -> tup
     pushes = _pushes(bytes.fromhex(((tx.get("vin") or [{}])[0].get("scriptSig") or {}).get("hex") or ""))
     doginal = bool(pushes) and pushes[0] == b"ord" and len(pushes) >= 3 and pushes[2] is not None
     if taproot and (n > 0 or not doginal):
-        return witness_content(tx, n)
+        return _witness_read(tx, n)
     if not doginal:
         raise ValueError("no ord envelope in that transaction")
+    from . import doginal_index as dx
+    script = bytes.fromhex(tx["vin"][0]["scriptSig"]["hex"])
     ctype, body, data, here = pushes[2].decode("utf-8", "replace"), b"", pushes[3:], tx
+    carried = dx.carry(None, script, dialect)              # the same reading as the index's walk, for the tags
     height = rpc.call("getblockheader", tx["blockhash"])["height"] if tx.get("blockhash") else None
     while True:
         i = 0
@@ -594,16 +637,27 @@ def content(rpc, inscription: str, look: int = 30, taproot: bool = False) -> tup
             body += data[i + 1]
             i += 2
             if count == 0:
-                return ctype, body
+                return ctype, body, carried.get("delegate") if carried.get("state") == "complete" else None
         if height is None:
             raise ValueError("the inscription runs on past a transaction that is not in a block yet")
         here, height = _spender(rpc, here["txid"], height, look)
         if here is None:
             raise ValueError("could not find the rest of that inscription")
-        data = _pushes(bytes.fromhex(here["vin"][0]["scriptSig"]["hex"]))
+        script = bytes.fromhex(here["vin"][0]["scriptSig"]["hex"])
+        if carried.get("state") == "partial":
+            carried = dx.carry(carried, script, dialect)
+        data = _pushes(script)
 
 
 def witness_content(tx: dict, n: int) -> tuple[str, bytes]:
+    """`_witness_read` without its delegate: an inscription with no body tag has no content."""
+    ctype, body, _delegate = _witness_read(tx, n)
+    if body is None:
+        raise ValueError("that inscription has no body")    # ord: no body tag, no content
+    return ctype, body
+
+
+def _witness_read(tx: dict, n: int) -> tuple[str, bytes | None, str | None]:
     """(content type, bytes) of inscription `n` of a reveal transaction (`getrawtransaction <txid> 1` as the node says
     it) on a Taproot chain: ord's witness envelope -- OP_FALSE OP_IF "ord" <fields> OP_0 <body pushes> OP_ENDIF in the
     tapscript of a script-path spend (doginal_index.taproot_bodies) -- numbered across the transaction as the chain's ord
@@ -632,9 +686,9 @@ def witness_content(tx: dict, n: int) -> tuple[str, bytes]:
     e = envelopes[k]
     if e["big"]:
         raise ValueError(f"that inscription's body is over {dx.TAPROOT_BODY_MAX} bytes")
-    if e["body"] is None:
+    if e["body"] is None and not born.get("delegate"):
         raise ValueError("that inscription has no body")    # ord: no body tag, no content
-    return e["ctype"].decode("utf-8", "replace"), e["body"]
+    return e["ctype"].decode("utf-8", "replace"), e["body"], born.get("delegate")
 
 
 def _spender(rpc, txid: str, height: int, look: int):

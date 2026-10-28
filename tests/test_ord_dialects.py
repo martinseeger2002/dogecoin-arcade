@@ -331,7 +331,7 @@ class _Guard:
     def __init__(self, held):
         self.held, self.asked = held, []
 
-    def content(self, key):
+    def content(self, key, follow=True):
         from arcade import doginals
         self.asked.append(key)
         if key not in self.held:

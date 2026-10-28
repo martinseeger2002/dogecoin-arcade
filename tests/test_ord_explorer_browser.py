@@ -79,7 +79,7 @@ def served(tmp_path_factory):
     app = create_app(state)
 
     class Kept:                                     # the chain's inscriptions, as the node would read them
-        def content(self, key):
+        def content(self, key, follow=True):
             if key not in content:
                 raise LookupError(key)
             return content[key]

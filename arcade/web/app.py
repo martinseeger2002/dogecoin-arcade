@@ -7067,7 +7067,8 @@ def create_app(state: AppState) -> FastAPI:
                     return contentlib._missing("its delegate names a delegate of its own")
                 read = said["delegate"]
             try:
-                ctype, body = guard.content(read)
+                # A delegate the index named is not followed on again (once, as ord does).
+                ctype, body = guard.content(read) if said is None else guard.content(read, follow=False)
             except Exception:                               # noqa: BLE001 -- not on this chain, or not readable now
                 continue
             # The same rules as the arcade's own pieces (content.content): a type it renders, else a download.

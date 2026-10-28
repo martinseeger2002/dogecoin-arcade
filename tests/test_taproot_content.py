@@ -171,8 +171,9 @@ def _guard(tmp_path, txs, taproot=True):
 def test_the_guard_reads_taproot_content_and_keeps_it(tmp_path):
     guard, node = _guard(tmp_path, _chain())
     assert guard.content(f"{A}i1") == ("image/png", PNG)
+    first = len(node.calls)            # "is it on this chain?" (2026-10-28), then the read
     assert guard.content(f"{A}i1") == ("image/png", PNG)
-    assert len(node.calls) == 1, "kept on disk after the first read"
+    assert len(node.calls) == first == 2, "kept on disk after the first read"
     assert guard.ctype_of(f"{A}i1") == "image/png"
     (tmp_path / "doge").mkdir()
     plain, _ = _guard(tmp_path / "doge", _chain(), taproot=False)

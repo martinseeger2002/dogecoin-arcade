@@ -88,6 +88,29 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-28 · SadFrog's side (Claude, node 2) · branch `team/explore-content` (on `main` c903042) · Pieces read from the chain: a delegate's content, and no waiting behind other chains
+Two things seen on node 2's Explore while fixing the viewer (team/explore-viewer), SadFrog: "Fix the slow and empty
+collection pictures next".
+- **Empty pieces (doginals.py):** the Dogecoin "bone" pieces came back as an empty download. Each is a Doginal with no
+  body and a delegate tag (11) naming one 3 MB video; while the ord index has not walked that far, `/content` reads the
+  piece from the chain (`_chain_inscription` -> `Doginals.content`), and that reader read only the envelope's own empty
+  body. Now `read(rpc, id, ..., dialect)` gives (type, bytes, delegate), the delegate from the same tag reading as the
+  index's walk (`doginal_index.carry`; a Taproot reveal's from `births_of`), and `Doginals.content(id, follow=True)`
+  gives the delegate's content and type, once (Pepecoin: a delegate naming its own is no content, as ord-pepecoin).
+  `_chain_inscription` passes `follow=False` when the index already named the delegate. `content()` and
+  `witness_content()` say what they said before. A kept read with no type and no bytes (a delegate read before this) is
+  read again rather than served empty for good.
+- **Slow pieces:** `/content` tries every chain's guard in turn, and each waited for one of two reading turns shared
+  by all chains (`_READING`, 25 s) before finding out the piece was not on its chain. A Bells piece on node 2 took
+  225 s while a collection page of 48 waited, each holding a web worker. Now a guard asks its node
+  `getrawtransaction <txid>` first and says "not on this chain" at once (0.09 s on node 2's Dogecoin for a Bells duck),
+  and each guard has its own two turns (`self._reading`), so one node's queue is not another's.
+- **Checked:** on node 2's real Dogecoin and Bells nodes: a bone piece now gives video/mp4, 3,087,142 bytes; a Belinal
+  Duck asked of the Dogecoin guard is refused in 0.09 s, and read by the Bells guard in 0.65 s. Tests:
+  tests/test_inscription_trace.py (the delegate, the kept empty read, the quick refusal and per-chain turns);
+  test_taproot_content's read count is one more (the check). Every test file touching `/content` or Doginals passes.
+- **Needs from the other side:** apply the commit.
+
 ### 2026-10-27 LLM credits per model (Claude)
 The operator: "Credits should not be shared across models each model has their own credit, and those credits are stored by
 The operator of that model"; "If an operator has multiple LLM's on their computer, they should all be able to be priced

@@ -148,3 +148,53 @@ def test_content_this_arcade_does_not_index_is_read_from_the_chain(client, monke
     got = app.get(f"/content/{iid}")
     assert got.status_code == 200 and got.content == b"\x89PNG-from-chain" and got.headers["content-type"] == "image/png"
     assert app.get(f"/content/{'cd' * 32}i0").status_code == 404
+
+
+def _delegating(delegate_txid: str) -> bytes:
+    """A Doginal with no body of its own and a delegate tag (11), as the Dogecoin "bone" pieces are inscribed."""
+    return (push(b"ord") + bytes([0x51]) + bytes([0x00]) + bytes([0x00]) + bytes([0x00])
+            + push(b"\x0b") + push(bytes.fromhex(delegate_txid)[::-1]) + push(b"\x30" * 71) + push(b"\x51"))
+
+
+def test_a_piece_that_names_a_delegate_shows_the_delegates_content(tmp_path):
+    """2026-10-28: Explore's Dogecoin "bone" pieces came back as an empty download -- each is a delegate of one video,
+    and the chain reader (used while the ord index has not walked that far) read only the piece's own empty body."""
+    d = "ab" * 32
+    txs = {**_chain(), d: _tx(d, [{"txid": F, "vout": 0, "scriptSig": _sig(_delegating(G))}], [0.001])}
+    assert D.read(Node(txs), f"{d}i0") == ("", b"", f"{G}i0")
+    assert D.content(Node(txs), f"{d}i0") == ("", b""), "the envelope alone, as before"
+
+    class Rpc:
+        def __enter__(self):
+            return Node(txs)
+
+        def __exit__(self, *a):
+            return False
+    guard = D.Doginals(tmp_path / "g.sqlite", rpc_factory=Rpc)
+    assert guard.content(f"{d}i0") == ("text/plain", b"hi"), "the delegate's content and type"
+    assert guard.content(f"{d}i0", follow=False) == ("text/plain", b"hi"), "kept, so not read again"
+    # One read before delegates were followed kept no type and no bytes: read again, not served empty for good.
+    (tmp_path / "inscription-content" / f"{d}i0").write_bytes(b"")
+    (tmp_path / "inscription-content" / f"{d}i0.type").write_text("")
+    assert guard.content(f"{d}i0") == ("text/plain", b"hi")
+
+
+def test_a_piece_on_another_chain_is_said_at_once_without_waiting_for_a_turn(tmp_path):
+    """2026-10-28: /content asks every chain's guard in turn, and each waited for one of two reading turns first: a
+    Bells piece on node 2 took 225 s while a collection page of 48 waited. Not on this chain is said before the wait,
+    and each chain has its own two turns."""
+    class Rpc:
+        def __enter__(self):
+            return Node(_chain())
+
+        def __exit__(self, *a):
+            return False
+    guard = D.Doginals(tmp_path / "g.sqlite", rpc_factory=Rpc)
+    other = D.Doginals(tmp_path / "o.sqlite", rpc_factory=Rpc)
+    assert guard._reading.acquire(timeout=1) and guard._reading.acquire(timeout=1), "this chain's turns, both taken"
+    import time
+    started = time.time()
+    with pytest.raises(D.Unknown, match="not on this chain"):
+        guard.content(f"{'ef' * 32}i0")
+    assert time.time() - started < 2, "said at once, not after waiting for a turn"
+    assert other.content(f"{G}i0") == ("text/plain", b"hi"), "another chain reads with its own turns"
