@@ -937,6 +937,7 @@ def shared_cores(state):
     borrows the chains it was told to (`core:<net>` = borrow, read at start)."""
     from .. import core_catchup
     from .. import cores as coreslib
+    from .. import coinscan as coinscanlib
     from .. import utxoset as utxosetlib
     from ..rpc import RpcError
     from .coreshare import CoreShare
@@ -954,11 +955,29 @@ def shared_cores(state):
                 if method == utxosetlib.SHARE_METHOD:
                     out.append(lent_set(chain, params))
                     continue
+                if method == coinscanlib.SCAN_METHOD:
+                    out.append(lent_scan(chain, params))
+                    continue
                 try:
                     out.append({"r": rpc.call(method, *params)})
                 except RpcError as exc:
                     out.append({"e": [exc.code, exc.message]})
         return out
+
+    lenders: dict = {}
+
+    def lent_scan(chain, params: list) -> dict:
+        """A coin-set read for a borrower's coins below its floor (coinscan.Lender), unless the operator said no
+        (`lend_coinscan` false)."""
+        if state.setting("lend_coinscan", True) is False:
+            return {"e": [coinscanlib.NOT_LENT, "this arcade reads no coin set for borrowers"]}
+        lender = lenders.get(chain.network)
+        if lender is None:
+            lender = lenders[chain.network] = coinscanlib.Lender(chain.params, chain.local_rpc)
+        try:
+            return {"r": lender.ask(params[0] if params else {})}
+        except coinscanlib.NotLent as exc:
+            return {"e": [coinscanlib.NOT_LENT, str(exc)]}
 
     def lent_set(chain, params: list) -> dict:
         """The chain's whole unspent set kept here, lent to a borrower (KOTIA ONLY, utxoset.answer)."""

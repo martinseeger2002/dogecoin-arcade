@@ -49,6 +49,36 @@ that chain, so their wallets see incoming payments as quickly as yours does.
 
 A Core that is still syncing or rescanning is not offered to other arcades until it has caught up.
 
+## Coins paid below a borrower's floor
+
+An arcade reads each chain from its floor up. Coins an account was paid below the floor are found by asking
+the Core's coin set (`scantxoutset`). A borrowing arcade has no Core of its own, so a sharer also reads its
+coin set for the arcades borrowing from it (`arcade_coinscan`, `arcade/coinscan.py`).
+
+- **Once for each address.** The borrower asks about each address it watches once: first every address
+  it watches already, then each one as it is watched. It asks again only until it gets an answer.
+- **At most once every ten minutes.** The sharer queues the addresses it is asked about, from every
+  borrower together. One read of its coin set covers all of them, at most once every ten minutes per
+  chain, because a read takes minutes of disk.
+  - **Answered at once.** The sharer never holds a request while it reads. It answers with what it
+    knows so far and which addresses are still waiting, and the borrower collects the rest on a later
+    pass.
+  - **Bounded.** It takes 100 addresses per ask and 500 waiting in all. Each borrower may ask once a
+    minute.
+  - **Forgotten.** An answer is kept for an hour, then forgotten. The addresses are never logged.
+- **Checked by the borrower.**
+  - **No made-up coins.** Every coin it is told of must be in its block, paid to that address for that
+    amount; the block itself is read and proved as above. A sharer cannot make a coin up.
+  - **Still unspent.** Each coin must still be unspent, and only then is it filed.
+  - **What can't be checked.** That none was left out is the sharer's word.
+- **What it costs in privacy:** the sharer learns which addresses the borrowing arcade's accounts hold.
+  An arcade that only reads whole blocks says nothing about its accounts. Either operator can say no:
+  - the setting `lend_coinscan` set to false: this arcade reads no coin set for borrowers;
+  - the setting `ask_coinscan` set to false: this arcade never asks.
+- **Not every Core has a coin set.** Dogecoin and Pepecoin 1.14 have none, and neither does Kotia, whose
+  borrowers use the sharer's whole unspent set instead. An older sharer does not answer `arcade_coinscan`
+  at all. The borrower asks such a sharer again after six hours.
+
 ## Which sharer is asked
 
 When several linked arcades share a chain, the one with the fastest ping is asked first. A sharer that

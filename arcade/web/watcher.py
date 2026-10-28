@@ -337,6 +337,33 @@ class BlockWatcher:
             if chain.network in backfilling or not self.state.chain_ready(chain):
                 continue
             self._watch_accounts_on(chain, backfilling)
+            if chain.borrowed and chain.network not in backfilling:
+                self._collect_coinscan(chain, backfilling)
+
+    def _collect_coinscan(self, chain, backfilling: set) -> None:
+        """A borrowed chain's coins below its index, from the sharer's coin-set read (coinscan.collect), on a thread
+        of its own: the addresses still owed an answer, asked again until answered."""
+        from .. import coinscan as coinscanlib
+        if not coinscanlib._owed(self.state, chain.network):
+            return
+        index = self.state.token_index(chain)
+        tip = index.indexed_height() or 0
+        if not tip:
+            return                                             # the floor still ahead: nothing below it to file yet
+        asked_at = self.__dict__.setdefault("_coinscan_asked_at", {})
+
+        def run() -> None:
+            backfilling.add(chain.network)
+            try:
+                with chain.rpc() as rpc:
+                    if coinscanlib.collect(self.state, chain, index, rpc, upto=tip, asked_at=asked_at):
+                        self.state.bump_generation()
+            except Exception:                                  # noqa: BLE001 -- asked again at the next pass
+                log.warning("%s: collecting the sharer's coin-set read failed", chain.params.label, exc_info=True)
+            finally:
+                backfilling.discard(chain.network)
+
+        threading.Thread(target=run, name=f"arcade-{chain.network}-coinscan", daemon=True).start()
 
     def _keep_utxo_sets(self) -> None:
         """KOTIA ONLY for now (Params.full_utxo_set, arcade/utxoset.py, 2026-10-25): the chain's whole unspent set,
@@ -521,7 +548,19 @@ class BlockWatcher:
             first = db.conn.execute("SELECT MIN(height) FROM block").fetchone()[0]
             fresh = sorted(set(wanted) - utxoslib.watching(db))
             if chain.borrowed:
+                # No Core here to ask: the sharer's coin-set read is asked instead, once for each address
+                # (coinscan.collect, 2026-10-28), unless the operator said no (`ask_coinscan` false). The first time,
+                # every address watched already; then each one as it is watched.
                 again = []
+                if (self.state.setting("ask_coinscan", True) is not False
+                        and not getattr(chain.params, "full_utxo_set", False)):      # Kotia: the lent set has them
+                    from .. import coinscan as coinscanlib
+                    every = f"coinscan_all:{chain.network}"
+                    if self.state.setting(every):
+                        coinscanlib.owe(self.state, chain.network, fresh)
+                    else:
+                        coinscanlib.owe(self.state, chain.network, utxoslib.watching(db) | set(fresh))
+                        self.state.set_setting(every, "owed")
             elif not self.state.setting(seeded_key):
                 again = sorted(utxoslib.watching(db) - set(fresh))
             elif tip and self.state.setting(early_key) != str(first):

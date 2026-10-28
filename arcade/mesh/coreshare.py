@@ -59,7 +59,14 @@ SERVED = frozenset({
     # Not a Core's: the sharer's whole unspent set (KOTIA ONLY, arcade/utxoset.py `answer`), lent to an arcade that
     # borrows the chain instead of building its own through this Core (tbuuol 2026-10-26).
     "arcade_utxoset",
+    # Not a Core's either: the sharer's coin-set read for coins below a borrower's floor (arcade/coinscan.py,
+    # 2026-10-28), queued and read at most once every ten minutes; answered at once with what is known so far.
+    "arcade_coinscan",
 })
+#: How often one borrower may ask a coin-set read (SERVED arcade_coinscan), in seconds: per request, so a batch of
+#: parts counts once (coinscan.ASK_PARTS of them at most).
+SCAN_ASK_EVERY = 60.0
+SCAN_ASK_PARTS = 5
 #: Work for a miner, and its answer (2026-10-18: mine testnet LTC with another arcade's Core). Answered
 #: only for a chain of test coins (`may_mine`), and no more often than MINE_EVERY seconds per borrower and call:
 #: a template is built from the sharer's mempool and a submitted block is checked whole, both real work.
@@ -139,7 +146,7 @@ class CoreShare:
                  pool_seconds: float = POOL_SECONDS, may_mine: Callable[[str], bool] | None = None):
         self.serve, self.shared, self.borrowing = serve, shared, set(borrowing)
         self.may_mine = may_mine or _test_coins
-        self._mined_at: dict[tuple[str, str], float] = {}     # (peer, method) -> when it was last answered
+        self._mined_at: dict[tuple[str, str], float] = {}     # (peer, method) -> when it was last answered (coin scans too)
         self.rate, self.pool_seconds = rate, pool_seconds
         self.node = None
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -287,6 +294,15 @@ class CoreShare:
                         self._mined_at[(peer, m)] = now
                 elif m not in SERVED:
                     refused[i] = f"a shared Core does not answer {m}"
+            scans = [i for i, (m, _) in enumerate(calls) if m == "arcade_coinscan"]
+            if scans:
+                if now - self._mined_at.get((peer, "arcade_coinscan"), -1e9) < SCAN_ASK_EVERY:
+                    refused.update({i: f"arcade_coinscan asked too often; once every {SCAN_ASK_EVERY:g} s"
+                                    for i in scans})
+                else:
+                    self._mined_at[(peer, "arcade_coinscan")] = now
+                    refused.update({i: f"arcade_coinscan: at most {SCAN_ASK_PARTS} in one ask"
+                                    for i in scans[SCAN_ASK_PARTS:]})
             asked = [c for i, c in enumerate(calls) if i not in refused]
             async with self._core:
                 got = await asyncio.to_thread(self.serve, net, asked) if asked else []
