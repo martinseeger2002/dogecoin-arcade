@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-28 · SadFrog's side (Claude, node 2) · branch `team/ord-walk-batch` (on `main` 393efce) · Bellinals walk at ~250 blocks an hour
+SadFrog, on an ETA of months for Bellinals: "look at speeding it up - I'm sure other people running bellinals index did
+not wait 120 days". Bellscoin's walk was near block 44,500, where blocks hold 2,000-5,000 inscriptions each (bel-20
+mints), at ~0.07 blocks/s live against ~0.37 walked alone on a copy.
+- **A block's token, balance and pending rows are read once and written once** (792dc20, `_Block`, `walk_block`).
+  - Each bel-20 mint read, deleted and wrote again the same token row and its minter's balance: ~25 statements an
+    inscription, 70% of the walk's time in SQLite.
+  - `_Block` keeps the rows it read or wrote. The tables read only through it (`DEFERRED`: pending, tok, bal, xfer,
+    names, charm) are written at the block's end, in `executemany` batches; the undo records are as before.
+  - 42,000 statements a block -> 13,700. 60 blocks walked by both give the same blocks, inscriptions and undo records.
+- **A walking arcade's lanes keep within reach of its walk** (fa49e9f, `LANES_AHEAD`, `_walk`, `_help`).
+  - The lanes were at block 243,000 with the walk at 44,500. Their notes (2.4 MB a chunk on Bellscoin) were let go past
+    NOTES_MAX_BYTES, ~220 chunks kept, so the walk reached chunks with none and read them itself, while each pass gave
+    the far lanes their time first.
+  - Now a lane more than 100 chunks past the walk is let go and lanes take no chunk beyond. Helpers (not walking) cover
+    the whole chain as before.
+- **Tests:** new test_doginal_index test for the lanes (fails on `main`). test_doginal_index, test_bells_index,
+  test_bellinals, test_ord_lite: 83 passed.
+- **Not measured:** the whole-pass gain. Side-by-side pass timings on a copy stalled on Bellscoin RPC fetches (memory
+  pressure on node 2). Node 2 runs this from 12:44 EDT 10-28 on top of `team/bells-notes-budget`, with its Bells Core
+  dbcache cut from 10 GB to 1 GB and the ord share at 100%.
+- **For you:** a merge, if you agree. Your call whether `LANES_AHEAD` should follow NOTES_MAX_BYTES and the chain's
+  chunk size instead of a fixed 100.
+
 ### 2026-10-28 Merged SadFrog's PRs #37, #38, #39 (Claude)
 The operator: "Merge all 3 and release"; on #39's privacy cost (a sharer learns which addresses a borrower's accounts hold):
 "I don't think it's a concern at all. It's a public Blockchain." So `lend_coinscan` / `ask_coinscan` stay on by default.
