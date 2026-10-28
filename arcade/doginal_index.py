@@ -88,6 +88,12 @@ LAYOUT = 3
 #: How many chunks past the walk an arcade holding the index asks its peers for at once, each from another peer
 #: (2026-10-20: served "torrent style").
 PREFETCH = 8
+#: How far past its walk, in chunks, the lanes of an arcade that walks take chunks (2026-10-28, Bellscoin on node 2: the
+#: lanes were at block 243,000 and the walk at 44,500. Their notes, 2.4 MB a chunk there, were let go past
+#: NOTES_MAX_BYTES -- 220 chunks were kept -- so the walk reached chunks with none and read them itself, while each
+#: pass gave the far lanes its time first). A lane further ahead is let go; the next chunks the walk reaches are taken.
+#: Covering the chain ahead is left to arcades that help without walking.
+LANES_AHEAD = 100
 #: Spend notes kept here when no arcade holds the index (and so nobody stitches them): beyond this the furthest are
 #: let go -- they can be scanned again. Notes everybody holding the index has stitched past are let go at once.
 NOTES_MAX_BYTES = 512 * 1024 ** 2
@@ -2078,6 +2084,9 @@ class DoginalIndex:
             self._ask_for_snapshot()
         if self.walker.disk is None:
             self.walker.disk = ord_values.Values(Path(str(self.store.path) + ".values"))
+        walk_c = chunk_of(self.walker.next_height(), self.base)
+        for lane in [lane for lane in self.chunks.lanes if lane["c"] - walk_c > LANES_AHEAD]:
+            self._drop_lane(lane)                        # too far ahead to help this walk (LANES_AHEAD)
         if self._lane_sources(walking=True):
             self._help(rpc, budget if self._values_lanes() else budget / 2, walking=True)
         else:
@@ -2486,7 +2495,7 @@ class DoginalIndex:
         held = {lane["c"] for lane in lanes}
         while free:
             c = self.chunks.choose(ready, now, exclude=held, first=self._needed() if self.mode() == "walk" else ())
-            if c is None:
+            if c is None or (walking and c - chunk_of(self.walker.next_height(), self.base) > LANES_AHEAD):
                 break
             lane = {"c": c, "at": chunk_range(c, self.base)[0], "via": free.pop(0)}
             lanes.append(lane)

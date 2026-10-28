@@ -1707,3 +1707,24 @@ def test_a_quick_status_never_waits_and_remembers_the_last_one(tmp_path, monkeyp
     monkeypatch.setattr(dx.DoginalIndex, "_status", lambda self: (threading.Event().wait(5), real(self))[1])
     kept = again.status(quick=True)
     assert kept["stale"] and kept.get("walk"), "the status kept from before the restart, at once"
+
+
+def test_the_lanes_of_a_walking_arcade_keep_within_reach_of_its_walk(tmp_path, monkeypatch):
+    """2026-10-28, Bellscoin on node 2: lanes at block 243,000, the walk at 44,500, their notes let go past
+    NOTES_MAX_BYTES long before the walk got there. A walking arcade's lane more than LANES_AHEAD chunks ahead is let
+    go, and its lanes take no chunk beyond that; helping without walking, they cover the chain as before."""
+    monkeypatch.setattr("os.cpu_count", lambda: 20)
+    monkeypatch.setattr(dx, "LANES_AHEAD", 2)
+    chain = _busy_chain(24)                                   # six chunks of four
+    index = dx.DoginalIndex(tmp_path / "w.sqlite", lambda: chain, lambda: "walk", cores=lambda: 3)
+    index.tip = int(chain.call("getblockcount"))
+    monkeypatch.setattr(index.walker, "step", lambda rpc, tip, budget, notes=None: None)
+    index.chunks.lanes[:] = [{"c": 5, "at": dx.chunk_range(5)[0], "via": ""}]
+    index._walk(chain, 0)
+    assert index.chunks.lanes and max(l["c"] for l in index.chunks.lanes) <= 2, index.chunks.lanes
+    assert all(l["c"] != 5 for l in index.chunks.lanes), "the far lane let go"
+    helper = dx.DoginalIndex(tmp_path / "h.sqlite", lambda: chain, lambda: "help", cores=lambda: 3)
+    for _ in range(8):
+        helper.step()
+    assert len(helper.store.all_words(6)) == 6, "a helper covers the whole chain, LANES_AHEAD or not"
+
