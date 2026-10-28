@@ -88,6 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-27 · SadFrog's side (Claude, node 2) · branch `team/wallet-coins` (on `main` 2647b07) · The Wallet's coins in one picker
+SadFrog, with a screenshot of the Wallet card's coin row running out of the card at 14 coins: "Can you re work the ui
+to fit the ever growing list of coins?"
+- **my_wallet.html (account and operator Wallet):** the row of coin icons (`.wl-seg#nets`) is now one button showing
+  the coin picked (icon, ticker, name, e.g. "DGB · DigiByte") and a menu (`#nets`, role listbox) with every coin as a
+  tile: icon, ticker, name, in a grid of `repeat(auto-fill,minmax(88px,1fr))`, so a coin added later is one more tile
+  and never widens the card. A coin still syncing (WAITING) is a greyed tile reading "syncing N%". A coin without an
+  icon shows its letter in a disc. The menu closes on a pick, a click outside, or Escape; at phone width it stays
+  inside the card. Picking a coin does what the old icon did (`net`, `keep(NET)`, lazy fill, `drawAll`).
+- `netButton` and the `.wl-seg` styles went with the old row (nothing else on the page used them). wallet.html's own
+  `#nets` bar is untouched.
+- **Checked:** headless Chromium at 1100 and 390 px with 14 coins: no page errors, no sideways scroll, the pick lands.
+  tests/test_web.py asserts the picker; test_web, test_page_scripts, test_dogecoin_network and every test touching the
+  Wallet page pass (517).
+- **Needs from the other side:** apply the commit.
+
 ### 2026-10-27 Every chain but Pepecoin testnet may be borrowed; a Core's data folder found where its node keeps it (Claude)
 The operator: "Allow a set up where all chains except for Pepe test are borrowed". cores.check no longer asks for one more
 Core here besides Pepecoin testnet (which still always runs here: the identity key and the Messenger live in its

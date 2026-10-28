@@ -3133,7 +3133,11 @@ def test_the_chain_switch_is_on_every_chain_specific_page(client):
     app, state = client
     # /wallet picks its chain with its own picker since 2026-10-19 (the operator: the operator's wallet "doesn't allow you
     # to change coin types"): one section per chain, not the node-global token chain.
-    assert 'id="nets"' in app.get("/wallet").text
+    wallet = app.get("/wallet").text
+    assert 'id="nets"' in wallet
+    # One coin button and a menu of tiles (2026-10-27: "re work the ui to fit the ever growing list of coins"), not a
+    # row of icons that runs out of the card as coins are added.
+    assert 'id="coinpick"' in wallet and "repeat(auto-fill" in wallet and 'class="wl-seg"' not in wallet
     for path in ("/wallet/nfts", "/wallet/tokens", "/exchange",
                  "/tokens", "/inscriptions", "/collections"):
         page = app.get(path).text

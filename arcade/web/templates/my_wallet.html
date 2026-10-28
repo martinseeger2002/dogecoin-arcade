@@ -26,7 +26,14 @@
 <section class="wl-hero" aria-label="Balance">
   <div class="wl-top">
     <span class="wl-who" id="who"></span>
-    <div class="wl-seg" role="group" aria-label="Network" id="nets"></div>
+    {# The coin picker (2026-10-27: "re work the ui to fit the ever growing list of coins"): one button with the coin
+       shown, and every coin as a tile in its menu, so a coin added later never pushes the row out of the card. #}
+    <div class="wl-coin" id="coinpicker" hidden>
+      <button type="button" class="wl-coinbtn" id="coinpick" aria-haspopup="listbox" aria-expanded="false">
+        <span class="wl-coinface" id="coinface"></span><span aria-hidden="true">&#9662;</span>
+      </button>
+      <div class="wl-coinmenu" role="listbox" aria-label="Coin" id="nets" hidden></div>
+    </div>
   </div>
   {% if not node_side %}
   {# Several wallets on each coin (plan item 18, 2026-10-20, from the mock-up he approved): the account's own
@@ -100,17 +107,31 @@
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .wl-hero{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:18px;
   box-shadow:var(--shadow);margin:16px 0 0;max-width:620px}
-.wl-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.wl-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;position:relative}
 .wl-who{color:var(--muted);font-size:.9rem;font-weight:600}
-.wl-seg{margin-left:auto;display:flex;background:var(--code);border-radius:999px;padding:3px}
-.wl-seg button{padding:5px 12px;border-radius:999px;font-size:.8rem;font-weight:650;color:var(--muted);
-  background:none;box-shadow:none;border:0}
-.wl-seg button[aria-pressed="true"]{background:var(--panel);color:var(--fg);box-shadow:var(--shadow)}
-/* A chain as its coin (2026-10-18): the picked one full colour and ringed, the others dimmed. */
-.wl-seg button.neticon-btn{padding:6px 10px;display:flex;align-items:center;justify-content:center}
-.wl-seg button.neticon-btn .neticon{width:30px;height:30px;opacity:.55;transition:opacity .15s}
-.wl-seg button.neticon-btn[aria-pressed="true"] .neticon{opacity:1;box-shadow:0 0 0 2px var(--accent,#d4a72c)}
-.wl-seg button.neticon-btn.chain-off .neticon{opacity:.25;filter:grayscale(1)}
+/* The coin picker (2026-10-27): the coin shown on one button; every coin a tile in its menu, as many rows as it
+   takes. The picked tile ringed; a coin still syncing greyed with how far it is. */
+.wl-coin{margin-left:auto;max-width:100%}
+.wl-coinbtn{display:flex;align-items:center;gap:8px;padding:5px 12px 5px 6px;border-radius:999px;background:var(--code);
+  color:var(--fg);border:1px solid var(--line);box-shadow:none;font-weight:650;font-size:.86rem;max-width:100%}
+.wl-coinface{display:flex;align-items:center;gap:8px;min-width:0}
+.wl-coinface .neticon,.wl-coinface .wl-coinletter{width:26px;height:26px;flex:none;font-size:.8rem}
+.wl-coinface .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wl-coinmenu{position:absolute;right:0;top:calc(100% + 6px);width:min(420px,100%);background:var(--panel);
+  border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);z-index:21;padding:8px;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:6px;max-height:60vh;overflow-y:auto}
+.wl-coinmenu[hidden]{display:none}
+.wl-cointile{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;border-radius:10px;border:1px solid transparent;
+  background:none;box-shadow:none;color:var(--fg);font-size:.74rem;font-weight:600;line-height:1.2;text-align:center;min-width:0}
+.wl-cointile:hover{background:var(--code)}
+.wl-cointile[aria-selected="true"]{border-color:var(--accent,#d4a72c);background:var(--code)}
+.wl-cointile .neticon,.wl-coinletter{width:32px;height:32px}
+.wl-coinletter{display:flex;align-items:center;justify-content:center;border-radius:50%;background:var(--code);
+  border:1px solid var(--line);font-weight:800;font-size:.95rem}
+.wl-cointile .tk{font-weight:750}
+.wl-cointile .lb{color:var(--muted);font-weight:500;font-size:.7rem;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wl-cointile.chain-off{opacity:.45;cursor:default}
+.wl-cointile.chain-off .neticon{filter:grayscale(1)}
 .wl-bal{margin:12px 0 0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .wl-bal b{font-size:2.4rem;font-weight:750;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.1}
 .wl-bal span{font-weight:650;color:var(--muted)}
@@ -309,34 +330,8 @@ const API = {{ ('/node/wallet' if node_side else '/account')|tojson }};
 const NODE_SIDE = {{ 'true' if node_side else 'false' }};
 
 const $ = (id) => document.getElementById(id);
-/* A network's button, said the way every page says it (2026-10-13: "Should say
- * 'P test' 'P main' 'D main' like in the other pages"): the coin's letter in its color. */
 // Each chain as its coin (2026-10-18: "Use the icons ... rather than text badges").
 const COIN_ICONS = {{ coin_icons()|tojson }};
-const netButton = (one, cls) => {
-  const icon = COIN_ICONS[one.network];
-  if (icon) {
-    const b = el("button", (cls ? cls + " " : "") + "neticon-btn");
-    const img = el("img", "neticon");
-    img.src = icon; img.alt = one.coin || one.label || one.network;
-    b.append(img);
-    b.title = one.title || one.label || "";
-    b.setAttribute("aria-label", one.title || one.label || one.network);
-    b.dataset.net = one.network || "";
-    return b;
-  }
-  const doge = one.network === "doge" || one.doge;
-  const ltctest = one.network === "ltctest" || one.ltctest;  // Litecoin testnet, "L test"
-  const ltc = one.network === "ltc" || one.ltc || ltctest;   // Litecoin (2026-10-17)
-  const b = el("button", cls);
-  // Any other add-on chain (2026-10-22: Bellscoin, Luckycoin) by its own word and letter (/account chains[].net, .letter).
-  const other = !doge && !ltc && one.net && !["mainnet", "testnet"].includes(one.net) && one.net;
-  const letter = el("b", "netl " + (doge ? "dogecoin" : ltc ? "litecoin" : other ? one.net : one.mainnet ? "mainnet" : "testnet"),
-                    doge ? "D" : ltc ? "L" : other ? (one.letter || "?") : "P");
-  b.append(letter, " " + (!ltctest && (one.mainnet || doge || ltc) ? "main" : "test"));
-  b.title = one.title || one.label || "";
-  return b;
-};
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -857,32 +852,61 @@ setInterval(() => {
   }
 }, 30000);
 
+/* --- the coin picker (2026-10-27) ----------------------------------------
+ * One button showing the coin now, and a menu with every coin as a tile: its icon (or letter), its ticker and
+ * its name. A coin still syncing is a greyed tile that cannot be picked. */
+const coinMark = (one) => {
+  const icon = COIN_ICONS[one.network];
+  if (!icon) return el("span", "wl-coinletter", one.letter || coinOf(one).charAt(0));
+  const img = el("img", "neticon"); img.src = icon; img.alt = ""; return img;
+};
+const coinTile = (one, cls) => {
+  const t = el("button", "wl-cointile" + (cls ? " " + cls : ""));
+  t.type = "button"; t.setAttribute("role", "option"); t.dataset.net = one.network || "";
+  t.append(coinMark(one), el("span", "tk", coinOf(one)), el("span", "lb", one.label || one.title || one.network));
+  return t;
+};
+const closeCoins = () => { $("nets").hidden = true; $("coinpick").setAttribute("aria-expanded", "false"); };
+function drawCoins(c) {
+  const box = $("coinpicker"), menu = $("nets"), face = $("coinface");
+  box.hidden = chains().length < 2 && !WAITING.length;
+  face.replaceChildren();
+  if (c) face.append(coinMark(c), el("span", "nm", `${coinOf(c)} · ${c.label || c.network}`));
+  menu.replaceChildren();
+  for (const one of chains()) {
+    const t = coinTile(one);
+    t.setAttribute("aria-selected", String(one.network === (c && c.network)));
+    t.onclick = async () => {
+      closeCoins();
+      net = one.network; asset = null; keep(NET, net);
+      if (one.lazy) { drawAll(); await fillNow(); }   // the picked wallet's balance, read now (lazy wallets)
+      drawAll();
+    };
+    menu.append(t);
+  }
+  for (const one of WAITING) {
+    const t = coinTile(one, "chain-off");
+    t.disabled = true; t.setAttribute("aria-disabled", "true");
+    t.title = `${one.label} opens when this node has synced it (${one.progress}% so far)`;
+    t.querySelector(".lb").textContent = `syncing ${one.progress}%`;
+    menu.append(t);
+  }
+}
+$("coinpick").onclick = (e) => {
+  e.stopPropagation();
+  const open = $("nets").hidden;
+  $("nets").hidden = !open; $("coinpick").setAttribute("aria-expanded", String(open));
+  if (open) { const on = $("nets").querySelector('[aria-selected="true"]'); if (on) on.focus(); }
+};
+document.addEventListener("click", (e) => { if (!e.target.closest || !e.target.closest(".wl-coin")) closeCoins(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("nets").hidden) { closeCoins(); $("coinpick").focus(); } });
+
 /* --- the balance card --------------------------------------------------- */
 
 function drawHead() {
   const c = chainNow();
   $("who").textContent = said.name ? "@" + said.name : "";
-  const nets = $("nets");
-  nets.replaceChildren();
-  if (chains().length > 1) {
-    for (const one of chains()) {
-      const b = netButton(one, "");
-      b.type = "button";
-      b.setAttribute("aria-pressed", String(one.network === (c && c.network)));
-      b.onclick = async () => {
-        net = one.network; asset = null; keep(NET, net);
-        if (one.lazy) { drawAll(); await fillNow(); }   // the picked wallet's balance, read now (lazy wallets)
-        drawAll();
-      };
-      nets.append(b);
-    }
-  }
-  for (const one of WAITING) {
-    const b = netButton(one, "chain-off");
-    b.type = "button"; b.disabled = true;
-    b.title = `${one.label} opens when this node has synced it (${one.progress}% so far)`;
-    nets.append(b);
-  }
+  drawCoins(c);
   if (!c) {
     $("bal").textContent = "—";
     $("sub").textContent = "This account has no address yet. It gets one the first time the wallet opens.";
