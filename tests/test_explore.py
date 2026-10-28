@@ -82,6 +82,9 @@ def test_the_page_has_a_tab_per_coin_and_a_protocol_menu(walking):
     text = page.text
     assert 'data-net="main"' in text and 'id="xpproto"' in text and "window.arcadePick" in text
     assert '"Pepinals"' in text and '"PRC-20"' in text
+    # The viewer is hidden until an inscription is picked, and a collection's piece the index has not reached yet is
+    # still shown, from the chain, with what its collection says (SadFrog, 2026-10-27).
+    assert 'id="xpview" aria-label="Inscription viewer" hidden' in text and "X.want" in text
     assert 'href="/explore"' in app.get("/", headers=LOCAL).text or 'href="/explore"' in app.get("/me", headers=LOCAL).text
 
 

@@ -88,6 +88,28 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-27 · SadFrog's side (Claude, node 2) · branch `team/explore-viewer` (on `main` c903042) · Explore: a collection's piece shows in the viewer, and the viewer waits to be asked
+SadFrog: "when you are on explore and click a collection, you see the inscriptions successfully, but when you click it,
+it successfully scrolls up to the card to view the inscriptions (which should be minimized until an inscription is
+clicked to view) but doesnt actually show the inscription in question".
+- **Why:** the tiles come from `/content/<id>` (the chain), the viewer from `/explore/api/inscription?id=` (this
+  arcade's ord index). On node 2 the Bells index had walked to block 44,205 and the Belinal Ducks sit near 888,000, so
+  the answer had no inscription and drawOne drew "No inscription #0 yet" -- the last number, not the piece clicked.
+- **Now (explore.html):** `showId(id, scroll, hint)` keeps what is asked in `X.want`; a tile passes its name, its
+  collection and the collection's number for it. When the index has no answer for that id, the viewer draws the
+  content from `/content/<id>` (as the tile did) with Name, In collection, Number "(as the collection lists it)",
+  Chain, Inscription id, and a line saying how far this arcade has indexed the chain. A number asked for, or a search,
+  clears `X.want` and draws as before.
+- **Hidden until asked:** `#xpview` starts `hidden`; picking a chain hides it again (no more `showNumber(0)` on every
+  chain switch); a tile, a link, the search box, `?id=` or `?n=` shows it.
+- **Seen, not fixed here (for a later change):** on node 2 a fresh collection page asks for 48 pieces the arcade has not
+  kept, each read from a Core two at a time (doginals `_READING`) and tried guard by guard: one took 225 s, and while
+  they wait they hold the web server's worker threads. Some Dogecoin "bone" pieces come back as an empty download.
+- **Checked:** node 2's live Explore page in headless Chromium with this script swapped in (reads only): the viewer is
+  hidden at load, a Belinal Ducks tile opens it with the duck and its facts. tests/test_explore.py asserts both;
+  test_explore, test_ord_explorer(+_browser) and test_page_scripts pass.
+- **Needs from the other side:** apply the commit.
+
 ### 2026-10-27 LLM credits per model (Claude)
 The operator: "Credits should not be shared across models each model has their own credit, and those credits are stored by
 The operator of that model"; "If an operator has multiple LLM's on their computer, they should all be able to be priced

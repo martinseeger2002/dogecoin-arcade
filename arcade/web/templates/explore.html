@@ -114,7 +114,9 @@
       <div id="xpsaid" class="xpsaid" aria-live="polite"></div>
     </div>
 
-    <div class="xpcard" id="xpview" aria-label="Inscription viewer">
+    {# Hidden until an inscription is picked (2026-10-27, SadFrog: the viewer "should be minimized until an inscription is
+       clicked to view"): a tile, a link, the search box, or ?id= / ?n= in the address. #}
+    <div class="xpcard" id="xpview" aria-label="Inscription viewer" hidden>
       <div class="xpnav">
         <button type="button" class="small" id="xpprev" aria-label="Previous inscription">&lsaquo; Previous</button>
         <label class="xpjump"><span>#</span><input autocomplete="off" type="number" id="xpnum" step="1"
@@ -277,7 +279,7 @@
   function num(n) { return n == null ? '' : Number(n).toLocaleString('en-US'); }
   function bytes(n) { n = Number(n || 0); return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(2) + ' MB'; }
   function link(label, go) { var b = el('button', 'xplink', label); b.type = 'button'; b.onclick = go; return b; }
-  var X = {chain: null, proto: null, number: 0, last: -1, tick: null, typeNext: null, typeAsked: '', coll: null, collAt: 0};
+  var X = {chain: null, proto: null, number: 0, last: -1, tick: null, typeNext: null, typeAsked: '', coll: null, collAt: 0, want: null};
 
   function api(path, args) {
     var qs = Object.keys(args).map(function (k) { return k + '=' + encodeURIComponent(args[k]); }).join('&');
@@ -335,9 +337,9 @@
         + 'heard just now: what is asked below may not be answered.'));
     }
     if (p.kind === 'ord') {
-      X.number = 0; X.last = -1; $('xpsaid').textContent = '';
+      X.number = 0; X.last = -1; X.want = null; $('xpsaid').textContent = '';
       $('xptypegrid').textContent = ''; $('xptypesaid').textContent = ''; $('xptypemore').hidden = true;
-      showNumber(0);
+      $('xpview').hidden = true;                      // until an inscription on this chain is picked
       $('xpcollq').value = '';
       collections();
     } else if (p.kind === 'token') {
@@ -389,7 +391,27 @@
   function drawOne(j) {
     var x = j.number && j.number.inscription, last = j.number ? j.number.last : X.last;
     X.last = last == null ? -1 : last;
-    var dl = $('xpfacts'), frame = $('xpframe');
+    var dl = $('xpfacts'), frame = $('xpframe'), want = X.want;
+    $('xpview').hidden = false;
+    if (!x && want) {
+      // Asked by id and this arcade's index has not walked that far yet (2026-10-27: a collection's piece clicked on
+      // node 2, whose Bells index was at block 44,205 while the ducks sit near 888,000, drew "No inscription #0 yet").
+      // The content comes from the chain itself, as the tile's did, with what the collection said about it.
+      contentInto(frame, {id: want.id, content_type: want.content_type || 'image/'}, true);
+      var wid = el('a', '', want.id); wid.href = '/content/' + encodeURIComponent(want.id); wid.target = '_blank'; wid.rel = 'noopener noreferrer';
+      facts(dl, [
+        ['Name', want.name || null],
+        ['In collection', want.collection || null],
+        ['Number', want.number != null ? '#' + num(want.number) + ' (as the collection lists it)' : null],
+        ['Chain', X.chain.chain],
+        ['Inscription id', wid]]);
+      dl.appendChild(el('dt'));
+      dl.appendChild(el('dd', 'muted xpnote', 'This arcade has indexed ' + X.chain.chain + ' up to block '
+        + num(j.walked_to || 0) + ', not as far as this one yet: its holder and where it sits show once it has.'));
+      $('xpnum').value = '';
+      $('xpprev').disabled = X.last < 0; $('xpnext').disabled = X.last < 0;
+      return;
+    }
     if (!x) {
       frame.textContent = '';
       frame.appendChild(el('div', 'xpnone muted', X.last < 0 ? 'No inscriptions indexed on this chain yet.'
@@ -431,6 +453,7 @@
     $('xpnext').disabled = X.last < 0 || X.number >= X.last;
   }
   function viewerError(e) {
+    $('xpview').hidden = false;
     $('xpframe').textContent = '';
     $('xpframe').appendChild(el('div', 'xpnone muted', e.message));
     facts($('xpfacts'), [['Number', '#' + num(X.number)]]);
@@ -439,13 +462,18 @@
   function showNumber(n) {
     var net = X.chain.net;
     X.number = Math.trunc(Number(n)) || 0;          // below zero: a cursed one (Litecoin)
+    X.want = null;
     $('xpprev').disabled = $('xpnext').disabled = true;
     api('inscription', {net: net, number: X.number})
       .then(function (j) { if (net === X.chain.net) drawOne(j); })
       .catch(function (e) { if (net === X.chain.net) viewerError(e); });
   }
-  function showId(id, scroll) {
+  /** `hint`: what the page already knows about it (a collection's tile: its name, collection and number), drawn when
+   * this arcade's index has not reached it. */
+  function showId(id, scroll, hint) {
     var net = X.chain.net;
+    X.want = Object.assign({id: id}, hint || {});
+    $('xpview').hidden = false;
     api('inscription', {net: net, id: id})
       .then(function (j) { if (net === X.chain.net) drawOne(j); })
       .catch(function (e) { if (net === X.chain.net) viewerError(e); });
@@ -465,7 +493,7 @@
       if (!x) card.appendChild(el('div', 'muted', 'Not found on ' + X.chain.chain + '.'));
       else {
         card.appendChild(el('div', '', 'Inscription #' + num(x.number) + ': shown below.'));
-        if (j.number) { drawOne(j); $('xpview').scrollIntoView({block: 'start', behavior: 'smooth'}); }
+        if (j.number) { X.want = null; drawOne(j); $('xpview').scrollIntoView({block: 'start', behavior: 'smooth'}); }
         else showId(x.id);
       }
     } else if ('on' in j) {
@@ -510,12 +538,12 @@
   $('xpq').onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); search(); } };
 
   // --- a grid of pieces ---------------------------------------------------------------------------------------
-  function tile(x, caption) {
+  function tile(x, caption, hint) {
     var b = el('button', 'xptile'); b.type = 'button';
     var thumb = el('div', 'xpthumb'); contentInto(thumb, x, false);
     b.appendChild(thumb);
     b.appendChild(el('div', 'xpcap', caption));
-    b.onclick = function () { showId(x.id); };
+    b.onclick = function () { showId(x.id, true, hint); };
     b.title = x.id;
     return b;
   }
@@ -681,7 +709,8 @@
       var items = j.items || [], grid = $('xpcollgrid');
       items.forEach(function (it) {
         grid.appendChild(tile({id: it.id, content_type: 'image/'},
-          it.name || (c.name + (it.number != null ? ' #' + num(it.number) : ''))));
+          it.name || (c.name + (it.number != null ? ' #' + num(it.number) : '')),
+          {name: it.name || '', collection: c.name, number: it.inscription_number}));
       });
       OPEN.next += items.length;
       OPEN.total = c.count || 0;
