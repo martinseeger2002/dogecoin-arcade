@@ -107,6 +107,24 @@ def test_a_core_with_no_coin_set_says_so_to_every_later_ask():
         lender.ask({"addresses": [A]})
 
 
+def test_a_coin_set_too_slow_to_read_is_not_lent_again():
+    """2026-10-28: Bellscoin's coin set took longer than SCAN_SECONDS to read on a hard disk; asked again every gap,
+    the Core would read it without end."""
+    from arcade.rpc import RpcTransportError
+
+    class Slow(_Core):
+        def call(self, method, *args):
+            self.asked.append(args)
+            raise RpcTransportError("127.0.0.1:19918 did not respond in 1200s -- the node may still be starting")
+    clock, core = _Clock(), Slow([])
+    lender = _lender(core, clock)
+    lender.ask({"addresses": [A]})
+    clock.now += coinscan.SCAN_GAP
+    with pytest.raises(coinscan.NotLent):
+        lender.ask({"addresses": [A]})
+    assert len(core.asked) == 1
+
+
 class _Borrowed:
     """A borrowed chain's client: the sharer's coin-set answer, its blocks and its unspent set."""
 

@@ -111,7 +111,7 @@ class Lender:
                 "waiting": waiting, "next": round(wait)}
 
     def _scan(self) -> None:
-        from .rpc import RpcError
+        from .rpc import RpcError, RpcTransportError
         from .script import parse_output
         from .utxos import SPENDABLE
         with self.lock:
@@ -148,6 +148,15 @@ class Lender:
                     self.waiting.clear()
             else:                                          # most often a scan of its own running: the next gap
                 log.info("%s: coin set read for borrowers put off: %s", self.params.name, exc.message)
+        except RpcTransportError as exc:
+            if "did not respond" in str(exc):
+                # Longer than SCAN_SECONDS: the Core reads on to the end anyway, and another ask would set off another
+                # read as long, every gap (2026-10-28: Bellscoin's coin set on a hard disk, read without end by the
+                # watcher's own read-back, and the chain's ord index stood still behind the disk). Not lent again.
+                with self.lock:
+                    self.none = f"{self.params.name}'s coin set takes longer than {SCAN_SECONDS:.0f} s to read here"
+                    self.waiting.clear()
+            log.warning("%s: coin set read for borrowers failed: %s", self.params.name, exc)
         except Exception:                                  # noqa: BLE001 -- the next gap tries again
             log.warning("%s: coin set read for borrowers failed", self.params.name, exc_info=True)
         finally:
