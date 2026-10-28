@@ -957,29 +957,70 @@ class _Seen:
         return self.added > self.capacity
 
 
+#: Tables the walk reads only through _Block.get while it files a block: their rows wait in memory and are written once,
+#: together, at the block's end (_Block.flush). `insc` and `at` are also read with SQL of their own during a block
+#: (Walker._on, the "already inscribed" checks), so theirs are written at once. 2026-10-28, Bellscoin at block 44,500:
+#: each bel-20 mint read, deleted and wrote again the same token row and its minter's balance, ~2,600 times a block,
+#: and the walk spent 70% of its time in SQLite (25 statements an inscription, 0.3 blocks a second).
+DEFERRED = frozenset({"pending", "tok", "bal", "xfer", "names", "charm"})
+
+
 class _Block:
-    """One block's writes, each row's old value kept first (rollback puts them back)."""
+    """One block's writes, each row's old value kept first (rollback puts them back). Rows read or written in the
+    block are kept as they now stand, so the same token or balance is read from SQLite once a block; a DEFERRED
+    table's rows are written at flush()."""
 
     def __init__(self, db):
         self.db = db
         self.old: list[list] = []
         self._seen: set = set()
+        self._rows: dict[tuple, dict | None] = {}        # (table, key) -> the row as it stands in this block
+        self._later: dict[tuple, None] = {}              # DEFERRED rows changed and not written yet
 
     def get(self, table: str, key: tuple) -> dict | None:
-        cols = KEYS[table]
-        cur = self.db.execute(f"SELECT * FROM {table} WHERE " + " AND ".join(f"{c}=?" for c in cols), key)
-        row = cur.fetchone()
-        return dict(zip([d[0] for d in cur.description], row)) if row else None
+        at = (table, tuple(key))
+        if at not in self._rows:
+            cols = KEYS[table]
+            cur = self.db.execute(f"SELECT * FROM {table} WHERE " + " AND ".join(f"{c}=?" for c in cols), at[1])
+            row = cur.fetchone()
+            self._rows[at] = dict(zip([d[0] for d in cur.description], row)) if row else None
+        row = self._rows[at]
+        return dict(row) if row is not None else None     # a copy: a caller changing it changes nothing kept here
 
     def put(self, table: str, key: tuple, row: dict | None) -> None:
-        if (table, key) not in self._seen:
-            self._seen.add((table, key))
+        at = (table, tuple(key))
+        if at not in self._seen:
+            self._seen.add(at)
             self.old.append([table, list(key), self.get(table, key)])
-        cols = KEYS[table]
-        self.db.execute(f"DELETE FROM {table} WHERE " + " AND ".join(f"{c}=?" for c in cols), key)
-        if row is not None:
-            self.db.execute(f"INSERT INTO {table} ({','.join(row)}) VALUES ({','.join('?' * len(row))})",
-                            tuple(row.values()))
+        self._rows[at] = dict(row) if row is not None else None
+        if table in DEFERRED:
+            self._later[at] = None
+            return
+        self._write(table, at[1], row)
+
+    def _write(self, table: str, key: tuple, row: dict | None) -> None:
+        if row is None:
+            self.db.execute(f"DELETE FROM {table} WHERE " + " AND ".join(f"{c}=?" for c in KEYS[table]), key)
+        else:                                            # every KEYS table's key is its primary key, and none has
+            self.db.execute(f"INSERT OR REPLACE INTO {table} ({','.join(row)}) "   # another unique one: a replace
+                            f"VALUES ({','.join('?' * len(row))})", tuple(row.values()))  # is the delete + insert
+
+    def flush(self) -> None:
+        """The DEFERRED rows changed in this block, each written once as it now stands, grouped into batches."""
+        gone: dict[str, list] = {}
+        rows: dict[tuple, list] = {}
+        for table, key in self._later:
+            row = self._rows[(table, key)]
+            if row is None:
+                gone.setdefault(table, []).append(key)
+            else:
+                rows.setdefault((table, tuple(row)), []).append(tuple(row.values()))
+        for table, keys in gone.items():
+            self.db.executemany(f"DELETE FROM {table} WHERE " + " AND ".join(f"{c}=?" for c in KEYS[table]), keys)
+        for (table, cols), values in rows.items():
+            self.db.executemany(f"INSERT OR REPLACE INTO {table} ({','.join(cols)}) "
+                                f"VALUES ({','.join('?' * len(cols))})", values)
+        self._later.clear()
 
 
 class Walker:
@@ -1389,6 +1430,7 @@ class Walker:
                     landed[rid] = (k, self.owner_of(tx.vout[k][1]))
                 self._tokens(w, h, tx, new, carried, landed)
                 self._names(w, h, new)
+            w.flush()
             line = block_hash_of(block.hash, born_here)
             moved = hashlib.sha256("".join(moves).encode()).hexdigest()
             db.execute("INSERT OR REPLACE INTO block VALUES (?,?,?,?,?)", (h, block.hash, line, len(born_here), moved))
