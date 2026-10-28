@@ -12451,7 +12451,10 @@ def create_app(state: AppState) -> FastAPI:
             start = max(chain.params.messaging_start_height,
                         chain.params.activation_height or 0)
             if end < start:
-                state.set_setting(key, 0)
+                # Nothing before the watch to read. Unless the index has no block yet (the chain's floor still ahead,
+                # DigiByte 2026-10-27): then nothing is known, and it is asked again at the next visit.
+                if index.indexed_height() is not None:
+                    state.set_setting(key, 0)
                 continue
             _backfilling.add(address)
             _backfill_runs[address] = {"network": chain.network, "start": start, "end": end, "progress": {},

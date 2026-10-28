@@ -122,3 +122,74 @@ def test_a_core_without_it_reads_the_blocks_as_before(client, monkeypatch):
     assert state.setting("utxo_seeded:ltc") is None, "nothing watched before, so no once-per-chain pass"
     with contextlib.closing(state.token_index(chain).open()) as db:
         assert A in utxos.watching(db)
+
+
+def test_an_address_watched_before_the_index_has_a_block_is_read_back_once_it_has_one(client, monkeypatch):
+    """2026-10-27: 101 DGB paid to an account below DigiByte's floor, before any arcade had read a DigiByte block.
+    Its read-back asked the coin set for coins up to block 0, filed none, and was marked done for good."""
+    from arcade.web.watcher import BlockWatcher
+    _app, state = client
+    floor = LTC.activation_height
+    state.set_setting("address:main:" + "ab" * 32, b58check_encode(56, b58check_decode(A)[1]))
+    core = _Core([_coin(A, "aa" * 32, 0, 1.0, floor - 1441), _coin(A, "bb" * 32, 1, 100.0, floor - 1397)])
+    chain = _litecoin(state, monkeypatch, core)
+    monkeypatch.setattr(LedgerIndex, "indexed_height", lambda self: None)
+    read = []
+    monkeypatch.setattr(utxos, "backfill_many", lambda *a, **k: read.append(a) or 0)
+    watcher = BlockWatcher(state)
+    watcher._watch_doge_accounts()
+    with contextlib.closing(state.token_index(chain).open()) as db:
+        assert A in utxos.watching(db), "watched from the start"
+    assert not core.asked and not read, "nothing to read back to: no block yet"
+    assert state.setting("utxo_seeded:ltc") is None, "not done: nothing was asked"
+    monkeypatch.setattr(LedgerIndex, "indexed_height", lambda self: floor)
+    watcher._doge_watch_at = 0
+    watcher._watch_doge_accounts()
+    with contextlib.closing(state.token_index(chain).open()) as db:
+        assert utxos.balance(db, A) == 101 * 100_000_000, "both coins below the floor"
+    assert core.asked == [{f"addr({A})"}]
+    assert state.setting("utxo_seeded:ltc") == "done"
+    watcher._doge_watch_at = 0
+    watcher._watch_doge_accounts()
+    assert len(core.asked) == 1, "once"
+
+
+def test_a_read_back_marked_done_at_block_0_is_done_again(client, monkeypatch):
+    """A node that marked it done before this fix: the addresses watched before its index's first block are read back
+    once more, and only those."""
+    from arcade.web.watcher import BlockWatcher
+    _app, state = client
+    floor = LTC.activation_height
+    state.set_setting("address:main:" + "ab" * 32, b58check_encode(56, b58check_decode(A)[1]))
+    core = _Core([_coin(A, "aa" * 32, 0, 1.0, floor - 1441), _coin(B, "ee" * 32, 0, 0.3, floor - 1)])
+    chain = _litecoin(state, monkeypatch, core)
+    with contextlib.closing(state.token_index(chain).open()) as db:
+        utxos.watch(db, A, 0, "account abababababab (derived)")       # watched before the index had a block
+        utxos.watch(db, B, floor + 50, "watched since a block")          # read back properly then
+        db.conn.commit()
+    state.set_setting("utxo_seeded:ltc", "done")
+    watcher = BlockWatcher(state)
+    watcher._watch_doge_accounts()
+    with contextlib.closing(state.token_index(chain).open()) as db:
+        assert utxos.balance(db, A) == 100_000_000
+        assert utxos.balance(db, B) == 0, "not asked again"
+    assert core.asked == [{f"addr({A})"}]
+    watcher._doge_watch_at = 0
+    watcher._watch_doge_accounts()
+    assert len(core.asked) == 1, "once"
+
+
+def test_the_account_backfill_is_not_marked_done_before_the_index_has_a_block(client, monkeypatch):
+    """/account/coins/backfill marked an address "nothing to read" while its chain's index had no block, so it was
+    never asked again once the index had one."""
+    from test_coinlist_web import _sign_in
+    app, state = client
+    pub = _sign_in(app)
+    state.set_setting(f"address:{pub}", b58check_encode(NETWORKS["regtest"].pubkeyhash_version, bytes(range(20))))
+    marked = lambda: {k: v for k, v in state.settings().items() if k.startswith("backfilled:")}  # noqa: E731
+    monkeypatch.setattr(LedgerIndex, "indexed_height", lambda self: None)
+    assert app.post("/account/coins/backfill", json={}).json() == {"started": []}
+    assert not marked(), "asked again at the next visit"
+    monkeypatch.setattr(LedgerIndex, "indexed_height", lambda self: 0)
+    app.post("/account/coins/backfill", json={})
+    assert list(marked().values()) and set(marked().values()) == {0}, "a block read, and nothing before the watch"
