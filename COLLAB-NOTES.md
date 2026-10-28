@@ -105,7 +105,13 @@ filed 0, `utxo_seeded:dgb` "done".
   a sharer serves no `scantxoutset` (coreshare.SERVED), so a borrowing arcade finds a coin below its floor in no way at
   all: only a lower floor lets its index walk those blocks. An index already begun at 24,462,000 is set aside and
   rebuilt from the new floor, as on any floor move (chain.IndexFromAnotherFloor); about 11,300 blocks over the mesh.
-- Tests: three new in tests/test_utxo_seed.py (they fail on `main`, pass here); test_digibyte's floor.
+- **Borrowed DigiByte blocks were refused from the floor on** (`rawchain.too_easy`): DigiByte's five algorithms each
+  keep their own difficulty, so an honest block is often far easier than the one under it, and a SadFrog node's
+  borrowed index stopped at block 24,450,003 ("its difficulty fell more than 4x in one block"). No borrower had walked
+  DigiByte before: the old floor was never reached. On a chain whose work is not checked (`pow_algo` "": DigiByte,
+  Kotia) the bits prove nothing, so the fall is no longer checked there; every other chain keeps it.
+- Tests: three new in tests/test_utxo_seed.py (they fail on `main`, pass here); test_digibyte's floor, and a borrowed
+  block far easier than the one under it (fails on `main`).
 - Wanted from the other side: a look, and a merge if you agree. Once it runs on dogecoinarcade.com, its DigiByte index
   walks from 24,450,000 and that account's 101 DGB shows with no step by anybody. Every other chain reads back once
   more only the addresses watched before its index's first block: one `scantxoutset` per chain, once (none borrowed).
