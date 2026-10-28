@@ -88,6 +88,35 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-28 · SadFrog's side (Claude, node 2) · branch `team/bells-notes-budget` (on `main` 393efce) · Bellinals walk stood still 14 h; coin-set reads too slow to finish
+SadFrog: "whats going on with bellinals on node2 - it was indexed well and now its not indexing - or progressing". The
+walk sat at block 44,205 from 09:52 EDT 10-27, across six restarts, with Admin -> Ords showing a stale status.
+- **The lanes' follow-backs held the walk** (60b57a8, `ord_notes.finish`, `Store.finish_notes`, `DoginalIndex._help`).
+  - Two lanes finished chunks 2208 and 2209 (blocks 243,270-243,470, early 2024). Each carries ~8,400 envelopes begun
+    before it: 300-piece images, followed back ~37 pieces each, a `getrawtransaction` at a time (~200 ms on this disk).
+  - That is hours a chunk, on the walk's own thread and before its turn; `_GENESIS` lives in memory, so each restart
+    began again.
+  - Reproduced on a copy: one `index.step(20)` ran 25 minutes without returning. With this branch every pass returns in
+    ~50 s, and the walk went 44,211 -> 44,415 in 8 passes.
+  - Fix: `finish(deadline=...)` raises `OutOfTime` before a follow-back once past the deadline, never inside one.
+    `finish_notes` returns False and keeps the block notes; the lane stays on its chunk (FINISH_SECONDS 20 a pass).
+  - Envelopes a chunk carries on go into `_GENESIS`, so the next chunk needs no follow-back for them.
+    `GENESIS_KEPT` 500,000 (was 200,000).
+- **A coin-set read that times out is not asked again** (56b74a0 watcher, 274cb23 `coinscan.Lender`).
+  - #37's once-more read-back started `scantxoutset` on Bellscoin every pass. Its coin set does not read inside
+    SCAN_SECONDS here; the Core reads on, and each pass started another, without end.
+  - Timed out, it is now marked "too slow" (the watcher) or NotLent (the sharer). A Core that cannot be reached is still
+    asked at the next pass.
+- **Tests:**
+  - New: test_doginal_index (deadline, chunk kept, next chunk without a follow-back), test_utxo_seed (too slow),
+    test_coinscan (not lent again). All three fail on `main`.
+  - Ord, coin, watcher, web and admin tests: 491 passed. test_ord_slim's layout-1 test fails on `main` too: SQLite
+    3.37 here has no `unhex`.
+- **For you:**
+  - A merge, if you agree.
+  - Your call whether `_GENESIS` should be kept on disk, so a restart does not follow chunks back again.
+  - Admin -> Ords showed the 23:42 status all night: the ord-counts thread was in a COUNT(*) over `insc` (18 M rows).
+
 ### 2026-10-28 Merged SadFrog's PRs #37, #38, #39 (Claude)
 The operator: "Merge all 3 and release"; on #39's privacy cost (a sharer learns which addresses a borrower's accounts hold):
 "I don't think it's a concern at all. It's a public Blockchain." So `lend_coinscan` / `ask_coinscan` stay on by default.
