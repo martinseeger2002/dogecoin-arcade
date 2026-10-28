@@ -31,7 +31,7 @@ def test_digibyte_params_are_its_chainparams():
     assert (DGB.letter, DGB.family, DGB.net_word, DGB.node_dir, DGB.node_conf) == (
         "G", "DGB", "digibyte", ".digibyte", "digibyte.conf")
     assert config.CHAIN_NAMES["dgb"] == "main"
-    assert DGB.activation_height == DGB.messaging_start_height == config.DGB_MAINNET_FLOOR == 24_462_000
+    assert DGB.activation_height == DGB.messaging_start_height == config.DGB_MAINNET_FLOOR == 24_450_000
     assert DGB.swaps_from is None and DGB.take_from is None
     assert "dgb" in __import__("arcade.cores", fromlist=["OPTIONAL"]).OPTIONAL
     assert all(p.letter != "G" for n, p in NETWORKS.items() if n != "dgb"), "its badge letter is its own"
@@ -104,7 +104,7 @@ def test_its_docs_page_is_listed():
     from arcade.web import guide
     assert any(page == "digibyte.md" for page, *_ in guide.ORDER)
     text = (pathlib.Path(guide.__file__).resolve().parent / "docs" / "digibyte.md").read_text()
-    assert "9.26.7" in text and "sharer's word" in text and "24,462,000" in text
+    assert "9.26.7" in text and "sharer's word" in text and "24,450,000" in text
 
 
 def test_a_caught_up_node_with_a_real_estimate_waits_for_it():

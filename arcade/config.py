@@ -695,8 +695,12 @@ WOJAKCOIN = dataclasses.replace(
 # nothing is lost by pasting one for the other; each page still names its chain), P2SH 63 ("S...", no other chain's
 # key-hash byte; the old "3", version 5, is still valid there and read as P2SH too: txbuild), WIF 128, bech32 "dgb".
 # Policy: an 83-byte OP_RETURN and bare multisig relay (policy.h MAX_OP_RETURN_RELAY, DEFAULT_PERMIT_BAREMULTISIG).
-# The floor: the tip on 2026-10-25 was about 24,449,834 (a node's peers), rounded up about two days at 15-second blocks.
-DGB_MAINNET_FLOOR = 24_462_000
+# The floor: the tip on 2026-10-25, when DigiByte was added, was about 24,449,834 (a node's peers). It was rounded up
+# about two days at 15-second blocks (24,462,000), and coins paid to accounts before the chain got there were never
+# filed on an arcade that borrows DigiByte (2026-10-28: 101 DGB at blocks 24,460,559 and 24,460,603; a sharer serves
+# no `scantxoutset`, so only the blocks an index walks find them). Rounded up to the next ten thousand only, below
+# anything an account could have been paid since.
+DGB_MAINNET_FLOOR = 24_450_000
 
 DIGIBYTE = dataclasses.replace(
     LITECOIN,

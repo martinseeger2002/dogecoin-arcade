@@ -87,5 +87,5 @@ DigiByte, but its ordinals are not Taproot envelopes, so the index reads the Dog
 ## What DigiByte 9 added
 
 DigiByte Core 9 activated two soft forks at block 23,869,440: **DigiDollar** and **AlgoLock**. The
-arcade reads DigiByte blocks from block 24,462,000, after both. It pays and reads ordinary outputs
+arcade reads DigiByte blocks from block 24,450,000, after both. It pays and reads ordinary outputs
 only and does not make or read DigiDollar transactions.
