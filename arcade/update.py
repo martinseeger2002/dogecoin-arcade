@@ -46,6 +46,22 @@ REVISION_FILE = ".revision"
 INSTALLED_FILE = "installed.json"
 HOME = Path.home() / ".dogecoinarcade"
 
+#: The channel an operator picks in Admin -> Overview (2026-10-28, Team HQ: "admin toggle for selecting main live vs
+#: main test branch deployment"). "live" is what every machine has always followed. "test" is published on every
+#: push to main, and live is promoted from it once a day had no trouble, so a test node runs what live nodes will run
+#: tomorrow. Both are signed with the one key pinned in arcade/release.py: a test node trusts the same signature a live
+#: one does, only sooner. Kept in settings.json, which this command reads itself, because it runs as its own process.
+CHANNEL_SETTING = "update_channel"
+CHANNELS = ("live", "test")
+#: Where the test channel is published, beside the live files: the published repository's `test` branch, and an
+#: archive, its revision and its signed manifest named like live's with "-test".
+TEST_BRANCH = "test"
+TEST_ARCHIVE_URL = "https://dogecoinarcade.com/source-test.tar.gz"
+TEST_REVISION_URL = "https://dogecoinarcade.com/source-test.rev"
+TEST_MANIFEST_URL = "https://dogecoinarcade.com/source-test.manifest.json"
+#: Why the last check follows another channel than the one chosen (the test channel not published yet), for Admin.
+followed_note = ""
+
 
 #: Cloudflare in front of the site refuses `Python-urllib/3.x` with a 403, so
 #: every fetch names itself. Found by fetching the manifest that had just been
@@ -118,6 +134,28 @@ def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
                           capture_output=True, text=True)
 
 
+def chosen_channel() -> str:
+    """The channel picked in Admin -> Overview; live when none was, or when the file cannot be read."""
+    try:
+        chosen = json.loads((HOME / "settings.json").read_text()).get(CHANNEL_SETTING)
+    except Exception:                                    # noqa: BLE001 -- no settings yet: live
+        return "live"
+    return chosen if chosen in CHANNELS else "live"
+
+
+def following() -> str:
+    """The channel this check follows: the chosen one, or live while test is not published. A machine set to test
+    before the publisher makes the test channel stays on live, and says so, rather than updating to nothing."""
+    global followed_note
+    followed_note = ""
+    if chosen_channel() != "test":
+        return "live"
+    if _published_revision(TEST_REVISION_URL) is None:
+        followed_note = "the test channel is not published yet: following live"
+        return "live"
+    return "test"
+
+
 def current_revision(checkout: Path) -> str | None:
     if not (checkout / ".git").exists():
         # Fetched as an archive: the installer wrote down what it fetched,
@@ -130,23 +168,25 @@ def current_revision(checkout: Path) -> str | None:
     return result.stdout.strip() or None
 
 
-def remote_revision() -> str | None:
-    """The published HEAD, without fetching the whole repository."""
+def remote_revision(channel: str | None = None) -> str | None:
+    """The published HEAD of the channel followed, without fetching the whole repository."""
+    channel = channel or following()
     if _find_git() is not None:
-        result = _run(_git(), "ls-remote", REPO_URL, "HEAD")
+        ref = "HEAD" if channel == "live" else f"refs/heads/{TEST_BRANCH}"
+        result = _run(_git(), "ls-remote", REPO_URL, ref)
         if result.returncode == 0:
             line = result.stdout.split()
             if line:
                 return line[0][:7]
-    return _published_revision()
+    return _published_revision(TEST_REVISION_URL if channel == "test" else REVISION_URL)
 
 
-def _published_revision() -> str | None:
+def _published_revision(url: str = REVISION_URL) -> str | None:
     """The revision named beside the source archive. No git needed."""
     import urllib.error
     import urllib.request
     try:
-        with urllib.request.urlopen(_request(REVISION_URL), timeout=30) as response:
+        with urllib.request.urlopen(_request(url), timeout=30) as response:
             return response.read().decode("utf-8", "replace").strip()[:7] or None
     except (urllib.error.URLError, OSError):
         return None
@@ -164,13 +204,35 @@ def check() -> tuple[str | None, str | None, bool]:
     except UpdateError:
         checkout = HOME / "src"
     installed = current_revision(checkout)
-    published = remote_revision()
+    channel = following()
+    published = remote_revision(channel)
     if installed is None or published is None:
         return installed, published, published is not None
-    return installed, published, not published.startswith(installed[:7])
+    if published.startswith(installed[:7]):
+        return installed, published, False
+    return installed, published, not _ahead_of(checkout, published, channel)
 
 
-def _resync(git: str, checkout: Path) -> bool:
+def _ahead_of(checkout: Path, published: str, channel: str = "live") -> bool:
+    """Whether what is installed is already newer than `published`: a machine moved from test back to live, whose
+    test release live has not been promoted to yet. Waits for live to catch up instead of reinstalling (and
+    restarting, dropping every player) at every check, or going back. A git checkout asks git whether the published
+    commit is in its history; an archive install compares the signed release times."""
+    if (checkout / ".git").exists():
+        git = _find_git()
+        if git is None:
+            return False
+        return _run(git, "merge-base", "--is-ancestor", published, "HEAD", cwd=checkout).returncode == 0
+    if _installed_published() is None:
+        return False
+    try:
+        _signed_manifest(channel)
+    except UpdateError as exc:
+        return "downgrade" in str(exc)     # signed, and older than what is installed: the refusal says so
+    return False
+
+
+def _resync(git: str, checkout: Path, branch: str = "master") -> bool:
     """Follow the published history when it was rewritten rather than extended.
 
     The published copy is filtered before it goes out (private documents and
@@ -182,7 +244,7 @@ def _resync(git: str, checkout: Path) -> bool:
     dirty = _run(git, "status", "--porcelain", "--untracked-files=no", cwd=checkout)
     if dirty.returncode != 0 or dirty.stdout.strip():
         return False
-    if _run(git, "fetch", "--quiet", "origin", "master", cwd=checkout).returncode != 0:
+    if _run(git, "fetch", "--quiet", "origin", branch, cwd=checkout).returncode != 0:
         return False
     return _run(git, "reset", "--hard", "--quiet", "FETCH_HEAD",
                 cwd=checkout).returncode == 0
@@ -196,18 +258,20 @@ def update(dry_run: bool = False) -> int:
         print("  Nothing to fetch: the code here is whatever you have checked out.")
         return _update_services(checkout, venv, dry_run)
 
-    print("Fetching the latest code")
+    channel = following()
+    print(f"Fetching the latest code ({channel} channel{'; ' + followed_note if followed_note else ''})")
     git = None if dry_run else _find_git()
     if dry_run:
-        print(f"  would fetch {REPO_URL} into {checkout}")
+        print(f"  would fetch {REPO_URL} ({channel}) into {checkout}")
     elif git is None or (checkout.exists() and not (checkout / ".git").exists()):
         # Installed from the archive, or installed with a git that has since
         # gone. Either way the archive is the way back to current, and it needs
         # nothing but a download.
         before = current_revision(checkout)
-        signed = _signed_manifest()
-        after = _call_installer(checkout, "fetch_source_archive", checkout,
-                                signed["sha256"])
+        signed = _signed_manifest(channel)
+        test = channel == "test"
+        after = _call_installer(checkout, "fetch_source_archive", checkout, signed["sha256"],
+                                *((TEST_ARCHIVE_URL, TEST_REVISION_URL) if test else ()))
         if after is None:
             raise UpdateError(
                 f"could not fetch the source archive into {checkout}.\n"
@@ -219,8 +283,14 @@ def update(dry_run: bool = False) -> int:
         _remember(signed)
     elif (checkout / ".git").exists():
         before = current_revision(checkout)
-        result = _run(git, "pull", "--ff-only", "--quiet", cwd=checkout)
-        if result.returncode != 0 and _resync(git, checkout):
+        if channel == "test":
+            # The test branch, fast-forwarded onto whatever is checked out: live's master is always in its history.
+            result = _run(git, "fetch", "--quiet", "origin", TEST_BRANCH, cwd=checkout)
+            if result.returncode == 0:
+                result = _run(git, "merge", "--ff-only", "--quiet", "FETCH_HEAD", cwd=checkout)
+        else:
+            result = _run(git, "pull", "--ff-only", "--quiet", cwd=checkout)
+        if result.returncode != 0 and _resync(git, checkout, TEST_BRANCH if channel == "test" else "master"):
             result = subprocess.CompletedProcess([], 0)       # followed it
         if result.returncode != 0:
             raise UpdateError(
@@ -266,7 +336,7 @@ def update(dry_run: bool = False) -> int:
     return _update_services(checkout, venv, dry_run)
 
 
-def _signed_manifest() -> dict:
+def _signed_manifest(channel: str = "live") -> dict:
     """The manifest for what is published, checked against the pinned key.
 
     Everything downstream trusts this: the archive is then required to hash to
@@ -275,12 +345,13 @@ def _signed_manifest() -> dict:
     installed, and nothing is installed. An updater that installs code it
     cannot attribute is a website with a shell on every machine (D-065).
     """
+    url = TEST_MANIFEST_URL if channel == "test" else MANIFEST_URL
     try:
-        with urllib.request.urlopen(_request(MANIFEST_URL), timeout=30) as response:
+        with urllib.request.urlopen(_request(url), timeout=30) as response:
             body = response.read().decode("utf-8", "replace")
     except urllib.error.URLError as exc:
         raise UpdateError(
-            f"could not read the release manifest from {MANIFEST_URL}: {exc}.\n"
+            f"could not read the release manifest from {url}: {exc}.\n"
             "  Nothing was installed. The manifest is what says the release is "
             "ours; without it there is nothing to check the download against.")
     try:
@@ -569,7 +640,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.check:
             installed, published, available = check()
             print(f"installed: {installed or 'unknown'}")
-            print(f"published: {published or 'could not reach the server'}")
+            print(f"published: {published or 'could not reach the server'} ({chosen_channel()} channel"
+                  f"{'; ' + followed_note if followed_note else ''})")
             if published is None:
                 return 1
             print()

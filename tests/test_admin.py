@@ -586,3 +586,15 @@ def test_the_sites_search_has_a_tab_of_its_own_called_dns(public):
     ords = page[page.index('<div class="admintab" data-tab="ords"'):]
     ords = ords[:ords.index('<div class="admintab"', 10)]
     assert 'id="sitescard"' not in ords
+
+
+def test_the_update_channel_is_live_or_test(public):
+    """Admin -> Overview's main live / main test choice (2026-10-28), read by the updater at its next check."""
+    app, state = public
+    assert app.get("/admin/api/state", headers=LOCAL).json()["selling"]["update_channel"] == "live"
+    assert app.post("/admin/api/settings", headers={**LOCAL, **WRITE},
+                    json={"update_channel": "test"}).status_code == 200
+    assert state.setting("update_channel") == "test"
+    assert app.post("/admin/api/settings", headers={**LOCAL, **WRITE},
+                    json={"update_channel": "nightly"}).status_code == 400
+    assert state.setting("update_channel") == "test"

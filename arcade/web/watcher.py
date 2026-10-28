@@ -1034,6 +1034,8 @@ class BlockWatcher:
         self.state.set_update_status({
             "at": time.time(), "what": what, "installed": installed,
             "published": published, "error": exc,
+            # The channel picked in Admin (main live or main test), and why another is followed, if one is.
+            "channel": self.state.setting(update.CHANNEL_SETTING, "live"), "note": update.followed_note,
         })
 
     _backfilled = False

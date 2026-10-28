@@ -1020,7 +1020,8 @@ def find_git() -> str | None:
     return None
 
 
-def fetch_source_archive(checkout: Path, expect_sha256: str | None = None) -> str | None:
+def fetch_source_archive(checkout: Path, expect_sha256: str | None = None,
+                         archive_url: str = ARCHIVE_URL, revision_url: str = REVISION_URL) -> str | None:
     """Fetch the application as an archive. Returns the revision, if published.
 
     With no `expect_sha256` the archive is checked against the SHA-256
@@ -1034,10 +1035,14 @@ def fetch_source_archive(checkout: Path, expect_sha256: str | None = None) -> st
     of a manifest it has already checked the signature on (arcade/release.py).
     Then the site cannot serve a different archive than the one that was
     signed, and the sums file beside it does not matter (D-065).
+
+    `archive_url` and `revision_url` are the test channel's when the operator
+    follows it (arcade/update.py, 2026-10-28); its archive is held to its own
+    signed manifest the same way.
     """
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
-        archive = download(ARCHIVE_URL, workdir / "source.tar.gz", "source.tar.gz")
+        archive = download(archive_url, workdir / "source.tar.gz", "source.tar.gz")
         expected = ([str(expect_sha256)] if expect_sha256
                     else read_url(ARCHIVE_SUMS_URL, "checksum").split())
         actual = sha256_of(archive)
@@ -1065,7 +1070,7 @@ def fetch_source_archive(checkout: Path, expect_sha256: str | None = None) -> st
         if root is None:
             fail("the source archive does not contain the application")
 
-        revision = (read_url(REVISION_URL, "revision", quiet=True) or "").strip() or None
+        revision = (read_url(revision_url, "revision", quiet=True) or "").strip() or None
         if revision:
             (root / REVISION_FILE).write_text(revision + "\n")
 

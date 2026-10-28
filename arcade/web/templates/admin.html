@@ -37,12 +37,22 @@
   <p class="muted" style="margin:0 0 6px;font-size:.84rem">
   {% if update_status %}Updates last checked {{ when(update_status.at) }}: <strong>{{ update_status.what }}</strong>
     {%- if update_status.installed %}, running <code class="mono">{{ update_status.installed[:7] }}</code>{% endif %}
-    {%- if update_status.published and update_status.published != update_status.installed %}, published <code class="mono">{{ update_status.published[:7] }}</code>{% endif %}.
+    {%- if update_status.published and update_status.published != update_status.installed %}, published <code class="mono">{{ update_status.published[:7] }}</code>{% endif %}
+    {%- if update_status.channel %} on the {{ update_status.channel }} channel{% endif %}.
+    {%- if update_status.note %} ({{ update_status.note }}){% endif %}
     {%- if update_status.error %}<br><span style="color:var(--bad)">{{ update_status.error }}</span>{% endif %}
   {% else %}Updates not checked since this interface started; it looks every {{ update_every // 60 }} minutes, and a
     source checkout never updates itself.{% endif %}
     Releases are signed with key <code class="mono">{{ release_key[:16] }}&hellip;</code>, pinned in this installation.</p>
   <label class="switch"><input type="checkbox" id="auto_update"> Install updates by itself</label>
+  <label style="display:block;margin:6px 0">Follow
+    <select id="update_channel">
+      <option value="live">main live: once a day, after a day with no trouble</option>
+      <option value="test">main test: every push to main, as it lands</option>
+    </select></label>
+  <p class="muted" style="margin:0 0 6px;font-size:.84rem">Both are signed with the same key. A test node runs
+    tomorrow's release today, so it is the one that finds a bad change; moved back to live, it waits for live to catch
+    up rather than going back.</p>
   <button type="button" class="small saveswitches">Save switches</button>
 </section>
 
@@ -2024,6 +2034,7 @@ section.panel h2{margin-top:0}
     // faucet + switches
     $('faucetdaily').value = d.faucet.daily ? coins(d.faucet.daily) : '';
     ['auto_update', 'auto_sell', 'auto_fill', 'node_trades'].forEach(function (k) { $(k).checked = !!d.selling[k]; });
+    $('update_channel').value = d.selling.update_channel || 'live';
     // One line per real-coin chain the swaps know (2026-10-18: LTC too), drawn from the setting itself.
     if (d.swap_big) {
       var lines = $('swapbiglines'); lines.textContent = '';
@@ -3554,7 +3565,7 @@ section.panel h2{margin-top:0}
   }
   loadNeeds(); setInterval(function () { if (!document.hidden) loadNeeds(); }, 30000);
   function saveSwitches() {
-    call('/admin/api/settings', {trade_cut: $('tradecut').value, auto_update: $('auto_update').checked, auto_sell: $('auto_sell').checked,
+    call('/admin/api/settings', {trade_cut: $('tradecut').value, auto_update: $('auto_update').checked, update_channel: $('update_channel').value, auto_sell: $('auto_sell').checked,
       auto_fill: $('auto_fill').checked, node_trades: $('node_trades').checked,
       xchain_enabled: $('xchain_enabled').checked,
       flags_broadcast: $('flags_broadcast').checked,

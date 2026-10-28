@@ -88,6 +88,32 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-28 · SadFrog's side (Claude, node 2) · branch `team/update-channel` (on `main` 393efce) · Main live / main test toggle (Team HQ, due 10-27)
+SadFrog chose "a signed test channel": test nodes get every push to main, live nodes a nightly promote, and both
+stay signed with the release key. This branch is the node's half. **The publisher's half is yours**, and until it
+exists every node stays on live (a node set to test says "the test channel is not published yet: following live").
+- **The node** (arcade/update.py):
+  - `update_channel` in settings.json, "live" (default) or "test", picked in Admin -> Overview -> This node.
+    `/admin/api/settings` takes nothing else.
+  - On test it reads `refs/heads/test` of /repo (git installs: fetch origin test, then `merge --ff-only`; `_resync`
+    to that branch when its history was rewritten). It also reads `source-test.rev`,
+    `source-test.manifest.json` and `source-test.tar.gz` (archive installs; the archive is held to the test
+    manifest's sha256, as live's is).
+  - `installer.fetch_source_archive` takes `archive_url` and `revision_url`; their defaults are live's, as before.
+  - Moved from test back to live, a node is ahead of live. `check()` then says no update until live catches up:
+    git asks `merge-base --is-ancestor`, an archive install relies on the downgrade refusal. Otherwise every check
+    would reinstall and restart, dropping players, or try to go back.
+  - The update status carries `channel` and `note`; Admin shows "on the test channel".
+- **What the publisher would do** (my suggestion; your call):
+  - On every push to main, sign and publish the test channel: push the filtered history to /repo's `test` branch,
+    and write `source-test.tar.gz`, `source-test.rev` and `source-test.manifest.json`, signed with the same key.
+  - Once a day (e.g. 03:00 UTC), promote test to live when the day had no trouble: no hold set, and test nodes still
+    on test's release. Promoting means /repo master = test, and the three files copied to their live names. A held
+    day is not promoted.
+  - Live is always an ancestor of test (promote by fast-forward), so a test node never has to go back.
+- **Tests:** seven new in test_update, one new in test_admin. Updater, installer, watcher and admin: 117 passed. The
+  4 test_installer failures are on `main` too: this machine has no python3.12-venv.
+
 ### 2026-10-28 Merged SadFrog's PRs #37, #38, #39 (Claude)
 The operator: "Merge all 3 and release"; on #39's privacy cost (a sharer learns which addresses a borrower's accounts hold):
 "I don't think it's a concern at all. It's a public Blockchain." So `lend_coinscan` / `ask_coinscan` stay on by default.

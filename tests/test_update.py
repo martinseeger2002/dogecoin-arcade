@@ -141,7 +141,7 @@ def test_check_reads_the_checkout_it_actually_has(tmp_path, monkeypatch, checkou
     monkeypatch.setattr(update.sys, "prefix", str(checkout / ".venv"))
     monkeypatch.setattr(update, "current_revision",
                         lambda path: "abc1234" if path == checkout else None)
-    monkeypatch.setattr(update, "remote_revision", lambda: "abc1234")
+    monkeypatch.setattr(update, "remote_revision", lambda channel=None: "abc1234")
 
     installed, published, available = update.check()
     assert installed == "abc1234"
@@ -405,3 +405,153 @@ def test_a_checkout_with_local_edits_is_left_alone(tmp_path):
     _published(tmp_path, "two").rename(pub)
     assert not update._resync("git", mine)
     assert (mine / "a.txt").read_text() == "my own change"
+
+
+# --- main live or main test (2026-10-28, Team HQ: "admin toggle for selecting main live vs main test") ----------
+
+def _choose(home, channel):
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "settings.json").write_text(json.dumps({update.CHANNEL_SETTING: channel}))
+
+
+def test_the_channel_is_live_unless_test_was_picked(tmp_path, monkeypatch):
+    home = tmp_path / ".dogecoinarcade"
+    monkeypatch.setattr(update, "HOME", home)
+    assert update.chosen_channel() == "live", "no settings yet"
+    _choose(home, "test")
+    assert update.chosen_channel() == "test"
+    _choose(home, "nightly-ish")
+    assert update.chosen_channel() == "live", "anything else is live"
+    (home / "settings.json").write_text("{half a file")
+    assert update.chosen_channel() == "live"
+
+
+def test_a_test_node_follows_live_until_the_test_channel_is_published(tmp_path, monkeypatch):
+    """Set to test before the publisher makes the test channel, a machine stays on live and says why."""
+    home = tmp_path / ".dogecoinarcade"
+    monkeypatch.setattr(update, "HOME", home)
+    _choose(home, "test")
+    asked = []
+    published = {update.TEST_REVISION_URL: None}
+    monkeypatch.setattr(update, "_published_revision", lambda url=update.REVISION_URL: asked.append(url) or published.get(url))
+    assert update.following() == "live"
+    assert "not published yet" in update.followed_note
+    published[update.TEST_REVISION_URL] = "abc1234"
+    assert update.following() == "test" and update.followed_note == ""
+    assert asked == [update.TEST_REVISION_URL] * 2
+    _choose(home, "live")
+    assert update.following() == "live" and len(asked) == 2, "a live node never asks for the test channel"
+
+
+def test_the_test_channel_reads_its_own_branch_revision_and_manifest(monkeypatch):
+    seen = []
+
+    class Listed:
+        returncode = 0
+        stdout = "fedcba9876543210\trefs/heads/test\n"
+
+    monkeypatch.setattr(update, "_find_git", lambda: "git")
+    monkeypatch.setattr(update, "_run", lambda *a, **k: seen.append(a) or Listed())
+    assert update.remote_revision("test") == "fedcba9"
+    assert seen[-1] == ("git", "ls-remote", update.REPO_URL, "refs/heads/test")
+    update.remote_revision("live")
+    assert seen[-1] == ("git", "ls-remote", update.REPO_URL, "HEAD")
+
+    monkeypatch.setattr(update, "_find_git", lambda: None)
+    monkeypatch.setattr(update, "_published_revision", lambda url=update.REVISION_URL: url)
+    assert update.remote_revision("test") == update.TEST_REVISION_URL
+    assert update.remote_revision("live") == update.REVISION_URL
+
+    urls = []
+
+    def no_manifest(request, timeout=None):
+        import urllib.error
+        urls.append(request.full_url)
+        raise urllib.error.URLError("404")
+
+    monkeypatch.setattr(update.urllib.request, "urlopen", no_manifest)
+    with pytest.raises(update.UpdateError, match="source-test.manifest.json"):
+        update._signed_manifest("test")
+    assert urls == [update.TEST_MANIFEST_URL]
+
+
+def test_a_git_node_moved_back_to_live_waits_for_live_rather_than_reinstalling(tmp_path, monkeypatch):
+    """Ahead of live (it took test's newer release), every check would reinstall and restart, dropping every
+    player, for nothing. Git says live's commit is already in its history; it waits."""
+    pub = _published(tmp_path, "live")
+    mine = tmp_path / "checkout"
+    _git("clone", "-q", str(pub), str(mine), cwd=tmp_path)
+    live = _git("rev-parse", "--short=7", "HEAD", cwd=mine)
+    (mine / "a.txt").write_text("test, not promoted yet")
+    _git("commit", "-q", "-am", "test", cwd=mine)
+    assert update._ahead_of(mine, live)
+    assert not update._ahead_of(mine, "1234567"), "a commit it has never seen is newer"
+
+    monkeypatch.setattr(update, "_layout", lambda: (tmp_path / "venv", mine, True))
+    monkeypatch.setattr(update, "following", lambda: "live")
+    monkeypatch.setattr(update, "remote_revision", lambda channel=None: live)
+    installed, published, available = update.check()
+    assert installed != published and not available
+
+
+def test_an_archive_node_ahead_of_live_waits_too(tmp_path, monkeypatch):
+    """No git: the signed release times say it. The refusal of an older release is what tells."""
+    checkout = tmp_path / "src"
+    checkout.mkdir()
+    monkeypatch.setattr(update, "HOME", tmp_path)
+    assert not update._ahead_of(checkout, "abc1234"), "nothing installed is recorded: not ahead"
+    update._remember({"published": 2000.0})
+
+    def older(channel="live"):
+        raise update.UpdateError("the published release is older than the one installed here. That is what a "
+                                 "downgrade attack looks like")
+
+    monkeypatch.setattr(update, "_signed_manifest", older)
+    assert update._ahead_of(checkout, "abc1234")
+    monkeypatch.setattr(update, "_signed_manifest", lambda channel="live": {"published": 3000.0})
+    assert not update._ahead_of(checkout, "abc1234")
+
+
+def test_a_git_node_on_test_fast_forwards_onto_the_test_branch(tmp_path, monkeypatch):
+    home = tmp_path / ".dogecoinarcade"
+    (home / "venv" / "bin").mkdir(parents=True)
+    (home / "src" / ".git").mkdir(parents=True)
+    monkeypatch.setattr(update, "HOME", home)
+    monkeypatch.setattr(update, "_find_git", lambda: "git")
+    monkeypatch.setattr(update, "current_revision", lambda _c: "abc1234")
+    monkeypatch.setattr(update, "following", lambda: "test")
+
+    class Done:
+        returncode = 0
+        stdout = stderr = ""
+
+    ran = []
+    monkeypatch.setattr(update, "_run", lambda *a, **k: ran.append(a) or Done())
+    monkeypatch.setattr(update.subprocess, "run", lambda argv, **k: Done())
+    assert update.update(dry_run=False) == 0
+    git = [a[1:] for a in ran if a[0] == "git"]
+    assert git[:2] == [("fetch", "--quiet", "origin", "test"), ("merge", "--ff-only", "--quiet", "FETCH_HEAD")]
+    assert ("pull", "--ff-only", "--quiet") not in git
+
+
+def test_an_archive_node_on_test_fetches_the_test_archive_held_to_its_manifest(tmp_path, monkeypatch):
+    home = tmp_path / ".dogecoinarcade"
+    (home / "venv" / "bin").mkdir(parents=True)
+    (home / "src").mkdir(parents=True)
+    monkeypatch.setattr(update, "HOME", home)
+    monkeypatch.setattr(update, "_find_git", lambda: None)
+    monkeypatch.setattr(update, "following", lambda: "test")
+    monkeypatch.setattr(update, "_signed_manifest", lambda channel="live": {"channel": channel, "sha256": "ab" * 32})
+    called = []
+    monkeypatch.setattr(update, "_call_installer", lambda *a: called.append(a) or "abc1234")
+    monkeypatch.setattr(update, "_remember", lambda m: None)
+
+    class Done:
+        returncode = 0
+        stdout = stderr = ""
+
+    monkeypatch.setattr(update, "_run", lambda *a, **k: Done())
+    monkeypatch.setattr(update.subprocess, "run", lambda argv, **k: Done())
+    assert update.update(dry_run=False) == 0
+    assert called[0][1:] == ("fetch_source_archive", home / "src", "ab" * 32,
+                             update.TEST_ARCHIVE_URL, update.TEST_REVISION_URL)

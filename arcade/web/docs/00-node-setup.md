@@ -59,6 +59,14 @@ Then open:       http://127.0.0.1:8420
 After installation, `dogecoinarcade-update` (in `~/.local/bin`) does the same
 as `--update`; it also accepts `--dry-run` and `--check`.
 
+**Main live or main test.** Admin -> Overview -> This node picks the channel the
+updates come from. *Main live* (the default) gets a release once a day, after a
+day with no trouble. *Main test* gets every push to main as it lands, so a test
+node finds a bad change before the live ones get it. Both are signed with the
+same key. Moved from test back to live, a node waits for live to catch up instead
+of going back. Until the test channel is published, a node set to test follows
+live and the Overview says so.
+
 ### Platform support
 
 | Platform | Status |
