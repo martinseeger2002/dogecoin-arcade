@@ -271,9 +271,9 @@ body.fullscreen #arc-bot { display: none !important; }
   box-shadow: inset -1px -1px var(--w98-dark), inset 1px 0 var(--w98-hi), inset -2px -2px var(--w98-shadow); }
 .dp-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
 .dp-grid { flex: 1; min-height: 110px; overflow-y: auto; background: #fff; padding: 4px; display: grid; align-content: start;
-  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 4px;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); grid-auto-rows: 64px; gap: 4px;
   box-shadow: inset -1px -1px var(--w98-hi), inset 1px 1px var(--w98-shadow), inset -2px -2px var(--w98-light), inset 2px 2px var(--w98-dark); }
-.dp-th { position: relative; aspect-ratio: 1; padding: 2px !important; border: 1px solid transparent; background: #fff !important;
+.dp-th { position: relative; width: 100%; height: 64px; min-height: 0 !important; padding: 2px !important; border-radius: 0 !important; border: 1px solid transparent; background: #fff !important;
   box-shadow: none !important; cursor: pointer; overflow: hidden; }
 .dp-th img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; display: block; pointer-events: none; }
 .dp-th iframe { position: absolute; left: 2px; top: 2px; width: 400%; height: 400%; border: 0; transform: scale(.25);
