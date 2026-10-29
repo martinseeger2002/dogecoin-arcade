@@ -253,9 +253,9 @@ def test_the_explorer_on_the_page_follows_the_chain_at_the_top(walking):
     page = app.get("/admin", headers=LOCAL).text
     assert 'id="ordlooknet"' not in page, "no chain choice of its own"
     for part in ('id="ordexplorer"', 'id="ordprev"', 'id="ordnext"', 'id="ordnum"', 'id="ordtickpick"',
-                 'class="pick-q"', "window.arcadePick", 'sandbox'):
+                 'class="pick-q"', "window.arcadeSearchBox", 'sandbox'):
         assert part in page, part
-    assert page.count("window.arcadePick = window.arcadePick") == 1, "the Exchange's one search tool, included once"
+    assert page.count("window.arcadeSearchBox = window.arcadeSearchBox") == 1, "the Exchange's one search tool, included once"
 
 
 def test_an_inscription_other_explorers_miss_carries_a_note(tmp_path):

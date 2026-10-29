@@ -6,14 +6,16 @@
       <span class="pick"><input type="search" class="pick-q" autocomplete="off" role="combobox" aria-expanded="false">
         <span class="pick-list" role="listbox" hidden></span></span>
 
-    and window.arcadePick(box, cfg) wires one, where cfg is
+    and window.arcadeSearchBox(box, cfg) wires one, where cfg is
       items(text, words, done)  what matches: done(rows, more, none) with rows [{value, label, note}], how many more
                                 there are, and what to say when nothing matches; may answer later (a fetch): an answer
                                 to a question the box has moved past is dropped
       choose(row)               a row was picked
       shown()                   what the box shows while not typing (the choice so far), '' for nothing
       placeholder               its hint when empty
-    It returns {q, sync}: sync() puts the choice back in the box. Included once per page. -#}
+    It returns {q, sync}: sync() puts the choice back in the box. Included once per page.
+    Not window.arcadePick: that name is base.html's picture picker (arcadePick(input, drawText), every page), so a
+    guard on it never installed this tool and every search box threw "drawText is not a function" (2026-10-28). -#}
 <style>
   .pick{position:relative;flex:1 1 170px;min-width:0;display:block}
   .pick-q{width:100%;box-sizing:border-box}
@@ -27,7 +29,7 @@
   .pick-none{display:block;padding:9px 10px;color:var(--muted,#a69d8e);font-size:.86rem}
 </style>
 <script>
-window.arcadePick = window.arcadePick || function (box, cfg) {
+window.arcadeSearchBox = window.arcadeSearchBox || function (box, cfg) {
   var q = box.querySelector('.pick-q'), list = box.querySelector('.pick-list'), at = -1, rows = [], asked = 0;
   var hint = cfg.placeholder || q.placeholder || '';
   function open(on) { list.hidden = !on; q.setAttribute('aria-expanded', on ? 'true' : 'false'); }

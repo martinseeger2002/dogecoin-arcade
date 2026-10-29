@@ -232,4 +232,4 @@ def test_the_operator_picks_tokens_the_t_decks_see(client, monkeypatch):
     outside = app.get("/admin/api/lora/assets?q=a", headers={"host": "app.example.com", "cf-ray": "x"})
     assert outside.status_code in (401, 403, 404)
     page = app.get("/admin", headers=LOCAL).text
-    assert 'id="lora-asset-pick"' in page and "window.arcadePick($(\"lora-asset-pick\")" in page
+    assert 'id="lora-asset-pick"' in page and "window.arcadeSearchBox($(\"lora-asset-pick\")" in page

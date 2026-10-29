@@ -1450,7 +1450,7 @@ $("lora-assets").addEventListener("click", (e) => {
   drawAssets();
   save({assets: loraAssets});
 });
-window.arcadePick($("lora-asset-pick"), {
+window.arcadeSearchBox($("lora-asset-pick"), {
   placeholder: "Search a token or DRC-20 / PRC-20 tick",
   shown: () => "",
   choose: (row) => {
@@ -3331,7 +3331,7 @@ section.panel h2{margin-top:0}
 
   // Tokens: the Exchange's search box (_pick.html) on the index's ticks, then the token and its rich list.
   var ORDX_WAIT = null;
-  var ORDX_PICK = window.arcadePick($('ordtickpick'), {
+  var ORDX_PICK = window.arcadeSearchBox($('ordtickpick'), {
     placeholder: 'Search a ticker',
     shown: function () { return ORDX.tick || ''; },
     choose: function (row) { ordxTick(row.value, 0); },

@@ -743,7 +743,7 @@
   function amount(t) { var p = String(t == null ? '' : t).split('.'); return p[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (p[1] ? '.' + p[1] : ''); }
   function pct(p) { return p == null ? '—' : (p >= 1 ? p.toFixed(2) : p >= 0.01 ? p.toFixed(3) : p > 0 ? '<0.01' : '0') + '%'; }
   var TICK_WAIT = null;
-  var PICK = window.arcadePick($('xptickpick'), {
+  var PICK = window.arcadeSearchBox($('xptickpick'), {
     placeholder: 'Search a ticker',
     shown: function () { return X.tick || ''; },
     choose: function (row) { tick(row.value, 0); },

@@ -765,7 +765,7 @@ document.addEventListener('click', function (ev) {
       // Each box is the shared search tool (_pick.html, 2026-10-21); the select behind it keeps the value sent.
       var boxes = [].slice.call(f.querySelectorAll('.pick')).map(function (box) {
         var sel = document.getElementById(box.dataset.for);
-        var tool = window.arcadePick(box, {
+        var tool = window.arcadeSearchBox(box, {
           placeholder: 'Search a coin or token',
           shown: function () { return shown(sel); },
           choose: function (row) { sel.value = row.value; sel.dispatchEvent(new Event('change', {bubbles: true})); },
