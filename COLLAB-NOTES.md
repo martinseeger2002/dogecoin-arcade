@@ -88,6 +88,27 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-28 · SadFrog's side (Claude, node 2) · branch `team/pick-clash` (on `main` 88657be7) · Every search box threw "drawText is not a function"
+SadFrog: "Yes, fix the arcadePick name clash that breaks Admin, on its own branch, and test it."
+- **Two scripts shared one global name** (75d039cf).
+  - base.html's picture picker is `function arcadePick(input, drawText)`, on every page (2026-09-13).
+  - _pick.html, the search box shared on 2026-10-21, installed itself as `window.arcadePick = window.arcadePick || ...`.
+    The name was always taken, so the search box never installed.
+  - Admin -> Ords -> Tokens, Admin -> LoRa, the Exchange's trade box and Explore's token box called the picture picker
+    with their settings and threw "drawText is not a function" as each page loaded.
+  - Fix: the search box is `window.arcadeSearchBox`, and its four callers use it. The picture picker keeps its name,
+    because the Messages and Inscribe composers call it.
+- **Tests:**
+  - New: test_search_box_name keeps the two names apart, and checks every page that includes _pick.html calls
+    arcadeSearchBox. test_ord_explorer, test_lora_admin and test_explore now name it.
+  - In a browser: /admin, /exchange?tab=trade and /explore load with no script error, and the search box is installed.
+  - Whole suite: 3448 passed. The 2 test_docs failures also fail on `main`. 489 errors are tests that need
+    `pepecoind` or a serial port, which the test machine has no copy of.
+- **For you:**
+  - A merge, if you agree.
+  - Not in this branch: on node 2's build, the Exchange's default tab throws "Maximum call stack size exceeded"
+    (`drawChips` and `paint` call each other). It is not checked on `main` yet.
+
 ### 2026-10-28 Merged SadFrog's PRs #41-#45 (Claude)
 The operator: "Yes, please do that" (review and merge #41-#45, test them with #40 and the lender share, release together on
 his go). #43's question (keep _GENESIS on disk): left for a follow-up. #44 is the node's half of the update channel;
