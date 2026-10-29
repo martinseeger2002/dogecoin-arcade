@@ -88,6 +88,41 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-28 · SadFrog's side (Claude, node 2) · branch `team/desktop-view` (on `main` 82f39c64) · Themes: a Windows 98 or Ubuntu desktop on a computer
+SadFrog asked for a "Desktop View", like the phone's home screen but for a computer: first in the old Windows 98 look,
+then (after trying it) "put the toggle in 'your arcade' section near light or dark - and we can call it themes - lets
+try an ubuntu style one". Commits 52cdbb19, 66eae2e7, 737678fc, 7a5729b7, dfd07756, 45d4f6bd.
+- **Themes on Your arcade** (me.html, beside Light or dark): Website, Windows 98 desktop, Ubuntu desktop.
+  - Kept in this browser (`localStorage arcade.deskview`).
+  - Computers only: never on a phone, never in the installed app.
+  - While a desktop is on, base.html sends a page opened in a tab of its own to `/desktop#open=<page>`. It never
+    sends Admin or the sign-in pages there.
+- **`/desktop`** (desktop.html, new; door: public).
+  - Every tab is an icon, Admin too for the operator. Apps open in windows that move, size, maximize and minimize to a
+    taskbar (Windows 98) or a dock (Ubuntu), and keep running. Icons go anywhere and any one can be removed.
+  - The Start menu (Windows 98) or Activities and Show Applications (Ubuntu) hold:
+    - Programs: the account's chosen apps, through Add/Remove Programs. It starts with Browser, Video Call, Arcade
+      Spaces and Tic-Tac-Toe, pinned by `gameslib.app_key`, so a copied name is never one of them.
+    - A wallet shortcut for every coin, using the Wallet's new `?coin=<network>` (my_wallet.html).
+    - Documents, Run, Help, and Log Off (the same `wallet.signOut` as Your arcade).
+    - System Information: this arcade, every arcade on the mesh (`/admin/api/arcades` for the operator,
+      `/account/arcades` for an account), the chains, the browser.
+  - The wallpaper is any inscription: the account's own, a chain's pictures, a collection searched through
+    `/explore/api/collections`, or an id.
+- **New routes:**
+  - `GET/POST /account/deskbg`: `{id, fit}`, kept as setting `deskbg:<owner>`, apart from the phone's `homebg`.
+  - `/desk98.css` and `/deskubuntu.css`, in ASSETS, so the shared fingerprint changes. base.html loads one of them
+    only in a page inside a desktop window (`html.indesk`).
+- **Small moves:**
+  - The tab glyphs moved out of home.html into `_tab_glyphs.js.html`, shared with desktop.html, plus an Explore glyph.
+  - `_shelf_apps()` builds the App Store list for both `/home` and `/desktop`.
+- **Tests:**
+  - New: tests/test_desktop_view.py (9).
+  - Whole suite: 3431 passed. The 2 test_docs failures also fail on `main`. 489 errors are tests that need
+    `pepecoind` or a serial port, which the test machine has no copy of.
+  - Clicked through in a browser in both looks.
+- **For you:** a merge, if you agree. It runs on SadFrog's node now.
+
 ### 2026-10-28 Merged SadFrog's #46; the Exchange's LLM tab no longer runs out of stack (Claude)
 The operator: "Check out PR 46". Both errors checked on .25 (c14f574) first: /admin threw "drawText is not a function",
 and /exchange (the LLM tab, the default) threw "Maximum call stack size exceeded". #46 merged as it came.
