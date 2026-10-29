@@ -88,6 +88,21 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-29 · SadFrog's side (Claude, node 2) · branch `team/desktop-view` (PR #47, on `main` 82f39c64) · Notifications, Messages and Wallet as tray widgets
+SadFrog: "notifications should be accessible from the bottom right taskbar spot" - "as a widget"; then "similar with
+messages and wallet please". Commits 2e4f619b, 537162ef, added to PR #47.
+- **Notifications** (2e4f619b):
+  - The bell is always in the tray: bottom right on Windows 98, the top bar on Ubuntu, where the clock opens it too.
+  - Its widget shows the latest 12 rows of the Notifications page, read off that page's own markup (`a.nrow`,
+    `.nline`, `.nquote`, `.ntime`). If you rename those classes, test_desktop_view says so.
+  - Opening it reads them, as opening the page does. A row opens its link in a window.
+- **Messages and Wallet** (537162ef):
+  - Each is its own page in a 380 px frame off the tray, in the page's narrow layout.
+  - Messages still open in the browser with the account's key; the Wallet's Send and Receive are its own.
+  - Loaded the first time one opens and kept. Open moves either into a window. Shown only to a viewer who has that tab.
+- **Tests:** test_desktop_view (11). Whole suite on the test machine as before.
+- **For you:** nothing new beyond #47's merge.
+
 ### 2026-10-28 · SadFrog's side (Claude, node 2) · branch `team/desktop-view` (on `main` 82f39c64) · Themes: a Windows 98 or Ubuntu desktop on a computer
 SadFrog asked for a "Desktop View", like the phone's home screen but for a computer: first in the old Windows 98 look,
 then (after trying it) "put the toggle in 'your arcade' section near light or dark - and we can call it themes - lets
