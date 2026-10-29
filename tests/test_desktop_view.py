@@ -135,3 +135,17 @@ def test_programs_start_with_the_four_that_come_with_it():
             gameslib.app_key("nWKJgSeAZSmfRCxZnwVgtYyPNowQT5X1Gk", "Tic-Tac-Toe")]
     line = re.search(r"var DEFAULT_PROGRAMS = (\[.*?\]);", desk, re.S).group(1)
     assert json.loads(line.replace("'", '"')) == want
+
+
+def test_notifications_are_a_widget_off_the_tray():
+    """2026-10-28: "notifications should be accessible from the bottom right taskbar spot" - "as a widget": the bell is
+    always in the tray (Ubuntu's clock opens it too) and shows the Notifications page's own latest rows."""
+    desk = (TEMPLATES / "desktop.html").read_text()
+    assert 'id="dk-bell" title="Notifications" aria-haspopup="dialog"' in desk and 'id="dk-bell" title="Notifications" hidden' not in desk
+    assert 'id="dk-notif" role="dialog" aria-label="Notifications" hidden' in desk
+    for need in ("fetch(bellHref, {credentials: 'same-origin', cache: 'no-store'})", "doc.querySelectorAll('a.nrow')",
+                 "$('dk-clock').addEventListener('click'", "pollBadges();                                   // looked at"):
+        assert need in desk, need
+    rows = (TEMPLATES / "notifications.html").read_text()
+    for cls in ('class="nrow', 'class="nface', 'class="nline', 'class="nquote', 'class="ntime'):
+        assert cls in rows, "the widget reads these off the Notifications page"

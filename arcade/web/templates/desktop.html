@@ -35,7 +35,7 @@ document.documentElement.setAttribute('data-skin', (function () {
   <span class="dk-grip" aria-hidden="true"></span>
   <div class="dk-tbtns" id="dk-tbtns"></div>
   <div class="dk-tray" id="dk-tray">
-    <button type="button" class="dk-traybtn" id="dk-bell" title="Notifications" hidden>
+    <button type="button" class="dk-traybtn" id="dk-bell" title="Notifications" aria-haspopup="dialog" aria-expanded="false">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" stroke="#000" stroke-width="2.2" stroke-linejoin="round"/></svg><span id="dk-bell-n"></span></button>
     <button type="button" class="dk-traybtn" id="dk-mail" title="Messages" hidden>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18v12H3zM3 6l9 7 9-7" stroke="#000" stroke-width="2.2" stroke-linejoin="round"/></svg><span id="dk-mail-n"></span></button>
@@ -59,6 +59,18 @@ document.documentElement.setAttribute('data-skin', (function () {
 </div>
 <div class="dk-menu dk-sub" id="dk-sub" role="menu" hidden></div>
 <div class="dk-menu dk-ctx" id="dk-ctx" role="menu" hidden></div>
+{#- Notifications as a widget off the tray (2026-10-28: "notifications should be accessible from the bottom right taskbar
+    spot" - "as a widget"): the latest rows of the Notifications page, read when it opens, as opening that page reads
+    them. -#}
+<section class="dk-notif" id="dk-notif" role="dialog" aria-label="Notifications" hidden>
+  <div class="dk-notif-head"><b>Notifications</b>
+    <button type="button" class="w98-btn dk-tbtn dk-notif-x" aria-label="Close"><svg width="8" height="7" viewBox="0 0 8 7" aria-hidden="true"><path d="M0 0h2l2 2 2-2h2L5 3.5 8 7H6L4 5 2 7H0l3-3.5z" fill="#000"/></svg></button></div>
+  <div class="dk-notif-list" id="dk-notif-list"></div>
+  <div class="dk-notif-foot">
+    <button type="button" class="w98-btn" id="dk-notif-all">Open Notifications</button>
+    <button type="button" class="w98-btn" id="dk-notif-again">Refresh</button>
+  </div>
+</section>
 <div class="dk-toast" id="dk-toast" role="status" hidden></div>
 
 <template id="dk-display-t">
@@ -120,7 +132,7 @@ header, footer.version, .notice, #appbar, #newposts, .unlockbar { display: none 
 /* The helper is an icon on the desktop; its chat box sits above the taskbar. */
 body.fullscreen #arc-bot { display: none !important; }
 #arc-bot-box { bottom: 40px !important; }
-.dk, .dk-task, .dk-menu, .dk-toast {
+.dk, .dk-task, .dk-menu, .dk-toast, .dk-notif {
   --w98-face: #c0c0c0; --w98-light: #dfdfdf; --w98-hi: #fff; --w98-shadow: #808080; --w98-dark: #0a0a0a;
   --w98-navy: #000080; --w98-blue: #1084d0; --w98-desk: #008080;
   font: 11px/1.3 Tahoma, "Microsoft Sans Serif", "MS Sans Serif", Geneva, Verdana, sans-serif; color: #000;
@@ -279,6 +291,49 @@ body.fullscreen #arc-bot { display: none !important; }
 .dk-toast { position: fixed; right: 6px; bottom: 36px; z-index: 9300; max-width: 320px; padding: 8px 10px; background: #ffffe1;
   border: 1px solid #000; box-shadow: 2px 2px 4px rgba(0,0,0,.3); }
 
+/* The notifications widget, above the tray */
+.dk-notif { position: fixed; right: 4px; bottom: 34px; z-index: 9250; width: 340px; max-height: min(520px, calc(100vh - 60px));
+  display: flex; flex-direction: column; padding: 3px; background: var(--w98-face, #c0c0c0); color: #000;
+  font: 11px/1.35 Tahoma, "Microsoft Sans Serif", "MS Sans Serif", Geneva, Verdana, sans-serif;
+  box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #dfdfdf, inset -2px -2px #808080, inset 2px 2px #fff, 2px 2px 6px rgba(0,0,0,.3); }
+.dk-notif[hidden] { display: none; }
+.dk-notif * { box-sizing: border-box; border-radius: 0; }
+.dk-notif-head { height: 20px; display: flex; align-items: center; justify-content: space-between; padding: 0 2px 0 4px; color: #fff;
+  background: linear-gradient(90deg, #000080, #1084d0); }
+.dk-notif-list { flex: 1; min-height: 60px; overflow-y: auto; margin: 3px 0; background: #fff;
+  box-shadow: inset -1px -1px #fff, inset 1px 1px #808080, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a; padding: 2px; }
+.dk-ni { display: flex; gap: 8px; align-items: flex-start; width: 100%; padding: 6px 6px !important; border: 0; background: none !important;
+  box-shadow: none !important; text-align: left; cursor: pointer; font: inherit; color: #000; border-bottom: 1px solid #eee; }
+.dk-ni:hover, .dk-ni:focus-visible { background: #000080 !important; color: #fff; outline: none; }
+.dk-ni.new { font-weight: 700; }
+.dk-ni.new::before { content: ""; flex: none; width: 6px; height: 6px; margin-top: 11px; margin-left: -2px; background: #e00; border-radius: 50%; }
+.dk-niface { position: relative; width: 28px; height: 28px; flex: none; display: flex; align-items: center; justify-content: center;
+  overflow: hidden; background: #808080; color: #fff; font-weight: 700; }
+.dk-niface img { width: 100%; height: 100%; object-fit: cover; }
+.dk-niface .nletter { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.dk-nibody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dk-niline { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.dk-niquote { font-weight: 400; opacity: .75; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dk-nitime { font-weight: 400; opacity: .7; font-size: 10px; }
+.dk-notif-said { padding: 14px 8px; text-align: center; color: #404040; }
+.dk-notif-foot { display: flex; gap: 6px; justify-content: flex-end; }
+.dk-traybtn#dk-bell { position: relative; }
+.dk-traybtn#dk-bell.down { box-shadow: inset 1px 1px #808080 !important; }
+[data-skin="ubuntu"] .dk-notif { top: 34px; bottom: auto; right: auto; left: 50%; transform: translateX(-50%); width: 380px; padding: 8px;
+  background: #fff; color: #3d3d3d; border-radius: 14px; box-shadow: 0 0 0 1px rgba(0,0,0,.12), 0 10px 30px rgba(0,0,0,.35);
+  font: 13px/1.4 Ubuntu, "Ubuntu Sans", Cantarell, "Noto Sans", "Segoe UI", system-ui, sans-serif; }
+[data-skin="ubuntu"] .dk-notif-head { background: none; color: #3d3d3d; height: 30px; padding: 0 2px 0 6px; font-size: 14px; }
+[data-skin="ubuntu"] .dk-notif-x { width: 24px; height: 24px; border-radius: 50% !important; border: 0 !important; background: #ececec !important; }
+[data-skin="ubuntu"] .dk-notif-list { box-shadow: none; padding: 0; margin: 4px 0 8px; background: none; }
+[data-skin="ubuntu"] .dk-ni { border-radius: 10px !important; border-bottom: 0; color: #3d3d3d; padding: 8px !important; margin-bottom: 4px;
+  background: #f4f2f1 !important; }
+[data-skin="ubuntu"] .dk-ni:hover, [data-skin="ubuntu"] .dk-ni:focus-visible { background: #e9e6e4 !important; color: #3d3d3d; }
+[data-skin="ubuntu"] .dk-ni.new::before { background: #e95420; }
+[data-skin="ubuntu"] .dk-niface { width: 36px; height: 36px; border-radius: 50% !important; }
+[data-skin="ubuntu"] .dk-nitime { font-size: 11px; }
+[data-skin="ubuntu"] .dk-clock { cursor: pointer; border-radius: 999px; padding: 1px 10px; }
+[data-skin="ubuntu"] .dk-clock:hover, [data-skin="ubuntu"] .dk-clock.down { background: rgba(255,255,255,.17); }
+
 /* Small dialogs */
 .dlg { display: flex; flex-direction: column; gap: 8px; height: 100%; }
 .dlg-note { margin: 0; font-size: 11px; color: #000; }
@@ -377,7 +432,7 @@ body.fullscreen #arc-bot { display: none !important; }
 
 /* ===== The Ubuntu look (Themes -> Ubuntu desktop; 2026-10-28): Yaru's colours, the top bar, the dock, rounded windows ===== */
 .dk-sysbtn, .dk-dock, .dk-apps { display: none; }
-[data-skin="ubuntu"] .dk, [data-skin="ubuntu"] .dk-task, [data-skin="ubuntu"] .dk-menu, [data-skin="ubuntu"] .dk-toast,
+[data-skin="ubuntu"] .dk, [data-skin="ubuntu"] .dk-task, [data-skin="ubuntu"] .dk-menu, [data-skin="ubuntu"] .dk-toast, [data-skin="ubuntu"] .dk-notif,
 [data-skin="ubuntu"] .dk-dock, [data-skin="ubuntu"] .dk-apps {
   --ub-orange: #e95420; --ub-aubergine: #2c001e; --ub-bar: #1d1d1d; --ub-head: #303030; --ub-line: #cdc7c2;
   font: 13px/1.4 Ubuntu, "Ubuntu Sans", Cantarell, "Noto Sans", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: auto; }
@@ -474,6 +529,7 @@ body.fullscreen #arc-bot { display: none !important; }
 [data-skin="ubuntu"] .dk-body { margin: 0; padding: 0; box-shadow: none; background: #fafafa; }
 [data-skin="ubuntu"] .dk-body.plain { padding: 14px; background: #fafafa; color: #3d3d3d; }
 /* Buttons, fields, menus: GTK's */
+[data-skin="ubuntu"] .dk-notif-foot .w98-btn { border-radius: 6px !important; background: #fff; border: 1px solid #cdc7c2 !important; box-shadow: none !important; padding: 5px 12px; color: #3d3d3d; }
 [data-skin="ubuntu"] .w98-btn { border-radius: 6px !important; background: #fff; border: 1px solid var(--ub-line) !important;
   box-shadow: 0 1px 1px rgba(0,0,0,.05) !important; padding: 5px 12px; color: #3d3d3d; }
 [data-skin="ubuntu"] .w98-btn:hover { background: #f4f2f1; }
@@ -939,10 +995,76 @@ body.fullscreen #arc-bot { display: none !important; }
   var mailHref = (TABS.filter(function (t) { return t.href === '/messages' || t.href === '/me/messages'; })[0] || {}).href;
   function paintTray() {
     var n = bellHref ? (badges[bellHref] || 0) : 0, m = mailHref ? (badges[mailHref] || 0) : 0;
-    $('dk-bell').hidden = !n; $('dk-bell-n').textContent = n > 99 ? '99+' : (n || '');
+    $('dk-bell').title = n ? n + ' new notification' + (n === 1 ? '' : 's') : 'Notifications';
+    $('dk-bell-n').textContent = n > 99 ? '99+' : (n || '');
     $('dk-mail').hidden = !m; $('dk-mail-n').textContent = m > 99 ? '99+' : (m || '');
   }
-  $('dk-bell').addEventListener('click', function () { if (bellHref) openKey('tab:' + bellHref); });
+  // ---------- the notifications widget ----------
+  function notifShown() { return !$('dk-notif').hidden; }
+  function closeNotif() {
+    $('dk-notif').hidden = true; $('dk-bell').classList.remove('down'); $('dk-bell').setAttribute('aria-expanded', 'false');
+    $('dk-clock').classList.remove('down');
+  }
+  function openNotif() {
+    hideMenus(); if (UB) toggleApps(false);
+    $('dk-notif').hidden = false; $('dk-bell').classList.add('down'); $('dk-bell').setAttribute('aria-expanded', 'true');
+    if (UB) $('dk-clock').classList.add('down');
+    loadNotif();
+  }
+  function notifSaid(text) { $('dk-notif-list').innerHTML = '<p class="dk-notif-said"></p>'; $('dk-notif-list').firstChild.textContent = text; }
+  function loadNotif() {
+    if (!bellHref) { notifSaid('This arcade has no notifications for you.'); return; }
+    notifSaid('Looking…');
+    fetch(bellHref, {credentials: 'same-origin', cache: 'no-store'}).then(function (r) {
+      if (r.redirected && new URL(r.url).pathname === '/join') throw new Error('signin');
+      if (!r.ok) throw new Error('down');
+      return r.text();
+    }).then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var rows = [].slice.call(doc.querySelectorAll('a.nrow')).slice(0, 12), list = $('dk-notif-list');
+      if (!rows.length) { notifSaid('No notifications yet.'); pollBadges(); return; }
+      list.innerHTML = '';
+      rows.forEach(function (a) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'dk-ni' + (a.classList.contains('new') ? ' new' : '');
+        var face = document.createElement('span'); face.className = 'dk-niface';
+        var img = a.querySelector('.nface img'), letter = a.querySelector('.nface .nletter');
+        if (img) { var i = document.createElement('img'); i.src = img.getAttribute('src'); i.alt = ''; face.appendChild(i); }
+        else if (letter) {
+          var l = document.createElement('span'); l.className = 'nletter'; l.textContent = letter.textContent.trim();
+          if (letter.style.background) l.style.background = letter.style.background;
+          face.appendChild(l);
+        }
+        var body = document.createElement('span'); body.className = 'dk-nibody';
+        var line = document.createElement('span'); line.className = 'dk-niline';
+        var said = a.querySelector('.nline');
+        line.textContent = (said ? said.textContent : a.textContent).replace(/\s+/g, ' ').replace(/Send 1 PEP test/, '').trim();
+        body.appendChild(line);
+        var quote = a.querySelector('.nquote');
+        if (quote && quote.textContent.trim()) {
+          var q = document.createElement('span'); q.className = 'dk-niquote'; q.textContent = quote.textContent.trim(); body.appendChild(q);
+        }
+        var when = a.querySelector('.ntime');
+        if (when) { var t = document.createElement('span'); t.className = 'dk-nitime'; t.textContent = when.textContent.trim(); body.appendChild(t); }
+        b.appendChild(face); b.appendChild(body);
+        var href = a.getAttribute('href') || bellHref;
+        b.addEventListener('click', function () { closeNotif(); window.arcadeShell.open(href, line.textContent.slice(0, 40)); });
+        list.appendChild(b);
+      });
+      pollBadges();                                   // looked at: the count goes, as on the page
+    }).catch(function (e) {
+      notifSaid(e.message === 'signin' ? 'Sign in to see your notifications.' : 'Notifications are not available right now.');
+    });
+  }
+  $('dk-bell').addEventListener('click', function (e) { e.stopPropagation(); if (notifShown()) closeNotif(); else openNotif(); });
+  $('dk-clock').addEventListener('click', function (e) { if (!UB) return; e.stopPropagation(); if (notifShown()) closeNotif(); else openNotif(); });
+  $('dk-notif').querySelector('.dk-notif-x').addEventListener('click', closeNotif);
+  $('dk-notif-again').addEventListener('click', loadNotif);
+  $('dk-notif-all').addEventListener('click', function () { closeNotif(); if (bellHref) openKey('tab:' + bellHref); });
+  document.addEventListener('pointerdown', function (e) {
+    if (notifShown() && !e.target.closest('#dk-notif') && !e.target.closest('#dk-bell') && !(UB && e.target.closest('#dk-clock'))) closeNotif();
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && notifShown()) closeNotif(); });
   $('dk-mail').addEventListener('click', function () { if (mailHref) openKey('tab:' + mailHref); });
   function pollBadges() {
     fetch('/account/badges', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.ok ? r.json() : null; })
