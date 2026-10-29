@@ -87,7 +87,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
     if (desk) {
       document.documentElement.classList.add('indesk');
       // ... in the desktop's own look (2026-10-28: "all apps internally should be styled windows 98 as well"; Themes
-      // on Your arcade picks the look, me.html).
+      // in me.html picks the look).
       var skin = shell.document.documentElement.getAttribute('data-skin') || 'w98';
       document.documentElement.setAttribute('data-skin', skin);
       var look = document.createElement('link');
