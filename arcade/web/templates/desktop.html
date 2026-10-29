@@ -12,7 +12,8 @@
     every page but Admin's, turns the view on and off; the choice is this browser's (base.html sends its pages here
     while it is on). -#}
 {%- set tabs = [] %}
-{%- for href, label, chain, built in nav if built and href not in ('/apps', '/admin') and not href.startswith('/admin/') %}
+{#- Admin too, for the operator (2026-10-28: "admin should be in it as well - also styled windows 98 from this view"). -#}
+{%- for href, label, chain, built in nav if built and href != '/apps' %}
 {%- set _ = tabs.append({'key': 'tab:' ~ href, 'href': href, 'name': label}) %}
 {%- endfor %}
 <div id="dk" class="dk" tabindex="-1">
@@ -50,6 +51,7 @@
     <div class="dp-tabs" role="tablist">
       <button type="button" role="tab" data-tab="mine" aria-selected="true">My inscriptions</button>
       <button type="button" role="tab" data-tab="browse" aria-selected="false">Browse</button>
+      <button type="button" role="tab" data-tab="coll" aria-selected="false">Collections</button>
       <button type="button" role="tab" data-tab="id" aria-selected="false">By ID</button>
     </div>
     <div class="dp-page">
@@ -62,6 +64,14 @@
         <label class="dp-row">Chain: <select class="w98-field dp-net"></select></label>
         <div class="dp-grid dp-browse"></div>
         <div class="dp-row"><button type="button" class="w98-btn dp-more">More</button><span class="dp-note dp-browse-note"></span></div>
+      </div>
+      <div class="dp-pane" data-pane="coll" hidden>
+        <div class="dp-row"><select class="w98-field dp-cnet" aria-label="Chain"></select>
+          <input class="w98-field dp-cq" placeholder="Search collections" aria-label="Search collections" autocomplete="off" spellcheck="false">
+          <button type="button" class="w98-btn dp-cgo">Search</button></div>
+        <div class="dp-row dp-cback" hidden><button type="button" class="w98-btn dp-cup">&#x2039; Collections</button><b class="dp-cname"></b></div>
+        <div class="dp-grid dp-colls"></div>
+        <div class="dp-row"><button type="button" class="w98-btn dp-cmore" hidden>More</button><span class="dp-note dp-cnote"></span></div>
       </div>
       <div class="dp-pane" data-pane="id" hidden>
         <p class="dp-note">Any inscription: a picture, or a page that moves. Paste its id (the long one ending in
@@ -101,6 +111,7 @@ body.fullscreen #arc-bot { display: none !important; }
   font: 11px/1.3 Tahoma, "Microsoft Sans Serif", "MS Sans Serif", Geneva, Verdana, sans-serif; color: #000;
   -webkit-font-smoothing: none; }
 .dk *, .dk-task *, .dk-menu * { box-sizing: border-box; }
+.dk *, .dk-task *, .dk-menu *, .dk-toast { border-radius: 0 !important; }
 .dk button, .dk-task button, .dk-menu button { font: inherit; color: #000; text-transform: none; letter-spacing: normal;
   min-height: 0; }
 /* The look: a raised grey face, a sunken white field, the title bar's blue (inset borders, as the old one drew them). */
@@ -153,6 +164,13 @@ body.fullscreen #arc-bot { display: none !important; }
 .dk-icon.sel .dk-lab { background: var(--w98-navy); text-shadow: none; outline: 1px dotted #ff0; -webkit-line-clamp: 5; }
 .dk-icon.sel .dk-ico::after { content: ""; position: absolute; inset: 0; background: var(--w98-navy); opacity: .5; }
 .dk-icon.drag { z-index: 5; opacity: .75; }
+/* A shortcut: the little curved arrow in the corner of its icon. */
+.dk-arrowmark { position: absolute; left: -1px; bottom: -1px; width: 11px; height: 11px; background: #fff;
+  box-shadow: 0 0 0 1px #000; }
+.dk-arrowmark::after { content: ""; position: absolute; left: 2px; top: 2px; width: 5px; height: 5px;
+  border: solid #000; border-width: 2px 2px 0 0; }
+.dk-arrowmark::before { content: ""; position: absolute; left: 1px; bottom: 1px; width: 6px; height: 2px; background: #000;
+  transform: rotate(-45deg); transform-origin: left; }
 .dk-badge { position: absolute; right: -8px; top: -5px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
   background: #e00; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
   box-shadow: 0 0 0 1px #fff; }
@@ -228,7 +246,14 @@ body.fullscreen #arc-bot { display: none !important; }
 .dk-banner span { writing-mode: vertical-rl; transform: rotate(180deg); color: #fff; font-weight: 700; font-size: 15px;
   letter-spacing: .02em; white-space: nowrap; }
 .dk-items, .dk-sub, .dk-ctx { flex-direction: column; }
-.dk-items { display: flex; flex-direction: column; min-width: 190px; }
+.dk-items { display: flex; flex-direction: column; min-width: 200px; }
+/* The user's section at the top of the Start menu */
+.dk-who { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 6px; margin: -3px -3px 0 0;
+  background: linear-gradient(90deg, var(--w98-navy), var(--w98-blue)); color: #fff; font-size: 12px; white-space: nowrap; }
+.dk-whoface { width: 28px; height: 28px; flex: none; display: flex; align-items: center; justify-content: center;
+  background: #d9a520; color: #000; font-weight: 700; font-size: 14px;
+  box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080; }
+.dk-whoface.big { width: 36px; height: 36px; font-size: 18px; }
 .dk-mi { display: flex; align-items: center; gap: 8px; width: 100%; padding: 3px 16px 3px 4px !important; border: 0;
   background: none !important; box-shadow: none !important; text-align: left; white-space: nowrap; cursor: default; }
 .dk-items .dk-mi { padding: 6px 18px 6px 6px !important; font-size: 12px; }
@@ -247,6 +272,48 @@ body.fullscreen #arc-bot { display: none !important; }
 .dk-ctx .dk-mi.def { font-weight: 700; }
 .dk-toast { position: fixed; right: 6px; bottom: 36px; z-index: 9300; max-width: 320px; padding: 8px 10px; background: #ffffe1;
   border: 1px solid #000; box-shadow: 2px 2px 4px rgba(0,0,0,.3); }
+
+/* Small dialogs */
+.dlg { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+.dlg-note { margin: 0; font-size: 11px; color: #000; }
+.dlg-row { display: flex; align-items: center; gap: 6px; margin: 0; font: inherit; color: #000; }
+.dlg-row .w98-field { flex: 1; min-width: 0; height: 21px; }
+.dlg-list { flex: 1; min-height: 0; overflow-y: auto; background: #fff; padding: 2px;
+  box-shadow: inset -1px -1px var(--w98-hi), inset 1px 1px var(--w98-shadow), inset -2px -2px var(--w98-light), inset 2px 2px var(--w98-dark); }
+.dlg-item { display: flex; align-items: center; gap: 8px; padding: 3px 4px; margin: 0; font: inherit; color: #000; cursor: default; }
+.dlg-item:hover { background: #e8e8f8; }
+.dlg-item label { display: inline-flex; align-items: center; gap: 3px; margin: 0; font: inherit; white-space: nowrap; }
+.dlg-ico { width: 16px; height: 16px; flex: none; display: flex; }
+.dlg-ico img, .dlg-ico .dk-tglyph { width: 16px; height: 16px; object-fit: cover; image-rendering: pixelated; display: flex;
+  align-items: center; justify-content: center; }
+.dlg-ico .dk-tglyph svg { width: 12px; height: 12px; }
+.dlg-name { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.dlg-name b, .dlg-name small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dlg-name small { color: #404040; font-size: 10px; }
+.dlg input[type="checkbox"] { margin: 0; accent-color: #000080; }
+.dlg-acts { display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
+.dlg-acts .w98-btn { min-width: 72px; }
+.dlg-acts .dlg-note { flex: 1; }
+.dlg-runtop { display: flex; gap: 10px; align-items: flex-start; }
+.dlg-err { color: #a00; }
+/* System Information: the tree on the left, its lines on the right */
+.si { flex: 1; min-height: 0; display: flex; gap: 4px; }
+.si-tree { width: 200px; flex: none; overflow: auto; background: #fff; padding: 3px;
+  box-shadow: inset -1px -1px var(--w98-hi), inset 1px 1px var(--w98-shadow), inset -2px -2px var(--w98-light), inset 2px 2px var(--w98-dark); }
+.si-ti { display: flex; align-items: center; gap: 4px; width: 100%; padding: 1px 3px !important; border: 0; background: none !important;
+  box-shadow: none !important; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.si-ti.sub { padding-left: 22px !important; }
+.si-ti.on { background: var(--w98-navy) !important; color: #fff !important; }
+.si-box { width: 9px; height: 9px; flex: none; border: 1px solid #808080; background: #fff; color: #000; font-size: 9px;
+  line-height: 7px; text-align: center; }
+.si-main { flex: 1; min-width: 0; overflow: auto; background: #fff;
+  box-shadow: inset -1px -1px var(--w98-hi), inset 1px 1px var(--w98-shadow), inset -2px -2px var(--w98-light), inset 2px 2px var(--w98-dark); }
+.si-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.si-table th { position: sticky; top: 0; text-align: left; font-weight: 400; padding: 2px 6px; background: var(--w98-face);
+  color: #000; text-transform: none; letter-spacing: normal; font-size: 11px;
+  box-shadow: inset -1px -1px var(--w98-dark), inset 1px 1px var(--w98-hi), inset -2px -2px var(--w98-shadow); }
+.si-table td { padding: 2px 6px; vertical-align: top; border-bottom: 1px solid #eee; word-break: break-word; }
+.si-table td:first-child { white-space: nowrap; width: 1%; }
 
 /* Display Properties */
 .dp { display: flex; flex-direction: column; height: 100%; gap: 6px; }
@@ -280,6 +347,14 @@ body.fullscreen #arc-bot { display: none !important; }
   transform-origin: 0 0; pointer-events: none; }
 .dp-th.on { border: 1px dotted #000; background: var(--w98-navy) !important; }
 .dp-th.on img { opacity: .75; }
+.dp-coll { height: 84px !important; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.dp-colls { grid-auto-rows: 84px; }
+.dp-coll img { height: 60px !important; flex: none; }
+.dp-ctxt { height: 60px; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #808080; }
+.dp-cl { width: 100%; font-size: 10px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #000; }
+.dp-coll.on .dp-cl { color: #fff; }
+.dp-cback b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.dp-row .dp-cq { flex: 1; min-width: 0; }
 .dp-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .dp-row .dp-idbox { flex: 1; min-width: 0; }
 .dp-opts { justify-content: space-between; }
@@ -298,6 +373,8 @@ body.fullscreen #arc-bot { display: none !important; }
   var TABS = {{ tabs|tojson }};
   var APPS = {{ apps|tojson }};
   var NETS = {{ ord_nets|tojson }};
+  var COINS = {{ coins|tojson }};
+  var SYSTEM = {{ system|tojson }};
   var OPERATOR = {{ 'true' if operator_view else 'false' }};
   var WHO = {{ (account_name or ('node' if operator_view else 'guest'))|tojson }};
   var BRAND = {{ brand.name|tojson }};
@@ -325,6 +402,17 @@ body.fullscreen #arc-bot { display: none !important; }
   byKey.display = {key: 'display', kind: 'display', name: 'Display Properties',
                    glyph: ['#008080', '#fff', 'M3 4h18v12H3zM8 20h8M12 16v4M6 13l4-4 3 3 2-2 3 3']};
   APPS.forEach(function (a) { byKey[a.key] = {key: a.key, kind: 'app', name: a.name, img: a.cover, app: a}; });
+  // A wallet shortcut for every coin: the Wallet opened on that coin (my_wallet.html, ?coin=).
+  var WALLET = (TABS.filter(function (t) { return t.href === '/me/wallet' || t.href === '/wallet'; })[0] || {}).href || '/wallet';
+  COINS.forEach(function (c) {
+    byKey['coin:' + c.net] = {key: 'coin:' + c.net, kind: 'coin', name: c.label + ' Wallet', img: c.icon || null,
+                              href: WALLET + '?coin=' + encodeURIComponent(c.net), shortcut: true};
+  });
+  byKey.sysinfo = {key: 'sysinfo', kind: 'sysinfo', name: 'System Information',
+                   glyph: ['#000080', '#fff', 'M4 4h16v11H4zM9 20h6M12 15v5M8 8h2M8 11h8M13 8h3']};
+  byKey.run = {key: 'run', kind: 'run', name: 'Run…', glyph: ['#404040', '#fff', 'M5 12h11M12 7l5 5-5 5M19 5v14']};
+  byKey.shortcuts = {key: 'shortcuts', kind: 'shortcuts', name: 'Wallet Shortcuts',
+                     glyph: ['#d9a520', '#141310', 'M3 7a2 2 0 0 1 2-2h11v4M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2zM12 12l4 4M16 12v4h-4']};
 
   var layout = load(LAYOUT_LS, {});
   if (!layout || typeof layout !== 'object' || Array.isArray(layout)) layout = {};
@@ -332,6 +420,18 @@ body.fullscreen #arc-bot { display: none !important; }
   layout.added = Array.isArray(layout.added) ? layout.added : [];                  // apps put on the desktop
   layout.gone = Array.isArray(layout.gone) ? layout.gone : [];                     // icons taken off it
   layout.rects = layout.rects && typeof layout.rects === 'object' ? layout.rects : {};  // a window's last place
+  layout.recent = Array.isArray(layout.recent) ? layout.recent : [];               // Documents: the last pages opened
+  // Start -> Programs: the apps the account chose (2026-10-28: "apps from app store should be added to start menu
+  // programs as well by choice"); null until first filled from the apps it already had.
+  layout.programs = Array.isArray(layout.programs) ? layout.programs : null;
+  // The programs that come with it (2026-10-28: "default programs ... are: browser, video call, and Arcade Spaces and tic
+  // tac toe"): by publisher and name, so an app that only copies a name is never one of them. Taken out like any other.
+  var DEFAULT_PROGRAMS = ['app:nWKJgSeAZSmfRCxZnwVgtYyPNowQT5X1Gk:browser', 'app:neKR5zDMgrAmSW94rMLYHRBUqzPtuXQ7gp:video-call',
+                          'app:nWKJgSeAZSmfRCxZnwVgtYyPNowQT5X1Gk:arcade-spaces', 'app:nWKJgSeAZSmfRCxZnwVgtYyPNowQT5X1Gk:tic-tac-toe'];
+  if (layout.programs === null) {
+    layout.programs = DEFAULT_PROGRAMS.concat(layout.added.filter(function (k) { return k.indexOf('app:') === 0 && DEFAULT_PROGRAMS.indexOf(k) < 0; }));
+    layout.seedHome = true;
+  }
   function save() { keep(LAYOUT_LS, layout); }
   var homeApps = [];     // the apps on this account's phone home screen and its stars: on the desktop too
 
@@ -391,6 +491,7 @@ body.fullscreen #arc-bot { display: none !important; }
       b.title = it.name;
       var n = it.href ? badges[it.href] : 0;
       b.innerHTML = '<span class="dk-ico">' + iconHtml(it) + (n ? '<span class="dk-badge">' + (n > 99 ? '99+' : n) + '</span>' : '')
+        + (it.shortcut ? '<span class="dk-arrowmark" aria-hidden="true"></span>' : '')
         + '</span><span class="dk-lab">' + esc(it.name) + '</span>';
       if (sel && sel.key === k) b.classList.add('sel');
       iconsEl.appendChild(b);
@@ -440,11 +541,20 @@ body.fullscreen #arc-bot { display: none !important; }
   iconsEl.addEventListener('keydown', function (e) {
     var b = e.target.closest('.dk-icon'); if (!b) return;
     if (e.key === 'Enter') { e.preventDefault(); openKey(b.dataset.key); }
-    if (e.key === 'Delete' && byKey[b.dataset.key].kind === 'app') removeIcon(b.dataset.key);
+    if (e.key === 'Delete') removeIcon(b.dataset.key);
   });
   iconsEl.addEventListener('click', function (e) { if (e.target.closest('.dk-icon')) e.preventDefault(); });
   function arrange() {
     layout.at = {}; save(); drawIcons();
+  }
+  // Any icon may be taken off the desktop (2026-10-28: "users should be able to remove any shortcut from the desktop
+  // view"); the Start menu still has every one, and puts it back.
+  function restoreIcons() { layout.gone = []; save(); drawIcons(); }
+  function inPrograms(k) { return (layout.programs || []).indexOf(k) >= 0; }
+  function setProgram(k, on) {
+    var list = (layout.programs || []).filter(function (x) { return x !== k; });
+    if (on) list.push(k);
+    layout.programs = list; save();
   }
   function removeIcon(k) {
     if (layout.gone.indexOf(k) < 0) layout.gone.push(k);
@@ -453,9 +563,9 @@ body.fullscreen #arc-bot { display: none !important; }
   }
   function putOnDesk(k) {
     layout.gone = layout.gone.filter(function (x) { return x !== k; });
-    if (layout.added.indexOf(k) < 0 && homeApps.indexOf(k) < 0) layout.added.push(k);
+    if (layout.added.indexOf(k) < 0 && homeApps.indexOf(k) < 0 && !byKey[k].href) layout.added.push(k);
+    if (byKey[k].kind === 'coin' && layout.added.indexOf(k) < 0) layout.added.push(k);
     save(); drawIcons();
-    say((byKey[k] || {}).name + ' is on the desktop.');
   }
 
   // ---------- windows: moved by the title bar, sized from any edge, kept running when minimized ----------
@@ -469,6 +579,9 @@ body.fullscreen #arc-bot { display: none !important; }
       bot.click(); return;
     }
     if (it.kind === 'display') { openDisplay(); return; }
+    if (it.kind === 'sysinfo') { openSysinfo(); return; }
+    if (it.kind === 'run') { openRun(); return; }
+    if (it.kind === 'shortcuts') { openShortcuts(); return; }
     if (it.kind === 'app') openWin({key: k, url: it.app.open, name: it.name, item: it});
     else openWin({key: k, url: it.href, name: it.name, item: it});
   }
@@ -495,6 +608,10 @@ body.fullscreen #arc-bot { display: none !important; }
     close: '<svg width="8" height="7" viewBox="0 0 8 7" aria-hidden="true"><path d="M0 0h2l2 2 2-2h2L5 3.5 8 7H6L4 5 2 7H0l3-3.5z" fill="#000"/></svg>'
   };
   function openWin(o) {
+    if (o.url && !o.body) {
+      layout.recent = [{key: o.key, url: o.url, name: o.name}].concat(layout.recent.filter(function (r) { return r.key !== o.key; })).slice(0, 12);
+      save();
+    }
     var w = wins.filter(function (x) { return x.key === o.key; })[0];
     if (w) { if (w.min) restore(w); focus(w); return w; }
     if (wins.length >= MOST) {
@@ -696,6 +813,8 @@ body.fullscreen #arc-bot { display: none !important; }
   }
   function menuItem(o) {
     if (o.hr) return '<div class="dk-hr" role="separator"></div>';
+    if (o.who) return '<div class="dk-who"><span class="dk-whoface">' + esc((WHO === 'guest' || OPERATOR ? BRAND : WHO).slice(0, 1).toUpperCase())
+      + '</span><b>' + esc(o.label) + '</b></div>';
     return '<button type="button" class="dk-mi' + (o.def ? ' def' : '') + '" role="menuitem" data-k="' + esc(o.k) + '"'
       + (o.sub ? ' aria-haspopup="menu"' : '') + (o.off ? ' disabled' : '') + '>'
       + (o.icon !== undefined ? '<span class="dk-mico">' + o.icon + '</span>' : '')
@@ -712,21 +831,67 @@ body.fullscreen #arc-bot { display: none !important; }
       var k = b.dataset.k; hideMenus(); run(k);
     };
   }
-  var START = [
+  function blank() { return '<span class="dk-tglyph"></span>'; }
+  // The user's own corner of the Start menu (2026-10-28: "there should be a user section in the start menu"): who is
+  // signed in, their own pages, and Log Off at the bottom.
+  function tabAt(href) { var t = TABS.filter(function (x) { return x.href === href; })[0]; return t ? t.key : null; }
+  var USER = WHO === 'guest' ? [{k: 'signin', label: 'Sign In…', icon: smallIcon({glyph: ['#2d7a4f', '#fff', 'M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3']})}]
+    : OPERATOR ? [{k: tabAt('/') || 'none', label: 'This Arcade', icon: smallIcon(byKey[tabAt('/')] || byKey.sysinfo), off: !tabAt('/')}]
+    : [{k: 'profile', label: 'My Profile', icon: smallIcon({glyph: GLYPH.accounts})},
+       {k: tabAt('/me'), label: 'Your Arcade', icon: smallIcon(byKey[tabAt('/me')])},
+       {k: tabAt('/me/wallet'), label: 'My Wallet', icon: smallIcon(byKey[tabAt('/me/wallet')])},
+       {k: tabAt('/me/messages'), label: 'My Messages', icon: smallIcon(byKey[tabAt('/me/messages')])},
+       {k: 'mynfts', label: 'My Inscriptions', icon: smallIcon({glyph: GLYPH.create})}].filter(function (x) { return x.k; });
+  var START_USER = [{k: 'user', label: WHO === 'guest' ? 'Not signed in' : OPERATOR ? BRAND + ' (operator)' : '@' + WHO, who: true}]
+    .concat(USER, [{hr: true}]);
+  var START = START_USER.concat([
     {k: 'sub:programs', label: 'Programs', sub: true, icon: smallIcon({img: STORE_ICON})},
+    {k: 'sub:wallets', label: 'Wallets', sub: true, icon: smallIcon({glyph: GLYPH.wallet})},
     {k: 'sub:pages', label: 'Pages', sub: true, icon: smallIcon(byKey[(TABS[0] || {}).key])},
+    {k: 'sub:documents', label: 'Documents', sub: true,
+     icon: smallIcon({glyph: ['#d9a520', '#141310', 'M3 6h6l2 2h10v11H3z']})},
+    {k: 'sub:settings', label: 'Settings', sub: true, icon: smallIcon({glyph: ['#636870', '#fff', GEAR]})},
+    {k: 'help', label: 'Help', icon: smallIcon({glyph: GLYPH.docs})},
+    {k: 'run', label: 'Run…', icon: smallIcon(byKey.run)},
     {hr: true},
-    {k: 'store', label: 'App Store', icon: smallIcon(byKey.store)},
-    {k: 'helper', label: 'Helper', icon: smallIcon(byKey.helper)},
-    {k: 'display', label: 'Display Properties…', icon: smallIcon(byKey.display)},
-    {k: 'arrange', label: 'Arrange Icons', icon: '<span class="dk-tglyph"></span>'},
+    {k: 'sysinfo', label: 'System Information', icon: smallIcon(byKey.sysinfo)},
     {hr: true},
-    {k: 'exit', label: 'Exit Desktop View…', icon: '<span class="dk-tglyph" style="background:#c00">' + glyphHtml(['', '#fff', 'M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0'], 12) + '</span>'}
-  ];
+  ]).concat(WHO !== 'guest' && !OPERATOR ? [{k: 'logoff', label: 'Log Off @' + WHO + '…',
+                                               icon: smallIcon({glyph: ['#345d9d', '#fff', 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9']})}] : [])
+    .concat([{k: 'exit', label: 'Exit Desktop View…', icon: '<span class="dk-tglyph" style="background:#c00">' + glyphHtml(['', '#fff', 'M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0'], 12) + '</span>'}]);
   function runStart(k) {
-    if (k === 'arrange') arrange();
+    var doc = /^doc:(\d+)$/.exec(k);
+    if (doc) { var r = layout.recent[+doc[1]]; if (r) openWin({key: r.key, url: r.url, name: r.name, item: byKey[r.key] || {name: r.name}}); }
+    else if (k === 'arrange') arrange();
+    else if (k === 'restoreicons') restoreIcons();
+    else if (k === 'addremove') openPrograms();
+    else if (k === 'cleardocs') { layout.recent = []; save(); }
+    else if (k === 'help') { var d = TABS.filter(function (t) { return t.href === '/docs'; })[0]; if (d) openKey(d.key); }
     else if (k === 'exit') leave();
+    else if (k === 'signin') location.href = '/join?next=' + encodeURIComponent('/desktop');
+    else if (k === 'profile') window.arcadeShell.open('/u/' + encodeURIComponent(WHO), 'My Profile');
+    else if (k === 'mynfts') window.arcadeShell.open('/me/nfts', 'My Inscriptions');
+    else if (k === 'logoff') logOff();
     else openKey(k);
+  }
+  // Log Off: the same sign-out as Your arcade's (me.html), asked the old way first.
+  function logOff() {
+    var open = wins.filter(function (x) { return x.key === 'logoff'; })[0];
+    if (open) { focus(open); return; }
+    var d = dialog('logoff', 'Log Off', {glyph: ['#345d9d', '#fff', 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9']},
+      '<div class="dlg-runtop"><span class="dk-whoface big">' + esc(WHO.slice(0, 1).toUpperCase()) + '</span>'
+      + '<p class="dlg-note">Are you sure you want to log off @' + esc(WHO) + '?<br><br>Your wallet locks and this browser forgets '
+      + 'your messages and address book. They are kept safely, sealed, and come back when you sign in again.</p></div>'
+      + '<div class="dlg-acts"><button type="button" class="w98-btn dlg-ok">Yes</button>'
+      + '<button type="button" class="w98-btn dlg-close">No</button></div>', 380, 190);
+    d.q('.dlg-close').addEventListener('click', function () { closeWin(d.win); });
+    d.q('.dlg-ok').addEventListener('click', function () {
+      d.q('.dlg-ok').disabled = true; d.q('.dlg-ok').textContent = 'Logging off…';
+      wins.slice().forEach(function (w) { if (w !== d.win) closeWin(w); });
+      import('/wallet.js').then(function (wallet) {
+        return wallet.signOut(typeof ARCADE_CHAIN !== 'undefined' ? ARCADE_CHAIN : null);
+      }).catch(function () {}).then(function () { location.href = '/join?next=' + encodeURIComponent('/desktop'); });
+    });
   }
   $('dk-start').addEventListener('click', function (e) {
     e.stopPropagation();
@@ -737,16 +902,37 @@ body.fullscreen #arc-bot { display: none !important; }
     $('dk-items').innerHTML = START.map(menuItem).join('');
     $('dk-start').classList.add('down'); $('dk-start').setAttribute('aria-expanded', 'true');
   });
+  function byName(a, b) { return String(byKey[a].name).localeCompare(String(byKey[b].name)); }
   function subItems(which) {
     if (which === 'pages') return TABS.map(function (t) { return {k: t.key, label: t.name, icon: smallIcon(byKey[t.key])}; });
-    if (!APPS.length) return [{k: 'none', label: '(No apps yet)', off: true}];
-    return APPS.map(function (a) { return {k: a.key, label: a.name, icon: smallIcon(byKey[a.key])}; });
+    if (which === 'wallets') {
+      if (!COINS.length) return [{k: 'none', label: '(No coins here)', off: true}];
+      return COINS.map(function (c) { var k = 'coin:' + c.net; return {k: k, label: byKey[k].name, icon: smallIcon(byKey[k])}; })
+        .concat([{hr: true}, {k: 'shortcuts', label: 'Wallet Shortcuts…', icon: smallIcon(byKey.shortcuts)}]);
+    }
+    if (which === 'documents') {
+      if (!layout.recent.length) return [{k: 'none', label: '(Empty)', off: true}];
+      return layout.recent.map(function (r, i) { return {k: 'doc:' + i, label: r.name, icon: smallIcon(byKey[r.key] || {name: r.name})}; })
+        .concat([{hr: true}, {k: 'cleardocs', label: 'Clear Documents', icon: blank()}]);
+    }
+    if (which === 'settings') return [
+      {k: 'display', label: 'Display Properties…', icon: smallIcon(byKey.display)},
+      {k: 'shortcuts', label: 'Wallet Shortcuts…', icon: smallIcon(byKey.shortcuts)},
+      {k: 'addremove', label: 'Add/Remove Programs…', icon: smallIcon({img: STORE_ICON})},
+      {hr: true},
+      {k: 'arrange', label: 'Arrange Icons', icon: blank()},
+      {k: 'restoreicons', label: 'Restore Desktop Icons', icon: blank()}];
+    var mine = (layout.programs || []).filter(function (k) { return byKey[k]; }).sort(byName);
+    return (mine.length ? mine.map(function (k) { return {k: k, label: byKey[k].name, icon: smallIcon(byKey[k])}; })
+                        : [{k: 'none', label: '(None yet)', off: true}])
+      .concat([{hr: true}, {k: 'store', label: 'App Store', icon: smallIcon(byKey.store)},
+               {k: 'addremove', label: 'Add/Remove Programs…', icon: smallIcon({img: STORE_ICON})}]);
   }
   function openSub(b) {
     var which = b.dataset.k.slice(4), r = b.getBoundingClientRect(), sub = $('dk-sub');
     $('dk-items').querySelectorAll('.dk-mi.hot').forEach(function (x) { x.classList.remove('hot'); });
     b.classList.add('hot');
-    showMenu(sub, subItems(which), r.right - 3, r.top - 3, function (k) { openKey(k); });
+    showMenu(sub, subItems(which), r.right - 3, r.top - 3, runStart);
     sub.dataset.which = which;
     sub.style.top = Math.max(0, Math.min(r.top - 3, window.innerHeight - 32 - sub.offsetHeight)) + 'px';
   }
@@ -761,13 +947,24 @@ body.fullscreen #arc-bot { display: none !important; }
     if (b.dataset.k.indexOf('sub:') === 0) { openSub(b); return; }
     var k = b.dataset.k; hideMenus(); runStart(k);
   });
-  // A program in the Start menu: right click to put it on the desktop.
+  // What a right click on an app, a page or a wallet offers, wherever it is.
+  function itemMenu(k, x, y, onDeskIcon) {
+    var it = byKey[k], here = onDesk().indexOf(k) >= 0, items = [{k: 'open', label: 'Open', def: true}, {hr: true}];
+    if (onDeskIcon) items.push({k: 'remove', label: it.shortcut ? 'Delete shortcut' : 'Remove from desktop'});
+    else items.push({k: 'put', label: it.kind === 'coin' ? 'Create shortcut on desktop' : 'Put on desktop', off: here});
+    if (it.kind === 'app') items.push({k: 'prog', label: inPrograms(k) ? 'Remove from Start menu' : 'Add to Start menu'});
+    showMenu($('dk-ctx'), items, x, y, function (a) {
+      if (a === 'open') openKey(k);
+      else if (a === 'remove') removeIcon(k);
+      else if (a === 'put') { putOnDesk(k); say(it.name + ' is on the desktop.'); }
+      else if (a === 'prog') { var on = !inPrograms(k); setProgram(k, on); say(it.name + (on ? ' is in Start → Programs.' : ' is out of the Start menu.')); }
+    });
+  }
+  // An item in the Start menu: right click to put it on the desktop, or an app in or out of Programs.
   $('dk-sub').addEventListener('contextmenu', function (e) {
     var b = e.target.closest('.dk-mi'); e.preventDefault(); if (!b || !byKey[b.dataset.k]) return;
-    var k = b.dataset.k, here = onDesk().indexOf(k) >= 0;
     $('dk-ctx').hidden = true;
-    showMenu($('dk-ctx'), [{k: 'open', label: 'Open', def: true}, {k: 'put', label: here ? 'On the desktop' : 'Put on desktop', off: here}],
-             e.clientX, e.clientY, function (a) { if (a === 'open') openKey(k); else putOnDesk(k); });
+    itemMenu(b.dataset.k, e.clientX, e.clientY, false);
     $('dk-sub').hidden = false;
   });
   document.addEventListener('pointerdown', function (e) {
@@ -782,18 +979,16 @@ body.fullscreen #arc-bot { display: none !important; }
     hideMenus();
     var b = e.target.closest('.dk-icon');
     if (b) {
-      var k = b.dataset.k || b.dataset.key, it = byKey[k];
       select(b);
-      showMenu($('dk-ctx'), [{k: 'open', label: 'Open', def: true}, {hr: true},
-                             {k: 'remove', label: 'Remove from desktop', off: it.kind !== 'app'}],
-               e.clientX, e.clientY, function (a) { if (a === 'open') openKey(k); else removeIcon(k); });
+      itemMenu(b.dataset.key, e.clientX, e.clientY, true);
       return;
     }
-    showMenu($('dk-ctx'), [{k: 'arrange', label: 'Arrange Icons'}, {k: 'refresh', label: 'Refresh'}, {hr: true},
-                           {k: 'store', label: 'App Store…'}, {k: 'display', label: 'Properties', def: true}],
+    showMenu($('dk-ctx'), [{k: 'arrange', label: 'Arrange Icons'}, {k: 'refresh', label: 'Refresh'},
+                           {k: 'restoreicons', label: 'Restore Desktop Icons', off: !layout.gone.length}, {hr: true},
+                           {k: 'shortcuts', label: 'New Wallet Shortcut…'}, {k: 'addremove', label: 'Add/Remove Programs…'},
+                           {hr: true}, {k: 'display', label: 'Properties', def: true}],
              e.clientX, e.clientY, function (a) {
-               if (a === 'arrange') arrange(); else if (a === 'refresh') { drawIcons(); pollBadges(); loadWallpaper(); }
-               else openKey(a);
+               if (a === 'refresh') { drawIcons(); pollBadges(); loadWallpaper(); } else runStart(a);
              });
   });
   function winMenu(w, x, y) {
@@ -910,6 +1105,7 @@ body.fullscreen #arc-bot { display: none !important; }
         root.querySelectorAll('.dp-tabs button').forEach(function (x) { x.setAttribute('aria-selected', x === t ? 'true' : 'false'); });
         root.querySelectorAll('.dp-pane').forEach(function (p) { p.hidden = p.dataset.pane !== t.dataset.tab; });
         if (t.dataset.tab === 'browse' && !q('.dp-browse').children.length) browse(true);
+        if (t.dataset.tab === 'coll' && !q('.dp-colls').children.length) colls(true);
       });
     });
     // Mine: every ord chain this arcade reads, the account's own coins that hold an inscription.
@@ -960,6 +1156,70 @@ body.fullscreen #arc-bot { display: none !important; }
     }
     netSel.addEventListener('change', function () { browse(true); });
     q('.dp-more').addEventListener('click', function () { browse(false); });
+    // Collections (2026-10-28: "in right click properties - you should also be able to search by collection as well"):
+    // the known and published collections of a chain (/explore/api/collections), then a collection's pieces
+    // (/explore/api/collection), a page at a time.
+    var cnet = q('.dp-cnet'), cat = 0, inColl = null, cpos = 0;
+    NETS.forEach(function (n) { var o = document.createElement('option'); o.value = n.net; o.textContent = n.label; cnet.appendChild(o); });
+    function cjson(url) {
+      return fetch(url, {credentials: 'same-origin'}).then(function (r) {
+        return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || 'not available'); return j; });
+      });
+    }
+    function colls(fresh) {
+      var grid = q('.dp-colls'), note = q('.dp-cnote'), more = q('.dp-cmore');
+      inColl = null; q('.dp-cback').hidden = true;
+      if (fresh) { grid.innerHTML = ''; cat = 0; }
+      if (!cnet.value) { note.textContent = 'This arcade reads no inscriptions.'; return; }
+      note.textContent = 'Searching…'; more.hidden = true;
+      cjson('/explore/api/collections?net=' + encodeURIComponent(cnet.value) + '&q=' + encodeURIComponent(q('.dp-cq').value.trim())
+            + '&sort=size&offset=' + cat + '&limit=30')
+        .then(function (j) {
+          (j.collections || []).forEach(function (c) {
+            var b = document.createElement('button');
+            b.type = 'button'; b.className = 'dp-th dp-coll'; b.title = c.name + (c.supply ? ' · ' + Number(c.supply).toLocaleString() + ' pieces' : '');
+            b.innerHTML = (ID.test(c.cover || '') ? '<img alt="" loading="lazy" src="/content/' + c.cover + '">' : '<span class="dp-ctxt"></span>')
+              + '<span class="dp-cl"></span>';
+            b.querySelector('.dp-cl').textContent = c.name || c.slug || 'Collection';
+            if (b.querySelector('.dp-ctxt')) b.querySelector('.dp-ctxt').textContent = (c.name || '?').slice(0, 2);
+            b.addEventListener('click', function () { openColl(c, true); });
+            grid.appendChild(b);
+          });
+          cat += (j.collections || []).length;
+          var total = j.total != null ? j.total : cat;
+          note.textContent = total ? cat + ' of ' + Number(total).toLocaleString() + ' collections' : 'No collection matches.';
+          more.hidden = cat >= total;
+          more.onclick = function () { colls(false); };
+        }).catch(function (e) { note.textContent = String(e.message || e); });
+    }
+    function openColl(c, fresh, tries) {
+      var grid = q('.dp-colls'), note = q('.dp-cnote'), more = q('.dp-cmore');
+      inColl = c; q('.dp-cback').hidden = false; q('.dp-cname').textContent = c.name || c.slug || '';
+      if (fresh) { grid.innerHTML = ''; cpos = 0; }
+      note.textContent = 'Loading…'; more.hidden = true;
+      var url = c.kind === 'registry' ? '/explore/api/collection?root=' + encodeURIComponent(c.txid || c.root || '') + '&offset=' + cpos
+                                      : '/explore/api/collection?net=' + encodeURIComponent(c.chain || cnet.value) + '&slug=' + encodeURIComponent(c.slug) + '&offset=' + cpos;
+      cjson(url).then(function (j) {
+        if (inColl !== c) return;
+        if (j.loading) {
+          note.textContent = 'This arcade is fetching the collection: ' + (j.have || 0) + ' of ' + (j.of || '?') + ' so far…';
+          if ((tries || 0) < 10) setTimeout(function () { if (inColl === c) openColl(c, false, (tries || 0) + 1); }, 3000);
+          return;
+        }
+        if (j.skipped) { note.textContent = 'Not fetched here: ' + j.skipped; return; }
+        var items = j.items || [];
+        items.forEach(function (it) { if (ID.test(it.id || '')) grid.appendChild(thumb(it.id)); });
+        cpos += items.length;
+        var supply = (j.collection || c).supply;
+        note.textContent = cpos + (supply ? ' of ' + Number(supply).toLocaleString() : '') + ' pieces. Click one to see it on the screen above.';
+        more.hidden = items.length < 48;
+        more.onclick = function () { openColl(c, false); };
+      }).catch(function (e) { note.textContent = String(e.message || e); });
+    }
+    q('.dp-cgo').addEventListener('click', function () { colls(true); });
+    q('.dp-cq').addEventListener('keydown', function (e) { if (e.key === 'Enter') colls(true); });
+    cnet.addEventListener('change', function () { colls(true); });
+    q('.dp-cup').addEventListener('click', function () { colls(true); });
     // By ID
     function tryId() {
       var id = q('.dp-idbox').value.trim().toLowerCase(), err = q('.dp-iderr');
@@ -983,8 +1243,210 @@ body.fullscreen #arc-bot { display: none !important; }
     q('.dp-ok').addEventListener('click', function () { apply(true); });
     q('.dp-apply').addEventListener('click', function () { apply(false); });
     q('.dp-cancel').addEventListener('click', function () { closeWin(dispWin); });
-    dispWin = openWin({key: 'display', name: 'Display Properties', item: byKey.display, body: root, w: 420, h: 560, center: true});
+    dispWin = openWin({key: 'display', name: 'Display Properties', item: byKey.display, body: root, w: 440, h: 600, center: true});
     preview();
+  }
+
+  // ---------- small dialogs: Add/Remove Programs, Wallet Shortcuts, Run ----------
+  function dialog(key, name, item, html, w, h) {
+    var root = document.createElement('div');
+    root.className = 'dlg'; root.innerHTML = html;
+    var win = openWin({key: key, name: name, item: item, body: root, w: w, h: h, center: true});
+    return {root: root, win: win, q: function (sel) { return root.querySelector(sel); }};
+  }
+  // Add/Remove Programs: which App Store apps are in Start -> Programs, and which are on the desktop.
+  function openPrograms() {
+    var open = wins.filter(function (x) { return x.key === 'addremove'; })[0];
+    if (open) { focus(open); return; }
+    var d = dialog('addremove', 'Add/Remove Programs', {img: STORE_ICON},
+      '<p class="dlg-note">Tick an app to put it in <b>Start → Programs</b>, or on the desktop. Every app here is in the App Store.</p>'
+      + '<div class="dlg-row"><input class="w98-field dlg-q" placeholder="Find an app" aria-label="Find an app" autocomplete="off"></div>'
+      + '<div class="dlg-list" role="list"></div>'
+      + '<div class="dlg-acts"><button type="button" class="w98-btn dlg-store">App Store…</button>'
+      + '<button type="button" class="w98-btn dlg-close">Close</button></div>', 470, 520);
+    function draw() {
+      var q = d.q('.dlg-q').value.trim().toLowerCase(), list = d.q('.dlg-list');
+      list.innerHTML = '';
+      var shown = APPS.filter(function (a) { return !q || (a.name + ' ' + (a.by || '') + ' ' + (a.genre || '')).toLowerCase().indexOf(q) >= 0; });
+      if (!shown.length) { list.innerHTML = '<p class="dlg-note">' + (APPS.length ? 'No app matches.' : 'No apps in the App Store yet.') + '</p>'; return; }
+      shown.forEach(function (a) {
+        var row = document.createElement('div'); row.className = 'dlg-item'; row.setAttribute('role', 'listitem');
+        row.innerHTML = '<span class="dlg-ico">' + smallIcon(byKey[a.key]) + '</span><span class="dlg-name"><b></b><small></small></span>'
+          + '<label><input type="checkbox" data-w="prog"> Start menu</label><label><input type="checkbox" data-w="desk"> Desktop</label>';
+        row.querySelector('b').textContent = a.name;
+        row.querySelector('small').textContent = [a.by, a.genre].filter(Boolean).join(' · ');
+        var prog = row.querySelector('[data-w=prog]'), desk = row.querySelector('[data-w=desk]');
+        prog.checked = inPrograms(a.key); desk.checked = onDesk().indexOf(a.key) >= 0;
+        prog.addEventListener('change', function () { setProgram(a.key, prog.checked); });
+        desk.addEventListener('change', function () { if (desk.checked) putOnDesk(a.key); else removeIcon(a.key); });
+        row.addEventListener('dblclick', function (e) { if (!e.target.closest('label')) openKey(a.key); });
+        list.appendChild(row);
+      });
+    }
+    d.q('.dlg-q').addEventListener('input', draw);
+    d.q('.dlg-store').addEventListener('click', function () { openKey('store'); });
+    d.q('.dlg-close').addEventListener('click', function () { closeWin(d.win); });
+    draw();
+  }
+  // Wallet Shortcuts: one per coin, on the desktop or not.
+  function openShortcuts() {
+    var open = wins.filter(function (x) { return x.key === 'shortcuts'; })[0];
+    if (open) { focus(open); return; }
+    var d = dialog('shortcuts', 'Wallet Shortcuts', byKey.shortcuts,
+      '<p class="dlg-note">A shortcut on the desktop opens your Wallet straight on that coin. Tick the coins you want.</p>'
+      + '<div class="dlg-list" role="list"></div>'
+      + '<div class="dlg-acts"><button type="button" class="w98-btn dlg-all">All</button>'
+      + '<button type="button" class="w98-btn dlg-close">Close</button></div>', 360, 420);
+    var list = d.q('.dlg-list');
+    function draw() {
+      list.innerHTML = '';
+      if (!COINS.length) { list.innerHTML = '<p class="dlg-note">No coins on this arcade.</p>'; return; }
+      COINS.forEach(function (c) {
+        var k = 'coin:' + c.net, row = document.createElement('label');
+        row.className = 'dlg-item'; row.setAttribute('role', 'listitem');
+        row.innerHTML = '<input type="checkbox"><span class="dlg-ico">' + smallIcon(byKey[k]) + '</span><span class="dlg-name"><b></b></span>';
+        row.querySelector('b').textContent = byKey[k].name;
+        var box = row.querySelector('input');
+        box.checked = onDesk().indexOf(k) >= 0;
+        box.addEventListener('change', function () { if (box.checked) putOnDesk(k); else removeIcon(k); });
+        list.appendChild(row);
+      });
+    }
+    d.q('.dlg-all').addEventListener('click', function () {
+      COINS.forEach(function (c) { if (onDesk().indexOf('coin:' + c.net) < 0) putOnDesk('coin:' + c.net); }); draw();
+    });
+    d.q('.dlg-close').addEventListener('click', function () { closeWin(d.win); });
+    draw();
+  }
+  // Run: a page, an @name, an inscription id or a program's name.
+  function openRun() {
+    var open = wins.filter(function (x) { return x.key === 'run'; })[0];
+    if (open) { focus(open); return; }
+    var d = dialog('run', 'Run', byKey.run,
+      '<div class="dlg-runtop">' + glyphHtml(['', '#000080', byKey.run.glyph[2]], 32)
+      + '<p class="dlg-note">Type the name of a page, a program, an @name or an inscription id, and it opens for you.</p></div>'
+      + '<label class="dlg-row">Open: <input class="w98-field dlg-q" list="dk-run-list" autocomplete="off" spellcheck="false"></label>'
+      + '<datalist id="dk-run-list"></datalist>'
+      + '<p class="dlg-note dlg-err" hidden></p>'
+      + '<div class="dlg-acts"><button type="button" class="w98-btn dlg-ok">OK</button>'
+      + '<button type="button" class="w98-btn dlg-close">Cancel</button></div>', 400, 200);
+    var names = TABS.map(function (t) { return t.name; }).concat(APPS.map(function (a) { return a.name; }), COINS.map(function (c) { return byKey['coin:' + c.net].name; }));
+    d.q('#dk-run-list').innerHTML = names.map(function (n) { return '<option value="' + esc(n) + '">'; }).join('');
+    function go() {
+      var said = d.q('.dlg-q').value.trim(), low = said.toLowerCase(), err = d.q('.dlg-err');
+      if (!said) return;
+      var hit = Object.keys(byKey).filter(function (k) { return String(byKey[k].name).toLowerCase() === low; })[0];
+      if (hit) openKey(hit);
+      else if (ID.test(low)) window.arcadeShell.open('/inscriptions/' + low, low.slice(0, 12) + '…');
+      else if (/^@?[a-z0-9_.-]{1,40}$/i.test(said) && said.charAt(0) === '@') window.arcadeShell.open('/u/' + encodeURIComponent(said.slice(1)), said);
+      else if (said.charAt(0) === '/' && said.charAt(1) !== '/') window.arcadeShell.open(said, said);
+      else { err.textContent = 'Cannot find “' + said + '”. Type a page (like /feed), a program, an @name or an inscription id.'; err.hidden = false; return; }
+      closeWin(d.win);
+    }
+    d.q('.dlg-ok').addEventListener('click', go);
+    d.q('.dlg-q').addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
+    d.q('.dlg-close').addEventListener('click', function () { closeWin(d.win); });
+    setTimeout(function () { d.q('.dlg-q').focus(); }, 30);
+  }
+
+  // ---------- System Information: this arcade, every arcade on the mesh, the chains, this browser ----------
+  function openSysinfo() {
+    var open = wins.filter(function (x) { return x.key === 'sysinfo'; })[0];
+    if (open) { focus(open); return; }
+    var d = dialog('sysinfo', 'System Information', byKey.sysinfo,
+      '<div class="si"><div class="si-tree" role="tree"></div><div class="si-main"><table class="si-table"><thead><tr><th>Item</th><th>Value</th></tr></thead><tbody></tbody></table></div></div>'
+      + '<div class="dlg-acts"><span class="dlg-note si-said"></span><button type="button" class="w98-btn si-refresh">Refresh</button>'
+      + '<button type="button" class="w98-btn dlg-close">Close</button></div>', 760, 520);
+    var mesh = null, idx = {}, pick = 'summary';
+    function fmtCores(cores) { return (cores || []).map(function (c) { return c.label + (c.shared === false ? ' (not shared)' : ''); }).join(', ') || '—'; }
+    function fmtOrds(ords) {
+      return (ords || []).map(function (o) {
+        return o.label + ': ' + (o.role || 'index') + (o.pct != null ? ' ' + o.pct + '%' : '') + (o.walked_to ? ' (block ' + Number(o.walked_to).toLocaleString() + ')' : '');
+      }).join('; ') || '—';
+    }
+    function link(r) {
+      var l = r.link || {};
+      return l.state === 'me' ? 'This arcade' : l.state === 'linked' ? 'Linked' + (l.ms != null ? ' (' + l.ms + ' ms)' : '') : (l.state || 'Not linked');
+    }
+    function nodeName(r) { return (r.tag ? '@' + r.tag : r.node) + (r.me ? ' (this arcade)' : ''); }
+    function rows() {
+      var out = [];
+      if (pick === 'summary') {
+        var me = mesh && (mesh.rows || []).filter(function (r) { return r.me; })[0];
+        out = [['Arcade', BRAND], ['Running version', SYSTEM.version || 'unknown'],
+               ['Node id', (me && me.node) || SYSTEM.node || '—'], ['Node name', me && me.tag ? '@' + me.tag : '—'],
+               ['Viewing as', OPERATOR ? 'The arcade’s operator' : WHO === 'guest' ? 'A visitor (not signed in)' : '@' + WHO],
+               ['Chains here', String(SYSTEM.chains.length)],
+               ['Real-coin chains', SYSTEM.chains.filter(function (c) { return c.real; }).map(function (c) { return c.label; }).join(', ') || '—'],
+               ['Inscription chains', SYSTEM.chains.filter(function (c) { return c.ords; }).map(function (c) { return c.label; }).join(', ') || '—']];
+        if (mesh) out = out.concat([['Arcades running', String(mesh.running != null ? mesh.running : '—')],
+                                    ['Arcades linked', String(mesh.linked != null ? mesh.linked : '—')],
+                                    ['Arcades known', String(mesh.total != null ? mesh.total : (mesh.rows || []).length)]]);
+        out.push(['Windows open', String(wins.length)], ['Apps in the App Store', String(APPS.length)]);
+      } else if (pick === 'nodes') {
+        if (!mesh) return [['Arcade nodes', meshSaid]];
+        out = (mesh.rows || []).map(function (r) { return [nodeName(r), link(r) + ' · Cores: ' + fmtCores(r.cores)]; });
+      } else if (pick.indexOf('node:') === 0) {
+        var r = idx[pick.slice(5)];
+        if (!r) return [];
+        out = [['Name', r.tag ? '@' + r.tag : '—'], ['Node id', r.node || '—'], ['Link', link(r)],
+               ['Cores it shares', fmtCores(r.cores)], ['Ord indexes', fmtOrds(r.ords)], ['LoRa radio', r.lora ? 'Yes' : 'No']];
+        if (r.host) out.push(['Address', r.host]);
+      } else if (pick === 'chains') {
+        out = SYSTEM.chains.map(function (c) {
+          var who = mesh ? (mesh.rows || []).filter(function (r) { return (r.cores || []).some(function (x) { return x.net === c.net; }); })
+                                             .map(function (r) { return r.tag ? '@' + r.tag : r.node; }) : [];
+          return [c.label, [c.real ? 'real coins' : 'test coins', c.ords ? 'inscriptions' : '',
+                            who.length ? 'Cores at ' + who.join(', ') : ''].filter(Boolean).join(' · ')];
+        });
+      } else if (pick === 'browser') {
+        var n = navigator;
+        out = [['Browser', n.userAgent], ['Language', n.language || '—'],
+               ['Screen', screen.width + ' × ' + screen.height + ' (' + (window.devicePixelRatio || 1) + '×)'],
+               ['Desktop', deskW() + ' × ' + deskH()],
+               ['Time zone', (Intl.DateTimeFormat().resolvedOptions().timeZone) || '—'],
+               ['Online', n.onLine ? 'Yes' : 'No'], ['Cookies', n.cookieEnabled ? 'On' : 'Off'],
+               ['Local time', new Date().toString()]];
+      }
+      return out;
+    }
+    var meshSaid = 'Asking the arcades…';
+    function drawTree() {
+      var t = d.q('.si-tree'), nodes = mesh ? (mesh.rows || []) : [];
+      idx = {};
+      nodes.forEach(function (r) { idx[r.node] = r; });
+      var items = [['summary', 'System Summary', 0], ['nodes', 'Arcade nodes', 0]]
+        .concat(nodes.map(function (r) { return ['node:' + r.node, nodeName(r), 1]; }))
+        .concat([['chains', 'Chains', 0], ['browser', 'This browser', 0]]);
+      t.innerHTML = items.map(function (x) {
+        return '<button type="button" role="treeitem" class="si-ti' + (x[2] ? ' sub' : '') + (x[0] === pick ? ' on' : '') + '" data-k="' + esc(x[0]) + '">'
+          + (x[2] ? '' : '<span class="si-box">' + (x[0] === 'nodes' ? '−' : '') + '</span>') + esc(x[1]) + '</button>';
+      }).join('');
+    }
+    function drawTable() {
+      d.q('.si-table tbody').innerHTML = rows().map(function (r) {
+        return '<tr><td>' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td></tr>';
+      }).join('');
+    }
+    function draw() { drawTree(); drawTable(); }
+    d.q('.si-tree').addEventListener('click', function (e) {
+      var b = e.target.closest('.si-ti'); if (!b) return;
+      pick = b.dataset.k; draw();
+    });
+    function ask() {
+      d.q('.si-said').textContent = 'Asking the arcades…';
+      // The operator reads the Admin card's own copy; an account, the one Your arcade shows (no Share switches).
+      fetch(OPERATOR ? '/admin/api/arcades' : '/account/arcades', {credentials: 'same-origin', cache: 'no-store'})
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || 'not available'); return j; }); })
+        .then(function (j) { mesh = j; d.q('.si-said').textContent = 'Updated ' + new Date().toLocaleTimeString(); draw(); })
+        .catch(function (e) {
+          meshSaid = WHO === 'guest' ? 'Sign in to see the arcades on the mesh.' : 'Not available: ' + (e.message || e);
+          d.q('.si-said').textContent = meshSaid; draw();
+        });
+    }
+    d.q('.si-refresh').addEventListener('click', ask);
+    d.q('.dlg-close').addEventListener('click', function () { closeWin(d.win); });
+    draw(); ask();
   }
 
   // ---------- the pages inside ask for these (base.html, IN THE DESKTOP VIEW) ----------
@@ -1040,6 +1502,11 @@ body.fullscreen #arc-bot { display: none !important; }
           });
           keys = keys.concat(d.dock || [], d.starred || []);
           homeApps = keys.filter(function (k) { return typeof k === 'string' && k.indexOf('app:') === 0 && byKey[k]; });
+          // Once: the apps already on the phone home screen join Programs too.
+          if (layout.seedHome) {
+            homeApps.forEach(function (k) { if (layout.programs.indexOf(k) < 0) layout.programs.push(k); });
+            delete layout.seedHome; save();
+          }
           if (homeApps.length) drawIcons();
         }).catch(function () {});
     }

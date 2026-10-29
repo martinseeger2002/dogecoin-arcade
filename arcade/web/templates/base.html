@@ -94,7 +94,13 @@ header .deskview i{width:13px;height:13px;background:#fff;flex:none;
   if (shell) {
     document.documentElement.classList.add('inshell');
     // In a window of the Desktop View (desktop.html): the window's own title bar closes it, so no Home link.
-    if (desk) document.documentElement.classList.add('indesk');
+    if (desk) {
+      document.documentElement.classList.add('indesk');
+      // ... in the desktop's own look (2026-10-28: "all apps internally should be styled windows 98 as well").
+      var look = document.createElement('link');
+      look.rel = 'stylesheet'; look.href = '/desk98.css';
+      document.head.appendChild(look);
+    }
     document.addEventListener('DOMContentLoaded', function () {
       if (desk) return;
       if (document.body.classList.contains('fullscreen')) return;     // an app: the pull-down bar is its way home

@@ -2520,7 +2520,10 @@ $("shut").hidden = !!keys;
 // A read-back of this account's coins cut short (a restart) is finished on a Wallet visit; done chains cost nothing.
 if (!NODE_SIDE) fetch("/account/coins/backfill", {method: "POST", headers: {"Content-Type": "application/json"},
                                                   body: "{}"}).catch(() => {});
-net = kept(NET, null);
+// A coin's shortcut (the Desktop View, 2026-10-28: "shortcuts ... for every coin type so people can click that to
+// quickly get to their favorite wallet") opens its Wallet on that coin: ?coin=<network>.
+const coinAsked = new URLSearchParams(location.search).get("coin");
+net = /^[a-z0-9]{1,16}$/.test(coinAsked || "") ? coinAsked : kept(NET, null);
 said = await wallet.state(net || "");
 if (!chains().some((c) => c.network === net)) {
   net = (chains().find((c) => c.mainnet) || chains()[0] || {}).network || null;

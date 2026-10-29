@@ -35,7 +35,10 @@ def test_the_desktop_has_every_tab_but_admin_as_an_icon_and_the_apps_for_its_pro
     hrefs = [t["href"] for t in tabs]
     assert "/feed" in hrefs and "/exchange" in hrefs
     assert "/apps" not in hrefs, "the App Store is its own icon"
-    assert not [h for h in hrefs if h.startswith("/admin")], "not the admin side"
+    coins = json.loads(re.search(r"var COINS = (\[.*?\]);\n", page.text).group(1))
+    assert coins and all(c["net"] and c["label"] for c in coins), "a wallet shortcut for every coin"
+    system = json.loads(re.search(r"var SYSTEM = (\{.*?\});\n", page.text).group(1))
+    assert {"version", "node", "chains"} <= set(system)
     one = [a for a in apps if a["name"] == "Call Me"][0]
     assert one["key"] == gameslib.app_key(MAKER, "Call Me") and one["open"] == f"/inscriptions/{one['page']}/full"
     assert 'id="deskview"' not in page.text, "the desktop draws its own switch, not the page header's"
@@ -83,3 +86,39 @@ def test_icons_move_and_windows_move_size_and_minimize():
         assert need in desk, need
     # A wallpaper that is not a picture runs sandboxed and never takes a click.
     assert "f.setAttribute('sandbox', 'allow-scripts')" in desk and ".dk-bg { position: absolute; inset: 0; pointer-events: none;" in desk
+
+
+def test_admin_is_on_the_desktop_and_every_page_in_a_window_wears_the_old_look(client):
+    """2026-10-28: "admin should be in it as well - also styled windows 98 from this view"; "all apps internally
+    should be styled windows 98 as well"."""
+    app, _state = client
+    desk = (TEMPLATES / "desktop.html").read_text()
+    assert "href != '/apps' %}" in desk and "'/admin')" not in desk, "Admin's tab is not left off the desktop"
+    css = app.get("/desk98.css")
+    assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")
+    assert "html.indesk" in css.text and door.public_path("/desk98.css")
+    base = (TEMPLATES / "base.html").read_text()
+    assert "look.href = '/desk98.css'" in base and base.index("look.href") > base.index("if (desk) {")
+
+
+def test_a_coin_shortcut_opens_the_wallet_on_that_coin_and_any_icon_can_go():
+    wallet = (TEMPLATES / "my_wallet.html").read_text()
+    assert 'new URLSearchParams(location.search).get("coin")' in wallet
+    desk = (TEMPLATES / "desktop.html").read_text()
+    assert "href: WALLET + '?coin=' + encodeURIComponent(c.net)" in desk
+    assert "if (e.key === 'Delete') removeIcon(b.dataset.key);" in desk, "any icon, pages too"
+    for need in ("function openPrograms()", "function openShortcuts()", "function openSysinfo()", "function openRun()",
+                 "function logOff()", "'/explore/api/collections?net='", "layout.programs"):
+        assert need in desk, need
+
+
+def test_programs_start_with_the_four_that_come_with_it():
+    """2026-10-28: "default programs shoulld be that come with it are: browser, video call, and Arcade Spaces and tic tac
+    toe": pinned by publisher and name (gameslib.app_key), never by a name another app could copy."""
+    desk = (TEMPLATES / "desktop.html").read_text()
+    want = [gameslib.app_key("nWKJgSeAZSmfRCxZnwVgtYyPNowQT5X1Gk", "Browser"),
+            gameslib.app_key("neKR5zDMgrAmSW94rMLYHRBUqzPtuXQ7gp", "Video Call"),
+            gameslib.app_key("nWKJgSeAZSmfRCxZnwVgtYyPNowQT5X1Gk", "Arcade Spaces"),
+            gameslib.app_key("nWKJgSeAZSmfRCxZnwVgtYyPNowQT5X1Gk", "Tic-Tac-Toe")]
+    line = re.search(r"var DEFAULT_PROGRAMS = (\[.*?\]);", desk, re.S).group(1)
+    assert json.loads(line.replace("'", '"')) == want

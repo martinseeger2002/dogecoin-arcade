@@ -1,0 +1,92 @@
+/* Every page in a window of the Desktop View, Admin's too, in the desktop's own look (2026-10-28: "all apps internally
+   should be styled windows 98 as well"; "admin should be in it as well - also styled windows 98 from this view").
+   Loaded by base.html only inside a Desktop View window (html.indesk), so the website itself never carries it. Each
+   rule starts with html.indesk to outweigh base.css whatever order the two arrive in. An inscribed app draws its own
+   page in a sandbox: only the frame around it is styled here. */
+html.indesk:root, html.indesk:root[data-theme] {
+  --bg: #c0c0c0; --panel: #c0c0c0; --fg: #000; --muted: #404040; --line: #808080;
+  --accent: #000080; --accent-fg: #fff; --ok: #006400; --warn: #806000; --bad: #a00000; --code: #fff;
+  --sent: #000080; --sent-fg: #fff; --shadow: none;
+  color-scheme: light;
+}
+html.indesk *, html.indesk *::before, html.indesk *::after { border-radius: 0 !important; }
+html.indesk body { background: #c0c0c0; color: #000;
+  font: 12px/1.45 Tahoma, "Microsoft Sans Serif", "MS Sans Serif", Geneva, Verdana, sans-serif; }
+html.indesk main { padding-top: 10px; }
+html.indesk h1, html.indesk h2, html.indesk h3, html.indesk h4 { font-family: inherit; text-transform: none;
+  letter-spacing: normal; font-weight: 700; color: #000; }
+html.indesk h1 { font-size: 17px; } html.indesk h2 { font-size: 14px; } html.indesk h3 { font-size: 13px; }
+html.indesk a { color: #000080; text-decoration: underline; }
+html.indesk a:visited { color: #551a8b; }
+html.indesk .muted, html.indesk small { color: #404040; }
+
+/* Raised: cards, tiles, bars, sheets. Etched: the panels a page is grouped into. */
+html.indesk .panel, html.indesk fieldset, html.indesk details.panel {
+  background: #c0c0c0 !important; border: 1px solid #808080 !important;
+  box-shadow: inset 1px 1px #fff, 1px 1px #fff !important; }
+html.indesk .card, html.indesk .tile, html.indesk .unlockbar, html.indesk .signbar, html.indesk .sheet,
+html.indesk .modal, html.indesk dialog, html.indesk [role="dialog"], html.indesk .resetnote {
+  background: #c0c0c0 !important; color: #000; border: 0 !important;
+  box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #dfdfdf, inset -2px -2px #808080, inset 2px 2px #fff !important; }
+html.indesk .tile:hover { transform: none !important; }
+html.indesk hr { border: 0; height: 2px; box-shadow: inset 0 1px #808080, inset 0 -1px #fff; }
+
+/* Buttons and every kind of pill or chip that acts like one. */
+html.indesk button, html.indesk .btn, html.indesk a.btn, html.indesk input[type="button"], html.indesk input[type="submit"],
+html.indesk input[type="reset"], html.indesk .pillpick, html.indesk .chip, html.indesk .seg button, html.indesk .tabs a,
+html.indesk .tabs button {
+  background: #c0c0c0 !important; color: #000 !important; border: 0 !important; text-decoration: none !important;
+  font: 12px/1.2 Tahoma, "Microsoft Sans Serif", "MS Sans Serif", Geneva, Verdana, sans-serif !important;
+  text-transform: none !important; letter-spacing: normal !important; min-height: 23px; padding: 4px 12px;
+  box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf !important;
+  transition: none !important; }
+html.indesk button:active, html.indesk .btn:active, html.indesk .pillpick.on, html.indesk .chip.on,
+html.indesk button[aria-pressed="true"], html.indesk button[aria-selected="true"], html.indesk .tabs .on,
+html.indesk button.on, html.indesk a.btn.on {
+  box-shadow: inset -1px -1px #fff, inset 1px 1px #0a0a0a, inset -2px -2px #dfdfdf, inset 2px 2px #808080 !important; }
+html.indesk .pillpick.on, html.indesk .tabs .on, html.indesk button.on { font-weight: 700 !important; }
+html.indesk button:disabled, html.indesk .btn[disabled], html.indesk .btn.off {
+  color: #808080 !important; text-shadow: 1px 1px #fff; cursor: default; }
+html.indesk button:focus-visible, html.indesk .btn:focus-visible { outline: 1px dotted #000 !important; outline-offset: -4px; }
+html.indesk button.ghost, html.indesk .btn.ghost { background: #c0c0c0 !important; }
+html.indesk button.small, html.indesk .btn.small { min-height: 21px; padding: 2px 8px; }
+html.indesk .pill { background: #c0c0c0 !important; color: #000 !important; border: 1px solid #808080 !important;
+  box-shadow: inset 1px 1px #fff !important; }
+html.indesk .pill.ok { color: #006400 !important; } html.indesk .pill.bad { color: #a00000 !important; }
+html.indesk .pill.warn { color: #806000 !important; }
+html.indesk .nav-count, html.indesk .badge { background: #a00000 !important; color: #fff !important; }
+
+/* Fields: white and sunken. */
+html.indesk input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="color"]),
+html.indesk select, html.indesk textarea {
+  background: #fff !important; color: #000 !important; border: 0 !important; outline: none;
+  font: 12px/1.3 Tahoma, "Microsoft Sans Serif", "MS Sans Serif", Geneva, Verdana, sans-serif !important;
+  box-shadow: inset -1px -1px #fff, inset 1px 1px #808080, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a !important;
+  padding: 4px 5px; }
+html.indesk input:focus, html.indesk select:focus, html.indesk textarea:focus { outline: none !important; }
+html.indesk input[type="checkbox"], html.indesk input[type="radio"], html.indesk input[type="range"] { accent-color: #000080; }
+html.indesk ::placeholder { color: #808080; }
+
+/* Lists and code: white wells. */
+html.indesk table { background: #fff; border-collapse: collapse;
+  box-shadow: inset -1px -1px #fff, inset 1px 1px #808080 !important; }
+html.indesk th { background: #c0c0c0 !important; color: #000; font-weight: 400; text-align: left;
+  box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080 !important; }
+html.indesk td { border-bottom: 1px solid #dfdfdf !important; }
+html.indesk table tr.active td, html.indesk table tr.on td { background: #000080 !important; color: #fff !important; }
+html.indesk code, html.indesk pre, html.indesk kbd { background: #fff !important; color: #000 !important;
+  font-family: "Courier New", Courier, monospace !important; }
+html.indesk pre { box-shadow: inset -1px -1px #fff, inset 1px 1px #808080, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a !important;
+  border: 0 !important; }
+html.indesk summary { cursor: default; }
+html.indesk .msg.err, html.indesk .err { color: #a00000 !important; }
+html.indesk .msg.ok { color: #006400 !important; }
+html.indesk img { image-rendering: auto; }
+
+/* Scroll bars: the grey thumb on the dotted track. */
+html.indesk * { scrollbar-color: #c0c0c0 #dfdfdf; }
+html.indesk ::-webkit-scrollbar { width: 16px; height: 16px; background: #dfdfdf; }
+html.indesk ::-webkit-scrollbar-track { background: repeating-conic-gradient(#c0c0c0 0 25%, #fff 0 50%) 0 0 / 2px 2px; }
+html.indesk ::-webkit-scrollbar-thumb { background: #c0c0c0;
+  box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #dfdfdf, inset -2px -2px #808080, inset 2px 2px #fff; }
+html.indesk ::-webkit-scrollbar-corner { background: #c0c0c0; }
