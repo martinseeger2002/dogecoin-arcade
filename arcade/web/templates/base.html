@@ -30,6 +30,18 @@ html.inshell body:not(.fullscreen){padding-top:18px}
 html.inshell body.fullscreen #arc-bot,html.inshell body.fullscreen #arc-bot-box{display:none !important}
 /* Back to the home screen, the App Store's own link (2026-10-24: "all of the pages should have a back to home
    link like the App Store does"). */
+/* A window of the Desktop View: its title bar says what it is, so the page starts at its top. */
+html.indesk body:not(.fullscreen){padding-top:0}
+/* The Desktop View's switch, top left of every page but Admin's, on a computer (2026-10-28; desktop.html). */
+header .deskview{display:inline-flex;align-items:center;gap:6px;padding:3px 8px 3px 5px;min-height:0;margin:0;border:0;
+  border-radius:0;background:#c0c0c0;color:#000;font:11px/1.3 Tahoma,"Microsoft Sans Serif","MS Sans Serif",Geneva,Verdana,sans-serif;
+  text-transform:none;letter-spacing:normal;cursor:pointer;flex:none;
+  box-shadow:inset -1px -1px #0a0a0a,inset 1px 1px #fff,inset -2px -2px #808080,inset 2px 2px #dfdfdf !important}
+header .deskview:active{box-shadow:inset -1px -1px #fff,inset 1px 1px #0a0a0a,inset -2px -2px #dfdfdf,inset 2px 2px #808080 !important}
+header .deskview i{width:13px;height:13px;background:#fff;flex:none;
+  box-shadow:inset -1px -1px #fff,inset 1px 1px #808080,inset -2px -2px #dfdfdf,inset 2px 2px #0a0a0a}
+@media(min-width:1180px){header .deskview{position:absolute;left:14px;top:14px}}
+@media(max-width:640px){header .deskview{display:none !important}}
 .inshell-home{display:inline-block;background:none !important;border:0;box-shadow:none !important;color:var(--accent);
   padding:8px 8px 8px 0;margin:0 0 6px;font:inherit;font-weight:650;font-size:1rem;cursor:pointer}
 </style>
@@ -74,11 +86,17 @@ html.inshell body.fullscreen #arc-bot,html.inshell body.fullscreen #arc-bot-box{
   };
 })();
 (function () {
-  var shell = null;
-  try { if (window.top !== window && window.top.location.pathname === '/home') shell = window.top; } catch (e) {}
+  var shell = null, desk = false;
+  try {
+    var top = window.top !== window && window.top.location.pathname;
+    if (top === '/home' || top === '/desktop') { shell = window.top; desk = top === '/desktop'; }
+  } catch (e) {}
   if (shell) {
     document.documentElement.classList.add('inshell');
+    // In a window of the Desktop View (desktop.html): the window's own title bar closes it, so no Home link.
+    if (desk) document.documentElement.classList.add('indesk');
     document.addEventListener('DOMContentLoaded', function () {
+      if (desk) return;
       if (document.body.classList.contains('fullscreen')) return;     // an app: the pull-down bar is its way home
       var home = document.createElement('button');
       home.type = 'button'; home.className = 'inshell-home'; home.textContent = '\u2039 Home';
@@ -93,7 +111,7 @@ html.inshell body.fullscreen #arc-bot,html.inshell body.fullscreen #arc-bot-box{
       if (u.origin !== location.origin) return;
       if (/^\/inscriptions\/[^/]+\/full$/.test(u.pathname)) {
         e.preventDefault(); shell.arcadeShell.open(u.pathname + u.search, a.title || a.textContent.trim().slice(0, 40));
-      } else if (u.pathname === '/home' || (u.pathname === '/apps' && !u.search && !u.hash)) {
+      } else if (u.pathname === '/home' || u.pathname === '/desktop' || (!desk && u.pathname === '/apps' && !u.search && !u.hash)) {
         e.preventDefault(); shell.arcadeShell.home();
       } else if (a.target === '_blank') {
         e.preventDefault(); shell.arcadeShell.open(u.pathname + u.search + u.hash, a.title || a.textContent.trim().slice(0, 40));
@@ -103,6 +121,19 @@ html.inshell body.fullscreen #arc-bot,html.inshell body.fullscreen #arc-bot-box{
   }
   var installed = window.navigator.standalone === true ||
     (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  // THE DESKTOP VIEW (desktop.html; 2026-10-28), on a computer's browser only: while its switch is on, a page opened in
+  // a tab of its own goes to the desktop and opens there in a window. Never the Admin pages, the sign-in pages, a phone
+  // or the installed app.
+  if (!installed && window.top === window && location.pathname !== '/desktop' && window.innerWidth > 640 &&
+      !/^\/(admin|join|restore|signin|offline|clone|home)(\/|$)/.test(location.pathname)) {
+    var deskOn = false;
+    try { deskOn = localStorage.getItem('arcade.deskview') === '1'; } catch (e) {}
+    if (deskOn) {
+      var page = location.pathname + location.search + location.hash;
+      location.replace(page === '/' ? '/desktop' : '/desktop#open=' + encodeURIComponent(page));
+      return;
+    }
+  }
   if (!installed || window.top !== window || location.pathname === '/home') return;
   if (/^\/(join|restore|signin|offline|clone)(\/|$)/.test(location.pathname)) return;
   // Opening the app goes straight to the apps (2026-10-24: "The PWA should open directly to the apps"): its start
@@ -132,6 +163,24 @@ html.inshell body.fullscreen #arc-bot,html.inshell body.fullscreen #arc-bot-box{
 <body{% if embed %} class="embed"{% elif fullscreen %} class="fullscreen"{% endif %} data-generation="{{ state.generation }}">
 {% if not embed %}
 <header><div class="bar">
+  {%- if not fullscreen and not path.startswith('/admin') %}
+  <button type="button" class="deskview" id="deskview" hidden aria-pressed="false"
+          title="Desktop View: your arcade as a desktop, every page in a window"><i aria-hidden="true"></i>Desktop View</button>
+  <script>
+  (function () {
+    var b = document.getElementById('deskview');
+    var installed = window.navigator.standalone === true ||
+      (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+    if (installed || window.top !== window) return;
+    b.hidden = false;
+    b.addEventListener('click', function () {
+      try { localStorage.setItem('arcade.deskview', '1'); } catch (e) {}
+      var page = location.pathname + location.search + location.hash;
+      location.href = page === '/' ? '/desktop' : '/desktop#open=' + encodeURIComponent(page);
+    });
+  })();
+  </script>
+  {%- endif %}
   <span class="brand">{{ brand.name }}</span>
   <nav>
   {%- for href, label, chain, built in nav %}

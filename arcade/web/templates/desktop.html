@@ -1,0 +1,1050 @@
+{% extends "base.html" %}
+{% block title %}{{ brand.name }} · Desktop{% endblock %}
+{% block body %}
+{#- THE DESKTOP VIEW (2026-10-28: "lets put a toggle at the top left of the user's desktop view (not the admin side and
+    leave mobile view alone) that turns the normal website into a 'Desktop View' similar to how the mobile side of
+    things look now - but make it look like old windows 98"; "we should be able to move apps around the screen like
+    normal desktop apps"; "we should be able to select our own background image of inscriptions").
+    The home screen's idea (home.html) for a computer: every tab and every app is an icon on the desktop, opened with a
+    double click into a window that moves by its title bar, sizes from any edge, maximizes, minimizes to the taskbar
+    and keeps running. Icons are dragged anywhere and stay there (this browser, per account). The wallpaper is any
+    inscription, kept for the account on this node (/account/deskbg). The toggle in the top left corner, here and on
+    every page but Admin's, turns the view on and off; the choice is this browser's (base.html sends its pages here
+    while it is on). -#}
+{%- set tabs = [] %}
+{%- for href, label, chain, built in nav if built and href not in ('/apps', '/admin') and not href.startswith('/admin/') %}
+{%- set _ = tabs.append({'key': 'tab:' ~ href, 'href': href, 'name': label}) %}
+{%- endfor %}
+<div id="dk" class="dk" tabindex="-1">
+  <div class="dk-bg" id="dk-bg"></div>
+  <button type="button" class="dk-toggle w98-btn" id="dk-toggle" aria-pressed="true"
+          title="Back to the normal website"><i aria-hidden="true"></i>Desktop View</button>
+  <div class="dk-icons" id="dk-icons" role="listbox" aria-label="Desktop"></div>
+  <div class="dk-wins" id="dk-wins"></div>
+</div>
+
+<div class="dk-task" id="dk-task">
+  <button type="button" class="dk-start w98-btn" id="dk-start" aria-haspopup="menu" aria-expanded="false">
+    <img src="/icon-32.png" alt="" width="16" height="16"><b>Start</b></button>
+  <span class="dk-grip" aria-hidden="true"></span>
+  <div class="dk-tbtns" id="dk-tbtns"></div>
+  <div class="dk-tray" id="dk-tray">
+    <button type="button" class="dk-traybtn" id="dk-bell" title="Notifications" hidden>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" stroke="#000" stroke-width="2.2" stroke-linejoin="round"/></svg><span id="dk-bell-n"></span></button>
+    <button type="button" class="dk-traybtn" id="dk-mail" title="Messages" hidden>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18v12H3zM3 6l9 7 9-7" stroke="#000" stroke-width="2.2" stroke-linejoin="round"/></svg><span id="dk-mail-n"></span></button>
+    <span class="dk-clock" id="dk-clock"></span>
+  </div>
+</div>
+
+<div class="dk-menu dk-startmenu" id="dk-startmenu" role="menu" hidden>
+  <div class="dk-banner" aria-hidden="true"><span>{{ brand.name }}</span></div>
+  <div class="dk-items" id="dk-items"></div>
+</div>
+<div class="dk-menu dk-sub" id="dk-sub" role="menu" hidden></div>
+<div class="dk-menu dk-ctx" id="dk-ctx" role="menu" hidden></div>
+<div class="dk-toast" id="dk-toast" role="status" hidden></div>
+
+<template id="dk-display-t">
+  <div class="dp">
+    <div class="dp-tabs" role="tablist">
+      <button type="button" role="tab" data-tab="mine" aria-selected="true">My inscriptions</button>
+      <button type="button" role="tab" data-tab="browse" aria-selected="false">Browse</button>
+      <button type="button" role="tab" data-tab="id" aria-selected="false">By ID</button>
+    </div>
+    <div class="dp-page">
+      <div class="dp-monitor" aria-hidden="true"><div class="dp-screen"><div class="dp-shot"></div></div><div class="dp-stand"></div></div>
+      <div class="dp-pane" data-pane="mine">
+        <p class="dp-note dp-mine-note">Looking for your inscriptions…</p>
+        <div class="dp-grid dp-mine"></div>
+      </div>
+      <div class="dp-pane" data-pane="browse" hidden>
+        <label class="dp-row">Chain: <select class="w98-field dp-net"></select></label>
+        <div class="dp-grid dp-browse"></div>
+        <div class="dp-row"><button type="button" class="w98-btn dp-more">More</button><span class="dp-note dp-browse-note"></span></div>
+      </div>
+      <div class="dp-pane" data-pane="id" hidden>
+        <p class="dp-note">Any inscription: a picture, or a page that moves. Paste its id (the long one ending in
+          <code>i0</code>, from Explore or your Wallet).</p>
+        <div class="dp-row"><input class="w98-field dp-idbox" spellcheck="false" autocomplete="off"
+             placeholder="inscription id, like 4b43…a9i0" aria-label="Inscription id">
+          <button type="button" class="w98-btn dp-try">Preview</button></div>
+        <p class="dp-note dp-iderr" hidden></p>
+      </div>
+      <div class="dp-row dp-opts">
+        <span class="dp-chosen">Wallpaper: <b class="dp-name">(None)</b></span>
+        <label>Display: <select class="w98-field dp-fit">
+          <option value="fill">Fill</option><option value="stretch">Stretch</option>
+          <option value="center">Center</option><option value="tile">Tile</option></select></label>
+        <button type="button" class="w98-btn dp-none">(None)</button>
+      </div>
+      <p class="dp-note dp-said" hidden></p>
+    </div>
+    <div class="dp-acts">
+      <button type="button" class="w98-btn dp-ok">OK</button>
+      <button type="button" class="w98-btn dp-cancel">Cancel</button>
+      <button type="button" class="w98-btn dp-apply">Apply</button>
+    </div>
+  </div>
+</template>
+
+<style>
+html, body.fullscreen { margin: 0; height: 100%; overflow: hidden; }
+body.fullscreen main { max-width: none !important; padding: 0 !important; margin: 0 !important; }
+header, footer.version, .notice, #appbar, #newposts, .unlockbar { display: none !important; }
+/* The helper is an icon on the desktop; its chat box sits above the taskbar. */
+body.fullscreen #arc-bot { display: none !important; }
+#arc-bot-box { bottom: 40px !important; }
+.dk, .dk-task, .dk-menu, .dk-toast {
+  --w98-face: #c0c0c0; --w98-light: #dfdfdf; --w98-hi: #fff; --w98-shadow: #808080; --w98-dark: #0a0a0a;
+  --w98-navy: #000080; --w98-blue: #1084d0; --w98-desk: #008080;
+  font: 11px/1.3 Tahoma, "Microsoft Sans Serif", "MS Sans Serif", Geneva, Verdana, sans-serif; color: #000;
+  -webkit-font-smoothing: none; }
+.dk *, .dk-task *, .dk-menu * { box-sizing: border-box; }
+.dk button, .dk-task button, .dk-menu button { font: inherit; color: #000; text-transform: none; letter-spacing: normal;
+  min-height: 0; }
+/* The look: a raised grey face, a sunken white field, the title bar's blue (inset borders, as the old one drew them). */
+.w98-btn { background: var(--w98-face); border: 0; border-radius: 0; padding: 3px 10px; min-width: 0; cursor: pointer;
+  box-shadow: inset -1px -1px var(--w98-dark), inset 1px 1px var(--w98-hi), inset -2px -2px var(--w98-shadow),
+              inset 2px 2px var(--w98-light) !important; color: #000; font: inherit; }
+.w98-btn:active, .w98-btn[aria-pressed="true"].dk-tb, .w98-btn.down {
+  box-shadow: inset -1px -1px var(--w98-hi), inset 1px 1px var(--w98-dark), inset -2px -2px var(--w98-light),
+              inset 2px 2px var(--w98-shadow) !important; }
+.w98-btn:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
+.w98-btn:disabled { color: var(--w98-shadow); text-shadow: 1px 1px var(--w98-hi); cursor: default; }
+.w98-field { background: #fff; color: #000; border: 0; border-radius: 0; padding: 3px 4px; font: inherit; min-height: 0;
+  box-shadow: inset -1px -1px var(--w98-hi), inset 1px 1px var(--w98-shadow), inset -2px -2px var(--w98-light),
+              inset 2px 2px var(--w98-dark) !important; }
+.w98-field:focus { outline: none; }
+
+.dk { position: fixed; left: 0; top: 0; right: 0; bottom: 30px; overflow: hidden; background: var(--w98-desk);
+  user-select: none; -webkit-user-select: none; outline: none; }
+.dk-bg { position: absolute; inset: 0; pointer-events: none; background-position: center; background-repeat: no-repeat; }
+.dk-bg iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; pointer-events: none; background: #000; }
+.dk-bg.fill { background-size: cover; }
+.dk-bg.stretch { background-size: 100% 100%; }
+.dk-bg.center { background-size: auto; }
+.dk-bg.tile { background-repeat: repeat; background-position: 0 0; background-size: auto; }
+.dk-bg.px { image-rendering: pixelated; }
+/* The way back, in the top left corner (the same switch every page has; base.html). */
+.dk-toggle { position: absolute; left: 8px; top: 8px; z-index: 2; display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px 3px 5px; }
+.dk-toggle i, .deskview i { width: 13px; height: 13px; background: #fff; position: relative; flex: none;
+  box-shadow: inset -1px -1px var(--w98-hi, #fff), inset 1px 1px var(--w98-shadow, #808080),
+              inset -2px -2px var(--w98-light, #dfdfdf), inset 2px 2px var(--w98-dark, #0a0a0a); }
+.dk-toggle[aria-pressed="true"] i::after { content: ""; position: absolute; left: 3px; top: 2px; width: 5px; height: 7px;
+  border: solid #000; border-width: 0 2px 2px 0; transform: rotate(40deg); }
+
+.dk-icons { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.dk-icon { position: absolute; width: 74px; padding: 2px 0; display: flex; flex-direction: column; align-items: center;
+  gap: 3px; background: none !important; border: 0; box-shadow: none !important; cursor: default; touch-action: none;
+  pointer-events: auto; }
+.dk-icon:focus { outline: none; }
+.dk-ico { position: relative; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; }
+.dk-ico img { width: 32px; height: 32px; object-fit: cover; image-rendering: pixelated; display: block; pointer-events: none;
+  box-shadow: 1px 1px 0 rgba(0,0,0,.45); }
+.dk-ico .dk-glyph { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  box-shadow: inset -1px -1px rgba(0,0,0,.55), inset 1px 1px rgba(255,255,255,.55), 1px 1px 0 rgba(0,0,0,.45); }
+.dk-ico .dk-glyph svg { width: 24px; height: 24px; }
+.dk-ico .dk-letter { color: #fff; font-weight: 700; font-size: 13px; }
+.dk-ico .dk-robot svg { width: 32px; height: 32px; image-rendering: pixelated; }
+.dk-lab { max-width: 74px; padding: 1px 2px; color: #fff; text-align: center; line-height: 1.2; word-wrap: break-word;
+  text-shadow: 1px 1px 0 #000; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.dk-icon.sel .dk-lab { background: var(--w98-navy); text-shadow: none; outline: 1px dotted #ff0; -webkit-line-clamp: 5; }
+.dk-icon.sel .dk-ico::after { content: ""; position: absolute; inset: 0; background: var(--w98-navy); opacity: .5; }
+.dk-icon.drag { z-index: 5; opacity: .75; }
+.dk-badge { position: absolute; right: -8px; top: -5px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: #e00; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+  box-shadow: 0 0 0 1px #fff; }
+
+/* Windows */
+.dk-wins { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.dk-win { position: absolute; display: flex; flex-direction: column; padding: 3px; background: var(--w98-face);
+  pointer-events: auto; min-width: 200px; min-height: 120px;
+  box-shadow: inset -1px -1px var(--w98-dark), inset 1px 1px var(--w98-light), inset -2px -2px var(--w98-shadow),
+              inset 2px 2px var(--w98-hi), 2px 2px 8px rgba(0,0,0,.25); }
+.dk-win.max { box-shadow: none; }
+.dk-title { flex: none; height: 20px; display: flex; align-items: center; gap: 4px; padding: 0 2px 0 3px; color: #fff;
+  background: linear-gradient(90deg, #808080, #b5b5b5); font-weight: 700; cursor: default; touch-action: none; }
+.dk-win.on .dk-title { background: linear-gradient(90deg, var(--w98-navy), var(--w98-blue)); }
+.dk-title img, .dk-title .dk-tglyph { width: 16px; height: 16px; flex: none; object-fit: cover; image-rendering: pixelated; }
+.dk-title .dk-tglyph { display: flex; align-items: center; justify-content: center; }
+.dk-title .dk-tglyph svg { width: 12px; height: 12px; }
+.dk-tname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #c0c0c0; }
+.dk-win.on .dk-tname { color: #fff; }
+.dk-tbtn { width: 16px; height: 14px; padding: 0 !important; display: flex; align-items: center; justify-content: center; flex: none; }
+.dk-tbtn + .dk-tbtn[data-a="close"] { margin-left: 2px; }
+.dk-tbtn svg { display: block; }
+.dk-body { flex: 1; min-height: 0; margin-top: 2px; position: relative; background: #fff;
+  box-shadow: inset -1px -1px var(--w98-hi), inset 1px 1px var(--w98-shadow), inset -2px -2px var(--w98-light),
+              inset 2px 2px var(--w98-dark); padding: 2px; }
+.dk-body iframe { width: 100%; height: 100%; border: 0; display: block; background: var(--bg, #fff); }
+.dk-body.plain { background: var(--w98-face); box-shadow: none; padding: 8px 6px 6px; overflow: auto; }
+.dk-rz { position: absolute; z-index: 2; }
+.dk-rz[data-d="n"] { top: -3px; left: 6px; right: 6px; height: 7px; cursor: ns-resize; }
+.dk-rz[data-d="s"] { bottom: -3px; left: 6px; right: 6px; height: 7px; cursor: ns-resize; }
+.dk-rz[data-d="e"] { right: -3px; top: 6px; bottom: 6px; width: 7px; cursor: ew-resize; }
+.dk-rz[data-d="w"] { left: -3px; top: 6px; bottom: 6px; width: 7px; cursor: ew-resize; }
+.dk-rz[data-d="ne"] { right: -3px; top: -3px; width: 12px; height: 12px; cursor: nesw-resize; }
+.dk-rz[data-d="sw"] { left: -3px; bottom: -3px; width: 12px; height: 12px; cursor: nesw-resize; }
+.dk-rz[data-d="nw"] { left: -3px; top: -3px; width: 12px; height: 12px; cursor: nwse-resize; }
+.dk-rz[data-d="se"] { right: -3px; bottom: -3px; width: 14px; height: 14px; cursor: nwse-resize; }
+.dk-win.max .dk-rz { display: none; }
+/* While a window moves or sizes, no page inside one may take the pointer. */
+.dk.moving iframe { pointer-events: none; }
+.dk.moving, .dk.moving * { cursor: inherit; }
+
+/* The taskbar */
+.dk-task { position: fixed; left: 0; right: 0; bottom: 0; height: 30px; z-index: 9100; display: flex; align-items: center;
+  gap: 3px; padding: 2px 2px 0; background: var(--w98-face); box-shadow: inset 0 1px var(--w98-light), inset 0 2px var(--w98-hi);
+  user-select: none; -webkit-user-select: none; }
+.dk-start { height: 24px; display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 4px; flex: none; }
+.dk-start img { image-rendering: pixelated; }
+.dk-start b { font-weight: 700; }
+.dk-grip { width: 2px; height: 22px; flex: none; margin: 0 2px; box-shadow: inset 1px 0 var(--w98-shadow), inset -1px 0 var(--w98-hi); }
+.dk-tbtns { flex: 1; min-width: 0; display: flex; gap: 3px; overflow: hidden; }
+.dk-tb { flex: 0 1 160px; min-width: 40px; height: 24px; display: flex; align-items: center; gap: 4px; padding: 2px 6px;
+  text-align: left; white-space: nowrap; overflow: hidden; }
+.dk-tb .dk-tbname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dk-tb[aria-pressed="true"] { font-weight: 700; background: repeating-conic-gradient(var(--w98-face) 0 25%, var(--w98-hi) 0 50%) 0 0 / 2px 2px; }
+.dk-tb img, .dk-tb .dk-tglyph { width: 16px; height: 16px; flex: none; image-rendering: pixelated; object-fit: cover;
+  display: flex; align-items: center; justify-content: center; }
+.dk-tb .dk-tglyph svg { width: 12px; height: 12px; }
+.dk-tray { flex: none; height: 24px; display: flex; align-items: center; gap: 4px; padding: 0 8px 0 4px;
+  box-shadow: inset -1px -1px var(--w98-hi), inset 1px 1px var(--w98-shadow); }
+.dk-traybtn { display: flex; align-items: center; gap: 2px; padding: 0 2px !important; background: none !important;
+  border: 0 !important; box-shadow: none !important; cursor: pointer; }
+.dk-traybtn span { font-weight: 700; color: #c00; }
+.dk-clock { min-width: 52px; text-align: right; }
+
+/* Menus: the Start menu, its cascades, right clicks */
+.dk-menu { position: fixed; z-index: 9200; background: var(--w98-face); padding: 3px; display: flex;
+  box-shadow: inset -1px -1px var(--w98-dark), inset 1px 1px var(--w98-light), inset -2px -2px var(--w98-shadow),
+              inset 2px 2px var(--w98-hi), 2px 2px 4px rgba(0,0,0,.3); }
+.dk-menu[hidden] { display: none !important; }
+.dk-startmenu { left: 2px; bottom: 28px; }
+.dk-banner { width: 22px; background: linear-gradient(0deg, var(--w98-navy), var(--w98-blue)); display: flex;
+  align-items: flex-end; justify-content: center; padding-bottom: 6px; }
+.dk-banner span { writing-mode: vertical-rl; transform: rotate(180deg); color: #fff; font-weight: 700; font-size: 15px;
+  letter-spacing: .02em; white-space: nowrap; }
+.dk-items, .dk-sub, .dk-ctx { flex-direction: column; }
+.dk-items { display: flex; flex-direction: column; min-width: 190px; }
+.dk-mi { display: flex; align-items: center; gap: 8px; width: 100%; padding: 3px 16px 3px 4px !important; border: 0;
+  background: none !important; box-shadow: none !important; text-align: left; white-space: nowrap; cursor: default; }
+.dk-items .dk-mi { padding: 6px 18px 6px 6px !important; font-size: 12px; }
+.dk-mi:hover, .dk-mi.hot, .dk-mi:focus-visible { background: var(--w98-navy) !important; color: #fff !important; outline: none; }
+.dk-mi .dk-mico { width: 16px; height: 16px; flex: none; display: flex; align-items: center; justify-content: center; }
+.dk-items .dk-mi .dk-mico { width: 24px; height: 24px; }
+.dk-mi .dk-mico img { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
+.dk-mi .dk-mico .dk-tglyph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.dk-mi .dk-mico svg { width: 70%; height: 70%; }
+.dk-mi .dk-arrow { margin-left: auto; padding-left: 14px; }
+.dk-mi[disabled] { color: var(--w98-shadow) !important; text-shadow: 1px 1px var(--w98-hi); background: none !important; }
+.dk-hr { height: 2px; margin: 3px 2px; box-shadow: inset 0 1px var(--w98-shadow), inset 0 -1px var(--w98-hi); flex: none; }
+.dk-sub { max-height: calc(100vh - 40px); overflow-y: auto; min-width: 170px; max-width: 280px; display: flex; }
+.dk-sub .dk-mi span:not(.dk-mico) { overflow: hidden; text-overflow: ellipsis; }
+.dk-ctx { min-width: 150px; display: flex; }
+.dk-ctx .dk-mi.def { font-weight: 700; }
+.dk-toast { position: fixed; right: 6px; bottom: 36px; z-index: 9300; max-width: 320px; padding: 8px 10px; background: #ffffe1;
+  border: 1px solid #000; box-shadow: 2px 2px 4px rgba(0,0,0,.3); }
+
+/* Display Properties */
+.dp { display: flex; flex-direction: column; height: 100%; gap: 6px; }
+.dp-tabs { display: flex; gap: 0; padding-left: 2px; margin-bottom: -7px; position: relative; z-index: 1; }
+.dp-tabs button { background: var(--w98-face); border: 0; border-radius: 3px 3px 0 0; padding: 3px 10px 4px; cursor: pointer;
+  box-shadow: inset -1px 0 var(--w98-dark), inset 1px 1px var(--w98-hi), inset -2px 0 var(--w98-shadow), inset 2px 2px var(--w98-light); }
+.dp-tabs button[aria-selected="true"] { padding-bottom: 6px; margin-top: -2px; z-index: 2; position: relative; }
+.dp-tabs button:focus-visible { outline: 1px dotted #000; outline-offset: -4px; }
+.dp-page { flex: 1; min-height: 0; padding: 12px 10px 8px; display: flex; flex-direction: column; gap: 8px;
+  box-shadow: inset -1px -1px var(--w98-dark), inset 1px 1px var(--w98-hi), inset -2px -2px var(--w98-shadow), inset 2px 2px var(--w98-light); }
+.dp-monitor { align-self: center; width: 184px; flex: none; }
+.dp-screen { height: 122px; padding: 10px 10px 16px; background: var(--w98-face); border-radius: 6px 6px 0 0;
+  box-shadow: inset -1px -1px var(--w98-dark), inset 1px 1px var(--w98-hi), inset -2px -2px var(--w98-shadow); }
+.dp-shot { position: relative; width: 100%; height: 100%; background: #008080 center no-repeat; overflow: hidden;
+  box-shadow: inset 1px 1px var(--w98-shadow), inset -1px -1px var(--w98-hi); }
+.dp-shot iframe { position: absolute; left: 0; top: 0; width: 400%; height: 400%; border: 0; transform: scale(.25);
+  transform-origin: 0 0; pointer-events: none; background: #000; }
+.dp-shot.fill { background-size: cover; } .dp-shot.stretch { background-size: 100% 100%; }
+.dp-shot.center { background-size: auto; } .dp-shot.tile { background-repeat: repeat; background-size: auto; background-position: 0 0; }
+.dp-shot.px { image-rendering: pixelated; }
+.dp-stand { width: 70px; height: 12px; margin: 0 auto; background: var(--w98-face);
+  box-shadow: inset -1px -1px var(--w98-dark), inset 1px 0 var(--w98-hi), inset -2px -2px var(--w98-shadow); }
+.dp-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.dp-grid { flex: 1; min-height: 110px; overflow-y: auto; background: #fff; padding: 4px; display: grid; align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 4px;
+  box-shadow: inset -1px -1px var(--w98-hi), inset 1px 1px var(--w98-shadow), inset -2px -2px var(--w98-light), inset 2px 2px var(--w98-dark); }
+.dp-th { position: relative; aspect-ratio: 1; padding: 2px !important; border: 1px solid transparent; background: #fff !important;
+  box-shadow: none !important; cursor: pointer; overflow: hidden; }
+.dp-th img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; display: block; pointer-events: none; }
+.dp-th iframe { position: absolute; left: 2px; top: 2px; width: 400%; height: 400%; border: 0; transform: scale(.25);
+  transform-origin: 0 0; pointer-events: none; }
+.dp-th.on { border: 1px dotted #000; background: var(--w98-navy) !important; }
+.dp-th.on img { opacity: .75; }
+.dp-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dp-row .dp-idbox { flex: 1; min-width: 0; }
+.dp-opts { justify-content: space-between; }
+.dp-chosen { flex: 1 1 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dp-note { margin: 0; color: #000; font-size: 11px; }
+.dp-note code { font-size: 11px; }
+.dp-acts { display: flex; justify-content: flex-end; gap: 6px; }
+.dp label { display: inline-flex; align-items: center; gap: 4px; margin: 0; font: inherit; color: #000; font-weight: 400; }
+.dp select.w98-field, .dp input.w98-field { width: auto; height: 21px; padding: 1px 4px; font: inherit; color: #000; }
+.dp input.w98-field { flex: 1; min-width: 0; }
+.dp-acts .w98-btn { min-width: 72px; }
+</style>
+
+<script>
+(function () {
+  var TABS = {{ tabs|tojson }};
+  var APPS = {{ apps|tojson }};
+  var NETS = {{ ord_nets|tojson }};
+  var OPERATOR = {{ 'true' if operator_view else 'false' }};
+  var WHO = {{ (account_name or ('node' if operator_view else 'guest'))|tojson }};
+  var BRAND = {{ brand.name|tojson }};
+  var STORE_ICON = '/apps/store-icon.png';
+  var LAYOUT_LS = 'arcade.desktop:' + WHO, BG_LS = 'arcade.deskbg:' + WHO;
+  var ID = /^[0-9a-f]{64}i\d{1,6}$/;
+  var CELL_W = 76, CELL_H = 76, TOP = 40, LEFT = 6, MOST = 8;
+  {% include "_tab_glyphs.js.html" %}
+
+  var $ = function (id) { return document.getElementById(id); };
+  var dk = $('dk'), iconsEl = $('dk-icons'), winsEl = $('dk-wins');
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+  function say(t) {
+    var el = $('dk-toast'); el.textContent = t; el.hidden = false;
+    clearTimeout(say.t); say.t = setTimeout(function () { el.hidden = true; }, 3200);
+  }
+  function load(key, dflt) { try { var v = JSON.parse(localStorage.getItem(key) || 'null'); return v == null ? dflt : v; } catch (e) { return dflt; } }
+  function keep(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {} }
+
+  // ---------- what can be on the desktop ----------
+  var byKey = {};
+  TABS.forEach(function (t) { byKey[t.key] = {key: t.key, kind: 'tab', name: t.name, href: t.href, glyph: glyphOf(t.href)}; });
+  byKey.store = {key: 'store', kind: 'store', name: 'App Store', href: '/apps', img: STORE_ICON};
+  byKey.helper = {key: 'helper', kind: 'helper', name: 'Helper'};
+  byKey.display = {key: 'display', kind: 'display', name: 'Display Properties',
+                   glyph: ['#008080', '#fff', 'M3 4h18v12H3zM8 20h8M12 16v4M6 13l4-4 3 3 2-2 3 3']};
+  APPS.forEach(function (a) { byKey[a.key] = {key: a.key, kind: 'app', name: a.name, img: a.cover, app: a}; });
+
+  var layout = load(LAYOUT_LS, {});
+  if (!layout || typeof layout !== 'object' || Array.isArray(layout)) layout = {};
+  layout.at = layout.at && typeof layout.at === 'object' ? layout.at : {};       // key -> [x, y]
+  layout.added = Array.isArray(layout.added) ? layout.added : [];                  // apps put on the desktop
+  layout.gone = Array.isArray(layout.gone) ? layout.gone : [];                     // icons taken off it
+  layout.rects = layout.rects && typeof layout.rects === 'object' ? layout.rects : {};  // a window's last place
+  function save() { keep(LAYOUT_LS, layout); }
+  var homeApps = [];     // the apps on this account's phone home screen and its stars: on the desktop too
+
+  function onDesk() {
+    var keys = TABS.map(function (t) { return t.key; }).concat(['store', 'helper']);
+    homeApps.concat(layout.added).forEach(function (k) { if (byKey[k] && keys.indexOf(k) < 0) keys.push(k); });
+    return keys.filter(function (k) { return layout.gone.indexOf(k) < 0; });
+  }
+
+  function glyphHtml(g, size) {
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="' + g[2]
+      + '" stroke="' + g[1] + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+  function iconHtml(it) {
+    if (it.kind === 'helper') {
+      var face = document.getElementById('arc-bot-face');
+      return '<span class="dk-robot">' + (face ? face.innerHTML : '') + '</span>';
+    }
+    if (it.img) return '<img src="' + esc(it.img) + '" alt="" draggable="false">';
+    if (it.glyph) return '<span class="dk-glyph" style="background:' + it.glyph[0] + '">' + glyphHtml(it.glyph, 24) + '</span>';
+    return '<span class="dk-glyph" style="background:#6b4fa0"><span class="dk-letter">' + esc((it.name || '?').slice(0, 2)) + '</span></span>';
+  }
+  function smallIcon(it) {
+    if (!it) return '<span class="dk-tglyph"></span>';
+    if (it.img) return '<img src="' + esc(it.img) + '" alt="">';
+    if (it.glyph) return '<span class="dk-tglyph" style="background:' + it.glyph[0] + '">' + glyphHtml(it.glyph, 12) + '</span>';
+    if (it.kind === 'helper') return '<span class="dk-tglyph" style="background:#1f2933"></span>';
+    return '<span class="dk-tglyph" style="background:#6b4fa0"></span>';
+  }
+
+  // ---------- the icons: anywhere on the desktop, kept where they are dropped ----------
+  function deskW() { return dk.clientWidth; }
+  function deskH() { return dk.clientHeight; }
+  function freeCells(taken) {
+    var rows = Math.max(1, Math.floor((deskH() - TOP) / CELL_H)), out = [];
+    for (var c = 0; c < 60; c++) for (var r = 0; r < rows; r++) {
+      var x = LEFT + c * CELL_W, y = TOP + r * CELL_H, hit = taken.some(function (p) {
+        return Math.abs(p[0] - x) < CELL_W - 10 && Math.abs(p[1] - y) < CELL_H - 10; });
+      if (!hit) out.push([x, y]);
+    }
+    return out;
+  }
+  function clampAt(p) {
+    return [Math.max(0, Math.min(p[0], deskW() - CELL_W)), Math.max(TOP - 4, Math.min(p[1], deskH() - CELL_H))];
+  }
+  var badges = {};
+  function drawIcons() {
+    var keys = onDesk(), placed = [];
+    keys.forEach(function (k) { if (Array.isArray(layout.at[k])) placed.push(clampAt(layout.at[k])); });
+    var free = freeCells(placed), sel = (iconsEl.querySelector('.dk-icon.sel') || {}).dataset;
+    iconsEl.innerHTML = '';
+    keys.forEach(function (k) {
+      var it = byKey[k], at = Array.isArray(layout.at[k]) ? clampAt(layout.at[k]) : (free.shift() || [LEFT, TOP]);
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'dk-icon'; b.dataset.key = k; b.setAttribute('role', 'option');
+      b.style.left = at[0] + 'px'; b.style.top = at[1] + 'px';
+      b.title = it.name;
+      var n = it.href ? badges[it.href] : 0;
+      b.innerHTML = '<span class="dk-ico">' + iconHtml(it) + (n ? '<span class="dk-badge">' + (n > 99 ? '99+' : n) + '</span>' : '')
+        + '</span><span class="dk-lab">' + esc(it.name) + '</span>';
+      if (sel && sel.key === k) b.classList.add('sel');
+      iconsEl.appendChild(b);
+    });
+  }
+  function select(b) {
+    iconsEl.querySelectorAll('.dk-icon.sel').forEach(function (x) { if (x !== b) x.classList.remove('sel'); });
+    if (b) { b.classList.add('sel'); b.focus({preventScroll: true}); }
+  }
+  var press = null;
+  // The empty desktop: a click there clears the selection.
+  dk.addEventListener('pointerdown', function (e) {
+    if (e.target.closest('.dk-icon') || e.target.closest('.dk-win') || e.target.closest('.dk-toggle')) return;
+    hideMenus(); select(null);
+  });
+  iconsEl.addEventListener('pointerdown', function (e) {
+    var b = e.target.closest('.dk-icon');
+    hideMenus();
+    if (!b) return;
+    if (e.button !== 0) { select(b); return; }
+    select(b);
+    press = {b: b, id: e.pointerId, x: e.clientX, y: e.clientY, ox: parseFloat(b.style.left), oy: parseFloat(b.style.top), moved: false};
+    try { b.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  iconsEl.addEventListener('pointermove', function (e) {
+    if (!press || e.pointerId !== press.id) return;
+    var dx = e.clientX - press.x, dy = e.clientY - press.y;
+    if (!press.moved && Math.abs(dx) + Math.abs(dy) < 5) return;
+    press.moved = true; press.b.classList.add('drag');
+    var at = clampAt([press.ox + dx, press.oy + dy]);
+    press.b.style.left = at[0] + 'px'; press.b.style.top = at[1] + 'px';
+  });
+  function endIconPress(e) {
+    if (!press || (e && e.pointerId !== press.id)) return;
+    var p = press; press = null;
+    p.b.classList.remove('drag');
+    if (p.moved) {
+      layout.at[p.b.dataset.key] = [Math.round(parseFloat(p.b.style.left)), Math.round(parseFloat(p.b.style.top))];
+      save();
+    }
+  }
+  iconsEl.addEventListener('pointerup', endIconPress);
+  iconsEl.addEventListener('pointercancel', endIconPress);
+  iconsEl.addEventListener('dblclick', function (e) {
+    var b = e.target.closest('.dk-icon'); if (b) openKey(b.dataset.key);
+  });
+  iconsEl.addEventListener('keydown', function (e) {
+    var b = e.target.closest('.dk-icon'); if (!b) return;
+    if (e.key === 'Enter') { e.preventDefault(); openKey(b.dataset.key); }
+    if (e.key === 'Delete' && byKey[b.dataset.key].kind === 'app') removeIcon(b.dataset.key);
+  });
+  iconsEl.addEventListener('click', function (e) { if (e.target.closest('.dk-icon')) e.preventDefault(); });
+  function arrange() {
+    layout.at = {}; save(); drawIcons();
+  }
+  function removeIcon(k) {
+    if (layout.gone.indexOf(k) < 0) layout.gone.push(k);
+    layout.added = layout.added.filter(function (x) { return x !== k; });
+    delete layout.at[k]; save(); drawIcons();
+  }
+  function putOnDesk(k) {
+    layout.gone = layout.gone.filter(function (x) { return x !== k; });
+    if (layout.added.indexOf(k) < 0 && homeApps.indexOf(k) < 0) layout.added.push(k);
+    save(); drawIcons();
+    say((byKey[k] || {}).name + ' is on the desktop.');
+  }
+
+  // ---------- windows: moved by the title bar, sized from any edge, kept running when minimized ----------
+  var wins = [], zTop = 10, opened = 0;
+  function openKey(k) {
+    var it = byKey[k]; if (!it) return;
+    hideMenus();
+    if (it.kind === 'helper') {
+      var bot = document.getElementById('arc-bot');
+      if (!bot || bot.style.display === 'none') { say('The helper is not on this arcade right now.'); return; }
+      bot.click(); return;
+    }
+    if (it.kind === 'display') { openDisplay(); return; }
+    if (it.kind === 'app') openWin({key: k, url: it.app.open, name: it.name, item: it});
+    else openWin({key: k, url: it.href, name: it.name, item: it});
+  }
+  function defaultRect(o) {
+    var W = deskW(), H = deskH(), n = opened++ % 8;
+    var w = Math.min(o.w || 980, W - 40), h = Math.min(o.h || 680, H - 30);
+    var x = Math.max(0, Math.min(120 + n * 26, W - w)), y = Math.max(0, Math.min(16 + n * 26, H - h));
+    if (o.center) { x = Math.round((W - w) / 2); y = Math.max(0, Math.round((H - h) / 2.4)); }
+    return {x: x, y: y, w: w, h: h};
+  }
+  function fitRect(r) {
+    var W = deskW(), H = deskH();
+    var w = Math.max(240, Math.min(r.w, W)), h = Math.max(150, Math.min(r.h, H));
+    return {x: Math.max(60 - w, Math.min(r.x, W - 60)), y: Math.max(0, Math.min(r.y, H - 24)), w: w, h: h};
+  }
+  function place(w) {
+    var r = w.max ? {x: 0, y: 0, w: deskW(), h: deskH()} : w.rect;
+    w.el.style.left = r.x + 'px'; w.el.style.top = r.y + 'px'; w.el.style.width = r.w + 'px'; w.el.style.height = r.h + 'px';
+  }
+  var TB_ICONS = {
+    min: '<svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><rect x="1" y="6" width="6" height="2" fill="#000"/></svg>',
+    max: '<svg width="9" height="9" viewBox="0 0 9 9" aria-hidden="true"><path d="M0 0h9v9H0zM1 2v6h7V2z" fill="#000" fill-rule="evenodd"/></svg>',
+    restore: '<svg width="9" height="9" viewBox="0 0 9 9" aria-hidden="true"><path d="M2 0h7v6H7V2H2zM0 3h7v6H0zM1 5v3h5V5z" fill="#000" fill-rule="evenodd"/></svg>',
+    close: '<svg width="8" height="7" viewBox="0 0 8 7" aria-hidden="true"><path d="M0 0h2l2 2 2-2h2L5 3.5 8 7H6L4 5 2 7H0l3-3.5z" fill="#000"/></svg>'
+  };
+  function openWin(o) {
+    var w = wins.filter(function (x) { return x.key === o.key; })[0];
+    if (w) { if (w.min) restore(w); focus(w); return w; }
+    if (wins.length >= MOST) {
+      var old = wins.filter(function (x) { return x.min; })[0] || wins[0];
+      say(old.name + ' was closed to make room (' + MOST + ' windows at most).');
+      closeWin(old);
+    }
+    var el = document.createElement('div');
+    el.className = 'dk-win'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', o.name);
+    el.innerHTML = '<div class="dk-title">' + smallIcon(o.item) + '<span class="dk-tname"></span>'
+      + (o.body ? '' : '<button type="button" class="w98-btn dk-tbtn" data-a="min" aria-label="Minimize">' + TB_ICONS.min + '</button>'
+      + '<button type="button" class="w98-btn dk-tbtn" data-a="max" aria-label="Maximize">' + TB_ICONS.max + '</button>')
+      + '<button type="button" class="w98-btn dk-tbtn" data-a="close" aria-label="Close">' + TB_ICONS.close + '</button></div>'
+      + '<div class="dk-body' + (o.body ? ' plain' : '') + '"></div>'
+      + (o.body ? '' : ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map(function (d) { return '<div class="dk-rz" data-d="' + d + '"></div>'; }).join(''));
+    w = {key: o.key, el: el, name: o.name, item: o.item || {name: o.name}, min: false, max: false, dialog: !!o.body,
+         timeout: o.item && o.item.app && typeof o.item.app.timeout === 'number' ? o.item.app.timeout : null};
+    w.rect = fitRect(!o.body && layout.rects[o.key] ? layout.rects[o.key] : defaultRect(o));
+    el.querySelector('.dk-tname').textContent = o.name;
+    var body = el.querySelector('.dk-body');
+    if (o.body) body.appendChild(o.body);
+    else {
+      var f = document.createElement('iframe');
+      f.src = o.url; f.title = o.name;
+      f.setAttribute('allow', 'camera; microphone; autoplay; fullscreen; clipboard-write; screen-wake-lock');
+      f.addEventListener('load', function () { framed(w); });
+      body.appendChild(f);
+      w.frame = f;
+    }
+    winsEl.appendChild(el);
+    wins.push(w);
+    wireWin(w);
+    place(w); focus(w); paintTask();
+    return w;
+  }
+  // A page inside: its own title on the bar, and a click anywhere in it brings its window to the front.
+  function framed(w) {
+    try {
+      var doc = w.frame.contentDocument, t = (doc.title || '').replace(new RegExp('\\s*·\\s*' + BRAND.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'), '');
+      if (t && !w.dialog) { w.name = t; w.el.querySelector('.dk-tname').textContent = t; w.el.setAttribute('aria-label', t); paintTask(); }
+      doc.addEventListener('pointerdown', function () { focus(w); }, true);
+      doc.addEventListener('focusin', function () { focus(w); }, true);
+    } catch (e) {}
+  }
+  function wireWin(w) {
+    var el = w.el, title = el.querySelector('.dk-title');
+    el.addEventListener('pointerdown', function () { focus(w); hideMenus(); }, true);
+    title.addEventListener('dblclick', function (e) { if (!e.target.closest('button') && !w.dialog) toggleMax(w); });
+    title.addEventListener('click', function (e) {
+      var a = e.target.closest('button[data-a]'); if (!a) return;
+      if (a.dataset.a === 'min') minimize(w);
+      else if (a.dataset.a === 'max') toggleMax(w);
+      else closeWin(w);
+    });
+    title.addEventListener('contextmenu', function (e) { e.preventDefault(); winMenu(w, e.clientX, e.clientY); });
+    drag(title, function (e) { return !e.target.closest('button') && !w.max; }, function (dx, dy, s) {
+      w.rect = fitRect({x: s.x + dx, y: s.y + dy, w: s.w, h: s.h}); place(w);
+    }, w);
+    el.querySelectorAll('.dk-rz').forEach(function (h) {
+      var d = h.dataset.d;
+      drag(h, function () { return !w.max; }, function (dx, dy, s) {
+        var r = {x: s.x, y: s.y, w: s.w, h: s.h};
+        if (d.indexOf('e') >= 0) r.w = Math.max(240, s.w + dx);
+        if (d.indexOf('s') >= 0) r.h = Math.max(150, s.h + dy);
+        if (d.indexOf('w') >= 0) { r.w = Math.max(240, s.w - dx); r.x = s.x + s.w - r.w; }
+        if (d.indexOf('n') >= 0) { r.h = Math.max(150, s.h - dy); r.y = Math.max(0, s.y + s.h - r.h); if (r.y === 0) r.h = s.y + s.h; }
+        w.rect = r; place(w);
+      }, w);
+    });
+  }
+  function drag(handle, ok, move, w) {
+    var s = null;
+    handle.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0 || !ok(e)) return;
+      e.preventDefault();
+      s = {id: e.pointerId, x: e.clientX, y: e.clientY, r: {x: w.rect.x, y: w.rect.y, w: w.rect.w, h: w.rect.h}};
+      try { handle.setPointerCapture(e.pointerId); } catch (err) {}
+      dk.classList.add('moving'); document.body.style.cursor = getComputedStyle(handle).cursor;
+    });
+    handle.addEventListener('pointermove', function (e) {
+      if (!s || e.pointerId !== s.id) return;
+      move(e.clientX - s.x, e.clientY - s.y, s.r);
+    });
+    function end(e) {
+      if (!s || e.pointerId !== s.id) return;
+      s = null; dk.classList.remove('moving'); document.body.style.cursor = '';
+      if (!w.dialog) { layout.rects[w.key] = w.rect; save(); }
+    }
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  }
+  function focus(w) {
+    if (!w || w.min) return;
+    if (front() !== w) w.el.style.zIndex = ++zTop;
+    wins.forEach(function (x) { x.el.classList.toggle('on', x === w); });
+    w.z = zTop;
+    paintTask();
+  }
+  function front() {
+    var up = wins.filter(function (x) { return !x.min; }).sort(function (a, b) { return (b.z || 0) - (a.z || 0); });
+    return up[0] && up[0].el.classList.contains('on') ? up[0] : null;
+  }
+  // Told to an app inside (arcade.app, /r/app.js), as the home screen tells it (home.html).
+  function tell(w, state) {
+    if (!w.frame) return;
+    try {
+      w.frame.contentWindow.postMessage({arcade: 'app', push: true, state: state, timeout: w.timeout,
+                                         closesAt: w.until || null}, location.origin);
+    } catch (e) {}
+  }
+  function minimize(w) {
+    if (w.min) return;
+    w.min = true; w.el.hidden = true; w.el.classList.remove('on');
+    if (typeof w.timeout === 'number') {
+      w.until = Date.now() + w.timeout * 1000;
+      clearTimeout(w.timer);
+      w.timer = setTimeout(function () {
+        if (wins.indexOf(w) >= 0 && w.min) { say(w.name + ' closed after being minimized a while.'); closeWin(w); }
+      }, w.timeout * 1000);
+    }
+    tell(w, 'minimized');
+    var next = wins.filter(function (x) { return !x.min; }).sort(function (a, b) { return (b.z || 0) - (a.z || 0); })[0];
+    if (next) focus(next); else paintTask();
+  }
+  function restore(w) {
+    if (!w.min) return;
+    w.min = false; w.el.hidden = false; w.until = null; clearTimeout(w.timer);
+    tell(w, 'restored');
+  }
+  function toggleMax(w) {
+    w.max = !w.max; w.el.classList.toggle('max', w.max);
+    var b = w.el.querySelector('[data-a="max"]');
+    if (b) { b.innerHTML = w.max ? TB_ICONS.restore : TB_ICONS.max; b.setAttribute('aria-label', w.max ? 'Restore' : 'Maximize'); }
+    place(w);
+  }
+  function closeWin(w) {
+    if (wins.indexOf(w) < 0) return;
+    clearTimeout(w.timer);
+    tell(w, 'closing');
+    w.el.hidden = true;
+    var el = w.el; setTimeout(function () { el.remove(); }, w.frame ? 700 : 0);
+    wins = wins.filter(function (x) { return x !== w; });
+    if (w.onclose) w.onclose();
+    var next = wins.filter(function (x) { return !x.min; }).sort(function (a, b) { return (b.z || 0) - (a.z || 0); })[0];
+    if (next) focus(next); else paintTask();
+  }
+  window.addEventListener('resize', function () {
+    wins.forEach(function (w) { if (!w.max) w.rect = fitRect(w.rect); place(w); });
+    drawIcons();
+  });
+
+  // ---------- the taskbar ----------
+  function paintTask() {
+    var bar = $('dk-tbtns'), on = front();
+    bar.innerHTML = '';
+    wins.forEach(function (w) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'w98-btn dk-tb'; b.setAttribute('aria-pressed', w === on ? 'true' : 'false');
+      b.innerHTML = smallIcon(w.item) + '<span class="dk-tbname"></span>';
+      b.querySelector('.dk-tbname').textContent = w.name; b.title = w.name;
+      b.addEventListener('click', function () {
+        hideMenus();
+        if (w === front()) minimize(w); else { restore(w); focus(w); }
+      });
+      b.addEventListener('contextmenu', function (e) { e.preventDefault(); winMenu(w, e.clientX, e.clientY); });
+      bar.appendChild(b);
+    });
+  }
+  function tick() {
+    var d = new Date(), h = d.getHours(), m = d.getMinutes();
+    $('dk-clock').textContent = ((h % 12) || 12) + ':' + (m < 10 ? '0' : '') + m + ' ' + (h < 12 ? 'AM' : 'PM');
+    $('dk-clock').title = d.toLocaleDateString(undefined, {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'});
+  }
+  tick(); setInterval(tick, 10000);
+  var bellHref = (TABS.filter(function (t) { return /notifications$/.test(t.href); })[0] || {}).href;
+  var mailHref = (TABS.filter(function (t) { return t.href === '/messages' || t.href === '/me/messages'; })[0] || {}).href;
+  function paintTray() {
+    var n = bellHref ? (badges[bellHref] || 0) : 0, m = mailHref ? (badges[mailHref] || 0) : 0;
+    $('dk-bell').hidden = !n; $('dk-bell-n').textContent = n > 99 ? '99+' : (n || '');
+    $('dk-mail').hidden = !m; $('dk-mail-n').textContent = m > 99 ? '99+' : (m || '');
+  }
+  $('dk-bell').addEventListener('click', function () { if (bellHref) openKey('tab:' + bellHref); });
+  $('dk-mail').addEventListener('click', function () { if (mailHref) openKey('tab:' + mailHref); });
+  function pollBadges() {
+    fetch('/account/badges', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || typeof j !== 'object') return;
+        var was = JSON.stringify(badges); badges = j;
+        if (JSON.stringify(badges) !== was) { drawIcons(); paintTray(); }
+      }).catch(function () {});
+  }
+  setInterval(pollBadges, 45000);
+  window.addEventListener('focus', pollBadges);
+
+  // ---------- menus: Start, its cascades, and right clicks ----------
+  function hideMenus() {
+    ['dk-startmenu', 'dk-sub', 'dk-ctx'].forEach(function (id) { $(id).hidden = true; });
+    $('dk-start').classList.remove('down'); $('dk-start').setAttribute('aria-expanded', 'false');
+  }
+  function menuItem(o) {
+    if (o.hr) return '<div class="dk-hr" role="separator"></div>';
+    return '<button type="button" class="dk-mi' + (o.def ? ' def' : '') + '" role="menuitem" data-k="' + esc(o.k) + '"'
+      + (o.sub ? ' aria-haspopup="menu"' : '') + (o.off ? ' disabled' : '') + '>'
+      + (o.icon !== undefined ? '<span class="dk-mico">' + o.icon + '</span>' : '')
+      + '<span>' + esc(o.label) + '</span>' + (o.sub ? '<span class="dk-arrow">&#9654;</span>' : '') + '</button>';
+  }
+  function showMenu(el, items, x, y, run) {
+    el.innerHTML = items.map(menuItem).join('');
+    el.hidden = false;
+    var w = el.offsetWidth, h = el.offsetHeight;
+    el.style.left = Math.max(0, Math.min(x, window.innerWidth - w - 2)) + 'px';
+    el.style.top = Math.max(0, Math.min(y, window.innerHeight - h - 2)) + 'px';
+    el.onclick = function (e) {
+      var b = e.target.closest('.dk-mi'); if (!b || b.disabled) return;
+      var k = b.dataset.k; hideMenus(); run(k);
+    };
+  }
+  var START = [
+    {k: 'sub:programs', label: 'Programs', sub: true, icon: smallIcon({img: STORE_ICON})},
+    {k: 'sub:pages', label: 'Pages', sub: true, icon: smallIcon(byKey[(TABS[0] || {}).key])},
+    {hr: true},
+    {k: 'store', label: 'App Store', icon: smallIcon(byKey.store)},
+    {k: 'helper', label: 'Helper', icon: smallIcon(byKey.helper)},
+    {k: 'display', label: 'Display Properties…', icon: smallIcon(byKey.display)},
+    {k: 'arrange', label: 'Arrange Icons', icon: '<span class="dk-tglyph"></span>'},
+    {hr: true},
+    {k: 'exit', label: 'Exit Desktop View…', icon: '<span class="dk-tglyph" style="background:#c00">' + glyphHtml(['', '#fff', 'M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0'], 12) + '</span>'}
+  ];
+  function runStart(k) {
+    if (k === 'arrange') arrange();
+    else if (k === 'exit') leave();
+    else openKey(k);
+  }
+  $('dk-start').addEventListener('click', function (e) {
+    e.stopPropagation();
+    var m = $('dk-startmenu');
+    if (!m.hidden) { hideMenus(); return; }
+    hideMenus();
+    m.hidden = false;
+    $('dk-items').innerHTML = START.map(menuItem).join('');
+    $('dk-start').classList.add('down'); $('dk-start').setAttribute('aria-expanded', 'true');
+  });
+  function subItems(which) {
+    if (which === 'pages') return TABS.map(function (t) { return {k: t.key, label: t.name, icon: smallIcon(byKey[t.key])}; });
+    if (!APPS.length) return [{k: 'none', label: '(No apps yet)', off: true}];
+    return APPS.map(function (a) { return {k: a.key, label: a.name, icon: smallIcon(byKey[a.key])}; });
+  }
+  function openSub(b) {
+    var which = b.dataset.k.slice(4), r = b.getBoundingClientRect(), sub = $('dk-sub');
+    $('dk-items').querySelectorAll('.dk-mi.hot').forEach(function (x) { x.classList.remove('hot'); });
+    b.classList.add('hot');
+    showMenu(sub, subItems(which), r.right - 3, r.top - 3, function (k) { openKey(k); });
+    sub.dataset.which = which;
+    sub.style.top = Math.max(0, Math.min(r.top - 3, window.innerHeight - 32 - sub.offsetHeight)) + 'px';
+  }
+  $('dk-items').addEventListener('mouseover', function (e) {
+    var b = e.target.closest('.dk-mi'); if (!b) return;
+    if (b.dataset.k.indexOf('sub:') === 0) { if (!b.classList.contains('hot')) openSub(b); }
+    else { $('dk-sub').hidden = true; $('dk-items').querySelectorAll('.dk-mi.hot').forEach(function (x) { x.classList.remove('hot'); }); }
+  });
+  $('dk-items').addEventListener('click', function (e) {
+    var b = e.target.closest('.dk-mi'); if (!b) return;
+    e.stopPropagation();
+    if (b.dataset.k.indexOf('sub:') === 0) { openSub(b); return; }
+    var k = b.dataset.k; hideMenus(); runStart(k);
+  });
+  // A program in the Start menu: right click to put it on the desktop.
+  $('dk-sub').addEventListener('contextmenu', function (e) {
+    var b = e.target.closest('.dk-mi'); e.preventDefault(); if (!b || !byKey[b.dataset.k]) return;
+    var k = b.dataset.k, here = onDesk().indexOf(k) >= 0;
+    $('dk-ctx').hidden = true;
+    showMenu($('dk-ctx'), [{k: 'open', label: 'Open', def: true}, {k: 'put', label: here ? 'On the desktop' : 'Put on desktop', off: here}],
+             e.clientX, e.clientY, function (a) { if (a === 'open') openKey(k); else putOnDesk(k); });
+    $('dk-sub').hidden = false;
+  });
+  document.addEventListener('pointerdown', function (e) {
+    if (e.target.closest('.dk-menu') || e.target.closest('#dk-start')) return;
+    hideMenus();
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideMenus(); });
+  // Right click: the desktop, an icon.
+  dk.addEventListener('contextmenu', function (e) {
+    if (e.target.closest('.dk-win')) return;
+    e.preventDefault();
+    hideMenus();
+    var b = e.target.closest('.dk-icon');
+    if (b) {
+      var k = b.dataset.k || b.dataset.key, it = byKey[k];
+      select(b);
+      showMenu($('dk-ctx'), [{k: 'open', label: 'Open', def: true}, {hr: true},
+                             {k: 'remove', label: 'Remove from desktop', off: it.kind !== 'app'}],
+               e.clientX, e.clientY, function (a) { if (a === 'open') openKey(k); else removeIcon(k); });
+      return;
+    }
+    showMenu($('dk-ctx'), [{k: 'arrange', label: 'Arrange Icons'}, {k: 'refresh', label: 'Refresh'}, {hr: true},
+                           {k: 'store', label: 'App Store…'}, {k: 'display', label: 'Properties', def: true}],
+             e.clientX, e.clientY, function (a) {
+               if (a === 'arrange') arrange(); else if (a === 'refresh') { drawIcons(); pollBadges(); loadWallpaper(); }
+               else openKey(a);
+             });
+  });
+  function winMenu(w, x, y) {
+    hideMenus();
+    showMenu($('dk-ctx'), [{k: 'restore', label: 'Restore', off: !w.min && !w.max},
+                           {k: 'min', label: 'Minimize', off: w.min || w.dialog},
+                           {k: 'max', label: 'Maximize', off: w.max || w.dialog}, {hr: true},
+                           {k: 'close', label: 'Close', def: true}], x, y, function (a) {
+      if (a === 'restore') { if (w.min) restore(w); else if (w.max) toggleMax(w); focus(w); }
+      else if (a === 'min') minimize(w);
+      else if (a === 'max') { restore(w); if (!w.max) toggleMax(w); focus(w); }
+      else closeWin(w);
+    });
+  }
+
+  // ---------- the wallpaper: any inscription (/account/deskbg) ----------
+  var paper = {id: '', fit: 'fill'};
+  // What an inscription is, from its first bytes' headers (/content takes no HEAD): a picture is drawn as the
+  // wallpaper; anything else runs in a sandboxed frame that never takes a click.
+  var kinds = {};
+  function kindOf(id) {
+    if (kinds[id]) return kinds[id];
+    var ctl = window.AbortController ? new AbortController() : null;
+    kinds[id] = fetch('/content/' + id, {credentials: 'same-origin', signal: ctl ? ctl.signal : undefined}).then(function (r) {
+      var t = (r.headers.get('content-type') || '').toLowerCase();
+      if (ctl) ctl.abort();
+      if (!r.ok) return 'none';
+      return t.indexOf('image/') === 0 ? 'image' : 'page';
+    }).catch(function () { return 'page'; });
+    return kinds[id];
+  }
+  function paint(el, p, frameCls) {
+    el.style.backgroundImage = ''; el.className = el.className.replace(/\b(fill|stretch|center|tile|px)\b/g, '').trim();
+    el.querySelectorAll('iframe').forEach(function (f) { f.remove(); });
+    if (!p.id) return Promise.resolve();
+    var asked = p.id;
+    return kindOf(p.id).then(function (k) {
+      if (el.dataset.want !== asked) return;
+      if (k === 'image') {
+        el.classList.add(p.fit || 'fill');
+        el.style.backgroundImage = 'url("/content/' + p.id + '")';
+        var img = new Image();
+        img.onload = function () { if (img.naturalWidth && img.naturalWidth < 300 && el.dataset.want === asked) el.classList.add('px'); };
+        img.src = '/content/' + p.id;
+      } else if (k === 'page') {
+        var f = document.createElement('iframe');
+        f.src = '/content/' + p.id; f.setAttribute('sandbox', 'allow-scripts'); f.setAttribute('tabindex', '-1');
+        f.setAttribute('aria-hidden', 'true'); f.title = '';
+        el.appendChild(f);
+      }
+    });
+  }
+  function drawWallpaper(p) {
+    paper = {id: ID.test(p.id || '') ? p.id : '', fit: p.fit || 'fill'};
+    var bg = $('dk-bg'); bg.dataset.want = paper.id;
+    paint(bg, paper);
+  }
+  function loadWallpaper() {
+    drawWallpaper(load(BG_LS, {id: '', fit: 'fill'}) || {});
+    fetch('/account/deskbg', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || WHO === 'guest') return;
+        keep(BG_LS, j);
+        if (j.id !== paper.id || j.fit !== paper.fit) drawWallpaper(j);
+      }).catch(function () {});
+  }
+  function saveWallpaper(p) {
+    keep(BG_LS, p); drawWallpaper(p);
+    if (WHO === 'guest') return Promise.resolve('Kept in this browser. Sign in to keep it for your account.');
+    return fetch('/account/deskbg', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                                     body: JSON.stringify(p)})
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || 'not saved'); return ''; }); })
+      .catch(function (e) { return 'Kept in this browser only: ' + (e.message || e); });
+  }
+
+  // Display Properties: pick from your own inscriptions, any chain's pictures, or paste an id.
+  var dispWin = null;
+  function openDisplay() {
+    if (dispWin && wins.indexOf(dispWin) >= 0) { focus(dispWin); return; }
+    var root = $('dk-display-t').content.firstElementChild.cloneNode(true);
+    var q = function (s) { return root.querySelector(s); };
+    var pick = {id: paper.id, fit: paper.fit};
+    var shot = q('.dp-shot'), fitSel = q('.dp-fit');
+    fitSel.value = pick.fit;
+    function preview() {
+      shot.dataset.want = pick.id;
+      paint(shot, pick);
+      q('.dp-name').textContent = pick.id ? pick.id.slice(0, 10) + '…' + pick.id.slice(-8) : '(None)';
+      q('.dp-name').title = pick.id;
+      root.querySelectorAll('.dp-th').forEach(function (t) { t.classList.toggle('on', t.dataset.id === pick.id); });
+    }
+    function choose(id) { pick.id = id; preview(); }
+    function thumb(id, type) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'dp-th'; b.dataset.id = id; b.title = id;
+      var showPage = function () {
+        b.innerHTML = '';
+        var f = document.createElement('iframe'); f.src = '/content/' + id; f.setAttribute('sandbox', 'allow-scripts');
+        f.setAttribute('tabindex', '-1'); f.setAttribute('loading', 'lazy'); f.title = ''; b.appendChild(f);
+      };
+      if (type && type.indexOf('image/') !== 0) showPage();
+      else {
+        var img = document.createElement('img'); img.alt = ''; img.loading = 'lazy'; img.src = '/content/' + id;
+        img.onerror = showPage; b.appendChild(img);
+      }
+      b.addEventListener('click', function () { choose(id); });
+      b.addEventListener('dblclick', function () { choose(id); apply(true); });
+      if (id === pick.id) b.classList.add('on');
+      return b;
+    }
+    // Tabs
+    root.querySelectorAll('.dp-tabs button').forEach(function (t) {
+      t.addEventListener('click', function () {
+        root.querySelectorAll('.dp-tabs button').forEach(function (x) { x.setAttribute('aria-selected', x === t ? 'true' : 'false'); });
+        root.querySelectorAll('.dp-pane').forEach(function (p) { p.hidden = p.dataset.pane !== t.dataset.tab; });
+        if (t.dataset.tab === 'browse' && !q('.dp-browse').children.length) browse(true);
+      });
+    });
+    // Mine: every ord chain this arcade reads, the account's own coins that hold an inscription.
+    (function mine() {
+      var grid = q('.dp-mine'), note = q('.dp-mine-note'), found = 0, left = NETS.length, seen = {};
+      if (WHO === 'guest' || OPERATOR) {
+        note.textContent = OPERATOR ? 'This is the arcade’s own view: pick from Browse, or paste an id.'
+                                    : 'Sign in to see your own inscriptions here. Browse and By ID work for anybody.';
+        return;
+      }
+      if (!left) { note.textContent = 'This arcade reads no inscriptions.'; return; }
+      NETS.forEach(function (n) {
+        fetch('/account/doginals?chain=' + encodeURIComponent(n.net), {credentials: 'same-origin', cache: 'no-store'})
+          .then(function (r) { return r.ok ? r.json() : {doginals: []}; })
+          .then(function (j) {
+            (j.doginals || []).forEach(function (d) {
+              (d.inscriptions || []).forEach(function (id) {
+                if (!ID.test(id || '') || seen[id]) return;
+                seen[id] = true; found++; grid.appendChild(thumb(id));
+              });
+            });
+          }).catch(function () {}).then(function () {
+            left--;
+            note.textContent = left ? 'Looking for your inscriptions… (' + found + ' so far)'
+              : found ? found + ' inscription' + (found === 1 ? '' : 's') + ' in your wallet. Click one to see it on the screen above.'
+              : 'No inscriptions in your wallet yet. Try Browse, or paste an id.';
+          });
+      });
+    })();
+    // Browse: any picture inscribed on a chain, oldest first, a page at a time.
+    var netSel = q('.dp-net'), after = null;
+    NETS.forEach(function (n) { var o = document.createElement('option'); o.value = n.net; o.textContent = n.label; netSel.appendChild(o); });
+    function browse(fresh) {
+      var grid = q('.dp-browse'), note = q('.dp-browse-note');
+      if (fresh) { grid.innerHTML = ''; after = null; }
+      if (!netSel.value) { note.textContent = 'This arcade reads no inscriptions.'; return; }
+      note.textContent = 'Loading…'; q('.dp-more').disabled = true;
+      fetch('/explore/api/typed?net=' + encodeURIComponent(netSel.value) + '&type=image/' + (after != null ? '&after=' + after : ''),
+            {credentials: 'same-origin'})
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || 'not available'); return j; }); })
+        .then(function (j) {
+          var rows = ((j.typed || {}).rows) || [];
+          rows.forEach(function (row) { if (ID.test(row.id || '')) grid.appendChild(thumb(row.id, row.content_type)); });
+          if (rows.length) after = rows[rows.length - 1].number;
+          note.textContent = rows.length ? grid.children.length + ' pictures' : (grid.children.length ? 'That is all of them.' : 'No pictures on this chain yet.');
+          q('.dp-more').disabled = !rows.length;
+        }).catch(function (e) { note.textContent = String(e.message || e); q('.dp-more').disabled = false; });
+    }
+    netSel.addEventListener('change', function () { browse(true); });
+    q('.dp-more').addEventListener('click', function () { browse(false); });
+    // By ID
+    function tryId() {
+      var id = q('.dp-idbox').value.trim().toLowerCase(), err = q('.dp-iderr');
+      if (!ID.test(id)) { err.textContent = 'That is not an inscription id (64 hex characters, i, a number).'; err.hidden = false; return; }
+      err.hidden = true; choose(id);
+    }
+    q('.dp-try').addEventListener('click', tryId);
+    q('.dp-idbox').addEventListener('keydown', function (e) { if (e.key === 'Enter') tryId(); });
+    if (pick.id) q('.dp-idbox').value = pick.id;
+    fitSel.addEventListener('change', function () { pick.fit = fitSel.value; preview(); });
+    q('.dp-none').addEventListener('click', function () { choose(''); });
+    function apply(close) {
+      var said = q('.dp-said');
+      q('.dp-apply').disabled = true;
+      return saveWallpaper({id: pick.id, fit: pick.fit}).then(function (msg) {
+        q('.dp-apply').disabled = false;
+        said.textContent = msg || ''; said.hidden = !msg;
+        if (close && !msg) closeWin(dispWin);
+      });
+    }
+    q('.dp-ok').addEventListener('click', function () { apply(true); });
+    q('.dp-apply').addEventListener('click', function () { apply(false); });
+    q('.dp-cancel').addEventListener('click', function () { closeWin(dispWin); });
+    dispWin = openWin({key: 'display', name: 'Display Properties', item: byKey.display, body: root, w: 420, h: 560, center: true});
+    preview();
+  }
+
+  // ---------- the pages inside ask for these (base.html, IN THE DESKTOP VIEW) ----------
+  window.arcadeShell = {
+    open: function (url, name) {
+      var u = new URL(url, location.href), path = u.pathname + u.search + u.hash;
+      var app = APPS.filter(function (a) { return a.open === u.pathname; })[0];
+      var tab = TABS.filter(function (t) { return t.href === u.pathname && !u.search; })[0];
+      if (app) openWin({key: app.key, url: path, name: app.name, item: byKey[app.key]});
+      else if (tab) openKey(tab.key);
+      else openWin({key: 'url:' + path, url: path, name: name || 'Page', item: {name: name || 'Page', glyph: ['#808080', '#fff', 'M5 3h10l4 4v14H5zM14 3v5h5']}});
+    },
+    home: function () { wins.forEach(function (w) { if (!w.dialog) minimize(w); }); },
+    leave: function (win) {
+      var w = wins.filter(function (x) { return x.frame && x.frame.contentWindow === win; })[0];
+      if (w) closeWin(w);
+    },
+    desk: true
+  };
+
+  // ---------- off: back to the website, at the page in front ----------
+  function leave() {
+    try { localStorage.removeItem('arcade.deskview'); } catch (e) {}
+    var to = '/', w = front();
+    try { if (w && w.frame) to = w.frame.contentWindow.location.pathname + w.frame.contentWindow.location.search; } catch (e) {}
+    location.href = to;
+  }
+  $('dk-toggle').addEventListener('click', leave);
+
+  // ---------- start ----------
+  function boot() {
+    try { localStorage.setItem('arcade.deskview', '1'); } catch (e) {}
+    loadWallpaper();
+    drawIcons();
+    var m = /^#open=(.+)$/.exec(location.hash);
+    if (m) {
+      history.replaceState(null, '', '/desktop');
+      var url = '/'; try { url = decodeURIComponent(m[1]); } catch (e) {}
+      if (url.charAt(0) === '/' && url.charAt(1) !== '/' && url !== '/' && url !== '/desktop') window.arcadeShell.open(url);
+    }
+    pollBadges();
+    if (WHO !== 'guest') {
+      // The apps already on this account's phone home screen, and its stars, are on the desktop too.
+      fetch('/account/homeapps', {cache: 'no-store', credentials: 'same-origin'}).then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;
+          var keys = [];
+          (d.pages || []).forEach(function (pg) {
+            (Array.isArray(pg) ? pg : []).forEach(function (it) {
+              if (typeof it === 'string') keys.push(it);
+              else if (it && Array.isArray(it.apps)) keys = keys.concat(it.apps);
+            });
+          });
+          keys = keys.concat(d.dock || [], d.starred || []);
+          homeApps = keys.filter(function (k) { return typeof k === 'string' && k.indexOf('app:') === 0 && byKey[k]; });
+          if (homeApps.length) drawIcons();
+        }).catch(function () {});
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+{% endblock %}

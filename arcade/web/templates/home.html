@@ -272,31 +272,7 @@ body.fullscreen #arc-bot { display: none !important; }
   var OPERATOR = {{ 'true' if operator_view else 'false' }};
   var SAVE_LS = 'arcade.homeapps';
   var STORE_ICON = '/apps/store-icon.png';
-  // Each tab's icon (2026-10-24: "'Your arcade' should have a gear as its icon. I think you can come up with the
-  // idea for the icon for the rest"): a white symbol on its own colour; the page rounds the square.
-  var GEAR = 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z';
-  var GLYPH = {
-    me: ['#636870', '#fff', GEAR],
-    overview: ['#636870', '#fff', OPERATOR ? GEAR : 'M3 11l9-7 9 7M5 10v10h14V10M10 20v-6h4v6'],
-    messages: ['#1f9d55', '#fff', 'M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.6-.8L3 21l1.9-5A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z'],
-    notifications: ['#e5484d', '#fff', 'M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0'],
-    feed: ['#f08c00', '#fff', 'M5 4h14a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM5 14h14a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z'],
-    contacts: ['#9a6b3f', '#fff', 'M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM12 11a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM8.5 16.5a3.5 3.5 0 0 1 7 0M3 7h2M3 12h2M3 17h2'],
-    wallet: ['#d9a520', '#141310', 'M3 7a2 2 0 0 1 2-2h11v4M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2zM16 14.5h.5'],
-    backup: ['#2d7a4f', '#fff', 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3zM8.5 12l2.5 2.5 4.5-5'],
-    create: ['#7a5af5', '#fff', 'M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8L12 3zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15zM5 15l.6 1.4L7 17l-1.4.6L5 19l-.6-1.4L3 17l1.4-.6L5 15z'],
-    exchange: ['#0f8a8a', '#fff', 'M7 4L3 8l4 4M3 8h14M17 12l4 4-4 4M21 16H7'],
-    affiliates: ['#345d9d', '#fff', 'M12 7a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM5 21a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM19 21a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM12 7v4M12 11l-5.2 5.2M12 11l5.2 5.2'],
-    approvals: ['#a8620a', '#fff', 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM8 12l3 3 5-6'],
-    docs: ['#4b5563', '#fff', 'M2 5h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2zM22 5h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z'],
-    accounts: ['#be185d', '#fff', 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21a7 7 0 0 1 14 0M16 3.5a4 4 0 0 1 0 7.5M22 21a7 7 0 0 0-4-6.3'],
-    admin: ['#3a3f47', '#fff', 'M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M14 4v4M8 10v4M16 16v4']
-  };
-  function glyphOf(href) {
-    var k = href === '/me' ? 'me' : (href.replace(/^\/me(?=\/|$)/, '').replace(/^\//, '').split('/')[0] || 'overview');
-    if (k === 'create' || k === 'nfts' || k === 'tokens') k = 'create';
-    return GLYPH[k] || null;
-  }
+  {% include "_tab_glyphs.js.html" %}
   var DOCK_WANT = ['/me', '/', '/messages', '/me/messages', '/feed', '/wallet', '/me/wallet'];
   var dockTabs = [];
   DOCK_WANT.forEach(function (h) {
