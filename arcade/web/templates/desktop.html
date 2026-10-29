@@ -303,6 +303,7 @@ body.fullscreen #arc-bot { display: none !important; }
 .si-ti { display: flex; align-items: center; gap: 4px; width: 100%; padding: 1px 3px !important; border: 0; background: none !important;
   box-shadow: none !important; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
 .si-ti.sub { padding-left: 22px !important; }
+.si-ti { min-height: 0 !important; height: 18px; line-height: 16px; font: inherit; color: #000; }
 .si-ti.on { background: var(--w98-navy) !important; color: #fff !important; }
 .si-box { width: 9px; height: 9px; flex: none; border: 1px solid #808080; background: #fff; color: #000; font-size: 9px;
   line-height: 7px; text-align: center; }
@@ -349,6 +350,7 @@ body.fullscreen #arc-bot { display: none !important; }
 .dp-th.on img { opacity: .75; }
 .dp-coll { height: 84px !important; display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .dp-colls { grid-auto-rows: 84px; }
+.dp-colls .dp-th:not(.dp-coll) { height: 84px !important; }
 .dp-coll img { height: 60px !important; flex: none; }
 .dp-ctxt { height: 60px; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #808080; }
 .dp-cl { width: 100%; font-size: 10px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #000; }
