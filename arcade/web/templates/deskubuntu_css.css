@@ -1,0 +1,63 @@
+/* Every page in a window of the Desktop View in its Ubuntu look (2026-10-28: Themes -> "Ubuntu desktop"): Yaru's light
+   colours, the orange accent, rounded GTK buttons and fields. Loaded by base.html only inside a Desktop View window
+   whose desktop wears this look (html.indesk[data-skin=ubuntu]); the Windows 98 look is desk98.css. An inscribed app draws
+   its own page in a sandbox: only the frame around it is styled here. */
+html.indesk:root, html.indesk:root[data-theme] {
+  --bg: #fafafa; --panel: #ffffff; --fg: #3d3d3d; --muted: #77767b; --line: #e0dcd9;
+  --accent: #e95420; --accent-fg: #fff; --ok: #0e8420; --warn: #c7162b; --bad: #c7162b; --code: #f4f2f1;
+  --sent: #e95420; --sent-fg: #fff;
+  color-scheme: light;
+}
+html.indesk body { background: #fafafa; color: #3d3d3d;
+  font: 14px/1.5 Ubuntu, "Ubuntu Sans", Cantarell, "Noto Sans", "Segoe UI", system-ui, sans-serif; }
+html.indesk main { padding-top: 14px; }
+html.indesk h1, html.indesk h2, html.indesk h3, html.indesk h4 { font-family: inherit; text-transform: none; letter-spacing: normal;
+  font-weight: 500; color: #2b2b2b; }
+html.indesk h1 { font-size: 22px; } html.indesk h2 { font-size: 17px; } html.indesk h3 { font-size: 15px; }
+html.indesk a { color: #e95420; }
+html.indesk .muted, html.indesk small { color: #77767b; }
+
+/* Cards and panels: white, a hairline, rounded. */
+html.indesk .panel, html.indesk .card, html.indesk .tile, html.indesk fieldset, html.indesk details.panel {
+  background: #fff !important; border: 1px solid #e0dcd9 !important; border-radius: 12px !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04) !important; }
+html.indesk .unlockbar, html.indesk .signbar, html.indesk .resetnote { background: #f4f2f1 !important; color: #3d3d3d;
+  border: 0 !important; border-bottom: 1px solid #e0dcd9 !important; box-shadow: none !important; }
+html.indesk .sheet, html.indesk .modal, html.indesk dialog, html.indesk [role="dialog"] { border-radius: 14px !important;
+  background: #fff !important; box-shadow: 0 0 0 1px rgba(0,0,0,.1), 0 12px 32px rgba(0,0,0,.25) !important; }
+
+/* Buttons: GTK's. The ones a page leads with wear the orange. */
+html.indesk button, html.indesk .btn, html.indesk a.btn, html.indesk input[type="button"], html.indesk input[type="submit"],
+html.indesk .pillpick, html.indesk .chip, html.indesk .tabs a, html.indesk .tabs button {
+  border-radius: 6px !important; font-family: inherit !important; text-transform: none !important; letter-spacing: normal !important;
+  transition: background .12s !important; }
+html.indesk button.ghost, html.indesk .btn.ghost, html.indesk .pillpick, html.indesk .chip, html.indesk .tabs a, html.indesk .tabs button,
+html.indesk button.small.ghost {
+  background: #fff !important; color: #3d3d3d !important; border: 1px solid #cdc7c2 !important; box-shadow: 0 1px 1px rgba(0,0,0,.05) !important; }
+html.indesk button.ghost:hover, html.indesk .btn.ghost:hover, html.indesk .pillpick:hover { background: #f4f2f1 !important; }
+html.indesk .pillpick.on, html.indesk .chip.on, html.indesk .tabs .on, html.indesk button.on, html.indesk button[aria-selected="true"] {
+  background: #e95420 !important; color: #fff !important; border-color: #c7461b !important; }
+html.indesk button:focus-visible, html.indesk .btn:focus-visible { outline: 2px solid rgba(233,84,32,.55) !important; outline-offset: 1px; }
+
+/* Fields */
+html.indesk input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="color"]),
+html.indesk select, html.indesk textarea {
+  background: #fff !important; color: #3d3d3d !important; border: 1px solid #cdc7c2 !important; border-radius: 6px !important;
+  box-shadow: none !important; font-family: inherit !important; }
+html.indesk input:focus, html.indesk select:focus, html.indesk textarea:focus {
+  border-color: #e95420 !important; box-shadow: 0 0 0 1px #e95420 !important; outline: none !important; }
+html.indesk input[type="checkbox"], html.indesk input[type="radio"], html.indesk input[type="range"] { accent-color: #e95420; }
+
+/* Lists, code, badges */
+html.indesk table { border-collapse: collapse; }
+html.indesk th { color: #77767b; font-weight: 500; }
+html.indesk td { border-bottom: 1px solid #ebe8e6 !important; }
+html.indesk code, html.indesk pre, html.indesk kbd { background: #f4f2f1 !important; color: #3d3d3d !important; border-radius: 5px !important;
+  font-family: "Ubuntu Mono", "DejaVu Sans Mono", Consolas, monospace !important; }
+html.indesk .pill { border-radius: 999px !important; }
+html.indesk .nav-count, html.indesk .badge { background: #e95420 !important; color: #fff !important; }
+
+/* Scroll bars: thin and rounded, as GNOME draws them. */
+html.indesk * { scrollbar-color: #b8b3af transparent; scrollbar-width: thin; }
+html.indesk ::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+html.indesk ::-webkit-scrollbar-thumb { background: #b8b3af; border-radius: 10px; border: 2px solid #fafafa; }

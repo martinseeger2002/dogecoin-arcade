@@ -16,10 +16,15 @@
 {%- for href, label, chain, built in nav if built and href != '/apps' %}
 {%- set _ = tabs.append({'key': 'tab:' ~ href, 'href': href, 'name': label}) %}
 {%- endfor %}
+{#- The look (Themes on Your arcade, me.html; 2026-10-28: "lets try an ubuntu style one to add to the category"): Windows 98
+    or Ubuntu, kept in this browser. Set before anything is drawn; the pages in the windows read it (base.html). -#}
+<script>
+document.documentElement.setAttribute('data-skin', (function () {
+  try { return localStorage.getItem('arcade.deskview') === 'ubuntu' ? 'ubuntu' : 'w98'; } catch (e) { return 'w98'; }
+})());
+</script>
 <div id="dk" class="dk" tabindex="-1">
   <div class="dk-bg" id="dk-bg"></div>
-  <button type="button" class="dk-toggle w98-btn" id="dk-toggle" aria-pressed="true"
-          title="Back to the normal website"><i aria-hidden="true"></i>Desktop View</button>
   <div class="dk-icons" id="dk-icons" role="listbox" aria-label="Desktop"></div>
   <div class="dk-wins" id="dk-wins"></div>
 </div>
@@ -35,7 +40,17 @@
     <button type="button" class="dk-traybtn" id="dk-mail" title="Messages" hidden>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18v12H3zM3 6l9 7 9-7" stroke="#000" stroke-width="2.2" stroke-linejoin="round"/></svg><span id="dk-mail-n"></span></button>
     <span class="dk-clock" id="dk-clock"></span>
+    <button type="button" class="dk-traybtn dk-sysbtn" id="dk-sys" title="System menu" aria-haspopup="menu">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0M12 19.5h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
   </div>
+</div>
+<nav class="dk-dock" id="dk-dock" aria-label="Dock" hidden></nav>
+<div class="dk-apps" id="dk-apps" hidden>
+  <div class="dk-apps-top"><input type="search" id="dk-apps-q" placeholder="Type to search" aria-label="Search applications" autocomplete="off" spellcheck="false"></div>
+  <div class="dk-apps-body" id="dk-apps-body"></div>
 </div>
 
 <div class="dk-menu dk-startmenu" id="dk-startmenu" role="menu" hidden>
@@ -137,15 +152,6 @@ body.fullscreen #arc-bot { display: none !important; }
 .dk-bg.center { background-size: auto; }
 .dk-bg.tile { background-repeat: repeat; background-position: 0 0; background-size: auto; }
 .dk-bg.px { image-rendering: pixelated; }
-/* The way back, in the top left corner (the same switch every page has; base.html). */
-.dk-toggle { position: absolute; left: 8px; top: 8px; z-index: 2; display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 8px 3px 5px; }
-.dk-toggle i, .deskview i { width: 13px; height: 13px; background: #fff; position: relative; flex: none;
-  box-shadow: inset -1px -1px var(--w98-hi, #fff), inset 1px 1px var(--w98-shadow, #808080),
-              inset -2px -2px var(--w98-light, #dfdfdf), inset 2px 2px var(--w98-dark, #0a0a0a); }
-.dk-toggle[aria-pressed="true"] i::after { content: ""; position: absolute; left: 3px; top: 2px; width: 5px; height: 7px;
-  border: solid #000; border-width: 0 2px 2px 0; transform: rotate(40deg); }
-
 .dk-icons { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .dk-icon { position: absolute; width: 74px; padding: 2px 0; display: flex; flex-direction: column; align-items: center;
   gap: 3px; background: none !important; border: 0; box-shadow: none !important; cursor: default; touch-action: none;
@@ -368,6 +374,141 @@ body.fullscreen #arc-bot { display: none !important; }
 .dp select.w98-field, .dp input.w98-field { width: auto; height: 21px; padding: 1px 4px; font: inherit; color: #000; }
 .dp input.w98-field { flex: 1; min-width: 0; }
 .dp-acts .w98-btn { min-width: 72px; }
+
+/* ===== The Ubuntu look (Themes -> Ubuntu desktop; 2026-10-28): Yaru's colours, the top bar, the dock, rounded windows ===== */
+.dk-sysbtn, .dk-dock, .dk-apps { display: none; }
+[data-skin="ubuntu"] .dk, [data-skin="ubuntu"] .dk-task, [data-skin="ubuntu"] .dk-menu, [data-skin="ubuntu"] .dk-toast,
+[data-skin="ubuntu"] .dk-dock, [data-skin="ubuntu"] .dk-apps {
+  --ub-orange: #e95420; --ub-aubergine: #2c001e; --ub-bar: #1d1d1d; --ub-head: #303030; --ub-line: #cdc7c2;
+  font: 13px/1.4 Ubuntu, "Ubuntu Sans", Cantarell, "Noto Sans", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: auto; }
+[data-skin="ubuntu"] .dk { top: 28px; left: 64px; bottom: 0;
+  background: radial-gradient(120% 120% at 85% 15%, #f0753a 0%, #e95420 18%, #a2305a 45%, #5e2750 70%, #2c001e 100%); }
+/* The top bar */
+[data-skin="ubuntu"] .dk-task { top: 0; bottom: auto; height: 28px; padding: 0 8px; gap: 8px; background: var(--ub-bar); color: #fff;
+  box-shadow: none; justify-content: space-between; }
+[data-skin="ubuntu"] .dk-task .dk-grip, [data-skin="ubuntu"] .dk-tbtns { display: none; }
+[data-skin="ubuntu"] .dk-start { height: 22px; padding: 0 12px !important; background: none !important; box-shadow: none !important;
+  color: #fff !important; border-radius: 999px !important; font-weight: 700; }
+[data-skin="ubuntu"] .dk-start img, [data-skin="ubuntu"] .dk-start b { display: none; }
+[data-skin="ubuntu"] .dk-start::after { content: "Activities"; }
+[data-skin="ubuntu"] .dk-start:hover, [data-skin="ubuntu"] .dk-start.down { background: rgba(255,255,255,.17) !important; }
+[data-skin="ubuntu"] .dk-tray { box-shadow: none; height: 22px; padding: 0; gap: 10px; color: #fff; }
+[data-skin="ubuntu"] .dk-clock { position: fixed; left: 50%; top: 4px; transform: translateX(-50%); font-weight: 700; white-space: pre;
+  min-width: 0; text-align: center; color: #fff; }
+[data-skin="ubuntu"] .dk-traybtn { color: #fff !important; }
+[data-skin="ubuntu"] .dk-traybtn svg path { stroke: #fff; }
+[data-skin="ubuntu"] .dk-traybtn span { color: #fff; }
+[data-skin="ubuntu"] .dk-sysbtn { display: flex; gap: 6px; padding: 2px 8px !important; border-radius: 999px !important; }
+[data-skin="ubuntu"] .dk-sysbtn:hover, [data-skin="ubuntu"] .dk-sysbtn.down { background: rgba(255,255,255,.17) !important; }
+/* The dock */
+[data-skin="ubuntu"] .dk-dock { display: flex; position: fixed; left: 0; top: 28px; bottom: 0; width: 64px; z-index: 9050;
+  flex-direction: column; align-items: center; gap: 4px; padding: 6px 0; background: rgba(23,23,23,.88); overflow-y: auto;
+  scrollbar-width: none; }
+[data-skin="ubuntu"] .dk-dock[hidden] { display: none; }
+.ub-dockbtn { position: relative; width: 56px; height: 52px; padding: 0 !important; border: 0 !important; border-radius: 10px !important;
+  background: none !important; box-shadow: none !important; display: flex; align-items: center; justify-content: center; flex: none; cursor: pointer; }
+.ub-dockbtn:hover, .ub-dockbtn.on { background: rgba(255,255,255,.14) !important; }
+.ub-dockbtn.ub-showapps { margin-top: auto; }
+.ub-run { position: absolute; left: 2px; top: 50%; width: 5px; height: 5px; margin-top: -2.5px; border-radius: 50%; background: var(--ub-orange); }
+.ub-ico { width: 40px; height: 40px; border-radius: 10px; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  flex: none; box-shadow: 0 1px 3px rgba(0,0,0,.35); }
+.ub-ico img { width: 100%; height: 100%; object-fit: cover; }
+.ub-ico .dk-letter { color: #fff; font-weight: 700; font-size: 15px; }
+.ub-ico .dk-robot svg { width: 36px; height: 36px; }
+.ub-dots { background: none; box-shadow: none; display: grid; grid-template-columns: repeat(3, 6px); gap: 5px; justify-content: center; align-content: center; }
+.ub-dots i { width: 6px; height: 6px; border-radius: 50%; background: #fff; }
+/* Show Applications */
+[data-skin="ubuntu"] .dk-apps { display: flex; position: fixed; left: 64px; top: 28px; right: 0; bottom: 0; z-index: 9040;
+  flex-direction: column; align-items: center; background: rgba(28,28,28,.82); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  color: #fff; overflow-y: auto; }
+[data-skin="ubuntu"] .dk-apps[hidden] { display: none; }
+.dk-apps-top { position: sticky; top: 0; padding: 22px 0 8px; width: 100%; display: flex; justify-content: center; }
+.dk-apps-top input { width: min(360px, 80%); height: 34px; border: 0; border-radius: 999px; padding: 0 16px; font: inherit; font-size: 14px;
+  background: rgba(255,255,255,.14); color: #fff; outline: none; box-shadow: none; }
+.dk-apps-top input::placeholder { color: rgba(255,255,255,.65); }
+.dk-apps-top input:focus { box-shadow: 0 0 0 2px var(--ub-orange); }
+.dk-apps-body { width: min(980px, 94%); padding-bottom: 30px; }
+.dk-apps-body h3 { margin: 18px 0 6px 6px; font: inherit; font-size: 13px; font-weight: 700; color: rgba(255,255,255,.7);
+  text-transform: none; letter-spacing: normal; }
+.ub-appgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 6px; }
+.ub-app { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 6px 10px !important; border: 0 !important;
+  border-radius: 14px !important; background: none !important; box-shadow: none !important; color: #fff !important; cursor: pointer; font: inherit; }
+.ub-app:hover, .ub-app:focus-visible { background: rgba(255,255,255,.12) !important; outline: none; }
+.ub-app .ub-ico { width: 64px; height: 64px; border-radius: 16px; }
+.ub-app .ub-ico svg { width: 40px; height: 40px; }
+.ub-applab { max-width: 104px; font-size: 13px; text-align: center; line-height: 1.25; overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.ub-none { text-align: center; color: rgba(255,255,255,.7); margin-top: 40px; }
+/* Desktop icons */
+[data-skin="ubuntu"] .dk-icon { width: 86px; gap: 4px; }
+[data-skin="ubuntu"] .dk-ico, [data-skin="ubuntu"] .dk-ico img, [data-skin="ubuntu"] .dk-ico .dk-glyph { width: 48px; height: 48px; }
+[data-skin="ubuntu"] .dk-ico img, [data-skin="ubuntu"] .dk-ico .dk-glyph { border-radius: 11px !important; box-shadow: 0 2px 5px rgba(0,0,0,.35); image-rendering: auto; }
+[data-skin="ubuntu"] .dk-ico .dk-glyph svg { width: 30px; height: 30px; }
+[data-skin="ubuntu"] .dk-ico .dk-robot svg { width: 44px; height: 44px; }
+[data-skin="ubuntu"] .dk-lab { max-width: 86px; font-size: 12px; text-shadow: 0 1px 2px rgba(0,0,0,.85); border-radius: 5px !important; padding: 1px 4px; }
+[data-skin="ubuntu"] .dk-icon.sel .dk-lab { background: var(--ub-orange); outline: 0; text-shadow: none; }
+[data-skin="ubuntu"] .dk-icon.sel .dk-ico::after { background: var(--ub-orange); opacity: .35; border-radius: 11px !important; }
+[data-skin="ubuntu"] .dk-arrowmark { border-radius: 50% !important; left: -3px; bottom: -3px; }
+[data-skin="ubuntu"] .dk-badge { border-radius: 8px !important; background: var(--ub-orange); }
+/* Windows */
+[data-skin="ubuntu"] .dk-win { padding: 0; border-radius: 12px 12px 0 0 !important; overflow: hidden; background: #fafafa;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.25), 0 10px 30px rgba(0,0,0,.45); }
+[data-skin="ubuntu"] .dk-win.max { border-radius: 0 !important; }
+[data-skin="ubuntu"] .dk-title { height: 38px; padding: 0 6px 0 12px; gap: 6px; background: #ebebeb; color: #3d3d3d; font-weight: 700;
+  border-bottom: 1px solid #d6d1cd; }
+[data-skin="ubuntu"] .dk-win.on .dk-title { background: var(--ub-head); color: #fff; border-bottom-color: #1e1e1e; }
+[data-skin="ubuntu"] .dk-title > img, [data-skin="ubuntu"] .dk-title > .dk-tglyph { display: none; }
+[data-skin="ubuntu"] .dk-tname { text-align: center; color: #555; padding-left: 60px; }
+[data-skin="ubuntu"] .dk-win.on .dk-tname { color: #fff; }
+[data-skin="ubuntu"] .dk-win.dlgwin .dk-tname { padding-left: 0; }
+[data-skin="ubuntu"] .dk-tbtn { width: 24px; height: 24px; border-radius: 50% !important; background: rgba(0,0,0,.08) !important;
+  box-shadow: none !important; margin-left: 6px !important; }
+[data-skin="ubuntu"] .dk-win.on .dk-tbtn { background: rgba(255,255,255,.12) !important; }
+[data-skin="ubuntu"] .dk-tbtn:hover { background: rgba(255,255,255,.25) !important; }
+[data-skin="ubuntu"] .dk-win .dk-tbtn { border: 0 !important; }
+[data-skin="ubuntu"] .dk-win .dk-tbtn[data-a="close"], [data-skin="ubuntu"] .dk-win.on .dk-tbtn[data-a="close"] { background: var(--ub-orange) !important; }
+[data-skin="ubuntu"] .dk-tbtn svg { transform: scale(.9); }
+[data-skin="ubuntu"] .dk-tbtn svg path, [data-skin="ubuntu"] .dk-tbtn svg rect { fill: #3d3d3d; }
+[data-skin="ubuntu"] .dk-win.on .dk-tbtn svg path, [data-skin="ubuntu"] .dk-win.on .dk-tbtn svg rect,
+[data-skin="ubuntu"] .dk-tbtn[data-a="close"] svg path { fill: #fff; }
+[data-skin="ubuntu"] .dk-body { margin: 0; padding: 0; box-shadow: none; background: #fafafa; }
+[data-skin="ubuntu"] .dk-body.plain { padding: 14px; background: #fafafa; color: #3d3d3d; }
+/* Buttons, fields, menus: GTK's */
+[data-skin="ubuntu"] .w98-btn { border-radius: 6px !important; background: #fff; border: 1px solid var(--ub-line) !important;
+  box-shadow: 0 1px 1px rgba(0,0,0,.05) !important; padding: 5px 12px; color: #3d3d3d; }
+[data-skin="ubuntu"] .w98-btn:hover { background: #f4f2f1; }
+[data-skin="ubuntu"] .w98-btn:active, [data-skin="ubuntu"] .w98-btn.down { background: #e5e2e0; box-shadow: none !important; }
+[data-skin="ubuntu"] .dp-ok, [data-skin="ubuntu"] .dlg-ok { background: var(--ub-orange) !important; border-color: #c7461b !important; color: #fff !important; }
+[data-skin="ubuntu"] .w98-field { border-radius: 5px !important; border: 1px solid var(--ub-line) !important; box-shadow: none !important; padding: 4px 8px; }
+[data-skin="ubuntu"] .w98-field:focus { border-color: var(--ub-orange) !important; box-shadow: 0 0 0 1px var(--ub-orange) !important; }
+[data-skin="ubuntu"] .dk-menu { border-radius: 10px !important; padding: 6px; background: #fff; color: #3d3d3d;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.12), 0 8px 24px rgba(0,0,0,.3); }
+[data-skin="ubuntu"] .dk-menu .dk-mi { border-radius: 6px !important; padding: 6px 14px 6px 8px !important; color: #3d3d3d; font-size: 13px; }
+[data-skin="ubuntu"] .dk-menu .dk-mi:hover, [data-skin="ubuntu"] .dk-menu .dk-mi.hot { background: #ececec !important; color: #3d3d3d !important; }
+[data-skin="ubuntu"] .dk-menu .dk-mi .dk-mico img, [data-skin="ubuntu"] .dk-menu .dk-mi .dk-tglyph { border-radius: 4px !important; }
+[data-skin="ubuntu"] .dk-hr { box-shadow: none; height: 1px; background: #e0dcd9; margin: 4px 6px; }
+[data-skin="ubuntu"] .dk-who { margin: -6px -6px 6px; padding: 10px 12px; background: var(--ub-head); border-radius: 10px 10px 0 0 !important; }
+[data-skin="ubuntu"] .dk-whoface { border-radius: 50% !important; background: var(--ub-orange); color: #fff; box-shadow: none; }
+[data-skin="ubuntu"] .dk-banner { display: none; }
+[data-skin="ubuntu"] .dk-toast { top: 36px; bottom: auto; left: 50%; right: auto; transform: translateX(-50%); background: #303030; color: #fff;
+  border: 0; border-radius: 12px !important; padding: 10px 16px; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+/* Dialogs */
+[data-skin="ubuntu"] .dp-tabs { margin-bottom: 0; gap: 2px; padding: 0; justify-content: center; }
+[data-skin="ubuntu"] .dp-tabs button { border-radius: 6px !important; box-shadow: none !important; background: none; padding: 5px 12px; color: #3d3d3d; }
+[data-skin="ubuntu"] .dp-tabs button[aria-selected="true"] { background: #e5e2e0; margin: 0; padding-bottom: 5px; font-weight: 700; }
+[data-skin="ubuntu"] .dp-page { box-shadow: none; border: 1px solid #e0dcd9; border-radius: 10px !important; background: #fff; }
+[data-skin="ubuntu"] .dp-screen { border-radius: 10px 10px 0 0 !important; background: #3d3d3d; box-shadow: none; }
+[data-skin="ubuntu"] .dp-shot { border-radius: 4px !important; box-shadow: none; background-color: #e95420; }
+[data-skin="ubuntu"] .dp-stand { background: #3d3d3d; box-shadow: none; border-radius: 0 0 6px 6px !important; }
+[data-skin="ubuntu"] .dp-grid, [data-skin="ubuntu"] .dlg-list, [data-skin="ubuntu"] .si-tree, [data-skin="ubuntu"] .si-main {
+  border: 1px solid #e0dcd9; border-radius: 8px !important; box-shadow: none; }
+[data-skin="ubuntu"] .dp-th { border-radius: 6px !important; }
+[data-skin="ubuntu"] .dp-th.on { background: var(--ub-orange) !important; border: 1px solid var(--ub-orange); }
+[data-skin="ubuntu"] .si-ti.on { background: var(--ub-orange) !important; border-radius: 5px !important; }
+[data-skin="ubuntu"] .si-table th { background: #f4f2f1; box-shadow: inset 0 -1px #e0dcd9; color: #3d3d3d; }
+[data-skin="ubuntu"] .dlg-item:hover { background: #f4f2f1; }
+[data-skin="ubuntu"] .dlg input[type="checkbox"], [data-skin="ubuntu"] .dp input[type="checkbox"] { accent-color: var(--ub-orange); }
+[data-skin="ubuntu"] .dlg-note, [data-skin="ubuntu"] .dp-note { color: #3d3d3d; font-size: 12px; }
 </style>
 
 <script>
@@ -383,7 +524,10 @@ body.fullscreen #arc-bot { display: none !important; }
   var STORE_ICON = '/apps/store-icon.png';
   var LAYOUT_LS = 'arcade.desktop:' + WHO, BG_LS = 'arcade.deskbg:' + WHO;
   var ID = /^[0-9a-f]{64}i\d{1,6}$/;
-  var CELL_W = 76, CELL_H = 76, TOP = 40, LEFT = 6, MOST = 8;
+  var SKIN = document.documentElement.getAttribute('data-skin') === 'ubuntu' ? 'ubuntu' : 'w98', UB = SKIN === 'ubuntu';
+  var CELL_W = UB ? 88 : 76, CELL_H = UB ? 92 : 76, TOP = 8, LEFT = UB ? 10 : 6, MOST = 8;
+  // The names each look gives the same tools.
+  function L(w98, ubuntu) { return UB ? ubuntu : w98; }
   {% include "_tab_glyphs.js.html" %}
 
   var $ = function (id) { return document.getElementById(id); };
@@ -401,7 +545,7 @@ body.fullscreen #arc-bot { display: none !important; }
   TABS.forEach(function (t) { byKey[t.key] = {key: t.key, kind: 'tab', name: t.name, href: t.href, glyph: glyphOf(t.href)}; });
   byKey.store = {key: 'store', kind: 'store', name: 'App Store', href: '/apps', img: STORE_ICON};
   byKey.helper = {key: 'helper', kind: 'helper', name: 'Helper'};
-  byKey.display = {key: 'display', kind: 'display', name: 'Display Properties',
+  byKey.display = {key: 'display', kind: 'display', name: UB ? 'Background' : 'Display Properties',
                    glyph: ['#008080', '#fff', 'M3 4h18v12H3zM8 20h8M12 16v4M6 13l4-4 3 3 2-2 3 3']};
   APPS.forEach(function (a) { byKey[a.key] = {key: a.key, kind: 'app', name: a.name, img: a.cover, app: a}; });
   // A wallet shortcut for every coin: the Wallet opened on that coin (my_wallet.html, ?coin=).
@@ -506,7 +650,7 @@ body.fullscreen #arc-bot { display: none !important; }
   var press = null;
   // The empty desktop: a click there clears the selection.
   dk.addEventListener('pointerdown', function (e) {
-    if (e.target.closest('.dk-icon') || e.target.closest('.dk-win') || e.target.closest('.dk-toggle')) return;
+    if (e.target.closest('.dk-icon') || e.target.closest('.dk-win')) return;
     hideMenus(); select(null);
   });
   iconsEl.addEventListener('pointerdown', function (e) {
@@ -557,6 +701,7 @@ body.fullscreen #arc-bot { display: none !important; }
     var list = (layout.programs || []).filter(function (x) { return x !== k; });
     if (on) list.push(k);
     layout.programs = list; save();
+    if (UB) paintDock();
   }
   function removeIcon(k) {
     if (layout.gone.indexOf(k) < 0) layout.gone.push(k);
@@ -767,6 +912,7 @@ body.fullscreen #arc-bot { display: none !important; }
 
   // ---------- the taskbar ----------
   function paintTask() {
+    if (UB) paintDock();
     var bar = $('dk-tbtns'), on = front();
     bar.innerHTML = '';
     wins.forEach(function (w) {
@@ -784,7 +930,8 @@ body.fullscreen #arc-bot { display: none !important; }
   }
   function tick() {
     var d = new Date(), h = d.getHours(), m = d.getMinutes();
-    $('dk-clock').textContent = ((h % 12) || 12) + ':' + (m < 10 ? '0' : '') + m + ' ' + (h < 12 ? 'AM' : 'PM');
+    $('dk-clock').textContent = (UB ? d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) + '  ' : '')
+      + ((h % 12) || 12) + ':' + (m < 10 ? '0' : '') + m + ' ' + (h < 12 ? 'AM' : 'PM');
     $('dk-clock').title = d.toLocaleDateString(undefined, {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'});
   }
   tick(); setInterval(tick, 10000);
@@ -811,6 +958,7 @@ body.fullscreen #arc-bot { display: none !important; }
   // ---------- menus: Start, its cascades, and right clicks ----------
   function hideMenus() {
     ['dk-startmenu', 'dk-sub', 'dk-ctx'].forEach(function (id) { $(id).hidden = true; });
+    $('dk-sys').classList.remove('down');
     $('dk-start').classList.remove('down'); $('dk-start').setAttribute('aria-expanded', 'false');
   }
   function menuItem(o) {
@@ -857,6 +1005,7 @@ body.fullscreen #arc-bot { display: none !important; }
     {k: 'run', label: 'Run…', icon: smallIcon(byKey.run)},
     {hr: true},
     {k: 'sysinfo', label: 'System Information', icon: smallIcon(byKey.sysinfo)},
+    {k: 'skin:ubuntu', label: 'Switch to the Ubuntu look', icon: blank()},
     {hr: true},
   ]).concat(WHO !== 'guest' && !OPERATOR ? [{k: 'logoff', label: 'Log Off @' + WHO + '…',
                                                icon: smallIcon({glyph: ['#345d9d', '#fff', 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9']})}] : [])
@@ -874,6 +1023,7 @@ body.fullscreen #arc-bot { display: none !important; }
     else if (k === 'profile') window.arcadeShell.open('/u/' + encodeURIComponent(WHO), 'My Profile');
     else if (k === 'mynfts') window.arcadeShell.open('/me/nfts', 'My Inscriptions');
     else if (k === 'logoff') logOff();
+    else if (k === 'skin:ubuntu') setSkin('ubuntu');
     else openKey(k);
   }
   // Log Off: the same sign-out as Your arcade's (me.html), asked the old way first.
@@ -897,6 +1047,7 @@ body.fullscreen #arc-bot { display: none !important; }
   }
   $('dk-start').addEventListener('click', function (e) {
     e.stopPropagation();
+    if (UB) { toggleApps(); return; }
     var m = $('dk-startmenu');
     if (!m.hidden) { hideMenus(); return; }
     hideMenus();
@@ -970,7 +1121,7 @@ body.fullscreen #arc-bot { display: none !important; }
     $('dk-sub').hidden = false;
   });
   document.addEventListener('pointerdown', function (e) {
-    if (e.target.closest('.dk-menu') || e.target.closest('#dk-start')) return;
+    if (e.target.closest('.dk-menu') || e.target.closest('#dk-start') || e.target.closest('#dk-sys')) return;
     hideMenus();
   });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hideMenus(); });
@@ -1245,7 +1396,7 @@ body.fullscreen #arc-bot { display: none !important; }
     q('.dp-ok').addEventListener('click', function () { apply(true); });
     q('.dp-apply').addEventListener('click', function () { apply(false); });
     q('.dp-cancel').addEventListener('click', function () { closeWin(dispWin); });
-    dispWin = openWin({key: 'display', name: 'Display Properties', item: byKey.display, body: root, w: 440, h: 600, center: true});
+    dispWin = openWin({key: 'display', name: L('Display Properties', 'Background'), item: byKey.display, body: root, w: 440, h: 600, center: true});
     preview();
   }
 
@@ -1469,6 +1620,128 @@ body.fullscreen #arc-bot { display: none !important; }
     desk: true
   };
 
+  // ---------- the Ubuntu look: the dock, Show Applications and the system menu ----------
+  function bigIcon(it) {
+    if (!it) return '<span class="ub-ico"></span>';
+    if (it.img) return '<span class="ub-ico"><img src="' + esc(it.img) + '" alt="" draggable="false"></span>';
+    if (it.glyph) return '<span class="ub-ico" style="background:' + it.glyph[0] + '">' + glyphHtml(it.glyph, 28) + '</span>';
+    if (it.kind === 'helper') return '<span class="ub-ico" style="background:#1f2933">' + iconHtml(it) + '</span>';
+    return '<span class="ub-ico" style="background:#6b4fa0"><span class="dk-letter">' + esc((it.name || '?').slice(0, 2)) + '</span></span>';
+  }
+  function dockKeys() {
+    var fav = ['/me', '/', '/me/wallet', '/wallet', '/me/messages', '/messages', '/feed'].map(tabAt)
+      .filter(function (k, i, all) { return k && all.indexOf(k) === i; });
+    if (fav.indexOf(tabAt('/me')) >= 0) fav = fav.filter(function (k) { return k !== tabAt('/'); });
+    fav = fav.concat((layout.programs || []).filter(function (k) { return byKey[k]; }), ['store']);
+    wins.forEach(function (w) { if (!w.dialog && fav.indexOf(w.key) < 0) fav.push(w.key); });
+    return fav;
+  }
+  function paintDock() {
+    var dock = $('dk-dock'), on = front();
+    dock.hidden = false;
+    dock.innerHTML = '';
+    dockKeys().forEach(function (k) {
+      var it = byKey[k] || (wins.filter(function (w) { return w.key === k; })[0] || {}).item || {name: k};
+      var mine = wins.filter(function (w) { return w.key === k; });
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'ub-dockbtn' + (mine.length && mine[0] === on ? ' on' : ''); b.dataset.key = k;
+      b.title = (mine[0] && mine[0].name) || it.name;
+      b.innerHTML = bigIcon(it) + (mine.length ? '<span class="ub-run"></span>' : '');
+      b.addEventListener('click', function () {
+        if (mine.length) { var w = mine[0]; if (w === front()) minimize(w); else { restore(w); focus(w); } }
+        else openKey(k);
+      });
+      b.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+        if (byKey[k]) itemMenu(k, e.clientX + 6, e.clientY, false); else if (mine[0]) winMenu(mine[0], e.clientX + 6, e.clientY);
+      });
+      dock.appendChild(b);
+    });
+    var grid = document.createElement('button');
+    grid.type = 'button'; grid.className = 'ub-dockbtn ub-showapps'; grid.title = 'Show Applications';
+    grid.innerHTML = '<span class="ub-ico ub-dots">' + Array(10).join('<i></i>') + '</span>';
+    grid.addEventListener('click', toggleApps);
+    dock.appendChild(grid);
+  }
+  var UTILS = [
+    {k: 'display', name: 'Background', it: byKey.display},
+    {k: 'shortcuts', name: 'Wallet Shortcuts', it: byKey.shortcuts},
+    {k: 'addremove', name: 'Software', it: {img: STORE_ICON}},
+    {k: 'sysinfo', name: 'About This Arcade', it: byKey.sysinfo},
+    {k: 'run', name: 'Run a Command', it: byKey.run},
+    {k: 'help', name: 'Help', it: {glyph: GLYPH.docs}}
+  ];
+  function appsSections() {
+    var progs = (layout.programs || []).filter(function (k) { return byKey[k]; }).sort(byName)
+      .map(function (k) { return {k: k, name: byKey[k].name, it: byKey[k]}; })
+      .concat([{k: 'store', name: 'App Store', it: byKey.store}]);
+    return [
+      {title: 'Programs', rows: progs},
+      {title: 'Pages', rows: TABS.map(function (t) { return {k: t.key, name: t.name, it: byKey[t.key]}; })},
+      {title: 'Wallets', rows: COINS.map(function (c) { var k = 'coin:' + c.net; return {k: k, name: byKey[k].name, it: byKey[k]}; })},
+      {title: 'Utilities', rows: UTILS.concat([{k: 'helper', name: 'Helper', it: byKey.helper}])}
+    ];
+  }
+  function drawApps() {
+    var q = $('dk-apps-q').value.trim().toLowerCase(), body = $('dk-apps-body');
+    body.innerHTML = '';
+    appsSections().forEach(function (sec) {
+      var rows = sec.rows.filter(function (r) { return !q || r.name.toLowerCase().indexOf(q) >= 0; });
+      if (!rows.length) return;
+      var h = document.createElement('h3'); h.textContent = sec.title; body.appendChild(h);
+      var g = document.createElement('div'); g.className = 'ub-appgrid';
+      rows.forEach(function (r) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'ub-app'; b.dataset.k = r.k;
+        b.innerHTML = bigIcon(r.it) + '<span class="ub-applab"></span>';
+        b.querySelector('.ub-applab').textContent = r.name;
+        b.addEventListener('click', function () { toggleApps(false); runStart(r.k); });
+        b.addEventListener('contextmenu', function (e) { e.preventDefault(); if (byKey[r.k] && r.k.indexOf(':') > 0) itemMenu(r.k, e.clientX, e.clientY, false); });
+        g.appendChild(b);
+      });
+      body.appendChild(g);
+    });
+    if (!body.children.length) body.innerHTML = '<p class="ub-none">No results</p>';
+  }
+  function toggleApps(on) {
+    var ov = $('dk-apps');
+    on = typeof on === 'boolean' ? on : ov.hidden;
+    hideMenus();
+    ov.hidden = !on;
+    $('dk-start').classList.toggle('down', on);
+    if (on) { $('dk-apps-q').value = ''; drawApps(); setTimeout(function () { $('dk-apps-q').focus(); }, 20); }
+  }
+  $('dk-apps-q').addEventListener('input', drawApps);
+  $('dk-apps-q').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { var first = $('dk-apps-body').querySelector('.ub-app'); if (first) first.click(); }
+  });
+  $('dk-apps').addEventListener('click', function (e) { if (!e.target.closest('.ub-app') && !e.target.closest('input')) toggleApps(false); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('dk-apps').hidden) toggleApps(false); });
+  // The system menu, top right: who is signed in, settings, the other look, log out, back to the website.
+  $('dk-sys').addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (!$('dk-ctx').hidden && $('dk-sys').classList.contains('down')) { hideMenus(); return; }
+    hideMenus(); toggleApps(false);
+    var r = $('dk-sys').getBoundingClientRect();
+    var items = START_USER.concat([
+      {k: 'display', label: 'Background…', icon: smallIcon(byKey.display)},
+      {k: 'addremove', label: 'Software…', icon: smallIcon({img: STORE_ICON})},
+      {k: 'sysinfo', label: 'About This Arcade', icon: smallIcon(byKey.sysinfo)},
+      {k: 'skin:w98', label: 'Switch to the Windows 98 look', icon: blank()},
+      {hr: true}
+    ]).concat(WHO !== 'guest' && !OPERATOR ? [{k: 'logoff', label: 'Log Out…', icon: blank()}] : [])
+      .concat([{k: 'exit', label: 'Back to the Website', icon: blank()}]);
+    showMenu($('dk-ctx'), items, r.right, r.bottom + 4, function (k) {
+      if (k === 'skin:w98') setSkin('w98'); else runStart(k);
+    });
+    var m = $('dk-ctx'); m.style.left = Math.max(0, r.right - m.offsetWidth) + 'px';
+    $('dk-sys').classList.add('down');
+  });
+  function setSkin(s) {
+    try { localStorage.setItem('arcade.deskview', s); } catch (e) {}
+    location.reload();
+  }
+
   // ---------- off: back to the website, at the page in front ----------
   function leave() {
     try { localStorage.removeItem('arcade.deskview'); } catch (e) {}
@@ -1476,18 +1749,18 @@ body.fullscreen #arc-bot { display: none !important; }
     try { if (w && w.frame) to = w.frame.contentWindow.location.pathname + w.frame.contentWindow.location.search; } catch (e) {}
     location.href = to;
   }
-  $('dk-toggle').addEventListener('click', leave);
 
   // ---------- start ----------
   function boot() {
-    try { localStorage.setItem('arcade.deskview', '1'); } catch (e) {}
+    try { if (!/^(1|w98|ubuntu)$/.test(localStorage.getItem('arcade.deskview') || '')) localStorage.setItem('arcade.deskview', 'w98'); } catch (e) {}
     loadWallpaper();
     drawIcons();
+    if (UB) paintDock();
     var m = /^#open=(.+)$/.exec(location.hash);
     if (m) {
       history.replaceState(null, '', '/desktop');
       var url = '/'; try { url = decodeURIComponent(m[1]); } catch (e) {}
-      if (url.charAt(0) === '/' && url.charAt(1) !== '/' && url !== '/' && url !== '/desktop') window.arcadeShell.open(url);
+      if (url.charAt(0) === '/' && url.charAt(1) !== '/' && url !== '/desktop') window.arcadeShell.open(url);
     }
     pollBadges();
     if (WHO !== 'guest') {

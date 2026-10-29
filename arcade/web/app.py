@@ -1158,7 +1158,7 @@ def create_app(state: AppState) -> FastAPI:
     # these were no-store: a stale copy of the code that derives somebody's keys has no acceptable failure mode).
     ASSETS = {"/wallet.js": "wallet_js.js", "/coins.js": "coins.js", "/signin.js": "signin.js",
               "/messaging.js": "messaging_js.js", "/qrscan.js": "qrscan.js", "/base.css": "base_css.css",
-              "/desk98.css": "desk98_css.css"}
+              "/desk98.css": "desk98_css.css", "/deskubuntu.css": "deskubuntu_css.css"}
     _asset_kept: dict = {}
 
     def _assets_mark() -> str:
@@ -10978,6 +10978,12 @@ def create_app(state: AppState) -> FastAPI:
         """The Desktop View's look for the pages in its windows (templates/desk98_css.css; base.html loads it there
         only)."""
         return _asset_response(request, "/desk98.css")
+
+    @app.get("/deskubuntu.css")
+    def deskubuntu_css(request: Request):
+        """The Desktop View's Ubuntu look for the pages in its windows (templates/deskubuntu_css.css; Themes on Your
+        arcade)."""
+        return _asset_response(request, "/deskubuntu.css")
 
     @app.get("/join", response_class=HTMLResponse)
     def join_page(request: Request):

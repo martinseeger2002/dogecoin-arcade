@@ -41,8 +41,7 @@ def test_the_desktop_has_every_tab_but_admin_as_an_icon_and_the_apps_for_its_pro
     assert {"version", "node", "chains"} <= set(system)
     one = [a for a in apps if a["name"] == "Call Me"][0]
     assert one["key"] == gameslib.app_key(MAKER, "Call Me") and one["open"] == f"/inscriptions/{one['page']}/full"
-    assert 'id="deskview"' not in page.text, "the desktop draws its own switch, not the page header's"
-    assert 'id="dk-toggle"' in page.text
+    assert 'id="deskview"' not in page.text and 'id="dk-toggle"' not in page.text, "the switch is Themes on Your arcade"
 
 
 def test_a_wallpaper_is_any_inscription_with_how_it_is_laid_and_kept_for_the_account(public):
@@ -60,22 +59,36 @@ def test_a_wallpaper_is_any_inscription_with_how_it_is_laid_and_kept_for_the_acc
     assert app.post("/account/deskbg", headers=EDGE, json={"id": ""}).json() == {"id": "", "fit": "fill"}
 
 
-def test_the_switch_is_on_every_page_but_admin_and_never_on_a_phone(client):
-    app, _state = client
-    feed = app.get("/feed").text
-    assert 'id="deskview"' in feed
-    admin = app.get("/admin")
-    assert admin.status_code != 200 or 'id="deskview"' not in admin.text
+def test_themes_on_your_arcade_turn_the_desktop_on_and_pick_its_look():
+    """2026-10-28: "put the toggle in 'your arcade' section near light or dark - and we can call it themes - lets try an
+    ubuntu style one to add to the category"."""
+    me = (TEMPLATES / "me.html").read_text()
+    assert me.index('id="theme-pref"') < me.index('id="desk-theme-pref"'), "beside Light or dark"
+    for want in ('data-desk-set=""', 'data-desk-set="w98"', 'data-desk-set="ubuntu"'):
+        assert want in me
+    assert "Math.max(screen.width, window.innerWidth) <= 640) return;" in me, "not on a phone"
     base = (TEMPLATES / "base.html").read_text()
-    assert "@media(max-width:640px){header .deskview{display:none !important}}" in base, "leave mobile view alone"
-    assert "not path.startswith('/admin')" in base
-    # Pages opened in a tab of their own go to the desktop while the switch is on: never Admin, sign-in, a phone,
+    assert 'id="deskview"' not in base, "no switch in the website's header any more"
+    # Pages opened in a tab of their own go to the desktop while a desktop look is on: never Admin, sign-in, a phone,
     # the installed app or a page already in one of its windows.
     redirect = base[base.index("THE DESKTOP VIEW (desktop.html"):]
     redirect = redirect[:redirect.index("if (!installed || window.top !== window")]
     for need in ("!installed", "window.top === window", "window.innerWidth > 640", "admin|join|restore|signin",
-                 "localStorage.getItem('arcade.deskview') === '1'"):
+                 "/^(1|w98|ubuntu)$/.test(localStorage.getItem('arcade.deskview')"):
         assert need in redirect
+    assert "look.href = skin === 'ubuntu' ? '/deskubuntu.css' : '/desk98.css';" in base
+
+
+def test_the_ubuntu_look_has_its_own_shell_and_its_own_window_style(client):
+    app, _state = client
+    desk = (TEMPLATES / "desktop.html").read_text()
+    for need in ("localStorage.getItem('arcade.deskview') === 'ubuntu' ? 'ubuntu' : 'w98'", "function paintDock()",
+                 "function toggleApps(", "$('dk-sys').addEventListener('click'", "[data-skin=\"ubuntu\"] .dk-dock",
+                 "setSkin('w98')", "setSkin('ubuntu')"):
+        assert need in desk, need
+    css = app.get("/deskubuntu.css")
+    assert css.status_code == 200 and css.headers["content-type"].startswith("text/css") and "#e95420" in css.text
+    assert door.public_path("/deskubuntu.css")
 
 
 def test_icons_move_and_windows_move_size_and_minimize():
@@ -98,7 +111,7 @@ def test_admin_is_on_the_desktop_and_every_page_in_a_window_wears_the_old_look(c
     assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")
     assert "html.indesk" in css.text and door.public_path("/desk98.css")
     base = (TEMPLATES / "base.html").read_text()
-    assert "look.href = '/desk98.css'" in base and base.index("look.href") > base.index("if (desk) {")
+    assert "'/deskubuntu.css' : '/desk98.css'" in base and base.index("look.href") > base.index("if (desk) {")
 
 
 def test_a_coin_shortcut_opens_the_wallet_on_that_coin_and_any_icon_can_go():

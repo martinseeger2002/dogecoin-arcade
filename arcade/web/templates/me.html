@@ -335,6 +335,57 @@
 })();
 </script>
 
+{#- THEMES (2026-10-28: "put the toggle in 'your arcade' section near light or dark - and we can call it themes - lets
+    try an ubuntu style one to add to the category"): the website as it is, or the Desktop View (desktop.html) in one
+    of its looks. Kept in this browser (arcade.deskview), on a computer only: a phone keeps the website (and the
+    installed app its home screen). -#}
+<div class="panel" style="margin-top:14px" id="desk-theme-pref" hidden>
+  <h2 style="margin-top:0">Themes</h2>
+  <p class="muted" style="margin-top:0">The website as it is, or a desktop: every page and app in a window you can move,
+    size and minimize, with your own wallpaper. Kept in this browser.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap" role="radiogroup" aria-label="Theme">
+    <button type="button" class="btn small ghost" data-desk-set="" role="radio">Website</button>
+    <button type="button" class="btn small ghost" data-desk-set="w98" role="radio">Windows 98 desktop</button>
+    <button type="button" class="btn small ghost" data-desk-set="ubuntu" role="radio">Ubuntu desktop</button>
+  </div>
+</div>
+<script>
+(function () {
+  var box = document.getElementById('desk-theme-pref');
+  var installed = window.navigator.standalone === true ||
+    (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  var shell = null;
+  try { if (window.top !== window && window.top.location.pathname === '/desktop') shell = window.top; } catch (e) {}
+  // Not on a phone, nor in the installed app, nor in a window of the phone's home screen.
+  if (installed || (window.top !== window && !shell) || Math.max(screen.width, window.innerWidth) <= 640) return;
+  box.hidden = false;
+  var bs = box.querySelectorAll('[data-desk-set]');
+  function now() {
+    var v = ''; try { v = localStorage.getItem('arcade.deskview') || ''; } catch (e) {}
+    return v === '1' ? 'w98' : v;
+  }
+  function paint() {
+    bs.forEach(function (b) {
+      var on = b.dataset.deskSet === now();
+      b.classList.toggle('on', on); b.classList.toggle('ghost', !on); b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+  }
+  bs.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var want = b.dataset.deskSet;
+      if (want === now()) return;
+      try { if (want) localStorage.setItem('arcade.deskview', want); else localStorage.removeItem('arcade.deskview'); } catch (e) {}
+      paint();
+      var page = location.pathname + location.search;
+      if (shell) { shell.location.href = want ? '/desktop#open=' + encodeURIComponent(page) : page; return; }
+      if (want) location.href = '/desktop#open=' + encodeURIComponent(page);
+    });
+  });
+  window.addEventListener('storage', function (e) { if (e.key === 'arcade.deskview') paint(); });
+  paint();
+})();
+</script>
+
 {#- 2026-10-23: "In the users your arcade tab you should be able to disable the robot helper" (_helper.html). #}
 <div class="panel" style="margin-top:14px" id="helper-pref">
   <h2 style="margin-top:0">Arcade helper</h2>
