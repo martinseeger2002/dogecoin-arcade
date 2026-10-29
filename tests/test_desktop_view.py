@@ -149,3 +149,14 @@ def test_notifications_are_a_widget_off_the_tray():
     rows = (TEMPLATES / "notifications.html").read_text()
     for cls in ('class="nrow', 'class="nface', 'class="nline', 'class="nquote', 'class="ntime'):
         assert cls in rows, "the widget reads these off the Notifications page"
+
+
+def test_messages_and_wallet_are_widgets_off_the_tray_too():
+    """2026-10-29: "similar with messages and wallet please": each is its own page in a small frame off the tray, so
+    messages still open in the browser with the account's own key, and the Wallet's coins and Send are its own."""
+    desk = (TEMPLATES / "desktop.html").read_text()
+    for need in ('id="dk-mailw" role="dialog" aria-label="Messages" hidden', 'id="dk-walw" role="dialog" aria-label="Wallet" hidden',
+                 'id="dk-wal" title="Wallet"', "mail: {btn: 'dk-mail', box: 'dk-mailw', href: mailHref}",
+                 "wal: {btn: 'dk-wal', box: 'dk-walw', href: WALLET}", "f.src = t.href;",
+                 "if (!t.href || !TABS.some(function (x) { return x.href === t.href; })) return;"):
+        assert need in desk, need

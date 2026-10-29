@@ -37,8 +37,10 @@ document.documentElement.setAttribute('data-skin', (function () {
   <div class="dk-tray" id="dk-tray">
     <button type="button" class="dk-traybtn" id="dk-bell" title="Notifications" aria-haspopup="dialog" aria-expanded="false">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" stroke="#000" stroke-width="2.2" stroke-linejoin="round"/></svg><span id="dk-bell-n"></span></button>
-    <button type="button" class="dk-traybtn" id="dk-mail" title="Messages" hidden>
+    <button type="button" class="dk-traybtn" id="dk-mail" title="Messages" aria-haspopup="dialog" aria-expanded="false" hidden>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18v12H3zM3 6l9 7 9-7" stroke="#000" stroke-width="2.2" stroke-linejoin="round"/></svg><span id="dk-mail-n"></span></button>
+    <button type="button" class="dk-traybtn" id="dk-wal" title="Wallet" aria-haspopup="dialog" aria-expanded="false" hidden>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h11v4M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2zM16 14.5h.5" stroke="#000" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/></svg></button>
     <span class="dk-clock" id="dk-clock"></span>
     <button type="button" class="dk-traybtn dk-sysbtn" id="dk-sys" title="System menu" aria-haspopup="menu">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0M12 19.5h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
@@ -59,6 +61,22 @@ document.documentElement.setAttribute('data-skin', (function () {
 </div>
 <div class="dk-menu dk-sub" id="dk-sub" role="menu" hidden></div>
 <div class="dk-menu dk-ctx" id="dk-ctx" role="menu" hidden></div>
+{#- Messages and Wallet as widgets off the tray too (2026-10-29: "similar with messages and wallet please"): each its
+    own page in a small frame, in its narrow layout. Messages open in this browser with the account's own key, as on
+    their page; the Wallet's coins and Send are its own. Loaded the first time one opens and kept, so it opens at once
+    after that. -#}
+<section class="dk-notif dk-traywin" id="dk-mailw" role="dialog" aria-label="Messages" hidden>
+  <div class="dk-notif-head"><b>Messages</b><span class="dk-tw-acts">
+    <button type="button" class="w98-btn dk-tw-big" title="Open in a window">Open</button>
+    <button type="button" class="w98-btn dk-tbtn dk-notif-x" aria-label="Close"><svg width="8" height="7" viewBox="0 0 8 7" aria-hidden="true"><path d="M0 0h2l2 2 2-2h2L5 3.5 8 7H6L4 5 2 7H0l3-3.5z" fill="#000"/></svg></button></span></div>
+  <div class="dk-tw-body"></div>
+</section>
+<section class="dk-notif dk-traywin" id="dk-walw" role="dialog" aria-label="Wallet" hidden>
+  <div class="dk-notif-head"><b>Wallet</b><span class="dk-tw-acts">
+    <button type="button" class="w98-btn dk-tw-big" title="Open in a window">Open</button>
+    <button type="button" class="w98-btn dk-tbtn dk-notif-x" aria-label="Close"><svg width="8" height="7" viewBox="0 0 8 7" aria-hidden="true"><path d="M0 0h2l2 2 2-2h2L5 3.5 8 7H6L4 5 2 7H0l3-3.5z" fill="#000"/></svg></button></span></div>
+  <div class="dk-tw-body"></div>
+</section>
 {#- Notifications as a widget off the tray (2026-10-28: "notifications should be accessible from the bottom right taskbar
     spot" - "as a widget"): the latest rows of the Notifications page, read when it opens, as opening that page reads
     them. -#}
@@ -333,6 +351,22 @@ body.fullscreen #arc-bot { display: none !important; }
 [data-skin="ubuntu"] .dk-nitime { font-size: 11px; }
 [data-skin="ubuntu"] .dk-clock { cursor: pointer; border-radius: 999px; padding: 1px 10px; }
 [data-skin="ubuntu"] .dk-clock:hover, [data-skin="ubuntu"] .dk-clock.down { background: rgba(255,255,255,.17); }
+
+/* Messages and Wallet: a page in a small frame */
+.dk-traywin { width: 380px; height: min(560px, calc(100vh - 60px)); max-height: none; }
+.dk-traywin .dk-notif-head { flex: none; }
+.dk-tw-acts { display: flex; align-items: center; gap: 4px; }
+.dk-tw-big { height: 16px; padding: 0 6px !important; font-size: 10px !important; line-height: 14px; min-height: 0 !important; }
+.dk-tw-body { flex: 1; min-height: 0; margin-top: 3px; background: #fff;
+  box-shadow: inset -1px -1px #fff, inset 1px 1px #808080, inset -2px -2px #dfdfdf, inset 2px 2px #0a0a0a; padding: 2px; }
+.dk-tw-body iframe { width: 100%; height: 100%; border: 0; display: block; background: var(--bg, #fff); }
+.dk-traybtn.down { box-shadow: inset 1px 1px #808080 !important; }
+[data-skin="ubuntu"] .dk-traywin { left: auto; right: 8px; transform: none; width: 400px; height: min(600px, calc(100vh - 50px)); }
+[data-skin="ubuntu"] .dk-tw-body { box-shadow: none; border-radius: 10px !important; overflow: hidden; border: 1px solid #e0dcd9; padding: 0; }
+[data-skin="ubuntu"] .dk-tw-big { height: 24px; padding: 0 10px !important; font-size: 12px !important; border-radius: 999px !important;
+  border: 0 !important; background: #ececec !important; color: #3d3d3d; }
+[data-skin="ubuntu"] .dk-traybtn.down { background: rgba(255,255,255,.17) !important; box-shadow: none !important; border-radius: 999px !important; }
+[data-skin="ubuntu"] .dk-traybtn svg path { stroke: #fff; }
 
 /* Small dialogs */
 .dlg { display: flex; flex-direction: column; gap: 8px; height: 100%; }
@@ -997,7 +1031,8 @@ body.fullscreen #arc-bot { display: none !important; }
     var n = bellHref ? (badges[bellHref] || 0) : 0, m = mailHref ? (badges[mailHref] || 0) : 0;
     $('dk-bell').title = n ? n + ' new notification' + (n === 1 ? '' : 's') : 'Notifications';
     $('dk-bell-n').textContent = n > 99 ? '99+' : (n || '');
-    $('dk-mail').hidden = !m; $('dk-mail-n').textContent = m > 99 ? '99+' : (m || '');
+    $('dk-mail').title = m ? m + ' new message' + (m === 1 ? '' : 's') : 'Messages';
+    $('dk-mail-n').textContent = m > 99 ? '99+' : (m || '');
   }
   // ---------- the notifications widget ----------
   function notifShown() { return !$('dk-notif').hidden; }
@@ -1007,6 +1042,7 @@ body.fullscreen #arc-bot { display: none !important; }
   }
   function openNotif() {
     hideMenus(); if (UB) toggleApps(false);
+    Object.keys(TRAYWINS).forEach(closeTrayWin);
     $('dk-notif').hidden = false; $('dk-bell').classList.add('down'); $('dk-bell').setAttribute('aria-expanded', 'true');
     if (UB) $('dk-clock').classList.add('down');
     loadNotif();
@@ -1065,7 +1101,38 @@ body.fullscreen #arc-bot { display: none !important; }
     if (notifShown() && !e.target.closest('#dk-notif') && !e.target.closest('#dk-bell') && !(UB && e.target.closest('#dk-clock'))) closeNotif();
   });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && notifShown()) closeNotif(); });
-  $('dk-mail').addEventListener('click', function () { if (mailHref) openKey('tab:' + mailHref); });
+  // ---------- Messages and Wallet widgets ----------
+  var TRAYWINS = {mail: {btn: 'dk-mail', box: 'dk-mailw', href: mailHref}, wal: {btn: 'dk-wal', box: 'dk-walw', href: WALLET}};
+  Object.keys(TRAYWINS).forEach(function (k) {
+    var t = TRAYWINS[k], btn = $(t.btn), box = $(t.box);
+    if (!t.href || !TABS.some(function (x) { return x.href === t.href; })) return;   // not one of this viewer's pages
+    btn.hidden = false;
+    btn.addEventListener('click', function (e) { e.stopPropagation(); if (box.hidden) openTrayWin(k); else closeTrayWin(k); });
+    box.querySelector('.dk-notif-x').addEventListener('click', function () { closeTrayWin(k); });
+    box.querySelector('.dk-tw-big').addEventListener('click', function () { closeTrayWin(k); openKey('tab:' + t.href); });
+  });
+  function openTrayWin(k) {
+    var t = TRAYWINS[k], box = $(t.box);
+    hideMenus(); closeNotif(); if (UB) toggleApps(false);
+    Object.keys(TRAYWINS).forEach(function (o) { if (o !== k) closeTrayWin(o); });
+    if (!box.querySelector('iframe')) {
+      var f = document.createElement('iframe');
+      f.src = t.href; f.title = box.getAttribute('aria-label');
+      f.setAttribute('allow', 'camera; microphone; clipboard-write');
+      f.addEventListener('load', function () { if (k === 'mail') setTimeout(pollBadges, 1500); });
+      box.querySelector('.dk-tw-body').appendChild(f);
+    } else if (k === 'mail') setTimeout(pollBadges, 800);
+    box.hidden = false; $(t.btn).classList.add('down'); $(t.btn).setAttribute('aria-expanded', 'true');
+  }
+  function closeTrayWin(k) {
+    var t = TRAYWINS[k]; $(t.box).hidden = true; $(t.btn).classList.remove('down'); $(t.btn).setAttribute('aria-expanded', 'false');
+  }
+  function trayWinOpen() { return Object.keys(TRAYWINS).filter(function (k) { return !$(TRAYWINS[k].box).hidden; })[0]; }
+  document.addEventListener('pointerdown', function (e) {
+    var k = trayWinOpen(); if (!k) return;
+    if (!e.target.closest('#' + TRAYWINS[k].box) && !e.target.closest('#' + TRAYWINS[k].btn)) closeTrayWin(k);
+  });
+  document.addEventListener('keydown', function (e) { var k = trayWinOpen(); if (e.key === 'Escape' && k) closeTrayWin(k); });
   function pollBadges() {
     fetch('/account/badges', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
