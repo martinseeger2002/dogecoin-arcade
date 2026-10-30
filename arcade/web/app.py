@@ -8877,7 +8877,15 @@ def create_app(state: AppState) -> FastAPI:
             elsewhere = _on_other_chain(request, key, f"/inscriptions/{key}/full")
             if elsewhere is not None:
                 return elsewhere
-            return RedirectResponse("/inscriptions", status_code=303)
+            # The operator has no per-browser chain to switch to, so open the piece on whichever
+            # chain holds it (as _chain_of does for every other lookup) instead of bouncing to NFTs.
+            other, oix = _chain_of(key)
+            if oix is not None and other is not chain:
+                row = oix.inscription(contentlib._key(key))
+                if row is not None:
+                    chain, index = other, oix
+        if row is None:
+            raise HTTPException(status_code=404, detail="no such piece")
         ctype = str(row.get("content_type") or row.get("contenttype") or "")
         data = _fromjson(row.get("json")) or {}
         title = (data.get("name") if isinstance(data, dict) and data.get("name")
