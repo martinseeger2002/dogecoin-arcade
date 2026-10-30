@@ -500,6 +500,41 @@ def test_a_helper_says_how_many_it_found_in_the_chunks_it_read(tmp_path):
     assert helper.status()["found"] == 3, "births at blocks 0, 3 and 6 of the eight"
 
 
+def test_the_walks_own_chunk_is_finished_first_and_read_by_the_walk_when_its_follow_back_is_slow(tmp_path, monkeypatch):
+    """2026-10-30, Bellscoin: 24 lanes at the ends of their chunks, each following envelopes back a coin at a time from a
+    hard disk, finished in the order they were taken -- the walk's chunk, 21st, was reached in no pass for eight hours
+    and the walk stood still. The walk's chunk is finished first; still unfinished, the lane lets it go and the walk
+    reads it from its own Core, and no lane takes it again. The index is the one a plain walk files."""
+    chain = _busy_chain(16)                                   # four chunks of four
+    index = dx.DoginalIndex(tmp_path / "w.sqlite", lambda: chain, lambda: "walk", cores=lambda: 3)
+    index.tip = int(chain.call("getblockcount"))
+    walk = index.walker.step
+    monkeypatch.setattr(index.walker, "step", lambda rpc, tip, budget, notes=None: None)
+    asked = []
+    finish = index.store.finish_notes
+    monkeypatch.setattr(index.store, "finish_notes", lambda c, rpc=None, deadline=None: asked.append(c) or False)
+    index.chunks.lanes[:] = [{"c": 1, "at": dx.chunk_range(1)[0], "via": ""}, {"c": 0, "at": dx.chunk_range(0)[0], "via": ""}]
+    index._walk(chain, 60)
+    assert asked[:2] == [0, 1], "the walk's chunk first"
+    assert all(l["c"] != 0 for l in index.chunks.lanes), "its lane let go"
+    assert index._notes_for(0) is None, "the walk reads it from its own Core"
+    assert not index.store.q("SELECT 1 FROM pnote WHERE height<?", (dx.chunk_range(0)[1],))
+    asked.clear()
+    index._walk(chain, 60)
+    assert 0 not in asked and all(l["c"] != 0 for l in index.chunks.lanes), "and no lane takes it again"
+    assert any(l["c"] == 1 for l in index.chunks.lanes), "a chunk past the walk's keeps its lane"
+
+    monkeypatch.setattr(index.walker, "step", walk)
+    monkeypatch.setattr(index.store, "finish_notes", finish)
+    for _ in range(12):
+        index.step()
+    plain = dx.DoginalIndex(tmp_path / "p.sqlite", lambda: chain, lambda: "walk")
+    for _ in range(12):
+        plain.step()
+    assert index.walker.next_height() == plain.walker.next_height() == dx.BASE + 16
+    assert _dump(index) == _dump(plain)
+
+
 def test_cores_are_lanes_each_reading_a_chunk_of_its_own_side_by_side(tmp_path, monkeypatch):
     """2026-10-20: "dedicate the number of cores to your ord index". Three cores: three chunks at once, their
     blocks fetched side by side and read in worker processes; the hashes are the same as one core's."""
