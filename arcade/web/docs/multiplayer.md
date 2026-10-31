@@ -254,6 +254,8 @@ arcade.realtime.join('call-x7', {fast: true}).then(function (room) {
 | | |
 |---|---|
 | `start({video, audio})` | opens the camera, the microphone or both. Called again mid-call, the new tracks replace the old (the camera joins the microphone, say) |
+| `start({screen: true, audio})` | shares the screen as the picture, with the microphone: the browser's own picker opens, and `{ok: false, error: 'cancelled'}` comes back if it is closed. `start({audio})` again stops the screen and keeps the voice |
+| `screen` | `room.media.screen` is `true` where this browser can share its screen (a computer's; a phone's cannot) |
 | `stop()` | camera and microphone off; every share ends |
 | `share(id, on)` | send your picture and sound to one player: `true`, `false`, or `{video, audio}` for one kind only. Refused with `not direct` until that player's link is direct |
 | `hear(id, on)` | play that player's sound. Nobody's sound plays until you say |
@@ -261,7 +263,7 @@ arcade.realtime.join('call-x7', {fast: true}).then(function (room) {
 | `mute({video, audio})` | `true` mutes that kind, `false` unmutes it |
 | `on('media', fn(player, {video, audio}))` | a player is sending to you |
 | `on('media-off', fn(player))` | they stopped |
-| `on('state', fn(s))` | `'on'`, `'off'` (the player pressed Stop) or `'denied'` |
+| `on('state', fn(s))` | `'on'`, `'off'` (the player pressed Stop), `'denied'`, or `'screen-off'` (the browser's own Stop sharing ended the picture; the voice goes on) |
 
 * **Share only with the player you mean.** A room's name can be guessed, and
   anybody who joins it is a peer. Check `p.address` before you call `share`

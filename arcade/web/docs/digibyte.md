@@ -71,7 +71,8 @@ input, the way `digibyteordinals` writes it and `wonky-ord-digibyte` reads it. T
 DigiByte, but its ordinals are not Taproot envelopes, so the index reads the Doginals kind only.
 
 - **The index:**
-  - Admin → Ords → DigiByte, set to *walk*, *help*, *read* or *off*. It is off until the operator turns it on.
+  - Admin → Ords → DigiByte, set to *Keep the full index* (walk), *Help scan* (help), *Watch only* (read) or *Off* (off).
+    It is Watch only until the operator picks another.
   - It starts at block **0**, which is `wonky-ord-digibyte`'s `first_inscription_height`. That is a long
     walk: over 24 million blocks. Borrowed lanes and helpers share it.
 - **Numbering follows wonky-ord, as on Dogecoin's Doginals kind:** a new inscription is looked for only

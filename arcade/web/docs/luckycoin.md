@@ -8,7 +8,7 @@ until its node has synced.
 **Status:**
 - **In the wallet,** on the same key as PEP, DOGE and LTC.
 - **Luckinals are indexed and shown,** and you can inscribe one from **Creator → Ords**.
-- **Swaps between chains and Luckinal sends from the arcade are not open yet.**
+- **Luckinals can be sent, listed and bought** like Doginals. **Swaps between chains are not open yet.**
 
 ## Running the node
 
@@ -47,15 +47,15 @@ Luckinals (also called luckyscriptions) are Luckycoin's ord inscriptions, in the
 the data rides in an ordinary input.
 
 - **The index:**
-  - Admin → Ords → Luckycoin, set to *walk*, *help*, *read* or *off*. It is off until the operator turns it on.
+  - Admin → Ords → Luckycoin, set to *Keep the full index* (walk), *Help scan* (help), *Watch only* (read) or *Off* (off).
+    It is Watch only until the operator picks another.
   - It starts at block **88,554**, the first Doginals-style envelope on the chain (August 2024).
     No official indexer height was found, so the whole chain was scanned for it.
 - **Numbering follows wonky-ord, as on Litecoin:** a new inscription is looked for only when no
   inscription already sits on the coin it is made on. Reinscriptions are still **marked** wherever
   they are numbered.
 - **In the wallet:**
-  - The NFTs tab shows your Luckinals, for viewing only for now.
-  - Sending, listing and swapping one come later.
+  - The NFTs tab shows your Luckinals, and they can be sent, listed and bought like Doginals.
   - An ordinary LKY send never spends a coin that carries one.
 - **Inscribing:** **Creator → Ords** inscribes a Luckinal from your own wallet, by the chain's own
   rules (see *Inscribing ords from your wallet*).

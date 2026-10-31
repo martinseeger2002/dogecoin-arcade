@@ -1,5 +1,9 @@
 # How DogecoinArcade works
 
+DogecoinArcade is one face of ARCADE (Adaptive Reciprocating Chain-linked
+Auxiliary Distributed Ecosystem): the same software runs as PepecoinArcade and
+LitecoinArcade too, and every face speaks the same protocol.
+
 DogecoinArcade is a social network, messenger, token exchange and NFT arcade
 that keeps everything that matters on a public blockchain. There is no
 company database behind it: posts, names, tokens, NFTs and trades are
@@ -22,16 +26,17 @@ text and interactive HTML pages) are stored in the transactions themselves.
 
 The home chain is **Pepecoin**, a Dogecoin Core fork. The installer also sets
 up **Dogecoin** mainnet, and the protocol works the same there. An operator
-can add more chains on **Admin → Coins & chains**: Litecoin, Bellscoin,
+can add more chains on **Admin → Coins & chains**: Litecoin, Litecoin testnet, Bellscoin,
 Luckycoin, Kotia, Wojakcoin and DigiByte. Each one runs on the arcade's own machine, or
 is borrowed from another arcade that shares its Core (see
-[Shared Cores](shared-cores.html)).
+[Shared Cores](shared-cores.md)).
 
 ## What a node does
 
 A node is one machine running:
 
-* **Pepecoin Core, mainnet**: the ledger.
+* **Pepecoin Core, mainnet**: the ledger, run here or borrowed from an arcade
+  that shares it.
 * **Pepecoin Core, testnet**: the messenger's chain. It always runs on the
   node's own machine.
 * **Dogecoin Core, mainnet**, unless the operator borrows it or turns it off.
@@ -78,7 +83,7 @@ A trade between two chains (PEP for DOGE, say) cannot be one transaction, so
 it is settled by **lock scripts** on both chains: either both sides get paid
 or both get their own coins back. It normally takes seconds, and your own node
 finishes your side with transactions you signed in advance. See
-[Swaps between chains](swaps.html).
+[Swaps between chains](swaps.md).
 
 Standing buy orders can be filled while you are away, in one of two ways:
 
@@ -119,16 +124,16 @@ bootstrap. Every node also hands out its own copy of the program and index at
 
 ## Where to read next
 
-* [What it does](features.html): every feature, what it costs and its limits.
-* [Node setup](00-node-setup.html): the installer, and the same steps by hand.
-* [Remote access](remote-access.html): reaching your node from elsewhere.
-* [Swaps between chains](swaps.html) and
-  [Shared Cores](shared-cores.html): trading across chains, and borrowing the
+* [What it does](features.md): every feature, what it costs and its limits.
+* [Node setup](00-node-setup.md): the installer, and the same steps by hand.
+* [Remote access](remote-access.md): reaching your node from elsewhere.
+* [Swaps between chains](swaps.md) and
+  [Shared Cores](shared-cores.md): trading across chains, and borrowing the
   chains you do not run.
-* [AI models and pictures](llm.html): selling and using AI models on the
+* [AI models and pictures](llm.md): selling and using AI models on the
   exchange.
-* [LoRa](lora.html): reaching an arcade by radio.
-* [Inscription API](inscription-api.html): building interactive NFT pages.
-* [Bot RPC](bot-rpc.html): scripting against a node.
-* [Messaging node](messaging/01-node.html) and
-  [messaging design](messaging/02-design.html): how messages are carried.
+* [LoRa](lora.md): reaching an arcade by radio.
+* [Inscription API](inscription-api.md): building interactive NFT pages.
+* [Bot RPC](bot-rpc.md): scripting against a node.
+* [Messaging node](messaging/01-node.md) and
+  [messaging design](messaging/02-design.md): how messages are carried.

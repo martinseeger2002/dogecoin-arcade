@@ -104,7 +104,7 @@ from that address are left out of the run, and the page says how many. The full 
 ## As ords: Inscribe a collection
 
 **Creator → Ords → Inscribe a collection** inscribes every picture as an ord on Dogecoin, Pepecoin, Bellscoin,
-Luckycoin or Wojakcoin, from your own wallet on that chain, and then indexes the set so the arcades show it.
+Luckycoin, Wojakcoin or DigiByte, from your own wallet on that chain, and then indexes the set so the arcades show it.
 
 1. **Choose the chain and the folder.** The page reads each picture's JSON (by `edition`, or by the file its `image`
    names), fills in the collection's name, and says how many transactions it takes and about what it costs.
