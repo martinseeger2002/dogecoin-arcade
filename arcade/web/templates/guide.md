@@ -8,18 +8,24 @@ was measured rather than estimated.
 
 ## The shape of it
 
+DogecoinArcade is one face of ARCADE (Adaptive Reciprocating Chain-linked
+Auxiliary Distributed Ecosystem): the same software runs as PepecoinArcade and
+LitecoinArcade too, and every face speaks the same protocol.
+
 DogecoinArcade is a **sidecar**: it runs beside Pepecoin Core on your own
-machine and reads the chain the node already has. It never
-holds your keys — the node's wallet does — and it never asks for a passphrase.
+machine and reads the chain the node already has. It never holds your keys:
+an account's keys are sealed with your password and used only in your browser,
+and the node's own coins are signed by its Core wallet.
 Everything it knows, it learned by replaying blocks, which means two
 installations reading the same chain agree without talking to each other.
 
 | | |
 |---|---|
 | Interface | `http://127.0.0.1:8420`, bound to loopback because it can spend |
-| Chains | Pepecoin main, Pepecoin test and Dogecoin main; Litecoin, Bellscoin, Luckycoin, Kotia, Wojakcoin and DigiByte as add-on chains, turned on in **Admin → Coins & chains**, each run on this machine or borrowed from another arcade that shares its Core |
+| Chains | Pepecoin main, Pepecoin test and Dogecoin main; Litecoin, Litecoin testnet, Bellscoin, Luckycoin, Kotia, Wojakcoin and DigiByte as add-on chains, turned on in **Admin → Coins & chains**, each run on this machine or borrowed from another arcade that shares its Core |
 | Messaging | **Pepecoin test only**, by design |
-| Tokens, inscriptions, @tags | Pepecoin main and Pepecoin test |
+| Tokens, inscriptions | Every chain the arcade reads |
+| @tags | Pepecoin test, the messaging chain |
 | Storage | your node's datadir for the chain; `~/.dogecoinarcade` for what the app remembers |
 
 ---
@@ -517,7 +523,8 @@ node listens; the page inscribed with it is the storefront.
   broadcasts at once, and the send is listed with the approvals as one that
   came from a page of your own.
 
-Pepecoin test only, like the messages it travels on. Swaps are read from a
+Shops, mintpads and launchpads are Pepecoin test only for now; on other
+chains pieces are sold through the Exchange's listings and offers. Swaps are read from a
 starting height per chain (`swaps_from`), so a swap in a block before it is
 recorded as unread rather than as an old transaction meaning something new.
 
@@ -537,13 +544,15 @@ Exchange by itself.
 ## The exchange
 
 Everything for sale on a chain, read from the chain itself. The tabs are
-**LLMs**, **Tokens**, **NFTs**, **Launchpad**, **Doginals**, **Pepinals** and
-**Offers**.
+**LLMs**, **Tokens**, **NFTs**, **Launchpad**, one tab for each chain's ords
+(**Doginals**, **Pepinals** and the others) and **Offers**.
 
 * **LLMs** — the model exchange: AI models other arcades sell or give away.
   See *AI models and the arcade helper* below.
-* **Doginals** and **Pepinals** — ord inscriptions on Dogecoin and on Pepecoin
-  main, each on a tab of its own. A tab is grayed out until its chain's node has
+* **Ords** — ord inscriptions, each chain on a tab of its own: Doginals on
+  Dogecoin, Pepinals on Pepecoin main and test, Bellinals on Bellscoin,
+  Luckinals on Luckycoin, Wojakinals on Wojakcoin, and the ordinals of DigiByte,
+  Litecoin and Litecoin testnet. A tab is grayed out until its chain's node has
   synced, and says how far it is.
 * **Offers** — what somebody has offered for an NFT of yours, and what you
   have offered for somebody else's. Accept or refuse; accepting builds the
@@ -602,9 +611,8 @@ Everything for sale on a chain, read from the chain itself. The tabs are
 chain for coins on another, is settled by lock scripts on both chains: either
 both sides get paid or both get their own coins back. It normally takes
 seconds, nobody holds your coins, and you do not have to keep the page open.
-No swap is offered on a chain that does not enforce `OP_CHECKLOCKTIMEVERIFY`
-(Wojakcoin), because there a lock could be refunded at once. See *Swaps
-between chains*.
+No swap is made with a Wojakcoin, Bellscoin or Kotia side: on those chains a
+lock could not be made safely or spent. See *Swaps between chains*.
 
 **Charts of what actually traded.** Tokens and NFTs both get candles, built
 from the swaps on the chain — there is no order book to draw, so what is
@@ -920,9 +928,9 @@ machine, everything in it theirs, reachable from where it is served.
 **As a public arcade** — `--public`, which is what a node on a real domain
 runs. Only the public surface is served: the feed, somebody's profile and
 holdings, the collections, the chain views, inscribed content, the page
-API, the guide and the sign-up page. **Every form is refused**, because
-every form in this application spends the NODE's wallet and none of it is
-per-account yet. Holding a seat says who you are; it does not make the
+API, the guide and the sign-up page. **Every form that spends the node's
+wallet is refused.** An account's own actions are served, because its browser
+signs them with a key the node never sees. Holding a seat says who you are; it does not make the
 operator's wallet yours, and no combination of cookies changes that,
 because the refusal is about the route rather than the visitor.
 
@@ -952,7 +960,7 @@ that reads balances or moves tokens without a person clicking.
   bytes. A bot sees the fee before it pays it.
 * `arcade-rpc` is the shell client; `examples/airdrop.py` is a working bot.
 
-See [Bot RPC](bot-rpc.html) for the full method list.
+See [Bot RPC](bot-rpc.md) for the full method list.
 
 ---
 
@@ -990,19 +998,18 @@ forwarding. The mempool already gossips to every node in seconds.
   to produce another node, not a queue. Nothing is lost by going elsewhere
   -- the name, the coins and the posts are on the chain, so any node will
   do, including one you run yourself.
-* **Twelve words are the whole account.** Made in the browser from the
-  standard BIP39 list, shown once, and confirmed by typing three of them
-  back before anything is taken. They never reach the node. There is no
-  reset and nobody to ask, which is why it says so at the moment they are
-  made rather than in a help page.
-* **The node holds no password and no key.** Signing in is a signature over
+* **Signing up takes a name and a password.** The wallet is made in the
+  browser and sealed with the password, which never reaches the node. The
+  node keeps only the sealed copy, under your @tag, so the same name and
+  password open it on other arcades too.
+* **Twelve words are the way back.** Made in the browser from the standard
+  BIP39 list and shown once, after sign-up. If the password is forgotten,
+  the words restore the wallet. There is no reset and nobody to ask, which
+  is why it says so at the moment they are made rather than in a help page.
+* **The node never sees your password or your key.** Signing in is a signature over
   a nonce the node just issued, good for two minutes, for one use, and for
   that node only -- the address is inside the bytes that get signed. A copy
   of the node's account file is a list of public keys and nothing else.
-* **An encrypted copy can stay in this browser**, under a password that
-  goes nowhere: not to the node, not into a cookie. It protects the copy on
-  that machine, not the wallet, and it cannot be reset for the same reason
-  the words cannot.
 * **A seat comes back after ninety days of silence**, and nothing of yours
   is touched when it does. Sign in again wherever there is a space and it
   is the same account, with the same name and the same join date.
@@ -1011,30 +1018,29 @@ forwarding. The mempool already gossips to every node in seconds.
   address the page says so instead of half working.
 * **What an account can do.** Its own tabs: *Your arcade*, *Apps*,
   *Messages*, *Notifications*, the feed, the *address book*, *Wallet*,
-  *Creator*, *Exchange* and *Affiliates*. From them it claims a @tag, publishes its
-  messaging key, takes the faucet's Pepecoin test coins once, sends coins, posts
+  *Creator*, *Exchange*, *Explore*, *Docs* and *Affiliates*. From them it claims a @tag, publishes its
+  messaging key, is topped back up from the faucet once a day on each test chain, sends coins, posts
   and likes, and writes sealed messages. Every one of those is a
   transaction the node builds, the browser signs with a key the node has
   never seen, and the node broadcasts -- it broadcasts what it *offered*,
   not whatever came back signed.
+* **Explore** (`/explore`) is open to anyone, signed in or not, and only reads.
+  It has a tab for each chain with an ord index, a search by inscription
+  number, id or address, the chain's collections by name, and each token's
+  holders.
 * **A wallet on each chain, from the same words.** The twelve words hold
-  coins on the test chain and on Pepecoin main, at each chain's own coin type --
-  two wallets, one secret, nothing extra to write down. The node is told
+  coins on every chain the arcade has, at each chain's own coin type --
+  a wallet on each, from the same words, nothing extra to write down. The node is told
   which address belongs to which chain and checks the version byte rather
   than believing it; the Pepecoin main card says on itself that those coins are
   real. Paying a @tag on Pepecoin main uses the address its holder published
   with their key, and says so plainly when they have not published one.
   The faucet pays out Pepecoin test coins; real ones are held back by a setting
   that is off, not by a rule that cannot be changed.
-* **Real coins are switched off for an account until it asks.** The Pepecoin main
-  wallet exists from the minute the account does, and it can be paid into,
-  but nothing can be spent out of it until the twelve words have been typed
-  back on *Backup* -- the only place they are ever asked for, and they are
-  checked in the browser against the address they are supposed to make, so
-  the node is told the answer and never the words. It is a speed bump with a
-  sentence on it rather than a lock, and the page says so: what it stops is
-  moving money out of a browser you can never come back to, which is the one
-  loss this cannot undo.
+* **Real coins can be spent from the start.** *Backup* shows the twelve
+  words again, after asking for the password, and reminds you that a
+  password lost without the words written down loses the account and
+  everything in it.
 * **There are numbers on what one account may do.** Posts, reactions,
   messages, sends, listings and name claims are each counted per account over
   a rolling hour, and the bytes you put on the chain are counted over a day --
@@ -1148,7 +1154,9 @@ forwarding. The mempool already gossips to every node in seconds.
 * **Mine a Pepecoin test block** from the wallet page, any time. The node hashes
   in batches of about thirty seconds, the page says how many hashes so far
   and how long a block takes at today's difficulty, and Stop mining stops
-  after the batch it is on. Pepecoin test only, because Pepecoin main has miners.
+  after the batch it is on. Pepecoin test only from the wallet page, because
+  Pepecoin main has miners; **Admin → Chains → Mine test coins** mines any
+  test-coin chain.
 * Your wallet **is** your identity. There is no passphrase and nothing to write
   down: back up `wallet.dat` and everything comes back with it — coins,
   messages and your published key.
@@ -1161,7 +1169,7 @@ forwarding. The mempool already gossips to every node in seconds.
 
 **What it says in the journal.** The interface logs what it did at `info` --
 blocks read, a store rebuilt, a sale answered, a release announced -- so
-`journalctl -u arcade-web` is a record of the wallet's own decisions rather
+`journalctl --user -u arcade-web` is a record of the wallet's own decisions rather
 than only of its complaints. `--log-level warning` quiets it; `debug` is for
 when something is wrong.
 
@@ -1180,8 +1188,9 @@ days.
 ## The installed app
 
 Installed on a phone or a computer (*Add to Home Screen*), the arcade opens
-on a **home screen** of its own instead of a page with tabs. In a browser tab
-nothing changes.
+on a **home screen** of its own instead of a page with tabs. A phone's
+browser opens the same home screen; a computer's opens the Desktop View, in
+Ubuntu's look. **Website** under *Themes* on *Your arcade* gets the tabs back.
 
 * **Every tab is an icon** (*Your arcade* is the gear), with a dock along the
   bottom and the **App Store** for adding apps. Adding an app asks once for what
@@ -1207,6 +1216,8 @@ nothing changes.
 **Light or dark.** Every page has a theme: **Auto** follows the device, or pick
 **Light** or **Dark** on **Your arcade** or with **Theme** in the footer. Kept
 in this browser, and every window of the home screen follows at once.
+**Themes**, beside it, offers the **Website**, a **Windows 98** desktop or an
+**Ubuntu** desktop on a computer, and the home screen or the website on a phone.
 
 ---
 

@@ -41,7 +41,7 @@ What that means for you:
 - **Litecoin's Taproot ordinals indexers and marketplaces do not show Doginals-format
   inscriptions.** An inscription made here is seen by this arcade and by Doginals-style indexers
   pointed at Litecoin, but not by Taproot-only sites.
-- **The arcade's ord index for Litecoin reads both kinds.** Turn it on in **Admin → Ords**. It
+- **The arcade's ord index for Litecoin reads both kinds.** It is *Watch only* until the operator picks another in **Admin → Ords**. It
   starts at block 2,424,429 (2,669,127 on Litecoin testnet), as ord-litecoin does, and reads Taproot
   envelopes as well as the Doginals kind.
 - **Taproot inscriptions show here.** `/content/<id>` reads a Taproot inscription's content from the

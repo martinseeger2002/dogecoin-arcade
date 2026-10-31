@@ -116,7 +116,7 @@ route, not the visitor.
    operator and claim the node (this can only be done from the machine itself,
    and only once, after which only the operator can change it).
 2. Still at the node machine, set a **remote-access password** in Admin. It
-   must be at least 10 characters. Setting or changing it closes every existing
+   must be at least 12 characters. Setting or changing it closes every existing
    admin session.
 3. From outside, sign in as the operator and open `/admin/login` with that
    password. The login page is rate-limited.
@@ -133,4 +133,4 @@ no edge headers, so it is treated as local. The SSH port-forward is the safer
 way to use the wallet from another device on your network.
 
 `arcade-web --public` serves the whole instance as a public arcade, with every
-form refused, for a node that is only a public server and not anyone's wallet.
+form that spends the node's wallet refused, for a node that is only a public server and not anyone's wallet.

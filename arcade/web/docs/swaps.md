@@ -17,11 +17,11 @@ market: the seller signs their half ahead of time and the buyer completes it.
   no outcome where one side pays and the other keeps everything.
 * A swap normally takes **seconds**: each side acts as soon as the other's lock is in the
   mempool and is exactly the lock the terms say. A swap with a coin side at or above the
-  arcade's big-swap line (1,000,000 PEP or 1,000 DOGE unless its operator sets another) waits
-  for one confirmation on each chain instead. A token, NFT or Doginal side counts from the
-  mempool too, once its lock transaction plainly moves exactly that asset in from its owner
-  and nothing else in the mempool is moving it; if that cannot be told yet, it waits for the
-  block.
+  arcade's big-swap line waits for one confirmation on each chain instead. The lines are
+  1,000,000 PEP, 1,000 DOGE, 2 LTC, 1,000 DGB, 200 BEL, 20 LKY, 100 KOT and 100 WJK, unless
+  the operator sets another (`swap_big:<chain>`). A swap with a token, NFT or Doginal side
+  always waits for one confirmation, whatever its value, and its lock must plainly move
+  exactly that asset.
 * You do **not** have to keep the page open. Your own node finishes your side
   with transactions you signed in your browser in advance.
 * If the other side disappears part-way, your coins come back to you
@@ -33,7 +33,10 @@ A swap between chains needs a lock script on each chain, and every lock this arc
 through CHECKLOCKTIMEVERIFY: the owner may take it back only after its time has passed.
 
 * **Pepecoin, Dogecoin and Litecoin** (and their test chains) swap with each other.
-* **Doginals, Pepinals and DRC-20 / PRC-20 tokens** swap from Dogecoin and Pepecoin mainnet.
+* **Ords** swap wherever a lock can be made: Doginals, Pepinals (Pepecoin main and test), Luckinals,
+  DigiByte ordinals and Litecoin ordinals (main and test) (`ord_chains.swappable`). Bellinals and
+  Wojakinals are sent, listed and bought, but never swapped.
+* **DRC-20 / PRC-20 tokens** swap from Dogecoin and Pepecoin mainnet.
 * **Wojakcoin cannot swap.** Its chain never turns on CHECKLOCKTIMEVERIFY (BIP65), so there a lock's
   refund opens at once. Whoever locked could take their coins back after the other side had claimed, and
   keep both. Your browser and every node refuse a swap order, a swap lock or an escrow with a Wojakcoin
@@ -95,7 +98,8 @@ transactions that finish your side: the **claim** of the other lock and the
 **refund** of your own. It hands them to your arcade node, which sends:
 
 * the **claim** as soon as the secret shows up on the chain (or, if you made the
-  secret, as soon as the other lock is confirmed), and
+  secret, as soon as the other lock is in the mempool, or confirmed for a big swap or one
+  carrying a token or NFT), and
 * the **refund** once your lock's time has run out, if nobody claimed it.
 
 Your node cannot change either one: your signature covers where the coins go,
@@ -118,8 +122,11 @@ what was agreed:
   smallest amount, unless its price is coin on the same chain.
 * Trading with an arcade that has not updated yet, its claim fee still comes off
   what you receive from it, and its claim keeps the operator fee in your lock.
-* Listing a swap writes a small record on the chain so other arcades can show
-  it: about **0.01**.
+* Listing a swap from your browser writes nothing on the chain: it is filed on
+  your own arcade and shared with every other arcade over the mesh. Only the
+  orders an arcade's node fills itself (its own, and those listed for it to
+  fill) are also inscribed on the chain, about **0.01** each time it posts them,
+  paid by the node.
 
 You see these amounts before you say yes. Saying yes to Take, or to List, also
 approves locking your side when the time comes; you are not asked again.
@@ -129,7 +136,7 @@ approves locking your side when the time comes; you are not asked again.
 On the Exchange, under **Swaps between arcades** (or on a coin pair's market,
 such as PEP/DOGE), choose what you offer and what you want. A Doginal or
 DRC-20 / PRC-20 listing shows on other arcades while an arcade page is open in
-your browser; close them all and it stops being shown within the hour. Withdraw
+your browser; close them all and it stops being shown within a few seconds. Withdraw
 it whenever you like.
 
 A coin, token or NFT you list is filled by your arcade's node, with every page
@@ -146,7 +153,8 @@ amount is off your balance, so it cannot be sent or listed again meanwhile, and 
 be sent or listed twice.
 
 When somebody takes it, your browser checks that their terms match yours
-exactly, locks your side once theirs is confirmed, and hands your node the claim
+exactly, locks your side once theirs is in the mempool (or confirmed, for a big
+swap or one carrying a token or NFT), and hands your node the claim
 and refund. You can close the page after that.
 
 ## Taking a swap

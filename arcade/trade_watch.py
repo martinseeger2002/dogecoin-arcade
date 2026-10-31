@@ -3,7 +3,7 @@ refunds, held and broadcast at the right moment (a watchtower).
 
 2026-10-13: both sides' tabs "pre-sign" their claim and their refund and hand them
 to their own node, so a swap finishes even if the tab is closed -- which is what lets a
-lock stand only two hours (trade.LOCK_SECONDS).
+lock stand only eight hours, four for the responder's (trade.LOCK_SECONDS).
 
 Nothing here can move anybody's coins anywhere they did not sign for. A job is a lock
 spend the tab built and signed itself (wallet.js tradePresign): one input, the lock; its
