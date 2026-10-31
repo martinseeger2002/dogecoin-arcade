@@ -88,6 +88,40 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-30 · SadFrog's side (Claude, node 2) · branch `team/stale-guides` (on `main` 7bbd4af) · The guides say what the code does
+SadFrog asked for the stale passages in the player and operator guides fixed against the code. Docs and three
+docstrings only; no behaviour changes. Commits 19657a7 (docs), 5f1fbf1 (docstrings).
+- **guide.md:** keys sealed with the account's password (accounts.MIN_PASSWORD, Vault); tokens and inscriptions on
+  every chain, @tags on Pepecoin test (`_tag_chain`); shops, mintpads and launchpads test only (`swaps_from`); one
+  Exchange tab per chain in `ord_chains.MOVED`; no swap with a Wojakcoin, Bellscoin or Kotia side; the public door
+  serves accounts' own actions; sign-up is a name and a password, twelve words the way back; the faucet tops up once a
+  day on each test chain; a wallet on every chain; no real-coin gate on Backup (2026-10-08); Explore and Docs in the
+  account tabs, and a line on Explore; Admin -> Chains -> Mine test coins; `journalctl --user`; phone home screen and
+  Ubuntu desktop by default, Themes; Litecoin testnet in the add-on list; `.md` links; ARCADE's full name once.
+- **swaps.md:** a token/NFT/Doginal side always waits one confirmation (ASSET_CONFIRMATIONS); every chain's big-swap
+  line from `trade.BIG`; ords swap per `ord_chains.swappable`; coin locks act from the mempool; a browser listing goes
+  over the mesh (book_relay), only a node's own and delegated orders are inscribed; a listing leaves in seconds
+  (ALIVE_FOR 12 s).
+- **Others:** escrow.md adds Kotia; remote-access.md 12-character admin password; bellscoin/luckycoin/wojakcoin/
+  digibyte/litecoin.md: Watch only by default with Admin's labels, and Bellinals/Luckinals/Wojakinals sent, listed and
+  bought; games.md drops the strip under full-screen apps; collections.md adds DigiByte; multiplayer.md documents
+  `start({screen: true})`, `room.media.screen` and `screen-off`; how-it-works.md and 00-node-setup.md: main can be
+  borrowed, `.md` links, ARCADE's name. Docstrings: door.py, trade_watch.py (8 h / 4 h), cores.py (rule removed 10-27).
+- **Tests:** test_guide, test_docs, test_public, test_game_door, test_digibyte, test_litecoin_face: 178 passed, 22
+  skipped, 2 failed. The 2 are test_docs' DECISIONS.md tests, which fail on `main` too (the file is not in the mirror).
+- **Questions for you (left as they are):**
+  - swaps.md says Luckycoin swaps are "not open yet", but the code allows them (`ord_chains.swappable("lky")` is True,
+    LKY is not in wallet_js `NO_LOCK`, `trade.BIG` has a line for it). luckycoin.md keeps "Swaps between chains are not
+    open yet" too, while swaps.md's ords line now lists Luckinals as the code does. Open, or closed somewhere I missed?
+  - swaps.md's coin-chain list leaves out DigiByte. Does DigiByte swap?
+  - swaps.md's fee figures: still right?
+  - guide.md "beside Pepecoin Core on your own machine": main can be borrowed now. Reword?
+  - The App Store wording that says phone only (the Desktop View has it too since 10-30).
+  - guide.md's `wallet.dat` backup advice for the operator's wallet: still the advice?
+  - 00-node-setup.md's Main live "once a day": still true?
+  - how-it-works.md ties seats to `--public`: is that right?
+  - ords.md ~52 and ~65 name different chains for the collection index. Which is right?
+
 ### 2026-10-30 Joining a room waits for the player to unlock their wallet (Claude, from the Tank Simulator session)
 Game-agnostic (every page that joins a room). A locked wallet's "Join this game as you?" took longer than
 `realtime.js` waited (20 s): the page played offline, its room never reached the mesh, and the viewer's late answer
