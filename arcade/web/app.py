@@ -1461,6 +1461,7 @@ def create_app(state: AppState) -> FastAPI:
             now = time.time()
             live = links | {e.get("id") for e in list(mesh.node.addrs.values())
                             if e.get("id") and now - float(e.get("ok") or 0) < 3600}
+            live |= set(_seen_through(mesh, links))
         try:
             with state.store() as store:
                 live |= {str(r["mesh_key"]) for r in store.mesh_peers(state.messaging.network,
@@ -1474,6 +1475,17 @@ def create_app(state: AppState) -> FastAPI:
         if with_ids:
             out["ids"] = sorted(live)
         return out
+
+    def _seen_through(mesh, links) -> dict:
+        """The arcades a linked arcade said, in the last couple of minutes, it is linked to (mesh/operators.py "me"
+        `links`, 2026-11-02: a phone keeping three links "is not listing all the arcades seen by strawberry").
+        Display only."""
+        from ..mesh.operators import seen_through
+        operators = getattr(mesh, "operators", None)
+        try:
+            return seen_through(dict(getattr(operators, "peers", {}) or {}), links, mesh.node_id or "")
+        except Exception:                                  # noqa: BLE001 -- the list is a nicety
+            return {}
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
@@ -30295,6 +30307,7 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:                                  # noqa: BLE001
             sharing = {}
         offers = dict(getattr(coreshare, "offers", {}) or {}) if coreshare is not None else {}
+        via = _seen_through(mesh, links) if up else {}
 
         def coin(net: str) -> dict:
             params = NETWORKS.get(net)
@@ -30351,16 +30364,23 @@ def create_app(state: AppState) -> FastAPI:
             if peer in links:
                 ms = rtts.get(peer)
                 link = {"state": "slow" if ms is not None and ms > 1000 else "linked", "ms": ms}
+            elif peer in via:
+                # Not linked here, but a linked arcade is linked to it (2026-11-02): "seen through @x".
+                by = via[peer]
+                link = {"state": "via", "by": by["by_tag"], "by_node": by["by"][:12]}
             else:
                 link = {"state": "none"}
-            others.append({"me": False, "node": peer[:12], "tag": heard.get("tag") or "",
-                           "host": (heard.get("hosts") or [""])[0], "lora": bool(heard.get("lora")),
+            seen = via.get(peer) or {}
+            others.append({"me": False, "node": peer[:12], "tag": heard.get("tag") or seen.get("tag") or "",
+                           "host": (heard.get("hosts") or [seen.get("host") or ""])[0],
+                           "lora": bool(heard.get("lora")),
                            "cores": [{**coin(n), "shared": True}
                                      for n in sorted(offers.get(peer) or {}, key=lambda n: (order.get(n, 99), n))
                                      if peer in links],
                            "ords": ords.get(peer, []), "link": link})
-        # Linked first, fastest first; then the rest by name.
-        others.sort(key=lambda r: (r["link"]["state"] == "none",
+        # Linked first, fastest first; then those seen through a linked arcade; then the rest; each by name.
+        rank = {"via": 1, "none": 2}
+        others.sort(key=lambda r: (rank.get(r["link"]["state"], 0),
                                    r["link"].get("ms") if r["link"].get("ms") is not None else 9e9,
                                    r["tag"] or "~" + r["node"]))
         return {"ok": up, "running": running["running"], "linked": running["linked"],

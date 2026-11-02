@@ -20,6 +20,9 @@ from selenium.webdriver.common.by import By                      # noqa: E402
 from selenium.webdriver.support.ui import WebDriverWait          # noqa: E402
 
 
+_SERVED = {}
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -44,6 +47,7 @@ def served(tmp_path_factory):
     mesh.status = lambda: {"linked": True, "node": "a" * 64, "peers": 1, "known": 1, "rtt_ms": [48.0]}
     state.mesh = mesh
     state.operator_tag = lambda: "strawberry"
+    _SERVED["mesh"] = mesh
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(create_app(state), host="127.0.0.1", port=port, log_level="critical",
                                            timeout_graceful_shutdown=1.0))
@@ -137,3 +141,30 @@ def test_your_arcade_has_a_row_of_wallet_coins_and_the_arcades_card(browser, ser
         browser.find_element(By.ID, "arcades").screenshot(shots + "me-arcades.png")
     finally:
         browser.set_window_size(1200, 900)
+
+
+def test_an_arcade_seen_through_a_linked_one_has_a_row_saying_so(browser, served):
+    """2026-11-02 (the phone "is not listing all the arcades seen by strawberry"): an arcade a linked arcade
+    says it is linked to gets a row, its link "seen through @<that arcade>", after the linked ones."""
+    import os
+    said = _SERVED["mesh"].operators.peers["b" * 64]
+    said.update(at=time.time(), links=[{"id": "c" * 64, "tag": "avacado", "host": "avo.example.com"}])
+    try:
+        browser.set_window_size(1200, 900)
+        browser.get(served + "/admin#overview")
+        rows = WebDriverWait(browser, 15).until(
+            lambda d: d.find_elements(By.CSS_SELECTOR, "#arcrows .arcrow:not(.archead)") or None)
+        if os.environ.get("SHOT_DIR"):
+            time.sleep(1)
+            for b in browser.find_elements(By.XPATH, "//button[normalize-space()='Later']"):
+                if b.is_displayed():
+                    b.click()
+            time.sleep(0.5)
+            browser.find_element(By.ID, "arcades").screenshot(
+                os.path.join(os.environ["SHOT_DIR"], "arcades-" + os.environ.get("SHOT_TAG", "x") + ".png"))
+        assert len(rows) == 3
+        assert "@avacado" in rows[2].text and "avo.example.com" in rows[2].text
+        assert "seen through @bigchiefenergy" in rows[2].text, "the linked arcade that said so"
+        assert rows[2].find_element(By.CSS_SELECTOR, ".dot.via").is_displayed()
+    finally:
+        said.pop("links", None)

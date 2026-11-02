@@ -1864,6 +1864,7 @@ body.fullscreen #arc-bot { display: none !important; }
     }
     function link(r) {
       var l = r.link || {};
+      if (l.state === 'via') return 'Seen through ' + (l.by ? '@' + l.by : l.by_node || 'a linked arcade');
       return l.state === 'me' ? 'This arcade' : l.state === 'linked' ? 'Linked' + (l.ms != null ? ' (' + l.ms + ' ms)' : '') : (l.state || 'Not linked');
     }
     function nodeName(r) { return (r.tag ? '@' + r.tag : r.node) + (r.me ? ' (this arcade)' : ''); }

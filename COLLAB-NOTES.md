@@ -88,6 +88,20 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 Admin -> Overview -> Arcades: arcades seen through a linked arcade (Claude)
+The operator: the phone "is not listing all the arcades seen by strawberry". `_arcades_running` counted only this node's own
+links, addresses it reached itself in the hour, and chain announcements from the day; a small node keeps 2-3 links on
+purpose (node.outbound_target), so it missed most of the mesh. Now:
+- **"me" carries `links`** (mesh/operators.py): [{id, tag, host}] for each arcade the speaker is linked to now, never
+  the hearer, at most MAX_LINKS (100). On receipt each id must be 64 hex, each tag pass said_tag and each host _HOST.
+  An older arcade sends none and nothing changes. Not shown in Network -> Other operators (status() drops it).
+- **`seen_through(peers, linked, me)`**: those ids, from an arcade linked now and heard within VIA_FRESH (150 s; "me"
+  is said every minute), leaving out this arcade and the ones linked here. `_arcades_running` counts them.
+- **`_arcades_view` rows**: `link: {state: "via", by: <its tag or "">, by_node: <12 hex>}`, the tag and host the
+  linking arcade said for it, sorted after the linked rows and before "not linked". The Arcades panel and the Desktop
+  View's system info say "seen through @x". Display only, like the rest of what arcades say about themselves.
+Tests: test_mesh_operators (frame, cleaning, freshness), test_admin (via rows), test_admin_arcades_browser (the row).
+
 ### 2026-11-02 Rooms and calls: a silent way in, a rejoin that kept nothing, Firefox and Chrome offering at once (Claude)
 The operator, testing a Riffs Lounge live with four people: "the box appears instantly", the audio, video or screen share "connects
 sometimes, disconnects at random times, and sometimes never connects at all". Found with a browser in the call, logging

@@ -541,6 +541,28 @@ def test_overview_lists_every_arcade_this_one_first_with_its_cores_ords_and_link
     assert app.get("/admin/api/arcades", headers=EDGE).status_code != 200, "never shown to a stranger"
 
 
+def test_overview_shows_arcades_seen_through_a_linked_one(public):
+    """2026-11-02 (the phone "is not listing all the arcades seen by strawberry"): an arcade a linked arcade
+    says it is linked to is running, and its row says "via" that arcade, with the tag and host it was said under."""
+    app, state = public
+    me, straw, avocado, pep = "a" * 64, "b" * 64, "c" * 64, "d" * 64
+    was = getattr(state, "mesh", None)
+    state.mesh = _mesh_of(me, [straw], rtts={straw: 9.0}, said={
+        straw: {"tag": "strawberry", "hosts": [], "at": time.time(),
+                "links": [{"id": avocado, "tag": "avacado", "host": "avo.example.com"}, {"id": pep}, {"id": me}]}})
+    try:
+        got = app.get("/admin/api/arcades", headers=LOCAL).json()
+    finally:
+        state.mesh = was
+    assert got["running"] == 3 and got["linked"] == 1
+    rows = got["rows"][1:]
+    assert [r["node"] for r in rows] == [straw[:12], avocado[:12], pep[:12]], "linked first, then seen through"
+    assert rows[1]["tag"] == "avacado" and rows[1]["host"] == "avo.example.com"
+    assert rows[1]["link"] == {"state": "via", "by": "strawberry", "by_node": straw[:12]}
+    assert rows[2]["tag"] == "" and rows[2]["link"]["state"] == "via"
+    assert rows[1]["cores"] == [], "nothing of its own is claimed for it"
+
+
 def _store_announcing(state, keys):
     """state.store, with these mesh keys announced on the chain in the last day."""
     import contextlib
