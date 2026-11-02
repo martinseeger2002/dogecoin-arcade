@@ -2247,6 +2247,8 @@ class DoginalIndex:
             return None                                  # not a whole chunk yet: nobody scans it; its few blocks read
         if any(lane["c"] == c for lane in self.chunks.lanes) or c in self._fetching():
             return False
+        if getattr(self, "_reading", None) == c and self.own_core():
+            return None                                  # a lane's follow-back was too slow: read here (_help)
         if self._lane_sources(walking=True):
             return False                                 # the lanes here take every chunk in line, this one too
         lo = chunk_range(c, self.base)[0]
@@ -2499,7 +2501,7 @@ class DoginalIndex:
                 free.remove(via)
             else:
                 self._drop_lane(lane)
-        held = {lane["c"] for lane in lanes}
+        held = {lane["c"] for lane in lanes} | ({self._reading} if getattr(self, "_reading", None) is not None else set())
         while free:
             c = self.chunks.choose(ready, now, exclude=held, first=self._needed() if self.mode() == "walk" else ())
             if c is None or (walking and c - chunk_of(self.walker.next_height(), self.base) > LANES_AHEAD):
@@ -2572,8 +2574,13 @@ class DoginalIndex:
         # FINISH_SECONDS a pass: the walk comes after, on this thread (2026-10-28: Bellscoin's lanes finished two
         # chunks of early 2024 -- ~8,400 follow-backs each, a coin at a time from a hard disk -- and the walk stood still
         # 14 hours). Unfinished, the lane keeps its chunk and the next pass goes on where this one stopped.
+        # The walk's own chunk is finished first, the rest in line after it (2026-10-30: Bellscoin's lanes finished in
+        # the order they were taken, and the walk's chunk, 21st of 24, was reached in no pass for eight hours). Still
+        # unfinished, the walk reads it from its own Core instead: it walked every envelope begun before, so it asks
+        # the Core nothing a coin at a time.
         finish_by = time.monotonic() + self.FINISH_SECONDS
-        for lane in list(lanes):
+        walk_c = chunk_of(self.walker.next_height(), self.base) if walking else None
+        for lane in sorted(lanes, key=lambda lane: lane["c"]):
             c = lane["c"]
             if lane["at"] >= chunk_range(c, self.base)[1]:
                 got = self.store.chunk_line(c)
@@ -2583,6 +2590,15 @@ class DoginalIndex:
                         nd = kept[1]
                     else:
                         finished = self.store.finish_notes(c, rpc, deadline=finish_by)
+                        if finished is False and c == walk_c and self.own_core():
+                            self._reading = c
+                            self._say_lease({"c": c, "at": self.walker.next_height()})
+                            lo, hi = chunk_range(c, self.base)
+                            self.store.x("DELETE FROM pnote WHERE height>=? AND height<?", (lo, hi))
+                            self._drop_lane(lane)
+                            log.info("ord index %s: chunk %d's envelopes are slow to follow back; the walk reads it",
+                                     self.net, c)
+                            continue
                         if finished is False:
                             said = self.__dict__.setdefault("_finishing_said", set())
                             if c not in said:

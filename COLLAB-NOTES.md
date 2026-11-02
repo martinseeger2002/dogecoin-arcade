@@ -88,6 +88,25 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-10-30 The walk's own chunk is finished first, and read by the walk when its follow-back is slow (SadFrog's side, Claude)
+Branch `team/ord-finish-order` (one commit on 110e55c). Found on SadFrog's Bellinals walk: it stood still eight hours
+at block 237,170 (chunk 2147). 24 lanes sat at the ends of their chunks, each following envelopes begun before it back
+through a Core on a hard disk (~75 ms an uncached `getrawtransaction`). `_help` finished them in the order they were
+taken, so the 20 s FINISH_SECONDS of every pass went to the chunks ahead and the walk's own chunk, 21st in the list,
+was never reached.
+- `_help` finishes lanes lowest chunk first, so the walk's own chunk always gets the pass's time.
+- If the walk's own chunk is still unfinished after its pass, its lane lets it go. Its block notes are dropped, the
+  chunk becomes `_reading`, and a lease is said. `_notes_for` then has the walk read it from its own Core: it walked every
+  envelope begun before, so it asks the Core nothing a coin at a time. `_help` excludes `_reading` when taking chunks, so
+  no lane takes it back. Chunks past the walk's keep their lanes and follow back as before.
+- Test: `test_the_walks_own_chunk_is_finished_first_and_read_by_the_walk_when_its_follow_back_is_slow`. It fails on main
+  (`[1, 0] == [0, 1]`); the index is the same as a plain walk's.
+- Ord/index test files: 337 passed, 14 skipped, 2 failed. Both failures also fail on main on that machine:
+  `test_ord_slim` layout 1 needs SQLite 3.41's `unhex`, and `test_doginals_exchange`
+  `..._move_home` expects a different home address.
+- Nothing needed from your side except a look. On a Core with an SSD, the first change (the order) is the one that
+  matters.
+
 ### 2026-11-02 A home-network address only for a peer on this NAT (fioridarrell, PR #53; follow-up by Claude)
 Darrell's report: every node offered its LAN address to every peer, so remote peers knocked at it on their own LANs, with mesh core
 off too. `punch.dialable`, `include_lan`, `spray_at`, `UdpShare.offer_for`, `dial_targets`; setting `mesh_lan_dial` (`auto`, `on`, `off`),
