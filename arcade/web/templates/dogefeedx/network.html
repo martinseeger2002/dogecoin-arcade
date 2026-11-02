@@ -1,0 +1,769 @@
+{% extends "base.html" %}
+{% block title %}Network · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- DogeFeedX Network App: Mac OS X Aqua-styled network status viewer.
+    Shows nodes, sync progress, mesh peers, and trusted nodes. -#}
+
+<div class="dfx-network" id="dfx-network">
+  <div class="dfx-titlebar">
+    <div class="dfx-traffic-lights">
+      <span class="dfx-light dfx-close"></span>
+      <span class="dfx-light dfx-minimize"></span>
+      <span class="dfx-light dfx-maximize"></span>
+    </div>
+    <h1 class="dfx-title">Network</h1>
+  </div>
+
+  <div class="dfx-toolbar">
+    <button type="button" class="dfx-btn" id="dfx-refresh" title="Refresh">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+      </svg>
+      Refresh
+    </button>
+    <span class="dfx-status" id="dfx-last-update">Loading...</span>
+  </div>
+
+  <div class="dfx-content">
+    <section class="dfx-section" id="dfx-nodes-section">
+      <h2 class="dfx-section-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="3" width="20" height="14" rx="2"/>
+          <path d="M8 21h8M12 17v4"/>
+        </svg>
+        Blockchain Nodes
+      </h2>
+      <div class="dfx-nodes" id="dfx-nodes">
+        <div class="dfx-loading">Looking for nodes...</div>
+      </div>
+    </section>
+
+    <section class="dfx-section" id="dfx-mesh-section">
+      <h2 class="dfx-section-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="5" r="3"/>
+          <circle cx="5" cy="19" r="3"/>
+          <circle cx="19" cy="19" r="3"/>
+          <path d="M12 8v4M7.5 16.5L12 12M16.5 16.5L12 12"/>
+        </svg>
+        Mesh Peers
+      </h2>
+      <div class="dfx-peers" id="dfx-mesh-peers">
+        <div class="dfx-loading">Looking for mesh peers...</div>
+      </div>
+    </section>
+
+    <section class="dfx-section" id="dfx-trusted-section">
+      <h2 class="dfx-section-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        Trusted Nodes
+      </h2>
+      <div class="dfx-nodes-list" id="dfx-trusted-nodes">
+        <div class="dfx-loading">Looking for trusted nodes...</div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<style>
+/* DogeFeedX Network App - Mac OS X Aqua Styling */
+
+.dfx-network {
+  max-width: 800px;
+  margin: 20px auto;
+  background: linear-gradient(180deg, #f0f0f0 0%, #d8d8d8 100%);
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,0.3),
+    0 4px 16px rgba(0,0,0,0.25),
+    inset 0 1px 0 rgba(255,255,255,0.8);
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Lucida Grande", "Helvetica Neue", sans-serif;
+}
+
+/* Aqua Title Bar */
+.dfx-titlebar {
+  background: linear-gradient(180deg, #e8e8e8 0%, #c8c8c8 45%, #b8b8b8 55%, #d0d0d0 100%);
+  border-bottom: 1px solid #888;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+}
+
+.dfx-traffic-lights {
+  display: flex;
+  gap: 8px;
+}
+
+.dfx-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow:
+    inset 0 -2px 2px rgba(0,0,0,0.2),
+    inset 0 2px 2px rgba(255,255,255,0.4),
+    0 1px 2px rgba(0,0,0,0.2);
+}
+
+.dfx-close {
+  background: linear-gradient(180deg, #ff6b6b 0%, #e53935 100%);
+  border: 1px solid #b71c1c;
+}
+
+.dfx-minimize {
+  background: linear-gradient(180deg, #ffd93d 0%, #f9a825 100%);
+  border: 1px solid #c77700;
+}
+
+.dfx-maximize {
+  background: linear-gradient(180deg, #6bcb77 0%, #2e7d32 100%);
+  border: 1px solid #1b5e20;
+}
+
+.dfx-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin: 0;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.7);
+  flex: 1;
+  text-align: center;
+}
+
+/* Aqua Toolbar */
+.dfx-toolbar {
+  background: linear-gradient(180deg, #e0e0e0 0%, #c4c4c4 100%);
+  border-bottom: 1px solid #999;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dfx-btn {
+  background: linear-gradient(180deg, #fff 0%, #e8e8e8 45%, #d0d0d0 55%, #e0e0e0 100%);
+  border: 1px solid #888;
+  border-radius: 5px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #333;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.1),
+    inset 0 1px 0 rgba(255,255,255,0.8);
+}
+
+.dfx-btn:hover {
+  background: linear-gradient(180deg, #fff 0%, #f0f0f0 45%, #e0e0e0 55%, #f0f0f0 100%);
+}
+
+.dfx-btn:active {
+  background: linear-gradient(180deg, #d0d0d0 0%, #c0c0c0 45%, #b8b8b8 55%, #c8c8c8 100%);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.dfx-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dfx-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: #666;
+}
+
+/* Content Area */
+.dfx-content {
+  background: #fff;
+  padding: 16px;
+  min-height: 400px;
+}
+
+.dfx-section {
+  margin-bottom: 20px;
+}
+
+.dfx-section:last-child {
+  margin-bottom: 0;
+}
+
+.dfx-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  margin: 0 0 12px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #ddd;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dfx-section-title svg {
+  color: #666;
+}
+
+/* Node Cards - Aqua Style */
+.dfx-nodes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.dfx-node-card {
+  background: linear-gradient(180deg, #fafafa 0%, #f0f0f0 100%);
+  border: 1px solid #c0c0c0;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow:
+    0 2px 4px rgba(0,0,0,0.08),
+    inset 0 1px 0 rgba(255,255,255,0.9);
+}
+
+.dfx-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.dfx-node-letter {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+  text-shadow: 0 -1px 0 rgba(0,0,0,0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.3),
+    0 1px 2px rgba(0,0,0,0.2);
+}
+
+.dfx-node-letter.pep {
+  background: linear-gradient(180deg, #6fcf6f 0%, #2e8b2e 100%);
+}
+
+.dfx-node-letter.doge {
+  background: linear-gradient(180deg, #daa520 0%, #b8860b 100%);
+}
+
+.dfx-node-letter.ltc {
+  background: linear-gradient(180deg, #6b9bc3 0%, #345d9d 100%);
+}
+
+.dfx-node-letter.default {
+  background: linear-gradient(180deg, #888 0%, #555 100%);
+}
+
+.dfx-node-name {
+  flex: 1;
+  font-weight: 600;
+  font-size: 13px;
+  color: #333;
+}
+
+.dfx-node-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.dfx-node-status.synced {
+  background: linear-gradient(180deg, #c8e6c9 0%, #a5d6a7 100%);
+  color: #2e7d32;
+  border: 1px solid #66bb6a;
+}
+
+.dfx-node-status.syncing {
+  background: linear-gradient(180deg, #fff3e0 0%, #ffe0b2 100%);
+  color: #e65100;
+  border: 1px solid #ffb74d;
+}
+
+.dfx-node-status.offline {
+  background: linear-gradient(180deg, #ffcdd2 0%, #ef9a9a 100%);
+  color: #c62828;
+  border: 1px solid #e57373;
+}
+
+.dfx-node-status.borrowed {
+  background: linear-gradient(180deg, #e3f2fd 0%, #bbdefb 100%);
+  color: #1565c0;
+  border: 1px solid #64b5f6;
+}
+
+/* Aqua Progress Bar */
+.dfx-progress {
+  margin: 10px 0;
+}
+
+.dfx-progress-label {
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.dfx-progress-bar {
+  height: 16px;
+  background: linear-gradient(180deg, #e8e8e8 0%, #d0d0d0 100%);
+  border: 1px solid #999;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.dfx-progress-fill {
+  height: 100%;
+  background: linear-gradient(180deg,
+    #7ec8f3 0%,
+    #4ca8e8 40%,
+    #3d9de0 60%,
+    #5bb5ed 100%);
+  border-radius: 7px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.5),
+    inset 0 -1px 0 rgba(0,0,0,0.1);
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+.dfx-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  right: 4px;
+  height: 4px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0) 100%);
+  border-radius: 2px;
+}
+
+.dfx-progress-fill.complete {
+  background: linear-gradient(180deg,
+    #6bcb77 0%,
+    #4caf50 40%,
+    #43a047 60%,
+    #66bb6a 100%);
+}
+
+.dfx-node-stats {
+  font-size: 11px;
+  color: #666;
+  margin-top: 8px;
+}
+
+.dfx-node-stats div {
+  margin: 2px 0;
+}
+
+.dfx-node-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.dfx-sync-btn {
+  background: linear-gradient(180deg,
+    #7ec8f3 0%,
+    #4ca8e8 45%,
+    #3d9de0 55%,
+    #5bb5ed 100%);
+  border: 1px solid #2980b9;
+  border-radius: 5px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  cursor: pointer;
+  text-shadow: 0 -1px 0 rgba(0,0,0,0.2);
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.15),
+    inset 0 1px 0 rgba(255,255,255,0.3);
+}
+
+.dfx-sync-btn:hover {
+  background: linear-gradient(180deg,
+    #8ed0f5 0%,
+    #5cb3eb 45%,
+    #4da8e5 55%,
+    #6bc0f0 100%);
+}
+
+.dfx-sync-btn:active {
+  background: linear-gradient(180deg,
+    #4ca8e8 0%,
+    #3d9de0 45%,
+    #3590d0 55%,
+    #4ca8e8 100%);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.dfx-sync-btn:disabled {
+  background: linear-gradient(180deg, #ccc 0%, #aaa 100%);
+  border-color: #888;
+  color: #666;
+  cursor: default;
+}
+
+/* Mesh Peers List */
+.dfx-peers {
+  background: #fafafa;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.dfx-peer-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee;
+  gap: 10px;
+}
+
+.dfx-peer-row:last-child {
+  border-bottom: none;
+}
+
+.dfx-peer-row:hover {
+  background: #f0f8ff;
+}
+
+.dfx-peer-icon {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dfx-peer-icon.linked {
+  background: linear-gradient(180deg, #6bcb77 0%, #2e7d32 100%);
+  box-shadow: 0 0 4px rgba(76,175,80,0.5);
+}
+
+.dfx-peer-icon.known {
+  background: linear-gradient(180deg, #90caf9 0%, #1976d2 100%);
+}
+
+.dfx-peer-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: #333;
+  flex: 1;
+}
+
+.dfx-peer-tag {
+  font-size: 11px;
+  color: #2e7d32;
+  font-weight: 500;
+}
+
+.dfx-peer-node {
+  font-size: 10px;
+  color: #888;
+  font-family: ui-monospace, monospace;
+}
+
+.dfx-peer-host {
+  font-size: 11px;
+  color: #666;
+}
+
+/* Trusted Nodes List */
+.dfx-nodes-list {
+  background: #fafafa;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.dfx-node-row {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid #eee;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.dfx-node-row:last-child {
+  border-bottom: none;
+}
+
+.dfx-node-id {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #555;
+}
+
+/* Loading state */
+.dfx-loading {
+  text-align: center;
+  padding: 20px;
+  color: #888;
+  font-size: 13px;
+}
+
+/* Empty state */
+.dfx-empty {
+  text-align: center;
+  padding: 16px;
+  color: #888;
+  font-size: 12px;
+}
+
+/* Error state */
+.dfx-error {
+  text-align: center;
+  padding: 16px;
+  color: #c62828;
+  font-size: 12px;
+  background: #ffebee;
+  border-radius: 6px;
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme=light]) .dfx-network {
+    background: linear-gradient(180deg, #3a3a3a 0%, #2a2a2a 100%);
+  }
+
+  :root:not([data-theme=light]) .dfx-titlebar {
+    background: linear-gradient(180deg, #4a4a4a 0%, #3a3a3a 45%, #333 55%, #404040 100%);
+    border-color: #222;
+  }
+
+  :root:not([data-theme=light]) .dfx-title {
+    color: #e0e0e0;
+    text-shadow: 0 -1px 0 rgba(0,0,0,0.5);
+  }
+
+  :root:not([data-theme=light]) .dfx-toolbar {
+    background: linear-gradient(180deg, #444 0%, #333 100%);
+    border-color: #222;
+  }
+
+  :root:not([data-theme=light]) .dfx-btn {
+    background: linear-gradient(180deg, #555 0%, #444 45%, #3a3a3a 55%, #454545 100%);
+    border-color: #222;
+    color: #e0e0e0;
+  }
+
+  :root:not([data-theme=light]) .dfx-content {
+    background: #2a2a2a;
+  }
+
+  :root:not([data-theme=light]) .dfx-section-title {
+    color: #e0e0e0;
+    border-color: #444;
+  }
+
+  :root:not([data-theme=light]) .dfx-node-card {
+    background: linear-gradient(180deg, #3a3a3a 0%, #333 100%);
+    border-color: #444;
+  }
+
+  :root:not([data-theme=light]) .dfx-node-name {
+    color: #e0e0e0;
+  }
+
+  :root:not([data-theme=light]) .dfx-progress-bar {
+    background: linear-gradient(180deg, #444 0%, #333 100%);
+    border-color: #222;
+  }
+
+  :root:not([data-theme=light]) .dfx-peers,
+  :root:not([data-theme=light]) .dfx-nodes-list {
+    background: #333;
+    border-color: #444;
+  }
+
+  :root:not([data-theme=light]) .dfx-peer-row,
+  :root:not([data-theme=light]) .dfx-node-row {
+    border-color: #444;
+  }
+
+  :root:not([data-theme=light]) .dfx-peer-row:hover {
+    background: #3a3a3a;
+  }
+
+  :root:not([data-theme=light]) .dfx-peer-name,
+  :root:not([data-theme=light]) .dfx-node-id {
+    color: #e0e0e0;
+  }
+}
+</style>
+
+<script>
+(function() {
+  const $ = (id) => document.getElementById(id);
+  const API = '/dogefeedx/network/api';
+  let lastData = null;
+
+  function formatNumber(n) {
+    return n.toLocaleString();
+  }
+
+  function nodeLetterClass(node) {
+    const fam = (node.family || '').toLowerCase();
+    if (fam === 'pep') return 'pep';
+    if (fam === 'doge') return 'doge';
+    if (fam === 'ltc') return 'ltc';
+    return 'default';
+  }
+
+  function nodeStatusClass(node) {
+    if (!node.online) return 'offline';
+    if (node.borrowed) return 'borrowed';
+    if (node.synced || node.ready) return 'synced';
+    return 'syncing';
+  }
+
+  function nodeStatusText(node) {
+    if (!node.online) return 'Offline';
+    if (node.borrowed) return 'Borrowed';
+    if (node.synced || node.ready) return 'Synced';
+    return 'Syncing';
+  }
+
+  function renderNodes(nodes) {
+    const container = $('dfx-nodes');
+    if (!nodes || !nodes.length) {
+      container.innerHTML = '<div class="dfx-empty">No blockchain nodes configured</div>';
+      return;
+    }
+
+    container.innerHTML = nodes.map(node => {
+      const pct = Math.min(100, Math.max(0, node.progress_pct || 0));
+      const isSynced = node.synced || node.ready;
+      const showSync = node.online && !isSynced && !node.borrowed;
+
+      return `
+        <div class="dfx-node-card" data-network="${node.network}">
+          <div class="dfx-node-header">
+            <div class="dfx-node-letter ${nodeLetterClass(node)}">${node.letter || '?'}</div>
+            <div class="dfx-node-name">${node.label || node.network}</div>
+            <span class="dfx-node-status ${nodeStatusClass(node)}">${nodeStatusText(node)}</span>
+          </div>
+          <div class="dfx-progress">
+            <div class="dfx-progress-label">
+              <span>Blocks: ${formatNumber(node.blocks)}</span>
+              <span>${pct.toFixed(1)}%</span>
+            </div>
+            <div class="dfx-progress-bar">
+              <div class="dfx-progress-fill ${isSynced ? 'complete' : ''}" style="width: ${pct}%"></div>
+            </div>
+          </div>
+          <div class="dfx-node-stats">
+            <div>Headers: ${formatNumber(node.headers)}</div>
+            ${node.behind > 0 ? `<div>Behind: ${formatNumber(node.behind)} blocks</div>` : ''}
+            ${node.is_mainnet ? '<div>⚠️ Real coins</div>' : ''}
+          </div>
+          ${showSync ? `
+            <div class="dfx-node-actions">
+              <button class="dfx-sync-btn" data-network="${node.network}">Start Sync</button>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+
+    container.querySelectorAll('.dfx-sync-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const network = btn.dataset.network;
+        btn.disabled = true;
+        btn.textContent = 'Starting...';
+        try {
+          const resp = await fetch(`${API}/sync/${network}`, {method: 'POST', credentials: 'same-origin'});
+          const data = await resp.json();
+          if (resp.ok) {
+            btn.textContent = 'Syncing...';
+            setTimeout(refresh, 2000);
+          } else {
+            btn.textContent = data.detail || 'Failed';
+            setTimeout(() => { btn.textContent = 'Start Sync'; btn.disabled = false; }, 3000);
+          }
+        } catch (e) {
+          btn.textContent = 'Error';
+          setTimeout(() => { btn.textContent = 'Start Sync'; btn.disabled = false; }, 3000);
+        }
+      });
+    });
+  }
+
+  function renderMeshPeers(peers) {
+    const container = $('dfx-mesh-peers');
+    if (!peers || !peers.length) {
+      container.innerHTML = '<div class="dfx-empty">No mesh peers connected</div>';
+      return;
+    }
+
+    container.innerHTML = peers.map(peer => `
+      <div class="dfx-peer-row">
+        <span class="dfx-peer-icon ${peer.linked ? 'linked' : 'known'}"></span>
+        ${peer.tag ? `<span class="dfx-peer-tag">@${peer.tag}</span>` : ''}
+        <span class="dfx-peer-node">${peer.node || '?'}</span>
+        ${peer.hosts && peer.hosts.length ? `<span class="dfx-peer-host">${peer.hosts[0]}</span>` : ''}
+      </div>
+    `).join('');
+  }
+
+  function renderTrustedNodes(nodes) {
+    const container = $('dfx-trusted-nodes');
+    if (!nodes || !nodes.length) {
+      container.innerHTML = '<div class="dfx-empty">No trusted nodes linked</div>';
+      return;
+    }
+
+    container.innerHTML = nodes.map(node => `
+      <div class="dfx-node-row">
+        <span class="dfx-peer-icon linked"></span>
+        <span class="dfx-node-id">${node.id}...</span>
+      </div>
+    `).join('');
+  }
+
+  async function refresh() {
+    try {
+      const resp = await fetch(`${API}/status`, {credentials: 'same-origin'});
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      lastData = data;
+
+      renderNodes(data.nodes);
+      renderMeshPeers(data.mesh_peers);
+      renderTrustedNodes(data.trusted_nodes);
+
+      const ts = new Date(data.timestamp * 1000);
+      $('dfx-last-update').textContent = `Updated ${ts.toLocaleTimeString()}`;
+    } catch (e) {
+      $('dfx-last-update').textContent = 'Update failed';
+      console.error('Network refresh error:', e);
+    }
+  }
+
+  $('dfx-refresh').addEventListener('click', refresh);
+
+  refresh();
+  setInterval(refresh, 30000);
+})();
+</script>
+{% endblock %}
