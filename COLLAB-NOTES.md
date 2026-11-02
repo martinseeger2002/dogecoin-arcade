@@ -88,6 +88,14 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 Mesh TCP: no dialing another operator's home-network address (Darrell's PR #55, Claude)
+Follows #53/72c17fa, which closed this for UDP. TCP, the backup link, still connected to a listen address a neighbour
+had learned on its own LAN (192.168.1.20:8421). The dialer, the IPv6 meeter, the tuner and address gossip now ask
+`punch.tcp_targets`, which asks `punch.dialable`: public always, a home address only on the same NAT or with
+`mesh_lan_dial` "on". `--mesh-peer` is still dialed unless `mesh_lan_dial` is off. Loopback follows the rule once STUN
+has a public answer; no arcade here meshes over loopback (staging runs --no-mesh). Doc conflict from the mirror's
+renamed LAN addresses resolved to the real ones. Mesh suites: 99 passed.
+
 ### 2026-11-02 chain_sync: a second caller no longer gets a thread that has not started (Claude)
 Darrell's report on #51: `watcher: _sync_ledgers failed`, `RuntimeError: cannot join thread before it is started`, at startup.
 `_refresh_sync_later` recorded the thread, then started it; now both happen under one lock. A failed start clears the record, or that

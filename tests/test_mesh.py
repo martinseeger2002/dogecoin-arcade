@@ -1018,3 +1018,127 @@ def test_two_offers_at_once_make_one_core_peer_per_arcade_and_chain():
     chains = asyncio.run(go())
     assert chains == ["doge", "ltc", "main", "test"], "every chain run here gets its arcade peer"
     assert sorted(asked) == [("doge", "add"), ("ltc", "add"), ("main", "add"), ("test", "add")], "and one addnode each"
+
+
+# The TCP dial the UDP fix did not cover: a neighbour's home LAN, port 8421.
+_PEER = "ab" * 32
+_OURS = "129.222.44.64"
+_HOME = ("192.168.1.20", 8421)
+_OTHER_HOME = ("192.168.1.20", 8421)
+_PUBLIC = ("156.67.28.112", 8421)
+
+
+def _watch_dials(monkeypatch):
+    dialed = []
+
+    async def refuse(*args, **kwargs):
+        if args:
+            dialed.append(tuple(args[:2]))
+        raise OSError("refused")
+
+    monkeypatch.setattr(meshlib.asyncio, "open_connection", refuse)
+    return dialed
+
+
+def test_the_dialer_does_not_open_tcp_to_another_nats_home_address(monkeypatch):
+    """Live: TCP to 192.168.1.20:8421 while that node sits on somebody else's LAN.
+    The public endpoint is still dialed. The home addresses are not."""
+    dialed = _watch_dials(monkeypatch)
+
+    async def go():
+        node = mk(listen=False, target=4)
+        node.outside_addrs = lambda: [_OURS]
+        node.add_address(*_PUBLIC, _PEER)
+        node.add_address(*_HOME, _PEER)
+        node.add_address(*_OTHER_HOME, _PEER)
+        await node.start()
+        try:
+            await until(lambda: _PUBLIC in dialed, what="public tcp")
+            await asyncio.sleep(0.3)
+            assert _HOME not in dialed and _OTHER_HOME not in dialed, dialed
+            assert _HOME not in node.addrs or node.addrs[_HOME]["fail"] == 0
+        finally:
+            await node.stop()
+    run(go())
+
+
+def test_the_dialer_opens_tcp_to_a_home_address_on_this_nat(monkeypatch):
+    dialed = _watch_dials(monkeypatch)
+
+    async def go():
+        node = mk(listen=False, target=4)
+        node.outside_addrs = lambda: [_OURS]
+        node.add_address(_OURS, 8421, _PEER)
+        node.add_address(*_HOME, _PEER)
+        await node.start()
+        try:
+            await until(lambda: _HOME in dialed and (_OURS, 8421) in dialed, what="same-nat tcp")
+        finally:
+            await node.stop()
+    run(go())
+
+
+def test_mesh_lan_dial_off_does_not_open_tcp_to_a_home_address_on_this_nat(monkeypatch):
+    dialed = _watch_dials(monkeypatch)
+
+    async def go():
+        node = mk(listen=False, target=4)
+        node.outside_addrs = lambda: [_OURS]
+        node.lan_dial = "off"
+        node.add_address(_OURS, 8421, _PEER)
+        node.add_address(*_HOME, _PEER)
+        await node.start()
+        try:
+            await until(lambda: (_OURS, 8421) in dialed, what="public tcp")
+            await asyncio.sleep(0.3)
+            assert _HOME not in dialed, dialed
+        finally:
+            await node.stop()
+    run(go())
+
+
+def test_a_configured_home_address_is_still_dialed(monkeypatch):
+    """--mesh-peer names a node on this LAN before STUN can show the shared public address."""
+    dialed = _watch_dials(monkeypatch)
+
+    async def go():
+        node = mk(listen=False, peers=[_HOME], target=2)
+        node.outside_addrs = lambda: [_OURS]
+        await node.start()
+        try:
+            await until(lambda: _HOME in dialed, what="configured home tcp")
+        finally:
+            await node.stop()
+    run(go())
+
+
+def test_gossip_keeps_a_home_address_only_for_this_nat():
+    async def go():
+        node = mk(listen=False)
+        node.outside_addrs = lambda: [_OURS]
+        far, near, house = "cd" * 32, "ef" * 32, "11" * 32
+
+        class Link:
+            def __init__(self, peer_id):
+                self.peer_id = peer_id
+
+        await node._handle(Link(far), {"t": "addrs", "a": [
+            {"h": "192.168.1.20", "p": 8421, "id": far},
+            {"h": "156.67.28.112", "p": 8421, "id": far},
+        ]}, b"")
+        assert _PUBLIC in node.addrs and _HOME not in node.addrs
+        # Listed first, before the public address. Still kept when that public address is ours.
+        await node._handle(Link(near), {"t": "addrs", "a": [
+            {"h": "192.168.1.20", "p": 8421, "id": near},
+            {"h": _OURS, "p": 8421, "id": near},
+        ]}, b"")
+        assert _HOME in node.addrs and node.addrs[_HOME]["id"] == near
+        node.addrs[_HOME]["ok"] = time.time()
+        node.addrs[(_OURS, 8421)]["ok"] = time.time()
+        # `far` is on another network (156.67.28.112). It must not be handed the home address.
+        told = {row["h"] for row in node._rows_for(far)}
+        assert "192.168.1.20" not in told and _OURS in told
+        node.add_address(_OURS, 9000, house)
+        node.addrs[(_OURS, 9000)]["ok"] = time.time()
+        assert "192.168.1.20" in {row["h"] for row in node._rows_for(house)}
+    run(go())
