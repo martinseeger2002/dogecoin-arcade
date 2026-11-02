@@ -1507,17 +1507,24 @@ class AppState:
 
     def _refresh_sync_later(self, chain: ChainContext) -> "threading.Thread | None":
         asking = self.__dict__.setdefault("_sync_asking", {})
-        if chain.network in asking:
-            return asking[chain.network]
+        # One step under a lock: a second caller was handed the thread between these two lines, and chain_sync's join then
+        # raised "cannot join thread before it is started" (2026-10-31, Darrell, a Windows start; issue #51).
+        with self.__dict__.setdefault("_sync_asking_lock", threading.Lock()):
+            if chain.network in asking:
+                return asking[chain.network]
 
-        def ask():
+            def ask():
+                try:
+                    self._sync_now(chain)
+                finally:
+                    asking.pop(chain.network, None)
+            thread = threading.Thread(target=ask, name=f"arcade-sync-{chain.network}", daemon=True)
+            asking[chain.network] = thread
             try:
-                self._sync_now(chain)
-            finally:
+                thread.start()
+            except RuntimeError:                         # no thread to be had: the next caller must be able to ask
                 asking.pop(chain.network, None)
-        thread = threading.Thread(target=ask, name=f"arcade-sync-{chain.network}", daemon=True)
-        asking[chain.network] = thread
-        thread.start()
+                raise
         return thread
 
     def _sync_now(self, chain: ChainContext) -> dict:

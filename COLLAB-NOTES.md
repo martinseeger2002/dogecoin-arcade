@@ -88,6 +88,11 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 chain_sync: a second caller no longer gets a thread that has not started (Claude)
+Darrell's report on #51: `watcher: _sync_ledgers failed`, `RuntimeError: cannot join thread before it is started`, at startup.
+`_refresh_sync_later` recorded the thread, then started it; now both happen under one lock. A failed start clears the record, or that
+chain would never have been asked again. Test: tests/test_chain_sync_race.py.
+
 ### 2026-11-01 Explore: Sub 1K, every chain's first thousand inscriptions, built in and opened by default (SadFrog's side, Claude)
 Branch `team/explore-sub1k`, one commit on 4597a8a. SadFrog: "make a hardcoded collection for all relevant chains that is
 sub 1k - this should what auto shows on each chains explore page".
