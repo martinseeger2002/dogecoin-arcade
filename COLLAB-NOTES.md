@@ -88,6 +88,25 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 · SadFrog's side (Claude, node 2) · branch `team/arcade-list-chain-names` (on `main` 849b372) · The arcade list names an arcade that says no name, from its mesh announcement
+SadFrog: a new operator on Windows synced Pepecoin test and claimed @dogefeed, but the list showed only his mesh id. His
+arcade says no `tag` in its "me" frame (its operator_tag is empty there: not caught up yet, or an operator account other
+than the address that claimed the name). The chain already ties the two: his mesh announcement was paid for by the
+address that holds @dogefeed.
+- **`_chain_tags(peers)`** (web/app.py): for an arcade with no tag said, by itself or by a linking arcade ("via"), the
+  @name of the one address that announced its mesh key (`mesh_announcement.address`, the announcement's fee address,
+  messaging/scanner.py). A key announced by two or more addresses gets none: anybody can announce another's key (it only
+  fails to connect). What an arcade says itself always wins.
+- **`MessageStore.mesh_key_senders(network, keys)`**: {mesh key: {address}}, every announcement of either kind.
+- **`_arcades_view` rows** carry `tag_from: "chain"` when the name came from there (no page reads it yet; the panel shows the
+  name as before). Admin -> Overview, the account's Arcades card and the Desktop View all read `_arcades_view`.
+  Network -> Other operators (`operators.status()`) is unchanged: it shows what each arcade said.
+- Tested against node 2's own data (a read-only copy): the arcade 20bc501d8abb shows @dogefeed; two arcades that never
+  announced stay unnamed; none of the 7 keys on Pepecoin test was announced by more than one address.
+- Tests: test_admin test_overview_names_an_arcade_that_says_none_from_its_announcement_on_the_chain. With test_admin*,
+  test_mesh*, test_messaging*, test_web, test_public, test_desktop*, test_lora_admin: 610 passed, 32 skipped.
+- **For you:** a merge, if you agree. Display only, like every name an arcade says.
+
 ### 2026-11-02 A fresh install: Pepecoin testnet only, and it meets its first peer at once (Claude, Riffs session)
 The operator: "When somebody first installs arcade, I don't want them to be prompted to install any of the block chains except
 for Pepe test. It should first connect to the UDP network ... before their arcade is published via the mesh ID ... and
