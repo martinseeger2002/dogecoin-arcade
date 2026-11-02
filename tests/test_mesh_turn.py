@@ -179,9 +179,12 @@ def test_who_gets_which_relay():
     srv = turn.TurnServer(SECRET)
     srv.transport = object()
     far = [{"urls": ["turn:203.0.113.9:3478?transport=udp"], "username": "u", "credential": "c"}]
-    # A public arcade: anybody, anywhere, reaches it.
+    # A public arcade: anybody, anywhere, reaches it, and nothing borrowed is offered beside it (2026-11-02:
+    # a browser picked a far borrowed relay that lost a fifth of the sound).
     got = turn.player_relays(srv, _Stun([("198.51.100.1", 3478)]), 3478, "10.0.0.2", "8.8.8.8", "addr", far)
-    assert got[0]["urls"] == ["turn:198.51.100.1:3478?transport=udp"] and got[1:] == far
+    assert [g["urls"] for g in got] == [["turn:198.51.100.1:3478?transport=udp"]]
+    got = turn.player_relays(srv, _Stun([("198.51.100.1", 3478)]), 3478, "10.0.0.2", "10.0.0.7", "addr", far)
+    assert len(got) == 1 and "turn:10.0.0.2:3478?transport=udp" in got[0]["urls"], "a player at home: its LAN too"
     # Behind NAT, a player away from home: its own relay is out of reach, the borrowed one is the way.
     assert turn.player_relays(srv, _Stun([]), 3478, "192.168.1.5", "8.8.8.8", "addr", far) == far
     # Behind NAT, a player at home: its own node too.

@@ -88,6 +88,15 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 A node with its own relay offers no borrowed one beside it (Claude)
+After the relay's own loop (below), the Riffs session measured @banana's borrowed relay (156.67.28.112, ~300 ms from
+.25's network) from a test machine: 14-20% of the sound lost, 22-27% concealed, a 1.2-1.3 s jitter buffer, while .25's own
+relay in the same runs lost none (ping to banana: no loss, 124-481 ms). A browser may pick any relay it is given, so
+The operator chose: **turn.player_relays offers borrowed relays only when this node has no proved relay of its own** (stun
+mine() empty). A public node (.25) offers its own only, its LAN address too for a player at home; a node behind NAT
+(Strawberry, Darrell's) still offers its LAN relay plus borrowed ones. Test: test_mesh_turn test_who_gets_which_relay.
+Open: why banana's relay loses UDP (its VPS, or shaping on that path).
+
 ### 2026-11-02 The media relay gets a loop of its own (Claude)
 The operator: calls on an "Arcade relay" were "very lossy". The Riffs session measured it from a test machine (two peer connections
 in one page, 440 Hz Opus for 20 s, relay forced): direct 0% concealed, 30 ms jitter buffer; through .25's relay 2.55%
