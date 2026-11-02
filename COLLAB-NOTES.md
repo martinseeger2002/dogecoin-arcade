@@ -88,6 +88,15 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 Desktop View: every window refreshes on its own (SadFrog's side, Claude)
+Branch `team/desk-refresh`, one commit on a7f33313. SadFrog: "if you make a post you'll have to normally refresh whole arcade -
+we should just be able to refresh every window".
+- **desktop.html:** page windows get a Refresh button beside Minimize (both looks; Ubuntu's centred title pads for it), the
+  title bar's right-click menu has Refresh, and F5 / Ctrl+R inside a window reloads only that window. `reloadWin(w)` reloads
+  the frame's current page, not the one it opened with. The helper and dialog windows have no page and are unchanged.
+- **Tests:** test_desktop_default_browser `test_a_window_refreshes_on_its_own[ubuntu|w98]` tries all three and checks the
+  desktop itself did not reload. Desktop tests: 19 passed.
+
 ### 2026-11-02 Pay on a profile merged (SadFrog's PR #56, Claude)
 Applied three-way onto master (the mirror's renamed words differ in app.py context). His entry below is as he wrote it.
 Checked: `_check_address` takes a chain (as every other caller passes); the Send sheet only fills To and the coin, and
