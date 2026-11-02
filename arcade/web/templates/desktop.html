@@ -37,6 +37,10 @@ document.documentElement.setAttribute('data-skin', (function () {
   <span class="dk-grip" aria-hidden="true"></span>
   <div class="dk-tbtns" id="dk-tbtns"></div>
   <div class="dk-tray" id="dk-tray">
+    <span class="dfx-status" id="dfx-status" hidden title="Network Status">
+      <span class="dfx-status-dot" id="dfx-status-dot"></span>
+      <span class="dfx-status-text" id="dfx-status-text">Offline</span>
+    </span>
     <button type="button" class="dk-traybtn" id="dk-bell" title="Notifications" hidden>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0" stroke="#000" stroke-width="2.2" stroke-linejoin="round"/></svg><span id="dk-bell-n"></span></button>
     <button type="button" class="dk-traybtn" id="dk-mail" title="Messages" hidden>
@@ -631,6 +635,16 @@ body.fullscreen #arc-bot { display: none !important; }
 [data-skin="dogefeedx"] .dk-tray { box-shadow: none; height: 22px; padding: 0; gap: 14px; color: var(--df-fg); }
 [data-skin="dogefeedx"] .dk-clock { position: static; transform: none; font-weight: 500; font-size: 13px; white-space: nowrap;
   min-width: 0; text-align: right; color: var(--df-fg); }
+/* Status indicator in menu bar */
+[data-skin="dogefeedx"] .dfx-status { display: flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 4px;
+  background: rgba(255,255,255,0.05); cursor: pointer; transition: background 0.15s; }
+[data-skin="dogefeedx"] .dfx-status:hover { background: rgba(255,255,255,0.1); }
+[data-skin="dogefeedx"] .dfx-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ff3b30; flex-shrink: 0;
+  box-shadow: 0 0 4px currentColor; }
+[data-skin="dogefeedx"] .dfx-status-dot.online { background: #32d74b; }
+[data-skin="dogefeedx"] .dfx-status-dot.syncing { background: #ff9f0a; animation: dfx-pulse 1.5s ease-in-out infinite; }
+[data-skin="dogefeedx"] .dfx-status-text { font-size: 11px; color: #98989d; font-weight: 500; }
+@keyframes dfx-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 [data-skin="dogefeedx"] .dk-traybtn { color: var(--df-fg) !important; }
 [data-skin="dogefeedx"] .dk-traybtn svg path { stroke: var(--df-fg); }
 [data-skin="dogefeedx"] .dk-traybtn span { color: #ff3b30; }
@@ -648,6 +662,8 @@ body.fullscreen #arc-bot { display: none !important; }
 [data-skin="dogefeedx"] .ub-dockbtn:hover { transform: translateY(-6px) scale(1.15); background: none !important; }
 [data-skin="dogefeedx"] .ub-dockbtn.on { transform: translateY(-4px); }
 [data-skin="dogefeedx"] .ub-dockbtn.ub-showapps { margin-top: 0; margin-left: 4px; border-left: 1px solid rgba(255,255,255,0.15); padding-left: 8px !important; }
+/* Dock separators for organized groups */
+[data-skin="dogefeedx"] .dfx-dock-sep { width: 1px; height: 36px; background: rgba(255,255,255,0.2); margin: 0 6px; flex-shrink: 0; }
 [data-skin="dogefeedx"] .ub-run { position: absolute; left: 50%; bottom: -4px; width: 4px; height: 4px; margin-left: -2px; margin-top: 0;
   border-radius: 50%; background: var(--df-gold); }
 [data-skin="dogefeedx"] .ub-ico { width: 44px; height: 44px; border-radius: 12px; overflow: hidden; display: flex; align-items: center;
@@ -697,12 +713,20 @@ body.fullscreen #arc-bot { display: none !important; }
 [data-skin="dogefeedx"] .dk-win.on .dk-tname { color: #fff; }
 [data-skin="dogefeedx"] .dk-tbtn { width: 12px; height: 12px; border-radius: 50% !important; padding: 0 !important;
   box-shadow: 0 0 0 1px rgba(0,0,0,0.15) !important; margin: 0 4px 0 0 !important; min-width: 0; min-height: 0;
-  display: flex; align-items: center; justify-content: center; }
+  display: flex; align-items: center; justify-content: center; position: relative; }
 [data-skin="dogefeedx"] .dk-tbtn svg { display: none; }
 [data-skin="dogefeedx"] .dk-tbtn[data-a="close"] { background: #ff5f57 !important; order: -2; }
 [data-skin="dogefeedx"] .dk-tbtn[data-a="min"] { background: #ffbd2e !important; order: -1; }
 [data-skin="dogefeedx"] .dk-tbtn[data-a="max"] { background: #28c840 !important; order: 0; }
 [data-skin="dogefeedx"] .dk-win:not(.on) .dk-tbtn { background: #5a5a5c !important; }
+/* Traffic light hover symbols */
+[data-skin="dogefeedx"] .dk-tbtn::after { content: ''; position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; font-size: 10px; font-weight: 700; color: rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.1s; }
+[data-skin="dogefeedx"] .dk-title:hover .dk-tbtn::after { opacity: 1; }
+[data-skin="dogefeedx"] .dk-tbtn[data-a="close"]::after { content: '×'; font-size: 12px; }
+[data-skin="dogefeedx"] .dk-tbtn[data-a="min"]::after { content: '−'; }
+[data-skin="dogefeedx"] .dk-tbtn[data-a="max"]::after { content: '+'; font-size: 11px; }
+[data-skin="dogefeedx"] .dk-win:not(.on) .dk-title:hover .dk-tbtn::after { opacity: 0; }
 [data-skin="dogefeedx"] .dk-body { margin: 0; padding: 0; box-shadow: none; background: #1c1c1e; }
 [data-skin="dogefeedx"] .dk-body.plain { padding: 16px; background: #1c1c1e; color: #f5f5f7; }
 /* Buttons, fields, menus: macOS dark */
@@ -2230,10 +2254,13 @@ body.fullscreen #arc-bot { display: none !important; }
       .filter(function (k, i, all) { return k && all.indexOf(k) === i; });
     if (fav.indexOf(tabAt('/me')) >= 0) fav = fav.filter(function (k) { return k !== tabAt('/'); });
     fav = fav.concat((layout.programs || []).filter(function (k) { return byKey[k]; }), ['store']);
-    // DogeFeedX dock: add the five DFX apps at the start
+    // DogeFeedX dock: organized into groups with separators
+    // Group 1: Core DFX apps (Profile, Market) | Group 2: Tools (Terminal, Network, Explorer) | Group 3: Other apps
     if (DFX) {
-      var dfxApps = ['dfxprofile', 'dfxmarket', 'dfxterminal', 'dfxnetwork', 'dfxexplorer'];
-      fav = dfxApps.concat(fav.filter(function (k) { return dfxApps.indexOf(k) < 0; }));
+      var dfxCore = ['dfxprofile', 'dfxmarket'];
+      var dfxTools = ['dfxterminal', 'dfxnetwork', 'dfxexplorer'];
+      var otherApps = fav.filter(function (k) { return dfxCore.indexOf(k) < 0 && dfxTools.indexOf(k) < 0; });
+      fav = dfxCore.concat(['|sep1'], dfxTools, ['|sep2'], otherApps);
     }
     wins.forEach(function (w) { if (!w.dialog && fav.indexOf(w.key) < 0) fav.push(w.key); });
     return fav;
@@ -2245,6 +2272,13 @@ body.fullscreen #arc-bot { display: none !important; }
     dock.hidden = false;
     dock.innerHTML = '';
     dockKeys().forEach(function (k) {
+      // DogeFeedX: render dock separators
+      if (DFX && k.indexOf('|sep') === 0) {
+        var sep = document.createElement('div');
+        sep.className = 'dfx-dock-sep';
+        dock.appendChild(sep);
+        return;
+      }
       var it = byKey[k] || (wins.filter(function (w) { return w.key === k; })[0] || {}).item || {name: k};
       // DogeFeedX: use registered app's name if available
       var appName = (DFX && DFX_APPS[k] && DFX_APPS[k].name) || it.name;
@@ -2281,12 +2315,24 @@ body.fullscreen #arc-bot { display: none !important; }
     var progs = (layout.programs || []).filter(function (k) { return byKey[k]; }).sort(byName)
       .map(function (k) { return {k: k, name: byKey[k].name, it: byKey[k]}; })
       .concat([{k: 'store', name: 'App Store', it: byKey.store}]);
-    return [
+    var sections = [];
+    // DogeFeedX: Featured DFX apps at the top
+    if (DFX) {
+      sections.push({title: 'DogeFeed', rows: [
+        {k: 'dfxprofile', name: 'Profile', it: byKey.dfxprofile},
+        {k: 'dfxmarket', name: 'Market', it: byKey.dfxmarket},
+        {k: 'dfxterminal', name: 'Terminal', it: byKey.dfxterminal},
+        {k: 'dfxnetwork', name: 'Network', it: byKey.dfxnetwork},
+        {k: 'dfxexplorer', name: 'Explorer', it: byKey.dfxexplorer}
+      ]});
+    }
+    sections = sections.concat([
       {title: 'Programs', rows: progs},
       {title: 'Pages', rows: TABS.map(function (t) { return {k: t.key, name: t.name, it: byKey[t.key]}; })},
       {title: 'Wallets', rows: COINS.map(function (c) { var k = 'coin:' + c.net; return {k: k, name: byKey[k].name, it: byKey[k]}; })},
       {title: 'Utilities', rows: UTILS.concat([{k: 'helper', name: 'Helper', it: byKey.helper}])}
-    ];
+    ]);
+    return sections;
   }
   function drawApps() {
     var q = $('dk-apps-q').value.trim().toLowerCase(), body = $('dk-apps-body');
@@ -2522,11 +2568,50 @@ body.fullscreen #arc-bot { display: none !important; }
   }
 
   // ---------- start ----------
+  // DogeFeedX: Update status indicator in menu bar
+  function updateDfxStatus() {
+    if (!DFX) return;
+    var statusEl = $('dfx-status'), dotEl = $('dfx-status-dot'), textEl = $('dfx-status-text');
+    if (!statusEl) return;
+    statusEl.hidden = false;
+    if (!statusEl._clickBound) {
+      statusEl._clickBound = true;
+      statusEl.addEventListener('click', function () { openKey('dfxnetwork'); });
+    }
+    fetch('/api/network', {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data) { dotEl.className = 'dfx-status-dot'; textEl.textContent = 'Offline'; return; }
+        var chains = data.chains || [];
+        var allReady = chains.length > 0 && chains.every(function (c) { return c.ready; });
+        var anySyncing = chains.some(function (c) { return c.online && !c.ready; });
+        var anyOnline = chains.some(function (c) { return c.online; });
+        if (allReady) {
+          dotEl.className = 'dfx-status-dot online';
+          textEl.textContent = 'Synced';
+        } else if (anySyncing) {
+          dotEl.className = 'dfx-status-dot syncing';
+          var syncing = chains.filter(function (c) { return c.online && !c.ready; })[0];
+          textEl.textContent = 'Syncing ' + (syncing.progress || 0).toFixed(0) + '%';
+        } else if (anyOnline) {
+          dotEl.className = 'dfx-status-dot online';
+          textEl.textContent = 'Online';
+        } else {
+          dotEl.className = 'dfx-status-dot';
+          textEl.textContent = 'Offline';
+        }
+      }).catch(function () {
+        dotEl.className = 'dfx-status-dot';
+        textEl.textContent = 'Offline';
+      });
+  }
   function boot() {
     try { if (!/^(1|w98|ubuntu|dogefeedx)$/.test(localStorage.getItem('arcade.deskview') || '')) localStorage.setItem('arcade.deskview', DFX ? 'dogefeedx' : UB ? 'ubuntu' : 'w98'); } catch (e) {}
     loadWallpaper();
     drawIcons();
     if (MAC_LIKE) paintDock();
+    // DogeFeedX: show and update status indicator
+    if (DFX) { updateDfxStatus(); setInterval(updateDfxStatus, 30000); }
     var m = /^#open=(.+)$/.exec(location.hash);
     if (m) {
       history.replaceState(null, '', '/desktop');
