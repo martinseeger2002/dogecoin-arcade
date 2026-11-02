@@ -1118,6 +1118,12 @@
     // Turned on on the card (in another tab): the note goes.
     window.addEventListener('storage', function(e){
       if (mediaNoteEl && e.key && e.key.indexOf(ARCADE_MEDIA) === 0 && e.newValue === 'yes') { mediaNoteEl.remove(); mediaNoteEl = null; }
+      // Turned off elsewhere (its Permissions window, Remove from arcade, Game access): a camera already on stops now.
+      if (e.key && e.key.indexOf(ARCADE_MEDIA) === 0 && e.newValue === null && mediaAnyOn()) {
+        arcadeGameOf(here).then(function(g){
+          if (!arcadeMediaOn(here, g)) for (var k in rt) if (rt[k].media) mediaStop(rt[k]);
+        });
+      }
     });
     // RINGING (arcade/ring.py): the app asks to ring an address; the viewer adds who is ringing (the player's own
     // certificate, as a realtime join proves it) and WHICH app -- this frame's page, never what the page says -- and

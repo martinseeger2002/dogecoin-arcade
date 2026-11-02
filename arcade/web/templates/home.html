@@ -1144,20 +1144,10 @@ body.fullscreen #arc-bot { display: none !important; }
     var a = sheetApp, page = a.page; $('hs-sheet').hidden = true; sheetApp = null;
     // The same switches the app's card has (base.html: WALLET ACCESS, CAMERA & MICROPHONE, CONTACTS, NOTIFICATIONS),
     // kept under the page the app opens, so its card, Game access and the app itself all agree.
-    if (grants.wallet) arcadeGameAllow(page, true);
-    if (grants.contacts) arcadeContactsAllow(page, true);
-    if (grants.groups) arcadeGroupsAllow(page, true);
-    if (grants.media) arcadeMediaAllow(page, true);
-    if (grants.notify) {
-      arcadePushOn().then(function (why) {
-        if (why) { say(why); return; }
-        return _arcadeJson('/account/ring/apps', {app: page, on: true}).then(function (j) {
-          if (!j._ok) { say(j.detail || 'Notifications could not be turned on.'); return; }
-          try { localStorage.setItem(ARCADE_RING_ON, 'yes'); } catch (e) {}
-          return arcadeRingBook(true);
-        });
-      });
-    }
+    // A box left off is off, not merely not turned on: adding an app again is a way to take something back.
+    a.perms.forEach(function (p) {
+      arcadeAppPermSet(p, [page].concat(a.card && a.card !== page ? [a.card] : []), !!grants[p]).then(function (why) { if (why) say(why); });
+    });
     finishAdd(a);
   });
   function finishAdd(a) {

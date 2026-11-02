@@ -88,6 +88,18 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-01 An app's permissions after it is added; Remove from arcade (Claude)
+The operator: once an app was added, its permissions could only be picked by deleting and adding it again, and that did not work
+either: the sheets only ever turned things on, and removing an app cleared nothing. Game agnostic.
+- `base.html`: `arcadeAppPerm(kind, ids)`, `arcadeAppPermSet(kind, ids, on)`, `arcadeRingOn(id)`. `ids` is the page an app opens, then its
+  card (`card` is new in the shelf's apps): a switch may be under either, so off clears both. The add sheets on desktop and home screen
+  now use them, so a box left off is off.
+- `desktop.html`: `openPerms` (right click, Properties on Windows 98, Permissions on Ubuntu; a Permissions button on an added app's
+  App Store card) lists what the card declares plus anything already allowed. `removeFromArcade` takes it off the desktop, Start menu
+  and dock, closes it, and turns its permissions off. Saves stay; the phone home screen is its own list.
+- `_page_doors`: the media switch turned off from another page stops a camera already running.
+- `/me/access` now lists Group chats and Notifications too. Tests: test_desktop_permissions_browser.py, test_media_browser.py.
+
 ### 2026-11-01 Leaving a group chat (Claude)
 The operator: "a way to be able to leave a group chat" in Messages and in apps. A left-line sealed to the group, credited by paying
 address, so it cannot be forged; somebody who STAYS makes the new key, because whoever makes a key holds it (creator first, next

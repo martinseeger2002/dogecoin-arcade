@@ -345,6 +345,51 @@ body.fullscreen #arc-bot { display: none !important; }
 .st-perm > span { text-align: left; }
 .st-perm span span { display: block; color: #404040; }
 .st-perm b { display: block; color: #000; }
+/* One app's permissions: the same boxes on both looks; on Ubuntu they wear GNOME's switch and save at once. */
+.pm { padding: 6px; }
+.pm-tabs { display: flex; margin-bottom: -8px; position: relative; z-index: 1; }
+.pm-tab { background: var(--w98-face); border: 0; padding: 3px 12px; margin-top: 2px; font: inherit; color: #000; cursor: pointer;
+  box-shadow: inset 1px 1px #fff, inset -1px 0 #808080, inset -2px 0 #0a0a0a; }
+.pm-tab[aria-selected="true"] { margin-top: 0; padding: 4px 14px 6px; position: relative; z-index: 2; }
+.pm-pg { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.pm-pg:not(.ub) { box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #dfdfdf, inset -2px -2px #808080, inset 2px 2px #fff; }
+.pm-pg[hidden] { display: none; }
+.pm-who { display: flex; gap: 12px; align-items: center; }
+.pm-who .st-cover { width: 40px; height: 40px; flex: none; }
+.pm-who b { display: block; font-size: 13px; }
+.pm-list { display: flex; flex-direction: column; gap: 10px; }
+.pm-info { display: grid; grid-template-columns: 90px 1fr; gap: 6px 8px; word-break: break-all; }
+.pm-low { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.pm-low a { color: #000080; }
+.pm-low .dlg-note { flex: 1; }
+/* The arcade's own question over the desktop wears the desktop's look. It sits on the body, outside the desktop's colour variables. */
+.askcard { background: #c0c0c0 !important; border: 0 !important; border-radius: 0 !important; color: #000; font-size: 11px; padding: 12px !important;
+  box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #dfdfdf, inset -2px -2px #808080, inset 2px 2px #fff, 2px 2px 8px rgba(0,0,0,.3) !important; max-width: 340px; }
+.askcard h3 { font: 700 13px Tahoma, "Microsoft Sans Serif", sans-serif; color: #000; }
+.askcard p { font-size: 11px; color: #000 !important; }
+.askcard button { background: #c0c0c0 !important; color: #000 !important; border: 0 !important; border-radius: 0 !important; min-width: 75px; height: 23px; padding: 0 10px !important;
+  font: inherit !important; box-shadow: inset -1px -1px #0a0a0a, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf !important; }
+[data-skin="ubuntu"] .askcard { background: #fff !important; border-radius: 14px !important; color: #3d3d3d; font-size: 13px; padding: 18px !important;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.1), 0 12px 32px rgba(0,0,0,.35) !important; }
+[data-skin="ubuntu"] .askcard h3 { font: 500 17px Ubuntu, "Ubuntu Sans", Cantarell, sans-serif; color: #2b2b2b; }
+[data-skin="ubuntu"] .askcard p { font-size: 13px; color: #3d3d3d !important; }
+[data-skin="ubuntu"] .askcard button { background: #fff !important; color: #3d3d3d !important; border: 1px solid #cdc7c2 !important; border-radius: 6px !important; height: 32px; box-shadow: none !important; }
+[data-skin="ubuntu"] .askcard button:first-child { background: #e95420 !important; border-color: #c7461b !important; color: #fff !important; }
+[data-skin="ubuntu"] .pm-tabs { display: none; }
+[data-skin="ubuntu"] .pm-pg { box-shadow: none; padding: 8px; }
+[data-skin="ubuntu"] .pm-who .st-cover { width: 56px; height: 56px; }
+[data-skin="ubuntu"] .pm-who b { font-size: 17px; font-weight: 500; }
+[data-skin="ubuntu"] .pm-list { gap: 0; background: #fff; border: 1px solid #e0dcd9; border-radius: 12px; }
+[data-skin="ubuntu"] .pm-list .st-perm { grid-template-columns: 1fr auto; padding: 11px 14px; border-bottom: 1px solid #ebe8e6; align-items: center; }
+[data-skin="ubuntu"] .pm-list .st-perm:last-child { border-bottom: 0; }
+[data-skin="ubuntu"] .pm-list .st-perm input { grid-column: 2; grid-row: 1; appearance: none; width: 44px !important; height: 24px; margin: 0 !important;
+  border-radius: 999px !important; background: #bdb8b4; position: relative; cursor: pointer; }
+[data-skin="ubuntu"] .pm-list .st-perm input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+[data-skin="ubuntu"] .pm-list .st-perm input:checked { background: var(--ub-orange); }
+[data-skin="ubuntu"] .pm-list .st-perm input:checked::after { left: 23px; }
+[data-skin="ubuntu"] .pm-list .st-perm > span { grid-column: 1; grid-row: 1; }
+[data-skin="ubuntu"] .pm-low a { color: var(--ub-orange); }
 [data-skin="ubuntu"] .st-perm b { color: #3d3d3d; }
 .st-sby { display: block; white-space: normal; overflow-wrap: anywhere; }
 .st-warn { margin: 0; font-size: 11px; color: #800000; }
@@ -1176,12 +1221,18 @@ body.fullscreen #arc-bot { display: none !important; }
     var it = byKey[k], here = onDesk().indexOf(k) >= 0, items = [{k: 'open', label: 'Open', def: true}, {hr: true}];
     if (onDeskIcon) items.push({k: 'remove', label: it.shortcut ? 'Delete shortcut' : 'Remove from desktop'});
     else items.push({k: 'put', label: it.kind === 'coin' ? 'Create shortcut on desktop' : 'Put on desktop', off: here});
-    if (it.kind === 'app') items.push({k: 'prog', label: inPrograms(k) ? 'Remove from Start menu' : 'Add to Start menu'});
+    if (it.kind === 'app') {
+      items.push({k: 'prog', label: inPrograms(k) ? L('Remove from Start menu', 'Remove from your apps') : L('Add to Start menu', 'Add to your apps')});
+      items.push({hr: true}, {k: 'perms', label: L('Properties', 'Permissions')});
+      if (installed(k)) items.push({k: 'gone', label: 'Remove from arcade'});
+    }
     showMenu($('dk-ctx'), items, x, y, function (a) {
       if (a === 'open') openKey(k);
       else if (a === 'remove') removeIcon(k);
       else if (a === 'put') { putOnDesk(k); say(it.name + ' is on the desktop.'); }
       else if (a === 'prog') { var on = !inPrograms(k); setProgram(k, on); say(it.name + (on ? ' is in Start → Programs.' : ' is out of the Start menu.')); }
+      else if (a === 'perms') openPerms(k);
+      else if (a === 'gone') removeFromArcade(k);
     });
   }
   // An item in the Start menu: right click to put it on the desktop, or an app in or out of Programs.
@@ -1535,7 +1586,7 @@ body.fullscreen #arc-bot { display: none !important; }
       + '<div class="dlg-list st-list" role="list"></div>'
       + '<div class="st-sheet" hidden><div class="st-box" role="dialog" aria-modal="true" aria-label="Add an app">'
       + '<div class="st-who"><span class="st-cover st-sicon"></span><div><b class="st-stitle"></b><span class="st-by st-sby"></span></div></div>'
-      + '<p class="dlg-note">It asks for these before it is added. You can change them later on its card in the App Store or under Game access.</p>'
+      + '<p class="dlg-note">It asks for these before it is added. You can change them any time: right-click the app, or Permissions on its App Store card.</p>'
       + '<div class="st-perms"></div><p class="st-warn"></p>'
       + '<div class="dlg-acts"><button type="button" class="w98-btn st-no">Cancel</button><button type="button" class="w98-btn st-go">Allow and add</button></div>'
       + '</div></div>', 760, 600);
@@ -1574,6 +1625,7 @@ body.fullscreen #arc-bot { display: none !important; }
           + (a.desc ? '<p class="st-desc">' + esc(a.desc) + '</p>' : '')
           + '<div class="st-acts">'
           + (installed(a.key) ? '<span class="st-added">✓ Added</span><button type="button" class="w98-btn" data-open="' + esc(a.key) + '">Open</button>'
+                                + '<button type="button" class="w98-btn" data-perms="' + esc(a.key) + '">Permissions</button>'
                               : '<button type="button" class="w98-btn" data-add="' + esc(a.key) + '">+ Add</button>')
           + '<span>♥ ' + (a.likes || 0) + '</span><span>' + (a.comments || 0) + ' comments</span>'
           + '<a href="/inscriptions/' + esc(a.page) + '/view" data-page="' + esc(a.page) + '">Details</a></div></div></div>';
@@ -1616,6 +1668,7 @@ body.fullscreen #arc-bot { display: none !important; }
       var link = e.target.closest('a[data-page]');
       if (link) { e.preventDefault(); openWin({key: 'details:' + link.dataset.page, url: link.getAttribute('href'), name: 'Details', item: byKey.store}); return; }
       var o = e.target.closest('[data-open]'); if (o) { openKey(o.dataset.open); return; }
+      var pm = e.target.closest('[data-perms]'); if (pm) { openPerms(pm.dataset.perms); return; }
       var b = e.target.closest('[data-add]'); if (b) add(b.dataset.add);
     });
     d.q('.st-perms').addEventListener('change', function (e) {
@@ -1625,25 +1678,113 @@ body.fullscreen #arc-bot { display: none !important; }
     d.q('.st-no').addEventListener('click', function () { d.q('.st-sheet').hidden = true; sheetApp = null; });
     d.q('.st-go').addEventListener('click', function () {
       var a = sheetApp, page = a.page; d.q('.st-sheet').hidden = true; sheetApp = null;
-      // The same switches the app's card has (base.html), kept under the page the app opens, as home.html does.
-      if (grants.wallet) arcadeGameAllow(page, true);
-      if (grants.contacts) arcadeContactsAllow(page, true);
-      if (grants.groups) arcadeGroupsAllow(page, true);
-      if (grants.media) arcadeMediaAllow(page, true);
-      if (grants.notify) {
-        arcadePushOn().then(function (why) {
-          if (why) { say(why); return; }
-          return _arcadeJson('/account/ring/apps', {app: page, on: true}).then(function (j) {
-            if (!j._ok) { say(j.detail || 'Notifications could not be turned on.'); return; }
-            try { localStorage.setItem(ARCADE_RING_ON, 'yes'); } catch (e) {}
-            return arcadeRingBook(true);
-          });
-        });
-      }
+      // The same switches the app's card has (base.html). A box left off is off, not merely not turned on: adding an
+      // app again is a way to take something back.
+      a.perms.forEach(function (p) { arcadeAppPermSet(p, permIds(a), !!grants[p]).then(function (why) { if (why) say(why); }); });
       finish(a);
     });
     chips(); cards();
     d.q('.st-q').focus();
+    storeDraw = cards;
+    var closed = d.win.onclose;
+    d.win.onclose = function () { storeDraw = null; if (closed) closed(); };
+  }
+  var storeDraw = null;     // the App Store window's cards, while it is open
+  function permIds(a) { return [a.page].concat(a.card && a.card !== a.page ? [a.card] : []); }
+  // One app's permissions, any time after it was added (2026-11-01, the operator: "once the app is installed, you can no longer
+  // pick the permission ... you have to delete the app and then reinstall it"). The same boxes on both looks: Windows 98's
+  // Properties with OK, Cancel and Apply; on Ubuntu they wear switches and save at once. What the card declares, plus
+  // anything already allowed that it does not: an app may ask for more while it runs, and that must not be out of sight.
+  function openPerms(k) {
+    var a = byKey[k] && byKey[k].app; if (!a) return;
+    var key = 'perms:' + k, open = wins.filter(function (x) { return x.key === key; })[0];
+    if (open) { if (open.min) restore(open); focus(open); return; }
+    var ids = permIds(a), held = {}, boxes = {}, rings = false;
+    ARCADE_PERM_KINDS.forEach(function (p) { held[p] = arcadeAppPerm(p, ids); boxes[p] = held[p]; });
+    var who = '<div class="pm-who"><span class="st-cover">' + (a.cover ? '<img src="' + esc(a.cover) + '" alt="">' : esc(a.name)) + '</span>'
+      + '<div><b>' + esc(a.name) + '</b>published by ' + esc(a.by) + '</div></div>';
+    var d = dialog(key, L(a.name + ' Properties', a.name + ' permissions'), byKey[k],
+      '<div class="pm-tabs" role="tablist"><button type="button" class="pm-tab" role="tab" data-tab="info" aria-selected="false">General</button>'
+      + '<button type="button" class="pm-tab" role="tab" data-tab="perms" aria-selected="true">Permissions</button></div>'
+      + '<div class="pm-pg' + (UB ? ' ub' : '') + '" data-pg="perms">' + who
+      + '<p class="dlg-note">' + esc(a.name) + ' may use these in this browser, on this arcade.</p>'
+      + '<div class="pm-list"></div>'
+      + '<p class="dlg-note">Turning one off does not undo anything the app already did. It has to ask again when it needs it.</p>'
+      + '<div class="pm-low"><button type="button" class="w98-btn pm-all">Turn all off</button>'
+      + '<span class="dlg-note pm-said">' + (UB ? 'Changes save right away.' : '') + '</span><a href="/me/access" class="pm-every">Every app</a></div></div>'
+      + '<div class="pm-pg' + (UB ? ' ub' : '') + '" data-pg="info" hidden>' + who + '<div class="pm-info">'
+      + [['Type', ['App'].concat(a.mp ? ['multiplayer'] : [], a.genre ? [a.genre] : []).join(', ')], ['Version', a.version], ['Players', a.players],
+         ['Publisher', a.by], ['Address', a.address]].filter(function (r) { return r[1]; })
+        .map(function (r) { return '<b>' + esc(r[0]) + '</b><span>' + esc(r[1]) + '</span>'; }).join('') + '</div></div>'
+      + (UB ? '' : '<div class="dlg-acts"><button type="button" class="w98-btn pm-ok">OK</button><button type="button" class="w98-btn pm-no">Cancel</button>'
+                 + '<button type="button" class="w98-btn pm-apply">Apply</button></div>'), 400, UB ? 500 : 480);
+    d.root.classList.add('pm');
+    function shown() { return ARCADE_PERM_KINDS.filter(function (p) { return (a.perms || []).indexOf(p) >= 0 || held[p]; }); }
+    function draw() {
+      var list = shown();
+      d.q('.pm-list').innerHTML = list.length ? list.map(function (p) {
+        return '<label class="st-perm"><input type="checkbox" data-perm="' + p + '"' + (UB ? ' role="switch"' : '') + (boxes[p] ? ' checked' : '')
+          + (p === 'notify' && !rings ? ' disabled' : '') + '><span><b>' + ST_PERM[p][0] + '</b><span>' + ST_PERM[p][1] + '</span></span></label>';
+      }).join('') : '<p class="dlg-note" style="padding:8px">' + esc(a.name) + ' has not asked for anything.</p>';
+      d.q('.pm-all').disabled = !list.some(function (p) { return boxes[p]; });
+      var ap = d.q('.pm-apply'); if (ap) ap.disabled = !list.some(function (p) { return boxes[p] !== held[p]; });
+    }
+    function tell(t) { if (!UB) d.q('.pm-said').textContent = t; }
+    // What changed goes through, one box at a time; a box that could not change goes back to what is true.
+    function apply() {
+      var work = shown().filter(function (p) { return boxes[p] !== held[p]; });
+      return Promise.all(work.map(function (p) {
+        return arcadeAppPermSet(p, ids, boxes[p]).then(function (why) {
+          if (why) { boxes[p] = held[p]; say(why); } else held[p] = boxes[p];
+          return why;
+        });
+      })).then(function (out) { draw(); return !out.some(Boolean); });
+    }
+    d.q('.pm-list').addEventListener('change', function (e) {
+      var b = e.target.closest('[data-perm]'); if (!b) return;
+      boxes[b.dataset.perm] = b.checked; tell(''); draw();
+      if (UB) apply();
+    });
+    d.q('.pm-all').addEventListener('click', function () {
+      shown().forEach(function (p) { boxes[p] = false; }); tell(''); draw();
+      if (UB) apply();
+    });
+    d.q('.pm-every').addEventListener('click', function (e) {
+      e.preventDefault(); openWin({key: 'access', url: '/me/access', name: 'Game access', item: byKey.store});
+    });
+    d.root.querySelectorAll('.pm-tab').forEach(function (t) {
+      t.addEventListener('click', function () {
+        d.root.querySelectorAll('.pm-tab').forEach(function (x) { x.setAttribute('aria-selected', String(x === t)); });
+        d.root.querySelectorAll('.pm-pg').forEach(function (g) { g.hidden = g.dataset.pg !== t.dataset.tab; });
+      });
+    });
+    if (!UB) {
+      d.q('.pm-ok').addEventListener('click', function () { apply().then(function (ok) { if (ok) closeWin(d.win); }); });
+      d.q('.pm-no').addEventListener('click', function () { closeWin(d.win); });
+      d.q('.pm-apply').addEventListener('click', function () { apply().then(function (ok) { if (ok) tell('Saved.'); }); });
+    }
+    draw();
+    fetch('/account/ring/apps', {cache: 'no-store', credentials: 'same-origin'}).then(function (r) { return r.ok ? r.json() : {apps: []}; })
+      .then(function (j) {
+        held.notify = ids.some(function (id) { return (j.apps || []).indexOf(id) >= 0; });
+        boxes.notify = held.notify; rings = true; draw();
+      }).catch(function () {});
+  }
+  // Off the desktop, the Start menu and the dock at once (2026-11-01, the operator: "a remove from arcade option"), and its
+  // permissions with it, so that adding it again starts clean. Its saves stay; the phone's home screen is its own list.
+  function removeFromArcade(k) {
+    var it = byKey[k], a = it.app;
+    arcadeAsk('Remove ' + it.name + ' from your arcade?',
+      'It comes off your ' + L('desktop and Start menu', 'desktop, your apps and the dock') + ', and it closes if it is open. Its permissions are turned off. '
+      + 'Your saves stay, and you can add it again from the App Store.', 'Remove').then(function (yes) {
+      if (!yes) return;
+      wins.filter(function (w) { return w.key === k || w.key === 'perms:' + k; }).forEach(closeWin);
+      setProgram(k, false);
+      removeIcon(k);
+      ARCADE_PERM_KINDS.forEach(function (p) { if (p !== 'notify' || WHO !== 'guest') arcadeAppPermSet(p, permIds(a), false); });
+      if (storeDraw) storeDraw();
+      say(it.name + ' is removed from your arcade.');
+    });
   }
   // Wallet Shortcuts: one per coin, on the desktop or not.
   function openShortcuts() {

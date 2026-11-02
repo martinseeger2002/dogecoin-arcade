@@ -3,7 +3,7 @@
 {% block body %}
 {# Game access (2026-10-23, SadFrog: wallet access asked in the game, and "the allowed-games list"). Everything a
    game was allowed in this browser on this arcade: wallet access, camera and microphone, the address book. Kept in
-   this browser's storage (base.html: arcade.wallet.allow:, arcade.media.allow:, arcade.contacts.allow:), so this
+   this browser's storage (base.html: arcade.wallet.allow:, arcade.media.allow:, arcade.contacts.allow:, arcade.groups.allow:), so this
    page reads it here; another arcade, or another browser, has its own list. #}
 <h1>Game access</h1>
 <p class="sub">What the games you play may ask of you in this browser, on this arcade. A game asks when it needs it,
@@ -23,8 +23,12 @@
   var KINDS = [
     {prefix: 'arcade.wallet.allow:', label: 'Wallet access', says: 'may ask your wallet to trade, pay and sign (each time with a card, except small test-network game actions)', off: function (id) { arcadeGameAllow(id, false); }},
     {prefix: 'arcade.media.allow:', label: 'Camera & microphone', says: 'may send your picture and sound to the players it names', off: function (id) { arcadeMediaAllow(id, false); }},
-    {prefix: 'arcade.contacts.allow:', label: 'Address book', says: 'may see the names and addresses in your address book', off: function (id) { try { localStorage.removeItem('arcade.contacts.allow:' + id); } catch (e) {} }}
+    {prefix: 'arcade.contacts.allow:', label: 'Address book', says: 'may see the names and addresses in your address book', off: function (id) { try { localStorage.removeItem('arcade.contacts.allow:' + id); } catch (e) {} }},
+    {prefix: 'arcade.groups.allow:', label: 'Group chats', says: 'may read your group chats, post in them as you, and see your address book', off: function (id) { arcadeGroupsAllow(id, false); }}
   ];
+  // Notifications are kept by the node, not this browser: every browser of the account sees the same list.
+  var rings = [], NOTIFY = {label: 'Notifications', says: 'may ring you while it is closed, when somebody in your address book calls',
+                            off: function (id) { arcadeRingOff(id).then(function () { rings = rings.filter(function (x) { return x !== id; }); draw(); }); }};
   function rows() {
     var out = [];
     try {
@@ -35,6 +39,7 @@
         });
       }
     } catch (e) {}
+    rings.forEach(function (id) { out.push({id: id, kind: NOTIFY}); });
     return out;
   }
   function el(tag, text, cls) { var e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
@@ -64,6 +69,8 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', draw); else draw();
   document.addEventListener('arcade:access', draw);
   document.addEventListener('arcade:media', draw);
+  fetch('/account/ring/apps', {cache: 'no-store', credentials: 'same-origin'}).then(function (r) { return r.ok ? r.json() : {apps: []}; })
+    .then(function (j) { rings = j.apps || []; draw(); }).catch(function () {});
 })();
 </script>
 {% endblock %}

@@ -406,7 +406,7 @@ Two more switches work the same way as Wallet access, each shown on a card that 
   so every phone the player is signed in on rings. It needs the arcade installed on the phone (on an iPhone: **Share →
   Add to Home Screen**) and an arcade that sends notifications.
 
-The player sees every app they allowed, and can turn each off, under **Game access** (`/me/access`).
+The player sees every app they allowed, and can turn each off, under **Game access** (`/me/access`). On a computer's Desktop View, right-clicking an app (Properties in Windows 98, Permissions on Ubuntu) changes that app's permissions any time, and Remove from arcade takes it off the desktop, Start menu and dock with its permissions. Turning Camera & microphone off stops a camera already running.
 
 ## On the phone: the App Store and the home screen
 

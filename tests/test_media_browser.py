@@ -152,6 +152,29 @@ def test_a_picture_goes_only_where_the_game_shares_it(tmp_path, no_nodes):
         state.mesh.stop()
 
 
+def test_a_camera_stops_when_its_permission_is_turned_off_elsewhere(tmp_path, no_nodes):
+    """2026-11-01: off in the app's Permissions window, Remove from arcade or Game access is another page writing the
+    same switch; the camera already running goes with it, and the other player is told."""
+    state, server, base = _server(tmp_path)
+    try:
+        with sync_api.sync_playwright() as pw:
+            chrome = _launch(pw)
+            pa, _, _ = _player(chrome, base)
+            ga = _game(pa)
+            _until(ga, "window.room && window.room.media && window.room.me", "a in")
+            said = ga.evaluate("window.room.media.start({video: true, audio: true})")
+            assert said["ok"], said
+            pa.wait_for_function("!document.querySelector('.arcade-media-pill').hidden")
+            other = pa.context.new_page()
+            other.goto(f"{base}/feed")
+            other.evaluate(f"localStorage.removeItem('arcade.media.allow:{GAME}')")
+            _until(ga, "window.log.some(function (e) { return e[0] === 'state' && e[1] === 'off'; })", "a told off")
+            pa.wait_for_function("document.querySelector('.arcade-media-pill').hidden")
+            chrome.close()
+    finally:
+        server.stop()
+
+
 def test_a_game_not_allowed_is_told_off_and_nothing_opens(tmp_path, no_nodes):
     """This page is no game (no card): the viewer asks, as Wallet access does for a shop; said no, the game hears
     'off' and the camera was never opened."""

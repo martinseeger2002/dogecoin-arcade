@@ -10278,7 +10278,7 @@ def create_app(state: AppState) -> FastAPI:
             who = _name_of(it["creator"])
             apps.append({
                 "key": gameslib.app_key(it["creator"], g["name"]), "name": str(g["name"])[:60],
-                "page": page, "open": f"/inscriptions/{page}/full",
+                "page": page, "card": it["txid"], "open": f"/inscriptions/{page}/full",
                 "cover": f"/content/{g['cover']}" if g.get("cover") else None,
                 "genre": str(g.get("genre") or "")[:24].lower(), "mp": bool(g.get("multiplayer")),
                 "tdeck": _tdeck_build(it),

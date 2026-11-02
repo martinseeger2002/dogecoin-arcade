@@ -1961,6 +1961,36 @@ function arcadeRingAsk(id, game, publisher, address){
     });
 }
 function arcadeRingOff(id){ return _arcadeJson('/account/ring/apps', {app: id, on: false}); }
+// Notifications on for an app, the first time included. '' when on, else what went wrong in the reader's words.
+function arcadeRingOn(id){
+  return arcadePushOn().then(function(why){
+    if (why) return why;
+    return _arcadeJson('/account/ring/apps', {app: id, on: true}).then(function(j){
+      if (!j._ok) return j.detail || 'Notifications could not be turned on.';
+      try { localStorage.setItem(ARCADE_RING_ON, 'yes'); } catch (e) {}
+      return arcadeRingBook(true).then(function(){ return ''; });
+    });
+  });
+}
+// ONE APP'S PERMISSIONS, in one place (2026-11-01, the operator: "once the app is installed ... you have to delete the app and
+// then reinstall it"): what the sheets, the app's Permissions window and Remove from arcade all change. ids: the page the
+// app opens first, then its card: a switch may have been set under either (arcadeGameOn reads both), so off clears all.
+// Notifications are kept by the node, so they are read with /account/ring/apps, not here.
+var ARCADE_PERM_KINDS = ['wallet', 'contacts', 'groups', 'media', 'notify'];
+var ARCADE_PERM_DOORS = {
+  wallet: [arcadeGameAllowed, arcadeGameAllow], contacts: [arcadeContactsAllowed, arcadeContactsAllow],
+  groups: [arcadeGroupsAllowed, arcadeGroupsAllow], media: [arcadeMediaAllowed, arcadeMediaAllow]
+};
+function arcadeAppPerm(kind, ids){ var d = ARCADE_PERM_DOORS[kind]; return !!d && ids.some(function(id){ return d[0](id); }); }
+function arcadeAppPermSet(kind, ids, on){
+  if (kind === 'notify') {
+    if (on) return arcadeRingOn(ids[0]);
+    return Promise.all(ids.map(arcadeRingOff)).then(function(){ return ''; }, function(){ return ''; });
+  }
+  var d = ARCADE_PERM_DOORS[kind];
+  if (d) { if (on) d[1](ids[0], true); else ids.forEach(function(id){ d[1](id, false); }); }
+  return Promise.resolve('');
+}
 // The book may have changed since it was last handed over (the Address book, a game's arcade.contacts.add): once
 // a page has settled, and only where an app was switched on in this browser.
 document.addEventListener('DOMContentLoaded', function(){

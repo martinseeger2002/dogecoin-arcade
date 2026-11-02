@@ -151,10 +151,16 @@ def test_the_app_store_is_the_home_screens_store_in_a_window():
     desk = (TEMPLATES / "desktop.html").read_text()
     assert "if (it.kind === 'store') { openStore(); return; }" in desk, "the App Store icon opens the store, not /apps"
     for need in ("function openStore()", "class=\"w98-field st-q\"", "ST_GAMES", "data-add=", "data-open=",
-                 "arcadeGameAllow(page, true)", "arcadeContactsAllow(page, true)", "arcadeMediaAllow(page, true)",
-                 "_arcadeJson('/account/ring/apps', {app: page, on: true})", "setProgram(a.key, true);", "putOnDesk(a.key);",
+                 "arcadeAppPermSet(p, permIds(a), !!grants[p])", "setProgram(a.key, true);", "putOnDesk(a.key);",
                  "anybody can publish a copy"):
         assert need in desk, need
     home = (TEMPLATES / "home.html").read_text()
     for perm in ("wallet: ['Wallet access'", "contacts: ['Contacts'", "media: ['Camera & microphone'", "notify: ['Notifications'"):
         assert perm in home and perm in desk, f"the desktop asks for {perm} as the home screen does"
+
+
+def test_game_access_lists_every_permission_an_app_can_hold():
+    """2026-11-01: Group chats and Notifications were missing, so the list was not the whole of what an app may do."""
+    access = (TEMPLATES / "my_access.html").read_text()
+    for need in ("arcade.wallet.allow:", "arcade.media.allow:", "arcade.contacts.allow:", "arcade.groups.allow:", "/account/ring/apps"):
+        assert need in access, need
