@@ -1487,6 +1487,31 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:                                  # noqa: BLE001 -- the list is a nicety
             return {}
 
+    def _chain_tags(peers: list[str]) -> dict[str, str]:
+        """The @name the chain gives each of these arcades (mesh keys), for the ones that say none themselves
+        (2026-11-02: a new operator on Windows claimed @dogefeed from the address that announces his arcade, and his
+        arcade still said no name, so every list showed only his mesh id). The name of the address that paid for the
+        arcade's mesh announcement (messaging/scanner.py: its fee address). Anybody can announce somebody else's key --
+        it only fails to connect -- so a key announced by more than one address gets no name. Display only, like the
+        name an arcade says itself."""
+        peers = [p for p in peers if p]
+        if not peers:
+            return {}
+        try:
+            chain = next(c for c in state.token_chains if c.network == state.messaging.network)
+            with state.store() as store:
+                senders = store.mesh_key_senders(state.messaging.network, peers)
+            index = state.token_index(chain)
+            out = {}
+            for peer, addresses in senders.items():
+                if len(addresses) == 1:
+                    tag = index.tag_of(next(iter(addresses))) or ""
+                    if tag:
+                        out[peer] = tag
+            return out
+        except Exception:                                  # noqa: BLE001 -- shown by mesh id
+            return {}
+
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
         # On a public instance the front page is the SPLASH, not the
@@ -30280,7 +30305,8 @@ def create_app(state: AppState) -> FastAPI:
         Where each piece comes from, and what can be known:
           * @name and host: this arcade's from state.operator_tag() and public_hosts; another's from what it said on
             its link (mesh/operators.py "me", checked for a tag's shape there) -- display only, never trusted for
-            anything. An arcade that never said one (older, or not linked since this one started) shows its mesh id.
+            anything. An arcade that says none gets the @name of the one address that announced its mesh key on the
+            chain (`_chain_tags`, `tag_from: "chain"`); with none of those, it shows its mesh id.
           * Cores: this arcade's own, each chain it runs here (not borrowed), `shared` when the mesh offers it now
             (coreshare.status "sharing"; its Share box in Coins -> Chains is `switch`). Another arcade's only as far
             as it shares them (coreshare.offers, linked arcades): a Core it runs and does not share is not told.
@@ -30375,6 +30401,8 @@ def create_app(state: AppState) -> FastAPI:
                  "lora": bool(getattr(getattr(state, "lora", None), "running", False)),
                  "ords": ords.get(me or "this arcade", []), "link": {"state": "me"}}]
         order = {n: i for i, n in enumerate(NETWORKS)}      # the chains in the order the arcade lists them
+        on_chain = _chain_tags([p for p in running["ids"]
+                                if not (said.get(p) or {}).get("tag") and not (via.get(p) or {}).get("tag")])
         others = []
         for peer in running["ids"]:
             heard = said.get(peer) or {}
@@ -30388,7 +30416,9 @@ def create_app(state: AppState) -> FastAPI:
             else:
                 link = {"state": "none"}
             seen = via.get(peer) or {}
-            others.append({"me": False, "node": peer[:12], "tag": heard.get("tag") or seen.get("tag") or "",
+            others.append({"me": False, "node": peer[:12],
+                           "tag": heard.get("tag") or seen.get("tag") or on_chain.get(peer) or "",
+                           **({"tag_from": "chain"} if peer in on_chain else {}),
                            "host": (heard.get("hosts") or [seen.get("host") or ""])[0],
                            "lora": bool(heard.get("lora")),
                            "cores": [{**coin(n), "shared": True}
