@@ -231,6 +231,34 @@ async def api_feed(
         return {"items": [], "doginal_holders": [], "source": "dogefeed.app", "error": str(e)}
 
 
+async def _fetch_collection_sample_items(collection_id: str, count: int = 3) -> list[str]:
+    """Fetch a few sample item IDs from a collection for use as icons.
+    
+    Returns a list of inscription IDs (up to `count`) that can be used as
+    representative images for the collection icon.
+    """
+    cache_key = f"sample_items:{collection_id}:{count}"
+    cached = _get_cached(_collection_items_cache, cache_key, ttl=600)  # 10 min cache
+    if cached is not None:
+        return cached
+    
+    try:
+        data = await _fetch_dogefeed_explorer(
+            f"/explorer/collections/{collection_id}/items",
+            {"offset": 0, "limit": count}
+        )
+        items_raw = data if isinstance(data, list) else data.get("items", data.get("inscriptions", []))
+        item_ids = [
+            i.get("id") or i.get("inscription_id") or ""
+            for i in items_raw[:count]
+            if i.get("id") or i.get("inscription_id")
+        ]
+        _set_cached(_collection_items_cache, cache_key, item_ids)
+        return item_ids
+    except Exception:
+        return []
+
+
 @router.get("/api/collections")
 async def api_collections(
     offset: int = 0,
@@ -243,6 +271,9 @@ async def api_collections(
     Uses explorer.dogesoft.io for structured collection data since dogefeed.app
     doesn't expose a public collection listing API. Images are served from
     dogefeed.app's /doginal-img/ endpoint.
+    
+    Each collection includes `sample_item_ids` - IDs of actual items from the
+    collection to use as representative icons (falls back to generic icon if empty).
     """
     limit = min(max(1, limit), 200)
     offset = max(0, offset)
@@ -268,6 +299,7 @@ async def api_collections(
                 "holder_count": c.get("holder_count") or c.get("holders") or 0,
                 "cover_id": c.get("cover_id") or c.get("cover") or c.get("icon") or "",
                 "created_at": c.get("created_at") or c.get("timestamp") or None,
+                "sample_item_ids": [],  # Will be populated below
             }
             if q and q.lower() not in (coll["name"] or "").lower():
                 continue
@@ -279,6 +311,24 @@ async def api_collections(
             collections.sort(key=lambda x: x.get("created_at") or "", reverse=True)
         else:
             collections.sort(key=lambda x: (x.get("name") or "").lower())
+        
+        # Fetch sample items for collections that need icons (up to first 20)
+        import asyncio
+        collections_to_fetch = collections[:min(limit, 20)]
+        sample_tasks = [
+            _fetch_collection_sample_items(c["id"], count=3)
+            for c in collections_to_fetch
+            if c["id"]
+        ]
+        if sample_tasks:
+            sample_results = await asyncio.gather(*sample_tasks, return_exceptions=True)
+            idx = 0
+            for c in collections_to_fetch:
+                if c["id"]:
+                    result = sample_results[idx]
+                    if isinstance(result, list):
+                        c["sample_item_ids"] = result
+                    idx += 1
         
         result = {
             "collections": collections[:limit],
@@ -388,6 +438,284 @@ async def api_inscription(id: str = ""):
     except Exception as e:
         logger.exception("Error fetching inscription")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- DRC-20 Tokens API ---
+
+_token_cache: dict[str, tuple[float, Any]] = {}
+
+
+@router.get("/api/tokens")
+async def api_tokens(
+    offset: int = 0,
+    limit: int = 50,
+    q: str = "",
+    sort: str = "holders"
+):
+    """List DRC-20 tokens from DogeFeed.
+    
+    Returns token tickers with supply, holders, and mint progress.
+    Uses dogefeed.app where available, falls back to explorer.dogesoft.io.
+    """
+    limit = min(max(1, limit), 200)
+    offset = max(0, offset)
+    
+    cache_key = f"tokens:{offset}:{limit}:{q}:{sort}"
+    cached = _get_cached(_token_cache, cache_key)
+    if cached is not None:
+        return cached
+    
+    try:
+        # Try dogefeed.app first for DRC-20 data
+        try:
+            data = await _fetch_dogefeed_app("/api/drc20/tokens", {"offset": offset, "limit": limit})
+        except HTTPException:
+            # Fallback to explorer
+            data = await _fetch_dogefeed_explorer("/drc20/tokens", {"offset": offset, "limit": limit})
+        
+        tokens_raw = data if isinstance(data, list) else data.get("tokens", data.get("items", []))
+        
+        tokens = []
+        for t in tokens_raw:
+            # Calculate mint progress percentage
+            max_supply = t.get("max_supply") or t.get("max") or t.get("limit") or 0
+            minted = t.get("minted") or t.get("total_minted") or t.get("current_supply") or 0
+            if isinstance(max_supply, str):
+                try:
+                    max_supply = int(max_supply)
+                except ValueError:
+                    max_supply = 0
+            if isinstance(minted, str):
+                try:
+                    minted = int(minted)
+                except ValueError:
+                    minted = 0
+            
+            mint_progress = 0
+            if max_supply > 0:
+                mint_progress = min(100, round((minted / max_supply) * 100, 1))
+            
+            token = {
+                "ticker": t.get("ticker") or t.get("tick") or t.get("name") or "",
+                "deploy_inscription": t.get("deploy_inscription") or t.get("inscription_id") or t.get("id") or "",
+                "max_supply": max_supply,
+                "minted": minted,
+                "mint_progress": mint_progress,
+                "holder_count": t.get("holder_count") or t.get("holders") or 0,
+                "transfer_count": t.get("transfer_count") or t.get("transfers") or 0,
+                "deploy_time": t.get("deploy_time") or t.get("deployed_at") or t.get("timestamp") or None,
+                "decimals": t.get("decimals") or t.get("dec") or 18,
+                "mint_limit": t.get("mint_limit") or t.get("lim") or None,
+            }
+            
+            if q and q.lower() not in (token["ticker"] or "").lower():
+                continue
+            tokens.append(token)
+        
+        if sort == "holders":
+            tokens.sort(key=lambda x: -(x.get("holder_count") or 0))
+        elif sort == "recent":
+            tokens.sort(key=lambda x: x.get("deploy_time") or "", reverse=True)
+        elif sort == "progress":
+            tokens.sort(key=lambda x: -(x.get("mint_progress") or 0))
+        else:
+            tokens.sort(key=lambda x: (x.get("ticker") or "").lower())
+        
+        result = {
+            "tokens": tokens[:limit],
+            "total": len(tokens_raw),
+            "offset": offset,
+            "limit": limit,
+            "has_more": len(tokens_raw) > offset + limit,
+            "source": "dogefeed.app",
+        }
+        
+        _set_cached(_token_cache, cache_key, result)
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error fetching tokens")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/token")
+async def api_token(ticker: str = ""):
+    """Get details for a specific DRC-20 token."""
+    if not ticker:
+        raise HTTPException(status_code=400, detail="Ticker required")
+    
+    cache_key = f"token:{ticker}"
+    cached = _get_cached(_token_cache, cache_key)
+    if cached is not None:
+        return cached
+    
+    try:
+        try:
+            data = await _fetch_dogefeed_app(f"/api/drc20/token/{ticker}")
+        except HTTPException:
+            data = await _fetch_dogefeed_explorer(f"/drc20/token/{ticker}")
+        
+        max_supply = data.get("max_supply") or data.get("max") or data.get("limit") or 0
+        minted = data.get("minted") or data.get("total_minted") or data.get("current_supply") or 0
+        if isinstance(max_supply, str):
+            try:
+                max_supply = int(max_supply)
+            except ValueError:
+                max_supply = 0
+        if isinstance(minted, str):
+            try:
+                minted = int(minted)
+            except ValueError:
+                minted = 0
+        
+        mint_progress = 0
+        if max_supply > 0:
+            mint_progress = min(100, round((minted / max_supply) * 100, 1))
+        
+        token = {
+            "ticker": data.get("ticker") or data.get("tick") or ticker,
+            "deploy_inscription": data.get("deploy_inscription") or data.get("inscription_id") or data.get("id") or "",
+            "max_supply": max_supply,
+            "minted": minted,
+            "mint_progress": mint_progress,
+            "holder_count": data.get("holder_count") or data.get("holders") or 0,
+            "transfer_count": data.get("transfer_count") or data.get("transfers") or 0,
+            "deploy_time": data.get("deploy_time") or data.get("deployed_at") or data.get("timestamp") or None,
+            "decimals": data.get("decimals") or data.get("dec") or 18,
+            "mint_limit": data.get("mint_limit") or data.get("lim") or None,
+            "deployer": data.get("deployer") or data.get("creator") or "",
+        }
+        
+        result = {"token": token, "source": "dogefeed.app"}
+        _set_cached(_token_cache, cache_key, result)
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error fetching token details")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Names API ---
+
+_names_cache: dict[str, tuple[float, Any]] = {}
+
+
+@router.get("/api/names")
+async def api_names(
+    offset: int = 0,
+    limit: int = 50,
+    q: str = "",
+    sort: str = "recent"
+):
+    """List .doge/.dogefeed names from DogeFeed.
+    
+    Returns names with owner, inscription info, and registration details.
+    Uses dogefeed.app where available, falls back to explorer.dogesoft.io.
+    """
+    limit = min(max(1, limit), 200)
+    offset = max(0, offset)
+    
+    cache_key = f"names:{offset}:{limit}:{q}:{sort}"
+    cached = _get_cached(_names_cache, cache_key)
+    if cached is not None:
+        return cached
+    
+    try:
+        # Try dogefeed.app first
+        try:
+            data = await _fetch_dogefeed_app("/api/names", {"offset": offset, "limit": limit, "q": q})
+        except HTTPException:
+            # Fallback to explorer
+            data = await _fetch_dogefeed_explorer("/names", {"offset": offset, "limit": limit})
+        
+        names_raw = data if isinstance(data, list) else data.get("names", data.get("items", []))
+        
+        names = []
+        for n in names_raw:
+            name = {
+                "name": n.get("name") or n.get("domain") or "",
+                "inscription_id": n.get("inscription_id") or n.get("id") or "",
+                "inscription_number": n.get("inscription_number") or n.get("number"),
+                "owner": n.get("owner") or n.get("holder") or n.get("address") or "",
+                "registered_at": n.get("registered_at") or n.get("inscribed_at") or n.get("timestamp") or None,
+                "genesis_height": n.get("genesis_height") or n.get("height"),
+                "suffix": ".doge" if (n.get("name") or "").endswith(".doge") else ".dogefeed" if (n.get("name") or "").endswith(".dogefeed") else "",
+            }
+            
+            if q and q.lower() not in (name["name"] or "").lower():
+                continue
+            names.append(name)
+        
+        if sort == "recent":
+            names.sort(key=lambda x: x.get("registered_at") or "", reverse=True)
+        elif sort == "alpha":
+            names.sort(key=lambda x: (x.get("name") or "").lower())
+        else:
+            names.sort(key=lambda x: x.get("registered_at") or "", reverse=True)
+        
+        result = {
+            "names": names[:limit],
+            "total": len(names_raw),
+            "offset": offset,
+            "limit": limit,
+            "has_more": len(names_raw) > offset + limit,
+            "source": "dogefeed.app",
+        }
+        
+        _set_cached(_names_cache, cache_key, result)
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error fetching names")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/name")
+async def api_name(name: str = ""):
+    """Get details for a specific .doge/.dogefeed name."""
+    if not name:
+        raise HTTPException(status_code=400, detail="Name required")
+    
+    cache_key = f"name:{name}"
+    cached = _get_cached(_names_cache, cache_key)
+    if cached is not None:
+        return cached
+    
+    try:
+        try:
+            data = await _fetch_dogefeed_app(f"/api/name/{name}")
+        except HTTPException:
+            data = await _fetch_dogefeed_explorer(f"/name/{name}")
+        
+        if not data or not data.get("name"):
+            return {"found": False, "name": name}
+        
+        name_info = {
+            "name": data.get("name") or name,
+            "inscription_id": data.get("inscription_id") or data.get("id") or "",
+            "inscription_number": data.get("inscription_number") or data.get("number"),
+            "owner": data.get("owner") or data.get("holder") or data.get("address") or "",
+            "registered_at": data.get("registered_at") or data.get("inscribed_at") or data.get("timestamp") or None,
+            "genesis_height": data.get("genesis_height") or data.get("height"),
+            "url": data.get("url") or "",
+            "suffix": ".doge" if name.endswith(".doge") else ".dogefeed" if name.endswith(".dogefeed") else "",
+        }
+        
+        result = {"found": True, "name_info": name_info, "source": "dogefeed.app"}
+        _set_cached(_names_cache, cache_key, result)
+        return result
+        
+    except HTTPException:
+        return {"found": False, "name": name}
+    except Exception as e:
+        logger.warning(f"Error fetching name details: {e}")
+        return {"found": False, "name": name}
 
 
 @router.get("/api/search")

@@ -34,10 +34,16 @@ def test_terminal_html_exists():
     assert path.is_file(), f"terminal.html not found at {path}"
 
 
-def test_dogefeedx_py_exists():
-    """DogeFeedX Python module exists."""
-    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx.py"
-    assert path.is_file(), f"dogefeedx.py not found at {path}"
+def test_dogefeedx_apps_py_exists():
+    """DogeFeedX Python apps module exists."""
+    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py"
+    assert path.is_file(), f"dogefeedx/apps.py not found at {path}"
+
+
+def test_dogefeedx_init_py_exists():
+    """DogeFeedX Python package init exists."""
+    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "__init__.py"
+    assert path.is_file(), f"dogefeedx/__init__.py not found at {path}"
 
 
 def test_aqua_css_has_brand_colors():
@@ -123,28 +129,30 @@ def test_terminal_html_registers_with_shell():
     assert "'terminal'" in content or '"terminal"' in content, "Missing app ID"
 
 
-def test_dogefeedx_py_has_api_routes():
-    """DogeFeedX Python module has API routes."""
-    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx.py"
+def test_dogefeedx_apps_has_api_routes():
+    """DogeFeedX apps module has API routes."""
+    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py"
     content = path.read_text()
     assert "/api/collections" in content, "Missing collections API"
+    assert "/api/tokens" in content, "Missing tokens API"
+    assert "/api/names" in content, "Missing names API"
     assert "/api/status" in content, "Missing status API"
     assert "/api/peers" in content, "Missing peers API"
     assert "register_routes" in content, "Missing register_routes function"
 
 
-def test_dogefeedx_py_has_caching():
-    """DogeFeedX Python module implements caching."""
-    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx.py"
+def test_dogefeedx_apps_has_caching():
+    """DogeFeedX apps module implements caching."""
+    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py"
     content = path.read_text()
     assert "_get_cached" in content, "Missing cache getter"
     assert "_set_cached" in content, "Missing cache setter"
     assert "CACHE_TTL" in content, "Missing cache TTL"
 
 
-def test_dogefeedx_py_has_fallback_handling():
-    """DogeFeedX Python module handles DogeFeed unavailability gracefully."""
-    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx.py"
+def test_dogefeedx_apps_has_fallback_handling():
+    """DogeFeedX apps module handles DogeFeed unavailability gracefully."""
+    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py"
     content = path.read_text()
     assert "timeout" in content.lower(), "Missing timeout handling"
     assert "HTTPException" in content, "Missing HTTP exception handling"
