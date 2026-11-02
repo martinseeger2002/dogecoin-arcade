@@ -112,7 +112,8 @@
 // WHAT THE SCREEN PLAYS (2026-11-01): add sound: true and the picker offers it, mixed with the microphone into one track;
 // the answer's `sound` says if the browser gave any (the player can leave it out, and many browsers have none to give).
 // Muting then silences the microphone only.
-// room.media.volume(p.id, 0.4): how loud they are for you alone, 0 to 1. It starts at 1.
+// room.media.volume(p.id, 0.4): how loud they are for you alone, 0 to room.media.loudest (4). It starts at 1; past 1 it is louder
+// than they send it, held by a limiter.
 // A SCREEN BESIDE THE CAMERA (2026-11-01): room.media.showScreen({sound: true}), on the player's press, sends the screen as a second
 // picture and leaves the camera and microphone as they are. {ok, sound} or {ok: false, error: 'cancelled'}. Everybody you share with
 // gets it; it is drawn and heard under its own name: room.media.place(p.id + '#screen', rect), 'me#screen', and
@@ -221,6 +222,7 @@
       .then(function () { return {ok: true}; }, function (err) { return {ok: false, error: err.message}; });
   };
   Media.prototype.hear = function (id, on) { return this._ask('hear', {peer: String(id), on: on !== false}); };
+  Media.prototype.loudest = 4;
   Media.prototype.volume = function (id, level) { return this._ask('volume', {peer: String(id), level: Number(level)}); };
   // place(id | 'me', {x, y, w, h} in this page's CSS pixels, or null to hide, {fit: 'cover' | 'contain', mirror})
   Media.prototype.place = function (who, rect, options) {
@@ -235,6 +237,7 @@
     var m = {};
     if (typeof which.video === 'boolean') m.video = which.video;
     if (typeof which.audio === 'boolean') m.audio = which.audio;
+    if (typeof which.sound === 'boolean') m.sound = which.sound;   // what your shared screen plays, for the others
     return this._ask('mute', m);
   };
   Media.prototype._emit = function (type, a, b) { Room.prototype._emit.call(this, type, a, b); };

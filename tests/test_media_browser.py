@@ -411,7 +411,7 @@ def test_a_screen_s_sound_goes_with_it_and_each_player_has_their_own_volume(tmp_
             gb.evaluate(f"window.room.media.volume({ida!r}, 0.25)")
             assert pb.evaluate(tile + ".volume") == .25
             gb.evaluate(f"window.room.media.volume({ida!r}, 7)")
-            assert pb.evaluate(tile + ".volume") == 1, "1 is the most"
+            assert pb.evaluate(tile + ".volume") == 1 and pb.evaluate(tile + ".muted"), "past 1 the element stays at 1 and the sound goes through a gain"
             ga.evaluate("window.room.media.stop()")
             chrome.close()
     finally:
@@ -461,6 +461,133 @@ def test_a_screen_goes_beside_the_camera_as_a_second_picture_with_its_own_sound(
             assert not gb.evaluate("window.log.some(function (e) { return e[0] === 'media-off'; })"), "they never went away"
             assert ga.evaluate("window.room.media.showScreen({sound: true})")["ok"], "and again"
             ga.evaluate("window.room.media.hideScreen()")
+            chrome.close()
+    finally:
+        server.stop()
+        state.mesh.stop()
+
+
+#: A room in a page: music from the "speakers" reaches the "microphone" 60 ms later at half strength, over a steady 3 kHz "voice". The shared
+#: screen's sound is the music itself. Every track is made here, so the test can read what comes out at the other player.
+ROOM = """() => {
+  const q = window.__q = new AudioContext(), rate = q.sampleRate, b = q.createBuffer(1, rate * 6, rate), d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * .5;
+  const music = q.createBufferSource(); music.buffer = b; music.loop = true;
+  const low = q.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = 1500; music.connect(low); music.start();
+  const screen = q.createMediaStreamDestination(), mic = q.createMediaStreamDestination(); low.connect(screen);
+  const late = q.createDelay(1), half = q.createGain(); late.delayTime.value = .06; half.gain.value = .5; low.connect(late); late.connect(half); half.connect(mic);
+  const voice = q.createOscillator(), soft = q.createGain(); voice.frequency.value = 3000; soft.gain.value = .05; voice.connect(soft); soft.connect(mic); voice.start();
+  q.resume();
+  navigator.mediaDevices.getUserMedia = async (c) => { window.__mic = c; return new MediaStream([mic.stream.getAudioTracks()[0].clone()]); };
+  navigator.mediaDevices.getDisplayMedia = async (c) => { window.__asked = c;
+    const v = document.createElement('canvas'); v.width = 320; v.height = 180; const x = v.getContext('2d');
+    setInterval(() => { x.fillRect(Math.random() * 300, 0, 9, 180); }, 100); const s = v.captureStream(10);
+    s.addTrack(screen.stream.getAudioTracks()[0].clone()); return s; };
+}"""
+
+#: What reaches this ear, in two bands, in dB: [the music's, the voice's]. Averaged over a second.
+EARS = """(id) => new Promise((done) => {
+  const v = document.querySelector('.arcade-media-layer video[data-media="' + id + '"]'), q = window.__ear || (window.__ear = new AudioContext()); q.resume();
+  const a = q.createAnalyser(); a.fftSize = 2048; a.smoothingTimeConstant = 0; q.createMediaStreamSource(new MediaStream(v.srcObject.getAudioTracks())).connect(a);
+  const f = new Float32Array(a.frequencyBinCount), hz = q.sampleRate / a.fftSize, sum = [0, 0]; let n = 0;
+  const t = setInterval(() => { a.getFloatFrequencyData(f); let m = 0, w = 0;
+    for (let i = 0; i < f.length; i++) { const p = Math.pow(10, f[i] / 10), at = i * hz; if (at > 200 && at < 1200) m += p; if (at > 2900 && at < 3100) w += p; }
+    sum[0] += m; sum[1] += w; n++;
+    if (n === 40) { clearInterval(t); a.disconnect(); done(sum.map((x) => 10 * Math.log10(x / n + 1e-20))); } }, 25);
+})"""
+
+
+def test_what_the_speakers_play_is_taken_out_of_the_microphone_and_the_call_stays_out_of_the_screen(tmp_path, no_nodes):
+    """2026-11-02. The screen's sound is what the speakers play, so it is taken out of what the microphone sends; the voice stays. Only while it is shared."""
+    state, server, base = _server(tmp_path)
+    try:
+        with sync_api.sync_playwright() as pw:
+            chrome = _launch(pw)
+            pa, _, _ = _player(chrome, base)
+            pb, _, _ = _player(chrome, base)
+            ga, gb = _game(pa), _game(pb)
+            _until(ga, "window.room && window.room.media && window.room.me", "a in")
+            _until(gb, "window.room && window.room.media && window.room.me", "b in")
+            ida, idb = ga.evaluate("window.room.me.id"), gb.evaluate("window.room.me.id")
+            _until(ga, f"window.states[{idb!r}] === 'direct'", "a direct")
+            errors = []; pa.on("console", lambda m: errors.append(m.text) if m.type in ("warning", "error") else None)
+            pa.evaluate(ROOM)
+            ga.evaluate("window.room.media.start({audio: true})")
+            assert pa.evaluate("window.__mic.audio.echoCancellation.ideal") == "all"
+            ga.evaluate(f"window.room.media.share({idb!r}, true)")
+            gb.evaluate(f"window.room.media.hear({ida!r}, true)")
+            _until(gb, f"window.has[{ida!r}] && window.has[{ida!r}].audio", "b hears a")
+            pb.wait_for_timeout(1500)
+            bare = pb.evaluate(EARS, ida)
+            said = ga.evaluate("window.room.media.showScreen({sound: true})")
+            assert said == {"ok": True, "sound": True}, said
+            if pa.evaluate("!!navigator.mediaDevices.getSupportedConstraints().restrictOwnAudio"):
+                assert pa.evaluate("window.__asked.audio.restrictOwnAudio") is True, "the call does not go out in the screen's sound"
+            assert pa.evaluate("window.__asked.audio.echoCancellation") is False, "and music is no voice"
+            pb.wait_for_timeout(9000)
+            clean = pb.evaluate(EARS, ida)
+            print("bare", bare, "clean", clean)
+            assert bare[0] - clean[0] > 20, (bare, clean, errors)
+            assert abs(bare[1] - clean[1]) < 2, ("the voice stays", bare, clean)
+            assert pb.evaluate(f"(id) => ({LOUD})(id)", ida + "#screen") > .005, "and the screen's own sound goes on"
+            # Muted for the others: the speakers go on, so the microphone stays clean.
+            ga.evaluate("window.room.media.mute({sound: true})")
+            assert "its sound muted" in pa.inner_text(".arcade-media-pill")
+            pb.wait_for_timeout(3000)
+            assert pb.evaluate(f"(id) => ({LOUD})(id)", ida + "#screen") < .002, "muted for the others"
+            quiet = pb.evaluate(EARS, ida)
+            assert bare[0] - quiet[0] > 20, (bare, quiet)
+            ga.evaluate("window.room.media.mute({sound: false})")
+            ga.evaluate("window.room.media.hideScreen()")
+            pb.wait_for_timeout(1500)
+            back = pb.evaluate(EARS, ida)
+            assert abs(bare[0] - back[0]) < 4, ("no screen: the bare microphone again, on the same link", bare, back)
+            ga.evaluate("window.room.media.stop()")
+            chrome.close()
+    finally:
+        server.stop()
+        state.mesh.stop()
+
+
+def test_a_player_can_be_louder_than_they_send_and_it_never_crackles(tmp_path, no_nodes):
+    """2026-11-02: past 100%. An element stops at 1, so a gain and a limiter. Read at the speakers: what the page sends to its audio destination."""
+    state, server, base = _server(tmp_path)
+    try:
+        with sync_api.sync_playwright() as pw:
+            chrome = _launch(pw)
+            pa, _, _ = _player(chrome, base)
+            pb, _, _ = _player(chrome, base)
+            ga, gb = _game(pa), _game(pb)
+            _until(ga, "window.room && window.room.media && window.room.me", "a in")
+            _until(gb, "window.room && window.room.media && window.room.me", "b in")
+            ida, idb = ga.evaluate("window.room.me.id"), gb.evaluate("window.room.me.id")
+            _until(ga, f"window.states[{idb!r}] === 'direct'", "a direct")
+            pa.evaluate(ROOM)
+            pa.evaluate("""() => { const q = window.__q, o = q.createOscillator(), g = window.__level = q.createGain(), d = q.createMediaStreamDestination(); g.gain.value = .02; o.connect(g); g.connect(d); o.start();
+                navigator.mediaDevices.getUserMedia = async () => new MediaStream([d.stream.getAudioTracks()[0].clone()]); }""")
+            pb.evaluate("""() => { const was = AudioNode.prototype.connect; window.__taps = [];
+                AudioNode.prototype.connect = function (to, ...r) { if (to instanceof AudioDestinationNode) { const a = this.context.createAnalyser(); a.fftSize = 2048; was.call(this, a); window.__taps.push(a); } return was.call(this, to, ...r); };
+                window.__peak = () => { const a = window.__taps[window.__taps.length - 1], f = new Float32Array(2048); a.getFloatTimeDomainData(f); return Math.max(...f.map(Math.abs)); }; }""")
+            ga.evaluate("window.room.media.start({audio: true})")
+            ga.evaluate(f"window.room.media.share({idb!r}, true)")
+            gb.evaluate(f"window.room.media.hear({ida!r}, true)")
+            _until(gb, f"window.has[{ida!r}] && window.has[{ida!r}].audio", "b hears a")
+            tile = f"document.querySelector('.arcade-media-layer video[data-media=\"{ida}\"]')"
+            gb.evaluate(f"window.room.media.volume({ida!r}, 1.01)")
+            pb.wait_for_timeout(1500)
+            assert pb.evaluate(tile + ".muted"), "one way out only, or it plays twice"
+            low = pb.evaluate("window.__peak()")
+            gb.evaluate(f"window.room.media.volume({ida!r}, 3)")
+            pb.wait_for_timeout(600)
+            high = pb.evaluate("window.__peak()")
+            assert 2.4 < high / low < 3.6, (low, high)
+            pa.evaluate("window.__level.gain.value = .9")
+            gb.evaluate(f"window.room.media.volume({ida!r}, 4)")
+            pb.wait_for_timeout(1500)
+            assert pb.evaluate("window.__peak()") < 1.25, "held, not clipped"
+            gb.evaluate(f"window.room.media.volume({ida!r}, 0.5)")
+            assert pb.evaluate(tile + ".volume") == .5 and not pb.evaluate(tile + ".muted"), "and back to the plain way"
+            ga.evaluate("window.room.media.stop()")
             chrome.close()
     finally:
         server.stop()

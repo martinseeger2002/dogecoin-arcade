@@ -97,6 +97,8 @@ only the answering side had a home address, so a host firewall (ufw) kept the LA
 side the asker's address once the answer proved one NAT (older nodes ignore it), `Path.aim` adds it, and a home address that answers
 replaces an outside one (`Path.received`, only after the packet opened with the path's key).
 Open: relayed introductions carry no home address, so two nodes in one house with no TCP link stay on the hairpin or fail.
+### 2026-11-02 Room media: the call stays out of a shared screen, speakers out of the microphone, louder than 100% (Claude, branch claude/riffs-audio)
+The operator's four Riffs asks. In `_page_doors.js.html`: getDisplayMedia asks `restrictOwnAudio` (Chrome 141 on, Windows and Mac) so a shared whole screen does not carry the call; the microphone asks `echoCancellation: {ideal: 'all'}`; while a screen is shared with sound the outgoing mic is swapped in place for one cleaned by `echo_canceller.js` (AudioWorklet from a blob, the screen's own sound as reference, about 61 ms added, bare mic again on stop or if it cannot start). `room.media.volume` now runs to `room.media.loudest` (4), past 1 through a gain and a limiter with the element muted. `room.media.mute({sound})` mutes what your screen sends. Tests: test_media_browser (two new, measured at the other player), test_echo_canceller + echo_canceller_sim.js. Page API addition is backward compatible. Not tested with a real screen capture, real speakers or a real room. Needs the usual release to all arcades, then Riffs v10 (V ?v=8).
 
 ### 2026-11-01 An app's permissions after it is added; Remove from arcade (Claude)
 The operator: once an app was added, its permissions could only be picked by deleting and adding it again, and that did not work

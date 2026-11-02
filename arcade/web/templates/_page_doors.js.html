@@ -615,14 +615,14 @@
     // (negotiated id 2) once it is direct -- whole descriptions, which the room could never carry -- so media is
     // direct only (or through the builder's leased relay): it never falls back to the room. While the camera or
     // microphone is open the viewer shows so, with a Stop button the game cannot cover.
-    var MEDIA_TILES = 16, mediaLayerEl = null, mediaPillEl = null, mediaNoteEl = null;
+    var MEDIA_TILES = 16, MEDIA_LOUDEST = 4, mediaLayerEl = null, mediaPillEl = null, mediaNoteEl = null;
     function mediaEvent(name, h, ev){
       ev.room = name;
       h.frame.postMessage({arcade: 'realtime', event: ev}, '*');
     }
     function mediaOf(h){
       return h.media || (h.media = {stream: null, video: false, audio: false, share: {}, hear: {}, place: {},
-                                    tiles: {}, muted: {video: false, audio: false}, volume: {}, mix: null});
+                                    tiles: {}, muted: {video: false, audio: false, sound: false}, volume: {}, mix: null, echo: null, amps: {}, ampCtx: null});
     }
     function mediaPc(name, h, peer, pc){
       var polite = h.me.id > peer.p.id;                    // the one that did not offer the first time gives way
@@ -770,13 +770,99 @@
       var md = h && h.media;
       if (!md) return;
       if (h.fast) for (var id in h.fast.peers) mediaDetach(h.fast.peers[id]);
+      mediaEchoOff(h, false);
       if (md.stream) md.stream.getTracks().forEach(function(t){ t.stop(); });
       var had = !!md.stream;
       mediaUnmix(md.mix); md.mix = null;
       if (md.xstream) { md.xstream.getTracks().forEach(function(t){ t.stop(); }); md.xstream = null; }
       md.stream = null; md.video = md.audio = md.screen = false; md.share = {};
-      if (quiet) { h.media = null; mediaDraw(h, true); }
+      if (quiet) { if (md.ampCtx) { md.ampCtx.onstatechange = null; try { md.ampCtx.close(); } catch (err) {} } h.media = null; mediaDraw(h, true); }
       else { mediaDraw(h); if (had && !silent) mediaEvent(rtName(h), h, {type: 'media-state', state: 'off'}); }
+    }
+    // What a shared screen plays, as it is (music is no voice: none of the voice cleaning), and WITHOUT this page's own sound (the operator
+    // 2026-11-02: "their screen sharing with audio I hear myself talk through their screen share"): sharing a whole screen takes in
+    // the call playing here, and everybody's voice went back round through it. The browser filters this page out of system audio.
+    function mediaScreenSound(){
+      var a = {echoCancellation: false, noiseSuppression: false, autoGainControl: false}, md0 = navigator.mediaDevices;
+      if (md0 && md0.getSupportedConstraints && md0.getSupportedConstraints().restrictOwnAudio) a.restrictOwnAudio = true;
+      return a;
+    }
+    // A shared screen's sound taken out of the microphone (echo_canceller.js): while a screen is shared with its sound, and only then,
+    // the microphone that goes to the others is the cleaned one, swapped in place. If it cannot start, the bare microphone just stays.
+    function mediaEchoCode(){
+{% include "echo_canceller.js" %}
+    }
+    var mediaEchoUrl = null;
+    function mediaEchoOn(h){
+      var md = h.media, x = md && md.xstream, s = md && md.stream;
+      if (!x || !s || md.mix || md.echo || !x.getAudioTracks().length || !s.getAudioTracks().length) return;
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx || !window.AudioWorkletNode) return;
+      var ctx = new Ctx({latencyHint: 'interactive'}), mark = md.echo = {ctx: ctx, mics: [], keep: [], clean: null};
+      mediaEchoUrl = mediaEchoUrl || URL.createObjectURL(new Blob(['(' + mediaEchoCode + ')()'], {type: 'text/javascript'}));
+      if (ctx.state === 'suspended') ctx.resume().catch(function(){});
+      ctx.audioWorklet.addModule(mediaEchoUrl).then(function(){
+        if (md.echo !== mark || md.xstream !== x || md.stream !== s) return;
+        // The reference is a copy of its own: muting the screen for the others does not stop the speakers.
+        var mics = s.getAudioTracks(), ref = x.getAudioTracks().map(function(t){ return t.clone(); });
+        var node = new AudioWorkletNode(ctx, 'arcade-echo', {numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [1],
+                                                             channelCount: 1, channelCountMode: 'explicit', channelInterpretation: 'speakers'});
+        var out = ctx.createMediaStreamDestination();
+        ctx.createMediaStreamSource(new MediaStream(mics)).connect(node, 0, 0);
+        ctx.createMediaStreamSource(new MediaStream(ref)).connect(node, 0, 1);
+        node.connect(out);
+        mark.mics = mics; mark.keep = ref; mark.clean = out.stream.getAudioTracks()[0];
+        mics.forEach(function(t){ s.removeTrack(t); });
+        s.addTrack(mark.clean);
+        mediaMutes(md);
+        mediaResend(h);
+      }).catch(function(err){
+        console.warn('arcade: the microphone goes uncleaned', err);
+        if (md.echo === mark) { md.echo = null; try { ctx.close(); } catch (e) {} }
+      });
+    }
+    // back: the bare microphone goes on in its place. Without it the whole stream is going, and the microphone with it.
+    function mediaEchoOff(h, back){
+      var md = h.media, e = md && md.echo;
+      if (!e) return;
+      md.echo = null;
+      if (e.clean && md.stream && back) {
+        md.stream.removeTrack(e.clean);
+        e.mics.forEach(function(t){ md.stream.addTrack(t); });
+        mediaMutes(md);
+        mediaResend(h);
+      } else e.mics.forEach(function(t){ t.stop(); });
+      e.keep.forEach(function(t){ t.stop(); });
+      if (e.clean) e.clean.stop();
+      try { e.ctx.close(); } catch (err) {}
+    }
+    function mediaResend(h){
+      if (h.fast) Object.keys(h.media.share).forEach(function(id){ var pr = h.fast.peers[id]; if (pr) mediaAttach(h, pr); });
+    }
+    // Louder than they send (2026-11-02: "amplify the sound ... at least by 200% maybe more"): a video element stops at 1, so past
+    // that their sound goes through a gain, and a limiter so that it gets loud and does not crackle. The element stays, muted: a remote
+    // track gives the audio graph nothing in Chrome without one. False while it cannot play: the element goes on at full volume instead.
+    function mediaLoud(h, key, stream, level){
+      var md = h.media, a = md.amps[key], track = stream && stream.getAudioTracks()[0];
+      if (a && a.track !== track) { a.src.disconnect(); a.limit.disconnect(); delete md.amps[key]; a = null; }
+      if (!track) return false;
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return false;
+      try {
+        var ctx = md.ampCtx;
+        if (!ctx) {
+          ctx = md.ampCtx = new Ctx();
+          ctx.onstatechange = function(){ if (h.media === md) mediaDraw(h); };
+        }
+        if (!a) {
+          a = md.amps[key] = {track: track, src: ctx.createMediaStreamSource(new MediaStream([track])), gain: ctx.createGain(), limit: ctx.createDynamicsCompressor()};
+          a.limit.threshold.value = -3; a.limit.knee.value = 3; a.limit.ratio.value = 20; a.limit.attack.value = 0.003; a.limit.release.value = 0.1;
+          a.src.connect(a.gain); a.gain.connect(a.limit); a.limit.connect(ctx.destination);
+        }
+        a.gain.gain.value = level;
+        if (ctx.state === 'suspended') ctx.resume().catch(function(){});
+        return ctx.state === 'running';
+      } catch (err) { return false; }
     }
     // The screen's sound and the microphone leave as ONE audio track: nothing to renegotiate in the middle of a call, and a
     // viewer that plays a single track hears both. Muting silences the microphone in the mix, never what is shared.
@@ -806,12 +892,17 @@
       if (md.mix) md.mix.mic.gain.value = md.muted.audio ? 0 : 1;
       else md.stream.getAudioTracks().forEach(function(t){ t.enabled = !md.muted.audio; });
     }
+    // Your own screen's sound, for the others: its loudness is your computer's business, so all a page can do is this.
+    function mediaSoundMute(md){
+      if (md.xstream) md.xstream.getAudioTracks().forEach(function(t){ t.enabled = !md.muted.sound; });
+    }
     function mediaAnyOn(){ for (var k in rt) if (rt[k].media && (rt[k].media.stream || rt[k].media.xstream)) return rt[k]; return null; }
     // A screen beside the camera (2026-11-01): a second picture of a player's own, for any page. The camera and microphone go
     // on untouched. The browser's own Stop sharing ends this picture only.
     function mediaXOff(name, h, told){
       var md = h.media;
       if (!md || !md.xstream) return;
+      mediaEchoOff(h, true);
       var x = md.xstream; md.xstream = null;
       x.getTracks().forEach(function(t){ t.stop(); });
       if (h.fast) Object.keys(md.share).forEach(function(id){ var pr = h.fast.peers[id]; if (pr) mediaAttachX(h, pr); });
@@ -826,16 +917,17 @@
       mediaAllowed().then(function(yes){
         if (!yes) { answer({ok: false, error: 'off', why: 'Camera & microphone is off on this app\u2019s card'}); return; }
         return md0.getDisplayMedia({video: {width: {max: 1920}, height: {max: 1080}, frameRate: {max: 15}},
-                                    audio: m.sound ? {echoCancellation: false, noiseSuppression: false, autoGainControl: false} : false})
+                                    audio: m.sound ? mediaScreenSound() : false})
           .then(function(stream){
             if (rt[name] !== h) { stream.getTracks().forEach(function(t){ t.stop(); }); throw new Error('left the room'); }
             mediaXOff(name, h, false);
-            md.xstream = stream;
+            md.xstream = stream; md.muted.sound = false;
             stream.getVideoTracks().forEach(function(t){
               t.contentHint = 'detail';
               t.addEventListener('ended', function(){ if (md.xstream === stream) mediaXOff(name, h, true); });
             });
             if (h.fast) Object.keys(md.share).forEach(function(id){ var pr = h.fast.peers[id]; if (pr) mediaAttachX(h, pr); });
+            mediaEchoOn(h);
             mediaDraw(h);
             answer(Object.assign({ok: true}, stream.getAudioTracks().length ? {sound: true} : {}));
           });
@@ -880,7 +972,7 @@
             video: {width: {max: 1920}, height: {max: 1080}, frameRate: {max: 15}},
             // What the screen plays (2026-11-01): asked only by a page that says `sound`, and the browser's
             // picker still lets the player leave it out. Music is no voice: none of the voice cleaning.
-            audio: want.sound ? {echoCancellation: false, noiseSuppression: false, autoGainControl: false} : false
+            audio: want.sound ? mediaScreenSound() : false
           }).catch(function(err){ err.screen = true; throw err; }) : Promise.resolve(null);
           return screen.then(function(shown){
             return (want.video || want.audio ? md0.getUserMedia({
@@ -889,7 +981,8 @@
               // `facing` picks a phone's front or rear camera ('ideal': a computer with one camera still gets it).
               video: want.video ? Object.assign({width: {max: 1280}, height: {max: 1280}},
                                                 m.facing ? {facingMode: {ideal: m.facing === 'environment' ? 'environment' : 'user'}} : {}) : false,
-              audio: want.audio
+              // Everything this computer plays, where the browser can take it out (Chrome 141 on); one that cannot takes it as true.
+              audio: want.audio ? {echoCancellation: {ideal: 'all'}} : false
             }) : Promise.resolve(new MediaStream())).then(function(stream){
               if (shown) shown.getVideoTracks().forEach(function(t){
                 t.contentHint = 'detail';                 // words on a screen stay sharp, at fewer frames
@@ -901,6 +994,7 @@
           }).then(function(stream){
             if (rt[name] !== h) { stream.getTracks().forEach(function(t){ t.stop(); }); throw new Error('left the room'); }
             var old = md.stream, oldMix = md.mix;           // a second start: the new tracks replace the old
+            mediaEchoOff(h, false);
             md.stream = stream; md.mix = stream.mix || null;
             md.video = stream.getVideoTracks().length > 0; md.audio = stream.getAudioTracks().length > 0;
             md.screen = want.screen && md.video;
@@ -923,6 +1017,7 @@
             });
             if (old && old !== stream) old.getTracks().forEach(function(t){ t.stop(); });
             mediaUnmix(oldMix);
+            mediaEchoOn(h);
             mediaDraw(h);
             mediaEvent(name, h, {type: 'media-state', state: 'on'});
             answer(Object.assign({ok: true, video: md.video, audio: md.audio, screen: md.screen}, md.mix ? {sound: true} : {}));
@@ -956,11 +1051,11 @@
         answer({ok: true, sending: !!md.stream});
         return;
       }
-      // How loud one player is here, 0 to 1, on this viewer only. Kept by id, so it outlives a link that drops.
+      // How loud one player is here, 0 to MEDIA_LOUDEST, on this viewer only. Kept by id, so it outlives a link that drops.
       if (m.do === 'volume') {
         var level = Number(m.level);
-        if (!isFinite(level)) { answer({ok: false, error: 'a volume is a number from 0 to 1'}); return; }
-        md.volume[String(m.peer || '')] = Math.min(1, Math.max(0, level));
+        if (!isFinite(level)) { answer({ok: false, error: 'a volume is a number from 0 to ' + MEDIA_LOUDEST}); return; }
+        md.volume[String(m.peer || '')] = Math.min(MEDIA_LOUDEST, Math.max(0, level));
         mediaDraw(h); answer({ok: true}); return;
       }
       if (m.do === 'hear') {
@@ -985,6 +1080,7 @@
       if (m.do === 'mute') {
         if (typeof m.video === 'boolean') md.muted.video = m.video;
         if (typeof m.audio === 'boolean') md.muted.audio = m.audio;
+        if (typeof m.sound === 'boolean') { md.muted.sound = m.sound; mediaSoundMute(md); }
         mediaMutes(md);
         mediaDraw(h); answer({ok: true, muted: md.muted}); return;
       }
@@ -1049,14 +1145,16 @@
       for (var k in tiles) if (!keep[k]) {
         try { tiles[k].srcObject = null; tiles[k].remove(); } catch (err) {}
         delete tiles[k];
+        if (h.media) mediaLoud(h, k, null);
       }
       if (h.media) h.mediaTiles = md.tiles;
       Object.keys(keep).forEach(function(key){
         var v = mediaTile(md, key), at = md.place[key];
         if (v.srcObject !== keep[key]) { v.srcObject = keep[key]; v.play().catch(function(){}); }
-        var who = key.replace(/#screen$/, '');
-        v.muted = who === 'me' || !md.hear[who];       // your own sound never; theirs once the game hears them
-        v.volume = key in md.volume ? md.volume[key] : 1;
+        var who = key.replace(/#screen$/, ''), level = key in md.volume ? md.volume[key] : 1, heard = who !== 'me' && !!md.hear[who];
+        var loud = mediaLoud(h, key, heard && level > 1 ? keep[key] : null, level);
+        v.muted = !heard || loud;                      // your own sound never; theirs once the game hears them
+        v.volume = Math.min(1, level);
         if (at && at.w > 0 && at.h > 0) {
           v.style.display = 'block';
           v.style.left = at.x + 'px'; v.style.top = at.y + 'px';
@@ -1087,7 +1185,7 @@
         el.append(dot, words, stop);
         mediaLayer().appendChild(el);
       }
-      var md = on.media, what = md.xstream ? (md.xstream.getAudioTracks().length ? 'Sharing your screen and its sound' : 'Sharing your screen') : md.screen ? (md.mix && md.mix.sound ? 'Sharing your screen and its sound'
+      var md = on.media, what = md.xstream ? (md.xstream.getAudioTracks().length ? (md.muted.sound ? 'Sharing your screen, its sound muted' : 'Sharing your screen and its sound') : 'Sharing your screen') : md.screen ? (md.mix && md.mix.sound ? 'Sharing your screen and its sound'
                                              : md.audio ? 'Sharing your screen, microphone on' : 'Sharing your screen')
         : md.video && md.audio ? 'Camera and microphone on' : md.video ? 'Camera on' : 'Microphone on';
       if (md.muted.video && md.muted.audio) what += ' (muted)';
