@@ -2416,6 +2416,19 @@ body.fullscreen #arc-bot { display: none !important; }
   });
   $('dk-apps').addEventListener('click', function (e) { if (!e.target.closest('.ub-app') && !e.target.closest('input')) toggleApps(false); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('dk-apps').hidden) toggleApps(false); });
+  // DogeFeedX: macOS-style keyboard shortcuts
+  if (DFX) {
+    document.addEventListener('keydown', function (e) {
+      var isMeta = e.metaKey || e.ctrlKey;
+      if (!isMeta) return;
+      var w = front();
+      if (e.key === 'w' && w) { e.preventDefault(); closeWin(w); }
+      else if (e.key === 'm' && w) { e.preventDefault(); minimize(w); }
+      else if (e.key === 'h') { e.preventDefault(); wins.filter(function(x){return !x.min;}).forEach(minimize); }
+      else if (e.key === ',') { e.preventDefault(); openKey(tabAt('/me')); }
+      else if (e.key === 'k') { e.preventDefault(); toggleApps(true); }
+    });
+  }
   // The system menu, top right: who is signed in, settings, the other look, log out, back to the website.
   $('dk-sys').addEventListener('click', function (e) {
     e.stopPropagation();
