@@ -98,3 +98,42 @@ def test_the_helper_is_a_window_that_moves_sizes_and_closes(base, page):
     page.dblclick('.dk-icon[data-key="helper"]')
     page.wait_for_selector(win, state="visible")
     assert page.errors == []
+
+
+@pytest.mark.parametrize("skin", ["ubuntu", "w98"])
+def test_a_window_refreshes_on_its_own(base, page, skin):
+    """2026-11-02: "if you make a post you'll have to normally refresh whole arcade - we should just be able to refresh
+    every window". The button, the title bar's menu and F5 inside a window reload that window's page, nothing else."""
+    page.goto(base + "/desktop")
+    page.evaluate(f"localStorage.setItem('arcade.deskview', '{skin}')")
+    page.goto(base + "/exchange")
+    page.wait_for_url(base + "/desktop")
+    page.wait_for_function("document.querySelector('.dk-win iframe') && "
+                           "document.querySelector('.dk-win iframe').contentDocument.readyState === 'complete'")
+    page.evaluate("window.deskMark = 1")
+    win = page.locator(".dk-win").first
+    frame = "document.querySelector('.dk-win iframe').contentWindow"
+
+    def mark():
+        page.evaluate(f"{frame}.refreshMark = 1")
+
+    def reloaded():
+        page.wait_for_function(f"{frame}.refreshMark === undefined && {frame}.document.readyState === 'complete'")
+        assert page.evaluate("window.deskMark") == 1, "the desktop itself did not reload"
+
+    mark()
+    win.locator('.dk-tbtn[data-a="reload"]').click()
+    reloaded()
+
+    page.wait_for_timeout(300)
+    mark()
+    win.locator(".dk-tname").click(button="right")
+    page.locator('#dk-ctx [data-k="reload"]').click()
+    reloaded()
+
+    page.wait_for_timeout(300)
+    mark()
+    page.evaluate(f"{frame}.focus()")                               # as after a click inside the window
+    page.keyboard.press("F5")
+    reloaded()
+    assert page.errors == []
