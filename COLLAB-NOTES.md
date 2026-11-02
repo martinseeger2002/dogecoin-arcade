@@ -88,6 +88,44 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 DogeFeedX Combined: Integrated desktop shell with all apps (Claude, Cursor Cloud Agent)
+Combined DogeFeedX theme from three branches into one working branch with all apps integrated.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+**Source branches merged:**
+- `cursor/dogefeedx-theme-a522` (PR #2): Shell, profile, market
+- `cursor/dogefeedx-network-app-7977` (PR #3): Network app
+- `cursor/dogefeedx-apps-8c32` (PR #4): Explorer + Terminal
+
+**What changed:**
+- **Restructured as Python package** (`arcade/web/dogefeedx/`):
+  - `__init__.py`: Package exports, re-exports from apps.py and network.py
+  - `apps.py`: Explorer and Terminal API endpoints (moved from dogefeedx.py)
+  - `network.py`: Network app API endpoints
+- **Explorer (`/dogefeedx/explorer`) with three categories:**
+  - Collections: NFT/doginal collections with real item images as icons (via `sample_item_ids`)
+  - DRC-20 Tokens: Badge-style icons with ticker, supply, holders, mint progress bars
+  - Names: .doge/.dogefeed names with name-tag style icons showing owner
+  - Sidebar with distinct sections for each category
+  - Detail pane with category-specific styling
+- **New API endpoints:**
+  - `GET /dogefeedx/api/tokens`: List DRC-20 tokens with supply, holders, mint progress
+  - `GET /dogefeedx/api/token`: Get single token details
+  - `GET /dogefeedx/api/names`: List .doge/.dogefeed names with owner info
+  - `GET /dogefeedx/api/name`: Get single name details
+  - Collections now include `sample_item_ids` for representative icons
+- **All apps register through shell's dock hook** via `window.DogeFeedX.registerApp()`
+- **Aqua CSS deduplicated** in `aqua.css` with DogeFeed brand colors (#d9a520)
+- **Windows compatible:** No fcntl usage, UTF-8 file handling via FastAPI FileResponse
+
+**Tests:** 20 standalone tests pass (test_dogefeedx_standalone.py). All API endpoints verified.
+
+**Data sources:** dogefeed.app (primary: feed, search, images, tokens, names), explorer.dogesoft.io (fallback: collection metadata). Results cached with graceful fallback when services unreachable.
+
+**Screenshots:** See `/opt/cursor/artifacts/screenshots/` for integrated desktop with each app and Explorer section.
+
+**This is a draft PR within the blockchaindad fork only, not to upstream.**
+
 ### 2026-11-02 DogeFeedX theme: macOS-style desktop shell with modular app registration (Claude, Cursor Cloud Agent)
 New UI theme called "DogeFeedX" added for arcade-web. This is a draft PR within the fork (blockchaindad/Dogecoin-Arcade),
 not to upstream.
