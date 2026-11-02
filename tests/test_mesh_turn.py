@@ -191,3 +191,58 @@ def test_who_gets_which_relay():
     assert turn.player_relays(None, None, None, None, "8.8.8.8", "addr", far) == far
     srv.limit_gb = lambda: 0.0
     assert turn.player_relays(srv, _Stun([("198.51.100.1", 3478)]), 3478, None, "8.8.8.8", "addr", far) == far
+
+
+def test_relayed_packets_keep_their_pace_while_the_mesh_loop_is_busy():
+    """2026-11-02: calls on an "Arcade relay" were "very lossy". The relay ran on the mesh loop, so every relayed
+    packet waited behind whatever the mesh was doing: none lost, but delivered in clumps. It has a loop of its own now;
+    a mesh loop blocked for 400 ms at a time must not hold up a 50-a-second stream through the relay."""
+    import socket
+    import nacl.signing
+    from arcade.mesh.service import MeshService
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    svc = MeshService("arcade-test", nacl.signing.SigningKey.generate(), listen_host="127.0.0.1", listen_port=0)
+    svc.stun_port = port
+    svc.turn = turn.TurnServer(SECRET)
+    svc.turn._allowed = lambda p, cl: True
+    svc.start()
+    try:
+        for _ in range(50):
+            if svc.turn.transport is not None:
+                break
+            time.sleep(0.05)
+        addr = ("127.0.0.1", port)
+
+        async def run():
+            u, p = turn.login(SECRET, "a")
+            c, reply, realm, nonce, tid = await _allocate(addr, u, p)
+            assert reply[0] == 0x100 | turn.ALLOCATE
+            relay = ("127.0.0.1", _relayed(reply, tid)[1])
+            loop = asyncio.get_running_loop()
+            _, peer = await loop.create_datagram_endpoint(_Client, local_addr=("127.0.0.1", 0))
+            peer_at = peer.t.get_extra_info("sockname")[:2]
+            r = turn.parse(await c.ask(_signed(turn.PERMISSION, [(turn.A_PEER, _xor(*peer_at))], u, p, realm, nonce),
+                                       addr))
+            assert r[0] == 0x100 | turn.PERMISSION
+            arrived = []
+
+            async def listen():
+                while len(arrived) < 50:
+                    await c.q.get()
+                    arrived.append(time.monotonic())
+            listening = asyncio.ensure_future(listen())
+            for i in range(50):                       # one second of 20 ms packets, as Opus sends them
+                if i in (10, 30):                     # the mesh busy for 400 ms, twice
+                    svc.loop.call_soon_threadsafe(time.sleep, 0.4)
+                peer.t.sendto(b"x" * 160, relay)
+                await asyncio.sleep(0.02)
+            await asyncio.wait_for(listening, 5)
+            c.t.close(); peer.t.close()
+            return max(b - a for a, b in zip(arrived, arrived[1:]))
+        worst = asyncio.run(run())
+        assert worst < 0.15, f"a {worst * 1000:.0f} ms gap: the relay waited for the mesh"
+    finally:
+        svc.stop()

@@ -247,6 +247,12 @@ class MeshService:
             self.node.add_address(host, port, node_id)
         self.loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        # STUN and the media relay (turn.py) run on a loop of their own (2026-11-02: calls on an "Arcade
+        # relay" were "very lossy"). On the mesh loop every relayed packet waited behind links, Core relaying and
+        # the UDP path's acks; measured through .25 and a borrowed relay: no loss, but packets in clumps, 1-3% of the
+        # sound concealed and a 250-400 ms jitter buffer. Here nothing else runs.
+        self.media_loop: asyncio.AbstractEventLoop | None = None
+        self._media_thread: threading.Thread | None = None
         self._sessions: dict[str, Session] = {}
         # Several pages of one member in one room (2026-10-09: ASHVALE and Ziibiing open
         # in two tabs as the same account shared ONE session -- one queue read by both
@@ -288,10 +294,7 @@ class MeshService:
             self._call(self._tunnel_stop(), timeout=15)
         except Exception:                              # noqa: BLE001
             pass
-        if self.turn is not None:
-            self.loop.call_soon_threadsafe(self.turn.close)
-        for t in self._stun_transports:
-            self.loop.call_soon_threadsafe(t.close)
+        self._stop_media()
         try:
             self._call(self.node.stop(), timeout=10)
         finally:
@@ -309,9 +312,44 @@ class MeshService:
         if (self.tunnel_cmd or self.named_url) and self.node.ws_port:
             self.node._spawn(self._tunneler())
         if self.stun_port:
-            self.node._spawn(self._stun_server())
+            self._start_media()
+
+    def _start_media(self) -> None:
+        """STUN and the media relay on their own thread and loop ("arcade-media"), so relayed sound and pictures
+        never wait for the mesh."""
+        ready = threading.Event()
+
+        def run():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self.media_loop = loop
+            ready.set()
+            loop.run_forever()
+            loop.close()
+
+        self._media_thread = threading.Thread(target=run, name="arcade-media", daemon=True)
+        self._media_thread.start()
+        ready.wait()
+        asyncio.run_coroutine_threadsafe(self._stun_server(), self.media_loop)
+
+    def _stop_media(self) -> None:
+        loop = self.media_loop
+        if loop is None:
+            return
+
+        def close():
+            if self.turn is not None:
+                self.turn.close()
+            for t in self._stun_transports:
+                t.close()
+            loop.call_soon(loop.stop)              # after the sockets' own closing callbacks
+        loop.call_soon_threadsafe(close)
+        if self._media_thread is not None:
+            self._media_thread.join(timeout=5)
+        self.media_loop = None
 
     async def _stun_server(self) -> None:
+        """Runs on the media loop."""
         from . import stun
         try:
             self._stun_transports = await stun.serve(port=self.stun_port, turn=self.turn)
@@ -963,7 +1001,8 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
         from .turn import TurnServer
         service.turn = TurnServer(
             hashlib.blake2b(bytes(key), digest_size=32, person=b"arcm-turn").digest(),
-            lambda: [a for offers in service.stun.offers.values() for a in offers],
+            # Read from the media loop's thread while the mesh loop may change it: a copy, taken at once.
+            lambda: [a for offers in list(service.stun.offers.values()) for a in offers],
             usage_file=Path(state.home) / "media-usage.json", own_addresses=own_hosts,
             limit_gb=lambda: _media_limit(state))
     from .turn import TurnShare

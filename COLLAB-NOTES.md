@@ -88,6 +88,20 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 The media relay gets a loop of its own (Claude)
+The operator: calls on an "Arcade relay" were "very lossy". The Riffs session measured it from a test machine (two peer connections
+in one page, 440 Hz Opus for 20 s, relay forced): direct 0% concealed, 30 ms jitter buffer; through .25's relay 2.55%
+concealed, 242 ms buffer; through a borrowed relay (156.67.28.112) 1.11%, 412 ms. Almost nothing lost: packets came in
+clumps. STUN and TURN (mesh/turn.py) were served on the mesh loop, behind links, Core relaying and the UDP path's
+acks, so any slow handler there held every relayed packet.
+- **service.py `_start_media` / `_stop_media`**: STUN and the relay run on their own thread and loop ("arcade-media",
+  `service.media_loop`). Nothing else changes: per-packet work, limits and logins are as before. TurnShare (mesh loop)
+  only reads the server's secret and `available()`; `stun_servers()` is read from the media thread as a copy.
+- Test: test_mesh_turn `test_relayed_packets_keep_their_pace_while_the_mesh_loop_is_busy` blocks the mesh loop for
+  400 ms twice during a 50-a-second stream: worst gap 421 ms before, 22 ms after.
+- Open: the web threads still share the GIL; re-measure live (~/arcade-work/lounge-probe/relaytest.js), target ~0%
+  concealed and a jitter buffer under 80 ms. If not, a process of its own is the next step.
+
 ### 2026-11-02 Admin -> Overview -> Arcades: arcades seen through a linked arcade (Claude)
 The operator: the phone "is not listing all the arcades seen by strawberry". `_arcades_running` counted only this node's own
 links, addresses it reached itself in the hour, and chain announcements from the day; a small node keeps 2-3 links on
