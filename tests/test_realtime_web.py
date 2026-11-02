@@ -571,6 +571,32 @@ def test_the_nodes_list_offers_https_ways_in_only(two_nodes):
     assert all(n["base"].startswith("https://") for n in j["nodes"]), "a page served over https cannot use http"
 
 
+def test_the_nodes_list_gives_each_node_only_the_name_it_answers_on(two_nodes):
+    """Live, 2026-11-02: a node behind a quick tunnel gets a new name at every restart, and every old name stayed on
+    the list while the node was linked (eleven for one node, dead, each one looked up by every joining browser)."""
+    (ca, sa), _ = two_nodes
+    node = sa.mesh.node
+    for i in range(5):                                    # four restarts' old names, then the one it answers on now
+        node.add_address(f"wss://old-{i}.trycloudflare.com/mesh", 443, "cd" * 32)
+    node.addrs[("wss://old-4.trycloudflare.com/mesh", 443)]["ok"] = time.time()
+    node.addrs[("wss://old-1.trycloudflare.com/mesh", 443)]["ok"] = time.time() - 7200   # answered, hours ago
+    bases = [n["base"] for n in ca.get("/realtime/nodes").json()["nodes"] if n["node"] == "cd" * 32]
+    assert bases == ["https://old-4.trycloudflare.com"]
+
+    # A linked node never dialed by tunnel: the newest name it announced that has not failed, and no other.
+    for i in range(3):
+        node.add_address(f"wss://via-lan-{i}.trycloudflare.com/mesh", 443, "ef" * 32)
+    node.addrs[("wss://via-lan-2.trycloudflare.com/mesh", 443)]["fail"] = 3
+    node.links["ef" * 32] = object()
+    try:
+        bases = [n["base"] for n in ca.get("/realtime/nodes").json()["nodes"] if n["node"] == "ef" * 32]
+    finally:
+        node.links.pop("ef" * 32, None)
+    assert bases == ["https://via-lan-1.trycloudflare.com"]
+    assert not [n for n in ca.get("/realtime/nodes").json()["nodes"] if n["node"] == "ef" * 32], \
+        "an unlinked node whose names never answered is not offered"
+
+
 def test_a_tunnel_announcement_that_fails_is_tried_again(tmp_path, monkeypatch):
     """Live, 2026-10-12: the IPv6 and tunnel announcements went in the same second and the second
     was refused (txn-mempool-conflict). Announcements now take turns, and a refused one is retried."""

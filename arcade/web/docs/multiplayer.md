@@ -64,7 +64,7 @@ outside an arcade viewer, or anything else goes wrong, the room has
 | `room.on('message', fn(data, player))` | `data` is parsed JSON when it parses |
 | `room.on('join', fn(player))`, `room.on('leave', fn(player))` | |
 | `room.on('reconnecting', fn())` | the line dropped and the viewer is taking your seat again by itself; `room.online` is `false` until it is back. Show "reconnecting" if you like |
-| `room.on('rejoined', fn(me))` | you were seated again after the line dropped: the others may have seen you leave and come back, so **send your state again** (position, gear) |
+| `room.on('rejoined', fn(me, media))` | you were seated again after the line dropped: the others may have seen you leave and come back, so **send your state again** (position, gear). `media` is `{video, audio, screen}` when your camera, microphone or screen stayed open through it (they go back on the new links by themselves, with whatever you shared and placed), `null` when nothing was open |
 | `room.leave()` | leave the room |
 
 A **player** is `{id, address, tag, guest, node}`. Key your game state by `id`.

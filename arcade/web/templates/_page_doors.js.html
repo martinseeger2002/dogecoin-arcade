@@ -51,6 +51,27 @@
     // that fails sends the player back to this one. Signed in here, the player is still
     // themselves there: the wallet signs that node's certificate (hello.cert) instead.
     var RT_PICK = 'arcade-rt-base-2';   // -2: picks made before 2026-10-12 17:00 could be this node's own tunnel
+    // A WAY IN THAT ANSWERS BUT NEVER SPEAKS (2026-11-02, a Riffs Lounge: "the box appears instantly, the audio and video are
+    // flaky or never connect"): another node's quick tunnel answered hello fastest and took the join and every send, but its
+    // room stream delivered nothing, not even the ping. The player showed up for everyone and heard nobody, so no offer ever
+    // reached them, and every 15 s of silence they joined again by the same road. A road whose stream says nothing in
+    // RT_FIRST ms, or that dies, is shunned for RT_SHUN ms, in every tab: this node's own road always works.
+    var RT_BAD = 'arcade-rt-bad', RT_FIRST = 8000, RT_SHUN = 6 * 3600 * 1000;
+    function realtimeShunned(){
+      var now = Date.now(), out = {};
+      try {
+        var b = JSON.parse(localStorage.getItem(RT_BAD) || '{}');
+        for (var k in b) if (typeof b[k] === 'number' && b[k] > now) out[k] = b[k];
+      } catch (err) {}
+      return out;
+    }
+    function realtimeShun(base){
+      if (!base) return;
+      var b = realtimeShunned();
+      b[base] = Date.now() + RT_SHUN;
+      try { localStorage.setItem(RT_BAD, JSON.stringify(b)); } catch (err) {}
+      realtimeForget();
+    }
     function realtimeTime(base){
       var t0 = performance.now();
       return Promise.race([
@@ -62,15 +83,16 @@
     function realtimeBase(){
       try {
         var kept = JSON.parse(sessionStorage.getItem(RT_PICK) || 'null');
-        if (kept && Date.now() - kept.at < 600000) return Promise.resolve(kept.base);
+        if (kept && Date.now() - kept.at < 600000 && !(kept.base && realtimeShunned()[kept.base])) return Promise.resolve(kept.base);
       } catch (err) {}
+      var shunned = realtimeShunned();
       return fetch('/realtime/nodes', {cache: 'no-store'}).then(function(r){ return r.json(); })
         .then(function(j){
           // Never this node again by another road (its own tunnel): same rooms, one more hop (2026-10-12 live:
           // players on .25 were carried through .25's own tunnel and lost their room streams there).
           var bases = [''].concat(((j && j.nodes) || []).filter(function(n){ return n.node !== j.self; })
             .map(function(n){ return n.base; })
-            .filter(function(b){ return b && b !== location.origin; }).slice(0, 12));
+            .filter(function(b){ return b && b !== location.origin && !shunned[b]; }).slice(0, 12));
           // two tries each (the first pays for a fresh TLS connection); the better counts
           return Promise.all(bases.map(function(b){
             return realtimeTime(b).then(function(a){ return realtimeTime(b).then(function(c){ return Math.min(a, c); }); });
@@ -158,15 +180,23 @@
         });
       });
     }
-    function realtimeOpen(name, frame, j, game, fast, link, max){
+    // `h`: a rejoin's own room, taken over rather than replaced (2026-11-02): everything that holds it -- the camera and
+    // the screen, their Stop handlers, the game's media calls -- goes on holding the live one.
+    function realtimeOpen(name, frame, j, game, fast, link, max, h){
       var base = j.base || '';
       var es = new EventSource(base + '/realtime/stream?token=' + encodeURIComponent(j.token));
-      var h = rt[name] = {token: j.token, es: es, me: j.me, members: {}, game: game, base: base, frame: frame,
-                          wantFast: !!fast, link: fastLinkList(link), fastMax: fastMaxOf(max)};
+      h = h || {};
+      Object.assign(h, {token: j.token, es: es, me: j.me, members: {}, game: game, base: base, frame: frame,
+                        wantFast: !!fast, link: fastLinkList(link), fastMax: fastMaxOf(max), got: false,
+                        rejoining: false, again: null, retry: null});
+      rt[name] = h;
       (j.members || []).forEach(function(p){ h.members[p.id] = p; });
       if (fast) fastStart(name, h);
+      if (base) setTimeout(function(){
+        if (rt[name] === h && h.es === es && !h.got) { realtimeShun(base); realtimeRejoin(name, frame, h); }
+      }, RT_FIRST);
       es.onmessage = function(ev){
-        if (rt[name] !== h) return;              // an old stream, replaced by a rejoin
+        if (rt[name] !== h || h.es !== es) return;   // an old stream, replaced by a rejoin
         var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
         d.room = name;
         if (d.member) {
@@ -189,18 +219,18 @@
       };
       // The node let this seat go (idle, or it restarted and has never heard
       // of this token): take a seat again rather than leave the game deaf.
-      es.addEventListener('closed', function(){ realtimeRejoin(name, frame, h); });
-      es.onerror = function(){ if (es.readyState === 2) realtimeRejoin(name, frame, h); };
+      es.addEventListener('closed', function(){ if (h.es === es) realtimeRejoin(name, frame, h); });
+      es.onerror = function(){ if (es.readyState === 2 && h.es === es) realtimeRejoin(name, frame, h); };
       // A stream that went silent without closing (2026-10-18, the operator: ASHVALE "really flaky" -- a phone that slept,
       // a network that changed, a proxy that dropped the line): the node says "ping" every few seconds when the room
       // is quiet, so nothing at all for REALTIME_DEAD ms means the line is dead, and the seat is taken again.
       h.heard = Date.now();
-      es.addEventListener('ping', function(){ h.heard = Date.now(); });
+      es.addEventListener('ping', function(){ if (h.es === es) { h.heard = Date.now(); h.got = true; } });
       var hear = es.onmessage;
-      es.onmessage = function(ev){ h.heard = Date.now(); return hear(ev); };
-      es.onopen = function(){ h.heard = Date.now(); };
-      h.watch = setInterval(function(){
-        if (rt[name] !== h) { clearInterval(h.watch); return; }
+      es.onmessage = function(ev){ if (h.es === es) { h.heard = Date.now(); h.got = true; } return hear(ev); };
+      es.onopen = function(){ if (h.es === es) h.heard = Date.now(); };
+      var watch = h.watch = setInterval(function(){
+        if (rt[name] !== h || h.watch !== watch) { clearInterval(watch); return; }
         if (Date.now() - h.heard > REALTIME_DEAD) realtimeRejoin(name, frame, h);
       }, 5000);
       tradeFrame = frame;
@@ -232,9 +262,14 @@
     function realtimeRejoin(name, frame, h){
       if (rt[name] !== h || h.rejoining) return;
       h.rejoining = true;
-      fastStop(h);                                // the new seat connects again from scratch
+      // The links connect again from scratch; the camera, microphone and screen stay open and go back on them (2026-11-02:
+      // each rejoin closed them, and a shared screen cannot come back without the player's press).
+      var kept = h.media && (h.media.stream || h.media.xstream) ? {video: !!h.media.video, audio: !!h.media.audio,
+                                                                  screen: !!h.media.xstream || !!h.media.screen} : null;
+      fastStop(h, true);
       try { h.es.close(); } catch (err) {}
       clearInterval(h.watch);
+      if (h.base) realtimeShun(h.base);          // another node's road failed: this node's own from now on
       frame.postMessage({arcade: 'realtime', event: {type: 'reconnecting', room: name}}, '*');
       var tries = 0;
       // A line that went silent may still hold its seat on the node: give it up first, so the same guest name is
@@ -251,11 +286,13 @@
             return;
           }
           if (!j || !j.ok || !j.online || !j.token) throw new Error('not yet');
-          var before = h.members, now = realtimeOpen(name, frame, j, h.game, h.wantFast, h.link, h.fastMax);
+          var before = h.members, was = h.me, now = realtimeOpen(name, frame, j, h.game, h.wantFast, h.link, h.fastMax, h);
           // The page's own seat was replaced: say so, every time, so a game can send its
-          // state again -- the others saw this player leave and come back (2026-10-13).
-          frame.postMessage({arcade: 'realtime', event: {type: 'rejoined', room: name, member: now.me}}, '*');
-          if (!h.me || now.me.id !== h.me.id) {
+          // state again -- the others saw this player leave and come back (2026-10-13). `media`: what is still
+          // open and goes back on the new links by itself, so a page need not start it again.
+          frame.postMessage({arcade: 'realtime', event: {type: 'rejoined', room: name, member: now.me,
+                                                         media: kept && now.media ? kept : null}}, '*');
+          if (!was || now.me.id !== was.id) {
             frame.postMessage({arcade: 'realtime', event: {type: 'me', room: name, member: now.me}}, '*');
           }
           for (var id in before) if (!now.members[id]) {
@@ -367,10 +404,11 @@
       h.fast = {peers: {}, out: [], parts: {}, latest: null, reliable: [], k: 0};
       for (var id in h.members) fastMeet(name, h, h.members[id]);
     }
-    function fastStop(h){
+    // keep: only the links go (a rejoin); the camera, the screen and what the game asked of them stay for the new links.
+    function fastStop(h, keep){
       if (!h || !h.fast) return;
-      mediaStop(h, true);
-      for (var id in h.fast.peers) fastDrop(h, id, true);
+      if (!keep) mediaStop(h, true);
+      for (var id in h.fast.peers) fastDrop(h, id, true, keep);
       clearInterval(h.fast.pump);
       h.fast = null;
     }
@@ -388,11 +426,12 @@
       if (h.me.id < p.id) fastOffer(name, h, peer);
       peer.timer = setTimeout(function(){ fastFallback(name, h, peer); }, FAST_WAIT);
     }
-    function fastDrop(h, id, quiet){
+    function fastDrop(h, id, quiet, keep){
       var peer = h.fast && h.fast.peers[id];
       if (!peer) return;
       clearTimeout(peer.timer);
-      mediaGone(h, peer);
+      clearTimeout(peer.stuck);
+      mediaGone(h, peer, keep);
       try { if (peer.pc) peer.pc.close(); } catch (err) {}
       delete h.fast.peers[id];
     }
@@ -616,6 +655,16 @@
     // direct only (or through the builder's leased relay): it never falls back to the room. While the camera or
     // microphone is open the viewer shows so, with a Stop button the game cannot cover.
     var MEDIA_TILES = 16, MEDIA_LOUDEST = 4, mediaLayerEl = null, mediaPillEl = null, mediaNoteEl = null;
+    // mediaPc: how long the one giving way waits before offering, how long the other waits after being asked to go second,
+    // and how long a pair may sit half way through a renegotiation before that step is undone and asked for again.
+    var MEDIA_YIELD = 1500, MEDIA_AFTER = 4000, MEDIA_STUCK = 10000;
+    function mediaStuck(peer, pc, back){
+      clearTimeout(peer.stuck);
+      if (pc.signalingState === 'stable') return;
+      peer.stuck = setTimeout(function(){
+        if (peer.pc === pc && pc.signalingState !== 'stable') { console.warn('arcade: a media renegotiation got no reply'); back(); }
+      }, MEDIA_STUCK);
+    }
     function mediaEvent(name, h, ev){
       ev.room = name;
       h.frame.postMessage({arcade: 'realtime', event: ev}, '*');
@@ -630,27 +679,66 @@
       peer.remote = null; peer.xremote = null; peer.xid = '';
       var mc = peer.m = pc.createDataChannel('m', {negotiated: true, id: 2, ordered: true});
       mc.onopen = function(){ if (peer.pc === pc) mediaPeerUp(name, h, peer); };
-      pc.onnegotiationneeded = function(){
-        if (peer.pc !== pc || mc.readyState !== 'open') return;    // the first time: the fast lane's own offer
+      // NEVER BOTH AT ONCE (2026-11-02, a Riffs Lounge, Firefox and Chrome: no picture either way, for good). When a link
+      // comes up with the camera already on at both ends, both offered in the same instant. Chrome, the one giving way,
+      // then refused Firefox's offer ("RTP extension ID reassignment not supported"): the rollback leaves Chrome's own
+      // numbering on the media section, and Firefox's numbers differ. Reproduced every time. Now the one giving way waits
+      // MEDIA_YIELD ms and offers only if the other has not: their offer goes through first, and ours follows it on the
+      // numbering they agreed. A description that is refused all the same is rolled back and asked for again rather than
+      // dropped, and a pair left half way for MEDIA_STUCK ms starts that step again.
+      // Offers are made only when the browser says one is needed (negotiationneeded, which it says again on getting back to
+      // stable while something is still left over), so two sides can never keep offering at each other.
+      var offer = function(){
+        if (peer.pc !== pc || mc.readyState !== 'open') return;
+        var wait = (peer.wait || 0) - Date.now();
+        if (wait > 0) { soon(wait); return; }                        // they asked to go first
+        if (peer.making || pc.signalingState !== 'stable') return;   // back to stable, the browser asks again
         peer.making = true;
         pc.setLocalDescription()
           .then(function(){ mc.send(JSON.stringify({d: pc.localDescription})); })
-          .catch(function(){})
-          .then(function(){ peer.making = false; });
+          .catch(function(err){ console.warn('arcade: a media offer failed', err); })
+          .then(function(){ peer.making = false; mediaStuck(peer, pc, back); });
+      };
+      var soon = function(ms){
+        clearTimeout(peer.yield);
+        peer.yield = setTimeout(offer, ms != null ? ms : polite ? MEDIA_YIELD : 0);
+      };
+      // Half way and nothing more coming: undo our half, and the browser asks for the offer again once stable.
+      var back = function(){
+        if (peer.pc !== pc) return Promise.resolve();
+        var st = pc.signalingState;
+        return (st === 'have-local-offer' || st === 'have-remote-offer'
+          ? pc.setLocalDescription({type: 'rollback'}).catch(function(){}) : Promise.resolve());
+      };
+      pc.onnegotiationneeded = function(){
+        if (peer.pc !== pc || mc.readyState !== 'open') return;    // the first time: the fast lane's own offer
+        soon();
       };
       mc.onmessage = function(ev){
         if (peer.pc !== pc) return;
         var msg; try { msg = JSON.parse(ev.data); } catch (err) { return; }
         if (msg && typeof msg.x === 'string') { peer.xid = msg.x; return; }   // which stream is their second picture
+        // They could not take our offer and make one of their own: ours is undone, and we wait for theirs.
+        if (msg && msg.yours) { clearTimeout(peer.yield); peer.wait = Date.now() + MEDIA_AFTER; back(); return; }
         var d = msg && msg.d;
         if (!d || (d.type !== 'offer' && d.type !== 'answer') || typeof d.sdp !== 'string') return;
         var collision = d.type === 'offer' && (peer.making || pc.signalingState !== 'stable');
         peer.ignoring = !polite && collision;
         if (peer.ignoring) return;
-        pc.setRemoteDescription(d).then(function(){
+        if (d.type === 'offer') clearTimeout(peer.yield);           // theirs first; ours, if still needed, after it
+        var ready = collision && pc.signalingState === 'have-local-offer'
+          ? pc.setLocalDescription({type: 'rollback'}) : Promise.resolve();
+        ready.then(function(){ return pc.setRemoteDescription(d); }).then(function(){
           if (d.type !== 'offer') return;
           return pc.setLocalDescription().then(function(){ mc.send(JSON.stringify({d: pc.localDescription})); });
-        }).catch(function(){});
+        }).then(function(){ mediaStuck(peer, pc, back); }, function(err){
+          console.warn('arcade: a media description was refused', d.type, err);
+          back().then(function(){
+            if (d.type !== 'offer') return;                          // our offer, their answer: the browser asks again
+            try { mc.send(JSON.stringify({yours: 1})); } catch (e) {}
+            peer.wait = 0; soon(0);                                  // ours goes first, on our numbering
+          });
+        });
       };
       pc.ontrack = function(ev){
         if (peer.pc !== pc) return;
@@ -758,11 +846,13 @@
       (peer.xsenders || []).forEach(function(s){ try { peer.pc.removeTrack(s); } catch (err) {} });
       peer.xsenders = []; peer.xfor = null;
     }
-    function mediaGone(h, peer){
+    // keep: the room is being taken again and this player comes back with it: what the game asked for them stays.
+    function mediaGone(h, peer, keep){
       var md = h.media;
       if (peer.said) { peer.said = ''; mediaEvent(rtName(h), h, {type: 'media-off', member: peer.p}); }
       peer.remote = null; peer.xremote = null;
-      if (md) { delete md.share[peer.p.id]; delete md.hear[peer.p.id]; delete md.place[peer.p.id]; mediaDraw(h); }
+      if (md && !keep) { delete md.share[peer.p.id]; delete md.hear[peer.p.id]; delete md.place[peer.p.id]; }
+      if (md) mediaDraw(h);
     }
     function rtName(h){ for (var k in rt) if (rt[k] === h) return k; return ''; }
     // Camera and microphone off, and every share with them (quiet: the room itself is going).
@@ -952,7 +1042,11 @@
     }
     function mediaDoor(name, h, m, answer){
       var md = mediaOf(h), peer = h.fast && h.fast.peers[String(m.peer || '')];
-      if (!h.fast) { answer({ok: false, error: 'media needs a room joined with {fast: true}'}); return; }
+      // While the room is taken again there are no links for a moment (2026-11-02: a page's calls in that moment all failed
+      // as if it had never asked for the fast lane). What needs no link works; share and hear say 'reconnecting'.
+      var back = !h.fast && h.wantFast && h.rejoining;
+      if (!h.fast && !back) { answer({ok: false, error: 'media needs a room joined with {fast: true}'}); return; }
+      if (back && (m.do === 'share' || m.do === 'hear')) { answer({ok: false, error: 'reconnecting'}); return; }
       if (m.do === 'start') {
         var want = {video: !!m.video, audio: !!m.audio, screen: !!m.screen, sound: !!(m.sound && m.screen)};
         if (want.screen) want.video = false;
@@ -1066,7 +1160,7 @@
       if (m.do === 'place') {
         var key = m.who === 'me' ? 'me' : String(m.who || '');       // 'id#screen' or 'me#screen': their second picture
         var owner = key.replace(/#screen$/, '');
-        if (owner !== 'me' && !(h.fast.peers[owner])) { answer({ok: false, error: 'no such player'}); return; }
+        if (owner !== 'me' && h.fast && !h.fast.peers[owner]) { answer({ok: false, error: 'no such player'}); return; }
         var r = m.rect;
         if (r == null) delete md.place[key];
         else {

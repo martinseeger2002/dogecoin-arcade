@@ -367,10 +367,23 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
         if svc.tunnel_url:
             add("https://" + svc.tunnel_url[len("wss://"):].rsplit("/mesh", 1)[0], svc.node_id)
         now = time.time()
-        for (host, _port), e in sorted(svc.node.addrs.items(), key=lambda kv: -(kv[1].get("ok") or 0)):
-            if str(host).startswith("wss://") and e.get("id") and (e.get("id") in svc.node.links
-                                                                  or now - (e.get("ok") or 0) < 3600):
-                add("https://" + host[len("wss://"):].rsplit("/mesh", 1)[0], e["id"])
+        # One way in per node: the address it last answered on. A node behind a quick tunnel gets a new name at
+        # every restart, and "the node is linked" kept every old name listed (2026-11-02: eleven dead names for one
+        # node, each costing every browser a lookup before it could join). A name that has never answered is not
+        # listed, however linked its node is.
+        # A linked node this one never dialed by tunnel (it came by another road) has no "ok" on any of its names: then
+        # the newest it announced (addrs keeps the order they arrived in) that has not failed when dialed.
+        named: dict[str, str] = {}
+        tunnels = [(str(host), e) for (host, _port), e in svc.node.addrs.items()
+                   if str(host).startswith("wss://") and e.get("id")]
+        for host, e in sorted(tunnels, key=lambda he: -(he[1].get("ok") or 0)):
+            if e["id"] not in named and now - (e.get("ok") or 0) < 3600:
+                named[e["id"]] = host
+        for host, e in reversed(tunnels):
+            if e["id"] not in named and e["id"] in svc.node.links and not e.get("fail"):
+                named[e["id"]] = host
+        for node_id, host in named.items():
+            add("https://" + host[len("wss://"):].rsplit("/mesh", 1)[0], node_id)
         try:
             if state.store_path.exists():
                 with state.store() as store:

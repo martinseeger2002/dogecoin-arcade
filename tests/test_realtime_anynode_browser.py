@@ -100,3 +100,66 @@ def test_a_player_plays_through_another_node_and_falls_back_when_it_is_gone(tmp_
             s.stop()
         sb.mesh.stop()
         sa.mesh.stop()
+
+
+def _mute_streams(app):
+    """A road that answers hello and takes the join but whose room stream never says a word (2026-11-02, another node's
+    quick tunnel, live: not the join, not a ping, nothing in 45 s)."""
+    import asyncio
+
+    async def muted(scope, receive, send):
+        if scope["type"] == "http" and scope["path"] == "/realtime/stream":
+            await send({"type": "http.response.start", "status": 200,
+                        "headers": [(b"content-type", b"text/event-stream"), (b"access-control-allow-origin", b"*")]})
+            await send({"type": "http.response.body", "body": b"", "more_body": True})
+            while (await receive())["type"] != "http.disconnect":
+                await asyncio.sleep(0)
+            return
+        await app(scope, receive, send)
+    return muted
+
+
+def test_a_way_in_whose_stream_says_nothing_is_left_for_this_node(tmp_path, no_nodes):
+    """2026-11-02, a Riffs Lounge: a player whose page had picked such a road showed up for everybody at once and heard
+    nobody, so no call ever reached them, and every 15 s of silence they joined again by the same road. Now a road whose
+    stream is silent for RT_FIRST is shunned, in every tab, and the page plays through its own node."""
+    from arcade.web.app import create_app
+
+    sa, sb = make_state(tmp_path, "a"), make_state(tmp_path, "b")
+    sa.mesh = _mesh()
+    sb.mesh = _mesh(peers=[("127.0.0.1", sa.mesh.node.listen_port)])
+    sb.public = True
+    for st in (sa, sb):
+        _inscribe(st, GAME, 1, "n" + "G" * 33, "text/html", PAGE)
+    pa, pb = _free_port(), _free_port()
+    base_a, base_b = f"http://127.0.0.1:{pa}", f"http://127.0.0.1:{pb}"
+    servers = [Server(create_app(sa), pa), Server(_mute_streams(create_app(sb)), pb)]
+    z = None
+    try:
+        end = time.time() + 10
+        while not (sa.mesh.node.links and sb.mesh.node.links) and time.time() < end:
+            time.sleep(0.1)
+        z = browsers.launch()
+        _pick(z, base_a, base_b)
+        _in_game(z, base_a)
+        _wait(z, "return window.room && window.room.me && window.room.me.id", "z seated (through B, first)")
+        zid = z.execute_script("return window.room.me.id")
+        end = time.time() + 40
+        while time.time() < end and not any(m == zid for _, m in sa.mesh.node.local):
+            time.sleep(0.25)
+        assert any(m == zid for _, m in sa.mesh.node.local), "z left the silent road for its own node"
+        z.switch_to.default_content()                    # the viewer's storage, not the sandboxed game's
+        bad = json.loads(z.execute_script("return localStorage.getItem('arcade-rt-bad') || '{}'"))
+        assert base_b in bad, bad
+        assert z.execute_script("return JSON.parse(sessionStorage.getItem('arcade-rt-base-2') || 'null')") is None \
+            or z.execute_script("return JSON.parse(sessionStorage.getItem('arcade-rt-base-2')).base") == "", "B no longer picked"
+        time.sleep(20)                                   # and it stays: no more rounds through B
+        assert any(m == zid for _, m in sa.mesh.node.local)
+        assert not any(m == zid for _, m in sb.mesh.node.local)
+    finally:
+        if z is not None:
+            z.quit()
+        for s in servers:
+            s.stop()
+        sb.mesh.stop()
+        sa.mesh.stop()

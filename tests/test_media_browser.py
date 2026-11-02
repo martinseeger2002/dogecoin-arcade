@@ -29,6 +29,8 @@ arcade.realtime.join('call', {game: 'media-test', fast: true}).then(function (r)
   r.media.on('media', function (p, h) { window.has[p.id] = h; window.log.push(['media', p.id, h]); });
   r.media.on('media-off', function (p) { delete window.has[p.id]; window.log.push(['media-off', p.id]); });
   r.media.on('state', function (s) { window.log.push(['state', s]); });
+  r.on('reconnecting', function () { window.log.push(['reconnecting']); });
+  r.on('rejoined', function (me, media) { window.log.push(['rejoined', media]); });
 });
 </script>"""
 
@@ -650,3 +652,112 @@ def test_ring_and_ringed_answer_in_the_viewer(tmp_path, no_nodes):
     finally:
         server.stop()
         state.mesh.stop()
+
+
+def test_a_rejoin_keeps_the_camera_the_screen_and_the_shares(tmp_path, no_nodes, monkeypatch):
+    """2026-11-02, a Riffs Lounge: every time the page took its seat again, the camera, the microphone and a shared screen
+    were closed, and a screen cannot come back without the player's press. Now only the links start again: the pictures
+    come back on the new links by themselves, with what the game shared, and the game is told what stayed open."""
+    from arcade.web import realtime as rtmod
+
+    state, server, base = _server(tmp_path)
+    try:
+        with sync_api.sync_playwright() as pw:
+            chrome = _launch(pw)
+            pa, _, _ = _player(chrome, base)
+            pb, _, _ = _player(chrome, base)
+            ga, gb = _game(pa), _game(pb)
+            _until(ga, "window.room && window.room.media && window.room.me", "a in")
+            _until(gb, "window.room && window.room.media && window.room.me", "b in")
+            ida, idb = ga.evaluate("window.room.me.id"), gb.evaluate("window.room.me.id")
+            _until(ga, f"window.states[{idb!r}] === 'direct'", "a direct")
+            pa.evaluate(FAKE_SCREEN)
+            assert ga.evaluate("window.room.media.start({video: true, audio: true})")["video"] is True
+            assert ga.evaluate("window.room.media.showScreen({sound: true})")["ok"]
+            ga.evaluate(f"window.room.media.share({idb!r}, true)")
+            gb.evaluate(f"window.room.media.place({ida!r}, {{x: 0, y: 0, w: 320, h: 180}})")
+            gb.evaluate(f"window.room.media.place({ida!r} + '#screen', {{x: 0, y: 200, w: 320, h: 180}})")
+            cam = f"document.querySelector('.arcade-media-layer video[data-media=\"{ida}\"]')"
+            scr = f"document.querySelector('.arcade-media-layer video[data-media=\"{ida}#screen\"]')"
+            _until(pb, f"(() => {{ var v = {cam}; return v && v.videoWidth > 0; }})()", "a's camera")
+            _until(pb, f"(() => {{ var v = {scr}; return v && v.videoWidth > 0; }})()", "a's screen")
+
+            # The line goes silent: both pages take their seats again.
+            beat = rtmod.HEARTBEAT
+            monkeypatch.setattr(rtmod, "HEARTBEAT", 3600.0)
+            _until(ga, "window.log.some(function (e) { return e[0] === 'reconnecting'; })", "a reconnecting", timeout=60000)
+            monkeypatch.setattr(rtmod, "HEARTBEAT", beat)
+            _until(ga, "window.log.some(function (e) { return e[0] === 'rejoined'; })", "a rejoined", timeout=60000)
+            kept = ga.evaluate("window.log.filter(function (e) { return e[0] === 'rejoined'; })[0][1]")
+            assert kept == {"video": True, "audio": True, "screen": True}, kept
+            _until(ga, "window.room.online && window.room.fast", "a back online")
+            _until(gb, "window.room.online", "b back online")
+            ida2 = ga.evaluate("window.room.me.id")
+            assert ida2 == ida, "a guest keeps its name"
+
+            # Back on the new link, with nothing asked again: b's game placed them before, and a's shares were kept.
+            _until(gb, f"window.states[{ida!r}] === 'direct'", "relinked", timeout=40000)
+            _until(pb, f"(() => {{ var v = {cam}; return v && v.videoWidth > 0 && v.currentTime > 0; }})()",
+                   "a's camera back on b", timeout=30000)
+            _until(pb, f"(() => {{ var v = {scr}; return v && v.videoWidth > 0; }})()", "a's screen back on b", timeout=30000)
+            log = ga.evaluate("window.log")
+            assert not [e for e in log if e[0] == "state" and e[1] in ("off", "screen-off")], log
+            assert "Sharing your screen" in pa.inner_text(".arcade-media-pill"), "still on air"
+            chrome.close()
+    finally:
+        server.stop()
+        state.mesh.stop()
+
+
+def test_chrome_and_firefox_offer_at_the_same_moment(tmp_path, no_nodes):
+    """2026-11-02, a Riffs Lounge, Firefox and Chrome: a link came up with the camera on at both ends, both offered in the
+    same instant, and Chrome, giving way, refused Firefox's offer ("RTP extension ID reassignment not supported"): no
+    picture either way, ever. Reproduced every time before the fix. Run until both browsers have been the one giving way."""
+    import os
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", os.path.expanduser("~/.cache/ms-playwright"))
+    seen = set()
+    for _ in range(8):
+        if seen == {True, False}:
+            break
+        run = tmp_path / f"run{_}"
+        run.mkdir()
+        state, server, base = _server(run)
+        try:
+            with sync_api.sync_playwright() as pw:
+                chrome = _launch(pw)
+                try:
+                    ff = pw.firefox.launch(firefox_user_prefs={
+                        "media.navigator.streams.fake": True, "media.navigator.permission.disabled": True,
+                        "media.peerconnection.ice.obfuscate_host_addresses": False,
+                        "media.peerconnection.ice.loopback": True, "media.autoplay.default": 0})
+                except Exception as exc:           # noqa: BLE001
+                    pytest.skip(f"no Firefox for playwright: {exc}")
+                refused = []
+                pages = []
+                for br in (chrome, ff):
+                    ctx = br.new_context(permissions=["camera", "microphone"] if br is chrome else [])
+                    ctx.add_init_script(f"try {{ localStorage.setItem('arcade.media.allow:{GAME}', 'yes'); }} catch (e) {{}}")
+                    pg = ctx.new_page()
+                    pg.on("console", lambda m: "was refused" in m.text and refused.append(m.text))
+                    pg.goto(f"{base}/inscriptions/{GAME}/full")
+                    pages.append(pg)
+                gc, gf = _game(pages[0]), _game(pages[1])
+                for g in (gc, gf):
+                    _until(g, "window.room && window.room.media && window.room.me", "in", timeout=40000)
+                idc, idf = gc.evaluate("window.room.me.id"), gf.evaluate("window.room.me.id")
+                for g in (gc, gf):
+                    assert g.evaluate("window.room.media.start({video: true, audio: true})")["ok"]
+                _until(gc, f"window.states[{idf!r}] === 'direct'", "chrome direct", timeout=40000)
+                _until(gf, f"window.states[{idc!r}] === 'direct'", "firefox direct", timeout=40000)
+                gc.evaluate(f"window.room.media.share({idf!r}, true); 0")
+                gf.evaluate(f"window.room.media.share({idc!r}, true); 0")
+                _until(gc, f"window.has[{idf!r}] && window.has[{idf!r}].video", "chrome got firefox's picture", timeout=30000)
+                _until(gf, f"window.has[{idc!r}] && window.has[{idc!r}].video", "firefox got chrome's picture", timeout=30000)
+                assert not refused, refused
+                seen.add(idc > idf)                    # True: Chrome was the one giving way
+                ff.close()
+                chrome.close()
+        finally:
+            server.stop()
+            state.mesh.stop()
+    assert seen == {True, False}, f"only saw chrome giving way = {seen}"

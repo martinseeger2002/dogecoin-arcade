@@ -88,6 +88,36 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 Rooms and calls: a silent way in, a rejoin that kept nothing, Firefox and Chrome offering at once (Claude)
+The operator, testing a Riffs Lounge live with four people: "the box appears instantly", the audio, video or screen share "connects
+sometimes, disconnects at random times, and sometimes never connects at all". Found with a browser in the call, logging
+every room event, WebRTC description and send. Three faults, each with a browser test that fails without the fix:
+- **A way in whose room stream says nothing** (`_page_doors` realtimeBase/realtimeOpen/realtimeShun). Another node's quick
+  tunnel answered hello fastest, so pages picked it; joins and sends worked, but its `/realtime/stream` delivered nothing at
+  all (checked with curl: not the join, not one ping in 45 s, where .25 pings every 4 s). Such a player shows up for
+  everybody and hears nobody: no offer reaches them, and every 15 s of silence they joined again by the same road. Now a
+  road whose stream says nothing in 8 s, or any road through another node that a rejoin leaves, is shunned for 6 h in
+  localStorage (`arcade-rt-bad`), and the page plays through its own node. Test: test_realtime_anynode_browser (a node
+  whose stream is muted). Open: why that node's stream is silent (node 3cc75ac2, behind base-narrow-soundtrack-publish).
+- **/realtime/nodes listed every quick-tunnel name a linked node ever had** (realtime.py): eleven dead names for a test machine
+  node, each looked up by every joining browser. Now one name per node: the one it last answered on within the hour, or for
+  a linked node never dialed by tunnel, the newest it announced that has not failed. Test in test_realtime_web.
+- **A rejoin closed the camera, the microphone and a shared screen** (realtimeRejoin, fastStop(h, keep), mediaGone keep).
+  A screen cannot come back without the player's press. Now the rejoin takes over the same room object (realtimeOpen's new
+  last argument), only the links start again, and what the game shared, heard and placed is kept and goes back on the new
+  links. `rejoined` carries `media: {video, audio, screen}` (SDK: `room.on('rejoined', fn(me, media))`, docs updated).
+  Media calls in the moment between work where they need no link; share and hear answer `reconnecting`.
+- **Firefox and Chrome offering at once** (mediaPc). A link coming up with the camera on at both ends: both offered in the
+  same instant, and Chrome, giving way, refused Firefox's offer: "RTP extension ID reassignment not supported (collision
+  on active MID 2, id=7 ...)". Reproduced every time; no picture either way, ever. Now the one giving way waits 1.5 s and
+  offers only if the other has not; a refused offer is rolled back and the refusing side offers first (`{yours: 1}`), and
+  a pair half way for 10 s rolls back so the browser asks again. Offers are made only on negotiationneeded, so two sides
+  cannot keep offering at each other. Test: test_chrome_and_firefox_offer_at_the_same_moment (Playwright's Firefox; runs
+  until both browsers have been the one giving way).
+Ran: test_media_browser, test_media, test_echo_canceller, test_fast_lane*_browser, test_page_doors_browser,
+test_page_scripts, test_realtime_*, test_docs, test_web: 368 passed, 2 skipped, 1 failed: test_game_access_lists_what_was_
+allowed_and_turns_it_off, which fails 1 run in 3 on master as well (a stale element). Riffs registry v11 goes with this.
+
 ### 2026-11-02 Terms of use merged (SadFrog's PR #57, Claude)
 Applied three-way onto master; his entry below is as he wrote it. Read the door change: off by default; only a GET that
 opens a page (Sec-Fetch-Dest document, or Accept html) from a public visitor is redirected; /admin and /terms exempt;

@@ -311,8 +311,10 @@
     else if (ev.type === 'closed') { this.online = false; this._emit('closed', ev.why || ''); }
     else if (ev.type === 'me') { this.me = p; }    // back after the node restarted, under a new name
     // This page's own seat was taken again (its connection dropped for longer than the
-    // node waits): the others saw it leave and come back, so send your state again.
-    else if (ev.type === 'rejoined') { this.me = p || this.me; this.online = true; this._emit('rejoined', this.me); }
+    // node waits): the others saw it leave and come back, so send your state again. The second
+    // argument says what of the camera, microphone and screen stayed open ({video, audio, screen}, or
+    // null): it goes back on the new links by itself, so a page need not start it again (2026-11-02).
+    else if (ev.type === 'rejoined') { this.me = p || this.me; this.online = true; this._emit('rejoined', this.me, ev.media || null); }
     // The line dropped and the page is taking the seat again by itself, for as long as it takes (2026-10-18):
     // a game can say "reconnecting"; 'rejoined' follows when it is back.
     else if (ev.type === 'reconnecting') { this.online = false; this._emit('reconnecting'); }
