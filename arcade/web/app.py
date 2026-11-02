@@ -3749,10 +3749,39 @@ def create_app(state: AppState) -> FastAPI:
                              "face": _face_for(address),
                              **{k: v for k, v in _profile_of(address, waiting).items()
                                 if k in ("bio", "url", "name", "mainnet")},
-                             **_profile_facts(chain, address)},
+                             **_profile_facts(chain, address),
+                             "pay": [] if not address or address == mine["address"]
+                             else _pay_coins(request, wanted),
+                             "pay_signin": _account_view(request) and signed_in(request) is None},
                       here=f"/u/{wanted}",
                       mine=mine, kinds=feedlib.BY_NAME, when=_when,
                       node=chain.status())
+
+    def _pay_coins(request: Request, tag: str) -> list[dict[str, Any]]:
+        """The coins a profile's Pay offers (SadFrog, 2026-11-02: "an option to pay that person right there or send
+        crypto"), real coins first, each with the link that opens the Wallet's Send sheet on that coin.
+
+        Asked of `_where_to_pay` and `_check_address`, which is what the send itself asks, so a coin is listed exactly
+        when a send would be taken. That also leaves out a name still waiting for its block: it is nobody's to be paid
+        under yet.
+
+        An account's link names the @tag, looked up again at Review, as every send is. The node's send reads a claim
+        on the chain being paid (`_tag_address`), not where tags live, so the operator's link carries the address.
+        """
+        public = _account_view(request)
+        out: list[dict[str, Any]] = []
+        for chain in sorted(_account_chains() if public else [c for c, _ in _node_wallets()],
+                            key=lambda c: not c.is_mainnet):
+            try:
+                where = _where_to_pay(tag, chain)
+                if _check_address(where, mainnet=chain, segwit_ok=True):
+                    continue
+            except Exception:                              # noqa: BLE001 -- nowhere to pay them there, or unreadable
+                continue
+            ask = urllib.parse.urlencode({"to": f"@{tag}" if public else where, "coin": chain.network})
+            out.append({"network": chain.network, "label": chain.label, "address": where,
+                        "href": f"{'/me/wallet' if public else '/wallet'}?{ask}"})
+        return out
 
     def _profile_facts(chain, address: str) -> dict[str, Any]:
         """The rest of a profile's header (2026-10-08, the redesign the operator
