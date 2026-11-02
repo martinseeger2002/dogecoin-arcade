@@ -839,15 +839,41 @@ def _quiet_install(tmp_path, monkeypatch, seen):
     monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("the installer must not ask which chain"))
 
 
-def test_the_installer_installs_both_coins_without_asking(tmp_path, monkeypatch):
-    """2026-10-13: "that option should be removed when installing because
-    it should install both"."""
-    seen = []
+def test_a_fresh_install_runs_pepecoin_testnet_only_and_asks_nothing(tmp_path, monkeypatch, fake_home):
+    """2026-11-02: "I don't want them to be prompted to install any of the block chains except for Pepe test".
+    The message chain's node and nothing else; everything else is borrowed over the mesh. No question (2026-10-13)."""
+    seen, nets = [], []
     _quiet_install(tmp_path, monkeypatch, seen)
+    monkeypatch.setattr(install, "write_configs", lambda m, t, coin: (seen.append(coin.key),
+                                                                     nets.extend(l for l, _ in coin.nodes(m, t))))
     monkeypatch.setattr(install.sys.stdin, "isatty", lambda: True, raising=False)
     assert install.main(["--no-browser", "--no-bootstrap"]) == 0
-    assert seen == ["pepecoin", "dogecoin"]
+    assert seen == ["pepecoin"] and nets == ["testnet"]
     assert not hasattr(install, "choose_chain")
+
+
+def test_a_scripted_install_can_still_ask_for_both_coins(tmp_path, monkeypatch, fake_home):
+    seen = []
+    _quiet_install(tmp_path, monkeypatch, seen)
+    assert install.main(["--no-browser", "--no-bootstrap", "--coin", "both"]) == 0
+    assert seen == ["pepecoin", "dogecoin"]
+
+
+def test_the_first_peer_is_recorded_for_the_arcade_to_meet(tmp_path, monkeypatch, fake_home):
+    """2026-11-02: a new arcade connects to the arcade it was installed from at once, before anything is synced
+    or announced. The "Run your own" page passes its own address; without one, the arcade the index comes from."""
+    _quiet_install(tmp_path, monkeypatch, [])
+    peer = Path.home() / ".dogecoinarcade" / "first-peer"
+    assert install.main(["--no-browser", "--no-bootstrap", "--first-peer", "https://pepecoinarcade.com"]) == 0
+    assert peer.read_text().strip() == "wss://pepecoinarcade.com/mesh"
+    assert install.main(["--no-browser", "--no-bootstrap"]) == 0
+    assert peer.read_text().strip() == "wss://app.dogecoinarcade.com/mesh"
+    assert install.main(["--no-browser", "--no-bootstrap", "--first-peer", "http://127.0.0.1:8420"]) == 2, \
+        "an address nobody else can use is refused before anything is installed"
+    for said, url in (("app.example.com", "wss://app.example.com/mesh"),
+                      ("https://app.example.com/clone", "wss://app.example.com/mesh"),
+                      ("wss://node.example.com/mesh", "wss://node.example.com/mesh")):
+        assert install.mesh_peer_url(said) == url
 
 
 def test_dogecoin_runs_mainnet_only(tmp_path):

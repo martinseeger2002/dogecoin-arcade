@@ -117,20 +117,30 @@ are a welcome board, and nothing else trusts them.
    `SHA256SUMS.asc`. It stops on any mismatch.
 4. **Installs the binaries** (`pepecoind`, `pepecoin-cli`, `pepecoin-tx`) into
    `~/.local/bin`. No root needed.
-5. **Writes two configs**: mainnet and testnet. An existing config is never
-   overwritten.
-6. **Registers both nodes as user services** that start at login and keep
+5. **Writes the testnet config.** A fresh install runs Pepecoin testnet only,
+   the message chain (2026-11-02); every other chain, Pepecoin mainnet and
+   Dogecoin included, is borrowed from other arcades over the mesh until you
+   install its Core under Admin -> Chains. An existing config is never
+   overwritten. `--coin both` installs Pepecoin mainnet and Dogecoin as well.
+6. **Registers the node as a user service** that starts at login and keeps
    running after logout.
 7. **Installs DogecoinArcade** into its own virtual environment under
    `~/.dogecoinarcade`.
 8. **Fetches the latest index bootstrap** for each chain, so a new node starts
    near the chain tip instead of indexing from block zero.
-9. **Registers the web interface** as a user service, writes the
+9. **Records its first peer** (`~/.dogecoinarcade/first-peer`): the arcade
+   it was installed from (`--first-peer`, filled in by that arcade's "Run your
+   own" page), else app.dogecoinarcade.com. The new arcade dials it the moment
+   it starts, before anything is synced or announced on chain, learns the
+   other arcades through it, adds UDP beside the link, and syncs Pepecoin
+   testnet from them over the mesh.
+10. **Registers the web interface** as a user service, writes the
    `dogecoinarcade` launcher, adds `~/.local/bin` to your PATH if needed, and
    opens the browser.
 
-The nodes still have to sync their block chains after installation. Testnet
-is small; mainnet is larger. The application shows progress while they do.
+The testnet node still syncs after installation, from the other arcades over
+the mesh; until it has caught up, chain reads go to an arcade that has. The
+application shows progress while it does.
 
 ## Doing it by hand
 
@@ -467,10 +477,12 @@ silent authentication failure.
 
 ## Dogecoin
 
-The installer always installs both coins, with no question: Pepecoin Core
-(a mainnet node and a testnet node) and Dogecoin Core (a mainnet node only).
-They are the arcade's three networks: testnet PEP, mainnet PEP and DOGE.
-There is no Dogecoin testnet node; the arcade's testnet is Pepecoin's.
+A fresh install asks nothing and installs Pepecoin Core for testnet only
+(2026-11-02). Dogecoin and Pepecoin mainnet are borrowed over the mesh until
+their Cores are installed (Admin -> Chains, or `--coin both` / `--coin
+dogecoin` for a scripted install, which installs Pepecoin's mainnet and testnet
+nodes and Dogecoin's mainnet node). There is no Dogecoin testnet node; the
+arcade's testnet is Pepecoin's.
 
 | | Pepecoin | Dogecoin |
 |---|---|---|

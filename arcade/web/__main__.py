@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         "--mesh-port", type=int, default=8421,
         help="port the mesh listens on for other nodes (0: do not listen, only dial out)")
     parser.add_argument(
-        "--mesh-peer", action="append", default=[], metavar="IP:PORT",
+        "--mesh-peer", action="append", default=[], metavar="IP:PORT|URL",
         help="another node to link to directly, e.g. one on this network "
              "(the chain cannot carry private addresses); may be repeated")
     parser.add_argument(
@@ -317,13 +317,10 @@ def main(argv: list[str] | None = None) -> int:
         try:
             from ..mesh.service import for_state
 
-            def host_port(text: str) -> tuple[str, int]:
-                host, _, port = text.rpartition(":")
-                return host.strip("[]"), int(port)
             state.mesh = for_state(
                 state, listen_port=args.mesh_port or None,
-                peers=[host_port(p) for p in args.mesh_peer],
-                announce_at=host_port(args.mesh_announce) if args.mesh_announce else None,
+                peers=mesh_peers(args.mesh_peer, home),
+                announce_at=peer_address(args.mesh_announce) if args.mesh_announce else None,
                 public_port=args.mesh_public_port, max_inbound=args.mesh_inbound,
                 tunnel=(shutil.which("cloudflared") or next((p for p in (os.path.expanduser("~/.local/bin/cloudflared"),)
                                                              if os.path.exists(p)), None))
@@ -370,6 +367,45 @@ def main(argv: list[str] | None = None) -> int:
 
 #: Every add-on chain, from the chains' own Params.
 ADDON_PARAMS = tuple(p for p in NETWORKS.values() if p.addon)
+
+
+#: The arcade the installer was told to meet first (installer/install.py FIRST_PEER_FILE): one wss:// address.
+FIRST_PEER_FILE = "first-peer"
+
+
+def peer_address(text: str) -> tuple[str, int]:
+    """One --mesh-peer: IP:PORT, [v6]:PORT, or an arcade's address (https://name, wss://name/mesh), which the mesh
+    dials as a WebSocket on its own name (node.py is_ws; web/app.py /mesh passes it to the mesh)."""
+    text = str(text).strip()
+    if "://" in text:
+        scheme, _, rest = text.partition("://")
+        host = rest.split("/", 1)[0]
+        if scheme.lower() not in ("https", "wss") or not host:
+            raise ValueError(f"not an arcade's address: {text}")
+        return f"wss://{host}/mesh", 443
+    host, _, port = text.rpartition(":")
+    return host.strip("[]"), int(port)
+
+
+def mesh_peers(given: list[str], home: Path) -> list[tuple[str, int]]:
+    """The peers this node dials from the start: --mesh-peer, and the first peer the installer recorded (the operator
+    2026-11-02: a new arcade connects "before their arcade is published", so its Pepecoin testnet syncs from the
+    others at once; nothing on chain is needed to dial out). One that cannot be read is left out, with a word."""
+    out: list[tuple[str, int]] = []
+    texts = list(given)
+    try:
+        texts += [l for l in (home / FIRST_PEER_FILE).read_text().split() if l]
+    except OSError:
+        pass
+    for text in texts:
+        try:
+            addr = peer_address(text)
+        except ValueError as exc:
+            print(f"  mesh: skipping peer {text!r}: {exc}")
+            continue
+        if addr not in out:
+            out.append(addr)
+    return out
 
 
 def _ledger_default(args, discover=None) -> str:

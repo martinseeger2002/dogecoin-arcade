@@ -88,6 +88,34 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 A fresh install: Pepecoin testnet only, and it meets its first peer at once (Claude, Riffs session)
+The operator: "When somebody first installs arcade, I don't want them to be prompted to install any of the block chains except
+for Pepe test. It should first connect to the UDP network ... before their arcade is published via the mesh ID ... and
+get Pepe test synced faster." Confirmed with him: only the Pepecoin testnet Core; the first peer is the arcade it was
+installed from.
+- **installer/install.py:** a fresh install (no `--coin`) is `PEPECOIN_TEST` only (testnet node, config and service).
+  `--coin both|pepecoin|dogecoin` still installs what it names. `--first-peer URL` (https://name, a bare name, or
+  wss://name/mesh; http:// refused) is written to `~/.dogecoinarcade/first-peer` as wss://name/mesh, default
+  wss://app.dogecoinarcade.com/mesh. Both index bootstraps are still fetched (main is a 6.7 MB index, and mainnet is still
+  indexed through a borrowed Core). `bootstrap_manifest` waits up to 10 min on a 503 (copy being made).
+- **web/__main__.py:** `--mesh-peer` takes an arcade's address as well as IP:PORT (`peer_address`), and `mesh_peers` adds
+  the first-peer file. It is pinned and dialed at once as wss://name/mesh (app.py `/mesh` hands it to the mesh); nothing on
+  chain, no node id, no coins and no listening port are needed to dial out. Through it the node learns the others, UDP is
+  added beside the link, corelink syncs the testnet Core from them, and core_catchup borrows reads meanwhile (all existing).
+  Pepecoin mainnet and the add-ons default to borrow already when no local node is found (`_ledger_default`).
+- **clone.html / join.html:** the install command carries `--first-peer` with this arcade's public name (`_install_peer`:
+  own_name, else its tunnel, else an https origin that is not this machine; none otherwise).
+- **bootstrap.py:** a web request never makes an index copy (`current(..., background=True)`): one build per chain in a
+  thread, the old copy (or 503 Retry-After) meanwhile, and `leftovers()` removes build folders nobody has written to for
+  30 min. Live on .25 the testnet copy had never been published: every request for test.json ran its own VACUUM INTO of
+  the 454 MB index inside the request (four at once today), and every cut-off one left ~400 MB (8 folders, ~3.3 GB, since
+  2026-10-22). /clone also built every chain's copy inline. Of that index, arcade_tx.payload_hex is 343 MB: type-200
+  inscription chunks kept as hex (171 MB of content). Not changed here.
+Tests: test_installer (fresh = testnet only, scripted both, first peer recorded/refused), test_mesh_named (a newcomer with
+only an address, no node id, not listening, links and learns the id; peer parsing), test_clone (first peer on the page;
+one background build, 503 meanwhile; leftovers). With test_web, test_public, test_docs, test_mesh*, test_cores*,
+test_core_install, test_update*: 597 passed, 18 skipped. Not tried: a real install on a clean machine against the live mesh.
+
 ### 2026-11-02 A node with its own relay offers no borrowed one beside it (Claude)
 After the relay's own loop (below), the Riffs session measured @banana's borrowed relay (156.67.28.112, ~300 ms from
 .25's network) from a test machine: 14-20% of the sound lost, 22-27% concealed, a 1.2-1.3 s jitter buffer, while .25's own

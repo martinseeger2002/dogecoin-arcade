@@ -187,7 +187,7 @@
   </p>
   <pre class="clone">curl -O <span id="here">this node</span>/source.tar.gz
 tar xzf source.tar.gz
-python3 installer/install.py</pre>
+python3 installer/install.py{% if first_peer %} --first-peer {{ first_peer }}{% endif %}</pre>
   <p class="muted small">
     The program and a copy of this node's index are both served from here,
     so a clone starts with the chain already read rather than spending a day

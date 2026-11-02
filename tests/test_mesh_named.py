@@ -46,3 +46,40 @@ def test_the_name_is_the_arcades_public_host_and_none_without_one():
     assert S.own_name(St) == "wss://app.example.com/mesh", "the first public name that is not the pages' own"
     St.public_hosts = ()
     assert S.own_name(St) is None, "no domain: the quick tunnel, as before"
+
+
+def test_a_new_arcade_meets_its_first_peer_by_address_alone(app_state, monkeypatch):
+    """2026-11-02: a fresh install connects to the arcade it came from "before their arcade is published via the
+    mesh ID", so its Pepecoin testnet syncs from the others at once. It is handed one address (installer --first-peer,
+    web/__main__.py mesh_peers) and nothing else: no node id, no announcement on chain, nothing synced, not listening."""
+    from arcade.web.app import create_app
+    monkeypatch.setattr(S, "TUNNEL_FIRST", 0.1)
+    a = S.MeshService("arcade-test", nacl.signing.SigningKey.generate(), listen_host="127.0.0.1", listen_port=0,
+                      verify=lambda *x: True, named_url=lambda: "wss://app.example.com/mesh",
+                      announce=lambda host, port: None).start()
+    app_state.mesh = a
+    port = _free_port()
+    srv = Server(create_app(app_state), port)
+    b = S.MeshService("arcade-test", nacl.signing.SigningKey.generate(), listen_port=None,
+                      peers=[(f"ws://127.0.0.1:{port}/mesh", 443)], verify=lambda *x: True).start()
+    try:
+        assert _until(lambda: a.node_id in b.node.links, 25), "the newcomer linked by the address alone"
+        entry = b.node.addrs[(f"ws://127.0.0.1:{port}/mesh", 443)]
+        assert entry["id"] == a.node_id and entry.get("pinned"), "and learned who it is from the link"
+    finally:
+        srv.stop(); a.stop(); b.stop()
+
+
+def test_a_first_peer_is_read_as_an_arcades_address(tmp_path, capsys):
+    from arcade.web.__main__ import mesh_peers, peer_address
+    assert peer_address("https://app.dogecoinarcade.com") == ("wss://app.dogecoinarcade.com/mesh", 443)
+    assert peer_address("wss://pepecoinarcade.com/mesh") == ("wss://pepecoinarcade.com/mesh", 443)
+    assert peer_address("192.168.1.20:8421") == ("192.168.1.20", 8421)
+    assert peer_address("[2001:db8::1]:8421") == ("2001:db8::1", 8421)
+    (tmp_path / "first-peer").write_text("wss://app.dogecoinarcade.com/mesh\n")
+    assert mesh_peers(["192.168.1.20:8421", "http://plain.example"], tmp_path) == [
+        ("192.168.1.20", 8421), ("wss://app.dogecoinarcade.com/mesh", 443)]
+    assert "skipping peer 'http://plain.example'" in capsys.readouterr().out
+    assert mesh_peers(["https://app.dogecoinarcade.com"], tmp_path) == [("wss://app.dogecoinarcade.com/mesh", 443)], \
+        "the same arcade twice is dialed once"
+    assert mesh_peers([], tmp_path / "nowhere") == []

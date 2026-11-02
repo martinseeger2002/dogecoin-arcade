@@ -173,6 +173,18 @@ DOGECOIN = Coin(
 
 COINS = {c.key: c for c in (PEPECOIN, DOGECOIN)}
 
+#: What a fresh install runs (2026-11-02: "I don't want them to be prompted to install any of the block chains
+#: except for Pepe test"): the message chain's node and nothing else. Pepecoin mainnet, Dogecoin and every other chain
+#: are borrowed from other arcades over the mesh until the operator installs them (Admin -> Chains).
+PEPECOIN_TEST = Coin(
+    key=PEPECOIN.key, name=PEPECOIN.name, version=PEPECOIN.version, repo=PEPECOIN.repo,
+    binaries=PEPECOIN.binaries, prefix=PEPECOIN.prefix, signer=PEPECOIN.signer, key_file=PEPECOIN.key_file,
+    datadir_name=PEPECOIN.datadir_name, app_name=PEPECOIN.app_name, sums=PEPECOIN.sums, networks=("testnet",),
+)
+
+#: The arcade a fresh install meets first, when it was not told one (--first-peer): where its index comes from.
+DEFAULT_FIRST_PEER = "https://app.dogecoinarcade.com"
+
 #: How well each platform is actually supported. Stated plainly, because an
 #: installer that half-works silently is worse than one that says it cannot.
 SUPPORT = {
@@ -1096,6 +1108,41 @@ def fetch_source_archive(checkout: Path, expect_sha256: str | None = None,
     return revision
 
 
+#: Where the arcade finds the first peer the installer was given (web/__main__.py reads it at every start). In the
+#: arcade's home, not in the service file, so an update that rewrites the service keeps it.
+FIRST_PEER_FILE = "first-peer"
+
+
+def mesh_peer_url(text: str) -> str:
+    """An arcade's address as the mesh dials it: wss://<name>/mesh. Takes what a person would paste -- the page's
+    https://name, a bare name, or the wss:// form itself. A plain http:// one is refused: an arcade on this
+    machine's own network name is no use to anybody else, and the mesh's own link is encrypted end to end
+    but the WebSocket in front of it should be too."""
+    text = str(text or "").strip()
+    if not text:
+        raise ValueError("no address")
+    if "://" not in text:
+        text = "https://" + text
+    scheme, _, rest = text.partition("://")
+    scheme = scheme.lower()
+    if scheme not in ("https", "wss"):
+        raise ValueError(f"{text} is not an https address")
+    host = rest.split("/", 1)[0].strip()
+    if not host or any(c in host for c in " @?#"):
+        raise ValueError(f"{text} has no host name")
+    return f"wss://{host}/mesh"
+
+
+def write_first_peer(url: str, dry_run: bool) -> None:
+    target = Path.home() / ".dogecoinarcade" / FIRST_PEER_FILE
+    if dry_run:
+        info(f"would meet {url} first on the mesh")
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(url + "\n")
+    info(f"meets {url} first on the mesh")
+
+
 def fetch_bootstraps(dry_run: bool) -> None:
     """Start each chain's index from the latest bootstrap instead of block zero.
 
@@ -1116,7 +1163,7 @@ def fetch_bootstraps(dry_run: bool) -> None:
             info(f"would fetch {BOOTSTRAP_URL}/{net}.sqlite.gz into {target}")
             continue
         try:
-            said = _json.loads(read_url(f"{BOOTSTRAP_URL}/{net}.json", f"{net} bootstrap manifest"))
+            said = _json.loads(bootstrap_manifest(net))
             with tempfile.TemporaryDirectory(prefix="arcade-bootstrap-") as tmp:
                 packed = download(f"{BOOTSTRAP_URL}/{net}.sqlite.gz", Path(tmp) / f"{net}.sqlite.gz",
                                   f"{net} bootstrap")
@@ -1133,6 +1180,32 @@ def fetch_bootstraps(dry_run: bool) -> None:
                  f"(the node carries on from there)")
         except Exception as exc:                      # noqa: BLE001 -- the node can build its own
             warn(f"{net}: no bootstrap ({exc}); the node will build its index itself")
+
+
+#: How long the installer waits for an arcade that is making its first copy of an index (it answers 503 meanwhile).
+BOOTSTRAP_WAIT = 600
+BOOTSTRAP_POLL = 30
+
+
+def bootstrap_manifest(net: str) -> str:
+    """The manifest of one chain's index copy. An arcade making its first copy says so (503) rather than making it
+    inside the request; for the message chain that copy is worth minutes of waiting, against reading the whole testnet
+    from block zero."""
+    import time as _time
+    url, waited = f"{BOOTSTRAP_URL}/{net}.json", 0
+    while True:
+        try:
+            with urllib.request.urlopen(_request(url), timeout=60) as response:
+                return response.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            if exc.code != 503 or waited >= BOOTSTRAP_WAIT:
+                raise InstallError(f"could not download the {net} bootstrap manifest from {url}: {exc}") from exc
+            if not waited:
+                info(f"{net}: the index copy is being made there; waiting for it (up to {BOOTSTRAP_WAIT // 60} minutes)")
+            _time.sleep(BOOTSTRAP_POLL)
+            waited += BOOTSTRAP_POLL
+        except urllib.error.URLError as exc:
+            raise InstallError(f"could not download the {net} bootstrap manifest from {url}: {exc}") from exc
 
 
 def read_url(url: str, label: str, quiet: bool = False) -> str:
@@ -1753,8 +1826,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--coin", choices=["pepecoin", "dogecoin", "both"], default=None,
         help="for scripted or partial installs only: which coin's nodes to install. "
-             "Omitted, the installer installs both -- Pepecoin (mainnet and testnet) "
-             "and Dogecoin (mainnet), the arcade's three networks.",
+             "Omitted, the installer installs Pepecoin testnet only, the message chain; "
+             "every other chain is borrowed from other arcades until you install it "
+             "(Admin -> Chains).",
+    )
+    parser.add_argument(
+        "--first-peer", default=None, metavar="URL",
+        help="the arcade this one meets first on the mesh, before anything is synced "
+             f"(the \"Run your own\" page fills it in). Omitted: {DEFAULT_FIRST_PEER}",
     )
     args = parser.parse_args(argv)
 
@@ -1770,13 +1849,19 @@ def main(argv: list[str] | None = None) -> int:
     print("DogecoinArcade installer")
     print("=" * 58)
 
-    # Both, always, with no question (2026-10-13: "that option should be
-    # removed when installing because it should install both"): the arcade runs
-    # on testnet PEP, mainnet PEP and mainnet DOGE.
-    if args.coin and args.coin != "both":
+    # No question, ever (2026-10-13). A fresh install is Pepecoin testnet only (2026-11-02); the rest
+    # is borrowed over the mesh. --coin is for scripted installs that want a Core of their own.
+    if args.coin == "both":
+        coins = [PEPECOIN, DOGECOIN]
+    elif args.coin:
         coins = [COINS[args.coin]]
     else:
-        coins = [PEPECOIN, DOGECOIN]
+        coins = [PEPECOIN_TEST]
+    try:
+        first_peer = mesh_peer_url(args.first_peer or DEFAULT_FIRST_PEER)
+    except ValueError as exc:
+        print(f"\nERROR: --first-peer: {exc}\n", file=sys.stderr)
+        return 2
     per_coin = 0 if args.skip_core else 2
     total = 4 + len(coins) * (per_coin + 2)
     n = 0
@@ -1892,6 +1977,7 @@ def main(argv: list[str] | None = None) -> int:
 
         n += 1
         step(n, total, "Finishing up")
+        write_first_peer(first_peer, args.dry_run)
         if not args.dry_run and not args.no_services:
             install_web_service(venv, system)
         if not args.dry_run:
@@ -1920,8 +2006,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  NOTE: {target} is not on your PATH. Either add it, or run")
                 print(f"        {launcher}")
             print()
-        print("  The nodes will take a while to sync before anything works.")
-        print("  Testnet is small; mainnet is larger. The application shows progress.")
+        print("  It joins the other arcades at once and borrows their chains while its")
+        print("  own Pepecoin testnet node syncs. The application shows progress.")
         print()
 
         if not args.dry_run and not args.no_browser:

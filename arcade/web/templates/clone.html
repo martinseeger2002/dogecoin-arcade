@@ -12,11 +12,13 @@
 curl -O {{ here }}/source.tar.gz.sha256
 sha256sum -c source.tar.gz.sha256
 tar xzf source.tar.gz
-python3 installer/install.py</pre>
+python3 installer/install.py{% if first_peer %} --first-peer {{ first_peer }}{% endif %}</pre>
   <p class="muted" style="font-size:.86rem">
-    The installer fetches Pepecoin Core, verifies its checksum and its
-    signature, writes both configs, registers the services and starts
-    everything. It needs Python and nothing else.
+    The installer fetches Pepecoin Core for the testnet, the message chain,
+    verifies its checksum and its signature, registers the services and starts
+    everything. It needs Python and nothing else. Your arcade joins
+    {% if first_peer %}this one{% else %}the other arcades{% endif %} at once and
+    borrows every other chain over the mesh until you install it yourself.
   </p>
   {% if source %}
   <table>

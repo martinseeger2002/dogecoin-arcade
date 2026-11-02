@@ -10999,6 +10999,22 @@ def create_app(state: AppState) -> FastAPI:
         proto = request.headers.get("x-forwarded-proto") or request.url.scheme
         return f"{proto}://{request.headers.get('host', '')}"
 
+    def _install_peer(request: Request) -> str:
+        """The address a new arcade installed from this one meets first (2026-11-02; installer --first-peer):
+        this arcade's public name, else its quick tunnel, else the address the page was opened on if that is https
+        and not this machine. "" when there is none: the installer then uses its own default."""
+        from ..mesh.service import own_name
+        named = own_name(state)
+        svc = getattr(state, "mesh", None)
+        for url in (named, getattr(svc, "tunnel_url", None)):
+            if url and str(url).startswith("wss://"):
+                return "https://" + str(url)[len("wss://"):].split("/", 1)[0]
+        origin = _origin(request)
+        host = origin.split("://", 1)[-1].split(":", 1)[0].lower()
+        if origin.startswith("https://") and host not in ("localhost", "") and not host.startswith("127."):
+            return origin
+        return ""
+
     def _signs_in_here(request: Request, origin: str) -> bool:
         """Whether a sign-in signed for `origin` is a sign-in to THIS arcade (issue #6, SadFrog's side, 2026-10-25).
 
@@ -11188,6 +11204,7 @@ def create_app(state: AppState) -> FastAPI:
                       seats=register.seats,
                       free=register.free(),
                       idle_days=register.idle_days,
+                      first_peer=_install_peer(request),
                       repo_url=updatelib.REPO_URL,
                       secure_enough=secure_context(request),
                       why_not=WHY_NOT_SECURE)
@@ -30777,7 +30794,7 @@ def create_app(state: AppState) -> FastAPI:
         index = state.ledger_index_path(context)
         tip = state.ledger_tips.get(network) or state.tips.get(network)
         return bootstraplib.current(state.home, network, index,
-                                    context.params.index_start, tip)
+                                    context.params.index_start, tip, background=True)
 
     # --- identity by key: who runs which arcade (arcade/instance.py) -------------
 
@@ -30834,7 +30851,7 @@ def create_app(state: AppState) -> FastAPI:
             if snapshot is not None:
                 copies.append({"chain": context, "snap": snapshot})
         return render(request, "clone.html", source=_packed_source(),
-                      copies=copies, here=_origin(request),
+                      copies=copies, here=_origin(request), first_peer=_install_peer(request),
                       seats=state.accounts().seats)
 
     @app.get("/source.tar.gz")
@@ -30875,6 +30892,10 @@ def create_app(state: AppState) -> FastAPI:
         else:
             raise HTTPException(404, "no such bootstrap")
         snapshot = _served_bootstrap(network)
+        if snapshot is None and bootstraplib.building(state.home, network):
+            # The first copy is being made in the background (bootstrap.current): ask again in a while.
+            return JSONResponse({"detail": f"the {network} index copy is being made; try again in a few minutes"},
+                                status_code=503, headers={"Retry-After": "120", "Cache-Control": "no-store"})
         if snapshot is None:
             raise HTTPException(
                 404, f"there is no {network} index here to copy yet")

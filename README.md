@@ -28,10 +28,13 @@ python3 install.py
 ```
 
 The installer needs Python 3.10 or newer and only the standard library. It downloads and verifies
-(SHA-256 and GPG) Pepecoin Core for mainnet and testnet and Dogecoin Core for mainnet, installs
-DogecoinArcade into `~/.dogecoinarcade`, fetches the latest index bootstrap, and registers everything
-as user services. `python3 install.py --help` lists its options; `--dry-run` changes nothing. The
-other chains' Cores are not installed by it: run them yourself, or borrow them.
+(SHA-256 and GPG) Pepecoin Core for testnet, the message chain, and nothing else; installs
+DogecoinArcade into `~/.dogecoinarcade`, fetches the latest index bootstraps, and registers everything
+as user services. The new arcade joins the mesh at once through its first peer (`--first-peer`, which
+the "Run your own" page fills in; otherwise app.dogecoinarcade.com), syncs Pepecoin testnet from the
+other arcades and borrows every other chain from them until you install its Core (Admin -> Chains;
+`--coin both` for a scripted install with Pepecoin mainnet and Dogecoin). `python3 install.py --help`
+lists its options; `--dry-run` changes nothing.
 
 Once installed:
 

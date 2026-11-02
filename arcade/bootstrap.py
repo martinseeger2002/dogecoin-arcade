@@ -39,6 +39,7 @@ import json
 import shutil
 import sqlite3
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -202,20 +203,91 @@ def _sha256(path: Path) -> str:
 
 
 def current(home: Path, network: str, index_path: Path, floor: int | None,
-            tip: int | None = None) -> Snapshot | None:
+            tip: int | None = None, *, background: bool = False) -> Snapshot | None:
     """The published copy, made or remade if it has gone stale.
 
     Returns None rather than raising when there is nothing to copy: an
     instance with no index yet simply has no bootstrap to offer, and that is
     a sentence on a page rather than an error.
+
+    `background` (what a web request asks for): never make it here. The copy on
+    disk is answered at once, stale or missing, and ONE build per chain runs in a
+    thread of its own (2026-11-02, live on .25: every request for the missing
+    testnet copy started its own VACUUM INTO of a 454 MB index inside the
+    request; four ran at once, none ever finished before the request gave up,
+    and every interrupted one left ~400 MB behind since 2026-10-22, so a new
+    install never got a testnet index at all).
     """
     have = published(home, network)
     if not stale(have, tip):
+        return have
+    if background:
+        _build_soon(home, network, index_path, floor)
         return have
     try:
         return make(home, network, index_path, floor)
     except BootstrapError:
         return have
+
+
+_builds: dict[tuple[str, str], threading.Thread] = {}
+_builds_lock = threading.Lock()
+
+
+def building(home: Path, network: str) -> bool:
+    """Whether a copy of this chain's index is being made right now."""
+    with _builds_lock:
+        build = _builds.get((str(home), network))
+        return build is not None and build.is_alive()
+
+
+def join(home: Path, network: str, timeout: float | None = None) -> None:
+    """Wait for this chain's background build, if one is running (tests, and a command line that wants the copy)."""
+    with _builds_lock:
+        build = _builds.get((str(home), network))
+    if build is not None:
+        build.join(timeout)
+
+
+def _build_soon(home: Path, network: str, index_path: Path, floor: int | None) -> None:
+    if not Path(index_path).exists():
+        return                                       # nothing to copy: a plain "not here", no thread
+    key = (str(home), network)
+    with _builds_lock:
+        build = _builds.get(key)
+        if build is not None and build.is_alive():
+            return
+
+        def run():
+            leftovers(home)
+            try:
+                make(home, network, index_path, floor)
+            except Exception:                         # noqa: BLE001 -- the old copy, or none, stays served
+                pass
+        build = _builds[key] = threading.Thread(target=run, name=f"bootstrap-{network}", daemon=True)
+        build.start()
+
+
+#: A build folder nobody has written to for this long belongs to a build that died with its process.
+LEFTOVER_AFTER = 1800
+
+
+def leftovers(home: Path, now: float | None = None) -> int:
+    """Remove the folders of builds that were cut off (a restart mid-build skips TemporaryDirectory's cleanup), each a
+    whole copy of an index. One still being written to is a build running now, and is left alone. Returns how many."""
+    now = time.time() if now is None else now
+    gone = 0
+    for tmp in folder(home).glob("tmp*"):
+        if not tmp.is_dir():
+            continue
+        try:
+            newest = max([tmp.stat().st_mtime] + [f.stat().st_mtime for f in tmp.iterdir()])
+        except OSError:
+            continue
+        if now - newest > LEFTOVER_AFTER:
+            shutil.rmtree(tmp, ignore_errors=True)
+            gone += 1
+    return gone
 
 
 # --- proving a copy is honest -------------------------------------------------
