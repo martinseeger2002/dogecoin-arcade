@@ -117,7 +117,7 @@ def test_signing_up_claims_the_name_and_publishes_the_key(browser, served):
     browser.find_element(By.ID, "tag").send_keys("byitself")
     browser.find_element(By.ID, "pw").send_keys("a long enough password")
     browser.find_element(By.ID, "pw2").send_keys("a long enough password")
-    browser.find_element(By.ID, "make").click()
+    browser.find_element(By.ID, "make-go").click()
 
     # The words appear at once; the setting-up runs behind them.
     for _ in range(80):
