@@ -170,6 +170,11 @@ inscriptions on both chains, read from the chain for the addresses their tag
 names. Nothing there is private — a chain is public — and nothing there can
 be spent.
 
+**Pay** on somebody's profile lists the coins they can be paid in here: only
+the ones a send would actually reach them on. Pick one and your Wallet opens
+with them in To, on that coin. You type the amount and review it there, and
+nothing is sent until you press Send.
+
 ## Notifications
 
 What happened to you, newest first, loaded as you scroll. The **Notifications**

@@ -88,6 +88,35 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 Pay on a profile merged (SadFrog's PR #56, Claude)
+Applied three-way onto master (the mirror's renamed words differ in app.py context). His entry below is as he wrote it.
+Checked: `_check_address` takes a chain (as every other caller passes); the Send sheet only fills To and the coin, and
+Review and signing are unchanged. 404 tests on profile, feed, wallet, send, public, kotia, litecoin safety, desktop,
+guide and docs: one feed-popularity test failed once in the big run and passes alone and as a file, with and without
+this change (timing). The `/node/wallet/send` `@name` question he raises is still open.
+
+### 2026-11-02 · SadFrog's side (Claude, node 2) · branch `team/profile-pay` (on `main` da31a948) · Pay on a profile, in any coin they can receive
+SadFrog: "when visiting someones user profile and checking out their profile - there should be an option to pay that
+person right there or send crypto". Commit 48b8f863. No new signing path; no rule in exchange-safety.md changes.
+- **What was missing:** `/u/<tag>` had a Pay link for signed-in accounts only, on whichever coin the Wallet last used.
+  The operator's view and signed-out visitors had none.
+- **Pay is now a sheet of coins** (`_pay_coins`, feed.html `#ppay`). A coin is listed only if `_where_to_pay` answers
+  and `_check_address` passes, which is what `/account/send` asks, so what is offered and what is taken cannot drift.
+  That also leaves out a chain still syncing, a published address of the wrong bytes, and a name still waiting for its
+  block. Real coins first. Your own profile has no Pay.
+- **It lands on the Wallet's Send sheet** (`?to=&coin=`). The amount, Review and signing are all there.
+  - An account's link names `@tag`, looked up again at Review.
+  - The operator's link carries the address, because `/node/wallet/send` resolves through `_tag_address`, which reads a
+    claim on the chain being paid; `_where_to_pay` reads it where tags live.
+  - Signed out, the sheet says to sign in, and the link comes back to that coin through `_to_join`.
+- **Wallet fix:** `?coin=` naming a hidden or missing wallet fell back to another one, so a Send would open on a coin
+  nobody picked. With `?to=` it now opens nothing and says why.
+- **Tests:** new test_profile_pay.py (9) and test_profile_pay_browser.py (3, regtest: a real payment from a profile
+  through Review and Send). Profile, wallet, feed, public and the exchange-safety list: 644 passed, 18 skipped, 2 failed.
+  The 2 are test_docs, and they fail on `main` too (no DECISIONS.md in the mirror).
+- **For you:** a merge, if you agree. Your call on `/node/wallet/send`: its `@name` reading differs from `/account/send`
+  on every chain but the messaging one, and the Address book's Pay on the node side goes through it. Not changed here.
+
 ### 2026-11-02 Mesh TCP: no dialing another operator's home-network address (Darrell's PR #55, Claude)
 Follows #53/72c17fa, which closed this for UDP. TCP, the backup link, still connected to a listen address a neighbour
 had learned on its own LAN (192.168.1.20:8421). The dialer, the IPv6 meeter, the tuner and address gossip now ask

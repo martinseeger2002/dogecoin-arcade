@@ -333,8 +333,9 @@
         <a class="pmain" id="msg-them"
            href="{% if not public %}/compose?to=@{{ whose.tag }}{% elif mine.address %}/me/messages?to=@{{ whose.tag }}{% else %}/me{% endif %}"
            {% if public and not mine.address %}title="Sign in to message {{ wall_text('@' ~ whose.tag, 'someone') }}"{% endif %}>Message</a>
+        {# Signed out and on the operator's own view too, and only with a coin to offer (2026-11-02). #}
+        {% if whose.pay %}<button type="button" id="pay-them">Pay</button>{% endif %}
         {% if account %}
-          <a href="/me/wallet?to=@{{ whose.tag }}">Pay</a>
           <button type="button" id="save-them" data-tag="{{ whose.tag }}">+ Save</button>
         {% else %}
           <a href="/u/{{ whose.tag }}/wallet">Wallet</a>
@@ -381,6 +382,25 @@
     </div>
   </div>
 </div>
+
+{# Pay: a coin, then the Wallet's own Send sheet with them in To. The amount, the review and the signing are all
+   there, so this page never spends. Signed out, a link goes through sign-in and comes back to the sheet (_to_join). #}
+{% if whose.pay %}
+<div class="psheetback" id="ppay" hidden>
+  <div class="psheet" role="dialog" aria-modal="true" aria-labelledby="ppay-title">
+    <div class="pgrab"></div>
+    <h2 id="ppay-title">Pay {{ wall('@' ~ whose.tag) }}<button type="button" class="px" id="ppay-x" aria-label="Close">&times;</button></h2>
+    <p class="muted ppay-says">{% if whose.pay_signin %}Sign in to pay them from your own wallet. Pick a coin and
+      you come back to it once you are signed in.{% else %}Pick a coin. Your Wallet opens with them in To; you type
+      the amount and review it there before anything is sent.{% endif %}</p>
+    <div class="pmenu">
+      {% for c in whose.pay %}
+      <a href="{{ c.href }}" data-network="{{ c.network }}" title="{{ c.address }}">{{ net_badge(c.network) }} {{ c.label }}<code class="mono ppay-at">{{ c.address[:8] }}…{{ c.address[-6:] }}</code></a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <style>
 .pbanner{height:110px;border-radius:18px 18px 0 0}
@@ -431,6 +451,9 @@
 .pmenu > a:hover{text-decoration:none}
 .pmenu > :last-child{border-bottom:0}
 .pmenu .pdanger{color:var(--bad)}
+#ppay .psheet{max-height:85vh;overflow-y:auto}
+.ppay-says{margin:0 0 4px;font-size:.86rem}
+.pmenu .ppay-at{margin-left:auto;background:none;padding:0;color:var(--muted);font-size:.76rem;font-weight:400}
 #m-noteform{display:flex;gap:8px;padding:10px 0}
 #m-noteform input{flex:1;min-width:0}
 .ptab[hidden]{display:none!important}
@@ -473,6 +496,13 @@ $("m-link").onclick = () => { copy(`${location.origin}/u/${TAG}`, "Profile link 
 $("m-addr").onclick = () => { copy(ADDR, "Address copied"); sheet(false); };
 if ($("copy-addr")) $("copy-addr").onclick = () => copy(ADDR, "Address copied");
 if ($("share-me")) $("share-me").onclick = () => copy(`${location.origin}/u/${TAG}`, "Profile link copied");
+if ($("ppay")) {
+  const paySheet = (open) => { $("ppay").hidden = !open; };
+  $("pay-them").onclick = () => paySheet(true);
+  $("ppay-x").onclick = () => paySheet(false);
+  $("ppay").addEventListener("click", (e) => { if (e.target === $("ppay")) paySheet(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") paySheet(false); });
+}
 
 // Tabs: Posts is the page as it always was; Games and Collections are drawn
 // on the server and shown in place. #games / #collections open one directly.
