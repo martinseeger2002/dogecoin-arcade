@@ -761,3 +761,40 @@ def test_chrome_and_firefox_offer_at_the_same_moment(tmp_path, no_nodes):
             server.stop()
             state.mesh.stop()
     assert seen == {True, False}, f"only saw chrome giving way = {seen}"
+
+
+def test_muting_the_microphone_leaves_the_screens_sound(tmp_path, no_nodes):
+    """2026-11-02, the operator: "When a user mute their own mic, it also mute the audio from their screen share they should be
+    separate". Measured where it counts, on the other side: the screen's sound before and after the microphone is muted."""
+    state, server, base = _server(tmp_path)
+    try:
+        with sync_api.sync_playwright() as pw:
+            chrome = _launch(pw)
+            pa, _, _ = _player(chrome, base)
+            pb, _, _ = _player(chrome, base)
+            ga, gb = _game(pa), _game(pb)
+            _until(ga, "window.room && window.room.media && window.room.me", "a in")
+            _until(gb, "window.room && window.room.media && window.room.me", "b in")
+            ida, idb = ga.evaluate("window.room.me.id"), gb.evaluate("window.room.me.id")
+            _until(ga, f"window.states[{idb!r}] === 'direct'", "a direct")
+            pa.evaluate(FAKE_SCREEN)
+            assert ga.evaluate("window.room.media.start({video: true, audio: true})")["ok"]
+            assert ga.evaluate("window.room.media.showScreen({sound: true})")["ok"]
+            ga.evaluate(f"window.room.media.share({idb!r}, true)")
+            gb.evaluate(f"window.room.media.hear({ida!r}, true)")
+            gb.evaluate(f"window.room.media.place({ida!r}, {{x: 0, y: 0, w: 320, h: 180}})")
+            gb.evaluate(f"window.room.media.place({ida!r} + '#screen', {{x: 0, y: 200, w: 320, h: 180}})")
+            scr = f"document.querySelector('.arcade-media-layer video[data-media=\"{ida}#screen\"]')"
+            _until(pb, f"(() => {{ var v = {scr}; return v && v.videoWidth > 0; }})()", "a's screen")
+            pb.wait_for_timeout(1500)
+            before = pb.evaluate(f"(id) => ({LOUD})(id)", ida + "#screen")
+            assert before > .01, before
+            ga.evaluate("window.room.media.mute({audio: true, video: false})")
+            pb.wait_for_timeout(2500)
+            after = pb.evaluate(f"(id) => ({LOUD})(id)", ida + "#screen")
+            print("screen sound on b before", before, "after the mic muted", after)
+            assert after > before * 0.5, f"the screen's sound went with the microphone: {before} -> {after}"
+            chrome.close()
+    finally:
+        server.stop()
+        state.mesh.stop()
