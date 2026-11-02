@@ -1075,8 +1075,10 @@
               // `facing` picks a phone's front or rear camera ('ideal': a computer with one camera still gets it).
               video: want.video ? Object.assign({width: {max: 1280}, height: {max: 1280}},
                                                 m.facing ? {facingMode: {ideal: m.facing === 'environment' ? 'environment' : 'user'}} : {}) : false,
-              // Everything this computer plays, where the browser can take it out (Chrome 141 on); one that cannot takes it as true.
-              audio: want.audio ? {echoCancellation: {ideal: 'all'}} : false
+              // The browser's own echo cancelling, as it comes. Not 'all' (Chrome 141: everything this computer plays taken out
+              // of the microphone): live, voices came through choppy and lossy (2026-11-02), and a shared screen's sound
+              // is taken out by echo_canceller.js while it is shared.
+              audio: want.audio ? {echoCancellation: true, noiseSuppression: true, autoGainControl: true} : false
             }) : Promise.resolve(new MediaStream())).then(function(stream){
               if (shown) shown.getVideoTracks().forEach(function(t){
                 t.contentHint = 'detail';                 // words on a screen stay sharp, at fewer frames

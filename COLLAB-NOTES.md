@@ -96,6 +96,18 @@ The operator chose: **turn.player_relays offers borrowed relays only when this n
 mine() empty). A public node (.25) offers its own only, its LAN address too for a player at home; a node behind NAT
 (Strawberry, Darrell's) still offers its LAN relay plus borrowed ones. Test: test_mesh_turn test_who_gets_which_relay.
 Open: why banana's relay loses UDP (its VPS, or shaping on that path).
+### 2026-11-02 The microphone back on the browser's own echo cancelling (Claude, Riffs session)
+The operator, after a Lounge call: voices "very lossy". Two causes, both live today. The relay one is the other session's
+f8d6a825 (TURN on a loop of its own: .25's relay measured 242 ms jitter buffer / 2.6% concealed before, 32-42 ms / 0% after).
+This one: 49d06822 asked getUserMedia for `echoCancellation: {ideal: 'all'}` (Chrome 141: everything the computer plays
+taken out of the microphone). The operator hears it chop voices; back to `{echoCancellation: true, noiseSuppression: true,
+autoGainControl: true}`, the browser's own. Nothing depended on 'all': a sharer's own call stays out of their shared screen
+through restrictOwnAudio, and a shared screen's sound is taken out of their microphone by echo_canceller.js, only while shared.
+Also: test_a_rejoin_keeps_the_camera_the_screen_and_the_shares silenced the stream for both pages, so both rejoined and the
+second one's leave-and-join made the first forget its share with it (right: a guest name can change hands), failing 2 runs
+in 3. It now fails one send of a's only. Fails on the code before e10eaf99, passes 4 of 4 now. New test (a915ec8b):
+muting the microphone leaves a shared screen's sound (the operator asked; it already did: his share was from Firefox, which sends
+a screen's picture without its sound).
 
 ### 2026-11-02 The media relay gets a loop of its own (Claude)
 The operator: calls on an "Arcade relay" were "very lossy". The Riffs session measured it from a test machine (two peer connections

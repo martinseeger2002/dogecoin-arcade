@@ -515,7 +515,7 @@ def test_what_the_speakers_play_is_taken_out_of_the_microphone_and_the_call_stay
             errors = []; pa.on("console", lambda m: errors.append(m.text) if m.type in ("warning", "error") else None)
             pa.evaluate(ROOM)
             ga.evaluate("window.room.media.start({audio: true})")
-            assert pa.evaluate("window.__mic.audio.echoCancellation.ideal") == "all"
+            assert pa.evaluate("window.__mic.audio.echoCancellation") is True, "the browser's own, not 'all' (lossy live)"
             ga.evaluate(f"window.room.media.share({idb!r}, true)")
             gb.evaluate(f"window.room.media.hear({ida!r}, true)")
             _until(gb, f"window.has[{ida!r}] && window.has[{ida!r}].audio", "b hears a")
@@ -654,11 +654,10 @@ def test_ring_and_ringed_answer_in_the_viewer(tmp_path, no_nodes):
         state.mesh.stop()
 
 
-def test_a_rejoin_keeps_the_camera_the_screen_and_the_shares(tmp_path, no_nodes, monkeypatch):
+def test_a_rejoin_keeps_the_camera_the_screen_and_the_shares(tmp_path, no_nodes):
     """2026-11-02, a Riffs Lounge: every time the page took its seat again, the camera, the microphone and a shared screen
     were closed, and a screen cannot come back without the player's press. Now only the links start again: the pictures
     come back on the new links by themselves, with what the game shared, and the game is told what stayed open."""
-    from arcade.web import realtime as rtmod
 
     state, server, base = _server(tmp_path)
     try:
@@ -682,11 +681,18 @@ def test_a_rejoin_keeps_the_camera_the_screen_and_the_shares(tmp_path, no_nodes,
             _until(pb, f"(() => {{ var v = {cam}; return v && v.videoWidth > 0; }})()", "a's camera")
             _until(pb, f"(() => {{ var v = {scr}; return v && v.videoWidth > 0; }})()", "a's screen")
 
-            # The line goes silent: both pages take their seats again.
-            beat = rtmod.HEARTBEAT
-            monkeypatch.setattr(rtmod, "HEARTBEAT", 3600.0)
+            # One send that fails: a takes its seat again (b stays, so this is a's rejoin alone: when b comes back too,
+            # a's game is told b left and must share with them again, which is right -- a guest's name can change hands).
+            once = []
+            def fail_once(route):
+                if once:
+                    route.continue_()
+                else:
+                    once.append(1)
+                    route.abort()
+            pa.route("**/realtime/send", fail_once)
+            ga.evaluate("window.room.send({hello: 1}).catch(function () {}); 0")
             _until(ga, "window.log.some(function (e) { return e[0] === 'reconnecting'; })", "a reconnecting", timeout=60000)
-            monkeypatch.setattr(rtmod, "HEARTBEAT", beat)
             _until(ga, "window.log.some(function (e) { return e[0] === 'rejoined'; })", "a rejoined", timeout=60000)
             kept = ga.evaluate("window.log.filter(function (e) { return e[0] === 'rejoined'; })[0][1]")
             assert kept == {"video": True, "audio": True, "screen": True}, kept
