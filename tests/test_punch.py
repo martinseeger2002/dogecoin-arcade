@@ -127,3 +127,110 @@ def test_an_old_arcades_ipv6_mapped_answer_is_the_same_ipv4_address():
     maps = asyncio.run(run())
     assert [m["host"] for m in maps] == ["127.0.0.1", "127.0.0.1"], maps
     assert punch.nat_kind(maps, "10.9.9.9") == "same-port"
+
+
+# The addresses from the report this fixes: a dial-out node was sending at them on its own LAN.
+_REMOTE = [("156.67.28.112", 41658), ("192.168.1.20", 32805), ("192.168.1.20", 41658),
+           ("10.1.2.3", 9), ("172.16.4.4", 9), ("100.64.12.1", 9), ("169.254.8.8", 9), ("127.0.0.1", 80)]
+_OURS = ["129.222.44.64"]
+
+
+def test_private_link_local_loopback_and_cgnat_are_not_public_addresses():
+    assert punch.routable_public("8.8.8.8") and punch.routable_public("129.222.44.64")
+    assert punch.routable_public("203.0.113.8") is False           # documentation range, not a place to send
+    assert punch.routable_public("198.51.100.9") is False
+    for host in ("192.168.1.20", "192.168.1.20", "10.0.0.1", "172.16.0.1", "172.31.255.1",
+                 "127.0.0.1", "169.254.1.1", "100.64.0.1", "100.127.255.254", "0.0.0.0", "224.0.0.1"):
+        assert punch.routable_public(host) is False, host
+    assert punch.routable_public("100.128.0.1") and punch.routable_public("172.32.0.1")
+    assert punch.routable_public("11.0.0.1")
+    assert punch.lan_dial_mode(None) == punch.lan_dial_mode("") == punch.lan_dial_mode("nope") == "auto"
+    assert punch.lan_dial_mode("on") == punch.lan_dial_mode(True) == "on"
+    assert punch.lan_dial_mode("off") == punch.lan_dial_mode(False) == "off"
+
+    def broken():
+        raise RuntimeError("settings could not be read")
+    assert punch.call_mode(broken) == "auto"
+
+
+def test_a_peer_on_another_network_is_not_dialed_at_its_home_address():
+    """What the socket was doing: 192.168.1.20 and 192.168.1.20, plus the other non-global ranges."""
+    assert punch.dialable(_REMOTE, _OURS, "auto") == [("156.67.28.112", 41658)]
+    assert punch.same_outside(_OURS, _REMOTE) is False
+    assert punch.include_lan(_OURS, _REMOTE, "auto") is False
+    assert punch.include_lan(_OURS, [], "auto") is False, "the asker has not seen the peer yet"
+    # A shared private address is somebody else's LAN that uses the same number, not proof of one NAT.
+    assert punch.same_outside(["192.168.1.20"], [("192.168.1.20", 32805)]) is False
+    assert punch.spray_at([("192.168.1.20", 32805), ("156.67.28.112", 2)], _OURS) == "156.67.28.112"
+    assert punch.spray_at([("192.168.1.20", 32805)], _OURS) is None
+    assert punch.spray_at([("127.0.0.1", 9)], ["127.0.0.1"]) == "127.0.0.1"
+
+
+def test_the_same_public_address_means_the_home_network_is_this_one():
+    peer = [("129.222.44.64", 40000), ("192.168.1.20", 32805), ("192.168.1.20", 41658),
+            ("100.64.1.1", 9), ("169.254.1.1", 9), ("127.0.0.1", 9)]
+    assert punch.dialable(peer, _OURS, "auto") == [
+        ("129.222.44.64", 40000), ("192.168.1.20", 32805), ("192.168.1.20", 41658),
+        ("100.64.1.1", 9), ("169.254.1.1", 9)]
+    assert punch.include_lan(_OURS, peer, "auto") is True
+    # Loopback is dialed when this node itself mapped to it, and not because a peer wrote it down.
+    assert punch.dialable([("127.0.0.1", 3478), ("192.168.1.20", 1)], ["127.0.0.1"], "auto") == [("127.0.0.1", 3478)]
+
+
+def test_the_operator_can_allow_or_refuse_home_network_addresses():
+    assert punch.dialable(_REMOTE, _OURS, "off") == [("156.67.28.112", 41658)]
+    assert punch.include_lan(_OURS, [("129.222.44.64", 1)], "off") is False
+    allowed = punch.dialable(_REMOTE, _OURS, "on")
+    assert ("192.168.1.20", 32805) in allowed and ("192.168.1.20", 41658) in allowed
+    assert ("100.64.12.1", 9) in allowed and ("169.254.8.8", 9) in allowed
+    assert ("127.0.0.1", 80) not in allowed, "on does not aim at this machine's loopback"
+    assert punch.dialable([("224.0.0.1", 9), ("0.0.0.0", 9), ("255.255.255.255", 9)], _OURS, "on") == []
+    assert punch.include_lan(_OURS, [], "on") is True
+
+
+def test_an_offer_keeps_the_home_address_for_a_peer_on_this_nat(monkeypatch):
+    monkeypatch.setattr(punch, "local_ipv4", lambda: "192.168.1.20")
+    me = punch.Session("n", "b")
+    me.local_port = 32805
+    me.maps = [{"host": "129.222.44.64", "port": 40000, "server": "1.1.1.1:3478"}]
+    assert me.offer() == [["129.222.44.64", 40000]]
+    assert me.offer(include_lan=True) == [["129.222.44.64", 40000], ["192.168.1.20", 32805]]
+    share = punch.PunchShare(lan_dial=lambda: "auto")
+    assert share._say(me, [["156.67.28.112", 41658]]) == [["129.222.44.64", 40000]]
+    assert share._say(me, [["129.222.44.64", 40001]]) == [["129.222.44.64", 40000], ["192.168.1.20", 32805]]
+    assert share._aim([["156.67.28.112", 41658], ["192.168.1.20", 32805], ["192.168.1.20", 41658]], me) == [
+        ("156.67.28.112", 41658)]
+    assert punch.PunchShare(lan_dial=lambda: "off")._say(me, [["129.222.44.64", 1]]) == [["129.222.44.64", 40000]]
+    assert punch.PunchShare(lan_dial=lambda: "on")._say(me, None) == [
+        ["129.222.44.64", 40000], ["192.168.1.20", 32805]]
+
+
+def test_the_probe_punches_the_mapped_address_and_not_the_home_network(monkeypatch):
+    monkeypatch.setattr(punch, "local_ipv4", lambda: "192.168.1.20")
+
+    async def run():
+        transports, servers = await _stun_servers()
+        sent = []
+        try:
+            a, b = _pair(servers=servers)
+
+            def watch(link):
+                real = link.send
+
+                async def capture(header, blob=b""):
+                    if header.get("op") in ("try", "ready"):
+                        sent.append(header.get("a"))
+                    await real(header, blob)
+                link.send = capture
+            watch(a.node.links["bb" * 32])
+            watch(b.node.links["aa" * 32])
+            return await a.run("bb" * 32), sent
+        finally:
+            for t in transports:
+                t.close()
+    rec, sent = asyncio.run(run())
+    assert rec["ok"] and rec["direct"], rec
+    assert sent, "both sides sent an offer"
+    for offer in sent:
+        assert offer and all(str(addr[0]).startswith("127.") for addr in offer), offer
+        assert not any(addr[0] == "192.168.1.20" for addr in offer)

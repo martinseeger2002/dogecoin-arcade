@@ -18,6 +18,10 @@ Frames "pu": {"op": "try", "n", "a": [[host, port]...], "m": maps} asks a linked
 {"op": "result", "n", "got": [...], "heard": bool} what it saw. A node answers one probe at a time, and the same
 node at most once per COOLDOWN, and sends at most MAX_ADDRS * DURATION / EVERY tiny packets, so a probe cannot be
 used to send anybody much of anything.
+
+A home-network address is not aimed at, and not told to the other side, unless that side's outside address is one
+STUN observed for us (both are behind the same NAT) or the operator set mesh_lan_dial to "on". Sending at a peer's
+private address from another network only hits whatever lives at that address on our own LAN.
 """
 
 from __future__ import annotations
@@ -41,6 +45,10 @@ MAX_ADDRS = 4               # addresses one side may give
 COOLDOWN = 20.0             # seconds between probes answered for one node
 KEEP = 20                   # results kept for Admin
 PUBLIC_STUN = (("stun.l.google.com", 19302), ("stun.cloudflare.com", 3478))
+#: settings.json key. "auto" (default) shares a home address only with a peer on this NAT; "on" always; "off" never.
+#: ARCADE_MESH_LAN_DIAL, when set, wins over the file.
+LAN_DIAL_SETTING = "mesh_lan_dial"
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
 def _v4(host: str) -> bool:
@@ -56,6 +64,156 @@ def _addrs(raw) -> list[tuple[str, int]]:
         if isinstance(a, list) and len(a) == 2 and isinstance(a[1], int) and 0 < a[1] < 65536 and _v4(a[0]):
             out.append((str(a[0]), int(a[1])))
     return out
+
+
+def _parse_v4(host) -> ipaddress.IPv4Address | None:
+    try:
+        ip = ipaddress.ip_address(str(host))
+    except ValueError:
+        return None
+    return ip if isinstance(ip, ipaddress.IPv4Address) else None
+
+
+def routable_public(host) -> bool:
+    """An ordinary public IPv4 address. Private, loopback, link-local, CGNAT, multicast and the rest of the
+    non-global space are not: a packet sent there from another network stays on the sender's own LAN."""
+    ip = _parse_v4(host)
+    if ip is None or ip in _CGNAT:
+        return False
+    if ip.is_multicast or ip.is_unspecified or ip.is_reserved or ip.is_loopback or ip.is_link_local or ip.is_private:
+        return False
+    return bool(ip.is_global)
+
+
+def lan_dial_mode(value) -> str:
+    """'on', 'off', or 'auto'. Anything unrecognised, including unset, is 'auto' (the safe one)."""
+    if isinstance(value, str):
+        value = value.strip().lower()
+    if value in (True, "on", "always", "1", "true", "yes"):
+        return "on"
+    if value in (False, "off", "never", "0", "false", "no"):
+        return "off"
+    return "auto"
+
+
+def call_mode(lan_dial) -> str:
+    try:
+        return lan_dial_mode(lan_dial() if callable(lan_dial) else lan_dial)
+    except Exception:                                    # noqa: BLE001 -- a broken setting reads as the safe default
+        return "auto"
+
+
+def outside_hosts(maps) -> list[str]:
+    """The addresses STUN said this socket is, in the order the answers came."""
+    out = []
+    for m in maps or []:
+        if isinstance(m, dict) and m.get("host") and _v4(m["host"]):
+            host = str(m["host"])
+            if host not in out:
+                out.append(host)
+    return out
+
+
+def same_outside(outside, addrs) -> bool:
+    """True when the peer's offer carries a public address STUN observed for us.
+
+    The same public address means the same NAT, so their home-network address is on our LAN too. A shared
+    private or loopback address is not that: loopback is this machine, and 192.168.1.10 is a common address on
+    someone else's LAN."""
+    ours = set()
+    for host in outside or []:
+        ip = _parse_v4(host)
+        if ip is not None and routable_public(ip):
+            ours.add(str(ip))
+    if not ours:
+        return False
+    for host, _port in addrs or []:
+        ip = _parse_v4(host)
+        if ip is not None and str(ip) in ours:
+            return True
+    return False
+
+
+def include_lan(outside, peer_addrs, mode="auto") -> bool:
+    """Whether to put this machine's home-network address in an offer to a peer that sent `peer_addrs`.
+
+    The asker has not seen the peer yet and passes none: nothing is shared unless the operator said 'on'.
+    """
+    mode = lan_dial_mode(mode)
+    if mode == "on":
+        return True
+    if mode == "off":
+        return False
+    return same_outside(outside, peer_addrs or [])
+
+
+def _never_dial(ip: ipaddress.IPv4Address) -> bool:
+    """Multicast, unspecified and reserved are not a peer's address in any mode."""
+    return ip.is_multicast or ip.is_unspecified or ip.is_reserved
+
+
+def share_with_remote(host, include_lan_flag: bool) -> bool:
+    """An address that may go in an offer: a public one always, loopback always (it is how two sockets on this
+    machine meet), a home-network one only when `include_lan_flag`."""
+    ip = _parse_v4(host)
+    if ip is None or _never_dial(ip):
+        return False
+    if ip.is_loopback or routable_public(ip):
+        return True
+    return bool(include_lan_flag)
+
+
+def dialable(addrs, outside, mode="auto") -> list[tuple[str, int]]:
+    """The addresses in a peer's offer this node may send to.
+
+    Public ones always. A private, link-local or CGNAT one only in 'on', or in 'auto' when `same_outside`.
+    Loopback only when this node's own STUN answer was that loopback address: a remote peer that lists
+    127.0.0.1 must not have its packets delivered to a service on this machine."""
+    mode = lan_dial_mode(mode)
+    outside_ips = []
+    for host in outside or []:
+        ip = _parse_v4(host)
+        if ip is not None:
+            outside_ips.append(str(ip))
+    allow_lan = mode == "on" or (mode == "auto" and same_outside(outside_ips, addrs))
+    kept = []
+    for host, port in addrs or []:
+        ip = _parse_v4(host)
+        if ip is None:
+            continue
+        if _never_dial(ip):
+            continue
+        if ip.is_loopback:
+            if str(ip) in outside_ips:
+                kept.append((str(host), int(port)))
+            continue
+        if not routable_public(ip) and not allow_lan:
+            continue
+        kept.append((str(host), int(port)))
+    return kept
+
+
+def spray_at(targets, outside) -> str | None:
+    """Where a new-port NAT's unknown port may be guessed. A public address of the peer, never a home-network
+    one (that would be a scan of this LAN). Loopback only when it is an address STUN observed for us."""
+    ours = set()
+    for host in outside or []:
+        ip = _parse_v4(host)
+        if ip is not None:
+            ours.add(str(ip))
+    publics = [str(host) for host, _port in targets or [] if routable_public(host)]
+    for host in publics:
+        if host not in ours:
+            return host
+    if publics:
+        return publics[0]
+    # No public address to guess at. Loopback is this machine's own mapped address (the tests); a home-network
+    # address is never guessed at, which would be a scan of this LAN.
+    for host, _port in targets or []:
+        ip = _parse_v4(host)
+        if ip is not None and ip.is_loopback and str(ip) in ours:
+            return str(host)
+    return None
 
 
 def udp_socket() -> socket.socket:
@@ -188,15 +346,20 @@ class Session:
             self.maps.append({"server": f"{ip}:{port}", "host": said[0] if said else None,
                               "port": said[1] if said else None})
 
-    def offer(self) -> list[list]:
-        """Where the other side should aim: the outside address(es) STUN saw, then the home-network one (two
-        arcades in one house reach each other there)."""
+    def offer(self, include_lan: bool = False) -> list[list]:
+        """Where the other side should aim.
+
+        The outside address STUN saw, always. This machine's home-network address only when `include_lan` (that
+        side is on this NAT, or the operator asked): told to a remote peer, it is what they then send at on their
+        own LAN. Two arcades in one house still reach each other there, because the one that has seen the other's
+        outside address includes it. A public address of this machine is not a home-network address."""
         out = []
         for m in self.maps:
-            if m.get("host") and _v4(m["host"]) and [m["host"], m["port"]] not in out:
-                out.append([m["host"], m["port"]])
+            host, port = m.get("host"), m.get("port")
+            if host and _v4(host) and share_with_remote(host, include_lan) and [host, port] not in out:
+                out.append([host, port])
         lan = local_ipv4()
-        if lan and [lan, self.local_port] not in out:
+        if lan and [lan, self.local_port] not in out and share_with_remote(lan, include_lan):
             out.append([lan, self.local_port])
         return out[:MAX_ADDRS]
 
@@ -238,9 +401,10 @@ class PunchShare:
 
     kinds = ("pu",)
 
-    def __init__(self, stun_servers=None, duration: float = DURATION, public_stun=PUBLIC_STUN):
+    def __init__(self, stun_servers=None, duration: float = DURATION, public_stun=PUBLIC_STUN, lan_dial=None):
         self.stun_servers = stun_servers or (lambda: [])
         self.duration, self.public_stun = duration, tuple(public_stun)
+        self.lan_dial = lan_dial
         self.node = None
         self.busy = False
         self.last_for: dict[str, float] = {}
@@ -253,6 +417,16 @@ class PunchShare:
         except Exception:                                    # noqa: BLE001
             mesh = []
         return mesh + [s for s in self.public_stun if s not in mesh]
+
+    def _mode(self) -> str:
+        return call_mode(self.lan_dial)
+
+    def _say(self, me: Session, peer_raw) -> list[list]:
+        peer = _addrs(peer_raw) if peer_raw is not None else []
+        return me.offer(include_lan=include_lan(outside_hosts(me.maps), peer, self._mode()))
+
+    def _aim(self, raw, me: Session) -> list[tuple[str, int]]:
+        return dialable(_addrs(raw), outside_hosts(me.maps), self._mode())
 
     def _keep(self, rec: dict) -> dict:
         self.results = (self.results + [rec])[-KEEP:]
@@ -283,7 +457,7 @@ class PunchShare:
         try:
             await me.open()
             await me.map(self._servers())
-            await link.send({"t": "pu", "op": "try", "n": nonce, "a": me.offer(), "m": me.maps})
+            await link.send({"t": "pu", "op": "try", "n": nonce, "a": self._say(me, None), "m": me.maps})
             try:
                 ready = await asyncio.wait_for(fut, 15.0)
             except asyncio.TimeoutError:
@@ -293,7 +467,7 @@ class PunchShare:
                 return self._keep({**rec, "ok": False, "mine": me.report(), "detail": f"it said no: {ready.get('why')}"})
             fut2 = asyncio.get_running_loop().create_future()
             self.waiting[nonce] = fut2
-            theirs_at = _addrs(ready.get("a"))
+            theirs_at = self._aim(ready.get("a"), me)
             await me.punch(theirs_at, self.duration)
             try:
                 result = await asyncio.wait_for(fut2, 10.0)
@@ -328,8 +502,8 @@ class PunchShare:
         try:
             await me.open()
             await me.map(self._servers())
-            targets = _addrs(header.get("a"))
-            await link.send({"t": "pu", "op": "ready", "n": nonce, "a": me.offer(), "m": me.maps})
+            targets = self._aim(header.get("a"), me)
+            await link.send({"t": "pu", "op": "ready", "n": nonce, "a": self._say(me, header.get("a")), "m": me.maps})
             await me.punch(targets, self.duration)
             await asyncio.sleep(1.0)                         # late answers still count
             await link.send({"t": "pu", "op": "result", "n": nonce, "got": dict(list(me.got.items())[:8]),

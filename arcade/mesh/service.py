@@ -912,13 +912,27 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
     service.node.add_extension(service.stun)
     # The punch probe (punch.py): can this node and a linked one reach each other directly over UDP? It maps
     # through other nodes' STUN (never its own: that would only see the home network).
-    from .punch import PunchShare
-    service.punch = PunchShare(lambda: [a for offers in service.stun.offers.values() for a in offers])
+    from .punch import LAN_DIAL_SETTING, PunchShare
+
+    def mesh_lan_dial():
+        """punch.lan_dial_mode: auto, on, or off. The environment wins, then settings.json, else auto."""
+        env = os.environ.get("ARCADE_MESH_LAN_DIAL")
+        if env not in (None, ""):
+            return env
+        try:
+            return state.settings().get(LAN_DIAL_SETTING, "auto")
+        except Exception:                              # noqa: BLE001
+            return "auto"
+
+    service.punch = PunchShare(lambda: [a for offers in service.stun.offers.values() for a in offers],
+                               lan_dial=mesh_lan_dial)
     service.node.add_extension(service.punch)
     # UDP alongside TCP on every link that can have it (udp.py); ARCADE_MESH_UDP=0 keeps a node on its connections.
+    # mesh-core off does not turn this off: the one UDP socket still punches every link.
     if os.environ.get("ARCADE_MESH_UDP", "1") != "0":
         from .udp import UdpShare
-        service.udp = UdpShare(lambda: [a for offers in service.stun.offers.values() for a in offers])
+        service.udp = UdpShare(lambda: [a for offers in service.stun.offers.values() for a in offers],
+                               lan_dial=mesh_lan_dial)
         service.node.add_extension(service.udp)
         # Links with no TCP under them (introduce.py): met over the mesh, or over the chain's machine layer.
         from .introduce import Introducer

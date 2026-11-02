@@ -153,6 +153,31 @@ def test_two_new_port_nats_do_not_try():
     asyncio.run(run())
 
 
+def test_an_introduction_is_not_aimed_at_another_networks_home_address():
+    async def run():
+        t, servers = await _stun()
+        a = _node(servers)
+        await a.start()
+        await a.share._offer()
+        a.share.outside = ["129.222.44.64"]
+        a.share.nat = "same-port"
+        eph = nacl.public.PrivateKey.generate()
+        peer = "bb" * 32
+        a.intro._punch(peer, eph, {
+            "a": [["192.168.1.20", 32805], ["192.168.1.20", 41658], ["156.67.28.112", 41658]],
+            "nat": "new-port", "n": "cd" * 8, "x": bytes(eph.public_key).hex(),
+        }, True)
+        path = a.intro.paths[peer]
+        targets, spray = list(path.targets), path.spray_host
+        path.close()
+        await a.stop()
+        t.close()
+        return targets, spray
+    targets, spray = asyncio.run(run())
+    assert targets == [("156.67.28.112", 41658)], targets
+    assert spray == "156.67.28.112"
+
+
 def test_a_forged_or_old_introduction_is_ignored():
     key, other = nacl.signing.SigningKey.generate(), nacl.signing.SigningKey.generate()
     import time

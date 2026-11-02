@@ -3,6 +3,7 @@
 import asyncio
 import os
 import random
+import time
 
 import nacl.signing
 import pytest
@@ -256,6 +257,108 @@ def test_a_machine_without_so_reuseport_still_links_and_moves_to_udp(monkeypatch
             await t.la.send({"t": "zz", "i": 1})
             assert await _until(lambda: t.tb.got == [(1, b"")])
     asyncio.run(run())
+
+
+def _house(lan_works, firewall=False):
+    """Two paths in one house: a router that loops back at the outside address, and (when it works) the LAN. With a
+    firewall, b drops a LAN packet until b has sent to that address itself."""
+    key_a, key_b = bytes(range(32)), bytes(range(1, 33))
+    outside_a, outside_b, lan_a, lan_b = ("129.222.44.94", 1), ("129.222.44.94", 2), ("192.168.1.20", 3), ("192.168.1.20", 4)
+    loop = asyncio.get_running_loop()
+
+    async def nothing(frame):
+        pass
+
+    def send_a(packet, to):
+        if to == outside_b:
+            loop.call_soon(b.received, packet, outside_a)
+        elif to == lan_b and lan_works and (not firewall or opened):
+            loop.call_soon(b.received, packet, lan_a)
+
+    def send_b(packet, to):
+        if to == outside_a:
+            loop.call_soon(a.received, packet, outside_b)
+        elif to == lan_a:
+            opened.append(1)
+            loop.call_soon(a.received, packet, lan_b)
+    opened = []
+    a = udp.Path(key_a, key_b, send_a, nothing, lambda *_: None, peer="b")
+    b = udp.Path(key_b, key_a, send_b, nothing, lambda *_: None, peer="a")
+    a.addresses = (outside_a, outside_b, lan_a, lan_b)
+    return a, b
+
+
+def test_two_arcades_in_one_house_stay_on_the_lan_when_the_router_loops_back():
+    """2026-11-02, a test machine and .25: only the answering side offers its home address, the router's loop back answered
+    first, and the link ran at 60 ms instead of 1 ms."""
+    async def run(lan_works):
+        a, b = _house(lan_works)
+        outside_a, outside_b, _, lan_b = a.addresses
+        b.start([outside_a])                             # the answer's side: it has only the outside address
+        await asyncio.sleep(0.05)
+        a.start([outside_b, lan_b])                      # the asker: outside first, as an offer lists them
+        await asyncio.sleep(0.8)
+        seen = a.addr, b.addr
+        a.down("done")
+        b.down("done")
+        await asyncio.sleep(0.05)
+        return seen
+    at_a, at_b = asyncio.run(run(True))
+    assert at_a == ("192.168.1.20", 4) and at_b == ("192.168.1.20", 3), (at_a, at_b)
+    at_a, at_b = asyncio.run(run(False))
+    assert at_a == ("129.222.44.94", 2) and at_b == ("129.222.44.94", 1), "no LAN: the loop back is fine"
+
+
+def test_a_host_firewall_lets_the_lan_through_once_both_sides_aim():
+    """A test machine's ufw: nothing came in from .25 until a test machine had sent to .25. The asker's "home" frame gives the
+    answering side something to aim at."""
+    async def run():
+        a, b = _house(True, firewall=True)
+        outside_a, outside_b, lan_a, lan_b = a.addresses
+        b.start([outside_a])
+        await asyncio.sleep(0.05)
+        a.start([outside_b, lan_b])
+        await asyncio.sleep(0.5)
+        before = a.addr, b.addr
+        b.aim([lan_a])
+        await asyncio.sleep(0.6)
+        seen = a.addr, b.addr
+        a.down("done")
+        b.down("done")
+        await asyncio.sleep(0.05)
+        return before, seen
+    before, seen = asyncio.run(run())
+    assert before == (("129.222.44.94", 2), ("129.222.44.94", 1)), before
+    assert seen == (("192.168.1.20", 4), ("192.168.1.20", 3)), seen
+
+
+def test_a_remote_home_address_is_neither_offered_nor_dialed():
+    """The one UDP socket's offer and its targets, without a link: the filter udp.py actually calls."""
+    async def run():
+        share = udp.UdpShare(lan_dial=lambda: "auto")
+        always = udp.UdpShare(lan_dial=lambda: "on")
+        for one in (share, always):
+            one.mapped = (time.monotonic(), [["129.222.44.64", 40000]])
+            one.outside = ["129.222.44.64"]
+            one._lan_extra = [["192.168.1.20", 32805]]
+        try:
+            remote = await share.offer_for([["156.67.28.112", 41658], ["192.168.1.20", 41658]])
+            same = await share.offer_for([["129.222.44.64", 40000]])
+            blind = await share.offer_for(None)
+            asked = await always.offer_for(None)
+        finally:
+            for one in (share, always):
+                if one.sock is not None and one.sock.transport is not None:
+                    one.sock.transport.close()
+        raw = [["156.67.28.112", 41658], ["192.168.1.20", 32805], ["192.168.1.20", 41658],
+               ["10.1.2.3", 9], ["100.64.12.1", 9], ["169.254.1.1", 9], ["127.0.0.1", 9]]
+        return remote, same, blind, asked, share.dial_targets(raw), always.dial_targets(raw)
+    remote, same, blind, asked, targets, allowed = asyncio.run(run())
+    assert remote == blind == [["129.222.44.64", 40000]]
+    assert same == [["129.222.44.64", 40000], ["192.168.1.20", 32805]]
+    assert asked == [["129.222.44.64", 40000], ["192.168.1.20", 32805]]
+    assert targets == [("156.67.28.112", 41658)]
+    assert ("192.168.1.20", 32805) in allowed and ("127.0.0.1", 9) not in allowed
 
 
 def test_on_windows_a_closed_port_does_not_break_the_next_receive(monkeypatch):

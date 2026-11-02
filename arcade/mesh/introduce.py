@@ -200,7 +200,9 @@ class Introducer:
     # ---------------------------------------------------------------- saying hello
 
     async def _what_i_say(self, op: str, peer: str, nonce: str, eph: nacl.public.PrivateKey) -> dict:
-        offer = await self.share._offer()
+        # No peer addresses here: a "hi" has not seen them, and a "yes" is relayed, so a home-network address would
+        # be shown to every node on the way. The direct UDP path (udp.py) still shares one with a peer on this NAT.
+        offer = await self.share.offer_for(None)
         return sign(self.node.key, {"t": "ui", "op": op, "to": peer, "from": self.node.node_id, "n": nonce,
                                     "x": bytes(eph.public_key).hex(), "a": offer, "nat": self.share.nat,
                                     "ts": int(time.time()), "hops": 0})
@@ -268,7 +270,7 @@ class Introducer:
     # ---------------------------------------------------------------- the punch
 
     def _punch(self, peer: str, eph, header: dict, outbound: bool) -> None:
-        targets = punchlib._addrs(header.get("a"))
+        targets = self.share.dial_targets(header.get("a"))
         theirs, mine = str(header.get("nat")), self.share.nat
         if not targets or (theirs == "new-port" and mine == "new-port"):
             log.info("mesh: no way to punch to %s (%s, %s)", peer[:12], mine, theirs)
@@ -288,8 +290,10 @@ class Introducer:
         path.stream = stream
         self.share.sock.paths[path.cid_in] = path
         self.paths[peer] = path
-        if theirs == "new-port":                       # guess at the far NAT's port
-            path.spray_host, path.knock_for = targets[0][0], SPRAY_FOR
+        if theirs == "new-port":                       # guess at the far NAT's port, on its public address
+            host = punchlib.spray_at(targets, self.share.outside)
+            if host is not None:
+                path.spray_host, path.knock_for = host, SPRAY_FOR
             path.start(targets)
         elif mine == "new-port":                       # be guessed at
             path.knock_for = SPRAY_FOR

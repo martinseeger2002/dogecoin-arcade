@@ -88,6 +88,16 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 A home-network address only for a peer on this NAT (fioridarrell, PR #53; follow-up by Claude)
+Darrell's report: every node offered its LAN address to every peer, so remote peers knocked at it on their own LANs, with mesh core
+off too. `punch.dialable`, `include_lan`, `spray_at`, `UdpShare.offer_for`, `dial_targets`; setting `mesh_lan_dial` (`auto`, `on`, `off`),
+`ARCADE_MESH_LAN_DIAL`. Write-up: docs/mesh-private-lan-dial.md.
+Follow-up, found on two real machines behind one NAT: the router hairpins, so the path settled at 50 to 65 ms instead of 1 to 2 ms, and
+only the answering side had a home address, so a host firewall (ufw) kept the LAN shut. Now `{"op": "home"}` gives the answering
+side the asker's address once the answer proved one NAT (older nodes ignore it), `Path.aim` adds it, and a home address that answers
+replaces an outside one (`Path.received`, only after the packet opened with the path's key).
+Open: relayed introductions carry no home address, so two nodes in one house with no TCP link stay on the hairpin or fail.
+
 ### 2026-11-01 An app's permissions after it is added; Remove from arcade (Claude)
 The operator: once an app was added, its permissions could only be picked by deleting and adding it again, and that did not work
 either: the sheets only ever turned things on, and removing an app cleared nothing. Game agnostic.

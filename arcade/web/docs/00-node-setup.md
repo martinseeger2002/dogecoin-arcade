@@ -418,6 +418,14 @@ and keeps nothing. When no node's STUN is known, browsers use a public one
 (Cloudflare's). To turn that off, set `"realtime_public_stun": false` in the
 node's settings.
 
+The mesh's own UDP path does not send to a peer's private, link-local, loopback
+or CGNAT address, and does not tell a remote peer this machine's, unless the
+two are behind the same NAT (the peer's outside address is the one STUN saw for
+this node). To always try home-network addresses, for several nodes on one LAN
+that STUN cannot show are on the same one, set `"mesh_lan_dial": "on"` in the
+node's settings. `"off"` never tries a home address. `"auto"` is the default
+and is the rule above. `ARCADE_MESH_LAN_DIAL`, when set, overrides the setting.
+
 The web interface prints the node's mesh id when it starts, and says whether it
 is listening.
 
