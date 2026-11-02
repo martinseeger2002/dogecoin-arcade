@@ -418,13 +418,19 @@ and keeps nothing. When no node's STUN is known, browsers use a public one
 (Cloudflare's). To turn that off, set `"realtime_public_stun": false` in the
 node's settings.
 
-The mesh's own UDP path does not send to a peer's private, link-local, loopback
-or CGNAT address, and does not tell a remote peer this machine's, unless the
+The mesh does not send to a peer's private, link-local or CGNAT address, over
+UDP or over TCP, and does not tell a remote peer such an address, unless the
 two are behind the same NAT (the peer's outside address is the one STUN saw for
-this node). To always try home-network addresses, for several nodes on one LAN
-that STUN cannot show are on the same one, set `"mesh_lan_dial": "on"` in the
-node's settings. `"off"` never tries a home address. `"auto"` is the default
-and is the rule above. `ARCADE_MESH_LAN_DIAL`, when set, overrides the setting.
+this node). TCP is how a node reaches a peer when the UDP path is not up, and
+it was still connecting to other operators' home-network addresses (`192.168.1.25:8421`
+and the like) that a neighbour had learned on its own LAN. To always try
+home-network addresses, for several nodes on one LAN that STUN cannot show are
+on the same one, set `"mesh_lan_dial": "on"` in the node's settings. `"off"`
+never tries a home address. `"auto"` is the default and is the rule above.
+`ARCADE_MESH_LAN_DIAL`, when set, overrides the setting. An address given with
+`--mesh-peer` is still dialed, including a home-network one, unless the setting
+is `"off"`. The UDP `{"op": "home"}` exchange, for two nodes that already share
+a NAT, is unchanged.
 
 The web interface prints the node's mesh id when it starts, and says whether it
 is listening.

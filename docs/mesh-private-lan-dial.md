@@ -34,7 +34,17 @@ A peer on another network advertising `192.168.1.20` therefore made this node tr
 
 Public-address hole punching is unchanged: the outside address STUN saw is still offered and still dialed.
 
-Two nodes in one house still get a direct UDP path, whether or not their NAT hairpins. The node that answers the punch has seen the asker's public address and includes its home address. The asker then knows they share a NAT, so it sends its own home address over the link (`op: "home"`). Both sides must aim: a host firewall drops a LAN packet until its own side has sent to that address. A home address that answers replaces an outside one on a path that is already up, because a router that hairpins answers about as soon and costs far more (measured on two machines in one house: 1 to 2 ms on the LAN, 50 to 65 ms through the hairpin). A node with no TCP link, met through a relayed introduction, does not get this. TCP is unchanged either way.
+Two nodes in one house still get a direct UDP path, whether or not their NAT hairpins. The node that answers the punch has seen the asker's public address and includes its home address. The asker then knows they share a NAT, so it sends its own home address over the link (`op: "home"`). Both sides must aim: a host firewall drops a LAN packet until its own side has sent to that address. A home address that answers replaces an outside one on a path that is already up, because a router that hairpins answers about as soon and costs far more (measured on two machines in one house: 1 to 2 ms on the LAN, 50 to 65 ms through the hairpin). A node with no TCP link, met through a relayed introduction, does not get this. That UDP exchange is unchanged.
+
+## TCP dials the same way
+
+The link is still found over TCP, and TCP stays up as the backup when the UDP path goes quiet. That dialer (`MeshNode._dial`) connects to addresses in the peer book. A node that shares a LAN with `192.168.1.25` learns that address from the connection itself (`link.host` plus the peer's listen port, 8421) and, once it has reached it, tells its other links. Those links are not on that LAN. They were opening TCP to `192.168.1.25:8421` over and over.
+
+`punch.tcp_targets` asks `punch.dialable` and is the list the dialer, the IPv6 meeter and the tuner may connect to. It keeps every public IPv4 address and every tunnel name. A private, link-local or CGNAT address, and the same address written as `::ffff:a.b.c.d` or as the host of a `ws://` URL, is kept only when `dialable` says so. Unique-local and link-local IPv6 follow that same LAN rule. The whole set of addresses known for that peer is judged together, so the public one is visible next to the home one.
+
+The same filter runs on the way in and the way out of the address gossip (`addrs` frames). A home-network address is not stored from a neighbour, and not sent to a neighbour, unless that neighbour is on this NAT (or `mesh_lan_dial` is `on`).
+
+An address the operator configured (`--mesh-peer`) is still dialed. That is how a machine is pointed at a node on its own LAN before STUN has shown they share one. `mesh_lan_dial` `off` dials no home-network address, including those. Loopback (`127.0.0.1`, `::1`) stays dialable until STUN has reported a public address, so two nodes on one machine still meet. The reachability dial-back is unchanged: it connects only to the address the asker's own connection came from.
 
 A shared carrier-grade NAT can give two unrelated nodes the same public address. `auto` will then try the home address, and those packets stay on the LAN here. `off` is the switch if that matters.
 
@@ -55,9 +65,9 @@ The same note is in the node setup guide under the mesh options.
 Unit tests, from the repository root:
 
 ```bash
-python -m pytest tests/test_punch.py tests/test_mesh_udp.py tests/test_mesh_introduce.py
+python -m pytest tests/test_punch.py tests/test_mesh.py tests/test_mesh_udp.py tests/test_mesh_introduce.py tests/test_stun.py
 ```
 
-`test_a_peer_on_another_network_is_not_dialed_at_its_home_address` is the observed case: our outside address `129.222.44.64`, the peer offering `156.67.28.112` plus `192.168.1.20:32805` and `192.168.1.20:41658`, and only the public address is dialed. The following test is the same public address, where the home addresses are dialed. `test_the_probe_punches_the_mapped_address_and_not_the_home_network` runs two local nodes and checks the offers on the wire contain no `192.168.1.20`. The UDP and introduction tests check those call paths.
+`test_a_peer_on_another_network_is_not_dialed_at_its_home_address` is the observed UDP case: our outside address `129.222.44.64`, the peer offering `156.67.28.112` plus `192.168.1.20:32805` and `192.168.1.20:41658`, and only the public address is dialed. The following test is the same public address, where the home addresses are dialed. `test_tcp_targets_follow_the_same_rule_as_udp` is that rule for the TCP dialer, including `192.168.1.25:8421`. `test_the_dialer_does_not_open_tcp_to_another_nats_home_address` runs a node and checks `open_connection` is called for the public address and not for `192.168.1.25:8421`. `test_the_probe_punches_the_mapped_address_and_not_the_home_network` runs two local nodes and checks the offers on the wire contain no `192.168.1.20`. The UDP and introduction tests check those call paths.
 
 On a machine, with another arcade whose public address is different: run as before (`--mesh-port 0 --mesh-core off --stun-port 0`) and confirm the UDP socket is not sending to `192.168.0.0/16`, `10.0.0.0/8`, `172.16.0.0/12`, `169.254.0.0/16`, `127.0.0.0/8`, or `100.64.0.0/10`. Packets to the peer's public address should still appear once STUN has mapped the socket. With two nodes behind one NAT, `auto` should still open a UDP path. With `"mesh_lan_dial": "on"`, a home address is offered and dialed even when the public addresses differ.

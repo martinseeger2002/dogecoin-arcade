@@ -969,6 +969,21 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
     from .turn import TurnShare
     service.turnshare = TurnShare(service.turn, lambda: {p: h for p, h in service.stun.offers.items() if h})
     service.node.add_extension(service.turnshare)
+
+    def mesh_outside() -> list[str]:
+        """What STUN saw for this node's UDP socket, then the address it announced. punch.tcp_targets
+        dials a peer's home address only when that peer lists one of these."""
+        hosts: list[str] = []
+        share = getattr(service, "udp", None)
+        if share is not None:
+            hosts.extend(list(getattr(share, "outside", ()) or ()))
+        last = (service.last_announced or {}).get("host")
+        if isinstance(last, str) and last:
+            hosts.append(last)
+        return hosts
+
+    service.node.lan_dial = mesh_lan_dial
+    service.node.outside_addrs = mesh_outside
     return service
 
 
