@@ -29112,8 +29112,46 @@ def create_app(state: AppState) -> FastAPI:
     #: The collection search's choices (2026-10-26, SadFrog: "more in depth with sorting and filters and lazy loading
     #: one at a time on demand").
     COLLECTION_SORTS = ("size", "name", "holders", "newest", "agreed")
-    COLLECTION_SOURCES = ("all", "registry", "known")
+    COLLECTION_SOURCES = ("all", "registry", "known", "builtin")
     COLLECTIONS_PAGE, COLLECTIONS_MOST = 30, 60
+
+    # --- Sub 1K: every chain's first thousand inscriptions, built in (2026-11-01) ----------------------------------
+    #
+    # SadFrog: "make a hardcoded collection for all relevant chains that is sub 1k - this should what auto shows on each
+    # chains explore page". Nothing is fetched from outside: its pieces are inscriptions #0 to #999 as this arcade's
+    # index (or a walking linked arcade's) numbers them, asked one number at a time -- a question every arcade answers
+    # -- and kept here once found (a number that low is long settled).
+    SUB1K, SUB1K_SLUG, SUB1K_PAGE = 1000, "sub1k", 48
+    _sub1k_seen: dict[tuple[str, int], dict] = {}
+
+    def _sub1k_row(net: str) -> dict:
+        cover = _sub1k_seen.get((net, 0))
+        return {"kind": "builtin", "slug": SUB1K_SLUG, "name": "Sub 1K", "source": "built in",
+                "description": f"The first {SUB1K:,} inscriptions on {ordchainslib.chain_name(net)}, #0 to "
+                               f"#{SUB1K - 1}, as this arcade's index numbers them.",
+                "supply": SUB1K, "count": SUB1K, "imported": True, "cover": cover["id"] if cover else None,
+                "agreed": None, "owners": None, "height": None, "created": None, "first": 0, "last": SUB1K - 1}
+
+    def _sub1k_pieces(net: str, start: int) -> list[dict]:
+        """Inscriptions #start.. of the Sub 1K page, those the index knows (a lookup each, side by side)."""
+        from concurrent.futures import ThreadPoolExecutor
+        index = state.ord_index(net)
+        numbers = range(start, min(start + SUB1K_PAGE, SUB1K))
+        wanted = [n for n in numbers if (net, n) not in _sub1k_seen]
+        if index is not None and wanted:
+            def one(n: int) -> None:
+                try:
+                    said = index.lookup({"what": "number", "number": n})
+                except Exception:                              # noqa: BLE001 -- not answered: asked at the next page
+                    return
+                x = (said.get("number") or {}).get("inscription") if isinstance(said.get("number"), dict) else None
+                if isinstance(x, dict) and x.get("id") and x.get("number") == n:
+                    _sub1k_seen[(net, n)] = {"id": str(x["id"]), "content_type": x.get("content_type") or ""}
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(one, wanted))
+        return [{"id": got["id"], "name": None, "number": n, "inscription_number": n,
+                 "content_type": got["content_type"]}
+                for n in numbers if (got := _sub1k_seen.get((net, n)))]
 
     def _collection_key(sort: str):
         def name(c):
@@ -29179,6 +29217,10 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": bad}, status_code=400)
         low = said.lower()
         found: list[dict] = []
+        pinned: list[dict] = []
+        if source in ("all", "builtin") and net in ordchainslib.EXPLORE_ORDER \
+                and (not low or low in "sub 1k" or low in SUB1K_SLUG):
+            pinned = [_sub1k_row(net)]
         if source in ("all", "registry"):
             keep = ("txid", "number", "name", "chain", "supply", "description", "cover", "count", "traits")
             found += [{**{k: r.get(k) for k in keep}, "kind": "registry", "source": "registry", "imported": True,
@@ -29196,6 +29238,8 @@ def create_app(state: AppState) -> FastAPI:
                  and (hi < 0 or (c.get("supply") is not None and c["supply"] <= hi))
                  and (not least or (c.get("agreed") or 0) >= least)]
         found.sort(key=_collection_key(sort))
+        pinned = [c for c in pinned if (lo < 0 or c["supply"] >= lo) and (hi < 0 or c["supply"] <= hi) and not least]
+        found = pinned + found                            # Sub 1K first, whatever the sort
         return JSONResponse({"collections": found[at:at + size], "total": len(found), "offset": at, "limit": size},
                             headers={"Cache-Control": "no-store"})
 
@@ -29219,6 +29263,20 @@ def create_app(state: AppState) -> FastAPI:
         demand): the answer says "loading", with how many pieces have come so far, until it is held."""
         if _explore_limited(request):
             return JSONResponse({"detail": "Too many questions in a minute: wait a moment."}, status_code=429)
+        if slug == SUB1K_SLUG:
+            if net not in ordchainslib.EXPLORE_ORDER or not re.match(r"^[0-9]{1,7}$", (offset or "0").strip()):
+                return JSONResponse({"detail": "a chain and an offset"}, status_code=400)
+            if state.ord_index(net) is None:
+                return JSONResponse({"detail": "this arcade does not read that chain"}, status_code=404)
+            start = int(offset)
+            items = _sub1k_pieces(net, start) if start < SUB1K else []
+            said = {"collection": _sub1k_row(net), "loading": False, "items": items,
+                    "next": min(start + SUB1K_PAGE, SUB1K)}
+            if start < SUB1K and not items:
+                said["unanswered"] = (f"Inscriptions #{start} to #{min(start + SUB1K_PAGE, SUB1K) - 1} are not "
+                                      f"indexed here yet, and no linked arcade walking "
+                                      f"{ordchainslib.chain_name(net)} answered.")
+            return JSONResponse(said, headers={"Cache-Control": "no-store"})
         if slug:
             store = state.known_collections() if hasattr(state, "known_collections") else None
             if net not in knownlib.CHAINS or not knownlib.SLUG.match(slug) \

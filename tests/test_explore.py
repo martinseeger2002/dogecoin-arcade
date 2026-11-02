@@ -260,9 +260,9 @@ def _slugs(j):
 def test_the_search_lists_every_known_collection_held_or_not(searched):
     app, _state, _store = searched
     j = _ask(app)
-    assert j["total"] == 7 and j["offset"] == 0 and j["limit"] == 30
-    assert _slugs(j) == ["bone", "apes", "Registry Frogs", "zebra-club", "toads", "frogs", "mesh-only"], \
-        "biggest first by default"
+    assert j["total"] == 8 and j["offset"] == 0 and j["limit"] == 30
+    assert _slugs(j) == ["sub1k", "bone", "apes", "Registry Frogs", "zebra-club", "toads", "frogs", "mesh-only"], \
+        "Sub 1K (built in) first, then biggest first by default"
     by = {c.get("slug") or c["name"]: c for c in j["collections"]}
     assert by["bone"]["imported"] is False and by["bone"]["count"] == 0 and by["bone"]["owners"] == 3000 \
         and by["bone"]["agreed"] == 0 and by["bone"]["cover"] == "" and by["bone"]["kind"] == "known"
@@ -281,24 +281,24 @@ def test_the_search_lists_every_known_collection_held_or_not(searched):
 
 def test_the_search_sorts_filters_and_pages(searched):
     app, _state, _store = searched
-    assert _slugs(_ask(app, sort="name")) == ["apes", "bone", "frogs", "mesh-only", "Registry Frogs", "toads",
+    assert _slugs(_ask(app, sort="name")) == ["sub1k", "apes", "bone", "frogs", "mesh-only", "Registry Frogs", "toads",
                                               "zebra-club"]
-    assert _slugs(_ask(app, sort="holders"))[:5] == ["bone", "apes", "frogs", "zebra-club", "toads"]
-    assert _slugs(_ask(app, sort="newest"))[:5] == ["zebra-club", "frogs", "toads", "bone", "apes"]
-    assert _slugs(_ask(app, sort="agreed"))[:3] == ["toads", "frogs", "mesh-only"], "held here first, then by size"
+    assert _slugs(_ask(app, sort="holders"))[1:6] == ["bone", "apes", "frogs", "zebra-club", "toads"]
+    assert _slugs(_ask(app, sort="newest"))[1:6] == ["zebra-club", "frogs", "toads", "bone", "apes"]
+    assert _slugs(_ask(app, sort="agreed"))[1:4] == ["toads", "frogs", "mesh-only"], "held here first, then by size"
     assert _slugs(_ask(app, source="registry")) == ["Registry Frogs"]
     assert "Registry Frogs" not in _slugs(_ask(app, source="known"))
     assert _slugs(_ask(app, q="FROG")) == ["Registry Frogs", "frogs"], "any case"
     assert _slugs(_ask(app, q="zebra-cl")) == ["zebra-club"], "by slug too"
-    assert _slugs(_ask(app, complete="1")) == ["Registry Frogs", "frogs", "mesh-only"], "held whole only"
+    assert _slugs(_ask(app, complete="1")) == ["sub1k", "Registry Frogs", "frogs", "mesh-only"], "held whole only"
     assert _slugs(_ask(app, max="999")) == ["zebra-club", "toads", "frogs", "mesh-only"]
-    assert _slugs(_ask(app, min="1000", max="10000")) == ["Registry Frogs"]
+    assert _slugs(_ask(app, min="1000", max="10000")) == ["sub1k", "Registry Frogs"]
     assert _slugs(_ask(app, min="10001")) == ["bone", "apes"]
     assert _slugs(_ask(app, agreed="1")) == ["toads", "frogs", "mesh-only"]
     assert _ask(app, agreed="2")["collections"] == []
     first, rest = _ask(app, sort="name", limit="3"), _ask(app, sort="name", limit="3", offset="3")
-    assert _slugs(first) == ["apes", "bone", "frogs"] and _slugs(rest) == ["mesh-only", "Registry Frogs", "toads"]
-    assert first["total"] == rest["total"] == 7 and _ask(app, offset="7")["collections"] == []
+    assert _slugs(first) == ["sub1k", "apes", "bone"] and _slugs(rest) == ["frogs", "mesh-only", "Registry Frogs"]
+    assert first["total"] == rest["total"] == 8 and _ask(app, offset="8")["collections"] == []
     assert _ask(app, q="nothing like it") == {"collections": [], "total": 0, "offset": 0, "limit": 30}
 
 
@@ -337,3 +337,34 @@ def test_a_collection_not_held_is_fetched_when_opened_then_paged(searched):
         "too big to keep: said so, not queued"
     assert app.get("/explore/api/collection?net=doge&slug=nope", headers=EDGE).status_code == 404
     assert app.get("/explore/api/collection?net=doge&slug=zebra-club&offset=x", headers=EDGE).status_code == 400
+
+
+def test_every_chain_opens_on_its_sub_1k_built_in_and_paged_by_number(walking, monkeypatch):
+    """2026-11-01, SadFrog: "make a hardcoded collection for all relevant chains that is sub 1k - this should what auto
+    shows on each chains explore page". Sub 1K is listed first on every chain whatever the sort; its pieces are #0 to #999
+    as this arcade's index numbers them, a page of 48 by number, kept once found; a page nobody answers says so."""
+    app, state = walking
+    j = app.get("/explore/api/collections?net=main&sort=name", headers=EDGE).json()
+    first = j["collections"][0]
+    assert (first["slug"], first["kind"], first["name"], first["supply"]) == ("sub1k", "builtin", "Sub 1K", 1000)
+    assert app.get("/explore/api/collections?net=main&source=builtin", headers=EDGE).json()["total"] == 1
+    assert app.get("/explore/api/collections?net=main&source=known", headers=EDGE).json()["total"] == 0
+    assert app.get("/explore/api/collections?net=main&max=999", headers=EDGE).json()["total"] == 0
+    assert app.get("/explore/api/collections?net=main&q=sub", headers=EDGE).json()["collections"][0]["slug"] == "sub1k"
+
+    page = app.get("/explore/api/collection?net=main&slug=sub1k&offset=0", headers=EDGE).json()
+    assert [i["number"] for i in page["items"]] == [0, 1, 2] and page["next"] == 48 and "unanswered" not in page
+    assert page["items"][1]["id"] == "02" * 32 + "i0" and page["items"][1]["content_type"] == "text/plain"
+    assert page["collection"]["cover"] == "01" * 32 + "i0", "#0 its cover once seen"
+    later = app.get("/explore/api/collection?net=main&slug=sub1k&offset=48", headers=EDGE).json()
+    assert later["items"] == [] and later["next"] == 96 and "not indexed here yet" in later["unanswered"]
+    assert app.get("/explore/api/collection?net=main&slug=sub1k&offset=1000", headers=EDGE).json()["items"] == []
+
+    index = state.ord_index("main")
+    monkeypatch.setattr(index, "lookup", lambda question: (_ for _ in ()).throw(RuntimeError("nobody answers")))
+    again = app.get("/explore/api/collection?net=main&slug=sub1k&offset=0", headers=EDGE).json()
+    assert [i["number"] for i in again["items"]] == [0, 1, 2], "kept once found"
+    for bad in ("net=main&slug=sub1k&offset=x", "net=nochain&slug=sub1k&offset=0"):
+        assert app.get("/explore/api/collection?" + bad, headers=EDGE).status_code == 400, bad
+    html = app.get("/explore", headers=EDGE).text
+    assert "slug: 'sub1k'" in html and 'value="builtin"' in html

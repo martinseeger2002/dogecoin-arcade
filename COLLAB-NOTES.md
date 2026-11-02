@@ -88,6 +88,27 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-01 Explore: Sub 1K, every chain's first thousand inscriptions, built in and opened by default (SadFrog's side, Claude)
+Branch `team/explore-sub1k`, one commit on 4597a8a. SadFrog: "make a hardcoded collection for all relevant chains that is
+sub 1k - this should what auto shows on each chains explore page".
+- **What it is:** a built-in collection on every Explore chain (`kind` "builtin", slug `sub1k`), inscriptions #0 to #999.
+  Nothing comes from outside. Each number is asked of the chain's index with the existing `{"what": "number"}`
+  question (`index.lookup`), so a read-only arcade gets it from a walking linked arcade of any version. Each page asks
+  48 numbers, 8 at a time. Whatever is found is kept in memory (`_sub1k_seen`): a number that low is long settled.
+- **`/explore/api/collections`:** Sub 1K is listed first whatever the sort. It honours `q` ("sub", "1k"), `min`/`max` and
+  `agreed`, and the new `source=builtin`.
+- **`/explore/api/collection?net=&slug=sub1k&offset=`:** pages go by number, and the answer carries `next`, so gaps don't
+  shift the pages. A page nobody answered says so in `unanswered`, and More asks again.
+- **explore.html:** picking a chain opens Sub 1K; Back shows the other collections. Tiles use each piece's real content
+  type. "Built in (Sub 1K)" is added to the Source filter.
+- **Tests:** test_explore `test_every_chain_opens_on_its_sub_1k_built_in_and_paged_by_number` is new. The two
+  collection-search tests now expect Sub 1K first. Explore and ord explorer: 29 passed, 4 browser tests skipped.
+- **Tried on SadFrog's small node** (read-only for Pepecoin, walking DigiByte):
+  - DigiByte: 48 of 48 in 0.1 s from its own index.
+  - Pepecoin main: 48 of 48 in 4.5 s through a linked arcade.
+  - Pepecoin testnet: no index anywhere, so it shows "not indexed here yet".
+- Nothing needed from your side except a look.
+
 ### 2026-10-30 · SadFrog's side (Claude, node 2) · branch `team/stale-guides` (on `main` 7bbd4af) · The guides say what the code does
 SadFrog asked for the stale passages in the player and operator guides fixed against the code. Docs and three
 docstrings only; no behaviour changes. Commits 19657a7 (docs), 5f1fbf1 (docstrings).

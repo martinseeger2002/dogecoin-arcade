@@ -182,6 +182,7 @@
           <option value="all">All</option>
           <option value="known">Known (Nintondo, arcades)</option>
           <option value="registry">Collection registry</option>
+          <option value="builtin">Built in (Sub 1K)</option>
         </select></label>
         <label>Size <select id="xpcollsize">
           <option value="">Any</option>
@@ -342,6 +343,9 @@
       $('xpview').hidden = true;                      // until an inscription on this chain is picked
       $('xpcollq').value = '';
       collections();
+      // 2026-11-01, SadFrog: Sub 1K (the chain's first thousand inscriptions, built in) is what a chain opens on;
+      // Back shows the other collections.
+      openCollection({kind: 'builtin', slug: 'sub1k', name: 'Sub 1K', count: 1000, supply: 1000, imported: true});
     } else if (p.kind === 'token') {
       X.tick = null; $('xptok').textContent = ''; PICK.q.value = '';
       $('xptokh').textContent = p.label + ' tokens on ' + c.chain;
@@ -691,11 +695,13 @@
     var c = X.coll, mine = OPEN.gen;
     if (!c || OPEN.busy || OPEN.done || (OPEN.waiting && again !== true)) return;
     OPEN.busy = true;
-    var args = c.kind === 'known' ? {net: X.chain.net, slug: c.slug, offset: OPEN.next} : {root: c.txid, offset: OPEN.next};
+    var args = c.kind === 'known' || c.kind === 'builtin' ? {net: X.chain.net, slug: c.slug, offset: OPEN.next}
+      : {root: c.txid, offset: OPEN.next};
     api('collection', args).then(function (j) {
       if (mine !== OPEN.gen) return;
       OPEN.busy = false;
       if (c.kind === 'known' && j.collection) { c = X.coll = j.collection; $('xpcolldesc').textContent = knownSaid(c); }
+      if (c.kind === 'builtin' && j.collection) { c = X.coll = j.collection; $('xpcolldesc').textContent = c.description || ''; }
       if (j.loading) {                                   // not held yet: being fetched, looked at again in 3 s
         $('xpcollwait').textContent = (j.importing === false ? 'Asking linked arcades for it' : 'Fetching from Nintondo')
           + ': ' + num(j.have || 0) + (j.of ? ' of ' + num(j.of) : '') + ' pieces';
@@ -705,16 +711,17 @@
       }
       OPEN.waiting = false;
       if (j.skipped) { OPEN.done = true; $('xpcollwait').textContent = 'Not fetched: ' + j.skipped; return; }
-      $('xpcollwait').textContent = '';
+      $('xpcollwait').textContent = j.unanswered || '';
       var items = j.items || [], grid = $('xpcollgrid');
       items.forEach(function (it) {
-        grid.appendChild(tile({id: it.id, content_type: 'image/'},
+        grid.appendChild(tile({id: it.id, content_type: it.content_type || 'image/'},
           it.name || (c.name + (it.number != null ? ' #' + num(it.number) : '')),
           {name: it.name || '', collection: c.name, number: it.inscription_number}));
       });
-      OPEN.next += items.length;
+      // Sub 1K goes by number (gaps and all); a page nobody could answer stays where it is, More asks again.
+      if (!(j.unanswered && !items.length)) OPEN.next = j.next != null ? j.next : OPEN.next + items.length;
       OPEN.total = c.count || 0;
-      if (!items.length) OPEN.total = OPEN.next;           // nothing more where more was said: the end
+      if (!items.length && j.next == null) OPEN.total = OPEN.next;   // nothing more where more was said: the end
       OPEN.done = OPEN.next >= OPEN.total;
       $('xpcollpage').textContent = OPEN.total ? num(Math.min(OPEN.next, OPEN.total)) + ' of ' + num(OPEN.total) + ' shown' : '';
       $('xpcollmore').hidden = OPEN.done;
