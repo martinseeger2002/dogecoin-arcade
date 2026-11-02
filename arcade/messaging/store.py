@@ -721,6 +721,19 @@ class MessageStore:
             "     AND (b.seen_at, b.txid) > (a.seen_at, a.txid))"
             " ORDER BY a.seen_at DESC LIMIT 2000", (network, int(since))).fetchall()   # hundreds of nodes, two kinds each
 
+    def mesh_key_senders(self, network: str, keys: list[str]) -> dict[str, set[str]]:
+        """Every address that has announced each of `keys`, of either kind and at any time: {mesh key: {address}}.
+        A key nobody announced is left out."""
+        keys = [k for k in keys if k]
+        out: dict[str, set[str]] = {}
+        for i in range(0, len(keys), 500):
+            part = keys[i:i + 500]
+            for row in self.conn.execute(
+                    "SELECT DISTINCT mesh_key, address FROM mesh_announcement"
+                    f" WHERE network = ? AND mesh_key IN ({','.join('?' * len(part))})", (network, *part)):
+                out.setdefault(str(row["mesh_key"]), set()).add(str(row["address"]))
+        return out
+
     def set_meta(self, key: str, value: str) -> None:
         self.conn.execute(
             "INSERT INTO meta(key,value) VALUES(?,?) "

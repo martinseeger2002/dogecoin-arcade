@@ -563,6 +563,37 @@ def test_overview_shows_arcades_seen_through_a_linked_one(public):
     assert rows[1]["cores"] == [], "nothing of its own is claimed for it"
 
 
+def test_overview_names_an_arcade_that_says_none_from_its_announcement_on_the_chain(public):
+    """2026-11-02: a new operator on Windows claimed @dogefeed from the address that announces his arcade, and his
+    arcade said no name, so the list showed his mesh id. An arcade that says none gets the @name of the one address that
+    announced its mesh key; a key two addresses announced (anybody can announce another's key) gets none, and what an
+    arcade says itself still wins."""
+    app, state = public
+    me, quiet, twice, says = "a" * 64, "b" * 64, "c" * 64, "d" * 64
+    net = state.messaging.network
+    chain = next(c for c in state.token_chains if c.network == net)
+    with state.token_index(chain).open() as db:
+        for tag, address in (("dogefeed", "nFeed"), ("mallory", "nMallory"), ("realname", "nSays")):
+            db.conn.execute("INSERT INTO tag(tag,address,claimed_txid,block_height,position) VALUES(?,?,?,?,0)",
+                            (tag, address, tag.ljust(64, "0")[:64], 100))
+        db.conn.commit()
+    with state.store() as store:
+        for i, (address, key) in enumerate((("nFeed", quiet), ("nFeed", quiet), ("nSays", twice),
+                                            ("nMallory", twice), ("nMallory", says))):
+            store.add_mesh_announcement(f"{i:064x}", net, address, "203.0.113.7", 8421, key, 100 + i, 1_700_000_000)
+    was = getattr(state, "mesh", None)
+    state.mesh = _mesh_of(me, [quiet, twice, says], rtts={quiet: 10.0, twice: 20.0, says: 30.0},
+                          said={quiet: {"tag": "", "hosts": []}, says: {"tag": "said_itself", "hosts": []}})
+    try:
+        got = app.get("/admin/api/arcades", headers=LOCAL).json()
+    finally:
+        state.mesh = was
+    rows = {r["node"]: r for r in got["rows"][1:]}
+    assert rows[quiet[:12]]["tag"] == "dogefeed" and rows[quiet[:12]]["tag_from"] == "chain"
+    assert rows[twice[:12]]["tag"] == "" and "tag_from" not in rows[twice[:12]], "announced by two addresses: no name"
+    assert rows[says[:12]]["tag"] == "said_itself" and "tag_from" not in rows[says[:12]], "its own word first"
+
+
 def _store_announcing(state, keys):
     """state.store, with these mesh keys announced on the chain in the last day."""
     import contextlib
