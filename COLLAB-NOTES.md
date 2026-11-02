@@ -88,6 +88,20 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 DogeFeedX: Updated data sources and added screenshots (blockchaindad agent, Claude)
+Follow-up to the DogeFeedX apps:
+- **Data sources clarified:** dogefeed.app provides feed (/api/feed), search (/api/search), and doginal
+  images (/doginal-img/). Collection metadata uses explorer.dogesoft.io since dogefeed.app doesn't expose
+  a public collection listing API (their collection pages are server-side rendered).
+- **dogefeedx.py updated:** Added `_fetch_dogefeed_app` for dogefeed.app endpoints and
+  `_fetch_dogefeed_explorer` for explorer.dogesoft.io. New `/api/feed` endpoint extracts verified PFP
+  holders from the social feed. Image URLs now point to dogefeed.app/doginal-img/.
+- **explorer.html updated:** CONTENT_BASE now uses dogefeed.app/doginal-img/ for images.
+- **Screenshots:** Created example screenshots at `/opt/cursor/artifacts/screenshots/`:
+  - `dogefeedx-explorer-example.png` - Finder-style collection browser
+  - `dogefeedx-terminal-example.png` - Terminal.app-style command window
+- Branch `cursor/dogefeedx-apps-8c32`, same PR #4. Tests: 19 passed.
+
 ### 2026-11-02 DogeFeedX: Explorer and Terminal apps with Mac OS X Aqua style (blockchaindad agent, Claude)
 Two self-contained DogeFeedX apps for the arcade desktop with Mac OS X Aqua styling and DogeFeed branding:
 - **Explorer (`/dogefeedx/explorer`)**: Finder-style browser for inscription collections from DogeFeed

@@ -4,8 +4,12 @@ Two self-contained apps that register with the shell's dock:
 1. Explorer: A Finder-style browser of inscription collections from DogeFeed
 2. Terminal: A Terminal.app-style window for inline commands
 
-DogeFeed collections are fetched from explorer.dogesoft.io, cached locally, with
-graceful fallback when the service is unreachable.
+Data sources:
+- dogefeed.app: Social feed (/api/feed), search (/api/search), doginal images (/doginal-img/)
+- explorer.dogesoft.io: Collection metadata fallback (DogeFeed does not expose a public
+  collection listing API; their collection pages are server-side rendered)
+
+All results are cached locally with graceful fallback when services are unreachable.
 """
 from __future__ import annotations
 
@@ -21,8 +25,9 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 
 logger = logging.getLogger(__name__)
 
-DOGEFEED_API_BASE = "https://explorer.dogesoft.io/api"
-DOGEFEED_CONTENT_BASE = "https://explorer.dogesoft.io/content"
+DOGEFEED_APP_BASE = "https://dogefeed.app"
+DOGEFEED_EXPLORER_BASE = "https://explorer.dogesoft.io/api"
+DOGEFEED_IMG_BASE = "https://dogefeed.app/doginal-img"
 CACHE_TTL = 300  # 5 minutes
 REQUEST_TIMEOUT = 10.0
 
@@ -50,23 +55,49 @@ def _set_cached(cache: dict, key: str, value: Any) -> None:
             cache.pop(k, None)
 
 
-async def _fetch_dogefeed(path: str, params: dict | None = None) -> dict:
-    """Fetch data from DogeFeed API with timeout and error handling."""
-    url = f"{DOGEFEED_API_BASE}{path}"
+async def _fetch_dogefeed_app(path: str, params: dict | None = None) -> dict:
+    """Fetch data from dogefeed.app API with timeout and error handling.
+    
+    dogefeed.app provides: /api/feed, /api/search, /doginal-img/{id}
+    """
+    url = f"{DOGEFEED_APP_BASE}{path}"
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             response = await client.get(url, params=params)
             response.raise_for_status()
             return response.json()
     except httpx.TimeoutException:
-        logger.warning(f"DogeFeed API timeout: {path}")
+        logger.warning(f"DogeFeed.app API timeout: {path}")
         raise HTTPException(status_code=504, detail="DogeFeed API timeout")
     except httpx.HTTPStatusError as e:
-        logger.warning(f"DogeFeed API error: {e.response.status_code}")
+        logger.warning(f"DogeFeed.app API error: {e.response.status_code}")
         raise HTTPException(status_code=502, detail=f"DogeFeed API error: {e.response.status_code}")
     except Exception as e:
-        logger.warning(f"DogeFeed API error: {e}")
+        logger.warning(f"DogeFeed.app API error: {e}")
         raise HTTPException(status_code=502, detail="Unable to reach DogeFeed")
+
+
+async def _fetch_dogefeed_explorer(path: str, params: dict | None = None) -> dict:
+    """Fetch collection data from explorer.dogesoft.io (DogeFeed's explorer).
+    
+    Used for structured collection listings since dogefeed.app doesn't expose a
+    public collection API (their collection pages are server-side rendered).
+    """
+    url = f"{DOGEFEED_EXPLORER_BASE}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+    except httpx.TimeoutException:
+        logger.warning(f"DogeFeed Explorer API timeout: {path}")
+        raise HTTPException(status_code=504, detail="DogeFeed Explorer API timeout")
+    except httpx.HTTPStatusError as e:
+        logger.warning(f"DogeFeed Explorer API error: {e.response.status_code}")
+        raise HTTPException(status_code=502, detail=f"DogeFeed Explorer API error: {e.response.status_code}")
+    except Exception as e:
+        logger.warning(f"DogeFeed Explorer API error: {e}")
+        raise HTTPException(status_code=502, detail="Unable to reach DogeFeed Explorer")
 
 
 # --- Static files ---
@@ -140,6 +171,66 @@ async def icon_terminal():
 
 # --- Explorer API ---
 
+@router.get("/api/feed")
+async def api_feed(
+    limit: int = 20,
+    cursor: str = ""
+):
+    """Get the DogeFeed social feed from dogefeed.app.
+    
+    Returns posts from verified doginal holders and recent activity.
+    This is the primary dogefeed.app data source.
+    """
+    limit = min(max(1, limit), 50)
+    
+    cache_key = f"feed:{cursor}:{limit}"
+    cached = _get_cached(_collection_cache, cache_key, ttl=60)  # 1 min cache for feed
+    if cached is not None:
+        return cached
+    
+    try:
+        params = {"tab": "for-you", "limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        data = await _fetch_dogefeed_app("/api/feed", params)
+        
+        items = data.get("items", []) if isinstance(data, dict) else data
+        
+        doginal_holders = []
+        seen_holders = set()
+        for item in items:
+            author = item.get("author", {})
+            if author.get("verifiedPfp") and author.get("id") not in seen_holders:
+                avatar = author.get("avatarUrl", "")
+                inscription_id = ""
+                if avatar.startswith("/doginal-img/"):
+                    inscription_id = avatar.replace("/doginal-img/", "")
+                doginal_holders.append({
+                    "handle": author.get("handle", ""),
+                    "display_name": author.get("displayName", ""),
+                    "pfp_rarity": author.get("pfpRarity"),
+                    "inscription_id": inscription_id,
+                    "avatar_url": f"{DOGEFEED_APP_BASE}{avatar}" if avatar.startswith("/") else avatar,
+                })
+                seen_holders.add(author.get("id"))
+        
+        result = {
+            "items": items[:limit],
+            "doginal_holders": doginal_holders,
+            "source": "dogefeed.app",
+            "image_base": DOGEFEED_IMG_BASE,
+        }
+        
+        _set_cached(_collection_cache, cache_key, result)
+        return result
+        
+    except HTTPException:
+        return {"items": [], "doginal_holders": [], "source": "dogefeed.app", "error": "unreachable"}
+    except Exception as e:
+        logger.warning(f"Error fetching feed: {e}")
+        return {"items": [], "doginal_holders": [], "source": "dogefeed.app", "error": str(e)}
+
+
 @router.get("/api/collections")
 async def api_collections(
     offset: int = 0,
@@ -149,7 +240,9 @@ async def api_collections(
 ):
     """List collections from DogeFeed.
     
-    Fetches from explorer.dogesoft.io/api/explorer/collections, caches results.
+    Uses explorer.dogesoft.io for structured collection data since dogefeed.app
+    doesn't expose a public collection listing API. Images are served from
+    dogefeed.app's /doginal-img/ endpoint.
     """
     limit = min(max(1, limit), 200)
     offset = max(0, offset)
@@ -161,7 +254,7 @@ async def api_collections(
     
     try:
         params = {"offset": offset, "limit": limit}
-        data = await _fetch_dogefeed("/explorer/collections", params)
+        data = await _fetch_dogefeed_explorer("/explorer/collections", params)
         
         collections_raw = data if isinstance(data, list) else data.get("collections", data.get("items", []))
         
@@ -193,7 +286,8 @@ async def api_collections(
             "offset": offset,
             "limit": limit,
             "has_more": len(collections_raw) > offset + limit,
-            "source": "dogefeed"
+            "source": "explorer.dogesoft.io",
+            "image_base": DOGEFEED_IMG_BASE,
         }
         
         _set_cached(_collection_cache, cache_key, result)
@@ -212,7 +306,10 @@ async def api_collection_items(
     offset: int = 0,
     limit: int = 50
 ):
-    """Get items in a collection from DogeFeed."""
+    """Get items in a collection from DogeFeed.
+    
+    Uses explorer.dogesoft.io for item listings. Images served from dogefeed.app.
+    """
     if not id:
         raise HTTPException(status_code=400, detail="Collection ID required")
     
@@ -225,7 +322,7 @@ async def api_collection_items(
         return cached
     
     try:
-        data = await _fetch_dogefeed(f"/explorer/collections/{id}/items", {"offset": offset, "limit": limit})
+        data = await _fetch_dogefeed_explorer(f"/explorer/collections/{id}/items", {"offset": offset, "limit": limit})
         
         items_raw = data if isinstance(data, list) else data.get("items", data.get("inscriptions", []))
         
@@ -247,7 +344,8 @@ async def api_collection_items(
             "offset": offset,
             "limit": limit,
             "has_more": len(items_raw) > limit,
-            "source": "dogefeed"
+            "source": "explorer.dogesoft.io",
+            "image_base": DOGEFEED_IMG_BASE,
         }
         
         _set_cached(_collection_items_cache, cache_key, result)
@@ -262,12 +360,15 @@ async def api_collection_items(
 
 @router.get("/api/inscription")
 async def api_inscription(id: str = ""):
-    """Get inscription details."""
+    """Get inscription details.
+    
+    Uses explorer.dogesoft.io for metadata. Image available at dogefeed.app/doginal-img/{id}.
+    """
     if not id:
         raise HTTPException(status_code=400, detail="Inscription ID required")
     
     try:
-        data = await _fetch_dogefeed(f"/explorer/inscriptions/{id}")
+        data = await _fetch_dogefeed_explorer(f"/explorer/inscriptions/{id}")
         
         inscription = {
             "id": data.get("id") or id,
@@ -277,9 +378,10 @@ async def api_inscription(id: str = ""):
             "owner": data.get("owner") or data.get("address") or "",
             "genesis_height": data.get("genesis_height") or data.get("height"),
             "collection": data.get("collection") or data.get("collection_name") or "",
+            "image_url": f"{DOGEFEED_IMG_BASE}/{id}",
         }
         
-        return {"inscription": inscription, "source": "dogefeed"}
+        return {"inscription": inscription, "source": "explorer.dogesoft.io", "image_base": DOGEFEED_IMG_BASE}
         
     except HTTPException:
         raise
@@ -289,13 +391,59 @@ async def api_inscription(id: str = ""):
 
 
 @router.get("/api/search")
-async def api_search(q: str = ""):
-    """Search inscriptions."""
+async def api_search(q: str = "", type: str = "all"):
+    """Search DogeFeed using dogefeed.app's search API.
+    
+    Searches users and posts. Use type=users, type=posts, or type=all.
+    """
     if not q or len(q) < 2:
         raise HTTPException(status_code=400, detail="Query too short")
     
-    results = []
-    return {"results": results, "query": q}
+    cache_key = f"search:{q}:{type}"
+    cached = _get_cached(_collection_cache, cache_key, ttl=120)  # 2 min cache
+    if cached is not None:
+        return cached
+    
+    try:
+        params = {"q": q}
+        if type in ("users", "posts"):
+            params["type"] = type
+        data = await _fetch_dogefeed_app("/api/search", params)
+        
+        users = data.get("users", [])
+        posts = data.get("posts", [])
+        
+        doginal_users = []
+        for u in users:
+            avatar = u.get("avatarUrl", "")
+            inscription_id = ""
+            if avatar.startswith("/doginal-img/"):
+                inscription_id = avatar.replace("/doginal-img/", "")
+            doginal_users.append({
+                "handle": u.get("handle", ""),
+                "display_name": u.get("displayName", ""),
+                "verified_pfp": u.get("verifiedPfp", False),
+                "pfp_rarity": u.get("pfpRarity"),
+                "inscription_id": inscription_id,
+                "avatar_url": f"{DOGEFEED_APP_BASE}{avatar}" if avatar.startswith("/") else avatar,
+            })
+        
+        result = {
+            "query": q,
+            "users": doginal_users,
+            "posts": posts[:20],
+            "source": "dogefeed.app",
+            "image_base": DOGEFEED_IMG_BASE,
+        }
+        
+        _set_cached(_collection_cache, cache_key, result)
+        return result
+        
+    except HTTPException:
+        return {"query": q, "users": [], "posts": [], "source": "dogefeed.app", "error": "unreachable"}
+    except Exception as e:
+        logger.warning(f"Error searching: {e}")
+        return {"query": q, "users": [], "posts": [], "source": "dogefeed.app", "error": str(e)}
 
 
 # --- Terminal API ---
@@ -356,12 +504,12 @@ async def api_peers(request: Request):
 
 @router.get("/api/balance")
 async def api_balance(address: str = ""):
-    """Check address balance using DogeFeed API."""
+    """Check address balance using DogeFeed Explorer API."""
     if not address:
         raise HTTPException(status_code=400, detail="Address required")
     
     try:
-        data = await _fetch_dogefeed(f"/wallet/address/{address}/balance")
+        data = await _fetch_dogefeed_explorer(f"/wallet/address/{address}/balance")
         
         balances = [{
             "chain": "Dogecoin",
@@ -379,12 +527,12 @@ async def api_balance(address: str = ""):
 
 @router.get("/api/lookup")
 async def api_lookup(name: str = ""):
-    """Look up a name (e.g., john.doge)."""
+    """Look up a name (e.g., john.doge) using DogeFeed Explorer API."""
     if not name:
         raise HTTPException(status_code=400, detail="Name required")
     
     try:
-        data = await _fetch_dogefeed(f"/name/{name}")
+        data = await _fetch_dogefeed_explorer(f"/name/{name}")
         
         if data and data.get("name"):
             return {

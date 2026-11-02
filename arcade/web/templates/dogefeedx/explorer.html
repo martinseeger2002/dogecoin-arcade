@@ -2,7 +2,10 @@
 {% block title %}DogeFeed Explorer · {{ brand.name }}{% endblock %}
 {% block body %}
 {#- DogeFeedX Explorer: A Finder-style browser for inscription collections from DogeFeed.
-    Pulls collections from DogeFeed (explorer.dogesoft.io), caches results, graceful fallback. -#}
+    Data sources:
+    - dogefeed.app: Social feed, search, doginal images (/doginal-img/)
+    - explorer.dogesoft.io: Collection metadata (DogeFeed doesn't expose a public collection API)
+    Caches results with graceful fallback when services are unreachable. -#}
 <link rel="stylesheet" href="/dogefeedx/aqua.css">
 <style>
 .dfx-explorer {
@@ -227,7 +230,7 @@
   'use strict';
   
   var API_BASE = '/dogefeedx/api';
-  var CONTENT_BASE = 'https://explorer.dogesoft.io/content';
+  var CONTENT_BASE = 'https://dogefeed.app/doginal-img';
   
   var state = {
     collections: [],
