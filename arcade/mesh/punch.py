@@ -21,7 +21,8 @@ used to send anybody much of anything.
 
 A home-network address is not aimed at, and not told to the other side, unless that side's outside address is one
 STUN observed for us (both are behind the same NAT) or the operator set mesh_lan_dial to "on". Sending at a peer's
-private address from another network only hits whatever lives at that address on our own LAN.
+private address from another network only hits whatever lives at that address on our own LAN. The TCP dialer
+(node.py) asks `tcp_targets` the same question before it connects, and before it passes such an address on.
 """
 
 from __future__ import annotations
@@ -191,6 +192,138 @@ def dialable(addrs, outside, mode="auto") -> list[tuple[str, int]]:
             continue
         kept.append((str(host), int(port)))
     return kept
+
+
+def _bare(host) -> str:
+    text = str(host or "").strip().strip("[]")
+    if "%" in text:
+        text = text.split("%", 1)[0]
+    return text
+
+
+def _mapped_v4(host) -> ipaddress.IPv4Address | None:
+    """IPv4, or the IPv4 inside an IPv4-mapped IPv6 address (::ffff:a.b.c.d)."""
+    try:
+        ip = ipaddress.ip_address(_bare(host))
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv4Address):
+        return ip
+    return ip.ipv4_mapped
+
+
+def _plain_v6(host) -> ipaddress.IPv6Address | None:
+    try:
+        ip = ipaddress.ip_address(_bare(host))
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is None:
+        return ip
+    return None
+
+
+def _ws_endpoint(host) -> tuple[str, int] | None:
+    """(name, port) inside a ws:// or wss:// address. None when `host` is not one.
+    ("", 0) when it was meant to be one and does not parse."""
+    text = str(host or "").strip()
+    if not text.startswith(("ws://", "wss://")):
+        return None
+    try:
+        from .wsock import parse_url
+        name, port, _, _ = parse_url(text)
+    except ValueError:
+        return ("", 0)
+    return name, port
+
+
+def is_home_host(host) -> bool:
+    """A private, link-local, unique-local or CGNAT address. Loopback is this machine. A public address,
+    and a tunnel name, are not."""
+    ws = _ws_endpoint(host)
+    if ws is not None:
+        if ws == ("", 0):
+            return False
+        host = ws[0]
+    ip4 = _mapped_v4(host)
+    if ip4 is not None:
+        return not ip4.is_loopback and not _never_dial(ip4) and not routable_public(ip4)
+    ip6 = _plain_v6(host)
+    if ip6 is None or ip6.is_loopback or ip6.is_global or ip6.is_multicast or ip6.is_unspecified or ip6.is_reserved:
+        return False
+    return True
+
+
+def tcp_targets(addrs, outside, mode="auto") -> list[tuple[str, int]]:
+    """Which of `addrs` the TCP dialer may connect to. Each kept pair compares equal to the one passed in.
+
+    Public IPv4 always. A private, link-local or CGNAT IPv4 address only when `dialable` allows it: the same
+    NAT (`same_outside`), or mesh_lan_dial "on". Give every address known for that one peer. Judging the home
+    address on its own cannot see the public address beside it, so the same NAT looks like a different one.
+
+    A hostname (a tunnel, or the name in a ws:// URL) is dialed. An IPv4 address written as ::ffff:a.b.c.d, or
+    as the host of a ws:// URL, is judged as that IPv4. Link-local and unique-local IPv6 follow the same rule.
+
+    Loopback stays dialable until STUN has reported a public address for this node, so two nodes on one machine
+    still meet. After that it follows `dialable`. mesh_lan_dial "off" does not dial loopback unless STUN
+    observed that loopback address.
+    """
+    mode = lan_dial_mode(mode)
+    outside_ips: list[str] = []
+    for host in outside or []:
+        ip = _parse_v4(host)
+        if ip is not None and str(ip) not in outside_ips:
+            outside_ips.append(str(ip))
+    have_public = any(routable_public(h) for h in outside_ips)
+    rows = []
+    v4_pairs: list[tuple[str, int]] = []
+    for item in addrs or []:
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            continue
+        host, port = item[0], item[1]
+        try:
+            stored_port = int(port)
+        except (TypeError, ValueError):
+            continue
+        original = (host, port) if isinstance(port, int) else (host, stored_port)
+        row: dict = {"item": original, "kind": "keep", "pair": None}
+        rows.append(row)
+        name, judged_port = str(host), stored_port
+        ws = _ws_endpoint(host)
+        if ws is not None:
+            if ws == ("", 0):
+                row["kind"] = "drop"
+                continue
+            name, judged_port = ws
+        ip4 = _mapped_v4(name)
+        if ip4 is not None:
+            if ip4.is_loopback and not have_public and mode != "off":
+                continue
+            pair = (str(ip4), int(judged_port))
+            row["kind"] = "v4"
+            row["pair"] = pair
+            v4_pairs.append(pair)
+            continue
+        ip6 = _plain_v6(name)
+        if ip6 is None:
+            continue
+        if ip6.is_loopback and not have_public and mode != "off":
+            pass
+        elif ip6.is_loopback or ip6.is_multicast or ip6.is_unspecified or ip6.is_reserved:
+            # ::1 is reserved as well as loopback. Once STUN has a public answer it is not dialed,
+            # same as 127.0.0.1. Multicast and the rest of the reserved space are never a peer.
+            row["kind"] = "drop"
+        elif ip6.is_global:
+            pass
+        else:
+            row["kind"] = "v6lan"
+    allowed = {(h, p) for h, p in dialable(v4_pairs, outside_ips, mode)}
+    allow_lan = mode == "on" or (mode == "auto" and same_outside(outside_ips, v4_pairs))
+    out = []
+    for row in rows:
+        kind, pair = row["kind"], row["pair"]
+        if kind == "keep" or (kind == "v4" and pair in allowed) or (kind == "v6lan" and allow_lan):
+            out.append(row["item"])
+    return out
 
 
 def spray_at(targets, outside) -> str | None:

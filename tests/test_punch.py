@@ -188,6 +188,52 @@ def test_the_operator_can_allow_or_refuse_home_network_addresses():
     assert punch.include_lan(_OURS, [], "on") is True
 
 
+def test_tcp_targets_follow_the_same_rule_as_udp():
+    """What the TCP dialer was doing after UDP gave up: 192.168.1.25:8421, another operator's home LAN.
+    The public endpoint is kept. The home one is kept only when that public address is ours."""
+    other = [
+        ("156.67.28.112", 8421),
+        ("192.168.1.25", 8421),
+        ("192.168.1.55", 8421),
+        ("10.1.2.3", 8421),
+        ("172.16.4.4", 8421),
+        ("100.64.12.1", 8421),
+        ("169.254.8.8", 8421),
+        ("::ffff:192.168.1.25", 8421),
+        ("wss://192.168.1.25/mesh", 443),
+        ("wss://node.trycloudflare.com/mesh", 443),
+        ("2606:4700:4700::1111", 8421),
+        ("fd00::25", 8421),
+    ]
+    kept = punch.tcp_targets(other, _OURS, "auto")
+    assert ("156.67.28.112", 8421) in kept
+    assert ("wss://node.trycloudflare.com/mesh", 443) in kept
+    assert ("2606:4700:4700::1111", 8421) in kept
+    for blocked in (("192.168.1.25", 8421), ("192.168.1.55", 8421), ("10.1.2.3", 8421),
+                    ("172.16.4.4", 8421), ("100.64.12.1", 8421), ("169.254.8.8", 8421),
+                    ("::ffff:192.168.1.25", 8421), ("wss://192.168.1.25/mesh", 443), ("fd00::25", 8421)):
+        assert blocked not in kept, blocked
+    # Judged on its own, the home address has no public sibling, so it is not this NAT.
+    assert punch.tcp_targets([("192.168.1.25", 8421)], _OURS, "auto") == []
+
+    same = [("129.222.44.64", 8421), ("192.168.1.25", 8421), ("192.168.1.55", 8421),
+            ("100.64.1.1", 8421), ("169.254.1.1", 8421), ("fd00::25", 8421), ("127.0.0.1", 8421)]
+    allowed = punch.tcp_targets(same, _OURS, "auto")
+    assert ("129.222.44.64", 8421) in allowed
+    assert ("192.168.1.25", 8421) in allowed and ("192.168.1.55", 8421) in allowed
+    assert ("100.64.1.1", 8421) in allowed and ("169.254.1.1", 8421) in allowed and ("fd00::25", 8421) in allowed
+    assert ("127.0.0.1", 8421) not in allowed, "a public STUN answer means a peer's loopback is this machine"
+
+    assert ("192.168.1.25", 8421) not in punch.tcp_targets(same, _OURS, "off")
+    assert ("192.168.1.25", 8421) in punch.tcp_targets(other, _OURS, "on")
+    # Two nodes on one machine, before STUN has a public answer, still dial loopback.
+    assert punch.tcp_targets([("127.0.0.1", 8421), ("::1", 8421)], [], "auto") == [
+        ("127.0.0.1", 8421), ("::1", 8421)]
+    assert punch.tcp_targets([("127.0.0.1", 8421)], [], "off") == []
+    assert punch.is_home_host("192.168.1.25") and not punch.is_home_host("156.67.28.112")
+    assert punch.is_home_host("wss://192.168.1.25/mesh") and not punch.is_home_host("127.0.0.1")
+
+
 def test_an_offer_keeps_the_home_address_for_a_peer_on_this_nat(monkeypatch):
     monkeypatch.setattr(punch, "local_ipv4", lambda: "192.168.1.55")
     me = punch.Session("n", "b")

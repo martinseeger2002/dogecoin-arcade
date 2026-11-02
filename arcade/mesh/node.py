@@ -7,6 +7,12 @@ outbound links up at all times and accepts inbound ones if it listens. A node
 behind a router never listens and still takes part fully -- it dials out, and
 everything it needs arrives over the links it made.
 
+A home-network address a peer learned on its own LAN is not dialed here, and not
+passed on, unless that peer's public address is one STUN saw for this node (both
+are behind the same NAT) or the operator set mesh_lan_dial to "on". punch.tcp_targets
+is that decision, the same one the UDP path uses. An address the operator configured
+(--mesh-peer) is still dialed. mesh_lan_dial "off" dials no home-network address.
+
 **Meeting halfway, over IPv6.** Two nodes that are both behind routers cannot
 dial each other the ordinary way: each router drops the other's first packet.
 Over IPv6 there is no address translation, only the router's firewall, and a
@@ -92,7 +98,7 @@ from typing import Any, Awaitable, Callable
 import nacl.exceptions
 import nacl.signing
 
-from . import wsock
+from . import punch, wsock
 from .link import Link, LinkError, handshake
 
 log = logging.getLogger("arcade.mesh")
@@ -251,7 +257,7 @@ class MeshNode:
         # (host, port) -> {"id": node id or None, "ok": last success, "fail": failures, "next": retry at}
         self.addrs: dict[tuple[str, int], dict] = {}
         for host, port in peers or []:
-            self.add_address(host, port)
+            self.add_address(host, port, pinned=True)
         self.local: dict[tuple[str, str], _Local] = {}
         # room id -> origin node -> {"via": peer id or None, "until": expiry}: where to send a room's traffic
         self.routes: dict[str, dict[str, dict]] = {}
@@ -282,6 +288,11 @@ class MeshNode:
         self._tasks: set[asyncio.Task] = set()
         self._stopping = False
         self._probing = False                  # one outbound link over target while a trial runs
+        # punch.lan_dial_mode. None: an extension that carries lan_dial (the UDP share), else auto.
+        self.lan_dial = None
+        # Hosts STUN, or this node's own announcement, saw for us. None: an extension's `outside`.
+        self.outside_addrs = None
+        self._home_skipped: set[tuple] = set()
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -331,12 +342,113 @@ class MeshNode:
 
     # ---------------------------------------------------------------- peers
 
-    def add_address(self, host: str, port: int, node_id: str | None = None) -> None:
+    def add_address(self, host: str, port: int, node_id: str | None = None, *, pinned: bool = False) -> None:
+        """Remember an address. `pinned` is one the operator configured (`--mesh-peer`): it is dialed even
+        when it is a home-network address. One learned from a peer is not, and is dialed only when that peer
+        is on this NAT (punch.tcp_targets)."""
         if not host or not isinstance(port, int) or not 0 < port < 65536:
             return
         entry = self.addrs.setdefault((host, port), {"id": None, "ok": 0.0, "fail": 0, "next": 0.0})
         if node_id and not entry["id"]:
             entry["id"] = node_id
+        if pinned:
+            entry["pinned"] = True
+
+    def _mode(self) -> str:
+        source = self.lan_dial
+        if source is None:
+            for ext in self.extensions:
+                if getattr(ext, "lan_dial", None) is not None:
+                    source = ext.lan_dial
+                    break
+        return punch.call_mode(source)
+
+    def _outside(self) -> list[str]:
+        """Addresses STUN (or the announcement) saw for this node, as text."""
+        raw: list = []
+        source = self.outside_addrs
+        if source is not None:
+            try:
+                raw = list((source() if callable(source) else source) or [])
+            except Exception:                      # noqa: BLE001 -- no map yet: public addresses are still dialed
+                raw = []
+        else:
+            for ext in self.extensions:
+                got = getattr(ext, "outside", None)
+                if got:
+                    raw.extend(list(got))
+        hosts: list[str] = []
+        for host in raw:
+            ip = punch._parse_v4(str(host).strip())
+            if ip is None:
+                continue
+            text = str(ip)
+            if text not in hosts:
+                hosts.append(text)
+        return hosts
+
+    def _known_for(self, addr: tuple) -> list[tuple]:
+        """Every address stored for the same peer as `addr`, so a home address is judged beside the public one."""
+        entry = self.addrs.get(addr) or {}
+        peer_id = entry.get("id")
+        if not peer_id:
+            return [addr]
+        found = [a for a, e in self.addrs.items() if e.get("id") == peer_id]
+        if addr not in found:
+            found.append(addr)
+        return found
+
+    def _may_dial(self, addr: tuple) -> bool:
+        """May the dialer open TCP to `addr`? A home-network address only when punch.tcp_targets says so.
+        An address the operator configured is dialed unless mesh_lan_dial is off."""
+        mode = self._mode()
+        if addr in punch.tcp_targets(self._known_for(addr), self._outside(), mode):
+            return True
+        entry = self.addrs.get(addr) or {}
+        if not entry.get("pinned") or mode == "off":
+            return False
+        ip = None if is_ws(str(addr[0])) else punch._mapped_v4(addr[0])
+        if ip is not None and punch._never_dial(ip):
+            return False
+        return True
+
+    def _note_skipped(self, addr: tuple) -> None:
+        if addr in self._home_skipped or not punch.is_home_host(addr[0]):
+            return
+        self._home_skipped.add(addr)
+        log.info("mesh: not dialing %s:%s (home-network address; that peer is not on this NAT)", addr[0], addr[1])
+
+    def _want_dial(self, addr: tuple) -> bool:
+        if self._may_dial(addr):
+            return True
+        self._note_skipped(addr)
+        return False
+
+    def _may_tell(self, addr: tuple, recipient_id: str) -> bool:
+        """May `addr` be told to `recipient_id`? A home-network address only when that peer is on this NAT
+        (or mesh_lan_dial is on). Told to anyone else, they dial it on their own LAN."""
+        mode, outside = self._mode(), self._outside()
+        if addr in punch.tcp_targets([addr], outside, mode):
+            return True
+        recip = [a for a, e in self.addrs.items() if e.get("id") == recipient_id]
+        return addr in punch.tcp_targets([*recip, addr], outside, mode)
+
+    def _rows_for(self, recipient_id: str) -> list[dict]:
+        return [{"h": h, "p": p, "id": e["id"]}
+                for (h, p), e in self.addrs.items()
+                if e["ok"] and e["id"] and e["id"] != recipient_id and self._may_tell((h, p), recipient_id)][:50]
+
+    def _take_gossip(self, rows: list[tuple[str, int, str | None]]) -> None:
+        """Addresses a neighbour says it reached. The whole list for one peer is judged together, so a home
+        address written before the public one is still kept when the two are the same NAT."""
+        grouped: dict[str | None, list[tuple[str, int]]] = {}
+        for host, port, node_id in rows:
+            grouped.setdefault(node_id, []).append((host, port))
+        outside, mode = self._outside(), self._mode()
+        for host, port, node_id in rows:
+            known = [a for a, e in self.addrs.items() if node_id and e.get("id") == node_id]
+            if (host, port) in punch.tcp_targets(known + grouped.get(node_id, []), outside, mode):
+                self.add_address(host, port, node_id)
 
     def add_extension(self, ext) -> None:
         """Something riding on the links (corelink.CoreBridge, coreshare.CoreShare): link_up(link),
@@ -365,7 +477,8 @@ class MeshNode:
                     choices = [a for a, e in self.addrs.items()
                                if e["next"] <= now and e["id"] != self.node_id
                                and e["id"] not in self.links
-                               and (not self._meets(a, e) or e.get("plain"))]
+                               and (not self._meets(a, e) or e.get("plain"))
+                               and self._want_dial(a)]
                     random.shuffle(choices)
                     # Direct addresses first: a tunnel (wss://) is for when nothing else reaches a node.
                     have = {e["id"] for a, e in self.addrs.items() if not is_ws(a[0]) and e["id"] and e["fail"] < 3}
@@ -379,6 +492,12 @@ class MeshNode:
 
     async def _dial(self, addr: tuple[str, int]) -> None:
         entry = self.addrs[addr]
+        if not self._may_dial(addr):
+            # STUN may not have answered yet. Look again shortly, and do not count a failure for an
+            # address this node is not supposed to connect to.
+            entry["next"] = time.monotonic() + 2
+            self._note_skipped(addr)
+            return
         entry["next"] = time.monotonic() + 30           # not again while this one runs
         writer = None
         try:
@@ -416,7 +535,7 @@ class MeshNode:
             try:
                 due = [a for a, e in self.addrs.items()
                        if e["id"] and e["id"] != self.node_id and e["id"] not in self.links
-                       and self._meets(a, e)]
+                       and self._meets(a, e) and self._want_dial(a)]
                 random.shuffle(due)
                 for addr in due[:MEET_MAX]:
                     self._spawn(self._meet(addr))
@@ -607,7 +726,8 @@ class MeshNode:
         if self._outbound() < self.outbound_target:
             return None
         spare = [a for a, e in self.addrs.items()
-                 if e["id"] != self.node_id and e["id"] not in self.links and e["next"] <= time.monotonic()]
+                 if e["id"] != self.node_id and e["id"] not in self.links and e["next"] <= time.monotonic()
+                 and self._may_dial(a)]
         if not spare:
             return None
         before = {pid for pid, l in self.links.items() if l.outbound}
@@ -633,16 +753,18 @@ class MeshNode:
         return drop.peer_id
 
     async def _send_addrs(self, link: Link) -> None:
-        good = [{"h": h, "p": p, "id": e["id"]} for (h, p), e in self.addrs.items()
-                if e["ok"] and e["id"] and e["id"] != link.peer_id][:50]
+        good = self._rows_for(link.peer_id)
         if good:
             await link.send({"t": "addrs", "a": good})
 
     def _tell_addr(self, addr: tuple[str, int], node_id: str) -> None:
         """An address just reached for the first time, passed on to the links already up:
         _send_addrs runs only as a link starts, and a link that came up while this dial
-        was still under way would never hear of it."""
+        was still under way would never hear of it. A home-network address goes only to a
+        peer on this NAT (see _may_tell)."""
         async def tell(link: Link) -> None:
+            if not self._may_tell(addr, link.peer_id):
+                return
             try:
                 await link.send({"t": "addrs", "a": [{"h": addr[0], "p": addr[1], "id": node_id}]})
             except (LinkError, ConnectionError, OSError):
@@ -1010,9 +1132,11 @@ class MeshNode:
                 await ext.on_frame(link, header, blob)
             return
         if kind == "addrs":
+            rows = []
             for a in header.get("a", [])[:50] if isinstance(header.get("a"), list) else []:
                 if isinstance(a, dict) and isinstance(a.get("h"), str) and isinstance(a.get("p"), int):
-                    self.add_address(a["h"][:255], a["p"], str(a.get("id") or "")[:64] or None)
+                    rows.append((a["h"][:255], a["p"], str(a.get("id") or "")[:64] or None))
+            self._take_gossip(rows)
             return
         if kind == "sub":
             await self._on_sub(link, header)
@@ -1084,7 +1208,11 @@ class MeshNode:
     async def _dial_back(self, link: Link, header: dict) -> None:
         """A peer asks whether it can be reached. Dial it -- only ever at the
         address its own connection comes from, so nobody can aim this node at a
-        third machine -- and say what happened, and where it was seen from."""
+        third machine -- and say what happened, and where it was seen from.
+
+        That host is the source of a connection already open, not an address a
+        peer advertised. When it is private, the peer is on this network. The
+        dialer's home-network rule is for advertised addresses."""
         port = header.get("port")
         now = time.monotonic()
         if not isinstance(port, int) or not 0 < port < 65536:

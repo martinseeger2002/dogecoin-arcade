@@ -88,6 +88,10 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 · fioridarrell's fork · branch `fix-mesh-private-lan-dial` (TCP, after ff711aa)
+UDP no longer aims at another network's home address. TCP still did. A node on the same LAN as a peer learns that peer's listen address (the live one was `192.168.1.25:8421`) and tells its other links; those links opened TCP to it over and over. The UDP attempts in the same trace were the punched ports (`192.168.1.25:55840`, `192.168.1.55:32805` and `:54789`), which ff711aa already stopped. `punch.tcp_targets` asks `punch.dialable`. The TCP dialer, the IPv6 meeter, the tuner and address gossip keep a private, link-local or CGNAT address only when that peer's public address is one STUN saw here, or `mesh_lan_dial` is `on`. A `ws://` host and an IPv4-mapped address are judged the same way. `--mesh-peer` is still dialed. `off` dials no home address. Public addresses are unchanged. Tests: `tests/test_punch.py`, `tests/test_mesh.py`. Write-up: `docs/mesh-private-lan-dial.md`.
+- **For Martin:** same branch as the UDP fix, one PR. Darrell opens it. Nothing was pushed to `martinseeger2002`.
+
 ### 2026-11-02 · fioridarrell's fork · branch `fix-mesh-private-lan-dial` (from upstream `main` 4597a8a)
 The mesh's one UDP socket was aiming at a peer's home-network address on every link, including with `--mesh-core off`. `Session.offer` always appended `local_ipv4()`, and `udp.py`, `introduce.py` and the punch probe dialed every IPv4 address a peer sent. A node now dials and advertises a private, link-local, loopback or CGNAT address only when the peer's public address is one STUN observed here. Setting `mesh_lan_dial`: `auto` (default), `on`, `off`. `ARCADE_MESH_LAN_DIAL` overrides it. Public hole punching is unchanged. Tests: `tests/test_punch.py`, `tests/test_mesh_udp.py`, `tests/test_mesh_introduce.py`. Write-up: `docs/mesh-private-lan-dial.md`.
 - **For Martin:** review, then whatever you want on `main`. Darrell opens the PR from this branch. Nothing was pushed to `martinseeger2002`.
