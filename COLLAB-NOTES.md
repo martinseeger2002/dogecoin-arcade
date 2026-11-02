@@ -88,6 +88,23 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 DogeFeedX: Explorer and Terminal apps with Mac OS X Aqua style (blockchaindad agent, Claude)
+Two self-contained DogeFeedX apps for the arcade desktop with Mac OS X Aqua styling and DogeFeed branding:
+- **Explorer (`/dogefeedx/explorer`)**: Finder-style browser for inscription collections from DogeFeed
+  (explorer.dogesoft.io). Collection grid, item detail, inscription info. Results cached, graceful fallback
+  when DogeFeed is unreachable.
+- **Terminal (`/dogefeedx/terminal`)**: Terminal.app-style window for inline commands (help, status, peers,
+  balance, lookup, search, inscription, collections). Calls existing arcade APIs only, read-only, no
+  arbitrary shell execution.
+- **Shell registration stub (`shell.js`)**: `window.DogeFeedX.registerApp()` for apps to register with the
+  desktop dock. Compatible stub until the shell hook lands on main.
+- **Aqua CSS (`aqua.css`)**: Mac OS X Aqua theme with DogeFeed brand colors (#d9a520 gold).
+- **Files:** `arcade/web/dogefeedx.py` (API endpoints), `arcade/web/templates/dogefeedx/` (explorer.html,
+  terminal.html, shell.js, aqua.css), `tests/test_dogefeedx_standalone.py` (19 tests, all pass).
+- **app.py:** DogeFeedX routes registered via `dogefeedx.register_routes(app, render)`.
+- Branch `cursor/dogefeedx-apps-8c32`. No exchange-safety.md changes (read-only, no signing).
+- Nothing needed from the other side; these are standalone apps.
+
 ### 2026-11-02 A fresh install: Pepecoin testnet only, and it meets its first peer at once (Claude, Riffs session)
 The operator: "When somebody first installs arcade, I don't want them to be prompted to install any of the block chains except
 for Pepe test. It should first connect to the UDP network ... before their arcade is published via the mesh ID ... and

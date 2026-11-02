@@ -1,0 +1,592 @@
+{% extends "base.html" %}
+{% block title %}DogeFeed Terminal · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- DogeFeedX Terminal: A Terminal.app-style window for inline commands.
+    Commands use existing arcade APIs only, read-only by default, no arbitrary shell execution. -#}
+<link rel="stylesheet" href="/dogefeedx/aqua.css">
+<style>
+.dfx-term-app {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: #1a1a1a;
+}
+.dfx-term-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: linear-gradient(180deg, #3a3a3a 0%, #2a2a2a 100%);
+  border-bottom: 1px solid #1a1a1a;
+}
+.dfx-term-buttons {
+  display: flex;
+  gap: 6px;
+}
+.dfx-term-btn {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.25);
+  cursor: pointer;
+}
+.dfx-term-btn.close { background: linear-gradient(180deg, #ff6b6b 0%, #ee5a24 100%); }
+.dfx-term-btn.minimize { background: linear-gradient(180deg, #feca57 0%, #ff9f43 100%); }
+.dfx-term-btn.maximize { background: linear-gradient(180deg, #5cdb5c 0%, #26de81 100%); }
+.dfx-term-title {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #aaa;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.dfx-term-tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.dfx-term-tab {
+  padding: 2px 12px;
+  background: rgba(255,255,255,0.1);
+  border: none;
+  border-radius: 4px;
+  color: #888;
+  font-size: 11px;
+  cursor: pointer;
+}
+.dfx-term-tab.active {
+  background: rgba(255,255,255,0.2);
+  color: #fff;
+}
+.dfx-terminal-wrap {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.dfx-terminal {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  background: #1a1a1a;
+  color: #33ff33;
+  font-family: "Monaco", "Menlo", "Consolas", "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.dfx-terminal-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.dfx-terminal-prompt-line {
+  display: flex;
+  align-items: flex-start;
+}
+.dfx-terminal-ps1 {
+  color: #d9a520;
+  margin-right: 8px;
+  white-space: nowrap;
+  user-select: none;
+}
+.dfx-terminal-cmd {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #33ff33;
+  font: inherit;
+  outline: none;
+  padding: 0;
+  resize: none;
+  min-height: 1.5em;
+  caret-color: #33ff33;
+}
+.dfx-cmd-error { color: #ff6b6b; }
+.dfx-cmd-success { color: #5cdb5c; }
+.dfx-cmd-info { color: #6cb4f0; }
+.dfx-cmd-muted { color: #888; }
+.dfx-cmd-brand { color: #d9a520; }
+.dfx-cmd-link {
+  color: #6cb4f0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.dfx-cmd-table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.dfx-cmd-table th, .dfx-cmd-table td {
+  text-align: left;
+  padding: 2px 16px 2px 0;
+  color: #33ff33;
+}
+.dfx-cmd-table th {
+  color: #d9a520;
+  border-bottom: 1px solid #444;
+}
+.dfx-statusbar {
+  padding: 4px 12px;
+  background: #2a2a2a;
+  border-top: 1px solid #3a3a3a;
+  font-size: 11px;
+  color: #888;
+  font-family: -apple-system, sans-serif;
+  display: flex;
+  justify-content: space-between;
+}
+</style>
+
+<div class="dfx-term-app">
+  <div class="dfx-term-toolbar">
+    <div class="dfx-term-buttons">
+      <button type="button" class="dfx-term-btn close" title="Close"></button>
+      <button type="button" class="dfx-term-btn minimize" title="Minimize"></button>
+      <button type="button" class="dfx-term-btn maximize" title="Maximize"></button>
+    </div>
+    <span class="dfx-term-title">DogeFeed Terminal — {{ brand.name }}</span>
+  </div>
+
+  <div class="dfx-terminal-wrap">
+    <div class="dfx-terminal" id="dfx-term">
+      <div class="dfx-terminal-line dfx-cmd-brand">
+╔═══════════════════════════════════════════════════════════════╗
+║  DogeFeed Terminal v1.0.0                                     ║
+║  {{ brand.name }} · Read-only arcade commands                 ║
+╚═══════════════════════════════════════════════════════════════╝
+      </div>
+      <div class="dfx-terminal-line dfx-cmd-muted">Type 'help' for a list of commands.</div>
+      <div class="dfx-terminal-line">&nbsp;</div>
+    </div>
+    <div class="dfx-terminal" style="flex:none; padding-top:0">
+      <div class="dfx-terminal-prompt-line">
+        <span class="dfx-terminal-ps1">dogefeed $</span>
+        <input type="text" class="dfx-terminal-cmd" id="dfx-cmd" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" autofocus>
+      </div>
+    </div>
+  </div>
+
+  <div class="dfx-statusbar">
+    <span id="dfx-term-status">Ready</span>
+    <span>{{ brand.name }}</span>
+  </div>
+</div>
+
+<script src="/dogefeedx/shell.js"></script>
+<script>
+(function() {
+  'use strict';
+  
+  var API_BASE = '/dogefeedx/api';
+  var term = document.getElementById('dfx-term');
+  var cmd = document.getElementById('dfx-cmd');
+  var status = document.getElementById('dfx-term-status');
+  var history = [];
+  var historyIndex = -1;
+  
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  
+  function print(text, cls) {
+    var line = el('div', 'dfx-terminal-line' + (cls ? ' ' + cls : ''), text);
+    term.appendChild(line);
+    term.scrollTop = term.scrollHeight;
+    return line;
+  }
+  
+  function printHtml(html) {
+    var line = el('div', 'dfx-terminal-line');
+    line.innerHTML = html;
+    term.appendChild(line);
+    term.scrollTop = term.scrollHeight;
+    return line;
+  }
+  
+  function printTable(headers, rows) {
+    var table = document.createElement('table');
+    table.className = 'dfx-cmd-table';
+    var thead = document.createElement('thead');
+    var tr = document.createElement('tr');
+    headers.forEach(function(h) {
+      var th = document.createElement('th');
+      th.textContent = h;
+      tr.appendChild(th);
+    });
+    thead.appendChild(tr);
+    table.appendChild(thead);
+    
+    var tbody = document.createElement('tbody');
+    rows.forEach(function(row) {
+      var tr = document.createElement('tr');
+      row.forEach(function(cell) {
+        var td = document.createElement('td');
+        td.textContent = cell;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    
+    term.appendChild(table);
+    term.scrollTop = term.scrollHeight;
+  }
+  
+  function api(path, params) {
+    var url = API_BASE + path;
+    if (params) {
+      var qs = Object.keys(params).map(function(k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
+      url += '?' + qs;
+    }
+    return fetch(url, { cache: 'no-store' }).then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  }
+  
+  var commands = {
+    help: {
+      desc: 'Show available commands',
+      usage: 'help [command]',
+      run: function(args) {
+        if (args[0]) {
+          var c = commands[args[0]];
+          if (!c) { print('Unknown command: ' + args[0], 'dfx-cmd-error'); return; }
+          print('');
+          print(args[0] + ' - ' + c.desc, 'dfx-cmd-info');
+          print('Usage: ' + c.usage, 'dfx-cmd-muted');
+          return;
+        }
+        print('');
+        print('Available commands:', 'dfx-cmd-info');
+        print('');
+        var rows = [];
+        Object.keys(commands).sort().forEach(function(name) {
+          rows.push([name, commands[name].desc]);
+        });
+        printTable(['Command', 'Description'], rows);
+      }
+    },
+    
+    clear: {
+      desc: 'Clear the terminal',
+      usage: 'clear',
+      run: function() {
+        term.innerHTML = '';
+      }
+    },
+    
+    status: {
+      desc: 'Show node status',
+      usage: 'status',
+      run: function() {
+        status.textContent = 'Fetching status...';
+        api('/status').then(function(data) {
+          print('');
+          print('Node Status', 'dfx-cmd-info');
+          print('═══════════════════════════════════');
+          print('Arcade:      ' + (data.arcade || 'Unknown'));
+          print('Version:     ' + (data.version || 'Unknown'));
+          print('Uptime:      ' + (data.uptime || 'Unknown'));
+          print('Connections: ' + (data.connections || 0));
+          if (data.chains && data.chains.length) {
+            print('');
+            print('Chains:', 'dfx-cmd-info');
+            data.chains.forEach(function(c) {
+              print('  ' + c.name + ': block ' + (c.height || '?') + (c.synced ? ' (synced)' : ' (syncing)'));
+            });
+          }
+          status.textContent = 'Ready';
+        }).catch(function(e) {
+          print('Error: ' + e.message, 'dfx-cmd-error');
+          status.textContent = 'Error';
+        });
+      }
+    },
+    
+    peers: {
+      desc: 'List connected peers',
+      usage: 'peers',
+      run: function() {
+        status.textContent = 'Fetching peers...';
+        api('/peers').then(function(data) {
+          var peers = data.peers || [];
+          print('');
+          if (!peers.length) {
+            print('No peers connected', 'dfx-cmd-muted');
+          } else {
+            print('Connected Peers (' + peers.length + ')', 'dfx-cmd-info');
+            printTable(['ID', 'Tag', 'Version', 'Latency'], peers.map(function(p) {
+              return [p.id ? p.id.slice(0, 12) + '...' : '-', p.tag || '-', p.version || '-', p.latency ? p.latency + 'ms' : '-'];
+            }));
+          }
+          status.textContent = 'Ready';
+        }).catch(function(e) {
+          print('Error: ' + e.message, 'dfx-cmd-error');
+          status.textContent = 'Error';
+        });
+      }
+    },
+    
+    balance: {
+      desc: 'Check address balance',
+      usage: 'balance <address>',
+      run: function(args) {
+        if (!args[0]) { print('Usage: balance <address>', 'dfx-cmd-error'); return; }
+        status.textContent = 'Fetching balance...';
+        api('/balance', { address: args[0] }).then(function(data) {
+          print('');
+          print('Balance for ' + args[0], 'dfx-cmd-info');
+          print('═══════════════════════════════════');
+          if (data.balances && data.balances.length) {
+            data.balances.forEach(function(b) {
+              print('  ' + b.chain + ': ' + b.amount + ' ' + b.symbol);
+            });
+          } else {
+            print('  No balances found', 'dfx-cmd-muted');
+          }
+          status.textContent = 'Ready';
+        }).catch(function(e) {
+          print('Error: ' + e.message, 'dfx-cmd-error');
+          status.textContent = 'Error';
+        });
+      }
+    },
+    
+    lookup: {
+      desc: 'Look up a name (e.g., john.doge)',
+      usage: 'lookup <name>',
+      run: function(args) {
+        if (!args[0]) { print('Usage: lookup <name>', 'dfx-cmd-error'); return; }
+        status.textContent = 'Looking up name...';
+        api('/lookup', { name: args[0] }).then(function(data) {
+          print('');
+          if (data.found) {
+            print('Name: ' + data.name, 'dfx-cmd-info');
+            print('═══════════════════════════════════');
+            if (data.owner) print('  Owner:    ' + data.owner);
+            if (data.address) print('  Address:  ' + data.address);
+            if (data.url) print('  URL:      ' + data.url);
+            if (data.inscribed_at) print('  Inscribed: Block ' + data.inscribed_at);
+          } else {
+            print('Name not found: ' + args[0], 'dfx-cmd-muted');
+          }
+          status.textContent = 'Ready';
+        }).catch(function(e) {
+          print('Error: ' + e.message, 'dfx-cmd-error');
+          status.textContent = 'Error';
+        });
+      }
+    },
+    
+    search: {
+      desc: 'Search inscriptions',
+      usage: 'search <query>',
+      run: function(args) {
+        var query = args.join(' ');
+        if (!query) { print('Usage: search <query>', 'dfx-cmd-error'); return; }
+        status.textContent = 'Searching...';
+        api('/search', { q: query }).then(function(data) {
+          print('');
+          var results = data.results || [];
+          if (!results.length) {
+            print('No results for: ' + query, 'dfx-cmd-muted');
+          } else {
+            print('Search Results (' + results.length + ')', 'dfx-cmd-info');
+            printTable(['ID', 'Type', 'Name'], results.slice(0, 20).map(function(r) {
+              return [r.id ? r.id.slice(0, 16) + '...' : '-', r.type || '-', r.name || '-'];
+            }));
+            if (results.length > 20) {
+              print('... and ' + (results.length - 20) + ' more', 'dfx-cmd-muted');
+            }
+          }
+          status.textContent = 'Ready';
+        }).catch(function(e) {
+          print('Error: ' + e.message, 'dfx-cmd-error');
+          status.textContent = 'Error';
+        });
+      }
+    },
+    
+    inscription: {
+      desc: 'Get inscription details',
+      usage: 'inscription <id>',
+      run: function(args) {
+        if (!args[0]) { print('Usage: inscription <id>', 'dfx-cmd-error'); return; }
+        status.textContent = 'Fetching inscription...';
+        api('/inscription', { id: args[0] }).then(function(data) {
+          print('');
+          if (data.inscription) {
+            var i = data.inscription;
+            print('Inscription Details', 'dfx-cmd-info');
+            print('═══════════════════════════════════');
+            print('  ID:           ' + i.id);
+            if (i.number != null) print('  Number:       #' + i.number);
+            if (i.content_type) print('  Content Type: ' + i.content_type);
+            if (i.content_size) print('  Size:         ' + i.content_size + ' bytes');
+            if (i.owner) print('  Owner:        ' + i.owner);
+            if (i.genesis_height) print('  Genesis:      Block ' + i.genesis_height);
+            if (i.collection) print('  Collection:   ' + i.collection);
+          } else {
+            print('Inscription not found', 'dfx-cmd-muted');
+          }
+          status.textContent = 'Ready';
+        }).catch(function(e) {
+          print('Error: ' + e.message, 'dfx-cmd-error');
+          status.textContent = 'Error';
+        });
+      }
+    },
+    
+    collections: {
+      desc: 'List collections from DogeFeed',
+      usage: 'collections [limit]',
+      run: function(args) {
+        var limit = parseInt(args[0]) || 10;
+        status.textContent = 'Fetching collections...';
+        api('/collections', { limit: Math.min(limit, 50) }).then(function(data) {
+          print('');
+          var colls = data.collections || [];
+          if (!colls.length) {
+            print('No collections found', 'dfx-cmd-muted');
+          } else {
+            print('Collections from DogeFeed', 'dfx-cmd-info');
+            printTable(['Name', 'Items', 'Holders'], colls.map(function(c) {
+              return [c.name || 'Unnamed', c.item_count || '-', c.holder_count || '-'];
+            }));
+          }
+          status.textContent = 'Ready';
+        }).catch(function(e) {
+          print('Error: ' + e.message, 'dfx-cmd-error');
+          status.textContent = 'Error';
+        });
+      }
+    },
+    
+    version: {
+      desc: 'Show terminal version',
+      usage: 'version',
+      run: function() {
+        print('');
+        print('DogeFeed Terminal v1.0.0', 'dfx-cmd-info');
+        print('{{ brand.name }}', 'dfx-cmd-muted');
+      }
+    },
+    
+    echo: {
+      desc: 'Echo text',
+      usage: 'echo <text>',
+      run: function(args) {
+        print(args.join(' '));
+      }
+    },
+    
+    date: {
+      desc: 'Show current date and time',
+      usage: 'date',
+      run: function() {
+        print(new Date().toString());
+      }
+    },
+    
+    whoami: {
+      desc: 'Show current user',
+      usage: 'whoami',
+      run: function() {
+        api('/whoami').then(function(data) {
+          if (data.user) {
+            print(data.user);
+          } else {
+            print('guest (not signed in)', 'dfx-cmd-muted');
+          }
+        }).catch(function() {
+          print('guest', 'dfx-cmd-muted');
+        });
+      }
+    }
+  };
+  
+  function runCommand(line) {
+    var parts = line.trim().split(/\s+/);
+    var name = parts[0].toLowerCase();
+    var args = parts.slice(1);
+    
+    print('');
+    printHtml('<span class="dfx-terminal-ps1">dogefeed $</span> ' + escapeHtml(line));
+    
+    if (!name) return;
+    
+    if (history[history.length - 1] !== line) {
+      history.push(line);
+    }
+    historyIndex = history.length;
+    
+    var command = commands[name];
+    if (!command) {
+      print('Command not found: ' + name, 'dfx-cmd-error');
+      print("Type 'help' for available commands.", 'dfx-cmd-muted');
+      return;
+    }
+    
+    try {
+      command.run(args);
+    } catch (e) {
+      print('Error: ' + e.message, 'dfx-cmd-error');
+    }
+  }
+  
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function(c) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  
+  cmd.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      var line = cmd.value;
+      cmd.value = '';
+      runCommand(line);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (historyIndex > 0) {
+        historyIndex--;
+        cmd.value = history[historyIndex] || '';
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (historyIndex < history.length - 1) {
+        historyIndex++;
+        cmd.value = history[historyIndex] || '';
+      } else {
+        historyIndex = history.length;
+        cmd.value = '';
+      }
+    } else if (e.key === 'l' && e.ctrlKey) {
+      e.preventDefault();
+      commands.clear.run([]);
+    }
+  });
+  
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('input, button, a')) {
+      cmd.focus();
+    }
+  });
+  
+  // Register with shell
+  window.DogeFeedX.registerApp({
+    id: 'terminal',
+    name: 'DogeFeed Terminal',
+    icon: '/dogefeedx/icon-terminal.png',
+    url: '/dogefeedx/terminal'
+  });
+  
+  cmd.focus();
+})();
+</script>
+{% endblock %}
