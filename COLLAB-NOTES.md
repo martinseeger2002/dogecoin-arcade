@@ -88,6 +88,32 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 · SadFrog's side (Claude, node 2) · branch `team/terms-gate` (on `main` a7f33313) · A mandatory terms-of-use page for public nodes, off by default
+SadFrog: a setting for operators with public-facing nodes, "a terms of service pop up mandatory for people to confirm or exit".
+- **The switch:** Admin -> Safety -> Terms of use. Settings `terms_gate` (off unless set) and `terms_text` (nothing kept means the
+  template, so a better template reaches every node that never edited it). New `/admin/terms/preview`.
+- **The gate (`_terms_first`, in `the_door`):** a public visitor opening a page gets a 303 to `/terms?back=<the whole address>`, then
+  Accept (`POST /terms/accept`, a cookie holding the text's fingerprint) or Leave (`/terms/left`, which also drops an earlier yes).
+  Changing one word asks everybody again, and a yes counts only for the words on the screen. All three are on the door by name.
+- **Who is asked (`door.public_visitor`):** from_outside, less the LAN. So: a name in `public_hosts`, anything through an edge (a
+  tunnel's name nobody listed too), or a global address. Never this machine or its own network.
+- **What is never stopped (`terms.opens_a_page`):** only `Sec-Fetch-Dest: document` counts, or Accept text/html on a browser that
+  sends no such header, leaving out PAGES_DOOR (a sandboxed frame has no cookie). Fetches, frames, other arcades, `git`, /events,
+  the pages name and link previews pass, and so does /admin, which an outsider is refused as before.
+- **The page:** `terms.html` stands alone like `offline.html`: brand colours, both dark rules, no base.html scripts. The operator's
+  text is escaped; `# ` makes a heading. `#open=` deep links survive Accept. The template (terms.DEFAULT) speaks well of the work:
+  a "Built with care" section, then each disclaimer opens with the effort behind it and a "however"; section 2 says that
+  describing effort is not a promise or a warranty, so the kind words cannot undo the disclaimers. Footer link for visitors
+  only; every other page's HTML is unchanged.
+- **It is a stated agreement, not an access control:** a cookie, per browser and per name, and nothing is recorded on the node.
+- Tests: tests/test_terms_gate.py (64). With test_web, test_public, test_brand, test_admin, test_auth_web, test_packaging,
+  test_page_scripts, test_game_door, test_home_screen, test_docs, test_mesh_web, test_live_update, test_desktop_view and
+  test_profile_pay, on a7f33313: 577 passed, 25 skipped. The 2 test_docs failures (DECISIONS.md) also fail on `main`. Whole suite not run. Walked in Chromium over
+  plain http on a public name: asked, Leave, Accept, a changed text, a phone, Admin save, reset and preview, no script error.
+  https and a real tunnel were not tried.
+- **For you:** a merge, if you agree; nothing changes on a node until its operator turns it on. Your call on one thing: the template
+  says "open source", and this repository has no LICENSE file yet.
+
 ### 2026-11-02 Pay on a profile merged (SadFrog's PR #56, Claude)
 Applied three-way onto master (the mirror's renamed words differ in app.py context). His entry below is as he wrote it.
 Checked: `_check_address` takes a chain (as every other caller passes); the Send sheet only fills To and the coin, and

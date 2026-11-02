@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en"{% if theme in ("light", "dark") %} data-theme="{{ theme }}"{% endif %}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Terms of use · {{ brand.name }}</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+<style>
+:root{--bg:{{ brand.light_bg }};--fg:{{ brand.light_fg }};--muted:{{ brand.muted }};--accent:{{ brand.accent }}}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:{{ brand.dark_bg }};--fg:{{ brand.dark_fg }};--muted:{{ brand.dark_muted }};--accent:{{ brand.dark_accent }}}}
+:root[data-theme=dark]{--bg:{{ brand.dark_bg }};--fg:{{ brand.dark_fg }};--muted:{{ brand.dark_muted }};--accent:{{ brand.dark_accent }}}
+:root{--line:color-mix(in srgb,var(--fg) 16%,transparent)}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:color-mix(in srgb,var(--fg) 8%,var(--bg));color:var(--fg);font:16px/1.5 system-ui,-apple-system,sans-serif;
+  display:flex;align-items:center;justify-content:center;padding:16px}
+main{width:100%;max-width:720px;max-height:100%;display:flex;flex-direction:column;background:var(--bg);
+  border:1px solid var(--line);border-radius:12px;overflow:hidden}
+header{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line)}
+header img{width:36px;height:36px}
+header b{font-size:1.05rem;display:block;line-height:1.25}
+header span{color:var(--muted);font-size:.85rem}
+.words{flex:1 1 auto;min-height:0;overflow-y:auto;padding:4px 20px 16px;white-space:pre-line;overflow-wrap:anywhere}
+.words h2{font-size:1rem;margin:18px 0 4px}
+.words h2:first-child{font-size:1.25rem}
+.words p{margin:0 0 10px}
+footer{padding:14px 20px;border-top:1px solid var(--line)}
+footer p{margin:0 0 10px;color:var(--muted);font-size:.85rem}
+.choose{display:flex;flex-wrap:wrap;gap:10px}
+.choose form{display:contents}
+button,.button{font:inherit;font-weight:600;padding:10px 22px;border-radius:999px;cursor:pointer;
+  text-decoration:none;text-align:center;flex:1 1 140px;border:1px solid var(--accent)}
+button,.button.go{background:var(--accent);color:#fff}
+.button.leave{background:none;color:var(--fg);border-color:var(--line)}
+button[disabled]{opacity:.55;cursor:default}
+main.left{max-width:440px;text-align:center}
+main.left section{padding:28px 24px}
+main.left h1{font-size:1.25rem;margin:0 0 8px}
+main.left p{color:var(--muted);margin:0 0 16px}
+</style>
+</head>
+<body>
+{% if left %}
+<main class="left">
+  <section>
+    <h1>You have left</h1>
+    <p>You did not accept the terms of use, so this site stays closed to you. You can close this tab.</p>
+    <a class="button leave" href="/terms">Read the terms again</a>
+  </section>
+</main>
+{% else %}
+<main>
+  <header>
+    <img src="/icon-192.png" alt="">
+    <div><b>{{ brand.name }}</b><span>Version {{ version }}</span></div>
+  </header>
+  <div class="words" tabindex="0">
+    {%- for heading, words in blocks %}
+    {%- if heading %}<h2>{{ words }}</h2>{% else %}<p>{{ words }}</p>{% endif %}
+    {%- endfor -%}
+  </div>
+  <footer>
+    {% if preview %}
+    <p>This is how visitors see the saved text. These buttons do nothing here.</p>
+    <div class="choose">
+      <button type="button" disabled>Accept</button>
+      <a class="button leave" href="/admin#terms">Back to Admin</a>
+    </div>
+    {% elif accepted %}
+    <p>You accepted these terms in this browser.</p>
+    <div class="choose">
+      <a class="button go" href="{{ back }}">Back to the site</a>
+      <a class="button leave" href="/terms/left">Leave</a>
+    </div>
+    {% else %}
+    <p>Accept means you have read these terms and agree to them.</p>
+    <div class="choose">
+      <form method="post" action="/terms/accept">
+        <input type="hidden" name="version" value="{{ version }}">
+        <input type="hidden" name="back" value="{{ back }}">
+        <button type="submit">Accept</button>
+      </form>
+      {# A home-screen or desktop link's page is after the # (#open=), which no server sees. #}
+      <script>document.querySelector('[name=back]').value += location.hash;</script>
+      <a class="button leave" href="/terms/left">Leave</a>
+    </div>
+    {% endif %}
+  </footer>
+</main>
+{% endif %}
+</body>
+</html>

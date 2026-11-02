@@ -46,6 +46,7 @@ from fastapi.responses import (
 from fastapi.templating import Jinja2Templates
 
 from . import brand as brandlib
+from . import terms as termslib
 
 from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import COIN, AmountError, format_amount, parse_amount
@@ -658,6 +659,28 @@ def _request_outside(state, request) -> bool:
                                 local_hosts=getattr(state, "local_hosts", ()))
 
 
+def _terms_visitor(state, request) -> bool:
+    """Does this node ask this request for the terms: the switch is on, and it is a public visitor (terms.py)."""
+    if not termslib.on(state):
+        return False
+    client = getattr(request, "client", None)
+    return doorlib.public_visitor(request.headers, request.headers.get("host", ""), state.public_hosts,
+                                  peer=client.host if client else None, local_hosts=state.local_hosts)
+
+
+def _terms_first(state, request):
+    """A redirect to the terms when this request is a public visitor opening a page who has not accepted them as they
+    stand now, else None (terms.py). The cheap questions first: this runs for every request the node answers."""
+    if not termslib.opens_a_page(request.method, request.url.path, request.headers) \
+            or termslib.exempt(request.url.path) or not _terms_visitor(state, request):
+        return None
+    if request.cookies.get(termslib.COOKIE) == termslib.version(termslib.text(state)):
+        return None
+    where = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    return RedirectResponse("/terms?" + urllib.parse.urlencode({"back": where}), status_code=303,
+                            headers={"Cache-Control": "no-store"})
+
+
 def the_door(state: AppState):
     """The one guard, registered as middleware so it covers every route.
 
@@ -710,6 +733,10 @@ def the_door(state: AppState):
                 return await call_next(request)
             return locked("Not here", "Nothing is served at this address but "
                           "inscribed pages.", status=404)
+
+        terms = _terms_first(state, request)
+        if terms is not None:
+            return terms
 
         outside = _request_outside(state, request)
 
@@ -1234,6 +1261,7 @@ def create_app(state: AppState) -> FastAPI:
             # beats a menu of eleven with seven missing.
             "nav": _nav_for(request),
             "public": _account_view(request),
+            "terms_link": _terms_visitor(state, request),
             # Whether the operator is looking: their machine, or signed in from
             # outside. Offers "Not sensitive" on a screened post (feed.html).
             "operator_here": _reads_the_plans(request),
@@ -10074,6 +10102,52 @@ def create_app(state: AppState) -> FastAPI:
     def offline_page():
         return HTMLResponse(TEMPLATES.get_template("offline.html").render(),
                             headers={"Cache-Control": "no-cache"})
+
+    def _terms_page(request: Request, **context: Any) -> HTMLResponse:
+        return HTMLResponse(TEMPLATES.get_template("terms.html").render(
+                                theme=request.cookies.get("arcade_theme", ""), **context),
+                            headers={"Cache-Control": "no-store"})
+
+    def _terms_context() -> dict:
+        words = termslib.text(state)
+        return {"blocks": termslib.blocks(words), "version": termslib.version(words)}
+
+    @app.get("/terms", response_class=HTMLResponse)
+    def terms_page(request: Request, back: str = "/"):
+        """The terms, for a visitor to accept or leave and for anybody to read again. With the switch off this node
+        asks nothing of anybody, so it shows no terms either."""
+        if not termslib.on(state):
+            return locked("Not here", "This arcade has no terms of use to show.", status=404)
+        context = _terms_context()
+        return _terms_page(request, back=termslib.safe_back(back),
+                           accepted=request.cookies.get(termslib.COOKIE) == context["version"], **context)
+
+    @app.post("/terms/accept")
+    def terms_accept(request: Request, version: str = Form(""), back: str = Form("/")):
+        """A yes counts for the words the visitor was shown: text changed while they read asks again. Another site
+        cannot say yes for them."""
+        if doorlib.cross_site(request.headers, request.headers.get("host", "")):
+            return JSONResponse({"detail": "that request came from another site"}, status_code=403)
+        where = termslib.safe_back(back)
+        if version != termslib.version(termslib.text(state)):
+            return RedirectResponse("/terms?" + urllib.parse.urlencode({"back": where}), status_code=303)
+        answer = RedirectResponse(where, status_code=303)
+        answer.set_cookie(termslib.COOKIE, version, max_age=termslib.COOKIE_DAYS * 86400, httponly=True,
+                          samesite="lax", secure=_over_https(request))
+        return answer
+
+    @app.get("/terms/left", response_class=HTMLResponse)
+    def terms_left(request: Request):
+        """Leave: a page that says so, since no page may close a tab it did not open. An earlier yes goes too."""
+        answer = _terms_page(request, left=True)
+        answer.delete_cookie(termslib.COOKIE)
+        return answer
+
+    @app.get("/admin/terms/preview", response_class=HTMLResponse)
+    def admin_terms_preview(request: Request):
+        """The saved text as a visitor sees it, switch on or off."""
+        _admin_check(request)
+        return _terms_page(request, preview=True, **_terms_context())
 
     @app.get("/push/key")
     def push_key():
@@ -28395,6 +28469,9 @@ def create_app(state: AppState) -> FastAPI:
                         "trade_cut": state.setting("trade_cut")},
             "node": {"version": state.running_version,
                      "public_hosts": list(state.public_hosts)},
+            "terms": {"on": termslib.on(state), "text": termslib.text(state),
+                      "version": termslib.version(termslib.text(state)),
+                      "own": bool(state.setting(termslib.TEXT_SETTING, ""))},
             "xchain": _admin_xchain(),
             "swap_big": {k: v / COIN for k, v in _swap_big_lines().items()},
             "delegate_cap": {k: v / COIN for k, v in _delegate_caps().items()},
@@ -29562,9 +29639,16 @@ def create_app(state: AppState) -> FastAPI:
                 text = str(said["faucet_daily"]).strip()
                 state.set_setting("faucet_daily",
                                   None if text in ("", "none") else walletlib.parse_amount(text))
-            for flag in ("auto_update", "auto_sell", "auto_fill", "node_trades"):
+            for flag in ("auto_update", "auto_sell", "auto_fill", "node_trades", termslib.GATE_SETTING):
                 if flag in said:
                     state.set_setting(flag, bool(said[flag]))
+            if termslib.TEXT_SETTING in said:
+                # Empty, or the template word for word, keeps nothing: the node then follows the template.
+                words = termslib.clean(said[termslib.TEXT_SETTING])
+                if len(words) > termslib.TEXT_MAX:
+                    raise ValueError(f"the terms are limited to {termslib.TEXT_MAX:,} characters")
+                state.set_setting(termslib.TEXT_SETTING,
+                                  None if words == termslib.clean(termslib.DEFAULT) else words or None)
             if "update_channel" in said:
                 # main live or main test (arcade/update.py CHANNELS), read by the updater at its next check
                 if said["update_channel"] not in updatelib.CHANNELS:

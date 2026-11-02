@@ -102,6 +102,8 @@ PUBLIC_PAGES = frozenset({
     "/manifest.webmanifest",  # the app, installable (a PWA)
     "/sw.js",                 # its service worker: an offline page and push, no cache of pages
     "/offline",
+    "/terms",                 # a node's terms of use, when it asks for them (terms.py, 2026-11-02)
+    "/terms/left",            # where Leave ends up
     "/push/key",              # the key a browser subscribes to this node's pushes with
     "/account/push/news",     # what woke the phone: who wrote, never what (signed in)
     "/account/ring/apps",     # the apps an account lets ring it (arcade/ring.py, signed in)
@@ -288,6 +290,8 @@ LINKED_FROM_PUBLIC = ("/content/", "/collections", "/feed", "/u/", "/docs",
 #: equally correct; it is named so that nobody reads that 405 as the door having
 #: opened something. (the door census, 2026-09-27)
 PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
+               # a browser's yes to the terms: a cookie in that browser, nothing on this node (terms.py, 2026-11-02)
+               "/terms/accept",
                # every session of the signed-in account ends, its own only (issue #13, 2026-10-25)
                "/auth/logout-everywhere",
                # the LLM service (llmweb.py, 2026-10-23): each acts only for the signed-in account, its own grants,
@@ -663,6 +667,26 @@ def from_outside(headers, host: str, public_hosts: tuple[str, ...],
     if not loopback_peer(peer):
         return True
     return not loopback_host(host, local_hosts)
+
+
+def public_visitor(headers, host: str, public_hosts: tuple[str, ...],
+                   peer=None, local_hosts: tuple[str, ...] = ()) -> bool:
+    """Is this somebody the public side of the node is showing itself to, rather than whoever runs it?
+
+    from_outside, less the LAN: a request naming a LAN address from a LAN machine is not from the internet, whatever
+    that function has to assume for the wallet's sake. Called public are the published names and anything that came
+    through an edge, so a tunnel's name nobody wrote into `public_hosts` is not missed, and a connection from a
+    global address. Whoever is left is the node's own machine and its own network, so they are never asked.
+    """
+    if not from_outside(headers, host, public_hosts, peer=peer, local_hosts=local_hosts):
+        return False
+    if host_name(host) in public_hosts or any(header in headers for header in EDGE_HEADERS):
+        return True
+    try:
+        ip = ipaddress.ip_address(str(peer or ""))
+    except ValueError:
+        return True
+    return (getattr(ip, "ipv4_mapped", None) or ip).is_global
 
 
 #: Methods that change nothing, so a request from another site may make them.

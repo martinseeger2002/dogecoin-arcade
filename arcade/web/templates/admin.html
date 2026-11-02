@@ -276,6 +276,29 @@
   <button type="button" class="small saveswitches">Save switches</button>
 </section>
 
+<section class="panel" id="terms">
+  <h2>Terms of use</h2>
+  <p class="muted" style="margin-top:0">For a node open to the public on a domain. With this on, a visitor opening a
+    page here must accept these terms or leave, and changing the text asks everybody again. It only asks people who
+    come from outside: this machine, your own network and this panel are never stopped, and neither are other arcades
+    or apps talking to this node.</p>
+  <label class="switch"><input type="checkbox" id="terms_gate"> Visitors must accept the terms to use this site</label>
+  <p class="muted" id="termswhere"></p>
+  <p class="msg info"><strong>This text is a template, not legal advice.</strong> It may not be enough
+    for where you or your visitors are, or for what your node offers, and no text removes every responsibility. Have
+    a lawyer read it, and add what only you can: your name or contact address for reports about content, and the
+    place whose law applies.</p>
+  <textarea id="terms_text" rows="16" autocomplete="off" maxlength="64000" style="width:100%;font:inherit"
+            aria-label="Terms of use text"></textarea>
+  <p class="muted" style="font-size:.84rem">A line starting with <code># </code> is a heading; a blank line starts a
+    new paragraph. <span id="termsversion"></span></p>
+  <div class="row" style="gap:8px;flex-wrap:wrap">
+    <button type="button" class="small" id="termssave">Save terms</button>
+    <button type="button" class="small ghost" id="termspreview">Preview what a visitor sees</button>
+    <button type="button" class="small ghost" id="termsreset">Back to the template</button>
+  </div>
+</section>
+
 <section class="panel" id="gamecards">
   <h2>Game cards</h2>
   <p class="muted" style="margin-top:0">A new game card that looks like somebody else&rsquo;s game (a lookalike name,
@@ -2061,6 +2084,7 @@ section.panel h2{margin-top:0}
     $('faucetdaily').value = d.faucet.daily ? coins(d.faucet.daily) : '';
     ['auto_update', 'auto_sell', 'auto_fill', 'node_trades'].forEach(function (k) { $(k).checked = !!d.selling[k]; });
     $('update_channel').value = d.selling.update_channel || 'live';
+    drawTerms(d.terms, d.node.public_hosts);
     // One line per real-coin chain the swaps know (2026-10-18: LTC too), drawn from the setting itself.
     if (d.swap_big) {
       var lines = $('swapbiglines'); lines.textContent = '';
@@ -3616,6 +3640,32 @@ section.panel h2{margin-top:0}
     rows.forEach(function (r) { var d = document.createElement('div'), b = document.createElement('b'); b.textContent = r[0] + ': '; d.append(b, r[1]); box.append(d); });
   }
   loadNeeds(); setInterval(function () { if (!document.hidden) loadNeeds(); }, 30000);
+  // The text is left alone while the operator is editing it: draw() runs again after every save anywhere on this page.
+  var termsEdited = false;
+  function drawTerms(t, hosts) {
+    $('terms_gate').checked = !!t.on;
+    if (!termsEdited) $('terms_text').value = t.text;
+    $('termsversion').textContent = 'Saved version: ' + t.version + (t.own ? ' (your own text).' : ' (the template).');
+    $('termswhere').textContent = (hosts || []).length
+      ? 'Your public names: ' + hosts.join(', ') + '. Anything else reaching this node through a tunnel or proxy is asked too.'
+      : 'No public name is set on the DNS tab, so only visitors arriving through a tunnel or proxy, or from a public address, are asked.';
+  }
+  $('terms_text').addEventListener('input', function () { termsEdited = true; });
+  function saveTerms(words) {
+    var body = {terms_gate: $('terms_gate').checked};
+    if (words !== undefined) body.terms_text = words;
+    return call('/admin/api/settings', body).then(function () { termsEdited = false; load(); });
+  }
+  $('termssave').onclick = function () {
+    saveTerms($('terms_text').value)
+      .then(function () { say($('terms_gate').checked ? 'Terms saved: visitors are asked.' : 'Terms saved: the switch is off, so nobody is asked.'); })
+      .catch(function (e) { say(e.message, 'err'); });
+  };
+  $('termspreview').onclick = function () { location.href = '/admin/terms/preview'; };
+  $('termsreset').onclick = function () {
+    if (!confirm('Replace your text with the template?')) return;
+    saveTerms('').then(function () { say('Back to the template.'); }).catch(function (e) { say(e.message, 'err'); });
+  };
   function saveSwitches() {
     call('/admin/api/settings', {trade_cut: $('tradecut').value, auto_update: $('auto_update').checked, update_channel: $('update_channel').value, auto_sell: $('auto_sell').checked,
       auto_fill: $('auto_fill').checked, node_trades: $('node_trades').checked,
