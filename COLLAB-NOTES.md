@@ -151,6 +151,37 @@ Network app only -- a self-contained module that shows node status, sync progres
   The Network app registers itself via `register(app, state)` and stores its dock entry for the shell to pick up.
   No changes to existing files, no signing paths touched.
 
+### 2026-11-02 DogeFeedX: Updated data sources and added screenshots (blockchaindad agent, Claude)
+Follow-up to the DogeFeedX apps:
+- **Data sources clarified:** dogefeed.app provides feed (/api/feed), search (/api/search), and doginal
+  images (/doginal-img/). Collection metadata uses explorer.dogesoft.io since dogefeed.app doesn't expose
+  a public collection listing API (their collection pages are server-side rendered).
+- **dogefeedx.py updated:** Added `_fetch_dogefeed_app` for dogefeed.app endpoints and
+  `_fetch_dogefeed_explorer` for explorer.dogesoft.io. New `/api/feed` endpoint extracts verified PFP
+  holders from the social feed. Image URLs now point to dogefeed.app/doginal-img/.
+- **explorer.html updated:** CONTENT_BASE now uses dogefeed.app/doginal-img/ for images.
+- **Screenshots:** Created example screenshots at `/opt/cursor/artifacts/screenshots/`:
+  - `dogefeedx-explorer-example.png` - Finder-style collection browser
+  - `dogefeedx-terminal-example.png` - Terminal.app-style command window
+- Branch `cursor/dogefeedx-apps-8c32`, same PR #4. Tests: 19 passed.
+
+### 2026-11-02 DogeFeedX: Explorer and Terminal apps with Mac OS X Aqua style (blockchaindad agent, Claude)
+Two self-contained DogeFeedX apps for the arcade desktop with Mac OS X Aqua styling and DogeFeed branding:
+- **Explorer (`/dogefeedx/explorer`)**: Finder-style browser for inscription collections from DogeFeed
+  (explorer.dogesoft.io). Collection grid, item detail, inscription info. Results cached, graceful fallback
+  when DogeFeed is unreachable.
+- **Terminal (`/dogefeedx/terminal`)**: Terminal.app-style window for inline commands (help, status, peers,
+  balance, lookup, search, inscription, collections). Calls existing arcade APIs only, read-only, no
+  arbitrary shell execution.
+- **Shell registration stub (`shell.js`)**: `window.DogeFeedX.registerApp()` for apps to register with the
+  desktop dock. Compatible stub until the shell hook lands on main.
+- **Aqua CSS (`aqua.css`)**: Mac OS X Aqua theme with DogeFeed brand colors (#d9a520 gold).
+- **Files:** `arcade/web/dogefeedx.py` (API endpoints), `arcade/web/templates/dogefeedx/` (explorer.html,
+  terminal.html, shell.js, aqua.css), `tests/test_dogefeedx_standalone.py` (19 tests, all pass).
+- **app.py:** DogeFeedX routes registered via `dogefeedx.register_routes(app, render)`.
+- Branch `cursor/dogefeedx-apps-8c32`. No exchange-safety.md changes (read-only, no signing).
+- Nothing needed from the other side; these are standalone apps.
+
 ### 2026-11-02 A fresh install: Pepecoin testnet only, and it meets its first peer at once (Claude, Riffs session)
 The operator: "When somebody first installs arcade, I don't want them to be prompted to install any of the block chains except
 for Pepe test. It should first connect to the UDP network ... before their arcade is published via the mesh ID ... and
