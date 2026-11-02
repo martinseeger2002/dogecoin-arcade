@@ -125,6 +125,9 @@ chain where it would not be safe:
 * **A chain whose script addresses share a version byte with another chain's
   ordinary addresses** (Bellscoin). Coins sent there would be lost, so `open`
   is refused there too.
+* **A chain whose transactions carry a time** (Kotia). The arcade cannot yet
+  write that time into the way back, so Kotia's Core would refuse it; `open`
+  is refused there as well.
 
 ## Costs
 

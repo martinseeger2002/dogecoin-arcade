@@ -3,8 +3,8 @@
 2026-10-17: "It should be required to be running Pepe coin test for everyone along with one more
 core." Pepecoin testnet carries the Messenger, the @names and the mesh's own vouching, so it is always
 run here; every other chain is run here, borrowed through the mesh (arcade/mesh/coreshare.py), or --
-for a chain the arcade can do without -- left off. At least one chain besides testnet must be run here,
-so every arcade brings a Core to the network as well as taking. Every chain this arcade runs is shared
+for a chain the arcade can do without -- left off. Until 2026-10-27 at least one chain besides testnet had
+to run here as well; now every other chain may be borrowed (`check`). Every chain this arcade runs is shared
 unless the operator unticks it (Admin -> Chains, one checkbox each).
 
 Settings (settings.json): `core:<net>` = "here" | "borrow" | "off", `share:<net>` = true | false (true when

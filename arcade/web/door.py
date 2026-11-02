@@ -19,10 +19,9 @@ The cost of that choice is that a new public page has to be added here to
 appear, which is a visible, one-line kind of mistake; the cost of the other
 choice is somebody's coins.
 
-**Almost every POST is refused.** Every FORM in this application spends
-the NODE's wallet — posting to the feed, tipping, inscribing, trading —
-and none of that is per-account yet, so on a public instance none of it
-may be reached.
+**Almost every POST is refused.** Every FORM that spends the NODE's
+wallet — posting to the feed, tipping, inscribing, trading as the node —
+is the operator's, so on a public instance none of it may be reached.
 
 The exceptions are named one at a time and deliberately, and they are the
 routes where an account acts with a key the node never sees: signing in,

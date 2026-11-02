@@ -12,7 +12,7 @@ A DogecoinArcade node is three things running on one machine:
 
 | Part | What it does |
 |---|---|
-| **Pepecoin Core, mainnet** | The ledger: tokens, NFTs, inscriptions and coins |
+| **Pepecoin Core, mainnet** | The ledger: tokens, NFTs, inscriptions and coins. Run here, or borrowed from an arcade that shares it |
 | **Pepecoin Core, testnet** | The Messenger's chain (messaging is testnet-only) |
 | **DogecoinArcade** | The indexer and web interface, served at `http://127.0.0.1:8420` |
 
