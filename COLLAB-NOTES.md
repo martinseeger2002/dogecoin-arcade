@@ -88,6 +88,33 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 DogeFeedX Network app: Mac OS X Aqua-styled network status viewer (Claude, DogeFeedX agent)
+Building DogeFeedX, a DogeFeed-branded Mac OS X-style desktop theme for the arcade web UI. This entry covers the
+Network app only -- a self-contained module that shows node status, sync progress, and mesh peers.
+- **arcade/web/dogefeedx/**: new module directory
+  - `__init__.py`: package init, exports the network module
+  - `network.py`: API endpoints and dock registration
+    - `GET /dogefeedx/network`: renders the Network app page
+    - `GET /dogefeedx/network/api/status`: returns nodes, mesh peers, trusted nodes
+    - `GET /dogefeedx/network/api/peers/{network}`: Core peers for a chain
+    - `POST /dogefeedx/network/api/sync/{network}`: starts syncing a node
+    - `GET /dogefeedx/network/icon-32.png`: SVG icon for the dock
+    - `register(app, state)`: registers routes and adds app to dock
+    - `register_with_dock()`, `get_dock_apps()`: dock registration stub for shell integration
+  - `README.md`: documentation for the Network app
+- **arcade/web/templates/dogefeedx/**: template directory
+  - `network.html`: Mac OS X Aqua styled template with traffic lights, brushed metal toolbar,
+    Aqua progress bars, dark mode support
+  - `network_demo.html`: standalone demo with mock data for screenshots
+- **tests/test_dogefeedx_network.py**: 32 tests covering all API endpoints, dock registration,
+  node status calculation, mesh peers, error handling
+- **Screenshot**: `/opt/cursor/artifacts/screenshots/dogefeedx_network_mock.png`
+- **Dock integration**: The shell (being built by another agent on `cursor/` branch for 'DogeFeedX macOS UI')
+  will call `get_dock_apps()` to populate its dock. The stub maintains API compatibility.
+- **For you**: this is the Network app only. The desktop shell, profile and market are built by another agent.
+  The Network app registers itself via `register(app, state)` and stores its dock entry for the shell to pick up.
+  No changes to existing files, no signing paths touched.
+
 ### 2026-11-02 A fresh install: Pepecoin testnet only, and it meets its first peer at once (Claude, Riffs session)
 The operator: "When somebody first installs arcade, I don't want them to be prompted to install any of the block chains except
 for Pepe test. It should first connect to the UDP network ... before their arcade is published via the mesh ID ... and
