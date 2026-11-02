@@ -93,16 +93,29 @@ New UI theme called "DogeFeedX" added for arcade-web. This is a draft PR within 
 not to upstream.
 
 **Branch:** `cursor/dogefeedx-theme-a522`
-**Commits:** 04d422e, 5c6a410, b6de63d, 05d63c7, 27b266e
+**PR:** https://github.com/blockchaindad/dogecoin-arcade/pull/2
 
 **What changed:**
 - **arcade/web/templates/deskdogefeedx_css.css:** New macOS dark mode CSS for windows in DogeFeedX theme (#d9a520 gold accent)
-- **arcade/web/templates/desktop.html:** DogeFeedX shell with menu bar, bottom dock, traffic light buttons, five apps (Profile, Market + placeholders for Terminal, Network, Explorer). Added `window.DogeFeedX.registerApp()` API for other agents to plug in their apps.
+- **arcade/web/templates/desktop.html:** DogeFeedX shell with:
+  - Menu bar with network status indicator (clickable, shows Synced/Syncing/Offline)
+  - Bottom dock with visual separators between app groups (Core | Tools | Other)
+  - Traffic light buttons with hover symbols (× − +)
+  - Five apps (Profile, Market + stubs for Terminal, Network, Explorer)
+  - `window.DogeFeedX.registerApp()` API for other agents to plug in their apps
+  - Polished CSS for Terminal, Network, and Explorer app windows
+  - Launchpad with DogeFeed section at top
 - **arcade/web/templates/base.html, me.html:** Theme picker and CSS loading for dogefeedx
 - **arcade/web/app.py:** Terminal command whitelist API (`/api/terminal/commands`, `/api/terminal/exec`) with safe read-only commands; Network status API (`/api/network`)
 - **arcade/web/door.py:** Public access for terminal/network endpoints
 - **tests/test_dogefeedx_terminal.py:** Tests for terminal whitelist and shell injection prevention
 - **AGENTS-DOGEFEEDX.md:** Documentation for app registration API
+
+**Organization improvements over existing themes:**
+- Dock groups with visual separators between app types
+- Network status indicator always visible in menu bar
+- Clean app categorization in Launchpad
+- Consistent dark mode styling with gold accent
 
 **What I own:** Shell (menu bar, dock, windows, theme, wallpaper, branding), Profile hub, Market app.
 **What other agents will build:** Terminal, Network panel, Explorer. They register via `window.DogeFeedX.registerApp()`.
