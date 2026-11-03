@@ -29,6 +29,7 @@ arcade.realtime.join('call', {game: 'media-test', fast: true}).then(function (r)
   r.media.on('media', function (p, h) { window.has[p.id] = h; window.log.push(['media', p.id, h]); });
   r.media.on('media-off', function (p) { delete window.has[p.id]; window.log.push(['media-off', p.id]); });
   r.media.on('state', function (s) { window.log.push(['state', s]); });
+  window.speak = {}; r.media.on('speaking', function (p, on) { window.speak[p.id] = on; window.log.push(['speaking', p.id, on]); });
   r.on('reconnecting', function () { window.log.push(['reconnecting']); });
   r.on('rejoined', function (me, media) { window.log.push(['rejoined', media]); });
 });
@@ -800,6 +801,38 @@ def test_muting_the_microphone_leaves_the_screens_sound(tmp_path, no_nodes):
             after = pb.evaluate(f"(id) => ({LOUD})(id)", ida + "#screen")
             print("screen sound on b before", before, "after the mic muted", after)
             assert after > before * 0.5, f"the screen's sound went with the microphone: {before} -> {after}"
+            chrome.close()
+    finally:
+        server.stop()
+        state.mesh.stop()
+
+
+def test_who_is_speaking_is_said_to_the_page_and_stops_when_they_mute(tmp_path, no_nodes):
+    """2026-11-02, the operator: green boxes round whoever is talking in a Riffs Lounge. The viewer says 'speaking' on and
+    off for each player it hears (their voice, not their screen's sound) and for this player's own microphone."""
+    state, server, base = _server(tmp_path)
+    try:
+        with sync_api.sync_playwright() as pw:
+            chrome = _launch(pw)
+            pa, _, _ = _player(chrome, base)
+            pb, _, _ = _player(chrome, base)
+            ga, gb = _game(pa), _game(pb)
+            _until(ga, "window.room && window.room.media && window.room.me", "a in")
+            _until(gb, "window.room && window.room.media && window.room.me", "b in")
+            ida, idb = ga.evaluate("window.room.me.id"), gb.evaluate("window.room.me.id")
+            _until(ga, f"window.states[{idb!r}] === 'direct'", "a direct")
+            ga.evaluate("window.room.media.start({video: false, audio: true})")
+            gb.evaluate("window.room.media.start({video: false, audio: false})")
+            ga.evaluate(f"window.room.media.share({idb!r}, true)")
+            _until(gb, f"window.has[{ida!r}] && window.has[{ida!r}].audio", "b gets a's voice")
+            assert not gb.evaluate(f"!!window.speak[{ida!r}]"), "not before b hears a"
+            gb.evaluate(f"window.room.media.hear({ida!r}, true)")
+            # Chromium's fake microphone beeps: a voice to the meter.
+            _until(gb, f"window.speak[{ida!r}] === true", "b sees a speaking", timeout=20000)
+            _until(ga, f"window.speak[{ida!r}] === true", "a sees itself speaking", timeout=20000)
+            ga.evaluate("window.room.media.mute({audio: true, video: false})")
+            _until(ga, f"window.speak[{ida!r}] === false", "a's own box goes quiet on mute", timeout=10000)
+            _until(gb, f"window.speak[{ida!r}] === false", "b sees a go quiet", timeout=15000)
             chrome.close()
     finally:
         server.stop()

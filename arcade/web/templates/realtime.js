@@ -96,6 +96,7 @@
 //     });
 //     room.media.on('media', function (p, has) { ... });    // has = {video, audio}: they are sending
 //     room.media.on('media-off', function (p) { ... });
+//     room.media.on('speaking', function (p, on) { ... });  // p is talking now (on) or went quiet: you too (p = room.me)
 //     room.media.on('state', function (s) { ... });         // 'on', 'off' (the player pressed Stop too), 'denied'
 //     room.media.share(p.id, {video: false, audio: true});  // one kind only: your voice, not your picture
 //     room.media.start({video: true, audio: true});          // again, mid-call: the camera joins the microphone
@@ -190,10 +191,10 @@
   function Media(room, screen) {
     this.room = room;
     this.screen = screen;                           // this browser can share its screen
-    this._on = {media: [], 'media-off': [], state: []};
+    this._on = {media: [], 'media-off': [], state: [], speaking: []};
   }
   Media.prototype.on = function (type, fn) {
-    if (!this._on[type]) throw new Error('media events are: media, media-off, state');
+    if (!this._on[type]) throw new Error('media events are: media, media-off, state, speaking');
     this._on[type].push(fn);
     return this;
   };
@@ -325,6 +326,7 @@
     }
     else if (ev.type === 'media' && this.media) this.media._emit('media', p, {video: !!ev.video, audio: !!ev.audio});
     else if (ev.type === 'media-off' && this.media) this.media._emit('media-off', p);
+    else if (ev.type === 'media-speaking' && this.media) this.media._emit('speaking', p, !!ev.on);
     else if (ev.type === 'media-state' && this.media) this.media._emit('state', ev.state);
     else if (ev.type === 'peer' && this.fast) {
       if (ev.state === 'gone') delete this.fast._peers[p.id]; else this.fast._peers[p.id] = ev.state;

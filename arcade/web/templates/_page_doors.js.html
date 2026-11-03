@@ -893,7 +893,8 @@
       mediaUnmix(md.mix); md.mix = null;
       if (md.xstream) { md.xstream.getTracks().forEach(function(t){ t.stop(); }); md.xstream = null; }
       md.stream = null; md.video = md.audio = md.screen = false; md.share = {};
-      if (quiet) { if (md.ampCtx) { md.ampCtx.onstatechange = null; try { md.ampCtx.close(); } catch (err) {} } h.media = null; mediaDraw(h, true); }
+      if (quiet) { if (md.ampCtx) { md.ampCtx.onstatechange = null; try { md.ampCtx.close(); } catch (err) {} }
+                   if (md.meterCtx) { try { md.meterCtx.close(); } catch (err) {} } h.media = null; mediaDraw(h, true); }
       else { mediaDraw(h); if (had && !silent) mediaEvent(rtName(h), h, {type: 'media-state', state: 'off'}); }
     }
     // What a shared screen plays, as it is (music is no voice: none of the voice cleaning), and WITHOUT this page's own sound (the operator
@@ -1288,6 +1289,47 @@
         } else v.style.display = 'none';
       });
       mediaPill();
+      if (h.media && !h.speakWatch) h.speakWatch = setInterval(function(){ mediaSpeak(h); }, 150);
+    }
+    // Who is talking (2026-11-02, the operator: green boxes round whoever speaks in a Riffs Lounge): the level of each
+    // player's voice as it arrives (their screen's sound is not their voice), and of your own microphone, said to the
+    // page as 'media-speaking' on/off. On above SPEAK_ON, off after SPEAK_HOLD ms below it, so a box does not flicker.
+    var SPEAK_ON = 0.04, SPEAK_HOLD = 600;
+    function mediaSpeak(h){
+      var name = rtName(h), md = h.media;
+      if (!name || !md) { clearInterval(h.speakWatch); h.speakWatch = null; return; }
+      var now = Date.now(), said = md.speaking || (md.speaking = {});
+      var level = function(id, lv, p){
+        var st = said[id] || (said[id] = {on: false, at: 0});
+        if (lv > SPEAK_ON) st.at = now;
+        var on = lv > SPEAK_ON || (st.on && now - st.at < SPEAK_HOLD);
+        if (on !== st.on) { st.on = on; mediaEvent(name, h, {type: 'media-speaking', member: p, on: on}); }
+      };
+      if (h.fast) for (var id in h.fast.peers) {
+        var pr = h.fast.peers[id], lv = 0;
+        if (pr.pc && pr.remote && md.hear[id]) pr.pc.getReceivers().forEach(function(r){
+          if (!r.track || r.track.kind !== 'audio' || !r.getSynchronizationSources) return;
+          if (pr.remote.getAudioTracks().indexOf(r.track) < 0) return;       // their screen's sound, not their voice
+          r.getSynchronizationSources().forEach(function(x){ if (x.audioLevel > lv) lv = x.audioLevel; });
+        });
+        level(id, lv, pr.p);
+      }
+      var mic = md.stream && md.audio && !md.muted.audio ? md.stream.getAudioTracks()[0] : null, me = 0;
+      if (mic && (!md.meter || md.meter.track !== mic)) {
+        try {
+          var Ctx = window.AudioContext || window.webkitAudioContext, ctx = md.meterCtx || (md.meterCtx = new Ctx());
+          var an = ctx.createAnalyser(); an.fftSize = 512;
+          ctx.createMediaStreamSource(new MediaStream([mic])).connect(an);
+          md.meter = {track: mic, an: an, buf: new Float32Array(512)};
+        } catch (err) { md.meter = {track: mic}; }
+      }
+      if (mic && md.meter && md.meter.an) {
+        if (md.meterCtx.state === 'suspended') md.meterCtx.resume().catch(function(){});
+        md.meter.an.getFloatTimeDomainData(md.meter.buf);
+        var sum = 0; for (var i = 0; i < md.meter.buf.length; i++) sum += md.meter.buf[i] * md.meter.buf[i];
+        me = Math.sqrt(sum / md.meter.buf.length) * 1.5;
+      }
+      if (h.me) level(h.me.id, me, h.me);
     }
     function mediaPill(){
       var on = mediaAnyOn();
