@@ -962,11 +962,17 @@ body.fullscreen #arc-bot { display: none !important; }
   function save() { keep(LAYOUT_LS, layout); }
   var homeApps = [];     // the apps on this account's phone home screen and its stars: on the desktop too
 
+  // DogeFeedX dock apps: items here appear in the dock, NOT on the desktop (per Billy's design rule)
+  var DFX_DOCK_APPS = ['dfxprofile', 'dfxmarket', 'dfxterminal', 'dfxnetwork', 'dfxexplorer'];
+  
   function onDesk() {
     var keys = TABS.map(function (t) { return t.key; }).concat(['store', 'helper']);
-    // Add DogeFeedX apps to the desktop in DogeFeedX theme
-    if (DFX) keys = keys.concat(['dfxprofile', 'dfxmarket', 'dfxterminal', 'dfxnetwork', 'dfxexplorer']);
+    // DogeFeedX: dock apps do NOT appear as desktop icons (Billy's design rule, 2026-11-03)
+    // Desktop shows only items not in the dock (files, folders, inscriptions, etc.)
+    // Do NOT add DFX_DOCK_APPS to keys - they are in the dock only
     homeApps.concat(layout.added).forEach(function (k) { if (byKey[k] && keys.indexOf(k) < 0) keys.push(k); });
+    // Filter out dock apps from desktop in DFX mode
+    if (DFX) keys = keys.filter(function (k) { return DFX_DOCK_APPS.indexOf(k) < 0; });
     return keys.filter(function (k) { return layout.gone.indexOf(k) < 0; });
   }
 

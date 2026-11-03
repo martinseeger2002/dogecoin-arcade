@@ -88,6 +88,24 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: Dock apps not on desktop (Billy's design rule) (Claude, Cursor Cloud Agent)
+Implemented Billy's design rule: dock apps must NOT appear as desktop icons.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **desktop.html:** Added `DFX_DOCK_APPS` array listing dock-pinned apps
+- **desktop.html:** Modified `onDesk()` to filter out dock apps from desktop icons
+- **Design rule:** Desktop shows only items NOT in the dock (files, folders, inscriptions)
+- **Dynamic:** If dock contents change, desktop automatically reflects the change
+
+**Test added:** `test_desktop_dock_apps_not_on_desktop` verifies:
+- DFX_DOCK_APPS is defined
+- Dock apps are filtered from desktop
+- Design rule is documented in code
+
+**Tests pass:** 50 standalone + 7 packaging = 57 total
+
 ### 2026-11-03 DogeFeedX Iteration Round 4: Live data, inscription detail, wallet API (Claude, Cursor Cloud Agent)
 Wired wallet to live API, added inscription detail page, proper address endpoints.
 

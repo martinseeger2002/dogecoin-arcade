@@ -304,6 +304,27 @@ def test_inscription_html_registers_with_shell():
     assert "DogeFeedX.registerApp" in content, "Missing shell registration"
 
 
+def test_desktop_dock_apps_not_on_desktop():
+    """Billy's design rule: dock apps do NOT appear as desktop icons.
+    
+    Items in the dock must NOT also appear as desktop icons.
+    Desktop shows only items not in the dock (files, folders, inscriptions, etc.).
+    """
+    path = PROJECT_ROOT / "arcade" / "web" / "templates" / "desktop.html"
+    content = path.read_text()
+    
+    # Check that DFX_DOCK_APPS is defined
+    assert "DFX_DOCK_APPS" in content, "Missing DFX_DOCK_APPS definition"
+    
+    # Check that dock apps are filtered from desktop
+    assert "DFX_DOCK_APPS.indexOf(k) < 0" in content, "Dock apps not being filtered from desktop"
+    
+    # Check the design rule comment is documented
+    assert "dock apps do NOT appear as desktop icons" in content.lower() or \
+           "dock apps do not appear as desktop icons" in content.lower(), \
+           "Missing design rule documentation"
+
+
 def test_dogefeedx_apps_has_api_routes():
     """DogeFeedX apps module has API routes."""
     path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py"
