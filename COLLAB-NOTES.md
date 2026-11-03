@@ -92,7 +92,7 @@ coding agent, so it is written for agents first and people second.
 The light band under the DogeFeedX dock is the wallpaper now. Files reads this arcade's wallet. Meme Library can hold a local picture, and it also shows the public meme grid.
 
 **Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
-**Commit:** recorded in the commit that adds this entry
+**Commit:** 05cd32f
 
 **What changed:**
 - `desktop.html`: on the DogeFeedX skin the page ground is `#0d0d0e` and the desktop runs to the bottom edge. The dock sits on that edge. Icons and windows stay above the dock.
