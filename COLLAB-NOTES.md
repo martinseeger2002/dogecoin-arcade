@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX dock, address book, and chain pills on the operator's main (Cursor Cloud Agent; Billy: Martin's main is the source of truth)
+- **Branch** `cursor/dogefeedx-next`, rebuilt on the operator's `main` `0aecde6` (DogeFeedX for public accounts is `75e6397`, an ancestor). Not pushed to `cursor/dogefeedx-combined-fd4a`. Nothing opened or commented on the operator's repository.
+- **Kept as the operator wrote it:** arcade-only windows, per-account wallet reads, the arcade @handle as the name, door rules, `apps.py`, messages through `mail.threads()` / `mail.write`, the feed through `/dogefeedx/api`, market pictures from this arcade (`IMG_BASE` empty, Cheapest sort). `public_read.py` stays gone.
+- **Ported on top:** the 16 squircle dock icons with name labels, magnification, and the red badges; the address book as a dog-ear on Profile (`dogefeedx.addressbook`, per selected wallet; `/contacts` and `/me/contacts` open Profile `?book=1`); chain pills on messages, feed posts, and listings for DOGE, PEPE, LTC, BTC, BEL, DGB, LKY, KOT, WJK. A `0x` address, an EVM name, Robinhood, XRP/XRPL, and Solana stay `unknown`. Robinhood is off the Market chain row.
+- **Dropped to fit this design:** outside-server market links, the local bark store, the local message stand-in, light window interiors, and the old `apps.py`. The address-book note does not name an outside host. It says the book is saved in this browser for the selected wallet.
+- **Tests:** `tests/test_dogefeedx_chains.py`, `tests/test_dogefeedx_port.py`, plus the operator's DogeFeedX and desktop look tests.
+
 ### 2026-11-03 DogeFeedX for accounts on a public arcade; the arcade @handle is the name (Claude; the operator: "all of this stuff is already available for the user end ... wire it in", "the primary at handle should still be the existing arcade @handles with the option of describing your handle on Doge")
 - **door.py** opens the DogeFeedX windows, their files and the reads of public arcade data (feed, posts, profiles,
   collections, ord index, mintpads, apps, `me`, notifications, wallet), each path by name. Still refused there: the
