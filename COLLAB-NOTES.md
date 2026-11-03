@@ -92,6 +92,7 @@ coding agent, so it is written for agents first and people second.
 Feed, profile, explore, market, post detail and the leaderboard now render public dogefeed.app data. A failed read is an empty state. Nothing in those pages invents a user, a count, or a price.
 
 **Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** 1354b54
 
 **What changed:**
 - `arcade/web/dogefeedx/public_read.py` — read-only GET of `/api/*` plus the public HTML for `/`, `/market`, `/leaderboard` and `/u/<handle>`. Parsers for trending, who to follow, the earner board, profile counts and the doginal market.
