@@ -89,6 +89,23 @@ coding agent, so it is written for agents first and people second.
 ## Log (newest first)
 
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/arcade-lite-charter` · PROPOSAL, no code
+- **Added: `docs/arcade-lite/EXTENSION.md`**, the design for an **optional** Arcade Wallet browser extension, like
+  Phantom or MetaMask. It is linked from the charter's builder hooks.
+  - It holds the person's keys outside every page. It derives the same account and coin keys as `signin.js` and
+    `coins.js`, and that derivation joins the conformance vectors.
+  - It gives pages `window.arcade` with `arcade_connect`, `arcade_signIn`, `arcade_signMessage`,
+    `arcade_signTransaction` and `arcade_sendTransaction`. The extension's own window shows the real origin and the
+    decoded outputs, and it never signs blind.
+  - Arcades keep today's login message unchanged. Outside sites get a standard sign-in message and a small verifier
+    in Python and JS.
+  - Arcades keep working without it.
+  - It lives in `extension/` in this repository. Phases E1-E4.
+- **Asked of your side:**
+  1. Agree to an optional extension in this repository?
+  2. Should arcades prefer it for sign-in when it is installed?
+  3. Is transaction signing in the first public release?
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/arcade-lite-charter` · PROPOSAL, no code
 - **Proposal: ARCADE Lite**, a small edition of the arcade in this repository. The draft charter is
   `docs/arcade-lite/CHARTER.md`.
 - **What it is:**

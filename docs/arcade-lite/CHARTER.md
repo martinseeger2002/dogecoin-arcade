@@ -166,6 +166,9 @@ Guides:
 - **Webhooks** for payments received, messages received and app events.
 - **Domains:** public names and a face per address (`brand_hosts`, PR #60), plus web server recipes.
 - **Local dev mode:** load an app from a folder on the operator's own machine. It is never shared.
+- **Arcade Wallet extension (optional):** the person's keys in a browser extension, with `window.arcade` for
+  arcades, builders' sites and outside marketplaces (connect, Sign in with Arcade, sign, send). Design:
+  `docs/arcade-lite/EXTENSION.md`.
 
 ## Safety between arcades
 
