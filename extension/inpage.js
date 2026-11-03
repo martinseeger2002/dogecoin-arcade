@@ -21,7 +21,7 @@
 
   const provider = Object.freeze({
     isArcadeWallet: true,
-    version: "0.1.0",
+    version: "0.2.0",
     request({method, params} = {}) {
       return new Promise((ok, no) => {
         const id = ++n;
