@@ -861,12 +861,16 @@ async def api_names(
             # Fallback to explorer
             data = await _fetch_dogefeed_explorer("/names", {"offset": offset, "limit": limit})
         
-        names_raw = data if isinstance(data, list) else data.get("names", data.get("items", []))
+        if isinstance(data, list):
+            names_raw = data
+        else:
+            # dogefeed.app /api/names returns {records:[{dns, address, url}]}.
+            names_raw = data.get("records") or data.get("names") or data.get("items") or []
         
         names = []
         for n in names_raw:
             name = {
-                "name": n.get("name") or n.get("domain") or "",
+                "name": n.get("dns") or n.get("name") or n.get("domain") or "",
                 "inscription_id": n.get("inscription_id") or n.get("id") or "",
                 "inscription_number": n.get("inscription_number") or n.get("number"),
                 "owner": n.get("owner") or n.get("holder") or n.get("address") or "",
@@ -1250,6 +1254,31 @@ async def api_lookup(name: str = ""):
         return {"found": False, "name": name}
 
 
+@router.get("/api/memes")
+async def api_memes():
+    """Public meme library, if dogefeed.app publishes one. Empty when it does not."""
+    from .public_read import empty, fetch_json
+
+    for path in ("/api/memes", "/api/meme"):
+        try:
+            data = await fetch_json(path)
+        except Exception:
+            continue
+        rows = data if isinstance(data, list) else data.get("memes") or data.get("items") or []
+        memes = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            memes.append({
+                "id": row.get("id") or "",
+                "name": row.get("name") or row.get("title") or "",
+                "image": row.get("image") or row.get("url") or row.get("src") or "",
+            })
+        if memes:
+            return {"memes": memes, "source": "dogefeed.app"}
+    return empty("no_public_list", memes=[])
+
+
 @router.get("/api/whoami")
 async def api_whoami(request: Request):
     """Get current user info for the terminal."""
@@ -1358,3 +1387,28 @@ def register_routes(app, render):
     def dogefeedx_post(request: Request):
         """The DogeFeed post detail - individual post view with replies."""
         return render(request, "dogefeedx/post.html", fullscreen=True)
+
+    @app.get("/dogefeedx/files", response_class=HTMLResponse)
+    def dogefeedx_files(request: Request):
+        """Finder-style view of this arcade wallet: collections, DRC-20 and names."""
+        return render(request, "dogefeedx/files.html", fullscreen=True)
+
+    @app.get("/dogefeedx/inscribe", response_class=HTMLResponse)
+    def dogefeedx_inscribe(request: Request):
+        """Inscribe a collection, a DRC-20 or a name with this arcade's wallet."""
+        return render(request, "dogefeedx/inscribe.html", fullscreen=True)
+
+    @app.get("/dogefeedx/arcade", response_class=HTMLResponse)
+    def dogefeedx_arcade(request: Request):
+        """Games on this arcade. The player is the on-chain account."""
+        return render(request, "dogefeedx/arcade.html", fullscreen=True)
+
+    @app.get("/dogefeedx/memes", response_class=HTMLResponse)
+    def dogefeedx_memes(request: Request):
+        """Meme library. Public reads only; empty when dogefeed.app has no public list."""
+        return render(request, "dogefeedx/memes.html", fullscreen=True)
+
+    @app.get("/dogefeedx/settings", response_class=HTMLResponse)
+    def dogefeedx_settings(request: Request):
+        """Settings kept on this arcade. Nothing is written to dogefeed.app."""
+        return render(request, "dogefeedx/settings.html", fullscreen=True)

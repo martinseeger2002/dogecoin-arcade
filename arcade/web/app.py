@@ -10371,6 +10371,60 @@ def create_app(state: AppState) -> FastAPI:
                "/exchange": 0 if _account_view(request) else _offers_waiting()}
         return JSONResponse({k: int(v or 0) for k, v in out.items()}, headers={"Cache-Control": "no-store"})
 
+    @app.get("/dogefeedx/api/local/notifications")
+    def dogefeedx_local_notifications(request: Request):
+        """Likes, comments, reposts, sales and offers for this arcade account.
+
+        Read from the node's own notification book. Empty when nobody is signed in.
+        Nothing here is written to dogefeed.app.
+        """
+        account = signed_in(request)
+        if account is None and _account_view(request):
+            return JSONResponse({"signed_in": False, "items": []}, headers={"Cache-Control": "no-store"})
+        try:
+            events = _notif_events(account) if account is not None else _node_notif_events()
+        except Exception:                                 # noqa: BLE001 -- an empty list, not a made-up one
+            events = []
+
+        def bucket(ev) -> str:
+            kind = ev.kind or ""
+            if kind == "liked":
+                return "likes"
+            if kind == "replied to":
+                return "comments"
+            if kind == "shared":
+                return "reposts"
+            if kind == "sold":
+                return "market_sale"
+            if kind == "bought":
+                return "market_purchase"
+            if ev.source == "fill":
+                return "offer_received"
+            return ""
+
+        items = []
+        for ev in list(events)[:100]:
+            which = bucket(ev)
+            if not which:
+                continue
+            items.append({"bucket": which, "kind": ev.kind, "text": ev.text or "",
+                          "unread": bool(ev.unread), "at": int(ev.at or 0)})
+        return JSONResponse({"signed_in": True, "items": items}, headers={"Cache-Control": "no-store"})
+
+    @app.get("/dogefeedx/api/local/games")
+    def dogefeedx_local_games(request: Request):
+        """Games inscribed on this arcade. Identity is the player's on-chain account. Empty when there are none."""
+        try:
+            rows = _games_ranked(request, "popular")
+        except Exception:                                 # noqa: BLE001
+            rows = []
+        games = []
+        for row in rows[:60]:
+            name = row.get("name") or ""
+            if name:
+                games.append({"name": name, "txid": row.get("txid") or "", "net": row.get("netlabel") or ""})
+        return JSONResponse({"games": games, "identity": "on-chain"}, headers={"Cache-Control": "no-store"})
+
     @app.get("/home", response_class=HTMLResponse)
     def home_screen(request: Request):
         """The installed app's one page (PWA only): the tabs and the apps as icons, each opened full screen over it

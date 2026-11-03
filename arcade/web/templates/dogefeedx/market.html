@@ -9,15 +9,16 @@
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
-  --df-gold: #f5a623;
-  --df-gold-dark: #e09000;
-  --df-gold-light: #fff8e7;
-  --df-bg: #fff;
-  --df-text: #0f1419;
-  --df-text-secondary: #536471;
-  --df-border: #eff3f4;
-  --df-hover: #f7f9f9;
-  --df-link: #1d9bf0;
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #1a1a1a;
+  --df-bg: #000;
+  --df-text: #fff6dd;
+  --df-text-secondary: rgba(255,255,255,0.55);
+  --df-border: rgba(255,255,255,0.12);
+  --df-hover: rgba(255,255,255,0.06);
+  --df-card: #0a0a0a;
+  --df-link: #f3e3a5;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -30,21 +31,25 @@ a { color: inherit; text-decoration: none; }
 
 .df-app {
   display: flex;
-  max-width: 1280px;
-  margin: 0 auto;
-  min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--df-bg);
 }
 
-/* Left Sidebar - same as feed */
+/* Left Sidebar - scrolls inside itself so Sign in never covers the list */
 .df-sidebar {
-  width: 275px;
-  padding: 12px;
-  position: sticky;
-  top: 0;
+  width: 220px;
+  flex-shrink: 0;
+  padding: 8px;
   height: 100vh;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--df-border);
+  background: var(--df-bg);
 }
 .df-logo {
   display: flex;
@@ -77,33 +82,40 @@ a { color: inherit; text-decoration: none; }
 .df-nav-item svg { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; }
 .df-signin-btn {
   width: 100%;
-  padding: 14px;
+  padding: 12px;
   border-radius: 9999px;
   border: none;
   background: var(--df-gold);
   color: #000;
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 700;
   cursor: pointer;
-  margin-top: auto;
+  margin-top: 8px;
+  flex-shrink: 0;
+  position: static;
 }
 .df-signin-btn:hover { background: var(--df-gold-dark); }
 
 /* Main Content */
 .df-main {
   flex: 1;
-  max-width: 600px;
+  min-width: 0;
+  max-width: none;
+  height: 100vh;
+  overflow: auto;
   border-right: 1px solid var(--df-border);
+  background: var(--df-bg);
 }
 .df-topbar {
   position: sticky;
   top: 0;
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.85);
   backdrop-filter: blur(12px);
   z-index: 100;
   padding: 16px;
   border-bottom: 1px solid var(--df-border);
 }
+.df-topbar h1, .df-card-title, .df-collection-name, .df-stat-value { color: var(--df-text); }
 .df-topbar h1 {
   font-family: "Fredoka", sans-serif;
   font-size: 20px;
@@ -306,12 +318,13 @@ a { color: inherit; text-decoration: none; }
 
 /* Right Sidebar */
 .df-right {
-  width: 350px;
-  padding: 12px 24px;
-  position: sticky;
-  top: 0;
+  width: 280px;
+  flex-shrink: 0;
+  padding: 12px 16px;
   height: 100vh;
-  overflow-y: auto;
+  overflow: auto;
+  background: var(--df-bg);
+  position: relative;
 }
 .df-search {
   display: flex;
@@ -332,10 +345,12 @@ a { color: inherit; text-decoration: none; }
   outline: none;
 }
 .df-card {
-  background: var(--df-hover);
+  background: var(--df-card);
+  border: 1px solid var(--df-border);
   border-radius: 16px;
   margin-bottom: 16px;
   overflow: hidden;
+  color: var(--df-text);
 }
 .df-card-title {
   font-family: "Fredoka", sans-serif;
@@ -400,7 +415,38 @@ a { color: inherit; text-decoration: none; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
+
+/* The desktop skin (deskdogefeedx.css) paints every window dark and forces
+   white headings and button chrome with !important. This page is dogefeed.app's
+   own dark board, so those rules must not turn cards white-on-white. */
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1,
+html.indesk body.df-dogefeed h2,
+html.indesk body.df-dogefeed h3,
+html.indesk body.df-dogefeed h4 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed a { color: inherit !important; text-decoration: none !important; }
+html.indesk body.df-dogefeed .df-card,
+html.indesk body.df-dogefeed .df-stat,
+html.indesk body.df-dogefeed .df-topbar,
+html.indesk body.df-dogefeed .df-sidebar,
+html.indesk body.df-dogefeed .df-main,
+html.indesk body.df-dogefeed .df-right { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background: #0a0a0a !important; }
+html.indesk body.df-dogefeed .df-signin-btn,
+html.indesk body.df-dogefeed .df-category.active {
+  background: #f3e3a5 !important; color: #000 !important; border-color: #f3e3a5 !important;
+}
+html.indesk body.df-dogefeed .df-category,
+html.indesk body.df-dogefeed .df-tab,
+html.indesk body.df-dogefeed .df-sort-btn,
+html.indesk body.df-dogefeed .df-view-btn {
+  background: transparent !important; color: #fff6dd !important;
+}
+html.indesk body.df-dogefeed input {
+  background: transparent !important; color: #fff6dd !important; border: 0 !important; box-shadow: none !important;
+}
 </style>
+<script>document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <!-- Left Sidebar -->
@@ -604,10 +650,18 @@ a { color: inherit; text-decoration: none; }
     return n.toLocaleString(undefined, {maximumFractionDigits: 8});
   }
 
+  function absImg(url) {
+    if (!url) return '';
+    if (url.charAt(0) === '/') return IMG_BASE + url;
+    if (url.indexOf('//') === 0) return 'https:' + url;
+    return url;
+  }
+
   function renderRow(row, rank) {
+    var img = absImg(row.image);
     return '<a class="df-collection" href="' + esc(row.href) + '" target="_blank" rel="noopener">' +
       '<div class="df-collection-rank">' + rank + '</div>' +
-      '<div class="df-collection-img">' + (row.image ? '<img src="' + esc(row.image) + '" alt="" loading="lazy">' : '') + '</div>' +
+      '<div class="df-collection-img">' + (img ? '<img src="' + esc(img) + '" alt="" loading="lazy">' : '') + '</div>' +
       '<div class="df-collection-info"><div class="df-collection-name">' + esc(row.name) +
       (row.verified ? '<svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
       '</div><div class="df-collection-meta">' + esc(row.meta) + '</div></div>' +

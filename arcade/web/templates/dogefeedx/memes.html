@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Meme Library · {{ brand.name }}{% endblock %}
+{% block body %}
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root { --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
+* { box-sizing:border-box; }
+body { margin:0; background:#000; color:var(--df-text); font-family:Nunito,sans-serif; }
+html.indesk body.df-dogefeed, html.indesk body.df-dogefeed h1 { background:#000 !important; color:#fff6dd !important; }
+.wrap { max-width:960px; margin:0 auto; padding:28px 20px; }
+h1 { font-family:Fredoka,sans-serif; font-size:28px; margin:0 0 8px; }
+p.note { color:var(--df-muted); }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; margin-top:16px; }
+.card { background:#0a0a0a; border:1px solid var(--df-line); border-radius:12px; padding:8px; }
+.card img { width:100%; height:120px; object-fit:cover; border-radius:8px; }
+button.copy { margin-top:6px; background:#f3e3a5; color:#000; border:0; border-radius:999px; padding:4px 10px; font-weight:700; cursor:pointer; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+<div class="wrap">
+  <h1>Meme Library</h1>
+  <p class="note">Memes you can drop into a post. Only a public list is shown.</p>
+  <div id="memes" class="grid"><p class="note">Loading…</p></div>
+</div>
+<script>
+(function () {
+  var box = document.getElementById('memes');
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function abs(url) { return url && url.charAt(0) === '/' ? 'https://dogefeed.app' + url : (url || ''); }
+  fetch('/dogefeedx/api/memes')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      var rows = data.memes || [];
+      if (!rows.length) {
+        box.innerHTML = '<p class="note">No public meme list. dogefeed.app does not publish one to read.</p>';
+        return;
+      }
+      box.innerHTML = rows.map(function (m) {
+        var src = abs(m.image);
+        return '<div class="card">' + (src ? '<img src="' + esc(src) + '" alt="">' : '')
+          + '<b>' + esc(m.name || 'Meme') + '</b>'
+          + (src ? '<button type="button" class="copy" data-src="' + esc(src) + '">Copy link</button>' : '')
+          + '</div>';
+      }).join('');
+      box.querySelectorAll('.copy').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var src = b.getAttribute('data-src');
+          if (navigator.clipboard) navigator.clipboard.writeText(src);
+          b.textContent = 'Copied';
+        });
+      });
+    })
+    .catch(function () { box.innerHTML = '<p class="note">No public meme list.</p>'; });
+})();
+</script>
+{% endblock %}

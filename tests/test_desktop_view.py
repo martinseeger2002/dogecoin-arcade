@@ -67,6 +67,7 @@ def test_themes_on_your_arcade_turn_the_desktop_on_and_pick_its_look():
     for want in ('data-desk-set=""', 'data-desk-set="w98"', 'data-desk-set="ubuntu"', 'data-desk-set="dogefeedx"'):
         assert want in me
     assert "Math.max(screen.width, window.innerWidth) <= 640) return;" in me, "not on a phone"
+    assert "classList.contains('indesk')" in me, "a desktop window is a computer, even when the window is narrow"
     base = (TEMPLATES / "base.html").read_text()
     assert 'id="deskview"' not in base, "no switch in the website's header any more"
     # Pages opened in a tab of their own go to the desktop while a desktop look is on: never Admin, sign-in, a phone,
@@ -84,7 +85,8 @@ def test_the_ubuntu_look_has_its_own_shell_and_its_own_window_style(client):
     desk = (TEMPLATES / "desktop.html").read_text()
     for need in ("'{{ desk_default }}' === 'w98' ? 'w98' :", "function paintDock()",
                  "function toggleApps(", "$('dk-sys').addEventListener('click'", "[data-skin=\"ubuntu\"] .dk-dock",
-                 "setSkin('w98')", "setSkin('ubuntu')"):
+                 "setSkin('w98')", "setSkin('ubuntu')", "function openCascade(", "function themeChoices(",
+                 "title: 'Switch Theme'"):
         assert need in desk, need
     css = app.get("/deskubuntu.css")
     assert css.status_code == 200 and css.headers["content-type"].startswith("text/css") and "#e95420" in css.text
@@ -100,7 +102,11 @@ def test_the_dogefeedx_look_has_macos_style_and_five_app_windows(client):
                  "byKey.dfxprofile", "byKey.dfxmarket", "byKey.dfxterminal",
                  "byKey.dfxnetwork", "byKey.dfxexplorer",
                  "function openDfxProfile()", "function openDfxMarket()",
-                 "function openDfxTerminal()", "function openDfxNetwork()", "function openDfxExplorer()"):
+                 "function openDfxTerminal()", "function openDfxNetwork()", "function openDfxExplorer()",
+                 "function magnifyDock(", "function dockCount(", "dfx-badge", "flex-wrap: nowrap",
+                 "dfxhome", "dfxfiles", "dfxnotifications", "dfxmessages", "dfxinscribe",
+                 "dfxlaunchpad", "dfxnfts", "dfxarcade", "dfxbookmarks", "dfxmemes",
+                 "dfxleaderboard", "dfxsettings"):
         assert need in desk, need
     css = app.get("/deskdogefeedx.css")
     assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")

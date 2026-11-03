@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Files · {{ brand.name }}{% endblock %}
+{% block body %}
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root { --df-gold:#f3e3a5; --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
+* { box-sizing: border-box; }
+body { margin:0; background:#000; color:var(--df-text); font-family:Nunito,sans-serif; }
+html.indesk body.df-dogefeed { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color:#fff6dd !important; }
+html.indesk body.df-dogefeed button { color:inherit; }
+.finder { display:flex; height:100vh; }
+.side { width:220px; flex:none; display:block; border-right:1px solid var(--df-line); padding:14px 10px; overflow:auto; }
+.side h1 { font-family:Fredoka,sans-serif; font-size:20px; margin:4px 8px 12px; }
+.side button { display:block; width:100%; height:auto; flex:none; text-align:left; background:transparent; color:inherit; border:0; border-radius:8px; padding:8px 10px; cursor:pointer; font:inherit; box-shadow:none; }
+html.indesk body.df-dogefeed .side button { width:100% !important; height:auto !important; background:transparent !important; color:#fff6dd !important; text-align:left !important; box-shadow:none !important; }
+html.indesk body.df-dogefeed .side button.on { background:#f3e3a5 !important; color:#000 !important; }
+.side button.on { background:#f3e3a5; color:#000; }
+.main { flex:1; min-width:0; overflow:auto; padding:16px 18px; }
+.main h2 { font-family:Fredoka,sans-serif; font-size:18px; margin:0 0 12px; }
+.empty { color:var(--df-muted); }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; }
+.item { background:#0a0a0a; border:1px solid var(--df-line); border-radius:12px; padding:8px; }
+.item img { width:100%; height:96px; object-fit:cover; border-radius:8px; background:#111; }
+.item b { display:block; margin-top:6px; font-size:13px; }
+.row { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--df-line); }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+<div class="finder">
+  <nav class="side">
+    <h1>Files</h1>
+    <button type="button" class="on" data-pane="collections">Collections</button>
+    <button type="button" data-pane="drc20">DRC-20</button>
+    <button type="button" data-pane="names">Names</button>
+  </nav>
+  <main class="main">
+    <h2 id="files-title">Collections</h2>
+    <div id="files-body"><p class="empty">Looking up this arcade wallet…</p></div>
+  </main>
+</div>
+<script>
+(function () {
+  var body = document.getElementById('files-body');
+  var title = document.getElementById('files-title');
+  var pane = 'collections';
+  var hold = {inscriptions: [], tokens: [], names: []};
+  var address = '';
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function paint() {
+    title.textContent = pane === 'drc20' ? 'DRC-20' : pane === 'names' ? 'Names' : 'Collections';
+    if (!address) {
+      body.innerHTML = '<p class="empty">Sign in on this arcade to see what your wallet holds. This does not read a DogeFeed wallet.</p>';
+      return;
+    }
+    if (pane === 'drc20') {
+      if (!hold.tokens.length) { body.innerHTML = '<p class="empty">No DRC-20 in this wallet.</p>'; return; }
+      body.innerHTML = hold.tokens.map(function (t) {
+        return '<div class="row"><b>' + esc(t.ticker) + '</b><span>' + esc(t.balance) + '</span></div>';
+      }).join('');
+      return;
+    }
+    if (pane === 'names') {
+      if (!hold.names.length) { body.innerHTML = '<p class="empty">No names in this wallet.</p>'; return; }
+      body.innerHTML = hold.names.map(function (n) {
+        return '<div class="row"><b>' + esc(n.name) + '</b><span>' + esc(n.owner) + '</span></div>';
+      }).join('');
+      return;
+    }
+    var groups = {};
+    hold.inscriptions.forEach(function (i) {
+      var key = i.collection || 'Loose inscriptions';
+      (groups[key] = groups[key] || []).push(i);
+    });
+    var keys = Object.keys(groups);
+    if (!keys.length) { body.innerHTML = '<p class="empty">No inscriptions in this wallet.</p>'; return; }
+    body.innerHTML = keys.map(function (key) {
+      return '<h2>' + esc(key) + '</h2><div class="grid">' + groups[key].map(function (i) {
+        var img = i.image_url ? '<img src="' + esc(i.image_url) + '" alt="">' : '';
+        return '<div class="item">' + img + '<b>' + esc(i.name || i.id) + '</b></div>';
+      }).join('') + '</div>';
+    }).join('');
+  }
+  document.querySelectorAll('.side button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.side button').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      pane = b.dataset.pane;
+      paint();
+    });
+  });
+  fetch('/account', {credentials: 'same-origin', cache: 'no-store'})
+    .then(function (r) { return r.ok ? r.json() : {}; })
+    .then(function (acct) {
+      address = acct && acct.address || '';
+      if (!address) { paint(); return; }
+      return Promise.all([
+        fetch('/dogefeedx/api/address/inscriptions?address=' + encodeURIComponent(address)).then(function (r) { return r.json(); }),
+        fetch('/dogefeedx/api/address/tokens?address=' + encodeURIComponent(address)).then(function (r) { return r.json(); }),
+        fetch('/dogefeedx/api/names?limit=100').then(function (r) { return r.json(); })
+      ]).then(function (got) {
+        hold.inscriptions = (got[0] && got[0].inscriptions) || [];
+        hold.tokens = (got[1] && got[1].tokens) || [];
+        var names = (got[2] && (got[2].names || got[2].records)) || [];
+        hold.names = names.filter(function (n) { return (n.owner || n.address || '') === address; });
+        paint();
+      });
+    })
+    .catch(function () { address = ''; body.innerHTML = '<p class="empty">Could not read this wallet.</p>'; });
+})();
+</script>
+{% endblock %}

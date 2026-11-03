@@ -473,6 +473,13 @@ a { color: inherit; text-decoration: none; }
       <div class="df-profile-name" id="profile-name">Profile</div>
       <div class="df-profile-handle" id="profile-handle"></div>
       <div class="df-profile-bio" id="profile-bio"></div>
+      <form id="local-profile" style="margin-top:12px;display:grid;gap:8px;max-width:420px">
+        <input id="local-name" type="text" maxlength="40" placeholder="Display name" aria-label="Display name" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
+        <input id="local-dns" type="text" maxlength="64" placeholder="DNS handle" aria-label="DNS handle" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
+        <input id="local-web" type="text" maxlength="200" placeholder="Website" aria-label="Website" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
+        <button type="submit" class="df-follow-btn">Save on this browser</button>
+        <p id="local-said" class="df-empty" style="padding:0"></p>
+      </form>
       <div class="df-profile-meta" id="profile-joined"></div>
       <div class="df-profile-stats">
         <span><strong id="following-count">—</strong> Following</span>
@@ -657,6 +664,28 @@ a { color: inherit; text-decoration: none; }
       loadPosts();
     });
   });
+
+  var localForm = document.getElementById('local-profile');
+  if (localForm) {
+    if (profileHandle) localForm.hidden = true;
+    else {
+      try {
+        var savedProfile = JSON.parse(localStorage.getItem('dogefeedx.profile') || '{}');
+        if (savedProfile.displayName) document.getElementById('local-name').value = savedProfile.displayName;
+        if (savedProfile.dns) document.getElementById('local-dns').value = savedProfile.dns;
+        if (savedProfile.website) document.getElementById('local-web').value = savedProfile.website;
+      } catch (e) {}
+      localForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        localStorage.setItem('dogefeedx.profile', JSON.stringify({
+          displayName: document.getElementById('local-name').value.trim(),
+          dns: document.getElementById('local-dns').value.trim(),
+          website: document.getElementById('local-web').value.trim()
+        }));
+        document.getElementById('local-said').textContent = 'Saved in this browser. Not sent to dogefeed.app.';
+      });
+    }
+  }
 
   document.querySelectorAll('.df-search input').forEach(function(inp) {
     inp.addEventListener('keydown', function(e) {

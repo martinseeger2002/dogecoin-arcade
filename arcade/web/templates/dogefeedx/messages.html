@@ -202,7 +202,17 @@ a { color: inherit; text-decoration: none; }
 .df-search input::placeholder {
   color: var(--df-text-secondary);
 }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; overflow: auto; position: relative; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; height: 100vh; overflow: auto; position: relative; }
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-signin-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; }
+html.indesk body.df-dogefeed .df-search { background: #111 !important; }
 </style>
+<script>document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <nav class="df-sidebar">
@@ -293,15 +303,22 @@ a { color: inherit; text-decoration: none; }
       <h1>Messages</h1>
     </div>
     
-    <div class="df-signin-prompt">
-      <div class="df-signin-icon">
-        <svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-      </div>
-      <h2>Send private messages</h2>
-      <p>Sign in to send and receive private messages with other DogeFeed users.</p>
-      <button class="df-signin-btn" onclick="alert('Sign in coming soon')">Sign in</button>
-    </div>
+    <p class="df-empty" id="msg-note">Your DMs stay on this arcade. They are not sent through dogefeed.app.</p>
+    <form id="dm" style="display:flex;gap:8px;padding:12px 16px">
+      <input id="dm-to" type="text" placeholder="@name or address" aria-label="Start a DM" style="flex:1;border:1px solid var(--df-border);border-radius:999px;padding:10px 14px;background:transparent;color:inherit">
+      <button class="df-signin-btn" type="submit" style="width:auto;padding:10px 16px">Start a DM</button>
+      <a class="df-signin-btn" href="/me/messages" style="width:auto;padding:10px 16px;text-align:center">New group</a>
+    </form>
+    <iframe id="msg-frame" title="Inbox" src="/me/messages" style="width:100%;height:70vh;border:0;background:#000"></iframe>
   </main>
+<script>
+document.getElementById('dm').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var to = document.getElementById('dm-to').value.trim();
+  if (!to) return;
+  document.getElementById('msg-frame').src = '/me/messages?to=' + encodeURIComponent(to);
+});
+</script>
 
   <aside class="df-right">
     <div class="df-search">

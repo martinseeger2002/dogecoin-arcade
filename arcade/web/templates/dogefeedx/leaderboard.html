@@ -98,7 +98,8 @@ a { color: inherit; text-decoration: none; }
   font-size: 17px;
   font-weight: 700;
   cursor: pointer;
-  margin-top: auto;
+  margin-top: 8px;
+  position: static;
 }
 .df-signin-btn:hover { background: var(--df-gold-dark); }
 .df-signin-footer {
@@ -313,7 +314,23 @@ a { color: inherit; text-decoration: none; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; overflow: auto; position: relative; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; height: 100vh; overflow: auto; position: relative; top: auto; }
+.df-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.df-tab { width: auto; background: transparent; color: inherit; border: 1px solid var(--df-border); border-radius: 999px; padding: 6px 12px; box-shadow: none; }
+.df-tab.active { background: var(--df-gold); color: #000; }
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2, html.indesk body.df-dogefeed h3 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background: #0a0a0a !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-tab { background: transparent !important; color: #fff6dd !important; border: 1px solid rgba(255,255,255,.25) !important; width: auto !important; box-shadow: none !important; }
+html.indesk body.df-dogefeed .df-tab.active { background: #f3e3a5 !important; color: #000 !important; }
+html.indesk body.df-dogefeed .df-signin-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; }
+html.indesk body.df-dogefeed .df-search { background: #111 !important; }
 </style>
+<script>document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <nav class="df-sidebar">
@@ -415,6 +432,10 @@ a { color: inherit; text-decoration: none; }
     <div class="df-leaderboard" id="df-leaderboard">
       <div class="df-loading"><div class="df-spinner"></div></div>
     </div>
+    <section id="referrers" style="padding:16px">
+      <h2>Top referrers</h2>
+      <p class="df-empty">Coming soon. No referral system exists yet.</p>
+    </section>
   </main>
 
   <aside class="df-right">

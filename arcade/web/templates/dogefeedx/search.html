@@ -452,8 +452,13 @@ a { color: inherit; text-decoration: none; }
     
     <div class="df-tabs">
       <button class="df-tab active" data-type="all">All</button>
-      <button class="df-tab" data-type="users">People</button>
+      <button class="df-tab" data-type="users">Users</button>
       <button class="df-tab" data-type="posts">Posts</button>
+      <button class="df-tab" data-type="collections">Collections</button>
+      <button class="df-tab" data-type="inscription">Inscription</button>
+      <button class="df-tab" data-type="item">Collection item</button>
+      <button class="df-tab" data-type="drc20">DRC-20</button>
+      <button class="df-tab" data-type="names">Names</button>
     </div>
     
     <div class="df-results" id="df-results">
@@ -541,14 +546,22 @@ a { color: inherit; text-decoration: none; }
     
     clearBtn.classList.toggle('visible', query.length > 0);
     
-    if (query.length < 2) {
+    var minLen = (currentType === 'all' || currentType === 'users' || currentType === 'posts') ? 2 : 1;
+    if (query.length < minLen) {
       resultsContainer.innerHTML = '<div class="df-empty"><h2>Search DogeFeed</h2><p>Find people, posts, and topics across the DogeFeed community</p></div>';
       return;
     }
     
     resultsContainer.innerHTML = '<div class="df-loading"><div class="df-spinner"></div></div>';
+
+    var url = '/dogefeedx/api/search?q=' + encodeURIComponent(query);
+    if (currentType === 'collections' || currentType === 'item') url = '/dogefeedx/api/market/doginals';
+    else if (currentType === 'drc20') url = '/dogefeedx/api/market/drc20?q=' + encodeURIComponent(query);
+    else if (currentType === 'names') url = '/dogefeedx/api/names?q=' + encodeURIComponent(query) + '&limit=50';
+    else if (currentType === 'inscription') url = '/dogefeedx/api/inscription?id=' + encodeURIComponent(query);
+    else url += '&type=' + currentType;
     
-    fetch('/dogefeedx/api/search?q=' + encodeURIComponent(query) + '&type=' + currentType)
+    fetch(url)
       .then(function(r) { return r.json(); })
       .then(function(data) {
         var html = '';
@@ -558,6 +571,27 @@ a { color: inherit; text-decoration: none; }
         }
         if (currentType === 'all' || currentType === 'posts') {
           html += renderPosts(data.posts, query);
+        }
+        if (currentType === 'collections' || currentType === 'item') {
+          var cols = (data.collections || []).filter(function (c) { return !query || String(c.name || c.slug || '').toLowerCase().indexOf(query.toLowerCase()) >= 0; });
+          html += cols.length ? '<div class="df-result-section"><h3>Collections</h3>' + cols.map(function (c) {
+            return '<a class="df-user-result" href="https://dogefeed.app/market/' + esc(c.slug || '') + '"><b>' + esc(c.name) + '</b></a>';
+          }).join('') + '</div>' : '';
+        }
+        if (currentType === 'drc20') {
+          var toks = data.tokens || [];
+          html += toks.length ? '<div class="df-result-section"><h3>DRC-20</h3>' + toks.map(function (t) {
+            return '<div class="df-user-result"><b>' + esc(t.tick || t.ticker) + '</b></div>';
+          }).join('') + '</div>' : '';
+        }
+        if (currentType === 'names') {
+          var names = data.names || [];
+          html += names.length ? '<div class="df-result-section"><h3>Names</h3>' + names.map(function (n) {
+            return '<div class="df-user-result"><b>' + esc(n.name || n.dns) + '</b></div>';
+          }).join('') + '</div>' : '';
+        }
+        if (currentType === 'inscription' && data.inscription) {
+          html += '<div class="df-result-section"><h3>Inscription</h3><div class="df-user-result"><b>' + esc(data.inscription.id || query) + '</b></div></div>';
         }
         
         if (!html) {
@@ -603,6 +637,15 @@ a { color: inherit; text-decoration: none; }
   });
   
   var urlParams = new URLSearchParams(window.location.search);
+  var kind = urlParams.get('kind');
+  if (kind) {
+    var kindTab = document.querySelector('.df-tab[data-type="' + kind + '"]');
+    if (kindTab) {
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      kindTab.classList.add('active');
+      currentType = kind;
+    }
+  }
   var q = urlParams.get('q');
   if (q) {
     searchInput.value = q;

@@ -187,6 +187,7 @@ def desktop_view(request: Request):
         ("/me", "You", None, True),
         ("/", "Home", None, True),
         ("/feed", "Feed", None, True),
+        ("/explore", "Explore", None, True),
         ("/me/wallet", "Wallet", None, True),
         ("/me/messages", "Messages", None, True),
     ]

@@ -202,7 +202,17 @@ a { color: inherit; text-decoration: none; }
 .df-search input::placeholder {
   color: var(--df-text-secondary);
 }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; overflow: auto; position: relative; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; height: 100vh; overflow: auto; position: relative; }
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-signin-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; }
+html.indesk body.df-dogefeed .df-search { background: #111 !important; }
 </style>
+<script>document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <nav class="df-sidebar">
@@ -293,15 +303,19 @@ a { color: inherit; text-decoration: none; }
       <h1>Bookmarks</h1>
     </div>
     
-    <div class="df-signin-prompt">
-      <div class="df-signin-icon">
-        <svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-      </div>
-      <h2>Save posts for later</h2>
-      <p>Sign in to bookmark posts and save them to your private collection.</p>
-      <button class="df-signin-btn" onclick="alert('Sign in coming soon')">Sign in</button>
-    </div>
+    <div id="marks"><p class="df-empty">No bookmarks saved on this arcade.</p></div>
   </main>
+<script>
+(function () {
+  var rows = [];
+  try { rows = JSON.parse(localStorage.getItem('dogefeedx.bookmarks') || '[]'); } catch (e) {}
+  if (!rows.length) return;
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  document.getElementById('marks').innerHTML = rows.map(function (p) {
+    return '<a class="df-collection" href="/dogefeedx/post?id=' + encodeURIComponent(p.id) + '"><b>' + esc(p.handle || 'post') + '</b><div>' + esc(p.text || '') + '</div></a>';
+  }).join('');
+})();
+</script>
 
   <aside class="df-right">
     <div class="df-search">

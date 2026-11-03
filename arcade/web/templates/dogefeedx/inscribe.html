@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Inscribe · {{ brand.name }}{% endblock %}
+{% block body %}
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root { --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
+* { box-sizing:border-box; }
+body { margin:0; background:#000; color:var(--df-text); font-family:Nunito,sans-serif; }
+html.indesk body.df-dogefeed, html.indesk body.df-dogefeed h1 { background:#000 !important; color:#fff6dd !important; }
+.wrap { max-width:880px; margin:0 auto; padding:28px 20px; }
+h1 { font-family:Fredoka,sans-serif; font-size:28px; margin:0 0 8px; }
+p.note { color:var(--df-muted); }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-top:18px; }
+a.card { display:block; background:#0a0a0a; border:1px solid var(--df-line); border-radius:16px; padding:18px; color:#fff6dd !important; text-decoration:none; }
+a.card:hover { border-color:#f3e3a5; }
+a.card b { display:block; font-family:Fredoka,sans-serif; font-size:18px; margin-bottom:6px; }
+a.card span { color:var(--df-muted); font-size:14px; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+<div class="wrap">
+  <h1>Inscribe</h1>
+  <p class="note">These use this arcade's own wallet. Nothing is sent to dogefeed.app, and an inscription-carrying coin is never spent as a fee.</p>
+  <div class="grid">
+    <a class="card" href="/create/ord"><b>Collection</b><span>Inscribe a Doginal and group it into a collection you already hold the pieces for.</span></a>
+    <a class="card" href="/tokens"><b>DRC-20</b><span>Create a DRC-20 with this wallet. The token page is the one that spends.</span></a>
+    <a class="card" href="/create/name"><b>Name</b><span>Claim a name such as yours.doge from this wallet.</span></a>
+  </div>
+</div>
+{% endblock %}

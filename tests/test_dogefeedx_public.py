@@ -1,4 +1,5 @@
 """DogeFeedX reads public dogefeed.app data and does not invent any of it."""
+import re
 from pathlib import Path
 
 from arcade.web.dogefeedx.public_read import (
@@ -101,4 +102,25 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     assert "DFX_DOCK_APPS.indexOf(k) < 0" in desk
     assert "openDfxFeed" in desk and "/dogefeedx/feed" in desk
     assert "openDfxMarket" in desk and "/dogefeedx/market" in desk
-    assert "inDock.indexOf(k) < 0" in desk
+    assert "if (inDock.indexOf(k) >= 0) return false;" in desk
+    # The dock stands in for the arcade pages it already opens. A second icon is a duplicate.
+    for cover in ("'/feed': 'dfxhome'", "'/explore': 'dfxexplore'", "'/me': 'dfxsettings'",
+                  "'/me/messages': 'dfxmessages'", "'/wallet': 'dfxwallet'", "'/nfts': 'dfxnfts'",
+                  "'/notifications': 'dfxnotifications'", "'/create/ord': 'dfxinscribe'",
+                  "'/apps': 'dfxarcade'", "'/mintpad/new': 'dfxlaunchpad'"):
+        assert cover in desk, cover
+    assert "if (DFX) fav = fav.filter(function (k) { return !DFX_COVERS[tabHref(k)]; });" in desk
+    assert "if (DFX) keys = keys.filter(function (k) { return !DFX_COVERS[tabHref(k)]; });" in desk
+    assert "function magnifyDock(" in desk and "function dockCount(" in desk and "dfx-badge" in desk
+    dock = desk[desk.index("var DFX_DOCK = ["):desk.index("];", desk.index("var DFX_DOCK = ["))]
+    assert re.findall(r"name: '([^']+)'", dock) == [
+        "Home", "Profile", "Files", "Notifications", "Messages", "Explore", "Market", "Inscribe",
+        "Wallet", "Launchpad", "NFTs", "Arcade", "Bookmarks", "Meme Library", "Leaderboard", "Settings",
+    ]
+    search = (TEMPLATES / "search.html").read_text()
+    assert "/dogefeedx/api/market/doginals" in search
+    assert "/dogefeedx/api/market/drc20?q=" in search
+    assert "/dogefeedx/api/names?q=" in search
+    assert "/dogefeedx/api/inscription?id=" in search
+    profile = (TEMPLATES / "profile.html").read_text()
+    assert "dogefeedx.profile" in profile and "Not sent to dogefeed.app." in profile

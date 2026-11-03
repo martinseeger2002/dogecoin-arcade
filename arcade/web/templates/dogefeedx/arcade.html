@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Arcade · {{ brand.name }}{% endblock %}
+{% block body %}
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root { --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
+* { box-sizing:border-box; }
+body { margin:0; background:#000; color:var(--df-text); font-family:Nunito,sans-serif; }
+html.indesk body.df-dogefeed, html.indesk body.df-dogefeed h1 { background:#000 !important; color:#fff6dd !important; }
+.wrap { max-width:880px; margin:0 auto; padding:28px 20px; }
+h1 { font-family:Fredoka,sans-serif; font-size:28px; margin:0 0 8px; }
+p.note { color:var(--df-muted); }
+ul { list-style:none; padding:0; }
+li { padding:12px 0; border-bottom:1px solid var(--df-line); }
+a { color:#f3e3a5; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+<div class="wrap">
+  <h1>Arcade</h1>
+  <p class="note">Games run as your on-chain identity on this arcade. No separate DogeFeed login.</p>
+  <ul id="games"><li class="note">Loading games…</li></ul>
+</div>
+<script>
+(function () {
+  var list = document.getElementById('games');
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  fetch('/dogefeedx/api/local/games', {credentials: 'same-origin'})
+    .then(function (r) { return r.ok ? r.json() : {games: []}; })
+    .then(function (data) {
+      var games = data.games || [];
+      if (!games.length) {
+        list.innerHTML = '<li class="note">No games inscribed on this arcade yet.</li>';
+        return;
+      }
+      list.innerHTML = games.map(function (g) {
+        var href = '/inscriptions/' + encodeURIComponent(g.txid) + '/view';
+        return '<li><a href="' + href + '">' + esc(g.name) + '</a> <span class="note">' + esc(g.net) + '</span></li>';
+      }).join('');
+    })
+    .catch(function () { list.innerHTML = '<li class="note">Could not load games.</li>'; });
+})();
+</script>
+{% endblock %}

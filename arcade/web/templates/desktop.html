@@ -285,7 +285,7 @@ body.fullscreen #arc-bot { display: none !important; }
 .dk-mi .dk-arrow { margin-left: auto; padding-left: 14px; }
 .dk-mi[disabled] { color: var(--w98-shadow) !important; text-shadow: 1px 1px var(--w98-hi); background: none !important; }
 .dk-hr { height: 2px; margin: 3px 2px; box-shadow: inset 0 1px var(--w98-shadow), inset 0 -1px var(--w98-hi); flex: none; }
-.dk-sub { max-height: calc(100vh - 40px); overflow-y: auto; min-width: 170px; max-width: 280px; display: flex; }
+.dk-sub { max-height: calc(100vh - 40px); overflow-y: auto; min-width: 170px; max-width: 280px; display: flex; z-index: 9210; }
 .dk-sub .dk-mi span:not(.dk-mico) { overflow: hidden; text-overflow: ellipsis; }
 .dk-ctx { min-width: 150px; display: flex; }
 .dk-ctx .dk-mi.def { font-weight: 700; }
@@ -662,16 +662,19 @@ body.fullscreen #arc-bot { display: none !important; }
 [data-skin="dogefeedx"] .dk-sysbtn { display: flex; gap: 8px; padding: 2px 10px !important; border-radius: 4px !important; }
 [data-skin="dogefeedx"] .dk-sysbtn:hover, [data-skin="dogefeedx"] .dk-sysbtn.down { background: rgba(255,255,255,.1) !important; }
 /* macOS dock at bottom */
-[data-skin="dogefeedx"] .dk-dock { display: flex; position: fixed; left: 50%; bottom: 4px; top: auto; width: auto; z-index: 9050;
-  transform: translateX(-50%); flex-direction: row; align-items: center; gap: 4px; padding: 4px 8px;
+[data-skin="dogefeedx"] .dk-dock { display: flex; position: fixed; left: 50%; bottom: 4px; top: auto; width: max-content; max-width: calc(100vw - 12px); z-index: 9050;
+  transform: translateX(-50%); flex-direction: row; flex-wrap: nowrap; align-items: flex-end; gap: 6px; margin: 0; padding: 8px 10px 6px;
   background: var(--df-dock); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
-  border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+  border-radius: 18px; border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  overflow: visible; }
 [data-skin="dogefeedx"] .dk-dock[hidden] { display: none; }
-[data-skin="dogefeedx"] .ub-dockbtn { width: 48px; height: 48px; padding: 0 !important; border: 0 !important; border-radius: 12px !important;
+[data-skin="dogefeedx"] .ub-dockbtn { width: 42px; height: 42px; padding: 0 !important; border: 0 !important; border-radius: 12px !important;
   background: none !important; box-shadow: none !important; display: flex; align-items: center; justify-content: center;
-  flex: none; cursor: pointer; transition: transform 0.15s ease; }
-[data-skin="dogefeedx"] .ub-dockbtn:hover { transform: translateY(-6px) scale(1.15); background: none !important; }
-[data-skin="dogefeedx"] .ub-dockbtn.on { transform: translateY(-4px); }
+  flex: none; cursor: pointer; position: relative; transform-origin: center bottom; }
+[data-skin="dogefeedx"] .ub-dockbtn:hover { background: none !important; }
+[data-skin="dogefeedx"] .dfx-badge { position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; background: #ff3b30; color: #fff; font: 700 10px/16px Nunito, sans-serif; text-align: center;
+  box-shadow: 0 0 0 2px rgba(40,40,45,0.9); pointer-events: none; }
 [data-skin="dogefeedx"] .ub-dockbtn.ub-showapps { margin-top: 0; margin-left: 4px; border-left: 1px solid rgba(255,255,255,0.15); padding-left: 8px !important; }
 /* Dock separators for organized groups */
 [data-skin="dogefeedx"] .dfx-dock-sep { width: 1px; height: 36px; background: rgba(255,255,255,0.2); margin: 0 6px; flex-shrink: 0; }
@@ -933,27 +936,42 @@ body.fullscreen #arc-bot { display: none !important; }
   byKey.run = {key: 'run', kind: 'run', name: 'Run…', glyph: ['#404040', '#fff', 'M5 12h11M12 7l5 5-5 5M19 5v14']};
   byKey.shortcuts = {key: 'shortcuts', kind: 'shortcuts', name: 'Wallet Shortcuts',
                      glyph: ['#d9a520', '#141310', 'M3 7a2 2 0 0 1 2-2h11v4M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2zM12 12l4 4M16 12v4h-4']};
+  // DogeFeedX dock, in Billy's order. Each one opens a window and is not also a desktop icon.
+  var DFX_DOCK = [
+    {k: 'dfxhome', name: 'Home', url: '/dogefeedx/feed', glyph: ['#f5a623', '#1c1c1e', 'M4 11l8-7 8 7v9H4z']},
+    {k: 'dfxprofile', name: 'Profile', url: '/dogefeedx/profile', glyph: ['#d9a520', '#1c1c1e', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8']},
+    {k: 'dfxfiles', name: 'Files', url: '/dogefeedx/files', glyph: ['#5ac8fa', '#1c1c1e', 'M3 7h6l2 2h10v10H3z']},
+    {k: 'dfxnotifications', name: 'Notifications', url: '/dogefeedx/notifications', glyph: ['#ff3b30', '#fff', 'M12 3a6 6 0 0 0-6 6c0 7-3 7-3 7h18s-3 0-3-7a6 6 0 0 0-6-6zM10 20a2 2 0 0 0 4 0']},
+    {k: 'dfxmessages', name: 'Messages', url: '/dogefeedx/messages', glyph: ['#34c759', '#1c1c1e', 'M4 5h16v10H7l-3 3z']},
+    {k: 'dfxexplore', name: 'Explore', url: '/dogefeedx/explore', glyph: ['#ff9500', '#1c1c1e', 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35']},
+    {k: 'dfxmarket', name: 'Market', url: '/dogefeedx/market', glyph: ['#d9a520', '#1c1c1e', 'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 22V12h6v10']},
+    {k: 'dfxinscribe', name: 'Inscribe', url: '/dogefeedx/inscribe', glyph: ['#bf5af2', '#fff', 'M12 20h9M16.5 3.5a2 2 0 0 1 3 3L8 18l-4 1 1-4z']},
+    {k: 'dfxwallet', name: 'Wallet', url: '/dogefeedx/wallet', glyph: ['#ffd60a', '#1c1c1e', 'M3 7h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3zM16 12h3']},
+    {k: 'dfxlaunchpad', name: 'Launchpad', url: '/dogefeedx/launchpad', glyph: ['#ff453a', '#fff', 'M5 16c-1 1-2 4-2 4s3-1 4-2c1-1 1-2 0-3s-2-1-2 1zM12 14l-2-2c2-2 6-6 10-8-2 4-6 8-8 10z']},
+    {k: 'dfxnfts', name: 'NFTs', url: '/dogefeedx/nfts', glyph: ['#64d2ff', '#1c1c1e', 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z']},
+    {k: 'dfxarcade', name: 'Arcade', url: '/dogefeedx/arcade', glyph: ['#0a84ff', '#fff', 'M6 8h12a2 2 0 0 1 2 2v6H4v-6a2 2 0 0 1 2-2zM8 16v3M16 16v3M8 11h.01M12 11h.01']},
+    {k: 'dfxbookmarks', name: 'Bookmarks', url: '/dogefeedx/bookmarks', glyph: ['#ff375f', '#fff', 'M7 3h10a1 1 0 0 1 1 1v17l-6-4-6 4V4a1 1 0 0 1 1-1z']},
+    {k: 'dfxmemes', name: 'Meme Library', url: '/dogefeedx/memes', glyph: ['#ff9f0a', '#1c1c1e', 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9 10h.01M15 10h.01M8 15s1.5 2 4 2 4-2 4-2']},
+    {k: 'dfxleaderboard', name: 'Leaderboard', url: '/dogefeedx/leaderboard', glyph: ['#ffd60a', '#1c1c1e', 'M8 21l4-2 4 2V9H8zM6 4h12v3H6z']},
+    {k: 'dfxsettings', name: 'Settings', url: '/dogefeedx/settings', glyph: ['#8e8e93', '#fff', 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 12h2M18 12h2M12 4v2M12 18v2']}
+  ];
   // ---------- DogeFeedX Apps (only shown in DogeFeedX theme) ----------
-  // Shell-owned apps: Profile, Market (always available)
-  // External apps: Terminal, Network, Explorer (registered by other agents via window.DogeFeedX.registerApp)
   if (DFX) {
-    // Shell-owned: Profile hub
-    byKey.dfxprofile = {key: 'dfxprofile', kind: 'dfxprofile', name: 'Profile',
-                        glyph: ['#d9a520', '#1c1c1e', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8']};
-    // Shell-owned: Market (collections/explore)
-    byKey.dfxmarket = {key: 'dfxmarket', kind: 'dfxmarket', name: 'Market',
-                       glyph: ['#d9a520', '#1c1c1e', 'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 22V12h6v10']};
-    // Placeholder stubs for external apps (other agents override these via registerApp)
+    DFX_DOCK.forEach(function (a) {
+      byKey[a.k] = {key: a.k, kind: a.k, name: a.name, href: a.url, glyph: a.glyph};
+    });
+    // Kept so a registered tool can still open. Not dock icons: the dock is the sixteen above.
+    byKey.dfxprofile = byKey.dfxprofile;
+    byKey.dfxmarket = byKey.dfxmarket;
     byKey.dfxterminal = {key: 'dfxterminal', kind: 'dfxterminal', name: 'Terminal',
                          glyph: ['#28c840', '#1c1c1e', 'M4 17l6-6-6-6M12 19h8']};
     byKey.dfxnetwork = {key: 'dfxnetwork', kind: 'dfxnetwork', name: 'Network',
                         glyph: ['#5856d6', '#1c1c1e', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10']};
     byKey.dfxexplorer = {key: 'dfxexplorer', kind: 'dfxexplorer', name: 'Explorer',
                          glyph: ['#ff9500', '#1c1c1e', 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35']};
-    byKey.dfxfeed = {key: 'dfxfeed', kind: 'dfxfeed', name: 'Feed',
+    byKey.dfxfeed = {key: 'dfxfeed', kind: 'dfxfeed', name: 'Feed', href: '/dogefeedx/feed',
                      glyph: ['#f5a623', '#1c1c1e', 'M4 5h16v6H4zM4 13h16v6H4']};
-    byKey.dfxexplore = {key: 'dfxexplore', kind: 'dfxexplore', name: 'Explore',
-                        glyph: ['#ff9500', '#1c1c1e', 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35']};
+    byKey.dfxexplore = byKey.dfxexplore;
   }
 
   var layout = load(LAYOUT_LS, {});
@@ -978,7 +996,16 @@ body.fullscreen #arc-bot { display: none !important; }
   var homeApps = [];     // the apps on this account's phone home screen and its stars: on the desktop too
 
   // DogeFeedX dock apps: items here appear in the dock, NOT on the desktop (per Billy's design rule)
-  var DFX_DOCK_APPS = ['dfxfeed', 'dfxexplore', 'dfxprofile', 'dfxmarket', 'dfxterminal', 'dfxnetwork', 'dfxexplorer'];
+  var DFX_DOCK_APPS = DFX_DOCK.map(function (a) { return a.k; });
+  // Arcade pages the dock apps already stand in for. Same name, not a second icon.
+  var DFX_COVERS = {
+    '/': 'dfxhome', '/feed': 'dfxhome', '/explore': 'dfxexplore',
+    '/me': 'dfxsettings', '/me/messages': 'dfxmessages', '/messages': 'dfxmessages',
+    '/me/wallet': 'dfxwallet', '/wallet': 'dfxwallet', '/me/nfts': 'dfxnfts', '/nfts': 'dfxnfts',
+    '/notifications': 'dfxnotifications', '/me/notifications': 'dfxnotifications',
+    '/create': 'dfxinscribe', '/create/ord': 'dfxinscribe', '/create/name': 'dfxinscribe',
+    '/tokens': 'dfxinscribe', '/apps': 'dfxarcade', '/mintpad/new': 'dfxlaunchpad'
+  };
   
   function onDesk() {
     var keys = TABS.map(function (t) { return t.key; }).concat(['store', 'helper']);
@@ -988,10 +1015,19 @@ body.fullscreen #arc-bot { display: none !important; }
     homeApps.concat(layout.added).forEach(function (k) { if (byKey[k] && keys.indexOf(k) < 0) keys.push(k); });
     // Filter out dock apps from desktop in DFX mode
     if (DFX) keys = keys.filter(function (k) { return DFX_DOCK_APPS.indexOf(k) < 0; });
+    // Explore (and Feed) already sit in the dock as DogeFeedX apps. The arcade tab is not a second icon.
+    if (DFX) keys = keys.filter(function (k) { return !DFX_COVERS[tabHref(k)]; });
     // The menu bar and the dock already show these. A DogeFeedX desktop does not repeat them as icons.
     if (DFX) {
       var inDock = dockKeys().filter(function (k) { return k.indexOf('|') !== 0; });
-      keys = keys.filter(function (k) { return inDock.indexOf(k) < 0; });
+      var dockNames = {};
+      DFX_DOCK_APPS.forEach(function (k) { if (byKey[k]) dockNames[byKey[k].name.toLowerCase()] = true; });
+      keys = keys.filter(function (k) {
+        if (inDock.indexOf(k) >= 0) return false;
+        var it = byKey[k];
+        if (it && (DFX_COVERS[it.href] || dockNames[(it.name || '').toLowerCase()])) return false;
+        return true;
+      });
     }
     return keys.filter(function (k) { return layout.gone.indexOf(k) < 0; });
   }
@@ -1135,6 +1171,10 @@ body.fullscreen #arc-bot { display: none !important; }
     if (it.kind === 'run') { openRun(); return; }
     if (it.kind === 'shortcuts') { openShortcuts(); return; }
     if (it.kind === 'store') { openStore(); return; }
+    if (DFX_DOCK_APPS.indexOf(k) >= 0) {
+      openWin({key: k, url: it.href, name: it.name, item: it, w: 1100, h: 760});
+      return;
+    }
     // DogeFeedX-specific apps: check for registered app first, then fall back to built-in
     if (DFX && DFX_APPS[k] && typeof DFX_APPS[k].opener === 'function') {
       DFX_APPS[k].opener(_dfxHelpers()); return;
@@ -1403,7 +1443,7 @@ body.fullscreen #arc-bot { display: none !important; }
       .then(function (j) {
         if (!j || typeof j !== 'object') return;
         var was = JSON.stringify(badges); badges = j;
-        if (JSON.stringify(badges) !== was) { drawIcons(); paintTray(); }
+        if (JSON.stringify(badges) !== was) { drawIcons(); paintTray(); if (DFX) paintDock(); }
       }).catch(function () {});
   }
   setInterval(pollBadges, 45000);
@@ -1432,7 +1472,20 @@ body.fullscreen #arc-bot { display: none !important; }
     el.style.top = Math.max(0, Math.min(y, window.innerHeight - h - 2)) + 'px';
     el.onclick = function (e) {
       var b = e.target.closest('.dk-mi'); if (!b || b.disabled) return;
-      var k = b.dataset.k; hideMenus(); run(k);
+      var k = b.dataset.k || '';
+      // A cascade (Switch Theme) stays open and shows its list. Closing here
+      // was why the system menu built that list and never showed it.
+      if (k.indexOf('sub:') === 0) { e.stopPropagation(); openCascade(b, run); return; }
+      hideMenus(); run(k);
+    };
+    el.onmouseover = function (e) {
+      var b = e.target.closest('.dk-mi'); if (!b || el.id === 'dk-sub') return;
+      var k = b.dataset.k || '';
+      if (k.indexOf('sub:') === 0) { if (!b.classList.contains('hot')) openCascade(b, run); }
+      else {
+        $('dk-sub').hidden = true;
+        el.querySelectorAll('.dk-mi.hot').forEach(function (x) { x.classList.remove('hot'); });
+      }
     };
   }
   function blank() { return '<span class="dk-tglyph"></span>'; }
@@ -1531,25 +1584,53 @@ body.fullscreen #arc-bot { display: none !important; }
       {hr: true},
       {k: 'arrange', label: 'Arrange Icons', icon: blank()},
       {k: 'restoreicons', label: 'Restore Desktop Icons', icon: blank()}];
-    if (which === 'themes') return [
-      {k: 'skin:w98', label: 'Windows 98', icon: SKIN === 'w98' ? smallIcon({glyph: ['#28c840', '#fff', 'M5 13l4 4L19 7']}) : blank()},
-      {k: 'skin:ubuntu', label: 'Ubuntu', icon: SKIN === 'ubuntu' ? smallIcon({glyph: ['#28c840', '#fff', 'M5 13l4 4L19 7']}) : blank()},
-      {k: 'skin:dogefeedx', label: 'DogeFeedX (macOS)', icon: SKIN === 'dogefeedx' ? smallIcon({glyph: ['#28c840', '#fff', 'M5 13l4 4L19 7']}) : blank()}
-    ];
+    if (which === 'themes') return themeChoices();
     var mine = (layout.programs || []).filter(function (k) { return byKey[k]; }).sort(byName);
     return (mine.length ? mine.map(function (k) { return {k: k, label: byKey[k].name, icon: smallIcon(byKey[k])}; })
                         : [{k: 'none', label: '(None yet)', off: true}])
       .concat([{hr: true}, {k: 'store', label: 'App Store', icon: smallIcon(byKey.store)},
                {k: 'addremove', label: 'Add/Remove Programs…', icon: smallIcon({img: STORE_ICON})}]);
   }
-  function openSub(b) {
-    var which = b.dataset.k.slice(4), r = b.getBoundingClientRect(), sub = $('dk-sub');
-    $('dk-items').querySelectorAll('.dk-mi.hot').forEach(function (x) { x.classList.remove('hot'); });
-    b.classList.add('hot');
-    showMenu(sub, subItems(which), r.right - 3, r.top - 3, runStart);
-    sub.dataset.which = which;
-    sub.style.top = Math.max(0, Math.min(r.top - 3, window.innerHeight - 32 - sub.offsetHeight)) + 'px';
+  // The theme list, one place, for the Start menu, the system menu and Show Applications.
+  // Website is the way back out; the marked row is the look on screen. Default is the
+  // arcade's own desk_default, so a chosen look can be put back.
+  var DESK_DEFAULT = '{{ desk_default }}' === 'w98' ? 'w98' : '{{ desk_default }}' === 'dogefeedx' ? 'dogefeedx' : 'ubuntu';
+  function themeMark(id) {
+    return SKIN === id ? smallIcon({glyph: ['#28c840', '#fff', 'M5 13l4 4L19 7']}) : blank();
   }
+  function themeChoices() {
+    function label(id, name) { return name + (DESK_DEFAULT === id ? ' (default)' : ''); }
+    return [
+      {k: 'skin:w98', label: label('w98', 'Windows 98'), icon: themeMark('w98')},
+      {k: 'skin:ubuntu', label: label('ubuntu', 'Ubuntu'), icon: themeMark('ubuntu')},
+      {k: 'skin:dogefeedx', label: label('dogefeedx', 'DogeFeedX (macOS)'), icon: themeMark('dogefeedx')},
+      {hr: true},
+      {k: 'exit', label: 'Website', icon: blank()}
+    ];
+  }
+  function openCascade(b, run) {
+    var which = (b.dataset.k || '').slice(4), r = b.getBoundingClientRect(), sub = $('dk-sub');
+    document.querySelectorAll('.dk-mi.hot').forEach(function (x) { x.classList.remove('hot'); });
+    b.classList.add('hot');
+    showMenu(sub, subItems(which), 0, 0, run || runStart);
+    var sw = sub.offsetWidth, sh = sub.offsetHeight;
+    var left = r.right - 3, top = r.top - 3;
+    // The system button sits in the top-right corner: open the list under it, not off the screen.
+    if (b.closest('#dk-ctx') || b.closest('#dk-sys')) {
+      var host = $('dk-ctx').getBoundingClientRect();
+      top = r.top - 3;
+      left = host.left - sw - 6;
+      if (left < 4) left = host.right + 6;
+    }
+    if (left + sw > window.innerWidth - 4) left = Math.max(4, r.left - sw + 3);
+    if (left < 4) left = 4;
+    if (top + sh > window.innerHeight - 4) top = Math.max(4, window.innerHeight - sh - 4);
+    sub.style.left = left + 'px';
+    sub.style.top = top + 'px';
+    sub.hidden = false;
+    sub.dataset.which = which;
+  }
+  function openSub(b) { openCascade(b, runStart); }
   $('dk-items').addEventListener('mouseover', function (e) {
     var b = e.target.closest('.dk-mi'); if (!b) return;
     if (b.dataset.k.indexOf('sub:') === 0) { if (!b.classList.contains('hot')) openSub(b); }
@@ -2324,25 +2405,78 @@ body.fullscreen #arc-bot { display: none !important; }
     if (it.kind === 'helper') return '<span class="ub-ico" style="background:#1f2933">' + iconHtml(it) + '</span>';
     return '<span class="ub-ico" style="background:#6b4fa0"><span class="dk-letter">' + esc((it.name || '?').slice(0, 2)) + '</span></span>';
   }
+  function tabHref(k) {
+    var t = TABS.filter(function (x) { return x.key === k; })[0];
+    return t ? t.href : '';
+  }
+  function dockCount(k) {
+    var n = 0;
+    if (k === 'dfxnotifications') n = Math.max(badges['/notifications'] || 0, badges['/me/notifications'] || 0);
+    else if (k === 'dfxmessages') n = Math.max(badges['/messages'] || 0, badges['/me/messages'] || 0);
+    else if (k === 'dfxmarket') n = badges['/exchange'] || 0;
+    return n > 0 ? n : 0;
+  }
+  // macOS dock magnification: the icon under the pointer grows, and its neighbours grow less.
+  function magnifyDock(dock, x) {
+    var origin = dock.getBoundingClientRect().left;
+    dock.querySelectorAll('.dfx-dock-app').forEach(function (b) {
+      var scale = 1, lift = 0;
+      if (x != null) {
+        var cx = origin + b.offsetLeft + b.offsetWidth / 2;
+        var influence = Math.max(0, 1 - Math.abs(x - cx) / 130);
+        scale = 1 + influence * 0.9;
+        lift = influence * 14;
+      }
+      b.style.transform = 'translateY(' + (-lift) + 'px) scale(' + scale + ')';
+    });
+  }
   function dockKeys() {
+    // DogeFeedX: exactly the sixteen apps, once each, in Billy's order. Nothing else.
+    if (DFX) return DFX_DOCK_APPS.slice();
     var fav = ['/me', '/', '/me/wallet', '/wallet', '/me/messages', '/messages', '/feed'].map(tabAt)
       .filter(function (k, i, all) { return k && all.indexOf(k) === i; });
     if (fav.indexOf(tabAt('/me')) >= 0) fav = fav.filter(function (k) { return k !== tabAt('/'); });
     fav = fav.concat((layout.programs || []).filter(function (k) { return byKey[k]; }), ['store']);
-    // DogeFeedX dock: organized into groups with separators
-    // Group 1: Core DFX apps (Profile, Market) | Group 2: Tools (Terminal, Network, Explorer) | Group 3: Other apps
-    if (DFX) {
-      var dfxCore = ['dfxfeed', 'dfxexplore', 'dfxprofile', 'dfxmarket'];
-      var dfxTools = ['dfxterminal', 'dfxnetwork', 'dfxexplorer'];
-      var otherApps = fav.filter(function (k) { return dfxCore.indexOf(k) < 0 && dfxTools.indexOf(k) < 0; });
-      fav = dfxCore.concat(['|sep1'], dfxTools, ['|sep2'], otherApps);
-    }
+    if (DFX) fav = fav.filter(function (k) { return !DFX_COVERS[tabHref(k)]; });
     wins.forEach(function (w) { if (!w.dialog && fav.indexOf(w.key) < 0) fav.push(w.key); });
-    return fav;
+    var seen = {}, out = [];
+    fav.forEach(function (k) {
+      if (k.indexOf('|sep') === 0) { out.push(k); return; }
+      if (seen[k]) return;
+      seen[k] = true;
+      out.push(k);
+    });
+    return out;
   }
   // Wire up refresh for registered apps
   window.DogeFeedX._refreshDock = function () { if (MAC_LIKE) paintDock(); };
+  function paintDfxDock() {
+    var dock = $('dk-dock'), on = front();
+    dock.hidden = false;
+    dock.innerHTML = '';
+    DFX_DOCK_APPS.forEach(function (k) {
+      var it = byKey[k] || {name: k};
+      var mine = wins.filter(function (w) { return w.key === k; });
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ub-dockbtn dfx-dock-app' + (mine.length && mine[0] === on ? ' on' : '');
+      b.dataset.key = k;
+      b.title = it.name;
+      b.setAttribute('aria-label', it.name);
+      var n = dockCount(k);
+      b.innerHTML = bigIcon(it, k) + (mine.length ? '<span class="ub-run"></span>' : '')
+        + (n ? '<span class="dfx-badge">' + (n > 99 ? '99+' : n) + '</span>' : '');
+      b.addEventListener('click', function () {
+        if (mine.length) { var w = mine[0]; if (w === front()) minimize(w); else { restore(w); focus(w); } }
+        else openKey(k);
+      });
+      dock.appendChild(b);
+    });
+    dock.onmousemove = function (e) { magnifyDock(dock, e.clientX); };
+    dock.onmouseleave = function () { magnifyDock(dock, null); };
+  }
   function paintDock() {
+    if (DFX) { paintDfxDock(); return; }
     var dock = $('dk-dock'), on = front();
     dock.hidden = false;
     dock.innerHTML = '';
@@ -2391,17 +2525,21 @@ body.fullscreen #arc-bot { display: none !important; }
       .map(function (k) { return {k: k, name: byKey[k].name, it: byKey[k]}; })
       .concat([{k: 'store', name: 'App Store', it: byKey.store}]);
     var sections = [];
+    // Show Applications is the Start menu in the Ubuntu and DogeFeedX looks. Switch Theme
+    // has to live here too: the classic Start cascade is not what that button opens.
+    if (MAC_LIKE) {
+      sections.push({title: 'Switch Theme', rows: [
+        {k: 'skin:w98', name: DESK_DEFAULT === 'w98' ? 'Windows 98 (default)' : 'Windows 98', it: {glyph: ['#245edb', '#fff', 'M3 5h18v14H3z']}},
+        {k: 'skin:ubuntu', name: DESK_DEFAULT === 'ubuntu' ? 'Ubuntu (default)' : 'Ubuntu', it: {glyph: ['#e95420', '#fff', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z']}},
+        {k: 'skin:dogefeedx', name: DESK_DEFAULT === 'dogefeedx' ? 'DogeFeedX (default)' : 'DogeFeedX', it: {glyph: ['#d9a520', '#1c1c1e', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z']}},
+        {k: 'exit', name: 'Website', it: {glyph: ['#3d3d3d', '#fff', 'M4 4h16v16H4z']}}
+      ]});
+    }
     // DogeFeedX: Featured DFX apps at the top
     if (DFX) {
-      sections.push({title: 'DogeFeed', rows: [
-        {k: 'dfxfeed', name: 'Feed', it: byKey.dfxfeed},
-        {k: 'dfxexplore', name: 'Explore', it: byKey.dfxexplore},
-        {k: 'dfxprofile', name: 'Profile', it: byKey.dfxprofile},
-        {k: 'dfxmarket', name: 'Market', it: byKey.dfxmarket},
-        {k: 'dfxterminal', name: 'Terminal', it: byKey.dfxterminal},
-        {k: 'dfxnetwork', name: 'Network', it: byKey.dfxnetwork},
-        {k: 'dfxexplorer', name: 'Explorer', it: byKey.dfxexplorer}
-      ]});
+      sections.push({title: 'DogeFeed', rows: DFX_DOCK.map(function (a) {
+        return {k: a.k, name: a.name, it: byKey[a.k]};
+      })});
     }
     sections = sections.concat([
       {title: 'Programs', rows: progs},
@@ -2465,11 +2603,6 @@ body.fullscreen #arc-bot { display: none !important; }
     if (!$('dk-ctx').hidden && $('dk-sys').classList.contains('down')) { hideMenus(); return; }
     hideMenus(); toggleApps(false);
     var r = $('dk-sys').getBoundingClientRect();
-    var themeItems = [
-      {k: 'skin:w98', label: 'Windows 98', icon: SKIN === 'w98' ? smallIcon({glyph: ['#28c840', '#fff', 'M5 13l4 4L19 7']}) : blank()},
-      {k: 'skin:ubuntu', label: 'Ubuntu', icon: SKIN === 'ubuntu' ? smallIcon({glyph: ['#28c840', '#fff', 'M5 13l4 4L19 7']}) : blank()},
-      {k: 'skin:dogefeedx', label: 'DogeFeedX (macOS)', icon: SKIN === 'dogefeedx' ? smallIcon({glyph: ['#28c840', '#fff', 'M5 13l4 4L19 7']}) : blank()}
-    ];
     var items = START_USER.concat([
       {k: 'display', label: 'Background…', icon: smallIcon(byKey.display)},
       {k: 'addremove', label: 'Software…', icon: smallIcon({img: STORE_ICON})},

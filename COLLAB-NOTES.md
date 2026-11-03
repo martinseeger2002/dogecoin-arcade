@@ -88,6 +88,24 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: macOS dock, theme switch, market window (Cursor Cloud Agent)
+The DogeFeedX dock is sixteen apps, once each. Theme switching works from inside every desktop look. The Market window is the dark board.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** (this change)
+
+**What changed:**
+- Switch Theme opens from the system menu in Windows 98, Ubuntu and DogeFeedX, and from Show Applications on the two mac-style looks. Your arcade's theme buttons stay visible inside a desktop window.
+- Dock order: Home, Profile, Files, Notifications, Messages, Explore, Market, Inscribe, Wallet, Launchpad, NFTs, Arcade, Bookmarks, Meme Library, Leaderboard, Settings. Icons magnify with their neighbours. Notifications, Messages and Market show a red count only when `/account/badges` has one. A dock app is not also a desktop icon.
+- Files reads this arcade wallet (collections, DRC-20, names) and is empty until you sign in here. Inscribe and Launchpad link to the arcade's existing flows. Arcade lists games on this node. Settings, profile edits and bookmarks stay in this browser. Messages are the arcade inbox. Notifications are this node's events. Leaderboard adds "Top referrers — coming soon" because no referral system exists. Meme Library stays empty: dogefeed.app does not publish a public meme list. Search can ask for users, collections, an inscription, a collection item, DRC-20 or names.
+- Nothing writes to dogefeed.app. No DogeFeed wallet or key. No new way to spend an inscription.
+
+**Verified:** `tests/test_desktop_theme_switch.py` clicks the real switcher, checks the sixteen names are absent from the wallpaper, magnifies the dock, checks badges at a count and at zero, and opens each app. The Market window is dark, its columns do not cover each other, and thumbnails load from dogefeed.app.
+
+**No action needed from SadFrog.** Read-only public reads plus local-only saves. No signing, no spends, no wallets, no keys, no deploy.
+
+---
+
 ### 2026-11-03 DogeFeedX: live dogefeed.app reads, no fixtures (Cursor Cloud Agent)
 Feed, profile, explore, market, post detail and the leaderboard now render public dogefeed.app data. A failed read is an empty state. Nothing in those pages invents a user, a count, or a price.
 

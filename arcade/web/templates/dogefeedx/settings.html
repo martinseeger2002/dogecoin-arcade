@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Settings · {{ brand.name }}{% endblock %}
+{% block body %}
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root { --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
+* { box-sizing:border-box; }
+body { margin:0; background:#000; color:var(--df-text); font-family:Nunito,sans-serif; }
+html.indesk body.df-dogefeed, html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed input { background:#111 !important; color:#fff6dd !important; border:1px solid rgba(255,255,255,.2) !important; }
+.wrap { max-width:720px; margin:0 auto; padding:28px 20px 48px; }
+h1 { font-family:Fredoka,sans-serif; font-size:28px; margin:0 0 6px; }
+h2 { font-family:Fredoka,sans-serif; font-size:18px; margin:22px 0 8px; }
+p.note, label.note { color:var(--df-muted); display:block; }
+label { display:flex; align-items:center; gap:8px; margin:8px 0; }
+input[type=text] { width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--df-line); background:#111; color:inherit; }
+input[type=checkbox] { width: auto; padding: 0; margin: 0; }
+html.indesk body.df-dogefeed input[type=checkbox] { width: auto !important; padding: 0 !important; background: transparent !important; border: 0 !important; }
+html.indesk body.df-dogefeed label { display: flex !important; align-items: center; gap: 8px; color: #fff6dd; }
+button.save { margin-top:12px; background:#f3e3a5; color:#000; border:0; border-radius:999px; padding:10px 16px; font-weight:700; cursor:pointer; }
+#said { min-height:1.2em; }
+a { color:#f3e3a5; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+<div class="wrap">
+  <h1>Settings</h1>
+  <p class="note">The same kinds of settings as dogefeed.app. Saves stay in this browser. Nothing is written to dogefeed.app.</p>
+
+  <h2>Profile</h2>
+  <p class="note">Display name, DNS handle and website. Your chain name, when this arcade has one, is shown under the fields.</p>
+  <input id="display-name" type="text" maxlength="40" placeholder="Display name" aria-label="Display name">
+  <input id="dns" type="text" maxlength="64" placeholder="DNS handle, like you.doge" aria-label="DNS handle">
+  <input id="website" type="text" maxlength="200" placeholder="Website" aria-label="Website">
+  <p class="note" id="chain-name"></p>
+
+  <h2>Notifications</h2>
+  <label><input type="checkbox" id="n-likes"> Likes</label>
+  <label><input type="checkbox" id="n-comments"> Comments</label>
+  <label><input type="checkbox" id="n-reposts"> Reposts</label>
+  <label><input type="checkbox" id="n-market"> Market sales, purchases and offers</label>
+
+  <h2>Account</h2>
+  <p class="note">Sign-in is this arcade's key, not a DogeFeed account. <a href="/join?next=/dogefeedx/settings">Sign in</a> · <a href="/me">Your arcade</a></p>
+  <button type="button" class="save" id="save">Save on this browser</button>
+  <p id="said" class="note"></p>
+</div>
+<script>
+(function () {
+  var KEY = 'dogefeedx.settings';
+  function read() { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return {}; } }
+  function fill(s) {
+    document.getElementById('display-name').value = s.displayName || '';
+    document.getElementById('dns').value = s.dns || '';
+    document.getElementById('website').value = s.website || '';
+    ['n-likes', 'n-comments', 'n-reposts', 'n-market'].forEach(function (id) {
+      document.getElementById(id).checked = s[id] !== false;
+    });
+  }
+  fill(read());
+  fetch('/account', {credentials: 'same-origin'}).then(function (r) { return r.ok ? r.json() : {}; }).then(function (a) {
+    var bits = [];
+    if (a && a.tag) bits.push('Chain name @' + a.tag);
+    if (a && a.profile && a.profile.url) bits.push(a.profile.url);
+    if (!a || !a.pubkey) bits.push('Not signed in.');
+    document.getElementById('chain-name').textContent = bits.join(' · ');
+  }).catch(function () {});
+  document.getElementById('save').addEventListener('click', function () {
+    var s = {
+      displayName: document.getElementById('display-name').value.trim(),
+      dns: document.getElementById('dns').value.trim(),
+      website: document.getElementById('website').value.trim()
+    };
+    ['n-likes', 'n-comments', 'n-reposts', 'n-market'].forEach(function (id) { s[id] = document.getElementById(id).checked; });
+    localStorage.setItem(KEY, JSON.stringify(s));
+    localStorage.setItem('dogefeedx.profile', JSON.stringify({displayName: s.displayName, dns: s.dns, website: s.website}));
+    document.getElementById('said').textContent = 'Saved in this browser. Not sent to dogefeed.app.';
+  });
+})();
+</script>
+{% endblock %}
