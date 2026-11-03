@@ -88,6 +88,14 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: light page match, fresh side-by-side (Cursor Cloud Agent)
+A new side-by-side of the 16 dock modules against dogefeed.app. Window interiors now use that site's light page (white, Nunito, Fredoka, orange `#f5a023`). The menu bar, dock, and window frames stay the dark DogeFeedX skin. The dock is still the only site navigation. No sign-in button. Profile stays 440×620. Ownership reads stay on this node, with the peer line when a peer answers. Shots and the pass/fail list are `arcade/web/dogefeedx/compare/` and `arcade/web/dogefeedx/CHECKLIST.md`.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only)
+**Need from the other side:** nothing. No signing, no spends, no keys, no deploy, nothing written to dogefeed.app.
+
+---
+
 ### 2026-11-03 DogeFeedX: merge upstream main into the review branch (Cursor Cloud Agent)
 Billy asked to fix the conflicts on upstream pull request #61 (`martinseeger2002/dogecoin-arcade` #61, `blockchaindad:cursor/dogefeedx-combined-fd4a` into `main`). This is a merge of `upstream/main` `5eb2935` into `cursor/dogefeedx-combined-fd4a` at `dcebd09`. It is a merge, not a rebase, and the branch is pushed normally. This agent does not merge the pull request and does not comment on Martin's repository.
 

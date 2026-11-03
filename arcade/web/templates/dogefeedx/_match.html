@@ -1,0 +1,251 @@
+{# Window interiors use dogefeed.app's light page: white, Nunito, Fredoka, orange #f5a023.
+   The desktop chrome (menu bar, dock, window frame) stays the dark DogeFeedX skin.
+   Loaded last so it wins over the desktop skin and any older dark overrides. #}
+<style>
+html.indesk body.df-dogefeed {
+  --df-gold: #f5a023;
+  --df-gold-dark: #e09010;
+  --df-gold-light: #fff6e8;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-hero-bg: linear-gradient(180deg, #fff6f2 0%, #fff 70%);
+  background: #fff !important;
+  color: #0f1419 !important;
+  font-family: Nunito, "Nunito", sans-serif !important;
+  font-size: 15px !important;
+}
+html.indesk body.df-dogefeed .df-app,
+html.indesk body.df-dogefeed .df-main,
+html.indesk body.df-dogefeed .df-header,
+html.indesk body.df-dogefeed .df-topbar,
+html.indesk body.df-dogefeed .wrap,
+html.indesk body.df-dogefeed .finder,
+html.indesk body.df-dogefeed .main,
+html.indesk body.df-dogefeed .side,
+html.indesk body.df-dogefeed .df-right,
+html.indesk body.df-dogefeed .df-app,
+html.indesk body.df-dogefeed .wrap,
+html.indesk body.df-dogefeed .finder,
+html.indesk body.df-dogefeed .main,
+html.indesk body.df-dogefeed .side {
+  background: #fff !important;
+  color: #0f1419 !important;
+}
+html.indesk body.df-dogefeed h1,
+html.indesk body.df-dogefeed h2,
+html.indesk body.df-dogefeed h3,
+html.indesk body.df-dogefeed h4,
+html.indesk body.df-dogefeed .df-profile-name,
+html.indesk body.df-dogefeed .df-post-name,
+html.indesk body.df-dogefeed .df-collection-name,
+html.indesk body.df-dogefeed .df-leaderboard-name {
+  background: transparent !important;
+  color: #0f1419 !important;
+  font-family: Fredoka, Nunito, sans-serif !important;
+}
+html.indesk body.df-dogefeed #meme-q {
+  background: #f7f9f9 !important;
+  color: #0f1419 !important;
+  border: 1px solid #eff3f4 !important;
+}
+html.indesk body.df-dogefeed a.card,
+html.indesk body.df-dogefeed .card,
+html.indesk body.df-dogefeed .df-notice,
+html.indesk body.df-dogefeed .df-chain-btn,
+html.indesk body.df-dogefeed .df-wallet-stat,
+html.indesk body.df-dogefeed .df-wallet-item,
+html.indesk body.df-dogefeed label {
+  background: #fff !important;
+  color: #0f1419 !important;
+  border-color: #eff3f4 !important;
+}
+html.indesk body.df-dogefeed a.card,
+html.indesk body.df-dogefeed .df-notice,
+html.indesk body.df-dogefeed .df-chain-btn {
+  border: 1px solid #eff3f4 !important;
+}
+html.indesk body.df-dogefeed a.card span,
+html.indesk body.df-dogefeed .df-notice {
+  color: #536471 !important;
+}
+html.indesk body.df-dogefeed a.card b,
+html.indesk body.df-dogefeed .df-notice strong { color: #0f1419 !important; }
+html.indesk body.df-dogefeed .df-chain-btn.active {
+  background: #f7f9f9 !important;
+  color: #0f1419 !important;
+  border-color: #0f1419 !important;
+}
+html.indesk body.df-dogefeed .df-lookup-btn {
+  background: #f5a023 !important;
+  color: #fff !important;
+  border: 0 !important;
+}
+html.indesk body.df-dogefeed label { border: 0 !important; background: transparent !important; }
+html.indesk body.df-dogefeed a { color: inherit !important; text-decoration: none !important; }
+html.indesk body.df-dogefeed .df-post-handle,
+html.indesk body.df-dogefeed .df-post-time,
+html.indesk body.df-dogefeed .df-profile-handle,
+html.indesk body.df-dogefeed .df-profile-bio,
+html.indesk body.df-dogefeed .df-profile-meta,
+html.indesk body.df-dogefeed .df-stat-label,
+html.indesk body.df-dogefeed .df-collection-meta,
+html.indesk body.df-dogefeed .df-leaderboard-handle,
+html.indesk body.df-dogefeed .df-trend-label,
+html.indesk body.df-dogefeed .df-trend-count,
+html.indesk body.df-dogefeed .df-empty,
+html.indesk body.df-dogefeed p.note,
+html.indesk body.df-dogefeed .note,
+html.indesk body.df-dogefeed .sec,
+html.indesk body.df-dogefeed .empty,
+html.indesk body.df-dogefeed small {
+  color: #536471 !important;
+}
+html.indesk body.df-dogefeed .df-post,
+html.indesk body.df-dogefeed .df-card,
+html.indesk body.df-dogefeed .df-stat,
+html.indesk body.df-dogefeed .df-collection,
+html.indesk body.df-dogefeed .df-leaderboard-item,
+html.indesk body.df-dogefeed .df-person,
+html.indesk body.df-dogefeed .df-earner,
+html.indesk body.df-dogefeed .tile,
+html.indesk body.df-dogefeed .folder,
+html.indesk body.df-dogefeed .item,
+html.indesk body.df-dogefeed .df-nft-card,
+html.indesk body.df-dogefeed .df-wallet-stat,
+html.indesk body.df-dogefeed .df-wallet-item,
+html.indesk body.df-dogefeed .df-hero {
+  background: #fff !important;
+  color: #0f1419 !important;
+  border-color: #eff3f4 !important;
+  box-shadow: none !important;
+}
+html.indesk body.df-dogefeed .df-post { border-bottom: 1px solid #eff3f4 !important; }
+html.indesk body.df-dogefeed .df-collection,
+html.indesk body.df-dogefeed .tile,
+html.indesk body.df-dogefeed .folder,
+html.indesk body.df-dogefeed .item,
+html.indesk body.df-dogefeed .df-nft-card {
+  border: 1px solid #eff3f4 !important;
+  border-radius: 16px !important;
+}
+html.indesk body.df-dogefeed .side { border-right: 1px solid #eff3f4 !important; }
+html.indesk body.df-dogefeed .mosaic,
+html.indesk body.df-dogefeed .mosaic span,
+html.indesk body.df-dogefeed .df-search,
+html.indesk body.df-dogefeed .df-search-box,
+html.indesk body.df-dogefeed .df-composer {
+  background: #f7f9f9 !important;
+  color: #0f1419 !important;
+  border-color: #eff3f4 !important;
+}
+html.indesk body.df-dogefeed button,
+html.indesk body.df-dogefeed .btn,
+html.indesk body.df-dogefeed .df-tab,
+html.indesk body.df-dogefeed .df-chain,
+html.indesk body.df-dogefeed .df-category,
+html.indesk body.df-dogefeed .df-sort-btn,
+html.indesk body.df-dogefeed .df-view-btn,
+html.indesk body.df-dogefeed .df-tool {
+  background: transparent !important;
+  color: #536471 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  width: auto !important;
+  height: auto !important;
+}
+html.indesk body.df-dogefeed .side button { width: 100% !important; color: #0f1419 !important; text-align: left !important; border-radius: 10px !important; }
+html.indesk body.df-dogefeed .side button.on { background: #f7f9f9 !important; color: #0f1419 !important; }
+html.indesk body.df-dogefeed .df-tabs { border-bottom: 1px solid #eff3f4 !important; }
+html.indesk body.df-dogefeed .df-tab,
+html.indesk body.df-dogefeed .df-chain {
+  border-radius: 0 !important;
+  border-bottom: 3px solid transparent !important;
+  padding: 12px 8px !important;
+  font-weight: 800 !important;
+}
+html.indesk body.df-dogefeed .df-tab.active,
+html.indesk body.df-dogefeed .df-chain.active {
+  background: transparent !important;
+  color: #0f1419 !important;
+  border-bottom-color: transparent !important;
+}
+html.indesk body.df-dogefeed .df-tab.active::after,
+html.indesk body.df-dogefeed .df-chain.active::after {
+  background: #0f1419 !important;
+}
+html.indesk body.df-dogefeed .df-header p,
+html.indesk body.df-dogefeed .df-hero p {
+  color: #536471 !important;
+}
+html.indesk body.df-dogefeed .df-hero h2 { color: #0f1419 !important; }
+html.indesk body.df-dogefeed .df-hero-btn.secondary {
+  background: #fff !important;
+  color: #0f1419 !important;
+  border: 1px solid #cfd9de !important;
+}
+html.indesk body.df-dogefeed .df-category {
+  background: #f7f9f9 !important;
+  color: #536471 !important;
+  border-radius: 999px !important;
+  padding: 8px 14px !important;
+  font-weight: 700 !important;
+}
+html.indesk body.df-dogefeed .df-category.active {
+  background: #eceff1 !important;
+  color: #0f1419 !important;
+}
+html.indesk body.df-dogefeed .df-post-btn,
+html.indesk body.df-dogefeed .df-hero-btn,
+html.indesk body.df-dogefeed .df-hero-btn.primary,
+html.indesk body.df-dogefeed .df-signin-btn,
+html.indesk body.df-dogefeed .more,
+html.indesk body.df-dogefeed .pick label,
+html.indesk body.df-dogefeed button.use,
+html.indesk body.df-dogefeed button.copy,
+html.indesk body.df-dogefeed button.drop {
+  background: #f5a023 !important;
+  color: #fff !important;
+  border-radius: 999px !important;
+  font-weight: 800 !important;
+  padding: 8px 16px !important;
+}
+html.indesk body.df-dogefeed .df-follow-btn {
+  background: #0f1419 !important;
+  color: #fff !important;
+  border-radius: 999px !important;
+  font-weight: 800 !important;
+}
+html.indesk body.df-dogefeed .df-chip,
+html.indesk body.df-dogefeed .df-trend-tag,
+html.indesk body.df-dogefeed .df-leaderboard-amount,
+html.indesk body.df-dogefeed .df-earner-amount,
+html.indesk body.df-dogefeed .df-collection-floor {
+  color: #f5a023 !important;
+  font-weight: 800 !important;
+}
+html.indesk body.df-dogefeed .df-chip {
+  background: #f7f9f9 !important;
+  border-radius: 999px !important;
+  padding: 6px 10px !important;
+}
+html.indesk body.df-dogefeed input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="button"]):not([type="submit"]),
+html.indesk body.df-dogefeed textarea,
+html.indesk body.df-dogefeed select {
+  background: #fff !important;
+  color: #0f1419 !important;
+  border: 1px solid #eff3f4 !important;
+  box-shadow: none !important;
+}
+html.indesk body.df-dogefeed .df-search input,
+html.indesk body.df-dogefeed .df-search-box input,
+html.indesk body.df-dogefeed .df-composer textarea {
+  background: transparent !important;
+  border: 0 !important;
+  color: #0f1419 !important;
+}
+html.indesk body.df-dogefeed .df-banner { background: #fff3d6 !important; }
+html.indesk body.df-dogefeed .df-tool { color: #f5a023 !important; width: 36px !important; height: 36px !important; padding: 0 !important; }
+</style>

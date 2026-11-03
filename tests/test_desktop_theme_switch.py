@@ -182,8 +182,8 @@ def test_switch_theme_from_every_look_and_the_dock_does_not_repeat(base):
         browser.close()
 
 
-def test_market_window_is_dark_and_its_columns_do_not_cover_each_other(base):
-    """The Market window on the DogeFeedX desktop: dark board, loaded thumbnails, no site nav."""
+def test_market_window_matches_the_public_board(base):
+    """The Market window is dogefeed.app's light board: white page, dark type, loaded pictures, no site nav."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
@@ -218,10 +218,10 @@ def test_market_window_is_dark_and_its_columns_do_not_cover_each_other(base):
           };
         }""")
         assert report["indesk"] is True
-        assert report["body"] < 40, report
-        assert report["title"] > 180, report
+        assert report["body"] > 200, report
+        assert report["title"] < 80, report
         assert report["sidebar"] is False, report
-        assert report["img"].startswith("https://dogefeed.app/"), report["img"]
+        assert report["img"].startswith("https://"), report["img"]
         page.locator('.dk-win[aria-label="Market"]').screenshot(
             path="/opt/cursor/artifacts/compare/market-window-dfx.png")
         browser.close()

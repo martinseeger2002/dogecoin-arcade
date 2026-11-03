@@ -462,6 +462,7 @@ html.indesk body.df-dogefeed input {
 }
 </style>
 <script>document.body.classList.add('df-dogefeed');</script>
+{% include "dogefeedx/_match.html" %}
 
 <div class="df-app">
   <!-- Left Sidebar -->
@@ -516,7 +517,7 @@ html.indesk body.df-dogefeed input {
       </div>
       <button class="df-sort-btn" id="sort-btn" type="button">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M6 12h12M9 18h6"/></svg>
-        Cheapest
+        A-Z
       </button>
       <button class="df-view-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
@@ -541,7 +542,7 @@ html.indesk body.df-dogefeed input {
   var tokens = [];
   var activity = [];
   var totals = {};
-  var sortCheap = true;
+  var sortCheap = false;
   var activeCat = 'nfts';
   var activeChain = 'doginals';
   var activeTab = 'market';

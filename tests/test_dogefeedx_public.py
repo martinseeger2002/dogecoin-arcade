@@ -218,7 +218,8 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     assert "/posts/" in post
     assert "data.replies" in post
     market = (TEMPLATES / "market.html").read_text()
-    assert "Cheapest" in market and "/market/doginals" in market
+    assert "Cheapest" in market and "A-Z" in market and "var sortCheap = false" in market
+    assert "/market/doginals" in market
     desk = (ROOT / "arcade" / "web" / "templates" / "desktop.html").read_text()
     assert "DFX_DOCK_APPS.indexOf(k) < 0" in desk
     assert "openDfxFeed" in desk and "/dogefeedx/feed" in desk
@@ -271,6 +272,7 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     assert "normalize_memes" in apps and "imageUrl" in (ROOT / "arcade" / "web" / "dogefeedx" / "public_read.py").read_text()
     launch = (TEMPLATES / "launchpad.html").read_text()
     assert "No public launch list" in launch
+    assert "Launch a collection" in launch
     assert "Doge Punks" not in launch and "Shiba Society" not in launch
     arcade = (TEMPLATES / "arcade.html").read_text()
     assert "Free chips, for fun only" in arcade and "On this arcade" in arcade
@@ -334,6 +336,7 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
         assert 'href="#" class="df-nav-item' not in page
         assert "inscribe.doginals.org" not in page
         assert '<nav class="df-sidebar">' not in page
+        assert 'dogefeedx/_match.html' in page
         assert 'class="df-nav-item"' not in page
         if name == "launchpad.html":
             assert '<aside class="df-right">' in page and "Top Launches" in page
