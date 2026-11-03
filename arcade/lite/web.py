@@ -22,10 +22,10 @@ NO_STORE = {"Cache-Control": "no-store"}
 LITE_HEADER = "x-arcade-lite"
 
 
-def register(app, state, admin_check, signed_in, account_address, name_of, node_wallet=None):
+def register(app, state, admin_check, signed_in, account_address, name_of, node_tools=None):
     """Add /lite to the node's app, with the web app's own checks: `admin_check(request, write=False)` raises unless
     the operator is asking, `signed_in(request)` is the account or None, `account_address(pubkey, chain)` and
-    `name_of(address)` look an account up. `node_wallet` is the node's wallet as Admin drives it (app.py). Returns
+    `name_of(address)` look an account up. `node_tools` is what the operator's commands ask of the node (app.py). Returns
     the window's page, which ARCADE Lite also serves at /."""
 
     def caller_for(request: Request, write: bool = False) -> cmdlib.Caller:
@@ -41,7 +41,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             audience = "user"
         return cmdlib.Caller(state, audience, pubkey,
                              address=(lambda chain: account_address(pubkey, chain)) if pubkey else (lambda chain: ""),
-                             name_of=name_of, node=node_wallet if audience == "operator" else None, local=local)
+                             name_of=name_of, node=node_tools if audience == "operator" else None, local=local)
 
     @app.get("/lite", response_class=HTMLResponse)
     def lite_page(request: Request):

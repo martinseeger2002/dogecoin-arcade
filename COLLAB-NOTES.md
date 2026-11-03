@@ -88,6 +88,24 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 2: the node's messages
+- **New commands** (module `messages`, the operator only): `listconversations` (everyone the node wrote to or heard
+  from, newest first, with unread counts), `readmessages <who> [count]` (oldest first; marks the conversation read, as
+  opening it does), `sendmessage <who> <text...>`. `who` is a key, an @name, a contact code or an announced address
+  (`_resolve_recipient`).
+- **A send is the Messages tab's**, for one-transaction text: app.py `_console_message` beside `send_in_thread`, same
+  steps and guards (funding check, the identity address first and the one that can pay after, one send at a time,
+  not the same message twice, our own copy kept with `record_sent`). Testnet only, as messaging is; at once, as the
+  tab sends on testnet. A message needing more transactions is refused with "send it from Messages" (progress lives
+  there). `send_in_thread` itself is untouched.
+- **The rest of the line is the text as typed**: a command whose last argument is `*text` gets the line's remainder,
+  shell-unquoted when it parses (arcade-cli quotes what it sends) and verbatim when it does not (`don't`); no JSON.
+- app.py's console namespace is `node_tools` now (wallet and messages).
+- Users' messages are sealed and opened in their browser, so these are the operator's.
+- Tests: `tests/test_lite_messages.py` (6): a real regtest message sent from the console, kept as typed, refused
+  twice, listed and read back; a long one, an unknown name or no text sends nothing; the line parsing; operator-only
+  and off with its module. With test_lite_wallet, test_lite, test_lite_cli, test_modules, test_web: 281 passed.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 1: the node's wallet
 SadFrog: "Build the wallet commands next (send, receive, transactions) in the terminal, then messages, feed and
 market queries, one PR each."

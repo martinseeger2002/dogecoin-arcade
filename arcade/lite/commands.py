@@ -59,7 +59,8 @@ class Command:
     @property
     def usage(self) -> str:
         params = list(inspect.signature(self.fn).parameters.values())[1:]   # the first is the caller
-        words = [p.name if p.default is inspect.Parameter.empty else f"[{p.name}]" for p in params]
+        words = [f"{p.name}..." if p.kind is p.VAR_POSITIONAL else p.name if p.default is inspect.Parameter.empty
+                 else f"[{p.name}]" for p in params]
         return " ".join([self.name, *words])
 
 
@@ -109,7 +110,12 @@ def available(caller: Caller) -> list[Command]:
 
 def run_line(caller: Caller, line: str) -> Any:
     """One console line, `name arg ...` as in a Core's console. A whole number, true, false, null, a list or an
-    object is taken as JSON; everything else, an amount such as 0.00000001 included, as the text typed."""
+    object is taken as JSON; everything else, an amount such as 0.00000001 included, as the text typed. A command
+    that takes the rest of the line (sendmessage's text) gets it as written, apostrophes and all."""
+    rest = _rest_of_line(line)
+    if rest is not None:
+        name, fixed, tail = rest
+        return run(caller, name, *(_value(w) for w in fixed), *([tail] if tail else []))
     try:
         words = shlex.split(line)
     except ValueError as exc:
@@ -121,6 +127,35 @@ def run_line(caller: Caller, line: str) -> Any:
     elif any(w in HELP_FLAGS for w in words[1:]):
         return run(caller, "help", words[0])
     return run(caller, words[0], *(_value(w) for w in words[1:]))
+
+
+def _rest_of_line(line: str) -> tuple[str, list[str], str] | None:
+    """(name, its fixed arguments, the rest of the line) for a command whose last argument is the rest of the line;
+    None for any other line. The rest is unquoted as a shell would (arcade-cli quotes what it sends) when it can be,
+    and kept as typed when it cannot (an apostrophe)."""
+    parts = line.split(None, 1)
+    cmd = COMMANDS.get(parts[0]) if parts else None
+    if cmd is None:
+        return None
+    params = list(inspect.signature(cmd.fn).parameters.values())[1:]
+    if not params or params[-1].kind is not inspect.Parameter.VAR_POSITIONAL:
+        return None
+    fixed = len(params) - 1
+    pieces = line.strip().split(None, fixed + 1)
+    if any(w in HELP_FLAGS for w in pieces[1:2]) or (len(pieces) == fixed + 2 and pieces[-1].strip() in HELP_FLAGS):
+        return None                                        # `sendmessage -help`: the help, by the usual path
+    tail = pieces[fixed + 1] if len(pieces) > fixed + 1 else ""
+    try:
+        tail = " ".join(shlex.split(tail))
+    except ValueError:
+        pass
+    words = []
+    for w in pieces[1:fixed + 1]:
+        try:
+            words += shlex.split(w)
+        except ValueError:
+            words.append(w)
+    return pieces[0], words, tail
 
 
 def _value(word: str) -> Any:
@@ -174,7 +209,7 @@ def getnodeinfo(caller) -> dict:
 
 def _wallet(caller):
     if caller.node is None:
-        raise CommandError("the node's wallet answers through the arcade's web app: run this in its console or arcade-cli")
+        raise CommandError("the node answers through the arcade's web app: run this in its console or arcade-cli")
     return caller.node
 
 
@@ -250,6 +285,61 @@ def confirm(caller, ticket: str) -> dict:
         raise CommandError("a send is confirmed at the node's own machine; from elsewhere, Admin asks for the "
                            "admin password")
     return {"txid": _ask(_wallet(caller).broadcast, str(ticket))}
+
+
+# --- messages: the node's own Messenger, as the Messages tab reads and sends it ---------------------------------------
+
+
+def _text(body) -> str:
+    return body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else str(body or "")
+
+
+def _store(caller):
+    state = caller.state
+    if not state.store_path.exists() or not getattr(state, "unlocked", False):
+        try:
+            state.ensure_identity()
+        except Exception as exc:                           # noqa: BLE001
+            raise CommandError(f"the node's identity is not open yet: {exc}") from None
+    return state.store()
+
+
+@command("messages", audience="operator", module="messages")
+def listconversations(caller) -> list[dict]:
+    """Everyone the node has written to or heard from, newest first, with what is unread.
+
+    `readmessages <who>` opens one: their key, @name, contact code or address."""
+    with _store(caller) as store:
+        threads = store.conversations(caller.state.identity.fingerprint)
+    return [{"who": t.get("name") or caller.name_of(t.get("address") or "") or t.get("address") or "",
+             "key": t["pubkey"].hex(), "address": t.get("address") or "", "last": t.get("last"),
+             "unread": t.get("unread", 0), "count": t.get("count", 0), "outgoing": t.get("outgoing", False),
+             "preview": _text(t.get("preview"))[:80]} for t in threads]
+
+
+@command("messages", audience="operator", module="messages")
+def readmessages(caller, who: str, count: int = 20) -> list[dict]:
+    """One conversation's last messages, oldest first; they are then read, as when the conversation is opened.
+
+    readmessages <who> [count]   who: their key, @name, contact code or address"""
+    if not isinstance(count, int) or count < 1:
+        raise CommandError("count is a whole number, 1 or more")
+    peer = _ask(_wallet(caller).peer, str(who))
+    with _store(caller) as store:
+        fingerprint = caller.state.identity.fingerprint
+        items = store.thread(fingerprint, peer)[-count:]
+        store.mark_thread_read(fingerprint, peer)
+    return [{"when": m.get("when"), "mine": m.get("mine", False), "text": _text(m.get("body")),
+             "txid": m.get("txid"), "confirmed": m.get("height") is not None} for m in items]
+
+
+@command("messages", audience="operator", module="messages")
+def sendmessage(caller, who: str, *text: str) -> dict:
+    """Send a message from the node, on testnet, at once, as the Messages tab sends one.
+
+    sendmessage <who> <text...>   for example: sendmessage @alice see you at the table
+    A message long enough to need more than one transaction is sent from Messages, which shows its progress."""
+    return _ask(_wallet(caller).message, str(who), " ".join(str(t) for t in text))
 
 
 # --- modules: installed and removed as packages are -----------------------------------------------------------------

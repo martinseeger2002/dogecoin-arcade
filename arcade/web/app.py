@@ -2312,6 +2312,52 @@ def create_app(state: AppState) -> FastAPI:
             attached_name=file_name, attached_type=file_type,
             share_profile=share_profile)
 
+    def _console_message(to: str, text: str) -> dict:
+        """A text message from the node's identity, for the console's sendmessage: one transaction, sent at once as
+        send_in_thread sends one on testnet, with its guards (one send at a time, not the same message twice) and
+        our own copy kept. A message that needs more than one transaction is the Messenger's, which shows progress."""
+        if state.messaging.is_mainnet:
+            raise ValueError("the console sends messages on testnet only; send this one from Messages")
+        if not text.strip():
+            raise ValueError("write something")
+        if not state.unlocked:
+            state.ensure_identity()
+        peer_key = _resolve_recipient(state, to)
+        plan = plan_message(state.identity, peer_key, content.build(text=text))
+        if plan.transactions > 1:
+            raise ValueError(f"that message takes {plan.transactions} transactions: send it from Messages, which "
+                             "shows its progress")
+        digest = hashlib.sha256(peer_key + text.encode()).hexdigest()
+        with state.messaging.rpc() as rpc:
+            funding = Miner(rpc, state.messaging.params).status()
+            if not funding.funded:
+                raise ValueError(f"cannot send: {funding.describe()}")
+            sender = MessageSender(rpc, state.messaging.params)
+            address = funded_address(rpc, prefer=state.derived_address)
+            try:
+                sender.prepare(address, plan.chunk_payloads[0])
+            except SendError:                              # the identity address cannot pay: the one that can
+                address = funded_address(rpc)
+            if state.is_repeat_send(digest):
+                raise ValueError("that exact message was just sent; change something or wait a minute")
+            if not state.begin_send():
+                raise ValueError("a message is already being sent; wait for it to finish")
+            try:
+                txids = sender.send_all(address, plan.chunk_payloads)
+                state.note_send(digest)
+            finally:
+                state.end_send()
+        with state.store() as store:
+            record_sent(store, txids[0], peer_key, state.identity.fingerprint, text.encode(), txids=txids)
+        return {"txid": txids[0], "to": peer_key.hex()}
+
+    def _console_peer(who: str) -> bytes:
+        """A correspondent's key from what the console was given: the key itself, an @name, a contact code or an
+        address with an announced key."""
+        if re.fullmatch(r"[0-9a-fA-F]{64}", who or ""):
+            return bytes.fromhex(who)
+        return _resolve_recipient(state, who)
+
     # --- inbox ----------------------------------------------------------------
 
     @app.get("/inbox", response_class=HTMLResponse)
@@ -31273,10 +31319,10 @@ def create_app(state: AppState) -> FastAPI:
         with _context(which).rpc() as rpc:
             return list(rpc.call("listunspent") or [])
 
-    #: The node's wallet for the console (arcade/lite/commands.py): the same steps as Admin's.
-    node_wallet = types.SimpleNamespace(wallets=lambda: _admin_wallets(), prepare=_node_prepare,
-                                        broadcast=_node_broadcast, receive=_node_receive, history=_node_history,
-                                        unspent=_node_unspent)
+    #: What the console asks of the node (arcade/lite/commands.py): its wallet in Admin's own steps, its messages.
+    node_tools = types.SimpleNamespace(wallets=lambda: _admin_wallets(), prepare=_node_prepare,
+                                       broadcast=_node_broadcast, receive=_node_receive, history=_node_history,
+                                       unspent=_node_unspent, peer=_console_peer, message=_console_message)
 
     # --- the Cloudflare tunnel wizard (2026-09-25; arcade/tunnel.py) -----
 
@@ -36181,7 +36227,7 @@ def create_app(state: AppState) -> FastAPI:
     # ARCADE Lite (docs/arcade-lite/CHARTER.md): its Core-style window at /lite, for visitors, users and the operator.
     from ..lite import web as liteweb
     _lite_home = liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in,
-                                  account_address=_account_address, name_of=_name_of, node_wallet=node_wallet)
+                                  account_address=_account_address, name_of=_name_of, node_tools=node_tools)
     # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
     from . import modules_web
     modules_web.register(app, state, admin_check=_admin_check)
