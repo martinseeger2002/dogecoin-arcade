@@ -191,3 +191,37 @@ def test_the_verifiers_say_yes_to_the_wallets_signature_and_no_to_anything_chang
     assert verify.verify_sign_in(s["origin"], s["nonce"], s["pubkey"], s["signature"])
     assert not verify.verify_sign_in("https://evil.example", s["nonce"], s["pubkey"], s["signature"])
     assert s["pubkey"] == seed.login_pubkey(PHRASES[0])
+
+
+# --- the transaction view: what the approval shows, read from the bytes -----------------------------------------------
+
+def test_the_view_reads_each_output_as_the_arcade_does():
+    from arcade import inscriptions, tokens, tx
+    from arcade import payload as P
+    from arcade.encoding import encode_class_c
+    from arcade.txbuild import op_return_script, p2pkh_script
+    params = config.NETWORKS["test"]
+    me = script.b58check_encode(params.pubkeyhash_version, bytes(20))
+    them = script.b58check_encode(params.pubkeyhash_version, bytes(range(20)))
+    pool = script.b58check_encode(params.scripthash_version, bytes(range(20, 40)))
+    piece = "ab" * 32
+    made = [p2pkh_script(them), p2pkh_script(pool), op_return_script(encode_class_c(tokens.send_payload(7, 250))),
+            op_return_script(encode_class_c(P.AnyData(data=inscriptions.Transfer(txid=bytes.fromhex(piece)).encode()).encode())),
+            op_return_script(b"hello"), bytes.fromhex("51")]
+    references = [[them], [me, them], [me, them, me], [them, me, pool], [me, me], [None, None]]
+    landing = [{"inputs": [{"value": 1000, "inscriptions": [{"id": "a", "offset": 0}]},
+                           {"value": 5000, "inscriptions": [{"id": "b", "offset": 4000}]}], "outputs": [1000, 3000, 1500]},
+               {"inputs": [{"value": None}, {"value": 10, "inscriptions": [{"id": "c", "offset": 0}]}], "outputs": [5]},
+               {"inputs": [{"value": 10, "inscriptions": [{"id": "d", "offset": 9}]}], "outputs": [5, 4]}]
+    got = node("txview.mjs", {"scripts": [{"network": "test", "hex": s.hex()} for s in made], "landing": landing,
+                              "references": [{"addresses": r, "sender": me} for r in references]})
+    assert got["addresses"] == [script.classify_script(s, params)[1] for s in made]
+    assert got["addresses"][:2] == [them, pool]
+    assert got["payloads"] == [None, None, {"kind": "token", "propertyid": 7, "units": "250"},
+                               {"kind": "nft", "piece": piece}, {"kind": "data", "bytes": 5}, None]
+    for r, n in zip(references, got["references"]):          # Omni's own recipient rule, output by output
+        outputs = [script.ParsedOutput(type=None, value=0, address=a) for a in r]
+        assert (r[n] if n >= 0 else None) == tx.determine_reference(outputs, me, None), r
+    assert got["landing"][0] == [{"id": "a", "input": 0, "output": 0}, {"id": "b", "input": 1, "output": 2}]
+    assert got["landing"][1] == [{"id": "c", "input": 1}]                # output undefined: an input before it is unknown
+    assert got["landing"][2] == [{"id": "d", "input": 0, "output": None}]   # past every output: burned to the fee

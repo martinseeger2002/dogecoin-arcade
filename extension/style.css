@@ -37,3 +37,11 @@ ul.coins{list-style:none;margin:0;padding:0}
 ul.coins li{padding:6px 0;border-bottom:1px solid var(--line)}
 ul.coins li:last-child{border-bottom:0}
 .coin-head{font-weight:600}
+ul.outputs{list-style:none;margin:0 0 8px;padding:0}
+ul.outputs li{padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px}
+ul.outputs li.mine{opacity:.75}
+ul.outputs code{display:block}
+.what{font-weight:600}
+.ins{color:var(--accent);font-size:12px}
+.real{color:var(--bad);font-weight:700}
+.fee{font-weight:600}
