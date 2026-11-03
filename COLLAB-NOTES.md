@@ -88,6 +88,26 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 Relay hops: a link to an arcade no direct link reaches, carried by the arcades between (Claude)
+The operator: "do you think relay hops would be a good idea like they do with Meshtastic?" -- yes, routed rather than
+flooded, for what direct links cannot cover (two routers that each pick a new port per destination).
+- **arcade/mesh/relay.py**: frame "rl" {o, to, q, bh, in, hops, sig} + blob, signed by the sender over everything but
+  hops (bh = sha256 of the blob), fresh and seen once like a SUB, passed along node._via (the first way the other's
+  SUB came), at most RELAY_HOPS (3). `in` is rl-open / rl-yes / rl-shut, or a frame of a CARRIED kind: "cr" (Cores),
+  "dx" (ord index), "lx" (index copies), "ix" (index checks). Calls never go this way. Each relaying arcade carries at
+  most RELAY_RATE (2 MB/s) per sender and RELAY_TOTAL (8 MB/s) in all. Shut after RELAY_IDLE (5 min) unused, or once
+  the two link directly. The accepting side says yes before its extensions' first frames, so an offer cannot overtake
+  it.
+- **RelayLink** walks like a Link (peer_id, send, close); node.reach(peer) and node.reachable() give direct or relayed;
+  coreshare, doginalshare, ledgershare and indexcheck use relay.reach / reachable / every_link wherever they used
+  node.links (a node without relays, as in a test, is direct only).
+- **coverage.py**: a need no direct link covers, whose holders did not link after RELAY_AFTER (2) tries, gets one
+  relayed link to the holder tried most; Admin counts "through other arcades".
+- Tests: tests/test_mesh_relay.py (two arcades talk through a third; a frame changed on the way is thrown away; the
+  per-sender limit), test_coreshare (Dogecoin borrowed through relay hops, blocks proved as ever), test_mesh_coverage
+  (the keeper's relay fallback).
+- The arcades between read what they carry: public chain data, as the end arcades see it.
+
 ### 2026-11-02 The coverage keeper: every Core, index, media relay and game room from linked holders (Claude)
 The operator: "an auto adjusting mesh that looks for the arcades containing the resources that we need ... at least have
 available every core and every index from at least one node preferably three"; "the same sort of auto connect for

@@ -23,6 +23,8 @@ import time
 import zlib
 from typing import Any, Callable
 
+from . import relay as _relay
+
 log = logging.getLogger("arcade.mesh")
 
 PART = 60 * 1024                 # a link frame carries at most 64 KB
@@ -79,7 +81,7 @@ class LedgerShare:
     async def rebalance(self) -> None:
         self.loop = asyncio.get_running_loop()
         hello = await asyncio.to_thread(self._hello)
-        for link in list((self.node.links if self.node else {}).values()):
+        for link in list(_relay.every_link(self.node)):
             try:
                 await link.send(hello)
             except Exception:                                  # noqa: BLE001
@@ -149,7 +151,7 @@ class LedgerShare:
     # ---------------------------------------------------------------- asking (from the watcher's thread)
     def _post(self, node: str, frame: dict) -> bool:
         loop = self.loop
-        link = self.node.links.get(node) if self.node is not None else None
+        link = _relay.reach(self.node, node)
         if loop is None or link is None:
             return False
         try:

@@ -552,3 +552,30 @@ def test_a_broadcast_goes_to_every_sharer_once(monkeypatch):
             for n in (a, c, b):
                 await n.stop()
     run(go())
+
+
+def test_a_chain_is_borrowed_through_relay_hops_from_an_arcade_no_direct_link_reaches():
+    """Relay hops (mesh/relay.py, 2026-11-02): the only sharer of Dogecoin is linked to the arcade in between,
+    not to the borrower. Through a relayed link the borrower hears the offer and reads blocks, proved as ever."""
+    core = FakeCore("doge")
+
+    async def go():
+        sharer, middle, borrower = mk(target=1), mk(target=2), mk(target=1)
+        ss, sb = _share(core), _borrower()
+        sharer.add_extension(ss); borrower.add_extension(sb)
+        middle.add_extension(CoreShare(None, lambda: {}))
+        await started(sharer, middle, borrower)
+        try:
+            await _linked((sharer, middle), (borrower, middle))
+            await until(lambda: sharer.node_id in borrower._via, timeout=5, what="the borrower heard of the sharer")
+            assert sharer.node_id not in borrower.links
+            assert await borrower.relays.open(sharer.node_id, wait=5) is not None
+            await until(lambda: sb.sharers("doge"), what="the offer came through the middle")
+            rpc = BorrowedRpc(sb, NETWORKS["doge"])
+            row = _blocks("doge")[-1]
+            got = await asyncio.to_thread(rpc.call, "getblock", row["hash"], 2)
+            assert got == _strip(row["verbose"]) and middle.relays.carried > 0
+        finally:
+            for n in (sharer, middle, borrower):
+                await n.stop()
+    run(go())

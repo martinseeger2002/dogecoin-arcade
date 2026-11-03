@@ -281,6 +281,9 @@ class MeshNode:
         #: it must answer from memory. And the links the coverage keeper counts on, which the tuner never drops.
         self.resources: Callable[[], list[str]] | None = None
         self.keep: set[str] = set()
+        #: Links carried by other arcades, to arcades no direct link reaches (relay.py, 2026-11-02).
+        from .relay import Relays
+        self.relays = Relays(self)
         self._via: dict[str, str] = {}             # origin -> the neighbour its SUBs come through
         self._seen: OrderedDict[str, None] = OrderedDict()
         # room -> {(origin, member)} this node's members have been told are there
@@ -469,6 +472,10 @@ class MeshNode:
     async def _rebalancer(self) -> None:
         while not self._stopping:
             await asyncio.sleep(60)
+            try:
+                await self.relays.tidy()
+            except Exception:                      # noqa: BLE001
+                log.exception("mesh relays")
             for ext in list(self.extensions):
                 try:
                     await ext.rebalance()
@@ -477,6 +484,14 @@ class MeshNode:
 
     def _outbound(self) -> int:
         return sum(1 for link in self.links.values() if link.outbound)
+
+    def reach(self, peer: str):
+        """The link to `peer`: the direct one, else a relayed one (relay.py), else None."""
+        return self.links.get(peer) or self.relays.links.get(peer)
+
+    def reachable(self) -> set[str]:
+        """Every arcade this one has a link to, direct or relayed."""
+        return set(self.links) | set(self.relays.links)
 
     def everyone(self) -> bool:
         """Links to every arcade it knows of (see EVERYONE_MAX), rather than OUTBOUND_TARGET of them."""
@@ -1160,6 +1175,9 @@ class MeshNode:
             return
         if kind == "pong":
             self._pong(link, str(header.get("n", "")))
+            return
+        if kind == "rl":                                   # carried for another arcade, or for this one (relay.py)
+            await self.relays.on_frame(link, header, blob)
             return
         # Extensions name the frame kinds they ride on: Core peering "cs" (corelink), shared Cores
         # "cr" (coreshare).

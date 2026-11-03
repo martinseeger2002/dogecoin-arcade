@@ -60,3 +60,27 @@ def test_what_an_arcade_holds_is_said_in_its_signed_sub_and_checked_on_receipt(f
         finally:
             await a.stop(); await b.stop()
     run(go())
+
+
+def test_a_need_no_direct_link_can_cover_is_reached_through_relay_hops(fast, monkeypatch):
+    """Relay hops (relay.py): the only holder cannot be linked directly (no address, no introducer here); after
+    RELAY_AFTER tries the keeper opens a relayed link to it, and Admin counts it."""
+    monkeypatch.setattr(cov, "EVERY", 0.2)
+
+    async def go():
+        a, b, c = mk(target=1), mk(target=2), mk(target=1)
+        ca = _cov(a, [], ["c:ltc"])
+        _cov(b, [], [])
+        _cov(c, ["c:ltc"], [])
+        await started(a, b, c)
+        try:
+            a.add_address(*addr(b))
+            c.add_address(*addr(b))                   # c reaches b; nobody can reach c
+            await until(lambda: c.node_id in a.relays.links, timeout=10, what="a relayed link to c")
+            assert c.node_id not in a.links
+            await until(lambda: {r["key"]: r for r in ca.status()}.get("c:ltc", {}).get("relayed") == 1, timeout=5,
+                        what="counted as relayed")
+        finally:
+            for n in (a, b, c):
+                await n.stop()
+    run(go())

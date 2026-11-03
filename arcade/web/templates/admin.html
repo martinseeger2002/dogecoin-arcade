@@ -2408,8 +2408,9 @@ section.panel h2{margin-top:0}
     if (cv) {
       cv.textContent = '';
       (c.coverage || []).forEach(function (r) {
-        var ok = r.linked >= r.goal, none = r.linked === 0;
+        var ok = r.linked >= r.goal, none = r.linked === 0 && !r.relayed;
         cv.appendChild(text('div', r.what + ': ' + r.linked + ' of ' + r.goal + ' linked'
+          + (r.relayed ? ' \u00b7 ' + r.relayed + ' through other arcades' : '')
           + (r.known > r.linked ? ' \u00b7 ' + (r.known - r.linked) + ' more known, linking' : (none ? ' \u00b7 no arcade holds it' : '')),
           none ? 'idx-bad' : (ok ? '' : 'muted')));
       });

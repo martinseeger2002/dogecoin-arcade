@@ -34,6 +34,8 @@ import time
 import zlib
 from typing import Any
 
+from . import relay as _relay
+
 log = logging.getLogger("arcade.mesh")
 
 ROWS_PER_FRAME = 500           # a "dn" frame stays well under the link's 64 KB frame
@@ -204,7 +206,7 @@ class DxShare:
         if index is None or loop is None or self.node is None:
             raise ValueError("no linked arcade to ask")
         for node, _height in ([(node, 0)] if node else index.walkers()):
-            link = self.node.links.get(node)
+            link = _relay.reach(self.node, node)
             if link is None:
                 continue
             got = asyncio.run_coroutine_threadsafe(self._ask(link, net, question), loop).result(ASK_SECONDS + 1)
@@ -248,7 +250,7 @@ class DxShare:
     def fetch_notes(self, net: str, c: int, node: str, nd: str, hash_: str) -> None:
         """From the index's thread: ask `node` for chunk c's notes; they reach index.got_notes (or fetch_failed)."""
         loop = self.loop
-        link = self.node.links.get(node) if self.node is not None else None
+        link = _relay.reach(self.node, node)
         index = self.indexes().get(net)
         if loop is None or link is None or index is None:
             if index is not None:
@@ -315,7 +317,7 @@ class DxShare:
     def get(self, net: str, node: str, ask: dict) -> None:
         """From the index's thread: ask `node` for a snapshot's manifest or piece; it reaches Snapshots.got_*."""
         loop = self.loop
-        link = self.node.links.get(node) if self.node is not None else None
+        link = _relay.reach(self.node, node)
         if loop is None or link is None:
             return
         now = time.monotonic()
@@ -368,7 +370,7 @@ class DxShare:
 
     def post_to(self, node: str, frame: dict) -> None:
         loop = self.loop
-        link = self.node.links.get(node) if self.node is not None else None
+        link = _relay.reach(self.node, node)
         if loop is None or link is None:
             return
         try:
@@ -392,7 +394,7 @@ class DxShare:
                 return
 
     async def _send_all(self, frame: dict) -> None:
-        for link in list((self.node.links if self.node else {}).values()):
+        for link in list(_relay.every_link(self.node)):
             try:
                 await link.send(frame)
             except Exception:                                  # noqa: BLE001

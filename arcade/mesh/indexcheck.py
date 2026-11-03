@@ -26,6 +26,8 @@ import logging
 import time
 from typing import Callable
 
+from . import relay as _relay
+
 log = logging.getLogger("arcade.mesh")
 
 MAX_ROWS = 200                 # rows of one block sent to show a difference
@@ -78,7 +80,7 @@ class IndexCheck:
         now = await asyncio.to_thread(self._tips)
         if now != self.mine:
             self.mine = now
-            for link in list(self.node.links.values()):
+            for link in _relay.every_link(self.node):
                 try:
                     await link.send({"t": "ix", "op": "tip", "nets": now})
                 except Exception:                              # noqa: BLE001
@@ -146,7 +148,7 @@ class IndexCheck:
 
     # ---------------------------------------------------------------- comparing
     async def _ask(self, peer: str, question: dict) -> dict:
-        link = self.node.links.get(peer)
+        link = _relay.reach(self.node, peer)
         if link is None:
             raise ConnectionError("gone")
         rid = next(self._ids)
@@ -228,7 +230,7 @@ class IndexCheck:
         out: dict[str, str] = {}
         for peer, nets in list(self.theirs.items()):
             tip = nets.get(net) or {}
-            if peer not in node.links or not isinstance(tip.get("at"), int) or tip["at"] < cp:
+            if peer not in _relay.reachable(node) or not isinstance(tip.get("at"), int) or tip["at"] < cp:
                 continue
             if tip["at"] == cp and isinstance(tip.get("d"), str):
                 out[peer] = tip["d"]
@@ -246,7 +248,7 @@ class IndexCheck:
         """For the admin panel: per chain, this arcade's checkpoint and what every linked arcade's showed."""
         out = {}
         for net in sorted(set(self.mine) | set(self.results)):
-            rows = {p: r for p, r in self.results.get(net, {}).items() if self.node is None or p in self.node.links}
+            rows = {p: r for p, r in self.results.get(net, {}).items() if self.node is None or p in _relay.reachable(self.node)}
             agree = [r for r in rows.values() if "differs_at" not in r and "error" not in r
                      and r.get("state") != "differs" and r.get("names") != "differs"]
             out[net] = {"at": (self.mine.get(net) or {}).get("at"), "height": (self.mine.get(net) or {}).get("h"),

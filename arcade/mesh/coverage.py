@@ -39,6 +39,9 @@ EXTRA_SMALL = 3
 #: A SUB heard within this long counts (they come every SUB_EVERY seconds).
 FRESH = 120.0
 MAX_KEYS = 64
+#: Direct tries at a holder before a need nothing else covers is reached through relay hops (relay.py).
+RELAY_AFTER = 2
+OPEN_WAIT = 10.0
 
 
 def clean(res: Any) -> set[str]:
@@ -68,7 +71,8 @@ class Coverage:
         self.introducer = introducer or (lambda: None)
         self.node = None
         self.mine: list[str] = []                  # what this arcade holds, worked out off the loop, said in its SUB
-        self.last: dict[str, dict] = {}            # need -> {"linked", "known", "at"}
+        self.last: dict[str, dict] = {}            # need -> {"linked", "relayed", "known", "at"}
+        self.tries: dict[str, int] = {}            # holder -> direct tries that did not link
         self._task: asyncio.Task | None = None
 
     # ---------------------------------------------------------------- hooks
@@ -137,18 +141,35 @@ class Coverage:
             self.mine = list(mine)
             await node._send_own_sub()                 # said at once, not at the next SUB
         linked = set(node.links)
+        relayed = set(getattr(getattr(node, "relays", None), "links", {}) or ())
         short: dict[str, int] = {}
         keep: set[str] = set()
         now = time.time()
         self.last = {}
+        for peer in list(self.tries):
+            if peer in linked:
+                self.tries.pop(peer, None)
+        stranded: list[tuple[str, set]] = []
         for key in needs:
             who = self.holders(key)
             have = who & linked
-            self.last[key] = {"linked": len(have), "known": len(who), "at": now}
+            self.last[key] = {"linked": len(have), "relayed": len(who & relayed), "known": len(who), "at": now}
+            if not have and not (who & relayed) and who:
+                stranded.append((key, who))
             keep |= set(sorted(have)[:GOAL])
             if len(have) < GOAL and who - linked:
                 short[key] = 2 if not have else 1
         node.keep = keep
+        # Relay hops (relay.py): a need no direct link covers, whose holders did not link after RELAY_AFTER tries,
+        # gets one relayed link, to the holder tried most.
+        if getattr(node, "relays", None) is not None:
+            for key, who in stranded:
+                tried = sorted((p for p in who if self.tries.get(p, 0) >= RELAY_AFTER), key=lambda p: -self.tries[p])
+                if tried:
+                    try:
+                        await node.relays.open(tried[0], wait=OPEN_WAIT)
+                    except Exception:                  # noqa: BLE001 -- tried again next step
+                        log.debug("coverage: relay to %s", tried[0][:12], exc_info=True)
         if not short:
             return []
         score: dict[str, int] = {}
@@ -166,6 +187,7 @@ class Coverage:
         node = self.node
         if peer in node.links:
             return
+        self.tries[peer] = self.tries.get(peer, 0) + 1
         addrs = [a for a, e in node.addrs.items() if e.get("id") == peer and node._may_dial(a)]
         if addrs:
             node._spawn(node._dial(addrs[0]))
@@ -179,7 +201,8 @@ class Coverage:
 
     def status(self) -> list[dict]:
         """For Admin: each need, how many linked arcades hold it and how many are known to."""
-        return [{"key": k, "what": label(k), "linked": v["linked"], "known": v["known"], "goal": GOAL}
+        return [{"key": k, "what": label(k), "linked": v["linked"], "relayed": v.get("relayed", 0), "known": v["known"],
+                 "goal": GOAL}
                 for k, v in sorted(self.last.items())]
 
 
