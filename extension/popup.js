@@ -1,4 +1,5 @@
 import * as keys from "./keys.js";
+import {drawTx} from "./render.js";
 
 const $ = (id) => document.getElementById(id);
 const say = (text) => { $("err").textContent = text || ""; };
@@ -79,7 +80,75 @@ async function drawArcades() {
     }
     coins.append(li);
   }
+  held = Object.fromEntries((b.rows || []).filter((r) => r.ours).map((r) => [r.network, r]));
+  const pick = $("send-chain"), was = pick.value;
+  pick.textContent = "";
+  for (const r of Object.values(held)) pick.append(new Option(`${r.label} (${r.coins} ${r.coin})`, r.network));
+  if (was && held[was]) pick.value = was;
+  $("send-box").hidden = !pick.options.length;
+  sendFields().catch((e) => say(e.message));
 }
+
+/* --- send: the arcade builds it, the wallet checks it, this shows it, and only "Sign and send" signs ---------------- */
+let held = {}, readied = null;
+
+async function sendFields() {
+  const kind = $("send-kind").value, row = held[$("send-chain").value] || {};
+  $("send-token").hidden = kind !== "token";
+  $("send-piece").hidden = kind !== "nft" && kind !== "inscription";
+  $("send-amount").hidden = kind === "nft" || kind === "inscription";
+  $("send-amount").placeholder = kind === "token" ? "how many" : `amount, in ${row.coin || "coins"}`;
+  if (kind === "token") {
+    $("send-token").textContent = "";
+    for (const t of row.tokens || []) $("send-token").append(new Option(`${t.balance} ${t.name || ""} (#${t.propertyid})`, t.propertyid));
+  }
+  if (kind === "nft" || kind === "inscription") {
+    $("send-piece").textContent = "";
+    $("send-piece").append(new Option("reading what you hold...", ""));
+    const got = await ask({type: "toSend", chain: $("send-chain").value});
+    $("send-piece").textContent = "";
+    const list = kind === "nft" ? got.nfts.map((n) => [`#${n.number} ${n.id.slice(0, 16)}...`, JSON.stringify(n)])
+      : got.ords.map((o) => [`${o.id.slice(0, 16)}... on ${o.txid.slice(0, 8)}:${o.vout}`, JSON.stringify(o)]);
+    for (const [text, value] of list) $("send-piece").append(new Option(text, value));
+    if (!list.length) $("send-piece").append(new Option(kind === "nft" ? "no NFT here" : "no inscription here", ""));
+  }
+}
+
+function asked() {
+  const kind = $("send-kind").value, chain = $("send-chain").value, to = $("send-to").value.trim();
+  const out = {kind, chain, to, amount: $("send-amount").value.trim()};
+  if (kind === "token") out.propertyid = Number($("send-token").value);
+  if (kind === "nft" || kind === "inscription") {
+    const p = JSON.parse($("send-piece").value || "null");
+    if (!p) throw new Error("Pick what to send.");
+    if (kind === "nft") out.piece = p.id; else Object.assign(out, {inscription: p.id, txid: p.txid, vout: p.vout});
+  }
+  return out;
+}
+
+$("send-kind").onchange = $("send-chain").onchange = () => sendFields().catch((e) => say(e.message));
+$("send-prepare").onclick = async () => {
+  say(""); $("sent").textContent = ""; $("review").hidden = true; readied = null;
+  try {
+    const got = await ask({type: "prepare", ask: asked()});
+    readied = got.id;
+    $("review-who").textContent = `To ${got.view.to}. Built by ${got.arcade}; checked here against what you asked.`;
+    drawTx($("review-tx"), got.view, got.tokens);
+    $("review").hidden = false;
+  } catch (e) { say(e.message); }
+};
+$("send-cancel").onclick = () => { readied = null; $("review").hidden = true; };
+$("send-yes").onclick = async () => {
+  if (!readied) return;
+  const id = readied;
+  readied = null;
+  $("review").hidden = true;
+  try {
+    const done = await ask({type: "confirm", id});
+    $("sent").textContent = `Sent: ${done.txid}`;
+    setTimeout(() => drawArcades().catch(() => {}), 3000);
+  } catch (e) { say(e.message); }
+};
 
 $("link").onclick = () => { say(""); ask({type: "link", origin: $("link-origin").value}).then(() => { $("link-origin").value = ""; return draw(); })
   .catch((e) => say(e.message)); };

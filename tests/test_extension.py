@@ -225,3 +225,96 @@ def test_the_view_reads_each_output_as_the_arcade_does():
     assert got["landing"][0] == [{"id": "a", "input": 0, "output": 0}, {"id": "b", "input": 1, "output": 2}]
     assert got["landing"][1] == [{"id": "c", "input": 1}]                # output undefined: an input before it is unknown
     assert got["landing"][2] == [{"id": "d", "input": 0, "output": None}]   # past every output: burned to the fee
+
+
+# --- sends: the arcade's offers, checked before anything is signed ----------------------------------------------------
+
+def _offers(tmp_path):
+    """Offers built by the arcade's own Python, as its send routes build them, for the extension to check."""
+    from arcade import funding, inscriptions, tokens
+    from arcade import payload as P
+    from arcade.encoding import encode_class_c
+    from arcade.txbuild import build_raw_tx, op_return_script, p2pkh_script
+    params = config.NETWORKS["test"]
+    s = seed.to_seed(PHRASES[0])
+    pub = _pubkey(_bip32(s, (44 | H, 1 | H, 0 | H, 0, 0)))
+    me = script.b58check_encode(params.pubkeyhash_version, script.hash160(pub))
+    them = script.b58check_encode(params.pubkeyhash_version, bytes(range(20)))
+    coin = {"txid": "11" * 32, "vout": 1, "value": 50 * 10**8, "address": me}
+    small = {"txid": "22" * 32, "vout": 0, "value": 10**7, "address": me}
+    rate = params.min_fee_per_kb
+
+    def offer(unsigned, **extra):
+        return {"offer": "o1", "chain": "test", **unsigned.as_json(), **extra}
+
+    pay = funding.build_one(params, me, dict(coin), [(15 * 10**7, p2pkh_script(them))], rate)
+    token = funding.build_one(params, me, dict(coin), [
+        (0, op_return_script(encode_class_c(tokens.send_payload(7, 250)))), (10**6, p2pkh_script(them))], rate)
+    piece = "ab" * 32
+    nft = funding.build_one(params, me, dict(coin), [
+        (0, op_return_script(encode_class_c(P.AnyData(data=inscriptions.Transfer(txid=bytes.fromhex(piece)).encode()).encode()))),
+        (10**6, p2pkh_script(them))], rate)
+    ins_in = [dict(small), dict(coin)]
+    ins_out = [(small["value"], p2pkh_script(them)), (coin["value"] - small["value"] // 10, p2pkh_script(me))]
+    raw = build_raw_tx([(c["txid"], c["vout"]) for c in ins_in], ins_out)
+    ins = funding.Unsigned(raw=raw, inputs=ins_in, outputs=ins_out,
+                           sighashes=[funding.sighash(ins_in, ins_out, n, p2pkh_script(me)).hex() for n in range(2)])
+    clean = {"state": "clean", "inscriptions": []}
+    k = lambda c: f"{c['txid']}:{c['vout']}"                                              # noqa: E731
+    marked = {k(small): {"state": "inscribed", "inscriptions": [{"id": "cd" * 32 + "i0", "offset": 0}]}, k(coin): clean}
+    coin_ask = {"kind": "coin", "chain": "test", "to": them, "amount": "1.5"}
+    tampered = offer(pay, to=them)
+    tampered["sighashes"] = [("00" * 32)]
+    other = offer(funding.build_one(params, me, dict(coin), [(15 * 10**7, p2pkh_script(me))], rate), to=them)
+    cases = [
+        (offer(pay, to=them), coin_ask, {k(coin): clean}),                                     # 0 sent as asked
+        (offer(pay, to=them), coin_ask, {k(coin): {"state": "unknown", "inscriptions": []}}),  # 1 the index cannot say
+        (offer(pay, to=them), coin_ask, {}),                                                    # 2 nor list it
+        (offer(pay, to=them), coin_ask, {k(coin): marked[k(small)]}),                           # 3 it carries one
+        (tampered, coin_ask, {k(coin): clean}),                                                 # 4 hashes not the bytes
+        (other, coin_ask, {k(coin): clean}),                                                    # 5 pays somebody else
+        (offer(pay, to=them), {**coin_ask, "amount": "1.4"}, {k(coin): clean}),                 # 6 another amount
+        (offer(token, to=them, divisible=False), {"kind": "token", "chain": "test", "to": them, "propertyid": 7,
+                                                  "amount": "250"}, {k(coin): clean}),         # 7 a token
+        (offer(token, to=them, divisible=False), {"kind": "token", "chain": "test", "to": them, "propertyid": 7,
+                                                  "amount": "251"}, {k(coin): clean}),         # 8 more than it moves
+        (offer(nft, to=them), {"kind": "nft", "chain": "test", "to": them, "piece": piece}, {k(coin): clean}),  # 9
+        (offer(ins, to=them), {"kind": "inscription", "chain": "test", "to": them, "inscription": "cd" * 32 + "i0",
+                               "txid": small["txid"], "vout": 0}, marked),                      # 10 an inscription
+        (offer(ins, to=them), {"kind": "coin", "chain": "test", "to": them, "amount": "0.1"}, marked),  # 11 never as coin
+        (offer(ins, to=them), {"kind": "inscription", "chain": "test", "to": them, "inscription": "cd" * 32 + "i0",
+                               "txid": small["txid"], "vout": 0},
+         {**marked, k(small): {"state": "inscribed", "inscriptions": [{"id": "cd" * 32 + "i0", "offset": 5}]}}),  # 12
+    ]
+    asked = tmp_path / "sends.json"
+    asked.write_text(json.dumps({"phrase": PHRASES[0],
+                                 "cases": [{"offer": o, "ask": a, "marks": m} for o, a, m in cases]}))
+    out = subprocess.run(["node", "--experimental-default-type=module", "--import", "./extension/test/register.mjs",
+                          str(ROOT / "extension" / "test" / "sends.mjs"), str(asked)],
+                         capture_output=True, text=True, timeout=180, check=True, cwd=ROOT)
+    return json.loads(out.stdout), {"me": me, "them": them, "pay": pay, "token": token, "piece": piece}
+
+
+def test_a_send_is_signed_only_as_asked_and_never_spends_an_inscription_or_a_coin_the_index_cannot_vouch_for(tmp_path):
+    got, made = _offers(tmp_path)
+    c = got["cases"]
+    assert c[0]["hashes"] == made["pay"].sighashes                       # what the arcade asks, worked out from the bytes
+    view = c[0]["view"]
+    assert [(o["address"], o["value"], o["mine"]) for o in view["outputs"]] == \
+        [(made["them"], str(15 * 10**7), False), (made["me"], str(made["pay"].change), True)]
+    assert view["fee"] == str(made["pay"].fee) and view["real"] is False
+    assert "cannot say yet" in c[1]["error"] and "cannot say yet" in c[2]["error"]
+    assert "carries" in c[3]["error"] and "never spends it" in c[3]["error"]
+    assert "different bytes" in c[4]["error"]
+    assert "No output pays them" in c[5]["error"] and "No output pays them" in c[6]["error"]
+    token = [o for o in c[7]["view"]["outputs"] if o["data"]][0]["data"]
+    assert token == {"kind": "token", "propertyid": 7, "units": "250", "to": made["them"], "toOutput": 1}
+    assert "does not move" in c[8]["error"]
+    nft = [o for o in c[9]["view"]["outputs"] if o["data"]][0]["data"]
+    assert nft["kind"] == "nft" and nft["piece"] == made["piece"] and nft["to"] == made["them"]
+    assert c[10]["view"]["outputs"][0]["receives"] == ["cd" * 32 + "i0"] and c[10]["view"]["outputs"][0]["address"] == made["them"]
+    assert "never spends it" in c[11]["error"]          # a coin send never takes an inscribed coin
+    assert "never spends it" in c[12]["error"]          # nor one whose inscription is not at its first koinu
+    for n, case in enumerate(c):
+        assert case.get("error", "Nothing was signed.").endswith("Nothing was signed."), n
+    assert got["sats"] == ["150000000", "1", "700000000"]

@@ -54,6 +54,23 @@
       <p class="muted" id="read-from" hidden></p>
       <ul class="coins" id="coins"></ul>
     </div>
+    <div class="panel" id="send-box" hidden>
+      <h2>Send</h2>
+      <div class="row"><select id="send-chain"></select><select id="send-kind">
+        <option value="coin">Coins</option><option value="token">An Omni token</option>
+        <option value="nft">An arcade NFT</option><option value="inscription">An inscription</option></select></div>
+      <select id="send-token" hidden></select>
+      <select id="send-piece" hidden></select>
+      <input id="send-to" placeholder="to: an address or @name" spellcheck="false">
+      <input id="send-amount" placeholder="amount" inputmode="decimal">
+      <button class="primary" id="send-prepare" style="width:100%">Review</button>
+      <div id="review" hidden>
+        <p class="muted" id="review-who"></p>
+        <div id="review-tx"></div>
+        <div class="row"><button id="send-cancel">Cancel</button><button class="primary" id="send-yes">Sign and send</button></div>
+      </div>
+      <p class="muted" id="sent"></p>
+    </div>
     <div class="panel">
       <h2>Linked arcades</h2>
       <ul class="sites" id="arcades"></ul>

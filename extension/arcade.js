@@ -79,3 +79,31 @@ export async function assets(origin, address) {
   ]);
   return {tokens: Array.isArray(tokens) ? tokens : [], inscriptions: Number(count.count || 0)};
 }
+
+/** What the arcade's ord index says sits on each of `coins` ([{txid, vout}], this wallet's own on `network`):
+ *  {"txid:vout": {state: "clean" | "inscribed" | "unknown", inscriptions: [{id, offset}]}}. "unknown" is anything the
+ *  index could not answer for now, a coin it did not list, or a chain whose inscriptions it does not check. */
+export async function inscriptionsOn(origin, account, network, address, list) {
+  const out = {};
+  for (const c of list) out[`${c.txid}:${c.vout}`] = {state: "unknown", inscriptions: []};
+  const txids = [...new Set(list.map((c) => c.txid))];
+  for (let at = 0; at < txids.length; at += 100) {
+    let said;
+    try {
+      said = await call(origin, "/account/doginal-txs",
+                        {account, body: {chain: network, address, txids: txids.slice(at, at + 100)}});
+    } catch (e) {
+      if (e.status === 404 || e.status === 400 || e.status === 503) return out;     // not checked: unknown, all of it
+      throw e;
+    }
+    for (const c of list) {
+      const rows = (said.txs || {})[c.txid];
+      if (!Array.isArray(rows)) continue;                                            // null or not listed: unknown
+      const here = rows.filter((r) => Number(r.vout) === Number(c.vout));
+      if (here.some((r) => r.unknown || r.wait || !r.inscription_id)) continue;
+      out[`${c.txid}:${c.vout}`] = {state: here.length ? "inscribed" : "clean",
+                                    inscriptions: here.map((r) => ({id: r.inscription_id, offset: Number(r.sat_offset || 0)}))};
+    }
+  }
+  return out;
+}

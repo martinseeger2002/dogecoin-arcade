@@ -9,6 +9,9 @@ import * as keys from "./keys.js";
 import * as chains from "./chains.js";
 import * as arcade from "./arcade.js";
 import * as messages from "./messages.js";
+import * as coins from "./coins.js";
+import * as txview from "./txview.js";
+import * as sends from "./sends.js";
 
 const LOCK_MINUTES = 30;
 const pending = new Map();          // request id -> {origin, method, params, resolve, window}
@@ -50,6 +53,64 @@ async function link(text) {
   const list = (await arcades()).filter((o) => o !== origin);
   await chrome.storage.local.set({arcades: [...list, origin]});
   return origin;
+}
+
+/* --- sends from the popup: the arcade builds, this checks, the popup shows, the person says yes ----------------- */
+
+const prepared = new Map();         // id -> {origin, ask, offer, hashes, at}
+
+async function tokenNames(origin, view) {
+  const ids = view.outputs.filter((o) => o.data && o.data.kind === "token").map((o) => o.data.propertyid);
+  if (!ids.length) return {};
+  const said = await fetch(`${origin}/r/tokens?ids=${ids.join(",")}`, {credentials: "omit"}).then((r) => r.json()).catch(() => []);
+  return Object.fromEntries((Array.isArray(said) ? said : []).map((t) => [t.propertyid, {name: t.name, divisible: t.divisible}]));
+}
+
+async function prepare(ask) {
+  const {seed: s, account: key} = await opened();
+  const [origin] = await arcades();
+  if (!origin) throw new Error("link an arcade first: it reads the chains and builds the send");
+  const k = await chains.keysOn(s, ask.chain);
+  const [path, body] = sends.request(ask);
+  const offer = await arcade.call(origin, path, {account: key, body});
+  const marks = txview.ORD_CHAINS.has(ask.chain)
+    ? await arcade.inscriptionsOn(origin, key, ask.chain, k.address, offer.inputs || []) : {};
+  const {hashes, view} = await sends.check(offer, k, ask, marks);
+  const id = String(nextId++);
+  prepared.set(id, {origin, ask, offer, hashes, at: Date.now()});
+  return {id, view, tokens: await tokenNames(origin, view), arcade: origin};
+}
+
+async function confirmSend(id) {
+  const p = prepared.get(id);
+  prepared.delete(id);
+  if (!p || Date.now() - p.at > 5 * 60000) throw new Error("that send is gone; prepare it again");
+  const {seed: s, account: key} = await opened();
+  const k = await chains.keysOn(s, p.ask.chain);
+  const signatures = [];
+  for (const h of p.hashes) signatures.push(coins.hex(await coins.signInput(k.key, coins.unhex(h))));
+  const done = await arcade.call(p.origin, "/account/sign",
+                                 {account: key, body: {offer: p.offer.offer, signatures, pubkey: coins.hex(k.pubkey)}});
+  return {txid: done.txid};
+}
+
+/** The inscriptions this wallet's coins on `network` carry, and the arcade NFTs its address holds: what the popup
+ *  offers to send. */
+async function holdingsToSend(network) {
+  const {seed: s, account: key} = await opened();
+  const [origin] = await arcades();
+  if (!origin) return {ords: [], nfts: []};
+  const k = await chains.keysOn(s, network);
+  let ords = [];
+  if (txview.ORD_CHAINS.has(network)) {
+    const own = (await arcade.call(origin, `/account/coins?chain=${encodeURIComponent(network)}`, {account: key})).coins || [];
+    const marks = await arcade.inscriptionsOn(origin, key, network, k.address, own);
+    ords = own.flatMap((c) => (marks[`${c.txid}:${c.vout}`] || {inscriptions: []}).inscriptions
+      .map((i) => ({id: i.id, offset: i.offset, txid: c.txid, vout: c.vout, value: c.value})));
+  }
+  const nfts = await fetch(`${origin}/r/inscriptions/${encodeURIComponent(k.address)}?limit=200`, {credentials: "omit"})
+    .then((r) => r.json()).catch(() => []);
+  return {ords, nfts: Array.isArray(nfts) ? nfts.map((n) => ({id: n.id, number: n.number})) : []};
 }
 
 /** Every chain's balance, Omni tokens and inscription count, as the first linked arcade reports them. */
@@ -204,6 +265,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         await chrome.storage.local.set({arcades: (await arcades()).filter((o) => o !== msg.origin)});
         return true;
       case "balances": return balances();
+      case "toSend": return holdingsToSend(msg.chain);
+      case "prepare": return prepare(msg.ask);
+      case "confirm": return confirmSend(msg.id);
       case "remove":
         await chrome.storage.local.remove(["vault", "sites", "arcades"]);
         await lock();
