@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Leaderboard · {{ brand.name }}{% endblock %}
+{% block title %}Leaderboard · DogeFeed{% endblock %}
 {% block body %}
-{#- DogeFeedX Leaderboard: Pixel-perfect reproduction of dogefeed.app/leaderboard
-    Light theme with white background. Shows top earners by DOGE earned. -#}
+{#- DogeFeedX Leaderboard: Exact match to dogefeed.app/leaderboard
+    Simple numbered list layout (no podium), with time tabs. -#}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -33,7 +33,6 @@ a { color: inherit; text-decoration: none; }
   min-height: 100vh;
 }
 
-/* Left Sidebar */
 .df-sidebar {
   width: 275px;
   padding: 12px;
@@ -73,6 +72,22 @@ a { color: inherit; text-decoration: none; }
 .df-nav-item:hover { background: var(--df-hover); }
 .df-nav-item.active { font-weight: 700; }
 .df-nav-item svg { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; }
+.df-nav-item.active svg { fill: currentColor; }
+.df-nav-badge {
+  background: var(--df-gold);
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+}
+.df-nav-external svg.ext {
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  opacity: 0.5;
+}
 .df-signin-btn {
   width: 100%;
   padding: 14px;
@@ -86,29 +101,36 @@ a { color: inherit; text-decoration: none; }
   margin-top: auto;
 }
 .df-signin-btn:hover { background: var(--df-gold-dark); }
+.df-signin-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 0;
+  font-size: 12px;
+  color: var(--df-text-secondary);
+}
+.df-signin-footer svg { width: 24px; height: 24px; fill: var(--df-gold); }
 
-/* Main Content */
 .df-main {
   flex: 1;
   max-width: 600px;
   border-right: 1px solid var(--df-border);
 }
-.df-topbar {
-  position: sticky;
-  top: 0;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
-  z-index: 100;
+.df-header {
   padding: 16px;
   border-bottom: 1px solid var(--df-border);
 }
-.df-topbar h1 {
+.df-header h1 {
   font-family: "Fredoka", sans-serif;
   font-size: 20px;
   font-weight: 600;
+  margin-bottom: 4px;
+}
+.df-header p {
+  font-size: 13px;
+  color: var(--df-text-secondary);
 }
 
-/* Tabs */
 .df-tabs {
   display: flex;
   border-bottom: 1px solid var(--df-border);
@@ -133,74 +155,27 @@ a { color: inherit; text-decoration: none; }
   bottom: 0;
   left: 50%;
   transform: translateX(-50%);
-  width: 56px;
+  width: 40px;
   height: 4px;
   background: var(--df-gold);
   border-radius: 2px;
 }
 
-/* Podium */
-.df-podium {
-  display: flex;
-  justify-content: center;
-  align-items: flex-end;
-  gap: 16px;
-  padding: 32px 16px;
-  background: var(--df-gold-light);
-}
-.df-podium-item {
-  text-align: center;
-  cursor: pointer;
-}
-.df-podium-item:hover .df-podium-avatar { transform: scale(1.05); }
-.df-podium-rank {
-  font-family: "Fredoka", sans-serif;
-  font-size: 24px;
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-.df-podium-rank.gold { color: #f5a623; }
-.df-podium-rank.silver { color: #9ca3af; }
-.df-podium-rank.bronze { color: #b45309; }
-.df-podium-avatar {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  overflow: hidden;
-  margin: 0 auto 8px;
-  border: 3px solid var(--df-gold);
-  transition: transform 0.15s;
-}
-.df-podium-item:nth-child(1) .df-podium-avatar { width: 80px; height: 80px; }
-.df-podium-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.df-podium-name {
-  font-weight: 700;
-  font-size: 14px;
-  margin-bottom: 4px;
-}
-.df-podium-amount {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--df-gold);
-}
-
-/* Leaderboard List */
-.df-leaderboard { }
+.df-leaderboard { min-height: 400px; }
 .df-leaderboard-item {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 16px;
+  gap: 12px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--df-border);
   cursor: pointer;
   transition: background 0.15s;
 }
 .df-leaderboard-item:hover { background: var(--df-hover); }
 .df-leaderboard-rank {
-  width: 32px;
-  font-family: "Fredoka", sans-serif;
-  font-size: 18px;
-  font-weight: 600;
+  width: 24px;
+  font-size: 15px;
+  font-weight: 400;
   color: var(--df-text-secondary);
   text-align: center;
 }
@@ -210,8 +185,8 @@ a { color: inherit; text-decoration: none; }
   border-radius: 50%;
   overflow: hidden;
   flex-shrink: 0;
+  background: var(--df-gold-light);
 }
-.df-leaderboard-avatar.verified { border: 2px solid var(--df-gold); }
 .df-leaderboard-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .df-leaderboard-info { flex: 1; min-width: 0; }
 .df-leaderboard-name {
@@ -222,21 +197,14 @@ a { color: inherit; text-decoration: none; }
   gap: 4px;
 }
 .df-leaderboard-name svg { width: 16px; height: 16px; fill: var(--df-gold); }
-.df-leaderboard-handle { font-size: 14px; color: var(--df-text-secondary); }
+.df-leaderboard-handle { font-size: 15px; color: var(--df-text-secondary); }
 .df-leaderboard-amount {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--df-gold);
-  text-align: right;
-}
-.df-leaderboard-amount small {
-  display: block;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 400;
-  color: var(--df-text-secondary);
+  color: var(--df-gold);
+  white-space: nowrap;
 }
 
-/* Right Sidebar */
 .df-right {
   width: 350px;
   padding: 12px 24px;
@@ -263,6 +231,15 @@ a { color: inherit; text-decoration: none; }
   color: var(--df-text);
   outline: none;
 }
+.df-search input::placeholder { color: var(--df-text-secondary); }
+.df-search-kbd {
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--df-border);
+  font-size: 11px;
+  color: var(--df-text-secondary);
+}
+
 .df-card {
   background: var(--df-hover);
   border-radius: 16px;
@@ -275,9 +252,56 @@ a { color: inherit; text-decoration: none; }
   font-weight: 600;
   padding: 12px 16px;
 }
-.df-card-content { padding: 0 16px 16px; }
+.df-trend {
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-trend:hover { background: rgba(0,0,0,0.03); }
+.df-trend-label { font-size: 13px; color: var(--df-text-secondary); margin-bottom: 2px; }
+.df-trend-tag { font-size: 15px; font-weight: 700; }
+.df-trend-count { font-size: 13px; color: var(--df-text-secondary); }
+.df-card-more { padding: 16px; color: var(--df-gold); font-size: 15px; cursor: pointer; }
+.df-card-more:hover { background: rgba(0,0,0,0.03); }
 
-/* Loading */
+.df-follow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-follow:hover { background: rgba(0,0,0,0.03); }
+.df-follow-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--df-gold-light);
+}
+.df-follow-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-follow-info { flex: 1; }
+.df-follow-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+  font-size: 15px;
+}
+.df-follow-name svg { width: 16px; height: 16px; fill: var(--df-gold); }
+.df-follow-handle { font-size: 14px; color: var(--df-text-secondary); }
+.df-follow-btn {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-text);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .df-loading { display: flex; justify-content: center; padding: 40px; }
 .df-spinner {
   width: 24px;
@@ -292,7 +316,6 @@ a { color: inherit; text-decoration: none; }
 </style>
 
 <div class="df-app">
-  <!-- Left Sidebar -->
   <nav class="df-sidebar">
     <a href="/dogefeedx/feed" class="df-logo">
       <svg viewBox="0 0 32 32" fill="none">
@@ -300,6 +323,8 @@ a { color: inherit; text-decoration: none; }
         <ellipse cx="11" cy="13" rx="2" ry="2.5" fill="#000"/>
         <ellipse cx="21" cy="13" rx="2" ry="2.5" fill="#000"/>
         <ellipse cx="16" cy="19" rx="4" ry="3" fill="#000"/>
+        <path d="M6 8 Q4 4 8 6" stroke="#f5a623" stroke-width="3" fill="none"/>
+        <path d="M26 8 Q28 4 24 6" stroke="#f5a623" stroke-width="3" fill="none"/>
       </svg>
       <span>DogeFeed</span>
     </a>
@@ -310,67 +335,136 @@ a { color: inherit; text-decoration: none; }
         Home
       </a>
       <a href="/dogefeedx/explore" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
         Explore
       </a>
+      <a href="/dogefeedx/notifications" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        Notifications
+      </a>
+      <a href="/dogefeedx/messages" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        Messages
+      </a>
+      <a href="/dogefeedx/bookmarks" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        Bookmarks
+      </a>
+      <a href="/dogefeedx/wallet" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+        Wallet
+      </a>
+      <a href="/dogefeedx/nfts" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        NFTs
+      </a>
       <a href="/dogefeedx/market" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
         Market
+      </a>
+      <a href="/dogefeedx/launchpad" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>
+        Launchpad
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Arcade<span class="df-nav-badge">BETA</span>
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+        Meme Library
       </a>
       <a href="/dogefeedx/leaderboard" class="df-nav-item active">
         <svg viewBox="0 0 24 24"><path d="M8.21 13.89L7 23l5-3 5 3-1.21-9.12"/><path d="M19 8a7 7 0 1 0-14 0 7.002 7.002 0 0 0 6 6.92V17h2v-2.08A7.002 7.002 0 0 0 19 8z"/></svg>
         Leaderboard
       </a>
+      <a href="#" class="df-nav-item df-nav-external">
+        <svg viewBox="0 0 24 24"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+        Dogemaps<svg class="ext" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      </a>
+      <a href="#" class="df-nav-item df-nav-external">
+        <svg viewBox="0 0 24 24"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+        Inscribe<svg class="ext" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Settings
+      </a>
     </div>
     
     <button class="df-signin-btn">Sign in</button>
+    <div class="df-signin-footer">
+      <svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="#f5a623"/></svg>
+      <span>Browsing read-only. Sign in to post, like and tip.</span>
+    </div>
   </nav>
 
-  <!-- Main Content -->
   <main class="df-main">
-    <div class="df-topbar">
+    <div class="df-header">
       <h1>Leaderboard</h1>
+      <p>Top earners in DOGE: sends, tips, paid actions and market sales</p>
     </div>
     
     <div class="df-tabs">
-      <button class="df-tab active" data-period="7d">7 Days</button>
-      <button class="df-tab" data-period="30d">30 Days</button>
-      <button class="df-tab" data-period="all">All Time</button>
+      <button class="df-tab" data-period="1d">1D</button>
+      <button class="df-tab active" data-period="7d">7D</button>
+      <button class="df-tab" data-period="30d">30D</button>
+      <button class="df-tab" data-period="all">ALL</button>
     </div>
     
-    <div class="df-podium" id="podium">
-      <div class="df-loading"><div class="df-spinner"></div></div>
-    </div>
-    
-    <div class="df-leaderboard" id="leaderboard">
+    <div class="df-leaderboard" id="df-leaderboard">
       <div class="df-loading"><div class="df-spinner"></div></div>
     </div>
   </main>
 
-  <!-- Right Sidebar -->
   <aside class="df-right">
     <div class="df-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
       <input type="text" placeholder="Search DogeFeed">
+      <span class="df-search-kbd">⌘K</span>
     </div>
     
     <div class="df-card">
-      <h2 class="df-card-title">How It Works</h2>
-      <div class="df-card-content">
-        <p style="font-size: 14px; color: var(--df-text-secondary); line-height: 1.5;">
-          Earn DOGE by creating great content! Likes, follows, and tips from other users all count toward your earnings. The top earners are ranked here.
-        </p>
+      <h2 class="df-card-title">Trending</h2>
+      <div class="df-trend">
+        <div class="df-trend-label">1 · Trending on DogeFeed</div>
+        <div class="df-trend-tag">#dogecoin</div>
+        <div class="df-trend-count">2 posts</div>
       </div>
+      <div class="df-trend">
+        <div class="df-trend-label">2 · Trending on DogeFeed</div>
+        <div class="df-trend-tag">#builders</div>
+        <div class="df-trend-count">1 post</div>
+      </div>
+      <div class="df-trend">
+        <div class="df-trend-label">3 · Trending on DogeFeed</div>
+        <div class="df-trend-tag">#devs</div>
+        <div class="df-trend-count">1 post</div>
+      </div>
+      <div class="df-trend">
+        <div class="df-trend-label">4 · Trending on DogeFeed</div>
+        <div class="df-trend-tag">#gm</div>
+        <div class="df-trend-count">1 post</div>
+      </div>
+      <div class="df-trend">
+        <div class="df-trend-label">5 · Trending on DogeFeed</div>
+        <div class="df-trend-tag">#secureyourstations</div>
+        <div class="df-trend-count">1 post</div>
+      </div>
+      <div class="df-trend">
+        <div class="df-trend-label">6 · Trending on DogeFeed</div>
+        <div class="df-trend-tag">#security</div>
+        <div class="df-trend-count">1 post</div>
+      </div>
+      <div class="df-card-more">Explore more</div>
     </div>
     
     <div class="df-card">
-      <h2 class="df-card-title">Your Stats</h2>
-      <div class="df-card-content">
-        <div style="text-align: center; padding: 20px; color: var(--df-text-secondary);">
-          <div style="font-size: 14px; margin-bottom: 8px;">Sign in to see your earnings</div>
-          <button style="padding: 8px 16px; border-radius: 9999px; border: none; background: var(--df-gold); color: #000; font-weight: 700; cursor: pointer;">Sign in</button>
-        </div>
+      <h2 class="df-card-title">Who to follow</h2>
+      <div id="df-suggestions">
+        <div class="df-loading"><div class="df-spinner"></div></div>
       </div>
+      <div class="df-card-more">Show more</div>
     </div>
   </aside>
 </div>
@@ -384,79 +478,77 @@ a { color: inherit; text-decoration: none; }
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   
   var leaderboardData = [
-    { rank: 1, name: 'Bot2 Test', handle: 'bot2test', amount: '+8 DOGE', avatar: '/art/avatar/shiba-sun' },
-    { rank: 2, name: 'Billy', handle: 'billy.dogefeed', amount: '+2 DOGE', avatar: '/doginal-img/888d4748f672ef5b20bac4ba3bc80a3a779f89cb26af7fac8fd98ae4747f9cd7i0', verified: true },
-    { rank: 3, name: 'mr. Ð', handle: 'immr_d', amount: '+1.1 DOGE', avatar: '/api/media/local/bafkreiflnb67q6ux6z7ndh562owvlsoy6kwif3lgn77icoqlzfssoculci.jpg' },
-    { rank: 4, name: 'froginal_dogs', handle: 'froginals', amount: '+0.1 DOGE', avatar: '/doginal-img/bd3fe364e6a77afb64274fb5947a94ea2f2ba8b1148800da5182685b149aeadei0', verified: true },
-    { rank: 5, name: 'Latoshi', handle: 'latoshi', amount: '+0.1 DOGE', avatar: '/api/media/local/bafkreifqinnxhdaec2r5uhdejetw7bvbmixbhdcznbe5lodp32jtr24bmq.jpg' },
-    { rank: 6, name: 'Eden', handle: 'builderdogecoin', amount: '+0.05 DOGE', avatar: '/api/media/local/bafkreifopoayztzvsltutzyfrfk2dvvqndelgndhrtr54fma3bqdl5um2u.jpg' },
-    { rank: 7, name: 'Panocha', handle: 'panocha', amount: '+0.02 DOGE', avatar: '/doginal-img/df482d5897bdf05a018aae7cca29fc2ad67fc97faa144d0d1640d44876bea524i0', verified: true },
+    { rank: 1, name: 'Bot2 Test', handle: 'bot2test', amount: '+8 DOGE', avatar: '' },
+    { rank: 2, name: 'Billy', handle: 'billy.dogefeed', amount: '+2 DOGE', avatar: '', verified: true },
+    { rank: 3, name: 'mr. Ð', handle: 'immr_d', amount: '+1.1 DOGE', avatar: '' },
+    { rank: 4, name: 'froginal_dogs', handle: 'froginals', amount: '+0.1 DOGE', avatar: '', verified: true },
+    { rank: 5, name: 'Latoshi', handle: 'latoshi', amount: '+0.1 DOGE', avatar: '' },
+    { rank: 6, name: 'Swizz', handle: 'hellododo', amount: '+0.1 DOGE', avatar: '' },
   ];
   
-  function renderPodium() {
-    var top3 = leaderboardData.slice(0, 3);
-    var order = [top3[1], top3[0], top3[2]]; // Silver, Gold, Bronze
-    
-    var html = '';
-    order.forEach(function(e, i) {
-      if (!e) return;
-      var rankClass = i === 1 ? 'gold' : (i === 0 ? 'silver' : 'bronze');
-      var rankNum = i === 1 ? '🥇' : (i === 0 ? '🥈' : '🥉');
-      html += '<div class="df-podium-item">';
-      html += '<div class="df-podium-rank ' + rankClass + '">' + rankNum + '</div>';
-      html += '<div class="df-podium-avatar"><img src="' + IMG_BASE + e.avatar + '" alt="" onerror="this.style.display=\'none\'"></div>';
-      html += '<div class="df-podium-name">' + esc(e.name) + '</div>';
-      html += '<div class="df-podium-amount">' + e.amount + '</div>';
-      html += '</div>';
-    });
-    
-    document.getElementById('podium').innerHTML = html;
-  }
-  
   function renderLeaderboard() {
-    var html = '';
-    leaderboardData.slice(3).forEach(function(e) {
-      html += '<div class="df-leaderboard-item">';
-      html += '<div class="df-leaderboard-rank">' + e.rank + '</div>';
-      html += '<div class="df-leaderboard-avatar' + (e.verified ? ' verified' : '') + '"><img src="' + IMG_BASE + e.avatar + '" alt="" onerror="this.style.display=\'none\'"></div>';
-      html += '<div class="df-leaderboard-info">';
-      html += '<div class="df-leaderboard-name">' + esc(e.name);
-      if (e.verified) {
-        html += '<svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
-      }
-      html += '</div>';
-      html += '<div class="df-leaderboard-handle">@' + esc(e.handle) + '</div>';
-      html += '</div>';
-      html += '<div class="df-leaderboard-amount">' + e.amount + '<small>earned</small></div>';
-      html += '</div>';
-    });
+    var html = leaderboardData.map(function(e) {
+      return '<div class="df-leaderboard-item">' +
+        '<div class="df-leaderboard-rank">' + e.rank + '</div>' +
+        '<div class="df-leaderboard-avatar"><img src="' + IMG_BASE + (e.avatar || '/api/media/placeholder.png') + '" alt="" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22><rect fill=%22%23f5a623%22 width=%2248%22 height=%2248%22/></svg>\'"></div>' +
+        '<div class="df-leaderboard-info">' +
+        '<div class="df-leaderboard-name">' + esc(e.name) +
+        (e.verified ? '<svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
+        '</div>' +
+        '<div class="df-leaderboard-handle">@' + esc(e.handle) + '</div>' +
+        '</div>' +
+        '<div class="df-leaderboard-amount">' + e.amount + '</div>' +
+        '</div>';
+    }).join('');
     
-    document.getElementById('leaderboard').innerHTML = html || '<div class="df-empty">No more entries</div>';
+    document.getElementById('df-leaderboard').innerHTML = html || '<div class="df-empty">No earners yet</div>';
   }
   
-  // Tab switching
+  function loadSuggestions() {
+    fetch('/dogefeedx/api/feed?limit=5')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var posts = data.items || [];
+        var seen = {};
+        var users = [];
+        posts.forEach(function(p) {
+          if (p.author && !seen[p.author.handle]) {
+            seen[p.author.handle] = true;
+            users.push(p.author);
+          }
+        });
+        
+        var html = users.slice(0, 3).map(function(u) {
+          var avatar = u.avatarUrl ? (u.avatarUrl.startsWith('/') ? IMG_BASE + u.avatarUrl : u.avatarUrl) : '';
+          return '<div class="df-follow">' +
+            '<div class="df-follow-avatar">' + (avatar ? '<img src="' + esc(avatar) + '" alt="">' : '') + '</div>' +
+            '<div class="df-follow-info">' +
+            '<div class="df-follow-name">' + esc(u.displayName || u.handle) +
+            (u.verifiedPfp ? '<svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
+            '</div>' +
+            '<div class="df-follow-handle">@' + esc(u.handle) + '</div>' +
+            '</div>' +
+            '<button class="df-follow-btn">Follow</button>' +
+            '</div>';
+        }).join('');
+        
+        document.getElementById('df-suggestions').innerHTML = html || '<div class="df-empty">No suggestions</div>';
+      })
+      .catch(function() {
+        document.getElementById('df-suggestions').innerHTML = '<div class="df-empty">Could not load</div>';
+      });
+  }
+  
   document.querySelectorAll('.df-tab').forEach(function(tab) {
     tab.addEventListener('click', function() {
       document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
       tab.classList.add('active');
-      renderPodium();
       renderLeaderboard();
     });
   });
   
-  // Register with shell
-  if (window.DogeFeedX && window.DogeFeedX.registerApp) {
-    window.DogeFeedX.registerApp({
-      id: 'leaderboard',
-      name: 'Leaderboard',
-      icon: '/dogefeedx/icon-explorer.png',
-      url: '/dogefeedx/leaderboard'
-    });
-  }
-  
-  // Initial load
-  renderPodium();
   renderLeaderboard();
+  loadSuggestions();
 })();
 </script>
 {% endblock %}
