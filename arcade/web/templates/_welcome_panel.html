@@ -89,7 +89,8 @@
       });
       board.append(t);
     }
-    if (!d.funded && !sheetShown) sheet();
+    // The setup wizard (_setup_wizard.html, 2026-11-02) covers this, and the name after it, while it is on the page.
+    if (!d.funded && !sheetShown && !window.ARCADE_SETUP) sheet();
   }
   function sheet() {
     // Shown at every visit to Admin until the first PEP test is here; "Later" closes it until the next one.

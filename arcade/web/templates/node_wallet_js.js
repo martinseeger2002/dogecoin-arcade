@@ -46,13 +46,16 @@ export async function confirm(keys, offer) {
 
 /** Claim the @name typed on the page (me.html's claim panel), with the key, in one announcement. */
 export async function claim() {
+  // The setup wizard's one button (2026-11-02): the name and the key together, and the REAL outcome -- /publish
+  // answered a refusal ("no coins") as an ordinary page, and this said "on its way" for a claim that never went.
   const box = document.getElementById("claim-name");
   const tag = ((box && box.value) || "").trim().replace(/^@/, "");
   if (!tag) throw new Error("type the name first");
-  const body = new URLSearchParams({csrf_token: (window.ARCADE_CSRF || ""), tag});
-  const r = await fetch("/publish", {method: "POST", credentials: "same-origin", body});
-  if (!r.ok) throw new Error(`refused (${r.status})`);
-  return {txid: "on its way"};
+  const r = await fetch("/admin/api/setup/claim", {method: "POST", credentials: "same-origin",
+    headers: {"Content-Type": "application/json", "X-Arcade-Admin": "1"}, body: JSON.stringify({tag})});
+  const said = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(said.detail || `refused (${r.status})`);
+  return {txid: said.claimed || said.published || "", ...said};
 }
 
 export async function tellTheNode() {}

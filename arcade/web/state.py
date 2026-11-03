@@ -1672,6 +1672,30 @@ class AppState:
             self._ledger_indexes[chain.network] = index
         return index
 
+    def ledger_snapshots(self, chain: ChainContext):
+        """The index copies of `chain` (arcade/ledger_snapshot.py, 2026-11-02): made for linked arcades far behind,
+        or fetched from them when this one is."""
+        from ..ledger_snapshot import LedgerSnapshots
+        kept = self.__dict__.setdefault("_ledger_snapshots", {})
+        index = self.token_index(chain)
+        snaps = kept.get(chain.network)
+        if snaps is None or snaps.index is not index:
+            snaps = kept[chain.network] = LedgerSnapshots(index, chain.network,
+                                                          setting=lambda key, default=None: self.setting(key, default))
+        return snaps
+
+    def ledger_confirmation(self, chain: ChainContext):
+        """The background confirmation of an index that came as a copy: a second index read from this arcade's own
+        node, at the lowest priority (ledger_snapshot.Confirmation)."""
+        from ..ledger import LedgerIndex
+        from ..ledger_snapshot import Confirmation
+        kept = self.__dict__.setdefault("_ledger_confirmations", {})
+        snaps = self.ledger_snapshots(chain)
+        conf = kept.get(chain.network)
+        if conf is None or conf.snaps is not snaps:
+            conf = kept[chain.network] = Confirmation(snaps, lambda path: LedgerIndex(path, chain.params, chain.rpc))
+        return conf
+
     # --- collections ----------------------------------------------------------
 
     _collections: tuple = ()

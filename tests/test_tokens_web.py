@@ -1320,3 +1320,52 @@ def test_a_pair_that_was_never_issued_answers_404_like_the_token_page(web):
             "the two pages of one token cannot answer it two ways"
         assert f"there is no token {missing}" in said.text, said.text
         assert "Tokens tab" in said.text, "and it still says where to go"
+
+
+def test_the_setup_wizard_claims_the_name_and_publishes_the_key_with_one_press(web, monkeypatch):
+    """2026-11-02: the setup wizard shows until the operator's @name is on the chain, and "claim and publish
+    should be the same thing". One press sends both and says their txids; a second press while the claim waits is
+    refused; once the block has it, the wizard is not needed any more."""
+    from test_admin import LOCAL, WRITE
+    app, state, node, alice, bob = web
+    monkeypatch.setattr(type(state), "derived_address", property(lambda self: alice))
+    mine_and_index(node, state)
+    said = app.get("/admin/api/setup", headers=LOCAL).json()
+    assert said["need"] and said["index"]["current"] and said["coins"]["spendable"] > 0 and said["blocked"] == ""
+    assert said["coins"]["address"], "the address to send PEP test to, from the start"
+    assert app.get("/admin/api/setup/name?tag=A%20B", headers=LOCAL).json()["valid"] is False
+    assert app.get("/admin/api/setup/name?tag=robin", headers=LOCAL).json() == {
+        "valid": True, "tag": "robin", "taken": False, "mine": False}
+
+    got = app.post("/admin/api/setup/claim", headers={**LOCAL, **WRITE}, json={"tag": "robin"})
+    assert got.status_code == 200, got.text
+    sent = got.json()
+    pool = node.rpc.call("getrawmempool")
+    assert sent["claimed"] in pool and sent["published"] in pool, "the name and the key, one press"
+    waiting = app.get("/admin/api/setup", headers=LOCAL).json()
+    assert waiting["claiming"]["tag"] == "robin" and waiting["claiming"]["txid"] == sent["claimed"]
+    again = app.post("/admin/api/setup/claim", headers={**LOCAL, **WRITE}, json={"tag": "robin"})
+    assert again.status_code == 400 and "already on its way" in again.json()["detail"]
+
+    mine_and_index(node, state)
+    state.pending_tokens.clear()
+    done = app.get("/admin/api/setup", headers=LOCAL).json()
+    assert done["tag"] == "robin" and done["need"] is False
+
+
+def test_the_setup_wizard_says_why_a_name_cannot_be_claimed_yet_and_spends_nothing(web, monkeypatch):
+    """2026-11-02: a fresh install with no PEP test was told its name was "on its way". Now the claim is refused
+    with the reason, and nothing goes out."""
+    from test_admin import LOCAL, WRITE
+    app, state, node, alice, bob = web
+    empty = node.rpc.call("getnewaddress")
+    monkeypatch.setattr(type(state), "derived_address", property(lambda self: empty))
+    mine_and_index(node, state)
+    said = app.get("/admin/api/setup", headers=LOCAL).json()
+    assert said["need"] and said["coins"]["spendable"] == 0 and said["blocked"] == "no coins"
+    before = node.rpc.call("getrawmempool")
+    got = app.post("/admin/api/setup/claim", headers={**LOCAL, **WRITE}, json={"tag": "nocoins"})
+    assert got.status_code == 400 and "no PEP test" in got.json()["detail"]
+    assert node.rpc.call("getrawmempool") == before, "a refusal spends nothing"
+    from test_admin import EDGE
+    assert app.get("/admin/api/setup", headers=EDGE).status_code != 200, "never to a stranger"

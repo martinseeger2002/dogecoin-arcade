@@ -295,3 +295,47 @@ def test_a_build_cut_off_by_a_restart_is_cleaned_up_and_a_running_one_is_not(tmp
     os.utime(dead / "test.sqlite", (old, old)); os.utime(dead, (old, old))
     assert bootstrap.leftovers(tmp_path) == 1
     assert not dead.exists() and alive.exists()
+
+
+def test_the_source_is_packed_when_the_arcade_starts_not_on_the_pages_first_visit(app_state, monkeypatch):
+    """2026-11-02: "/clone doesn't do anything". The first visit after every update packed the source while the
+    page waited (27 s on .25) and the browser gave up. Now it is packed in the background as the arcade starts."""
+    import time
+    from fastapi.testclient import TestClient
+    from arcade.web.app import create_app
+    from arcade.web.state import AppState
+    monkeypatch.setattr(AppState, "running_version", property(lambda self: "abc1234"))
+    with TestClient(create_app(app_state)):
+        for _ in range(300):
+            said = bootstrap.source(app_state.home)
+            if said is not None and said.get("revision") == "abc1234":
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("not packed at startup")
+
+
+def test_the_page_answers_at_once_while_the_download_is_being_packed(client, monkeypatch):
+    """The pack at startup took about 3 minutes on .25 right after an update; the page does not wait for it."""
+    import threading
+    import time
+    from arcade import bootstrap as B
+    app, state = client
+    started, release = threading.Event(), threading.Event()
+    real = B.source_archive
+
+    def slow(*a, **k):
+        started.set()
+        release.wait(10)
+        return real(*a, **k)
+    monkeypatch.setattr(B, "source_archive", slow)
+    t = threading.Thread(target=lambda: app.get("/source.tar.gz.sha256"))
+    t.start()
+    try:
+        assert started.wait(5)
+        begun = time.monotonic()
+        page = app.get("/clone").text
+        assert time.monotonic() - begun < 3 and "packing the download now" in page
+    finally:
+        release.set()
+        t.join(15)

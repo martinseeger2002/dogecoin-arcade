@@ -23,6 +23,7 @@
   var KINDS = [
     {prefix: 'arcade.wallet.allow:', label: 'Wallet access', says: 'may ask your wallet to trade, pay and sign (each time with a card, except small test-network game actions)', off: function (id) { arcadeGameAllow(id, false); }},
     {prefix: 'arcade.media.allow:', label: 'Camera & microphone', says: 'may send your picture and sound to the players it names', off: function (id) { arcadeMediaAllow(id, false); }},
+    {prefix: 'arcade.pictures.allow:', label: 'Pictures in the app', says: 'gets the live pictures of the cameras and shared screens in its rooms, to draw them itself', off: function (id) { arcadePicturesAllow(id, false); }},
     {prefix: 'arcade.contacts.allow:', label: 'Address book', says: 'may see the names and addresses in your address book', off: function (id) { try { localStorage.removeItem('arcade.contacts.allow:' + id); } catch (e) {} }},
     {prefix: 'arcade.groups.allow:', label: 'Group chats', says: 'may read your group chats, post in them as you, and see your address book', off: function (id) { arcadeGroupsAllow(id, false); }}
   ];

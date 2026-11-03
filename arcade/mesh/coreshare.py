@@ -48,6 +48,8 @@ from .. import rawchain
 from ..config import NETWORKS
 from ..rpc import RpcClient, RpcError, RpcTransportError
 
+from . import relay as _relay
+
 log = logging.getLogger("arcade.mesh")
 
 #: What a shared Core answers. Reads of the chain and the mempool, fee estimates, and broadcasting a
@@ -201,7 +203,7 @@ class CoreShare:
         now = await asyncio.to_thread(self._shared_now)
         if set(now) != set(self._offered) or any(now[n] != self._offered.get(n) for n in now):
             self._offered = now
-            for link in list(self.node.links.values()):
+            for link in _relay.every_link(self.node):
                 try:
                     await link.send({"t": "cr", "op": "offer", "nets": now})
                 except Exception:                              # noqa: BLE001
@@ -342,7 +344,7 @@ class CoreShare:
         while True:
             await asyncio.sleep(self.pool_seconds)
             for net in list(self._offered):
-                subs = [p for p in self._subs.get(net, ()) if p in self.node.links]
+                subs = [p for p in self._subs.get(net, ()) if p in _relay.reachable(self.node)]
                 if not subs:
                     seen.pop(net, None)
                     continue
@@ -356,7 +358,7 @@ class CoreShare:
                     seen[net] = pool
                     for at in range(0, len(left), 1000):
                         for peer in subs:
-                            link = self.node.links.get(peer)
+                            link = _relay.reach(self.node, peer)
                             if link is not None:
                                 await link.send({"t": "cr", "op": "gone", "net": net, "ids": left[at:at + 1000]})
                     for at in range(0, len(fresh), 100):
@@ -369,7 +371,7 @@ class CoreShare:
                             if not data or len(data) > CHUNK:
                                 continue                       # gone already, or too big: asked for when needed
                             for peer in subs:
-                                link = self.node.links.get(peer)
+                                link = _relay.reach(self.node, peer)
                                 if link is not None:
                                     await self._rates.setdefault(peer, _Rate(self.rate)).take(len(data))
                                     await link.send({"t": "cr", "op": "tx", "net": net}, data)
@@ -436,7 +438,7 @@ class CoreShare:
         if self.node is None:
             return []
         rtts = self.node.rtts()
-        peers = [p for p, nets in self.offers.items() if net in nets and p in self.node.links]
+        peers = [p for p, nets in self.offers.items() if net in nets and p in _relay.reachable(self.node)]
         # Among the ones failing lately, the fewest failures first, then ping (2026-10-25: a sharer caught lying, +10,
         # could stay ahead of one that merely went quiet five times, by ping alone -- the coreshare liar test flaked).
         def order(p: str) -> tuple:
@@ -451,7 +453,7 @@ class CoreShare:
         quiet. Returns who answered, and the answers."""
         tried = []
         for peer in [p for p in self.sharers(net) if p not in avoid]:
-            link = self.node.links.get(peer)
+            link = _relay.reach(self.node, peer)
             if link is None:
                 continue
             rid = next(self._ids)
@@ -504,7 +506,7 @@ class CoreShare:
     def tips(self, net: str) -> dict[str, dict]:
         """What each linked sharer of `net` says its tip is."""
         return {p: dict(nets[net]) for p, nets in self.offers.items()
-                if net in nets and self.node is not None and p in self.node.links}
+                if net in nets and self.node is not None and p in _relay.reachable(self.node)}
 
     def status(self) -> dict:
         nets = sorted({n for nets in self.offers.values() for n in nets} | self.borrowing | set(self._offered))
@@ -516,7 +518,7 @@ class CoreShare:
                 heights.setdefault(t["h"], set()).add(t["b"])
             out[net] = {"sharing": net in self._offered, "borrowing": net in self.borrowing,
                         "sharers": len(tips), "pool": len(self.pools.get(net, ())),
-                        "borrowers": len([p for p in self._subs.get(net, ()) if self.node and p in self.node.links]),
+                        "borrowers": len([p for p in self._subs.get(net, ()) if self.node and p in _relay.reachable(self.node)]),
                         # two sharers naming different blocks at the same height disagree about the chain
                         "disagree": any(len(v) > 1 for v in heights.values())}
         return out

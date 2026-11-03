@@ -3,8 +3,8 @@ that we can verify everyone has the same index"). The fingerprints are arcade/in
 
 On the wire (frames of kind "ix" on an ordinary link, never flooded):
 
-    tip  {nets: {net: {h, at, d[, s]}}}   indexed height, the settled checkpoint, the fingerprint of
-                                         floor..checkpoint, and the consensus hash at h
+    tip  {nets: {net: {h, at, d[, s][, n]}}}   indexed height, the settled checkpoint, the fingerprint of
+                                         floor..checkpoint, the consensus hash at h, and the names digest at h
     q    {id, net, what: "d", lo, hi}     the fingerprint of a range, to halve towards a difference
     q    {id, net, what: "rows", h}       what one block did, to show the difference
     a    {id[, d][, rows][, err]}
@@ -12,7 +12,11 @@ On the wire (frames of kind "ix" on an ordinary link, never flooded):
 Each link compares every chain both arcades index at the lower of their two checkpoints. Equal: they
 agree up to there. Different: the range is halved, a question at a time, to the first block whose rows
 differ, and both sides' rows for it are kept for the admin panel. Same height and a different
-consensus hash (balances, the book, properties) is said too.
+consensus hash (balances, the book, properties) is said too, and so are different @names (2026-11-02: the
+names are in neither the block fingerprints nor the consensus hash).
+
+`votes(net, floor, cp)` (2026-11-02, ledger_snapshot): from a thread, every linked arcade whose index is settled
+at least to `cp`, with its fingerprint of floor..cp -- what an index copy is checked against before it is used.
 """
 from __future__ import annotations
 
@@ -21,6 +25,8 @@ import itertools
 import logging
 import time
 from typing import Callable
+
+from . import relay as _relay
 
 log = logging.getLogger("arcade.mesh")
 
@@ -47,9 +53,11 @@ class IndexCheck:
         self._running: dict[tuple[str, str], asyncio.Task] = {}
         self._asked: dict[str, list[float]] = {}
         self._work: asyncio.Semaphore | None = None          # made on the mesh's loop
+        self.loop: asyncio.AbstractEventLoop | None = None
 
     # ---------------------------------------------------------------- hooks
     async def link_up(self, link) -> None:
+        self.loop = asyncio.get_running_loop()
         if self._work is None:
             self._work = asyncio.Semaphore(1)
         if not self.mine:
@@ -66,12 +74,13 @@ class IndexCheck:
                 fut.cancel()
 
     async def rebalance(self) -> None:
+        self.loop = asyncio.get_running_loop()
         if self.node is None:
             return
         now = await asyncio.to_thread(self._tips)
         if now != self.mine:
             self.mine = now
-            for link in list(self.node.links.values()):
+            for link in _relay.every_link(self.node):
                 try:
                     await link.send({"t": "ix", "op": "tip", "nets": now})
                 except Exception:                              # noqa: BLE001
@@ -139,7 +148,7 @@ class IndexCheck:
 
     # ---------------------------------------------------------------- comparing
     async def _ask(self, peer: str, question: dict) -> dict:
-        link = self.node.links.get(peer)
+        link = _relay.reach(self.node, peer)
         if link is None:
             raise ConnectionError("gone")
         rid = next(self._ids)
@@ -192,6 +201,8 @@ class IndexCheck:
                     log.warning("indexcheck: %s's %s index differs from this one at block %d", peer[:12], net, first)
             if mine.get("h") == theirs.get("h") and mine.get("s") and theirs.get("s"):
                 result["state"] = "same" if mine["s"] == theirs["s"] else "differs"
+            if mine.get("h") == theirs.get("h") and mine.get("n") and theirs.get("n"):
+                result["names"] = "same" if mine["n"] == theirs["n"] else "differs"
         except (asyncio.CancelledError, ConnectionError):
             return
         except Exception as exc:                               # noqa: BLE001 -- said, and tried again next minute
@@ -210,16 +221,41 @@ class IndexCheck:
                 lo = mid + 1
         return lo
 
+    def votes(self, net: str, floor: int, cp: int, timeout: float = ASK_SECONDS + 5) -> dict[str, str]:
+        """From a thread: {peer: its fingerprint of floor..cp} for every linked arcade whose index of `net` is
+        settled at least to cp. One that does not answer is left out."""
+        loop, node = self.loop, self.node
+        if loop is None or node is None:
+            return {}
+        out: dict[str, str] = {}
+        for peer, nets in list(self.theirs.items()):
+            tip = nets.get(net) or {}
+            if peer not in _relay.reachable(node) or not isinstance(tip.get("at"), int) or tip["at"] < cp:
+                continue
+            if tip["at"] == cp and isinstance(tip.get("d"), str):
+                out[peer] = tip["d"]
+                continue
+            try:
+                got = asyncio.run_coroutine_threadsafe(
+                    self._ask(peer, {"net": net, "what": "d", "lo": floor, "hi": cp}), loop).result(timeout)
+                if isinstance(got.get("d"), str):
+                    out[peer] = got["d"]
+            except Exception:                                  # noqa: BLE001 -- not a vote
+                continue
+        return out
+
     def status(self) -> dict:
         """For the admin panel: per chain, this arcade's checkpoint and what every linked arcade's showed."""
         out = {}
         for net in sorted(set(self.mine) | set(self.results)):
-            rows = {p: r for p, r in self.results.get(net, {}).items() if self.node is None or p in self.node.links}
-            agree = [r for r in rows.values() if "differs_at" not in r and "error" not in r and r.get("state") != "differs"]
+            rows = {p: r for p, r in self.results.get(net, {}).items() if self.node is None or p in _relay.reachable(self.node)}
+            agree = [r for r in rows.values() if "differs_at" not in r and "error" not in r
+                     and r.get("state") != "differs" and r.get("names") != "differs"]
             out[net] = {"at": (self.mine.get(net) or {}).get("at"), "height": (self.mine.get(net) or {}).get("h"),
                         "compared": len(rows), "agree": len(agree),
                         "agree_upto": max((r.get("agree_upto") or 0 for r in agree), default=None),
-                        "differ": [{"peer": p[:12], **{k: r[k] for k in ("differs_at", "ours", "theirs", "state", "error")
+                        "differ": [{"peer": p[:12], **{k: r[k] for k in ("differs_at", "ours", "theirs", "state",
+                                                                             "names", "error")
                                                         if k in r}}
                                    for p, r in rows.items() if r not in agree]}
         return out

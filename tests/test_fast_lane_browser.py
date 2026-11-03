@@ -7,6 +7,7 @@ No STUN here (the public one is turned off): two browsers on one machine connect
 import os
 import pathlib
 import sys
+import time
 
 import pytest
 
@@ -153,5 +154,55 @@ def test_chrome_and_firefox_connect_directly(tmp_path, no_nodes):
     finally:
         if a is not None:
             a.quit()
+        server.stop()
+        state.mesh.stop()
+
+
+def test_a_player_who_drops_out_and_comes_back_is_linked_again_at_once(tmp_path, no_nodes):
+    """2026-11-02, the operator: "if somebody drops out of a riff lounge, they can't reconnect again for several minutes".
+    A page that vanished without saying leave keeps its seat a while; the same player back in that seat is announced
+    to nobody, and the link the other holds to the dropped page may still say 'direct'. The one whose call the
+    newcomer waits for (the lower id offers) must start a new link at once, not after its old one fails."""
+    from selenium.webdriver.common.by import By
+    state, server, base = _two_players(tmp_path)
+    a = b = again = None
+    try:
+        a, b = _browser(), _browser()
+        _in_game(a, base)
+        _in_game(b, base)
+        ida = _wait(a, "return window.room && window.room.online && window.room.fast && window.room.me.id", "a in")
+        idb = _wait(b, "return window.room && window.room.online && window.room.fast && window.room.me.id", "b in")
+        _wait(a, f"return window.states[{idb!r}] === 'direct'", "a direct")
+        _wait(b, f"return window.states[{ida!r}] === 'direct'", "b direct")
+        # The higher id drops (the hard case: back, it waits for the other's offer). Its page goes without a word:
+        # the leave never reaches the node, so the seat stays.
+        stay, drop, stay_id, drop_id = (a, b, ida, idb) if ida < idb else (b, a, idb, ida)
+        drop.switch_to.default_content()
+        drop.execute_script("var f = window.fetch; window.fetch = function (u, o) {"
+                            " return String(u).indexOf('/realtime/leave') >= 0 ? new Promise(function () {}) : f(u, o); };")
+        drop.quit()
+        if drop is a:
+            a = None
+        else:
+            b = None
+        # Back in the same seat: the node hands the returning page the name it had.
+        state.mesh.new_guest = lambda: drop_id
+        again = _browser()
+        started = time.monotonic()
+        _in_game(again, base)
+        assert _wait(again, "return window.room && window.room.online && window.room.fast && window.room.me.id",
+                     "back in") == drop_id
+        _wait(again, f"return window.states[{stay_id!r}] === 'direct'", "back: direct", timeout=40)
+        again.execute_script("window.again = setInterval(function () { window.room.fast.send('back'); }, 300);")
+        _wait(stay, "return window.fastHeard.indexOf('back') >= 0", "heard again", timeout=40)
+        took = time.monotonic() - started
+        assert took < 20, f"linked again only after {took:.0f} s"
+        stay.execute_script("window.room.fast.send('welcome back')")
+        _wait(again, "return window.fastHeard.indexOf('welcome back') >= 0", "both ways")
+        del By
+    finally:
+        for d in (a, b, again):
+            if d is not None:
+                d.quit()
         server.stop()
         state.mesh.stop()

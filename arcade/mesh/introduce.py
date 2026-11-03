@@ -42,6 +42,7 @@ import nacl.signing
 from . import punch as punchlib
 from . import udp
 from .link import LinkError, handshake
+from .node import EVERYONE_MAX
 
 log = logging.getLogger("arcade.mesh.introduce")
 
@@ -176,7 +177,9 @@ class Introducer:
             self.lonely_since = None
         elif self.lonely_since is None:
             self.lonely_since = time.monotonic()
-        if node.links and node._outbound() < node.outbound_target:
+        # Every arcade heard of, while the node links everyone (node.everyone, 2026-11-02); else up to its target.
+        if node.links and ((node.everyone() and len(node.links) < EVERYONE_MAX)
+                           or node._outbound() < node.outbound_target):
             for peer in self._worth_meeting()[:AT_ONCE]:
                 await self.meet(peer)
         if (not node.links and self.lonely_since is not None

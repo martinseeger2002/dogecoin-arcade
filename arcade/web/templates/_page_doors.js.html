@@ -200,8 +200,20 @@
         var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
         d.room = name;
         if (d.member) {
-          if (d.type === 'join') { h.members[d.member.id] = d.member; fastMeet(name, h, d.member); }
+          if (d.type === 'join') {
+            // Back through another node (2026-11-02, the operator: "if somebody drops out of a riff lounge, they can't
+            // reconnect again for several minutes"): the link we hold is to the page that dropped; start a new one.
+            var was = h.fast && h.fast.peers[d.member.id];
+            if (was && was.p.node && d.member.node && was.p.node !== d.member.node) fastDrop(h, d.member.id, true, true);
+            h.members[d.member.id] = d.member; fastMeet(name, h, d.member);
+            var np = h.fast && h.fast.peers[d.member.id];
+            if (np && !np.s) np.byJoin = true;     // the link to the page that just joined: its 'h' must not restart it
+          }
           if (d.type === 'leave') {
+            // The seat they left behind on the node they dropped from, given up after they came back through
+            // another: they are still here, so neither their link nor the page hears of it.
+            var now = h.members[d.member.id];
+            if (now && now.node && d.member.node && now.node !== d.member.node) return;
             delete h.members[d.member.id];
             if (h.fast && h.fast.peers[d.member.id]) { fastDrop(h, d.member.id); fastSay(name, h, d.member, 'gone'); }
           }
@@ -320,6 +332,8 @@
     // size and rate limits on every node, old ones included. STUN comes from /realtime/ice (nodes first, then a
     // public one); there is no relay unless the game's builder pays for one, so a pair that cannot connect
     // directly carries that link over the room instead, as often as the room allows (state 'room').
+    // FAST_FRESH: a link younger than this is still being made, and a page's 'h' never restarts it.
+    var FAST_FRESH = 8000;
     var RTC = '\u001farcade-rtc:', FAST_WAIT = 12000, FAST_MAX = 16384, FAST_PEERS = 19, RTC_PIECE = 300;
     // WHO TO LINK WITH, TO WHOM TO SEND, AND BYTES (2026-10-27, SadFrog's side for an MMO: "one host, many players").
     // By default every pair links (up to FAST_PEERS) and a send goes to everybody, as text. A game may instead
@@ -401,8 +415,13 @@
     }
     function fastStart(name, h){
       if (typeof RTCPeerConnection !== 'function') return;     // no WebRTC here: the room carries everything
-      h.fast = {peers: {}, out: [], parts: {}, latest: null, reliable: [], k: 0};
-      for (var id in h.members) fastMeet(name, h, h.members[id]);
+      h.fast = {peers: {}, out: [], parts: {}, latest: null, reliable: [], k: 0, s: Math.random().toString(36).slice(2, 10)};
+      for (var id in h.members) {
+        fastMeet(name, h, h.members[id]);
+        // Every page that comes (back) into the room tells those whose call it waits for (a lower id offers) that
+        // this is a new page: a link they still hold to us is to the old one, which may still look connected.
+        if (h.fast.peers[id] && id < h.me.id) fastSignal(name, h, id, {t: 'h', s: h.fast.s});
+      }
     }
     // keep: only the links go (a rejoin); the camera, the screen and what the game asked of them stay for the new links.
     function fastStop(h, keep){
@@ -421,7 +440,7 @@
       if (!h.fast || !h.me || p.id === h.me.id || h.fast.peers[p.id]) return;
       if (!fastLinks(h, p.id)) return;                        // the game does not want this link
       if (Object.keys(h.fast.peers).length >= (h.fastMax || FAST_PEERS)) return;
-      var peer = h.fast.peers[p.id] = {p: p, state: '', tries: 0};
+      var peer = h.fast.peers[p.id] = {p: p, state: '', tries: 0, born: Date.now()};
       fastSay(name, h, p, 'connecting');
       if (h.me.id < p.id) fastOffer(name, h, peer);
       peer.timer = setTimeout(function(){ fastFallback(name, h, peer); }, FAST_WAIT);
@@ -608,9 +627,17 @@
         return;
       }
       if (o.t === 'h') {                       // they want the link now and wait for our offer (our id is lower)
-        if (!h.fast.peers[p.id]) fastMeet(name, h, p);
         var ph = h.fast.peers[p.id];
-        if (ph && ph.state !== 'direct' && h.me.id < p.id) fastOffer(name, h, ph);
+        // A new page of theirs (s): a link we hold that is not the one made for it when it joined is to a page of
+        // theirs that dropped, though it may still say connected (a seat kept is announced to nobody). Start again;
+        // what we share with them and hear from them stays.
+        if (ph && o.s && ph.s !== o.s) {
+          if (ph.byJoin && !ph.s) ph.s = o.s;
+          else { fastDrop(h, p.id, true, true); ph = null; }
+        }
+        if (!ph) { fastMeet(name, h, p); ph = h.fast.peers[p.id]; if (ph) ph.s = o.s; return; }   // fastMeet offers
+        if (o.s) ph.s = o.s;
+        if (ph.state !== 'direct' && h.me.id < p.id && !(ph.tries && Date.now() - ph.born < FAST_FRESH)) fastOffer(name, h, ph);
         return;
       }
       if (o.t === 'o') fastAnswer(name, h, p, o);
@@ -671,7 +698,8 @@
     }
     function mediaOf(h){
       return h.media || (h.media = {stream: null, video: false, audio: false, share: {}, hear: {}, place: {},
-                                    tiles: {}, muted: {video: false, audio: false, sound: false}, volume: {}, mix: null, echo: null, amps: {}, ampCtx: null});
+                                    tiles: {}, muted: {video: false, audio: false, sound: false}, volume: {}, mix: null, echo: null, amps: {}, ampCtx: null,
+                                    frames: {}, lag: {}, spatial: null, levels: null});
     }
     function mediaPc(name, h, peer, pc){
       var polite = h.me.id > peer.p.id;                    // the one that did not offer the first time gives way
@@ -866,7 +894,10 @@
       mediaUnmix(md.mix); md.mix = null;
       if (md.xstream) { md.xstream.getTracks().forEach(function(t){ t.stop(); }); md.xstream = null; }
       md.stream = null; md.video = md.audio = md.screen = false; md.share = {};
-      if (quiet) { if (md.ampCtx) { md.ampCtx.onstatechange = null; try { md.ampCtx.close(); } catch (err) {} } h.media = null; mediaDraw(h, true); }
+      Object.keys(md.frames || {}).forEach(function(k){ framesStop(md, k); });
+      if (md.levels) { clearInterval(md.levels.timer); md.levels = null; }
+      if (quiet) { if (md.ampCtx) { md.ampCtx.onstatechange = null; try { md.ampCtx.close(); } catch (err) {} }
+                   if (md.meterCtx) { try { md.meterCtx.close(); } catch (err) {} } h.media = null; mediaDraw(h, true); }
       else { mediaDraw(h); if (had && !silent) mediaEvent(rtName(h), h, {type: 'media-state', state: 'off'}); }
     }
     // What a shared screen plays, as it is (music is no voice: none of the voice cleaning), and WITHOUT this page's own sound (the operator
@@ -932,9 +963,14 @@
     // Louder than they send (2026-11-02: "amplify the sound ... at least by 200% maybe more"): a video element stops at 1, so past
     // that their sound goes through a gain, and a limiter so that it gets loud and does not crackle. The element stays, muted: a remote
     // track gives the audio graph nothing in Chrome without one. False while it cannot play: the element goes on at full volume instead.
-    function mediaLoud(h, key, stream, level){
+    function mediaLoud(h, key, stream, level, placed){
       var md = h.media, a = md.amps[key], track = stream && stream.getAudioTracks()[0];
-      if (a && a.track !== track) { a.src.disconnect(); a.limit.disconnect(); delete md.amps[key]; a = null; }
+      // In a scene or with pictures in the app the sound goes delay -> panner -> distance fade -> gain -> limiter;
+      // otherwise gain -> limiter as before. A change of route builds it again.
+      if (a && (a.track !== track || !!a.pan !== !!placed)) {
+        a.src.disconnect(); a.limit.disconnect(); if (a.pan) { a.delay.disconnect(); a.pan.disconnect(); a.fade.disconnect(); }
+        delete md.amps[key]; a = null;
+      }
       if (!track) return false;
       var Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return false;
@@ -947,9 +983,15 @@
         if (!a) {
           a = md.amps[key] = {track: track, src: ctx.createMediaStreamSource(new MediaStream([track])), gain: ctx.createGain(), limit: ctx.createDynamicsCompressor()};
           a.limit.threshold.value = -3; a.limit.knee.value = 3; a.limit.ratio.value = 20; a.limit.attack.value = 0.003; a.limit.release.value = 0.1;
-          a.src.connect(a.gain); a.gain.connect(a.limit); a.limit.connect(ctx.destination);
+          if (placed) {
+            a.delay = ctx.createDelay(1); a.pan = ctx.createPanner(); a.fade = ctx.createGain();
+            a.pan.panningModel = 'HRTF'; a.pan.distanceModel = 'linear'; a.pan.rolloffFactor = 0;   // the fade does distance
+            a.src.connect(a.delay); a.delay.connect(a.pan); a.pan.connect(a.fade); a.fade.connect(a.gain);
+          } else a.src.connect(a.gain);
+          a.gain.connect(a.limit); a.limit.connect(ctx.destination);
         }
         a.gain.gain.value = level;
+        if (placed) mediaSpatialApply(h);
         if (ctx.state === 'suspended') ctx.resume().catch(function(){});
         return ctx.state === 'running';
       } catch (err) { return false; }
@@ -1180,7 +1222,171 @@
         mediaMutes(md);
         mediaDraw(h); answer({ok: true, muted: md.muted}); return;
       }
-      answer({ok: false, error: 'media ops are start, stop, screen, share, hear, volume, place and mute'});
+      // PICTURES IN THE APP (2026-11-02, for Spatial World: screens in a 3D world): the picture of one key handed to
+      // the app as an ImageBitmap at up to w x h and fps, while the card's Pictures in the app switch is on.
+      if (m.do === 'frames') {
+        var fk = m.key === 'me' || m.key === 'me#screen' ? m.key : String(m.key || '');
+        var fo = fk.replace(/#screen$/, '');
+        if (!m.size) { framesStop(md, fk); mediaPill(); answer({ok: true}); return; }
+        if (fo !== 'me' && h.fast && !h.fast.peers[fo]) { answer({ok: false, error: 'no such player'}); return; }
+        picturesAllowed().then(function(yes){
+          if (!yes) { answer({ok: false, error: 'off', why: 'Pictures in the app is off on this app\u2019s card'}); return; }
+          var sz = m.size, n = function(v, lo, hi){ v = Number(v); return isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : hi; };
+          framesStart(name, h, fk, {w: n(sz.w, 16, FRAME_MAX_W), h: n(sz.h, 16, FRAME_MAX_H), fps: n(sz.fps, 1, FRAME_MAX_FPS)});
+          mediaPill(); answer({ok: true});
+        });
+        return;
+      }
+      // The app drew frame t of this key: how far its picture runs behind the sound, to hold the sound back as much.
+      if (m.do === 'shown') {
+        var sk = String(m.key || ''), st = Number(m.t);
+        if (md.frames[sk] && isFinite(st)) {
+          var lag = Math.min(FRAME_LAG_MAX, Math.max(0, Date.now() - st));
+          md.lag[sk] = md.lag[sk] == null ? lag : md.lag[sk] * 0.8 + lag * 0.2;
+          mediaSpatialApply(h);
+        }
+        answer({ok: true}); return;
+      }
+      if (m.do === 'spatial') {
+        md.spatial = mediaSpatialClean(m.scene);
+        mediaDraw(h); answer({ok: true}); return;
+      }
+      if (m.do === 'levels') {
+        var keys = Array.isArray(m.keys) ? m.keys.slice(0, MEDIA_TILES).map(String) : [];
+        if (!keys.length) { if (md.levels) clearInterval(md.levels.timer); md.levels = null; mediaPill(); answer({ok: true}); return; }
+        picturesAllowed().then(function(yes){
+          if (!yes) { answer({ok: false, error: 'off', why: 'Pictures in the app is off on this app\u2019s card'}); return; }
+          if (md.levels) clearInterval(md.levels.timer);
+          md.levels = {keys: keys, timer: setInterval(function(){ mediaLevels(name, h); }, 500)};
+          mediaPill(); answer({ok: true});
+        });
+        return;
+      }
+      answer({ok: false, error: 'media ops are start, stop, screen, share, hear, volume, place, mute, frames, spatial and levels'});
+    }
+    var FRAME_MAX_W = 1920, FRAME_MAX_H = 1080, FRAME_MAX_FPS = 30, FRAME_LAG_MAX = 500;
+    function framesStop(md, key){
+      var f = md.frames[key];
+      if (f) clearInterval(f.timer);
+      delete md.frames[key]; delete md.lag[key];
+    }
+    function framesStart(name, h, key, want){
+      var md = h.media;
+      framesStop(md, key);
+      var f = md.frames[key] = {w: want.w, h: want.h, fps: want.fps, busy: false};
+      f.timer = setInterval(function(){
+        if (h.media !== md || md.frames[key] !== f || f.busy) return;
+        var v = md.tiles[key];
+        if (!v || v.readyState < 2 || !v.videoWidth || typeof createImageBitmap !== 'function') return;
+        // Inside w x h, the picture's own shape kept (never stretched).
+        var scale = Math.min(1, f.w / v.videoWidth, f.h / v.videoHeight);
+        var w = Math.max(1, Math.round(v.videoWidth * scale)), hh = Math.max(1, Math.round(v.videoHeight * scale));
+        var t = Date.now();
+        f.busy = true;
+        createImageBitmap(v, {resizeWidth: w, resizeHeight: hh, resizeQuality: scale < 0.5 ? 'medium' : 'low'}).then(function(bm){
+          f.busy = false;
+          if (h.media !== md || md.frames[key] !== f) { bm.close(); return; }
+          var owner = key.replace(/#screen$/, ''), p = owner === 'me' ? h.me : (h.fast && h.fast.peers[owner] ? h.fast.peers[owner].p : null);
+          h.frame.postMessage({arcade: 'realtime', event: {type: 'media-frame', room: name, key: key, member: p, t: t,
+                                                            w: w, h: hh, bitmap: bm}}, '*', [bm]);
+        }, function(){ f.busy = false; });
+      }, Math.round(1000 / want.fps));
+    }
+    // A far screen the app does not fetch frames for: its average colour and how loud it is, a few bytes twice a second.
+    function mediaLevels(name, h){
+      var md = h.media, lv = md && md.levels;
+      if (!lv) return;
+      var c = lv.canvas || (lv.canvas = document.createElement('canvas')), g = c.getContext('2d', {willReadFrequently: true});
+      c.width = 4; c.height = 4;
+      var out = {};
+      lv.keys.forEach(function(key){
+        var v = md.tiles[key], rgb = null, loud = 0;
+        if (v && v.readyState >= 2 && v.videoWidth) {
+          try {
+            g.drawImage(v, 0, 0, 4, 4);
+            var d = g.getImageData(0, 0, 4, 4).data, r = 0, gg = 0, b = 0;
+            for (var i = 0; i < d.length; i += 4) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; }
+            rgb = [Math.round(r / 16), Math.round(gg / 16), Math.round(b / 16)];
+          } catch (err) {}
+        }
+        var owner = key.replace(/#screen$/, ''), pr = h.fast && h.fast.peers[owner];
+        var stream = pr ? (key === owner ? pr.remote : pr.xremote) : null;
+        if (pr && pr.pc && stream && md.hear[owner]) pr.pc.getReceivers().forEach(function(rcv){
+          if (!rcv.track || rcv.track.kind !== 'audio' || !rcv.getSynchronizationSources) return;
+          if (stream.getAudioTracks().indexOf(rcv.track) < 0) return;
+          rcv.getSynchronizationSources().forEach(function(x){ if (x.audioLevel > loud) loud = x.audioLevel; });
+        });
+        out[key] = {rgb: rgb, loud: Math.round(loud * 100) / 100};
+      });
+      mediaEvent(name, h, {type: 'media-levels', levels: out});
+    }
+    // SPATIAL SOUND: each heard key's sound placed in the app's 3D scene (its metres), faded by distance from `full` to
+    // `end` (equal power, nothing past end), and held back by the measured lag of its pictures in the app, so the two
+    // stay together. Without a scene, as before.
+    function mediaSpatialClean(scene){
+      if (!scene || typeof scene !== 'object') return null;
+      var v3 = function(a, d){ return Array.isArray(a) && a.length === 3 && a.every(function(x){ return isFinite(Number(x)); })
+                                 ? a.map(Number) : d; };
+      var l = scene.listener || {}, out = {listener: {p: v3(l.p, [0, 0, 0]), f: v3(l.f, [0, 0, -1]), u: v3(l.u, [0, 1, 0])}, sources: {}};
+      var src = scene.sources && typeof scene.sources === 'object' ? scene.sources : {};
+      Object.keys(src).slice(0, MEDIA_TILES).forEach(function(k){
+        var s0 = src[k] || {}, cone = Array.isArray(s0.cone) ? s0.cone.map(Number) : null;
+        var full = Math.max(0, Number(s0.full) || 0), end = Math.max(full + 0.01, Number(s0.end) || 30);
+        out.sources[String(k)] = {p: v3(s0.p, [0, 0, 0]), d: v3(s0.d, null), full: full, end: end,
+                                  cone: cone && cone.length === 3 && cone.every(isFinite) ? cone : null};
+      });
+      return out;
+    }
+    function mediaFade(dist, full, end){
+      if (dist <= full) return 1;
+      if (dist >= end) return 0;
+      var c = Math.cos(Math.PI / 2 * (dist - full) / (end - full));
+      return c * c;
+    }
+    function mediaSpatialApply(h){
+      var md = h.media, sc = md && md.spatial, ctx = md && md.ampCtx;
+      if (!md || !ctx) return;
+      var L = ctx.listener;
+      if (sc) {
+        var lp = sc.listener.p, lf = sc.listener.f, lu = sc.listener.u;
+        if (L.positionX) {
+          L.positionX.value = lp[0]; L.positionY.value = lp[1]; L.positionZ.value = lp[2];
+          L.forwardX.value = lf[0]; L.forwardY.value = lf[1]; L.forwardZ.value = lf[2];
+          L.upX.value = lu[0]; L.upY.value = lu[1]; L.upZ.value = lu[2];
+        } else { try { L.setPosition(lp[0], lp[1], lp[2]); L.setOrientation(lf[0], lf[1], lf[2], lu[0], lu[1], lu[2]); } catch (err) {} }
+      }
+      Object.keys(md.amps).forEach(function(key){
+        var a = md.amps[key], src = sc && sc.sources[key];
+        if (a.delay) a.delay.delayTime.value = md.frames[key] && md.lag[key] != null ? md.lag[key] / 1000 : 0;
+        if (!a.pan) return;
+        if (!src) { a.fade.gain.value = 1; return; }
+        var p = src.p;
+        if (a.pan.positionX) { a.pan.positionX.value = p[0]; a.pan.positionY.value = p[1]; a.pan.positionZ.value = p[2]; }
+        else { try { a.pan.setPosition(p[0], p[1], p[2]); } catch (err) {} }
+        if (src.d) {
+          if (a.pan.orientationX) { a.pan.orientationX.value = src.d[0]; a.pan.orientationY.value = src.d[1]; a.pan.orientationZ.value = src.d[2]; }
+          else { try { a.pan.setOrientation(src.d[0], src.d[1], src.d[2]); } catch (err) {} }
+        }
+        if (src.cone) { a.pan.coneInnerAngle = src.cone[0]; a.pan.coneOuterAngle = src.cone[1]; a.pan.coneOuterGain = src.cone[2]; }
+        else { a.pan.coneInnerAngle = 360; a.pan.coneOuterAngle = 360; a.pan.coneOuterGain = 1; }
+        var lp2 = sc.listener.p, dx = p[0] - lp2[0], dy = p[1] - lp2[1], dz = p[2] - lp2[2];
+        a.fade.gain.value = mediaFade(Math.sqrt(dx * dx + dy * dy + dz * dz), src.full, src.end);
+      });
+    }
+    // The card's Pictures in the app switch, as mediaAllowed is for Camera & microphone. A card that does not say
+    // "pictures": true never gets them.
+    function picturesAllowed(){
+      if (arcadePicturesAllowed(here)) return Promise.resolve(true);
+      return arcadeGameOf(here).then(function(g){
+        if (g.game) {
+          if (!g.pictures) return false;
+          if (arcadePicturesOn(here, g)) return true;
+          arcadePicturesUsed(here);
+          if (g.opens) arcadePicturesUsed(g.opens);
+          return false;
+        }
+        return arcadePicturesAsk(here, gameName, makerName, maker);
+      });
     }
     // The layer over the game's frame: the pictures where the game placed them, every voice the game hears (a
     // picture not placed still plays its sound), and the on-air pill with its Stop.
@@ -1248,7 +1454,8 @@
         var v = mediaTile(md, key), at = md.place[key];
         if (v.srcObject !== keep[key]) { v.srcObject = keep[key]; v.play().catch(function(){}); }
         var who = key.replace(/#screen$/, ''), level = key in md.volume ? md.volume[key] : 1, heard = who !== 'me' && !!md.hear[who];
-        var loud = mediaLoud(h, key, heard && level > 1 ? keep[key] : null, level);
+        var placed = !!(md.spatial && md.spatial.sources[key]) || !!md.frames[key];
+        var loud = mediaLoud(h, key, heard && (level > 1 || placed) ? keep[key] : null, level, placed);
         v.muted = !heard || loud;                      // your own sound never; theirs once the game hears them
         v.volume = Math.min(1, level);
         if (at && at.w > 0 && at.h > 0) {
@@ -1261,9 +1468,52 @@
         } else v.style.display = 'none';
       });
       mediaPill();
+      if (h.media && !h.speakWatch) h.speakWatch = setInterval(function(){ mediaSpeak(h); }, 150);
+    }
+    // Who is talking (2026-11-02, the operator: green boxes round whoever speaks in a Riffs Lounge): the level of each
+    // player's voice as it arrives (their screen's sound is not their voice), and of your own microphone, said to the
+    // page as 'media-speaking' on/off. On above SPEAK_ON, off after SPEAK_HOLD ms below it, so a box does not flicker.
+    var SPEAK_ON = 0.04, SPEAK_HOLD = 600;
+    function mediaSpeak(h){
+      var name = rtName(h), md = h.media;
+      if (!name || !md) { clearInterval(h.speakWatch); h.speakWatch = null; return; }
+      var now = Date.now(), said = md.speaking || (md.speaking = {});
+      var level = function(id, lv, p){
+        var st = said[id] || (said[id] = {on: false, at: 0});
+        if (lv > SPEAK_ON) st.at = now;
+        var on = lv > SPEAK_ON || (st.on && now - st.at < SPEAK_HOLD);
+        if (on !== st.on) { st.on = on; mediaEvent(name, h, {type: 'media-speaking', member: p, on: on}); }
+      };
+      if (h.fast) for (var id in h.fast.peers) {
+        var pr = h.fast.peers[id], lv = 0;
+        if (pr.pc && pr.remote && md.hear[id]) pr.pc.getReceivers().forEach(function(r){
+          if (!r.track || r.track.kind !== 'audio' || !r.getSynchronizationSources) return;
+          if (pr.remote.getAudioTracks().indexOf(r.track) < 0) return;       // their screen's sound, not their voice
+          r.getSynchronizationSources().forEach(function(x){ if (x.audioLevel > lv) lv = x.audioLevel; });
+        });
+        level(id, lv, pr.p);
+      }
+      var mic = md.stream && md.audio && !md.muted.audio ? md.stream.getAudioTracks()[0] : null, me = 0;
+      if (mic && (!md.meter || md.meter.track !== mic)) {
+        try {
+          var Ctx = window.AudioContext || window.webkitAudioContext, ctx = md.meterCtx || (md.meterCtx = new Ctx());
+          var an = ctx.createAnalyser(); an.fftSize = 512;
+          ctx.createMediaStreamSource(new MediaStream([mic])).connect(an);
+          md.meter = {track: mic, an: an, buf: new Float32Array(512)};
+        } catch (err) { md.meter = {track: mic}; }
+      }
+      if (mic && md.meter && md.meter.an) {
+        if (md.meterCtx.state === 'suspended') md.meterCtx.resume().catch(function(){});
+        md.meter.an.getFloatTimeDomainData(md.meter.buf);
+        var sum = 0; for (var i = 0; i < md.meter.buf.length; i++) sum += md.meter.buf[i] * md.meter.buf[i];
+        me = Math.sqrt(sum / md.meter.buf.length) * 1.5;
+      }
+      if (h.me) level(h.me.id, me, h.me);
     }
     function mediaPill(){
       var on = mediaAnyOn();
+      // Pictures handed to an app count as on air too, though this page sends nothing itself.
+      if (!on) for (var rk in rt) { var rm = rt[rk].media; if (rm && (Object.keys(rm.frames).length || rm.levels)) { on = rt[rk]; break; } }
       if (!on) { if (mediaPillEl) mediaPillEl.hidden = true; return; }
       if (!mediaPillEl) {
         var el = mediaPillEl = document.createElement('div');
@@ -1285,6 +1535,8 @@
                                              : md.audio ? 'Sharing your screen, microphone on' : 'Sharing your screen')
         : md.video && md.audio ? 'Camera and microphone on' : md.video ? 'Camera on' : 'Microphone on';
       if (md.muted.video && md.muted.audio) what += ' (muted)';
+      var inApp = Object.keys(md.frames).length || md.levels;
+      if (inApp) what = md.stream || md.xstream ? what + ' \u00b7 pictures shown in the app' : 'Pictures shown in the app';
       mediaPillEl.querySelector('.arcade-media-words').textContent = what;
       mediaPillEl.hidden = false;
     }

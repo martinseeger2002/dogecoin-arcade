@@ -148,6 +148,10 @@ SHORT = 8                   # hex characters of a node id in a copy's "d" list
 SKEW = 60.0                 # seconds of clock difference tolerated on a message
 MAX_HOPS = 16
 OUTBOUND_TARGET = 6          # 2026-10-12: 4 -> 6, more paths for hundreds of nodes
+#: 2026-11-02: "all arcade should share each of their chains and ORD indexes with all other arcades". A node
+#: with at least the default target links to every arcade it knows of, dialled or introduced, up to this many links;
+#: a node that set a smaller target on purpose (a phone, on battery) keeps it.
+EVERYONE_MAX = 48
 DIAL_EVERY = 1.0            # how often a node tops up its outbound links
 MEET_EVERY = 15.0           # the wall-clock beat IPv6 peers meet on (seconds)
 MEET_WAIT = 9.0             # how long one meeting dial keeps knocking (SYN retries at 1, 3, 7 s)
@@ -273,6 +277,13 @@ class MeshNode:
         #: Every node floods one every SUB_EVERY seconds, rooms or none, so this is the
         #: mesh-wide heartbeat (2026-10-13: orders show while their lister is online).
         self._heard: dict[str, float] = {}
+        #: What this arcade holds, said in its SUB (coverage.py): a callable giving short keys, read on the loop, so
+        #: it must answer from memory. And the links the coverage keeper counts on, which the tuner never drops.
+        self.resources: Callable[[], list[str]] | None = None
+        self.keep: set[str] = set()
+        #: Links carried by other arcades, to arcades no direct link reaches (relay.py, 2026-11-02).
+        from .relay import Relays
+        self.relays = Relays(self)
         self._via: dict[str, str] = {}             # origin -> the neighbour its SUBs come through
         self._seen: OrderedDict[str, None] = OrderedDict()
         # room -> {(origin, member)} this node's members have been told are there
@@ -461,6 +472,10 @@ class MeshNode:
     async def _rebalancer(self) -> None:
         while not self._stopping:
             await asyncio.sleep(60)
+            try:
+                await self.relays.tidy()
+            except Exception:                      # noqa: BLE001
+                log.exception("mesh relays")
             for ext in list(self.extensions):
                 try:
                     await ext.rebalance()
@@ -470,10 +485,34 @@ class MeshNode:
     def _outbound(self) -> int:
         return sum(1 for link in self.links.values() if link.outbound)
 
+    def reach(self, peer: str):
+        """The link to `peer`: the direct one, else a relayed one (relay.py), else None."""
+        return self.links.get(peer) or self.relays.links.get(peer)
+
+    def reachable(self) -> set[str]:
+        """Every arcade this one has a link to, direct or relayed."""
+        return set(self.links) | set(self.relays.links)
+
+    def everyone(self) -> bool:
+        """Links to every arcade it knows of (see EVERYONE_MAX), rather than OUTBOUND_TARGET of them."""
+        return self.outbound_target >= OUTBOUND_TARGET
+
+    def _target(self) -> int:
+        """How many links this node opens itself: outbound_target, or -- linking everyone -- one for every arcade it
+        has an address for and is not linked to yet, up to EVERYONE_MAX links in all."""
+        if not self.everyone():
+            return self.outbound_target
+        # Each arcade not linked yet once, and each address not dialled yet (its arcade is not known until it answers).
+        known = {e["id"] for e in self.addrs.values() if e["id"] and e["id"] != self.node_id} - set(self.links)
+        unknown = sum(1 for e in self.addrs.values() if not e["id"])
+        room = max(0, EVERYONE_MAX - len(self.links))
+        return max(self.outbound_target, self._outbound() + min(room, len(known) + unknown))
+
     async def _dialer(self) -> None:
         while not self._stopping:
             try:
-                if self._outbound() < self.outbound_target + (1 if self._probing else 0):
+                target = self._target()
+                if self._outbound() < target + (1 if self._probing else 0):
                     now = time.monotonic()
                     choices = [a for a, e in self.addrs.items()
                                if e["next"] <= now and e["id"] != self.node_id
@@ -485,7 +524,7 @@ class MeshNode:
                     have = {e["id"] for a, e in self.addrs.items() if not is_ws(a[0]) and e["id"] and e["fail"] < 3}
                     choices = [a for a in choices if not is_ws(a[0])] + \
                               [a for a in choices if is_ws(a[0]) and self.addrs[a]["id"] not in have]
-                    for addr in choices[: self.outbound_target + (1 if self._probing else 0) - self._outbound()]:
+                    for addr in choices[: target + (1 if self._probing else 0) - self._outbound()]:
                         self._spawn(self._dial(addr))
             except Exception:                      # noqa: BLE001 -- the loop must not die
                 log.exception("mesh dialer")
@@ -726,8 +765,8 @@ class MeshNode:
 
     async def tune_once(self, settle: float | None = None) -> str | None:
         """Try one more peer; drop the slowest outbound link if the trial beat it.
-        Returns the id of the link dropped, if any."""
-        if self._outbound() < self.outbound_target:
+        Returns the id of the link dropped, if any. Never while linking everyone: no link is spare then."""
+        if self.everyone() or self._outbound() < self.outbound_target:
             return None
         spare = [a for a, e in self.addrs.items()
                  if e["id"] != self.node_id and e["id"] not in self.links and e["next"] <= time.monotonic()
@@ -744,7 +783,9 @@ class MeshNode:
         if len(out) <= self.outbound_target or any(getattr(l, "rtt", None) is None for l in out):
             return None
         new = [l for l in out if l.peer_id not in before]
-        slowest = max(out, key=lambda l: l.rtt)
+        # Never a link the coverage keeper counts on for something this arcade needs (coverage.py, node.keep).
+        keep = getattr(self, "keep", set())
+        slowest = max([l for l in out if l.peer_id not in keep] or out, key=lambda l: l.rtt)
         if not new or slowest in new or min(l.rtt for l in new) > slowest.rtt * TUNE_MARGIN:
             # The trial was no better: let it go again instead.
             drop = max(new, key=lambda l: l.rtt) if new else slowest
@@ -1019,8 +1060,15 @@ class MeshNode:
         if if_changed and ids == self._sub_sent and only is None:
             return
         self._sub_sent = ids
-        header = self._sign({"t": "sub", "o": self.node_id, "q": self._next_seq(),
-                             "rooms": sorted(ids), "hops": 0})
+        said = {"t": "sub", "o": self.node_id, "q": self._next_seq(), "rooms": sorted(ids), "hops": 0}
+        # What this arcade holds (coverage.py, 2026-11-02), for every arcade on the mesh: signed with the rest.
+        holds = getattr(self, "resources", None)
+        if holds is not None:
+            try:
+                said["res"] = list(holds())[:64]
+            except Exception:                              # noqa: BLE001 -- said without it this time
+                pass
+        header = self._sign(said)
         self._seen[f"{self.node_id}:{header['q']}"] = None
         links = [only] if only is not None else list(self.links.values())
         for link in links:
@@ -1127,6 +1175,9 @@ class MeshNode:
             return
         if kind == "pong":
             self._pong(link, str(header.get("n", "")))
+            return
+        if kind == "rl":                                   # carried for another arcade, or for this one (relay.py)
+            await self.relays.on_frame(link, header, blob)
             return
         # Extensions name the frame kinds they ride on: Core peering "cs" (corelink), shared Cores
         # "cr" (coreshare).

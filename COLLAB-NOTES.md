@@ -88,6 +88,18 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: merge upstream main into the review branch (Cursor Cloud Agent)
+Billy asked to fix the conflicts on upstream pull request #61 (`martinseeger2002/dogecoin-arcade` #61, `blockchaindad:cursor/dogefeedx-combined-fd4a` into `main`). This is a merge of `upstream/main` `5eb2935` into `cursor/dogefeedx-combined-fd4a` at `dcebd09`. It is a merge, not a rebase, and the branch is pushed normally. This agent does not merge the pull request and does not comment on Martin's repository.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+**Parents:** `dcebd096630c501bfc664f538f720ab6039a90d2`, `5eb2935a40983981d1b88f7c3cbfb6c86f352529`
+
+**Conflict:** `COLLAB-NOTES.md` only. Both logs are kept. The 2026-11-03 DogeFeedX entries stay above Martin's 2026-11-02 entries, and his wording is unchanged. `arcade/web/app.py`, `base.html`, `desktop.html`, and `me.html` merged on their own. DogeFeedX stays an opt-in theme (`localStorage arcade.deskview = dogefeedx`). The Ubuntu and Windows 98 skins are unchanged, including `reloadWin`.
+
+**Need from the other side:** a review only. No signing, no spends, no keys, nothing written to dogefeed.app.
+
+---
+
 ### 2026-11-03 DogeFeedX: review request on the upstream repo (Cursor Cloud Agent)
 Billy asked for a pull request from `blockchaindad:cursor/dogefeedx-combined-fd4a` onto `martinseeger2002/Dogecoin-Arcade` `main`. DogeFeedX is an opt-in theme. dogefeed.app stays a read-only source of public pages. Wallet ownership stays on this node or a peer. This agent does not merge it.
 
@@ -688,6 +700,232 @@ Two self-contained DogeFeedX apps for the arcade desktop with Mac OS X Aqua styl
 - **app.py:** DogeFeedX routes registered via `dogefeedx.register_routes(app, render)`.
 - Branch `cursor/dogefeedx-apps-8c32`. No exchange-safety.md changes (read-only, no signing).
 - Nothing needed from the other side; these are standalone apps.
+
+### 2026-11-02 Pictures in the app: an app draws the room's pictures itself, behind its own card switch (Claude)
+For Spatial World (3D screens; the Garrys mod session asked, the operator confirmed: "Build it"). Option 2 of two: the video
+is handed to the app, behind its own permission; the viewer no longer has to draw every picture on top.
+- **Permission**: a card says "pictures": true (games.py parse, /games/<id>/access, App Store perms). base.html PICTURES
+  IN THE APP: arcade.pictures.allow:<id> / .uses:, arcadePicturesAsk ("Let this app show the pictures itself?", says
+  it could keep them), in ARCADE_PERM_KINDS/DOORS; switches on the Games card, Home and Desktop sheets, My access. A
+  page with no card is asked, as for the camera. The on-air pill says "Pictures shown in the app" while any go.
+- **Frames** (`room.media.frames(key, {w, h, fps})`, key = player id, id#screen, 'me', 'me#screen'; null stops):
+  the viewer's own video element for that key, createImageBitmap at most w x h (shape kept, up to 1920x1080 at 30 fps),
+  posted to the frame as a transfer: event 'frame' (key, bitmap, t, p), t = when it was taken. realtime.js says
+  'shown' back after the app's handler: the lag (EWMA, at most 500 ms) holds that key's sound back by as much
+  (DelayNode), so picture and sound stay together.
+- **Levels** (`room.media.levels(keys)`, event 'levels' {key: {rgb, loud}} twice a second): a far screen's average
+  colour (4x4 sample) and loudness (receiver audioLevel) without frames.
+- **Spatial sound** (`room.media.spatial({listener: {p, f, u}, sources: {key: {p, d, cone, full, end}}})`, null
+  undoes): a heard key in the scene, or with frames, plays through delay -> HRTF panner (rolloff 0) -> equal-power
+  distance fade (cos^2 from full to end, 0 past end) -> volume gain -> limiter; the viewer's element is muted then.
+  Sound never leaves the viewer.
+- Tests: test_media_browser test_pictures_go_to_the_app_as_bitmaps_only_with_its_switch_and_their_sound_is_placed_in_its_scene
+  (asked and refused: none; allowed: bitmaps inside the size, stamped; the pill; the placed route; levels; null stops),
+  test_games test_a_card_that_draws_pictures_itself_says_so_and_gets_its_own_switch. Screenshots shown to the operator.
+- Not built yet: an end-to-end flash-and-beep measurement of the ±45 ms sync, frames from a VideoFrame/track transfer
+  (bitmaps for now).
+
+### 2026-11-02 Room media says who is speaking (Claude, the session that worked for Riffs; reviewed and taken in by the Arcade session)
+The operator: green boxes round whoever talks in a Riffs Lounge. `_page_doors.js.html` mediaSpeak, every 150 ms: each heard
+player's voice level from the receiver's getSynchronizationSources().audioLevel (their screen's sound left out), and
+your own microphone through an analyser; said to the page as 'media-speaking' {member, on}: on above SPEAK_ON (0.04),
+off after SPEAK_HOLD (600 ms) below, so a box does not flicker. realtime.js: `room.media.on('speaking', (p, on))`, p
+is room.me for your own voice. Riffs guards it with try/catch, so an arcade without this is a no-op there. Test:
+test_media_browser test_who_is_speaking_is_said_to_the_page_and_stops_when_they_mute.
+
+### 2026-11-02 Riffs Lounge: a player who drops out is linked again at once, not minutes later (Claude)
+The operator: "For some reason, if somebody drops out of a riff lounge, they can't reconnect again for several minutes".
+Three faults in the fast lane (_page_doors.js.html), all on the page; the node is unchanged:
+- **Back in a kept seat (same node):** a page that vanished without "leave" keeps its seat LOCAL_GRACE (30 s); the
+  same player back in it is announced to nobody (node.join returns the seat). The others hold their link to the
+  dropped page, which can still say 'direct', and fastMeet skipped anyone already linked; the newcomer, if its id
+  is the higher, waited for an offer nobody sent until the old link failed (31 s on one machine, longer over the
+  internet, and only the lower id retries, 3 times). Now every page that comes (back) into a room sends 'h' with a
+  page id `s` (h.fast.s) to those whose offer it waits for; a link held for that player that was not made for this
+  page when it joined (peer.byJoin) is dropped and a new one offered at once. What is shared/heard stays (keep).
+- **Back through another node:** its old seat on the node it dropped from expires and that node says "leave",
+  and every page dropped the player's working link and box. A leave from a node other than the one the member is
+  now seated through (member.node) is ignored, link and page alike.
+- **A join from a new node for a player we hold a link to** replaces that link at once.
+- Test: test_fast_lane_browser::test_a_player_who_drops_out_and_comes_back_is_linked_again_at_once (31 s without the
+  fix, about 2 s with it). 90 pass across fast lane, star, media, rejoin, seat-lost, area and realtime_web.
+
+### 2026-11-02 Relay hops: a link to an arcade no direct link reaches, carried by the arcades between (Claude)
+The operator: "do you think relay hops would be a good idea like they do with Meshtastic?" -- yes, routed rather than
+flooded, for what direct links cannot cover (two routers that each pick a new port per destination).
+- **arcade/mesh/relay.py**: frame "rl" {o, to, q, bh, in, hops, sig} + blob, signed by the sender over everything but
+  hops (bh = sha256 of the blob), fresh and seen once like a SUB, passed along node._via (the first way the other's
+  SUB came), at most RELAY_HOPS (3). `in` is rl-open / rl-yes / rl-shut, or a frame of a CARRIED kind: "cr" (Cores),
+  "dx" (ord index), "lx" (index copies), "ix" (index checks). Calls never go this way. Each relaying arcade carries at
+  most RELAY_RATE (2 MB/s) per sender and RELAY_TOTAL (8 MB/s) in all. Shut after RELAY_IDLE (5 min) unused, or once
+  the two link directly. The accepting side says yes before its extensions' first frames, so an offer cannot overtake
+  it.
+- **RelayLink** walks like a Link (peer_id, send, close); node.reach(peer) and node.reachable() give direct or relayed;
+  coreshare, doginalshare, ledgershare and indexcheck use relay.reach / reachable / every_link wherever they used
+  node.links (a node without relays, as in a test, is direct only).
+- **coverage.py**: a need no direct link covers, whose holders did not link after RELAY_AFTER (2) tries, gets one
+  relayed link to the holder tried most; Admin counts "through other arcades".
+- Tests: tests/test_mesh_relay.py (two arcades talk through a third; a frame changed on the way is thrown away; the
+  per-sender limit), test_coreshare (Dogecoin borrowed through relay hops, blocks proved as ever), test_mesh_coverage
+  (the keeper's relay fallback).
+- The arcades between read what they carry: public chain data, as the end arcades see it.
+- With it, from the first live look at Strawberry's "What this arcade borrows": a room only this arcade's players are in
+  is not a need (a dozen were listed, held by nobody), and a need nobody is known to hold says "none known yet",
+  since arcades on older versions do not say what they hold. Full suite: 4514 passed; the one failure,
+  test_media_browser's speakers test, passed twice alone (a timing flake under load).
+
+### 2026-11-02 The coverage keeper: every Core, index, media relay and game room from linked holders (Claude)
+The operator: "an auto adjusting mesh that looks for the arcades containing the resources that we need ... at least have
+available every core and every index from at least one node preferably three"; "the same sort of auto connect for
+game and multimedia servers".
+- **What an arcade holds** rides in its SUB as `res` (node._send_own_sub; signed with the rest, relayed unchanged by
+  older arcades): `c:<net>` a Core it shares, `o:<net>` a whole ord index it keeps, `t:<net>` a current token index,
+  `m` a media relay anybody can reach. Rooms are already in the SUB (`g:<room id>`). So every arcade knows what every
+  other holds (node._last_sub), linked or not. Worked out on a thread (Coverage.mine), never on the mesh loop.
+- **What it needs** (coverage.needs): every chain it borrows, every ord index it reads or helps with, its token index
+  while more than 20 blocks behind, a media relay, and every room it has players in.
+- **Coverage** (arcade/mesh/coverage.py), every 30 s: per need, linked holders; below 3 it links to the holders that
+  cover most short needs (none-linked counting double), dialled or introduced, 3 at a time; node.keep stops the tuner
+  dropping them. A node linking everyone may go to 48 links; a small one (a phone) 3 beyond its target.
+- **Admin -> Coins & chains** "What this arcade borrows": each need, linked of 3, and how many more are known.
+- Tests: tests/test_mesh_coverage.py (a target-1 arcade links to the two other Litecoin holders it hears of through
+  one, and to nobody else; `res` signed and cleaned).
+- Next: relay hops (the operator: "relay hops ... like they do with Meshtastic?") for a holder no direct link can reach.
+
+### 2026-11-02 Every arcade links with every arcade it knows (Claude)
+The operator, looking at the ThinkPad's Arcades panel (@avacado, @pepmonster and @yourfirstname only "seen through
+@strawberry", nothing shared): "all arcade should share each of their chains and ORD indexes with all other arcades"; he
+chose "Direct links first". Sharing (Cores, ord indexes, index copies) rides on direct links, and a node opened links
+only up to OUTBOUND_TARGET (6), introduced only while under it, and the tuner dropped the slowest link past it.
+- **node.everyone() / node._target()**: a node with at least the default target opens a link to every arcade it has an
+  address for (and to every address not dialled yet), up to EVERYONE_MAX (48) links; the tuner drops nothing then. A
+  node that set a smaller target on purpose (the phone, on battery) keeps it.
+- **introduce.round**: meets every arcade heard of on the mesh while under EVERYONE_MAX, not only under the target.
+- Why a cap at all (the operator asked): every link carries keepalives and about ten status frames a minute, and room
+  announcements are relayed along every link, so total traffic grows with the square of the arcades; 48 is far above
+  today's mesh and only a guard for when it is large.
+- Test: test_mesh test_an_arcade_links_with_every_arcade_it_knows_and_a_small_one_keeps_its_target.
+- Next (the operator: "Direct links first"): relaying Core reads and ord requests through the arcade in between, for pairs
+  that still cannot link (two routers that both pick a new port per destination).
+
+### 2026-11-02 The new operator's setup wizard (Claude)
+The operator: on a fresh install, claiming a name said "Claiming it: on its way" with no synced Core and no PEP test; "create
+a wizard that walks the new operator through the initial Setup ... should pop up as long as the operator has yet to
+claim their name"; then, approving the mock-up: "There should be only one button claim and publish should be the same
+thing" and "the wizard should display the operators pepetest wallet address before it is funded so that it can be
+copied".
+- **The bug**: node_wallet_js claim() posted /publish and returned {txid: "on its way"} whatever happened; /publish
+  answers a refusal ("no spendable coins") as an ordinary 200 page. Now claim() calls `/admin/api/setup/claim` and
+  shows the real txid or the real reason.
+- **`_claim_node_tag` and `_key_announcement`** (web/app.py): the claim and the key announcement, out of /publish and
+  /publish-key, which still use them (test_web's "asks the chain before it spends" now reads the helper).
+- **`GET /admin/api/setup`**: need (no operator @name), node sync and borrowing (core_catchup.say), the names index
+  (current within 6 blocks, copy status), coins (address; on the chain per the index, with its first block; spendable
+  per the node's own wallet; mined), this arcade's welcome ask, a claim really on its way, and `blocked`: why Claim
+  is off ("index", "no coins", "node behind coins" -- the wallet is in the node, so a coin in a block it has not
+  reached cannot pay yet --, "mined", "operator account", "claimed").
+- **`GET /admin/api/setup/name?tag=`** (valid, taken, mine) and **`POST /admin/api/setup/claim {tag}`**: the one button,
+  name and key together, {claimed, published, publish_error}; refused with the reason, and never twice while one waits.
+- **templates/_setup_wizard.html** on Admin and on the operator's Your arcade: four steps (node, PEP test with the
+  address and Copy, ask the operators or mine a block; the @name with a live check; on its way), refreshed every 5 s,
+  Later until the next visit, never once the name is on the chain. The welcome panel's coins-only first-run sheet gives
+  way to it (window.ARCADE_SETUP).
+- Tests: test_tokens_web (a real regtest claim and key with one press; refusal with no coins spends nothing),
+  test_setup_wizard_browser (opens, Later, never with a name, the four states; screenshots shown to the operator).
+- Open: an arcade whose node has not reached its coins' block waits for it; spending from coins the index knows of,
+  signed by the node's wallet, would end that wait.
+
+### 2026-11-02 Run your own: the download is packed as the arcade starts (Claude)
+The operator: "When I click run your own, it brings me to /clone ... /clone doesn't do anything". The page is fine, but the
+first visit after every update packed the source archive while it waited: 27 s on .25, and the browser gave up. Now
+`_packed_source` runs in a thread at startup (lifespan), one pack at a time (a page asking meanwhile waits for that
+one). Live, that pack still took about 3 minutes right after a reload, so the page no longer waits for a pack that is
+running: it says the arcade is packing the download and to reload in a minute (`_packed_source(wait=False)`); the
+download routes still wait for it. Tests: test_clone test_the_source_is_packed_when_the_arcade_starts_not_on_the_pages_first_visit,
+test_the_page_answers_at_once_while_the_download_is_being_packed. Each arcade's page shows its own domain, its own
+download and itself as `--first-peer`. Open: the page's install commands are for Linux only.
+
+### 2026-11-02 Index copies between arcades: an index far behind takes a checked copy from linked holders (Claude)
+The operator: an arcade whose Core was at 100% still showed no @name for its operator (@dogefeed), because its own token index
+reads Core 500 blocks at a time and trailed by hours. "No daily copy's"; "a full confirmation of every index should be
+done as a background task after the index is complete in a way that does not hog resources"; he chose "copy on
+request", "Majority of linked" (of those storing the index), phones "Off by default". Rows alone cannot rebuild an
+index (a block's rows lack each transaction's inputs, outputs and fee, and the current tables are worked out from
+those), so a whole copy is sent in pieces, as the ord index already does (ord_snapshot.py).
+- **arcade/ledger_snapshot.py `LedgerSnapshots`** (one per token chain, `state.ledger_snapshots(chain)`):
+  - Made only when a linked arcade asks ("sq"), by an index within 20 blocks of its Core, at most every 6 h, never
+    while being fetched from, deleted after 2 h unfetched. `VACUUM INTO` without PRIVATE = utxo, activity, watched,
+    covered (this arcade's own addresses, coins, history, read-backs).
+  - Manifest: net, floor, block height and hash, `cp` checkpoint, `d` fingerprint of floor..cp, `s` consensus hash,
+    `n` names digest, 1 MB pieces' sha256. Measured on Strawberry's Pepecoin test index (1,558,396 blocks, 430 MB):
+    made in 4 s, checked in 0.9 s, pieces compress to about 27%.
+  - Fetched when at least WORTH_BLOCKS (50,000) behind and its Core is at least at the copy's block; pieces from
+    every arcade offering that same copy, 6 at a time; resumes after a restart; let go of if the index reads past it.
+  - Checked in its own thread: pieces, then the copy's own height/hash/cp/d/s/n against its manifest, its block hash
+    against this arcade's Core, then the votes: `IndexCheck.votes` asks every linked arcade settled at least to cp for
+    its fingerprint of floor..cp; at least 2 must agree and more than half of those answering. A refused copy is
+    never fetched again. On Windows a copy that cannot be moved into place is let go of.
+  - `LedgerIndex.install(path)` puts it in place (old file deleted, `epoch` moved on so index_digest.Fingerprints
+    reads afresh). The accounts are watched again from the copy's block and read back as a new install's are.
+- **`Confirmation`**: a second index from this arcade's own Core at <index>.confirm, 500 blocks every 15 s, only while
+  the index is current, nothing is fetched and no call is relayed (watcher `_index_copies`). At cp: fingerprints;
+  at the same height: consensus hash and names. Same: "confirmed", the second index deleted. Different: the index
+  built here replaces the copy ("rebuilt") and Admin says so. Progress in <index>.copy.json.
+- **arcade/mesh/ledgershare.py** frames "lx": hi {nets: {net: {h, sn}}}, sq {net}, g/gb manifest and pieces (zlib),
+  2 served at once, 120 pieces a minute per asker.
+- **indexcheck**: the tip carries `n` (names digest); same height and different names is a difference too (the names
+  are in neither the fingerprints nor the consensus hash).
+- **Admin -> Coins & chains**: a line per index that came as a copy (from how many holders, confirmation progress),
+  and two switches, `serve_index_copies` and `fetch_index_copies` (both on unless turned off; a phone sets serving
+  off).
+- **bootstrap.py**: the published website copy now leaves out the same PRIVATE tables. The Pepecoin test copy on
+  app.dogecoinarcade.com carried .25's 192 watched addresses, 16,730 coins, 32,283 history rows and 8 read-backs.
+- Tests: tests/test_ledger_snapshot.py (real regtest chain: privacy, a copy taken and read on from, refused by
+  1/1, 1/3 and 2/4 votes, a wrong piece, another chain, confirmed, a wrong name found and rebuilt, made only when
+  asked and allowed, and three arcades over real mesh links), test_admin switches.
+- First live run (a throwaway arcade on a test machine, empty index, linked to .25): main and two small chains came from 4 of 4
+  holders. Two fixes from it: a fetch now steps on its own thread every 0.25 s (`keep_fetching`; on a new arcade the
+  watcher's pass took two minutes per chain), and only pieces actually sent count against the 120 a minute, while an
+  arcade that says "busy" is not asked again for 10 s (refusals had counted, and the fetch sat at 97 of 411 pieces).
+- Open: the ord index keeps its own snapshot rules for now; same-height consensus/names checks need two arcades at
+  the same height, so a quiet chain confirms sooner than a busy one.
+
+### 2026-11-02 PR #58 merged: every Desktop View window refreshes on its own (Claude)
+SadFrog's PR #58, applied to master from the public mirror diff. Before/after screenshots of both looks shown to the operator.
+Desktop tests pass with the rest (531 passed, 17 skipped). Their entry follows, as written.
+
+### 2026-11-02 Desktop View: every window refreshes on its own (SadFrog's side, Claude)
+Branch `team/desk-refresh`, one commit on a7f33313. SadFrog: "if you make a post you'll have to normally refresh whole arcade -
+we should just be able to refresh every window".
+- **desktop.html:** page windows get a Refresh button beside Minimize (both looks; Ubuntu's centred title pads for it), the
+  title bar's right-click menu has Refresh, and F5 / Ctrl+R inside a window reloads only that window. `reloadWin(w)` reloads
+  the frame's current page, not the one it opened with. The helper and dialog windows have no page and are unchanged.
+- **Tests:** test_desktop_default_browser `test_a_window_refreshes_on_its_own[ubuntu|w98]` tries all three and checks the
+  desktop itself did not reload. Desktop tests: 19 passed.
+
+### 2026-11-02 PR #59 merged: the arcade list names an arcade from its mesh announcement (Claude)
+SadFrog's PR #59, applied to master 20291b5a from the public mirror diff. Tests: test_admin*, test_desktop*, test_messaging*,
+test_web, test_public*, test_mesh_operators: 531 passed, 17 skipped. Works beside the "seen through" rows (f049e231): a tag
+an arcade says, or a linking arcade says for it, still wins. Their entry follows, as written.
+
+### 2026-11-02 · SadFrog's side (Claude, node 2) · branch `team/arcade-list-chain-names` (on `main` 849b372) · The arcade list names an arcade that says no name, from its mesh announcement
+SadFrog: a new operator on Windows synced Pepecoin test and claimed @dogefeed, but the list showed only his mesh id. His
+arcade says no `tag` in its "me" frame (its operator_tag is empty there: not caught up yet, or an operator account other
+than the address that claimed the name). The chain already ties the two: his mesh announcement was paid for by the
+address that holds @dogefeed.
+- **`_chain_tags(peers)`** (web/app.py): for an arcade with no tag said, by itself or by a linking arcade ("via"), the
+  @name of the one address that announced its mesh key (`mesh_announcement.address`, the announcement's fee address,
+  messaging/scanner.py). A key announced by two or more addresses gets none: anybody can announce another's key (it only
+  fails to connect). What an arcade says itself always wins.
+- **`MessageStore.mesh_key_senders(network, keys)`**: {mesh key: {address}}, every announcement of either kind.
+- **`_arcades_view` rows** carry `tag_from: "chain"` when the name came from there (no page reads it yet; the panel shows the
+  name as before). Admin -> Overview, the account's Arcades card and the Desktop View all read `_arcades_view`.
+  Network -> Other operators (`operators.status()`) is unchanged: it shows what each arcade said.
+- Tested against node 2's own data (a read-only copy): the arcade 20bc501d8abb shows @dogefeed; two arcades that never
+  announced stay unnamed; none of the 7 keys on Pepecoin test was announced by more than one address.
+- Tests: test_admin test_overview_names_an_arcade_that_says_none_from_its_announcement_on_the_chain. With test_admin*,
+  test_mesh*, test_messaging*, test_web, test_public, test_desktop*, test_lora_admin: 610 passed, 32 skipped.
+- **For you:** a merge, if you agree. Display only, like every name an arcade says.
 
 ### 2026-11-02 A fresh install: Pepecoin testnet only, and it meets its first peer at once (Claude, Riffs session)
 The operator: "When somebody first installs arcade, I don't want them to be prompted to install any of the block chains except

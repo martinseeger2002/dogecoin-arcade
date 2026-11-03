@@ -1142,3 +1142,28 @@ def test_gossip_keeps_a_home_address_only_for_this_nat():
         node.addrs[(_OURS, 9000)]["ok"] = time.time()
         assert "192.168.1.20" in {row["h"] for row in node._rows_for(house)}
     run(go())
+
+
+def test_an_arcade_links_with_every_arcade_it_knows_and_a_small_one_keeps_its_target():
+    """2026-11-02: "all arcade should share each of their chains and ORD indexes with all other arcades". Sharing
+    rides on direct links, so a node with the default target links to every arcade it has an address for (up to
+    EVERYONE_MAX), not six of them; a node that set a smaller target on purpose (a phone on battery) keeps it, and the
+    tuner drops no link from a node that links everyone."""
+    async def go():
+        others = [mk() for _ in range(8)]
+        a, small = mk(), mk(target=2)
+        await started(a, small, *others)
+        try:
+            for o in others:
+                a.add_address(*addr(o))
+                small.add_address(*addr(o))
+            await until(lambda: len([p for p in a.links if p != small.node_id]) == 8, timeout=10,
+                        what="a linked to all eight")
+            await asyncio.sleep(1.5)
+            assert small._outbound() == 2, "a small target is kept"
+            assert a.everyone() and not small.everyone()
+            assert await a.tune_once(settle=0) is None, "no link is spare when linking everyone"
+        finally:
+            for n in (a, small, *others):
+                await n.stop()
+    run(go())
