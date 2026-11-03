@@ -108,12 +108,11 @@ a { color: inherit; text-decoration: none; }
   border-right: 1px solid var(--df-border);
 }
 .df-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: block;
   padding: 16px;
   border-bottom: 1px solid var(--df-border);
 }
+.df-header p { margin: 6px 0 0; color: var(--df-text-secondary); font-size: 14px; }
 .df-header h1 {
   font-family: "Fredoka", sans-serif;
   font-size: 20px;
@@ -160,6 +159,7 @@ a { color: inherit; text-decoration: none; }
   justify-content: center;
   gap: 12px;
 }
+a.df-hero-btn { display: inline-block; text-decoration: none; }
 .df-hero-btn {
   padding: 12px 24px;
   border-radius: 9999px;
@@ -416,7 +416,22 @@ a { color: inherit; text-decoration: none; }
   font-size: 12px;
   color: var(--df-text-secondary);
 }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; overflow: auto; position: relative; height: auto; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; height: 100vh; overflow: auto; position: relative; }
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-card, html.indesk body.df-dogefeed .df-hero { background: #0a0a0a !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-hero h2, html.indesk body.df-dogefeed .df-hero p, html.indesk body.df-dogefeed .df-header p { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-launch-img { background: #111 !important; }
+html.indesk body.df-dogefeed .df-tab { background: transparent !important; color: #fff6dd !important; border: 1px solid rgba(255,255,255,.25) !important; width: auto !important; box-shadow: none !important; }
+html.indesk body.df-dogefeed .df-tab.active { background: #f3e3a5 !important; color: #000 !important; }
+html.indesk body.df-dogefeed .df-signin-btn, html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; width: auto !important; }
+html.indesk body.df-dogefeed .df-search { background: #111 !important; }
 </style>
+<script>document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <nav class="df-sidebar">
@@ -515,7 +530,7 @@ a { color: inherit; text-decoration: none; }
       <h2>Launch on Dogecoin</h2>
       <p>Discover new projects, participate in mints, and be early to the next big Doginal collection</p>
       <div class="df-hero-btns">
-        <button class="df-hero-btn primary">Apply to Launch</button>
+        <a class="df-hero-btn primary" href="/mintpad/new">Apply to Launch</a>
         <button class="df-hero-btn secondary">Learn More</button>
       </div>
     </div>
@@ -527,110 +542,7 @@ a { color: inherit; text-decoration: none; }
     </div>
     
     <div class="df-launch-list" id="df-launches">
-      <div class="df-launch">
-        <div class="df-launch-header">
-          <div class="df-launch-img">
-            <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-          </div>
-          <div class="df-launch-info">
-            <div class="df-launch-title">
-              <span class="df-launch-name">Doge Punks</span>
-              <span class="df-launch-badge live">Live</span>
-            </div>
-            <div class="df-launch-desc">10,000 unique pixel art doges on Dogecoin</div>
-            <div class="df-launch-stats">
-              <div class="df-launch-stat">
-                <span class="df-launch-stat-label">Price</span>
-                <span class="df-launch-stat-value">50 DOGE</span>
-              </div>
-              <div class="df-launch-stat">
-                <span class="df-launch-stat-label">Supply</span>
-                <span class="df-launch-stat-value">10,000</span>
-              </div>
-              <div class="df-launch-stat">
-                <span class="df-launch-stat-label">Minted</span>
-                <span class="df-launch-stat-value">3,245</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="df-launch-progress">
-          <div class="df-launch-progress-bar">
-            <div class="df-launch-progress-fill" style="width: 32.45%"></div>
-          </div>
-          <div class="df-launch-progress-text">
-            <span>32.45% minted</span>
-            <span>6,755 remaining</span>
-          </div>
-        </div>
-      </div>
-      
-      <div class="df-launch">
-        <div class="df-launch-header">
-          <div class="df-launch-img">
-            <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-          </div>
-          <div class="df-launch-info">
-            <div class="df-launch-title">
-              <span class="df-launch-name">Shiba Society</span>
-              <span class="df-launch-badge upcoming">Upcoming</span>
-            </div>
-            <div class="df-launch-desc">Hand-drawn shiba inu art collection</div>
-            <div class="df-launch-stats">
-              <div class="df-launch-stat">
-                <span class="df-launch-stat-label">Price</span>
-                <span class="df-launch-stat-value">100 DOGE</span>
-              </div>
-              <div class="df-launch-stat">
-                <span class="df-launch-stat-label">Supply</span>
-                <span class="df-launch-stat-value">5,000</span>
-              </div>
-              <div class="df-launch-stat">
-                <span class="df-launch-stat-label">Starts</span>
-                <span class="df-launch-stat-value">Nov 15</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      <div class="df-launch">
-        <div class="df-launch-header">
-          <div class="df-launch-img">
-            <svg viewBox="0 0 24 24" fill="none" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-          </div>
-          <div class="df-launch-info">
-            <div class="df-launch-title">
-              <span class="df-launch-name">Doginal Dogs</span>
-              <span class="df-launch-badge ended">Sold Out</span>
-            </div>
-            <div class="df-launch-desc">The OG Doginal collection</div>
-            <div class="df-launch-stats">
-              <div class="df-launch-stat">
-                <span class="df-launch-stat-label">Price</span>
-                <span class="df-launch-stat-value">25 DOGE</span>
-              </div>
-              <div class="df-launch-stat">
-                <span class="df-launch-stat-label">Supply</span>
-                <span class="df-launch-stat-value">10,000</span>
-              </div>
-              <div class="df-launch-stat">
-                <span class="df-launch-stat-label">Floor</span>
-                <span class="df-launch-stat-value">500 DOGE</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="df-launch-progress">
-          <div class="df-launch-progress-bar">
-            <div class="df-launch-progress-fill" style="width: 100%"></div>
-          </div>
-          <div class="df-launch-progress-text">
-            <span>100% minted</span>
-            <span>Sold out!</span>
-          </div>
-        </div>
-      </div>
+      <p class="df-empty">Loading public launches…</p>
     </div>
   </main>
 
@@ -643,17 +555,9 @@ a { color: inherit; text-decoration: none; }
     <div class="df-card">
       <h2 class="df-card-title">Top Launches</h2>
       <div class="df-card-item">
-        <div class="df-card-item-img"></div>
         <div class="df-card-item-info">
-          <div class="df-card-item-name">Doge Punks</div>
-          <div class="df-card-item-meta">32.45% minted</div>
-        </div>
-      </div>
-      <div class="df-card-item">
-        <div class="df-card-item-img"></div>
-        <div class="df-card-item-info">
-          <div class="df-card-item-name">Doginal Dogs</div>
-          <div class="df-card-item-meta">Sold out · 500 DOGE floor</div>
+          <div class="df-card-item-name">None yet</div>
+          <div class="df-card-item-meta">No public launch list to rank.</div>
         </div>
       </div>
     </div>
@@ -673,13 +577,42 @@ a { color: inherit; text-decoration: none; }
 <script>
 (function() {
   'use strict';
-  
+  var box = document.getElementById('df-launches');
+  var side = document.querySelector('.df-card .df-card-item-info');
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function abs(url) { return url && url.charAt(0) === '/' ? 'https://dogefeed.app' + url : (url || ''); }
+  function empty() {
+    box.innerHTML = '<p class="df-empty">No public launch list. dogefeed.app does not publish one to read. Launch a collection you already inscribed on this arcade.</p>';
+  }
   document.querySelectorAll('.df-tab').forEach(function(tab) {
     tab.addEventListener('click', function() {
       document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
       this.classList.add('active');
     });
   });
+  fetch('/dogefeedx/api/launchpad')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      var rows = data.launches || [];
+      if (!rows.length) { empty(); return; }
+      box.innerHTML = rows.map(function (row) {
+        var src = abs(row.image);
+        var width = String(row.pct || '').replace('%', '');
+        return '<div class="df-launch"><div class="df-launch-header">'
+          + (src ? '<div class="df-launch-img"><img src="' + esc(src) + '" alt=""></div>' : '')
+          + '<div class="df-launch-info"><div class="df-launch-title"><span class="df-launch-name">' + esc(row.name) + '</span>'
+          + '<span class="df-launch-badge live">Live</span></div>'
+          + '<div class="df-launch-desc">' + esc(row.detail) + '</div>'
+          + '<div class="df-launch-stats"><span>' + esc(row.progress) + '</span></div></div></div>'
+          + '<div class="df-launch-progress"><div class="df-launch-progress-bar"><div class="df-launch-progress-fill" style="width:' + esc(width) + '%"></div></div>'
+          + '<div class="df-launch-progress-text"><span>' + esc(row.progress) + '</span><span>' + esc(row.pct) + '</span></div></div></div>';
+      }).join('');
+      if (side) {
+        side.innerHTML = '<div class="df-card-item-name">' + esc(rows[0].name) + '</div>'
+          + '<div class="df-card-item-meta">' + esc(rows[0].progress) + '</div>';
+      }
+    })
+    .catch(empty);
 })();
 </script>
 {% endblock %}

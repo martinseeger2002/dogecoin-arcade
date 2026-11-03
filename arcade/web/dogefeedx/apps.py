@@ -13,6 +13,7 @@ All results are cached locally with graceful fallback when services are unreacha
 """
 from __future__ import annotations
 
+import asyncio
 import time
 import logging
 from functools import lru_cache
@@ -1259,10 +1260,14 @@ async def api_memes():
     """Public meme library, if dogefeed.app publishes one. Empty when it does not."""
     from .public_read import empty, fetch_json
 
-    for path in ("/api/memes", "/api/meme"):
+    async def _one(path: str):
         try:
-            data = await fetch_json(path)
+            return await fetch_json(path)
         except Exception:
+            return None
+
+    for data in await asyncio.gather(_one("/api/memes"), _one("/api/meme")):
+        if not data:
             continue
         rows = data if isinstance(data, list) else data.get("memes") or data.get("items") or []
         memes = []
@@ -1276,7 +1281,31 @@ async def api_memes():
             })
         if memes:
             return {"memes": memes, "source": "dogefeed.app"}
+    from .public_read import fetch_html, parse_memes
+
+    try:
+        page = await fetch_html("/memes")
+    except Exception:
+        page = ""
+    rows = parse_memes(page) if page else []
+    if rows:
+        return {"memes": rows, "source": "dogefeed.app"}
     return empty("no_public_list", memes=[])
+
+
+@router.get("/api/launchpad")
+async def api_launchpad():
+    """Public minting-now cards from dogefeed.app/launchpad. Empty when the page has none."""
+    from .public_read import empty, fetch_html, parse_launchpad
+
+    try:
+        page = await fetch_html("/launchpad")
+    except Exception:
+        return empty("no_public_list", launches=[])
+    rows = parse_launchpad(page)
+    if not rows:
+        return empty("no_public_list", launches=[])
+    return {"launches": rows, "source": "dogefeed.app"}
 
 
 @router.get("/api/whoami")

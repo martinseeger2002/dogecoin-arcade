@@ -58,8 +58,8 @@ _LEADERBOARD_RANGES = {"1d", "7d", "30d", "all"}
 
 
 async def fetch_html(path: str, params: dict | None = None) -> str:
-    """GET one public HTML page. Only /, /market, /leaderboard and /u/<handle>."""
-    allowed = path in ("/", "/market", "/leaderboard") or (
+    """GET one public HTML page. Only the public boards and a profile."""
+    allowed = path in ("/", "/market", "/leaderboard", "/memes", "/launchpad") or (
         path.startswith("/u/") and _HANDLE.fullmatch(path[3:])
     )
     if not allowed:
@@ -227,6 +227,57 @@ def parse_market(html: str) -> dict:
             "verified": 'aria-label="Verified"' in body,
         })
     return {"stats": stats, "collections": collections, "source": "dogefeed.app"}
+
+
+def parse_memes(html: str, limit: int = 48) -> list[dict]:
+    """Public meme cards from /memes. Empty when the grid is absent."""
+    found: list[dict] = []
+    seen: set[str] = set()
+    for match in re.finditer(
+        r'href="(/memes/[A-Za-z0-9]+)"[^>]*>\s*<img src="(/api/media/[^"]+)" alt="([^"]*)"',
+        html,
+    ):
+        image = match.group(2)
+        if image in seen:
+            continue
+        seen.add(image)
+        found.append({
+            "id": match.group(1).rsplit("/", 1)[-1],
+            "name": unescape(match.group(3)).strip(),
+            "image": image,
+        })
+        if len(found) >= limit:
+            break
+    return found
+
+
+def _plain(chunk: str) -> str:
+    text = re.sub(r"<!--.*?-->", "", chunk or "")
+    return re.sub(r"\s+", " ", unescape(text)).strip()
+
+
+def parse_launchpad(html: str) -> list[dict]:
+    """Minting-now cards from the public launchpad. Empty when none are rendered."""
+    found: list[dict] = []
+    for match in re.finditer(
+        r'data-testid="launchpad-card" href="(/launchpad/[a-z0-9-]+)"([\s\S]*?)</a>',
+        html,
+    ):
+        href, body = match.group(1), match.group(2)
+        name = re.search(r'font-black">([^<]+)</p>', body)
+        image = re.search(r'<img src="([^"]+)"', body)
+        detail = re.search(r'text-white/60">([\s\S]*?)</p>', body)
+        progress = re.search(r'data-testid="launchpad-progress">([\s\S]*?)</span>', body)
+        pct = re.search(r'data-testid="launchpad-progress-pct">([^<]+)', body)
+        found.append({
+            "slug": href.rsplit("/", 1)[-1],
+            "name": _plain(name.group(1)) if name else "",
+            "image": image.group(1) if image else "",
+            "detail": _plain(detail.group(1)) if detail else "",
+            "progress": _plain(progress.group(1)) if progress else "",
+            "pct": _plain(pct.group(1)) if pct else "",
+        })
+    return found
 
 
 def empty(error: str, **extra) -> dict:

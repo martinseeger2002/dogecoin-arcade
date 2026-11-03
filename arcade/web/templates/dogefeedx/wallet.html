@@ -328,7 +328,22 @@ a { color: inherit; text-decoration: none; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; overflow: auto; position: relative; height: auto; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; height: 100vh; overflow: auto; position: relative; }
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header, html.indesk body.df-dogefeed .df-topbar { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background: #0a0a0a !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-signin-btn, html.indesk body.df-dogefeed .df-lookup-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; width: auto !important; }
+html.indesk body.df-dogefeed .df-search, html.indesk body.df-dogefeed input { background: #111 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-notice { background: #111 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-notice strong { color: #f3e3a5 !important; }
+html.indesk body.df-dogefeed .df-chain-btn { background: #111 !important; color: #fff6dd !important; width: auto !important; box-shadow: none !important; }
+html.indesk body.df-dogefeed .df-chain-btn.active { background: #1a1a1a !important; color: #fff6dd !important; border-color: #f3e3a5 !important; }
 </style>
+<script>document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <!-- Left Sidebar -->

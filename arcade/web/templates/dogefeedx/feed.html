@@ -312,6 +312,19 @@ a { color: inherit; text-decoration: none; }
   color: var(--df-text-secondary);
   cursor: pointer;
 }
+.df-draft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 12px;
+  padding: 8px;
+  border: 1px solid var(--df-border);
+  border-radius: 12px;
+}
+.df-draft[hidden] { display: none !important; }
+.df-draft img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; }
+.df-draft span { flex: 1; color: var(--df-text-secondary); font-size: 13px; }
+.df-draft button { width: auto; background: transparent; border: 1px solid var(--df-border); border-radius: 999px; padding: 4px 10px; cursor: pointer; }
 
 /* Posts */
 .df-posts {
@@ -766,6 +779,7 @@ a { color: inherit; text-decoration: none; }
       </div>
       <div class="df-composer-input">What's the latest? Sign in to bark.</div>
     </div>
+    <div class="df-draft" id="df-draft" hidden></div>
     
     <div class="df-posts" id="df-posts">
       <div class="df-loading">
@@ -799,6 +813,28 @@ a { color: inherit; text-decoration: none; }
   </aside>
 </div>
 
+<script>
+(function () {
+  var box = document.getElementById('df-draft');
+  if (!box) return;
+  function show() {
+    var raw = '';
+    try { raw = localStorage.getItem('dogefeedx.draftMeme') || ''; } catch (e) {}
+    if (!raw) { box.hidden = true; box.innerHTML = ''; return; }
+    var meme;
+    try { meme = JSON.parse(raw); } catch (e) { box.hidden = true; return; }
+    if (!meme || !meme.data) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = '<img alt="" src="' + meme.data + '"><span>Attached from Meme Library. Saved in this browser. Not sent to dogefeed.app.</span><button type="button" id="df-draft-clear">Remove</button>';
+    var clear = document.getElementById('df-draft-clear');
+    if (clear) clear.addEventListener('click', function () {
+      try { localStorage.removeItem('dogefeedx.draftMeme'); } catch (e) {}
+      show();
+    });
+  }
+  show();
+})();
+</script>
 <script>
 (function() {
   'use strict';

@@ -327,6 +327,14 @@ def test_the_dock_magnifies_shows_real_badges_and_opens_each_app_once(base):
         page.goto(base + "/desktop")
         _wait_skin(page, "dogefeedx")
         _deduped(page)
+        strip = page.evaluate("""() => ({
+          body: getComputedStyle(document.body).backgroundColor,
+          desk: getComputedStyle(document.querySelector('.dk')).bottom,
+          dock: getComputedStyle(document.querySelector('.dk-dock')).bottom
+        })""")
+        assert strip["body"] == "rgb(13, 13, 14)", strip
+        assert strip["desk"] == "0px" and strip["dock"] == "0px", strip
+        page.screenshot(path="/opt/cursor/artifacts/compare/desktop-bottom-dfx.png")
 
         apps = page.locator("#dk-dock .dfx-dock-app")
         assert apps.count() == 16
@@ -374,8 +382,39 @@ def test_the_dock_magnifies_shows_real_badges_and_opens_each_app_once(base):
             assert body.evaluate("() => location.pathname") == path, title
             html = body.inner_html()
             assert needle in html or needle in body.inner_text(), (title, needle)
-            if title in ("Files", "Notifications", "Leaderboard", "Settings"):
-                win.screenshot(path=f"/opt/cursor/artifacts/compare/{title.lower()}-window-dfx.png")
+            if title == "Files":
+                body.get_by_text("This does not read a DogeFeed wallet.").wait_for(timeout=15000)
+                html = body.inner_html()
+                assert "/account/nfts/collections" in html and "DRC-20" in html and "Names" in html
+            if title == "Meme Library":
+                assert "Pick a picture" in html and "dogefeedx.memes" in html
+                page.wait_for_function(
+                    """() => {
+                      const f = [...document.querySelectorAll('iframe')].find(el => (el.getAttribute('src') || '').endsWith('/dogefeedx/memes'));
+                      const box = f && f.contentDocument && f.contentDocument.getElementById('memes');
+                      if (!box || /Loading/.test(box.textContent)) return false;
+                      const imgs = [...box.querySelectorAll('img')];
+                      return !imgs.length || imgs.some(i => i.complete && i.naturalWidth > 0);
+                    }""",
+                    timeout=25000)
+            if title == "Launchpad":
+                page.wait_for_function(
+                    """() => {
+                      const f = [...document.querySelectorAll('iframe')].find(el => (el.getAttribute('src') || '').endsWith('/dogefeedx/launchpad'));
+                      const box = f && f.contentDocument && f.contentDocument.getElementById('df-launches');
+                      if (!box || /Loading/.test(box.textContent)) return false;
+                      const imgs = [...box.querySelectorAll('img')];
+                      return !imgs.length || imgs.some(i => i.complete && i.naturalWidth > 0);
+                    }""",
+                    timeout=25000)
+            if title == "Leaderboard":
+                body.locator("#df-leaderboard .df-empty, #df-leaderboard a").first.wait_for(timeout=20000)
+            if title == "NFTs":
+                body.locator("#df-nfts .df-empty, #df-nfts .df-nft-card").first.wait_for(timeout=20000)
+            if title in ("Files", "Notifications", "Messages", "Inscribe", "Wallet",
+                         "Launchpad", "NFTs", "Bookmarks", "Meme Library", "Leaderboard", "Settings"):
+                slug = title.lower().replace(" ", "-")
+                win.screenshot(path=f"/opt/cursor/artifacts/compare/{slug}-window-dfx.png")
             win.locator('[data-a="close"]').click()
             page.wait_for_function(
                 """(path) => ![...document.querySelectorAll('.dk-win iframe')].some(f => f.getAttribute('src') === path)""",

@@ -88,6 +88,26 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: dock strip, Files wallet, meme picker, launch list (Cursor Cloud Agent)
+The light band under the DogeFeedX dock is the wallpaper now. Files reads this arcade's wallet. Meme Library can hold a local picture, and it also shows the public meme grid.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** recorded in the commit that adds this entry
+
+**What changed:**
+- `desktop.html`: on the DogeFeedX skin the page ground is `#0d0d0e` and the desktop runs to the bottom edge. The dock sits on that edge. Icons and windows stay above the dock.
+- `dogefeedx/files.html`: Finder. The left pane lists collections from `/account/nfts/collections`. A collection opens `/account/nfts/pieces`. DRC-20 is `/account/token20`. Names are `/account/names`. Signed out, the chrome stays and the pane says to sign in here. No spend, and no DogeFeed wallet.
+- `dogefeedx/memes.html`: Pick a picture keeps a small copy in this browser (`dogefeedx.memes`) and can attach it to the Home draft (`dogefeedx.draftMeme`). The public grid is parsed from dogefeed.app/memes. Nothing is uploaded.
+- `dogefeedx/launchpad.html`: the invented Doge Punks and Shiba Society rows are gone. Minting-now cards are parsed from the public launchpad (999 Club, Byte Bubbles, and whatever else that page renders). Apply to Launch still opens `/mintpad/new` on this arcade.
+- Wallet, NFTs, Launchpad, Notifications, Messages, Bookmarks, Leaderboard and Settings keep the dark window skin so headings and buttons stay readable inside the desktop.
+- Checklist and side-by-side shots are in the compare folder, not in this repository.
+
+**Verified:** `tests/test_desktop_theme_switch.py` checks the page ground and the dock edge, opens Files and waits for the sign-in line, and opens Meme Library and Launchpad after their public pictures load. `tests/test_dogefeedx_public.py` locks the meme and launchpad parsers and forbids the invented launch names.
+
+**No action needed from SadFrog.** Read-only public reads plus local-only saves. No signing, no spends, no wallets, no keys, no deploy.
+
+---
+
 ### 2026-11-03 DogeFeedX: macOS dock, theme switch, market window (Cursor Cloud Agent)
 The DogeFeedX dock is sixteen apps, once each. Theme switching works from inside every desktop look. The Market window is the dark board.
 

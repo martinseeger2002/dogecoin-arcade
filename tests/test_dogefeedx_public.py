@@ -3,9 +3,11 @@ import re
 from pathlib import Path
 
 from arcade.web.dogefeedx.public_read import (
+    parse_launchpad,
     parse_leaderboard,
     parse_leaderboard_page,
     parse_market,
+    parse_memes,
     parse_profile_card,
     parse_suggestions,
     parse_trending,
@@ -82,6 +84,37 @@ def test_market_keeps_a_blank_floor_and_the_traded_total():
     assert parsed["collections"][0]["floor"] == "—"
 
 
+MEMES = '''<a href="/memes/abc123def" class="card"><img src="/api/media/local/one.webp" alt="0 days without (Lenny, Simpsons)" class="aspect-square">'''
+
+LAUNCH = '''<a data-testid="launchpad-card" href="/launchpad/999club"><img src="/api/media/local/club.jpg" alt="">
+<p class="truncate font-black">999 Club</p><p class="text-xs text-white/60">69<!-- --> DOGE · <!-- -->Max 10 per mint</p>
+<span data-testid="launchpad-progress">268<!-- --> / <!-- -->1,000<!-- --> minted</span>
+<span data-testid="launchpad-progress-pct">26.8%</span></a>'''
+
+
+def test_public_memes_come_from_the_library_grid():
+    rows = parse_memes(MEMES)
+    assert rows == [{
+        "id": "abc123def",
+        "name": "0 days without (Lenny, Simpsons)",
+        "image": "/api/media/local/one.webp",
+    }]
+    assert parse_memes("<div>no grid</div>") == []
+
+
+def test_launchpad_cards_keep_the_public_mint_counts():
+    rows = parse_launchpad(LAUNCH)
+    assert rows == [{
+        "slug": "999club",
+        "name": "999 Club",
+        "image": "/api/media/local/club.jpg",
+        "detail": "69 DOGE · Max 10 per mint",
+        "progress": "268 / 1,000 minted",
+        "pct": "26.8%",
+    }]
+    assert parse_launchpad("<div>nothing minting</div>") == []
+
+
 def test_runtime_pages_do_not_invent_posts_or_prices():
     banned = ("Doge Lord", "Shiba Master", "Crypto Doge", "Math.random", "leaderboardData", "I run this bitch")
     for name in ("feed.html", "post.html", "profile.html", "explore.html", "market.html", "leaderboard.html"):
@@ -124,3 +157,17 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     assert "/dogefeedx/api/inscription?id=" in search
     profile = (TEMPLATES / "profile.html").read_text()
     assert "dogefeedx.profile" in profile and "Not sent to dogefeed.app." in profile
+    assert 'html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body' in desk
+    assert "[data-skin=\"dogefeedx\"] .dk { top: 28px; left: 0; bottom: 0;" in desk
+    assert "[data-skin=\"dogefeedx\"] .dk-dock { display: flex; position: fixed; left: 50%; bottom: 0;" in desk
+    files = (TEMPLATES / "files.html").read_text()
+    assert "/account/nfts/collections" in files and "/account/nfts/pieces" in files
+    assert "/account/token20?chain=" in files and "/account/names" in files
+    assert 'id="coll-list"' in files
+    memes = (TEMPLATES / "memes.html").read_text()
+    assert 'id="meme-file"' in memes and "dogefeedx.memes" in memes and "dogefeedx.draftMeme" in memes
+    assert "Pick a picture" in memes
+    assert "dogefeedx.draftMeme" in feed
+    launch = (TEMPLATES / "launchpad.html").read_text()
+    assert "No public launch list" in launch
+    assert "Doge Punks" not in launch and "Shiba Society" not in launch
