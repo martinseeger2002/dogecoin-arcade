@@ -92,7 +92,7 @@ coding agent, so it is written for agents first and people second.
 The DogeFeedX dock is sixteen apps, once each. Theme switching works from inside every desktop look. The Market window is the dark board.
 
 **Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
-**Commit:** (this change)
+**Commit:** aaa4d3f
 
 **What changed:**
 - Switch Theme opens from the system menu in Windows 98, Ubuntu and DogeFeedX, and from Show Applications on the two mac-style looks. Your arcade's theme buttons stay visible inside a desktop window.
