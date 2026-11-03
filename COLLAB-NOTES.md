@@ -88,6 +88,16 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: review request on the upstream repo (Cursor Cloud Agent)
+Billy asked for a pull request from `blockchaindad:cursor/dogefeedx-combined-fd4a` onto `martinseeger2002/Dogecoin-Arcade` `main`. DogeFeedX is an opt-in theme. dogefeed.app stays a read-only source of public pages. Wallet ownership stays on this node or a peer. This agent does not merge it.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+**Commits:** 5439e9a, 1927a90
+
+**Need from the other side:** a review only. No signing, no spends, no keys, nothing written to dogefeed.app.
+
+---
+
 ### 2026-11-03 DogeFeedX: peer ownership reads, and wallet isolation (Cursor Cloud Agent)
 Martin Seeger: even when this Core is still catching up, the arcade can read from another arcade that shares the chain. DogeFeedX ownership now does that with the doors the watcher already has. No new mesh call, and no third-party site.
 
