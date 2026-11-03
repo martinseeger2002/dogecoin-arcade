@@ -1069,7 +1069,7 @@ async def api_balance(address: str = ""):
     """Balance from this node's watcher utxo index. No explorer, no key."""
     if not address:
         raise HTTPException(status_code=400, detail="Address required")
-    from .wallet_assets import index_owned, valid_address
+    from .wallet_assets import index_owned, reading_of, valid_address
 
     try:
         valid_address(address)
@@ -1078,12 +1078,15 @@ async def api_balance(address: str = ""):
     try:
         owned = await asyncio.to_thread(index_owned, address)
         amount = owned.get("balance_doge") or "0"
+        reading = reading_of(owned)
     except Exception:
         amount = "0"
+        reading = {"via": "local", "sync": "", "node": "this arcade"}
     return {
         "address": address,
         "balances": [{"chain": "Dogecoin", "amount": str(amount), "symbol": "DOGE"}],
         "source": "node",
+        "reading": reading,
     }
 
 
@@ -1104,7 +1107,7 @@ async def api_address_inscriptions(
     """
     if not address:
         raise HTTPException(status_code=400, detail="Address required")
-    from .wallet_assets import index_owned, valid_address
+    from .wallet_assets import index_owned, reading_of, valid_address
 
     try:
         valid_address(address)
@@ -1113,9 +1116,11 @@ async def api_address_inscriptions(
 
     limit = min(max(1, limit), 100)
     offset = max(0, offset)
+    reading = {"via": "local", "sync": "", "node": "this arcade"}
     try:
         owned = await asyncio.to_thread(index_owned, address)
         pieces = list(owned.get("pieces") or [])
+        reading = reading_of(owned)
     except Exception as exc:
         logger.warning(f"Index inscriptions failed: {exc}")
         pieces = []
@@ -1135,6 +1140,7 @@ async def api_address_inscriptions(
         "limit": limit,
         "has_more": offset + limit < len(pieces),
         "source": "node",
+        "reading": reading,
     }
 
 
@@ -1143,15 +1149,17 @@ async def api_address_tokens(address: str = ""):
     """DRC-20 balances from this arcade's ord index. No explorer, no key."""
     if not address:
         raise HTTPException(status_code=400, detail="Address required")
-    from .wallet_assets import index_owned, valid_address
+    from .wallet_assets import index_owned, reading_of, valid_address
 
     try:
         valid_address(address)
     except ValueError:
         raise HTTPException(status_code=400, detail="Dogecoin address required")
+    reading = {"via": "local", "sync": "", "node": "this arcade"}
     try:
         owned = await asyncio.to_thread(index_owned, address)
         rows = list(owned.get("tokens") or [])
+        reading = reading_of(owned)
     except Exception as exc:
         logger.warning(f"Index tokens failed: {exc}")
         rows = []
@@ -1161,7 +1169,7 @@ async def api_address_tokens(address: str = ""):
         "transferable": row.get("balance") or "0",
         "available": row.get("balance") or "0",
     } for row in rows]
-    return {"address": address, "tokens": tokens, "source": "node"}
+    return {"address": address, "tokens": tokens, "source": "node", "reading": reading}
 
 
 @router.get("/api/wallet/holdings")

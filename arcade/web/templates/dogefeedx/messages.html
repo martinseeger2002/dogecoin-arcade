@@ -228,23 +228,65 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
       <button class="df-signin-btn" type="submit" style="width:auto;padding:10px 16px">Start a DM</button>
       <button class="df-signin-btn" type="button" id="new-group" style="width:auto;padding:10px 16px">New group</button>
     </form>
-    <div id="msg-thread"></div>
+    <div id="msg-thread" data-wallet=""></div>
   </main>
+{% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function () {
   var thread = document.getElementById('msg-thread');
-  function note(text) {
-    thread.innerHTML = '<p class="df-empty">' + text + '</p>';
+  var toBox = document.getElementById('dm-to');
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function rows() {
+    var addr = dfxReadWallet();
+    return addr ? (dfxReadJson('dogefeedx.messages', [], addr) || []) : [];
+  }
+  function paint() {
+    var addr = dfxReadWallet();
+    thread.setAttribute('data-wallet', addr);
+    thread.innerHTML = '';
+    var list = rows();
+    if (!addr) {
+      thread.innerHTML = '<p class="df-empty">Select a wallet on Profile. Nothing from another wallet is shown.</p>';
+    } else if (!list.length) {
+      thread.innerHTML = '<p class="df-empty">No messages for this wallet.</p>';
+    } else {
+      thread.innerHTML = list.map(function (m) {
+        return '<article class="df-thread"><b>' + esc(m.to || '') + '</b><p>' + esc(m.text || '') + '</p></article>';
+      }).join('');
+    }
+    if (addr) dfxSetBadge('messages', list.filter(function (m) { return m.unread; }).length, addr);
+  }
+  function save(list) {
+    var addr = dfxReadWallet();
+    if (!addr) return;
+    dfxWriteJson('dogefeedx.messages', list.slice(0, 50), addr);
+    paint();
   }
   document.getElementById('dm').addEventListener('submit', function (e) {
     e.preventDefault();
-    var to = document.getElementById('dm-to').value.trim();
+    var addr = dfxReadWallet();
+    var to = toBox.value.trim();
+    if (!addr) { paint(); return; }
     if (!to) return;
-    note('A DM to ' + to.replace(/[&<>"']/g, '') + ' stays on this arcade. It is not sent through dogefeed.app.');
+    var list = rows();
+    list.unshift({id: String(Date.now()), to: to, text: 'A DM to ' + to + ' stays on this arcade. It is not sent through dogefeed.app.', unread: true});
+    toBox.value = '';
+    save(list);
   });
   document.getElementById('new-group').addEventListener('click', function () {
-    note('Name the group in the field above. It stays on this arcade.');
+    var addr = dfxReadWallet();
+    if (!addr) { paint(); return; }
+    var name = toBox.value.trim() || 'group';
+    var list = rows();
+    list.unshift({id: String(Date.now()), to: name, text: 'Group ' + name + ' stays on this arcade.', unread: true});
+    save(list);
   });
+  dfxBindWallet(function () {
+    toBox.value = '';
+    thread.innerHTML = '';
+    paint();
+  });
+  dfxEnsureWallet().then(paint);
 })();
 </script>
 

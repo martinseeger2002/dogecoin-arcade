@@ -536,6 +536,7 @@ a { color: inherit; text-decoration: none; }
   
 </div>
 
+{% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function() {
   'use strict';
@@ -693,11 +694,13 @@ a { color: inherit; text-decoration: none; }
         if (save) save.addEventListener('click', function () {
           var id = save.getAttribute('data-id');
           if (!id) return;
-          var rows = [];
-          try { rows = JSON.parse(localStorage.getItem('dogefeedx.bookmarks') || '[]'); } catch (e) {}
+          var addr = dfxReadWallet();
+          if (!addr) { save.title = 'Select a wallet on Profile'; return; }
+          var rows = dfxReadJson('dogefeedx.bookmarks', [], addr);
+          if (!Array.isArray(rows)) rows = [];
           if (!rows.some(function (p) { return p.id === id; })) {
             rows.unshift({id: id, handle: save.getAttribute('data-handle') || '', text: (post.body || post.text || '').slice(0, 180)});
-            localStorage.setItem('dogefeedx.bookmarks', JSON.stringify(rows.slice(0, 100)));
+            dfxWriteJson('dogefeedx.bookmarks', rows.slice(0, 100), addr);
           }
           save.title = 'Saved on this arcade';
         });

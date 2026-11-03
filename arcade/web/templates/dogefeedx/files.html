@@ -51,6 +51,7 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
   </nav>
   <div class="main">
     <h2 id="files-title">Collections</h2>
+    <p class="empty" id="files-reading"></p>
     <div class="tools"><input id="files-q" type="search" placeholder="Search this wallet" aria-label="Search this wallet"></div>
     <div id="files-body"><p class="empty">Looking up this arcade wallet…</p></div>
   </div>
@@ -67,6 +68,12 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
   var open = {kind: 'all'};
   var piecePage = [];
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function readingLine(data) {
+    var r = (data && data.reading) || {};
+    var via = r.via === 'peer' ? 'a peer on the arcade network' : "this arcade's node";
+    var sync = r.sync || '';
+    return 'Read from ' + via + (sync ? '. Local sync: ' + sync : '.');
+  }
   function units(raw, dec) {
     var digits = String(raw || '0').replace(/^-/, '').replace(/^0+(?=\d)/, '');
     var n = Number(dec) || 0;
@@ -224,27 +231,46 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
     if (open.kind === 'collection') paintPieces();
     else paint();
   });
+  var filesSeq = 0;
   function loadFiles() {
-  fetch(dfxHoldingsUrl(), {credentials: 'same-origin', cache: 'no-store'})
-    .then(function (r) { return r.ok ? r.json() : {}; })
-    .then(function (data) {
-      signed = !!(data && data.imported);
-      if (!signed) { paint(); return; }
-      hold.groups = [{
-        net: 'doge',
-        label: (data.addresses && data.addresses[0]) || 'Dogecoin',
-        collections: (data.collections || []).map(function (c) {
-          var pieces = (c.pieces || []).map(function (p) {
-            return {content_type: 'image/png', image: p.image, name: p.title, edition: p.edition, txid: ''};
-          });
-          return {collection: c.name || c.slug, count: c.count, cover: pieces.slice(0, 4), pieces: pieces};
-        })
-      }];
-      hold.tokens = data.tokens || [];
-      hold.names = (data.names || []).map(function (n) { return {name: n.name, chain: 'Dogecoin'}; });
-      paint();
-    })
-    .catch(function () { signed = false; body.innerHTML = '<p class="empty">Could not read this wallet.</p>'; });
+    var mine = ++filesSeq;
+    var addr = dfxReadWallet();
+    signed = false;
+    hold = {groups: [], tokens: [], names: [], trouble: ''};
+    piecePage = [];
+    open = {kind: 'all'};
+    body.innerHTML = '';
+    list.innerHTML = '';
+    title.textContent = '';
+    body.setAttribute('data-wallet', addr);
+    var reading = document.getElementById('files-reading');
+    if (reading) reading.textContent = '';
+    fetch(dfxHoldingsUrl(), {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (data) {
+        if (mine !== filesSeq || dfxReadWallet() !== addr) return;
+        if (reading) reading.textContent = readingLine(data);
+        signed = !!(data && data.imported);
+        if (!signed) { paint(); return; }
+        hold.groups = [{
+          net: 'doge',
+          label: (data.addresses && data.addresses[0]) || 'Dogecoin',
+          collections: (data.collections || []).map(function (c) {
+            var pieces = (c.pieces || []).map(function (p) {
+              return {content_type: 'image/png', image: p.image, name: p.title, edition: p.edition, txid: ''};
+            });
+            return {collection: c.name || c.slug, count: c.count, cover: pieces.slice(0, 4), pieces: pieces};
+          })
+        }];
+        hold.tokens = data.tokens || [];
+        hold.names = (data.names || []).map(function (n) { return {name: n.name, chain: 'Dogecoin'}; });
+        paint();
+      })
+      .catch(function () {
+        if (mine !== filesSeq || dfxReadWallet() !== addr) return;
+        signed = false;
+        body.innerHTML = '<p class="empty">Could not read this wallet.</p>';
+      });
   }
   dfxEnsureWallet().then(loadFiles);
   dfxBindWallet(function () { loadFiles(); });

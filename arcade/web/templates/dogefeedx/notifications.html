@@ -240,23 +240,56 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
       <button type="button" class="df-tab" data-bucket="offer_accepted">Offer accepted</button>
       <button type="button" class="df-tab" data-bucket="offer_denied">Offer denied</button>
     </div>
-    <div id="note-list"><p class="df-empty">Loading…</p></div>
+    <div id="note-list" data-wallet=""><p class="df-empty">Loading…</p></div>
   </main>
+{% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function () {
-  var items = [], bucket = '';
+  var remote = [], bucket = '', seq = 0;
   var labels = {likes:'Like', comments:'Comment', reposts:'Repost', market_sale:'Market sale', market_purchase:'Market purchase', offer_received:'Offer received', offer_accepted:'Offer accepted', offer_denied:'Offer denied'};
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function localRows(addr) {
+    var rows = addr ? dfxReadJson('dogefeedx.notifications', [], addr) : [];
+    return Array.isArray(rows) ? rows : [];
+  }
   function paint() {
-    var rows = items.filter(function (i) { return !bucket || i.bucket === bucket; });
+    var addr = dfxReadWallet();
     var box = document.getElementById('note-list');
+    box.setAttribute('data-wallet', addr);
+    box.innerHTML = '';
+    var mine = localRows(addr);
+    if (addr) dfxSetBadge('notifications', mine.filter(function (i) { return i.unread; }).length, addr);
+    var rows = mine.concat(remote).filter(function (i) { return !bucket || i.bucket === bucket; });
+    if (!addr) {
+      box.innerHTML = '<p class="df-empty">Select a wallet on Profile.</p>';
+      return;
+    }
     if (!rows.length) {
-      box.innerHTML = '<p class="df-empty">Nothing here yet.</p>';
+      box.innerHTML = '<p class="df-empty">No notifications for this wallet.</p>';
       return;
     }
     box.innerHTML = rows.map(function (i) {
       return '<div class="df-collection"><b>' + esc(labels[i.bucket] || i.kind) + '</b><div>' + esc(i.text || '') + '</div></div>';
     }).join('');
+  }
+  function load() {
+    var mine = ++seq;
+    var addr = dfxReadWallet();
+    remote = [];
+    paint();
+    if (!addr) return;
+    fetch('/dogefeedx/api/local/notifications?address=' + encodeURIComponent(addr), {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.ok ? r.json() : {items: []}; })
+      .then(function (data) {
+        if (mine !== seq || dfxReadWallet() !== addr) return;
+        remote = (data.items || []).filter(function (i) {
+          return i && (i.address === addr || String(i.text || '').indexOf(addr) >= 0);
+        });
+        paint();
+      })
+      .catch(function () {
+        if (mine !== seq || dfxReadWallet() !== addr) return;
+      });
   }
   document.getElementById('note-filters').addEventListener('click', function (e) {
     var b = e.target.closest('[data-bucket]'); if (!b) return;
@@ -264,14 +297,8 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
     document.querySelectorAll('#note-filters .df-tab').forEach(function (t) { t.classList.toggle('active', t === b); });
     paint();
   });
-  fetch('/dogefeedx/api/local/notifications', {credentials: 'same-origin'})
-    .then(function (r) { return r.ok ? r.json() : {signed_in: false, items: []}; })
-    .then(function (data) {
-      items = data.items || [];
-      items.signedOut = data.signed_in === false;
-      paint();
-    })
-    .catch(function () { document.getElementById('note-list').innerHTML = '<p class="df-empty">Could not load notifications.</p>'; });
+  dfxBindWallet(function () { remote = []; load(); });
+  dfxEnsureWallet().then(load);
 })();
 </script>
 

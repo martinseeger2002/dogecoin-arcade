@@ -358,6 +358,7 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
     <div class="df-hero">
       <h2>Held by this node's wallet</h2>
       <p>Doginals at the imported Dogecoin addresses, named from DogeFeed's public collections. Watch-only.</p>
+      <p id="nft-reading" style="margin:8px 0 0;font-size:13px;color:var(--df-text-secondary)"></p>
     </div>
     
     <div class="df-tabs">
@@ -382,6 +383,12 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
   var IMG_BASE = 'https://dogefeed.app/doginal-img';
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function readingLine(data) {
+    var r = (data && data.reading) || {};
+    var via = r.via === 'peer' ? 'a peer on the arcade network' : "this arcade's node";
+    var sync = r.sync || '';
+    return 'Read from ' + via + (sync ? '. Local sync: ' + sync : '.');
+  }
   
   function renderNFT(item, collection) {
     var imgUrl = item.id ? IMG_BASE + '/' + item.id : '';
@@ -434,17 +441,27 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
     container.innerHTML = cards.join('') || '<div class="df-empty">No doginals cross-referenced for this wallet.</div>';
   }
 
+  var nftSeq = 0;
   function loadNFTs() {
+    var mine = ++nftSeq;
+    var addr = dfxReadWallet();
     var container = document.getElementById('df-nfts');
-    container.innerHTML = '<div class="df-loading"><div class="df-spinner"></div></div>';
-    fetch(dfxHoldingsUrl())
+    nftRows = [];
+    container.setAttribute('data-wallet', addr);
+    container.innerHTML = '';
+    var reading = document.getElementById('nft-reading');
+    if (reading) reading.textContent = '';
+    fetch(dfxHoldingsUrl(), {cache: 'no-store'})
       .then(function(r) { return r.json(); })
       .then(function(data) {
+        if (mine !== nftSeq || dfxReadWallet() !== addr) return;
+        if (reading) reading.textContent = readingLine(data);
         nftRows = data.collections || [];
         nftRows._empty = data.imported ? 'No doginals cross-referenced for this wallet.' : (data.empty || 'Import a watch-only address on this node.');
         paintNfts();
       })
       .catch(function() {
+        if (mine !== nftSeq || dfxReadWallet() !== addr) return;
         container.innerHTML = '<div class="df-empty">Could not load NFTs</div>';
       });
   }

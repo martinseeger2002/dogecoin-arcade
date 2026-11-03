@@ -28,6 +28,7 @@ a { color:#f3e3a5; }
 
   <h2>Profile</h2>
   <p class="note">Display name, DNS handle and website. Your chain name, when this arcade has one, is shown under the fields.</p>
+  <p class="note" id="settings-who"></p>
   <input id="display-name" type="text" maxlength="40" placeholder="Display name" aria-label="Display name">
   <input id="dns" type="text" maxlength="64" placeholder="DNS handle, like you.doge" aria-label="DNS handle">
   <input id="website" type="text" maxlength="200" placeholder="Website" aria-label="Website">
@@ -44,35 +45,50 @@ a { color:#f3e3a5; }
   <button type="button" class="save" id="save">Save on this browser</button>
   <p id="said" class="note"></p>
 </div>
+{% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function () {
   var KEY = 'dogefeedx.settings';
-  function read() { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return {}; } }
-  function fill(s) {
-    document.getElementById('display-name').value = s.displayName || '';
-    document.getElementById('dns').value = s.dns || '';
-    document.getElementById('website').value = s.website || '';
-    ['n-likes', 'n-comments', 'n-reposts', 'n-market'].forEach(function (id) {
-      document.getElementById(id).checked = s[id] !== false;
-    });
+  function read() {
+    var s = dfxReadJson(KEY, {});
+    return s && typeof s === 'object' && !Array.isArray(s) ? s : {};
   }
-  fill(read());
+  function fill() {
+    var s = read();
+    var addr = dfxReadWallet();
+    document.getElementById('display-name').value = addr ? (s.displayName || '') : '';
+    document.getElementById('settings-who').textContent = addr ? (s.displayName || '') : '';
+    document.getElementById('dns').value = addr ? (s.dns || '') : '';
+    document.getElementById('website').value = addr ? (s.website || '') : '';
+    ['n-likes', 'n-comments', 'n-reposts', 'n-market'].forEach(function (id) {
+      document.getElementById(id).checked = !addr || s[id] !== false;
+    });
+    document.getElementById('said').textContent = addr ? '' : 'Select a wallet on Profile.';
+    document.getElementById('chain-name').setAttribute('data-wallet', addr);
+  }
+  dfxBindWallet(function () { fill(); });
+  dfxEnsureWallet().then(fill);
   fetch('/account', {credentials: 'same-origin'}).then(function (r) { return r.ok ? r.json() : {}; }).then(function (a) {
     var bits = [];
     if (a && a.tag) bits.push('Chain name @' + a.tag);
     if (a && a.profile && a.profile.url) bits.push(a.profile.url);
-    document.getElementById('chain-name').textContent = bits.join(' · ');
+    var node = bits.join(' · ');
+    var el = document.getElementById('chain-name');
+    if (node && !el.textContent) el.textContent = node;
   }).catch(function () {});
   document.getElementById('save').addEventListener('click', function () {
+    var addr = dfxReadWallet();
+    if (!addr) { fill(); return; }
     var s = {
       displayName: document.getElementById('display-name').value.trim(),
       dns: document.getElementById('dns').value.trim(),
       website: document.getElementById('website').value.trim()
     };
     ['n-likes', 'n-comments', 'n-reposts', 'n-market'].forEach(function (id) { s[id] = document.getElementById(id).checked; });
-    localStorage.setItem(KEY, JSON.stringify(s));
-    localStorage.setItem('dogefeedx.profile', JSON.stringify({displayName: s.displayName, dns: s.dns, website: s.website}));
-    document.getElementById('said').textContent = 'Saved in this browser. Not sent to dogefeed.app.';
+    dfxWriteJson(KEY, s, addr);
+    dfxWriteJson('dogefeedx.profile', {displayName: s.displayName, dns: s.dns, website: s.website}, addr);
+    document.getElementById('said').textContent = 'Saved in this browser for this wallet. Not sent to dogefeed.app.';
+    document.getElementById('settings-who').textContent = s.displayName || '';
   });
 })();
 </script>

@@ -1,10 +1,13 @@
 """Watch-only holdings for one Dogecoin address.
 
-What the address owns comes from this node: the watcher's utxo index (the
+What the address owns comes from this arcade: the watcher's coin index (the
 balance), the ledger's inscription index (doginals), and the ord index
-(DRC-20 balances and names). dogefeed.app is read only to label a collection
-this index already holds (its public name, cover, and floor). Nothing here
-asks for a key, signs, or spends, and nothing is written to dogefeed.app.
+(DRC-20 balances and names). While this Core is behind, or the chain is
+borrowed, those reads go to a linked arcade the way the watcher already
+asks (`utxoset.LentSet`, `coinscan`, `DoginalIndex.lookup`). dogefeed.app is
+read only to label a collection this index already holds (its public name,
+cover, and floor). Nothing here asks for a key, signs, or spends, and
+nothing is written to dogefeed.app. No third-party explorer is asked.
 
 Outpoints are asked of the name index inside this process and are not returned.
 """
@@ -387,52 +390,326 @@ def _pieces_from_index(index, address: str) -> list[dict]:
     return found
 
 
-def index_owned(address: str) -> dict:
-    """Balance, doginals, DRC-20, and names from this node's indexes.
+def _clean_reading(raw) -> dict:
+    """Which node answered, and how far this arcade's own Core is. No coin, no outpoint."""
+    raw = raw if isinstance(raw, dict) else {}
+    via = "peer" if raw.get("via") == "peer" else "local"
+    sync = str(raw.get("sync") or "")[:240]
+    node = str(raw.get("node") or "this arcade")[:80]
+    return {"via": via, "sync": sync, "node": node}
 
-    The watcher utxo rows are summed for the balance and handed to the name
-    index. They are not part of the result: no script, no outpoint.
+
+def reading_of(owned) -> dict:
+    """The reading line for an API answer. Only via, sync, and node."""
+    raw = owned.get("reading") if isinstance(owned, dict) else None
+    return _clean_reading(raw)
+
+
+def _wants_peer(chain) -> bool:
+    """True when this chain is borrowed, or this Core is behind and a linked arcade shares it.
+
+    `core_catchup.borrowing` is the same switch `ChainContext.rpc` uses. A chain with no
+    sharer stays on this Core.
+    """
+    if getattr(chain, "borrowed", False):
+        return True
+    try:
+        from arcade import core_catchup
+        return bool(core_catchup.borrowing(chain))
+    except Exception:
+        return False
+
+
+def _sync_text(chain, *, wanted_peer: bool, coins_from_peer: bool) -> str:
+    """Local sync, from `core_catchup.say` (this Core), never the peer's tip."""
+    said = None
+    if chain is not None:
+        try:
+            from arcade import core_catchup
+            said = core_catchup.say(chain)
+        except Exception:
+            said = None
+    if said:
+        line = str(said)
+    elif chain is not None and getattr(chain, "borrowed", False):
+        line = "this chain is borrowed; this arcade has no Core of its own"
+    elif chain is not None:
+        line = "this Core is at the tip"
+    else:
+        line = ""
+    if wanted_peer and not coins_from_peer:
+        extra = "No coin set was lent, so the balance is this arcade's own index."
+        if extra not in line:
+            line = (line.rstrip(".") + ". " + extra).strip()
+    return line[:240]
+
+
+def _as_coin(row) -> dict | None:
+    if isinstance(row, dict):
+        txid, vout, value = row.get("txid"), row.get("vout"), row.get("value")
+    elif isinstance(row, (list, tuple)) and len(row) >= 3:
+        txid, vout, value = row[0], row[1], row[2]
+    else:
+        return None
+    txid = str(txid or "")
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", txid):
+        return None
+    try:
+        return {"txid": txid, "vout": int(vout), "value": int(value)}
+    except (TypeError, ValueError):
+        return None
+
+
+def _rows_from_scan(said, address: str) -> list[dict] | None:
+    """Coins a sharer already has. An address still waiting is not an answer."""
+    if not isinstance(said, list):
+        return None
+    for one in said:
+        if not isinstance(one, dict):
+            continue
+        coins = one.get("coins")
+        if isinstance(coins, dict) and address in coins:
+            return [row for row in (_as_coin(c) for c in (coins.get(address) or [])) if row]
+    return None
+
+
+def _coins_from_peer(chain, address: str) -> list[dict] | None:
+    """Coins a linked arcade lent for this address, or None when it lent none.
+
+    Same two doors the watcher uses: `LentSet.fetch` (`_utxoset_lent_pass`), then
+    `arcade_coinscan` (`coinscan.collect`). The coin rows stay in this process.
+    """
+    from arcade import coinscan, utxoset as utxosetlib
+    from arcade.rpc import RpcError
+
+    try:
+        rpc_cm = chain.rpc()
+    except Exception:
+        return None
+    try:
+        with rpc_cm as rpc:
+            lent = None
+            try:
+                lent = utxosetlib.LentSet.fetch(rpc, [address])
+            except (RpcError, utxosetlib.UtxoSetError, KeyError, TypeError, ValueError):
+                lent = None
+            if lent is not None:
+                return [row for row in (_as_coin(c) for c in lent.unspent(address)) if row]
+            try:
+                said = rpc.batch([(coinscan.SCAN_METHOD, [{"addresses": [address]}])])
+            except (RpcError, TypeError, ValueError):
+                return None
+            return _rows_from_scan(said, address)
+    except Exception:
+        return None
+
+
+def _postage_first(coins: list[dict]) -> list[dict]:
+    from arcade.doginals import POSTAGE_MAX
+
+    def key(coin: dict) -> tuple:
+        value = int(coin.get("value") or 0)
+        return (0 if 0 < value <= POSTAGE_MAX else 1, value)
+
+    return sorted(coins, key=key)
+
+
+def _is_postage(value: int) -> bool:
+    from arcade.doginals import POSTAGE_MAX
+    return 0 < int(value) <= POSTAGE_MAX
+
+
+def _ask_ord(ordix, question: dict) -> tuple[dict | None, str]:
+    """`DoginalIndex.lookup`: the most complete walker, then this arcade. (`via`, from its `from`.)"""
+    if ordix is None:
+        return None, "local"
+    said = None
+    try:
+        said = ordix.lookup(question)
+    except Exception:
+        try:
+            said = ordix.answer(question)
+        except Exception:
+            return None, "local"
+        if isinstance(said, dict):
+            said = {**said, "from": "this arcade"}
+    if not isinstance(said, dict):
+        return None, "local"
+    origin = str(said.get("from") or "")
+    return said, ("peer" if origin.startswith("arcade ") else "local")
+
+
+def _pieces_on(ordix, coins: list[list]) -> tuple[list[dict], str, str, bool]:
+    """Inscriptions on coins, from `lookup` `on`. Text, JSON, and scripts stay out.
+
+    The fourth value is whether a walker answered. Coins are not returned.
+    """
+    found: list[dict] = []
+    seen: set[str] = set()
+    via = "local"
+    node = "this arcade"
+    answered = False
+    for txid, vout in coins[:24]:
+        said, one_via = _ask_ord(ordix, {"what": "on", "txid": txid, "vout": int(vout)})
+        if said is None or "on" not in said:
+            continue
+        answered = True
+        if one_via == "peer":
+            via = "peer"
+            node = str(said.get("from") or node)
+        for row in said.get("on") or []:
+            if not isinstance(row, dict):
+                continue
+            iid = str(row.get("id") or "")
+            if not _INSCRIPTION.fullmatch(iid) or iid in seen:
+                continue
+            ctype = str(row.get("ctype") or "")
+            if ctype.startswith("text/") or ctype.startswith("application/json") or "javascript" in ctype:
+                continue
+            seen.add(iid)
+            found.append({
+                "slug": "",
+                "title": "Doginal",
+                "edition": "",
+                "inscription_id": iid,
+                "image": f"/content/{iid[:64]}",
+            })
+    return found, via, node, answered
+
+
+def _note_peer(any_peer: bool, peer_node: str, via: str, said) -> tuple[bool, str]:
+    if via == "peer" and isinstance(said, dict):
+        return True, peer_node or str(said.get("from") or "")
+    return any_peer, peer_node
+
+
+def index_owned(address: str) -> dict:
+    """Balance, doginals, DRC-20, and names.
+
+    On a synced Core this is the local indexes. While this Core is behind, or the
+    chain is borrowed, coins come from the sharer (`LentSet`, then `arcade_coinscan`)
+    and DRC-20, names, and inscriptions come from `DoginalIndex.lookup`. A sharer
+    that lent no coin set falls back to this arcade's own index. Coin rows are
+    summed and handed to the name index. They are not part of the result.
     """
     address = valid_address(address)
-    out: dict = {"balance_doge": None, "names": [], "tokens": [], "pieces": []}
+    out: dict = {
+        "balance_doge": None, "names": [], "tokens": [], "pieces": [],
+        "reading": _clean_reading({}),
+    }
     chain = _doge_chain()
     if chain is None:
         return out
+    wanted_peer = _wants_peer(chain)
+    peer_rows = _coins_from_peer(chain, address) if wanted_peer else None
+    coins_from_peer = peer_rows is not None
     from arcade.web import state
     from arcade import utxos as utxoslib
     import contextlib
 
     coins: list[list] = []
-    try:
-        index = state.token_index(chain)
-        with contextlib.closing(index.open()) as db:
-            out["balance_doge"] = _koinu_doge(utxoslib.balance(db, address))
-            for coin in utxoslib.unspent(db, address)[:3000]:
-                txid = str(coin.get("txid") or "")
-                if re.fullmatch(r"[0-9a-fA-F]{64}", txid):
-                    coins.append([txid, int(coin.get("vout") or 0)])
-        out["pieces"] = _pieces_from_index(index, address)
-    except Exception:
-        index = None
+    index = None
+    if coins_from_peer:
+        total = 0
+        for coin in _postage_first(peer_rows):
+            total += int(coin["value"])
+            coins.append([coin["txid"], coin["vout"], coin["value"]])
+        out["balance_doge"] = _koinu_doge(total)
+    else:
+        try:
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                out["balance_doge"] = _koinu_doge(utxoslib.balance(db, address))
+                for coin in utxoslib.unspent(db, address)[:3000]:
+                    txid = str(coin.get("txid") or "")
+                    if re.fullmatch(r"[0-9a-fA-F]{64}", txid):
+                        coins.append([txid, int(coin.get("vout") or 0), int(coin.get("value") or 0)])
+            out["pieces"] = _pieces_from_index(index, address)
+        except Exception:
+            index = None
     try:
         ordix = state.ord_index(getattr(chain, "network", "") or "doge", wait=0.8)
     except Exception:
         ordix = None
-    if ordix is not None:
+    any_peer = coins_from_peer
+    peer_node = ""
+    if ordix is not None and wanted_peer:
+        said, via = _ask_ord(ordix, {"what": "balances", "owner": address})
+        if isinstance(said, dict) and "balances" in said:
+            out["tokens"] = _tokens_from_index(said.get("balances"))
+            any_peer, peer_node = _note_peer(any_peer, peer_node, via, said)
+        else:
+            try:
+                out["tokens"] = _tokens_from_index(ordix.balances(address))
+            except Exception:
+                pass
+        name_coins = [[c[0], c[1]] for c in coins if _is_postage(c[2])][:300]
+        if name_coins:
+            said, via = _ask_ord(ordix, {"what": "names_on", "coins": name_coins})
+            rows = said.get("names_on") if isinstance(said, dict) else None
+            if rows is not None:
+                out["names"] = _names_from_index(rows)
+                any_peer, peer_node = _note_peer(any_peer, peer_node, via, said)
+            else:
+                try:
+                    out["names"] = _names_from_index(ordix.names_on(name_coins))
+                except Exception:
+                    pass
+        if coins_from_peer and coins:
+            ordered = [[c[0], c[1]] for c in sorted(coins, key=lambda c: (0 if _is_postage(c[2]) else 1, c[2]))]
+            pieces, via, node, answered = _pieces_on(ordix, ordered[:24])
+            if answered:
+                out["pieces"] = pieces
+                if via == "peer":
+                    any_peer = True
+                    peer_node = peer_node or node
+            else:
+                try:
+                    index = index or state.token_index(chain)
+                    out["pieces"] = _pieces_from_index(index, address)
+                except Exception:
+                    pass
+        elif coins_from_peer:
+            out["pieces"] = []
+    elif ordix is not None:
         try:
             out["tokens"] = _tokens_from_index(ordix.balances(address))
         except Exception:
             pass
         if coins:
             try:
-                out["names"] = _names_from_index(ordix.names_on(coins))
+                out["names"] = _names_from_index(ordix.names_on([[c[0], c[1]] for c in coins]))
             except Exception:
                 pass
+    elif coins_from_peer:
+        try:
+            index = index or state.token_index(chain)
+            out["pieces"] = _pieces_from_index(index, address)
+        except Exception:
+            out["pieces"] = []
+    out["reading"] = _clean_reading({
+        "via": "peer" if any_peer else "local",
+        "sync": _sync_text(chain, wanted_peer=wanted_peer, coins_from_peer=coins_from_peer),
+        "node": peer_node or ("a peer on the arcade network" if any_peer else "this arcade"),
+    })
     return out
 
 
+def _name_body(said) -> dict | None:
+    if not isinstance(said, dict):
+        return None
+    if "readings" in said:
+        return said
+    inner = said.get("name")
+    return inner if isinstance(inner, dict) else None
+
+
 def local_name(name: str) -> dict | None:
-    """One name from this arcade's name index. The claim's outpoint is dropped."""
+    """One name from this arcade's name index. The claim's outpoint is dropped.
+
+    While this Core is behind, the question goes to `DoginalIndex.lookup` (the most
+    complete linked walker, then this arcade).
+    """
     chain = _doge_chain()
     if chain is None:
         return None
@@ -445,11 +722,17 @@ def local_name(name: str) -> dict | None:
     if ordix is None:
         return None
     try:
-        said = ordix.name(name)
+        if _wants_peer(chain):
+            said, _via = _ask_ord(ordix, {"what": "name", "name": name})
+            said = _name_body(said)
+        else:
+            said = ordix.name(name)
     except Exception:
         return None
-    wanted = str((said or {}).get("name") or name).strip().lower()
-    for reading in ((said or {}).get("readings") or {}).values():
+    if not isinstance(said, dict):
+        return None
+    wanted = str(said.get("name") or name).strip().lower()
+    for reading in (said.get("readings") or {}).values():
         winner = (reading or {}).get("winner") or {}
         iid = str(winner.get("inscription") or "")
         if _INSCRIPTION.fullmatch(iid):
@@ -490,7 +773,17 @@ def build_holdings(
         "profile": profile,
         "empty": empty,
         "source": "node",
+        "reading": _clean_reading(owned.get("reading")),
     }
+
+
+def _prefer_reading(parts: list[dict]) -> dict:
+    """A peer answer wins over this Core when one address was read from a linked arcade."""
+    readings = [_clean_reading(part.get("reading")) for part in parts if isinstance(part, dict)]
+    for reading in readings:
+        if reading["via"] == "peer":
+            return reading
+    return readings[0] if readings else _clean_reading({})
 
 
 def merge_holdings(parts: list[dict]) -> dict:
@@ -502,6 +795,8 @@ def merge_holdings(parts: list[dict]) -> dict:
         first = dict(parts[0])
         first["imported"] = True
         first["empty"] = "" if first.get("names") or first.get("collections") else first.get("empty") or ""
+        first["reading"] = _clean_reading(first.get("reading"))
+        first["source"] = "node"
         return first
     addresses: list[str] = []
     names: list[dict] = []
@@ -556,6 +851,8 @@ def merge_holdings(parts: list[dict]) -> dict:
         "collections": collections,
         "profile": profile,
         "empty": "" if names or collections or tokens or balance else "This node's index has no holdings for that wallet yet.",
+        "source": "node",
+        "reading": _prefer_reading(parts),
     }
 
 
@@ -570,6 +867,8 @@ def empty_holdings() -> dict:
         "collections": [],
         "profile": "",
         "empty": _EMPTY,
+        "source": "node",
+        "reading": _clean_reading({}),
     }
 
 

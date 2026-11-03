@@ -1449,8 +1449,22 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
   tick(); setInterval(tick, 10000);
   var bellHref = (TABS.filter(function (t) { return /notifications$/.test(t.href); })[0] || {}).href;
   var mailHref = (TABS.filter(function (t) { return t.href === '/messages' || t.href === '/me/messages'; })[0] || {}).href;
+  function dfxWalletNow() {
+    try { return localStorage.getItem('dogefeedx.wallet') || ''; } catch (e) { return ''; }
+  }
+  function dfxScopedBadges() {
+    var addr = dfxWalletNow();
+    if (!addr) return null;
+    function num(field) {
+      try { return Number(localStorage.getItem('dogefeedx.badge.' + field + '::' + addr) || 0) || 0; }
+      catch (e) { return 0; }
+    }
+    return {messages: num('messages'), notifications: num('notifications'), market: num('market')};
+  }
   function paintTray() {
-    var n = bellHref ? (badges[bellHref] || 0) : 0, m = mailHref ? (badges[mailHref] || 0) : 0;
+    var scoped = DFX ? dfxScopedBadges() : null;
+    var n = scoped ? (Number(scoped.notifications) || 0) : (bellHref ? (badges[bellHref] || 0) : 0);
+    var m = scoped ? (Number(scoped.messages) || 0) : (mailHref ? (badges[mailHref] || 0) : 0);
     $('dk-bell').hidden = !n; $('dk-bell-n').textContent = n > 99 ? '99+' : (n || '');
     $('dk-mail').hidden = !m; $('dk-mail-n').textContent = m > 99 ? '99+' : (m || '');
   }
@@ -1466,6 +1480,18 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
   }
   setInterval(pollBadges, 45000);
   window.addEventListener('focus', pollBadges);
+  function dfxPingWallet() {
+    document.querySelectorAll('iframe').forEach(function (frame) {
+      try { frame.contentWindow.postMessage({type: 'dogefeedx-wallet'}, location.origin); } catch (e) {}
+    });
+  }
+  window.addEventListener('storage', function (e) {
+    if (!e || !e.key) return;
+    if (e.key !== 'dogefeedx.wallet' && e.key.indexOf('dogefeedx.badge.') !== 0) return;
+    paintTray();
+    if (DFX) paintDock();
+    if (e.key === 'dogefeedx.wallet') dfxPingWallet();
+  });
 
   // ---------- menus: Start, its cascades, and right clicks ----------
   function hideMenus() {
@@ -2429,6 +2455,13 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
   }
   function dockCount(k) {
     var n = 0;
+    var scoped = DFX ? dfxScopedBadges() : null;
+    if (scoped) {
+      if (k === 'dfxnotifications') n = Number(scoped.notifications) || 0;
+      else if (k === 'dfxmessages') n = Number(scoped.messages) || 0;
+      else if (k === 'dfxmarket') n = Number(scoped.market) || 0;
+      return n > 0 ? n : 0;
+    }
     if (k === 'dfxnotifications') n = Math.max(badges['/notifications'] || 0, badges['/me/notifications'] || 0);
     else if (k === 'dfxmessages') n = Math.max(badges['/messages'] || 0, badges['/me/messages'] || 0);
     else if (k === 'dfxmarket') n = badges['/exchange'] || 0;

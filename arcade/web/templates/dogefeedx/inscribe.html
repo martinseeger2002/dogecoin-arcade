@@ -19,11 +19,45 @@ a.card span { color:var(--df-muted); font-size:14px; }
 <script>document.body.classList.add('df-dogefeed');</script>
 <div class="wrap">
   <h1>Inscribe</h1>
-  <p class="note">These use this arcade's own wallet. Nothing is sent to dogefeed.app, and an inscription-carrying coin is never spent as a fee.</p>
+  <p class="note">These use the wallet selected on Profile. Nothing is sent to dogefeed.app, and an inscription-carrying coin is never spent as a fee.</p>
+  <p class="note" id="inscribe-for" data-wallet=""></p>
+  <textarea id="inscribe-note" maxlength="280" placeholder="Note for this wallet" aria-label="Note for this wallet" style="width:100%;min-height:72px;margin-top:12px;border-radius:12px;border:1px solid var(--df-line);background:#111;color:inherit;padding:10px"></textarea>
+  <p class="note" id="inscribe-shown"></p>
   <div class="grid">
     <a class="card" href="/create/ord"><b>Collection</b><span>Inscribe a Doginal and group it into a collection you already hold the pieces for.</span></a>
     <a class="card" href="/tokens"><b>DRC-20</b><span>Create a DRC-20 with this wallet. The token page is the one that spends.</span></a>
     <a class="card" href="/create/name"><b>Name</b><span>Claim a name such as yours.doge from this wallet.</span></a>
   </div>
 </div>
+{% include "dogefeedx/_wallet.js.html" %}
+<script>
+(function () {
+  var note = document.getElementById('inscribe-note');
+  var who = document.getElementById('inscribe-for');
+  var shown = '';
+  function apply(addr) {
+    addr = addr || dfxReadWallet();
+    if (shown && shown !== (addr || '')) dfxWriteJson('dogefeedx.inscribe', {note: note.value}, shown);
+    shown = addr || '';
+    who.setAttribute('data-wallet', shown);
+    who.textContent = shown ? ('Wallet ' + shown) : 'Select a wallet on Profile.';
+    note.value = '';
+    var shownNote = document.getElementById('inscribe-shown');
+    if (!shown) {
+      if (shownNote) shownNote.textContent = '';
+      return;
+    }
+    var saved = dfxReadJson('dogefeedx.inscribe', {}, shown);
+    note.value = saved && typeof saved.note === 'string' ? saved.note : '';
+    if (shownNote) shownNote.textContent = note.value || '';
+  }
+  note.addEventListener('input', function () {
+    if (shown) dfxWriteJson('dogefeedx.inscribe', {note: note.value}, shown);
+    var shownNote = document.getElementById('inscribe-shown');
+    if (shownNote) shownNote.textContent = note.value || '';
+  });
+  dfxBindWallet(apply);
+  dfxEnsureWallet().then(function (w) { apply(w.selected); });
+})();
+</script>
 {% endblock %}

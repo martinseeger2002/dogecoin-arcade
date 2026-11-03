@@ -360,8 +360,9 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
     </div>
     
     <div class="df-notice">
-      <strong>Read-only view.</strong> Balances, doginals, DRC-20, and names come from this node's indexes. DogeFeed only names the collections the index already holds. No key, no spending, no signing.
+      <strong>Read-only view.</strong> Balances, doginals, DRC-20, and names come from this arcade. DogeFeed only names the collections the index already holds. No key, no spending, no signing.
     </div>
+    <p class="df-notice" id="wallet-reading" hidden></p>
     
     <div class="df-chain-selector">
       <button class="df-chain-btn active" data-chain="doge">
@@ -424,9 +425,16 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
   var currentChain = 'doge';
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function readingLine(data) {
+    var r = (data && data.reading) || {};
+    var via = r.via === 'peer' ? 'a peer on the arcade network' : "this arcade's node";
+    var sync = r.sync || '';
+    return 'Read from ' + via + (sync ? '. Local sync: ' + sync : '.');
+  }
   
   var walletTab = 'all';
   var lastHoldings = null;
+  var holdSeq = 0;
 
   function paintHoldings(data) {
     lastHoldings = data || {};
@@ -439,6 +447,8 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
     document.getElementById('stat-inscriptions').textContent = String(pieces);
     document.getElementById('stat-collections').textContent = String(collections.length);
     document.getElementById('stat-balance').textContent = (data.balance_doge || '0') + ' DOGE';
+    var reading = document.getElementById('wallet-reading');
+    if (reading) { reading.hidden = false; reading.textContent = readingLine(data); }
     var html = '';
     if (walletTab === 'all' || walletTab === 'nfts') {
       collections.forEach(function(c) {
@@ -467,13 +477,23 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
   }
 
   function loadHoldings(address) {
+    var mine = ++holdSeq;
+    var want = address || '';
     var container = document.getElementById('wallet-grid');
-    container.innerHTML = '<div class="df-loading" style="grid-column:1/-1"><div class="df-spinner"></div></div>';
+    lastHoldings = null;
+    container.setAttribute('data-wallet', want);
+    container.innerHTML = '';
+    document.getElementById('stat-inscriptions').textContent = '';
+    document.getElementById('stat-collections').textContent = '';
+    document.getElementById('stat-balance').textContent = '';
+    var reading = document.getElementById('wallet-reading');
+    if (reading) { reading.hidden = true; reading.textContent = ''; }
     var url = '/dogefeedx/api/wallet/holdings';
-    if (address) url += '?address=' + encodeURIComponent(address);
-    fetch(url)
+    if (want) url += '?address=' + encodeURIComponent(want);
+    fetch(url, {cache: 'no-store'})
       .then(function(r) { return r.json().then(function(data) { return {ok: r.ok, data: data}; }); })
       .then(function(res) {
+        if (mine !== holdSeq || (dfxReadWallet() || '') !== want) return;
         if (!res.ok) {
           container.innerHTML = '<div class="df-empty" style="grid-column:1/-1">Enter a public Dogecoin address. No key is used.</div>';
           return;
@@ -481,6 +501,7 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
         paintHoldings(res.data || {});
       })
       .catch(function() {
+        if (mine !== holdSeq || (dfxReadWallet() || '') !== want) return;
         container.innerHTML = '<div class="df-empty" style="grid-column:1/-1">Could not load holdings. Try again later.</div>';
       });
   }

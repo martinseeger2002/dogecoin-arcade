@@ -10,12 +10,15 @@ from arcade.web.dogefeedx.wallet_assets import (
     build_holdings,
     cross_reference,
     empty_holdings,
+    index_owned,
     inscriptions_from_utxos,
+    merge_holdings,
     name_points_at,
     parse_balance,
     parse_drc20,
     parse_names,
     parse_profile_assets,
+    public_view,
     valid_address,
 )
 
@@ -174,3 +177,231 @@ def test_index_rows_are_labeled_by_the_catalog_and_coins_stay_out():
     dumped = json.dumps(built)
     assert "scriptPubKey" not in dumped and "txid" not in dumped and '"coins"' not in dumped
     assert "utxo" not in dumped
+    assert built["reading"]["via"] == "local"
+    assert "utxo" not in json.dumps(built["reading"])
+
+
+class _Chain:
+    def __init__(self, *, borrowed=False, rpc=None):
+        self.borrowed = borrowed
+        self.network = "doge"
+        self.is_doge = True
+        self._rpc = rpc
+
+    def rpc(self):
+        if self._rpc is None:
+            raise AssertionError("this Core must not open a peer")
+        return self._rpc
+
+
+class _Rpc:
+    def __init__(self, answer=None):
+        self.answer = answer
+        self.calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def batch(self, calls):
+        self.calls.extend(calls)
+        return self.answer
+
+
+def _patch_chain(monkeypatch, chain, *, behind, sync):
+    from arcade import core_catchup
+    from arcade.web.dogefeedx import wallet_assets as wa
+
+    monkeypatch.setattr(wa, "_doge_chain", lambda: chain)
+    monkeypatch.setattr(core_catchup, "borrowing", lambda _chain: behind)
+    monkeypatch.setattr(core_catchup, "say", lambda _chain, mesh_on=True: sync)
+
+
+def _patch_indexes(monkeypatch, *, ordix, token):
+    import arcade.web.state as state
+
+    monkeypatch.setattr(state, "ord_index", lambda net, wait=0: ordix, raising=False)
+    monkeypatch.setattr(state, "token_index", lambda chain: token, raising=False)
+
+
+class _Ord:
+    def __init__(self, answers):
+        self.answers = answers
+        self.direct = []
+
+    def lookup(self, question):
+        what = question.get("what")
+        if what not in self.answers:
+            raise AssertionError(what)
+        return self.answers[what]
+
+    def answer(self, question):
+        return self.lookup(question)
+
+    def balances(self, address):
+        self.direct.append("balances")
+        raise AssertionError("direct balances")
+
+    def names_on(self, coins):
+        self.direct.append("names")
+        raise AssertionError("direct names")
+
+    def name(self, name):
+        self.direct.append("name")
+        raise AssertionError("direct name")
+
+
+def test_a_synced_core_does_not_ask_a_peer(monkeypatch):
+    _patch_chain(monkeypatch, _Chain(), behind=False, sync=None)
+
+    class Index:
+        def open(self):
+            raise RuntimeError("no local index in this test")
+
+    _patch_indexes(monkeypatch, ordix=None, token=Index())
+    owned = index_owned(ADDR)
+    assert owned["balance_doge"] is None
+    assert owned["reading"] == {"via": "local", "sync": "this Core is at the tip", "node": "this arcade"}
+    assert "utxo" not in json.dumps(owned)
+
+
+def test_a_behind_core_reads_the_lent_set_and_the_ord_walker(monkeypatch):
+    from arcade import utxoset
+
+    fetched = []
+
+    class Lent:
+        def unspent(self, address, wallet_only=False):
+            assert address == ADDR
+            return [{"txid": "ab" * 32, "vout": 0, "value": 100_000, "height": 3, "kind": "wallet"}]
+
+    def fetch(rpc, addresses):
+        fetched.append(list(addresses))
+        return Lent()
+
+    monkeypatch.setattr(utxoset.LentSet, "fetch", fetch)
+    _patch_chain(
+        monkeypatch, _Chain(rpc=_Rpc()), behind=True,
+        sync="syncing: borrowed from arcade abcdef123456 until it catches up (block 1 of 9)",
+    )
+    iid = "cd" * 32 + "i0"
+    ordix = _Ord({
+        "balances": {"from": "arcade abcdef123456", "balances": [{"tick": "wow", "units": "5", "decimals": 0}]},
+        "names_on": {"from": "arcade abcdef123456", "names_on": [{"name": "billy.doge"}]},
+        "on": {"from": "arcade abcdef123456", "on": [{"id": iid, "offset": 0, "ctype": "image/png"},
+                                                     {"id": "ee" * 32 + "i0", "offset": 1, "ctype": "text/plain"}]},
+    })
+    _patch_indexes(monkeypatch, ordix=ordix, token=None)
+    owned = index_owned(ADDR)
+    assert fetched == [[ADDR]]
+    assert ordix.direct == []
+    assert owned["balance_doge"] == "0.001"
+    assert owned["tokens"] == [{"tick": "wow", "balance": "5"}]
+    assert owned["names"] == [{"name": "billy.doge"}]
+    assert [row["inscription_id"] for row in owned["pieces"]] == [iid]
+    assert owned["pieces"][0]["image"] == "/content/" + "cd" * 32
+    assert owned["reading"]["via"] == "peer"
+    assert owned["reading"]["node"] == "arcade abcdef123456"
+    assert "block 1 of 9" in owned["reading"]["sync"]
+    blob = json.dumps(owned)
+    assert "txid" not in blob and "scriptPubKey" not in blob and "utxo" not in blob and '"coins"' not in blob
+    built = build_holdings(ADDR, owned, [], imported=True)
+    assert built["source"] == "node" and built["reading"]["via"] == "peer"
+    assert "txid" not in json.dumps(built) and "utxo" not in json.dumps(built)
+
+
+def test_no_lent_set_uses_the_coin_scan_and_not_a_third_party(monkeypatch):
+    from arcade import coinscan, utxoset
+
+    def fetch(rpc, addresses):
+        raise utxoset.UtxoSetError("no unspent set of Dogecoin here")
+
+    monkeypatch.setattr(utxoset.LentSet, "fetch", fetch)
+    rpc = _Rpc(answer=[{"coins": {ADDR: [["ef" * 32, 1, 50_000_000, 4]]}, "waiting": [], "height": {ADDR: 4}}])
+    _patch_chain(monkeypatch, _Chain(borrowed=True, rpc=rpc), behind=False, sync=None)
+    ordix = _Ord({
+        "balances": {"from": "this arcade", "balances": []},
+        "on": {"from": "this arcade", "on": []},
+    })
+    _patch_indexes(monkeypatch, ordix=ordix, token=None)
+    owned = index_owned(ADDR)
+    assert rpc.calls and rpc.calls[0][0] == coinscan.SCAN_METHOD
+    assert "scantxoutset" not in json.dumps(rpc.calls)
+    assert owned["balance_doge"] == "0.5"
+    assert owned["reading"]["via"] == "peer"
+    assert owned["reading"]["node"] == "a peer on the arcade network"
+    assert "no Core of its own" in owned["reading"]["sync"]
+    assert "No coin set was lent" not in owned["reading"]["sync"]
+    blob = json.dumps(owned)
+    for banned in ("dogecoinnames.com", "explorer.dogesoft.io", "dogefeed.app", "scriptPubKey", "txid", "utxo"):
+        assert banned not in blob
+
+
+def test_a_scan_still_waiting_falls_back_to_this_index(monkeypatch):
+    from arcade import utxos as utxoslib
+    from arcade import utxoset
+
+    def fetch(rpc, addresses):
+        raise utxoset.UtxoSetError("no set")
+
+    monkeypatch.setattr(utxoset.LentSet, "fetch", fetch)
+    monkeypatch.setattr(utxoslib, "balance", lambda db, address: 100_000_000)
+    monkeypatch.setattr(utxoslib, "unspent", lambda db, address: [])
+    rpc = _Rpc(answer=[{"coins": {}, "waiting": [ADDR]}])
+    _patch_chain(
+        monkeypatch, _Chain(rpc=rpc), behind=True,
+        sync="syncing: borrowed from arcade abcdef123456 until it catches up (block 2 of 9)",
+    )
+
+    class Index:
+        def open(self):
+            return self
+
+        def close(self):
+            return None
+
+        def held_collections(self, address, cover=1):
+            return []
+
+    _patch_indexes(monkeypatch, ordix=None, token=Index())
+    owned = index_owned(ADDR)
+    assert rpc.calls and rpc.calls[0][0] == "arcade_coinscan"
+    assert owned["balance_doge"] == "1"
+    assert owned["reading"]["via"] == "local"
+    assert "No coin set was lent" in owned["reading"]["sync"]
+    assert "block 2 of 9" in owned["reading"]["sync"]
+    assert "utxo" not in json.dumps(owned)
+
+
+def test_merge_prefers_a_peer_reading_and_the_pages_show_it():
+    other = "D" + "B" * 33
+    local = build_holdings(ADDR, {
+        "balance_doge": "1",
+        "reading": {"via": "local", "sync": "this Core is at the tip", "node": "this arcade", "txid": "ab" * 32},
+    }, [], imported=True)
+    peer = build_holdings(other, {
+        "balance_doge": "2",
+        "reading": {"via": "peer", "sync": "syncing: borrowed from arcade abcdef123456", "node": "arcade abcdef123456"},
+    }, [], imported=True)
+    assert "txid" not in json.dumps(local)
+    merged = merge_holdings([local, peer])
+    assert merged["reading"]["via"] == "peer"
+    assert merged["source"] == "node"
+    assert "txid" not in json.dumps(merged) and "utxo" not in json.dumps(merged)
+    shown = public_view(merged)
+    assert shown["reading"]["via"] == "peer"
+    templates = ROOT / "arcade" / "web" / "templates" / "dogefeedx"
+    for name in ("wallet.html", "files.html", "nfts.html", "profile.html"):
+        text = (templates / name).read_text()
+        assert "data.reading" in text, name
+        assert "r.via === 'peer'" in text, name
+        assert "Local sync:" in text, name
+        assert "a peer on the arcade network" in text, name
+    assert "scantxoutset" not in MODULE
+    apps = (ROOT / "arcade" / "web" / "dogefeedx" / "apps.py").read_text()
+    for name in ("api_balance", "api_address_inscriptions", "api_address_tokens"):
+        start = apps.index(f"async def {name}")
+        body = apps[start:apps.find("\n@router.", start + 10)]
+        assert '"reading"' in body, name

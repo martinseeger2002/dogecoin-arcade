@@ -429,6 +429,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
         <button type="submit" class="df-follow-btn" style="width:auto">Open</button>
       </form>
       <div class="df-profile-meta" id="profile-joined"></div>
+      <div class="df-profile-meta" id="profile-reading"></div>
       <div class="df-profile-stats">
         <span><strong id="following-count">—</strong> Following</span>
         <span><strong id="followers-count">—</strong> Followers</span>
@@ -463,6 +464,12 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
   var IMG_BASE = 'https://dogefeed.app';
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function readingLine(data) {
+    var r = (data && data.reading) || {};
+    var via = r.via === 'peer' ? 'a peer on the arcade network' : "this arcade's node";
+    var sync = r.sync || '';
+    return 'Read from ' + via + (sync ? '. Local sync: ' + sync : '.');
+  }
   
   function timeAgo(dateStr) {
     if (!dateStr) return '';
@@ -655,18 +662,17 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
     if (profileHandle) localForm.hidden = true;
     else {
       try {
-        var savedProfile = JSON.parse(localStorage.getItem('dogefeedx.profile') || '{}');
-        if (savedProfile.displayName) document.getElementById('local-name').value = savedProfile.displayName;
-        if (savedProfile.dns) document.getElementById('local-dns').value = savedProfile.dns;
-        if (savedProfile.website) document.getElementById('local-web').value = savedProfile.website;
+        fillLocalProfile();
       } catch (e) {}
       localForm.addEventListener('submit', function (e) {
         e.preventDefault();
-        localStorage.setItem('dogefeedx.profile', JSON.stringify({
+        var addr = dfxReadWallet();
+        if (!addr) return;
+        dfxWriteJson('dogefeedx.profile', {
           displayName: document.getElementById('local-name').value.trim(),
           dns: document.getElementById('local-dns').value.trim(),
           website: document.getElementById('local-web').value.trim()
-        }));
+        }, addr);
         document.getElementById('local-said').textContent = 'Saved in this browser. Not sent to dogefeed.app.';
       });
     }
@@ -700,13 +706,36 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
     });
   }
 
+  var profileSeq = 0;
+  function fillLocalProfile() {
+    var addr = dfxReadWallet();
+    var saved = addr ? dfxReadJson('dogefeedx.profile', {}, addr) : {};
+    if (!saved || typeof saved !== 'object') saved = {};
+    var name = document.getElementById('local-name');
+    var dns = document.getElementById('local-dns');
+    var web = document.getElementById('local-web');
+    if (name) name.value = addr ? (saved.displayName || '') : '';
+    if (dns) dns.value = addr ? (saved.dns || '') : '';
+    if (web) web.value = addr ? (saved.website || '') : '';
+  }
+  function clearIdentity() {
+    ['profile-name', 'topbar-name', 'profile-handle', 'profile-bio', 'profile-joined', 'profile-reading'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = '';
+    });
+  }
   function loadWalletIdentity(addr) {
-    fetch(dfxHoldingsUrl(addr || ''))
+    var mine = ++profileSeq;
+    var want = addr || '';
+    clearIdentity();
+    fillLocalProfile();
+    fetch(dfxHoldingsUrl(want), {cache: 'no-store'})
       .then(function (r) { return r.json(); })
       .then(function (data) {
+        if (mine !== profileSeq || (dfxReadWallet() || '') !== want) return;
         var names = (data.names || []).map(function (n) { return n.name; }).filter(Boolean);
-        var saved = {};
-        try { saved = JSON.parse(localStorage.getItem('dogefeedx.profile') || '{}'); } catch (e) {}
+        var saved = want ? dfxReadJson('dogefeedx.profile', {}, want) : {};
+        if (!saved || typeof saved !== 'object') saved = {};
         var chain = data.profile || names[0] || '';
         var short = addr && addr.length > 12 ? addr.slice(0, 6) + '…' + addr.slice(-4) : (addr || 'Profile');
         var label = saved.displayName || chain || short;
@@ -721,6 +750,8 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
         (data.collections || []).forEach(function (c) { pieces += Number(c.count) || (c.pieces || []).length; });
         if (pieces) bits.push(pieces + ' doginals');
         document.getElementById('profile-joined').textContent = bits.join(' · ');
+        var where = document.getElementById('profile-reading');
+        if (where) where.textContent = readingLine(data);
       })
       .catch(function () {});
   }

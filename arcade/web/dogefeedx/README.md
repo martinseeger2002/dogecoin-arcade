@@ -10,10 +10,11 @@ Ownership indexes:
 
 | Owns | Where |
 |---|---|
-| Balance | The watcher's utxo index (`arcade/utxos.py` on the Dogecoin ledger). The sum only. Outpoints are not returned. |
-| Doginals | The ledger inscription index (`held_collections` / `held_pieces`). Pictures are this node's `/content/`. |
-| DRC-20 | This arcade's ord index (`DoginalIndex.balances`). |
-| Names | This arcade's ord index (`DoginalIndex.names_on` for coins the watcher already holds). The claim's outpoint is dropped. |
+| Balance | The watcher's coin index (`arcade/utxos.py` on the Dogecoin ledger). The sum only. Outpoints are not returned. While this Core is behind, or the chain is borrowed, the sum is the sharer's lent set (`utxoset.LentSet`, the same ask as `watcher._utxoset_lent_pass`), then `arcade_coinscan` when that chain has no set. |
+| Doginals | The ledger inscription index (`held_collections` / `held_pieces`). Pictures are this node's `/content/`. While behind, inscriptions on the lent coins come from `DoginalIndex.lookup` (`what: on`). |
+| DRC-20 | This arcade's ord index (`DoginalIndex.balances`). While behind, `DoginalIndex.lookup` (`what: balances`), the most complete linked walker. |
+| Names | This arcade's ord index (`DoginalIndex.names_on` for coins the watcher already holds). While behind, the same question through `lookup`. The claim's outpoint is dropped. |
+| Which node | Holdings carry `reading.via` (`local` or `peer`), `reading.node`, and `reading.sync` from `core_catchup.say` (this Core, not the peer's tip). Wallet, Files, NFTs, and Profile show that line. |
 
 A pasted address that this node is not watching comes back empty. Import it
 watch-only on the node and let the indexes catch up. No key is asked, and

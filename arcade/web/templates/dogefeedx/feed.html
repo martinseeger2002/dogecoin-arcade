@@ -817,13 +817,12 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
     who.textContent = wallet || 'No wallet selected';
     who.title = wallet || '';
   }
-  dfxEnsureWallet().then(function (w) { paintWho(w.selected); });
-  dfxBindWallet(paintWho);
   function shortAddr(addr) {
     return addr && addr.length > 12 ? addr.slice(0, 6) + '…' + addr.slice(-4) : (addr || 'wallet');
   }
   function readBarks() {
-    try { return JSON.parse(localStorage.getItem('dogefeedx.localBarks') || '[]') || []; } catch (e) { return []; }
+    var rows = dfxReadJson('dogefeedx.localBarks', []);
+    return Array.isArray(rows) ? rows : [];
   }
   function price() {
     var n = parseFloat(document.getElementById('df-pay-price').value);
@@ -920,14 +919,10 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
     paintButton();
   });
   document.getElementById('df-draft-btn').addEventListener('click', function () {
-    try { localStorage.setItem('dogefeedx.barkDraft', text.value); }
-    catch (e) { said.textContent = 'This browser would not keep that draft.'; return; }
-    said.textContent = 'Draft saved in this browser. Not sent to dogefeed.app.';
+    if (!dfxReadWallet()) { said.textContent = 'Select a wallet on Profile. Nothing was sent.'; return; }
+    dfxWriteJson('dogefeedx.barkDraft', text.value);
+    said.textContent = 'Draft saved in this browser for this wallet. Not sent to dogefeed.app.';
   });
-  try {
-    var draft = localStorage.getItem('dogefeedx.barkDraft') || '';
-    if (draft) text.value = draft;
-  } catch (e) {}
   function shrink(file) {
     return new Promise(function (resolve) {
       if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size > MAX_BYTES) { resolve(''); return; }
@@ -1018,12 +1013,13 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
       at: new Date().toISOString()
     };
     var rows = [bark].concat(readBarks()).slice(0, 30);
-    try { localStorage.setItem('dogefeedx.localBarks', JSON.stringify(rows)); }
-    catch (err) {
+    dfxWriteJson('dogefeedx.localBarks', rows);
+    var kept = dfxReadJson('dogefeedx.localBarks', []);
+    if (!kept.length || kept[0].id !== bark.id) {
       said.textContent = 'This browser would not keep that bark. Try fewer images.';
       return;
     }
-    try { localStorage.removeItem('dogefeedx.barkDraft'); } catch (err) {}
+    dfxWriteJson('dogefeedx.barkDraft', '');
     text.value = '';
     images = [];
     document.getElementById('df-pay-price').value = '';
@@ -1039,6 +1035,26 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
       ? 'Saved on this arcade. No payment was sent. Nothing was written to dogefeed.app.'
       : 'Saved on this arcade. Nothing was written to dogefeed.app.';
   });
+  var shownWallet = '';
+  function applyWallet(addr) {
+    var next = addr || '';
+    if (shownWallet && shownWallet !== next) {
+      dfxWriteJson('dogefeedx.barkDraft', text.value, shownWallet);
+      images = [];
+      paintThumbs();
+    }
+    shownWallet = next;
+    paintWho(shownWallet);
+    var draft = next ? dfxReadJson('dogefeedx.barkDraft', '', next) : '';
+    text.value = typeof draft === 'string' ? draft : '';
+    paintButton();
+    document.querySelectorAll('#df-posts [data-local]').forEach(function (el) { el.remove(); });
+    var box = document.getElementById('df-posts');
+    var html = window.dfxLocalBarksHtml ? window.dfxLocalBarksHtml() : '';
+    if (box && html) box.insertAdjacentHTML('afterbegin', html);
+  }
+  dfxEnsureWallet().then(function (w) { applyWallet(w.selected); });
+  dfxBindWallet(applyWallet);
   paintButton();
 })();
 </script>

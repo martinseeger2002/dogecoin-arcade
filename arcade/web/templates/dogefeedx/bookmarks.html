@@ -222,17 +222,28 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
       <h1>Bookmarks</h1>
     </div>
     
-    <div id="marks"><p class="df-empty">No bookmarks saved on this arcade.</p></div>
+    <div id="marks" data-wallet=""><p class="df-empty">No bookmarks saved on this arcade.</p></div>
   </main>
+{% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function () {
-  var rows = [];
-  try { rows = JSON.parse(localStorage.getItem('dogefeedx.bookmarks') || '[]'); } catch (e) {}
-  if (!rows.length) return;
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
-  document.getElementById('marks').innerHTML = rows.map(function (p) {
-    return '<a class="df-collection" href="/dogefeedx/post?id=' + encodeURIComponent(p.id) + '"><b>' + esc(p.handle || 'post') + '</b><div>' + esc(p.text || '') + '</div></a>';
-  }).join('');
+  function paint() {
+    var addr = dfxReadWallet();
+    var box = document.getElementById('marks');
+    box.setAttribute('data-wallet', addr);
+    box.innerHTML = '';
+    var rows = addr ? dfxReadJson('dogefeedx.bookmarks', [], addr) : [];
+    if (!Array.isArray(rows) || !rows.length) {
+      box.innerHTML = '<p class="df-empty">' + (addr ? 'No bookmarks for this wallet.' : 'Select a wallet on Profile.') + '</p>';
+      return;
+    }
+    box.innerHTML = rows.map(function (p) {
+      return '<a class="df-collection" href="/dogefeedx/post?id=' + encodeURIComponent(p.id) + '"><b>' + esc(p.handle || 'post') + '</b><div>' + esc(p.text || '') + '</div></a>';
+    }).join('');
+  }
+  dfxBindWallet(paint);
+  dfxEnsureWallet().then(paint);
 })();
 </script>
 

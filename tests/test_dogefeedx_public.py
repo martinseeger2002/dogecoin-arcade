@@ -301,6 +301,22 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     assert 'id="df-wallet-select"' in profile
     assert 'include "dogefeedx/_wallet.js.html"' in profile
     assert "/dogefeedx/api/wallet/addresses" in helper
+    assert "dfxStoreKey" in helper and "dogefeedx-wallet" in helper and "dfxSetBadge" in helper
+    assert "dogefeedx.badge." in helper and "dogefeedx.badge." in desk and "dfxScopedBadges" in desk
+    for name in ("messages.html", "notifications.html", "bookmarks.html", "settings.html",
+                 "inscribe.html", "files.html", "nfts.html", "wallet.html", "feed.html"):
+        page = (TEMPLATES / name).read_text()
+        assert "dfxBindWallet" in page, name
+        assert "dfxReadWallet()" in page, name
+    assert "dogefeedx.messages" in (TEMPLATES / "messages.html").read_text()
+    assert "dogefeedx.notifications" in (TEMPLATES / "notifications.html").read_text()
+    assert "dfxReadJson('dogefeedx.bookmarks'" in (TEMPLATES / "bookmarks.html").read_text()
+    assert "dfxWriteJson(KEY" in (TEMPLATES / "settings.html").read_text()
+    assert "dogefeedx.inscribe" in (TEMPLATES / "inscribe.html").read_text()
+    assert "mine !== filesSeq" in (TEMPLATES / "files.html").read_text()
+    assert "mine !== nftSeq" in (TEMPLATES / "nfts.html").read_text()
+    assert "mine !== holdSeq" in (TEMPLATES / "wallet.html").read_text()
+    assert "mine !== profileSeq" in (TEMPLATES / "profile.html").read_text()
     assert "w: 640, h: 620" in desk and "w: 440, h: 620" in desk
     assert "w: dock.w || 640" in desk and "layout.dfxWin" in desk
     assert 'class="dk-df-logo"' in desk and "[data-skin=\"dogefeedx\"] .dk-start .dk-brand-icon { display: none !important; }" in desk
