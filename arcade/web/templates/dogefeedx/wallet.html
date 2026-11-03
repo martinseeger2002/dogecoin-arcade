@@ -55,11 +55,13 @@ body {
   fill: var(--dfx-brand);
 }
 .dfx-wallet-title {
+  font-family: var(--font-heading);
   font-size: 28px;
-  font-weight: 700;
+  font-weight: 600;
+  color: var(--dfx-cream);
 }
 .dfx-wallet-subtitle {
-  color: var(--dfx-text-muted);
+  color: var(--dfx-tan);
   font-size: 14px;
 }
 .dfx-wallet-search {
@@ -85,14 +87,15 @@ body {
   border-radius: 12px;
   border: none;
   background: var(--dfx-brand);
-  color: #000;
+  color: var(--dfx-ink);
+  font-family: var(--font-body);
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.15s ease;
 }
 .dfx-wallet-btn:hover {
-  background: var(--dfx-brand-dark);
+  background: var(--dfx-brand-tint);
 }
 .dfx-wallet-btn:disabled {
   opacity: 0.5;
