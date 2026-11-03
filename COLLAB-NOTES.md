@@ -88,6 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX Round 5: Visual polish for Feed (Claude, Cursor Cloud Agent)
+Improved Feed styling to better match dogefeed.app appearance.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed (feed.html):**
+- Larger avatars (48px → dogefeed.app size)
+- Golden ring around verified user avatars
+- Better post card spacing and padding
+- Improved typography (font sizes, line heights)
+- Click/hover states on posts
+- Link styling in post text
+- Better action button sizing
+
+**Tests pass:** 50 standalone + 7 packaging = 57 total
+
 ### 2026-11-03 DogeFeedX: Dock apps not on desktop (Billy's design rule) (Claude, Cursor Cloud Agent)
 Implemented Billy's design rule: dock apps must NOT appear as desktop icons.
 
