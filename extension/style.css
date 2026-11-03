@@ -1,0 +1,35 @@
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#16181d;--muted:#5d6470;--line:#d9dde3;--accent:#2f6fde;--accent-ink:#fff;
+  --bad:#c62828;--warn-bg:#fff4e0}
+@media (prefers-color-scheme:dark){:root{--bg:#121418;--panel:#1b1e24;--ink:#e7e9ee;--muted:#9aa2ae;--line:#2c313a;
+  --accent:#5b8ff0;--accent-ink:#0d1117;--bad:#ef6b6b;--warn-bg:#2b2416}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
+  width:360px;min-height:200px}
+body.window{width:auto}
+header{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);font-weight:650}
+header img{width:22px;height:22px}
+main{padding:14px}
+h2{font-size:15px;margin:0 0 8px}
+p{margin:0 0 10px}
+.muted{color:var(--muted)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px}
+input,textarea{width:100%;font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:8px 10px;margin:0 0 8px}
+textarea{min-height:70px;resize:vertical}
+button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;
+  padding:8px 12px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+button.link{border:0;background:none;color:var(--accent);padding:0}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row>button{flex:1}
+.words{font-family:ui-monospace,Menlo,Consolas,monospace;background:var(--warn-bg);border-radius:8px;padding:10px;
+  word-spacing:4px;margin-bottom:10px}
+.origin{font-size:17px;font-weight:700;overflow-wrap:anywhere}
+.message{font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);
+  border-radius:8px;padding:8px;font-size:12px;overflow-wrap:anywhere}
+.err{color:var(--bad);min-height:1.2em}
+ul.sites{list-style:none;margin:0;padding:0}
+ul.sites li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}
+ul.sites li:last-child{border-bottom:0}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;overflow-wrap:anywhere}
+[hidden]{display:none!important}

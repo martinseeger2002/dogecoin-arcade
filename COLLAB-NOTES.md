@@ -88,6 +88,37 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/arcade-wallet-e1` · Arcade Wallet extension, phase E1
+- **New: `extension/`**, an **optional** MV3 browser extension (design: `docs/arcade-lite/EXTENSION.md` in PR #62).
+  It keeps the person's arcade words outside every page.
+  - `keys.js` is the web wallet's own derivation and sealed blob (`signin.js`, `wallet_js.js`), pure WebCrypto.
+  - There are three ways in: twelve words, a new wallet, or @name and password (it fetches `/signin/<name>` from
+    the arcade the person names, opens it, and checks the key matches).
+  - The vault locks after 30 idle minutes.
+  - `window.arcade` (inpage.js, through content.js) offers `arcade_connect`, `arcade_accounts`, `arcade_signIn` and
+    `arcade_disconnect`, plus an `arcade:announceProvider` event.
+  - The origin is the browser's (`port.sender.origin`), never the page's. Every connect and sign-in opens the
+    extension's own window, showing that origin and the exact message.
+  - A nonce must be 32-128 hex characters, so a page cannot slip a second line into the message.
+  - It runs only in the top frame (an inscribed app in a frame gets no wallet), and only on https and localhost.
+- **Arcade side** (no server change):
+  - `signin.js` gets `extension()` and `signInWithExtension()`. They send the same `/auth/login` as today, with the
+    same login message.
+  - `signup.html` (/join) and `join.html` (/join/keys) show "Sign in with Arcade Wallet" only when the extension is
+    there.
+- **Tests:**
+  - `tests/test_extension.py` (4, needs Node): keys.js gives `seed.login_pubkey`'s key for the same words, its
+    signature passes the node's check, it reopens what it seals and refuses a bad checksum, and the manifest asks
+    only for storage and alarms.
+  - In a real Chromium with the extension loaded:
+    - import, then sign-in through /join/keys and /join, approved in the extension's window;
+    - another origin connects and then sees the account;
+    - refusing a sign-in, a malformed nonce and an unknown method are all refused.
+  - Sign-in/signup/web/public tests: 431 passed.
+- **Not yet (E2-E3):** signing messages per chain, transaction signing with decoded previews, the outside-site
+  verifier, and the wallet's coin keys. A person signed in through the extension opens their coins with their
+  password as before.
+
 ### 2026-11-03 DogeFeedX for accounts on a public arcade; the arcade @handle is the name (Claude; the operator: "all of this stuff is already available for the user end ... wire it in", "the primary at handle should still be the existing arcade @handles with the option of describing your handle on Doge")
 - **door.py** opens the DogeFeedX windows, their files and the reads of public arcade data (feed, posts, profiles,
   collections, ord index, mintpads, apps, `me`, notifications, wallet), each path by name. Still refused there: the
