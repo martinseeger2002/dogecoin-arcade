@@ -8,8 +8,11 @@ cannot run arbitrary shell commands or access admin-only RPC methods.
 import pathlib
 import sys
 
+from nacl.signing import SigningKey
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_web import app_state, client                          # noqa: F401,E402
+from test_auth_web import _sign_in                              # noqa: E402
 
 from arcade.web import door                                      # noqa: E402
 
@@ -173,7 +176,7 @@ def test_network_status_chains_have_required_fields(client):
 
 
 def test_terminal_endpoints_are_public():
-    """The terminal and network API endpoints must be public (no auth required)."""
+    """The door still lets a signed-in account reach these. The routes themselves refuse a stranger."""
     assert door.public_path("/api/terminal/commands")
     assert door.public_path("/api/terminal/exec", "POST")
     assert door.public_path("/api/network")
@@ -219,3 +222,56 @@ def test_terminal_does_not_execute_shell_metacharacters(client):
         data = response.json()
         assert "error" in data, f"metacharacter payload {payload} should error"
         assert "unknown command" in data["error"].lower()
+
+
+def test_terminal_and_network_refuse_strangers_and_limit_commands(client):
+    """A stranger is 403. A signed-in account may ask, thirty times a minute, then 429.
+
+    Peers stay on this machine (Admin → Overview). The network reply has no node id
+    and no tunnel name. A failed Core lookup is a sentence, not Core's own text.
+    """
+    app, _state = client
+    stranger = {"host": "node.example", "cf-connecting-ip": "203.0.113.77", "cf-ray": "abc"}
+    assert app.post("/api/terminal/exec", json={"command": "help"}, headers=stranger).status_code == 403
+    assert app.get("/api/network", headers=stranger).status_code == 403
+
+    # Sign in on this machine. The session cookie is what a later request from outside carries.
+    assert _sign_in(app, SigningKey.generate()).status_code == 200
+    signed = app.post("/api/terminal/exec", json={"command": "help"}, headers=stranger)
+    assert signed.status_code == 200 and "Available commands" in signed.json()["output"]
+    net = app.get("/api/network", headers=stranger)
+    assert net.status_code == 200
+    body = net.json()
+    assert set(body["tunnel"]) == {"active"}
+    assert body["arcades"] == []
+    assert "node_id" not in body["mesh"]
+
+    peers = app.post("/api/terminal/exec", json={"command": "peers"}, headers=stranger)
+    assert peers.status_code == 403
+    assert "Overview" in peers.json()["output"]
+    here = app.post("/api/terminal/exec", json={"command": "peers"})
+    assert here.status_code == 200
+
+    block = app.post("/api/terminal/exec", json={"command": "block", "args": "regtest 1"})
+    assert block.status_code == 200
+    assert block.json()["output"] == "Could not look up that block."
+    tx = app.post("/api/terminal/exec", json={"command": "tx", "args": "regtest " + ("ab" * 32)})
+    assert tx.json()["output"] == "Could not look up that transaction."
+    address = app.post("/api/terminal/exec", json={"command": "address", "args": "main nTestAddress"})
+    said = address.json()["output"]
+    assert "no node available" not in said
+    assert said.startswith("Address:") or said == "Could not look up that address."
+
+    source = pathlib.Path(__file__).resolve().parents[1].joinpath("arcade/web/app.py").read_text()
+    assert "with chain.rpc() as rpc:" in source
+    assert 'rpc.call("getblockhash", int(block_ref))' in source
+    assert 'rpc.call("getrawtransaction", txid, True)' in source
+    assert "index.balances([addr])" in source
+
+    flood = {"host": "node.example", "cf-connecting-ip": "203.0.113.88", "cf-ray": "flood"}
+    codes = [
+        app.post("/api/terminal/exec", json={"command": "help"}, headers=flood).status_code
+        for _ in range(31)
+    ]
+    assert codes[:30] == [200] * 30
+    assert codes[30] == 429

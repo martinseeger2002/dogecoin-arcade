@@ -10525,6 +10525,48 @@ def create_app(state: AppState) -> FastAPI:
                       coins=coins, system=system, operator_view=not _account_view(request))
 
     # ---------- DogeFeedX Terminal API: safe whitelist of read-only commands ----------
+    #: Commands a signed-in account, or the operator at this machine, may ask a minute.
+    #: A stranger on the public address is refused by the route (the door still lets a signed-in account through).
+    DFX_COMMANDS_A_MINUTE = 30
+    _dfx_seen: dict[str, list[float]] = {}
+
+    def _dfx_visitor(request: Request) -> str:
+        return (request.headers.get("cf-connecting-ip")
+                or (request.headers.get("x-forwarded-for") or "").split(",")[0]
+                or (request.client.host if request.client else "")).strip() or "local"
+
+    def _dfx_at_the_machine(request: Request) -> bool:
+        """The operator sitting at this arcade: the same door Admin → Overview uses."""
+        return not (state.public or _from_outside(request))
+
+    def _dfx_may_ask(request: Request) -> bool:
+        """A signed-in account, or the operator on this machine."""
+        return _dfx_at_the_machine(request) or signed_in(request) is not None
+
+    def _dfx_limited(request: Request) -> bool:
+        who = _dfx_visitor(request)
+        now = time.monotonic()
+        times = [t for t in _dfx_seen.get(who, ()) if now - t < 60]
+        if len(times) >= DFX_COMMANDS_A_MINUTE:
+            _dfx_seen[who] = times
+            return True
+        times.append(now)
+        _dfx_seen[who] = times
+        if len(_dfx_seen) > 5000:
+            for key in [k for k, seen in _dfx_seen.items() if not seen or now - seen[-1] > 60]:
+                _dfx_seen.pop(key, None)
+        return False
+
+    def _dfx_refused(request: Request):
+        if not _dfx_may_ask(request):
+            return JSONResponse({"detail": "Sign in first.", "output": "Sign in first."},
+                                status_code=403)
+        if _dfx_limited(request):
+            return JSONResponse({"detail": "Too many commands in a minute.",
+                                 "output": "Too many commands in a minute."},
+                                status_code=429)
+        return None
+
     TERMINAL_COMMANDS = {
         "help": "Show available commands",
         "status": "Show node status and version",
@@ -10548,11 +10590,16 @@ def create_app(state: AppState) -> FastAPI:
     @app.post("/api/terminal/exec")
     def terminal_exec(request: Request, payload: Any = Body(None)):
         """Execute a terminal command. Commands are limited to safe, read-only operations.
-        
-        This endpoint is public but restricted to a whitelist of commands that only read data.
-        It does NOT provide arbitrary shell or RPC access. Admin-only actions (like sending,
-        signing, or changing settings) are not available here.
+
+        A signed-in account, or the operator on this machine, may ask. A stranger is refused
+        (403). Thirty commands a minute, then 429. The whitelist only reads data. It does
+        NOT provide arbitrary shell or RPC access. Admin-only actions (sending, signing,
+        or changing settings) are not available here. A reply never includes Core's own
+        error text.
         """
+        refused = _dfx_refused(request)
+        if refused is not None:
+            return refused
         said = payload if isinstance(payload, dict) else {}
         cmd = str(said.get("command", "")).strip()
         args = [a.strip() for a in str(said.get("args", "")).split() if a.strip()]
@@ -10601,6 +10648,13 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"output": "\n".join(lines)})
             
             if cmd == "peers":
+                # Mesh links are the operator's, the same rule as Admin → Overview:
+                # this machine only. A signed-in account from outside is not shown them.
+                if not _dfx_at_the_machine(request):
+                    return JSONResponse(
+                        {"detail": "Peers are on this machine, under Admin → Overview.",
+                         "output": "Peers are on this machine, under Admin → Overview."},
+                        status_code=403)
                 mesh = getattr(state, "mesh", None)
                 if not mesh or not hasattr(mesh, "node"):
                     return JSONResponse({"output": "Mesh not available."})
@@ -10645,11 +10699,12 @@ def create_app(state: AppState) -> FastAPI:
                 if not chain:
                     return JSONResponse({"output": f"Unknown chain: {chain_name}. Use 'chains' to see available chains."})
                 try:
-                    if block_ref.isdigit():
-                        block_hash = chain.rpc("getblockhash", int(block_ref))
-                    else:
-                        block_hash = block_ref
-                    block = chain.rpc("getblock", block_hash)
+                    with chain.rpc() as rpc:
+                        if block_ref.isdigit():
+                            block_hash = rpc.call("getblockhash", int(block_ref))
+                        else:
+                            block_hash = block_ref
+                        block = rpc.call("getblock", block_hash)
                     lines = [
                         f"Block {block.get('height', '?')}",
                         f"  Hash: {block.get('hash', '?')[:32]}...",
@@ -10658,8 +10713,9 @@ def create_app(state: AppState) -> FastAPI:
                         f"  Size: {block.get('size', '?')} bytes",
                     ]
                     return JSONResponse({"output": "\n".join(lines)})
-                except Exception as e:
-                    return JSONResponse({"output": f"Error looking up block: {e}"})
+                except Exception:
+                    log.debug("terminal block lookup failed", exc_info=True)
+                    return JSONResponse({"output": "Could not look up that block."})
             
             if cmd == "tx":
                 if len(args) < 2:
@@ -10669,7 +10725,8 @@ def create_app(state: AppState) -> FastAPI:
                 if not chain:
                     return JSONResponse({"output": f"Unknown chain: {chain_name}. Use 'chains' to see available chains."})
                 try:
-                    tx = chain.rpc("getrawtransaction", txid, True)
+                    with chain.rpc() as rpc:
+                        tx = rpc.call("getrawtransaction", txid, True)
                     lines = [
                         f"Transaction {txid[:32]}...",
                         f"  Confirmations: {tx.get('confirmations', 0)}",
@@ -10680,8 +10737,9 @@ def create_app(state: AppState) -> FastAPI:
                     if tx.get("blockhash"):
                         lines.append(f"  Block: {tx.get('blockhash')[:32]}...")
                     return JSONResponse({"output": "\n".join(lines)})
-                except Exception as e:
-                    return JSONResponse({"output": f"Error looking up transaction: {e}"})
+                except Exception:
+                    log.debug("terminal transaction lookup failed", exc_info=True)
+                    return JSONResponse({"output": "Could not look up that transaction."})
             
             if cmd == "address":
                 if len(args) < 2:
@@ -10692,16 +10750,20 @@ def create_app(state: AppState) -> FastAPI:
                     return JSONResponse({"output": f"Unknown chain or not indexed: {chain_name}"})
                 try:
                     index = state.token_index(chain)
-                    with contextlib.closing(index.open()) as db:
-                        balance = index.balance(db, addr)
+                    held = index.balances([addr])
                     lines = [
                         f"Address: {addr[:20]}...",
                         f"  Chain: {chain.label}",
-                        f"  Balance: {format_amount(balance)} {chain.params.coin}",
                     ]
+                    if not held:
+                        lines.append("  No tokens.")
+                    else:
+                        for row in held:
+                            lines.append(f"  {row.get('name')}: {row.get('display')}")
                     return JSONResponse({"output": "\n".join(lines)})
-                except Exception as e:
-                    return JSONResponse({"output": f"Error looking up address: {e}"})
+                except Exception:
+                    log.debug("terminal address lookup failed", exc_info=True)
+                    return JSONResponse({"output": "Could not look up that address."})
             
             if cmd == "inscription":
                 if not args:
@@ -10736,24 +10798,26 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"output": "", "clear": True})
             
             return JSONResponse({"error": "not implemented", "output": f"Command '{cmd}' is not yet implemented."})
-        
-        except Exception as e:
-            return JSONResponse({"error": str(e), "output": f"Error: {e}"})
+
+        except Exception:
+            log.debug("terminal command failed", exc_info=True)
+            return JSONResponse({"error": "That command could not be run.",
+                                 "output": "That command could not be run."})
 
     # ---------- DogeFeedX Network API: public network status endpoint ----------
     @app.get("/api/network")
-    def api_network_status():
-        """Public network status for the DogeFeedX Network window.
-        
-        Returns safe, non-sensitive network information including:
-        - Chain sync status with progress bars
-        - Connected peers count
-        - Node status
-        - Tunnel status (if available)
-        
-        This endpoint is public and does not require authentication.
-        Sensitive information (like full peer lists or admin details) is not included.
+    def api_network_status(request: Request):
+        """Network status for the DogeFeedX Network window.
+
+        A signed-in account, or the operator on this machine. A stranger is refused
+        (403), and thirty asks a minute (429). The reply has chain sync, whether the
+        mesh is up, and a peer count. It does not send the node id, the tunnel's name,
+        or a list of arcades (that list was always empty). `tunnel` is `{active}` and
+        `arcades` is `[]`, which is what the window reads.
         """
+        refused = _dfx_refused(request)
+        if refused is not None:
+            return refused
         chains = []
         for c in state.all_chains:
             try:
@@ -10782,34 +10846,23 @@ def create_app(state: AppState) -> FastAPI:
         mesh_status = {"connected": False, "peers": 0}
         if mesh is not None and getattr(mesh, "loop", None) is not None:
             mesh_status["connected"] = True
-            mesh_status["node_id"] = str(getattr(mesh, "node_id", "") or "")[:16]
             if hasattr(mesh, "node") and hasattr(mesh.node, "links"):
                 mesh_status["peers"] = len(mesh.node.links)
             stun = getattr(mesh, "stun", None)
             if stun is not None:
                 mesh_status["stun_servers"] = len(stun.mine())
-        
-        tunnel = {"active": False, "name": None}
+
+        tunnel = {"active": False}
         try:
             tunnel_state = state.setting("tunnel", {})
             if isinstance(tunnel_state, dict) and tunnel_state.get("active"):
                 tunnel["active"] = True
-                tunnel["name"] = tunnel_state.get("name", "")
         except Exception:
             pass
-        
-        arcades = []
-        try:
-            running = _arcades_running()
-            for arc in running[:10]:
-                arcades.append({
-                    "id": str(arc.get("id", ""))[:16],
-                    "name": arc.get("name", ""),
-                    "linked": arc.get("link", {}).get("state") == "linked",
-                })
-        except Exception:
-            pass
-        
+
+        # The window reads `arcades`. The old list sliced a dict and was always empty.
+        arcades: list = []
+
         return JSONResponse({
             "chains": chains,
             "mesh": mesh_status,

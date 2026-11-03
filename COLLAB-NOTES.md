@@ -88,6 +88,20 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: Martin's review rules, re-applied (Cursor Cloud Agent)
+Martin's comment on `martinseeger2002/dogecoin-arcade` #61 says the review sits in its own commit after ours. That commit is not on any public branch. `upstream/main` is still `5eb2935` ("Pictures in the app"). Fetched branches: `main`, `pepecoinarcade`, `sadfrog/admin-mining`, `sadfrog/chain-switch-label`, `sadfrog/ltc-node-backup`, `sadfrog/ltc-safety`, `sadfrog/ltctest-mining`, `team/ord-walk-batch`. Nothing to merge. The listed review changes are re-applied on `cursor/dogefeedx-combined-fd4a` on top of `f5fb962` (the light window interiors). That commit does not touch the terminal, the network route, the door, the wheel fixture, or the look test, so it does not undo the review. Where the two would meet, the review wins.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only)
+**What landed:** `POST /api/terminal/exec` and `GET /api/network` answer a signed-in account or the operator on this machine (403 otherwise) and stop at 30 a minute (429). `door.py` still lets a signed-in account through. Replies do not include Core's own error text. `peers` is this machine only, the same door as Admin → Overview. `/api/network` sends no node id and no tunnel name: `tunnel` is `{active}` and `arcades` is `[]`. `block` and `tx` use `with chain.rpc() as rpc: rpc.call(...)`. `address` uses `index.balances([addr])` and each token's name. Desktop screenshots go to `DFX_SHOTS` or the temp folder. The wheel fixture is a `@classmethod`. The look test checks `#d9a520` in `desktop.html` and the paler golds in `deskdogefeedx.css`. `test_dogefeedx_server.py` is removed. New test: `test_terminal_and_network_refuse_strangers_and_limit_commands`.
+
+**Tests:** 158 in `tests/test_dogefeedx*.py`, including that access test, plus the desktop look test and the four theme-switch tests. 163 passed.
+
+**Left for the maintainer:** DogeFeedX still fetches `explorer.dogesoft.io` from `arcade/web/dogefeedx/apps.py` (`_fetch_dogefeed_explorer`). Not changed.
+
+**Need from the other side:** nothing. This agent does not merge the pull request, does not comment on Martin's repository, and writes nothing to dogefeed.app.
+
+---
+
 ### 2026-11-03 DogeFeedX: light page match, fresh side-by-side (Cursor Cloud Agent)
 A new side-by-side of the 16 dock modules against dogefeed.app. Window interiors now use that site's light page (white, Nunito, Fredoka, orange `#f5a023`). The menu bar, dock, and window frames stay the dark DogeFeedX skin. The dock is still the only site navigation. No sign-in button. Profile stays 440×620. Ownership reads stay on this node, with the peer line when a peer answers. Shots and the pass/fail list are `arcade/web/dogefeedx/compare/` and `arcade/web/dogefeedx/CHECKLIST.md`.
 

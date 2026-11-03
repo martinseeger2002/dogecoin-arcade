@@ -18,7 +18,8 @@ class TestWheelContents:
     """Tests that verify the built wheel contains dogefeedx."""
     
     @pytest.fixture(scope="class")
-    def wheel_path(self, tmp_path_factory):
+    @classmethod
+    def wheel_path(cls, tmp_path_factory):
         """Build a wheel and return its path."""
         tmp_dir = tmp_path_factory.mktemp("wheel")
         

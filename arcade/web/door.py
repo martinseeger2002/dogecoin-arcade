@@ -110,7 +110,7 @@ PUBLIC_PAGES = frozenset({
     "/account/ring/live",     # an open page checks in, and hears what is ringing it (signed in)
     "/admin/login",           # the remote admin password page (rate-limited)
     "/signin.js", "/base.css", "/desk98.css", "/deskubuntu.css", "/deskdogefeedx.css",
-    "/api/network",           # DogeFeedX Network window: safe, public network status (chains, mesh, peers)
+    "/api/network",           # DogeFeedX Network window. The door lets a signed-in account through; the route refuses a stranger (403) and limits asks.
     "/coins.js",
     "/wallet.js",
     "/messaging.js",
@@ -205,7 +205,7 @@ PUBLIC_TREES = (
     "/exchange/swap-trade/",  # one finished lock-script swap (2026-10-17)
     "/exchange/coins/",       # a coin pair: redirects to its swap market
     "/exchange/ord/",         # a Doginals/Pepinals collection described by an inscription (2026-10-17)
-    "/api/terminal/",         # DogeFeedX Terminal: safe whitelist of read-only app commands (commands list)
+    "/api/terminal/",         # DogeFeedX Terminal command list. exec itself refuses a stranger and limits commands.
 )
 
 #: Whole paths with something variable in the middle of them, where a tree
@@ -292,7 +292,7 @@ LINKED_FROM_PUBLIC = ("/content/", "/collections", "/feed", "/u/", "/docs",
 #: equally correct; it is named so that nobody reads that 405 as the door having
 #: opened something. (the door census, 2026-09-27)
 PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
-               # DogeFeedX Terminal: safe whitelist of read-only app commands (exec endpoint)
+               # DogeFeedX Terminal exec: the door lets a signed-in account reach it; the route refuses a stranger (403) and limits commands
                "/api/terminal/exec",
                # a browser's yes to the terms: a cookie in that browser, nothing on this node (terms.py, 2026-11-02)
                "/terms/accept",
