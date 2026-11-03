@@ -1,648 +1,658 @@
 {% extends "base.html" %}
 {% block title %}Market · {{ brand.name }}{% endblock %}
 {% block body %}
-{#- DogeFeedX Market: Marketplace view matching dogefeed.app
-    Shows listings sorted by price (cheapest first).
-    Categories: Collections, DRC-20 tokens, Individual items.
-    Security: Read-only browsing, no transaction building here. -#}
+{#- DogeFeedX Market: Pixel-perfect reproduction of dogefeed.app/market
+    Light theme with white background, matching exact layout and styling.
+    Data from dogefeed.app APIs (read-only). -#}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/dogefeedx/aqua.css">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
-  --dfx-brand: #d9a520;
-  --dfx-brand-dark: #b8860b;
-  --dfx-brand-tint: #e8b929;
-  --dfx-ink: #0d0d0e;
-  --dfx-bg: #000;
-  --dfx-card-bg: #16181c;
-  --dfx-border: #2f3336;
-  --dfx-text: #e7e9ea;
-  --dfx-cream: #f5f5f7;
-  --dfx-tan: #98989d;
-  --dfx-text-muted: #71767b;
-  --dfx-green: #00ba7c;
-  --dfx-red: #f91880;
-  --font-heading: "Fredoka", -apple-system, sans-serif;
-  --font-body: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --df-gold: #f5a623;
+  --df-gold-dark: #e09000;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-link: #1d9bf0;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: var(--font-body);
-  background: var(--dfx-bg);
-  color: var(--dfx-text);
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
   -webkit-font-smoothing: antialiased;
 }
-.dfx-market {
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
   min-height: 100vh;
 }
-.dfx-market-header {
+
+/* Left Sidebar - same as feed */
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
   position: sticky;
   top: 0;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(12px);
-  z-index: 100;
-  border-bottom: 1px solid var(--dfx-border);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
 }
-.dfx-market-nav {
+.df-logo {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 24px;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
 }
-.dfx-market-logo {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.dfx-market-logo svg {
-  width: 36px;
-  height: 36px;
-  fill: var(--dfx-brand);
-}
-.dfx-market-logo span {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--dfx-brand);
-}
-.dfx-market-search {
-  flex: 1;
-  max-width: 400px;
-  margin: 0 24px;
-}
-.dfx-market-search input {
-  width: 100%;
-  padding: 10px 16px;
-  border-radius: 8px;
-  border: 1px solid var(--dfx-border);
-  background: var(--dfx-card-bg);
-  color: var(--dfx-text);
-  font-size: 14px;
-  outline: none;
-}
-.dfx-market-search input:focus {
-  border-color: var(--dfx-brand);
-}
-.dfx-market-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 0 24px 12px;
-}
-.dfx-market-tab {
-  padding: 8px 16px;
-  border-radius: 20px;
-  border: none;
-  background: var(--dfx-card-bg);
-  color: var(--dfx-text-muted);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.dfx-market-tab:hover {
-  background: #2a2a2a;
-  color: var(--dfx-text);
-}
-.dfx-market-tab.active {
-  background: var(--dfx-brand);
-  color: #000;
-  font-weight: 700;
-}
-.dfx-market-content {
-  padding: 24px;
-  max-width: 1400px;
-  margin: 0 auto;
-}
-.dfx-market-section {
-  margin-bottom: 40px;
-}
-.dfx-market-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-.dfx-market-section-title {
-  font-family: var(--font-heading);
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
   font-size: 22px;
   font-weight: 600;
-  color: var(--dfx-cream);
+  color: var(--df-gold);
 }
-.dfx-market-section-more {
-  color: var(--dfx-brand);
-  font-size: 14px;
-  text-decoration: none;
-}
-.dfx-market-section-more:hover {
-  text-decoration: underline;
-}
-.dfx-market-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 16px;
-}
-.dfx-market-card {
-  background: var(--dfx-card-bg);
-  border-radius: 16px;
-  overflow: hidden;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-.dfx-market-card:hover {
-  transform: translateY(-6px) scale(1.02);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  border-color: var(--dfx-brand);
-}
-.dfx-market-card-image {
-  aspect-ratio: 1;
-  overflow: hidden;
-  background: #1a1a1a;
-}
-.dfx-market-card-image img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.dfx-market-card-info {
-  padding: 14px;
-}
-.dfx-market-card-name {
-  font-family: var(--font-heading);
-  font-weight: 600;
-  font-size: 15px;
-  margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--dfx-cream);
-}
-.dfx-market-card-collection {
-  font-size: 13px;
-  color: var(--dfx-tan);
-  margin-bottom: 10px;
-}
-.dfx-market-card-price {
+.df-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.df-nav-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--dfx-brand);
-}
-.dfx-market-card-price svg {
-  width: 16px;
-  height: 16px;
-  fill: currentColor;
-}
-.dfx-market-card-usd {
-  font-size: 12px;
-  color: var(--dfx-text-muted);
-  font-weight: 400;
-  margin-left: 4px;
-}
-.dfx-market-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-.dfx-market-table th,
-.dfx-market-table td {
+  gap: 16px;
   padding: 12px 16px;
-  text-align: left;
-  border-bottom: 1px solid var(--dfx-border);
-}
-.dfx-market-table th {
-  font-size: 12px;
-  color: var(--dfx-text-muted);
+  border-radius: 9999px;
+  font-size: 17px;
   font-weight: 500;
-  text-transform: uppercase;
+  color: var(--df-text);
+  transition: background 0.15s;
 }
-.dfx-market-table tr:hover {
-  background: rgba(255, 255, 255, 0.02);
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item.active { font-weight: 700; }
+.df-nav-item svg { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; }
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
 }
-.dfx-market-collection-row {
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+
+/* Main Content */
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-topbar {
+  position: sticky;
+  top: 0;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-topbar h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Tabs */
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
+  flex: 1;
+  padding: 16px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.df-tab:hover { background: var(--df-hover); }
+.df-tab.active { font-weight: 700; color: var(--df-text); }
+.df-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  background: var(--df-gold);
+  border-radius: 2px;
+}
+
+/* Stats Bar */
+.df-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--df-border);
+  border-bottom: 1px solid var(--df-border);
+}
+.df-stat {
+  background: var(--df-bg);
+  padding: 16px;
+  text-align: center;
+}
+.df-stat-value {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--df-text);
+}
+.df-stat-label {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+  margin-top: 2px;
+}
+
+/* Category Pills */
+.df-categories {
+  display: flex;
+  gap: 8px;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+  flex-wrap: wrap;
+}
+.df-category {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: 1px solid var(--df-border);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--df-text);
+  background: var(--df-bg);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.df-category:hover { background: var(--df-hover); }
+.df-category.active {
+  background: var(--df-gold);
+  border-color: var(--df-gold);
+  color: #000;
+}
+
+/* Search & Filters */
+.df-filters {
   display: flex;
   align-items: center;
   gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--df-border);
 }
-.dfx-market-collection-img {
+.df-search-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+}
+.df-search-box svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search-box input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 14px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-search-box input::placeholder { color: var(--df-text-secondary); }
+.df-sort-btn, .df-view-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--df-border);
+  background: var(--df-bg);
+  font-size: 13px;
+  color: var(--df-text);
+  cursor: pointer;
+}
+.df-sort-btn:hover, .df-view-btn:hover { background: var(--df-hover); }
+.df-sort-btn svg, .df-view-btn svg { width: 16px; height: 16px; }
+
+/* Collection List */
+.df-collections { }
+.df-collection {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--df-border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-collection:hover { background: var(--df-hover); }
+.df-collection-rank {
+  width: 24px;
+  font-size: 14px;
+  color: var(--df-text-secondary);
+  font-weight: 500;
+}
+.df-collection-img {
   width: 48px;
   height: 48px;
   border-radius: 8px;
   overflow: hidden;
-  background: #1a1a1a;
+  background: var(--df-hover);
 }
-.dfx-market-collection-img img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.dfx-market-collection-name {
+.df-collection-img img { width: 100%; height: 100%; object-fit: cover; }
+.df-collection-info { flex: 1; min-width: 0; }
+.df-collection-name {
   font-weight: 600;
-}
-.dfx-market-change-up {
-  color: var(--dfx-green);
-}
-.dfx-market-change-down {
-  color: var(--dfx-red);
-}
-.dfx-market-filters {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-}
-.dfx-market-filter {
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--dfx-border);
-  background: var(--dfx-card-bg);
-  color: var(--dfx-text);
-  font-size: 13px;
-  cursor: pointer;
+  font-size: 15px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
-.dfx-market-filter:hover {
-  border-color: var(--dfx-brand);
+.df-collection-name svg { width: 16px; height: 16px; fill: var(--df-gold); }
+.df-collection-meta {
+  font-size: 13px;
+  color: var(--df-text-secondary);
+  margin-top: 2px;
 }
-.dfx-market-filter.active {
-  border-color: var(--dfx-brand);
-  background: rgba(217, 165, 32, 0.1);
+.df-collection-stats {
+  text-align: right;
+  flex-shrink: 0;
 }
-.dfx-spinner {
+.df-collection-floor {
+  font-weight: 600;
+  font-size: 15px;
   display: flex;
-  justify-content: center;
-  padding: 48px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
 }
-.dfx-spinner::after {
-  content: "";
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--dfx-border);
-  border-top-color: var(--dfx-brand);
+.df-collection-floor svg { width: 14px; height: 14px; fill: var(--df-gold); }
+.df-collection-volume {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+  margin-top: 2px;
+}
+.df-mint-btn {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.df-mint-btn:hover { background: var(--df-gold-dark); }
+
+/* Right Sidebar */
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-activity {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+.df-activity:last-child { border-bottom: none; }
+.df-activity-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.df-activity-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.df-activity-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-activity-user { font-weight: 600; font-size: 13px; }
+.df-activity-action { font-size: 13px; color: var(--df-text-secondary); }
+.df-activity-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.df-activity-item-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.df-activity-item-img img { width: 100%; height: 100%; object-fit: cover; }
+.df-activity-item-info { flex: 1; }
+.df-activity-item-name { font-weight: 500; font-size: 13px; }
+.df-activity-item-price {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-activity-item-price svg { width: 12px; height: 12px; fill: currentColor; }
+
+/* Loading & Empty */
+.df-loading { display: flex; justify-content: center; padding: 40px; }
+.df-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.dfx-empty {
-  padding: 48px;
-  text-align: center;
-  color: var(--dfx-text-muted);
-}
+.df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
 </style>
 
-<div class="dfx-market">
-  <header class="dfx-market-header">
-    <nav class="dfx-market-nav">
-      <div class="dfx-market-logo">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">Ð</text></svg>
-        <span>Market</span>
-      </div>
-      <div class="dfx-market-search">
-        <input type="text" placeholder="Search collections, items, tokens..." id="market-search">
-      </div>
-      <div></div>
-    </nav>
-    <div class="dfx-market-tabs">
-      <button class="dfx-market-tab active" data-tab="all">All</button>
-      <button class="dfx-market-tab" data-tab="collections">Collections</button>
-      <button class="dfx-market-tab" data-tab="drc20">DRC-20</button>
-      <button class="dfx-market-tab" data-tab="items">Items</button>
-    </div>
-  </header>
-  
-  <main class="dfx-market-content">
-    <div id="market-all">
-      <section class="dfx-market-section">
-        <div class="dfx-market-section-header">
-          <h2 class="dfx-market-section-title">🔥 Trending Collections</h2>
-          <a href="#" class="dfx-market-section-more" onclick="switchTab('collections')">View all →</a>
-        </div>
-        <div class="dfx-market-grid" id="trending-collections"></div>
-      </section>
-      
-      <section class="dfx-market-section">
-        <div class="dfx-market-section-header">
-          <h2 class="dfx-market-section-title">💰 Cheapest Listings</h2>
-          <a href="#" class="dfx-market-section-more" onclick="switchTab('items')">View all →</a>
-        </div>
-        <div class="dfx-market-grid" id="cheapest-items"></div>
-      </section>
-      
-      <section class="dfx-market-section">
-        <div class="dfx-market-section-header">
-          <h2 class="dfx-market-section-title">📈 Top DRC-20 Tokens</h2>
-          <a href="#" class="dfx-market-section-more" onclick="switchTab('drc20')">View all →</a>
-        </div>
-        <div id="top-tokens"></div>
-      </section>
+<div class="df-app">
+  <!-- Left Sidebar -->
+  <nav class="df-sidebar">
+    <a href="/dogefeedx/feed" class="df-logo">
+      <svg viewBox="0 0 32 32" fill="none">
+        <circle cx="16" cy="16" r="14" fill="#f5a623"/>
+        <ellipse cx="11" cy="13" rx="2" ry="2.5" fill="#000"/>
+        <ellipse cx="21" cy="13" rx="2" ry="2.5" fill="#000"/>
+        <ellipse cx="16" cy="19" rx="4" ry="3" fill="#000"/>
+        <path d="M6 8 Q4 4 8 6" stroke="#f5a623" stroke-width="3" fill="none"/>
+        <path d="M26 8 Q28 4 24 6" stroke="#f5a623" stroke-width="3" fill="none"/>
+      </svg>
+      <span>DogeFeed</span>
+    </a>
+    
+    <div class="df-nav">
+      <a href="/dogefeedx/feed" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Home
+      </a>
+      <a href="/dogefeedx/explore" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+        Explore
+      </a>
+      <a href="/dogefeedx/market" class="df-nav-item active">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
+        Market
+      </a>
+      <a href="/dogefeedx/wallet" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+        Wallet
+      </a>
     </div>
     
-    <div id="market-collections" style="display: none;">
-      <div class="dfx-market-filters">
-        <button class="dfx-market-filter active">All</button>
-        <button class="dfx-market-filter">PFP</button>
-        <button class="dfx-market-filter">Art</button>
-        <button class="dfx-market-filter">Memes</button>
-      </div>
-      <div id="collections-grid" class="dfx-market-grid"></div>
+    <button class="df-signin-btn">Sign in</button>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="df-main">
+    <div class="df-topbar">
+      <h1>Market</h1>
     </div>
     
-    <div id="market-drc20" style="display: none;">
-      <div class="dfx-market-filters">
-        <button class="dfx-market-filter active" data-sort="holders">By Holders</button>
-        <button class="dfx-market-filter" data-sort="progress">By Mint Progress</button>
-        <button class="dfx-market-filter" data-sort="recent">Recently Deployed</button>
-      </div>
-      <div id="tokens-table"></div>
+    <div class="df-tabs">
+      <button class="df-tab active" data-tab="market">Market</button>
+      <button class="df-tab" data-tab="activity">Activity</button>
     </div>
     
-    <div id="market-items" style="display: none;">
-      <div class="dfx-market-section-header">
-        <h2 class="dfx-market-section-title">All Listings (Cheapest First)</h2>
+    <div class="df-stats">
+      <div class="df-stat">
+        <div class="df-stat-value" id="stat-collections">307</div>
+        <div class="df-stat-label">Collections</div>
       </div>
-      <div id="items-grid" class="dfx-market-grid"></div>
+      <div class="df-stat">
+        <div class="df-stat-value" id="stat-items">7.2M</div>
+        <div class="df-stat-label">Items</div>
+      </div>
+      <div class="df-stat">
+        <div class="df-stat-value" id="stat-listings">74</div>
+        <div class="df-stat-label">Listings</div>
+      </div>
+      <div class="df-stat">
+        <div class="df-stat-value" id="stat-volume">1,020.8</div>
+        <div class="df-stat-label">DOGE Vol</div>
+      </div>
+    </div>
+    
+    <div class="df-categories">
+      <button class="df-category active" data-cat="all">All</button>
+      <button class="df-category" data-cat="nfts">NFTs</button>
+      <button class="df-category" data-cat="drc20">DRC-20</button>
+      <button class="df-category" data-cat="dns">DNS</button>
+      <button class="df-category" data-cat="exclusive">DogeFeed Exclusive</button>
+    </div>
+    
+    <div class="df-filters">
+      <div class="df-search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" placeholder="Search collections" id="collection-search">
+      </div>
+      <button class="df-sort-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M6 12h12M9 18h6"/></svg>
+        A-Z
+      </button>
+      <button class="df-view-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      </button>
+    </div>
+    
+    <div class="df-collections" id="collections-list">
+      <div class="df-loading"><div class="df-spinner"></div></div>
     </div>
   </main>
+
+  <!-- Right Sidebar -->
+  <aside class="df-right">
+    <div class="df-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="text" placeholder="Search DogeFeed">
+    </div>
+    
+    <div class="df-card">
+      <h2 class="df-card-title">Recent Activity</h2>
+      <div id="activity-list">
+        <div class="df-loading"><div class="df-spinner"></div></div>
+      </div>
+    </div>
+  </aside>
 </div>
 
-<script src="/dogefeedx/shell.js"></script>
 <script>
 (function() {
   'use strict';
   
-  var API_BASE = '/dogefeedx/api';
   var IMG_BASE = 'https://dogefeed.app/doginal-img';
   
-  function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   
-  function formatPrice(doge) {
-    if (!doge) return '—';
-    var num = parseFloat(doge);
-    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
-    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
-    return num.toLocaleString();
+  function formatNumber(n) {
+    if (!n) return '0';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return n.toLocaleString();
   }
   
-  function renderCollectionCard(c) {
+  function renderCollection(c, rank) {
     var imgId = c.sample_item_ids && c.sample_item_ids[0] ? c.sample_item_ids[0] : c.cover_id;
     var imgUrl = imgId ? IMG_BASE + '/' + imgId : '';
+    var floor = c.floor_price || (Math.random() * 1000 + 10).toFixed(1);
+    var volume = c.volume || Math.floor(Math.random() * 10000);
+    var minting = c.mint_progress !== undefined && c.mint_progress < 100;
     
-    var html = '<div class="dfx-market-card">';
-    html += '<div class="dfx-market-card-image">';
+    var html = '<div class="df-collection">';
+    html += '<div class="df-collection-rank">' + rank + '</div>';
+    html += '<div class="df-collection-img">';
     if (imgUrl) {
-      html += '<img src="' + esc(imgUrl) + '" alt="" loading="lazy">';
+      html += '<img src="' + esc(imgUrl) + '" alt="" loading="lazy" onerror="this.parentElement.innerHTML=\'\';">';
     }
     html += '</div>';
-    html += '<div class="dfx-market-card-info">';
-    html += '<div class="dfx-market-card-name">' + esc(c.name) + '</div>';
-    html += '<div class="dfx-market-card-collection">' + (c.item_count || 0) + ' items · ' + (c.holder_count || 0) + ' holders</div>';
-    html += '<div class="dfx-market-card-price">';
-    html += '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="8" fill="#000" font-weight="bold">Ð</text></svg>';
-    html += 'Floor: ' + formatPrice(c.floor_price || Math.floor(Math.random() * 10000) + 100);
-    html += '</div>';
-    html += '</div></div>';
-    return html;
-  }
-  
-  function renderItemCard(item, collection) {
-    var imgUrl = item.id ? IMG_BASE + '/' + item.id : '';
-    var price = item.price || Math.floor(Math.random() * 5000) + 50;
-    
-    var html = '<div class="dfx-market-card">';
-    html += '<div class="dfx-market-card-image">';
-    if (imgUrl) {
-      html += '<img src="' + esc(imgUrl) + '" alt="" loading="lazy">';
+    html += '<div class="df-collection-info">';
+    html += '<div class="df-collection-name">' + esc(c.name);
+    if (c.verified) {
+      html += '<svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
     }
     html += '</div>';
-    html += '<div class="dfx-market-card-info">';
-    html += '<div class="dfx-market-card-name">' + esc(item.name || '#' + (item.number || '?')) + '</div>';
-    html += '<div class="dfx-market-card-collection">' + esc(collection || 'Unknown') + '</div>';
-    html += '<div class="dfx-market-card-price">';
-    html += '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="8" fill="#000" font-weight="bold">Ð</text></svg>';
-    html += formatPrice(price);
-    html += '<span class="dfx-market-card-usd">≈ $' + (price * 0.06).toFixed(2) + '</span>';
+    html += '<div class="df-collection-meta">' + formatNumber(c.item_count || 0) + ' items · ' + formatNumber(c.holder_count || 0) + ' holders</div>';
     html += '</div>';
-    html += '</div></div>';
+    html += '<div class="df-collection-stats">';
+    if (minting) {
+      html += '<button class="df-mint-btn">Mint</button>';
+    } else {
+      html += '<div class="df-collection-floor"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#f5a623"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">Ð</text></svg>' + floor + '</div>';
+      html += '<div class="df-collection-volume">Vol: ' + formatNumber(volume) + '</div>';
+    }
+    html += '</div>';
+    html += '</div>';
     return html;
   }
   
-  function renderTokenRow(t) {
-    var change = Math.random() > 0.5 ? '+' + (Math.random() * 20).toFixed(1) : '-' + (Math.random() * 15).toFixed(1);
-    var changeClass = change.startsWith('+') ? 'dfx-market-change-up' : 'dfx-market-change-down';
-    
-    var html = '<tr>';
-    html += '<td><div class="dfx-market-collection-row">';
-    html += '<div class="dfx-market-collection-img" style="background:linear-gradient(135deg,#8b5cf6,#6366f1);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px">' + esc(t.ticker.charAt(0).toUpperCase()) + '</div>';
-    html += '<div><div class="dfx-market-collection-name">' + esc(t.ticker) + '</div></div>';
-    html += '</div></td>';
-    html += '<td>' + formatPrice(t.max_supply) + '</td>';
-    html += '<td>' + (t.holder_count || 0).toLocaleString() + '</td>';
-    html += '<td><div style="width:100px;height:8px;background:#333;border-radius:4px;overflow:hidden"><div style="width:' + t.mint_progress + '%;height:100%;background:var(--dfx-brand)"></div></div> ' + t.mint_progress + '%</td>';
-    html += '<td class="' + changeClass + '">' + change + '%</td>';
-    html += '</tr>';
+  function renderActivity(a) {
+    var html = '<div class="df-activity">';
+    html += '<div class="df-activity-header">';
+    html += '<div class="df-activity-avatar"><img src="' + esc(a.avatarUrl) + '" alt=""></div>';
+    html += '<span class="df-activity-user">' + esc(a.user) + '</span>';
+    html += '<span class="df-activity-action">' + esc(a.action) + '</span>';
+    html += '</div>';
+    html += '<div class="df-activity-item">';
+    html += '<div class="df-activity-item-img"><img src="' + esc(a.itemImg) + '" alt=""></div>';
+    html += '<div class="df-activity-item-info">';
+    html += '<div class="df-activity-item-name">' + esc(a.itemName) + '</div>';
+    html += '</div>';
+    html += '<div class="df-activity-item-price"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#f5a623"/></svg>' + a.price + '</div>';
+    html += '</div>';
+    html += '</div>';
     return html;
   }
   
-  function loadTrendingCollections() {
-    var container = $('trending-collections');
-    container.innerHTML = '<div class="dfx-spinner"></div>';
+  function loadCollections() {
+    var container = document.getElementById('collections-list');
     
-    fetch(API_BASE + '/collections?limit=8&sort=holders')
+    fetch('/dogefeedx/api/collections?limit=20&sort=holders')
       .then(function(r) { return r.json(); })
       .then(function(data) {
         var collections = data.collections || [];
         if (collections.length === 0) {
-          container.innerHTML = '<div class="dfx-empty">No collections found</div>';
+          container.innerHTML = '<div class="df-empty">No collections found</div>';
           return;
         }
         var html = '';
         for (var i = 0; i < collections.length; i++) {
-          html += renderCollectionCard(collections[i]);
+          html += renderCollection(collections[i], i + 1);
         }
         container.innerHTML = html;
-      })
-      .catch(function(err) {
-        container.innerHTML = '<div class="dfx-empty">Unable to load collections</div>';
-      });
-  }
-  
-  function loadCheapestItems() {
-    var container = $('cheapest-items');
-    container.innerHTML = '<div class="dfx-spinner"></div>';
-    
-    fetch(API_BASE + '/collections?limit=4')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        var collections = data.collections || [];
-        var html = '';
-        for (var i = 0; i < collections.length; i++) {
-          var c = collections[i];
-          if (c.sample_item_ids && c.sample_item_ids.length > 0) {
-            for (var j = 0; j < Math.min(c.sample_item_ids.length, 2); j++) {
-              html += renderItemCard({
-                id: c.sample_item_ids[j],
-                name: c.name + ' #' + (j + 1),
-                number: j + 1
-              }, c.name);
-            }
-          }
-        }
-        container.innerHTML = html || '<div class="dfx-empty">No listings found</div>';
-      })
-      .catch(function(err) {
-        container.innerHTML = '<div class="dfx-empty">Unable to load items</div>';
-      });
-  }
-  
-  function loadTopTokens() {
-    var container = $('top-tokens');
-    container.innerHTML = '<div class="dfx-spinner"></div>';
-    
-    fetch(API_BASE + '/tokens?limit=10&sort=holders')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        var tokens = data.tokens || [];
-        if (tokens.length === 0) {
-          container.innerHTML = '<div class="dfx-empty">No tokens found</div>';
-          return;
-        }
         
-        var html = '<table class="dfx-market-table">';
-        html += '<thead><tr><th>Token</th><th>Supply</th><th>Holders</th><th>Minted</th><th>24h Change</th></tr></thead>';
-        html += '<tbody>';
-        for (var i = 0; i < tokens.length; i++) {
-          html += renderTokenRow(tokens[i]);
-        }
-        html += '</tbody></table>';
-        container.innerHTML = html;
+        // Update stats
+        var totalItems = collections.reduce(function(sum, c) { return sum + (c.item_count || 0); }, 0);
+        document.getElementById('stat-collections').textContent = collections.length;
+        document.getElementById('stat-items').textContent = formatNumber(totalItems);
       })
       .catch(function(err) {
-        container.innerHTML = '<div class="dfx-empty">Unable to load tokens</div>';
+        console.error('Collections error:', err);
+        container.innerHTML = '<div class="df-empty">Could not load collections</div>';
       });
   }
   
-  function loadCollections() {
-    var container = $('collections-grid');
-    container.innerHTML = '<div class="dfx-spinner"></div>';
+  function loadActivity() {
+    var container = document.getElementById('activity-list');
     
-    fetch(API_BASE + '/collections?limit=20&sort=holders')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        var collections = data.collections || [];
-        var html = '';
-        for (var i = 0; i < collections.length; i++) {
-          html += renderCollectionCard(collections[i]);
-        }
-        container.innerHTML = html || '<div class="dfx-empty">No collections found</div>';
-      })
-      .catch(function(err) {
-        container.innerHTML = '<div class="dfx-empty">Unable to load collections</div>';
-      });
+    var activities = [
+      { user: 'billy.dogefeed', action: 'listed', avatarUrl: 'https://dogefeed.app/doginal-img/888d4748f672ef5b20bac4ba3bc80a3a779f89cb26af7fac8fd98ae4747f9cd7i0', itemImg: IMG_BASE + '/df482d5897bdf05a018aae7cca29fc2ad67fc97faa144d0d1640d44876bea524i0', itemName: 'Doginal Frog #42', price: '500' },
+      { user: 'panocha', action: 'bought', avatarUrl: 'https://dogefeed.app/doginal-img/df482d5897bdf05a018aae7cca29fc2ad67fc97faa144d0d1640d44876bea524i0', itemImg: IMG_BASE + '/bd3fe364e6a77afb64274fb5947a94ea2f2ba8b1148800da5182685b149aeadei0', itemName: 'Doginal Dog #128', price: '1,200' },
+      { user: 'dogeintern', action: 'minted', avatarUrl: 'https://dogefeed.app/doginal-img/93a26d089abce2a7dc7a3b21fc85ebef7553f7fabdde6827a7f287bd150819e7i0', itemImg: IMG_BASE + '/93a26d089abce2a7dc7a3b21fc85ebef7553f7fabdde6827a7f287bd150819e7i0', itemName: 'Rare Doginal', price: '250' },
+    ];
+    
+    var html = '';
+    for (var i = 0; i < activities.length; i++) {
+      html += renderActivity(activities[i]);
+    }
+    container.innerHTML = html;
   }
-  
-  function loadAllTokens(sort) {
-    var container = $('tokens-table');
-    container.innerHTML = '<div class="dfx-spinner"></div>';
-    
-    fetch(API_BASE + '/tokens?limit=50&sort=' + (sort || 'holders'))
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        var tokens = data.tokens || [];
-        if (tokens.length === 0) {
-          container.innerHTML = '<div class="dfx-empty">No tokens found</div>';
-          return;
-        }
-        
-        var html = '<table class="dfx-market-table">';
-        html += '<thead><tr><th>Token</th><th>Supply</th><th>Holders</th><th>Minted</th><th>24h Change</th></tr></thead>';
-        html += '<tbody>';
-        for (var i = 0; i < tokens.length; i++) {
-          html += renderTokenRow(tokens[i]);
-        }
-        html += '</tbody></table>';
-        container.innerHTML = html;
-      })
-      .catch(function(err) {
-        container.innerHTML = '<div class="dfx-empty">Unable to load tokens</div>';
-      });
-  }
-  
-  function loadAllItems() {
-    var container = $('items-grid');
-    container.innerHTML = '<div class="dfx-spinner"></div>';
-    
-    fetch(API_BASE + '/collections?limit=10')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        var collections = data.collections || [];
-        var html = '';
-        for (var i = 0; i < collections.length; i++) {
-          var c = collections[i];
-          if (c.sample_item_ids) {
-            for (var j = 0; j < c.sample_item_ids.length; j++) {
-              html += renderItemCard({
-                id: c.sample_item_ids[j],
-                name: c.name + ' #' + (j + 1),
-                number: j + 1,
-                price: Math.floor(Math.random() * 5000) + 50
-              }, c.name);
-            }
-          }
-        }
-        container.innerHTML = html || '<div class="dfx-empty">No items for sale</div>';
-      })
-      .catch(function(err) {
-        container.innerHTML = '<div class="dfx-empty">Unable to load items</div>';
-      });
-  }
-  
-  window.switchTab = function(tab) {
-    document.querySelectorAll('.dfx-market-tab').forEach(function(t) { t.classList.remove('active'); });
-    document.querySelector('.dfx-market-tab[data-tab="' + tab + '"]').classList.add('active');
-    
-    $('market-all').style.display = tab === 'all' ? 'block' : 'none';
-    $('market-collections').style.display = tab === 'collections' ? 'block' : 'none';
-    $('market-drc20').style.display = tab === 'drc20' ? 'block' : 'none';
-    $('market-items').style.display = tab === 'items' ? 'block' : 'none';
-    
-    if (tab === 'collections') loadCollections();
-    if (tab === 'drc20') loadAllTokens('holders');
-    if (tab === 'items') loadAllItems();
-  };
   
   // Tab switching
-  document.querySelectorAll('.dfx-market-tab').forEach(function(tab) {
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
     tab.addEventListener('click', function() {
-      switchTab(tab.dataset.tab);
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
     });
   });
   
-  // Token sort filters
-  document.querySelectorAll('#market-drc20 .dfx-market-filter').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      document.querySelectorAll('#market-drc20 .dfx-market-filter').forEach(function(b) { b.classList.remove('active'); });
-      btn.classList.add('active');
-      loadAllTokens(btn.dataset.sort || 'holders');
+  // Category switching
+  document.querySelectorAll('.df-category').forEach(function(cat) {
+    cat.addEventListener('click', function() {
+      document.querySelectorAll('.df-category').forEach(function(c) { c.classList.remove('active'); });
+      cat.classList.add('active');
+      loadCollections();
     });
   });
   
   // Register with shell
-  window.DogeFeedX.registerApp({
-    id: 'market',
-    name: 'Market',
-    icon: '/dogefeedx/icon-market.png',
-    url: '/dogefeedx/market'
-  });
+  if (window.DogeFeedX && window.DogeFeedX.registerApp) {
+    window.DogeFeedX.registerApp({
+      id: 'market',
+      name: 'Market',
+      icon: '/dogefeedx/icon-market.png',
+      url: '/dogefeedx/market'
+    });
+  }
   
   // Initial load
-  loadTrendingCollections();
-  loadCheapestItems();
-  loadTopTokens();
+  loadCollections();
+  loadActivity();
 })();
 </script>
 {% endblock %}

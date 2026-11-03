@@ -1,237 +1,238 @@
 {% extends "base.html" %}
 {% block title %}Profile · {{ brand.name }}{% endblock %}
 {% block body %}
-{#- DogeFeedX Profile: User profile hub matching dogefeed.app
-    Shows user info, PFP, holdings, activity, and social connections.
-    Data from dogefeed.app /api/search and explorer endpoints. -#}
+{#- DogeFeedX Profile: Pixel-perfect reproduction of dogefeed.app/u/username
+    Light theme with white background, matching exact layout and styling.
+    Shows user info, PFP, holdings, activity, and social connections. -#}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/dogefeedx/aqua.css">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
-  --dfx-brand: #d9a520;
-  --dfx-brand-dark: #b8860b;
-  --dfx-brand-tint: #e8b929;
-  --dfx-ink: #0d0d0e;
-  --dfx-bg: #000;
-  --dfx-card-bg: #16181c;
-  --dfx-border: #2f3336;
-  --dfx-text: #e7e9ea;
-  --dfx-cream: #f5f5f7;
-  --dfx-tan: #98989d;
-  --dfx-text-muted: #71767b;
-  --dfx-link: #d9a520;
-  --font-heading: "Fredoka", -apple-system, sans-serif;
-  --font-body: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --df-gold: #f5a623;
+  --df-gold-dark: #e09000;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-link: #1d9bf0;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: var(--font-body);
-  background: var(--dfx-bg);
-  color: var(--dfx-text);
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
   -webkit-font-smoothing: antialiased;
 }
-.dfx-profile-app {
-  max-width: 600px;
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
   margin: 0 auto;
-  border-left: 1px solid var(--dfx-border);
-  border-right: 1px solid var(--dfx-border);
   min-height: 100vh;
 }
-.dfx-profile-header {
+
+/* Left Sidebar */
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
   position: sticky;
   top: 0;
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(12px);
-  padding: 8px 16px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
   display: flex;
   align-items: center;
-  gap: 32px;
-  z-index: 10;
-  border-bottom: 1px solid var(--dfx-border);
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
 }
-.dfx-profile-back {
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item.active { font-weight: 700; }
+.df-nav-item svg { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; }
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+}
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+
+/* Main Content */
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-topbar {
+  position: sticky;
+  top: 0;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--df-border);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.df-back-btn {
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   border: none;
   background: none;
   cursor: pointer;
-  color: var(--dfx-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.dfx-profile-back:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-.dfx-profile-header-info h1 {
-  font-size: 20px;
-  font-weight: 700;
-}
-.dfx-profile-header-info span {
-  font-size: 13px;
-  color: var(--dfx-text-muted);
-}
-.dfx-profile-banner {
+.df-back-btn:hover { background: var(--df-hover); }
+.df-topbar-info h1 { font-size: 18px; font-weight: 700; }
+.df-topbar-info span { font-size: 13px; color: var(--df-text-secondary); }
+
+/* Banner */
+.df-banner {
   height: 200px;
-  background: linear-gradient(135deg, var(--dfx-brand) 0%, var(--dfx-brand-dark) 100%);
+  background: linear-gradient(135deg, var(--df-gold-light) 0%, var(--df-gold) 100%);
   position: relative;
 }
-.dfx-profile-banner img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.df-banner img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Profile Info */
+.df-profile-info {
+  padding: 0 16px 16px;
+  position: relative;
 }
-.dfx-profile-avatar {
+.df-avatar-container {
+  position: relative;
+  margin-top: -67px;
+  margin-bottom: 12px;
+}
+.df-avatar {
   width: 134px;
   height: 134px;
   border-radius: 50%;
-  border: 4px solid var(--dfx-bg);
-  position: absolute;
-  left: 16px;
-  bottom: -67px;
+  border: 4px solid var(--df-bg);
   overflow: hidden;
-  background: var(--dfx-card-bg);
+  background: var(--df-hover);
 }
-.dfx-profile-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.df-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-avatar.verified { border: 4px solid var(--df-gold); }
+.df-profile-actions {
+  position: absolute;
+  top: 16px;
+  right: 0;
+  display: flex;
+  gap: 8px;
 }
-.dfx-profile-avatar-placeholder {
-  width: 100%;
-  height: 100%;
+.df-follow-btn {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-text);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.df-follow-btn:hover { background: #272c30; }
+.df-more-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--df-border);
+  background: var(--df-bg);
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--dfx-brand), var(--dfx-brand-dark));
-  font-size: 48px;
+}
+.df-profile-name {
+  font-size: 20px;
   font-weight: 700;
-  color: #000;
-}
-.dfx-profile-actions {
-  padding: 12px 16px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.dfx-profile-btn {
-  padding: 8px 16px;
-  border-radius: 9999px;
-  font-size: 15px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.dfx-profile-btn-outline {
-  background: none;
-  border: 1px solid var(--dfx-border);
-  color: var(--dfx-text);
-}
-.dfx-profile-btn-outline:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-.dfx-profile-btn-primary {
-  background: var(--dfx-brand);
-  border: none;
-  color: var(--dfx-ink);
-  font-family: var(--font-body);
-}
-.dfx-profile-btn-primary:hover {
-  background: var(--dfx-brand-tint);
-}
-.dfx-profile-info {
-  padding: 12px 16px;
-  padding-top: 72px;
-}
-.dfx-profile-name {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: 4px;
 }
-.dfx-profile-name h2 {
-  font-family: var(--font-heading);
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--dfx-cream);
-}
-.dfx-profile-verified {
-  width: 20px;
-  height: 20px;
-  fill: var(--dfx-brand);
-}
-.dfx-profile-handle {
-  color: var(--dfx-text-muted);
+.df-profile-name svg { width: 20px; height: 20px; fill: var(--df-gold); }
+.df-profile-handle {
   font-size: 15px;
+  color: var(--df-text-secondary);
   margin-bottom: 12px;
 }
-.dfx-profile-bio {
-  margin-bottom: 12px;
+.df-profile-bio {
+  font-size: 15px;
   line-height: 1.4;
+  margin-bottom: 12px;
 }
-.dfx-profile-meta {
+.df-profile-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  color: var(--dfx-text-muted);
-  font-size: 15px;
+  font-size: 14px;
+  color: var(--df-text-secondary);
   margin-bottom: 12px;
 }
-.dfx-profile-meta svg {
-  width: 18px;
-  height: 18px;
-  margin-right: 4px;
-}
-.dfx-profile-meta a {
-  color: var(--dfx-link);
-  text-decoration: none;
-}
-.dfx-profile-meta a:hover {
-  text-decoration: underline;
-}
-.dfx-profile-stats {
+.df-profile-meta svg { width: 16px; height: 16px; margin-right: 4px; }
+.df-profile-stats {
   display: flex;
-  gap: 20px;
-  font-size: 15px;
+  gap: 16px;
+  font-size: 14px;
 }
-.dfx-profile-stats a {
-  color: var(--dfx-text-muted);
-  text-decoration: none;
-}
-.dfx-profile-stats a:hover {
-  text-decoration: underline;
-}
-.dfx-profile-stats strong {
-  color: var(--dfx-text);
-  font-weight: 700;
-}
-.dfx-profile-tabs {
+.df-profile-stats strong { font-weight: 700; color: var(--df-text); }
+
+/* Tabs */
+.df-tabs {
   display: flex;
-  border-bottom: 1px solid var(--dfx-border);
+  border-bottom: 1px solid var(--df-border);
 }
-.dfx-profile-tab {
+.df-tab {
   flex: 1;
   padding: 16px;
   text-align: center;
-  color: var(--dfx-text-muted);
-  border: none;
-  background: none;
-  cursor: pointer;
   font-size: 15px;
   font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
   position: relative;
 }
-.dfx-profile-tab:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
-.dfx-profile-tab.active {
-  color: var(--dfx-text);
-  font-weight: 700;
-}
-.dfx-profile-tab.active::after {
+.df-tab:hover { background: var(--df-hover); }
+.df-tab.active { font-weight: 700; color: var(--df-text); }
+.df-tab.active::after {
   content: "";
   position: absolute;
   bottom: 0;
@@ -239,318 +240,350 @@ body {
   transform: translateX(-50%);
   width: 56px;
   height: 4px;
-  background: var(--dfx-brand);
+  background: var(--df-gold);
   border-radius: 2px;
 }
-.dfx-profile-content {
-  min-height: 400px;
+
+/* Posts */
+.df-posts { }
+.df-post {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--df-border);
+  display: flex;
+  gap: 12px;
+  cursor: pointer;
 }
-.dfx-holdings-grid {
+.df-post:hover { background: var(--df-hover); }
+.df-post-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.df-post-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-post-content { flex: 1; min-width: 0; }
+.df-post-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+.df-post-name { font-weight: 700; font-size: 15px; }
+.df-post-verified { width: 18px; height: 18px; fill: var(--df-gold); }
+.df-post-handle { color: var(--df-text-secondary); font-size: 15px; }
+.df-post-time { color: var(--df-text-secondary); font-size: 15px; }
+.df-post-time::before { content: "·"; margin: 0 4px; }
+.df-post-text { font-size: 15px; line-height: 1.4; margin-bottom: 12px; }
+.df-post-actions {
+  display: flex;
+  justify-content: space-between;
+  max-width: 400px;
+}
+.df-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  margin: -8px;
+  border-radius: 9999px;
+  border: none;
+  background: none;
+  color: var(--df-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.df-action svg { width: 18px; height: 18px; }
+.df-action:hover { color: var(--df-gold); background: rgba(245, 166, 35, 0.1); }
+
+/* NFT Grid */
+.df-nft-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-  padding: 4px;
+  gap: 2px;
 }
-.dfx-holding-item {
+.df-nft-item {
   aspect-ratio: 1;
   overflow: hidden;
+  background: var(--df-hover);
   cursor: pointer;
-  position: relative;
 }
-.dfx-holding-item img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: transform 0.2s;
+.df-nft-item img { width: 100%; height: 100%; object-fit: cover; }
+.df-nft-item:hover { opacity: 0.9; }
+
+/* Right Sidebar */
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
-.dfx-holding-item:hover img {
-  transform: scale(1.05);
-}
-.dfx-holding-badge {
-  position: absolute;
-  bottom: 4px;
-  left: 4px;
-  background: rgba(0, 0, 0, 0.75);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 700;
-}
-.dfx-spinner {
+.df-search {
   display: flex;
-  justify-content: center;
-  padding: 32px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
 }
-.dfx-spinner::after {
-  content: "";
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+
+/* Loading & Empty */
+.df-loading { display: flex; justify-content: center; padding: 40px; }
+.df-spinner {
   width: 24px;
   height: 24px;
-  border: 3px solid var(--dfx-border);
-  border-top-color: var(--dfx-brand);
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.dfx-empty {
-  padding: 48px 16px;
-  text-align: center;
-  color: var(--dfx-text-muted);
-}
-.dfx-search-box {
-  padding: 16px;
-  border-bottom: 1px solid var(--dfx-border);
-}
-.dfx-search-input {
-  width: 100%;
-  padding: 12px 16px;
-  border-radius: 9999px;
-  border: 1px solid var(--dfx-border);
-  background: var(--dfx-card-bg);
-  color: var(--dfx-text);
-  font-size: 15px;
-  outline: none;
-}
-.dfx-search-input:focus {
-  border-color: var(--dfx-brand);
-}
+.df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
 </style>
 
-<div class="dfx-profile-app">
-  <header class="dfx-profile-header">
-    <button class="dfx-profile-back" onclick="history.back()">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M19 12H5M12 19l-7-7 7-7"/>
+<div class="df-app">
+  <!-- Left Sidebar -->
+  <nav class="df-sidebar">
+    <a href="/dogefeedx/feed" class="df-logo">
+      <svg viewBox="0 0 32 32" fill="none">
+        <circle cx="16" cy="16" r="14" fill="#f5a623"/>
+        <ellipse cx="11" cy="13" rx="2" ry="2.5" fill="#000"/>
+        <ellipse cx="21" cy="13" rx="2" ry="2.5" fill="#000"/>
+        <ellipse cx="16" cy="19" rx="4" ry="3" fill="#000"/>
       </svg>
-    </button>
-    <div class="dfx-profile-header-info">
-      <h1 id="header-name">Profile</h1>
-      <span id="header-posts">Loading...</span>
+      <span>DogeFeed</span>
+    </a>
+    
+    <div class="df-nav">
+      <a href="/dogefeedx/feed" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Home
+      </a>
+      <a href="/dogefeedx/explore" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+        Explore
+      </a>
+      <a href="/dogefeedx/market" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        Market
+      </a>
+      <a href="/dogefeedx/wallet" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+        Wallet
+      </a>
     </div>
-  </header>
+    
+    <button class="df-signin-btn">Sign in</button>
+  </nav>
 
-  <div class="dfx-search-box">
-    <input type="text" class="dfx-search-input" placeholder="Search users by handle or address..." id="search-input">
-  </div>
+  <!-- Main Content -->
+  <main class="df-main">
+    <div class="df-topbar">
+      <button class="df-back-btn" onclick="history.back()">
+        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      </button>
+      <div class="df-topbar-info">
+        <h1 id="topbar-name">Profile</h1>
+        <span id="topbar-posts">0 posts</span>
+      </div>
+    </div>
+    
+    <div class="df-banner" id="banner">
+      <img src="https://dogefeed.app/api/media/local/bafkreic6t2wxacb5drtic3znmq3kmo4qreshsrig7jgua6dgackgrne37y.jpg" alt="" onerror="this.style.display='none'">
+    </div>
+    
+    <div class="df-profile-info">
+      <div class="df-avatar-container">
+        <div class="df-avatar" id="avatar">
+          <img src="https://dogefeed.app/doginal-img/888d4748f672ef5b20bac4ba3bc80a3a779f89cb26af7fac8fd98ae4747f9cd7i0" alt="">
+        </div>
+      </div>
+      <div class="df-profile-actions">
+        <button class="df-more-btn">···</button>
+        <button class="df-follow-btn">Follow</button>
+      </div>
+      <div class="df-profile-name" id="profile-name">
+        Billy
+        <svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>
+      </div>
+      <div class="df-profile-handle" id="profile-handle">@billy.dogefeed</div>
+      <div class="df-profile-bio" id="profile-bio">I run this bitch</div>
+      <div class="df-profile-meta">
+        <span>📅 Joined September 2026</span>
+      </div>
+      <div class="df-profile-stats">
+        <span><strong id="following-count">12</strong> Following</span>
+        <span><strong id="followers-count">45</strong> Followers</span>
+      </div>
+    </div>
+    
+    <div class="df-tabs">
+      <button class="df-tab active" data-tab="posts">Posts</button>
+      <button class="df-tab" data-tab="replies">Replies</button>
+      <button class="df-tab" data-tab="media">Media</button>
+      <button class="df-tab" data-tab="nfts">NFTs</button>
+      <button class="df-tab" data-tab="likes">Likes</button>
+    </div>
+    
+    <div id="profile-content">
+      <div class="df-posts" id="posts-list">
+        <div class="df-loading"><div class="df-spinner"></div></div>
+      </div>
+    </div>
+  </main>
 
-  <div id="profile-view" style="display: none;">
-    <div class="dfx-profile-banner" id="profile-banner">
-      <div class="dfx-profile-avatar" id="profile-avatar"></div>
+  <!-- Right Sidebar -->
+  <aside class="df-right">
+    <div class="df-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="text" placeholder="Search DogeFeed">
     </div>
     
-    <div class="dfx-profile-actions">
-      <button class="dfx-profile-btn dfx-profile-btn-outline" id="tip-btn">Tip Ð</button>
-      <button class="dfx-profile-btn dfx-profile-btn-primary" id="follow-btn">Follow</button>
-    </div>
-    
-    <div class="dfx-profile-info">
-      <div class="dfx-profile-name">
-        <h2 id="profile-name">User Name</h2>
-        <svg class="dfx-profile-verified" id="profile-verified" viewBox="0 0 24 24" style="display: none;">
-          <path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/>
-        </svg>
-      </div>
-      <div class="dfx-profile-handle" id="profile-handle">@handle</div>
-      <div class="dfx-profile-bio" id="profile-bio"></div>
-      <div class="dfx-profile-meta" id="profile-meta"></div>
-      <div class="dfx-profile-stats" id="profile-stats">
-        <a href="#"><strong>0</strong> Following</a>
-        <a href="#"><strong>0</strong> Followers</a>
+    <div class="df-card">
+      <h2 class="df-card-title">NFT Holdings</h2>
+      <div id="nft-preview" class="df-nft-grid" style="padding: 8px;">
+        <div class="df-loading"><div class="df-spinner"></div></div>
       </div>
     </div>
-    
-    <nav class="dfx-profile-tabs">
-      <button class="dfx-profile-tab active" data-tab="holdings">Holdings</button>
-      <button class="dfx-profile-tab" data-tab="posts">Posts</button>
-      <button class="dfx-profile-tab" data-tab="likes">Likes</button>
-    </nav>
-    
-    <div class="dfx-profile-content" id="profile-content">
-      <div class="dfx-spinner"></div>
-    </div>
-  </div>
-  
-  <div id="search-results" style="display: none;">
-    <div class="dfx-profile-content" id="results-content"></div>
-  </div>
-  
-  <div id="no-profile" class="dfx-empty">
-    Search for a user by handle (e.g., @doge) or Dogecoin address
-  </div>
+  </aside>
 </div>
 
-<script src="/dogefeedx/shell.js"></script>
 <script>
 (function() {
   'use strict';
   
-  var API_BASE = '/dogefeedx/api';
   var IMG_BASE = 'https://dogefeed.app';
   
-  function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   
-  var searchTimeout = null;
+  function timeAgo(dateStr) {
+    if (!dateStr) return '';
+    var date = new Date(dateStr);
+    var now = new Date();
+    var diff = Math.floor((now - date) / 1000);
+    if (diff < 60) return diff + 's';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+    return Math.floor(diff / 86400) + 'd';
+  }
   
-  function showProfile(user) {
-    $('no-profile').style.display = 'none';
-    $('search-results').style.display = 'none';
-    $('profile-view').style.display = 'block';
-    
-    var avatar = user.avatar_url || '';
+  function renderPost(post) {
+    var author = post.author || {};
+    var avatar = author.avatarUrl || '';
     var avatarUrl = avatar.startsWith('/') ? IMG_BASE + avatar : avatar;
-    var displayName = user.display_name || user.handle || 'Anonymous';
-    var handle = user.handle || '';
-    var verified = user.verified_pfp;
     
-    $('header-name').textContent = displayName;
-    $('header-posts').textContent = '0 posts';
-    
-    if (avatarUrl) {
-      $('profile-avatar').innerHTML = '<img src="' + esc(avatarUrl) + '" alt="">';
-    } else {
-      $('profile-avatar').innerHTML = '<div class="dfx-profile-avatar-placeholder">' + esc(displayName.charAt(0).toUpperCase()) + '</div>';
+    var html = '<article class="df-post">';
+    html += '<div class="df-post-avatar">';
+    html += '<img src="' + esc(avatarUrl) + '" alt="" onerror="this.style.display=\'none\'">';
+    html += '</div>';
+    html += '<div class="df-post-content">';
+    html += '<div class="df-post-header">';
+    html += '<span class="df-post-name">' + esc(author.displayName || author.handle) + '</span>';
+    if (author.verifiedPfp) {
+      html += '<svg class="df-post-verified" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
     }
-    
-    $('profile-name').textContent = displayName;
-    $('profile-handle').textContent = '@' + handle;
-    $('profile-verified').style.display = verified ? 'block' : 'none';
-    
-    var bio = user.bio || 'Dogecoin enthusiast 🐕';
-    $('profile-bio').textContent = bio;
-    
-    var meta = '';
-    if (user.inscription_id) {
-      meta += '<span><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">Ð</text></svg> Doginal PFP</span>';
-    }
-    if (user.pfp_rarity) {
-      meta += '<span>Rarity: ' + esc(user.pfp_rarity) + '</span>';
-    }
-    $('profile-meta').innerHTML = meta;
-    
-    loadHoldings(user.handle || user.address);
+    html += '<span class="df-post-handle">@' + esc(author.handle) + '</span>';
+    html += '<span class="df-post-time">' + timeAgo(post.createdAt) + '</span>';
+    html += '</div>';
+    html += '<div class="df-post-text">' + esc(post.body || post.text || '') + '</div>';
+    html += '<div class="df-post-actions">';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>' + ((post.counts && post.counts.likes) || '') + '</button>';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>';
+    html += '</div>';
+    html += '</div></article>';
+    return html;
   }
   
-  function loadHoldings(handle) {
-    var content = $('profile-content');
-    content.innerHTML = '<div class="dfx-spinner"></div>';
+  function loadPosts() {
+    var container = document.getElementById('posts-list');
     
-    fetch(API_BASE + '/feed?limit=10')
+    fetch('/dogefeedx/api/feed?limit=10')
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        var holders = data.doginal_holders || [];
-        if (holders.length === 0) {
-          content.innerHTML = '<div class="dfx-empty">No Doginals found</div>';
-          return;
+        var posts = (data.items || []).filter(function(p) {
+          return p.author && p.author.handle === 'billy.dogefeed';
+        });
+        
+        if (posts.length === 0) {
+          posts = (data.items || []).slice(0, 5);
         }
         
-        var html = '<div class="dfx-holdings-grid">';
-        for (var i = 0; i < holders.length; i++) {
-          var h = holders[i];
-          if (h.inscription_id) {
-            html += '<div class="dfx-holding-item">';
-            html += '<img src="' + IMG_BASE + '/doginal-img/' + esc(h.inscription_id) + '" alt="">';
-            if (h.pfp_rarity) {
-              html += '<span class="dfx-holding-badge">' + esc(h.pfp_rarity) + '</span>';
-            }
-            html += '</div>';
-          }
-        }
-        html += '</div>';
-        content.innerHTML = html || '<div class="dfx-empty">No Doginals found</div>';
+        document.getElementById('topbar-posts').textContent = posts.length + ' posts';
+        container.innerHTML = posts.length > 0 ? posts.map(renderPost).join('') : '<div class="df-empty">No posts yet</div>';
       })
-      .catch(function(err) {
-        content.innerHTML = '<div class="dfx-empty">Unable to load holdings</div>';
+      .catch(function() {
+        container.innerHTML = '<div class="df-empty">Could not load posts</div>';
       });
   }
   
-  function searchUsers(query) {
-    if (!query || query.length < 2) {
-      $('no-profile').style.display = 'block';
-      $('search-results').style.display = 'none';
-      $('profile-view').style.display = 'none';
-      return;
-    }
+  function loadNFTs() {
+    var container = document.getElementById('nft-preview');
     
-    $('no-profile').style.display = 'none';
-    $('profile-view').style.display = 'none';
-    $('search-results').style.display = 'block';
-    
-    var content = $('results-content');
-    content.innerHTML = '<div class="dfx-spinner"></div>';
-    
-    fetch(API_BASE + '/search?q=' + encodeURIComponent(query) + '&type=users')
+    fetch('/dogefeedx/api/collections?limit=3')
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        var users = data.users || [];
-        if (users.length === 0) {
-          content.innerHTML = '<div class="dfx-empty">No users found for "' + esc(query) + '"</div>';
-          return;
-        }
-        
+        var collections = data.collections || [];
         var html = '';
-        for (var i = 0; i < users.length; i++) {
-          var u = users[i];
-          var avatar = u.avatar_url || '';
-          var avatarUrl = avatar.startsWith('/') ? IMG_BASE + avatar : avatar;
-          
-          html += '<div class="dfx-feed-card-item" onclick="window.showUserProfile(' + i + ')" style="padding:12px 16px;cursor:pointer;border-bottom:1px solid var(--dfx-border)">';
-          html += '<div style="width:48px;height:48px;border-radius:50%;overflow:hidden;flex-shrink:0">';
-          if (avatarUrl) {
-            html += '<img src="' + esc(avatarUrl) + '" style="width:100%;height:100%;object-fit:cover">';
-          } else {
-            html += '<div style="width:100%;height:100%;background:linear-gradient(135deg,var(--dfx-brand),var(--dfx-brand-dark));display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700">' + esc((u.display_name || u.handle || '?').charAt(0).toUpperCase()) + '</div>';
+        collections.forEach(function(c) {
+          if (c.sample_item_ids) {
+            c.sample_item_ids.slice(0, 2).forEach(function(id) {
+              html += '<div class="df-nft-item"><img src="https://dogefeed.app/doginal-img/' + id + '" alt="" loading="lazy"></div>';
+            });
           }
-          html += '</div>';
-          html += '<div style="flex:1;margin-left:12px">';
-          html += '<div style="display:flex;align-items:center;gap:4px">';
-          html += '<span style="font-weight:700">' + esc(u.display_name || u.handle) + '</span>';
-          if (u.verified_pfp) {
-            html += '<svg width="18" height="18" fill="var(--dfx-brand)" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
-          }
-          html += '</div>';
-          html += '<div style="color:var(--dfx-text-muted)">@' + esc(u.handle) + '</div>';
-          html += '</div>';
-          html += '</div>';
-        }
-        content.innerHTML = html;
-        
-        window._searchResults = users;
+        });
+        container.innerHTML = html || '<div class="df-empty" style="grid-column:1/-1">No NFTs</div>';
       })
-      .catch(function(err) {
-        content.innerHTML = '<div class="dfx-empty">Search failed: ' + err.message + '</div>';
+      .catch(function() {
+        container.innerHTML = '<div class="df-empty" style="grid-column:1/-1">Could not load NFTs</div>';
       });
   }
-  
-  window.showUserProfile = function(index) {
-    if (window._searchResults && window._searchResults[index]) {
-      showProfile(window._searchResults[index]);
-    }
-  };
   
   // Tab switching
-  document.querySelectorAll('.dfx-profile-tab').forEach(function(tab) {
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
     tab.addEventListener('click', function() {
-      document.querySelectorAll('.dfx-profile-tab').forEach(function(t) { t.classList.remove('active'); });
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
       tab.classList.add('active');
     });
   });
   
-  // Search
-  $('search-input').addEventListener('input', function(e) {
-    clearTimeout(searchTimeout);
-    var query = e.target.value.trim();
-    searchTimeout = setTimeout(function() {
-      searchUsers(query);
-    }, 300);
-  });
-  
   // Register with shell
-  window.DogeFeedX.registerApp({
-    id: 'profile',
-    name: 'Profile',
-    icon: '/dogefeedx/icon-profile.png',
-    url: '/dogefeedx/profile'
-  });
+  if (window.DogeFeedX && window.DogeFeedX.registerApp) {
+    window.DogeFeedX.registerApp({
+      id: 'profile',
+      name: 'Profile',
+      icon: '/dogefeedx/icon-profile.png',
+      url: '/dogefeedx/profile'
+    });
+  }
+  
+  // Initial load
+  loadPosts();
+  loadNFTs();
 })();
 </script>
 {% endblock %}

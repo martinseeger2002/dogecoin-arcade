@@ -1151,6 +1151,11 @@ def register_routes(app, render):
         """The DogeFeed profile hub - user profiles with holdings and activity."""
         return render(request, "dogefeedx/profile.html", fullscreen=True)
     
+    @app.get("/dogefeedx/explore", response_class=HTMLResponse)
+    def dogefeedx_explore(request: Request):
+        """The DogeFeed explore page - trending, people to follow, collections."""
+        return render(request, "dogefeedx/explore.html", fullscreen=True)
+    
     @app.get("/dogefeedx/market", response_class=HTMLResponse)
     def dogefeedx_market(request: Request):
         """The DogeFeed market - listings sorted cheapest first."""

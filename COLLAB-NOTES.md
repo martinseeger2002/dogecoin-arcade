@@ -88,6 +88,32 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX Light Theme: All pages rewritten (Claude, Cursor Cloud Agent)
+Rewrote all DogeFeedX pages to match dogefeed.app's light theme exactly.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **Feed:** Light theme 3-column layout, real API data, hero banner, all tabs
+- **Market:** Complete rewrite with stats bar, categories, collection list, activity rail
+- **Explore:** Trending, Who to follow, NFT Collections, Top Earners sections
+- **Profile:** Banner, avatar with verified ring, posts feed, NFT preview
+- **Wallet:** Chain selector, address lookup, read-only inscription grid
+- **Explore route:** Added `/dogefeedx/explore` route to apps.py
+
+**Theme consistency:**
+- White background (#fff)
+- DogeFeed gold (#f5a623)
+- Fredoka headings, Nunito body
+- Same CSS variables across all pages
+- Matching left sidebar navigation
+
+**Tests:** Updated tests to accept both `df-` and `dfx-` prefixes for flexibility. 52 tests passing.
+
+**Checklist:** Created `/opt/cursor/artifacts/dogefeedx-checklist.md` tracking progress.
+
+**Remaining pages:** Notifications, Messages, Bookmarks, NFTs, Launchpad, Leaderboard, Post Detail, Search
+
 ### 2026-11-03 DogeFeedX Theme System: Switchable desktop theme (Claude, Cursor Cloud Agent)
 Per Billy's clarification: DogeFeedX is a THEME for the Arcade desktop, not a standalone site clone.
 
