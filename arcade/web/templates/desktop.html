@@ -2,9 +2,6 @@
 {% block title %}{{ brand.name }} · Desktop{% endblock %}
 {% block body %}
 {#- DogeFeedX Theme Fonts (Fredoka for headings, Nunito for body) -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 {#- THE DESKTOP VIEW (2026-10-28: "lets put a toggle at the top left of the user's desktop view (not the admin side and
     leave mobile view alone) that turns the normal website into a 'Desktop View' similar to how the mobile side of
     things look now - but make it look like old windows 98"; "we should be able to move apps around the screen like
@@ -945,6 +942,8 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
                      glyph: ['#d9a520', '#141310', 'M3 7a2 2 0 0 1 2-2h11v4M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2zM12 12l4 4M16 12v4h-4']};
   // DogeFeedX dock, in Billy's order. Each one opens a window and is not also a desktop icon.
   var DFX_DOCK = [
+    // Every window is DogeFeedX's own look, wired to this arcade (2026-11-03, the operator: "Keep UI/UX elements from
+    // DogefeedX wire them into the existing arcade architecture"): no window asks any other server.
     {k: 'dfxhome', name: 'Home', url: '/dogefeedx/feed', w: 640, h: 620, glyph: ['#f3e3a5', '#1b1b1b', 'M4 11l8-7 8 7v9H4z']},
     {k: 'dfxprofile', name: 'Profile', url: '/dogefeedx/profile', w: 440, h: 620, glyph: ['#f3e3a5', '#1b1b1b', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8']},
     {k: 'dfxfiles', name: 'Files', url: '/dogefeedx/files', w: 760, h: 480, glyph: ['#f3e3a5', '#1b1b1b', 'M3 7h6l2 2h10v10H3z']},

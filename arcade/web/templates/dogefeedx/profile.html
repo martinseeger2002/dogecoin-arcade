@@ -1,12 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Profile · {{ brand.name }}{% endblock %}
 {% block body %}
-{#- DogeFeedX Profile: Pixel-perfect reproduction of dogefeed.app/u/username
+{#- DogeFeedX Profile: DogeFeed's profile page
     Light theme with white background, matching exact layout and styling.
     Shows user info, PFP, holdings, activity, and social connections. -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -418,10 +415,10 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
       <div class="df-profile-handle" id="profile-handle"></div>
       <div class="df-profile-bio" id="profile-bio"></div>
       <form id="local-profile" style="margin-top:12px;display:grid;gap:8px;max-width:420px">
-        <input id="local-name" type="text" maxlength="40" placeholder="Display name" aria-label="Display name" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
-        <input id="local-dns" type="text" maxlength="64" placeholder="DNS handle" aria-label="DNS handle" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
-        <input id="local-web" type="text" maxlength="200" placeholder="Website" aria-label="Website" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
-        <button type="submit" class="df-follow-btn">Save on this browser</button>
+        <input id="local-name" type="text" readonly placeholder="Your @name" aria-label="Name on the chain" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
+        <input id="local-dns" type="text" readonly placeholder="Bio" aria-label="Bio" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
+        <input id="local-web" type="text" readonly placeholder="Website" aria-label="Website" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
+        <button type="submit" class="df-follow-btn">Edit in Settings</button>
         <p id="local-said" class="df-empty" style="padding:0"></p>
       </form>
       <form id="lookup-handle" style="margin-top:8px;display:flex;gap:8px;max-width:420px">
@@ -461,7 +458,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
 (function() {
   'use strict';
   
-  var IMG_BASE = 'https://dogefeed.app';
+  var IMG_BASE = '';   // pictures are this arcade's own /content/<id>
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function readingLine(data) {
@@ -666,14 +663,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
       } catch (e) {}
       localForm.addEventListener('submit', function (e) {
         e.preventDefault();
-        var addr = dfxReadWallet();
-        if (!addr) return;
-        dfxWriteJson('dogefeedx.profile', {
-          displayName: document.getElementById('local-name').value.trim(),
-          dns: document.getElementById('local-dns').value.trim(),
-          website: document.getElementById('local-web').value.trim()
-        }, addr);
-        document.getElementById('local-said').textContent = 'Saved in this browser. Not sent to dogefeed.app.';
+        location.href = '/dogefeedx/settings';
       });
     }
   }
@@ -708,15 +698,17 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
 
   var profileSeq = 0;
   function fillLocalProfile() {
-    var addr = dfxReadWallet();
-    var saved = addr ? dfxReadJson('dogefeedx.profile', {}, addr) : {};
-    if (!saved || typeof saved !== 'object') saved = {};
-    var name = document.getElementById('local-name');
-    var dns = document.getElementById('local-dns');
-    var web = document.getElementById('local-web');
-    if (name) name.value = addr ? (saved.displayName || '') : '';
-    if (dns) dns.value = addr ? (saved.dns || '') : '';
-    if (web) web.value = addr ? (saved.website || '') : '';
+    // What you published on the chain (the arcade's profile); edited and published from Settings.
+    fetch('/dogefeedx/api/me', {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (me) {
+        var name = document.getElementById('local-name');
+        var dns = document.getElementById('local-dns');
+        var web = document.getElementById('local-web');
+        if (name) name.value = me.tag ? '@' + me.tag : '';
+        if (dns) dns.value = me.bio || '';
+        if (web) web.value = me.url || '';
+      }).catch(function () {});
   }
   function clearIdentity() {
     ['profile-name', 'topbar-name', 'profile-handle', 'profile-bio', 'profile-joined', 'profile-reading'].forEach(function (id) {

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Wallet · {{ brand.name }}{% endblock %}
 {% block body %}
-{#- DogeFeedX Wallet: Pixel-perfect reproduction of dogefeed.app/wallet
+{#- DogeFeedX Wallet: DogeFeed's wallet page
     Light theme with white background. READ-ONLY view.
     
     SECURITY: This view is READ-ONLY. It only displays inscriptions - no transaction
@@ -9,10 +9,7 @@
     UTXOs must NEVER be spent as fees. This view fetches and displays only.
     
     Supports: Dogecoin mainnet/testnet, Pepecoin mainnet/testnet
-    Data from: dogefeed.app API, explorer.dogesoft.io -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    Data: this node's indexes -#}
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -421,7 +418,7 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
 (function() {
   'use strict';
   
-  var IMG_BASE = 'https://dogefeed.app/doginal-img';
+  var IMG_BASE = '/content';   // this arcade's own copy of every inscription
   var currentChain = 'doge';
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }

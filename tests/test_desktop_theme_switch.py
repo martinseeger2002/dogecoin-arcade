@@ -191,6 +191,33 @@ def test_switch_theme_from_every_look_and_the_dock_does_not_repeat(base):
         browser.close()
 
 
+
+#: One picture, as this arcade serves an inscription's content (/content/<id>).
+_PIC_ID = "d" * 64 + "i0"
+
+
+def _arcade_rows(page):
+    """The Market's collections and the Launchpad's mints, shaped as this arcade's own indexes answer them (the
+    DogeFeedX windows read nothing else since 2026-11-03), with their picture from /content/."""
+    import base64
+    import json
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+    page.route(f"**/content/{_PIC_ID}", lambda route: route.fulfill(status=200, content_type="image/png", body=png))
+    page.route("**/dogefeedx/api/market/doginals", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"source": "arcade", "stats": {"collections": "1"},
+            "collections": [{"id": "much-dogs", "slug": "much-dogs", "name": "Much Dogs", "item_count": 100,
+                             "holder_count": 40, "image": f"/content/{_PIC_ID}", "href": "/exchange/ord/much-dogs",
+                             "floor": "12 DOGE", "listed": 3, "sales": 0, "verified": True}]})))
+    page.route("**/dogefeedx/api/memes*", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"source": "arcade", "offset": 0, "more": False,
+            "memes": [{"id": f"m{n}", "name": f"#{n}", "image": f"/content/{_PIC_ID}", "format": "",
+                       "category": "doginal", "tags": [], "uses": 0, "sourceName": "this arcade"} for n in range(8)]})))
+    page.route("**/dogefeedx/api/launchpad", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=json.dumps({"source": "arcade", "launches": [
+            {"slug": "e" * 64, "name": "Much Dogs mint", "image": f"/content/{_PIC_ID}", "detail": "minting",
+             "progress": "", "pct": "", "href": "/mintpad/" + "e" * 64}]})))
+
+
 def test_market_window_is_dark_and_its_columns_do_not_cover_each_other(base):
     """The Market window on the DogeFeedX desktop: dark board, loaded thumbnails, no site nav."""
     from playwright.sync_api import sync_playwright
@@ -198,6 +225,7 @@ def test_market_window_is_dark_and_its_columns_do_not_cover_each_other(base):
     with sync_playwright() as playwright:
         browser = _chrome(playwright)
         page = browser.new_page(viewport={"width": 1280, "height": 900})
+        _arcade_rows(page)
         page.goto(base + "/desktop")
         _wait_skin(page, "ubuntu")
         _open_system_themes(page)
@@ -230,7 +258,7 @@ def test_market_window_is_dark_and_its_columns_do_not_cover_each_other(base):
         assert report["body"] < 40, report
         assert report["title"] > 180, report
         assert report["sidebar"] is False, report
-        assert report["img"].startswith("https://dogefeed.app/"), report["img"]
+        assert "/content/" in report["img"], report["img"]            # the arcade's own picture
         page.locator('.dk-win[aria-label="Market"]').screenshot(
             path=_shot("market-window-dfx.png"))
         browser.close()
@@ -315,6 +343,7 @@ def test_the_dock_magnifies_shows_real_badges_and_opens_each_app_once(base):
     with sync_playwright() as playwright:
         browser = _chrome(playwright)
         page = browser.new_page(viewport={"width": 1440, "height": 900})
+        _arcade_rows(page)
         page.add_init_script("localStorage.setItem('arcade.deskview','dogefeedx')")
         page.route("**/account/badges", lambda route: route.fulfill(
             status=200, content_type="application/json", body=json.dumps(counts["now"])))
@@ -392,7 +421,7 @@ def test_the_dock_magnifies_shows_real_badges_and_opens_each_app_once(base):
                       const cards = [...box.querySelectorAll('.card')];
                       if (!cards.length || cards.length !== imgs.length) return false;
                       const loaded = imgs.filter(i => i.complete && i.naturalWidth > 0);
-                      return loaded.length >= 8 && imgs.every(i => (i.getAttribute('src') || '').indexOf('/api/media/') >= 0);
+                      return loaded.length >= 8 && imgs.every(i => (i.getAttribute('src') || '').indexOf('/content/') >= 0);
                     }""",
                     timeout=40000)
             if title == "Launchpad":

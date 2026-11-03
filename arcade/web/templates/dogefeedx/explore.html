@@ -1,12 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Explore · {{ brand.name }}{% endblock %}
 {% block body %}
-{#- DogeFeedX Explore: Pixel-perfect reproduction of dogefeed.app/explore
+{#- DogeFeedX Explore: DogeFeed's Explore page
     Light theme with white background, matching exact layout and styling.
     Shows trending hashtags, who to follow, NFT collections, top earners. -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -456,7 +453,7 @@ html.indesk body.df-dogefeed .df-person-handle, html.indesk body.df-dogefeed .df
 (function() {
   'use strict';
   
-  var IMG_BASE = 'https://dogefeed.app';
+  var IMG_BASE = '';   // pictures are this arcade's own /content/<id>
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   

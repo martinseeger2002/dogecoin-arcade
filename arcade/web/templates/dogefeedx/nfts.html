@@ -1,10 +1,7 @@
 {% extends "base.html" %}
 {% block title %}NFTs · DogeFeed{% endblock %}
 {% block body %}
-{#- DogeFeedX NFTs: Browse and discover NFTs matching dogefeed.app/nfts -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+{#- DogeFeedX NFTs: NFTs, from this arcade's indexes -#}
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -380,7 +377,7 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
 (function() {
   'use strict';
   
-  var IMG_BASE = 'https://dogefeed.app/doginal-img';
+  var IMG_BASE = '/content';   // this arcade's own copy of every inscription
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function readingLine(data) {
@@ -414,7 +411,7 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
 
   function absImg(url) {
     if (!url) return '';
-    return url.charAt(0) === '/' ? 'https://dogefeed.app' + url : url;
+    return url;   // this arcade's own addresses
   }
 
   function paintNfts() {

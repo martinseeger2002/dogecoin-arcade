@@ -88,6 +88,28 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX reads and writes through the arcade alone (Claude; the operator: "Everything needs to work through arcade", "Keep UI/UX elements from DogefeedX wire them into the existing arcade architecture")
+- **No other server**: every dogefeed.app, explorer.dogesoft.io and doggy.market call is gone (apps.py's
+  `_fetch_dogefeed_*`, wallet_assets.py's market scrape, public_read.py deleted), and so are the Google Fonts links
+  (system fonts stand in). httpx left the web extra's DogeFeedX line. `tests/test_dogefeedx_local.py` refuses any of
+  those hosts, or any absolute URL a page would load, in DogeFeedX's code and pages.
+- **The data is the arcade's** (`apps.LOCAL`, app.py `dfx_local`, handed to `register_routes(..., local=)`): Home,
+  Post, Profile, Explore, Search, Leaderboard = the arcade's own feed; Market and Collections = the collection registry
+  (Doginal Frogs, Doginal Dogs, ...) plus the imported listing, floors from this arcade's Doginal market; inscriptions,
+  DRC-20, names, the Meme Library = the ord index (`lookup`); Launchpad = mintpads; Arcade = the Apps list. No DOGE
+  price (none is asked). Every endpoint answers empty with `source: "arcade"` when there is nothing.
+- **The windows stay DogeFeedX's and are wired**: Home's Post goes on the chain (account: `wallet.post` in its
+  browser; operator: new `POST /dogefeedx/api/post`, /feed/post in JSON, pictures inscribed; a Meme Library picture is
+  linked, not re-inscribed); Like, Repost and Reply under a post are the Feed's (`wallet.react` / new
+  `POST /dogefeedx/api/react`); Messages is the arcade's sealed messages (`/messaging.js` or `/node-mail.js`, as
+  /me/messages); Settings publishes bio and website on the chain (`mail.publishProfile`); Profile's card shows them
+  (`GET /dogefeedx/api/me`). Before, Home kept "barks" in the browser and Messages/Settings stored stand-ins there.
+  Both new POSTs are refused on a public arcade by the door (not on its list) and for an account view.
+- The DogeFeedX pages are still not on the door's public list, as merged in #61: they serve the operator's machine
+  (and an account signed in there).
+- Tests: the outside-fetch mocks became a fake provider; two browser tests that waited on dogefeed.app's pictures get
+  arcade rows; the wallet-isolation test covers the windows still keyed to a watch address.
+
 ### 2026-11-03 PR #61, what the review changed before merging (Claude; the operator: "Fix the issues ourselves")
 - **The terminal and the Network window are for an arcade's own people** (app.py `_dfx_viewer`): POST
   /api/terminal/exec and GET /api/network answered anyone on the public address; the terminal's block and tx commands

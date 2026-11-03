@@ -36,8 +36,6 @@ web = [
     # a referee: node 3 had the web extra alone, and /account/trade/watch answered 500 ("No module named
     # 'cryptography'") through its first live trade race (2026-10-19).
     "cryptography>=42",
-    # httpx for async HTTP requests in DogeFeedX apps (dogefeedx/apps.py fetches from dogefeed.app).
-    "httpx>=0.27",
 ]
 # httpx is not optional: fastapi.testclient imports it, so without it the web
 # tests do not skip -- collection ABORTS and the entire suite runs zero tests,

@@ -2,9 +2,6 @@
 {% block title %}Bookmarks · DogeFeed{% endblock %}
 {% block body %}
 {#- DogeFeedX Bookmarks saved in this browser. No DogeFeed account. -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -229,21 +226,21 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
 (function () {
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function paint() {
-    var addr = dfxReadWallet();
     var box = document.getElementById('marks');
-    box.setAttribute('data-wallet', addr);
     box.innerHTML = '';
-    var rows = addr ? dfxReadJson('dogefeedx.bookmarks', [], addr) : [];
+    var rows = [];
+    try { rows = JSON.parse(localStorage.getItem('dogefeedx.bookmarks') || '[]') || []; } catch (e) {}
     if (!Array.isArray(rows) || !rows.length) {
-      box.innerHTML = '<p class="df-empty">' + (addr ? 'No bookmarks for this wallet.' : 'Select a wallet on Profile.') + '</p>';
+      box.innerHTML = '<p class="df-empty">No bookmarks yet. Press the bookmark under a post to keep it here (in this browser).</p>';
       return;
     }
     box.innerHTML = rows.map(function (p) {
       return '<a class="df-collection" href="/dogefeedx/post?id=' + encodeURIComponent(p.id) + '"><b>' + esc(p.handle || 'post') + '</b><div>' + esc(p.text || '') + '</div></a>';
     }).join('');
   }
-  dfxBindWallet(paint);
-  dfxEnsureWallet().then(paint);
+  window.addEventListener('storage', function (e) { if (e.key === 'dogefeedx.bookmarks') paint(); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) paint(); });
+  paint();
 })();
 </script>
 

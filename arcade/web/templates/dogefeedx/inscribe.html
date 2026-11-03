@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Inscribe · {{ brand.name }}{% endblock %}
 {% block body %}
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 :root { --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
 * { box-sizing:border-box; }
@@ -19,7 +18,7 @@ a.card span { color:var(--df-muted); font-size:14px; }
 <script>document.body.classList.add('df-dogefeed');</script>
 <div class="wrap">
   <h1>Inscribe</h1>
-  <p class="note">These use the wallet selected on Profile. Nothing is sent to dogefeed.app, and an inscription-carrying coin is never spent as a fee.</p>
+  <p class="note">These use the wallet selected on Profile. An inscription-carrying coin is never spent as a fee.</p>
   <p class="note" id="inscribe-for" data-wallet=""></p>
   <textarea id="inscribe-note" maxlength="280" placeholder="Note for this wallet" aria-label="Note for this wallet" style="width:100%;min-height:72px;margin-top:12px;border-radius:12px;border:1px solid var(--df-line);background:#111;color:inherit;padding:10px"></textarea>
   <p class="note" id="inscribe-shown"></p>

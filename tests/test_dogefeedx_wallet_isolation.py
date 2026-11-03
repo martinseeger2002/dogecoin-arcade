@@ -1,4 +1,8 @@
-"""Switching the Profile wallet drops the previous wallet from every module."""
+"""Switching the Profile wallet drops the previous wallet from every module that reads it.
+
+Messages, Bookmarks, Settings and Home are not among them since 2026-11-03: they are the arcade's own account (its
+sealed letters, its profile on the chain, its posts), not a watch-only address (dogefeedx/messages.html,
+settings.html, feed.html)."""
 import json
 import pathlib
 import socket
@@ -170,16 +174,11 @@ def test_switching_wallets_drops_the_previous_wallet(base):
         assert page.locator("#dk-dock .dfx-badge", has_text="99").count() == 0
 
         modules = [
-            ("Profile", "/dogefeedx/profile", "Alpha Name"),
-            ("Messages", "/dogefeedx/messages", "ALPHA-SECRET-THREAD"),
             ("Notifications", "/dogefeedx/notifications", "ALPHA-NOTE"),
-            ("Bookmarks", "/dogefeedx/bookmarks", "ALPHA-MARK"),
-            ("Settings", "/dogefeedx/settings", "Alpha Name"),
             ("Inscribe", "/dogefeedx/inscribe", "ALPHA-INSCRIBE"),
             ("NFTs", "/dogefeedx/nfts", "AlphaDogs"),
             ("Files", "/dogefeedx/files", "AlphaDogs"),
             ("Wallet", "/dogefeedx/wallet", "11 DOGE"),
-            ("Home", "/dogefeedx/feed", "ALPHA-BARK"),
         ]
         for title, path, needle in modules:
             body = _open(page, title, path)
@@ -195,38 +194,26 @@ def test_switching_wallets_drops_the_previous_wallet(base):
                 assert leak not in text, (path, leak)
 
         profile = _open(page, "Profile", "/dogefeedx/profile")
-        assert profile.locator("#local-name").input_value() == "Alpha Name"
         assert profile.locator("#df-wallet-select").input_value() == A
-        assert _open(page, "Settings", "/dogefeedx/settings").locator("#n-likes").is_checked()
         assert _open(page, "Inscribe", "/dogefeedx/inscribe").locator("#inscribe-note").input_value() == "ALPHA-INSCRIBE"
-        assert _open(page, "Messages", "/dogefeedx/messages").locator("#msg-thread").get_attribute("data-wallet") == A
 
         profile = _open(page, "Profile", "/dogefeedx/profile")
+        assert profile.locator("#df-wallet-select").input_value() == A
         profile.locator("#df-wallet-select").select_option(B)
 
         gone = {
-            "/dogefeedx/profile": "Alpha Name",
-            "/dogefeedx/messages": "ALPHA-SECRET-THREAD",
             "/dogefeedx/notifications": "ALPHA-NOTE",
-            "/dogefeedx/bookmarks": "ALPHA-MARK",
-            "/dogefeedx/settings": "Alpha Name",
             "/dogefeedx/inscribe": "ALPHA-INSCRIBE",
             "/dogefeedx/nfts": "AlphaDogs",
             "/dogefeedx/files": "AlphaDogs",
             "/dogefeedx/wallet": "11 DOGE",
-            "/dogefeedx/feed": "ALPHA-BARK",
         }
         arrived = {
-            "/dogefeedx/profile": "Beta Name",
-            "/dogefeedx/messages": "No messages for this wallet.",
             "/dogefeedx/notifications": "No notifications for this wallet.",
-            "/dogefeedx/bookmarks": "No bookmarks for this wallet.",
-            "/dogefeedx/settings": "Beta Name",
             "/dogefeedx/inscribe": "BETA-INSCRIBE",
             "/dogefeedx/nfts": "BetaDogs",
             "/dogefeedx/files": "BetaDogs",
             "/dogefeedx/wallet": "22 DOGE",
-            "/dogefeedx/feed": "BETA-BARK",
         }
         title_of = {path: title for title, path, _needle in modules}
         for path, needle in arrived.items():
@@ -239,15 +226,11 @@ def test_switching_wallets_drops_the_previous_wallet(base):
                 assert leak not in _open(page, title, path).inner_text(), (path, leak)
 
         profile = _open(page, "Profile", "/dogefeedx/profile")
-        assert profile.locator("#local-name").input_value() == "Beta Name"
         assert profile.locator("#df-wallet-select").input_value() == B
-        assert _open(page, "Messages", "/dogefeedx/messages").locator("#msg-thread").get_attribute("data-wallet") == B
         assert _open(page, "Notifications", "/dogefeedx/notifications").locator("#note-list").get_attribute("data-wallet") == B
-        assert _open(page, "Bookmarks", "/dogefeedx/bookmarks").locator("#marks").get_attribute("data-wallet") == B
         assert _open(page, "Files", "/dogefeedx/files").locator("#files-body").get_attribute("data-wallet") == B
         assert _open(page, "NFTs", "/dogefeedx/nfts").locator("#df-nfts").get_attribute("data-wallet") == B
         assert _open(page, "Wallet", "/dogefeedx/wallet").locator("#wallet-grid").get_attribute("data-wallet") == B
-        assert not _open(page, "Settings", "/dogefeedx/settings").locator("#n-likes").is_checked()
         assert _open(page, "Inscribe", "/dogefeedx/inscribe").locator("#inscribe-for").get_attribute("data-wallet") == B
         page.wait_for_function("() => document.querySelectorAll('#dk-dock .dfx-badge').length === 0")
         assert badge("Messages").count() == 0

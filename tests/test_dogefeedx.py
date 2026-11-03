@@ -69,97 +69,83 @@ class TestDogeFeedXStaticFiles:
         assert "svg" in response.headers.get("content-type", "").lower() or "png" in response.headers.get("content-type", "").lower()
 
 
+@pytest.fixture
+def local(monkeypatch):
+    """A stand-in for the arcade's data (app.py dfx_local): the endpoints read only this."""
+    import types
+    from arcade.web.dogefeedx import apps
+    rows = [{"id": "doge-dogs", "name": "Doge Dogs", "item_count": 100},
+            {"id": "pepe-art", "name": "Pepecoin Art", "item_count": 200}]
+    seen = []
+
+    def collections(offset=0, limit=50, q="", sort="name"):
+        seen.append(("collections", offset, limit, q, sort))
+        got = [r for r in rows if q.lower() in r["name"].lower()]
+        return {"collections": got[offset:offset + limit], "total": len(got), "offset": offset, "limit": limit,
+                "has_more": len(got) > offset + limit}
+
+    def collection_items(slug, offset=0, limit=50):
+        seen.append(("items", slug))
+        return {"items": [{"id": "a" * 64 + "i0", "number": 1, "name": "Item 1"}], "collection_id": slug,
+                "offset": offset, "limit": limit, "has_more": False}
+
+    def inscription(iid):
+        seen.append(("inscription", iid))
+        return {"inscription": {"id": iid, "number": 12345, "content_type": "image/png", "image_url": f"/content/{iid}"}}
+
+    fake = types.SimpleNamespace(collections=collections, collection_items=collection_items, inscription=inscription,
+                                 seen=seen)
+    monkeypatch.setattr(apps, "LOCAL", fake)
+    apps._cache.clear()
+    yield fake
+    apps._cache.clear()
+
+
 class TestDogeFeedXCollectionsAPI:
-    """Test the collections API."""
-    
-    @patch('arcade.web.dogefeedx.apps._fetch_dogefeed_explorer', new_callable=AsyncMock)
-    def test_collections_list(self, mock_fetch, client):
-        """Collections are listed from DogeFeed."""
-        mock_fetch.return_value = [
-            {"id": "coll1", "name": "Test Collection", "item_count": 100, "holder_count": 50},
-            {"id": "coll2", "name": "Another Collection", "item_count": 200},
-        ]
-        
-        response = client.get("/dogefeedx/api/collections")
-        assert response.status_code == 200
-        data = response.json()
-        assert "collections" in data
-        assert len(data["collections"]) == 2
-        assert data["collections"][0]["name"] in ["Another Collection", "Test Collection"]
-    
-    @patch('arcade.web.dogefeedx.apps._fetch_dogefeed_explorer', new_callable=AsyncMock)
-    def test_collections_with_search(self, mock_fetch, client):
-        """Collections can be searched by name."""
-        mock_fetch.return_value = [
-            {"id": "coll1", "name": "Doge Dogs", "item_count": 100},
-            {"id": "coll2", "name": "Pepecoin Art", "item_count": 200},
-        ]
-        
-        response = client.get("/dogefeedx/api/collections?q=doge")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["collections"]) == 1
-        assert data["collections"][0]["name"] == "Doge Dogs"
-    
-    @patch('arcade.web.dogefeedx.apps._fetch_dogefeed_explorer', new_callable=AsyncMock)
-    def test_collections_pagination(self, mock_fetch, client):
-        """Collections support pagination."""
-        mock_fetch.return_value = [{"id": f"coll{i}", "name": f"Coll {i}"} for i in range(60)]
-        
-        response = client.get("/dogefeedx/api/collections?offset=0&limit=20")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["collections"]) == 20
-        assert data["has_more"] == True
+    """Collections come from the arcade's own database (the provider), never another server."""
+
+    def test_collections_list(self, client, local):
+        data = client.get("/dogefeedx/api/collections").json()
+        assert [c["name"] for c in data["collections"]] == ["Doge Dogs", "Pepecoin Art"]
+        assert data["source"] == "arcade" and data["image_base"] == "/content"
+
+    def test_collections_with_search(self, client, local):
+        data = client.get("/dogefeedx/api/collections?q=doge").json()
+        assert [c["name"] for c in data["collections"]] == ["Doge Dogs"]
+        assert ("collections", 0, 50, "doge", "name") in local.seen
+
+    def test_collections_limits_are_bounded(self, client, local):
+        client.get("/dogefeedx/api/collections?offset=-5&limit=5000&sort=bogus")
+        assert ("collections", 0, 200, "", "name") in local.seen
+
+    def test_no_provider_answers_empty(self, client, monkeypatch):
+        from arcade.web.dogefeedx import apps
+        monkeypatch.setattr(apps, "LOCAL", None)
+        data = client.get("/dogefeedx/api/collections").json()
+        assert data["collections"] == [] and data["source"] == "arcade"
 
 
 class TestDogeFeedXCollectionItemsAPI:
-    """Test the collection items API."""
-    
     def test_collection_items_requires_id(self, client):
-        """Collection items endpoint requires an ID."""
-        response = client.get("/dogefeedx/api/collection/items")
-        assert response.status_code == 400
-    
-    @patch('arcade.web.dogefeedx.apps._fetch_dogefeed_explorer', new_callable=AsyncMock)
-    def test_collection_items_list(self, mock_fetch, client):
-        """Collection items are listed."""
-        mock_fetch.return_value = [
-            {"id": "inscr1i0", "number": 1, "name": "Item 1"},
-            {"id": "inscr2i0", "number": 2, "name": "Item 2"},
-        ]
-        
-        response = client.get("/dogefeedx/api/collection/items?id=coll1")
-        assert response.status_code == 200
-        data = response.json()
-        assert "items" in data
-        assert len(data["items"]) == 2
-        assert data["collection_id"] == "coll1"
+        assert client.get("/dogefeedx/api/collection/items").status_code == 400
+        assert client.get("/dogefeedx/api/collection/items?id=../x").status_code == 400
+
+    def test_collection_items_list(self, client, local):
+        data = client.get("/dogefeedx/api/collection/items?id=doge-dogs").json()
+        assert len(data["items"]) == 1 and data["collection_id"] == "doge-dogs"
+        assert ("items", "doge-dogs") in local.seen
 
 
 class TestDogeFeedXInscriptionAPI:
-    """Test the inscription details API."""
-    
     def test_inscription_requires_id(self, client):
-        """Inscription endpoint requires an ID."""
-        response = client.get("/dogefeedx/api/inscription")
-        assert response.status_code == 400
-    
-    @patch('arcade.web.dogefeedx.apps._fetch_dogefeed_explorer', new_callable=AsyncMock)
-    def test_inscription_details(self, mock_fetch, client):
-        """Inscription details are returned."""
-        mock_fetch.return_value = {
-            "id": "abc123i0",
-            "number": 12345,
-            "content_type": "image/png",
-            "owner": "D123456789abcdef",
-        }
-        
-        response = client.get("/dogefeedx/api/inscription?id=abc123i0")
-        assert response.status_code == 200
-        data = response.json()
-        assert "inscription" in data
-        assert data["inscription"]["id"] == "abc123i0"
+        assert client.get("/dogefeedx/api/inscription").status_code == 400
+        assert client.get("/dogefeedx/api/inscription?id=abc123i0").status_code == 400
+
+    def test_inscription_details(self, client, local):
+        iid = "b" * 64 + "i0"
+        data = client.get(f"/dogefeedx/api/inscription?id={iid}").json()
+        assert data["inscription"]["id"] == iid
+        assert data["inscription"]["image_url"] == f"/content/{iid}"
 
 
 class TestDogeFeedXTerminalAPI:

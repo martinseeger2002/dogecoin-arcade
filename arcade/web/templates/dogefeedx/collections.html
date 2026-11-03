@@ -1,10 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Collections · DogeFeed{% endblock %}
 {% block body %}
-{#- DogeFeedX Collections: Browse Doginal collections matching dogefeed.app/collections -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+{#- DogeFeedX Collections: Doginal collections kept in this arcade's database -#}
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -402,7 +399,7 @@ a { color: inherit; text-decoration: none; }
 (function() {
   'use strict';
   
-  var IMG_BASE = 'https://dogefeed.app/doginal-img';
+  var IMG_BASE = '/content';   // this arcade's own copy of every inscription
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   

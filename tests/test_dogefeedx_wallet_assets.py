@@ -1,7 +1,7 @@
-"""Index holdings labeled from DogeFeed's public collection catalog.
+"""Index holdings labeled from the arcade's own collections.
 
 Ownership is a fixture shaped like this node's indexes. The test does not
-import a key, ask dogefeed.app who owns a coin, or write anywhere.
+import a key, ask any other server anything, or write anywhere.
 """
 import json
 from pathlib import Path
@@ -13,11 +13,9 @@ from arcade.web.dogefeedx.wallet_assets import (
     index_owned,
     inscriptions_from_utxos,
     merge_holdings,
-    name_points_at,
     parse_balance,
     parse_drc20,
     parse_names,
-    parse_profile_assets,
     public_view,
     valid_address,
 )
@@ -26,52 +24,44 @@ ADDR = "DBMBjmyKSAKboj5NrXeER2rYWkpxETvUMn"
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = (ROOT / "arcade" / "web" / "dogefeedx" / "wallet_assets.py").read_text()
 
-ASSETS = """
-<div data-testid="profile-nfts"><div data-testid="doginal-grid">
-<div data-inscription="301db49a62fa817a1bbcbb0c0e00ce7b14f1b18acee23c40da2d5748e2c99b5ei0">
-<a href="/market/anti-doginal-dogs/9730"><img src="/doginal-img/a" alt="Anti Doginal Dog #9730"></a></div>
-<div data-inscription="c20693d06282a666126a5660cd11ed9e7556da5fbfa2bd609837f704bbd6f842i0">
-<a href="/market/pixel-pepes/689"><img src="/doginal-img/b" alt="Pixel Pepes #689"></a></div>
-<div data-inscription="888d4748f672ef5b20bac4ba3bc80a3a779f89cb26af7fac8fd98ae4747f9cd7i0">
-<a href="/market/doginal-frogs/10040"><img src="/doginal-img/c" alt="Doginal Frog #10040"></a></div>
-<div data-inscription="992dbf195dae9e43fdf5540afb574bc03c8d435ef1c0572c5d74b68f9e806d2bi0">
-<a href="/market/doginal-maxi-biz/29"><img src="/doginal-img/d" alt="DMB #29"></a></div>
-<div data-inscription="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaai0">
-<a href="/market/doginal-cowz/395"><img src="/doginal-img/e" alt="Doginal Cowz #395"></a></div>
-<div data-inscription="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbi0">
-<a href="/market/spooksociety/350"><img src="/doginal-img/f" alt="The Spook Society #350"></a></div>
-</div></div>
-Show more
-<a href="/market/dogebuds/1"><img src="/doginal-img/nope" alt="Not held #1">
-"""
+def _piece(iid, slug, edition, title):
+    return {"inscription_id": iid, "slug": slug, "edition": edition, "title": title, "image": f"/content/{iid}",
+            "href": f"/exchange/ord/{slug}"}
 
+
+# What the index says an address holds (wallet_assets._pieces_from_index's shape).
+HELD = [
+    _piece("301db49a62fa817a1bbcbb0c0e00ce7b14f1b18acee23c40da2d5748e2c99b5ei0", "anti-doginal-dogs", "9730", "Anti Doginal Dog #9730"),
+    _piece("c20693d06282a666126a5660cd11ed9e7556da5fbfa2bd609837f704bbd6f842i0", "pixel-pepes", "689", "Pixel Pepes #689"),
+    _piece("888d4748f672ef5b20bac4ba3bc80a3a779f89cb26af7fac8fd98ae4747f9cd7i0", "doginal-frogs", "10040", "Doginal Frog #10040"),
+    _piece("992dbf195dae9e43fdf5540afb574bc03c8d435ef1c0572c5d74b68f9e806d2bi0", "doginal-maxi-biz", "29", "DMB #29"),
+]
+PEPE_COVER = "/content/" + "c" * 64 + "i0"
+
+# The arcade's collections (apps.LOCAL.market rows): covers are its own /content/, anything else is dropped.
 CATALOG = [
-    {"slug": "pixel-pepes", "name": "Pixel Pepes", "image": "https://dogefeed.app/pepe.png", "floor": "69"},
-    {"slug": "doginal-maxi-biz", "name": "Doge Maxi Biz", "image": "/doginal-img/cover", "floor": "10"},
+    {"slug": "pixel-pepes", "name": "Pixel Pepes", "image": PEPE_COVER, "floor": "69"},
+    {"slug": "doginal-maxi-biz", "name": "Doge Maxi Biz", "image": "https://evil.example/cover.png", "floor": "10"},
     {"slug": "dogebuds", "name": "Doge Buds", "image": "https://evil.example/x.png", "floor": "1"},
 ]
 
 
-def test_cross_reference_uses_the_public_catalog_name_not_the_card_nickname():
-    held = parse_profile_assets(ASSETS)
-    assert [row["slug"] for row in held] == [
-        "anti-doginal-dogs", "pixel-pepes", "doginal-frogs",
-        "doginal-maxi-biz", "doginal-cowz", "spooksociety",
-    ]
-    assert ("dogebuds", "1") not in {(row["slug"], row["edition"]) for row in held}
+def test_cross_reference_uses_the_arcades_collection_name_not_the_card_nickname():
+    held = list(HELD)
     groups = {row["slug"]: row for row in cross_reference(held, CATALOG)}
     assert groups["pixel-pepes"]["known"] is True
     assert groups["pixel-pepes"]["name"] == "Pixel Pepes"
     assert groups["pixel-pepes"]["floor"] == "69"
-    assert groups["pixel-pepes"]["cover"] == "https://dogefeed.app/pepe.png"
+    assert groups["pixel-pepes"]["cover"] == PEPE_COVER
+    assert groups["pixel-pepes"]["href"] == "/exchange/ord/pixel-pepes"
     assert groups["pixel-pepes"]["pieces"][0]["edition"] == "689"
     assert groups["doginal-maxi-biz"]["name"] == "Doge Maxi Biz"
-    assert groups["doginal-maxi-biz"]["cover"].startswith("https://dogefeed.app/doginal-img/")
+    assert groups["doginal-maxi-biz"]["cover"] == ""          # a picture from anywhere but this arcade is dropped
     assert "dogebuds" not in groups
     assert groups["anti-doginal-dogs"]["known"] is False
     assert groups["anti-doginal-dogs"]["name"] == "Anti Doginal Dog"
     blob = json.dumps(groups)
-    assert "scriptPubKey" not in blob and "evil.example" not in blob
+    assert "scriptPubKey" not in blob and "evil.example" not in blob and "https://" not in blob
 
 
 def test_utxo_rows_keep_the_inscription_and_drop_the_coin():
@@ -107,14 +97,11 @@ def test_balance_uses_balance_doge_and_names_must_match_the_address():
     assert parse_names({"address": "DSomeoneElse111111111111111111111", "names": [
         {"name": "billy.dogefeed", "held": True},
     ]}, ADDR) == []
-    assert name_points_at(
-        {"records": [{"address": ADDR, "dns": "billy.dogefeed"}]}, ADDR, "billy.dogefeed",
-    )
     built = build_holdings(ADDR, {
         "balance_doge": "333.03308736",
         "names": [{"name": "billy.dogefeed"}],
         "tokens": [{"tick": "$DON", "balance": "230000"}],
-        "pieces": parse_profile_assets(ASSETS),
+        "pieces": list(HELD),
         "utxo_count": 15409,
         "scriptPubKeyHex": "nope",
     }, CATALOG, imported=True)
@@ -150,12 +137,12 @@ def test_the_reader_never_lists_coins_or_asks_for_a_key():
         body = apps[start:nxt if nxt > start else start + 2500]
         assert "/wallet/address/" not in body
         assert "dogesoft" not in body
-        assert "dogefeed.app" not in body or name == "api_wallet_holdings"
+        assert "dogefeed.app" not in body
 
 
 def test_index_rows_are_labeled_by_the_catalog_and_coins_stay_out():
-    """The public billy.dogefeed pieces, as the index would report them, pick up DogeFeed's names."""
-    pieces = parse_profile_assets(ASSETS)
+    """Pieces as the index reports them pick up the arcade's collection names."""
+    pieces = [dict(p) for p in HELD]
     pieces[1]["group_count"] = 24
     owned = {
         "balance_doge": "1.5",

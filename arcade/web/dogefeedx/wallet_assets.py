@@ -4,10 +4,10 @@ What the address owns comes from this arcade: the watcher's coin index (the
 balance), the ledger's inscription index (doginals), and the ord index
 (DRC-20 balances and names). While this Core is behind, or the chain is
 borrowed, those reads go to a linked arcade the way the watcher already
-asks (`utxoset.LentSet`, `coinscan`, `DoginalIndex.lookup`). dogefeed.app is
-read only to label a collection this index already holds (its public name,
-cover, and floor). Nothing here asks for a key, signs, or spends, and
-nothing is written to dogefeed.app. No third-party explorer is asked.
+asks (`utxoset.LentSet`, `coinscan`, `DoginalIndex.lookup`). A collection's
+name, cover and floor are the arcade's own (the collections in its database,
+its Doginal market's listings). Nothing here asks for a key, signs, or spends,
+and no other server is asked anything.
 
 Outpoints are asked of the name index inside this process and are not returned.
 """
@@ -17,12 +17,6 @@ import re
 import threading
 from html import unescape
 
-import httpx
-
-from .public_read import parse_market
-
-DOGEFEED_ORIGIN = "https://dogefeed.app"
-_HTML_UA = {"User-Agent": "DogecoinArcade-DogeFeedX-readonly", "Accept": "text/html"}
 
 # A mainnet Dogecoin address. No bech32, no key material, no testnet n-address.
 _ADDRESS = re.compile(r"^D[1-9A-HJ-NP-Za-km-z]{25,33}$")
@@ -31,11 +25,6 @@ _SLUG = re.compile(r"^[a-z0-9-]{1,80}$")
 _NAME = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _DOGE = re.compile(r"^\d+(?:\.\d+)?$")
 _TICK = re.compile(r"^\$?[A-Za-z0-9]{1,12}$")
-_CARD = re.compile(
-    r'data-inscription="([0-9a-f]{64}i\d{1,6})"[\s\S]{0,700}?'
-    r'href="(/market/([a-z0-9-]+)/(\d+))"[\s\S]{0,500}?'
-    r'<img src="([^"]+)" alt="([^"]*)"'
-)
 _EMPTY = "Import a watch-only address on this node."
 
 # Spend-shaped keys that must never leave this module, even if a caller passes a wallet row.
@@ -99,18 +88,6 @@ def parse_names(payload, address: str) -> list[dict]:
     return out
 
 
-def name_points_at(payload, address: str, dns: str) -> bool:
-    """dogefeed.app's public name record resolves `dns` to this address."""
-    if not isinstance(payload, dict):
-        return False
-    for row in payload.get("records") or []:
-        if not isinstance(row, dict):
-            continue
-        if str(row.get("dns") or "") == dns and str(row.get("address") or "") == address:
-            return True
-    return False
-
-
 def parse_balance(payload) -> str | None:
     """The public `balance_doge` string. The legacy `balance` field is not DOGE."""
     if not isinstance(payload, dict):
@@ -140,11 +117,8 @@ def parse_drc20(payload) -> list[dict]:
 
 def _safe_image(src: str) -> str:
     text = unescape(src or "").strip()
-    if re.fullmatch(r"/content/[0-9a-fA-F]{64}", text):
-        return text
-    if text.startswith("/doginal-img/") or text.startswith("/api/media/"):
-        return DOGEFEED_ORIGIN + text
-    if text.startswith("https://dogefeed.app/") or text.startswith("https://cdn.doggy.market/"):
+    # Only this arcade's own pictures.
+    if re.fullmatch(r"/content/[0-9a-fA-F]{64}(i[0-9]{1,6})?", text):
         return text
     return ""
 
@@ -175,39 +149,6 @@ def _doge_chain():
         if getattr(ctx, "is_doge", False):
             return ctx
     return None
-
-
-def parse_profile_assets(html: str) -> list[dict]:
-    """Doginals on a profile's public assets grid: inscription, collection slug, edition.
-
-    Only the first `profile-nfts` grid. Later copies of the page payload repeat
-    the whole market and are not what this profile holds.
-    """
-    if not html:
-        return []
-    start = html.find('data-testid="profile-nfts"')
-    if start < 0:
-        start = html.find('data-testid="doginal-grid"')
-    if start < 0:
-        return []
-    end = html.find("Show more", start)
-    chunk = html[start:end if end > start else start + 2_000_000]
-    found = []
-    seen: set[str] = set()
-    for iid, href, slug, edition, src, alt in _CARD.findall(chunk):
-        if iid in seen or not _SLUG.fullmatch(slug):
-            continue
-        seen.add(iid)
-        title = unescape(alt).strip()
-        found.append({
-            "inscription_id": iid,
-            "slug": slug,
-            "edition": edition,
-            "href": DOGEFEED_ORIGIN + href,
-            "image": _safe_image(src),
-            "title": title,
-        })
-    return found
 
 
 def _catalog_maps(catalog: list[dict]) -> tuple[dict, dict]:
@@ -259,7 +200,7 @@ def cross_reference(held: list[dict], catalog: list[dict]) -> list[dict]:
                 "name": name,
                 "cover": image,
                 "floor": floor,
-                "href": (DOGEFEED_ORIGIN + f"/market/{slug}") if slug else "",
+                "href": f"/exchange/ord/{slug}" if slug else "",
                 "count": 0,
                 "known": known,
                 "pieces": [],
@@ -283,7 +224,7 @@ def cross_reference(held: list[dict], catalog: list[dict]) -> list[dict]:
         }
         if piece["inscription_id"] and not _INSCRIPTION.fullmatch(piece["inscription_id"]):
             piece["inscription_id"] = ""
-        if piece["href"] and not piece["href"].startswith(DOGEFEED_ORIGIN + "/market/"):
+        if piece["href"] and not piece["href"].startswith(("/exchange/ord/", "/inscriptions/")):
             piece["href"] = ""
         group["pieces"].append(piece)
     return [groups[key] for key in order]
@@ -928,34 +869,27 @@ def _store(key: str, value, ttl: float) -> None:
     _cache[key] = (time.time() + ttl, value)
 
 
-async def _get_html(url: str, timeout: float) -> str:
-    hit = _cached(url, 600)
-    if isinstance(hit, str):
-        return hit
-    try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-            response = await client.get(url, headers=_HTML_UA)
-            response.raise_for_status()
-            text = response.text
-    except Exception:
-        return ""
-    _store(url, text, 600)
-    return text
-
-
 async def catalog_collections() -> list[dict]:
-    hit = _cached("market-catalog", 600)
+    """The collections kept in this arcade's database, with floors from its own market (apps.LOCAL)."""
+    import asyncio
+
+    from . import apps
+
+    hit = _cached("market-catalog", 120)
     if isinstance(hit, list):
         return hit
-    html = await _get_html(DOGEFEED_ORIGIN + "/market", 20)
-    rows = parse_market(html).get("collections") if html else []
+    market = getattr(apps.LOCAL, "market", None)
+    try:
+        rows = (await asyncio.to_thread(market)).get("collections") if market else []
+    except Exception:
+        rows = []
     rows = rows if isinstance(rows, list) else []
-    _store("market-catalog", rows, 600)
+    _store("market-catalog", rows, 120)
     return rows
 
 
 async def holdings_for(address: str, *, imported: bool) -> dict:
-    """Index holdings for one address, labeled from the public collection catalog.
+    """Index holdings for one address, labeled from the arcade's collections.
 
     `imported` is true only when the address is already in the node wallet.
     The catalog names collections. It does not decide what the address owns.

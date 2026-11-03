@@ -83,19 +83,11 @@ class TestWheelContents:
 class TestDependencies:
     """Tests that verify dependencies are properly declared."""
     
-    def test_httpx_in_web_dependencies(self):
-        """httpx is declared as a web dependency."""
-        pyproject = PROJECT_ROOT / "pyproject.toml"
-        content = pyproject.read_text()
-        
-        # Find the web dependencies section
-        web_start = content.find('web = [')
-        assert web_start != -1, "Could not find web dependencies section"
-        
-        web_end = content.find(']', web_start)
-        web_section = content[web_start:web_end]
-        
-        assert 'httpx' in web_section, "httpx not in web dependencies"
+    def test_dogefeedx_needs_no_http_client(self):
+        """DogeFeedX asks no other server, so it brings no HTTP client into the web extra."""
+        apps = (PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py").read_text()
+        assets = (PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "wallet_assets.py").read_text()
+        assert "import httpx" not in apps and "import httpx" not in assets
     
     def test_dogefeedx_in_packages(self):
         """arcade.web.dogefeedx is in the packages list."""

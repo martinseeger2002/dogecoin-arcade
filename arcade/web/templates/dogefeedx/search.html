@@ -1,10 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Search · DogeFeed{% endblock %}
 {% block body %}
-{#- DogeFeedX Search: Global search results matching dogefeed.app/search -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+{#- DogeFeedX Search: DogeFeed's search, over this arcade -#}
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -395,7 +392,7 @@ a { color: inherit; text-decoration: none; }
 (function() {
   'use strict';
   
-  var IMG_BASE = 'https://dogefeed.app';
+  var IMG_BASE = '';   // pictures are this arcade's own /content/<id>
   var searchInput = document.getElementById('search-input');
   var clearBtn = document.getElementById('search-clear');
   var resultsContainer = document.getElementById('df-results');
@@ -489,7 +486,7 @@ a { color: inherit; text-decoration: none; }
         if (currentType === 'collections' || currentType === 'item') {
           var cols = (data.collections || []).filter(function (c) { return !query || String(c.name || c.slug || '').toLowerCase().indexOf(query.toLowerCase()) >= 0; });
           html += cols.length ? '<div class="df-result-section"><h3>Collections</h3>' + cols.map(function (c) {
-            return '<a class="df-user-result" href="https://dogefeed.app/market/' + esc(c.slug || '') + '"><b>' + esc(c.name) + '</b></a>';
+            return '<a class="df-user-result" href="/exchange/ord/' + esc(c.slug || '') + '"><b>' + esc(c.name) + '</b></a>';
           }).join('') + '</div>' : '';
         }
         if (currentType === 'drc20') {

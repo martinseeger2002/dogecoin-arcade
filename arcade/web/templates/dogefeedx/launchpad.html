@@ -1,10 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Launchpad · DogeFeed{% endblock %}
 {% block body %}
-{#- DogeFeedX Launchpad: New project launches matching dogefeed.app/launchpad -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+{#- DogeFeedX Launchpad: DogeFeed's launchpad, over this arcade's mintpads -#}
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -439,7 +436,7 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
   <main class="df-main">
     <div class="df-header">
       <h1>Launchpad</h1>
-      <p><a href="/mintpad/new">Launch an already-inscribed collection for sale</a> on this arcade. That uses your wallet here, not dogefeed.app.</p>
+      <p><a href="/mintpad/new">Launch an already-inscribed collection for sale</a> on this arcade. That uses your wallet here.</p>
     </div>
     
     <div class="df-hero">
@@ -494,9 +491,9 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
   var box = document.getElementById('df-launches');
   var side = document.querySelector('.df-card .df-card-item-info');
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
-  function abs(url) { return url && url.charAt(0) === '/' ? 'https://dogefeed.app' + url : (url || ''); }
+  function abs(url) { return url || ''; }   // this arcade's own addresses
   function empty() {
-    box.innerHTML = '<p class="df-empty">No public launch list. dogefeed.app does not publish one to read. Launch a collection you already inscribed on this arcade.</p>';
+    box.innerHTML = '<p class="df-empty">Nothing minting on this arcade right now. Launch a collection you already inscribed.</p>';
   }
   document.querySelectorAll('.df-tab').forEach(function(tab) {
     tab.addEventListener('click', function() {

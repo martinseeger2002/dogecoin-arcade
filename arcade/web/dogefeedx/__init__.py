@@ -8,9 +8,9 @@ Apps included:
 - Terminal: Terminal.app-style command window
 - Network: Node status, sync progress, and mesh peers
 
-To register all DogeFeedX apps:
+To register all DogeFeedX apps (`local` is the arcade's data; see apps.py):
     from arcade.web.dogefeedx import register_routes
-    register_routes(app, render)
+    register_routes(app, render, local=...)
 
 To register just the Network app (requires state):
     from arcade.web.dogefeedx import network
@@ -21,9 +21,7 @@ from __future__ import annotations
 from .apps import (
     router,
     register_routes,
-    DOGEFEED_APP_BASE,
-    DOGEFEED_EXPLORER_BASE,
-    DOGEFEED_IMG_BASE,
+    IMG_BASE,
     CACHE_TTL,
 )
 from . import network
@@ -32,8 +30,6 @@ __all__ = [
     "router",
     "register_routes",
     "network",
-    "DOGEFEED_APP_BASE",
-    "DOGEFEED_EXPLORER_BASE",
-    "DOGEFEED_IMG_BASE",
+    "IMG_BASE",
     "CACHE_TTL",
 ]

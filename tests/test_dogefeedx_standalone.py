@@ -330,21 +330,13 @@ def test_desktop_dock_apps_not_on_desktop():
 
 
 def test_dogefeedx_uses_dogefeed_fonts():
-    """DogeFeedX views should use DogeFeed's fonts (Fredoka, Nunito)."""
+    """DogeFeedX names DogeFeed's fonts (Fredoka, Nunito) and loads none from another server: the system fonts
+    stand in where a machine has neither."""
     views = ["feed.html", "profile.html", "market.html", "wallet.html", "inscription.html"]
-    
     for view in views:
-        path = DOGEFEEDX_PATH / view
-        content = path.read_text()
-        
-        # Check for Google Fonts link
-        assert "fonts.googleapis.com" in content, f"{view} missing Google Fonts"
-        
-        # Check for Fredoka (heading font)
-        assert "Fredoka" in content, f"{view} missing Fredoka font"
-        
-        # Check for Nunito (body font)
-        assert "Nunito" in content, f"{view} missing Nunito font"
+        content = (DOGEFEEDX_PATH / view).read_text()
+        assert "fonts.googleapis.com" not in content and "fonts.gstatic.com" not in content, view
+        assert "Fredoka" in content or "Nunito" in content, f"{view} lost DogeFeed's fonts"
 
 
 def test_dogefeedx_theme_is_switchable():
@@ -406,11 +398,9 @@ def test_dogefeedx_apps_has_caching():
 
 
 def test_dogefeedx_apps_has_fallback_handling():
-    """DogeFeedX apps module handles DogeFeed unavailability gracefully."""
-    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py"
-    content = path.read_text()
-    assert "timeout" in content.lower(), "Missing timeout handling"
-    assert "HTTPException" in content, "Missing HTTP exception handling"
+    """Every DogeFeedX endpoint answers empty, not an error, when the arcade has nothing to say (apps._local)."""
+    content = (PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py").read_text()
+    assert "async def _local(" in content and "empty" in content
 
 
 def test_app_py_includes_dogefeedx():
@@ -464,16 +454,10 @@ def test_pyproject_includes_dogefeedx_templates():
     assert "templates/dogefeedx/" in content, "Missing dogefeedx templates in package-data"
 
 
-def test_pyproject_includes_httpx_dependency():
-    """pyproject.toml includes httpx as a web dependency."""
-    path = PROJECT_ROOT / "pyproject.toml"
-    content = path.read_text()
-    assert "httpx" in content, "Missing httpx dependency"
-    # Verify it's in web dependencies, not just dev
-    web_section_start = content.find("web = [")
-    web_section_end = content.find("]", web_section_start)
-    web_section = content[web_section_start:web_section_end]
-    assert "httpx" in web_section, "httpx not in web dependencies"
+def test_pyproject_web_extra_has_no_dogefeedx_http_client():
+    """The web extra no longer carries an HTTP client for DogeFeedX: it reads only this arcade."""
+    content = (PROJECT_ROOT / "pyproject.toml").read_text()
+    assert "fetches from dogefeed.app" not in content
 
 
 if __name__ == "__main__":

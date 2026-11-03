@@ -1,13 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Inscription · DogeFeed{% endblock %}
 {% block body %}
-{#- DogeFeedX Inscription Detail: Full inscription viewer matching dogefeed.app style
+{#- DogeFeedX Inscription Detail: Full inscription viewer in DogeFeed's style
     Light theme with white background. Renders images, text, HTML, JSON.
-    Data from dogefeed.app /doginal-img/ and explorer.dogesoft.io.
+    Data: this arcade's ord index; pictures from its own /content/.
     SECURITY: Read-only content display. No transaction logic. -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -369,8 +366,8 @@ a { color: inherit; text-decoration: none; }
   'use strict';
   
   var API_BASE = '/dogefeedx/api';
-  var IMG_BASE = 'https://dogefeed.app/doginal-img';
-  var DOGEFEED_BASE = 'https://dogefeed.app';
+  var IMG_BASE = '/content';   // this arcade's own copy of every inscription
+  var DOGEFEED_BASE = '';   // this arcade's own pages
   
   function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -415,7 +412,7 @@ a { color: inherit; text-decoration: none; }
   function renderDetails(inscription) {
     var html = '';
     
-    html += '<div class="df-detail-row"><span class="df-detail-label">Inscription ID</span><span class="df-detail-value"><a href="' + DOGEFEED_BASE + '/doginal/' + esc(inscription.id) + '" target="_blank">' + esc(inscription.id.substring(0, 20)) + '...</a></span></div>';
+    html += '<div class="df-detail-row"><span class="df-detail-label">Inscription ID</span><span class="df-detail-value"><a href="' + '/inscriptions/' + esc(inscription.id) + '" target="_blank">' + esc(inscription.id.substring(0, 20)) + '...</a></span></div>';
     
     if (inscription.number) {
       html += '<div class="df-detail-row"><span class="df-detail-label">Number</span><span class="df-detail-value">#' + inscription.number + '</span></div>';
@@ -441,7 +438,7 @@ a { color: inherit; text-decoration: none; }
     
     $('insc-details').innerHTML = html;
     
-    var actionsHtml = '<a href="' + DOGEFEED_BASE + '/doginal/' + esc(inscription.id) + '" target="_blank" class="df-btn df-btn-primary">';
+    var actionsHtml = '<a href="' + '/inscriptions/' + esc(inscription.id) + '" target="_blank" class="df-btn df-btn-primary">';
     actionsHtml += '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>';
     actionsHtml += 'View on DogeFeed</a>';
     actionsHtml += '<a href="' + IMG_BASE + '/' + esc(inscription.id) + '" target="_blank" class="df-btn df-btn-secondary">Download</a>';

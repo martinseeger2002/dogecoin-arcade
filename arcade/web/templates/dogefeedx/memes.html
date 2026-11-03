@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Meme Library · {{ brand.name }}{% endblock %}
 {% block body %}
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 :root { --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
 * { box-sizing:border-box; }
@@ -36,7 +35,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
 <script>document.body.classList.add('df-dogefeed');</script>
 <div class="wrap">
   <h1>Meme Library</h1>
-  <p class="note">Pictures you keep in this browser to attach to a local draft. Nothing is uploaded to dogefeed.app.</p>
+  <p class="note">Pictures you keep in this browser to attach to a local draft. Nothing is uploaded.</p>
   <div class="pick">
     <label for="meme-file">Pick a picture</label>
     <input id="meme-file" type="file" accept="image/*" multiple>
@@ -46,7 +45,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
   <h2>Yours</h2>
   <div id="local-memes" class="grid"></div>
   <h2>Public</h2>
-  <p class="note">Pictures from dogefeed.app/memes. Nothing here is uploaded.</p>
+  <p class="note">Picture inscriptions from this arcade's index, and pictures you pick here. Nothing here is uploaded.</p>
   <input id="meme-q" type="search" placeholder="Search memes, tags, creators" aria-label="Search memes, tags, creators">
   <p class="note" id="meme-count"></p>
   <div id="memes" class="grid"><p class="note">Loading…</p></div>
@@ -61,7 +60,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
   var said = document.getElementById('said');
   var file = document.getElementById('meme-file');
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
-  function abs(url) { return url && url.charAt(0) === '/' ? 'https://dogefeed.app' + url : (url || ''); }
+  function abs(url) { return url || ''; }   // this arcade's own addresses
   function read() {
     try { return JSON.parse(localStorage.getItem(KEY) || '[]') || []; } catch (e) { return []; }
   }
@@ -103,7 +102,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
         if (!meme) return;
         try { localStorage.setItem(DRAFT, JSON.stringify({id: meme.id, name: meme.name, data: meme.data})); }
         catch (e) { said.textContent = 'Could not attach it.'; return; }
-        said.textContent = 'Attached to your Home draft. Not sent to dogefeed.app.';
+        said.textContent = 'Attached to your Home draft.';
       });
     });
     local.querySelectorAll('button.drop').forEach(function (b) {
@@ -124,7 +123,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
       });
     })).then(function (made) {
       var rows = made.filter(Boolean).concat(read());
-      if (write(rows)) said.textContent = 'Saved in this browser. Not sent to dogefeed.app.';
+      if (write(rows)) said.textContent = 'Saved in this browser.';
       paintLocal();
     });
   });
@@ -134,7 +133,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
     said.textContent = 'Library cleared on this browser.';
   });
   paintLocal();
-  var offset = 0;
+  var offset = 0, nextAfter = null;
   var query = '';
   var moreBtn = document.getElementById('meme-more');
   function card(m) {
@@ -156,7 +155,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
       .then(function (data) {
         var rows = (data.memes || []).filter(function (m) { return abs(m.image); });
         if (!append && !rows.length) {
-          box.innerHTML = '<p class="note">' + (query ? 'No public memes match that search.' : 'No public meme list. dogefeed.app does not publish one to read.') + '</p>';
+          box.innerHTML = '<p class="note">' + (query ? 'No pictures match that search.' : 'No pictures in the index yet.') + '</p>';
           moreBtn.hidden = true;
           return;
         }
@@ -164,6 +163,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
         if (append) box.insertAdjacentHTML('beforeend', html);
         else box.innerHTML = html;
         moreBtn.hidden = !data.more;
+        nextAfter = data.next != null ? data.next : null;
         var countEl = document.getElementById('meme-count');
         if (countEl && data.count) {
           var page = Math.floor(offset / 120) + 1;
@@ -173,7 +173,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
         }
       })
       .catch(function () {
-        if (!append) box.innerHTML = '<p class="note">No public meme list.</p>';
+        if (!append) box.innerHTML = '<p class="note">No pictures here yet.</p>';
         moreBtn.hidden = true;
       });
   }
@@ -190,7 +190,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
     try {
       localStorage.setItem(DRAFT, JSON.stringify({id: b.getAttribute('data-id') || '', name: b.getAttribute('data-name') || 'Meme', data: src}));
     } catch (err) { said.textContent = 'Could not attach it.'; return; }
-    said.textContent = 'Attached to your Home draft. Not sent to dogefeed.app.';
+    said.textContent = 'Attached to your Home draft.';
   });
   var timer = 0;
   document.getElementById('meme-q').addEventListener('input', function (e) {
@@ -200,7 +200,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
     timer = setTimeout(function () { loadPublic(false); }, 250);
   });
   moreBtn.addEventListener('click', function () {
-    offset += 120;
+    offset = nextAfter != null ? nextAfter : offset + 120;   // the index pages by inscription number
     loadPublic(true);
   });
   loadPublic(false);

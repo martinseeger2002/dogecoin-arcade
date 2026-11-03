@@ -1,12 +1,9 @@
 {% extends "base.html" %}
 {% block title %}DogeFeed · {{ brand.name }}{% endblock %}
 {% block body %}
-{#- DogeFeedX Feed: Pixel-perfect reproduction of dogefeed.app home feed
+{#- DogeFeedX Feed: DogeFeed's home timeline
     Light theme with white background, matching exact layout and styling.
-    Data from dogefeed.app/api/feed (read-only). -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    Data: this arcade's own feed (/dogefeedx/api/feed). -#}
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -279,7 +276,7 @@ a { color: inherit; text-decoration: none; }
   border-radius: 2px;
 }
 
-/* Composer: dogefeed.app's bark box. Posts stay in this browser. */
+/* Composer: DogeFeed's bark box. Post puts it on the chain through this arcade (window.dfxPublish). */
 .df-composer {
   display: flex;
   gap: 12px;
@@ -727,7 +724,7 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
     <form class="df-composer" id="df-bark">
       <div class="df-composer-avatar" id="df-who-mark" aria-hidden="true">Ð</div>
       <div class="df-composer-body">
-        <div class="df-composer-id" id="df-who">No wallet selected</div>
+        <div class="df-composer-id" id="df-who">{{ "Your wallet" if public else "This arcade's wallet" }}</div>
         <textarea id="df-bark-text" maxlength="10050" placeholder="What's the latest? (every post is a bark)" aria-label="Post text"></textarea>
         <div id="df-slash" class="df-panel df-slash" hidden></div>
         <div id="df-emoji" class="df-panel df-emoji" hidden></div>
@@ -753,11 +750,10 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
           <button type="button" class="df-tool" id="df-lock-btn" aria-label="Paywall" title="Paid post"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
           <button type="button" class="df-tool" id="df-send-btn" aria-label="Send" title="/send Doge, a Doginal, a name or DRC-20"><svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg></button>
           <button type="button" class="df-tool" id="df-draft-btn" aria-label="Save draft" title="Save draft"><svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
-          <label class="df-x" title="This arcade does not post to X or dogefeed.app"><input type="checkbox" id="df-also-x" disabled> Also post to 𝕏</label>
-          <span id="df-count" class="df-count" hidden></span>
+                    <span id="df-count" class="df-count" hidden></span>
           <button type="submit" class="df-post-btn" id="df-post">Post</button>
         </div>
-        <p class="df-composer-note" id="df-said">Posts stay on this arcade. Nothing is written to dogefeed.app.</p>
+        <p class="df-composer-note" id="df-said">{{ "Posts go on the chain from your wallet." if public else "Posts go on the chain from this arcade's wallet." }}</p>
       </div>
     </form>
 
@@ -814,15 +810,11 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
   }
   function paintWho(addr) {
     wallet = addr || '';
-    who.textContent = wallet || 'No wallet selected';
+    who.textContent = wallet || {{ ("Your wallet" if public else "This arcade's wallet") | tojson }};
     who.title = wallet || '';
   }
   function shortAddr(addr) {
     return addr && addr.length > 12 ? addr.slice(0, 6) + '…' + addr.slice(-4) : (addr || 'wallet');
-  }
-  function readBarks() {
-    var rows = dfxReadJson('dogefeedx.localBarks', []);
-    return Array.isArray(rows) ? rows : [];
   }
   function price() {
     var n = parseFloat(document.getElementById('df-pay-price').value);
@@ -919,9 +911,8 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
     paintButton();
   });
   document.getElementById('df-draft-btn').addEventListener('click', function () {
-    if (!dfxReadWallet()) { said.textContent = 'Select a wallet on Profile. Nothing was sent.'; return; }
     dfxWriteJson('dogefeedx.barkDraft', text.value);
-    said.textContent = 'Draft saved in this browser for this wallet. Not sent to dogefeed.app.';
+    said.textContent = 'Draft saved in this browser.';
   });
   function shrink(file) {
     return new Promise(function (resolve) {
@@ -987,53 +978,39 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
     try { localStorage.setItem('dogefeedx.draftMeme', JSON.stringify({id: meme.id, name: meme.name, data: meme.data})); } catch (err) {}
     document.getElementById('df-memes').hidden = true;
     paintThumbs();
-    said.textContent = 'Attached from Meme Library. Saved in this browser. Not sent to dogefeed.app.';
+    said.textContent = 'Attached from Meme Library.';
   });
-  window.dfxLocalBarksHtml = function () {
-    return readBarks().map(function (bark) {
-      var lock = bark.lock && bark.lock.price ? '<div class="df-post-text">Locked · ' + esc(bark.lock.price) + ' DOGE · ' + esc(bark.lock.mode || '') + '. No payment was sent.</div>' : '';
-      var media = (bark.images || []).map(function (src) { return '<img src="' + src + '" alt="">'; }).join('');
-      return '<article class="df-post" data-local="1"><div class="df-post-avatar"></div><div class="df-post-content"><div class="df-post-header"><span class="df-post-name">' + esc(shortAddr(bark.address)) + '</span><span class="df-post-handle">' + esc(bark.address || '') + '</span><span class="df-post-time">On this arcade</span></div><div class="df-post-text">' + esc(bark.text || '') + '</div>' + lock + (media ? '<div class="df-post-media">' + media + '</div>' : '') + '</div></article>';
-    }).join('');
-  };
+  // Post: on the chain through the arcade (2026-11-03, the operator: "Keep UI/UX elements from DogefeedX wire them into the
+  // existing arcade architecture"). An account signs in its own browser (wallet.post, as the Feed page does); the
+  // operator's arcade posts from its own wallet (/dogefeedx/api/post, as /feed/post does). It shows in the timeline
+  // when its block lands, like every post on the Feed.
   document.getElementById('df-bark').addEventListener('submit', function (e) {
     e.preventDefault();
     paintButton();
-    if (document.getElementById('df-post').disabled) return;
-    if (!wallet) {
-      said.textContent = 'Select a wallet on Profile. Nothing was sent.';
+    var btn = document.getElementById('df-post');
+    if (btn.disabled) return;
+    if (price() > 0) {
+      said.textContent = 'Paid posts are not on this arcade. Make it free to post.';
       return;
     }
-    var bark = {
-      id: String(Date.now()),
-      address: wallet,
-      text: text.value.trim(),
-      images: images.map(function (img) { return img.data; }),
-      lock: price() > 0 ? {price: String(price()), mode: lockMode} : null,
-      at: new Date().toISOString()
-    };
-    var rows = [bark].concat(readBarks()).slice(0, 30);
-    dfxWriteJson('dogefeedx.localBarks', rows);
-    var kept = dfxReadJson('dogefeedx.localBarks', []);
-    if (!kept.length || kept[0].id !== bark.id) {
-      said.textContent = 'This browser would not keep that bark. Try fewer images.';
-      return;
-    }
-    dfxWriteJson('dogefeedx.barkDraft', '');
-    text.value = '';
-    images = [];
-    document.getElementById('df-pay-price').value = '';
-    paintThumbs();
-    paintButton();
-    var box = document.getElementById('df-posts');
-    if (box && window.dfxLocalBarksHtml) {
-      var all = window.dfxLocalBarksHtml();
-      var end = all.indexOf('</article>');
-      if (end > 0) box.insertAdjacentHTML('afterbegin', all.slice(0, end + 10));
-    }
-    said.textContent = (bark.lock || payCommand(bark.text))
-      ? 'Saved on this arcade. No payment was sent. Nothing was written to dogefeed.app.'
-      : 'Saved on this arcade. Nothing was written to dogefeed.app.';
+    if (!window.dfxPublish) { said.textContent = 'Posting is not ready yet. Try again in a moment.'; return; }
+    btn.disabled = true;
+    said.textContent = 'Posting…';
+    // A picture already on the chain (Meme Library: /content/<id>) is linked, as a Feed post links an inscription;
+    // only a new picture from this computer is inscribed.
+    var linked = images.filter(function (img) { return /^\/content\//.test(img.data); }).map(function (img) { return img.data; });
+    var fresh = images.filter(function (img) { return !/^\/content\//.test(img.data); }).map(function (img) { return img.data; });
+    var words = (text.value.trim() + (linked.length ? '\n' + linked.join('\n') : '')).trim();
+    window.dfxPublish(words, fresh).then(function (out) {
+      dfxWriteJson('dogefeedx.barkDraft', '');
+      text.value = '';
+      images = [];
+      document.getElementById('df-pay-price').value = '';
+      paintThumbs();
+      said.textContent = 'Posted. It shows here when its block lands (' + String((out && out.txid) || '').slice(0, 12) + '…).';
+    }).catch(function (err) {
+      said.textContent = String((err && err.message) || err || 'Not posted.');
+    }).then(function () { paintButton(); });
   });
   var shownWallet = '';
   function applyWallet(addr) {
@@ -1048,22 +1025,19 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
     var draft = next ? dfxReadJson('dogefeedx.barkDraft', '', next) : '';
     text.value = typeof draft === 'string' ? draft : '';
     paintButton();
-    document.querySelectorAll('#df-posts [data-local]').forEach(function (el) { el.remove(); });
-    var box = document.getElementById('df-posts');
-    var html = window.dfxLocalBarksHtml ? window.dfxLocalBarksHtml() : '';
-    if (box && html) box.insertAdjacentHTML('afterbegin', html);
   }
   dfxEnsureWallet().then(function (w) { applyWallet(w.selected); });
   dfxBindWallet(applyWallet);
   paintButton();
 })();
 </script>
+{% include "dogefeedx/_arcade_act.html" %}
 <script>
 (function() {
   'use strict';
   
   var API_BASE = '/dogefeedx/api';
-  var IMG_BASE = 'https://dogefeed.app';
+  var IMG_BASE = '';   // pictures are this arcade's own /content/<id>
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   
@@ -1143,12 +1117,12 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
     }
     
     html += '<div class="df-post-actions">';
-    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>';
-    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg><span>' + (counts.likes || '') + '</span></button>';
-    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg><span>' + (counts.branches || '') + '</span></button>';
-    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>';
-    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>';
-    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></button>';
+    html += '<button type="button" class="df-action" data-dfx-do="reply" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>';
+    html += '<button type="button" class="df-action" data-dfx-do="like" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg><span>' + (counts.likes || '') + '</span></button>';
+    html += '<button type="button" class="df-action" data-dfx-do="share" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg><span>' + (counts.branches || '') + '</span></button>';
+    html += '<button type="button" class="df-action" data-dfx-do="link" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>';
+    html += '<button type="button" class="df-action" data-dfx-do="save" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>';
+    html += '<button type="button" class="df-action" data-dfx-do="link" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></button>';
     html += '</div>';
     html += '</div>';
     html += '</article>';
@@ -1177,20 +1151,19 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
         var posts = data.items || [];
         var container = document.getElementById('df-posts');
         var more = document.getElementById('df-more');
-        var local = (!append && window.dfxLocalBarksHtml) ? window.dfxLocalBarksHtml() : '';
         if (data.error && !posts.length && !append) {
-          container.innerHTML = local + '<div class="df-empty">Error loading feed: ' + esc(data.error) + '</div>';
+          container.innerHTML = '<div class="df-empty">Error loading feed: ' + esc(data.error) + '</div>';
           more.hidden = true;
           return;
         }
         if (!posts.length && !append) {
-          container.innerHTML = local + '<div class="df-empty">No posts yet</div>';
+          container.innerHTML = '<div class="df-empty">No posts yet</div>';
           more.hidden = true;
           return;
         }
         var html = posts.map(renderPost).join('');
         if (append) container.insertAdjacentHTML('beforeend', html);
-        else container.innerHTML = local + html;
+        else container.innerHTML = html;
         feedCursor = data.nextCursor || '';
         more.hidden = !feedCursor;
       })
@@ -1204,7 +1177,7 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
   function renderTrends(trending) {
     if (!trending || !trending.length) return '<div class="df-empty">No trends</div>';
     return trending.map(function(t) {
-      return '<a class="df-trend" href="https://dogefeed.app/tag/' + encodeURIComponent(t.tag) + '" target="_blank" rel="noopener">' +
+      return '<a class="df-trend" href="/feed?q=%23' + encodeURIComponent(t.tag) + '">' +
         '<div class="df-trend-label">' + t.rank + ' · Trending on DogeFeed</div>' +
         '<div class="df-trend-tag">#' + esc(t.tag) + '</div>' +
         '<div class="df-trend-count">' + esc(t.count) + '</div>' +

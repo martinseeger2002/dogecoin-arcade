@@ -1,11 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Leaderboard · DogeFeed{% endblock %}
 {% block body %}
-{#- DogeFeedX Leaderboard: Exact match to dogefeed.app/leaderboard
+{#- DogeFeedX Leaderboard: DogeFeed's leaderboard, over this arcade's posters
     Simple numbered list layout (no podium), with time tabs. -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -364,7 +361,7 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
 (function() {
   'use strict';
   
-  var IMG_BASE = 'https://dogefeed.app';
+  var IMG_BASE = '';   // pictures are this arcade's own /content/<id>
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   

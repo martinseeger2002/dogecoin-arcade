@@ -7,8 +7,7 @@
     3. Names - .doge/.dogefeed names with owner and inscription info
     
     Data sources:
-    - dogefeed.app: Primary source for feed, search, images, tokens, names
-    - explorer.dogesoft.io: Fallback for collection metadata
+    - this arcade: feed, search, images, tokens, names (its own indexes)
     
     Results cached with graceful fallback when services are unreachable. -#}
 <link rel="stylesheet" href="/dogefeedx/aqua.css">
@@ -548,7 +547,7 @@
   'use strict';
   
   var API_BASE = '/dogefeedx/api';
-  var CONTENT_BASE = 'https://dogefeed.app/doginal-img';
+  var CONTENT_BASE = '/content';   // this arcade's own copy
   
   var state = {
     category: 'collections',

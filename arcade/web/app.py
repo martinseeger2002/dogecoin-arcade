@@ -10438,7 +10438,7 @@ def create_app(state: AppState) -> FastAPI:
         """Likes, comments, reposts, sales and offers for this arcade account.
 
         Read from the node's own notification book. Empty when nobody is signed in.
-        Nothing here is written to dogefeed.app.
+        Nothing here asks any other server.
         """
         account = signed_in(request)
         if account is None and _account_view(request):
@@ -10472,6 +10472,68 @@ def create_app(state: AppState) -> FastAPI:
             items.append({"bucket": which, "kind": ev.kind, "text": ev.text or "",
                           "unread": bool(ev.unread), "at": int(ev.at or 0)})
         return JSONResponse({"signed_in": True, "items": items}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/dogefeedx/api/post")
+    def dogefeedx_post(request: Request, payload: Any = Body(None)):
+        """DogeFeedX Home's Post, for the operator: what /feed/post does, answered in JSON. {text, pictures: [data:
+        URLs], csrf_token}. Each picture is inscribed, as a file posted to the Feed is, and the post links it. An
+        account posts from its own browser (wallet.post), so this is the node's wallet only -- the door refuses it on a
+        public arcade, and an account's view is refused here."""
+        if _account_view(request):
+            return JSONResponse({"ok": False, "error": "Post from your own wallet."}, status_code=403)
+        body = payload if isinstance(payload, dict) else {}
+        check_csrf(str(body.get("csrf_token") or ""))
+        try:
+            complaint = _needs_a_name()
+            if complaint:
+                raise ValueError(complaint)
+            said = str(body.get("text") or "").strip()[:10050]
+            pictures = body.get("pictures") or []
+            if not isinstance(pictures, list) or len(pictures) > 4:
+                raise ValueError("At most 4 pictures.")
+            import base64 as _b64
+            for i, url in enumerate(pictures):
+                m = re.fullmatch(r"data:(image/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=]+)", str(url or ""))
+                if not m:
+                    raise ValueError("Pictures are PNG, JPEG, GIF or WebP.")
+                data = _b64.b64decode(m.group(2))
+                if len(data) > 1_500_000:
+                    raise ValueError("A picture is too large.")
+                ext = m.group(1).split("/")[1].replace("jpeg", "jpg")
+                said = (said + f"\n/content/{_inscribe_for_post(data, f'picture{i + 1}.{ext}', m.group(1))}").strip()
+            if not said:
+                raise ValueError("Say something, or attach something.")
+            txid = state.post(said)
+        except HTTPException:
+            raise
+        except Exception as exc:                          # noqa: BLE001 -- said in the window
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True, "txid": txid if isinstance(txid, str) else ""})
+
+    @app.post("/dogefeedx/api/react")
+    def dogefeedx_react(request: Request, payload: Any = Body(None)):
+        """DogeFeedX's like, reply and share, for the operator: what /feed/{txid}/{doing} does, answered in JSON.
+        {txid, doing: like|unlike|reply|share, text, csrf_token}. An account reacts from its own browser
+        (wallet.react)."""
+        if _account_view(request):
+            return JSONResponse({"ok": False, "error": "React from your own wallet."}, status_code=403)
+        body = payload if isinstance(payload, dict) else {}
+        check_csrf(str(body.get("csrf_token") or ""))
+        kinds = {"like": feedlib.LIKE, "unlike": feedlib.UNLIKE, "reply": feedlib.REPLY, "share": feedlib.SHARE}
+        txid, doing = str(body.get("txid") or "").lower(), str(body.get("doing") or "")
+        try:
+            if not re.fullmatch(r"[0-9a-f]{64}", txid) or doing not in kinds:
+                raise ValueError("Nothing to do to that post.")
+            text = str(body.get("text") or "").strip()[:2000]
+            if doing == "reply" and not text:
+                raise ValueError("Write a reply first.")
+            complaint = _needs_a_name()
+            if complaint:
+                raise ValueError(complaint)
+            out = state.send_feed_act(kinds[doing], txid, text)
+        except Exception as exc:                          # noqa: BLE001 -- said in the window
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        return JSONResponse({"ok": True, "txid": out if isinstance(out, str) else ""})
 
     @app.get("/dogefeedx/api/local/games")
     def dogefeedx_local_games(request: Request):
@@ -35690,9 +35752,344 @@ def create_app(state: AppState) -> FastAPI:
     llmweb.register(app, state, signed_in=signed_in, account_address=_account_address, account_chain=_account_chain,
                     admin_check=_admin_check, name_of=_name_of,
                     pay_choices=lambda request: _pair_choices(request, "nobody", everything=True), render=render)
+    # DogeFeedX, read from this arcade alone (2026-11-03: "strip out the Dogefeed.app calls ... Everything needs
+    # to work through arcade"; Home: "The arcade's own feed"). Each window keeps its layout; what it shows comes from
+    # this node's feed, its ord index, its known collections and its Doginal market. No outside server is asked.
+    import types as _types
+    from datetime import datetime as _dt, timezone as _tz
+    _DFX_NET = "doge"
+    _IID = re.compile(r"\b([0-9a-f]{64}i[0-9]{1,6})\b")
+
+    def _dfx_iso(t) -> str:
+        try:
+            return _dt.fromtimestamp(int(t or 0), _tz.utc).isoformat().replace("+00:00", "Z")
+        except Exception:                                  # noqa: BLE001
+            return ""
+
+    def _dfx_author(address: str) -> dict:
+        tag = _name_of(address) or ""
+        face = _face_for(address) if address else ""
+        return {"id": address, "handle": tag or address[:10], "displayName": ("@" + tag) if tag else address[:10],
+                "avatarUrl": f"/content/{face}" if face else "", "verifiedPfp": bool(face), "address": address}
+
+    def _dfx_post(item) -> dict:
+        text = item.text or ""
+        return {"id": item.txid, "text": text, "body": text, "createdAt": _dfx_iso(item.block_time),
+                "height": item.height, "author": _dfx_author(item.author),
+                "mediaUrls": [f"/content/{m}" for m in dict.fromkeys(_IID.findall(text))][:4],
+                "counts": {"likes": item.likes, "branches": len(item.replies), "shares": item.shares, "tips": item.tips},
+                "quote": None, "replies": [_dfx_post(r) for r in (item.replies or [])]}
+
+    def _dfx_posts(author: str = "", before=None, limit: int = 20, sort: str = "popular"):
+        chain = _account_chain()
+        rows, cursor, waiting = _feed_page(chain.network, author=author, before=before, limit=limit, sort=sort)
+        return [_dfx_post(i) for i in _shown(rows, chain.network, waiting) if not i.deleted], cursor
+
+    def _dfx_feed(tab: str = "for-you", limit: int = 20, cursor: str = "") -> dict:
+        items, nxt = _dfx_posts(before=cursor or None, limit=limit,
+                                sort="new" if tab in ("latest", "following") else "popular")
+        seen, holders = set(), []
+        for it in items:
+            a = it["author"]
+            if a["verifiedPfp"] and a["id"] not in seen:
+                seen.add(a["id"])
+                holders.append({"handle": a["handle"], "display_name": a["displayName"], "pfp_rarity": None,
+                                "inscription_id": a["avatarUrl"].rsplit("/", 1)[-1], "avatar_url": a["avatarUrl"]})
+        return {"items": items, "nextCursor": nxt, "doginal_holders": holders}
+
+    def _dfx_find_post(txid: str) -> dict:
+        items, _ = _dfx_posts(limit=200, sort="new")
+        stack = list(items)
+        while stack:
+            it = stack.pop()
+            if it["id"] == txid:
+                return {"post": it, "ancestors": [], "replies": it["replies"]}
+            stack.extend(it["replies"])
+        return {"post": None, "ancestors": [], "replies": []}
+
+    def _dfx_user_posts(handle: str, tab: str = "posts", limit: int = 20, cursor: str = "") -> dict:
+        address, _pending = _address_of_tag(handle.lstrip("@").lower())
+        if not address:
+            return {"handle": handle, "author": None, "card": {}, "items": [], "nextCursor": None}
+        items, nxt = _dfx_posts(author=address, before=cursor or None, limit=limit, sort="new")
+        return {"handle": handle, "author": _dfx_author(address), "card": {}, "items": items, "nextCursor": nxt}
+
+    def _dfx_people(items) -> list[dict]:
+        by: dict = {}
+        for it in items:
+            a = it["author"]
+            row = by.setdefault(a["id"], {"handle": a["handle"], "name": a["displayName"], "avatar": a["avatarUrl"],
+                                          "verified": a["verifiedPfp"], "posts": 0, "likes": 0, "tips": 0})
+            row["posts"] += 1
+            row["likes"] += it["counts"]["likes"]
+            row["tips"] += it["counts"]["tips"]
+        return list(by.values())
+
+    def _dfx_sidebar() -> dict:
+        items, _ = _dfx_posts(limit=100, sort="new")
+        tags: dict = {}
+        for it in items:
+            for t in re.findall(r"#([A-Za-z0-9_]{2,32})", it["text"]):
+                tags[t.lower()] = tags.get(t.lower(), 0) + 1
+        trending = [{"rank": i + 1, "tag": t, "count": str(n)} for i, (t, n) in
+                    enumerate(sorted(tags.items(), key=lambda kv: -kv[1])[:10])]
+        people = sorted(_dfx_people(items), key=lambda r: -r["posts"])
+        earners = [{"rank": i + 1, "handle": r["handle"], "name": r["name"], "amount": f"{r['tips']} tips",
+                    "avatar": r["avatar"], "verified": r["verified"]}
+                   for i, r in enumerate(sorted(people, key=lambda r: (-r["tips"], -r["likes"]))[:10])]
+        return {"trending": trending, "suggestions": people[:6], "earners": earners}
+
+    def _dfx_leaderboard(range_: str = "7d") -> dict:
+        items, _ = _dfx_posts(limit=200, sort="new")
+        span = {"1d": 86400, "7d": 7 * 86400, "30d": 30 * 86400}.get(range_)
+        if span:
+            since = time.time() - span
+            items = [i for i in items if not i["createdAt"] or
+                     _dt.fromisoformat(i["createdAt"].replace("Z", "+00:00")).timestamp() >= since]
+        rows = sorted(_dfx_people(items), key=lambda r: (-r["tips"], -r["likes"], -r["posts"]))[:50]
+        return {"range": range_, "earners": [{"rank": i + 1, "handle": r["handle"], "name": r["name"],
+                                              "amount": f"{r['tips']} tips · {r['likes']} likes",
+                                              "avatar": r["avatar"], "verified": r["verified"]}
+                                             for i, r in enumerate(rows)]}
+
+    def _dfx_known():
+        return state.known_collections() if hasattr(state, "known_collections") else None
+
+    def _dfx_registry():
+        try:
+            return state.collection_registry()
+        except Exception:                                  # noqa: BLE001 -- no registry: the listing's alone
+            return None
+
+    def _dfx_listings(net: str) -> list[dict]:
+        """Open asks on this arcade's own Doginal market (doginal_market.Book), for one chain."""
+        try:
+            return state.doginal_book.open_listings(net, 500)
+        except Exception:                                  # noqa: BLE001 -- shown without floors
+            return []
+
+    def _dfx_in_collection(iid: str) -> dict | None:
+        """Which of the arcade's collections holds `iid`: {slug, collection}. The registry's first (collections that
+        described themselves in an inscription), then the imported listing's."""
+        reg = _dfx_registry()
+        for chain in ("doge", "pep"):
+            hit = reg.item(chain, iid) if reg is not None else None
+            if hit:
+                return {"slug": hit["root"], "collection": hit.get("name") or "", "number": hit.get("number")}
+        known = _dfx_known()
+        hit = known.in_collection(_DFX_NET, iid) if known is not None else None
+        return {"slug": hit["slug"], "collection": hit.get("collection") or "", "number": None} if hit else None
+
+    def _dfx_collection_rows() -> list[dict]:
+        """Every collection this arcade holds, in DogeFeed's collection shape: the registry's (Doginal Frogs, Doginal
+        Dogs ... each described by an inscription, with its items in this arcade's database) and the imported
+        listing's. Floors are the lowest open ask on this arcade's own Doginal market."""
+        from .. import doginals as doginalslib
+        out: list[dict] = []
+        reg = _dfx_registry()
+        roots = reg.active() if reg is not None else []
+        for c in roots:
+            net, cover = c.get("chain") or _DFX_NET, c.get("cover") or ""
+            asks = _dfx_listings(net)
+            mine = {i["id"] for i in reg.items(c["txid"], ids={a["inscription"] for a in asks})} if asks else set()
+            prices = [int(a["price"]) for a in asks if a["inscription"] in mine and int(a.get("price") or 0) > 0]
+            out.append({"id": c["txid"], "slug": c["txid"], "name": c.get("name") or "Collection",
+                        "description": c.get("description") or "", "item_count": c.get("count") or c.get("supply") or 0,
+                        "holder_count": 0, "cover_id": cover, "created_at": c.get("number"),
+                        "sample_item_ids": [cover] if cover else [],
+                        "image": doginalslib.content_url(cover) if cover else "", "href": f"/exchange/ord/{c['txid']}",
+                        "floor": f"{min(prices) / 1e8:g} DOGE" if prices else None, "listed": len(prices), "sales": 0,
+                        "verified": True, "chain": net})
+        known = _dfx_known()
+        if known is not None:
+            floors: dict = {}
+            for row in _dfx_listings(_DFX_NET):
+                hit = known.in_collection(_DFX_NET, str(row.get("inscription") or ""))
+                price = int(row.get("price") or 0)
+                if hit and price and (hit["slug"] not in floors or price < floors[hit["slug"]]):
+                    floors[hit["slug"]] = price
+            for c in known.catalog(_DFX_NET):
+                if not c.get("imported"):
+                    continue
+                slug, cover = c.get("slug") or "", c.get("cover") or ""
+                floor = floors.get(slug)
+                out.append({"id": slug, "slug": slug, "name": c.get("name") or slug, "description": "",
+                            "item_count": c.get("count") or c.get("supply") or 0, "holder_count": c.get("owners") or 0,
+                            "cover_id": cover, "created_at": c.get("created"), "sample_item_ids": [cover] if cover else [],
+                            "image": doginalslib.content_url(cover) if cover else "", "href": f"/exchange/ord/{slug}",
+                            "floor": f"{floor / 1e8:g} DOGE" if floor else None, "listed": 0, "sales": 0,
+                            "verified": True, "chain": _DFX_NET})
+        return out
+
+    def _dfx_collections(offset: int = 0, limit: int = 50, q: str = "", sort: str = "name") -> dict:
+        rows = _dfx_collection_rows()
+        if q:
+            rows = [c for c in rows if q.lower() in (c["name"] or "").lower() or q.lower() in c["slug"]]
+        if sort == "holders":
+            rows.sort(key=lambda c: (-(c["holder_count"] or 0), -(c["item_count"] or 0)))
+        elif sort == "recent":
+            rows.sort(key=lambda c: -(c["created_at"] or 0))
+        else:
+            rows.sort(key=lambda c: (c["name"] or c["slug"]).lower())
+        return {"collections": rows[offset:offset + limit], "total": len(rows), "offset": offset, "limit": limit,
+                "has_more": len(rows) > offset + limit}
+
+    def _dfx_collection_items(slug: str, offset: int = 0, limit: int = 50) -> dict:
+        reg = _dfx_registry()
+        root = reg.root(slug) if reg is not None and re.fullmatch(r"[0-9a-f]{64}", slug) else None
+        if root is not None and root.get("status") == "active":
+            items = reg.items(slug, offset, limit + 1)
+            rows = [{"id": i["id"], "number": i.get("number"), "name": f"{root.get('name') or ''} #{i.get('number')}",
+                     "content_type": "", "owner": "", "genesis_height": None} for i in items[:limit]]
+        else:
+            known = _dfx_known()
+            items = known.items(_DFX_NET, slug, offset, limit + 1) if known else []
+            rows = [{"id": i["id"], "number": i.get("number"), "name": i.get("name") or "", "content_type": "",
+                     "owner": "", "genesis_height": None} for i in items[:limit]]
+        return {"items": rows, "collection_id": slug, "offset": offset, "limit": limit, "has_more": len(items) > limit}
+
+    def _dfx_market() -> dict:
+        got = _dfx_collections(limit=200, sort="holders")
+        return {"stats": {"collections": str(got["total"])}, "collections": got["collections"]}
+
+    def _dfx_index():
+        return state.ord_index(_DFX_NET)
+
+    def _dfx_ask(question: dict) -> dict:
+        index = _dfx_index()
+        if index is None:
+            return {}
+        try:
+            return index.lookup(question) or {}
+        except Exception:                                  # noqa: BLE001 -- not answered just now
+            return {}
+
+    def _dfx_inscription(iid: str) -> dict:
+        row = (_dfx_ask({"what": "number", "id": iid}).get("number") or {}).get("inscription") or {}
+        hit = _dfx_in_collection(iid)
+        return {"inscription": {"id": iid, "number": row.get("number"), "content_type": row.get("content_type") or row.get("ctype") or "",
+                                "content_size": row.get("size"), "owner": row.get("owner") or "",
+                                "genesis_height": row.get("height"), "collection": (hit or {}).get("collection") or "",
+                                "image_url": f"/content/{iid}"}}
+
+    def _dfx_num(v) -> float:
+        try:
+            return float(str(v).replace(",", ""))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _dfx_token_row(t: dict) -> dict:
+        mx, minted = _dfx_num(t.get("supply")), _dfx_num(t.get("minted"))
+        pct = t.get("minted_pct")
+        return {"ticker": t.get("tick") or "", "deploy_inscription": t.get("deploy") or "",
+                "max_supply": t.get("supply") or 0, "minted": t.get("minted") or 0,
+                "mint_progress": float(pct) if isinstance(pct, (int, float)) else (round(100 * minted / mx, 1) if mx else 0),
+                "holder_count": t.get("holders") or 0, "transfer_count": 0, "deploy_time": t.get("height"),
+                "decimals": t.get("decimals") or 18, "mint_limit": t.get("limit"), "deployer": t.get("deployer") or "",
+                "number": t.get("number")}
+
+    def _dfx_tokens(offset: int = 0, limit: int = 50, q: str = "", sort: str = "holders") -> dict:
+        ticks = (_dfx_ask({"what": "ticks", "prefix": q or ""}).get("ticks") or {}).get("first") or []
+        rows = [_dfx_token_row({"tick": t.get("tick"), "number": t.get("number"), "supply": t.get("supply"),
+                                "minted": t.get("minted"), "minted_pct": t.get("minted_pct")}) for t in ticks]
+        if sort == "progress":
+            rows.sort(key=lambda t: -t["mint_progress"])
+        elif sort == "holders":
+            rows.sort(key=lambda t: -(t["holder_count"] or 0))
+        else:
+            rows.sort(key=lambda t: t["ticker"].lower())
+        return {"tokens": rows[offset:offset + limit], "total": len(rows), "offset": offset, "limit": limit,
+                "has_more": len(rows) > offset + limit}
+
+    def _dfx_token(tick: str) -> dict:
+        t = _dfx_ask({"what": "token", "tick": tick}).get("token")
+        return {"token": _dfx_token_row(t)} if t else {"token": None}
+
+    def _dfx_name(name: str) -> dict:
+        said = _dfx_ask({"what": "name", "name": name}).get("name") or {}
+        win = next((r.get("winner") for r in (said.get("readings") or {}).values() if r.get("winner")), None)
+        if not win:
+            return {"found": False, "name": name}
+        where = _dfx_ask({"what": "where", "id": win["inscription"]}).get("where") or {}
+        n = {"id": win["inscription"], "number": win.get("number"), "owner": where.get("owner") or ""}
+        return {"found": True, "name_info": {"name": name, "inscription_id": n.get("id") or "",
+                                             "inscription_number": n.get("number"), "owner": n.get("owner") or "",
+                                             "registered_at": None, "genesis_height": n.get("height"), "url": "",
+                                             "suffix": "." + name.rsplit(".", 1)[-1] if "." in name else ""}}
+
+    def _dfx_search(q: str, kind: str = "all") -> dict:
+        ql = q.lower()
+        items, _ = _dfx_posts(limit=200, sort="new")
+        posts = [i for i in items if ql in i["text"].lower()][:20] if kind in ("all", "posts") else []
+        users = [p for p in _dfx_people(items) if ql in (p["handle"] or "").lower()][:20] if kind in ("all", "users") else []
+        address, _pending = _address_of_tag(ql.lstrip("@"))
+        if address and not any(u["handle"] == ql.lstrip("@") for u in users) and kind in ("all", "users"):
+            a = _dfx_author(address)
+            users.insert(0, {"handle": a["handle"], "name": a["displayName"], "avatar": a["avatarUrl"],
+                             "verified": a["verifiedPfp"]})
+        return {"users": [{"handle": u["handle"], "displayName": u["name"], "avatarUrl": u["avatar"],
+                           "verifiedPfp": u["verified"]} for u in users], "posts": posts,
+                "collections": _dfx_collections(limit=10, q=q)["collections"]}
+
+    def _dfx_memes(q: str = "", offset: int = 0) -> dict:
+        """Pictures on the chain, by number, from this arcade's ord index; `offset` is the number to go on after."""
+        typed = _dfx_ask({"what": "typed", "ctype": "image/", "after": offset or None}).get("typed") or {}
+        rows = typed.get("rows") or []
+        memes = []
+        for r in rows:
+            iid = r.get("id") if isinstance(r, dict) else str(r)
+            if iid:
+                memes.append({"id": iid, "name": f"#{r.get('number')}" if isinstance(r, dict) and r.get("number") is not None else iid[:10],
+                              "image": f"/content/{iid}", "format": "", "category": "doginal", "tags": [], "uses": 0,
+                              "sourceName": "this arcade"})
+        return {"memes": memes, "offset": offset, "next": typed.get("next"), "more": typed.get("next") is not None}
+
+    def _dfx_launchpad() -> dict:
+        try:
+            _chain, index = _token_chain()
+            rows = index.launches(limit=60)
+        except Exception:                                  # noqa: BLE001
+            rows = []
+        return {"launches": [{"slug": r.get("txid", ""), "name": r.get("name") or r.get("collection") or "Launch",
+                              "image": f"/content/{r['cover']}" if r.get("cover") else "",
+                              "detail": r.get("detail") or "", "progress": "", "pct": "",
+                              "href": f"/mintpad/{r.get('txid', '')}"} for r in rows]}
+
+    def _dfx_games(request) -> dict:
+        """The apps on this arcade (the Apps page's list, most played first), as DogeFeedX's Arcade tiles."""
+        try:
+            rows = _games_ranked(request, "popular")
+        except Exception:                                  # noqa: BLE001
+            rows = []
+        return {"games": [{"slug": r.get("txid") or "", "href": f"/games/{r.get('txid') or ''}",
+                           "name": r.get("name") or "", "detail": r.get("netlabel") or "Play"}
+                          for r in rows[:60] if r.get("name")]}
+
+    def _dfx_me(request) -> dict:
+        """Who is asking, as the chain has them: the @tag, the address, and what they published (bio, url, picture)."""
+        who = _tag_of_whoever_is_asking(request) or {}
+        address = str(who.get("address") or "")
+        try:
+            said = _profile_of(address) if address else {}
+        except Exception:                                  # noqa: BLE001
+            said = {}
+        if not _account_view(request):                     # the operator's own words, as /profile/about keeps them
+            said = dict(said, bio=said.get("bio") or str(state.setting("bio", "") or ""),
+                        url=said.get("url") or str(state.setting("url", "") or ""))
+        return {"signed_in": bool(address), "operator": not _account_view(request), "tag": who.get("tag") or "",
+                "address": address, "bio": said.get("bio") or "", "url": said.get("url") or "",
+                "pfp": said.get("pfp") or "", "doge": said.get("doge") or ""}
+
+    dfx_local = _types.SimpleNamespace(
+        chain=_account_chain, games=_dfx_games, me=_dfx_me,
+        feed=_dfx_feed, post=_dfx_find_post, user_posts=_dfx_user_posts, sidebar=_dfx_sidebar,
+        leaderboard=_dfx_leaderboard, market=_dfx_market, collections=_dfx_collections,
+        collection_items=_dfx_collection_items, inscription=_dfx_inscription, tokens=_dfx_tokens, token=_dfx_token,
+        name=_dfx_name, search=_dfx_search, memes=_dfx_memes, launchpad=_dfx_launchpad,
+        in_collection=_dfx_in_collection)
     # DogeFeedX apps: Explorer and Terminal apps with Mac OS X Aqua styling and DogeFeed branding.
     from . import dogefeedx
-    dogefeedx.register_routes(app, render)
+    dogefeedx.register_routes(app, render, local=dfx_local)
     # DogeFeedX Network app: node status, sync progress, and mesh peers.
     from .dogefeedx import network as dogefeedx_network
     dogefeedx_network.register(app, state, admin_check=_admin_check)

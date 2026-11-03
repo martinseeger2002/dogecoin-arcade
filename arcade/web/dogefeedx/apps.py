@@ -1,10 +1,17 @@
 """DogeFeedX apps for the Dogecoin Arcade desktop.
 
-What a wallet owns is read from this node: the watcher's utxo index for the
-balance, the ledger for doginals, and the ord index for DRC-20 balances and
-names. dogefeed.app is read-only enrichment (collection names, covers, floors,
-the social feed, the leaderboard, memes, and launchpad listings). A public
-explorer is not asked who holds a coin, a doginal, a token, or a name.
+Everything these windows show comes from this arcade (2026-11-03: "this is meant not to be reliant on any
+external API's or external servers or services. Everything needs to work through arcade"):
+
+    the feed, posts, profiles, trends, the leaderboard   the arcade's own on-chain feed (feed.html's posts)
+    collections, items, floors, the market               the collections kept in this arcade's database and its own
+                                                         Doginal market's open listings
+    inscriptions, DRC-20 tokens, names, memes            this arcade's ord index (images: /content/<id>)
+    launchpad                                            the arcade's mintpads
+    balances, holdings                                   the watcher's utxo index and the ledger
+
+The data comes from `LOCAL`, the provider app.py hands register_routes (app.py holds the arcade's state). No
+endpoint here reaches any other server; tests/test_dogefeedx_local.py keeps it so.
 """
 from __future__ import annotations
 
@@ -16,26 +23,25 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
 logger = logging.getLogger(__name__)
 
-DOGEFEED_APP_BASE = "https://dogefeed.app"
-DOGEFEED_EXPLORER_BASE = "https://explorer.dogesoft.io/api"
-DOGEFEED_IMG_BASE = "https://dogefeed.app/doginal-img"
-CACHE_TTL = 300  # 5 minutes
-REQUEST_TIMEOUT = 10.0
+#: Pictures are this arcade's own content route.
+IMG_BASE = "/content"
+CACHE_TTL = 30
+SOURCE = "arcade"
 
-_collection_cache: dict[str, tuple[float, Any]] = {}
-_collection_items_cache: dict[str, tuple[float, Any]] = {}
+#: The arcade's data (app.py: dfx_local). None until register_routes: every endpoint answers empty then.
+LOCAL = None
+
+_cache: dict[str, tuple[float, Any]] = {}
 
 router = APIRouter(prefix="/dogefeedx", tags=["dogefeedx"])
 
 
 def _get_cached(cache: dict, key: str, ttl: float = CACHE_TTL) -> Any | None:
-    """Get a cached value if it exists and hasn't expired."""
     if key in cache:
         ts, value = cache[key]
         if time.time() - ts < ttl:
@@ -44,57 +50,30 @@ def _get_cached(cache: dict, key: str, ttl: float = CACHE_TTL) -> Any | None:
 
 
 def _set_cached(cache: dict, key: str, value: Any) -> None:
-    """Set a cached value with current timestamp."""
     cache[key] = (time.time(), value)
     if len(cache) > 1000:
-        oldest = sorted(cache.items(), key=lambda x: x[1][0])[:100]
-        for k, _ in oldest:
+        for k, _ in sorted(cache.items(), key=lambda x: x[1][0])[:100]:
             cache.pop(k, None)
 
 
-async def _fetch_dogefeed_app(path: str, params: dict | None = None) -> dict:
-    """Fetch data from dogefeed.app API with timeout and error handling.
-    
-    dogefeed.app provides: /api/feed, /api/search, /doginal-img/{id}
-    """
-    url = f"{DOGEFEED_APP_BASE}{path}"
+async def _local(name: str, *args, empty: dict, ttl: float = CACHE_TTL, **kwargs) -> dict:
+    """LOCAL.<name>(...) off the event loop, cached `ttl` seconds; `empty` (with source) when there is no answer."""
+    fn = getattr(LOCAL, name, None) if LOCAL is not None else None
+    if fn is None:
+        return dict(empty, source=SOURCE)
+    key = f"{name}:{args!r}:{sorted(kwargs.items())!r}"
+    got = _get_cached(_cache, key, ttl) if ttl else None
+    if got is not None:
+        return got
     try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
-    except httpx.TimeoutException:
-        logger.warning(f"DogeFeed.app API timeout: {path}")
-        raise HTTPException(status_code=504, detail="DogeFeed API timeout")
-    except httpx.HTTPStatusError as e:
-        logger.warning(f"DogeFeed.app API error: {e.response.status_code}")
-        raise HTTPException(status_code=502, detail=f"DogeFeed API error: {e.response.status_code}")
-    except Exception as e:
-        logger.warning(f"DogeFeed.app API error: {e}")
-        raise HTTPException(status_code=502, detail="Unable to reach DogeFeed")
-
-
-async def _fetch_dogefeed_explorer(path: str, params: dict | None = None) -> dict:
-    """Fetch collection data from explorer.dogesoft.io (DogeFeed's explorer).
-    
-    Used for structured collection listings since dogefeed.app doesn't expose a
-    public collection API (their collection pages are server-side rendered).
-    """
-    url = f"{DOGEFEED_EXPLORER_BASE}{path}"
-    try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            return response.json()
-    except httpx.TimeoutException:
-        logger.warning(f"DogeFeed Explorer API timeout: {path}")
-        raise HTTPException(status_code=504, detail="DogeFeed Explorer API timeout")
-    except httpx.HTTPStatusError as e:
-        logger.warning(f"DogeFeed Explorer API error: {e.response.status_code}")
-        raise HTTPException(status_code=502, detail=f"DogeFeed Explorer API error: {e.response.status_code}")
-    except Exception as e:
-        logger.warning(f"DogeFeed Explorer API error: {e}")
-        raise HTTPException(status_code=502, detail="Unable to reach DogeFeed Explorer")
+        got = await asyncio.to_thread(fn, *args, **kwargs)
+    except Exception:                                      # noqa: BLE001 -- shown empty, logged
+        logger.warning("dogefeedx: %s", name, exc_info=True)
+        return dict(empty, source=SOURCE)
+    got = dict(got or empty, source=SOURCE, image_base=IMG_BASE)
+    if ttl:
+        _set_cached(_cache, key, got)
+    return got
 
 
 # --- Static files ---
@@ -261,751 +240,141 @@ _FEED_TABS = {"for-you", "latest", "following", "top", "hot"}
 
 
 @router.get("/api/feed")
-async def api_feed(
-    limit: int = 20,
-    cursor: str = "",
-    tab: str = "for-you",
-):
-    """Get the DogeFeed social feed from dogefeed.app.
-    
-    Returns posts from verified doginal holders and recent activity.
-    This is the primary dogefeed.app data source.
-    """
+async def api_feed(limit: int = 20, cursor: str = "", tab: str = "for-you"):
+    """The arcade's own feed, as DogeFeed's timeline: For you = popular, Latest/Following = newest."""
     limit = min(max(1, limit), 50)
     tab = tab if tab in _FEED_TABS else "for-you"
-    
-    cache_key = f"feed:{tab}:{cursor}:{limit}"
-    cached = _get_cached(_collection_cache, cache_key, ttl=60)  # 1 min cache for feed
-    if cached is not None:
-        return cached
-    
-    try:
-        params = {"tab": tab, "limit": limit}
-        if cursor:
-            params["cursor"] = cursor
-        data = await _fetch_dogefeed_app("/api/feed", params)
-        
-        items = data.get("items", []) if isinstance(data, dict) else data
-        
-        doginal_holders = []
-        seen_holders = set()
-        for item in items:
-            author = item.get("author", {})
-            if author.get("verifiedPfp") and author.get("id") not in seen_holders:
-                avatar = author.get("avatarUrl", "")
-                inscription_id = ""
-                if avatar.startswith("/doginal-img/"):
-                    inscription_id = avatar.replace("/doginal-img/", "")
-                doginal_holders.append({
-                    "handle": author.get("handle", ""),
-                    "display_name": author.get("displayName", ""),
-                    "pfp_rarity": author.get("pfpRarity"),
-                    "inscription_id": inscription_id,
-                    "avatar_url": f"{DOGEFEED_APP_BASE}{avatar}" if avatar.startswith("/") else avatar,
-                })
-                seen_holders.add(author.get("id"))
-        
-        result = {
-            "items": items[:limit],
-            "nextCursor": data.get("nextCursor") if isinstance(data, dict) else None,
-            "doginal_holders": doginal_holders,
-            "source": "dogefeed.app",
-            "image_base": DOGEFEED_IMG_BASE,
-        }
-        
-        _set_cached(_collection_cache, cache_key, result)
-        return result
-        
-    except HTTPException:
-        return {"items": [], "doginal_holders": [], "source": "dogefeed.app", "error": "unreachable"}
-    except Exception as e:
-        logger.warning(f"Error fetching feed: {e}")
-        return {"items": [], "doginal_holders": [], "source": "dogefeed.app", "error": str(e)}
+    cursor = cursor if re.fullmatch(r"[0-9]{0,12}", cursor or "") else ""
+    return await _local("feed", tab=tab, limit=limit, cursor=cursor, ttl=10,
+                        empty={"items": [], "nextCursor": None, "doginal_holders": []})
 
 
 @router.get("/api/posts/{post_id}")
 async def api_post(post_id: str):
-    """One public post, its ancestors and its replies. Empty on failure."""
-    from .public_read import PublicReadError, empty, fetch_json, valid_post_id
-
-    try:
-        post_id = valid_post_id(post_id)
-        data = await fetch_json(f"/api/posts/{post_id}")
-        data["source"] = "dogefeed.app"
-        return data
-    except (PublicReadError, HTTPException) as e:
-        return empty(str(getattr(e, "detail", e) or e), post=None, replies=[])
-    except Exception as e:
-        logger.warning(f"Error fetching post: {e}")
-        return empty("unreachable", post=None, replies=[])
+    """One post of the arcade's feed (its txid) and its replies."""
+    if not re.fullmatch(r"[0-9a-f]{64}", post_id or ""):
+        return {"post": None, "ancestors": [], "replies": [], "source": SOURCE, "error": "not_found"}
+    return await _local("post", post_id, ttl=10, empty={"post": None, "ancestors": [], "replies": []})
 
 
 @router.get("/api/users/{handle}/posts")
 async def api_user_posts(handle: str, tab: str = "posts", limit: int = 20, cursor: str = ""):
-    """A public profile's posts, plus follower counts from the public profile page."""
-    from .public_read import (
-        PublicReadError, empty, fetch_html, fetch_json, parse_profile_card, valid_handle,
-    )
-
-    try:
-        handle = valid_handle(handle)
-        tab = tab if tab in ("posts", "replies", "media", "likes") else "posts"
-        limit = min(max(1, limit), 40)
-        params = {"tab": tab, "limit": limit}
-        if cursor and len(cursor) <= 40 and re.fullmatch(r"[A-Za-z0-9:._+-]+", cursor):
-            params["cursor"] = cursor
-        data = await fetch_json(
-            f"/api/users/{handle}/posts",
-            params,
-        )
-        card = {}
-        try:
-            card = parse_profile_card(await fetch_html(f"/u/{handle}"), handle)
-        except Exception:
-            card = {}
-        author = None
-        for item in data.get("items") or []:
-            if item.get("author"):
-                author = item["author"]
-                break
-        return {
-            "handle": handle,
-            "author": author,
-            "card": card,
-            "items": data.get("items") or [],
-            "nextCursor": data.get("nextCursor"),
-            "source": "dogefeed.app",
-        }
-    except (PublicReadError, HTTPException) as e:
-        return empty(str(getattr(e, "detail", e) or e), handle=handle, author=None, card={}, items=[])
-    except Exception as e:
-        logger.warning(f"Error fetching profile: {e}")
-        return empty("unreachable", handle=handle, author=None, card={}, items=[])
+    """An arcade account's posts (its @name)."""
+    handle = (handle or "").lstrip("@")[:40]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", handle):
+        return {"handle": handle, "author": None, "card": {}, "items": [], "nextCursor": None, "source": SOURCE}
+    tab = tab if tab in ("posts", "replies", "media", "likes") else "posts"
+    cursor = cursor if re.fullmatch(r"[0-9]{0,12}", cursor or "") else ""
+    return await _local("user_posts", handle, tab=tab, limit=min(max(1, limit), 40), cursor=cursor, ttl=10,
+                        empty={"handle": handle, "author": None, "card": {}, "items": [], "nextCursor": None})
 
 
 @router.get("/api/sidebar")
 async def api_sidebar():
-    """Trending tags, who to follow, and the 7-day earner list from the public home page."""
-    from .public_read import empty, fetch_html, parse_leaderboard, parse_suggestions, parse_trending
-
-    try:
-        html = await fetch_html("/")
-        return {
-            "trending": parse_trending(html),
-            "suggestions": parse_suggestions(html),
-            "earners": parse_leaderboard(html),
-            "source": "dogefeed.app",
-        }
-    except Exception as e:
-        logger.warning(f"Error fetching sidebar: {e}")
-        return empty("unreachable", trending=[], suggestions=[], earners=[])
+    """Trending tags, people and the tipped list, from the arcade's recent posts."""
+    return await _local("sidebar", empty={"trending": [], "suggestions": [], "earners": []})
 
 
 @router.get("/api/leaderboard")
 async def api_leaderboard(range: str = "7d"):
-    """Public earner board. `range` is 1d, 7d, 30d or all. Empty on failure."""
-    from .public_read import empty, fetch_html, parse_leaderboard_page
-
+    """The arcade's posters by tips and likes. `range` is 1d, 7d, 30d or all."""
     if range not in ("1d", "7d", "30d", "all"):
         range = "7d"
-    try:
-        html = await fetch_html("/leaderboard", {"range": range})
-        return {
-            "range": range,
-            "earners": parse_leaderboard_page(html),
-            "source": "dogefeed.app",
-        }
-    except Exception as e:
-        logger.warning(f"Error fetching leaderboard: {e}")
-        return empty("unreachable", range=range, earners=[])
+    return await _local("leaderboard", range, empty={"range": range, "earners": []})
 
 
 @router.get("/api/market/doginals")
 async def api_market_doginals():
-    """Doginal collections as dogefeed.app renders them on /market."""
-    from .public_read import empty, fetch_html, parse_market
-
-    try:
-        return parse_market(await fetch_html("/market"))
-    except Exception as e:
-        logger.warning(f"Error fetching market: {e}")
-        return empty("unreachable", stats={}, collections=[])
+    """The arcade's collections with their floors on its own Doginal market."""
+    return await _local("market", empty={"stats": {}, "collections": []})
 
 
 @router.get("/api/market/drc20")
 async def api_market_drc20(q: str = ""):
-    """Public DRC-20 market board from dogefeed.app."""
-    from .public_read import empty, fetch_json
-
-    try:
-        params = {"q": q} if q else None
-        data = await fetch_json("/api/drc20/market", params)
-        data["source"] = "dogefeed.app"
-        return data
-    except Exception as e:
-        logger.warning(f"Error fetching DRC-20 market: {e}")
-        return empty("unreachable", ok=False, tokens=[])
+    """DRC-20 tokens from this arcade's ord index, in the market board's shape."""
+    got = await _local("tokens", limit=200, q=(q or "")[:20], sort="holders", empty={"tokens": []})
+    return {"ok": True, "source": SOURCE,
+            "tokens": [{"tick": t["ticker"], "holders": t["holder_count"], "pic": "", "floorPrice": None,
+                        "listingsDoggy": 0, "minted": t["minted"], "max": t["max_supply"],
+                        "progress": t["mint_progress"]} for t in got.get("tokens") or []]}
 
 
 @router.get("/api/price")
 async def api_price():
-    """Public DOGE/USD price dogefeed.app publishes. Empty on failure."""
-    from .public_read import empty, fetch_json
-
-    try:
-        data = await fetch_json("/api/price")
-        data["source"] = "dogefeed.app"
-        return data
-    except Exception as e:
-        logger.warning(f"Error fetching price: {e}")
-        return empty("unreachable", ok=False, price=None)
-
-
-async def _fetch_collection_sample_items(collection_id: str, count: int = 3) -> list[str]:
-    """Fetch a few sample item IDs from a collection for use as icons.
-    
-    Returns a list of inscription IDs (up to `count`) that can be used as
-    representative images for the collection icon.
-    """
-    cache_key = f"sample_items:{collection_id}:{count}"
-    cached = _get_cached(_collection_items_cache, cache_key, ttl=600)  # 10 min cache
-    if cached is not None:
-        return cached
-    
-    try:
-        data = await _fetch_dogefeed_explorer(
-            f"/explorer/collections/{collection_id}/items",
-            {"offset": 0, "limit": count}
-        )
-        items_raw = data if isinstance(data, list) else data.get("items", data.get("inscriptions", []))
-        item_ids = [
-            i.get("id") or i.get("inscription_id") or ""
-            for i in items_raw[:count]
-            if i.get("id") or i.get("inscription_id")
-        ]
-        _set_cached(_collection_items_cache, cache_key, item_ids)
-        return item_ids
-    except Exception:
-        return []
+    """No outside price feed: the arcade does not ask one."""
+    return {"ok": False, "price": None, "source": SOURCE}
 
 
 @router.get("/api/collections")
-async def api_collections(
-    offset: int = 0,
-    limit: int = 50,
-    q: str = "",
-    sort: str = "name"
-):
-    """List collections from DogeFeed.
-    
-    Uses explorer.dogesoft.io for structured collection data since dogefeed.app
-    doesn't expose a public collection listing API. Images are served from
-    dogefeed.app's /doginal-img/ endpoint.
-    
-    Each collection includes `sample_item_ids` - IDs of actual items from the
-    collection to use as representative icons (falls back to generic icon if empty).
-    """
-    limit = min(max(1, limit), 200)
-    offset = max(0, offset)
-    
-    cache_key = f"collections:{offset}:{limit}:{q}:{sort}"
-    cached = _get_cached(_collection_cache, cache_key)
-    if cached is not None:
-        return cached
-    
-    try:
-        params = {"offset": offset, "limit": limit}
-        data = await _fetch_dogefeed_explorer("/explorer/collections", params)
-        
-        collections_raw = data if isinstance(data, list) else data.get("collections", data.get("items", []))
-        
-        collections = []
-        for c in collections_raw:
-            coll = {
-                "id": c.get("id") or c.get("collection_id") or "",
-                "name": c.get("name") or c.get("title") or "Unnamed",
-                "description": c.get("description") or "",
-                "item_count": c.get("item_count") or c.get("supply") or c.get("count") or 0,
-                "holder_count": c.get("holder_count") or c.get("holders") or 0,
-                "cover_id": c.get("cover_id") or c.get("cover") or c.get("icon") or "",
-                "created_at": c.get("created_at") or c.get("timestamp") or None,
-                "sample_item_ids": [],  # Will be populated below
-            }
-            if q and q.lower() not in (coll["name"] or "").lower():
-                continue
-            collections.append(coll)
-        
-        if sort == "holders":
-            collections.sort(key=lambda x: -(x.get("holder_count") or 0))
-        elif sort == "recent":
-            collections.sort(key=lambda x: x.get("created_at") or "", reverse=True)
-        else:
-            collections.sort(key=lambda x: (x.get("name") or "").lower())
-        
-        # Fetch sample items for collections that need icons (up to first 20)
-        import asyncio
-        collections_to_fetch = collections[:min(limit, 20)]
-        sample_tasks = [
-            _fetch_collection_sample_items(c["id"], count=3)
-            for c in collections_to_fetch
-            if c["id"]
-        ]
-        if sample_tasks:
-            sample_results = await asyncio.gather(*sample_tasks, return_exceptions=True)
-            idx = 0
-            for c in collections_to_fetch:
-                if c["id"]:
-                    result = sample_results[idx]
-                    if isinstance(result, list):
-                        c["sample_item_ids"] = result
-                    idx += 1
-        
-        result = {
-            "collections": collections[:limit],
-            "total": len(collections_raw),
-            "offset": offset,
-            "limit": limit,
-            "has_more": len(collections_raw) > offset + limit,
-            "source": "explorer.dogesoft.io",
-            "image_base": DOGEFEED_IMG_BASE,
-        }
-        
-        _set_cached(_collection_cache, cache_key, result)
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error fetching collections")
-        raise HTTPException(status_code=500, detail=str(e))
+async def api_collections(offset: int = 0, limit: int = 50, q: str = "", sort: str = "name"):
+    """The collections kept in this arcade's database (the imported catalog)."""
+    return await _local("collections", offset=max(0, offset), limit=min(max(1, limit), 200), q=(q or "")[:60],
+                        sort=sort if sort in ("name", "holders", "recent") else "name",
+                        empty={"collections": [], "total": 0, "offset": offset, "limit": limit, "has_more": False})
 
 
 @router.get("/api/collection/items")
-async def api_collection_items(
-    id: str = "",
-    offset: int = 0,
-    limit: int = 50
-):
-    """Get items in a collection from DogeFeed.
-    
-    Uses explorer.dogesoft.io for item listings. Images served from dogefeed.app.
-    """
-    if not id:
+async def api_collection_items(id: str = "", offset: int = 0, limit: int = 50):
+    """One collection's items, from this arcade's database."""
+    if not id or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", id):
         raise HTTPException(status_code=400, detail="Collection ID required")
-    
-    limit = min(max(1, limit), 200)
-    offset = max(0, offset)
-    
-    cache_key = f"items:{id}:{offset}:{limit}"
-    cached = _get_cached(_collection_items_cache, cache_key)
-    if cached is not None:
-        return cached
-    
-    try:
-        data = await _fetch_dogefeed_explorer(f"/explorer/collections/{id}/items", {"offset": offset, "limit": limit})
-        
-        items_raw = data if isinstance(data, list) else data.get("items", data.get("inscriptions", []))
-        
-        items = []
-        for i in items_raw:
-            item = {
-                "id": i.get("id") or i.get("inscription_id") or "",
-                "number": i.get("number") or i.get("inscription_number"),
-                "name": i.get("name") or i.get("title") or "",
-                "content_type": i.get("content_type") or i.get("mime_type") or "",
-                "owner": i.get("owner") or i.get("address") or "",
-                "genesis_height": i.get("genesis_height") or i.get("height"),
-            }
-            items.append(item)
-        
-        result = {
-            "items": items[:limit],
-            "collection_id": id,
-            "offset": offset,
-            "limit": limit,
-            "has_more": len(items_raw) > limit,
-            "source": "explorer.dogesoft.io",
-            "image_base": DOGEFEED_IMG_BASE,
-        }
-        
-        _set_cached(_collection_items_cache, cache_key, result)
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error fetching collection items")
-        raise HTTPException(status_code=500, detail=str(e))
+    return await _local("collection_items", id, offset=max(0, offset), limit=min(max(1, limit), 200),
+                        empty={"items": [], "collection_id": id, "offset": offset, "limit": limit, "has_more": False})
 
 
 @router.get("/api/inscription")
 async def api_inscription(id: str = ""):
-    """Get inscription details.
-    
-    Uses explorer.dogesoft.io for metadata. Image available at dogefeed.app/doginal-img/{id}.
-    """
-    if not id:
+    """One inscription, from this arcade's ord index."""
+    if not re.fullmatch(r"[0-9a-f]{64}i[0-9]{1,6}", id or ""):
         raise HTTPException(status_code=400, detail="Inscription ID required")
-    
-    try:
-        data = await _fetch_dogefeed_explorer(f"/explorer/inscriptions/{id}")
-        
-        inscription = {
-            "id": data.get("id") or id,
-            "number": data.get("number") or data.get("inscription_number"),
-            "content_type": data.get("content_type") or data.get("mime_type") or "",
-            "content_size": data.get("content_size") or data.get("size"),
-            "owner": data.get("owner") or data.get("address") or "",
-            "genesis_height": data.get("genesis_height") or data.get("height"),
-            "collection": data.get("collection") or data.get("collection_name") or "",
-            "image_url": f"{DOGEFEED_IMG_BASE}/{id}",
-        }
-        
-        return {"inscription": inscription, "source": "explorer.dogesoft.io", "image_base": DOGEFEED_IMG_BASE}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error fetching inscription")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# --- DRC-20 Tokens API ---
-
-_token_cache: dict[str, tuple[float, Any]] = {}
+    return await _local("inscription", id, empty={"inscription": None})
 
 
 @router.get("/api/tokens")
-async def api_tokens(
-    offset: int = 0,
-    limit: int = 50,
-    q: str = "",
-    sort: str = "holders"
-):
-    """List DRC-20 tokens from DogeFeed.
-    
-    Returns token tickers with supply, holders, and mint progress.
-    Uses dogefeed.app where available, falls back to explorer.dogesoft.io.
-    """
-    limit = min(max(1, limit), 200)
-    offset = max(0, offset)
-    
-    cache_key = f"tokens:{offset}:{limit}:{q}:{sort}"
-    cached = _get_cached(_token_cache, cache_key)
-    if cached is not None:
-        return cached
-    
-    try:
-        # Try dogefeed.app first for DRC-20 data
-        try:
-            data = await _fetch_dogefeed_app("/api/drc20/tokens", {"offset": offset, "limit": limit})
-        except HTTPException:
-            # Fallback to explorer
-            data = await _fetch_dogefeed_explorer("/drc20/tokens", {"offset": offset, "limit": limit})
-        
-        tokens_raw = data if isinstance(data, list) else data.get("tokens", data.get("items", []))
-        
-        tokens = []
-        for t in tokens_raw:
-            # Calculate mint progress percentage
-            max_supply = t.get("max_supply") or t.get("max") or t.get("limit") or 0
-            minted = t.get("minted") or t.get("total_minted") or t.get("current_supply") or 0
-            if isinstance(max_supply, str):
-                try:
-                    max_supply = int(max_supply)
-                except ValueError:
-                    max_supply = 0
-            if isinstance(minted, str):
-                try:
-                    minted = int(minted)
-                except ValueError:
-                    minted = 0
-            
-            mint_progress = 0
-            if max_supply > 0:
-                mint_progress = min(100, round((minted / max_supply) * 100, 1))
-            
-            token = {
-                "ticker": t.get("ticker") or t.get("tick") or t.get("name") or "",
-                "deploy_inscription": t.get("deploy_inscription") or t.get("inscription_id") or t.get("id") or "",
-                "max_supply": max_supply,
-                "minted": minted,
-                "mint_progress": mint_progress,
-                "holder_count": t.get("holder_count") or t.get("holders") or 0,
-                "transfer_count": t.get("transfer_count") or t.get("transfers") or 0,
-                "deploy_time": t.get("deploy_time") or t.get("deployed_at") or t.get("timestamp") or None,
-                "decimals": t.get("decimals") or t.get("dec") or 18,
-                "mint_limit": t.get("mint_limit") or t.get("lim") or None,
-            }
-            
-            if q and q.lower() not in (token["ticker"] or "").lower():
-                continue
-            tokens.append(token)
-        
-        if sort == "holders":
-            tokens.sort(key=lambda x: -(x.get("holder_count") or 0))
-        elif sort == "recent":
-            tokens.sort(key=lambda x: x.get("deploy_time") or "", reverse=True)
-        elif sort == "progress":
-            tokens.sort(key=lambda x: -(x.get("mint_progress") or 0))
-        else:
-            tokens.sort(key=lambda x: (x.get("ticker") or "").lower())
-        
-        result = {
-            "tokens": tokens[:limit],
-            "total": len(tokens_raw),
-            "offset": offset,
-            "limit": limit,
-            "has_more": len(tokens_raw) > offset + limit,
-            "source": "dogefeed.app",
-        }
-        
-        _set_cached(_token_cache, cache_key, result)
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error fetching tokens")
-        raise HTTPException(status_code=500, detail=str(e))
+async def api_tokens(offset: int = 0, limit: int = 50, q: str = "", sort: str = "holders"):
+    """DRC-20 tokens from this arcade's ord index."""
+    return await _local("tokens", offset=max(0, offset), limit=min(max(1, limit), 200), q=(q or "")[:20],
+                        sort=sort if sort in ("holders", "recent", "progress", "name") else "holders",
+                        empty={"tokens": [], "total": 0, "offset": offset, "limit": limit, "has_more": False})
 
 
 @router.get("/api/token")
 async def api_token(ticker: str = ""):
-    """Get details for a specific DRC-20 token."""
-    if not ticker:
+    """One DRC-20 token, from this arcade's ord index."""
+    if not ticker or len(ticker) > 20:
         raise HTTPException(status_code=400, detail="Ticker required")
-    
-    cache_key = f"token:{ticker}"
-    cached = _get_cached(_token_cache, cache_key)
-    if cached is not None:
-        return cached
-    
-    try:
-        try:
-            data = await _fetch_dogefeed_app(f"/api/drc20/token/{ticker}")
-        except HTTPException:
-            data = await _fetch_dogefeed_explorer(f"/drc20/token/{ticker}")
-        
-        max_supply = data.get("max_supply") or data.get("max") or data.get("limit") or 0
-        minted = data.get("minted") or data.get("total_minted") or data.get("current_supply") or 0
-        if isinstance(max_supply, str):
-            try:
-                max_supply = int(max_supply)
-            except ValueError:
-                max_supply = 0
-        if isinstance(minted, str):
-            try:
-                minted = int(minted)
-            except ValueError:
-                minted = 0
-        
-        mint_progress = 0
-        if max_supply > 0:
-            mint_progress = min(100, round((minted / max_supply) * 100, 1))
-        
-        token = {
-            "ticker": data.get("ticker") or data.get("tick") or ticker,
-            "deploy_inscription": data.get("deploy_inscription") or data.get("inscription_id") or data.get("id") or "",
-            "max_supply": max_supply,
-            "minted": minted,
-            "mint_progress": mint_progress,
-            "holder_count": data.get("holder_count") or data.get("holders") or 0,
-            "transfer_count": data.get("transfer_count") or data.get("transfers") or 0,
-            "deploy_time": data.get("deploy_time") or data.get("deployed_at") or data.get("timestamp") or None,
-            "decimals": data.get("decimals") or data.get("dec") or 18,
-            "mint_limit": data.get("mint_limit") or data.get("lim") or None,
-            "deployer": data.get("deployer") or data.get("creator") or "",
-        }
-        
-        result = {"token": token, "source": "dogefeed.app"}
-        _set_cached(_token_cache, cache_key, result)
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error fetching token details")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# --- Names API ---
-
-_names_cache: dict[str, tuple[float, Any]] = {}
+    return await _local("token", ticker, empty={"token": None})
 
 
 @router.get("/api/names")
-async def api_names(
-    offset: int = 0,
-    limit: int = 50,
-    q: str = "",
-    sort: str = "recent"
-):
-    """List .doge/.dogefeed names from DogeFeed.
-    
-    Returns names with owner, inscription info, and registration details.
-    Uses dogefeed.app where available, falls back to explorer.dogesoft.io.
-    """
-    limit = min(max(1, limit), 200)
-    offset = max(0, offset)
-    
-    cache_key = f"names:{offset}:{limit}:{q}:{sort}"
-    cached = _get_cached(_names_cache, cache_key)
-    if cached is not None:
-        return cached
-    
-    try:
-        # Try dogefeed.app first
-        try:
-            data = await _fetch_dogefeed_app("/api/names", {"offset": offset, "limit": limit, "q": q})
-        except HTTPException:
-            # Fallback to explorer
-            data = await _fetch_dogefeed_explorer("/names", {"offset": offset, "limit": limit})
-        
-        if isinstance(data, list):
-            names_raw = data
-        else:
-            # dogefeed.app /api/names returns {records:[{dns, address, url}]}.
-            names_raw = data.get("records") or data.get("names") or data.get("items") or []
-        
-        names = []
-        for n in names_raw:
-            name = {
-                "name": n.get("dns") or n.get("name") or n.get("domain") or "",
-                "inscription_id": n.get("inscription_id") or n.get("id") or "",
-                "inscription_number": n.get("inscription_number") or n.get("number"),
-                "owner": n.get("owner") or n.get("holder") or n.get("address") or "",
-                "registered_at": n.get("registered_at") or n.get("inscribed_at") or n.get("timestamp") or None,
-                "genesis_height": n.get("genesis_height") or n.get("height"),
-                "suffix": ".doge" if (n.get("name") or "").endswith(".doge") else ".dogefeed" if (n.get("name") or "").endswith(".dogefeed") else "",
-            }
-            
-            if q and q.lower() not in (name["name"] or "").lower():
-                continue
-            names.append(name)
-        
-        if sort == "recent":
-            names.sort(key=lambda x: x.get("registered_at") or "", reverse=True)
-        elif sort == "alpha":
-            names.sort(key=lambda x: (x.get("name") or "").lower())
-        else:
-            names.sort(key=lambda x: x.get("registered_at") or "", reverse=True)
-        
-        result = {
-            "names": names[:limit],
-            "total": len(names_raw),
-            "offset": offset,
-            "limit": limit,
-            "has_more": len(names_raw) > offset + limit,
-            "source": "dogefeed.app",
-        }
-        
-        _set_cached(_names_cache, cache_key, result)
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error fetching names")
-        raise HTTPException(status_code=500, detail=str(e))
+async def api_names(offset: int = 0, limit: int = 50, q: str = "", sort: str = "recent"):
+    """Names from this arcade's ord index: the one asked for (`q`, e.g. much.doge)."""
+    q = (q or "").strip().lower()[:64]
+    rows = []
+    if q:
+        got = await _local("name", q if "." in q else q + ".doge", empty={"found": False})
+        if got.get("found"):
+            rows = [got["name_info"]]
+    return {"names": rows, "total": len(rows), "offset": 0, "limit": limit, "has_more": False, "source": SOURCE}
 
 
 @router.get("/api/name")
 async def api_name(name: str = ""):
-    """Get details for a specific .doge/.dogefeed name."""
+    """One name, from this arcade's ord index."""
+    name = (name or "").strip().lower()[:64]
     if not name:
         raise HTTPException(status_code=400, detail="Name required")
-    
-    cache_key = f"name:{name}"
-    cached = _get_cached(_names_cache, cache_key)
-    if cached is not None:
-        return cached
-    
-    try:
-        try:
-            data = await _fetch_dogefeed_app(f"/api/name/{name}")
-        except HTTPException:
-            data = await _fetch_dogefeed_explorer(f"/name/{name}")
-        
-        if not data or not data.get("name"):
-            return {"found": False, "name": name}
-        
-        name_info = {
-            "name": data.get("name") or name,
-            "inscription_id": data.get("inscription_id") or data.get("id") or "",
-            "inscription_number": data.get("inscription_number") or data.get("number"),
-            "owner": data.get("owner") or data.get("holder") or data.get("address") or "",
-            "registered_at": data.get("registered_at") or data.get("inscribed_at") or data.get("timestamp") or None,
-            "genesis_height": data.get("genesis_height") or data.get("height"),
-            "url": data.get("url") or "",
-            "suffix": ".doge" if name.endswith(".doge") else ".dogefeed" if name.endswith(".dogefeed") else "",
-        }
-        
-        result = {"found": True, "name_info": name_info, "source": "dogefeed.app"}
-        _set_cached(_names_cache, cache_key, result)
-        return result
-        
-    except HTTPException:
-        return {"found": False, "name": name}
-    except Exception as e:
-        logger.warning(f"Error fetching name details: {e}")
-        return {"found": False, "name": name}
+    return await _local("name", name, empty={"found": False, "name": name})
 
 
 @router.get("/api/search")
 async def api_search(q: str = "", type: str = "all"):
-    """Search DogeFeed using dogefeed.app's search API.
-    
-    Searches users and posts. Use type=users, type=posts, or type=all.
-    """
-    if not q or len(q) < 2:
+    """Posts, people and collections on this arcade."""
+    q = (q or "").strip()[:80]
+    if len(q) < 2:
         raise HTTPException(status_code=400, detail="Query too short")
-    
-    cache_key = f"search:{q}:{type}"
-    cached = _get_cached(_collection_cache, cache_key, ttl=120)  # 2 min cache
-    if cached is not None:
-        return cached
-    
-    try:
-        params = {"q": q}
-        if type in ("users", "posts"):
-            params["type"] = type
-        data = await _fetch_dogefeed_app("/api/search", params)
-        
-        users = data.get("users", [])
-        posts = data.get("posts", [])
-        
-        doginal_users = []
-        for u in users:
-            avatar = u.get("avatarUrl", "")
-            inscription_id = ""
-            if avatar.startswith("/doginal-img/"):
-                inscription_id = avatar.replace("/doginal-img/", "")
-            doginal_users.append({
-                "handle": u.get("handle", ""),
-                "display_name": u.get("displayName", ""),
-                "verified_pfp": u.get("verifiedPfp", False),
-                "pfp_rarity": u.get("pfpRarity"),
-                "inscription_id": inscription_id,
-                "avatar_url": f"{DOGEFEED_APP_BASE}{avatar}" if avatar.startswith("/") else avatar,
-            })
-        
-        result = {
-            "query": q,
-            "users": doginal_users,
-            "posts": posts[:20],
-            "source": "dogefeed.app",
-            "image_base": DOGEFEED_IMG_BASE,
-        }
-        
-        _set_cached(_collection_cache, cache_key, result)
-        return result
-        
-    except HTTPException:
-        return {"query": q, "users": [], "posts": [], "source": "dogefeed.app", "error": "unreachable"}
-    except Exception as e:
-        logger.warning(f"Error searching: {e}")
-        return {"query": q, "users": [], "posts": [], "source": "dogefeed.app", "error": str(e)}
+    return await _local("search", q, type if type in ("users", "posts") else "all", ttl=20,
+                        empty={"query": q, "users": [], "posts": [], "collections": []}) | {"query": q}
 
 
 # --- Terminal API ---
@@ -1178,7 +547,7 @@ async def api_wallet_holdings(address: str = ""):
 
     Ownership is this node's indexes. `address` is an optional public lookup of
     an address the index already watches. No key is accepted. Outpoints are not
-    returned. dogefeed.app only labels collections the index already holds.
+    returned. Collection labels are the arcade's own.
     """
     from .wallet_assets import (
         empty_holdings,
@@ -1239,88 +608,30 @@ async def api_lookup(name: str = ""):
 
 @router.get("/api/memes")
 async def api_memes(q: str = "", offset: int = 0):
-    """Public meme library. Pictures come from imageUrl on /api/memes.
-
-    `q` and `offset` are the public search and page. A row with no picture is
-    dropped. The HTML grid is only a fallback when that route is down.
-    """
-    from .public_read import empty, fetch_html, fetch_json, normalize_memes, parse_meme_count, parse_memes
-
-    q = " ".join((q or "").split())[:80]
+    """Pictures inscribed on the chain, from this arcade's ord index."""
     try:
-        offset = min(max(0, int(offset)), 5000)
+        offset = min(max(0, int(offset)), 10_000_000)
     except (TypeError, ValueError):
         offset = 0
-    params = {}
-    if q:
-        params["q"] = q
-    if offset:
-        params["offset"] = str(offset)
-
-    async def _json():
-        try:
-            return await fetch_json("/api/memes", params or None)
-        except Exception:
-            return None
-
-    async def _count():
-        if q or offset:
-            return None
-        try:
-            return parse_meme_count(await fetch_html("/memes"))
-        except Exception:
-            return None
-
-    data, count = await asyncio.gather(_json(), _count())
-    rows = normalize_memes(data) if data else []
-    if rows:
-        return {
-            "memes": rows,
-            "offset": offset,
-            "more": len(rows) >= 120,
-            "count": (count or {}).get("count"),
-            "pages": (count or {}).get("pages"),
-            "source": "dogefeed.app",
-        }
-    if q or offset:
-        return empty("no_public_list", memes=[], offset=offset, more=False)
-    try:
-        page = await fetch_html("/memes")
-    except Exception:
-        page = ""
-    rows = parse_memes(page) if page else []
-    if rows:
-        return {"memes": rows, "offset": 0, "more": False, "source": "dogefeed.app"}
-    return empty("no_public_list", memes=[], offset=0, more=False)
+    return await _local("memes", (q or "")[:80], offset, empty={"memes": [], "offset": offset, "more": False})
 
 
 @router.get("/api/arcade")
-async def api_arcade():
-    """Public game tiles from dogefeed.app/arcade. Empty when that page has none."""
-    from .public_read import empty, fetch_html, parse_arcade
-
-    try:
-        games = parse_arcade(await fetch_html("/arcade"))
-    except Exception:
-        return empty("no_public_list", games=[])
-    if not games:
-        return empty("no_public_list", games=[])
-    return {"games": games, "source": "dogefeed.app"}
+async def api_arcade(request: Request):
+    """The apps on this arcade, as tiles."""
+    return await _local("games", request, ttl=0, empty={"games": []})
 
 
 @router.get("/api/launchpad")
 async def api_launchpad():
-    """Public minting-now cards from dogefeed.app/launchpad. Empty when the page has none."""
-    from .public_read import empty, fetch_html, parse_launchpad
+    """The arcade's mintpads that are minting."""
+    return await _local("launchpad", empty={"launches": []})
 
-    try:
-        page = await fetch_html("/launchpad")
-    except Exception:
-        return empty("no_public_list", launches=[])
-    rows = parse_launchpad(page)
-    if not rows:
-        return empty("no_public_list", launches=[])
-    return {"launches": rows, "source": "dogefeed.app"}
+
+@router.get("/api/me")
+async def api_me(request: Request):
+    """Whoever is asking: @tag, address, and the profile they published on the chain."""
+    return await _local("me", request, ttl=0, empty={"signed_in": False, "tag": "", "address": "", "bio": "", "url": ""})
 
 
 @router.get("/api/whoami")
@@ -1336,123 +647,135 @@ async def api_whoami(request: Request):
         return {"user": None}
 
 
-def register_routes(app, render):
-    """Register DogeFeedX routes with the main app.
-    
-    Call this from app.py to add the DogeFeedX pages and API endpoints.
-    
-    Args:
-        app: The FastAPI application instance
-        render: The template rendering function from app.py
-    """
+def _feed_kinds() -> dict:
+    """The feed's reaction kinds by name (feed.py BY_NAME), for wallet.react in the browser."""
+    try:
+        from arcade.messaging import feed as feedlib
+        return dict(feedlib.BY_NAME)
+    except Exception:                                      # noqa: BLE001
+        return {}
+
+
+def _chain():
+    """The arcade's account chain, for a page that signs or seals in the browser (None before register_routes)."""
+    try:
+        return LOCAL.chain() if LOCAL is not None and hasattr(LOCAL, "chain") else None
+    except Exception:                                      # noqa: BLE001
+        return None
+
+
+def register_routes(app, render, local=None):
+    """The DogeFeedX pages and API on `app`; `local` is the arcade's data (app.py: dfx_local)."""
+    global LOCAL
+    LOCAL = local
     app.include_router(router)
     
     @app.get("/dogefeedx/explorer", response_class=HTMLResponse)
     def dogefeedx_explorer(request: Request):
         """The DogeFeed Explorer app - Finder-style inscription browser."""
-        return render(request, "dogefeedx/explorer.html", fullscreen=True)
+        return render(request, "dogefeedx/explorer.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/terminal", response_class=HTMLResponse)
     def dogefeedx_terminal(request: Request):
         """The DogeFeed Terminal app - Terminal.app-style command window."""
-        return render(request, "dogefeedx/terminal.html", fullscreen=True)
+        return render(request, "dogefeedx/terminal.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/feed", response_class=HTMLResponse)
     def dogefeedx_feed(request: Request):
-        """The DogeFeed social feed - Twitter/X-style post timeline."""
-        return render(request, "dogefeedx/feed.html", fullscreen=True)
+        """Home: the arcade's own feed in DogeFeed's timeline; Post goes on the chain through the arcade."""
+        return render(request, "dogefeedx/feed.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/profile", response_class=HTMLResponse)
     def dogefeedx_profile(request: Request):
         """The DogeFeed profile hub - user profiles with holdings and activity."""
-        return render(request, "dogefeedx/profile.html", fullscreen=True)
+        return render(request, "dogefeedx/profile.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/explore", response_class=HTMLResponse)
     def dogefeedx_explore(request: Request):
         """The DogeFeed explore page - trending, people to follow, collections."""
-        return render(request, "dogefeedx/explore.html", fullscreen=True)
+        return render(request, "dogefeedx/explore.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/market", response_class=HTMLResponse)
     def dogefeedx_market(request: Request):
         """The DogeFeed market - listings sorted cheapest first."""
-        return render(request, "dogefeedx/market.html", fullscreen=True)
+        return render(request, "dogefeedx/market.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/wallet", response_class=HTMLResponse)
     def dogefeedx_wallet(request: Request):
         """The DogeFeed wallet - read-only view of inscriptions by address."""
-        return render(request, "dogefeedx/wallet.html", fullscreen=True)
+        return render(request, "dogefeedx/wallet.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/inscription", response_class=HTMLResponse)
     def dogefeedx_inscription(request: Request):
         """The DogeFeed inscription detail - full content viewer for any inscription."""
-        return render(request, "dogefeedx/inscription.html", fullscreen=True)
+        return render(request, "dogefeedx/inscription.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/leaderboard", response_class=HTMLResponse)
     def dogefeedx_leaderboard(request: Request):
         """The DogeFeed leaderboard - top users by activity and holdings."""
-        return render(request, "dogefeedx/leaderboard.html", fullscreen=True)
+        return render(request, "dogefeedx/leaderboard.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/notifications", response_class=HTMLResponse)
     def dogefeedx_notifications(request: Request):
         """The DogeFeed notifications - activity alerts (requires sign-in)."""
-        return render(request, "dogefeedx/notifications.html", fullscreen=True)
+        return render(request, "dogefeedx/notifications.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/messages", response_class=HTMLResponse)
     def dogefeedx_messages(request: Request):
         """The DogeFeed messages - direct messages (requires sign-in)."""
-        return render(request, "dogefeedx/messages.html", fullscreen=True)
+        return render(request, "dogefeedx/messages.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/bookmarks", response_class=HTMLResponse)
     def dogefeedx_bookmarks(request: Request):
         """The DogeFeed bookmarks - saved posts (requires sign-in)."""
-        return render(request, "dogefeedx/bookmarks.html", fullscreen=True)
+        return render(request, "dogefeedx/bookmarks.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/collections", response_class=HTMLResponse)
     def dogefeedx_collections(request: Request):
         """The DogeFeed collections - browse all Doginal collections."""
-        return render(request, "dogefeedx/collections.html", fullscreen=True)
+        return render(request, "dogefeedx/collections.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/nfts", response_class=HTMLResponse)
     def dogefeedx_nfts(request: Request):
         """The DogeFeed NFTs page - browse and discover NFTs."""
-        return render(request, "dogefeedx/nfts.html", fullscreen=True)
+        return render(request, "dogefeedx/nfts.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/launchpad", response_class=HTMLResponse)
     def dogefeedx_launchpad(request: Request):
         """The DogeFeed launchpad - new project launches and mints."""
-        return render(request, "dogefeedx/launchpad.html", fullscreen=True)
+        return render(request, "dogefeedx/launchpad.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/search", response_class=HTMLResponse)
     def dogefeedx_search(request: Request):
         """The DogeFeed search page - global search results."""
-        return render(request, "dogefeedx/search.html", fullscreen=True)
+        return render(request, "dogefeedx/search.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
     
     @app.get("/dogefeedx/post", response_class=HTMLResponse)
     def dogefeedx_post(request: Request):
         """The DogeFeed post detail - individual post view with replies."""
-        return render(request, "dogefeedx/post.html", fullscreen=True)
+        return render(request, "dogefeedx/post.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
 
     @app.get("/dogefeedx/files", response_class=HTMLResponse)
     def dogefeedx_files(request: Request):
         """Finder-style view of this arcade wallet: collections, DRC-20 and names."""
-        return render(request, "dogefeedx/files.html", fullscreen=True)
+        return render(request, "dogefeedx/files.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
 
     @app.get("/dogefeedx/inscribe", response_class=HTMLResponse)
     def dogefeedx_inscribe(request: Request):
         """Inscribe a collection, a DRC-20 or a name with this arcade's wallet."""
-        return render(request, "dogefeedx/inscribe.html", fullscreen=True)
+        return render(request, "dogefeedx/inscribe.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
 
     @app.get("/dogefeedx/arcade", response_class=HTMLResponse)
     def dogefeedx_arcade(request: Request):
         """Games on this arcade. The player is the on-chain account."""
-        return render(request, "dogefeedx/arcade.html", fullscreen=True)
+        return render(request, "dogefeedx/arcade.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
 
     @app.get("/dogefeedx/memes", response_class=HTMLResponse)
     def dogefeedx_memes(request: Request):
-        """Meme library. Public reads only; empty when dogefeed.app has no public list."""
-        return render(request, "dogefeedx/memes.html", fullscreen=True)
+        """Pictures on the chain, from this arcade's ord index."""
+        return render(request, "dogefeedx/memes.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())
 
     @app.get("/dogefeedx/settings", response_class=HTMLResponse)
     def dogefeedx_settings(request: Request):
-        """Settings kept on this arcade. Nothing is written to dogefeed.app."""
-        return render(request, "dogefeedx/settings.html", fullscreen=True)
+        """Settings kept on this arcade."""
+        return render(request, "dogefeedx/settings.html", fullscreen=True, chain=_chain(), feed_kinds=_feed_kinds())

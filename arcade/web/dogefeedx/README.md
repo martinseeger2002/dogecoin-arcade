@@ -1,10 +1,13 @@
 # DogeFeedX
 
-The dock is the navigation. Each window is one module. What a wallet **owns**
-is read from this Dogecoin node and this arcade's indexes. [dogefeed.app](https://dogefeed.app)
-is read-only, and only to enrich a label: a collection's public name, cover,
-and floor, or a public social page. No module asks dogefeed.app, dogecoinnames,
-or explorer.dogesoft.io who holds a coin, a doginal, a DRC-20, or a name.
+DogeFeed's look, the arcade's data (2026-11-03: "this is meant not to be reliant on any external API's or
+external servers or services. Everything needs to work through arcade", and "Keep UI/UX elements from DogefeedX wire
+them into the existing arcade architecture"). The dock is the navigation; each window is one module. No module asks
+any other server anything: not dogefeed.app, not an explorer, not a font host. `tests/test_dogefeedx_local.py`
+keeps it so.
+
+The data comes from `apps.LOCAL`, the provider app.py hands `register_routes(app, render, local=dfx_local)`; every
+endpoint answers empty (`source: "arcade"`) when the arcade has nothing to say.
 
 Ownership indexes:
 
@@ -16,35 +19,29 @@ Ownership indexes:
 | Names | This arcade's ord index (`DoginalIndex.names_on` for coins the watcher already holds). While behind, the same question through `lookup`. The claim's outpoint is dropped. |
 | Which node | Holdings carry `reading.via` (`local` or `peer`), `reading.node`, and `reading.sync` from `core_catchup.say` (this Core, not the peer's tip). Wallet, Files, NFTs, and Profile show that line. |
 
-A pasted address that this node is not watching comes back empty. Import it
-watch-only on the node and let the indexes catch up. No key is asked, and
-nothing is written to dogefeed.app.
+A pasted address that this node is not watching comes back empty. Import it watch-only on the node and let the
+indexes catch up. No key is asked.
 
 ## Per-module data sources
 
 | Dock module | What it shows | Source of truth |
 |---|---|---|
-| Home | Public social feed, and a local composer | dogefeed.app `/api/feed` is read-only. The composer (image, meme, emoji, paywall lock, `/send` and `/pay`) saves the bark in this browser as the wallet selected on Profile. It does not post or pay on dogefeed.app. |
-| Profile | The selected Core wallet, as a compact card | Wallet switcher lists addresses from `/dogefeedx/api/wallet/addresses` (this node's watch list). The choice is stored in this browser and is the address Wallet, Files, NFTs, and Profile read. A public handle's posts still come from dogefeed.app. |
-| Files | Collections, DRC-20, names | Node indexes via `/dogefeedx/api/wallet/holdings`. Catalog names and covers from dogefeed.app `/market`. |
-| Notifications | This arcade's notices | Local `/dogefeedx/api/local/notifications`. |
-| Messages | This arcade's messages | Local arcade account. No dogefeed auth. |
-| Explore | Hashtags, people, collections, earners, top posts | dogefeed.app public pages. Not a wallet. |
-| Market | Public Doginal and DRC-20 listings, floors, covers | dogefeed.app market. Not what any wallet owns. |
-| Inscribe | Create an inscription, token, or name | This arcade (`/create/ord`, `/tokens`, `/create/name`). Does not embed inscribe.doginals.org. |
-| Wallet | Balance, doginals, DRC-20, names | Node indexes. dogefeed.app only labels collections the index already holds. |
-| Launchpad | Public mint listings, plus this module's Top Launches panel | dogefeed.app launch listings. Applying to launch uses this arcade's wallet. |
-| NFTs | Doginals at the node's addresses | Node indexes, labeled from the public catalog. |
-| Arcade | Free-chip games, and games inscribed here | dogefeed.app's public game list, and this node's own games. |
-| Bookmarks | Saved posts on this arcade | Local. |
-| Meme Library | Public meme pictures, and pictures picked in this browser | dogefeed.app `/api/memes` for the public grid. Local picks stay in this browser. |
-| Leaderboard | Public boards | dogefeed.app. Top referrers stays empty: there is no referral system. |
-| Settings | This arcade's account | Local `/account`. Not a DogeFeed login. |
+| Home | The arcade's own feed, and Post | `/dogefeedx/api/feed` (the Feed's posts: For you = popular, Latest = newest). Post goes on the chain: an account signs in its browser (`wallet.post`), the operator's arcade posts from its wallet (`/dogefeedx/api/post`, as `/feed/post`). A picture from the Meme Library is linked (`/content/<id>`); a new one is inscribed (operator). Paid posts are not offered. |
+| Post | One post and its replies; Like, Repost, Reply, Bookmark | `/dogefeedx/api/posts/<txid>`. Reactions are the Feed's (`wallet.react` / `/dogefeedx/api/react`, as `/feed/{txid}/{doing}`); `_arcade_act.html`. |
+| Profile | An arcade account's posts; the selected watch wallet | `/dogefeedx/api/users/<tag>/posts`; the card is the asker's @tag, bio and website from the chain (`/dogefeedx/api/me`). The wallet switcher lists this node's watch list (`/dogefeedx/api/wallet/addresses`). |
+| Files, Wallet, NFTs | Collections, DRC-20, names, balance | Node indexes via `/dogefeedx/api/wallet/holdings`, labeled from the arcade's collections. |
+| Notifications | This arcade's notices | `/dogefeedx/api/local/notifications`. |
+| Messages | The arcade's own sealed messages | `/messaging.js` (an account, in its browser) or `/node-mail.js` (the operator), as `/me/messages`. Groups and files: the full Messages page. |
+| Explore, Search, Leaderboard | Tags, people, top posts, earners | The arcade's feed (`/dogefeedx/api/sidebar`, `/leaderboard`, `/search`). Top referrers stays empty: there is no referral system. |
+| Market, Collections | Doginal collections, floors, covers; DRC-20 | The collection registry (collections described by an inscription: Doginal Frogs, Doginal Dogs ...) and the imported listing (`known_collections`); floors are the lowest open ask on this arcade's Doginal market. Tokens from the ord index. |
+| Inscribe | Create an inscription, token, or name | This arcade (`/create/ord`, `/tokens`, `/create/name`). |
+| Launchpad | Collections minting now | The arcade's mintpads (`ledger.launches`). |
+| Arcade | Apps on this arcade | The Apps page's list (`_games_ranked`). |
+| Bookmarks | Saved posts | This browser (`dogefeedx.bookmarks`). |
+| Meme Library | Pictures on the chain | The ord index (`what: typed`, `image/`), paged by inscription number. |
+| Settings | Your profile and notification switches | Bio and website published on the chain (`mail.publishProfile`, as Profile on `/me`); switches stay in this browser. |
 
-Routes that used to ask explorer.dogesoft.io for a wallet (`/api/balance`,
-`/api/address/inscriptions`, `/api/address/tokens`, `/api/lookup`) now read
-the same indexes. `/api/wallet/holdings` is the one Files, NFTs, Profile, and
-Wallet call.
+There is no DOGE price: the arcade does not ask a price feed (`/dogefeedx/api/price` answers `price: null`).
 
 # DogeFeedX Network App
 
@@ -124,4 +121,3 @@ pytest tests/test_dogefeedx_network.py -v
 
 ## Screenshots
 
-See `/opt/cursor/artifacts/screenshots/dogefeedx_network_mock.png` for a demo with mock data.

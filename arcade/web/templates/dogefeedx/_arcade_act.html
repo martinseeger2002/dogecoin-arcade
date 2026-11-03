@@ -1,0 +1,98 @@
+{#- DogeFeedX's Post and reactions, through the arcade (2026-11-03, the operator: "Keep UI/UX elements from DogefeedX
+    wire them into the existing arcade architecture"). window.dfxPublish(text, pictures) and
+    window.dfxReact(txid, doing, text) -> {txid}. An account signs in its own browser (wallet.post / wallet.react, as
+    the Feed page does); the operator's arcade uses its own wallet (/dogefeedx/api/post and /react, as /feed/post and
+    /feed/{txid}/{doing} do). Both show on the feed when their block lands. -#}
+{% if public and chain %}
+<script type="module">
+  import * as wallet from "/wallet.js";
+  const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
+  const KINDS = {{ feed_kinds | tojson }};
+  const opening = wallet.opened(CHAIN);
+  let keys = null;
+  opening.then((found) => { keys = keys || found; });
+  const held = async () => {
+    const got = keys || (keys = await opening) || await arcadeKeys(CHAIN).catch(() => null);
+    if (!got) throw new Error("Unlock your wallet first.");
+    return got;
+  };
+  window.dfxPublish = async (text, pictures) => {
+    if (pictures && pictures.length) throw new Error("Pictures go up from the Create page; remove them here to post the text.");
+    if (!text) throw new Error("Write something first.");
+    return await wallet.post(await held(), text);
+  };
+  window.dfxReact = async (txid, doing, text) => {
+    if (!(doing in KINDS)) throw new Error("Nothing to do to that post.");
+    return await wallet.react(await held(), txid, KINDS[doing], text || "");
+  };
+</script>
+{% elif not public %}
+<script>
+  (function () {
+    function send(path, body) {
+      body.csrf_token = {{ csrf | tojson }};
+      return fetch(path, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+                          body: JSON.stringify(body)})
+        .then(function (r) {
+          return r.json().catch(function () { return {}; }).then(function (d) {
+            if (!r.ok || !d.ok) throw new Error(d.error || d.detail || 'Not done.');
+            return d;
+          });
+        });
+    }
+    window.dfxPublish = function (text, pictures) { return send('/dogefeedx/api/post', {text: text, pictures: pictures || []}); };
+    window.dfxReact = function (txid, doing, text) { return send('/dogefeedx/api/react', {txid: txid, doing: doing, text: text || ''}); };
+  })();
+</script>
+{% endif %}
+<script>
+(function () {
+  // The buttons under a post: Reply opens it, Like and Repost go on the chain (dfxReact), the link and share
+  // buttons copy its address, Bookmark keeps it in this browser (Bookmarks reads them back).
+  if (window.dfxActsBound) return;
+  window.dfxActsBound = true;
+  function flash(btn, text) {
+    var was = btn.getAttribute('title') || '';
+    btn.setAttribute('title', text);
+    btn.classList.add('liked');
+    var tip = document.createElement('span');
+    tip.className = 'dfx-did';
+    tip.textContent = text;
+    tip.style.cssText = 'font-size:12px;margin-left:4px;opacity:.8';
+    btn.appendChild(tip);
+    setTimeout(function () { tip.remove(); btn.setAttribute('title', was); }, 4000);
+  }
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-dfx-do]');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var doing = btn.getAttribute('data-dfx-do'), txid = btn.getAttribute('data-txid') || '';
+    if (!txid) return;
+    var link = location.origin + '/feed#' + txid;
+    if (doing === 'reply') { location.href = '/dogefeedx/post?id=' + encodeURIComponent(txid) + '#reply'; return; }
+    if (doing === 'link') {
+      (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(
+        function () { flash(btn, 'Link copied'); }, function () { flash(btn, link); });
+      return;
+    }
+    if (doing === 'save') {
+      var rows = [];
+      try { rows = JSON.parse(localStorage.getItem('dogefeedx.bookmarks') || '[]') || []; } catch (err) {}
+      if (!rows.some(function (p) { return p.id === txid; })) {
+        rows.unshift({id: txid, handle: btn.getAttribute('data-handle') || '', text: (btn.getAttribute('data-text') || '').slice(0, 180)});
+        try { localStorage.setItem('dogefeedx.bookmarks', JSON.stringify(rows.slice(0, 100))); } catch (err) {}
+      }
+      flash(btn, 'Saved');
+      return;
+    }
+    if (!window.dfxReact) { flash(btn, 'Not ready yet'); return; }
+    btn.disabled = true;
+    window.dfxReact(txid, doing, '').then(function () {
+      flash(btn, doing === 'like' ? 'Liked: counts when its block lands' : 'Reposted: shows when its block lands');
+    }).catch(function (err) {
+      flash(btn, String((err && err.message) || err || 'Not done'));
+    }).then(function () { btn.disabled = false; });
+  }, true);
+})();
+</script>

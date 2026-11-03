@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Arcade · {{ brand.name }}{% endblock %}
 {% block body %}
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 :root { --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
 * { box-sizing:border-box; }
@@ -26,7 +25,7 @@ li a { color:#f3e3a5; }
   <h2>Card Games</h2>
   <div id="public-games" class="grid"><p class="note">Loading public games…</p></div>
   <h2>On this arcade</h2>
-  <p class="note">Games inscribed on this node. They are not the dogefeed.app chips.</p>
+  <p class="note">Games inscribed on this node. </p>
   <ul id="games"><li class="note">Loading games…</li></ul>
 </div>
 <script>
@@ -39,12 +38,12 @@ li a { color:#f3e3a5; }
     .then(function (data) {
       var games = data.games || [];
       if (!games.length) {
-        pub.innerHTML = '<p class="note">No public game list. dogefeed.app does not publish one to read.</p>';
+        pub.innerHTML = '<p class="note">No apps on this arcade yet.</p>';
         return;
       }
       pub.innerHTML = games.map(function (g) {
-        return '<a class="tile" href="https://dogefeed.app' + esc(g.href) + '" target="_blank" rel="noopener">'
-          + '<b>' + esc(g.name) + '</b><span>' + esc(g.detail || 'Play on dogefeed.app') + '</span></a>';
+        return '<a class="tile" href="' + esc(g.href) + '">'
+          + '<b>' + esc(g.name) + '</b><span>' + esc(g.detail || 'Play') + '</span></a>';
       }).join('');
     })
     .catch(function () { pub.innerHTML = '<p class="note">No public game list.</p>'; });

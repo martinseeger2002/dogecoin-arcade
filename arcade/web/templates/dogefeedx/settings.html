@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Settings · {{ brand.name }}{% endblock %}
 {% block body %}
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 :root { --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
 * { box-sizing:border-box; }
@@ -24,72 +23,77 @@ a { color:#f3e3a5; }
 <script>document.body.classList.add('df-dogefeed');</script>
 <div class="wrap">
   <h1>Settings</h1>
-  <p class="note">The same kinds of settings as dogefeed.app. Saves stay in this browser. Nothing is written to dogefeed.app.</p>
+  <p class="note">Your profile is what you publish on the chain, the same one every arcade shows. Notification choices stay in this browser.</p>
 
   <h2>Profile</h2>
-  <p class="note">Display name, DNS handle and website. Your chain name, when this arcade has one, is shown under the fields.</p>
   <p class="note" id="settings-who"></p>
-  <input id="display-name" type="text" maxlength="40" placeholder="Display name" aria-label="Display name">
-  <input id="dns" type="text" maxlength="64" placeholder="DNS handle, like you.doge" aria-label="DNS handle">
+  <input id="display-name" type="text" readonly placeholder="Your @name" aria-label="Name on the chain">
+  <input id="dns" type="text" maxlength="200" placeholder="Bio" aria-label="Bio">
   <input id="website" type="text" maxlength="200" placeholder="Website" aria-label="Website">
   <p class="note" id="chain-name"></p>
+  <button type="button" class="save" id="publish">Publish on the chain</button>
+  <p id="said" class="note"></p>
 
   <h2>Notifications</h2>
   <label><input type="checkbox" id="n-likes"> Likes</label>
   <label><input type="checkbox" id="n-comments"> Comments</label>
   <label><input type="checkbox" id="n-reposts"> Reposts</label>
   <label><input type="checkbox" id="n-market"> Market sales, purchases and offers</label>
-
-  <h2>Wallet</h2>
-  <p class="note">Identity is the wallet chosen on Profile. Those addresses are the ones already imported into this node's Dogecoin Core. No DogeFeed account.</p>
   <button type="button" class="save" id="save">Save on this browser</button>
-  <p id="said" class="note"></p>
+  <p id="said-n" class="note"></p>
 </div>
 {% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function () {
+  // Settings over the arcade (2026-11-03, the operator: "Keep UI/UX elements from DogefeedX wire them into the existing
+  // arcade architecture"): the name is the @tag the chain says; bio and website are the arcade's profile
+  // (mail.publishProfile below, as Profile on /me does); the notification switches stay in this browser.
   var KEY = 'dogefeedx.settings';
   function read() {
-    var s = dfxReadJson(KEY, {});
+    var s = dfxReadJson(KEY, {}, '');
     return s && typeof s === 'object' && !Array.isArray(s) ? s : {};
   }
-  function fill() {
-    var s = read();
-    var addr = dfxReadWallet();
-    document.getElementById('display-name').value = addr ? (s.displayName || '') : '';
-    document.getElementById('settings-who').textContent = addr ? (s.displayName || '') : '';
-    document.getElementById('dns').value = addr ? (s.dns || '') : '';
-    document.getElementById('website').value = addr ? (s.website || '') : '';
-    ['n-likes', 'n-comments', 'n-reposts', 'n-market'].forEach(function (id) {
-      document.getElementById(id).checked = !addr || s[id] !== false;
-    });
-    document.getElementById('said').textContent = addr ? '' : 'Select a wallet on Profile.';
-    document.getElementById('chain-name').setAttribute('data-wallet', addr);
-  }
-  dfxBindWallet(function () { fill(); });
-  dfxEnsureWallet().then(fill);
-  fetch('/account', {credentials: 'same-origin'}).then(function (r) { return r.ok ? r.json() : {}; }).then(function (a) {
-    var bits = [];
-    if (a && a.tag) bits.push('Chain name @' + a.tag);
-    if (a && a.profile && a.profile.url) bits.push(a.profile.url);
-    var node = bits.join(' · ');
-    var el = document.getElementById('chain-name');
-    if (node && !el.textContent) el.textContent = node;
-  }).catch(function () {});
+  var ids = ['n-likes', 'n-comments', 'n-reposts', 'n-market'];
+  var s = read();
+  ids.forEach(function (id) { document.getElementById(id).checked = s[id] !== false; });
   document.getElementById('save').addEventListener('click', function () {
-    var addr = dfxReadWallet();
-    if (!addr) { fill(); return; }
-    var s = {
-      displayName: document.getElementById('display-name').value.trim(),
-      dns: document.getElementById('dns').value.trim(),
-      website: document.getElementById('website').value.trim()
-    };
-    ['n-likes', 'n-comments', 'n-reposts', 'n-market'].forEach(function (id) { s[id] = document.getElementById(id).checked; });
-    dfxWriteJson(KEY, s, addr);
-    dfxWriteJson('dogefeedx.profile', {displayName: s.displayName, dns: s.dns, website: s.website}, addr);
-    document.getElementById('said').textContent = 'Saved in this browser for this wallet. Not sent to dogefeed.app.';
-    document.getElementById('settings-who').textContent = s.displayName || '';
+    var next = read();
+    ids.forEach(function (id) { next[id] = document.getElementById(id).checked; });
+    dfxWriteJson(KEY, next, '');
+    document.getElementById('said-n').textContent = 'Saved in this browser.';
   });
+  fetch('/dogefeedx/api/me', {credentials: 'same-origin', cache: 'no-store'})
+    .then(function (r) { return r.ok ? r.json() : {}; })
+    .then(function (me) {
+      document.getElementById('display-name').value = me.tag ? '@' + me.tag : '';
+      document.getElementById('settings-who').textContent = me.tag ? '' : (me.address ? 'No @name yet: claim one on Profile.' : 'Sign in to publish a profile.');
+      document.getElementById('dns').value = me.bio || '';
+      document.getElementById('website').value = me.url || '';
+      document.getElementById('chain-name').textContent = me.doge ? 'Name: ' + me.doge : '';
+      window.dfxSettingsMe = me;
+    }).catch(function () {});
 })();
 </script>
+{% if chain %}
+{% if not public %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
+<script type="module">
+import * as wallet from "{{ '/wallet.js' if public else '/node-wallet.js' }}";
+import * as mail from "{{ '/messaging.js' if public else '/node-mail.js' }}";
+const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
+const $ = (id) => document.getElementById(id);
+$("publish").onclick = async () => {
+  $("said").textContent = "";
+  $("publish").disabled = true;
+  try {
+    const keys = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+    if (!keys) throw new Error("Unlock your wallet to publish.");
+    const me = await mail.identity(keys.phrase);
+    await mail.publishProfile(keys, me, {bio: $("dns").value.trim(), url: $("website").value.trim()});
+    $("said").textContent = "Published. Every arcade shows it once its block lands.";
+  } catch (e) {
+    $("said").textContent = String(e.message || e);
+  } finally { $("publish").disabled = false; }
+};
+</script>
+{% endif %}
 {% endblock %}

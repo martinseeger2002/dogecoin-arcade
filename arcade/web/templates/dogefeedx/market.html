@@ -1,12 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Market · {{ brand.name }}{% endblock %}
 {% block body %}
-{#- DogeFeedX Market: Pixel-perfect reproduction of dogefeed.app/market
+{#- DogeFeedX Market: DogeFeed's market page
     Light theme with white background, matching exact layout and styling.
-    Data from dogefeed.app APIs (read-only). -#}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    Data: this arcade's collections and its own Doginal market. -#}
 <style>
 :root {
   --df-gold: #f3e3a5;
@@ -429,7 +426,7 @@ button.df-more { display:block; width:auto; margin:8px auto 16px; background:tra
 .df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
 
 /* The desktop skin (deskdogefeedx.css) paints every window dark and forces
-   white headings and button chrome with !important. This page is dogefeed.app's
+   white headings and button chrome with !important. This page is DogeFeed's
    own dark board, so those rules must not turn cards white-on-white. */
 html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
 html.indesk body.df-dogefeed h1,
@@ -536,7 +533,7 @@ html.indesk body.df-dogefeed input {
 (function() {
   'use strict';
   
-  var IMG_BASE = 'https://dogefeed.app';
+  var IMG_BASE = '';   // pictures are this arcade's own /content/<id>
   var doginals = [];
   var tokens = [];
   var activity = [];
@@ -556,7 +553,7 @@ html.indesk body.df-dogefeed input {
     return isNaN(n) ? null : n;
   }
 
-  // dogefeed.app publishes some DRC-20 floors in satoshis and some already in DOGE.
+  // Some DRC-20 floors come in satoshis and some already in DOGE.
   function dogeFloor(raw) {
     if (raw == null || raw === '') return null;
     var n = Number(raw);
@@ -592,7 +589,7 @@ html.indesk body.df-dogefeed input {
   }
 
   function collectionRow(c) {
-    return {name: c.name, href: 'https://dogefeed.app' + c.href, image: c.image, verified: c.verified,
+    return {name: c.name, href: c.href, image: c.image, verified: c.verified,
       meta: (c.listed || 0) + ' listed · ' + (c.sales || 0) + ' sales',
       floor: floorNumber(c.floor), floorText: c.floor || '—', extra: ''};
   }
@@ -602,14 +599,14 @@ html.indesk body.df-dogefeed input {
     var rows = [];
     if (activeTab === 'activity') {
       rows = activity.map(function(a) {
-        return {name: a.name, href: 'https://dogefeed.app' + a.href, image: a.image, verified: false,
+        return {name: a.name, href: a.href, image: a.image, verified: false,
           meta: a.collection || '', floor: floorNumber(a.price), floorText: a.price || '—',
           extra: a.kind === 'listing' ? 'Listing' : 'Sale'};
       });
     } else if (activeCat === 'drc20' && activeChain === 'doginals') {
       rows = tokens.map(function(t) {
         var floor = dogeFloor(t.floorPrice);
-        return {name: t.tick, href: 'https://dogefeed.app/market', image: t.pic || '', verified: false,
+        return {name: t.tick, href: '/exchange?tab=tokens', image: t.pic || '', verified: false,
           meta: (t.holders || 0) + ' holders · ' + (t.listingsDoggy || 0) + ' listings',
           floor: floor, floorText: formatFloor(floor), extra: ''};
       });
