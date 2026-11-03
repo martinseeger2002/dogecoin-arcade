@@ -8,6 +8,7 @@
 import * as keys from "./keys.js";
 import * as chains from "./chains.js";
 import * as arcade from "./arcade.js";
+import * as messages from "./messages.js";
 
 const LOCK_MINUTES = 30;
 const pending = new Map();          // request id -> {origin, method, params, resolve, window}
@@ -123,6 +124,18 @@ const METHODS = {
     await chrome.storage.local.set({sites: {...await sites(), [origin]: {since: Date.now()}}});
     touch();
     return {pubkey: key.pubkey, origin, nonce, signature: keys.hex(signature)};
+  },
+  async arcade_signMessage(origin, params) {
+    const network = String((params || {}).chain || "");
+    const message = (params || {}).message;
+    const c = chains.chain(network);
+    const said = messages.refusal(message, network);
+    if (said) throw new Error(`Nothing was signed: ${said}.`);
+    const before = await seed();
+    const shown = before ? (await chains.keysOn(before, network)).address : "";
+    await approve(origin, "signMessage", {message, chain: c.label, address: shown});
+    const k = await chains.keysOn((await opened()).seed, network);
+    return {chain: network, address: k.address, message, signature: await messages.signText(k.key, message, network)};
   },
   async arcade_disconnect(origin) {
     const all = await sites();

@@ -10,6 +10,9 @@ const WORDS = {
             "It will see your account's public key and can then ask you to sign. It can never sign on its own."],
   signIn: ["Sign in to this site?",
            "This signs the message below with your account key. It proves to this site, and only this site, that it is you."],
+  signMessage: ["Sign this message?",
+                "It is signed with your address key below, exactly as written. Anyone can check that you signed it. "
+                + "Sign only words you mean: a signature cannot be taken back."],
 };
 
 ask({type: "pending", id}).then((p) => {
@@ -18,6 +21,9 @@ ask({type: "pending", id}).then((p) => {
   $("what").textContent = what;
   $("why").textContent = why;
   if (p.detail && p.detail.message) { $("message").textContent = p.detail.message; $("message").hidden = false; }
+  if (p.detail && p.detail.chain) {
+    $("why").textContent += ` On ${p.detail.chain}${p.detail.address ? `, as ${p.detail.address}` : ""}.`;
+  }
   $("pubkey").textContent = p.pubkey || "locked: type your password to approve";
   $("password").hidden = p.open;
   if (!p.open) $("password").focus();

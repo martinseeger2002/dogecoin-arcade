@@ -130,3 +130,64 @@ def test_the_extensions_coin_code_is_the_arcades_own_file():
     assert vendored, "extension/vendor is empty"
     for rel in vendored:
         assert (ROOT / "extension" / "vendor" / rel).read_bytes() == (ROOT / "arcade" / "web" / "vendor" / rel).read_bytes(), rel
+
+
+# --- messages: each chain's Core words, and a verifier for outside sites -------------------------------------------
+
+#: A throwaway key (sha256 of a sentence) and the signature each chain's own Core made with it, 2026-11-03:
+#: `<chain>-cli signmessagewithprivkey <its WIF> "arcade wallet probe"`. The extension must make the very same bytes.
+PROBE_KEY = "87bd27b8eb03a9a6dd0cf45e0e9c15e6dda8e9f4a6a808d58a1ea93b2d4b934d"
+PROBE_TEXT = "arcade wallet probe"
+CORE_SAID = {
+    "main": "H9xWUPXuwOupHYk3ms4hMbOJ/XJBlFAT+TfAUd4R2RHafmf87lFoCNPomKYhvdCpXauO5nxHzimH4cGRNSfTsuA=",   # pepecoind
+    "test": "H9xWUPXuwOupHYk3ms4hMbOJ/XJBlFAT+TfAUd4R2RHafmf87lFoCNPomKYhvdCpXauO5nxHzimH4cGRNSfTsuA=",   # its testnet
+    "doge": "HzeMpEhm+lv/tX/YbHrMF2rs112H0PLUewYzRI09NqTxHeTS6HKI+eD/zX/pL2DSMKyD4rKBFsg+fzKllnfWRTw=",   # dogecoind
+    "ltc": "IH9ZFd53ydLWEL8PSrDqGqCnWruh2GRrugBdIFFjxUTUVi6IjPKYTT8V5dgGj3UN7gZXc++t/AjN/w5UvQkV+3o=",    # litecoind
+    "ltctest": "IH9ZFd53ydLWEL8PSrDqGqCnWruh2GRrugBdIFFjxUTUVi6IjPKYTT8V5dgGj3UN7gZXc++t/AjN/w5UvQkV+3o=",
+    "lky": "IPSadvZtMmDUdzNwiozAUon9uFo9sxjYvlhtOKQFvYzWJlObW4Q/79zmo24vwKGHYa211CwkaMEbD9WU2IaAG7A=",    # luckycoind
+    "bel": "HzZJDNuWttSoRJjFwM8x2eSTdvWaYh+3tObnvE0BeuxHBWVpJ4Dh2wsJz0Hsc0Fy2NYpyGT2L+2IlGWBHKB/NCE=",    # bellsd
+}
+ARCADE_WORDS = [f"arcade-llm\n{'ab' * 32}\nPehYeRLFsRj5jboZXTC6rFHxmYdmV9RdfR\n1900000000", "arcade-realtime\nanything",
+                "DogecoinArcade login\nhttps://x.example\n" + "ab" * 32]
+
+
+@pytest.fixture(scope="module")
+def signed():
+    return node("messages.mjs", {"key": PROBE_KEY, "text": PROBE_TEXT, "phrase": PHRASES[0], "arcadeWords": ARCADE_WORDS})
+
+
+def test_a_message_is_signed_as_each_chains_own_core_signs_it(signed):
+    for network, core in CORE_SAID.items():
+        assert signed["probe"][network] == core, network
+    for network, row in signed["tables"]["chains"].items():
+        assert (network in signed["tables"]["verify"]) == bool(row["magic"]), network
+        if row["magic"]:
+            assert signed["tables"]["verify"][network] == [row["pubkeyhash"], row["magic"]], network
+    for network in ("dgb", "kot", "wjk"):         # no message words without a Core that was checked
+        assert "not signed here yet" in signed["refused"][network], network
+    assert sorted(signed["mine"]) == sorted([*CORE_SAID, "regtest"])
+
+
+def test_the_arcades_own_words_are_never_signed_for_a_site(signed):
+    for text in ARCADE_WORDS:
+        assert "an arcade signs for itself" in signed["refused"][text], text
+
+
+def test_the_verifiers_say_yes_to_the_wallets_signature_and_no_to_anything_changed(signed):
+    import importlib.util
+    from arcade import llm
+    spec = importlib.util.spec_from_file_location("arcade_verify", ROOT / "extension" / "verify.py")
+    verify = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verify)
+    assert verify.CHAINS == {n: tuple(v) for n, v in signed["tables"]["verify"].items()}
+    for network, got in signed["mine"].items():
+        assert signed["verified"][network] == {"right": True, "otherText": False, "otherChain": False}, network
+        assert verify.verify_message(network, got["address"], PROBE_TEXT, got["signature"]), network
+        assert not verify.verify_message(network, got["address"], PROBE_TEXT + ".", got["signature"]), network
+        assert llm.recover_hash160(got["signature"], PROBE_TEXT, verify.CHAINS[network][1]) == \
+            script.b58check_decode(got["address"])[1], network          # and the arcade's own recovery agrees
+    s = signed["signIn"]
+    assert s["right"] and not s["otherOrigin"]
+    assert verify.verify_sign_in(s["origin"], s["nonce"], s["pubkey"], s["signature"])
+    assert not verify.verify_sign_in("https://evil.example", s["nonce"], s["pubkey"], s["signature"])
+    assert s["pubkey"] == seed.login_pubkey(PHRASES[0])
