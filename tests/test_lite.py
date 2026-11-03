@@ -55,7 +55,7 @@ def test_every_command_has_help_and_runs_on_a_node_with_nothing_reachable(app_st
     op = caller(app_state, "operator")
     for cmd in cmdlib.COMMANDS.values():
         assert cmd.summary, f"{cmd.name} has no help"
-        if cmd.name != "help" and " " not in cmd.usage and cmd.module not in ("wallet", "messages"):
+        if cmd.name != "help" and " " not in cmd.usage and cmd.module not in ("wallet", "messages", "feed"):
             cmdlib.run(op, cmd.name)                     # no node, no mesh: it still answers
 
 
@@ -97,7 +97,7 @@ def test_a_visitor_from_outside_sees_the_arcade_and_a_way_to_sign_in(app):
     said = app.post("/lite/api/console", headers={**OUTSIDE, **LITE}, json={"line": "getmeshinfo"}).json()
     assert not said["ok"]
     names = {c["name"] for c in app.get("/lite/api/commands", headers=OUTSIDE).json()}
-    assert names == {"help", "getnodeinfo", "listchains", "listmodules"}
+    assert names == {"help", "getnodeinfo", "listchains", "listmodules", "readfeed", "readposts"}
 
 
 def test_a_signed_in_user_from_outside_sees_their_own_account(app, app_state):

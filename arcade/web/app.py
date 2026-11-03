@@ -4440,6 +4440,15 @@ def create_app(state: AppState) -> FastAPI:
             return RedirectResponse(back if net else f"/feed/{txid}/tip", status_code=303)
         return RedirectResponse(back, status_code=303)
 
+    #: What can be done to a post, by the word for it (feed_act and the console's feed commands).
+    _FEED_KINDS = {"like": feedlib.LIKE, "unlike": feedlib.UNLIKE,
+                   "dislike": feedlib.DISLIKE, "undislike": feedlib.UNDISLIKE,
+                   "reply": feedlib.REPLY, "share": feedlib.SHARE,
+                   "edit": feedlib.EDIT, "delete": feedlib.DELETE,
+                   # An unshare deletes the share itself: the txid in the path is
+                   # the viewer's own share, not the post (2026-09-29).
+                   "unshare": feedlib.DELETE}
+
     @app.post("/feed/{txid}/{doing}")
     def feed_act(request: Request, txid: str, doing: str,
                  text: str = Form(""), csrf_token: str = Form(""),
@@ -4449,13 +4458,7 @@ def create_app(state: AppState) -> FastAPI:
         One route for all of them: they are one message type with a kind
         byte, and a route per kind would be six copies of this (D-138).
         """
-        kinds = {"like": feedlib.LIKE, "unlike": feedlib.UNLIKE,
-                 "dislike": feedlib.DISLIKE, "undislike": feedlib.UNDISLIKE,
-                 "reply": feedlib.REPLY, "share": feedlib.SHARE,
-                 "edit": feedlib.EDIT, "delete": feedlib.DELETE,
-                 # An unshare deletes the share itself: the txid in the path is
-                 # the viewer's own share, not the post (2026-09-29).
-                 "unshare": feedlib.DELETE}
+        kinds = _FEED_KINDS
         try:
             check_csrf(csrf_token)
             if doing == "mute":
@@ -4481,6 +4484,37 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:
             state.flash(str(exc), "err")
         return RedirectResponse(back or "/feed", status_code=303)
+
+    def _console_feed(sort: str, author: str, count: int) -> list[dict]:
+        """A page of the feed as the Feed tab draws it (newest, or popular), or one person's posts: the console's."""
+        network = state.messaging.network
+        address = _tag_address(state, author, mainnet=state.messaging) if author else ""
+        rows, _next, waiting = _feed_page(network, author=address, limit=count, sort=sort)
+        return [{"txid": p.txid, "by": _name_of(p.author) or p.author, "text": p.text, "when": p.block_time,
+                 "likes": p.likes, "replies": len(p.replies), "shares": p.shares, "mine": p.mine,
+                 "confirmed": bool(p.height)} for p in _shown(rows, network, waiting) if not (p.deleted or p.muted)]
+
+    def _console_feed_post(text: str) -> str:
+        """A post from the node, as feed_post makes one (text only): its txid."""
+        complaint = _needs_a_name()
+        if complaint:
+            raise ValueError(complaint)
+        if not text.strip():
+            raise ValueError("say something")
+        return state.post(text.strip())
+
+    def _console_feed_act(doing: str, txid: str, text: str = "") -> str:
+        """A like, reply, share, edit or delete from the node, as feed_act makes one: its txid. Mute is local."""
+        if doing in ("mute", "unmute"):
+            with state.store() as store:
+                store.mute(text.strip() or txid, on=doing == "mute")
+            return ""
+        if doing not in _FEED_KINDS:
+            raise ValueError(f"nothing called {doing!r} is done to a post")
+        complaint = _needs_a_name()
+        if complaint:
+            raise ValueError(complaint)
+        return state.send_feed_act(_FEED_KINDS[doing], txid, text)
 
     @app.post("/contacts/scan")
     def contacts_scan(request: Request, csrf_token: str = Form("")):
@@ -31322,7 +31356,12 @@ def create_app(state: AppState) -> FastAPI:
     #: What the console asks of the node (arcade/lite/commands.py): its wallet in Admin's own steps, its messages.
     node_tools = types.SimpleNamespace(wallets=lambda: _admin_wallets(), prepare=_node_prepare,
                                        broadcast=_node_broadcast, receive=_node_receive, history=_node_history,
-                                       unspent=_node_unspent, peer=_console_peer, message=_console_message)
+                                       unspent=_node_unspent, peer=_console_peer, message=_console_message,
+                                       feed=_console_feed, feed_post=_console_feed_post, feed_act=_console_feed_act)
+    #: ...and what it may ask on behalf of anyone at all: reads of what the public pages show.
+    public_tools = types.SimpleNamespace(
+        feed=lambda sort, author, count: [{k: v for k, v in post.items() if k != "mine"}
+                                          for post in _console_feed(sort, author, count)])
 
     # --- the Cloudflare tunnel wizard (2026-09-25; arcade/tunnel.py) -----
 
@@ -36227,7 +36266,8 @@ def create_app(state: AppState) -> FastAPI:
     # ARCADE Lite (docs/arcade-lite/CHARTER.md): its Core-style window at /lite, for visitors, users and the operator.
     from ..lite import web as liteweb
     _lite_home = liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in,
-                                  account_address=_account_address, name_of=_name_of, node_tools=node_tools)
+                                  account_address=_account_address, name_of=_name_of, node_tools=node_tools,
+                                  public_tools=public_tools)
     # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
     from . import modules_web
     modules_web.register(app, state, admin_check=_admin_check)

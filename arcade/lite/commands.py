@@ -31,7 +31,8 @@ class Caller:
     """Who is asking: the node's state, their audience, and their account's public key when signed in.
 
     `address(chain)` and `name_of(address)` are the web app's own account lookups. `node` is the node's wallet as
-    Admin drives it (the operator's only), and `local` says the operator is at the node's own machine."""
+    Admin drives it (the operator's only), and `local` says the operator is at the node's own machine. `reads` is what
+    anyone may ask of the node: what its public pages show."""
     state: Any
     audience: str = "anyone"
     account: str | None = None
@@ -39,6 +40,7 @@ class Caller:
     name_of: Callable[[str], str] = lambda address: ""
     node: Any = None
     local: bool = False
+    reads: Any = None
 
     def may(self, audience: str) -> bool:
         return AUDIENCES.index(self.audience) >= AUDIENCES.index(audience)
@@ -340,6 +342,91 @@ def sendmessage(caller, who: str, *text: str) -> dict:
     sendmessage <who> <text...>   for example: sendmessage @alice see you at the table
     A message long enough to need more than one transaction is sent from Messages, which shows its progress."""
     return _ask(_wallet(caller).message, str(who), " ".join(str(t) for t in text))
+
+
+# --- the feed: read by anyone, as the Feed tab is; written by the node's operator --------------------------------------
+
+
+#: The most posts one read answers.
+MOST_POSTS = 100
+
+
+def _reads(caller):
+    """The operator's own reads (which say what is the node's), else anyone's."""
+    tools = caller.node if caller.node is not None else caller.reads
+    if tools is None:
+        raise CommandError("the node answers through the arcade's web app: run this in its console or arcade-cli")
+    return tools
+
+
+def _count(count) -> int:
+    if not isinstance(count, int) or count < 1:
+        raise CommandError("count is a whole number, 1 or more")
+    return min(count, MOST_POSTS)
+
+
+@command("feed", module="feed")
+def readfeed(caller, order: str = "popular", count: int = 20) -> list[dict]:
+    """The feed, as its tab shows it: popular (the endorsed first) or new.
+
+    readfeed [popular|new] [count]   up to 100"""
+    if order not in ("popular", "new"):
+        raise CommandError("usage: readfeed [popular|new] [count]")
+    return _ask(_reads(caller).feed, order, "", _count(count))
+
+
+@command("feed", module="feed")
+def readposts(caller, who: str, count: int = 20) -> list[dict]:
+    """One person's posts, newest first, as their page shows them.
+
+    readposts <@name or address> [count]"""
+    return _ask(_reads(caller).feed, "new", str(who), _count(count))
+
+
+@command("feed", audience="operator", module="feed")
+def post(caller, *text: str) -> dict:
+    """Post on the feed as the node's @name, in one transaction.
+
+    post <text...>   for example: post the arcade is open tonight"""
+    return {"txid": _ask(_wallet(caller).feed_post, " ".join(str(t) for t in text))}
+
+
+def _act(caller, doing: str, txid: str, text: str = "") -> dict:
+    return {"txid": _ask(_wallet(caller).feed_act, doing, str(txid), text)}
+
+
+@command("feed", audience="operator", module="feed")
+def reply(caller, txid: str, *text: str) -> dict:
+    """Reply to a post or a reply.
+
+    reply <txid> <text...>   the txid is readfeed's"""
+    if not text:
+        raise CommandError("usage: reply txid text...")
+    return _act(caller, "reply", txid, " ".join(str(t) for t in text))
+
+
+@command("feed", audience="operator", module="feed")
+def like(caller, txid: str) -> dict:
+    """Like a post or a reply."""
+    return _act(caller, "like", txid)
+
+
+@command("feed", audience="operator", module="feed")
+def unlike(caller, txid: str) -> dict:
+    """Take a like back."""
+    return _act(caller, "unlike", txid)
+
+
+@command("feed", audience="operator", module="feed")
+def share(caller, txid: str) -> dict:
+    """Share a post onto the node's own feed."""
+    return _act(caller, "share", txid)
+
+
+@command("feed", audience="operator", module="feed")
+def deletepost(caller, txid: str) -> dict:
+    """Delete one of the node's own posts or replies. The chain keeps it; every arcade stops showing it."""
+    return _act(caller, "delete", txid)
 
 
 # --- modules: installed and removed as packages are -----------------------------------------------------------------

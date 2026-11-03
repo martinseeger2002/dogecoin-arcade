@@ -88,6 +88,21 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 3: the feed
+- **New commands** (module `feed`): for anyone, as the Feed tab is public: `readfeed [popular|new] [count]` and
+  `readposts <@name or address> [count]` (up to 100; deleted and muted posts left out, as the tab draws them). For
+  the operator: `post <text...>`, `reply <txid> <text...>`, `like`, `unlike`, `share`, `deletepost <txid>`.
+- **The tab's own code:** `_console_feed` reads through `_feed_page` and `_shown`; `_console_feed_post` and
+  `_console_feed_act` are `feed_post` and `feed_act` without the form: the same "claim a @tag first" check
+  (`_needs_a_name`), then `state.post` / `state.send_feed_act`. The reaction table is `_FEED_KINDS`, shared with
+  `feed_act` (moved out of it, unchanged). Text only; a file post (an inscription) stays the tab's. Tips are not in
+  the console yet.
+- **What anyone may ask is kept apart:** app.py hands the console `node_tools` for the operator only and
+  `public_tools` (the feed read, without the node-relative "mine") for everyone.
+- Tests: `tests/test_lite_feed.py` (4): a visitor reads the feed and a person's posts (order, deleted gone, likes
+  counted, no "mine"); a post needs a name and only the operator posts; each command is the tab's button; off with
+  its module. With the other Lite tests, test_feed_web, test_web, test_public: 446 passed, 16 skipped.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 2: the node's messages
 - **New commands** (module `messages`, the operator only): `listconversations` (everyone the node wrote to or heard
   from, newest first, with unread counts), `readmessages <who> [count]` (oldest first; marks the conversation read, as
