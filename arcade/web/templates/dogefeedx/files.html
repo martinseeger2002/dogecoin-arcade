@@ -99,7 +99,7 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
   }
   function paintSide() {
     if (!signed) {
-      list.innerHTML = '<p class="empty">Import a watch-only address on this node.</p>';
+      list.innerHTML = '<p class="empty">{{ 'Sign in' if public else 'Import a watch-only address on this node' }}.</p>';
       return;
     }
     var html = '';
@@ -206,7 +206,7 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
     paintSide();
     if (!signed) {
       title.textContent = 'Collections';
-      body.innerHTML = '<p class="empty">Import a watch-only address on this node. This reads that Dogecoin wallet and does not ask for a key.</p>';
+      body.innerHTML = '<p class="empty">{{ 'Sign in' if public else 'Import a watch-only address on this node' }}. This reads that Dogecoin wallet and does not ask for a key.</p>';
       return;
     }
     if (open.kind === 'drc20') { paintTokens(); return; }

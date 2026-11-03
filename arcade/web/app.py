@@ -35812,7 +35812,14 @@ def create_app(state: AppState) -> FastAPI:
         if not address:
             return {"handle": handle, "author": None, "card": {}, "items": [], "nextCursor": None}
         items, nxt = _dfx_posts(author=address, before=cursor or None, limit=limit, sort="new")
-        return {"handle": handle, "author": _dfx_author(address), "card": {}, "items": items, "nextCursor": nxt}
+        author = _dfx_author(address)
+        try:
+            said = _profile_of(address)
+        except Exception:                                  # noqa: BLE001
+            said = {}
+        author.update(bio=said.get("bio") or "", url=said.get("url") or "",
+                      dogeNames=_dfx_doge_names(said.get("doge") or ""))
+        return {"handle": handle, "author": author, "card": {}, "items": items, "nextCursor": nxt}
 
     def _dfx_people(items) -> list[dict]:
         by: dict = {}
@@ -36065,6 +36072,28 @@ def create_app(state: AppState) -> FastAPI:
                            "name": r.get("name") or "", "detail": r.get("netlabel") or "Play"}
                           for r in rows[:60] if r.get("name")]}
 
+    _dfx_doge_seen: dict = {}
+
+    def _dfx_doge_names(doge: str) -> list[str]:
+        """The Dogecoin ord names (much.doge, billy.dogefeed ...) a Dogecoin address holds, as this arcade's indexes
+        read them: a handle described on Doge, beside the arcade @handle (2026-11-03: "the primary at handle
+        should still be the existing arcade @handles with the option of describing your handle on Doge"). Five
+        minutes per address."""
+        if not doge:
+            return []
+        hit = _dfx_doge_seen.get(doge)
+        if hit and hit[0] > time.time():
+            return hit[1]
+        try:
+            from .dogefeedx.wallet_assets import index_owned
+            names = [str(n.get("name") or "") for n in (index_owned(doge).get("names") or []) if n.get("name")]
+        except Exception:                                  # noqa: BLE001 -- none shown, asked again later
+            names = []
+        _dfx_doge_seen[doge] = (time.time() + 300, names[:6])
+        if len(_dfx_doge_seen) > 500:
+            _dfx_doge_seen.pop(next(iter(_dfx_doge_seen)))
+        return names[:6]
+
     def _dfx_me(request) -> dict:
         """Who is asking, as the chain has them: the @tag, the address, and what they published (bio, url, picture)."""
         who = _tag_of_whoever_is_asking(request) or {}
@@ -36078,10 +36107,24 @@ def create_app(state: AppState) -> FastAPI:
                         url=said.get("url") or str(state.setting("url", "") or ""))
         return {"signed_in": bool(address), "operator": not _account_view(request), "tag": who.get("tag") or "",
                 "address": address, "bio": said.get("bio") or "", "url": said.get("url") or "",
-                "pfp": said.get("pfp") or "", "doge": said.get("doge") or ""}
+                "pfp": said.get("pfp") or "", "doge": said.get("doge") or "",
+                "doge_names": _dfx_doge_names(said.get("doge") or "")}
+
+    def _dfx_wallets(request) -> dict:
+        """The Dogecoin addresses the asker's DogeFeedX windows read (Profile's switcher, Files, Wallet, NFTs): the
+        operator's are this node's watch list; an account's is its own address and only that (the node's watch list is
+        the operator's, never an account's); a visitor has none."""
+        if not _account_view(request):
+            from .dogefeedx.wallet_assets import node_watch_addresses
+            return {"operator": True, "addresses": list(node_watch_addresses())}
+        account = signed_in(request)
+        if account is None:
+            return {"operator": False, "addresses": [], "signed_in": False}
+        mine = _account_doge_address(account.pubkey)
+        return {"operator": False, "addresses": [mine] if mine else [], "signed_in": True}
 
     dfx_local = _types.SimpleNamespace(
-        chain=_account_chain, games=_dfx_games, me=_dfx_me,
+        chain=_account_chain, games=_dfx_games, me=_dfx_me, wallets=_dfx_wallets,
         feed=_dfx_feed, post=_dfx_find_post, user_posts=_dfx_user_posts, sidebar=_dfx_sidebar,
         leaderboard=_dfx_leaderboard, market=_dfx_market, collections=_dfx_collections,
         collection_items=_dfx_collection_items, inscription=_dfx_inscription, tokens=_dfx_tokens, token=_dfx_token,

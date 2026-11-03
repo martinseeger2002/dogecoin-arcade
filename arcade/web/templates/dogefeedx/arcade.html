@@ -25,7 +25,7 @@ li a { color:#f3e3a5; }
   <h2>Card Games</h2>
   <div id="public-games" class="grid"><p class="note">Loading public games…</p></div>
   <h2>On this arcade</h2>
-  <p class="note">Games inscribed on this node. </p>
+  <p class="note">{{ 'Games inscribed on this arcade.' if public else 'Games inscribed on this node.' }} </p>
   <ul id="games"><li class="note">Loading games…</li></ul>
 </div>
 <script>

@@ -88,6 +88,21 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX for accounts on a public arcade; the arcade @handle is the name (Claude; the operator: "all of this stuff is already available for the user end ... wire it in", "the primary at handle should still be the existing arcade @handles with the option of describing your handle on Doge")
+- **door.py** opens the DogeFeedX windows, their files and the reads of public arcade data (feed, posts, profiles,
+  collections, ord index, mintpads, apps, `me`, notifications, wallet), each path by name. Still refused there: the
+  standalone terminal page and its node status/peers/balance/address/lookup calls, the Network module, and the
+  operator's two POSTs (an account posts and reacts from its browser). The desktop's own Terminal and Explorer
+  windows use /api/terminal, as reviewed in #61.
+- **Wallet windows read the asker's own address** (app.py `_dfx_wallets`, apps.py `_wallets`): the operator's are
+  the node's watch list as before; an account's is its own Dogecoin address only (`_account_doge_address`); a
+  visitor has none. Holdings for any other address come back empty for an account. The watch-only look-up box and
+  "import on this node" wording are the operator's only.
+- **Names**: Profile's card and a profile page show the arcade @handle first; the Dogecoin ord names (much.doge,
+  you.dogefeed) the person's Doge address holds show beside it as "on Dogecoin: ..." (`_dfx_doge_names`, from the
+  indexes, five minutes per address). Before, the own-wallet card put the Doge name or the address where the
+  @handle goes. Settings says your Doge names, not your Doge address.
+
 ### 2026-11-03 DogeFeedX reads and writes through the arcade alone (Claude; the operator: "Everything needs to work through arcade", "Keep UI/UX elements from DogefeedX wire them into the existing arcade architecture")
 - **No other server**: every dogefeed.app, explorer.dogesoft.io and doggy.market call is gone (apps.py's
   `_fetch_dogefeed_*`, wallet_assets.py's market scrape, public_read.py deleted), and so are the Google Fonts links

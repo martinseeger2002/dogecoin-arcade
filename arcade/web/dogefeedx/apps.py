@@ -541,35 +541,47 @@ async def api_address_tokens(address: str = ""):
     return {"address": address, "tokens": tokens, "source": "node", "reading": reading}
 
 
+async def _wallets(request: Request) -> dict:
+    """Whose addresses the asker's wallet windows read (app.py _dfx_wallets): the operator's watch list, an account's
+    own address, or none."""
+    fn = getattr(LOCAL, "wallets", None) if LOCAL is not None else None
+    if fn is None:
+        from .wallet_assets import node_watch_addresses
+        return {"operator": True, "addresses": list(await asyncio.to_thread(node_watch_addresses))}
+    try:
+        return await asyncio.to_thread(fn, request)
+    except Exception:                                      # noqa: BLE001 -- nobody's, rather than somebody else's
+        return {"operator": False, "addresses": []}
+
+
 @router.get("/api/wallet/holdings")
-async def api_wallet_holdings(address: str = ""):
-    """Doginals, names, DRC-20, and the balance for one Dogecoin address.
+async def api_wallet_holdings(request: Request, address: str = ""):
+    """Doginals, names, DRC-20, and the balance for the asker's Dogecoin address(es).
 
-    Ownership is this node's indexes. `address` is an optional public lookup of
-    an address the index already watches. No key is accepted. Outpoints are not
-    returned. Collection labels are the arcade's own.
+    Ownership is this node's indexes. The operator may name any address (an address the index already watches reads
+    as imported); an account reads its own address only, never the node's watch list. No key is accepted. Outpoints
+    are not returned. Collection labels are the arcade's own.
     """
-    from .wallet_assets import (
-        empty_holdings,
-        holdings_for,
-        merge_holdings,
-        node_watch_addresses,
-        public_view,
-        valid_address,
-    )
+    from .wallet_assets import empty_holdings, holdings_for, merge_holdings, public_view, valid_address
 
-    watched = node_watch_addresses()
+    said = await _wallets(request)
+    watched = list(said.get("addresses") or [])
     if address:
         try:
             valid_address(address)
         except ValueError:
             raise HTTPException(status_code=400, detail="Dogecoin address required")
+        if not said.get("operator") and address not in watched:
+            return empty_holdings()
         try:
             result = await holdings_for(address, imported=address in set(watched))
         except Exception:
             result = empty_holdings()
         return public_view(result)
     if not watched:
+        if not said.get("operator"):
+            return dict(empty_holdings(), empty="Sign in to see your wallet." if not said.get("signed_in")
+                        else "Your wallet has no Dogecoin address on this arcade yet.")
         return empty_holdings()
     parts = []
     for one in watched[:4]:
@@ -581,12 +593,10 @@ async def api_wallet_holdings(address: str = ""):
 
 
 @router.get("/api/wallet/addresses")
-async def api_wallet_addresses():
-    """Dogecoin addresses this node's wallet already watches. Address strings only."""
-    from .wallet_assets import node_watch_addresses
-
-    watched = await asyncio.to_thread(node_watch_addresses)
-    return {"addresses": list(watched), "source": "node"}
+async def api_wallet_addresses(request: Request):
+    """The asker's Dogecoin addresses: the node's watch list for the operator, an account's own address for it."""
+    said = await _wallets(request)
+    return {"addresses": list(said.get("addresses") or []), "source": "node" if said.get("operator") else "account"}
 
 
 @router.get("/api/lookup")

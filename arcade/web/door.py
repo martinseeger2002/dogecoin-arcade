@@ -111,6 +111,28 @@ PUBLIC_PAGES = frozenset({
     "/admin/login",           # the remote admin password page (rate-limited)
     "/signin.js", "/base.css", "/desk98.css", "/deskubuntu.css", "/deskdogefeedx.css",
     "/api/network",           # DogeFeedX Network window: through the door for signed-in accounts; strangers get 403
+    # DogeFeedX for an account on a public arcade (2026-11-03: "all of this stuff is already available for the
+    # user end ... wire it in"): its windows, their files, and the reads of the arcade's own public data -- the feed,
+    # collections, the ord index, mintpads, apps. The wallet windows read the ASKER's own address (apps._wallets: an
+    # account's own, never the node's watch list); notifications, messages and settings are the account's own. Not
+    # here, so refused: the terminal's node status, peers and address lookups (/dogefeedx/api/status, peers,
+    # balance, address/*, lookup), the Network module's sync (/dogefeedx/network/...), and the operator's two POSTs
+    # (/dogefeedx/api/post, react) -- an account posts and reacts from its own browser.
+    "/dogefeedx/feed", "/dogefeedx/post", "/dogefeedx/profile", "/dogefeedx/explore", "/dogefeedx/search",
+    "/dogefeedx/market", "/dogefeedx/collections", "/dogefeedx/nfts", "/dogefeedx/files", "/dogefeedx/wallet",
+    "/dogefeedx/inscription", "/dogefeedx/leaderboard", "/dogefeedx/notifications", "/dogefeedx/messages",
+    "/dogefeedx/bookmarks", "/dogefeedx/launchpad", "/dogefeedx/inscribe", "/dogefeedx/arcade", "/dogefeedx/memes",
+    "/dogefeedx/settings", "/dogefeedx/explorer",     # not /dogefeedx/terminal: its status/balance calls are the node's
+    "/dogefeedx/aqua.css", "/dogefeedx/shell.js", "/dogefeedx/icon-explorer.png", "/dogefeedx/icon-terminal.png",
+    "/dogefeedx/icon-feed.png", "/dogefeedx/icon-profile.png", "/dogefeedx/icon-market.png",
+    "/dogefeedx/icon-wallet.png",
+    "/dogefeedx/api/feed", "/dogefeedx/api/sidebar", "/dogefeedx/api/leaderboard", "/dogefeedx/api/market/doginals",
+    "/dogefeedx/api/market/drc20", "/dogefeedx/api/price", "/dogefeedx/api/collections",
+    "/dogefeedx/api/collection/items", "/dogefeedx/api/inscription", "/dogefeedx/api/tokens", "/dogefeedx/api/token",
+    "/dogefeedx/api/names", "/dogefeedx/api/name", "/dogefeedx/api/search", "/dogefeedx/api/memes",
+    "/dogefeedx/api/arcade", "/dogefeedx/api/launchpad", "/dogefeedx/api/me", "/dogefeedx/api/whoami",
+    "/dogefeedx/api/local/notifications", "/dogefeedx/api/local/games",
+    "/dogefeedx/api/wallet/addresses", "/dogefeedx/api/wallet/holdings",
     "/coins.js",
     "/wallet.js",
     "/messaging.js",
@@ -206,6 +228,8 @@ PUBLIC_TREES = (
     "/exchange/coins/",       # a coin pair: redirects to its swap market
     "/exchange/ord/",         # a Doginals/Pepinals collection described by an inscription (2026-10-17)
     "/api/terminal/",         # DogeFeedX Terminal's command list; its commands are for signed-in accounts only
+    "/dogefeedx/api/posts/",  # DogeFeedX: one post of the arcade's feed and its replies (2026-11-03)
+    "/dogefeedx/api/users/",  # DogeFeedX: an arcade account's posts (2026-11-03)
 )
 
 #: Whole paths with something variable in the middle of them, where a tree

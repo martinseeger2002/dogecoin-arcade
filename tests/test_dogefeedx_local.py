@@ -5,6 +5,7 @@ Its look stays DogeFeed's; its data is the arcade's: the feed, collections, the 
 profiles. These tests keep any other server's address out of its code and pages, check every endpoint answers from
 the arcade, and check Home's Post and the reactions go through the arcade's own routes.
 """
+import json
 import pathlib
 import re
 import sys
@@ -95,3 +96,68 @@ def test_home_messages_and_settings_use_the_arcades_own_modules():
     assert "mail.publishProfile(" in settings
     feed = (pages / "feed.html").read_text()
     assert "dogefeedx.localBarks" not in feed
+
+
+# --------------------------------------------------------------------- an account on a public arcade (2026-11-03)
+NODE_WATCHED = "DNodeWatchAddress111111111111111X"
+
+
+def test_the_door_opens_dogefeedx_reads_and_keeps_the_nodes_own_closed():
+    """2026-11-03: the DogeFeedX windows for the user end on the public website, as the arcade already is."""
+    from arcade.web import door
+    desktop = (ROOT / "arcade" / "web" / "templates" / "desktop.html").read_text()
+    dock = re.findall(r"url: '(/dogefeedx/[a-z]+)'", desktop)
+    assert len(set(dock)) >= 16
+    for path in dock + ["/dogefeedx/post", "/dogefeedx/explore", "/dogefeedx/search", "/dogefeedx/inscription",
+                        "/dogefeedx/collections", "/dogefeedx/api/feed", "/dogefeedx/api/posts/" + "a" * 64,
+                        "/dogefeedx/api/users/someone/posts", "/dogefeedx/api/wallet/holdings",
+                        "/dogefeedx/api/me", "/dogefeedx/aqua.css"]:
+        assert door.public_path(path), path
+    for path in ("/dogefeedx/api/status", "/dogefeedx/api/peers", "/dogefeedx/api/balance",
+                 "/dogefeedx/api/address/inscriptions", "/dogefeedx/api/address/tokens", "/dogefeedx/api/lookup",
+                 "/dogefeedx/network", "/dogefeedx/network/api/status", "/dogefeedx/terminal"):
+        assert not door.public_path(path), path
+    for path in ("/dogefeedx/api/post", "/dogefeedx/api/react", "/dogefeedx/network/api/sync/doge"):
+        assert not door.public_path(path, "POST"), path
+
+
+def test_an_account_reads_its_own_wallet_never_the_nodes(client, monkeypatch):
+    from arcade.web.dogefeedx import wallet_assets
+    app, state = client
+    monkeypatch.setattr(wallet_assets, "node_watch_addresses", lambda: [NODE_WATCHED])
+    # The operator, on its own machine: the node's watch list.
+    assert app.get("/dogefeedx/api/wallet/addresses").json()["addresses"] == [NODE_WATCHED]
+    state.public = True
+    try:
+        assert app.get("/dogefeedx/feed").status_code == 200
+        said = app.get("/dogefeedx/api/wallet/addresses").json()
+        assert NODE_WATCHED not in said["addresses"] and said["source"] == "account"
+        held = app.get("/dogefeedx/api/wallet/holdings").json()
+        assert NODE_WATCHED not in json.dumps(held) and "Sign in" in held["empty"]
+        other = app.get(f"/dogefeedx/api/wallet/holdings?address={NODE_WATCHED}").json()
+        assert other["collections"] == [] and other["addresses"] == [] and other["balance_doge"] is None
+        assert app.get("/dogefeedx/api/status").status_code in (403, 404)
+        assert app.post("/dogefeedx/api/post", json={"text": "x"}).status_code in (403, 404)
+        me = app.get("/dogefeedx/api/me").json()
+        assert me["operator"] is False and me["address"] == ""
+    finally:
+        state.public = False
+
+
+def test_a_signed_in_account_gets_its_own_address_only(client, monkeypatch):
+    from test_account_feed import _sign_in
+    from arcade.web.dogefeedx import wallet_assets
+    app, state = client
+    monkeypatch.setattr(wallet_assets, "node_watch_addresses", lambda: [NODE_WATCHED])
+    state.public = True
+    try:
+        _sign_in(app)
+        said = app.get("/dogefeedx/api/wallet/addresses").json()
+        assert NODE_WATCHED not in said["addresses"] and len(said["addresses"]) <= 1
+        held = app.get("/dogefeedx/api/wallet/holdings").json()
+        assert NODE_WATCHED not in json.dumps(held)
+        if not said["addresses"]:                                  # a test arcade runs no Dogecoin
+            assert "no Dogecoin address" in held["empty"]
+        assert app.get("/dogefeedx/api/me").json()["operator"] is False
+    finally:
+        state.public = False

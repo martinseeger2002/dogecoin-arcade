@@ -69,7 +69,10 @@ a { color:#f3e3a5; }
       document.getElementById('settings-who').textContent = me.tag ? '' : (me.address ? 'No @name yet: claim one on Profile.' : 'Sign in to publish a profile.');
       document.getElementById('dns').value = me.bio || '';
       document.getElementById('website').value = me.url || '';
-      document.getElementById('chain-name').textContent = me.doge ? 'Name: ' + me.doge : '';
+      // Your arcade @name is the name; Dogecoin ord names your Doge address holds describe it on Doge.
+      var doge = (me.doge_names || []).join(' · ');
+      document.getElementById('chain-name').textContent = doge ? 'On Dogecoin: ' + doge
+        : (me.doge ? 'No Dogecoin name on your Doge address (' + me.doge.slice(0, 8) + '…) yet.' : '');
       window.dfxSettingsMe = me;
     }).catch(function () {});
 })();

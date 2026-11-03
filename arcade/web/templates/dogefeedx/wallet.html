@@ -357,7 +357,7 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
     </div>
     
     <div class="df-notice">
-      <strong>Read-only view.</strong> Balances, doginals, DRC-20, and names come from this arcade. DogeFeed only names the collections the index already holds. No key, no spending, no signing.
+      <strong>Read-only view.</strong> Balances, doginals, DRC-20, and names come from this arcade's indexes{{ ', for your own wallet' if public else '' }}. No key, no spending, no signing.
     </div>
     <p class="df-notice" id="wallet-reading" hidden></p>
     
@@ -372,7 +372,9 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
       </button>
     </div>
     
-    <div class="df-address-input">
+    {#- An account reads its own wallet only (apps.api_wallet_holdings), so the look-up of another address is the
+        operator's: hidden from an account rather than offered and always empty. -#}
+    <div class="df-address-input"{% if public %} style="display:none"{% endif %}>
       <label>Public Dogecoin address (watch-only):</label>
       <div class="df-address-input-row">
         <input type="text" id="address-input" placeholder="D... address" autocomplete="off">
@@ -404,7 +406,7 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
     
     <div id="wallet-content">
       <div class="df-wallet-grid" id="wallet-grid">
-        <div class="df-empty" style="grid-column: 1/-1;">Import a watch-only address on this node.</div>
+        <div class="df-empty" style="grid-column: 1/-1;">{{ 'Sign in' if public else 'Import a watch-only address on this node' }}.</div>
       </div>
     </div>
   </main>

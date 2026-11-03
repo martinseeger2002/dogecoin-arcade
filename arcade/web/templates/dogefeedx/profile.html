@@ -409,7 +409,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
       <div class="df-wallet-switch" id="df-wallet-switch">
         <label for="df-wallet-select">Wallet</label>
         <select id="df-wallet-select" aria-label="Imported wallet"></select>
-        <p id="df-wallet-empty" class="df-empty" style="padding:8px 0" hidden>No wallets imported on this node.</p>
+        <p id="df-wallet-empty" class="df-empty" style="padding:8px 0" hidden>{{ "Sign in to see your wallet." if public else "No wallets imported on this node." }}</p>
       </div>
       <div class="df-profile-name" id="profile-name">Profile</div>
       <div class="df-profile-handle" id="profile-handle"></div>
@@ -522,7 +522,9 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
     var name = author.displayName || data.handle || 'Profile';
     document.getElementById('profile-name').innerHTML = esc(name) + (author.verifiedPfp ? VERIFIED : '');
     document.getElementById('topbar-name').textContent = name;
-    document.getElementById('profile-handle').textContent = data.handle ? '@' + data.handle : '';
+    // The arcade @handle first; Dogecoin ord names the person's Doge address holds, beside it.
+    var doge = (author.dogeNames || []).join(' · ');
+    document.getElementById('profile-handle').textContent = (data.handle ? '@' + data.handle : '') + (doge ? '  ·  on Dogecoin: ' + doge : '');
     document.getElementById('profile-bio').textContent = author.bio || '';
     document.getElementById('profile-joined').textContent = card.joined ? 'Joined ' + card.joined : '';
     document.getElementById('following-count').textContent = card.following == null ? '—' : String(card.following);
@@ -552,7 +554,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
         .then(function(data) {
           var mine = (data.names || []).some(function(n) { return n.name === profileHandle; }) || data.profile === profileHandle;
           if (!data.imported) {
-            container.innerHTML = '<div class="df-empty">Import a watch-only address on this node to see the doginals it holds.</div>';
+            container.innerHTML = '<div class="df-empty">{{ 'Sign in' if public else 'Import a watch-only address on this node' }} to see the doginals it holds.</div>';
             return;
           }
           if (!mine) {
@@ -702,6 +704,9 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
     fetch('/dogefeedx/api/me', {credentials: 'same-origin', cache: 'no-store'})
       .then(function (r) { return r.ok ? r.json() : {}; })
       .then(function (me) {
+        var first = !window.dfxMe;
+        window.dfxMe = me;
+        if (first && me.tag && !profileHandle) loadWalletIdentity(dfxReadWallet());
         var name = document.getElementById('local-name');
         var dns = document.getElementById('local-dns');
         var web = document.getElementById('local-web');
@@ -730,11 +735,13 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
         if (!saved || typeof saved !== 'object') saved = {};
         var chain = data.profile || names[0] || '';
         var short = addr && addr.length > 12 ? addr.slice(0, 6) + '…' + addr.slice(-4) : (addr || 'Profile');
-        var label = saved.displayName || chain || short;
+        // The arcade @handle is the name (2026-11-03); the Doge wallet's ord names describe it on Dogecoin.
+        var tag = (window.dfxMe && window.dfxMe.tag) ? '@' + window.dfxMe.tag : '';
+        var label = tag || chain || short;
         document.getElementById('profile-name').textContent = label;
         document.getElementById('topbar-name').textContent = label;
-        document.getElementById('profile-handle').textContent = addr || '';
-        var rest = names.filter(function (n) { return n !== chain; });
+        document.getElementById('profile-handle').textContent = (tag && chain ? 'on Dogecoin: ' + chain + '  ·  ' : '') + (addr || '');
+        var rest = names.filter(function (n) { return n !== chain || !tag; });
         document.getElementById('profile-bio').textContent = data.empty && !data.imported ? data.empty : rest.join(' · ');
         var bits = [];
         if (data.balance_doge) bits.push(data.balance_doge + ' DOGE');

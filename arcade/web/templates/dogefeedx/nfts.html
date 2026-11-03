@@ -353,7 +353,7 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
     </div>
     
     <div class="df-hero">
-      <h2>Held by this node's wallet</h2>
+      <h2>{{ 'Held by your wallet' if public else "Held by this node's wallet" }}</h2>
       <p>Doginals at the imported Dogecoin addresses, named from DogeFeed's public collections. Watch-only.</p>
       <p id="nft-reading" style="margin:8px 0 0;font-size:13px;color:var(--df-text-secondary)"></p>
     </div>
@@ -420,7 +420,7 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
     if (nftFilter === 'listed') rows = rows.filter(function(c) { return c.floor && c.floor !== '—'; });
     if (nftFilter === 'recent') rows = rows.slice().reverse();
     if (!rows.length) {
-      container.innerHTML = '<div class="df-empty">' + (nftRows._empty || 'Import a watch-only address on this node.') + '</div>';
+      container.innerHTML = '<div class="df-empty">' + (nftRows._empty || '{{ 'Sign in' if public else 'Import a watch-only address on this node' }}.') + '</div>';
       return;
     }
     var cards = [];
@@ -454,7 +454,7 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
         if (mine !== nftSeq || dfxReadWallet() !== addr) return;
         if (reading) reading.textContent = readingLine(data);
         nftRows = data.collections || [];
-        nftRows._empty = data.imported ? 'No doginals cross-referenced for this wallet.' : (data.empty || 'Import a watch-only address on this node.');
+        nftRows._empty = data.imported ? 'No doginals cross-referenced for this wallet.' : (data.empty || '{{ 'Sign in' if public else 'Import a watch-only address on this node' }}.');
         paintNfts();
       })
       .catch(function() {
