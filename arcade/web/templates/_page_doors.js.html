@@ -200,8 +200,20 @@
         var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
         d.room = name;
         if (d.member) {
-          if (d.type === 'join') { h.members[d.member.id] = d.member; fastMeet(name, h, d.member); }
+          if (d.type === 'join') {
+            // Back through another node (2026-11-02, the operator: "if somebody drops out of a riff lounge, they can't
+            // reconnect again for several minutes"): the link we hold is to the page that dropped; start a new one.
+            var was = h.fast && h.fast.peers[d.member.id];
+            if (was && was.p.node && d.member.node && was.p.node !== d.member.node) fastDrop(h, d.member.id, true, true);
+            h.members[d.member.id] = d.member; fastMeet(name, h, d.member);
+            var np = h.fast && h.fast.peers[d.member.id];
+            if (np && !np.s) np.byJoin = true;     // the link to the page that just joined: its 'h' must not restart it
+          }
           if (d.type === 'leave') {
+            // The seat they left behind on the node they dropped from, given up after they came back through
+            // another: they are still here, so neither their link nor the page hears of it.
+            var now = h.members[d.member.id];
+            if (now && now.node && d.member.node && now.node !== d.member.node) return;
             delete h.members[d.member.id];
             if (h.fast && h.fast.peers[d.member.id]) { fastDrop(h, d.member.id); fastSay(name, h, d.member, 'gone'); }
           }
@@ -320,6 +332,8 @@
     // size and rate limits on every node, old ones included. STUN comes from /realtime/ice (nodes first, then a
     // public one); there is no relay unless the game's builder pays for one, so a pair that cannot connect
     // directly carries that link over the room instead, as often as the room allows (state 'room').
+    // FAST_FRESH: a link younger than this is still being made, and a page's 'h' never restarts it.
+    var FAST_FRESH = 8000;
     var RTC = '\u001farcade-rtc:', FAST_WAIT = 12000, FAST_MAX = 16384, FAST_PEERS = 19, RTC_PIECE = 300;
     // WHO TO LINK WITH, TO WHOM TO SEND, AND BYTES (2026-10-27, SadFrog's side for an MMO: "one host, many players").
     // By default every pair links (up to FAST_PEERS) and a send goes to everybody, as text. A game may instead
@@ -401,8 +415,13 @@
     }
     function fastStart(name, h){
       if (typeof RTCPeerConnection !== 'function') return;     // no WebRTC here: the room carries everything
-      h.fast = {peers: {}, out: [], parts: {}, latest: null, reliable: [], k: 0};
-      for (var id in h.members) fastMeet(name, h, h.members[id]);
+      h.fast = {peers: {}, out: [], parts: {}, latest: null, reliable: [], k: 0, s: Math.random().toString(36).slice(2, 10)};
+      for (var id in h.members) {
+        fastMeet(name, h, h.members[id]);
+        // Every page that comes (back) into the room tells those whose call it waits for (a lower id offers) that
+        // this is a new page: a link they still hold to us is to the old one, which may still look connected.
+        if (h.fast.peers[id] && id < h.me.id) fastSignal(name, h, id, {t: 'h', s: h.fast.s});
+      }
     }
     // keep: only the links go (a rejoin); the camera, the screen and what the game asked of them stay for the new links.
     function fastStop(h, keep){
@@ -421,7 +440,7 @@
       if (!h.fast || !h.me || p.id === h.me.id || h.fast.peers[p.id]) return;
       if (!fastLinks(h, p.id)) return;                        // the game does not want this link
       if (Object.keys(h.fast.peers).length >= (h.fastMax || FAST_PEERS)) return;
-      var peer = h.fast.peers[p.id] = {p: p, state: '', tries: 0};
+      var peer = h.fast.peers[p.id] = {p: p, state: '', tries: 0, born: Date.now()};
       fastSay(name, h, p, 'connecting');
       if (h.me.id < p.id) fastOffer(name, h, peer);
       peer.timer = setTimeout(function(){ fastFallback(name, h, peer); }, FAST_WAIT);
@@ -608,9 +627,17 @@
         return;
       }
       if (o.t === 'h') {                       // they want the link now and wait for our offer (our id is lower)
-        if (!h.fast.peers[p.id]) fastMeet(name, h, p);
         var ph = h.fast.peers[p.id];
-        if (ph && ph.state !== 'direct' && h.me.id < p.id) fastOffer(name, h, ph);
+        // A new page of theirs (s): a link we hold that is not the one made for it when it joined is to a page of
+        // theirs that dropped, though it may still say connected (a seat kept is announced to nobody). Start again;
+        // what we share with them and hear from them stays.
+        if (ph && o.s && ph.s !== o.s) {
+          if (ph.byJoin && !ph.s) ph.s = o.s;
+          else { fastDrop(h, p.id, true, true); ph = null; }
+        }
+        if (!ph) { fastMeet(name, h, p); ph = h.fast.peers[p.id]; if (ph) ph.s = o.s; return; }   // fastMeet offers
+        if (o.s) ph.s = o.s;
+        if (ph.state !== 'direct' && h.me.id < p.id && !(ph.tries && Date.now() - ph.born < FAST_FRESH)) fastOffer(name, h, ph);
         return;
       }
       if (o.t === 'o') fastAnswer(name, h, p, o);

@@ -88,6 +88,23 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 Riffs Lounge: a player who drops out is linked again at once, not minutes later (Claude)
+The operator: "For some reason, if somebody drops out of a riff lounge, they can't reconnect again for several minutes".
+Three faults in the fast lane (_page_doors.js.html), all on the page; the node is unchanged:
+- **Back in a kept seat (same node):** a page that vanished without "leave" keeps its seat LOCAL_GRACE (30 s); the
+  same player back in it is announced to nobody (node.join returns the seat). The others hold their link to the
+  dropped page, which can still say 'direct', and fastMeet skipped anyone already linked; the newcomer, if its id
+  is the higher, waited for an offer nobody sent until the old link failed (31 s on one machine, longer over the
+  internet, and only the lower id retries, 3 times). Now every page that comes (back) into a room sends 'h' with a
+  page id `s` (h.fast.s) to those whose offer it waits for; a link held for that player that was not made for this
+  page when it joined (peer.byJoin) is dropped and a new one offered at once. What is shared/heard stays (keep).
+- **Back through another node:** its old seat on the node it dropped from expires and that node says "leave",
+  and every page dropped the player's working link and box. A leave from a node other than the one the member is
+  now seated through (member.node) is ignored, link and page alike.
+- **A join from a new node for a player we hold a link to** replaces that link at once.
+- Test: test_fast_lane_browser::test_a_player_who_drops_out_and_comes_back_is_linked_again_at_once (31 s without the
+  fix, about 2 s with it). 90 pass across fast lane, star, media, rejoin, seat-lost, area and realtime_web.
+
 ### 2026-11-02 Relay hops: a link to an arcade no direct link reaches, carried by the arcades between (Claude)
 The operator: "do you think relay hops would be a good idea like they do with Meshtastic?" -- yes, routed rather than
 flooded, for what direct links cannot cover (two routers that each pick a new port per destination).
