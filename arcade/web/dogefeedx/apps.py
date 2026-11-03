@@ -150,6 +150,20 @@ TERMINAL_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 6
 <rect x="14" y="40" width="6" height="8" fill="#33ff33" opacity="0.8"/>
 </svg>"""
 
+FEED_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<defs><linearGradient id="fg" x1="0%" y1="0%" x2="0%" y2="100%">
+<stop offset="0%" style="stop-color:#1a1a1a"/><stop offset="100%" style="stop-color:#000"/>
+</linearGradient></defs>
+<rect width="64" height="64" rx="12" fill="url(#fg)"/>
+<circle cx="32" cy="20" r="10" fill="#d9a520"/>
+<text x="32" y="24" text-anchor="middle" font-size="12" fill="#000" font-weight="bold">D</text>
+<rect x="14" y="34" width="36" height="4" rx="2" fill="#555"/>
+<rect x="14" y="42" width="28" height="4" rx="2" fill="#444"/>
+<rect x="14" y="50" width="32" height="4" rx="2" fill="#444"/>
+<circle cx="50" cy="48" r="6" fill="#d9a520" opacity="0.8"/>
+<path d="M48 48 L50 50 L53 46" stroke="#000" stroke-width="1.5" fill="none"/>
+</svg>"""
+
 
 @router.get("/icon-explorer.png")
 async def icon_explorer():
@@ -167,6 +181,15 @@ async def icon_terminal():
     if path.is_file():
         return FileResponse(path, media_type="image/png")
     return Response(content=TERMINAL_ICON_SVG, media_type="image/svg+xml")
+
+
+@router.get("/icon-feed.png")
+async def icon_feed():
+    """Serve the Feed app icon (SVG fallback)."""
+    path = Path(__file__).parent / "templates" / "dogefeedx" / "icon-feed.png"
+    if path.is_file():
+        return FileResponse(path, media_type="image/png")
+    return Response(content=FEED_ICON_SVG, media_type="image/svg+xml")
 
 
 # --- Explorer API ---
@@ -913,3 +936,8 @@ def register_routes(app, render):
     def dogefeedx_terminal(request: Request):
         """The DogeFeed Terminal app - Terminal.app-style command window."""
         return render(request, "dogefeedx/terminal.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/feed", response_class=HTMLResponse)
+    def dogefeedx_feed(request: Request):
+        """The DogeFeed social feed - Twitter/X-style post timeline."""
+        return render(request, "dogefeedx/feed.html", fullscreen=True)

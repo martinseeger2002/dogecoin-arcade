@@ -34,6 +34,12 @@ def test_terminal_html_exists():
     assert path.is_file(), f"terminal.html not found at {path}"
 
 
+def test_feed_html_exists():
+    """Feed template exists."""
+    path = DOGEFEEDX_PATH / "feed.html"
+    assert path.is_file(), f"feed.html not found at {path}"
+
+
 def test_dogefeedx_apps_py_exists():
     """DogeFeedX Python apps module exists."""
     path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py"
@@ -127,6 +133,32 @@ def test_terminal_html_registers_with_shell():
     content = path.read_text()
     assert "DogeFeedX.registerApp" in content, "Missing shell registration"
     assert "'terminal'" in content or '"terminal"' in content, "Missing app ID"
+
+
+def test_feed_html_has_feed_layout():
+    """Feed HTML has Twitter/X-style layout."""
+    path = DOGEFEEDX_PATH / "feed.html"
+    content = path.read_text()
+    assert "dfx-feed" in content, "Missing feed class"
+    assert "dfx-post" in content, "Missing post class"
+    assert "dfx-feed-sidebar" in content, "Missing sidebar"
+
+
+def test_feed_html_has_social_features():
+    """Feed HTML has social media features."""
+    path = DOGEFEEDX_PATH / "feed.html"
+    content = path.read_text()
+    assert "dfx-post-action" in content, "Missing post actions (like, repost)"
+    assert "Trending" in content, "Missing trending section"
+    assert "dfx-post-avatar" in content, "Missing avatar styling"
+
+
+def test_feed_html_registers_with_shell():
+    """Feed registers itself with the shell."""
+    path = DOGEFEEDX_PATH / "feed.html"
+    content = path.read_text()
+    assert "DogeFeedX.registerApp" in content, "Missing shell registration"
+    assert "'feed'" in content or '"feed"' in content, "Missing app ID"
 
 
 def test_dogefeedx_apps_has_api_routes():

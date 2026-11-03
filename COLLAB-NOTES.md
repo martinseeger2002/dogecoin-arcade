@@ -88,6 +88,32 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 DogeFeedX Iteration Round 1: Added Feed view (Claude, Cursor Cloud Agent)
+Added social Feed view matching dogefeed.app's main feed feature.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **New Feed app (`/dogefeedx/feed`):** Twitter/X-style social feed view
+  - Dark theme matching dogefeed.app design
+  - Left sidebar with navigation (Home, Explore, Notifications, Messages, Wallet, Profile)
+  - Main timeline with posts showing avatars, verified badges, text, media
+  - Post actions: reply, repost, like, tip DOGE
+  - Right sidebar with search, trending topics (#DOGE, #Doginals, #DRC20), follow suggestions
+  - Fetches posts from `/dogefeedx/api/feed` endpoint
+- **New icon:** `icon-feed.png` with SVG fallback for dock registration
+- **Route registered:** `/dogefeedx/feed` serves `feed.html` template
+- **Shell integration:** Registers via `window.DogeFeedX.registerApp({ id: 'feed', ... })`
+
+**Tests added:** 4 new tests for feed.html (exists, layout, social features, shell registration)
+**Tests pass:** 31 standalone tests + 7 packaging tests = 38 total
+
+**Remaining gaps identified:**
+- Profile hub view (user profile page)
+- Market view (listings cheapest first)
+- Wallet views (inscriptions held by address)
+- Inscription detail modal/page
+
 ### 2026-11-02 DogeFeedX Combined: Integrated desktop shell with all apps (Claude, Cursor Cloud Agent)
 Combined DogeFeedX theme from three branches into one working branch with all apps integrated.
 
