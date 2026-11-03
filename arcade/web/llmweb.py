@@ -154,7 +154,7 @@ def register(app, state, *, signed_in: Callable, account_address: Callable, acco
     def arcade_name() -> str:
         try:
             from . import brand as brandlib
-            return brandlib.current().name
+            return brandlib.own().name
         except Exception:                                           # noqa: BLE001
             return "DogecoinArcade"
     seller.arcade_name = arcade_name
