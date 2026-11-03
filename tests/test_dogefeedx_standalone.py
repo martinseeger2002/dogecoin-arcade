@@ -166,7 +166,8 @@ def test_feed_html_has_feed_layout():
     # Allow either df- or dfx- prefix (df- matches dogefeed.app styling)
     assert "df-" in content or "dfx-feed" in content, "Missing feed class"
     assert "df-post" in content or "dfx-post" in content, "Missing post class"
-    assert "df-sidebar" in content or "dfx-feed-sidebar" in content, "Missing sidebar"
+    assert '<nav class="df-sidebar">' not in content
+    assert "df-post" in content or "dfx-post" in content
 
 
 def test_feed_html_has_social_features():
@@ -275,8 +276,10 @@ def test_wallet_html_has_address_api():
     """Wallet HTML uses proper address API endpoints."""
     path = DOGEFEEDX_PATH / "wallet.html"
     content = path.read_text()
-    assert "/address/" in content, "Missing address API endpoint"
+    assert "/dogefeedx/api/wallet/holdings" in content, "Missing watch-only holdings endpoint"
+    assert "address=" in content, "Missing public address lookup"
     assert "inscriptions" in content.lower(), "Missing inscriptions handling"
+    assert "importprivkey" not in content and "private key" not in content.lower()
 
 
 def test_inscription_html_has_content_viewer():

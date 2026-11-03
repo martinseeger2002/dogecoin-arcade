@@ -15,8 +15,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
-  --df-gold: #f5a623;
-  --df-gold-dark: #e09000;
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
   --df-gold-light: #fff8e7;
   --df-bg: #fff;
   --df-text: #0f1419;
@@ -342,91 +342,16 @@ html.indesk body.df-dogefeed .df-notice { background: #111 !important; color: #f
 html.indesk body.df-dogefeed .df-notice strong { color: #f3e3a5 !important; }
 html.indesk body.df-dogefeed .df-chain-btn { background: #111 !important; color: #fff6dd !important; width: auto !important; box-shadow: none !important; }
 html.indesk body.df-dogefeed .df-chain-btn.active { background: #1a1a1a !important; color: #fff6dd !important; border-color: #f3e3a5 !important; }
+html.indesk body.df-dogefeed .df-wallet-stat { background: #0a0a0a !important; color: #fff6dd !important; border: 1px solid #ffffff1f; }
+html.indesk body.df-dogefeed .df-wallet-item { background: #0a0a0a !important; }
+html.indesk body.df-dogefeed .df-wallet-stat-value, html.indesk body.df-dogefeed .df-wallet-stat-label { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
 </style>
 <script>document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <!-- Left Sidebar -->
-  <nav class="df-sidebar">
-    <a href="/dogefeedx/feed" class="df-logo">
-      <svg viewBox="0 0 32 32" fill="none">
-        <circle cx="16" cy="16" r="14" fill="#f5a623"/>
-        <ellipse cx="11" cy="13" rx="2" ry="2.5" fill="#000"/>
-        <ellipse cx="21" cy="13" rx="2" ry="2.5" fill="#000"/>
-        <ellipse cx="16" cy="19" rx="4" ry="3" fill="#000"/>
-      </svg>
-      <span>DogeFeed</span>
-    </a>
-    
-    <div class="df-nav">
-      <a href="/dogefeedx/feed" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        Home
-      </a>
-      <a href="/dogefeedx/explore" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
-        Explore
-      </a>
-      <a href="/dogefeedx/notifications" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-        Notifications
-      </a>
-      <a href="/dogefeedx/messages" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-        Messages
-      </a>
-      <a href="/dogefeedx/bookmarks" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-        Bookmarks
-      </a>
-      <a href="/dogefeedx/wallet" class="df-nav-item active">
-        <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-        Wallet
-      </a>
-      <a href="/dogefeedx/nfts" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        NFTs
-      </a>
-      <a href="/dogefeedx/market" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
-        Market
-      </a>
-      <a href="/dogefeedx/launchpad" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>
-        Launchpad
-      </a>
-      <a href="/dogefeedx/arcade" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-        Arcade<span class="df-nav-badge" style="background:var(--df-gold);color:#000;font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:4px;">BETA</span>
-      </a>
-      <a href="/dogefeedx/memes" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-        Meme Library
-      </a>
-      <a href="/dogefeedx/leaderboard" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><path d="M8.21 13.89L7 23l5-3 5 3-1.21-9.12"/><path d="M19 8a7 7 0 1 0-14 0 7.002 7.002 0 0 0 6 6.92V17h2v-2.08A7.002 7.002 0 0 0 19 8z"/></svg>
-        Leaderboard
-      </a>
-      <a href="https://dogemaps.land" target="_blank" rel="noopener noreferrer" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
-        Dogemaps
-      </a>
-      <a href="/dogefeedx/inscribe" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-        Inscribe
-      </a>
-      <a href="/dogefeedx/settings" class="df-nav-item">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        Settings
-      </a>
-    </div>
-    
-    <div style="padding: 12px; font-size: 13px; color: var(--df-text-secondary); text-align: center; border-top: 1px solid var(--df-border); margin-top: auto;">
-      Browsing read-only. Sign in to post, like and tip.
-    </div>
-    
-    <a class="df-signin-btn" href="/me" style="display:block;text-align:center;text-decoration:none;color:#000">Sign in</a>
-  </nav>
+  
 
   <!-- Main Content -->
   <main class="df-main">
@@ -435,12 +360,12 @@ html.indesk body.df-dogefeed .df-chain-btn.active { background: #1a1a1a !importa
     </div>
     
     <div class="df-notice">
-      <strong>Read-only view.</strong> This wallet viewer displays inscriptions held at an address. No spending or signing is performed here.
+      <strong>Read-only view.</strong> Balances, doginals, DRC-20, and names come from this node's indexes. DogeFeed only names the collections the index already holds. No key, no spending, no signing.
     </div>
     
     <div class="df-chain-selector">
       <button class="df-chain-btn active" data-chain="doge">
-        <svg viewBox="0 0 24 24" fill="#f5a623"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">Ð</text></svg>
+        <svg viewBox="0 0 24 24" fill="#f3e3a5"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">Ð</text></svg>
         <div>Dogecoin</div>
       </button>
       <button class="df-chain-btn" data-chain="pep">
@@ -450,9 +375,9 @@ html.indesk body.df-dogefeed .df-chain-btn.active { background: #1a1a1a !importa
     </div>
     
     <div class="df-address-input">
-      <label>Enter wallet address to view holdings:</label>
+      <label>Public Dogecoin address (watch-only):</label>
       <div class="df-address-input-row">
-        <input type="text" id="address-input" placeholder="D... or P... address">
+        <input type="text" id="address-input" placeholder="D... address" autocomplete="off">
         <button class="df-lookup-btn" onclick="lookupAddress()">View</button>
       </div>
     </div>
@@ -481,35 +406,13 @@ html.indesk body.df-dogefeed .df-chain-btn.active { background: #1a1a1a !importa
     
     <div id="wallet-content">
       <div class="df-wallet-grid" id="wallet-grid">
-        <div class="df-empty" style="grid-column: 1/-1;">Enter an address above to view holdings</div>
+        <div class="df-empty" style="grid-column: 1/-1;">Import a watch-only address on this node.</div>
       </div>
     </div>
   </main>
 
   <!-- Right Sidebar -->
-  <aside class="df-right">
-    <div class="df-search">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-      <input type="text" placeholder="Search DogeFeed">
-    </div>
-    
-    <div class="df-card">
-      <h2 class="df-card-title">Quick Links</h2>
-      <div class="df-card-content">
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-          <a href="/dogefeedx/market" style="padding: 12px; background: rgba(0,0,0,0.03); border-radius: 8px; display: flex; align-items: center; gap: 8px;">
-            <span style="font-size: 20px;">🛒</span>
-            <span>Browse Market</span>
-          </a>
-          <a href="/dogefeedx/nfts" style="padding: 12px; background: rgba(0,0,0,0.03); border-radius: 8px; display: flex; align-items: center; gap: 8px;">
-            <span style="font-size: 20px;">🔍</span>
-            <span>Browse collections</span>
-          </a>
-        </div>
-      </div>
-    </div>
-    
-  </aside>
+  
 </div>
 
 <script>
@@ -521,48 +424,73 @@ html.indesk body.df-dogefeed .df-chain-btn.active { background: #1a1a1a !importa
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   
+  var walletTab = 'all';
+  var lastHoldings = null;
+
+  function paintHoldings(data) {
+    lastHoldings = data || {};
+    var container = document.getElementById('wallet-grid');
+    var statsEl = document.getElementById('wallet-stats');
+    statsEl.style.display = 'grid';
+    var collections = data.collections || [];
+    var pieces = 0;
+    collections.forEach(function(c) { pieces += Number(c.count) || 0; });
+    document.getElementById('stat-inscriptions').textContent = String(pieces);
+    document.getElementById('stat-collections').textContent = String(collections.length);
+    document.getElementById('stat-balance').textContent = (data.balance_doge || '0') + ' DOGE';
+    var html = '';
+    if (walletTab === 'all' || walletTab === 'nfts') {
+      collections.forEach(function(c) {
+        (c.pieces || []).forEach(function(p) {
+          var href = p.href || c.href || '/dogefeedx/nfts';
+          html += '<a class="df-wallet-item" href="' + esc(href) + '" target="_blank" rel="noopener">';
+          if (p.image) html += '<img src="' + esc(p.image) + '" alt="" loading="lazy" referrerpolicy="no-referrer">';
+          html += '<div class="df-wallet-item-badge">' + esc(c.name || '') + (p.edition ? ' #' + esc(p.edition) : '') + '</div></a>';
+        });
+      });
+    }
+    if (walletTab === 'all' || walletTab === 'names') {
+      (data.names || []).forEach(function(n) {
+        html += '<div class="df-wallet-item"><div class="df-wallet-item-badge">' + esc(n.name) + '</div></div>';
+      });
+    }
+    if (walletTab === 'all' || walletTab === 'tokens') {
+      (data.tokens || []).forEach(function(t) {
+        html += '<div class="df-wallet-item"><div class="df-wallet-item-badge">' + esc(t.tick) + ' ' + esc(t.balance) + '</div></div>';
+      });
+    }
+    if (!html) {
+      html = '<div class="df-empty" style="grid-column:1/-1">' + esc(data.empty || 'No public holdings for this address.') + '</div>';
+    }
+    container.innerHTML = html;
+  }
+
+  function loadHoldings(address) {
+    var container = document.getElementById('wallet-grid');
+    container.innerHTML = '<div class="df-loading" style="grid-column:1/-1"><div class="df-spinner"></div></div>';
+    var url = '/dogefeedx/api/wallet/holdings';
+    if (address) url += '?address=' + encodeURIComponent(address);
+    fetch(url)
+      .then(function(r) { return r.json().then(function(data) { return {ok: r.ok, data: data}; }); })
+      .then(function(res) {
+        if (!res.ok) {
+          container.innerHTML = '<div class="df-empty" style="grid-column:1/-1">Enter a public Dogecoin address. No key is used.</div>';
+          return;
+        }
+        paintHoldings(res.data || {});
+      })
+      .catch(function() {
+        container.innerHTML = '<div class="df-empty" style="grid-column:1/-1">Could not load holdings. Try again later.</div>';
+      });
+  }
+
   window.lookupAddress = function() {
     var address = document.getElementById('address-input').value.trim();
     if (!address) {
-      alert('Please enter an address');
+      loadHoldings('');
       return;
     }
-    
-    var container = document.getElementById('wallet-grid');
-    var statsEl = document.getElementById('wallet-stats');
-    container.innerHTML = '<div class="df-loading" style="grid-column:1/-1"><div class="df-spinner"></div></div>';
-    statsEl.style.display = 'grid';
-    
-    fetch('/dogefeedx/api/address/' + encodeURIComponent(address) + '/inscriptions?limit=24')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        var inscriptions = data.inscriptions || [];
-        
-        document.getElementById('stat-inscriptions').textContent = inscriptions.length;
-        document.getElementById('stat-collections').textContent = data.collections || 0;
-        document.getElementById('stat-balance').textContent = (data.balance || 0) + ' ' + (currentChain === 'doge' ? 'DOGE' : 'PEP');
-        
-        if (inscriptions.length === 0) {
-          container.innerHTML = '<div class="df-empty" style="grid-column:1/-1">No inscriptions found at this address</div>';
-          return;
-        }
-        
-        var html = '';
-        inscriptions.forEach(function(ins) {
-          html += '<div class="df-wallet-item" onclick="window.location=\'/dogefeedx/inscription?id=' + esc(ins.id) + '\'">';
-          html += '<img src="' + IMG_BASE + '/' + esc(ins.id) + '" alt="" loading="lazy" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23f5a623%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 font-size=%2220%22>📜</text></svg>\'">';
-          if (ins.collection) {
-            html += '<div class="df-wallet-item-badge">' + esc(ins.collection) + '</div>';
-          }
-          html += '</div>';
-        });
-        
-        container.innerHTML = html;
-      })
-      .catch(function(err) {
-        console.error('Lookup error:', err);
-        container.innerHTML = '<div class="df-empty" style="grid-column:1/-1">Could not load inscriptions. Try again later.</div>';
-      });
+    loadHoldings(address);
   };
   
   // Chain selector
@@ -579,8 +507,12 @@ html.indesk body.df-dogefeed .df-chain-btn.active { background: #1a1a1a !importa
     tab.addEventListener('click', function() {
       document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
       tab.classList.add('active');
+      walletTab = tab.getAttribute('data-tab') || 'all';
+      if (lastHoldings) paintHoldings(lastHoldings);
     });
   });
+
+  loadHoldings('');
   
   // Register with shell
   if (window.DogeFeedX && window.DogeFeedX.registerApp) {

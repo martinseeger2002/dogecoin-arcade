@@ -1,15 +1,10 @@
-"""DogeFeedX: DogeFeed-branded Mac OS X-style apps for the Dogecoin Arcade.
+"""DogeFeedX apps for the Dogecoin Arcade desktop.
 
-Two self-contained apps that register with the shell's dock:
-1. Explorer: A Finder-style browser of inscription collections from DogeFeed
-2. Terminal: A Terminal.app-style window for inline commands
-
-Data sources:
-- dogefeed.app: Social feed (/api/feed), search (/api/search), doginal images (/doginal-img/)
-- explorer.dogesoft.io: Collection metadata fallback (DogeFeed does not expose a public
-  collection listing API; their collection pages are server-side rendered)
-
-All results are cached locally with graceful fallback when services are unreachable.
+What a wallet owns is read from this node: the watcher's utxo index for the
+balance, the ledger for doginals, and the ord index for DRC-20 balances and
+names. dogefeed.app is read-only enrichment (collection names, covers, floors,
+the social feed, the leaderboard, memes, and launchpad listings). A public
+explorer is not asked who holds a coin, a doginal, a token, or a name.
 """
 from __future__ import annotations
 
@@ -1071,25 +1066,25 @@ async def api_peers(request: Request):
 
 @router.get("/api/balance")
 async def api_balance(address: str = ""):
-    """Check address balance using DogeFeed Explorer API."""
+    """Balance from this node's watcher utxo index. No explorer, no key."""
     if not address:
         raise HTTPException(status_code=400, detail="Address required")
-    
+    from .wallet_assets import index_owned, valid_address
+
     try:
-        data = await _fetch_dogefeed_explorer(f"/wallet/address/{address}/balance")
-        
-        balances = [{
-            "chain": "Dogecoin",
-            "amount": str(data.get("balance", 0) / 100000000),
-            "symbol": "DOGE",
-        }]
-        
-        return {"address": address, "balances": balances}
-        
-    except HTTPException:
-        return {"address": address, "balances": []}
+        valid_address(address)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dogecoin address required")
+    try:
+        owned = await asyncio.to_thread(index_owned, address)
+        amount = owned.get("balance_doge") or "0"
     except Exception:
-        return {"address": address, "balances": []}
+        amount = "0"
+    return {
+        "address": address,
+        "balances": [{"chain": "Dogecoin", "amount": str(amount), "symbol": "DOGE"}],
+        "source": "node",
+    }
 
 
 # Cache for address inscriptions
@@ -1102,162 +1097,127 @@ async def api_address_inscriptions(
     offset: int = 0,
     limit: int = 50
 ):
-    """Get inscriptions held by an address.
-    
-    This is the primary endpoint for the Wallet view to display inscriptions.
-    Uses dogefeed.app and explorer.dogesoft.io for inscription data.
-    
-    SECURITY: Read-only. Returns inscription metadata only, never UTXOs or
-    spending data. Per exchange-safety.md, inscription-carrying UTXOs must
-    never be exposed to spending logic.
+    """Doginals the ledger index says this address holds.
+
+    Pictures are this node's `/content/` copies. Collection names may be filled
+    later from the public catalog. No explorer, and no outpoint.
     """
     if not address:
         raise HTTPException(status_code=400, detail="Address required")
-    
+    from .wallet_assets import index_owned, valid_address
+
+    try:
+        valid_address(address)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dogecoin address required")
+
     limit = min(max(1, limit), 100)
     offset = max(0, offset)
-    
-    cache_key = f"addr_inscriptions:{address}:{offset}:{limit}"
-    cached = _get_cached(_address_inscriptions_cache, cache_key, ttl=120)
-    if cached is not None:
-        return cached
-    
     try:
-        # Try explorer API for address inscriptions
-        data = await _fetch_dogefeed_explorer(
-            f"/wallet/address/{address}/inscriptions",
-            {"offset": offset, "limit": limit}
-        )
-        
-        inscriptions_raw = data if isinstance(data, list) else data.get("inscriptions", data.get("items", []))
-        
-        inscriptions = []
-        for i in inscriptions_raw:
-            insc = {
-                "id": i.get("id") or i.get("inscription_id") or "",
-                "number": i.get("number") or i.get("inscription_number"),
-                "name": i.get("name") or i.get("title") or "",
-                "content_type": i.get("content_type") or i.get("mime_type") or "image/png",
-                "content_size": i.get("content_size") or i.get("size"),
-                "collection": i.get("collection") or i.get("collection_name") or "",
-                "genesis_height": i.get("genesis_height") or i.get("height"),
-                "image_url": f"{DOGEFEED_IMG_BASE}/{i.get('id') or i.get('inscription_id') or ''}",
-            }
-            inscriptions.append(insc)
-        
-        result = {
-            "address": address,
-            "inscriptions": inscriptions,
-            "total": data.get("total", len(inscriptions_raw)) if isinstance(data, dict) else len(inscriptions_raw),
-            "offset": offset,
-            "limit": limit,
-            "has_more": len(inscriptions_raw) >= limit,
-            "source": "explorer.dogesoft.io",
-            "image_base": DOGEFEED_IMG_BASE,
-        }
-        
-        _set_cached(_address_inscriptions_cache, cache_key, result)
-        return result
-        
-    except HTTPException:
-        return {
-            "address": address,
-            "inscriptions": [],
-            "total": 0,
-            "offset": offset,
-            "limit": limit,
-            "has_more": False,
-            "source": "explorer.dogesoft.io",
-            "error": "unreachable",
-        }
-    except Exception as e:
-        logger.warning(f"Error fetching address inscriptions: {e}")
-        return {
-            "address": address,
-            "inscriptions": [],
-            "total": 0,
-            "offset": offset,
-            "limit": limit,
-            "has_more": False,
-            "source": "explorer.dogesoft.io",
-            "error": str(e),
-        }
+        owned = await asyncio.to_thread(index_owned, address)
+        pieces = list(owned.get("pieces") or [])
+    except Exception as exc:
+        logger.warning(f"Index inscriptions failed: {exc}")
+        pieces = []
+    page = pieces[offset:offset + limit]
+    inscriptions = [{
+        "id": piece.get("inscription_id") or "",
+        "name": piece.get("title") or "",
+        "content_type": "",
+        "collection": piece.get("slug") or piece.get("title") or "",
+        "image_url": piece.get("image") or "",
+    } for piece in page]
+    return {
+        "address": address,
+        "inscriptions": inscriptions,
+        "total": len(pieces),
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + limit < len(pieces),
+        "source": "node",
+    }
 
 
 @router.get("/api/address/tokens")
 async def api_address_tokens(address: str = ""):
-    """Get DRC-20 token balances for an address.
-    
-    SECURITY: Read-only. Returns token balances only.
-    """
+    """DRC-20 balances from this arcade's ord index. No explorer, no key."""
     if not address:
         raise HTTPException(status_code=400, detail="Address required")
-    
-    cache_key = f"addr_tokens:{address}"
-    cached = _get_cached(_token_cache, cache_key, ttl=120)
-    if cached is not None:
-        return cached
-    
+    from .wallet_assets import index_owned, valid_address
+
     try:
-        # Try dogefeed.app first
+        valid_address(address)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dogecoin address required")
+    try:
+        owned = await asyncio.to_thread(index_owned, address)
+        rows = list(owned.get("tokens") or [])
+    except Exception as exc:
+        logger.warning(f"Index tokens failed: {exc}")
+        rows = []
+    tokens = [{
+        "ticker": row.get("tick") or "",
+        "balance": row.get("balance") or "0",
+        "transferable": row.get("balance") or "0",
+        "available": row.get("balance") or "0",
+    } for row in rows]
+    return {"address": address, "tokens": tokens, "source": "node"}
+
+
+@router.get("/api/wallet/holdings")
+async def api_wallet_holdings(address: str = ""):
+    """Doginals, names, DRC-20, and the balance for one Dogecoin address.
+
+    Ownership is this node's indexes. `address` is an optional public lookup of
+    an address the index already watches. No key is accepted. Outpoints are not
+    returned. dogefeed.app only labels collections the index already holds.
+    """
+    from .wallet_assets import (
+        empty_holdings,
+        holdings_for,
+        merge_holdings,
+        node_watch_addresses,
+        public_view,
+        valid_address,
+    )
+
+    watched = node_watch_addresses()
+    if address:
         try:
-            data = await _fetch_dogefeed_app(f"/api/address/{address}/drc20")
-        except HTTPException:
-            data = await _fetch_dogefeed_explorer(f"/drc20/address/{address}")
-        
-        tokens_raw = data if isinstance(data, list) else data.get("tokens", data.get("balances", []))
-        
-        tokens = []
-        for t in tokens_raw:
-            token = {
-                "ticker": t.get("ticker") or t.get("tick") or "",
-                "balance": t.get("balance") or t.get("amount") or "0",
-                "transferable": t.get("transferable") or "0",
-                "available": t.get("available") or t.get("balance") or "0",
-            }
-            tokens.append(token)
-        
-        result = {
-            "address": address,
-            "tokens": tokens,
-            "source": "dogefeed.app",
-        }
-        
-        _set_cached(_token_cache, cache_key, result)
-        return result
-        
-    except HTTPException:
-        return {"address": address, "tokens": [], "source": "dogefeed.app", "error": "unreachable"}
-    except Exception as e:
-        logger.warning(f"Error fetching address tokens: {e}")
-        return {"address": address, "tokens": [], "source": "dogefeed.app", "error": str(e)}
+            valid_address(address)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Dogecoin address required")
+        try:
+            result = await holdings_for(address, imported=address in set(watched))
+        except Exception:
+            result = empty_holdings()
+        return public_view(result)
+    if not watched:
+        return empty_holdings()
+    parts = []
+    for one in watched[:4]:
+        try:
+            parts.append(await holdings_for(one, imported=True))
+        except Exception:
+            continue
+    return public_view(merge_holdings(parts) if parts else empty_holdings())
 
 
 @router.get("/api/lookup")
 async def api_lookup(name: str = ""):
-    """Look up a name (e.g., john.doge) using DogeFeed Explorer API."""
+    """A name from this arcade's name index. The claim's outpoint is not returned."""
     if not name:
         raise HTTPException(status_code=400, detail="Name required")
-    
+    from .wallet_assets import local_name
+
     try:
-        data = await _fetch_dogefeed_explorer(f"/name/{name}")
-        
-        if data and data.get("name"):
-            return {
-                "found": True,
-                "name": data.get("name"),
-                "owner": data.get("owner") or data.get("holder") or "",
-                "address": data.get("address") or "",
-                "url": data.get("url") or "",
-                "inscribed_at": data.get("inscribed_at") or data.get("height"),
-            }
-        else:
-            return {"found": False, "name": name}
-            
-    except HTTPException:
-        return {"found": False, "name": name}
+        found = await asyncio.to_thread(local_name, name)
     except Exception:
-        return {"found": False, "name": name}
+        found = None
+    if not found:
+        return {"found": False, "name": name, "source": "node"}
+    return {"found": True, "name": found.get("name") or name,
+            "inscription": found.get("inscription") or "", "source": "node"}
 
 
 @router.get("/api/memes")

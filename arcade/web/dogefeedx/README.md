@@ -1,3 +1,50 @@
+# DogeFeedX
+
+The dock is the navigation. Each window is one module. What a wallet **owns**
+is read from this Dogecoin node and this arcade's indexes. [dogefeed.app](https://dogefeed.app)
+is read-only, and only to enrich a label: a collection's public name, cover,
+and floor, or a public social page. No module asks dogefeed.app, dogecoinnames,
+or explorer.dogesoft.io who holds a coin, a doginal, a DRC-20, or a name.
+
+Ownership indexes:
+
+| Owns | Where |
+|---|---|
+| Balance | The watcher's utxo index (`arcade/utxos.py` on the Dogecoin ledger). The sum only. Outpoints are not returned. |
+| Doginals | The ledger inscription index (`held_collections` / `held_pieces`). Pictures are this node's `/content/`. |
+| DRC-20 | This arcade's ord index (`DoginalIndex.balances`). |
+| Names | This arcade's ord index (`DoginalIndex.names_on` for coins the watcher already holds). The claim's outpoint is dropped. |
+
+A pasted address that this node is not watching comes back empty. Import it
+watch-only on the node and let the indexes catch up. No key is asked, and
+nothing is written to dogefeed.app.
+
+## Per-module data sources
+
+| Dock module | What it shows | Source of truth |
+|---|---|---|
+| Home | Public social feed | dogefeed.app `/api/feed` (read-only). Not a wallet. |
+| Profile | A handle's public posts; NFT tab | Posts from dogefeed.app. NFT tab is this node's holdings, and only when the open handle is a name the index holds. |
+| Files | Collections, DRC-20, names | Node indexes via `/dogefeedx/api/wallet/holdings`. Catalog names and covers from dogefeed.app `/market`. |
+| Notifications | This arcade's notices | Local `/dogefeedx/api/local/notifications`. |
+| Messages | This arcade's messages | Local arcade account. No dogefeed auth. |
+| Explore | Hashtags, people, collections, earners, top posts | dogefeed.app public pages. Not a wallet. |
+| Market | Public Doginal and DRC-20 listings, floors, covers | dogefeed.app market. Not what any wallet owns. |
+| Inscribe | Create an inscription, token, or name | This arcade (`/create/ord`, `/tokens`, `/create/name`). Does not embed inscribe.doginals.org. |
+| Wallet | Balance, doginals, DRC-20, names | Node indexes. dogefeed.app only labels collections the index already holds. |
+| Launchpad | Public mint listings, plus this module's Top Launches panel | dogefeed.app launch listings. Applying to launch uses this arcade's wallet. |
+| NFTs | Doginals at the node's addresses | Node indexes, labeled from the public catalog. |
+| Arcade | Free-chip games, and games inscribed here | dogefeed.app's public game list, and this node's own games. |
+| Bookmarks | Saved posts on this arcade | Local. |
+| Meme Library | Public meme pictures, and pictures picked in this browser | dogefeed.app `/api/memes` for the public grid. Local picks stay in this browser. |
+| Leaderboard | Public boards | dogefeed.app. Top referrers stays empty: there is no referral system. |
+| Settings | This arcade's account | Local `/account`. Not a DogeFeed login. |
+
+Routes that used to ask explorer.dogesoft.io for a wallet (`/api/balance`,
+`/api/address/inscriptions`, `/api/address/tokens`, `/api/lookup`) now read
+the same indexes. `/api/wallet/holdings` is the one Files, NFTs, Profile, and
+Wallet call.
+
 # DogeFeedX Network App
 
 A Mac OS X Aqua-styled network status viewer for the DogeFeedX desktop shell.

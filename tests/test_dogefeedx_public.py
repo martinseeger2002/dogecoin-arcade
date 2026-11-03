@@ -249,8 +249,10 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     assert "[data-skin=\"dogefeedx\"] .dk { top: 28px; left: 0; bottom: 0;" in desk
     assert "[data-skin=\"dogefeedx\"] .dk-dock { display: flex; position: fixed; left: 50%; bottom: 0;" in desk
     files = (TEMPLATES / "files.html").read_text()
-    assert "/account/nfts/collections" in files and "/account/nfts/pieces" in files
-    assert "/account/token20?chain=" in files and "/account/names" in files
+    assert "/dogefeedx/api/wallet/holdings" in files
+    assert "/account/nfts/collections" not in files and "/account/nfts/pieces" not in files
+    assert "/account/token20?chain=" not in files and "/account/names" not in files
+    assert "Import a watch-only address on this node" in files
     assert 'id="coll-list"' in files
     memes = (TEMPLATES / "memes.html").read_text()
     assert 'id="meme-file"' in memes and "dogefeedx.memes" in memes and "dogefeedx.draftMeme" in memes
@@ -279,7 +281,9 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     wallet = (TEMPLATES / "wallet.html").read_text()
     assert "Sample Addresses" not in wallet and "nghHJba6wBoWesbYQfkZiMTicoQANkpdvH" not in wallet
     nfts = (TEMPLATES / "nfts.html").read_text()
-    assert "/dogefeedx/api/market/doginals" in nfts and "Total traded" in nfts
+    assert "/dogefeedx/api/wallet/holdings" in nfts
+    assert "Import a watch-only address on this node" in nfts
+    assert "/dogefeedx/api/market/doginals" not in nfts
     assert 'id="meme-count"' in memes
     assert 'id="lookup-u"' in profile
     assert "boardRange" in (TEMPLATES / "leaderboard.html").read_text()
@@ -293,3 +297,9 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
         assert "Sign in coming soon" not in page
         assert 'href="#" class="df-nav-item' not in page
         assert "inscribe.doginals.org" not in page
+        assert '<nav class="df-sidebar">' not in page
+        assert 'class="df-nav-item"' not in page
+        if name == "launchpad.html":
+            assert '<aside class="df-right">' in page and "Top Launches" in page
+        else:
+            assert '<aside class="df-right">' not in page

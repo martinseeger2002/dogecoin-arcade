@@ -207,35 +207,20 @@ def test_market_window_is_dark_and_its_columns_do_not_cover_each_other(base):
         report = frame.evaluate("""() => {
           const rgb = (s) => (s.match(/[\\d.]+/g) || []).slice(0, 3).map(Number);
           const lum = (s) => { const c = rgb(s); return c.length ? (c[0] + c[1] + c[2]) / 3 : 255; };
-          const box = (el) => el.getBoundingClientRect();
-          const hit = (a, b) => !(a.right <= b.left + 1 || a.left >= b.right - 1
-            || a.bottom <= b.top + 1 || a.top >= b.bottom - 1);
-          const title = document.querySelector('.df-card-title');
-          const card = document.querySelector('.df-card');
-          const side = document.querySelector('.df-sidebar');
-          const main = document.querySelector('.df-main');
-          const right = document.querySelector('.df-right');
-          const sign = document.querySelector('.df-signin-btn');
-          const list = document.querySelector('#collections-list');
+          const title = document.querySelector('h1');
           const img = document.querySelector('.df-collection img');
           return {
             indesk: document.documentElement.classList.contains('indesk'),
             body: lum(getComputedStyle(document.body).backgroundColor),
             title: lum(getComputedStyle(title).color),
-            card: lum(getComputedStyle(card).backgroundColor),
-            sideOverMain: hit(box(side), box(main)),
-            rightOverMain: hit(box(right), box(main)),
-            signOverList: hit(box(sign), box(list)),
+            sidebar: !!document.querySelector('nav.df-sidebar, aside.df-right'),
             img: img.src
           };
         }""")
         assert report["indesk"] is True
         assert report["body"] < 40, report
-        assert report["card"] < 40, report
         assert report["title"] > 180, report
-        assert report["sideOverMain"] is False, report
-        assert report["rightOverMain"] is False, report
-        assert report["signOverList"] is False, report
+        assert report["sidebar"] is False, report
         assert report["img"].startswith("https://dogefeed.app/"), report["img"]
         page.locator('.dk-win[aria-label="Market"]').screenshot(
             path="/opt/cursor/artifacts/compare/market-window-dfx.png")
@@ -332,7 +317,7 @@ def test_the_dock_magnifies_shows_real_badges_and_opens_each_app_once(base):
           desk: getComputedStyle(document.querySelector('.dk')).bottom,
           dock: getComputedStyle(document.querySelector('.dk-dock')).bottom
         })""")
-        assert strip["body"] == "rgb(13, 13, 14)", strip
+        assert strip["body"] == "rgb(0, 0, 0)", strip
         assert strip["desk"] == "0px" and strip["dock"] == "0px", strip
         page.screenshot(path="/opt/cursor/artifacts/compare/desktop-bottom-dfx.png")
 
@@ -383,9 +368,10 @@ def test_the_dock_magnifies_shows_real_badges_and_opens_each_app_once(base):
             html = body.inner_html()
             assert needle in html or needle in body.inner_text(), (title, needle)
             if title == "Files":
-                body.get_by_text("This does not read a DogeFeed wallet.").wait_for(timeout=15000)
+                body.get_by_text("does not ask for a key").wait_for(timeout=15000)
                 html = body.inner_html()
-                assert "/account/nfts/collections" in html and "DRC-20" in html and "Names" in html
+                assert "/dogefeedx/api/wallet/holdings" in html and "DRC-20" in html and "Names" in html
+                assert "/account/nfts/collections" not in html
             if title == "Meme Library":
                 assert "Pick a picture" in html and "dogefeedx.memes" in html
                 page.wait_for_function(

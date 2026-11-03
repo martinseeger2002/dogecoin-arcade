@@ -74,7 +74,8 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
     return pad.slice(0, -n).replace(/^0+(?=\d)/, '') + (pad.slice(-n).replace(/0+$/, '') ? '.' + pad.slice(-n).replace(/0+$/, '') : '');
   }
   function thumb(piece) {
-    if (String(piece.content_type || '').indexOf('image/') === 0) {
+    if (piece && piece.image) return '<img src="' + esc(piece.image) + '" alt="" referrerpolicy="no-referrer">';
+    if (String(piece.content_type || '').indexOf('image/') === 0 && piece.txid) {
       return '<img src="/content/' + esc(piece.txid) + '" alt="">';
     }
     return '<span>' + esc(String(piece.content_type || 'file').split('/').pop().slice(0, 8)) + '</span>';
@@ -91,7 +92,7 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
   }
   function paintSide() {
     if (!signed) {
-      list.innerHTML = '<p class="empty">Sign in on this arcade.</p>';
+      list.innerHTML = '<p class="empty">Import a watch-only address on this node.</p>';
       return;
     }
     var html = '';
@@ -166,24 +167,13 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
     }).join('') + '</div>' : '<p class="empty">Nothing matches.</p>')
       + (more ? '<button type="button" class="more" id="files-more">More</button>' : '');
     var btn = document.getElementById('files-more');
-    if (btn) btn.addEventListener('click', function () { loadPieces(true); });
+    if (btn) btn.addEventListener('click', function () { loadPieces(); });
   }
-  function loadPieces(append) {
+  function loadPieces() {
     var found = findColl();
     title.textContent = found ? collName(found.coll) : 'Collection';
-    if (!append) body.innerHTML = '<p class="empty">Reading pieces…</p>';
-    var offset = append ? piecePage.length : 0;
-    fetch('/account/nfts/pieces?chain=' + encodeURIComponent(open.net)
-      + '&collection=' + encodeURIComponent(open.collection || '')
-      + '&offset=' + offset + '&limit=60', {credentials: 'same-origin', cache: 'no-store'})
-      .then(function (r) { return r.ok ? r.json() : {}; })
-      .then(function (data) {
-        var rows = data.pieces || [];
-        piecePage = append ? piecePage.concat(rows) : rows;
-        if (found && data.total != null) found.coll.count = data.total;
-        paintPieces();
-      })
-      .catch(function () { body.innerHTML = '<p class="empty">Could not read this collection.</p>'; });
+    piecePage = found && found.coll.pieces ? found.coll.pieces : [];
+    paintPieces();
   }
   function paintTokens() {
     title.textContent = 'DRC-20';
@@ -192,7 +182,7 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
     var rows = hold.tokens.filter(function (t) { return !q || String(t.tick || '').toLowerCase().indexOf(q) >= 0; });
     if (!rows.length) { body.innerHTML = '<p class="empty">' + (q ? 'No token by that tick.' : 'No DRC-20 in this wallet.') + '</p>'; return; }
     body.innerHTML = rows.map(function (t) {
-      var shown = t.display || units(t.units, t.decimals);
+      var shown = t.display || t.balance || units(t.units, t.decimals);
       return '<div class="row"><b>' + esc(t.tick) + '</b><span>' + esc(shown) + (t.chain ? ' · ' + esc(t.chain) : '') + '</span></div>';
     }).join('');
   }
@@ -209,13 +199,13 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
     paintSide();
     if (!signed) {
       title.textContent = 'Collections';
-      body.innerHTML = '<p class="empty">Sign in on this arcade to see what your wallet holds. This does not read a DogeFeed wallet.</p>';
+      body.innerHTML = '<p class="empty">Import a watch-only address on this node. This reads that Dogecoin wallet and does not ask for a key.</p>';
       return;
     }
     if (open.kind === 'drc20') { paintTokens(); return; }
     if (open.kind === 'names') { paintNames(); return; }
     if (open.kind === 'collection') {
-      if (!piecePage.length) loadPieces(false);
+      if (!piecePage.length) loadPieces();
       else paintPieces();
       return;
     }
@@ -233,42 +223,24 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
     if (open.kind === 'collection') paintPieces();
     else paint();
   });
-  fetch('/account', {credentials: 'same-origin', cache: 'no-store'})
+  fetch('/dogefeedx/api/wallet/holdings', {credentials: 'same-origin', cache: 'no-store'})
     .then(function (r) { return r.ok ? r.json() : {}; })
-    .then(function (acct) {
-      signed = !!(acct && acct.pubkey);
+    .then(function (data) {
+      signed = !!(data && data.imported);
       if (!signed) { paint(); return; }
-      var chains = (acct.chains || []).filter(function (c) { return c && c.network; });
-      return Promise.all(chains.map(function (c) {
-        return fetch('/account/nfts/collections?chain=' + encodeURIComponent(c.network), {credentials: 'same-origin', cache: 'no-store'})
-          .then(function (r) { return r.ok ? r.json() : {collections: []}; })
-          .then(function (data) {
-            return {net: c.network, label: (data && data.label) || c.label || c.network, collections: (data && data.collections) || []};
+      hold.groups = [{
+        net: 'doge',
+        label: (data.addresses && data.addresses[0]) || 'Dogecoin',
+        collections: (data.collections || []).map(function (c) {
+          var pieces = (c.pieces || []).map(function (p) {
+            return {content_type: 'image/png', image: p.image, name: p.title, edition: p.edition, txid: ''};
           });
-      })).then(function (groups) {
-        hold.groups = groups;
-        var tokenChains = chains.filter(function (c) { return c.network === 'doge' || c.network === 'main'; });
-        if (!tokenChains.length) tokenChains = [{network: 'doge', label: 'Dogecoin'}];
-        return Promise.all(tokenChains.map(function (c) {
-          return fetch('/account/token20?chain=' + encodeURIComponent(c.network), {credentials: 'same-origin', cache: 'no-store'})
-            .then(function (r) { return r.json().then(function (data) { return {ok: r.ok, chain: c.network, data: data}; }); })
-            .catch(function () { return {ok: false, chain: c.network, data: {}}; });
-        })).then(function (tokenSets) {
-          var answered = false;
-          tokenSets.forEach(function (set) {
-            if (!set.ok || !set.data || set.data.balances == null) {
-              if (set.data && set.data.detail && !hold.trouble) hold.trouble = set.data.detail;
-              return;
-            }
-            answered = true;
-            (set.data.balances || []).forEach(function (b) { hold.tokens.push(Object.assign({chain: set.chain}, b)); });
-          });
-          if (answered) hold.trouble = '';
-          return fetch('/account/names', {credentials: 'same-origin', cache: 'no-store'})
-            .then(function (r) { return r.ok ? r.json() : {names: []}; })
-            .then(function (data) { hold.names = (data && data.names) || []; paint(); });
-        });
-      });
+          return {collection: c.name || c.slug, count: c.count, cover: pieces.slice(0, 4), pieces: pieces};
+        })
+      }];
+      hold.tokens = data.tokens || [];
+      hold.names = (data.names || []).map(function (n) { return {name: n.name, chain: 'Dogecoin'}; });
+      paint();
     })
     .catch(function () { signed = false; body.innerHTML = '<p class="empty">Could not read this wallet.</p>'; });
 })();
