@@ -1210,3 +1210,8 @@ def register_routes(app, render):
     def dogefeedx_search(request: Request):
         """The DogeFeed search page - global search results."""
         return render(request, "dogefeedx/search.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/post", response_class=HTMLResponse)
+    def dogefeedx_post(request: Request):
+        """The DogeFeed post detail - individual post view with replies."""
+        return render(request, "dogefeedx/post.html", fullscreen=True)
