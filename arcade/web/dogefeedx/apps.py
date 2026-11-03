@@ -188,6 +188,18 @@ MARKET_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"
 <text x="44" y="52" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">Ð</text>
 </svg>"""
 
+WALLET_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<defs><linearGradient id="wg" x1="0%" y1="0%" x2="0%" y2="100%">
+<stop offset="0%" style="stop-color:#3a3a3a"/><stop offset="100%" style="stop-color:#2a2a2a"/>
+</linearGradient></defs>
+<rect width="64" height="64" rx="12" fill="url(#wg)"/>
+<rect x="8" y="18" width="48" height="32" rx="6" fill="#d9a520"/>
+<rect x="12" y="22" width="40" height="24" rx="4" fill="#1a1a1a"/>
+<circle cx="44" cy="34" r="6" fill="#d9a520"/>
+<text x="44" y="38" text-anchor="middle" font-size="8" fill="#000" font-weight="bold">Ð</text>
+<rect x="12" y="14" width="24" height="8" rx="2" fill="#b8860b"/>
+</svg>"""
+
 
 @router.get("/icon-explorer.png")
 async def icon_explorer():
@@ -232,6 +244,15 @@ async def icon_market():
     if path.is_file():
         return FileResponse(path, media_type="image/png")
     return Response(content=MARKET_ICON_SVG, media_type="image/svg+xml")
+
+
+@router.get("/icon-wallet.png")
+async def icon_wallet():
+    """Serve the Wallet app icon (SVG fallback)."""
+    path = Path(__file__).parent / "templates" / "dogefeedx" / "icon-wallet.png"
+    if path.is_file():
+        return FileResponse(path, media_type="image/png")
+    return Response(content=WALLET_ICON_SVG, media_type="image/svg+xml")
 
 
 # --- Explorer API ---
@@ -993,3 +1014,8 @@ def register_routes(app, render):
     def dogefeedx_market(request: Request):
         """The DogeFeed market - listings sorted cheapest first."""
         return render(request, "dogefeedx/market.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/wallet", response_class=HTMLResponse)
+    def dogefeedx_wallet(request: Request):
+        """The DogeFeed wallet - read-only view of inscriptions by address."""
+        return render(request, "dogefeedx/wallet.html", fullscreen=True)

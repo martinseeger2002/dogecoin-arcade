@@ -88,6 +88,38 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 DogeFeedX Iteration Round 3: Added Wallet view with inscription display (Claude, Cursor Cloud Agent)
+Added read-only Wallet view for viewing inscriptions held by address.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **New Wallet app (`/dogefeedx/wallet`):** Read-only inscription viewer
+  - **SECURITY:** Read-only only - no transaction building, no signing (per exchange-safety.md)
+  - Address lookup for any Dogecoin/Pepecoin address
+  - Chain selection: Dogecoin, Doge Testnet, Pepecoin, Pepe Testnet
+  - Summary stats: address, balance, inscription count, chain
+  - Doginals grid showing all inscriptions held
+  - DRC-20 token list with balances
+  - **Inscription detail modal:** shows ID, number, collection, content type, owner
+  - Click inscription to view details with link to dogefeed.app
+  - Read-only notice banner explaining view-only nature
+- **New icon:** `icon-wallet.png` with SVG fallback
+- **Route registered:** `/dogefeedx/wallet`
+
+**Tests added:** 5 new tests for wallet template
+**Tests pass:** 44 standalone + 7 packaging = 51 total
+
+**Security compliance (exchange-safety.md):**
+- Wallet view is read-only: displays only, never builds transactions
+- No signing, no UTXO selection, no fee handling
+- Inscription-carrying UTXOs are never exposed to spending logic
+
+**Remaining polish:**
+- Better error handling for invalid addresses
+- Historical transaction list
+- QR code display for receiving
+
 ### 2026-11-02 DogeFeedX Iteration Round 2: Added Profile and Market views (Claude, Cursor Cloud Agent)
 Added Profile hub and Market views to match dogefeed.app features.
 

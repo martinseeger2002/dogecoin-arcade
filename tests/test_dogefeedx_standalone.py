@@ -52,6 +52,12 @@ def test_market_html_exists():
     assert path.is_file(), f"market.html not found at {path}"
 
 
+def test_wallet_html_exists():
+    """Wallet template exists."""
+    path = DOGEFEEDX_PATH / "wallet.html"
+    assert path.is_file(), f"wallet.html not found at {path}"
+
+
 def test_dogefeedx_apps_py_exists():
     """DogeFeedX Python apps module exists."""
     path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py"
@@ -222,6 +228,41 @@ def test_market_html_registers_with_shell():
     content = path.read_text()
     assert "DogeFeedX.registerApp" in content, "Missing shell registration"
     assert "'market'" in content or '"market"' in content, "Missing app ID"
+
+
+def test_wallet_html_has_wallet_layout():
+    """Wallet HTML has read-only wallet layout."""
+    path = DOGEFEEDX_PATH / "wallet.html"
+    content = path.read_text()
+    assert "dfx-wallet" in content, "Missing wallet class"
+    assert "read-only" in content.lower(), "Missing read-only notice"
+    assert "dfx-wallet-grid" in content, "Missing inscription grid"
+
+
+def test_wallet_html_has_chain_selection():
+    """Wallet HTML has chain selection (Dogecoin/Pepecoin)."""
+    path = DOGEFEEDX_PATH / "wallet.html"
+    content = path.read_text()
+    assert "Dogecoin" in content, "Missing Dogecoin option"
+    assert "Pepecoin" in content, "Missing Pepecoin option"
+    assert "Testnet" in content, "Missing testnet options"
+
+
+def test_wallet_html_has_inscription_display():
+    """Wallet HTML has inscription display with modal."""
+    path = DOGEFEEDX_PATH / "wallet.html"
+    content = path.read_text()
+    assert "dfx-wallet-item" in content, "Missing inscription item"
+    assert "dfx-modal" in content, "Missing inscription modal"
+    assert "showInscription" in content, "Missing inscription viewer"
+
+
+def test_wallet_html_registers_with_shell():
+    """Wallet registers itself with the shell."""
+    path = DOGEFEEDX_PATH / "wallet.html"
+    content = path.read_text()
+    assert "DogeFeedX.registerApp" in content, "Missing shell registration"
+    assert "'wallet'" in content or '"wallet"' in content, "Missing app ID"
 
 
 def test_dogefeedx_apps_has_api_routes():
