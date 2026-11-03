@@ -92,7 +92,7 @@ coding agent, so it is written for agents first and people second.
 Billy's Home screenshot. The "DOGE payments enabled" line and the "social feed paid in DOGE" card are gone. The composer sits at the top with dogefeed.app's controls: add images, Meme Library, emoji, paywall lock (text, text + image, image only), `/send` and `/pay`, save draft, and Post. The bark is signed by the wallet chosen on Profile and stored in this browser. Nothing is posted or paid on dogefeed.app.
 
 **Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
-**Commit:** pending
+**Commit:** df2b68c
 
 **No action needed from SadFrog.**
 
