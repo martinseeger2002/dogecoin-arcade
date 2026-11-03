@@ -166,6 +166,61 @@ def test_app_py_includes_dogefeedx():
     assert "dogefeedx.register_routes" in content, "Missing dogefeedx registration"
 
 
+def test_dogefeedx_network_module_exists():
+    """DogeFeedX network module exists."""
+    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "network.py"
+    assert path.is_file(), f"dogefeedx/network.py not found at {path}"
+
+
+def test_dogefeedx_network_has_register_function():
+    """DogeFeedX network module has register function."""
+    path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "network.py"
+    content = path.read_text()
+    assert "def register(" in content, "Missing register function"
+    assert "/dogefeedx/network" in content, "Missing /dogefeedx/network route"
+    assert "/dogefeedx/network/api/status" in content, "Missing status API route"
+
+
+def test_dogefeedx_network_template_exists():
+    """DogeFeedX network template exists."""
+    path = DOGEFEEDX_PATH / "network.html"
+    assert path.is_file(), f"network.html not found at {path}"
+
+
+def test_app_py_registers_network_routes():
+    """app.py registers DogeFeedX network routes."""
+    path = PROJECT_ROOT / "arcade" / "web" / "app.py"
+    content = path.read_text()
+    assert "dogefeedx_network" in content or "dogefeedx.network" in content, "Missing network module import"
+    assert ".register(" in content and "network" in content, "Missing network.register call"
+
+
+def test_pyproject_includes_dogefeedx_package():
+    """pyproject.toml includes arcade.web.dogefeedx package."""
+    path = PROJECT_ROOT / "pyproject.toml"
+    content = path.read_text()
+    assert "arcade.web.dogefeedx" in content, "Missing arcade.web.dogefeedx in packages"
+
+
+def test_pyproject_includes_dogefeedx_templates():
+    """pyproject.toml includes dogefeedx templates in package-data."""
+    path = PROJECT_ROOT / "pyproject.toml"
+    content = path.read_text()
+    assert "templates/dogefeedx/" in content, "Missing dogefeedx templates in package-data"
+
+
+def test_pyproject_includes_httpx_dependency():
+    """pyproject.toml includes httpx as a web dependency."""
+    path = PROJECT_ROOT / "pyproject.toml"
+    content = path.read_text()
+    assert "httpx" in content, "Missing httpx dependency"
+    # Verify it's in web dependencies, not just dev
+    web_section_start = content.find("web = [")
+    web_section_end = content.find("]", web_section_start)
+    web_section = content[web_section_start:web_section_end]
+    assert "httpx" in web_section, "httpx not in web dependencies"
+
+
 if __name__ == "__main__":
     import traceback
     

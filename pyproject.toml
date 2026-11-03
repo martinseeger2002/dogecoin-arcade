@@ -36,6 +36,8 @@ web = [
     # a referee: node 3 had the web extra alone, and /account/trade/watch answered 500 ("No module named
     # 'cryptography'") through its first live trade race (2026-10-19).
     "cryptography>=42",
+    # httpx for async HTTP requests in DogeFeedX apps (dogefeedx/apps.py fetches from dogefeed.app).
+    "httpx>=0.27",
 ]
 # httpx is not optional: fastapi.testclient imports it, so without it the web
 # tests do not skip -- collection ABORTS and the entire suite runs zero tests,
@@ -75,7 +77,7 @@ dogecoinarcade-update = "arcade.update:main"
 [tool.setuptools]
 # Only `arcade` is a package. Without this, setuptools sees installer/ as a
 # second top-level package and refuses to build at all.
-packages = ["arcade", "arcade.messaging", "arcade.mesh", "arcade.web", "arcade.lora"]
+packages = ["arcade", "arcade.messaging", "arcade.mesh", "arcade.web", "arcade.web.dogefeedx", "arcade.lora"]
 
 [tool.setuptools.package-data]
 # Files that are DATA rather than code and must be in the wheel, or an
@@ -89,9 +91,11 @@ packages = ["arcade", "arcade.messaging", "arcade.mesh", "arcade.web", "arcade.l
 "arcade.lora" = ["SOURCE.md"]
 "arcade.web" = ["templates/*.html", "templates/*.js", "templates/*.css", "templates/*.md",
                 "templates/*.png", "templates/brands/*/*.png",
+                "templates/dogefeedx/*.html", "templates/dogefeedx/*.css", "templates/dogefeedx/*.js",
                 "docs/*.md", "docs/*/*.md",
                 "vendor/*.js", "vendor/*/*.js", "vendor/*.md",
                 "browser.html"]                                     # the Browser (meshweb.py, 2026-10-26)
+"arcade.web.dogefeedx" = ["README.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
