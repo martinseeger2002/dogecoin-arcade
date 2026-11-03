@@ -55,7 +55,7 @@ label { color: var(--ink2); }
 
 .words { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--gold); background: var(--bg3); border: 1px dashed var(--gold);
          border-radius: 8px; padding: 10px; word-spacing: 4px; margin-bottom: 10px; }
-.origin { font-family: "Pixel", monospace; font-size: 13px; line-height: 1.6; color: var(--cyan); overflow-wrap: anywhere; margin-bottom: 14px; }
+.origin { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; font-weight: 700; line-height: 1.5; color: var(--cyan); overflow-wrap: anywhere; margin-bottom: 14px; }
 .message { font-family: ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line);
            border-left: 4px solid var(--pink); border-radius: 0 8px 8px 0; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }
 .err { color: var(--bad); min-height: 1.2em; }
