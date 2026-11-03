@@ -88,6 +88,33 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 The new operator's setup wizard (Claude)
+The operator: on a fresh install, claiming a name said "Claiming it: on its way" with no synced Core and no PEP test; "create
+a wizard that walks the new operator through the initial Setup ... should pop up as long as the operator has yet to
+claim their name"; then, approving the mock-up: "There should be only one button claim and publish should be the same
+thing" and "the wizard should display the operators pepetest wallet address before it is funded so that it can be
+copied".
+- **The bug**: node_wallet_js claim() posted /publish and returned {txid: "on its way"} whatever happened; /publish
+  answers a refusal ("no spendable coins") as an ordinary 200 page. Now claim() calls `/admin/api/setup/claim` and
+  shows the real txid or the real reason.
+- **`_claim_node_tag` and `_key_announcement`** (web/app.py): the claim and the key announcement, out of /publish and
+  /publish-key, which still use them (test_web's "asks the chain before it spends" now reads the helper).
+- **`GET /admin/api/setup`**: need (no operator @name), node sync and borrowing (core_catchup.say), the names index
+  (current within 6 blocks, copy status), coins (address; on the chain per the index, with its first block; spendable
+  per the node's own wallet; mined), this arcade's welcome ask, a claim really on its way, and `blocked`: why Claim
+  is off ("index", "no coins", "node behind coins" -- the wallet is in the node, so a coin in a block it has not
+  reached cannot pay yet --, "mined", "operator account", "claimed").
+- **`GET /admin/api/setup/name?tag=`** (valid, taken, mine) and **`POST /admin/api/setup/claim {tag}`**: the one button,
+  name and key together, {claimed, published, publish_error}; refused with the reason, and never twice while one waits.
+- **templates/_setup_wizard.html** on Admin and on the operator's Your arcade: four steps (node, PEP test with the
+  address and Copy, ask the operators or mine a block; the @name with a live check; on its way), refreshed every 5 s,
+  Later until the next visit, never once the name is on the chain. The welcome panel's coins-only first-run sheet gives
+  way to it (window.ARCADE_SETUP).
+- Tests: test_tokens_web (a real regtest claim and key with one press; refusal with no coins spends nothing),
+  test_setup_wizard_browser (opens, Later, never with a name, the four states; screenshots shown to the operator).
+- Open: an arcade whose node has not reached its coins' block waits for it; spending from coins the index knows of,
+  signed by the node's wallet, would end that wait.
+
 ### 2026-11-02 Run your own: the download is packed as the arcade starts (Claude)
 The operator: "When I click run your own, it brings me to /clone ... /clone doesn't do anything". The page is fine, but the
 first visit after every update packed the source archive while it waited: 27 s on .25, and the browser gave up. Now

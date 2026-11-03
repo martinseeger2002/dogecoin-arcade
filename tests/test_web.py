@@ -2251,14 +2251,20 @@ def test_publishing_asks_the_chain_before_it_spends(monkeypatch, client):
     source = inspect.getsource(webapp.create_app)
     publish = source[source.index("def publish_key("):]
     publish = publish[:publish.index("\n    @app.")]
+    # The announcement is prepared in one helper (2026-11-02: the setup wizard's one button uses it too), which asks
+    # the chain; both callers prepare with it before they broadcast.
+    prepare = source[source.index("def _key_announcement("):]
+    prepare = prepare[:prepare.index("\n    @app.")]
 
-    assert "find_own_announcements(" in publish, (
+    assert "find_own_announcements(" in prepare, (
         "publishing decides from the local list again"
     )
-    spend = publish.index("sender.broadcast(")
-    check = publish.index("find_own_announcements(")
-    assert check < spend, "the chain is asked AFTER the money is spent"
-    assert "add_key_announcement" not in publish, (
+    assert "sender.broadcast(" not in prepare, "preparing never spends"
+    for caller in (publish, source[source.index("def setup_claim("):]):
+        caller = caller[:caller.index("\n    @app.")] if "\n    @app." in caller else caller
+        assert caller.index("_key_announcement(") < caller.index("sender.broadcast("), (
+            "the chain is asked AFTER the money is spent")
+    assert "add_key_announcement" not in prepare + publish, (
         "refusing is enough; writing the rows back undoes the user's reset"
     )
 

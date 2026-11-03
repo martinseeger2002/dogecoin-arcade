@@ -1,0 +1,244 @@
+{#- The new operator's setup wizard (2026-11-02, approving the mock-up: "The wizard should pop up as long as the
+    operator has yet to claim their name. And should not pop up once the operator has claimed their name."; "There
+    should be only one button claim and publish should be the same thing"; "the wizard should display the operators
+    pepetest wallet address before it is funded so that it can be copied"). Four steps, in order: the node, PEP test,
+    the @name, the name going out. /admin/api/setup; its own script scope. Replaces the welcome panel's first-run
+    sheet (window.ARCADE_SETUP). -#}
+<style>
+.swz{max-width:580px;max-height:calc(100vh - 40px);overflow:auto}
+.swz h3.swzt{margin:0;font-size:1.15rem}
+.swz .lead{margin:4px 0 12px}
+.swz .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:0 0 12px;padding:0;list-style:none}
+.swz .steps li{font-size:.74rem;color:var(--muted);border-top:4px solid var(--line);padding-top:5px}
+.swz .steps li.done{border-color:var(--ok);color:var(--ok)}
+.swz .steps li.now{border-color:var(--accent);color:inherit;font-weight:700}
+.swz .box{border:1px solid var(--line);border-radius:10px;padding:11px 12px;margin:0 0 10px}
+.swz .box.now{border:2px solid var(--accent)}
+.swz .box.done{border-color:var(--ok)}
+.swz .box h4{margin:0 0 4px;font-size:.96rem;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.swz .box p{margin:4px 0;font-size:.86rem}
+.swz .pill{font-size:.7rem;padding:1px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);font-weight:600}
+.swz .pill.ok{color:var(--ok);border-color:var(--ok)}
+.swz .pill.warn{color:var(--warn);border-color:var(--warn)}
+.swz .swzbar{height:8px;background:var(--line);border-radius:99px;overflow:hidden;margin:6px 0 2px}
+.swz .swzbar i{display:block;height:100%;background:var(--accent)}
+.swz .rows{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:.84rem;margin:6px 0}
+.swz .rows .k{color:var(--muted)}
+.swz .two{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px}
+@media (max-width:560px){.swz .two{grid-template-columns:1fr}}
+.swz .opt{border:1px solid var(--line);border-radius:9px;padding:9px 10px;font-size:.84rem}
+.swz .opt b{display:block;margin-bottom:2px}
+.swz .addr{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+.swz .addr code{font-size:.8rem;word-break:break-all;padding:3px 6px;border-radius:6px;background:var(--line)}
+.swz .act{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+.swz .foot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:4px;font-size:.78rem}
+.swz input.swzname{font:inherit;padding:6px 9px;width:13em}
+.swz .good{color:var(--ok)}
+.swz .bad{color:var(--warn)}
+</style>
+<script>
+(function () {
+  window.ARCADE_SETUP = true;            // the welcome panel's first-run sheet gives way to this
+  var shown = false, closed = false, back = null, timer = null, mineTimer = null, said = null, typed = '';
+  function el(tag, txt, cls) { var e = document.createElement(tag); if (txt != null) e.textContent = txt; if (cls) e.className = cls; return e; }
+  function coins(k) { return (Number(k || 0) / 1e8).toLocaleString(undefined, {maximumFractionDigits: 8}) + ' PEP test'; }
+  function call(path, body) {
+    return fetch(path, {method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'}, body: body === undefined ? undefined : JSON.stringify(body)})
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error(j.detail || ('refused (' + r.status + ')')); return j; }); });
+  }
+  function step(n, d) {
+    // Which step the operator is on: 1 the node (until the names index is current), 2 coins, 3 the name, 4 going out.
+    if (d.claiming) return 4;
+    if (!d.index.current) return 1;
+    if (!(d.coins.spendable > 0)) return 2;
+    return 3;
+  }
+  function box(title, state, pill, pillCls) {
+    var b = el('div', null, 'box' + (state ? ' ' + state : '')), h = el('h4', title);
+    if (pill) h.append(el('span', pill, 'pill' + (pillCls ? ' ' + pillCls : '')));
+    b.append(h); return b;
+  }
+  function nodeBox(d, now) {
+    var n = d.node || {}, ix = d.index || {}, ready = !!n.ready, cp = (ix.copy || {});
+    var b = box('1 · Your ' + d.label + ' node', now === 1 ? 'now' : (now > 1 ? 'done' : ''),
+                ready ? 'synced' : 'syncing', ready ? 'ok' : 'warn');
+    if (!ready) {
+      var bar = el('div', null, 'swzbar'), i = el('i'); i.style.width = Math.max(1, Math.round(100 * (n.progress || 0))) + '%';
+      bar.append(i); b.append(bar);
+    }
+    var rows = el('div', null, 'rows');
+    rows.append(el('span', 'Node', 'k'), el('span', ready ? 'at the tip' : ('block ' + Number(n.blocks || 0).toLocaleString()
+      + (n.headers ? ' of ' + Number(n.headers).toLocaleString() : '') + ' (' + Math.round(100 * (n.progress || 0)) + '%)')));
+    if (!ready || n.catchup) rows.append(el('span', 'Meanwhile', 'k'), el('span', n.borrowed ? 'the chain is borrowed from a linked arcade'
+      : (n.catchup || 'this arcade reads the chain through a linked arcade while its node catches up')));
+    var ixText = ix.current ? 'ready' : (cp.fetch ? 'copying from linked arcades: ' + cp.fetch.have + ' of ' + cp.fetch.of + ' pieces'
+      : 'reading: block ' + Number(ix.indexed || 0).toLocaleString() + (ix.tip ? ' of ' + Number(ix.tip).toLocaleString() : ''));
+    rows.append(el('span', 'Names index', 'k'), el('span', ixText));
+    b.append(rows);
+    if (!ready) b.append(el('p', 'You don’t have to wait for your node: until it has caught up, this arcade reads the chain '
+      + 'through a linked arcade and sends the same way.', 'muted'));
+    if (!ix.current) b.append(el('p', 'A name is checked against the names index before it is claimed, so step 3 waits for it.', 'muted'));
+    return b;
+  }
+  function coinsBox(d, now) {
+    var c = d.coins || {}, w = d.welcome || {};
+    var b = box('2 · Get some PEP test', now === 2 ? 'now' : (now > 2 ? 'done' : ''),
+                c.spendable > 0 ? coins(c.spendable) : (now === 2 ? 'needed next' : ''), c.spendable > 0 ? 'ok' : '');
+    if (now < 2 && !(c.spendable > 0) && !c.on_chain) {
+      b.append(el('p', 'Claiming your @name costs a little PEP test. This arcade has none yet.', 'muted'));
+    }
+    if (!(c.spendable > 0) || now === 2) {
+      // The address, from the start (2026-11-02): to ask somebody for coins, or send some from a faucet.
+      b.append(el('p', 'This arcade’s ' + d.label + ' address. Anybody can send PEP test to it:', 'muted'));
+      var a = el('div', null, 'addr'), code = el('code', c.address || '—'), copy = el('button', 'Copy', 'small ghost');
+      copy.type = 'button';
+      copy.onclick = function () {
+        if (!c.address) return;
+        navigator.clipboard.writeText(c.address).then(function () { copy.textContent = 'Copied'; setTimeout(function () { copy.textContent = 'Copy'; }, 1500); },
+          function () { copy.textContent = 'Select it and copy'; });
+      };
+      a.append(code, copy); b.append(a);
+      var two = el('div', null, 'two'), o1 = el('div', null, 'opt'), o2 = el('div', null, 'opt');
+      o1.append(el('b', 'Ask the other operators'));
+      var askLine = !w || !w.asked ? 'This arcade asks every operator on the mesh for 1 PEP test as soon as it links to one.'
+        : ((w.welcomed_by || []).length ? 'Sent by ' + w.welcomed_by.join(', ') + '.'
+           : (w.senders || []).length ? 'Sent by ' + w.senders.join(', ') + ': waiting for its block.'
+           : 'Asked the operators on the mesh. Nobody has sent one yet.');
+      o1.append(document.createTextNode(askLine));
+      if (w && w.can_ask) {
+        var again = el('button', w.asked ? 'Ask again' : 'Ask now', 'small ghost'); again.type = 'button';
+        again.onclick = function () { again.disabled = true; call('/admin/api/welcome/ask', {}).then(load).catch(function (e) { again.textContent = e.message; }); };
+        var r1 = el('div', null, 'act'); r1.append(again); o1.append(r1);
+      }
+      o2.append(el('b', 'Mine a block yourself'));
+      o2.append(document.createTextNode('This computer works out a block; your node does not need to be synced. Mined coins '
+        + 'can be spent only after many more blocks, so an operator’s 1 PEP test is the quicker start.'));
+      var mine = el('button', 'Mine a block', 'small'), ms = el('div', '', 'muted'); mine.type = 'button';
+      mine.onclick = function () {
+        mine.disabled = true; ms.textContent = 'Starting…';
+        call('/admin/api/mine', {net: d.net, blocks: 1}).then(function () { watchMine(ms, mine); })
+          .catch(function (e) { mine.disabled = false; ms.textContent = e.message; });
+      };
+      var r2 = el('div', null, 'act'); r2.append(mine); o2.append(r2, ms);
+      two.append(o1, o2); b.append(two);
+    }
+    var rows = el('div', null, 'rows');
+    rows.append(el('span', 'Spendable', 'k'), el('span', coins(c.spendable)));
+    if (c.on_chain && !(c.spendable > 0)) rows.append(el('span', 'On the chain', 'k'), el('span', coins(c.on_chain)
+      + (c.arrived_at ? ' (block ' + Number(c.arrived_at).toLocaleString() + ')' : '')));
+    if (c.mined) rows.append(el('span', 'Mined', 'k'), el('span', coins(c.mined) + ': not yet spendable for a name'));
+    b.append(rows);
+    var why = {
+      'node behind coins': 'Your PEP test is on the chain, in block ' + Number(c.arrived_at || 0).toLocaleString()
+        + '. This arcade’s wallet is in its own node, so it can spend the coins once the node reaches that block '
+        + '(it is at ' + Number((d.node || {}).blocks || 0).toLocaleString() + ').',
+      'mined': 'Mined coins pay themselves in a way a name claim cannot be funded from. Send them once to this same address '
+        + 'from the Wallet page and the change can pay for the name.'
+    }[d.blocked];
+    if (why) b.append(el('p', why, 'bad'));
+    return b;
+  }
+  function nameBox(d, now) {
+    var b = box('3 · Claim your @name', now === 3 ? 'now' : (now > 3 ? 'done' : ''), d.claiming ? '@' + d.claiming.tag : '', d.claiming ? 'ok' : '');
+    if (now < 3) { b.append(el('p', 'After step ' + now + '.', 'muted')); return b; }
+    if (now > 3) return b;
+    if (d.blocked === 'operator account') {
+      b.append(el('p', 'This arcade’s operator is an account: claim the name from its ', 'muted'));
+      var link = el('a', 'Your arcade page'); link.href = '/me'; b.lastChild.append(link, document.createTextNode('.'));
+      return b;
+    }
+    var row = el('div', null, 'act'), at = el('span', '@'), input = el('input', null, 'swzname mono'), note = el('span', '', 'muted');
+    input.setAttribute('aria-label', 'Your @name'); input.autocomplete = 'off'; input.spellcheck = false; input.maxLength = 24;
+    input.value = typed; input.placeholder = 'yourname';
+    var claim = el('button', 'Claim', 'primary'); claim.type = 'button'; claim.disabled = true;
+    var check = null;
+    function look() {
+      typed = input.value.trim().replace(/^@/, '');
+      claim.textContent = typed ? 'Claim @' + typed : 'Claim'; claim.disabled = true;
+      clearTimeout(check);
+      if (!typed) { note.textContent = ''; return; }
+      check = setTimeout(function () {
+        call('/admin/api/setup/name?tag=' + encodeURIComponent(typed)).then(function (r) {
+          if (!r.valid) { note.textContent = r.why || 'not a name'; note.className = 'bad'; return; }
+          if (r.taken) { note.textContent = '@' + r.tag + ' is taken'; note.className = 'bad'; return; }
+          note.textContent = r.mine ? 'already yours' : 'free'; note.className = 'good'; claim.disabled = d.blocked !== '';
+        }).catch(function (e) { note.textContent = e.message; note.className = 'bad'; });
+      }, 300);
+    }
+    input.addEventListener('input', look);
+    claim.onclick = function () {
+      claim.disabled = true; note.textContent = 'Claiming and publishing…'; note.className = 'muted';
+      call('/admin/api/setup/claim', {tag: typed}).then(function (r) {
+        note.textContent = r.publish_error ? 'Claimed; your key goes out once it can: ' + r.publish_error : 'Sent.';
+        load();
+      }).catch(function (e) { claim.disabled = false; note.textContent = e.message; note.className = 'bad'; });
+    };
+    row.append(at, input, note); b.append(row);
+    b.append(el('p', '2–24 letters, digits or _. This one button claims the name and publishes your key with it; the '
+      + 'name is what every Arcades list shows beside this arcade. The first claim of a name wins.', 'muted'));
+    var r2 = el('div', null, 'act'); r2.append(claim); b.append(r2);
+    if (typed) look();
+    return b;
+  }
+  function outBox(d) {
+    var c = d.claiming || {}, b = box('4 · @' + c.tag + ' is on its way', 'now', 'waiting for a block', 'warn');
+    var rows = el('div', null, 'rows');
+    rows.append(el('span', 'Sent', 'k'), el('span', (c.at ? new Date(c.at * 1000).toLocaleTimeString() + ' · ' : '')
+      + (c.txid ? c.txid.slice(0, 8) + '…' + c.txid.slice(-6) : '')));
+    b.append(rows, el('p', 'When a block includes it, other arcades show your name within a minute and this does not open again.', 'muted'));
+    return b;
+  }
+  function draw() {
+    var d = said; if (!d || !back) return;
+    var card = back.firstChild; card.replaceChildren();
+    var now = step(0, d);
+    card.append(el('h3', d.need ? 'Set up your arcade' : 'Your arcade is set up', 'swzt'));
+    card.append(el('p', d.need ? 'Before other operators see who runs this arcade: its node, some PEP test, and your @name. '
+      + 'You can close this and come back; it opens until your name is on the chain.' : '@' + d.tag + ' is yours.', 'muted lead'));
+    var steps = el('ol', null, 'steps');
+    ['Your node', 'PEP test', 'Your @name', 'Published'].forEach(function (t, i) {
+      steps.append(el('li', (i + 1) + ' · ' + t, !d.need || i + 1 < now ? 'done' : (i + 1 === now ? 'now' : '')));
+    });
+    card.append(steps);
+    if (d.need) {
+      card.append(nodeBox(d, now), coinsBox(d, now), nameBox(d, now));
+      if (d.claiming) card.append(outBox(d));
+    }
+    var foot = el('div', null, 'foot'), left = el('span', d.need ? 'Opens until your @name is on the chain.' : '', 'muted');
+    var close = el('button', d.need ? 'Later' : 'Done', d.need ? 'ghost' : 'primary'); close.type = 'button';
+    close.onclick = function () { closed = true; back.remove(); back = null; clearInterval(timer); clearInterval(mineTimer); };
+    foot.append(left, close); card.append(foot);
+  }
+  function watchMine(ms, button) {
+    clearInterval(mineTimer);
+    mineTimer = setInterval(function () {
+      call('/admin/api/mine').then(function (m) {
+        if (m.running) { ms.textContent = 'Mining… ' + (m.tries ? Number(m.tries).toLocaleString() + ' tries' : ''); return; }
+        clearInterval(mineTimer); button.disabled = false;
+        ms.textContent = m.blocks ? 'Block found! Its coins can be spent after many more blocks.' : (m.note || 'Stopped.');
+      }).catch(function () {});
+    }, 3000);
+  }
+  function open() {
+    if (back || closed) return;
+    back = el('div', null, 'askcard-back');
+    var card = el('div', null, 'panel askcard swz'); card.setAttribute('role', 'dialog'); card.setAttribute('aria-modal', 'true');
+    card.setAttribute('aria-label', 'Set up your arcade'); back.id = 'setupwizard';
+    back.append(card); document.body.append(back); shown = true;
+    timer = setInterval(function () { if (!document.hidden) load(); }, 5000);
+  }
+  function load() {
+    var active = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('swzname');
+    call('/admin/api/setup').then(function (d) {
+      said = d;
+      if (d.need) open();
+      if (back && !active) draw();
+      if (!d.need && !shown) window.ARCADE_SETUP = false;
+    }).catch(function () {});
+  }
+  load();
+  window.arcadeSetup = {open: function () { closed = false; open(); load(); }};
+})();
+</script>
