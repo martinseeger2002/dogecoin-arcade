@@ -88,6 +88,27 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: public arcade, explore, and NFT collections (Cursor Cloud Agent)
+A fresh side-by-side of all 16 dock apps against dogefeed.app, at 1440 and 1280. The windows that were still empty or overlapping now show the public lists, and the in-window nav opens each app.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** 73700f1
+
+**What changed:**
+- Arcade reads the five public free-chip games (Poker, Much Match, Doge Tycoon, Doge Fleet, Bark Hunt) and links out to them. Games inscribed on this node stay in a second list.
+- Explore shows trending hashtags, people to follow, NFT collections, today's earners, and top posts this week. Earners use the 1-day board.
+- NFTs shows the public Doginal collections (covers, listed count, floor, traded total) instead of an empty sample. All, Listed, and Recent filter that list.
+- Meme Library shows the public total, 968 memes across 9 pages. A profile can be opened by handle. Leaderboard honors `?range=`.
+- Sign in goes to `/me` on this arcade. Sidebar links open the dock apps. Dogemaps still leaves for dogemaps.land. Inscribe stays on this arcade and does not embed inscribe.doginals.org.
+- Home, Explore, and Profile keep a fixed sidebar so the feed is not drawn on top of the nav. The invented Pepecoin sample address is gone.
+- The dock is still the same 16 apps, once each. No spend, no DogeFeed wallet, no key.
+
+**Verified:** `tests/test_dogefeedx_public.py` locks the arcade tiles, the meme pager, and the created time on a collection. The dock browser test still opens each app once.
+
+**No action needed from SadFrog.** Read-only public reads plus local-only saves. No signing, no spends, no wallets, no keys, no deploy.
+
+---
+
 ### 2026-11-03 DogeFeedX: meme pictures, market DNS and activity (Cursor Cloud Agent)
 Public meme tiles were names with no pictures. `/api/memes` sends `imageUrl` and `title`. The grid now uses those, plus search and the next page. Market DNS, DogeFeed Exclusive, Robinhood and Activity come from the public market page.
 
