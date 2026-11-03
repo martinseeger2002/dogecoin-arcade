@@ -54,12 +54,23 @@ def _do(driver, **job):
     raise AssertionError(f"no answer to {job}")
 
 
-def test_a_line_posted_through_the_bridge_is_read_back_from_the_chain_by_the_other_member(world):   # noqa: F811
+def _alice_and_bob(world):
+    """Alice and Bob signed up and the Chats page inscribed, once per world, whichever test asks first: each test here
+    stands alone (run by itself, or on another worker than the first test, the later ones found no keys and failed:
+    "keys is null")."""
     base, state, node, a, b = world
+    if getattr(state, "_groups_people", False):
+        return
     _inscribe(state, PAGE_ID, 7, "n" + "G" * 33, "text/html", PAGE, said={"app": {"name": "Chats", "groups": True}})
     _signed_up(a, base, state, node, "alicegroup")
     _signed_up(b, base, state, node, "bobgroup")
     _settled(state, node.rpc)
+    state._groups_people = True
+
+
+def test_a_line_posted_through_the_bridge_is_read_back_from_the_chain_by_the_other_member(world):   # noqa: F811
+    base, state, node, a, b = world
+    _alice_and_bob(world)
     made = a.execute_async_script("""
         const done = arguments[0];
         import("/messaging.js").then((mail) => mail.identity(window.wallet.phrase).then((me) =>
@@ -102,6 +113,7 @@ def test_a_line_posted_through_the_bridge_is_read_back_from_the_chain_by_the_oth
 
 def test_somebody_added_later_reads_what_was_said_and_everybody_sees_them(world):   # noqa: F811
     base, state, node, a, b = world
+    _alice_and_bob(world)
     # Both browsers are signed up by the test above: Alice makes a group with one other, then lets a third person in.
     third = browsers.launch()
     try:
@@ -159,6 +171,7 @@ def test_somebody_added_later_reads_what_was_said_and_everybody_sees_them(world)
 def test_leaving_takes_you_out_of_what_is_said_next_and_those_who_stay_carry_on(world):   # noqa: F811
     """2026-11-01: a way to leave a group chat. Real keys on a real chain: the one who left cannot read what comes next."""
     base, state, node, a, b = world
+    _alice_and_bob(world)
     third = browsers.launch()
     try:
         _signed_up(third, base, state, node, "danagroup")
