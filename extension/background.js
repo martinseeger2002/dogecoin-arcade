@@ -12,6 +12,7 @@ import * as messages from "./messages.js";
 import * as coins from "./coins.js";
 import * as txview from "./txview.js";
 import * as sends from "./sends.js";
+import * as sitetx from "./sitetx.js";
 
 const LOCK_MINUTES = 30;
 const pending = new Map();          // request id -> {origin, method, params, resolve, window}
@@ -113,6 +114,31 @@ async function holdingsToSend(network) {
   return {ords, nfts: Array.isArray(nfts) ? nfts.map((n) => ({id: n.id, number: n.number})) : []};
 }
 
+/** A site's transaction: read, checked against the linked arcade's coins and ord index, shown in the extension's
+ *  window, signed on yes; with `send`, handed to the arcade to broadcast (its /account/broadcast checks the coins
+ *  again). The site gets the signed bytes, or the txid. */
+async function siteTransaction(origin, params, send) {
+  const network = String(params.chain || "");
+  chains.chain(network);
+  const {seed: s, account: key} = await opened();
+  const [linked] = await arcades();
+  if (!linked) throw new Error("the Arcade Wallet has no linked arcade to read its coins from");
+  const k = await chains.keysOn(s, network);
+  const listed = (await arcade.call(linked, `/account/coins?chain=${encodeURIComponent(network)}`, {account: key})).coins || [];
+  const own = Object.fromEntries(listed.filter((c) => c.address === k.address)
+    .map((c) => [`${c.txid}:${c.vout}`, {value: c.value, address: c.address}]));
+  const tx = coins.parseTx(String(params.raw || "").toLowerCase(), coins.TX_TIME.has(network));
+  const spent = tx.inputs.filter((i) => own[`${i.txid}:${i.vout}`]);
+  const marks = txview.ORD_CHAINS.has(network) ? await arcade.inscriptionsOn(linked, key, network, k.address, spent) : {};
+  const planned = await sitetx.plan(params, own, marks, k, {send});
+  await approve(origin, send ? "sendTransaction" : "signTransaction",
+                {view: planned.view, tokens: await tokenNames(linked, planned.view), arcade: linked});
+  const raw = await sitetx.finish(planned, (await chains.keysOn((await opened()).seed, network)));
+  if (!send) return {raw, signed: planned.sign.map((x) => x.n)};
+  const done = await arcade.call(linked, "/account/broadcast", {account: key, body: {chain: network, raw}});
+  return {txid: done.txid};
+}
+
 /** Every chain's balance, Omni tokens and inscription count, as the first linked arcade reports them. */
 async function balances() {
   const {seed: s, account: key} = await opened();
@@ -198,6 +224,8 @@ const METHODS = {
     const k = await chains.keysOn((await opened()).seed, network);
     return {chain: network, address: k.address, message, signature: await messages.signText(k.key, message, network)};
   },
+  async arcade_signTransaction(origin, params) { return siteTransaction(origin, params || {}, false); },
+  async arcade_sendTransaction(origin, params) { return siteTransaction(origin, params || {}, true); },
   async arcade_disconnect(origin) {
     const all = await sites();
     delete all[origin];

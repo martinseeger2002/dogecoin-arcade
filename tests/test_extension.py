@@ -318,3 +318,102 @@ def test_a_send_is_signed_only_as_asked_and_never_spends_an_inscription_or_a_coi
     for n, case in enumerate(c):
         assert case.get("error", "Nothing was signed.").endswith("Nothing was signed."), n
     assert got["sats"] == ["150000000", "1", "700000000"]
+
+
+# --- a site's own transaction ------------------------------------------------------------------------------------------
+
+def _ecdsa_ok(pubkey: bytes, digest: bytes, der: bytes) -> bool:
+    """Verify a DER signature with the arcade's own secp256k1 arithmetic: nothing from the extension in the check."""
+    from arcade.llm import _P, _add
+    assert der[0] == 0x30 and der[2] == 0x02
+    rl = der[3]
+    r = int.from_bytes(der[4:4 + rl], "big")
+    s = int.from_bytes(der[6 + rl:6 + rl + der[5 + rl]], "big")
+    x = int.from_bytes(pubkey[1:], "big")
+    y = pow((x ** 3 + 7) % _P, (_P + 1) // 4, _P)
+    if (y & 1) != (pubkey[0] & 1):
+        y = _P - y
+    w = pow(s, -1, N)
+    point = _add(_mul(int.from_bytes(digest, "big") * w % N, _G), _mul(r * w % N, (x, y)))
+    return point is not None and point[0] % N == r and s <= N // 2
+
+
+def test_a_sites_transaction_is_signed_only_as_exchange_safety_allows_and_only_over_coins_it_can_vouch_for(tmp_path):
+    from arcade import funding
+    from arcade.txbuild import build_raw_tx, p2pkh_script
+    params = config.NETWORKS["test"]
+    pub = _pubkey(_bip32(seed.to_seed(PHRASES[0]), (44 | H, 1 | H, 0 | H, 0, 0)))
+    me = script.b58check_encode(params.pubkeyhash_version, script.hash160(pub))
+    them = script.b58check_encode(params.pubkeyhash_version, bytes(range(20)))
+    a, b, f = ("aa" * 32, 0), ("bb" * 32, 1), ("ff" * 32, 3)            # two of mine, one somebody else's
+    own = {f"{a[0]}:0": {"value": 3 * 10**8, "address": me}, f"{b[0]}:1": {"value": 10**6, "address": me}}
+    clean, ins = {"state": "clean", "inscriptions": []}, "ee" * 32 + "i0"
+    marks = {f"{a[0]}:0": clean, f"{b[0]}:1": {"state": "inscribed", "inscriptions": [{"id": ins, "offset": 0}]}}
+    pay = [(2 * 10**8, p2pkh_script(them)), (99 * 10**6, p2pkh_script(me))]
+    plain = build_raw_tx([a], pay)
+    listing = build_raw_tx([f, b], [(5 * 10**8, p2pkh_script(them)), (7 * 10**8, p2pkh_script(me))])
+    moving = build_raw_tx([b, a], [(10**6, p2pkh_script(them)), (29 * 10**7, p2pkh_script(me))])
+    after_foreign = build_raw_tx([f, b], [(10**6, p2pkh_script(them))])
+    p = lambda raw, **kw: {"chain": "test", "raw": raw, **kw}                                  # noqa: E731
+    cases = [
+        {"params": p(plain), "own": own, "marks": marks},                                       # 0 a plain payment
+        {"params": p(listing, sign=[1], sighash=0x83, inscriptions=[ins]), "own": own, "marks": marks},   # 1 a listing
+        {"params": p(listing, sign=[1], sighash=0x83), "own": own, "marks": marks},             # 2 undeclared
+        {"params": p(moving, inscriptions=[ins]), "own": own, "marks": marks, "send": True},     # 3 never sent plainly
+        {"params": p(moving, inscriptions=[ins]), "own": own, "marks": marks},                   # 4 moved on purpose
+        {"params": p(plain, sighash=0x02), "own": own, "marks": marks},                          # 5 NONE
+        {"params": p(plain, sighash=0x82), "own": own, "marks": marks},                          # 6 NONE|ANYONECANPAY
+        {"params": p(plain, sighash=0x03), "own": own, "marks": marks},                          # 7 SINGLE alone
+        {"params": p(after_foreign, sign=[1], inscriptions=[ins]), "own": own, "marks": marks},  # 8 landing unknown
+        {"params": p(plain), "own": own, "marks": {}},                                           # 9 index cannot say
+        {"params": p(listing, sign=[0]), "own": own, "marks": marks},                            # 10 not mine
+        {"params": p(build_raw_tx([b, a], [(10**6, p2pkh_script(them))]), sign=[1], sighash=0x83), "own": own,
+         "marks": marks},                                                                         # 11 no output beside it
+        {"params": p(listing, sign=[1], sighash=0x83, inscriptions=[ins]), "own": own, "marks": marks,
+         "send": True},                                                                           # 12 send: ALL only
+    ]
+    asked = tmp_path / "sitetx.json"
+    asked.write_text(json.dumps({"phrase": PHRASES[0], "cases": cases}))
+    got = json.loads(subprocess.run(["node", "--experimental-default-type=module", "--import", "./extension/test/register.mjs",
+                                     str(ROOT / "extension" / "test" / "sitetx.mjs"), str(asked)],
+                                    capture_output=True, text=True, timeout=180, check=True, cwd=ROOT).stdout)
+
+    def signed_input(raw_hex: str, n: int):
+        raw = bytes.fromhex(raw_hex)
+        at, inputs = 5, []
+        for _ in range(raw[4]):
+            length = raw[at + 36]
+            inputs.append(raw[at + 37:at + 37 + length])
+            at += 37 + length + 4
+        sig = inputs[n]
+        der, rest = sig[1:1 + sig[0]], sig[1 + sig[0]:]
+        assert rest == bytes([33]) + pub
+        return der[:-1], der[-1]
+
+    plain_in = [{"txid": a[0], "vout": 0}]
+    want = funding.sighash(plain_in, pay, 0, p2pkh_script(me))
+    assert got[0]["digests"] == [want.hex()]
+    der, kind = signed_input(got[0]["raw"], 0)
+    assert kind == 1 and _ecdsa_ok(pub, want, der)
+    assert got[0]["view"]["fee"] == str(10**6) and got[0]["view"]["outputs"][0]["address"] == them
+
+    listing_in = [{"txid": f[0], "vout": 3}, {"txid": b[0], "vout": 1}]
+    listing_out = [(5 * 10**8, p2pkh_script(them)), (7 * 10**8, p2pkh_script(me))]
+    want = funding.sighash(listing_in, listing_out, 1, p2pkh_script(me), sighash_type=funding.SINGLE_ANYONECANPAY)
+    assert got[1]["digests"] == [want.hex()]
+    der, kind = signed_input(got[1]["raw"], 1)
+    assert kind == 0x83 and _ecdsa_ok(pub, want, der)
+    assert got[1]["view"]["fee"] is None                       # somebody else's coin: its value is not known here
+
+    assert "did not say it moves" in got[2]["error"]
+    assert "a send never spends it" in got[3]["error"]
+    assert got[4]["view"]["outputs"][0]["receives"] == [ins] and got[4]["view"]["outputs"][0]["address"] == them
+    for n in (5, 6, 7):
+        assert "never NONE" in got[n]["error"], n
+    assert "cannot be worked out" in got[8]["error"]
+    assert "cannot say yet" in got[9]["error"]
+    assert "not a coin of this wallet's" in got[10]["error"]
+    assert "no output beside it" in got[11]["error"]
+    assert "Only SIGHASH_ALL" in got[12]["error"]
+    for n, case in enumerate(got):
+        assert case.get("error", "Nothing was signed.").endswith("Nothing was signed."), n

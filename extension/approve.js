@@ -1,3 +1,5 @@
+import {drawTx} from "./render.js";
+
 const $ = (id) => document.getElementById(id);
 const id = new URLSearchParams(location.search).get("id");
 const ask = (msg) => chrome.runtime.sendMessage(msg).then((r) => {
@@ -13,6 +15,10 @@ const WORDS = {
   signMessage: ["Sign this message?",
                 "It is signed with your address key below, exactly as written. Anyone can check that you signed it. "
                 + "Sign only words you mean: a signature cannot be taken back."],
+  signTransaction: ["Sign this transaction?",
+                    "The site gets it back signed and may broadcast it. Read every output below: once signed, it can be sent."],
+  sendTransaction: ["Send this transaction?",
+                    "Signed here, then broadcast through your linked arcade. Read every output below."],
 };
 
 ask({type: "pending", id}).then((p) => {
@@ -21,6 +27,11 @@ ask({type: "pending", id}).then((p) => {
   $("what").textContent = what;
   $("why").textContent = why;
   if (p.detail && p.detail.message) { $("message").textContent = p.detail.message; $("message").hidden = false; }
+  if (p.detail && p.detail.view) {
+    $("why").textContent += ` Each signature ${p.detail.view.sighash}. Your coins are read from ${p.detail.arcade}.`;
+    drawTx($("tx"), p.detail.view, p.detail.tokens || {});
+    $("tx").hidden = false;
+  }
   if (p.detail && p.detail.chain) {
     $("why").textContent += ` On ${p.detail.chain}${p.detail.address ? `, as ${p.detail.address}` : ""}.`;
   }
