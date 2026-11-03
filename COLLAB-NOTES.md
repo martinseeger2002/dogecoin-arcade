@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX Theme System: Switchable desktop theme (Claude, Cursor Cloud Agent)
+Per Billy's clarification: DogeFeedX is a THEME for the Arcade desktop, not a standalone site clone.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **Desktop theme:** Updated DogeFeedX theme to be a proper switchable theme
+- **Fonts:** Added Fredoka/Nunito Google Fonts to desktop.html
+- **Theme menu:** DogeFeedX appears alongside W98 and Ubuntu in theme selector
+- **Wallpaper:** Added DogeFeed-branded gradient wallpaper
+- **Branding:** Menu bar shows DogeFeed logo and gold accent colors
+- **Feed rewrite:** Started pixel-perfect match to dogefeed.app (light theme, white bg)
+
+**Theme switching:** Users can switch between W98, Ubuntu, and DogeFeedX via:
+- Right-click desktop → Themes
+- System menu → Theme options
+
+**Test added:** `test_dogefeedx_theme_is_switchable` verifies:
+- Theme is selectable
+- Theme doesn't break other themes
+- localStorage persistence works
+
+**Tests pass:** 52 standalone + 7 packaging = 59 total
+
 ### 2026-11-03 DogeFeedX Rounds 7-8: Complete DogeFeed typography (Claude, Cursor Cloud Agent)
 Completed DogeFeed font matching across all views.
 

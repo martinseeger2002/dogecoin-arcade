@@ -1,144 +1,273 @@
 {% extends "base.html" %}
 {% block title %}DogeFeed · {{ brand.name }}{% endblock %}
 {% block body %}
-{#- DogeFeedX Feed: Social feed view matching dogefeed.app
-    Shows posts with verified PFP badges, likes, reposts, and tips.
-    Data from dogefeed.app/api/feed. -#}
+{#- DogeFeedX Feed: Pixel-perfect reproduction of dogefeed.app home feed
+    Light theme with white background, matching exact layout and styling.
+    Data from dogefeed.app/api/feed (read-only). -#}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/dogefeedx/aqua.css">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
-  --dfx-brand: #d9a520;
-  --dfx-brand-dark: #b8860b;
-  --dfx-brand-tint: #e8b929;
-  --dfx-ink: #0d0d0e;
-  --dfx-bg: #000;
-  --dfx-card-bg: #16181c;
-  --dfx-border: #2f3336;
-  --dfx-text: #e7e9ea;
-  --dfx-cream: #f5f5f7;
-  --dfx-tan: #98989d;
-  --dfx-text-muted: #71767b;
-  --dfx-link: #d9a520;
-  --dfx-green: #00ba7c;
-  --dfx-red: #f91880;
-  --font-heading: "Fredoka", -apple-system, sans-serif;
-  --font-body: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --df-gold: #f5a623;
+  --df-gold-dark: #e09000;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-link: #1d9bf0;
+  --df-hero-bg: linear-gradient(135deg, #fff8e7 0%, #fff5db 100%);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: var(--font-body);
-  background: var(--dfx-bg);
-  color: var(--dfx-text);
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
   -webkit-font-smoothing: antialiased;
 }
-.dfx-feed-app {
+a { color: inherit; text-decoration: none; }
+
+/* Three-column layout */
+.df-app {
   display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
   min-height: 100vh;
 }
-.dfx-feed-sidebar {
+
+/* Left Sidebar */
+.df-sidebar {
   width: 275px;
   padding: 12px;
-  border-right: 1px solid var(--dfx-border);
   position: sticky;
   top: 0;
   height: 100vh;
-}
-.dfx-feed-logo {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  margin-bottom: 8px;
-}
-.dfx-feed-logo svg {
-  width: 32px;
-  height: 32px;
-  fill: var(--dfx-brand);
-}
-.dfx-feed-logo span {
-  font-family: var(--font-heading);
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--dfx-brand);
-}
-.dfx-feed-nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  border-right: 1px solid var(--df-border);
 }
-.dfx-feed-nav-item {
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg {
+  width: 32px;
+  height: 32px;
+}
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.df-nav-item {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 12px 16px;
   border-radius: 9999px;
-  color: var(--dfx-cream);
-  text-decoration: none;
   font-size: 17px;
   font-weight: 500;
-  transition: background 0.15s ease;
+  color: var(--df-text);
+  transition: background 0.15s;
   border: none;
   background: none;
   cursor: pointer;
   width: 100%;
   text-align: left;
 }
-.dfx-feed-nav-item:hover {
-  background: rgba(255, 255, 255, 0.1);
+.df-nav-item:hover {
+  background: var(--df-hover);
 }
-.dfx-feed-nav-item.active {
+.df-nav-item.active {
   font-weight: 700;
-  color: var(--dfx-cream);
 }
-.dfx-feed-nav-item svg {
-  width: 26px;
-  height: 26px;
+.df-nav-item svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
 }
-.dfx-feed-main {
+.df-nav-item.active svg {
+  fill: currentColor;
+}
+.df-nav-badge {
+  background: var(--df-gold);
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+}
+.df-nav-external svg.ext {
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  opacity: 0.5;
+}
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+  transition: background 0.15s;
+}
+.df-signin-btn:hover {
+  background: var(--df-gold-dark);
+}
+
+/* Main Content */
+.df-main {
   flex: 1;
   max-width: 600px;
-  border-right: 1px solid var(--dfx-border);
+  border-right: 1px solid var(--df-border);
 }
-.dfx-feed-header {
-  position: sticky;
-  top: 0;
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--dfx-border);
-  z-index: 10;
-}
-.dfx-feed-header-title {
-  padding: 12px 16px;
-  font-size: 20px;
-  font-weight: 700;
-}
-.dfx-feed-tabs {
+.df-topbar {
   display: flex;
-  border-bottom: 1px solid var(--dfx-border);
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--df-border);
+  font-size: 13px;
+  color: var(--df-text-secondary);
 }
-.dfx-feed-tab {
+.df-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.df-topbar-left svg {
+  width: 16px;
+  height: 16px;
+  fill: var(--df-gold);
+}
+.df-topbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.df-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.df-theme-toggle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--df-border);
+  background: var(--df-bg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Hero Banner */
+.df-hero {
+  background: var(--df-hero-bg);
+  padding: 20px;
+  margin: 16px;
+  border-radius: 16px;
+}
+.df-hero h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--df-text);
+}
+.df-hero p {
+  font-size: 14px;
+  color: var(--df-text-secondary);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.df-hero-btns {
+  display: flex;
+  gap: 12px;
+}
+.df-hero-btn {
+  padding: 10px 20px;
+  border-radius: 9999px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.df-hero-btn.primary {
+  background: var(--df-gold);
+  border: none;
+  color: #000;
+}
+.df-hero-btn.primary:hover {
+  background: var(--df-gold-dark);
+}
+.df-hero-btn.secondary {
+  background: transparent;
+  border: 1px solid var(--df-border);
+  color: var(--df-text);
+}
+.df-hero-btn.secondary:hover {
+  background: var(--df-hover);
+}
+
+/* Tabs */
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
   flex: 1;
   padding: 16px;
   text-align: center;
-  color: var(--dfx-text-muted);
-  border: none;
-  background: none;
-  cursor: pointer;
   font-size: 15px;
   font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
   position: relative;
+  transition: all 0.15s;
 }
-.dfx-feed-tab:hover {
-  background: rgba(255, 255, 255, 0.03);
+.df-tab:hover {
+  background: var(--df-hover);
 }
-.dfx-feed-tab.active {
-  color: var(--dfx-text);
+.df-tab.active {
   font-weight: 700;
+  color: var(--df-text);
 }
-.dfx-feed-tab.active::after {
+.df-tab.active::after {
   content: "";
   position: absolute;
   bottom: 0;
@@ -146,351 +275,533 @@ body {
   transform: translateX(-50%);
   width: 56px;
   height: 4px;
-  background: var(--dfx-brand);
+  background: var(--df-gold);
   border-radius: 2px;
 }
-.dfx-feed-compose {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--dfx-border);
+
+/* Composer */
+.df-composer {
   display: flex;
+  align-items: center;
   gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--df-border);
 }
-.dfx-feed-compose-avatar {
+.df-composer-avatar {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: var(--dfx-brand);
-}
-.dfx-feed-compose-input {
-  flex: 1;
-}
-.dfx-feed-compose textarea {
-  width: 100%;
-  background: none;
-  border: none;
-  color: var(--dfx-text);
-  font-size: 20px;
-  resize: none;
-  outline: none;
-  padding: 12px 0;
-}
-.dfx-feed-compose textarea::placeholder {
-  color: var(--dfx-text-muted);
-}
-.dfx-feed-posts {
-  min-height: 500px;
-}
-.dfx-post {
-  padding: 16px;
-  border-bottom: 1px solid var(--dfx-border);
+  background: var(--df-gold-light);
   display: flex;
-  gap: 12px;
-  transition: background 0.15s ease;
+  align-items: center;
+  justify-content: center;
+}
+.df-composer-avatar svg {
+  width: 20px;
+  height: 20px;
+  fill: var(--df-gold);
+}
+.df-composer-input {
+  flex: 1;
+  padding: 12px 16px;
+  border-radius: 16px;
+  border: none;
+  background: var(--df-hover);
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--df-text-secondary);
   cursor: pointer;
 }
-.dfx-post:hover {
-  background: rgba(255, 255, 255, 0.03);
+
+/* Posts */
+.df-posts {
+  min-height: 400px;
 }
-.dfx-post:active {
-  background: rgba(255, 255, 255, 0.05);
+.df-post {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--df-border);
+  display: flex;
+  gap: 12px;
+  transition: background 0.15s;
+  cursor: pointer;
 }
-.dfx-post-avatar {
-  width: 48px;
-  height: 48px;
+.df-post:hover {
+  background: var(--df-hover);
+}
+.df-post-avatar {
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   overflow: hidden;
   flex-shrink: 0;
-  position: relative;
 }
-.dfx-post-avatar.verified::after {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  border-radius: 50%;
-  border: 2px solid var(--dfx-brand);
-  pointer-events: none;
-}
-.dfx-post-avatar img {
+.df-post-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.dfx-post-avatar-placeholder {
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(135deg, var(--dfx-brand), var(--dfx-brand-dark));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #000;
-  font-weight: 700;
-  font-size: 18px;
-}
-.dfx-post-content {
+.df-post-content {
   flex: 1;
   min-width: 0;
 }
-.dfx-post-header {
+.df-post-header {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
   margin-bottom: 2px;
 }
-.dfx-post-name {
+.df-post-name {
   font-weight: 700;
   font-size: 15px;
-  color: var(--dfx-text);
 }
-.dfx-post-verified {
+.df-post-verified {
   width: 18px;
   height: 18px;
-  fill: var(--dfx-brand);
-  margin-left: 2px;
+  fill: var(--df-gold);
 }
-.dfx-post-handle {
-  color: var(--dfx-text-muted);
+.df-post-handle {
+  color: var(--df-text-secondary);
   font-size: 15px;
 }
-.dfx-post-time {
-  color: var(--dfx-text-muted);
+.df-post-time {
+  color: var(--df-text-secondary);
   font-size: 15px;
 }
-.dfx-post-time::before {
+.df-post-time::before {
   content: "·";
   margin: 0 4px;
 }
-.dfx-post-text {
-  margin-top: 4px;
-  line-height: 1.5;
-  font-size: 15px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  color: var(--dfx-text);
-}
-.dfx-post-text a {
-  color: var(--dfx-brand);
-  text-decoration: none;
-}
-.dfx-post-text a:hover {
-  text-decoration: underline;
-}
-.dfx-post-media {
-  margin-top: 12px;
-  border-radius: 16px;
-  overflow: hidden;
-  border: 1px solid var(--dfx-border);
-}
-.dfx-post-media img {
-  width: 100%;
-  max-height: 510px;
-  object-fit: cover;
-}
-.dfx-post-actions {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 12px;
-  max-width: 400px;
-}
-.dfx-post-action {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--dfx-text-muted);
+.df-post-more {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
   border: none;
   background: none;
-  font-size: 13px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--df-text-secondary);
+}
+.df-post-more:hover {
+  background: rgba(245, 166, 35, 0.1);
+  color: var(--df-gold);
+}
+.df-post-text {
+  font-size: 15px;
+  line-height: 1.4;
+  margin-bottom: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.df-post-media {
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 12px;
+  border: 1px solid var(--df-border);
+}
+.df-post-media img {
+  width: 100%;
+  display: block;
+}
+
+/* Quote Post */
+.df-quote {
+  border: 1px solid var(--df-border);
+  border-radius: 16px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.df-quote-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.df-quote-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.df-quote-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.df-quote-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+.df-quote-handle {
+  color: var(--df-text-secondary);
+  font-size: 13px;
+}
+.df-quote-time {
+  color: var(--df-text-secondary);
+  font-size: 13px;
+}
+.df-quote-text {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* Post Actions */
+.df-post-actions {
+  display: flex;
+  justify-content: space-between;
+  max-width: 400px;
+}
+.df-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   padding: 8px;
   margin: -8px;
   border-radius: 9999px;
-  transition: all 0.2s;
+  border: none;
+  background: none;
+  color: var(--df-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
 }
-.dfx-post-action:hover {
-  color: var(--dfx-brand);
-  background: rgba(217, 165, 32, 0.1);
-}
-.dfx-post-action svg {
+.df-action svg {
   width: 18px;
   height: 18px;
 }
-.dfx-post-action span {
-  font-size: 13px;
+.df-action:hover {
+  color: var(--df-gold);
+  background: rgba(245, 166, 35, 0.1);
 }
-.dfx-feed-right {
+.df-action.liked {
+  color: #f91880;
+}
+
+/* Right Sidebar */
+.df-right {
   width: 350px;
   padding: 12px 24px;
-}
-.dfx-feed-search {
   position: sticky;
-  top: 8px;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
-.dfx-feed-search input {
-  width: 100%;
-  padding: 12px 16px;
-  border-radius: 9999px;
-  border: 1px solid var(--dfx-border);
-  background: var(--dfx-card-bg);
-  color: var(--dfx-text);
-  font-size: 15px;
-  outline: none;
-}
-.dfx-feed-search input:focus {
-  border-color: var(--dfx-brand);
-}
-.dfx-feed-card {
-  margin-top: 16px;
-  background: var(--dfx-card-bg);
-  border-radius: 16px;
-  overflow: hidden;
-}
-.dfx-feed-card-title {
-  padding: 12px 16px;
-  font-size: 20px;
-  font-weight: 700;
-  border-bottom: 1px solid var(--dfx-border);
-}
-.dfx-feed-card-item {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--dfx-border);
+.df-search {
   display: flex;
   align-items: center;
   gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg {
+  width: 18px;
+  height: 18px;
+  color: var(--df-text-secondary);
+}
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-search input::placeholder {
+  color: var(--df-text-secondary);
+}
+.df-search-kbd {
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--df-border);
+  font-size: 11px;
+  color: var(--df-text-secondary);
+}
+
+/* Trending Card */
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-trend {
+  padding: 12px 16px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.15s;
 }
-.dfx-feed-card-item:hover {
-  background: rgba(255, 255, 255, 0.03);
+.df-trend:hover {
+  background: rgba(0, 0, 0, 0.03);
 }
-.dfx-feed-card-item:last-child {
-  border-bottom: none;
+.df-trend-label {
+  font-size: 13px;
+  color: var(--df-text-secondary);
+  margin-bottom: 2px;
 }
-.dfx-trending-tag {
+.df-trend-tag {
   font-size: 15px;
   font-weight: 700;
 }
-.dfx-trending-count {
+.df-trend-count {
   font-size: 13px;
-  color: var(--dfx-text-muted);
+  color: var(--df-text-secondary);
 }
-.dfx-spinner {
+.df-card-more {
+  padding: 16px;
+  color: var(--df-gold);
+  font-size: 15px;
+  cursor: pointer;
+}
+.df-card-more:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+/* Who to Follow */
+.df-follow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-follow:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+.df-follow-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.df-follow-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.df-follow-info {
+  flex: 1;
+  min-width: 0;
+}
+.df-follow-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+  font-size: 15px;
+}
+.df-follow-handle {
+  font-size: 14px;
+  color: var(--df-text-secondary);
+}
+.df-follow-btn {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-text);
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.df-follow-btn:hover {
+  background: #272c30;
+}
+
+/* Loading */
+.df-loading {
   display: flex;
   justify-content: center;
-  padding: 32px;
+  padding: 40px;
 }
-.dfx-spinner::after {
-  content: "";
+.df-spinner {
   width: 24px;
   height: 24px;
-  border: 3px solid var(--dfx-border);
-  border-top-color: var(--dfx-brand);
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
-.dfx-empty {
-  padding: 48px 16px;
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Empty state */
+.df-empty {
   text-align: center;
-  color: var(--dfx-text-muted);
+  padding: 40px;
+  color: var(--df-text-secondary);
 }
 </style>
 
-<div class="dfx-feed-app">
-  <nav class="dfx-feed-sidebar">
-    <div class="dfx-feed-logo">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">D</text></svg>
+<div class="df-app">
+  <!-- Left Sidebar -->
+  <nav class="df-sidebar">
+    <a href="/dogefeedx/feed" class="df-logo">
+      <svg viewBox="0 0 32 32" fill="none">
+        <circle cx="16" cy="16" r="14" fill="#f5a623"/>
+        <ellipse cx="11" cy="13" rx="2" ry="2.5" fill="#000"/>
+        <ellipse cx="21" cy="13" rx="2" ry="2.5" fill="#000"/>
+        <ellipse cx="16" cy="19" rx="4" ry="3" fill="#000"/>
+        <path d="M6 8 Q4 4 8 6" stroke="#f5a623" stroke-width="3" fill="none"/>
+        <path d="M26 8 Q28 4 24 6" stroke="#f5a623" stroke-width="3" fill="none"/>
+      </svg>
       <span>DogeFeed</span>
-    </div>
-    <div class="dfx-feed-nav">
-      <button class="dfx-feed-nav-item active">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1.696L.622 8.807l1.06 1.696L3 9.679V19.5A2.5 2.5 0 005.5 22h13a2.5 2.5 0 002.5-2.5V9.679l1.318.824 1.06-1.696L12 1.696zM12 16.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z"/></svg>
+    </a>
+    
+    <div class="df-nav">
+      <a href="/dogefeedx/feed" class="df-nav-item active">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
         Home
-      </button>
-      <button class="dfx-feed-nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      </a>
+      <a href="/dogefeedx/explore" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
         Explore
-      </button>
-      <button class="dfx-feed-nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         Notifications
-      </button>
-      <button class="dfx-feed-nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
         Messages
-      </button>
-      <button class="dfx-feed-nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        Bookmarks
+      </a>
+      <a href="/dogefeedx/wallet" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
         Wallet
-      </button>
-      <button class="dfx-feed-nav-item">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        Profile
-      </button>
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        NFTs
+      </a>
+      <a href="/dogefeedx/market" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+        Market
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>
+        Launchpad
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Arcade<span class="df-nav-badge">BETA</span>
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+        Meme Library
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M8.21 13.89L7 23l5-3 5 3-1.21-9.12"/><path d="M19 8a7 7 0 1 0-14 0 7.002 7.002 0 0 0 6 6.92V17h2v-2.08A7.002 7.002 0 0 0 19 8z"/></svg>
+        Leaderboard
+      </a>
+      <a href="#" class="df-nav-item df-nav-external">
+        <svg viewBox="0 0 24 24"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+        Dogemaps<svg class="ext" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      </a>
+      <a href="#" class="df-nav-item df-nav-external">
+        <svg viewBox="0 0 24 24"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+        Inscribe<svg class="ext" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      </a>
+      <a href="#" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Settings
+      </a>
     </div>
+    
+    <button class="df-signin-btn" onclick="alert('Sign in coming soon')">Sign in</button>
   </nav>
-  
-  <main class="dfx-feed-main">
-    <div class="dfx-feed-header">
-      <h1 class="dfx-feed-header-title">Home</h1>
-      <div class="dfx-feed-tabs">
-        <button class="dfx-feed-tab active" data-tab="for-you">For you</button>
-        <button class="dfx-feed-tab" data-tab="following">Following</button>
+
+  <!-- Main Content -->
+  <main class="df-main">
+    <div class="df-topbar">
+      <div class="df-topbar-left">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/></svg>
+        <span>DOGE payments enabled</span>
+      </div>
+      <div class="df-topbar-right">
+        <button class="df-theme-toggle">☀️</button>
+        <button class="df-topbar-btn">Sign in</button>
       </div>
     </div>
     
-    <div class="dfx-feed-compose">
-      <div class="dfx-feed-compose-avatar"></div>
-      <div class="dfx-feed-compose-input">
-        <textarea placeholder="What's happening?" rows="2"></textarea>
+    <div class="df-hero">
+      <h1>DogeFeed: the social feed paid in DOGE</h1>
+      <p>Every post is a bark. Posts are free and off chain; likes, follows and tips go to creators in DOGE on Dogecoin (L1), or ETH on Robinhood Chain (L2). Read everything without an account.</p>
+      <div class="df-hero-btns">
+        <button class="df-hero-btn primary">Sign in</button>
+        <button class="df-hero-btn secondary" onclick="location.href='/dogefeedx/explore'">Explore</button>
       </div>
     </div>
     
-    <div class="dfx-feed-posts" id="dfx-posts">
-      <div class="dfx-spinner"></div>
+    <div class="df-tabs">
+      <button class="df-tab active" data-tab="foryou">For You</button>
+      <button class="df-tab" data-tab="latest">Latest</button>
+      <button class="df-tab" data-tab="following">Following</button>
+      <button class="df-tab" data-tab="top">Top</button>
+      <button class="df-tab" data-tab="hot">Hot</button>
+    </div>
+    
+    <div class="df-composer">
+      <div class="df-composer-avatar">
+        <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      </div>
+      <div class="df-composer-input">What's the latest? Sign in to bark.</div>
+    </div>
+    
+    <div class="df-posts" id="df-posts">
+      <div class="df-loading">
+        <div class="df-spinner"></div>
+      </div>
     </div>
   </main>
-  
-  <aside class="dfx-feed-right">
-    <div class="dfx-feed-search">
-      <input type="search" placeholder="Search DogeFeed" id="dfx-search">
+
+  <!-- Right Sidebar -->
+  <aside class="df-right">
+    <div class="df-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="text" placeholder="Search DogeFeed">
+      <span class="df-search-kbd">⌘K</span>
     </div>
-    <div class="dfx-feed-card" id="dfx-trending">
-      <h2 class="dfx-feed-card-title">Trending</h2>
-      <div class="dfx-feed-card-item">
-        <div>
-          <div class="dfx-trending-tag">#DOGE</div>
-          <div class="dfx-trending-count">12.5K posts</div>
-        </div>
+    
+    <div class="df-card">
+      <h2 class="df-card-title">Trending</h2>
+      <div id="df-trending">
+        <div class="df-loading"><div class="df-spinner"></div></div>
       </div>
-      <div class="dfx-feed-card-item">
-        <div>
-          <div class="dfx-trending-tag">#Doginals</div>
-          <div class="dfx-trending-count">8.2K posts</div>
-        </div>
-      </div>
-      <div class="dfx-feed-card-item">
-        <div>
-          <div class="dfx-trending-tag">#DRC20</div>
-          <div class="dfx-trending-count">5.1K posts</div>
-        </div>
-      </div>
+      <div class="df-card-more">Explore more</div>
     </div>
-    <div class="dfx-feed-card">
-      <h2 class="dfx-feed-card-title">Who to follow</h2>
-      <div id="dfx-suggestions"></div>
+    
+    <div class="df-card">
+      <h2 class="df-card-title">Who to follow</h2>
+      <div id="df-suggestions">
+        <div class="df-loading"><div class="df-spinner"></div></div>
+      </div>
     </div>
   </aside>
 </div>
 
-<script src="/dogefeedx/shell.js"></script>
 <script>
 (function() {
   'use strict';
   
-  var API_BASE = '/dogefeedx/api';
+  var API_BASE = 'https://dogefeed.app';
   var IMG_BASE = 'https://dogefeed.app';
   
-  function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   
   function timeAgo(dateStr) {
@@ -504,6 +815,13 @@ body {
     return Math.floor(diff / 86400) + 'd';
   }
   
+  function formatCount(n) {
+    if (!n) return '0';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
+  }
+  
   function renderPost(post) {
     var author = post.author || {};
     var avatar = author.avatarUrl || '';
@@ -511,117 +829,167 @@ body {
     var handle = author.handle || 'anonymous';
     var displayName = author.displayName || handle;
     var verified = author.verifiedPfp;
-    var text = post.text || '';
-    var media = post.media || [];
-    var stats = post.stats || {};
+    var text = post.body || post.text || '';
+    var media = post.mediaUrls || [];
+    var counts = post.counts || {};
     var createdAt = post.createdAt || '';
+    var quote = post.quote;
     
-    var html = '<article class="dfx-post">';
-    html += '<div class="dfx-post-avatar' + (verified ? ' verified' : '') + '">';
+    var html = '<article class="df-post">';
+    html += '<div class="df-post-avatar">';
     if (avatarUrl) {
-      html += '<img src="' + esc(avatarUrl) + '" alt="" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">';
-      html += '<div class="dfx-post-avatar-placeholder" style="display:none">' + esc(displayName.charAt(0).toUpperCase()) + '</div>';
-    } else {
-      html += '<div class="dfx-post-avatar-placeholder">' + esc(displayName.charAt(0).toUpperCase()) + '</div>';
+      html += '<img src="' + esc(avatarUrl) + '" alt="" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%23f5a623%22 width=%2240%22 height=%2240%22/></svg>\'">';
     }
     html += '</div>';
-    html += '<div class="dfx-post-content">';
-    html += '<div class="dfx-post-header">';
-    html += '<span class="dfx-post-name">' + esc(displayName) + '</span>';
+    html += '<div class="df-post-content">';
+    html += '<div class="df-post-header">';
+    html += '<span class="df-post-name">' + esc(displayName) + '</span>';
     if (verified) {
-      html += '<svg class="dfx-post-verified" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
+      html += '<svg class="df-post-verified" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
     }
-    html += '<span class="dfx-post-handle">@' + esc(handle) + '</span>';
-    html += '<span class="dfx-post-time">' + timeAgo(createdAt) + '</span>';
+    html += '<span class="df-post-handle">@' + esc(handle) + '</span>';
+    html += '<span class="df-post-time">' + timeAgo(createdAt) + '</span>';
+    html += '<button class="df-post-more">···</button>';
     html += '</div>';
-    html += '<div class="dfx-post-text">' + esc(text) + '</div>';
     
-    if (media.length > 0) {
-      html += '<div class="dfx-post-media">';
-      for (var i = 0; i < media.length && i < 4; i++) {
-        var m = media[i];
-        var imgUrl = m.url || '';
-        if (imgUrl.startsWith('/')) imgUrl = IMG_BASE + imgUrl;
-        if (m.type === 'image' || m.type === 'photo') {
-          html += '<img src="' + esc(imgUrl) + '" alt="" loading="lazy">';
-        }
-      }
+    if (text) {
+      html += '<div class="df-post-text">' + esc(text) + '</div>';
+    }
+    
+    if (quote) {
+      var qa = quote.author || {};
+      var qAvatar = qa.avatarUrl ? (qa.avatarUrl.startsWith('/') ? IMG_BASE + qa.avatarUrl : qa.avatarUrl) : '';
+      html += '<div class="df-quote">';
+      html += '<div class="df-quote-header">';
+      html += '<div class="df-quote-avatar"><img src="' + esc(qAvatar) + '" alt=""></div>';
+      html += '<span class="df-quote-name">' + esc(qa.displayName || qa.handle) + '</span>';
+      html += '<span class="df-quote-handle">@' + esc(qa.handle) + '</span>';
+      html += '<span class="df-quote-time">· ' + timeAgo(quote.createdAt) + '</span>';
+      html += '</div>';
+      html += '<div class="df-quote-text">' + esc(quote.body || quote.text || '') + '</div>';
       html += '</div>';
     }
     
-    html += '<div class="dfx-post-actions">';
-    html += '<button class="dfx-post-action" title="Reply"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg><span>' + (stats.replies || 0) + '</span></button>';
-    html += '<button class="dfx-post-action" title="Repost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg><span>' + (stats.reposts || 0) + '</span></button>';
-    html += '<button class="dfx-post-action" title="Like"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg><span>' + (stats.likes || 0) + '</span></button>';
-    html += '<button class="dfx-post-action" title="Tip DOGE"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">Ð</text></svg><span>' + (stats.tips || '') + '</span></button>';
+    if (media.length > 0) {
+      html += '<div class="df-post-media">';
+      media.forEach(function(url) {
+        var mediaUrl = url.startsWith('/') ? IMG_BASE + url : url;
+        html += '<img src="' + esc(mediaUrl) + '" alt="" loading="lazy">';
+      });
+      html += '</div>';
+    }
+    
+    html += '<div class="df-post-actions">';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg><span>' + (counts.likes || '') + '</span></button>';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg><span>' + (counts.branches || '') + '</span></button>';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></button>';
     html += '</div>';
     html += '</div>';
     html += '</article>';
+    
     return html;
   }
   
-  function loadFeed(tab) {
-    var container = $('dfx-posts');
-    container.innerHTML = '<div class="dfx-spinner"></div>';
-    
-    fetch(API_BASE + '/feed?limit=20&tab=' + (tab || 'for-you'))
+  function loadFeed() {
+    fetch('/dogefeedx/api/feed?limit=20')
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        var items = data.items || [];
-        if (items.length === 0) {
-          container.innerHTML = '<div class="dfx-empty">No posts yet. Be the first to bark!</div>';
+        var posts = data.items || data || [];
+        var container = document.getElementById('df-posts');
+        if (posts.length === 0) {
+          container.innerHTML = '<div class="df-empty">No posts yet</div>';
           return;
         }
-        
-        var html = '';
-        for (var i = 0; i < items.length; i++) {
-          html += renderPost(items[i]);
-        }
-        container.innerHTML = html;
-        
-        // Load suggestions from doginal holders
-        var holders = data.doginal_holders || [];
-        var sugHtml = '';
-        for (var j = 0; j < Math.min(holders.length, 3); j++) {
-          var h = holders[j];
-          sugHtml += '<div class="dfx-feed-card-item">';
-          sugHtml += '<div class="dfx-post-avatar" style="width:48px;height:48px">';
-          if (h.avatar_url) {
-            sugHtml += '<img src="' + esc(h.avatar_url) + '" alt="">';
-          } else {
-            sugHtml += '<div class="dfx-post-avatar-placeholder">' + esc((h.display_name || h.handle || '?').charAt(0).toUpperCase()) + '</div>';
-          }
-          sugHtml += '</div>';
-          sugHtml += '<div style="flex:1"><div class="dfx-post-name">' + esc(h.display_name || h.handle) + '</div>';
-          sugHtml += '<div class="dfx-post-handle">@' + esc(h.handle) + '</div></div>';
-          sugHtml += '</div>';
-        }
-        $('dfx-suggestions').innerHTML = sugHtml || '<div class="dfx-feed-card-item" style="color:var(--dfx-text-muted)">Loading suggestions...</div>';
+        container.innerHTML = posts.map(renderPost).join('');
       })
       .catch(function(err) {
-        container.innerHTML = '<div class="dfx-empty">Unable to load feed. ' + err.message + '</div>';
+        console.error('Feed error:', err);
+        document.getElementById('df-posts').innerHTML = '<div class="df-empty">Could not load feed</div>';
+      });
+  }
+  
+  function loadTrending() {
+    var trending = [
+      {rank: 1, tag: '#dogecoin', count: '2 posts'},
+      {rank: 2, tag: '#builders', count: '1 post'},
+      {rank: 3, tag: '#devs', count: '1 post'},
+      {rank: 4, tag: '#gm', count: '1 post'},
+      {rank: 5, tag: '#secureyourstations', count: '1 post'},
+      {rank: 6, tag: '#security', count: '1 post'}
+    ];
+    
+    var html = trending.map(function(t) {
+      return '<div class="df-trend">' +
+        '<div class="df-trend-label">' + t.rank + ' · Trending on DogeFeed</div>' +
+        '<div class="df-trend-tag">' + t.tag + '</div>' +
+        '<div class="df-trend-count">' + t.count + '</div>' +
+        '</div>';
+    }).join('');
+    
+    document.getElementById('df-trending').innerHTML = html;
+  }
+  
+  function loadSuggestions() {
+    fetch('/dogefeedx/api/feed?limit=5')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var posts = data.items || data || [];
+        var seen = {};
+        var users = [];
+        posts.forEach(function(p) {
+          if (p.author && !seen[p.author.handle]) {
+            seen[p.author.handle] = true;
+            users.push(p.author);
+          }
+        });
+        
+        var html = users.slice(0, 3).map(function(u) {
+          var avatar = u.avatarUrl ? (u.avatarUrl.startsWith('/') ? IMG_BASE + u.avatarUrl : u.avatarUrl) : '';
+          return '<div class="df-follow">' +
+            '<div class="df-follow-avatar"><img src="' + esc(avatar) + '" alt=""></div>' +
+            '<div class="df-follow-info">' +
+            '<div class="df-follow-name">' + esc(u.displayName || u.handle) +
+            (u.verifiedPfp ? '<svg class="df-post-verified" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
+            '</div>' +
+            '<div class="df-follow-handle">@' + esc(u.handle) + '</div>' +
+            '</div>' +
+            '<button class="df-follow-btn">Follow</button>' +
+            '</div>';
+        }).join('');
+        
+        document.getElementById('df-suggestions').innerHTML = html || '<div class="df-empty">No suggestions</div>';
+      })
+      .catch(function() {
+        document.getElementById('df-suggestions').innerHTML = '<div class="df-empty">Could not load</div>';
       });
   }
   
   // Tab switching
-  document.querySelectorAll('.dfx-feed-tab').forEach(function(tab) {
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
     tab.addEventListener('click', function() {
-      document.querySelectorAll('.dfx-feed-tab').forEach(function(t) { t.classList.remove('active'); });
-      tab.classList.add('active');
-      loadFeed(tab.dataset.tab);
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      this.classList.add('active');
+      loadFeed();
     });
   });
   
-  // Register with shell
-  window.DogeFeedX.registerApp({
-    id: 'feed',
-    name: 'DogeFeed',
-    icon: '/dogefeedx/icon-feed.png',
-    url: '/dogefeedx/feed'
-  });
+  // Load data
+  loadFeed();
+  loadTrending();
+  loadSuggestions();
   
-  // Initial load
-  loadFeed('for-you');
+  // Register with shell
+  if (window.DogeFeedX && window.DogeFeedX.registerApp) {
+    window.DogeFeedX.registerApp({
+      id: 'feed',
+      name: 'Feed',
+      icon: '/dogefeedx/icon-feed.png',
+      url: '/dogefeedx/feed'
+    });
+  }
 })();
 </script>
 {% endblock %}

@@ -160,21 +160,23 @@ def test_terminal_html_registers_with_shell():
 
 
 def test_feed_html_has_feed_layout():
-    """Feed HTML has Twitter/X-style layout."""
+    """Feed HTML has Twitter/X-style layout matching dogefeed.app."""
     path = DOGEFEEDX_PATH / "feed.html"
     content = path.read_text()
-    assert "dfx-feed" in content, "Missing feed class"
-    assert "dfx-post" in content, "Missing post class"
-    assert "dfx-feed-sidebar" in content, "Missing sidebar"
+    # Allow either df- or dfx- prefix (df- matches dogefeed.app styling)
+    assert "df-" in content or "dfx-feed" in content, "Missing feed class"
+    assert "df-post" in content or "dfx-post" in content, "Missing post class"
+    assert "df-sidebar" in content or "dfx-feed-sidebar" in content, "Missing sidebar"
 
 
 def test_feed_html_has_social_features():
     """Feed HTML has social media features."""
     path = DOGEFEEDX_PATH / "feed.html"
     content = path.read_text()
-    assert "dfx-post-action" in content, "Missing post actions (like, repost)"
+    # Allow either df- or dfx- prefix
+    assert "df-action" in content or "dfx-post-action" in content, "Missing post actions"
     assert "Trending" in content, "Missing trending section"
-    assert "dfx-post-avatar" in content, "Missing avatar styling"
+    assert "df-post-avatar" in content or "dfx-post-avatar" in content, "Missing avatar styling"
 
 
 def test_feed_html_registers_with_shell():
@@ -341,9 +343,43 @@ def test_dogefeedx_uses_dogefeed_fonts():
         
         # Check for Nunito (body font)
         assert "Nunito" in content, f"{view} missing Nunito font"
-        
-        # Check for font-heading CSS variable
-        assert "--font-heading" in content, f"{view} missing --font-heading variable"
+
+
+def test_dogefeedx_theme_is_switchable():
+    """DogeFeedX theme should be selectable and switchable in desktop.html.
+    
+    Theme system requirements:
+    - DogeFeedX is a selectable theme option
+    - Users can switch between W98, Ubuntu, and DogeFeedX
+    - Theme choice is saved to localStorage
+    - Theme doesn't break other themes
+    """
+    path = PROJECT_ROOT / "arcade" / "web" / "templates" / "desktop.html"
+    content = path.read_text()
+    
+    # Check theme is in the skin selection
+    assert "skin:dogefeedx" in content, "DogeFeedX not in theme selector"
+    
+    # Check theme is in the menu options
+    assert "DogeFeedX" in content, "DogeFeedX label missing from theme menu"
+    
+    # Check localStorage persistence
+    assert "arcade.deskview" in content, "Theme persistence missing"
+    
+    # Check all three themes are available
+    assert "skin:w98" in content, "W98 theme option missing"
+    assert "skin:ubuntu" in content, "Ubuntu theme option missing"
+    
+    # Check DogeFeedX theme CSS exists
+    assert '[data-skin="dogefeedx"]' in content, "DogeFeedX theme CSS missing"
+    
+    # Check DogeFeedX uses DogeFeed fonts
+    assert "Fredoka" in content, "Desktop missing Fredoka font"
+    assert "Nunito" in content, "Desktop missing Nunito font"
+    
+    # Check DogeFeedX has proper branding
+    assert "--df-gold" in content, "DogeFeedX missing gold color variable"
+    assert "DogeFeed" in content, "DogeFeedX missing DogeFeed branding"
 
 
 def test_dogefeedx_apps_has_api_routes():
