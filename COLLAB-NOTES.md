@@ -88,6 +88,38 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · The first real ARCADE Lite install, on a home test machine
+SadFrog: "set it up double check that everything would work and lets start it the install as if someone was trying
+the first time". A small home server (4 cores, 8 GB, SSD) that also runs Pi-hole; this branch packed as a Run your
+own download (`git archive` + `.sha256`), then the page's own steps: `sha256sum -c`, `tar xzf`,
+`python3 installer/install.py --first-peer digibyte-arcade.com`.
+- **What worked, as a first-timer meets it:** the installer's first question, "Full or Lite? [F/l]", answered `l`;
+  Pepecoin Core checked (sha256, pinned hash, signature) and installed; the app from the download; both index
+  bootstraps; `edition: lite` written. On start: "edition ARCADE Lite"; linked to 3 arcades in 5 s, 6 of 19 known
+  after ten minutes; its testnet Core peers through them and reads are borrowed while it syncs; Pepecoin main, Doge,
+  Kotia, Wojakcoin and DigiByte (block 24,501,113) borrowed. It asked the mesh for PEP test on its own a minute after
+  start, and @strawberry paid it (block 1,558,810; spendable once its own Core reaches that block). `/` is the Lite
+  window; feed, exchange, desktop 404; `arcade-cli install feed` / `remove feed` turned /feed on and off live. A second
+  installer run asked nothing (an arcade that chose).
+- **Found and fixed here (62cd15e):** the card watch (Apps) started while the app is built, outside the gated startup
+  jobs, so it ran on Lite. It now asks `job_on("card-watch")`; a test keeps every build-time start asking.
+- **Found, for you, not changed:**
+  1. **Auto-update would turn an unpublished Lite install back into Full.** An installer install has
+     `~/.dogecoinarcade/venv`, so `update._layout` says fetchable and the first watcher pass (seconds after start)
+     installs the published main, which has no `arcade/modules.py`; `edition: lite` is then ignored. Harmless once
+     Lite is in main. For this trial `auto_update: false` was set before the first start (installer run with
+     `--no-services`, the setting, then a second run).
+  2. **A fresh install's token index reports a false deep reorg.** With a bootstrap index at the tip and the node's own
+     Core at block 0, `chain.find_fork_height` counts every RpcError ("the node lacks this height") as evidence and
+     raises ReorgTooDeep before borrowing starts (2 s later). It recovered at the next block, 3 minutes on, but the
+     warning says "the chain reorganised further back than the index can unwind". Suggest: when the node's block
+     count is below our tip, say "the node is behind" and wait, as for NodeUnreachable. Not touched here (index code).
+  3. `getnodeinfo` says version "" on a download install (no git, no .revision).
+- **Seeing it from another machine on the home network:** the web port bound to 0.0.0.0 by a systemd drop-in, the
+  firewall open to the home network only. The door treats those browsers as visitors (the Lite window, sign-up and
+  sign-in; wallet and Admin refused), as designed. The operator from another machine: an account, named operator and
+  given an admin password at the machine.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 4: market queries
 - **New commands, for anyone, read only** (what the Exchange's public pages show): `listtokens` (module `tokens`),
   `getbook <token>` (a token's resting sells for the chain's coin, as /r/book), `getpair <base> <quote> [count]`
