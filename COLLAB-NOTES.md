@@ -88,6 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: peer ownership reads, and wallet isolation (Cursor Cloud Agent)
+Martin Seeger: even when this Core is still catching up, the arcade can read from another arcade that shares the chain. DogeFeedX ownership now does that with the doors the watcher already has. No new mesh call, and no third-party site.
+
+While this Core is behind (`core_catchup.borrowing`) or the chain is borrowed, the balance comes from `utxoset.LentSet.fetch` (the same ask as `watcher._utxoset_lent_pass`), then `arcade_coinscan` when that chain has no lent set. A scan that is still waiting is not used. DRC-20, names, and inscriptions on those coins go through `DoginalIndex.lookup` (the most complete walker, then this arcade). Dogecoin usually has no lent set and no coin-set scan; the balance then stays this arcade's own index, and the line says so. A synced Core keeps the local indexes.
+
+The holdings answer stays `source: node` and adds `reading.via` (`local` or `peer`), `reading.node`, and `reading.sync` from `core_catchup.say` (this Core, not the peer's tip). Wallet, Files, NFTs, and Profile show which one was read and the local sync. Outpoints are not returned.
+
+Switching the wallet on Profile drops the previous wallet from every module. Messages, notifications, bookmarks, settings, the inscribe note, local barks, and the dock badges are stored per address.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** 5439e9a
+
+**No action needed from SadFrog.** No signing, no spends, no keys, nothing written to dogefeed.app.
+
+---
+
 ### 2026-11-03 DogeFeedX: Home composer, no intro card (Cursor Cloud Agent)
 Billy's Home screenshot. The "DOGE payments enabled" line and the "social feed paid in DOGE" card are gone. The composer sits at the top with dogefeed.app's controls: add images, Meme Library, emoji, paywall lock (text, text + image, image only), `/send` and `/pay`, save draft, and Post. The bark is signed by the wallet chosen on Profile and stored in this browser. Nothing is posted or paid on dogefeed.app.
 
