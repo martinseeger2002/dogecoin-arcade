@@ -1170,3 +1170,43 @@ def register_routes(app, render):
     def dogefeedx_inscription(request: Request):
         """The DogeFeed inscription detail - full content viewer for any inscription."""
         return render(request, "dogefeedx/inscription.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/leaderboard", response_class=HTMLResponse)
+    def dogefeedx_leaderboard(request: Request):
+        """The DogeFeed leaderboard - top users by activity and holdings."""
+        return render(request, "dogefeedx/leaderboard.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/notifications", response_class=HTMLResponse)
+    def dogefeedx_notifications(request: Request):
+        """The DogeFeed notifications - activity alerts (requires sign-in)."""
+        return render(request, "dogefeedx/notifications.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/messages", response_class=HTMLResponse)
+    def dogefeedx_messages(request: Request):
+        """The DogeFeed messages - direct messages (requires sign-in)."""
+        return render(request, "dogefeedx/messages.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/bookmarks", response_class=HTMLResponse)
+    def dogefeedx_bookmarks(request: Request):
+        """The DogeFeed bookmarks - saved posts (requires sign-in)."""
+        return render(request, "dogefeedx/bookmarks.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/collections", response_class=HTMLResponse)
+    def dogefeedx_collections(request: Request):
+        """The DogeFeed collections - browse all Doginal collections."""
+        return render(request, "dogefeedx/collections.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/nfts", response_class=HTMLResponse)
+    def dogefeedx_nfts(request: Request):
+        """The DogeFeed NFTs page - browse and discover NFTs."""
+        return render(request, "dogefeedx/nfts.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/launchpad", response_class=HTMLResponse)
+    def dogefeedx_launchpad(request: Request):
+        """The DogeFeed launchpad - new project launches and mints."""
+        return render(request, "dogefeedx/launchpad.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/search", response_class=HTMLResponse)
+    def dogefeedx_search(request: Request):
+        """The DogeFeed search page - global search results."""
+        return render(request, "dogefeedx/search.html", fullscreen=True)

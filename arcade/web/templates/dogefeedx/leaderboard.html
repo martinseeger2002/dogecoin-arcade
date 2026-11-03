@@ -1,0 +1,462 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- DogeFeedX Leaderboard: Pixel-perfect reproduction of dogefeed.app/leaderboard
+    Light theme with white background. Shows top earners by DOGE earned. -#}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --df-gold: #f5a623;
+  --df-gold-dark: #e09000;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+/* Left Sidebar */
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item.active { font-weight: 700; }
+.df-nav-item svg { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; }
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+}
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+
+/* Main Content */
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-topbar {
+  position: sticky;
+  top: 0;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-topbar h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Tabs */
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
+  flex: 1;
+  padding: 16px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.df-tab:hover { background: var(--df-hover); }
+.df-tab.active { font-weight: 700; color: var(--df-text); }
+.df-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  background: var(--df-gold);
+  border-radius: 2px;
+}
+
+/* Podium */
+.df-podium {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 32px 16px;
+  background: var(--df-gold-light);
+}
+.df-podium-item {
+  text-align: center;
+  cursor: pointer;
+}
+.df-podium-item:hover .df-podium-avatar { transform: scale(1.05); }
+.df-podium-rank {
+  font-family: "Fredoka", sans-serif;
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.df-podium-rank.gold { color: #f5a623; }
+.df-podium-rank.silver { color: #9ca3af; }
+.df-podium-rank.bronze { color: #b45309; }
+.df-podium-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  overflow: hidden;
+  margin: 0 auto 8px;
+  border: 3px solid var(--df-gold);
+  transition: transform 0.15s;
+}
+.df-podium-item:nth-child(1) .df-podium-avatar { width: 80px; height: 80px; }
+.df-podium-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-podium-name {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.df-podium-amount {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--df-gold);
+}
+
+/* Leaderboard List */
+.df-leaderboard { }
+.df-leaderboard-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-leaderboard-item:hover { background: var(--df-hover); }
+.df-leaderboard-rank {
+  width: 32px;
+  font-family: "Fredoka", sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--df-text-secondary);
+  text-align: center;
+}
+.df-leaderboard-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.df-leaderboard-avatar.verified { border: 2px solid var(--df-gold); }
+.df-leaderboard-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-leaderboard-info { flex: 1; min-width: 0; }
+.df-leaderboard-name {
+  font-weight: 700;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.df-leaderboard-name svg { width: 16px; height: 16px; fill: var(--df-gold); }
+.df-leaderboard-handle { font-size: 14px; color: var(--df-text-secondary); }
+.df-leaderboard-amount {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--df-gold);
+  text-align: right;
+}
+.df-leaderboard-amount small {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--df-text-secondary);
+}
+
+/* Right Sidebar */
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-card-content { padding: 0 16px 16px; }
+
+/* Loading */
+.df-loading { display: flex; justify-content: center; padding: 40px; }
+.df-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
+</style>
+
+<div class="df-app">
+  <!-- Left Sidebar -->
+  <nav class="df-sidebar">
+    <a href="/dogefeedx/feed" class="df-logo">
+      <svg viewBox="0 0 32 32" fill="none">
+        <circle cx="16" cy="16" r="14" fill="#f5a623"/>
+        <ellipse cx="11" cy="13" rx="2" ry="2.5" fill="#000"/>
+        <ellipse cx="21" cy="13" rx="2" ry="2.5" fill="#000"/>
+        <ellipse cx="16" cy="19" rx="4" ry="3" fill="#000"/>
+      </svg>
+      <span>DogeFeed</span>
+    </a>
+    
+    <div class="df-nav">
+      <a href="/dogefeedx/feed" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Home
+      </a>
+      <a href="/dogefeedx/explore" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+        Explore
+      </a>
+      <a href="/dogefeedx/market" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        Market
+      </a>
+      <a href="/dogefeedx/leaderboard" class="df-nav-item active">
+        <svg viewBox="0 0 24 24"><path d="M8.21 13.89L7 23l5-3 5 3-1.21-9.12"/><path d="M19 8a7 7 0 1 0-14 0 7.002 7.002 0 0 0 6 6.92V17h2v-2.08A7.002 7.002 0 0 0 19 8z"/></svg>
+        Leaderboard
+      </a>
+    </div>
+    
+    <button class="df-signin-btn">Sign in</button>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="df-main">
+    <div class="df-topbar">
+      <h1>Leaderboard</h1>
+    </div>
+    
+    <div class="df-tabs">
+      <button class="df-tab active" data-period="7d">7 Days</button>
+      <button class="df-tab" data-period="30d">30 Days</button>
+      <button class="df-tab" data-period="all">All Time</button>
+    </div>
+    
+    <div class="df-podium" id="podium">
+      <div class="df-loading"><div class="df-spinner"></div></div>
+    </div>
+    
+    <div class="df-leaderboard" id="leaderboard">
+      <div class="df-loading"><div class="df-spinner"></div></div>
+    </div>
+  </main>
+
+  <!-- Right Sidebar -->
+  <aside class="df-right">
+    <div class="df-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="text" placeholder="Search DogeFeed">
+    </div>
+    
+    <div class="df-card">
+      <h2 class="df-card-title">How It Works</h2>
+      <div class="df-card-content">
+        <p style="font-size: 14px; color: var(--df-text-secondary); line-height: 1.5;">
+          Earn DOGE by creating great content! Likes, follows, and tips from other users all count toward your earnings. The top earners are ranked here.
+        </p>
+      </div>
+    </div>
+    
+    <div class="df-card">
+      <h2 class="df-card-title">Your Stats</h2>
+      <div class="df-card-content">
+        <div style="text-align: center; padding: 20px; color: var(--df-text-secondary);">
+          <div style="font-size: 14px; margin-bottom: 8px;">Sign in to see your earnings</div>
+          <button style="padding: 8px 16px; border-radius: 9999px; border: none; background: var(--df-gold); color: #000; font-weight: 700; cursor: pointer;">Sign in</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+(function() {
+  'use strict';
+  
+  var IMG_BASE = 'https://dogefeed.app';
+  
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  
+  var leaderboardData = [
+    { rank: 1, name: 'Bot2 Test', handle: 'bot2test', amount: '+8 DOGE', avatar: '/art/avatar/shiba-sun' },
+    { rank: 2, name: 'Billy', handle: 'billy.dogefeed', amount: '+2 DOGE', avatar: '/doginal-img/888d4748f672ef5b20bac4ba3bc80a3a779f89cb26af7fac8fd98ae4747f9cd7i0', verified: true },
+    { rank: 3, name: 'mr. Ð', handle: 'immr_d', amount: '+1.1 DOGE', avatar: '/api/media/local/bafkreiflnb67q6ux6z7ndh562owvlsoy6kwif3lgn77icoqlzfssoculci.jpg' },
+    { rank: 4, name: 'froginal_dogs', handle: 'froginals', amount: '+0.1 DOGE', avatar: '/doginal-img/bd3fe364e6a77afb64274fb5947a94ea2f2ba8b1148800da5182685b149aeadei0', verified: true },
+    { rank: 5, name: 'Latoshi', handle: 'latoshi', amount: '+0.1 DOGE', avatar: '/api/media/local/bafkreifqinnxhdaec2r5uhdejetw7bvbmixbhdcznbe5lodp32jtr24bmq.jpg' },
+    { rank: 6, name: 'Eden', handle: 'builderdogecoin', amount: '+0.05 DOGE', avatar: '/api/media/local/bafkreifopoayztzvsltutzyfrfk2dvvqndelgndhrtr54fma3bqdl5um2u.jpg' },
+    { rank: 7, name: 'Panocha', handle: 'panocha', amount: '+0.02 DOGE', avatar: '/doginal-img/df482d5897bdf05a018aae7cca29fc2ad67fc97faa144d0d1640d44876bea524i0', verified: true },
+  ];
+  
+  function renderPodium() {
+    var top3 = leaderboardData.slice(0, 3);
+    var order = [top3[1], top3[0], top3[2]]; // Silver, Gold, Bronze
+    
+    var html = '';
+    order.forEach(function(e, i) {
+      if (!e) return;
+      var rankClass = i === 1 ? 'gold' : (i === 0 ? 'silver' : 'bronze');
+      var rankNum = i === 1 ? '🥇' : (i === 0 ? '🥈' : '🥉');
+      html += '<div class="df-podium-item">';
+      html += '<div class="df-podium-rank ' + rankClass + '">' + rankNum + '</div>';
+      html += '<div class="df-podium-avatar"><img src="' + IMG_BASE + e.avatar + '" alt="" onerror="this.style.display=\'none\'"></div>';
+      html += '<div class="df-podium-name">' + esc(e.name) + '</div>';
+      html += '<div class="df-podium-amount">' + e.amount + '</div>';
+      html += '</div>';
+    });
+    
+    document.getElementById('podium').innerHTML = html;
+  }
+  
+  function renderLeaderboard() {
+    var html = '';
+    leaderboardData.slice(3).forEach(function(e) {
+      html += '<div class="df-leaderboard-item">';
+      html += '<div class="df-leaderboard-rank">' + e.rank + '</div>';
+      html += '<div class="df-leaderboard-avatar' + (e.verified ? ' verified' : '') + '"><img src="' + IMG_BASE + e.avatar + '" alt="" onerror="this.style.display=\'none\'"></div>';
+      html += '<div class="df-leaderboard-info">';
+      html += '<div class="df-leaderboard-name">' + esc(e.name);
+      if (e.verified) {
+        html += '<svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
+      }
+      html += '</div>';
+      html += '<div class="df-leaderboard-handle">@' + esc(e.handle) + '</div>';
+      html += '</div>';
+      html += '<div class="df-leaderboard-amount">' + e.amount + '<small>earned</small></div>';
+      html += '</div>';
+    });
+    
+    document.getElementById('leaderboard').innerHTML = html || '<div class="df-empty">No more entries</div>';
+  }
+  
+  // Tab switching
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      renderPodium();
+      renderLeaderboard();
+    });
+  });
+  
+  // Register with shell
+  if (window.DogeFeedX && window.DogeFeedX.registerApp) {
+    window.DogeFeedX.registerApp({
+      id: 'leaderboard',
+      name: 'Leaderboard',
+      icon: '/dogefeedx/icon-explorer.png',
+      url: '/dogefeedx/leaderboard'
+    });
+  }
+  
+  // Initial load
+  renderPodium();
+  renderLeaderboard();
+})();
+</script>
+{% endblock %}

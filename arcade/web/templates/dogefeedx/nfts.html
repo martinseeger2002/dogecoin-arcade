@@ -1,0 +1,509 @@
+{% extends "base.html" %}
+{% block title %}NFTs · DogeFeed{% endblock %}
+{% block body %}
+{#- DogeFeedX NFTs: Browse and discover NFTs matching dogefeed.app/nfts -#}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --df-gold: #f5a623;
+  --df-gold-dark: #e09000;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-link: #1d9bf0;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item.active { font-weight: 700; }
+.df-nav-item svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+.df-nav-item.active svg { fill: currentColor; }
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+  transition: background 0.15s;
+}
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-header h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.df-hero {
+  background: var(--df-gold-light);
+  padding: 24px;
+  text-align: center;
+}
+.df-hero h2 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.df-hero p {
+  color: var(--df-text-secondary);
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+.df-hero-btn {
+  display: inline-block;
+  padding: 12px 24px;
+  border-radius: 9999px;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+}
+.df-hero-btn:hover { background: var(--df-gold-dark); }
+
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
+  flex: 1;
+  padding: 14px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.df-tab:hover { background: var(--df-hover); }
+.df-tab.active {
+  font-weight: 700;
+  color: var(--df-text);
+}
+.df-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  background: var(--df-gold);
+  border-radius: 2px;
+}
+
+.df-nft-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  padding: 16px;
+  min-height: 400px;
+}
+.df-nft-card {
+  background: var(--df-bg);
+  border: 1px solid var(--df-border);
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.df-nft-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.df-nft-img {
+  aspect-ratio: 1;
+  background: var(--df-gold-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.df-nft-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.df-nft-img svg {
+  width: 48px;
+  height: 48px;
+  fill: var(--df-gold);
+}
+.df-nft-info {
+  padding: 12px;
+}
+.df-nft-collection {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+  margin-bottom: 4px;
+}
+.df-nft-name {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.df-nft-price {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.df-nft-price-label {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+}
+.df-nft-price-value {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--df-gold);
+}
+
+.df-loading {
+  display: flex;
+  justify-content: center;
+  padding: 40px;
+  grid-column: 1 / -1;
+}
+.df-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.df-empty {
+  text-align: center;
+  padding: 40px;
+  color: var(--df-text-secondary);
+  grid-column: 1 / -1;
+}
+
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-search input::placeholder { color: var(--df-text-secondary); }
+
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-stat {
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.df-stat-label {
+  font-size: 14px;
+  color: var(--df-text-secondary);
+}
+.df-stat-value {
+  font-weight: 700;
+  font-size: 14px;
+}
+</style>
+
+<div class="df-app">
+  <nav class="df-sidebar">
+    <a href="/dogefeedx/feed" class="df-logo">
+      <svg viewBox="0 0 32 32" fill="none">
+        <circle cx="16" cy="16" r="14" fill="#f5a623"/>
+        <ellipse cx="11" cy="13" rx="2" ry="2.5" fill="#000"/>
+        <ellipse cx="21" cy="13" rx="2" ry="2.5" fill="#000"/>
+        <ellipse cx="16" cy="19" rx="4" ry="3" fill="#000"/>
+        <path d="M6 8 Q4 4 8 6" stroke="#f5a623" stroke-width="3" fill="none"/>
+        <path d="M26 8 Q28 4 24 6" stroke="#f5a623" stroke-width="3" fill="none"/>
+      </svg>
+      <span>DogeFeed</span>
+    </a>
+    
+    <div class="df-nav">
+      <a href="/dogefeedx/feed" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        Home
+      </a>
+      <a href="/dogefeedx/explore" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+        Explore
+      </a>
+      <a href="/dogefeedx/collections" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Collections
+      </a>
+      <a href="/dogefeedx/nfts" class="df-nav-item active">
+        <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        NFTs
+      </a>
+      <a href="/dogefeedx/market" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+        Market
+      </a>
+      <a href="/dogefeedx/wallet" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+        Wallet
+      </a>
+      <a href="/dogefeedx/launchpad" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>
+        Launchpad
+      </a>
+      <a href="/dogefeedx/leaderboard" class="df-nav-item">
+        <svg viewBox="0 0 24 24"><path d="M8.21 13.89L7 23l5-3 5 3-1.21-9.12"/><path d="M19 8a7 7 0 1 0-14 0 7.002 7.002 0 0 0 6 6.92V17h2v-2.08A7.002 7.002 0 0 0 19 8z"/></svg>
+        Leaderboard
+      </a>
+    </div>
+    
+    <button class="df-signin-btn" onclick="alert('Sign in coming soon')">Sign in</button>
+  </nav>
+
+  <main class="df-main">
+    <div class="df-header">
+      <h1>NFTs</h1>
+    </div>
+    
+    <div class="df-hero">
+      <h2>Discover Doginals</h2>
+      <p>Browse, collect, and trade inscriptions on Dogecoin</p>
+      <button class="df-hero-btn" onclick="location.href='/dogefeedx/collections'">Browse Collections</button>
+    </div>
+    
+    <div class="df-tabs">
+      <button class="df-tab active" data-filter="all">All NFTs</button>
+      <button class="df-tab" data-filter="listed">Listed</button>
+      <button class="df-tab" data-filter="recent">Recent</button>
+    </div>
+    
+    <div class="df-nft-grid" id="df-nfts">
+      <div class="df-loading"><div class="df-spinner"></div></div>
+    </div>
+  </main>
+
+  <aside class="df-right">
+    <div class="df-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="text" placeholder="Search DogeFeed">
+    </div>
+    
+    <div class="df-card">
+      <h2 class="df-card-title">Market Stats</h2>
+      <div class="df-stat">
+        <span class="df-stat-label">Total Collections</span>
+        <span class="df-stat-value" id="stat-collections">--</span>
+      </div>
+      <div class="df-stat">
+        <span class="df-stat-label">Total NFTs</span>
+        <span class="df-stat-value" id="stat-nfts">--</span>
+      </div>
+      <div class="df-stat">
+        <span class="df-stat-label">24h Volume</span>
+        <span class="df-stat-value" id="stat-volume">--</span>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+(function() {
+  'use strict';
+  
+  var IMG_BASE = 'https://dogefeed.app/doginal-img';
+  
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  
+  function renderNFT(item, collection) {
+    var imgUrl = item.id ? IMG_BASE + '/' + item.id : '';
+    
+    return '<div class="df-nft-card" data-id="' + esc(item.id) + '">' +
+      '<div class="df-nft-img">' +
+      (imgUrl ? '<img src="' + esc(imgUrl) + '" alt="" onerror="this.style.display=\'none\'">' :
+       '<svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>') +
+      '</div>' +
+      '<div class="df-nft-info">' +
+      '<div class="df-nft-collection">' + esc(collection || item.collection || 'Doginal') + '</div>' +
+      '<div class="df-nft-name">' + esc(item.name || '#' + (item.number || item.id.substring(0, 8))) + '</div>' +
+      '<div class="df-nft-price">' +
+      '<span class="df-nft-price-label">Price</span>' +
+      '<span class="df-nft-price-value">' + (item.price || '--') + ' DOGE</span>' +
+      '</div>' +
+      '</div>' +
+      '</div>';
+  }
+  
+  function loadNFTs() {
+    var container = document.getElementById('df-nfts');
+    container.innerHTML = '<div class="df-loading"><div class="df-spinner"></div></div>';
+    
+    fetch('/dogefeedx/api/collections?limit=10&sort=holders')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var collections = data.collections || [];
+        var nfts = [];
+        
+        collections.forEach(function(c) {
+          if (c.sample_item_ids) {
+            c.sample_item_ids.forEach(function(id) {
+              nfts.push({
+                id: id,
+                name: c.name,
+                collection: c.name
+              });
+            });
+          }
+        });
+        
+        if (nfts.length === 0) {
+          container.innerHTML = '<div class="df-empty">No NFTs found</div>';
+          return;
+        }
+        
+        container.innerHTML = nfts.slice(0, 20).map(function(n) {
+          return renderNFT(n, n.collection);
+        }).join('');
+        
+        document.getElementById('stat-collections').textContent = collections.length;
+        document.getElementById('stat-nfts').textContent = collections.reduce(function(sum, c) {
+          return sum + (c.item_count || 0);
+        }, 0).toLocaleString();
+      })
+      .catch(function(err) {
+        console.error('NFTs error:', err);
+        container.innerHTML = '<div class="df-empty">Could not load NFTs</div>';
+      });
+  }
+  
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      this.classList.add('active');
+      loadNFTs();
+    });
+  });
+  
+  loadNFTs();
+})();
+</script>
+{% endblock %}
