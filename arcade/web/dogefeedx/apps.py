@@ -939,6 +939,147 @@ async def api_balance(address: str = ""):
         return {"address": address, "balances": []}
 
 
+# Cache for address inscriptions
+_address_inscriptions_cache: dict[str, tuple[float, Any]] = {}
+
+
+@router.get("/api/address/inscriptions")
+async def api_address_inscriptions(
+    address: str = "",
+    offset: int = 0,
+    limit: int = 50
+):
+    """Get inscriptions held by an address.
+    
+    This is the primary endpoint for the Wallet view to display inscriptions.
+    Uses dogefeed.app and explorer.dogesoft.io for inscription data.
+    
+    SECURITY: Read-only. Returns inscription metadata only, never UTXOs or
+    spending data. Per exchange-safety.md, inscription-carrying UTXOs must
+    never be exposed to spending logic.
+    """
+    if not address:
+        raise HTTPException(status_code=400, detail="Address required")
+    
+    limit = min(max(1, limit), 100)
+    offset = max(0, offset)
+    
+    cache_key = f"addr_inscriptions:{address}:{offset}:{limit}"
+    cached = _get_cached(_address_inscriptions_cache, cache_key, ttl=120)
+    if cached is not None:
+        return cached
+    
+    try:
+        # Try explorer API for address inscriptions
+        data = await _fetch_dogefeed_explorer(
+            f"/wallet/address/{address}/inscriptions",
+            {"offset": offset, "limit": limit}
+        )
+        
+        inscriptions_raw = data if isinstance(data, list) else data.get("inscriptions", data.get("items", []))
+        
+        inscriptions = []
+        for i in inscriptions_raw:
+            insc = {
+                "id": i.get("id") or i.get("inscription_id") or "",
+                "number": i.get("number") or i.get("inscription_number"),
+                "name": i.get("name") or i.get("title") or "",
+                "content_type": i.get("content_type") or i.get("mime_type") or "image/png",
+                "content_size": i.get("content_size") or i.get("size"),
+                "collection": i.get("collection") or i.get("collection_name") or "",
+                "genesis_height": i.get("genesis_height") or i.get("height"),
+                "image_url": f"{DOGEFEED_IMG_BASE}/{i.get('id') or i.get('inscription_id') or ''}",
+            }
+            inscriptions.append(insc)
+        
+        result = {
+            "address": address,
+            "inscriptions": inscriptions,
+            "total": data.get("total", len(inscriptions_raw)) if isinstance(data, dict) else len(inscriptions_raw),
+            "offset": offset,
+            "limit": limit,
+            "has_more": len(inscriptions_raw) >= limit,
+            "source": "explorer.dogesoft.io",
+            "image_base": DOGEFEED_IMG_BASE,
+        }
+        
+        _set_cached(_address_inscriptions_cache, cache_key, result)
+        return result
+        
+    except HTTPException:
+        return {
+            "address": address,
+            "inscriptions": [],
+            "total": 0,
+            "offset": offset,
+            "limit": limit,
+            "has_more": False,
+            "source": "explorer.dogesoft.io",
+            "error": "unreachable",
+        }
+    except Exception as e:
+        logger.warning(f"Error fetching address inscriptions: {e}")
+        return {
+            "address": address,
+            "inscriptions": [],
+            "total": 0,
+            "offset": offset,
+            "limit": limit,
+            "has_more": False,
+            "source": "explorer.dogesoft.io",
+            "error": str(e),
+        }
+
+
+@router.get("/api/address/tokens")
+async def api_address_tokens(address: str = ""):
+    """Get DRC-20 token balances for an address.
+    
+    SECURITY: Read-only. Returns token balances only.
+    """
+    if not address:
+        raise HTTPException(status_code=400, detail="Address required")
+    
+    cache_key = f"addr_tokens:{address}"
+    cached = _get_cached(_token_cache, cache_key, ttl=120)
+    if cached is not None:
+        return cached
+    
+    try:
+        # Try dogefeed.app first
+        try:
+            data = await _fetch_dogefeed_app(f"/api/address/{address}/drc20")
+        except HTTPException:
+            data = await _fetch_dogefeed_explorer(f"/drc20/address/{address}")
+        
+        tokens_raw = data if isinstance(data, list) else data.get("tokens", data.get("balances", []))
+        
+        tokens = []
+        for t in tokens_raw:
+            token = {
+                "ticker": t.get("ticker") or t.get("tick") or "",
+                "balance": t.get("balance") or t.get("amount") or "0",
+                "transferable": t.get("transferable") or "0",
+                "available": t.get("available") or t.get("balance") or "0",
+            }
+            tokens.append(token)
+        
+        result = {
+            "address": address,
+            "tokens": tokens,
+            "source": "dogefeed.app",
+        }
+        
+        _set_cached(_token_cache, cache_key, result)
+        return result
+        
+    except HTTPException:
+        return {"address": address, "tokens": [], "source": "dogefeed.app", "error": "unreachable"}
+    except Exception as e:
+        logger.warning(f"Error fetching address tokens: {e}")
+        return {"address": address, "tokens": [], "source": "dogefeed.app", "error": str(e)}
+
+
 @router.get("/api/lookup")
 async def api_lookup(name: str = ""):
     """Look up a name (e.g., john.doge) using DogeFeed Explorer API."""
@@ -1019,3 +1160,8 @@ def register_routes(app, render):
     def dogefeedx_wallet(request: Request):
         """The DogeFeed wallet - read-only view of inscriptions by address."""
         return render(request, "dogefeedx/wallet.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/inscription", response_class=HTMLResponse)
+    def dogefeedx_inscription(request: Request):
+        """The DogeFeed inscription detail - full content viewer for any inscription."""
+        return render(request, "dogefeedx/inscription.html", fullscreen=True)

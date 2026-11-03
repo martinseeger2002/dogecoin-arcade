@@ -1,0 +1,371 @@
+{% extends "base.html" %}
+{% block title %}Inscription · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- DogeFeedX Inscription Detail: Full inscription content viewer
+    Renders different content types: images, text, HTML, JSON.
+    Data from dogefeed.app /doginal-img/ and explorer.dogesoft.io.
+    
+    SECURITY: Read-only content display. No transaction logic. -#}
+<link rel="stylesheet" href="/dogefeedx/aqua.css">
+<style>
+:root {
+  --dfx-brand: #d9a520;
+  --dfx-brand-dark: #b8860b;
+  --dfx-bg: #000;
+  --dfx-card-bg: #16181c;
+  --dfx-border: #2f3336;
+  --dfx-text: #e7e9ea;
+  --dfx-text-muted: #71767b;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--dfx-bg);
+  color: var(--dfx-text);
+}
+.dfx-inscription {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px;
+  min-height: 100vh;
+}
+.dfx-inscription-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.dfx-inscription-back {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--dfx-border);
+  background: var(--dfx-card-bg);
+  color: var(--dfx-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.dfx-inscription-back:hover {
+  border-color: var(--dfx-brand);
+  color: var(--dfx-brand);
+}
+.dfx-inscription-title {
+  flex: 1;
+}
+.dfx-inscription-title h1 {
+  font-size: 24px;
+  font-weight: 700;
+}
+.dfx-inscription-title span {
+  color: var(--dfx-text-muted);
+  font-size: 14px;
+}
+.dfx-inscription-content {
+  background: var(--dfx-card-bg);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 24px;
+  border: 1px solid var(--dfx-border);
+}
+.dfx-inscription-media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  background: #0a0a0a;
+}
+.dfx-inscription-media img {
+  max-width: 100%;
+  max-height: 600px;
+  object-fit: contain;
+}
+.dfx-inscription-media iframe {
+  width: 100%;
+  min-height: 400px;
+  border: none;
+  background: #fff;
+}
+.dfx-inscription-text {
+  padding: 24px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  background: #0a0a0a;
+  max-height: 600px;
+  overflow: auto;
+}
+.dfx-inscription-json {
+  padding: 24px;
+  background: #0a0a0a;
+  max-height: 600px;
+  overflow: auto;
+}
+.dfx-inscription-json pre {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.dfx-inscription-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+.dfx-inscription-detail {
+  background: var(--dfx-card-bg);
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid var(--dfx-border);
+}
+.dfx-inscription-detail-label {
+  font-size: 12px;
+  color: var(--dfx-text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.dfx-inscription-detail-value {
+  font-size: 14px;
+  word-break: break-all;
+}
+.dfx-inscription-detail-value a {
+  color: var(--dfx-brand);
+  text-decoration: none;
+}
+.dfx-inscription-detail-value a:hover {
+  text-decoration: underline;
+}
+.dfx-inscription-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+}
+.dfx-inscription-btn {
+  padding: 12px 24px;
+  border-radius: 9999px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.dfx-inscription-btn-primary {
+  background: var(--dfx-brand);
+  border: none;
+  color: #000;
+}
+.dfx-inscription-btn-primary:hover {
+  background: var(--dfx-brand-dark);
+}
+.dfx-inscription-btn-secondary {
+  background: none;
+  border: 1px solid var(--dfx-border);
+  color: var(--dfx-text);
+}
+.dfx-inscription-btn-secondary:hover {
+  border-color: var(--dfx-brand);
+  color: var(--dfx-brand);
+}
+.dfx-spinner {
+  display: flex;
+  justify-content: center;
+  padding: 48px;
+}
+.dfx-spinner::after {
+  content: "";
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--dfx-border);
+  border-top-color: var(--dfx-brand);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.dfx-empty {
+  padding: 48px;
+  text-align: center;
+  color: var(--dfx-text-muted);
+}
+</style>
+
+<div class="dfx-inscription">
+  <header class="dfx-inscription-header">
+    <button class="dfx-inscription-back" onclick="history.back()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M19 12H5M12 19l-7-7 7-7"/>
+      </svg>
+    </button>
+    <div class="dfx-inscription-title">
+      <h1 id="insc-name">Loading...</h1>
+      <span id="insc-number"></span>
+    </div>
+  </header>
+  
+  <div class="dfx-inscription-content" id="insc-content">
+    <div class="dfx-spinner"></div>
+  </div>
+  
+  <div class="dfx-inscription-details" id="insc-details"></div>
+  
+  <div class="dfx-inscription-actions" id="insc-actions"></div>
+</div>
+
+<script src="/dogefeedx/shell.js"></script>
+<script>
+(function() {
+  'use strict';
+  
+  var API_BASE = '/dogefeedx/api';
+  var IMG_BASE = 'https://dogefeed.app/doginal-img';
+  var DOGEFEED_BASE = 'https://dogefeed.app';
+  
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  
+  function getInscriptionId() {
+    var params = new URLSearchParams(window.location.search);
+    return params.get('id') || '';
+  }
+  
+  function renderContent(inscription) {
+    var contentType = inscription.content_type || 'image/png';
+    var id = inscription.id;
+    var content = $('insc-content');
+    
+    if (contentType.startsWith('image/')) {
+      content.innerHTML = '<div class="dfx-inscription-media"><img src="' + IMG_BASE + '/' + esc(id) + '" alt="Inscription ' + esc(id) + '" onerror="this.src=\'/dogefeedx/icon-explorer.png\'"></div>';
+    } else if (contentType.startsWith('text/html')) {
+      content.innerHTML = '<div class="dfx-inscription-media"><iframe src="' + IMG_BASE + '/' + esc(id) + '" sandbox="allow-scripts"></iframe></div>';
+    } else if (contentType.startsWith('text/') || contentType === 'application/json') {
+      fetch(IMG_BASE + '/' + id)
+        .then(function(r) { return r.text(); })
+        .then(function(text) {
+          if (contentType === 'application/json') {
+            try {
+              var json = JSON.parse(text);
+              content.innerHTML = '<div class="dfx-inscription-json"><pre>' + esc(JSON.stringify(json, null, 2)) + '</pre></div>';
+            } catch (e) {
+              content.innerHTML = '<div class="dfx-inscription-text">' + esc(text) + '</div>';
+            }
+          } else {
+            content.innerHTML = '<div class="dfx-inscription-text">' + esc(text) + '</div>';
+          }
+        })
+        .catch(function() {
+          content.innerHTML = '<div class="dfx-inscription-media"><img src="' + IMG_BASE + '/' + esc(id) + '" alt=""></div>';
+        });
+    } else {
+      content.innerHTML = '<div class="dfx-inscription-media"><img src="' + IMG_BASE + '/' + esc(id) + '" alt=""></div>';
+    }
+  }
+  
+  function renderDetails(inscription) {
+    var html = '';
+    
+    html += '<div class="dfx-inscription-detail">';
+    html += '<div class="dfx-inscription-detail-label">Inscription ID</div>';
+    html += '<div class="dfx-inscription-detail-value"><a href="' + DOGEFEED_BASE + '/doginal/' + esc(inscription.id) + '" target="_blank">' + esc(inscription.id) + '</a></div>';
+    html += '</div>';
+    
+    if (inscription.number) {
+      html += '<div class="dfx-inscription-detail">';
+      html += '<div class="dfx-inscription-detail-label">Number</div>';
+      html += '<div class="dfx-inscription-detail-value">#' + inscription.number + '</div>';
+      html += '</div>';
+    }
+    
+    html += '<div class="dfx-inscription-detail">';
+    html += '<div class="dfx-inscription-detail-label">Content Type</div>';
+    html += '<div class="dfx-inscription-detail-value">' + esc(inscription.content_type || 'unknown') + '</div>';
+    html += '</div>';
+    
+    if (inscription.content_size) {
+      html += '<div class="dfx-inscription-detail">';
+      html += '<div class="dfx-inscription-detail-label">Size</div>';
+      html += '<div class="dfx-inscription-detail-value">' + Math.round(inscription.content_size / 1024) + ' KB</div>';
+      html += '</div>';
+    }
+    
+    if (inscription.collection) {
+      html += '<div class="dfx-inscription-detail">';
+      html += '<div class="dfx-inscription-detail-label">Collection</div>';
+      html += '<div class="dfx-inscription-detail-value">' + esc(inscription.collection) + '</div>';
+      html += '</div>';
+    }
+    
+    if (inscription.owner) {
+      html += '<div class="dfx-inscription-detail">';
+      html += '<div class="dfx-inscription-detail-label">Owner</div>';
+      html += '<div class="dfx-inscription-detail-value"><a href="/dogefeedx/wallet?address=' + esc(inscription.owner) + '">' + esc(inscription.owner) + '</a></div>';
+      html += '</div>';
+    }
+    
+    if (inscription.genesis_height) {
+      html += '<div class="dfx-inscription-detail">';
+      html += '<div class="dfx-inscription-detail-label">Genesis Height</div>';
+      html += '<div class="dfx-inscription-detail-value">' + inscription.genesis_height + '</div>';
+      html += '</div>';
+    }
+    
+    $('insc-details').innerHTML = html;
+    
+    // Actions
+    var actionsHtml = '<a href="' + DOGEFEED_BASE + '/doginal/' + esc(inscription.id) + '" target="_blank" class="dfx-inscription-btn dfx-inscription-btn-primary">';
+    actionsHtml += '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>';
+    actionsHtml += 'View on DogeFeed</a>';
+    actionsHtml += '<a href="' + IMG_BASE + '/' + esc(inscription.id) + '" target="_blank" class="dfx-inscription-btn dfx-inscription-btn-secondary">Download Content</a>';
+    $('insc-actions').innerHTML = actionsHtml;
+  }
+  
+  function loadInscription() {
+    var id = getInscriptionId();
+    if (!id) {
+      $('insc-name').textContent = 'No inscription ID';
+      $('insc-content').innerHTML = '<div class="dfx-empty">Please provide an inscription ID in the URL (?id=...)</div>';
+      return;
+    }
+    
+    fetch(API_BASE + '/inscription?id=' + encodeURIComponent(id))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.inscription) {
+          $('insc-name').textContent = 'Inscription Not Found';
+          $('insc-content').innerHTML = '<div class="dfx-empty">Could not load inscription ' + esc(id) + '</div>';
+          return;
+        }
+        
+        var inscription = data.inscription;
+        $('insc-name').textContent = inscription.name || inscription.collection || 'Inscription';
+        $('insc-number').textContent = inscription.number ? '#' + inscription.number : id.substring(0, 16) + '...';
+        
+        renderContent(inscription);
+        renderDetails(inscription);
+      })
+      .catch(function(err) {
+        $('insc-name').textContent = 'Error Loading';
+        $('insc-content').innerHTML = '<div class="dfx-empty">Error: ' + esc(err.message) + '</div>';
+      });
+  }
+  
+  // Register with shell
+  window.DogeFeedX.registerApp({
+    id: 'inscription',
+    name: 'Inscription',
+    icon: '/dogefeedx/icon-explorer.png',
+    url: '/dogefeedx/inscription'
+  });
+  
+  // Load on page load
+  loadInscription();
+})();
+</script>
+{% endblock %}

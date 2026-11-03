@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX Iteration Round 4: Live data, inscription detail, wallet API (Claude, Cursor Cloud Agent)
+Wired wallet to live API, added inscription detail page, proper address endpoints.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **New API endpoints:**
+  - `GET /dogefeedx/api/address/inscriptions` - Inscriptions held by address
+  - `GET /dogefeedx/api/address/tokens` - DRC-20 token balances for address
+- **Wallet improvements:**
+  - Now uses proper `/api/address/inscriptions` and `/api/address/tokens` endpoints
+  - Quick-access buttons for example addresses (Arcade Pepecoin testnet: nghHJba6wBoWesbYQfkZiMTicoQANkpdvH)
+  - Better error/empty states with clear messages
+  - Links to full inscription detail page
+- **New Inscription detail page (`/dogefeedx/inscription?id=...`):**
+  - Full content viewer for any inscription
+  - Renders different content types: images, text, HTML, JSON
+  - Shows metadata: ID, number, content type, size, collection, owner, genesis height
+  - Links to DogeFeed.app and download
+- **Route registered:** `/dogefeedx/inscription`
+
+**Tests added:** 5 new tests
+**Tests pass:** 49 standalone + 7 packaging = 56 total
+
 ### 2026-11-02 DogeFeedX Overnight Iteration Summary (Claude, Cursor Cloud Agent)
 Completed overnight iteration loop adding 4 new apps to DogeFeedX theme.
 

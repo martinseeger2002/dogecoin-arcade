@@ -58,6 +58,12 @@ def test_wallet_html_exists():
     assert path.is_file(), f"wallet.html not found at {path}"
 
 
+def test_inscription_html_exists():
+    """Inscription detail template exists."""
+    path = DOGEFEEDX_PATH / "inscription.html"
+    assert path.is_file(), f"inscription.html not found at {path}"
+
+
 def test_dogefeedx_apps_py_exists():
     """DogeFeedX Python apps module exists."""
     path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py"
@@ -263,6 +269,39 @@ def test_wallet_html_registers_with_shell():
     content = path.read_text()
     assert "DogeFeedX.registerApp" in content, "Missing shell registration"
     assert "'wallet'" in content or '"wallet"' in content, "Missing app ID"
+
+
+def test_wallet_html_has_address_api():
+    """Wallet HTML uses proper address API endpoints."""
+    path = DOGEFEEDX_PATH / "wallet.html"
+    content = path.read_text()
+    assert "/address/inscriptions" in content, "Missing address inscriptions API"
+    assert "/address/tokens" in content, "Missing address tokens API"
+
+
+def test_inscription_html_has_content_viewer():
+    """Inscription HTML has content viewer for different types."""
+    path = DOGEFEEDX_PATH / "inscription.html"
+    content = path.read_text()
+    assert "dfx-inscription" in content, "Missing inscription class"
+    assert "dfx-inscription-media" in content, "Missing media container"
+    assert "content_type" in content, "Missing content type handling"
+
+
+def test_inscription_html_has_details():
+    """Inscription HTML shows inscription details."""
+    path = DOGEFEEDX_PATH / "inscription.html"
+    content = path.read_text()
+    assert "dfx-inscription-detail" in content, "Missing details section"
+    assert "Content Type" in content, "Missing content type label"
+    assert "Owner" in content, "Missing owner field"
+
+
+def test_inscription_html_registers_with_shell():
+    """Inscription page registers itself with the shell."""
+    path = DOGEFEEDX_PATH / "inscription.html"
+    content = path.read_text()
+    assert "DogeFeedX.registerApp" in content, "Missing shell registration"
 
 
 def test_dogefeedx_apps_has_api_routes():

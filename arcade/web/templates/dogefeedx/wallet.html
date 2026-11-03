@@ -358,6 +358,27 @@ body {
 .dfx-modal-detail-value a:hover {
   text-decoration: underline;
 }
+.dfx-wallet-quick {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dfx-wallet-quick-btn {
+  padding: 6px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--dfx-border);
+  background: var(--dfx-card-bg);
+  color: var(--dfx-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.dfx-wallet-quick-btn:hover {
+  border-color: var(--dfx-brand);
+  color: var(--dfx-brand);
+  background: rgba(217, 165, 32, 0.1);
+}
 </style>
 
 <div class="dfx-wallet">
@@ -387,6 +408,12 @@ body {
     <button class="dfx-wallet-chain-btn" data-chain="doge-testnet">Doge Testnet</button>
     <button class="dfx-wallet-chain-btn" data-chain="pepe">Pepecoin</button>
     <button class="dfx-wallet-chain-btn" data-chain="pepe-testnet">Pepe Testnet</button>
+  </div>
+  
+  <div class="dfx-wallet-quick" style="margin-bottom:16px">
+    <span style="font-size:12px;color:var(--dfx-text-muted);margin-right:8px">Quick lookup:</span>
+    <button class="dfx-wallet-quick-btn" data-address="nghHJba6wBoWesbYQfkZiMTicoQANkpdvH" data-chain="pepe-testnet">Arcade Pepe Testnet</button>
+    <button class="dfx-wallet-quick-btn" data-address="D6xm1zXkJsGHKtSr9wMNpGGQGwLxvFVLLH" data-chain="doge">Example DOGE</button>
   </div>
   
   <div id="wallet-content" style="display: none;">
@@ -474,13 +501,14 @@ body {
     $('wallet-content').style.display = 'none';
     $('wallet-loading').style.display = 'block';
     
+    // Use proper API endpoints for address data
     Promise.all([
       fetch(API_BASE + '/balance?address=' + encodeURIComponent(address)).then(function(r) { return r.json(); }),
-      fetch(API_BASE + '/feed?limit=20').then(function(r) { return r.json(); }),
-      fetch(API_BASE + '/tokens?limit=10').then(function(r) { return r.json(); })
+      fetch(API_BASE + '/address/inscriptions?address=' + encodeURIComponent(address) + '&limit=50').then(function(r) { return r.json(); }),
+      fetch(API_BASE + '/address/tokens?address=' + encodeURIComponent(address)).then(function(r) { return r.json(); })
     ]).then(function(results) {
       var balanceData = results[0];
-      var feedData = results[1];
+      var inscData = results[1];
       var tokensData = results[2];
       
       $('wallet-loading').style.display = 'none';
@@ -488,7 +516,10 @@ body {
       
       var balances = balanceData.balances || [];
       var balance = balances.length > 0 ? balances[0].amount : '0';
+      var inscriptions = inscData.inscriptions || [];
+      var tokens = tokensData.tokens || [];
       
+      // Render summary
       var summaryHtml = '';
       summaryHtml += '<div class="dfx-wallet-stat">';
       summaryHtml += '<div class="dfx-wallet-stat-label">Address</div>';
@@ -500,7 +531,7 @@ body {
       summaryHtml += '</div>';
       summaryHtml += '<div class="dfx-wallet-stat">';
       summaryHtml += '<div class="dfx-wallet-stat-label">Inscriptions</div>';
-      summaryHtml += '<div class="dfx-wallet-stat-value">' + ((feedData.doginal_holders || []).length) + '</div>';
+      summaryHtml += '<div class="dfx-wallet-stat-value">' + (inscData.total || inscriptions.length) + '</div>';
       summaryHtml += '</div>';
       summaryHtml += '<div class="dfx-wallet-stat">';
       summaryHtml += '<div class="dfx-wallet-stat-label">Chain</div>';
@@ -508,44 +539,48 @@ body {
       summaryHtml += '</div>';
       $('wallet-summary').innerHTML = summaryHtml;
       
-      var holders = feedData.doginal_holders || [];
+      // Render inscriptions
       var inscHtml = '';
-      if (holders.length === 0) {
-        inscHtml = '<div class="dfx-empty" style="grid-column:1/-1">No Doginals found for this address</div>';
+      if (inscriptions.length === 0) {
+        if (inscData.error) {
+          inscHtml = '<div class="dfx-empty" style="grid-column:1/-1"><p>⚠️ Could not load inscriptions</p><p style="font-size:12px;color:var(--dfx-text-muted)">' + esc(inscData.error) + '</p></div>';
+        } else {
+          inscHtml = '<div class="dfx-empty" style="grid-column:1/-1">No Doginals found for this address</div>';
+        }
       } else {
-        for (var i = 0; i < holders.length; i++) {
-          var h = holders[i];
-          if (h.inscription_id) {
-            inscHtml += '<div class="dfx-wallet-item" onclick="showInscription(\'' + esc(h.inscription_id) + '\', \'' + esc(h.display_name || h.handle || 'Unknown') + '\')">';
-            inscHtml += '<div class="dfx-wallet-item-img">';
-            inscHtml += '<img src="' + IMG_BASE + '/' + esc(h.inscription_id) + '" alt="" loading="lazy">';
-            inscHtml += '</div>';
-            inscHtml += '<div class="dfx-wallet-item-info">';
-            inscHtml += '<div class="dfx-wallet-item-name">' + esc(h.display_name || h.handle || 'Inscription') + '</div>';
-            inscHtml += '<div class="dfx-wallet-item-collection">' + (h.pfp_rarity || 'Common') + '</div>';
-            inscHtml += '</div></div>';
-          }
+        for (var i = 0; i < inscriptions.length; i++) {
+          var insc = inscriptions[i];
+          inscHtml += '<div class="dfx-wallet-item" onclick="showInscription(\'' + esc(insc.id) + '\', \'' + esc(insc.name || insc.collection || '#' + (insc.number || '?')) + '\')">';
+          inscHtml += '<div class="dfx-wallet-item-img">';
+          inscHtml += '<img src="' + esc(insc.image_url || IMG_BASE + '/' + insc.id) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">';
+          inscHtml += '</div>';
+          inscHtml += '<div class="dfx-wallet-item-info">';
+          inscHtml += '<div class="dfx-wallet-item-name">' + esc(insc.name || '#' + (insc.number || '?')) + '</div>';
+          inscHtml += '<div class="dfx-wallet-item-collection">' + esc(insc.collection || insc.content_type || 'Inscription') + '</div>';
+          inscHtml += '</div></div>';
         }
       }
       $('wallet-inscriptions').innerHTML = inscHtml;
       
-      var tokens = tokensData.tokens || [];
+      // Render tokens
       var tokenHtml = '';
       if (tokens.length === 0) {
-        tokenHtml = '<div class="dfx-empty">No DRC-20 tokens found</div>';
+        if (tokensData.error) {
+          tokenHtml = '<div class="dfx-empty"><p>⚠️ Could not load tokens</p><p style="font-size:12px;color:var(--dfx-text-muted)">' + esc(tokensData.error) + '</p></div>';
+        } else {
+          tokenHtml = '<div class="dfx-empty">No DRC-20 tokens found for this address</div>';
+        }
       } else {
-        for (var j = 0; j < Math.min(tokens.length, 5); j++) {
+        for (var j = 0; j < tokens.length; j++) {
           var t = tokens[j];
-          var randomBalance = Math.floor(Math.random() * 10000);
           tokenHtml += '<div class="dfx-wallet-token">';
-          tokenHtml += '<div class="dfx-wallet-token-icon">' + esc(t.ticker.charAt(0).toUpperCase()) + '</div>';
+          tokenHtml += '<div class="dfx-wallet-token-icon">' + esc((t.ticker || '?').charAt(0).toUpperCase()) + '</div>';
           tokenHtml += '<div class="dfx-wallet-token-info">';
           tokenHtml += '<div class="dfx-wallet-token-name">' + esc(t.ticker) + '</div>';
-          tokenHtml += '<div class="dfx-wallet-token-amount">' + (t.holder_count || 0).toLocaleString() + ' holders</div>';
+          tokenHtml += '<div class="dfx-wallet-token-amount">Available: ' + esc(t.available || t.balance || '0') + '</div>';
           tokenHtml += '</div>';
           tokenHtml += '<div class="dfx-wallet-token-balance">';
-          tokenHtml += '<div class="dfx-wallet-token-value">' + randomBalance.toLocaleString() + '</div>';
-          tokenHtml += '<div class="dfx-wallet-token-usd">≈ $' + (randomBalance * 0.001).toFixed(2) + '</div>';
+          tokenHtml += '<div class="dfx-wallet-token-value">' + esc(t.balance || '0') + '</div>';
           tokenHtml += '</div></div>';
         }
       }
@@ -554,7 +589,7 @@ body {
     }).catch(function(err) {
       $('wallet-loading').style.display = 'none';
       $('wallet-empty').style.display = 'block';
-      $('wallet-empty').innerHTML = '<p>Error loading wallet data: ' + esc(err.message) + '</p><p>Try a different address.</p>';
+      $('wallet-empty').innerHTML = '<div class="dfx-empty"><p>⚠️ Error loading wallet data</p><p style="font-size:12px;color:var(--dfx-text-muted)">' + esc(err.message) + '</p><p>Try a different address or check your connection.</p></div>';
     });
   }
   
@@ -562,7 +597,7 @@ body {
     var modal = $('inscription-modal');
     $('modal-title').textContent = name || 'Inscription';
     $('modal-img').innerHTML = '<img src="' + IMG_BASE + '/' + esc(id) + '" alt="">';
-    $('modal-id').innerHTML = '<a href="https://dogefeed.app/doginal/' + esc(id) + '" target="_blank">' + esc(id) + '</a>';
+    $('modal-id').innerHTML = '<a href="/dogefeedx/inscription?id=' + esc(id) + '">' + esc(id.substring(0, 20)) + '...</a>';
     $('modal-number').textContent = '—';
     $('modal-collection').textContent = name || 'Unknown';
     $('modal-type').textContent = 'image/png';
@@ -609,6 +644,22 @@ body {
       btn.classList.add('active');
       currentChain = btn.dataset.chain;
       if (currentAddress) lookupAddress(currentAddress);
+    });
+  });
+  
+  // Quick address buttons
+  document.querySelectorAll('.dfx-wallet-quick-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var address = btn.dataset.address;
+      var chain = btn.dataset.chain;
+      if (chain) {
+        document.querySelectorAll('.dfx-wallet-chain-btn').forEach(function(b) { b.classList.remove('active'); });
+        var chainBtn = document.querySelector('.dfx-wallet-chain-btn[data-chain="' + chain + '"]');
+        if (chainBtn) chainBtn.classList.add('active');
+        currentChain = chain;
+      }
+      $('address-input').value = address;
+      lookupAddress(address);
     });
   });
   
