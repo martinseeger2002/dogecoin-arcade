@@ -88,6 +88,20 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 One stream for all of a page's rooms (Claude; found by the Garrys mod session, the operator: "Build it")
+Over plain http (a local arcade, http://127.0.0.1:8420) a browser opens only 6 connections to a site, and the viewer
+held an EventSource per room: a page in 6 rooms (Riffs chat, a Lounge, 4 area cells) had none left, so its sends and
+joins hung 20 s ("no viewer is listening", "this room is not online"). Over https (HTTP/2) it did not show.
+- **realtime.py**: POST /realtime/hub/attach {token[, hub]} -> {hub} (made here, token_urlsafe(16), the only way into
+  its stream; a hub of another event loop is made again), /realtime/hub/detach, GET /realtime/hub?id= streams every
+  attached room's events as {"k": token, "ev": ...}, "closed" {k, why}, "ping". A pump task per room pulls
+  next_event into the hub's queue. A hub nobody streams for 60 s is let go; at most 64 rooms on one.
+- **_page_doors**: realtimeStream(base, token) gives each room a stand-in with an EventSource's face, fed from the one
+  hub per node; the rejoin, ping and dead-line watching are as they were. Attaches go one at a time (eight at once
+  made eight hubs). A node from before the hub (404) gives its room its own EventSource, as before.
+- Test: tests/test_realtime_one_stream_browser.py (a page in 8 rooms on a plain http arcade sends and hears in every
+  one in under 10 s; without the hub none got through).
+
 ### 2026-11-03 "ARCADE_MEDIA is not defined" while a page loads (Claude; found live by the Garrys mod session)
 inscription_full.html and inscription_view.html include _page_doors inside base.html's body block, and base.html
 defines ARCADE_MEDIA in its script further down. The viewer's storage listener is registered at once, so another tab

@@ -39,6 +39,7 @@ thread while it waits, and it does nothing but wait on the mesh's queue.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import json
@@ -347,6 +348,104 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
         return StreamingResponse(events(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-store",
                                           "X-Accel-Buffering": "no"})
+
+    # ONE STREAM FOR ALL OF A PAGE'S ROOMS (2026-11-03, found by the Garrys mod session for Spatial World; the operator: "Build
+    # it"). A page held one EventSource per room, and over plain http (a local arcade, http://<lan ip>:8420) a browser
+    # opens only 6 connections to a site: a page in 6 rooms (Riffs chat, a Lounge, 4 world cells) had none left for its
+    # sends, which hung for 20 s. Now a page's rooms attach to one hub: POST /realtime/hub/attach {token[, hub]} answers
+    # the hub's id (made here, 128 random bits, the only way in to its stream) and starts pulling that room's events
+    # into it; GET /realtime/hub?id= streams every attached room's events, each as {"k": token, "ev": ...}, a room's
+    # end as event "closed" {k, why}, and "ping" when all are quiet. A hub nobody streams for HUB_IDLE is let go.
+    hubs: dict[str, dict] = {}
+    HUB_IDLE = 60.0
+    HUB_MAX_ROOMS = 64
+
+    def _hub_gone(hid: str) -> None:
+        hub = hubs.pop(hid, None)
+        if hub is not None:
+            for task in hub["pumps"].values():
+                task.cancel()
+
+    def _hub_tidy() -> None:
+        now = time.monotonic()
+        for hid, hub in list(hubs.items()):
+            if not hub["streaming"] and now - hub["at"] > HUB_IDLE:
+                _hub_gone(hid)
+
+    async def _hub_pump(hub: dict, token: str) -> None:
+        svc = mesh()
+        try:
+            while True:
+                ev = await svc.next_event(token, HEARTBEAT)
+                svc.touch(token)
+                if ev is not None:
+                    await hub["q"].put(("data", token, ev))
+        except asyncio.CancelledError:
+            raise
+        except MeshError as exc:
+            await hub["q"].put(("closed", token, str(exc)))
+        finally:
+            hub["pumps"].pop(token, None)
+
+    @app.post("/realtime/hub/attach")
+    async def realtime_hub_attach(request: Request, body: dict):
+        said = body
+        token, hid = str(said.get("token") or ""), str(said.get("hub") or "")
+        try:
+            mesh().session(token)
+        except MeshError as exc:
+            return refused(exc, 404)
+        _hub_tidy()
+        loop = asyncio.get_running_loop()
+        hub = hubs.get(hid)
+        if hub is not None and hub["loop"] is not loop:      # made before this server's loop (a restart in-process)
+            _hub_gone(hid)
+            hub = None
+        if hub is None:
+            hid = _secrets.token_urlsafe(16)
+            hub = hubs[hid] = {"q": asyncio.Queue(maxsize=4096), "pumps": {}, "streaming": 0, "at": time.monotonic(),
+                               "loop": loop}
+        if token not in hub["pumps"]:
+            if len(hub["pumps"]) >= HUB_MAX_ROOMS:
+                return JSONResponse({"ok": False, "error": "too many rooms on one stream"}, status_code=400)
+            hub["pumps"][token] = asyncio.get_running_loop().create_task(_hub_pump(hub, token))
+        return JSONResponse({"ok": True, "hub": hid}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/realtime/hub/detach")
+    async def realtime_hub_detach(body: dict):
+        said = body
+        hub = hubs.get(str(said.get("hub") or ""))
+        task = hub["pumps"].pop(str(said.get("token") or ""), None) if hub else None
+        if task is not None:
+            task.cancel()
+        return JSONResponse({"ok": True})
+
+    @app.get("/realtime/hub")
+    async def realtime_hub(request: Request, id: str = ""):
+        hub = hubs.get(id)
+        if hub is None or hub["loop"] is not asyncio.get_running_loop():
+            return JSONResponse({"ok": False, "error": "no such stream"}, status_code=404)
+
+        async def events():
+            hub["streaming"] += 1
+            try:
+                yield "retry: 2000\n\n"
+                while not await request.is_disconnected():
+                    try:
+                        kind, token, ev = await asyncio.wait_for(hub["q"].get(), HEARTBEAT)
+                    except asyncio.TimeoutError:
+                        yield "event: ping\ndata: {}\n\n"
+                        continue
+                    if kind == "closed":
+                        yield "event: closed\ndata: " + json.dumps({"k": token, "why": ev}) + "\n\n"
+                    else:
+                        yield "data: {\"k\": " + json.dumps(token) + ", \"ev\": " + event_json(ev) + "}\n\n"
+            finally:
+                hub["streaming"] -= 1
+                hub["at"] = time.monotonic()
+
+        return StreamingResponse(events(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
     @app.get("/realtime/nodes")
     def realtime_nodes(request: Request):

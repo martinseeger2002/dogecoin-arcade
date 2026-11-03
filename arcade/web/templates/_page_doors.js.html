@@ -182,9 +182,85 @@
     }
     // `h`: a rejoin's own room, taken over rather than replaced (2026-11-02): everything that holds it -- the camera and
     // the screen, their Stop handlers, the game's media calls -- goes on holding the live one.
+    // ONE STREAM FOR ALL OF THIS PAGE'S ROOMS ON ONE NODE (2026-11-03, realtime.py /realtime/hub): a browser opens only 6
+    // connections to a site over plain http, and a page in 6 rooms had none left for its sends. Each room gets a
+    // stand-in with an EventSource's face (onmessage, onopen, onerror, addEventListener, close, readyState), fed from
+    // the one hub stream; a node from before the hub gives its room an EventSource of its own, as before.
+    var rtHubs = {};
+    function realtimeStream(base, token){
+      var fake = {readyState: 0, onmessage: null, onopen: null, onerror: null, _l: {}, token: token,
+        addEventListener: function(t, fn){ (this._l[t] = this._l[t] || []).push(fn); },
+        _fire: function(t, ev){
+          (this._l[t] || []).forEach(function(fn){ fn(ev); });
+          if (t === 'message' && this.onmessage) this.onmessage(ev);
+          if (t === 'open' && this.onopen) this.onopen(ev);
+          if (t === 'error' && this.onerror) this.onerror(ev);
+        },
+        close: function(){
+          this.readyState = 2;
+          if (this.real) { try { this.real.close(); } catch (err) {} }
+          else hubDetach(base, token);
+        }};
+      hubAttach(base, token, fake).catch(function(){
+        var hub = rtHubs[base];
+        if (hub) { delete hub.rooms[token]; if (!Object.keys(hub.rooms).length && !hub.es) delete rtHubs[base]; }
+        if (fake.readyState === 2) return;
+        var es = fake.real = new EventSource(base + '/realtime/stream?token=' + encodeURIComponent(token));
+        es.onmessage = function(ev){ fake._fire('message', ev); };
+        es.onopen = function(ev){ fake.readyState = 1; fake._fire('open', ev); };
+        es.onerror = function(ev){ fake.readyState = es.readyState; fake._fire('error', ev); };
+        ['closed', 'ping'].forEach(function(t){ es.addEventListener(t, function(ev){ fake._fire(t, ev); }); });
+      });
+      return fake;
+    }
+    function hubOpen(base, hub){
+      if (hub.es) { try { hub.es.close(); } catch (err) {} }
+      var es = hub.es = new EventSource(base + '/realtime/hub?id=' + encodeURIComponent(hub.id));
+      es.onopen = function(){ for (var t in hub.rooms) { hub.rooms[t].readyState = 1; hub.rooms[t]._fire('open', {}); } };
+      es.onmessage = function(ev){
+        var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
+        var room = hub.rooms[d.k];
+        if (room) room._fire('message', {data: JSON.stringify(d.ev)});
+      };
+      es.addEventListener('ping', function(ev){ for (var t in hub.rooms) hub.rooms[t]._fire('ping', ev); });
+      es.addEventListener('closed', function(ev){
+        var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
+        var room = hub.rooms[d.k];
+        if (room) { delete hub.rooms[d.k]; room._fire('closed', ev); }
+      });
+      es.onerror = function(){
+        if (es.readyState !== 2 || hub.es !== es) return;    // reconnecting by itself: the node keeps the hub a minute
+        delete rtHubs[base];                                  // gone (the node restarted): every room takes its seat again
+        for (var t in hub.rooms) { var r = hub.rooms[t]; r.readyState = 2; r._fire('error', {}); }
+      };
+    }
+    function hubAttach(base, token, fake){
+      var hub = rtHubs[base] || (rtHubs[base] = {id: '', es: null, rooms: {}, chain: Promise.resolve()});
+      hub.rooms[token] = fake;                    // before the answer: its first events may come on the stream first
+      // One attach at a time: the first makes the hub, the rest join it (eight rooms joined at once made eight hubs).
+      var go = hub.chain.then(function(){ return realtimePost('/realtime/hub/attach', {token: token, hub: hub.id}, base); });
+      hub.chain = go.catch(function(){});
+      return go.then(function(j){
+        if (!j || !j.ok || !j.hub) { delete hub.rooms[token]; throw new Error('no hub here'); }
+        if (rtHubs[base] !== hub || fake.readyState === 2) return;
+        if (hub.id !== j.hub) {
+          // A new hub (the first, or the node let the last one go): the rooms already on it move over.
+          var old = hub.id; hub.id = j.hub;
+          if (old) for (var t in hub.rooms) if (t !== token) realtimePost('/realtime/hub/attach', {token: t, hub: hub.id}, base).catch(function(){});
+          hubOpen(base, hub);
+        } else if (hub.es && hub.es.readyState === 1) { fake.readyState = 1; fake._fire('open', {}); }
+      });
+    }
+    function hubDetach(base, token){
+      var hub = rtHubs[base];
+      if (!hub || !hub.rooms[token]) return;
+      delete hub.rooms[token];
+      realtimePost('/realtime/hub/detach', {token: token, hub: hub.id}, base).catch(function(){});
+      if (!Object.keys(hub.rooms).length) { try { hub.es.close(); } catch (err) {} delete rtHubs[base]; }
+    }
     function realtimeOpen(name, frame, j, game, fast, link, max, h){
       var base = j.base || '';
-      var es = new EventSource(base + '/realtime/stream?token=' + encodeURIComponent(j.token));
+      var es = realtimeStream(base, j.token);
       h = h || {};
       Object.assign(h, {token: j.token, es: es, me: j.me, members: {}, game: game, base: base, frame: frame,
                         wantFast: !!fast, link: fastLinkList(link), fastMax: fastMaxOf(max), got: false,
