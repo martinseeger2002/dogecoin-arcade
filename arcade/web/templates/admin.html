@@ -103,6 +103,11 @@
     so they should all hold the same tokens, inscriptions, names and trades. Linked arcades compare
     fingerprints of their indexes every minute; a difference is tracked down to the block it starts at.</p>
   <div id="indexrows" class="muted" style="font-size:.86rem">Not linked to another arcade yet.</div>
+  <p class="muted" style="margin:10px 0 4px;font-size:.84rem">An arcade far behind can take a copy of the index from
+    linked arcades that hold it, used only when most of them agree with it, then checked block by block against its
+    own node in the background.</p>
+  <label class="switch"><input type="checkbox" id="serve_index_copies"> Serve index copies to linked arcades</label>
+  <label class="switch"><input type="checkbox" id="fetch_index_copies"> Fetch a copy when this index is far behind</label>
   <h3 style="margin:14px 0 6px">Mine test coins</h3>
   <p class="muted" style="margin-top:0;font-size:.84rem">This machine's CPU mines blocks on a test-coin chain, with
     work from its Core: the one here, or the one it borrows. On a borrowed chain a tenth of every block goes to the
@@ -2359,6 +2364,21 @@ section.panel h2{margin-top:0}
     var ix = $('indexrows'); ix.textContent = '';
     (c.rows || []).forEach(function (r) {
       var i = r.index || {};
+      // Where this index came from (2026-11-02): a copy from linked arcades, and its confirmation from this
+      // arcade's own node; or a copy being fetched, or one made here for others.
+      var cp = r.copy || {};
+      if (cp.copy) {
+        var k = cp.copy, how = k.state === 'confirmed' ? 'confirmed from this arcade\u2019s own node'
+          : k.state === 'rebuilt' ? 'did not match this arcade\u2019s own node (' + (k.differs || 'differs')
+              + '): replaced by the index built here'
+          : 'confirming from this arcade\u2019s own node' + (k.confirmed_to ? ', at block '
+              + Number(k.confirmed_to).toLocaleString() + ' of ' + Number(k.height).toLocaleString() : '');
+        ix.appendChild(text('div', r.title + ': index copied from ' + k.agreed + ' of ' + k.voters
+          + ' linked arcades at block ' + Number(k.height).toLocaleString() + ' \u2014 ' + how,
+          k.state === 'rebuilt' ? 'idx-bad' : ''));
+      }
+      if (cp.fetch) ix.appendChild(text('div', r.title + ': ' + (cp.said || 'fetching a copy of the index')));
+      else if (cp.said && !cp.copy) ix.appendChild(text('div', r.title + ': ' + cp.said, 'muted'));
       if (!i.compared) return;
       var line = document.createElement('div');
       var ok = i.agree === i.compared;
@@ -2369,7 +2389,8 @@ section.panel h2{margin-top:0}
       (i.differ || []).forEach(function (x) {
         var why = x.error ? 'could not compare: ' + x.error
           : x.differs_at ? 'reads block ' + Number(x.differs_at).toLocaleString() + ' differently'
-          : x.state === 'differs' ? 'same blocks, different balances' : 'differs';
+          : x.state === 'differs' ? 'same blocks, different balances'
+          : x.names === 'differs' ? 'same blocks, different @names' : 'differs';
         ix.appendChild(text('div', '\u2014 arcade ' + x.peer + ' ' + why, 'idx-bad'));
         if (x.differs_at) {
           ix.appendChild(text('div', 'This arcade:\n' + ((x.ours || []).join('') || '(nothing)') +
@@ -2378,6 +2399,11 @@ section.panel h2{margin-top:0}
       });
     });
     if (!ix.childNodes.length) ix.textContent = c.mesh ? 'Not linked to another arcade yet.' : 'The mesh is off on this arcade.';
+    var copies = c.copies || {};
+    ['serve', 'fetch'].forEach(function (k) {
+      var box = $(k + '_index_copies');
+      if (box && document.activeElement !== box) box.checked = copies[k] !== false;
+    });
   }
   // A test chain's faucet (2026-10-18, SadFrog's side): what every account is topped back up to once a
   // day, and how this node keeps the coins for it. Chains with real coins have none.
@@ -3651,6 +3677,18 @@ section.panel h2{margin-top:0}
       : 'No public name is set on the DNS tab, so only visitors arriving through a tunnel or proxy, or from a public address, are asked.';
   }
   $('terms_text').addEventListener('input', function () { termsEdited = true; });
+  ['serve_index_copies', 'fetch_index_copies'].forEach(function (key) {
+    var box = $(key);
+    if (!box) return;
+    box.addEventListener('change', function () {
+      var body = {}; body[key] = box.checked;
+      call('/admin/api/settings', body)
+        .then(function () { say(key === 'serve_index_copies'
+          ? (box.checked ? 'This arcade serves index copies.' : 'This arcade serves no index copies.')
+          : (box.checked ? 'This arcade fetches a copy when far behind.' : 'This arcade always reads its own node.')); })
+        .catch(function (e) { box.checked = !box.checked; say(e.message, 'err'); });
+    });
+  });
   function saveTerms(words) {
     var body = {terms_gate: $('terms_gate').checked};
     if (words !== undefined) body.terms_text = words;

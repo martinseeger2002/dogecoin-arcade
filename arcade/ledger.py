@@ -343,6 +343,60 @@ class LedgerIndex:
             self._content_cache = {}
             self._content_held = 0
 
+    #: Moved on by `install`: anything that kept what it read from the old file (index_digest.Fingerprints) reads
+    #: it again.
+    epoch = 0
+
+    def release(self) -> None:
+        """Close this thread's kept connection to the index file (before the file is moved away)."""
+        kept: dict[str, _Kept] | None = getattr(_THREAD, "kept", None)
+        lease = (kept or {}).pop(str(self.path.resolve()), None)
+        if lease is not None:
+            try:
+                lease.db.conn.close()
+            except Exception:                         # noqa: BLE001 -- it is gone either way
+                pass
+
+    def install(self, source: Path | str) -> None:
+        """Put the index file at `source` in this index's place (ledger_snapshot: a checked copy from linked
+        arcades, or the one built here to confirm it). The old file is deleted: what replaces it was checked, and
+        it was only further behind. No sync runs meanwhile. Connections other threads keep to the old file are
+        dropped the next time they ask (`open` follows the file)."""
+        source = Path(source)
+        with self._sync_lock:
+            self.release()
+            aside = self.path.with_name(self.path.name + ".replaced")
+            moved = []
+            try:
+                for suffix in ("", "-wal", "-shm"):
+                    old = Path(str(self.path) + suffix)
+                    if old.exists():
+                        old.replace(str(aside) + suffix)
+                        moved.append(suffix)
+            except OSError:
+                # Put back what was moved (Windows: a file another thread holds open cannot be moved), and say so.
+                for suffix in moved:
+                    Path(str(aside) + suffix).replace(str(self.path) + suffix)
+                raise
+            for suffix in ("-wal", "-shm"):
+                stray = Path(str(source) + suffix)
+                if stray.exists():
+                    stray.replace(str(self.path) + suffix)
+            os.replace(source, self.path)
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    Path(str(aside) + suffix).unlink()
+                except FileNotFoundError:
+                    pass
+            self.stopped = None
+            self.stats = {}
+            self.epoch += 1
+            with self._content_lock:
+                self._content_cache = {}
+                self._content_held = 0
+        log.info("ledger %s: index replaced from %s, now at block %s", self.params.name, source.name,
+                 self.indexed_height())
+
     def _stop(self, exc: Exception) -> None:
         """Record why the index halted, at the height it was working on."""
         height = self.indexed_height()

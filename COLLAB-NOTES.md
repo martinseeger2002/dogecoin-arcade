@@ -88,6 +88,54 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 Run your own: the download is packed as the arcade starts (Claude)
+The operator: "When I click run your own, it brings me to /clone ... /clone doesn't do anything". The page is fine, but the
+first visit after every update packed the source archive while it waited: 27 s on .25, and the browser gave up. Now
+`_packed_source` runs in a thread at startup (lifespan), one pack at a time (a page asking meanwhile waits for that
+one). Test: test_clone test_the_source_is_packed_when_the_arcade_starts_not_on_the_pages_first_visit. Open: the page's
+install commands are for Linux only.
+
+### 2026-11-02 Index copies between arcades: an index far behind takes a checked copy from linked holders (Claude)
+The operator: an arcade whose Core was at 100% still showed no @name for its operator (@dogefeed), because its own token index
+reads Core 500 blocks at a time and trailed by hours. "No daily copy's"; "a full confirmation of every index should be
+done as a background task after the index is complete in a way that does not hog resources"; he chose "copy on
+request", "Majority of linked" (of those storing the index), phones "Off by default". Rows alone cannot rebuild an
+index (a block's rows lack each transaction's inputs, outputs and fee, and the current tables are worked out from
+those), so a whole copy is sent in pieces, as the ord index already does (ord_snapshot.py).
+- **arcade/ledger_snapshot.py `LedgerSnapshots`** (one per token chain, `state.ledger_snapshots(chain)`):
+  - Made only when a linked arcade asks ("sq"), by an index within 20 blocks of its Core, at most every 6 h, never
+    while being fetched from, deleted after 2 h unfetched. `VACUUM INTO` without PRIVATE = utxo, activity, watched,
+    covered (this arcade's own addresses, coins, history, read-backs).
+  - Manifest: net, floor, block height and hash, `cp` checkpoint, `d` fingerprint of floor..cp, `s` consensus hash,
+    `n` names digest, 1 MB pieces' sha256. Measured on Strawberry's Pepecoin test index (1,558,396 blocks, 430 MB):
+    made in 4 s, checked in 0.9 s, pieces compress to about 27%.
+  - Fetched when at least WORTH_BLOCKS (50,000) behind and its Core is at least at the copy's block; pieces from
+    every arcade offering that same copy, 6 at a time; resumes after a restart; let go of if the index reads past it.
+  - Checked in its own thread: pieces, then the copy's own height/hash/cp/d/s/n against its manifest, its block hash
+    against this arcade's Core, then the votes: `IndexCheck.votes` asks every linked arcade settled at least to cp for
+    its fingerprint of floor..cp; at least 2 must agree and more than half of those answering. A refused copy is
+    never fetched again. On Windows a copy that cannot be moved into place is let go of.
+  - `LedgerIndex.install(path)` puts it in place (old file deleted, `epoch` moved on so index_digest.Fingerprints
+    reads afresh). The accounts are watched again from the copy's block and read back as a new install's are.
+- **`Confirmation`**: a second index from this arcade's own Core at <index>.confirm, 500 blocks every 15 s, only while
+  the index is current, nothing is fetched and no call is relayed (watcher `_index_copies`). At cp: fingerprints;
+  at the same height: consensus hash and names. Same: "confirmed", the second index deleted. Different: the index
+  built here replaces the copy ("rebuilt") and Admin says so. Progress in <index>.copy.json.
+- **arcade/mesh/ledgershare.py** frames "lx": hi {nets: {net: {h, sn}}}, sq {net}, g/gb manifest and pieces (zlib),
+  2 served at once, 120 pieces a minute per asker.
+- **indexcheck**: the tip carries `n` (names digest); same height and different names is a difference too (the names
+  are in neither the fingerprints nor the consensus hash).
+- **Admin -> Coins & chains**: a line per index that came as a copy (from how many holders, confirmation progress),
+  and two switches, `serve_index_copies` and `fetch_index_copies` (both on unless turned off; a phone sets serving
+  off).
+- **bootstrap.py**: the published website copy now leaves out the same PRIVATE tables. The Pepecoin test copy on
+  app.dogecoinarcade.com carried .25's 192 watched addresses, 16,730 coins, 32,283 history rows and 8 read-backs.
+- Tests: tests/test_ledger_snapshot.py (real regtest chain: privacy, a copy taken and read on from, refused by
+  1/1, 1/3 and 2/4 votes, a wrong piece, another chain, confirmed, a wrong name found and rebuilt, made only when
+  asked and allowed, and three arcades over real mesh links), test_admin switches.
+- Open: the ord index keeps its own snapshot rules for now; same-height consensus/names checks need two arcades at
+  the same height, so a quiet chain confirms sooner than a busy one.
+
 ### 2026-11-02 PR #58 merged: every Desktop View window refreshes on its own (Claude)
 SadFrog's PR #58, applied to master from the public mirror diff. Before/after screenshots of both looks shown to the operator.
 Desktop tests pass with the rest (531 passed, 17 skipped). Their entry follows, as written.

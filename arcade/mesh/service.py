@@ -225,6 +225,7 @@ class MeshService:
         self.coreshare = None                   # coreshare.CoreShare: Cores shared with, and borrowed from, other arcades
         self.llmshare = None                    # llmshare.LlmShare: the LLM service with other arcades
         self.indexcheck = None                  # indexcheck.IndexCheck: indexes compared with other arcades'
+        self.ledgershare = None                 # ledgershare.LedgerShare: index copies for arcades far behind
         self.stun = None                        # stun.StunShare: STUN addresses for the fast lane, this node's and others'
         self.punch = None                       # punch.PunchShare: the direct-UDP probe with a linked node
         self.udp = None                         # udp.UdpShare: the UDP path beside each link
@@ -873,11 +874,18 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
     def fingerprints() -> dict:
         for chain in state.token_chains:
             fp = prints.get(chain.network)
-            if fp is None or fp.index is not state.token_index(chain):
+            if fp is None or fp.index is not state.token_index(chain) \
+                    or fp.epoch != getattr(fp.index, "epoch", 0):      # its file replaced by a copy (2026-11-02)
                 prints[chain.network] = Fingerprints(state.token_index(chain), chain.params.index_start)
         return dict(prints)
     service.indexcheck = IndexCheck(fingerprints)
     service.node.add_extension(service.indexcheck)
+    # Index copies for arcades far behind, a piece from each arcade that has one (ledgershare.py,
+    # ledger_snapshot.py, 2026-11-02: "copy on request").
+    if hasattr(state, "ledger_snapshots"):
+        from .ledgershare import LedgerShare
+        service.ledgershare = LedgerShare(lambda: {c.network: state.ledger_snapshots(c) for c in state.token_chains})
+        service.node.add_extension(service.ledgershare)
     # Fruit names for new arcades' operators (fruitshare.py, arcade/fruit.py, 2026-10-20).
     if hasattr(state, "fruit_stand"):
         from .fruitshare import FruitShare

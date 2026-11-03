@@ -727,6 +727,34 @@ class BlockWatcher:
         # bid is above somebody's ask, take it (D-102).
         self._shopkeeper.fill_what_crosses()
 
+    def _index_copies(self, chain, index, tip: int) -> None:
+        """Index copies (arcade/ledger_snapshot.py, 2026-11-02): make one for a linked arcade far behind that
+        asked, fetch one when this index is far behind, and confirm one that came here, a bounded pass at a time and
+        only while this arcade is idle. Never stops the index reading its own node."""
+        mesh = getattr(self.state, "mesh", None)
+        share = getattr(mesh, "ledgershare", None)
+        check = getattr(mesh, "indexcheck", None)
+        if not hasattr(self.state, "ledger_snapshots"):
+            return
+        try:
+            snaps = self.state.ledger_snapshots(chain)
+            snaps.make_in_background(tip)
+            before = index.epoch
+            if share is not None and check is not None:
+                floor = chain.params.index_start
+                snaps.step(share, tip, verify=lambda manifest, maker: check.votes(chain.network, floor,
+                                                                                  int(manifest["cp"])))
+            if index.epoch != before:                          # a copy took the old index's place
+                self.state.ledger_tips.pop(chain.network, None)
+                self.state.bump_generation()
+            height = index.indexed_height() or 0
+            turn = getattr(mesh, "turn", None)
+            relaying = bool(getattr(turn, "allocations", None)) if turn is not None else False
+            idle = tip - height <= 20 and snaps.fetch is None and not relaying
+            self.state.ledger_confirmation(chain).step(idle)
+        except Exception:                                      # noqa: BLE001 -- the index reads its node regardless
+            log.warning("%s index copies", chain.params.label, exc_info=True)
+
     def _sync_ledgers(self) -> None:
         """Keep the token indexes in step with their chains.
 
@@ -747,6 +775,7 @@ class BlockWatcher:
                 continue
             moved = tip != self.state.ledger_tips.get(chain.network)
             self.state.ledger_tips[chain.network] = tip
+            self._index_copies(chain, index, tip)
             height = index.indexed_height()
             behind = height is None or height < tip
             if not moved and (not behind or index.stopped is not None):

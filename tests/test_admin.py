@@ -655,3 +655,22 @@ def test_the_update_channel_is_live_or_test(public):
     assert app.post("/admin/api/settings", headers={**LOCAL, **WRITE},
                     json={"update_channel": "nightly"}).status_code == 400
     assert state.setting("update_channel") == "test"
+
+
+def test_index_copies_can_be_turned_off_for_serving_and_fetching(public):
+    """2026-11-02: index copies between arcades, opt-out (a phone turns serving off). Both on by default, each
+    its own switch in Admin -> Chains, and each chain row says what its copies are doing."""
+    app, state = public
+    chains = app.get("/admin/api/state", headers=LOCAL).json()["chains"]
+    assert chains["copies"] == {"serve": True, "fetch": True}
+    assert app.post("/admin/api/settings", headers={**LOCAL, **WRITE},
+                    json={"serve_index_copies": False}).status_code == 200
+    try:
+        chains = app.get("/admin/api/state", headers=LOCAL).json()["chains"]
+        assert chains["copies"] == {"serve": False, "fetch": True}
+        mine = next(r for r in chains["rows"] if r["net"] == state.messaging.network)
+        assert mine["copy"]["serving"] is False and mine["copy"]["fetching_allowed"] is True
+    finally:
+        state.set_setting("serve_index_copies", None)
+    page = app.get("/admin", headers=LOCAL).text
+    assert 'id="serve_index_copies"' in page and 'id="fetch_index_copies"' in page

@@ -164,6 +164,21 @@ def make(home: Path, network: str, index_path: Path, floor: int | None,
         finally:
             source.close()
 
+        # Never this arcade's own wallet tables (2026-11-02: the published Pepecoin test copy carried .25's 192
+        # watched addresses, their coins, history and read-backs -- which addresses its accounts hold, to anybody, and
+        # every clone went on watching them). The same tables an index copy between arcades leaves out.
+        from .ledger_snapshot import PRIVATE
+        strip = sqlite3.connect(str(plain))
+        try:
+            have = {r[0] for r in strip.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            for table in PRIVATE:
+                if table in have:
+                    strip.execute(f"DELETE FROM {table}")
+            strip.commit()
+            strip.execute("VACUUM")
+        finally:
+            strip.close()
+
         # Read the claim from the COPY, not from the live index: the live one
         # may have moved on between the copy and the question, and a manifest
         # describing a height the file is not at is worse than no manifest.

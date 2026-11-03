@@ -1049,6 +1049,12 @@ def create_app(state: AppState) -> FastAPI:
             _start_known_import()
         except Exception as exc:              # noqa: BLE001 -- never block startup
             log.info("known collections not started: %s", exc)
+        try:                                  # the Run your own page's download, packed now rather than on its first visit
+            # (2026-11-02: "/clone doesn't do anything" -- the first visit after every update packed the
+            # source while the page waited, 27 s on .25, and the browser gave up before it came)
+            threading.Thread(target=_packed_source, name="arcade-pack-source", daemon=True).start()
+        except Exception as exc:              # noqa: BLE001 -- never block startup
+            log.info("source not packed: %s", exc)
         try:                                  # mail for phones already subscribed
             push = state.push()
             if push is not None:              # notes every account's mail
@@ -29693,7 +29699,8 @@ def create_app(state: AppState) -> FastAPI:
                 text = str(said["faucet_daily"]).strip()
                 state.set_setting("faucet_daily",
                                   None if text in ("", "none") else walletlib.parse_amount(text))
-            for flag in ("auto_update", "auto_sell", "auto_fill", "node_trades", termslib.GATE_SETTING):
+            for flag in ("auto_update", "auto_sell", "auto_fill", "node_trades", termslib.GATE_SETTING,
+                         "serve_index_copies", "fetch_index_copies"):
                 if flag in said:
                     state.set_setting(flag, bool(said[flag]))
             if termslib.TEXT_SETTING in said:
@@ -29882,8 +29889,17 @@ def create_app(state: AppState) -> FastAPI:
                 row["chosen"] = coreslib.mode(state.settings(), row["net"], coreslib.OFF)
         index = check.status() if check else {}
         from .. import core_catchup
+        tokens = {c.network: c for c in state.token_chains}
         for row in rows:
             row["index"] = index.get(row["net"], {})
+            # Index copies (ledger_snapshot.py, 2026-11-02): one made for others, one being fetched, or where this
+            # index came from and how far its confirmation from this arcade's own node has got.
+            row["copy"] = None
+            if row["net"] in tokens and hasattr(state, "ledger_snapshots"):
+                try:
+                    row["copy"] = state.ledger_snapshots(tokens[row["net"]]).status()
+                except Exception:                          # noqa: BLE001 -- never takes the panel down
+                    row["copy"] = None
             # A Core here that is behind (syncing, re-indexing, rescanning): read from a sharer until it catches up,
             # or used as it is when none shares the chain, said in one line (arcade/core_catchup.py, 2026-10-21).
             own = state.messaging if row["net"] == state.messaging.network else (
@@ -29921,7 +29937,11 @@ def create_app(state: AppState) -> FastAPI:
                          if net not in NETWORKS and s.get("sharers"))
         return {"rows": rows, "mesh": mesh is not None, "unknown": unknown,
                 "restart": bool(os.environ.get("INVOCATION_ID") or os.environ.get("ARCADE_SUPERVISOR_PID")),
-                "mining": _mining_json()}
+                "mining": _mining_json(),
+                # Index copies (ledger_snapshot.py, 2026-11-02): serve them to arcades far behind, and fetch
+                # one when this index is. Both on unless turned off (a phone turns serving off).
+                "copies": {"serve": state.setting("serve_index_copies", True) is not False,
+                           "fetch": state.setting("fetch_index_copies", True) is not False}}
 
     def _admin_faucet_row(net: str) -> dict | None:
         """A test chain's faucet for Admin -> Chains (2026-10-18): its daily top-off, how it is stocked,
@@ -30799,16 +30819,23 @@ def create_app(state: AppState) -> FastAPI:
     # any node can be the place somebody installs from with no new option to
     # point at one.
 
+    packing = threading.Lock()
+
     def _packed_source():
-        """This instance's own source, packed if it has not been."""
-        said = bootstraplib.source(state.home)
+        """This instance's own source, packed if it has not been. One pack at a time: started at startup, and a page
+        asking meanwhile waits for that one rather than packing a second beside it."""
         revision = state.running_version or "unknown"
-        if said is None or said.get("revision") != revision:
-            try:
-                said = bootstraplib.source_archive(
-                    state.home, state.checkout, revision)
-            except bootstraplib.BootstrapError:
-                return None
+        said = bootstraplib.source(state.home)
+        if said is not None and said.get("revision") == revision:
+            return said
+        with packing:
+            said = bootstraplib.source(state.home)
+            if said is None or said.get("revision") != revision:
+                try:
+                    said = bootstraplib.source_archive(
+                        state.home, state.checkout, revision)
+                except bootstraplib.BootstrapError:
+                    return None
         return said
 
     def _served_bootstrap(network: str):

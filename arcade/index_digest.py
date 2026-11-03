@@ -105,6 +105,8 @@ class Fingerprints:
 
     def __init__(self, index, floor: int | None):
         self.index, self.floor = index, floor
+        #: The index file this was read from (LedgerIndex.install moves it on): a new one is fingerprinted afresh.
+        self.epoch = getattr(index, "epoch", 0)
         self._kept: dict[int, str] = {}
         self._kept_to: int | None = None          # every settled block up to here is in _kept
         self._lock = threading.Lock()
@@ -119,7 +121,8 @@ class Fingerprints:
             return self._kept
 
     def tip(self) -> dict | None:
-        """{h: indexed height, at: the checkpoint, d: fingerprint of floor..at, s: consensus hash at h}."""
+        """{h: indexed height, at: the checkpoint, d: fingerprint of floor..at, s: consensus hash at h, n: the names
+        digest at h (every @name's current claim, ledger_snapshot.names_digest; 2026-11-02)}."""
         indexed = self.index.indexed_height()
         at = checkpoint(indexed, self.floor)
         if at is None:
@@ -127,10 +130,13 @@ class Fingerprints:
         said = {"h": indexed, "at": at, "d": self.digest(self.floor, at)}
         try:
             from .consensushash import consensus_hash
+            from .ledger_snapshot import names_digest
             with self.index.open() as db:
                 state = consensus_hash(db)
+                names = names_digest(db)
             if self.index.indexed_height() == indexed:      # still the same block: the hash is of that one
                 said["s"] = state
+                said["n"] = names
         except Exception:                                    # noqa: BLE001 -- the range still compares
             pass
         return said
