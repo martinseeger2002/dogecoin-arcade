@@ -88,6 +88,31 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 1: the node's wallet
+SadFrog: "Build the wallet commands next (send, receive, transactions) in the terminal, then messages, feed and
+market queries, one PR each."
+- **New commands** (`arcade/lite/commands.py`, module `wallet`, the operator only): `getbalances` (every wallet of
+  the node and its name: `messaging`, `ledger`, an add-on's network, or `key:<network>`), `getnewaddress <wallet>`,
+  `listtransactions <wallet> [count]` (Core wallets, up to 100), `listunspent <wallet>` (Core and key wallets),
+  `send <wallet> <@name or address> <amount>` and `confirm <ticket>`.
+- **A send is Admin's own two steps**, not a new way to spend: app.py's `/admin/api/send`, `/send/confirm` and
+  `/receive` bodies became `_node_prepare`, `_node_broadcast` and `_node_receive` (unchanged in what they do and
+  answer), shared with the console through `node_wallet`. `send` builds and shows the fee and a ticket (ten
+  minutes, the same store as Admin's); `confirm` broadcasts it once. **`confirm` runs only at the node's machine**:
+  from outside, Admin asks for the admin password, and the console never takes one. This is R1's one confirmation.
+- **Console arguments:** only whole numbers, true/false/null, lists and objects are read as JSON now; an amount
+  such as 0.00000001 stays the text typed (as JSON it was 1e-08).
+- **Users** send from their own wallet page, signed in their browser; the node never holds their keys, so the
+  terminal's wallet commands are the operator's. The Lite window's Send/Receive/Transactions tabs show the operator
+  the console lines.
+- Exchange safety: no signing rule changed (the send code moved, word for word). The checklist's tests
+  (test_account_list, test_doginal_market, test_standing, test_trade, test_trade_tab, test_kotia, test_wojakcoin,
+  test_swap) and test_tokens_web: 137 passed.
+- Tests: `tests/test_lite_wallet.py` (6): against a real regtest node, balances, an address, coins, a send shown
+  then confirmed once, transactions; a wrong wallet or amount builds nothing; amounts as typed; confirm only at the
+  machine; only the operator has the commands. With test_lite, test_lite_cli, test_node_wallet, test_admin: 47 passed.
+- Next: messages, then the feed, then market queries, one PR each.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · ARCADE Lite is chosen at install: editions and modules
 SadFrog: "at the beginning of the installation of the arcade it asks if the downloader wants to install full or lite
 arcade ... it should be the start of the direction for making changes on the full that modularizes applications,

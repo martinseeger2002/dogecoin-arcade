@@ -140,10 +140,14 @@ th{font-weight:600;color:var(--muted)}
                                'addresses': '/contacts'},
                   'user': {'send': '/me/wallet', 'receive': '/me/wallet', 'transactions': '/me/wallet',
                            'addresses': '/me/contacts'}}.get(audience) %}
+  {% set console = {'send': 'send <wallet> <@name or address> <amount>, then confirm <ticket>',
+                     'receive': 'getnewaddress <wallet>', 'transactions': 'listtransactions <wallet>'} %}
   {% for tab, label in (('send', 'Send coins'), ('receive', 'Receive coins'), ('transactions', 'Transactions'),
                         ('addresses', 'Address book')) %}
   <section data-panel="{{ tab }}" hidden><p class="later">{% if pages %}<a href="{{ pages[tab] }}">{{ label }}</a>
-    opens the wallet's page.{% else %}<a href="/join">Sign in or make an account</a> to use your wallet.{% endif %}</p></section>
+    opens the wallet's page.{% else %}<a href="/join">Sign in or make an account</a> to use your wallet.{% endif %}
+    {%- if audience == 'operator' and console[tab] %}<br>In Window → Console: <code>{{ console[tab] }}</code>
+    (<code>getbalances</code> names the wallets).{% endif %}</p></section>
   {% endfor %}
   <section data-panel="apps" hidden>
     <fieldset><legend>Apps, themes and node modules</legend>

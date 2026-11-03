@@ -30,12 +30,15 @@ class CommandError(Exception):
 class Caller:
     """Who is asking: the node's state, their audience, and their account's public key when signed in.
 
-    `address(chain)` and `name_of(address)` are the web app's own account lookups."""
+    `address(chain)` and `name_of(address)` are the web app's own account lookups. `node` is the node's wallet as
+    Admin drives it (the operator's only), and `local` says the operator is at the node's own machine."""
     state: Any
     audience: str = "anyone"
     account: str | None = None
     address: Callable[[Any], str] = lambda chain: ""
     name_of: Callable[[str], str] = lambda address: ""
+    node: Any = None
+    local: bool = False
 
     def may(self, audience: str) -> bool:
         return AUDIENCES.index(self.audience) >= AUDIENCES.index(audience)
@@ -105,7 +108,8 @@ def available(caller: Caller) -> list[Command]:
 
 
 def run_line(caller: Caller, line: str) -> Any:
-    """One console line, `name arg ...` as in a Core's console. An argument that reads as JSON is taken as JSON."""
+    """One console line, `name arg ...` as in a Core's console. A whole number, true, false, null, a list or an
+    object is taken as JSON; everything else, an amount such as 0.00000001 included, as the text typed."""
     try:
         words = shlex.split(line)
     except ValueError as exc:
@@ -120,6 +124,8 @@ def run_line(caller: Caller, line: str) -> Any:
 
 
 def _value(word: str) -> Any:
+    if not (word.lstrip("-").isdigit() or word in ("true", "false", "null") or word[:1] in "[{"):
+        return word
     try:
         return json.loads(word)
     except ValueError:
@@ -161,6 +167,89 @@ def getnodeinfo(caller) -> dict:
     return {"edition": modulelib.edition(state.settings()), "version": state.running_version,
             "face": brandlib.current().name, "operator": state.operator_tag() or None,
             "public_names": list(state.public_hosts), "mesh_id": getattr(mesh, "node_id", None)}
+
+
+# --- the node's wallet: what Admin's wallet cards do, in the same two steps for a send -------------------------------
+
+
+def _wallet(caller):
+    if caller.node is None:
+        raise CommandError("the node's wallet answers through the arcade's web app: run this in its console or arcade-cli")
+    return caller.node
+
+
+def _ask(fn, *args):
+    try:
+        return fn(*args)
+    except CommandError:
+        raise
+    except Exception as exc:                               # noqa: BLE001 -- the node's own words
+        raise CommandError(str(exc) or type(exc).__name__) from None
+
+
+@command("wallet", audience="operator", module="wallet")
+def getbalances(caller) -> list[dict]:
+    """Every wallet of the node: its name for the other wallet commands, its chain, and what it holds.
+
+    A Core wallet is named by its chain (messaging, ledger, or an add-on chain's network); a chain where the node
+    holds coins with its own key is key:<network>."""
+    return _ask(_wallet(caller).wallets)
+
+
+@command("wallet", audience="operator", module="wallet")
+def getnewaddress(caller, wallet: str) -> str:
+    """An address the node's wallet is paid at: a new one from a Core wallet, the key's own on a key wallet.
+
+    getnewaddress <wallet>   for example: getnewaddress ledger"""
+    return _ask(_wallet(caller).receive, str(wallet))
+
+
+#: The most transactions one listtransactions answers.
+MOST_TRANSACTIONS = 100
+
+
+@command("wallet", audience="operator", module="wallet")
+def listtransactions(caller, wallet: str, count: int = 15) -> list[dict]:
+    """A Core wallet's last transactions, newest first.
+
+    listtransactions <wallet> [count]   up to 100"""
+    if not isinstance(count, int) or count < 1:
+        raise CommandError("count is a whole number, 1 or more")
+    rows = _ask(_wallet(caller).history, str(wallet), min(count, MOST_TRANSACTIONS))
+    keep = ("txid", "category", "amount", "fee", "address", "confirmations", "time")
+    return [{k: (str(r[k]) if k in ("amount", "fee") else r[k]) for k in keep if k in r} for r in rows]
+
+
+@command("wallet", audience="operator", module="wallet")
+def listunspent(caller, wallet: str) -> list[dict]:
+    """The coins a wallet of the node can spend: a Core wallet's or a key wallet's.
+
+    listunspent <wallet>"""
+    rows = _ask(_wallet(caller).unspent, str(wallet))
+    return [{k: (str(v) if k == "amount" else v) for k, v in r.items()
+             if k in ("txid", "vout", "address", "amount", "confirmations", "value", "height")} for r in rows]
+
+
+@command("wallet", audience="operator", module="wallet")
+def send(caller, wallet: str, to: str, amount: str) -> dict:
+    """Prepare a send from the node's wallet and show its fee. Nothing goes until `confirm`.
+
+    send <wallet> <@name or address> <amount>   for example: send ledger @alice 1.5
+    The send is held for ten minutes under a ticket, the same as Admin's Send; `confirm <ticket>` broadcasts it."""
+    held = _ask(_wallet(caller).prepare, str(wallet), str(to), str(amount))
+    return {**held, "next": f"confirm {held['ticket']}"}
+
+
+@command("wallet", audience="operator", module="wallet")
+def confirm(caller, ticket: str) -> dict:
+    """Broadcast a send that `send` prepared. Only at the node's own machine.
+
+    confirm <ticket>
+    From anywhere else, Admin -> Send asks for the admin password first; the console never takes a password."""
+    if not caller.local:
+        raise CommandError("a send is confirmed at the node's own machine; from elsewhere, Admin asks for the "
+                           "admin password")
+    return {"txid": _ask(_wallet(caller).broadcast, str(ticket))}
 
 
 # --- modules: installed and removed as packages are -----------------------------------------------------------------

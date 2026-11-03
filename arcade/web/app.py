@@ -31179,26 +31179,29 @@ def create_app(state: AppState) -> FastAPI:
         _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
         try:
-            which = str(said.get("which", ""))
-            ctx = _keyed_context(which) if which.startswith("key:") else _context(which)
-            sats = walletlib.parse_amount(str(said.get("amount", "")))
-            to = _tag_address(state, str(said.get("to", "")), mainnet=ctx)
-            if which.startswith("key:"):
-                prepared = keywalletlib.prepare(state, ctx, to, sats)
-            else:
-                with ctx.rpc() as rpc:
-                    prepared = walletlib.prepare_send(rpc, to, sats)
+            return JSONResponse(_node_prepare(str(said.get("which", "")), str(said.get("to", "")),
+                                              str(said.get("amount", ""))))
         except Exception as exc:                        # noqa: BLE001
             return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    def _node_prepare(which: str, to: str, amount: str) -> dict:
+        """A send from the node's own wallet, built and held for ten minutes under a ticket, with its fee: the first
+        of the two steps, for Admin and for the console (arcade/lite/commands.py `send`)."""
+        ctx = _keyed_context(which) if which.startswith("key:") else _context(which)
+        sats = walletlib.parse_amount(str(amount))
+        to = _tag_address(state, str(to), mainnet=ctx)
+        if which.startswith("key:"):
+            prepared = keywalletlib.prepare(state, ctx, to, sats)
+        else:
+            with ctx.rpc() as rpc:
+                prepared = walletlib.prepare_send(rpc, to, sats)
         ticket = secrets.token_urlsafe(16)
         now = time.time()
         for key in [k for k, v in _admin_prepared.items() if now - v[0] > 600]:
             _admin_prepared.pop(key, None)
-        _admin_prepared[ticket] = (now, str(said.get("which")), prepared)
-        return JSONResponse({"ticket": ticket, "to": to,
-                             "amount": f"{sats / 1e8:.8f}".rstrip("0").rstrip("."),
-                             "fee": f"{prepared.fee_sats / 1e8:.8f}".rstrip("0").rstrip("."),
-                             "network": ctx.label})
+        _admin_prepared[ticket] = (now, which, prepared)
+        return {"ticket": ticket, "to": to, "amount": f"{sats / 1e8:.8f}".rstrip("0").rstrip("."),
+                "fee": f"{prepared.fee_sats / 1e8:.8f}".rstrip("0").rstrip("."), "network": ctx.label}
 
     @app.post("/admin/api/send/confirm")
     def admin_send_confirm(request: Request, payload: Any = Body(None)):
@@ -31209,26 +31212,29 @@ def create_app(state: AppState) -> FastAPI:
                                                        request):
             return JSONResponse({"detail": "the admin password, to send the node's coins"},
                                 status_code=403)
-        held = _admin_prepared.pop(str(said.get("ticket", "")), None)
-        if held is None or time.time() - held[0] > 600:
-            return JSONResponse({"detail": "that send has expired -- prepare it again"},
-                                status_code=400)
         try:
-            if held[1].startswith("tok:"):
-                # A token or NFT send from the node's Wallet page (/node/wallet/token|nft/send).
-                ctx = _node_wallet(held[1].split(":", 1)[1])[0]
-                with ctx.rpc() as rpc:
-                    txid = tokenlib.TokenSender(rpc, ctx.params).broadcast(held[2])
-                state.pending_tokens.append({"txid": txid, "what": getattr(held[2], "what", "send"),
-                                             "at": time.time(), "network": ctx.network})
-            elif held[1].startswith("key:"):
-                txid = keywalletlib.broadcast(_keyed_context(held[1]), held[2])
-            else:
-                with _context(held[1]).rpc() as rpc:
-                    txid = walletlib.broadcast(rpc, held[2])
+            return JSONResponse({"txid": _node_broadcast(str(said.get("ticket", "")))})
         except Exception as exc:                        # noqa: BLE001
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        return JSONResponse({"txid": txid})
+
+    def _node_broadcast(ticket: str) -> str:
+        """The second step: broadcast what a ticket holds, once. The caller has checked who is asking."""
+        held = _admin_prepared.pop(ticket, None)
+        if held is None or time.time() - held[0] > 600:
+            raise ValueError("that send has expired -- prepare it again")
+        if held[1].startswith("tok:"):
+            # A token or NFT send from the node's Wallet page (/node/wallet/token|nft/send).
+            ctx = _node_wallet(held[1].split(":", 1)[1])[0]
+            with ctx.rpc() as rpc:
+                txid = tokenlib.TokenSender(rpc, ctx.params).broadcast(held[2])
+            state.pending_tokens.append({"txid": txid, "what": getattr(held[2], "what", "send"),
+                                         "at": time.time(), "network": ctx.network})
+        elif held[1].startswith("key:"):
+            txid = keywalletlib.broadcast(_keyed_context(held[1]), held[2])
+        else:
+            with _context(held[1]).rpc() as rpc:
+                txid = walletlib.broadcast(rpc, held[2])
+        return txid
 
     def _keyed_context(which: str):
         """The chain a `key:<net>` wallet card names (keywallet.py): P main or an add-on chain, never P test."""
@@ -31242,13 +31248,35 @@ def create_app(state: AppState) -> FastAPI:
     def admin_receive(request: Request, payload: Any = Body(None)):
         _admin_check(request, write=True)
         try:
-            which = str((payload or {}).get("which", ""))
-            if which.startswith("key:"):
-                return JSONResponse({"address": state.key_address(_keyed_context(which))})
-            with _context(which).rpc() as rpc:
-                return JSONResponse({"address": walletlib.receive_address(rpc, "admin")})
+            return JSONResponse({"address": _node_receive(str((payload or {}).get("which", "")))})
         except Exception as exc:                        # noqa: BLE001
             return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    def _node_receive(which: str) -> str:
+        """An address the node's wallet `which` is paid at: a new one from a Core wallet, the key's own otherwise."""
+        if which.startswith("key:"):
+            return state.key_address(_keyed_context(which))
+        with _context(which).rpc() as rpc:
+            return walletlib.receive_address(rpc, "admin")
+
+    def _node_history(which: str, count: int) -> list[dict]:
+        """A Core wallet's last `count` transactions, newest first."""
+        if which.startswith("key:"):
+            raise ValueError(f"{which} is a key wallet: it keeps no history here; listunspent shows its coins")
+        with _context(which).rpc() as rpc:
+            return walletlib.recent(rpc, count)
+
+    def _node_unspent(which: str) -> list[dict]:
+        """The coins the node's wallet `which` can spend."""
+        if which.startswith("key:"):
+            return keywalletlib.coins(state, _keyed_context(which))
+        with _context(which).rpc() as rpc:
+            return list(rpc.call("listunspent") or [])
+
+    #: The node's wallet for the console (arcade/lite/commands.py): the same steps as Admin's.
+    node_wallet = types.SimpleNamespace(wallets=lambda: _admin_wallets(), prepare=_node_prepare,
+                                        broadcast=_node_broadcast, receive=_node_receive, history=_node_history,
+                                        unspent=_node_unspent)
 
     # --- the Cloudflare tunnel wizard (2026-09-25; arcade/tunnel.py) -----
 
@@ -36153,7 +36181,7 @@ def create_app(state: AppState) -> FastAPI:
     # ARCADE Lite (docs/arcade-lite/CHARTER.md): its Core-style window at /lite, for visitors, users and the operator.
     from ..lite import web as liteweb
     _lite_home = liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in,
-                                  account_address=_account_address, name_of=_name_of)
+                                  account_address=_account_address, name_of=_name_of, node_wallet=node_wallet)
     # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
     from . import modules_web
     modules_web.register(app, state, admin_check=_admin_check)
