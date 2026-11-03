@@ -145,7 +145,7 @@ def test_lite_runs_only_the_cores_jobs_and_every_settlement_job(app_state):
     assert not set(PHASE_JOBS) & set(lite.ran)
     # what was agreed finishes whatever the switches say (arcade/web/docs/exchange-safety.md)
     assert {"_run_watch", "_run_trader", "_run_xchain", "_keep_shop", "_sync_ledgers", "_walk_home"} <= set(lite.ran)
-    for job in ("ord-index", "sites-search", "lora", "push-mail", "known-collections", "book-relay"):
+    for job in ("ord-index", "sites-search", "lora", "push-mail", "known-collections", "book-relay", "card-watch"):
         assert not modulelib.job_on(app_state.settings(), job) and modulelib.job_on({}, job), job
     assert modulelib.job_on(app_state.settings(), "mesh") and modulelib.job_on(app_state.settings(), "chain-scan")
 
@@ -255,3 +255,14 @@ def test_the_installer_offers_the_question_and_the_flag(monkeypatch, capsys):
     assert "--edition {full,lite}" in out
     monkeypatch.setattr(sys, "stdin", io.StringIO(""))                         # not a terminal: never blocks
     assert install.choose_edition(Path("/nonexistent/home"), None) == "ask"
+
+
+def test_every_background_thread_the_app_starts_names_its_job():
+    """A thread started while the app is built runs on every edition unless its module is asked first: found on the
+    first real Lite install, where the card watch (Apps) ran. Each such start in app.py asks job_on."""
+    import re
+    source = (Path(__file__).resolve().parent.parent / "arcade" / "web" / "app.py").read_text()
+    starts = [m.start() for m in re.finditer(r'"PYTEST_CURRENT_TEST" not in os.environ', source)]
+    assert starts, "the build-time starts moved: look for them again"
+    for at in starts:
+        assert "modulelib.job_on(" in source[at:at + 300], source[at - 200:at + 300]

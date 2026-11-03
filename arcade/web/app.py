@@ -26420,7 +26420,8 @@ def create_app(state: AppState) -> FastAPI:
             running.wait()
         _cardwatch_loop()
 
-    if not getattr(state, "no_background", False) and "PYTEST_CURRENT_TEST" not in os.environ:
+    if not getattr(state, "no_background", False) and "PYTEST_CURRENT_TEST" not in os.environ \
+            and modulelib.job_on(state.settings(), "card-watch"):
         threading.Thread(target=_cardwatch_when_running, name="card-watch", daemon=True).start()
 
     def _game_by_txid(txid: str) -> dict | None:
