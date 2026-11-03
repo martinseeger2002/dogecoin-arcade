@@ -88,6 +88,16 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: logo, window sizes, no sign-in, wallet switcher (Cursor Cloud Agent)
+Billy's pass on the fb8b55d screenshots. The DogeFeedX menu bar uses dogefeed.app's Shiba mark (cream `#f3e3a5`, muzzle `#fff6dd`) instead of the arcade icon. Each dock module opens at its own size (Home 640×620, Profile 440×560, and the rest fitted the same way) and a saved full-screen rect is dropped once. Sign-in buttons, banners, and the Messages join iframe are gone from the modules. Profile lists the Dogecoin addresses this node's Core wallet already watches; the selected address is what Wallet, Files, NFTs, and Profile read. No key, no spend.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** f01d93f
+
+**No action needed from SadFrog.**
+
+---
+
 ### 2026-11-03 DogeFeedX: branding, dock-only nav, node holdings (Cursor Cloud Agent)
 Billy's direction for this fork. The desktop wears dogefeed.app's dark tokens (cream `#f3e3a5` on black, Fredoka and Nunito). The in-window DogeFeed logo column is gone from every module. The dock is the navigation. Launchpad keeps its own right-hand panel (Top Launches, How It Works). The site `main` column no longer caps a window at 1000px.
 
