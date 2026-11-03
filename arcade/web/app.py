@@ -128,7 +128,7 @@ from .state import AppState, ChainContext
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 TEMPLATES = Jinja2Templates(directory=str(TEMPLATE_DIR))
-TEMPLATES.env.globals["brand"] = brandlib.current()   # create_app reads it again
+TEMPLATES.env.globals["brand"] = brandlib.CURRENT   # the face of this request (brand.py)
 
 
 def _fromjson(text: str):
@@ -430,6 +430,24 @@ class _BrowserChain:
         finally:
             if token is not None:
                 _BROWSER_CHAIN.reset(token)
+
+
+class _HostFace:
+    """ASGI middleware wearing, for one request, the face `pick(request)` gives the web address it came in by
+    (brand.py `brand_hosts`; None: the node's own face). SadFrog's side, 2026-11-03: one node published as
+    pepecoinarcade.com and digibyte-arcade.com shows each its own name, colours and icons."""
+
+    def __init__(self, app, pick):
+        self.app, self.pick = app, pick
+
+    async def __call__(self, scope, receive, send):
+        face = self.pick(Request(scope)) if scope["type"] == "http" else None
+        token = brandlib._HOST.set(face) if face else None
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            if token is not None:
+                brandlib._HOST.reset(token)
 
 
 def _session_cookie_headers(token: str, secure: bool) -> list[tuple[bytes, bytes]]:
@@ -935,7 +953,7 @@ def create_app(state: AppState) -> FastAPI:
             brandlib.use(str(state.setting("brand")))
         except ValueError:
             pass
-    TEMPLATES.env.globals["brand"] = brandlib.current()   # this node's name, colours, icons (brand.py)
+    TEMPLATES.env.globals["brand"] = brandlib.CURRENT   # this node's name, colours, icons, or its web address's (brand.py)
     # [Claude 2026-10-14] Inscriptions stay put: a wallet's ordinary sends never spend a coin carrying one (arcade/doginals.py).
     # Read from each chain by its own node (2026-10-15, the outside Doginals API removed): Doginals on Dogecoin, and the same ord
     # envelopes on small Pepecoin MAINNET coins ("do the same for small .01 pep txs. Not made by the Arcade").
@@ -1072,7 +1090,7 @@ def create_app(state: AppState) -> FastAPI:
                   "offer to finish the rest when it starts again.",
                   file=sys.stderr, flush=True)
 
-    app = FastAPI(title=brandlib.current().name, docs_url=None, redoc_url=None,
+    app = FastAPI(title=brandlib.own().name, docs_url=None, redoc_url=None,
                   lifespan=_lifespan)
     app.middleware("http")(_request_timer())
     app.middleware("http")(the_door(state))
@@ -5593,6 +5611,9 @@ def create_app(state: AppState) -> FastAPI:
         return None
 
     app.add_middleware(_BrowserChain, pick=_per_browser_chain)
+    # The face of the web address a request came in by (brand.py `brand_hosts`, 2026-11-03).
+    app.add_middleware(_HostFace, pick=lambda request: brandlib.by_host(request.headers.get("host"),
+                                                                        state.setting("brand_hosts")))
     # Outside every other middleware, so a session renewed anywhere in a request (the door's look, the chain
     # pick, the route) sends the cookie again (issue #13, 2026-10-25).
     app.add_middleware(_SessionRenewal)
@@ -28549,8 +28570,11 @@ def create_app(state: AppState) -> FastAPI:
             "inscribe_fee": _admin_inscribe_fee(),
             "flags": _admin_flags(),
             "chains": _admin_chains(),
-            "brand": {"current": brandlib.current().key, "locked": brandlib.FROM_ENV,
-                      "choices": [[b.key, b.name] for b in brandlib.BRANDS.values()]},
+            "brand": {"current": brandlib.own().key, "locked": brandlib.FROM_ENV,
+                      "choices": [[b.key, b.name] for b in brandlib.BRANDS.values()],
+                      # A face per web address (brand.py): {host: face}, and the names it may be given for.
+                      "hosts": brandlib.hosts(state.setting("brand_hosts")),
+                      "public_hosts": list(state.public_hosts)},
         }, headers={"Cache-Control": "no-store"})
 
     # --- names another arcade holds under another key (issue #15, 2026-10-25) ------------------------------------
@@ -29835,14 +29859,27 @@ def create_app(state: AppState) -> FastAPI:
                     except InvalidOperation:
                         raise ValueError(f"{text} is not an amount") from None
                     state.set_setting(f"inscribe_fee:{network}", 0 if none else walletlib.parse_amount(text))
-            if "brand" in said and said["brand"] != brandlib.current().key:
+            if "brand" in said and said["brand"] != brandlib.own().key:
                 # The face, at once and kept (brand.py). A face fixed by the service stays fixed.
                 if brandlib.FROM_ENV:
                     raise ValueError("this node's face is set by --brand / ARCADE_BRAND in its "
                                      "service; change it there")
                 chosen = brandlib.use(str(said["brand"]))
                 state.set_setting("brand", chosen.key)
-                TEMPLATES.env.globals["brand"] = chosen
+            if "brand_hosts" in said:
+                # A face per web address (brand.py, 2026-11-03): {host: face}, each host one of this node's
+                # public names. Allowed with a face fixed by the service too: that one stays the node's own.
+                wanted = said["brand_hosts"] if isinstance(said["brand_hosts"], dict) else None
+                if wanted is None:
+                    raise ValueError("brand_hosts is {web address: face}")
+                kept = brandlib.hosts(wanted)
+                for host, key in wanted.items():
+                    name = str(host).strip().lower().rsplit(":", 1)[0]
+                    if name and name not in kept:
+                        raise ValueError(f"no such face: {key!r} (one of {sorted(brandlib.BRANDS)})")
+                    if name and name not in state.public_hosts:
+                        raise ValueError(f"{name} is not one of this node's public names; add it under public_hosts first")
+                state.set_setting("brand_hosts", kept)
             if "flags_broadcast" in said:     # content flags to every arcade (arcade/flags.py)
                 state.set_setting("flags:broadcast", bool(said["flags_broadcast"]))
             if "flags_follow" in said:        # whose content flags this arcade uses

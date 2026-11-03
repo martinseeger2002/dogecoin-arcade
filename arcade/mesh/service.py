@@ -1051,7 +1051,7 @@ def operator_about(state) -> dict:
     tag = state.operator_tag() if hasattr(state, "operator_tag") else ""
     try:
         from ..web import brand as brandlib
-        name = brandlib.current().name
+        name = brandlib.own().name
     except Exception:                                      # noqa: BLE001
         name = ""
     return {**({"tag": tag} if tag else {}), "name": name,

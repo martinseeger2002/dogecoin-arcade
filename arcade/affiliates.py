@@ -137,16 +137,18 @@ def host_sites(state) -> list[dict]:
     """https://<host> for each name the arcade is published under, with whether it is shared."""
     try:
         from .web import brand as brandlib
-        name = brandlib.current().name
+        name = brandlib.own().name
+        faces = state.setting("brand_hosts")
     except Exception:                                      # noqa: BLE001
-        name = "Arcade"
+        brandlib, name, faces = None, "Arcade", None
     shared = set(state.setting("affiliates_hosts_shared", []) or [])
     out, seen = [], set()
     for host in getattr(state, "public_hosts", ()) or ():
         url = clean_url(f"https://{host}")
         if url and url not in seen:
             seen.add(url)
-            out.append({"url": url, "name": (name or "Arcade")[:MAX_NAME],
+            face = brandlib.by_host(host, faces) if brandlib else None   # its own face's name (brand_hosts)
+            out.append({"url": url, "name": ((face.name if face else name) or "Arcade")[:MAX_NAME],
                         "about": "An arcade: games, tokens and trades on the chain.", "share": url in shared})
     return out
 
