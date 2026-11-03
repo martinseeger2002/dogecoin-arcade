@@ -88,6 +88,28 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · ARCADE Lite phase 1, part 1
+- **New: `arcade/lite/`**, the first part of ARCADE Lite (proposal: PR #62). The running node serves it at
+  `/lite` beside the full UI.
+- **`commands.py`: one list of commands for the UI, the console and the help.**
+  - Each command says who may run it: `anyone`, `user` (signed in, on their own account only) or `operator`.
+  - `help` lists only what the caller may run. A command above the caller answers "no command", as an unknown one
+    does.
+  - The commands so far only read: `help`, `getnodeinfo`, `listchains` (only the operator sees why a chain is
+    offline), `listarcades` (user), `whoami` (user) and `getmeshinfo` (operator).
+- **`web.py` and `templates/lite.html`: the classic Core window.**
+  - Menu bar, tab toolbar, Overview, status bar, and Window → Information / Console / Peers.
+  - Send, Receive, Transactions, Address book and Apps are placeholders for the next parts.
+  - Visitors see the arcade and a sign-in link. Signed-in users see their @name and addresses. The operator also sees
+    the mesh and Peers.
+  - Routes: `/lite`, `GET /lite/api/{overview,commands}`, `POST /lite/api/console`. The console takes lines only
+    with the `X-Arcade-Lite` header from this origin (`door.cross_site`), for outside callers too.
+- **Shared code touched:**
+  - `app.py` registers Lite with its existing helpers (`_admin_check`, `signed_in`, `_account_address`, `_name_of`).
+  - `door.py` adds `/lite`, `/lite/api/` and the console POST.
+  - `pyproject.toml` adds the `arcade.lite` package and its template.
+- Tests: `tests/test_lite.py` (9). The smoke set with test_admin, test_guide and the door tests: 484 passed.
+
 ### 2026-11-02 Pictures in the app: an app draws the room's pictures itself, behind its own card switch (Claude)
 For Spatial World (3D screens; the Garrys mod session asked, the operator confirmed: "Build it"). Option 2 of two: the video
 is handed to the app, behind its own permission; the viewer no longer has to draw every picture on top.

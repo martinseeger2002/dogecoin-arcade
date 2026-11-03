@@ -35290,6 +35290,10 @@ def create_app(state: AppState) -> FastAPI:
     llmweb.register(app, state, signed_in=signed_in, account_address=_account_address, account_chain=_account_chain,
                     admin_check=_admin_check, name_of=_name_of,
                     pay_choices=lambda request: _pair_choices(request, "nobody", everything=True), render=render)
+    # ARCADE Lite (docs/arcade-lite/CHARTER.md): its Core-style window at /lite, for visitors, users and the operator.
+    from ..lite import web as liteweb
+    liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in, account_address=_account_address,
+                     name_of=_name_of)
     return app
 
 
