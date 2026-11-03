@@ -226,6 +226,7 @@ class MeshService:
         self.llmshare = None                    # llmshare.LlmShare: the LLM service with other arcades
         self.indexcheck = None                  # indexcheck.IndexCheck: indexes compared with other arcades'
         self.ledgershare = None                 # ledgershare.LedgerShare: index copies for arcades far behind
+        self.coverage = None                    # coverage.Coverage: every resource needed, from linked holders
         self.stun = None                        # stun.StunShare: STUN addresses for the fast lane, this node's and others'
         self.punch = None                       # punch.PunchShare: the direct-UDP probe with a linked node
         self.udp = None                         # udp.UdpShare: the UDP path beside each link
@@ -1016,6 +1017,13 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
     from .turn import TurnShare
     service.turnshare = TurnShare(service.turn, lambda: {p: h for p, h in service.stun.offers.items() if h})
     service.node.add_extension(service.turnshare)
+    # Every resource this arcade needs, from linked arcades that hold it: Cores, ord and token indexes, media relays and
+    # game rooms (coverage.py, 2026-11-02: "at least one node preferably three").
+    from . import coverage as coveragelib
+    service.coverage = coveragelib.Coverage(lambda: coveragelib.holds(state, service),
+                                            lambda: coveragelib.needs(state, service),
+                                            lambda: getattr(service, "introducer", None))
+    service.node.add_extension(service.coverage)
 
     def mesh_outside() -> list[str]:
         """What STUN saw for this node's UDP socket, then the address it announced. punch.tcp_targets

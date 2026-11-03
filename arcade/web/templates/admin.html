@@ -109,6 +109,10 @@
     own node in the background.</p>
   <label class="switch"><input type="checkbox" id="serve_index_copies"> Serve index copies to linked arcades</label>
   <label class="switch"><input type="checkbox" id="fetch_index_copies"> Fetch a copy when this index is far behind</label>
+  <h3 style="margin:14px 0 6px">What this arcade borrows</h3>
+  <p class="muted" style="margin-top:0;font-size:.84rem">Every Core, index, media relay and game room this arcade uses
+    and does not hold itself, and how many linked arcades hold it. It links to more holders on its own until three do.</p>
+  <div id="coverrows" class="muted" style="font-size:.86rem">Nothing borrowed.</div>
   <h3 style="margin:14px 0 6px">Mine test coins</h3>
   <p class="muted" style="margin-top:0;font-size:.84rem">This machine's CPU mines blocks on a test-coin chain, with
     work from its Core: the one here, or the one it borrows. On a borrowed chain a tenth of every block goes to the
@@ -2400,6 +2404,17 @@ section.panel h2{margin-top:0}
       });
     });
     if (!ix.childNodes.length) ix.textContent = c.mesh ? 'Not linked to another arcade yet.' : 'The mesh is off on this arcade.';
+    var cv = $('coverrows');
+    if (cv) {
+      cv.textContent = '';
+      (c.coverage || []).forEach(function (r) {
+        var ok = r.linked >= r.goal, none = r.linked === 0;
+        cv.appendChild(text('div', r.what + ': ' + r.linked + ' of ' + r.goal + ' linked'
+          + (r.known > r.linked ? ' \u00b7 ' + (r.known - r.linked) + ' more known, linking' : (none ? ' \u00b7 no arcade holds it' : '')),
+          none ? 'idx-bad' : (ok ? '' : 'muted')));
+      });
+      if (!cv.childNodes.length) cv.textContent = c.mesh ? 'Nothing borrowed: this arcade holds all it uses.' : 'The mesh is off on this arcade.';
+    }
     var copies = c.copies || {};
     ['serve', 'fetch'].forEach(function (k) {
       var box = $(k + '_index_copies');

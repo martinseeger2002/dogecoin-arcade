@@ -277,6 +277,10 @@ class MeshNode:
         #: Every node floods one every SUB_EVERY seconds, rooms or none, so this is the
         #: mesh-wide heartbeat (2026-10-13: orders show while their lister is online).
         self._heard: dict[str, float] = {}
+        #: What this arcade holds, said in its SUB (coverage.py): a callable giving short keys, read on the loop, so
+        #: it must answer from memory. And the links the coverage keeper counts on, which the tuner never drops.
+        self.resources: Callable[[], list[str]] | None = None
+        self.keep: set[str] = set()
         self._via: dict[str, str] = {}             # origin -> the neighbour its SUBs come through
         self._seen: OrderedDict[str, None] = OrderedDict()
         # room -> {(origin, member)} this node's members have been told are there
@@ -764,7 +768,9 @@ class MeshNode:
         if len(out) <= self.outbound_target or any(getattr(l, "rtt", None) is None for l in out):
             return None
         new = [l for l in out if l.peer_id not in before]
-        slowest = max(out, key=lambda l: l.rtt)
+        # Never a link the coverage keeper counts on for something this arcade needs (coverage.py, node.keep).
+        keep = getattr(self, "keep", set())
+        slowest = max([l for l in out if l.peer_id not in keep] or out, key=lambda l: l.rtt)
         if not new or slowest in new or min(l.rtt for l in new) > slowest.rtt * TUNE_MARGIN:
             # The trial was no better: let it go again instead.
             drop = max(new, key=lambda l: l.rtt) if new else slowest
@@ -1039,8 +1045,15 @@ class MeshNode:
         if if_changed and ids == self._sub_sent and only is None:
             return
         self._sub_sent = ids
-        header = self._sign({"t": "sub", "o": self.node_id, "q": self._next_seq(),
-                             "rooms": sorted(ids), "hops": 0})
+        said = {"t": "sub", "o": self.node_id, "q": self._next_seq(), "rooms": sorted(ids), "hops": 0}
+        # What this arcade holds (coverage.py, 2026-11-02), for every arcade on the mesh: signed with the rest.
+        holds = getattr(self, "resources", None)
+        if holds is not None:
+            try:
+                said["res"] = list(holds())[:64]
+            except Exception:                              # noqa: BLE001 -- said without it this time
+                pass
+        header = self._sign(said)
         self._seen[f"{self.node_id}:{header['q']}"] = None
         links = [only] if only is not None else list(self.links.values())
         for link in links:

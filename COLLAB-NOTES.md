@@ -88,6 +88,24 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 The coverage keeper: every Core, index, media relay and game room from linked holders (Claude)
+The operator: "an auto adjusting mesh that looks for the arcades containing the resources that we need ... at least have
+available every core and every index from at least one node preferably three"; "the same sort of auto connect for
+game and multimedia servers".
+- **What an arcade holds** rides in its SUB as `res` (node._send_own_sub; signed with the rest, relayed unchanged by
+  older arcades): `c:<net>` a Core it shares, `o:<net>` a whole ord index it keeps, `t:<net>` a current token index,
+  `m` a media relay anybody can reach. Rooms are already in the SUB (`g:<room id>`). So every arcade knows what every
+  other holds (node._last_sub), linked or not. Worked out on a thread (Coverage.mine), never on the mesh loop.
+- **What it needs** (coverage.needs): every chain it borrows, every ord index it reads or helps with, its token index
+  while more than 20 blocks behind, a media relay, and every room it has players in.
+- **Coverage** (arcade/mesh/coverage.py), every 30 s: per need, linked holders; below 3 it links to the holders that
+  cover most short needs (none-linked counting double), dialled or introduced, 3 at a time; node.keep stops the tuner
+  dropping them. A node linking everyone may go to 48 links; a small one (a phone) 3 beyond its target.
+- **Admin -> Coins & chains** "What this arcade borrows": each need, linked of 3, and how many more are known.
+- Tests: tests/test_mesh_coverage.py (a target-1 arcade links to the two other Litecoin holders it hears of through
+  one, and to nobody else; `res` signed and cleaned).
+- Next: relay hops (the operator: "relay hops ... like they do with Meshtastic?") for a holder no direct link can reach.
+
 ### 2026-11-02 Every arcade links with every arcade it knows (Claude)
 The operator, looking at the ThinkPad's Arcades panel (@avacado, @pepmonster and @yourfirstname only "seen through
 @strawberry", nothing shared): "all arcade should share each of their chains and ORD indexes with all other arcades"; he

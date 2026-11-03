@@ -29884,6 +29884,19 @@ def create_app(state: AppState) -> FastAPI:
                 chains.append(state.addon(net) or ChainContext(network=net, role="ledger", label=params.label))
         return chains
 
+    def _coverage_rows(mesh) -> list[dict]:
+        cov = getattr(mesh, "coverage", None)
+        try:
+            rows = cov.status() if cov is not None else []
+        except Exception:                                  # noqa: BLE001 -- never takes the panel down
+            return []
+        labels = {c.network: c.label for c in getattr(state, "all_chains", ())}
+        for r in rows:
+            kind, _, net = r["key"].partition(":")
+            r["what"] = {"c": "Core", "o": "Ord index", "t": "Token index", "m": "Media relay",
+                         "g": "Game room"}.get(kind, kind) + (f": {labels.get(net, net)}" if net and kind != "g" else "")
+        return [r for r in rows if not r["key"].startswith("g:")] + [r for r in rows if r["key"].startswith("g:")]
+
     def _admin_chains() -> dict:
         """Admin -> Chains (arcade/cores.py): which Cores run here, which are borrowed through the
         mesh, which are shared, and how this arcade's indexes compare with other arcades'."""
@@ -29951,7 +29964,9 @@ def create_app(state: AppState) -> FastAPI:
                 # Index copies (ledger_snapshot.py, 2026-11-02): serve them to arcades far behind, and fetch
                 # one when this index is. Both on unless turned off (a phone turns serving off).
                 "copies": {"serve": state.setting("serve_index_copies", True) is not False,
-                           "fetch": state.setting("fetch_index_copies", True) is not False}}
+                           "fetch": state.setting("fetch_index_copies", True) is not False},
+                # What this arcade needs and how many linked arcades hold each (mesh/coverage.py, 2026-11-02).
+                "coverage": _coverage_rows(mesh)}
 
     def _admin_faucet_row(net: str) -> dict | None:
         """A test chain's faucet for Admin -> Chains (2026-10-18): its daily top-off, how it is stocked,
