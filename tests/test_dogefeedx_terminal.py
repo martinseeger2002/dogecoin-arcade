@@ -219,3 +219,20 @@ def test_terminal_does_not_execute_shell_metacharacters(client):
         data = response.json()
         assert "error" in data, f"metacharacter payload {payload} should error"
         assert "unknown command" in data["error"].lower()
+
+
+def test_the_terminal_and_the_network_window_are_for_the_arcades_own_people_and_limited(client):
+    """Reviewed before merging (2026-11-03, PR #61): a stranger reaching the arcade's public address gets neither the
+    terminal nor the Network window -- they read the node's Core and the mesh -- and the operator is limited per minute.
+    The node's own error text never goes out, and only the operator sees the arcade's links."""
+    from test_admin import EDGE, LOCAL
+    app, _state = client
+    assert app.post("/api/terminal/exec", json={"command": "status"}, headers=EDGE).status_code == 403
+    assert app.get("/api/network", headers=EDGE).status_code == 403
+    said = app.post("/api/terminal/exec", json={"command": "block", "args": "main 1"}, headers=LOCAL).json()
+    assert "Error" not in said["output"] and "Traceback" not in said["output"]
+    net = app.get("/api/network", headers=LOCAL).json()
+    assert "node_id" not in net["mesh"] and "name" not in net["tunnel"] and net["arcades"] == []
+    for _ in range(40):
+        last = app.post("/api/terminal/exec", json={"command": "chains"}, headers=LOCAL)
+    assert last.status_code == 429, "at most 30 a minute"

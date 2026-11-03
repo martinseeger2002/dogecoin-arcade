@@ -10,6 +10,15 @@ import sys
 import threading
 import time
 
+
+def _shot(name: str) -> str:
+    """Where a test's screenshot goes: DFX_SHOTS, else this machine's temp folder (it was the PR author's /opt/cursor)."""
+    import os
+    import tempfile
+    folder = os.environ.get("DFX_SHOTS") or os.path.join(tempfile.gettempdir(), "dfx-shots")
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, name)
+
 import httpx
 import pytest
 from nacl.signing import SigningKey
@@ -223,7 +232,7 @@ def test_market_window_is_dark_and_its_columns_do_not_cover_each_other(base):
         assert report["sidebar"] is False, report
         assert report["img"].startswith("https://dogefeed.app/"), report["img"]
         page.locator('.dk-win[aria-label="Market"]').screenshot(
-            path="/opt/cursor/artifacts/compare/market-window-dfx.png")
+            path=_shot("market-window-dfx.png"))
         browser.close()
 
 
@@ -319,7 +328,7 @@ def test_the_dock_magnifies_shows_real_badges_and_opens_each_app_once(base):
         })""")
         assert strip["body"] == "rgb(0, 0, 0)", strip
         assert strip["desk"] == "0px" and strip["dock"] == "0px", strip
-        page.screenshot(path="/opt/cursor/artifacts/compare/desktop-bottom-dfx.png")
+        page.screenshot(path=_shot("desktop-bottom-dfx.png"))
 
         apps = page.locator("#dk-dock .dfx-dock-app")
         assert apps.count() == 16
@@ -337,7 +346,7 @@ def test_the_dock_magnifies_shows_real_badges_and_opens_each_app_once(base):
         grown, neighbour, far = _scale(scales[0]), _scale(scales[1]), _scale(scales[-1])
         assert grown > neighbour > 1, scales
         assert far == 1, scales
-        page.locator("#dk-dock").screenshot(path="/opt/cursor/artifacts/compare/dock-magnify-dfx.png")
+        page.locator("#dk-dock").screenshot(path=_shot("dock-magnify-dfx.png"))
 
         def badge(title):
             return page.locator(f'#dk-dock .dfx-dock-app[title="{title}"] .dfx-badge')
@@ -403,7 +412,7 @@ def test_the_dock_magnifies_shows_real_badges_and_opens_each_app_once(base):
             if title in ("Files", "Notifications", "Messages", "Inscribe", "Wallet",
                          "Launchpad", "NFTs", "Bookmarks", "Meme Library", "Leaderboard", "Settings"):
                 slug = title.lower().replace(" ", "-")
-                win.screenshot(path=f"/opt/cursor/artifacts/compare/{slug}-window-dfx.png")
+                win.screenshot(path=_shot(f"{slug}-window-dfx.png"))
             win.locator('[data-a="close"]').click()
             page.wait_for_function(
                 """(path) => ![...document.querySelectorAll('.dk-win iframe')].some(f => f.getAttribute('src') === path)""",

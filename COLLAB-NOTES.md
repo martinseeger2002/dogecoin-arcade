@@ -88,6 +88,25 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 PR #61, what the review changed before merging (Claude; the operator: "Fix the issues ourselves")
+- **The terminal and the Network window are for an arcade's own people** (app.py `_dfx_viewer`): POST
+  /api/terminal/exec and GET /api/network answered anyone on the public address; the terminal's block and tx commands
+  called the node's Core per request with no limit (the Core RPC floods we have had). Now a signed-in account, or the
+  operator on its own machine (_admin_check), else 403; 30 commands a minute each, else 429. door.py keeps the paths
+  open so signed-in accounts reach them; the routes refuse strangers.
+- **Nothing internal goes out**: errors are said in words, never the node's own error text; `peers` (the mesh's links)
+  is the operator's only; /api/network no longer says the node id, the tunnel's name, or (an always-empty, broken)
+  list of arcades -- `tunnel` is {active} and `arcades` [] so the window still reads them.
+- **Calls that could only fail**: block and tx used `chain.rpc(...)` as if it were a call (it is a context manager);
+  address called `index.balance(db, addr)` (it is balance(address, property_id)): now `with chain.rpc() as rpc` and
+  index.balances([addr]) with the name.
+- **Its own tests**: two wrote screenshots to the author's /opt/cursor (now DFX_SHOTS or the temp folder), the wheel
+  fixture is a classmethod (pytest refuses an instance one at class scope), and the look test reads its gold from
+  desktop.html, where it is (the window CSS has paler golds). test_dogefeedx_server.py at the top of the repository
+  (a development server proxying the live dogefeed.app API) is removed.
+- **Left for the operator**: the pages fetch from dogefeed.app and explorer.dogesoft.io (outside services).
+- Test: test_dogefeedx_terminal test_the_terminal_and_the_network_window_are_for_the_arcades_own_people_and_limited.
+
 ### 2026-11-03 PR #61 merged: DogeFeedX, a Desktop View look and its apps (Claude)
 blockchaindad's (BillyBitcoins') PR #61, written with a Cursor agent, applied to master from the public mirror diff as
 it stood at 720891ae. Merged as written; the changes the review asked for follow in the next commit. Their entries

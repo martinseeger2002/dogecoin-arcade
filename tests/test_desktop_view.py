@@ -110,7 +110,8 @@ def test_the_dogefeedx_look_has_macos_style_and_five_app_windows(client):
         assert need in desk, need
     css = app.get("/deskdogefeedx.css")
     assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")
-    assert "#d9a520" in css.text, "DogeFeed gold color"
+    assert "#d9a520" in desk, "DogeFeed gold color (the desktop's own colours; the window CSS uses its paler golds)"
+    assert "#fff6dd" in css.text, "the windows' pale gold"
     assert door.public_path("/deskdogefeedx.css")
 
 

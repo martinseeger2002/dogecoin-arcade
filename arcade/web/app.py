@@ -10561,6 +10561,31 @@ def create_app(state: AppState) -> FastAPI:
         "clear": "Clear the terminal",
     }
 
+    # Reviewed before merging (2026-11-03, PR #61): the terminal and the Network window are for an arcade's own
+    # people, not the public -- a signed-in account, or the operator on its own machine. They read the node's Core and
+    # the mesh, so each is limited per caller, and an error is said in words, never with the node's own error text.
+    _dfx_calls: dict[str, list[float]] = {}
+    DFX_PER_MINUTE = 30
+
+    def _dfx_viewer(request: Request):
+        account = signed_in(request)
+        if account is not None:
+            who = f"account:{getattr(account, 'pubkey', '') or id(account)}"
+        else:
+            try:
+                _admin_check(request)
+            except HTTPException:
+                raise HTTPException(403, "sign in first") from None
+            who = "operator"
+        now = time.monotonic()
+        calls = [t for t in _dfx_calls.get(who, []) if t > now - 60]
+        if len(calls) >= DFX_PER_MINUTE:
+            raise HTTPException(429, "too many commands this minute")
+        _dfx_calls[who] = calls + [now]
+        if len(_dfx_calls) > 10_000:
+            _dfx_calls.clear()
+        return account, who
+
     @app.get("/api/terminal/commands")
     def terminal_commands():
         """List available terminal commands for the DogeFeedX in-UI terminal."""
@@ -10574,6 +10599,7 @@ def create_app(state: AppState) -> FastAPI:
         It does NOT provide arbitrary shell or RPC access. Admin-only actions (like sending,
         signing, or changing settings) are not available here.
         """
+        account, who = _dfx_viewer(request)
         said = payload if isinstance(payload, dict) else {}
         cmd = str(said.get("command", "")).strip()
         args = [a.strip() for a in str(said.get("args", "")).split() if a.strip()]
@@ -10607,7 +10633,6 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"output": "\n".join(lines)})
             
             if cmd == "balance":
-                account = signed_in(request)
                 if not account:
                     return JSONResponse({"output": "Not signed in. Sign in to view your balance."})
                 lines = ["Balances:", ""]
@@ -10622,6 +10647,8 @@ def create_app(state: AppState) -> FastAPI:
                 return JSONResponse({"output": "\n".join(lines)})
             
             if cmd == "peers":
+                if who != "operator":
+                    return JSONResponse({"output": "Only the operator sees this arcade's links (Admin -> Overview)."})
                 mesh = getattr(state, "mesh", None)
                 if not mesh or not hasattr(mesh, "node"):
                     return JSONResponse({"output": "Mesh not available."})
@@ -10666,11 +10693,9 @@ def create_app(state: AppState) -> FastAPI:
                 if not chain:
                     return JSONResponse({"output": f"Unknown chain: {chain_name}. Use 'chains' to see available chains."})
                 try:
-                    if block_ref.isdigit():
-                        block_hash = chain.rpc("getblockhash", int(block_ref))
-                    else:
-                        block_hash = block_ref
-                    block = chain.rpc("getblock", block_hash)
+                    with chain.rpc() as rpc:
+                        block_hash = rpc.call("getblockhash", int(block_ref)) if block_ref.isdigit() else block_ref
+                        block = rpc.call("getblock", block_hash)
                     lines = [
                         f"Block {block.get('height', '?')}",
                         f"  Hash: {block.get('hash', '?')[:32]}...",
@@ -10679,8 +10704,8 @@ def create_app(state: AppState) -> FastAPI:
                         f"  Size: {block.get('size', '?')} bytes",
                     ]
                     return JSONResponse({"output": "\n".join(lines)})
-                except Exception as e:
-                    return JSONResponse({"output": f"Error looking up block: {e}"})
+                except Exception:
+                    return JSONResponse({"output": "No such block on that chain (or its node is not answering)."})
             
             if cmd == "tx":
                 if len(args) < 2:
@@ -10690,7 +10715,8 @@ def create_app(state: AppState) -> FastAPI:
                 if not chain:
                     return JSONResponse({"output": f"Unknown chain: {chain_name}. Use 'chains' to see available chains."})
                 try:
-                    tx = chain.rpc("getrawtransaction", txid, True)
+                    with chain.rpc() as rpc:
+                        tx = rpc.call("getrawtransaction", txid, True)
                     lines = [
                         f"Transaction {txid[:32]}...",
                         f"  Confirmations: {tx.get('confirmations', 0)}",
@@ -10701,8 +10727,8 @@ def create_app(state: AppState) -> FastAPI:
                     if tx.get("blockhash"):
                         lines.append(f"  Block: {tx.get('blockhash')[:32]}...")
                     return JSONResponse({"output": "\n".join(lines)})
-                except Exception as e:
-                    return JSONResponse({"output": f"Error looking up transaction: {e}"})
+                except Exception:
+                    return JSONResponse({"output": "No such transaction on that chain (or its node is not answering)."})
             
             if cmd == "address":
                 if len(args) < 2:
@@ -10713,16 +10739,14 @@ def create_app(state: AppState) -> FastAPI:
                     return JSONResponse({"output": f"Unknown chain or not indexed: {chain_name}"})
                 try:
                     index = state.token_index(chain)
-                    with contextlib.closing(index.open()) as db:
-                        balance = index.balance(db, addr)
-                    lines = [
-                        f"Address: {addr[:20]}...",
-                        f"  Chain: {chain.label}",
-                        f"  Balance: {format_amount(balance)} {chain.params.coin}",
-                    ]
+                    rows = index.balances([addr])
+                    tag = index.tag_of(addr) or ""
+                    lines = [f"Address: {addr[:20]}..." + (f" (@{tag})" if tag else ""), f"  Chain: {chain.label}"]
+                    lines += [f"  {r.get('name') or ('token #' + str(r.get('property_id')))}: {r.get('display') or r.get('balance')}"
+                              for r in rows[:20]] or ["  No tokens."]
                     return JSONResponse({"output": "\n".join(lines)})
-                except Exception as e:
-                    return JSONResponse({"output": f"Error looking up address: {e}"})
+                except Exception:
+                    return JSONResponse({"output": "That address could not be looked up."})
             
             if cmd == "inscription":
                 if not args:
@@ -10758,12 +10782,12 @@ def create_app(state: AppState) -> FastAPI:
             
             return JSONResponse({"error": "not implemented", "output": f"Command '{cmd}' is not yet implemented."})
         
-        except Exception as e:
-            return JSONResponse({"error": str(e), "output": f"Error: {e}"})
+        except Exception:
+            return JSONResponse({"error": "failed", "output": "That command could not be run just now."})
 
-    # ---------- DogeFeedX Network API: public network status endpoint ----------
+    # ---------- DogeFeedX Network window: for this arcade's own people (see _dfx_viewer) ----------
     @app.get("/api/network")
-    def api_network_status():
+    def api_network_status(request: Request):
         """Public network status for the DogeFeedX Network window.
         
         Returns safe, non-sensitive network information including:
@@ -10772,9 +10796,9 @@ def create_app(state: AppState) -> FastAPI:
         - Node status
         - Tunnel status (if available)
         
-        This endpoint is public and does not require authentication.
-        Sensitive information (like full peer lists or admin details) is not included.
+        A signed-in account or the operator only (reviewed 2026-11-03): no node id, tunnel name or list of arcades.
         """
+        _dfx_viewer(request)
         chains = []
         for c in state.all_chains:
             try:
@@ -10803,39 +10827,23 @@ def create_app(state: AppState) -> FastAPI:
         mesh_status = {"connected": False, "peers": 0}
         if mesh is not None and getattr(mesh, "loop", None) is not None:
             mesh_status["connected"] = True
-            mesh_status["node_id"] = str(getattr(mesh, "node_id", "") or "")[:16]
             if hasattr(mesh, "node") and hasattr(mesh.node, "links"):
                 mesh_status["peers"] = len(mesh.node.links)
             stun = getattr(mesh, "stun", None)
             if stun is not None:
                 mesh_status["stun_servers"] = len(stun.mine())
         
-        tunnel = {"active": False, "name": None}
+        tunnel_on = False
         try:
-            tunnel_state = state.setting("tunnel", {})
-            if isinstance(tunnel_state, dict) and tunnel_state.get("active"):
-                tunnel["active"] = True
-                tunnel["name"] = tunnel_state.get("name", "")
-        except Exception:
+            t = state.setting("tunnel", {})
+            tunnel_on = bool(isinstance(t, dict) and t.get("active"))
+        except Exception:                                  # noqa: BLE001
             pass
-        
-        arcades = []
-        try:
-            running = _arcades_running()
-            for arc in running[:10]:
-                arcades.append({
-                    "id": str(arc.get("id", ""))[:16],
-                    "name": arc.get("name", ""),
-                    "linked": arc.get("link", {}).get("state") == "linked",
-                })
-        except Exception:
-            pass
-        
         return JSONResponse({
             "chains": chains,
             "mesh": mesh_status,
-            "tunnel": tunnel,
-            "arcades": arcades,
+            "tunnel": {"active": tunnel_on},              # whether, never its name
+            "arcades": [],                                # the Arcades panel lists them, to the people allowed
             "version": str(getattr(state, "running_version", "") or ""),
         })
 
