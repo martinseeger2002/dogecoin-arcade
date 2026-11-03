@@ -6,6 +6,8 @@
  * while the wallet is open.
  */
 import * as keys from "./keys.js";
+import * as chains from "./chains.js";
+import * as arcade from "./arcade.js";
 
 const LOCK_MINUTES = 30;
 const pending = new Map();          // request id -> {origin, method, params, resolve, window}
@@ -17,10 +19,50 @@ async function vault() { return (await chrome.storage.local.get("vault")).vault 
 async function phrase() { return (await chrome.storage.session.get("phrase")).phrase || null; }
 async function sites() { return (await chrome.storage.local.get("sites")).sites || {}; }
 
-async function account() {
+async function arcades() { return (await chrome.storage.local.get("arcades")).arcades || []; }
+
+async function seed() {
   const words = await phrase();
-  if (!words) return null;
-  return keys.accountKey(await keys.toSeed(words));
+  return words ? keys.toSeed(words) : null;
+}
+
+async function account() {
+  const s = await seed();
+  return s ? keys.accountKey(s) : null;
+}
+
+/** The open wallet's key and seed, or a refusal: nothing is read or signed for a locked wallet. */
+async function opened() {
+  const s = await seed();
+  if (!s) throw new Error("unlock the Arcade Wallet first");
+  touch();
+  return {seed: s, account: await keys.accountKey(s)};
+}
+
+/** Link an arcade: sign in there, tell it this wallet's addresses, and keep it (the first one linked is read first). */
+async function link(text) {
+  const origin = arcade.arcadeOrigin(text);
+  const {seed: s, account: key} = await opened();
+  await arcade.signIn(origin, key);
+  const mine = await chains.addresses(s);
+  await arcade.tellAddresses(origin, key, mine, await arcade.holdings(origin, key, mine));
+  const list = (await arcades()).filter((o) => o !== origin);
+  await chrome.storage.local.set({arcades: [...list, origin]});
+  return origin;
+}
+
+/** Every chain's balance, Omni tokens and inscription count, as the first linked arcade reports them. */
+async function balances() {
+  const {seed: s, account: key} = await opened();
+  const [origin] = await arcades();
+  const mine = await chains.addresses(s);
+  if (!origin) return {origin: null, mine, rows: []};
+  const rows = await arcade.holdings(origin, key, mine);
+  for (const row of rows) {
+    if (row.ours && row.address) Object.assign(row, await arcade.assets(origin, row.address));
+    if (row.balance != null) row.coins = chains.coinsOf(row.balance);
+  }
+  return {origin, mine, rows};
 }
 
 async function unlock(password) {
@@ -143,8 +185,14 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       }
       case "unlock": await unlock(msg.password); return true;
       case "lock": await lock(); return true;
+      case "arcades": return arcades();
+      case "link": return link(msg.origin);
+      case "unlink":
+        await chrome.storage.local.set({arcades: (await arcades()).filter((o) => o !== msg.origin)});
+        return true;
+      case "balances": return balances();
       case "remove":
-        await chrome.storage.local.remove(["vault", "sites"]);
+        await chrome.storage.local.remove(["vault", "sites", "arcades"]);
         await lock();
         return true;
       case "forget": return METHODS.arcade_disconnect(msg.origin);

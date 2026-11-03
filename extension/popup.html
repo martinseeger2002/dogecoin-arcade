@@ -48,6 +48,19 @@
       <div class="row"><button id="lock">Lock</button></div>
     </div>
     <div class="panel">
+      <h2>Coins</h2>
+      <p class="muted" id="no-arcade">Link an arcade to see what your addresses hold. The wallet keeps no chain data of
+        its own; an arcade reads the chains for it.</p>
+      <p class="muted" id="read-from" hidden></p>
+      <ul class="coins" id="coins"></ul>
+    </div>
+    <div class="panel">
+      <h2>Linked arcades</h2>
+      <ul class="sites" id="arcades"></ul>
+      <div class="row"><input id="link-origin" type="url" placeholder="https://your-arcade.com" style="flex:3;margin:0">
+        <button id="link">Link</button></div>
+    </div>
+    <div class="panel">
       <h2>Connected sites</h2>
       <ul class="sites" id="sites"></ul>
       <p class="muted" id="no-sites">No site is connected yet.</p>

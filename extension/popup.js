@@ -29,8 +29,60 @@ async function draw() {
       list.append(li);
     });
     $("no-sites").hidden = origins.length > 0;
+    drawArcades().catch((e) => say(e.message));
   }
 }
+
+function item(list, text, button, onclick) {
+  const li = document.createElement("li");
+  const name = document.createElement("span");
+  name.textContent = text;
+  li.append(name);
+  if (button) {
+    const b = document.createElement("button");
+    b.textContent = button;
+    b.onclick = onclick;
+    li.append(b);
+  }
+  list.append(li);
+  return li;
+}
+
+async function drawArcades() {
+  const list = $("arcades");
+  list.textContent = "";
+  for (const origin of await ask({type: "arcades"}))
+    item(list, origin, "Unlink", () => ask({type: "unlink", origin}).then(draw).catch((e) => say(e.message)));
+  const coins = $("coins");
+  coins.textContent = "";
+  const b = await ask({type: "balances"});
+  $("no-arcade").hidden = !!b.origin;
+  $("read-from").hidden = !b.origin;
+  $("read-from").textContent = b.origin ? `As ${b.origin} reads the chains:` : "";
+  const rows = b.origin ? b.rows : Object.entries(b.mine).map(([network, m]) => ({network, label: network, ...m}));
+  for (const row of rows) {
+    const li = document.createElement("li");
+    const head = document.createElement("div");
+    head.className = "coin-head";
+    head.textContent = `${row.label || row.network}${row.coins != null ? `  ${row.coins} ${row.coin || ""}` : ""}`;
+    const address = document.createElement("code");
+    address.textContent = row.ours === false ? `this arcade has another address: ${row.address}` : (row.address || "");
+    li.append(head, address);
+    const extra = [];
+    if (row.tokens && row.tokens.length) extra.push(row.tokens.map((t) => `${t.balance} ${t.name || "#" + t.propertyid}`).join(", "));
+    if (row.inscriptions) extra.push(`${row.inscriptions} inscription${row.inscriptions === 1 ? "" : "s"}`);
+    if (extra.length) {
+      const more = document.createElement("div");
+      more.className = "muted";
+      more.textContent = extra.join(" · ");
+      li.append(more);
+    }
+    coins.append(li);
+  }
+}
+
+$("link").onclick = () => { say(""); ask({type: "link", origin: $("link-origin").value}).then(() => { $("link-origin").value = ""; return draw(); })
+  .catch((e) => say(e.message)); };
 
 function needPassword(words) {
   chosen = words;
@@ -85,7 +137,8 @@ $("import-name").onclick = async () => {
     const words = await keys.open(said.blob, password);
     const key = await keys.accountKey(await keys.toSeed(words));
     if (said.pubkey && key.pubkey !== said.pubkey) throw new Error("that wallet does not match its name. Nothing was kept.");
-    try { await keep(words, password); } catch (e) { needPassword(words); say(e.message + " (for this browser)"); }
+    try { await keep(words, password); } catch (e) { needPassword(words); say(e.message + " (for this browser)"); return; }
+    await ask({type: "link", origin}).then(draw).catch((e) => say(`Kept, but not linked to ${origin}: ${e.message}`));
   } catch (e) { say(e.message); }
 };
 
