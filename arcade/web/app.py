@@ -25907,6 +25907,52 @@ def create_app(state: AppState) -> FastAPI:
         return contentlib._json({"property_id": property_id, "name": prop["name"],
                                  "divisible": bool(prop["divisible"]), "asks": asks})
 
+    # --- the market for the console (arcade/lite/commands.py): what the Exchange's public pages show ---------------
+
+    def _console_tokens() -> list[dict]:
+        """The tokens this arcade's token index knows, as the Tokens tab lists them."""
+        _chain, index = _token_chain()
+        return [{"id": p["property_id"], "name": p["name"], "divisible": p["divisible"],
+                 "supply": p["total_display"], "holders": p["holder_count"]} for p in index.properties()]
+
+    def _console_book(property_id: int) -> dict:
+        """A token's resting sell orders for this chain's coin, as /r/book answers them, amounts in words."""
+        chain, index = _token_chain()
+        prop = index.property(property_id)
+        if prop is None:
+            raise ValueError("no such token")
+        book, taking = index.book(property_id), index.pending_takes()
+        return {"token": prop["name"], "coin": chain.params.coin, "asks": [
+            {"order": o["txid"], "seller": _name_of(o["address"]) or o["address"],
+             "tokens": format_amount(int(o["tokens"]), prop["divisible"]), "coins": format_amount(int(o["coins"]), True),
+             "pending": bool(o.get("pending")), "taking": int(taking.get(o["txid"], 0))} for o in book.get("asks", [])]}
+
+    def _console_pair(base: int, quote: int, count: int) -> dict:
+        """BASE/QUOTE's book and its last trades, as the pair page shows them."""
+        _chain, index = _token_chain()
+        base_prop, quote_prop = index.property(base), index.property(quote)
+        if base_prop is None or quote_prop is None or base == quote:
+            raise ValueError("a pair is two different tokens this node knows")
+        book = index.pair_book(base, quote)
+        scale = (COIN if base_prop["divisible"] else 1) / (COIN if quote_prop["divisible"] else 1)
+
+        def amounts(row: dict) -> dict:
+            return {"base": format_amount(row["base"], base_prop["divisible"]),
+                    "quote": format_amount(row["quote"], quote_prop["divisible"])}
+        return {"pair": f"{base_prop['name']}/{quote_prop['name']}",
+                "asks": [{"order": r["txid"], **amounts(r), "each": float(r["price"]) * scale} for r in book["asks"]],
+                "bids": [{"order": r["txid"], **amounts(r), "each": float(r["price"]) * scale} for r in book["bids"]],
+                "trades": [{"when": t["when"], "side": t["side"], "txid": t["txid"], **amounts(t)}
+                           for t in index.pair_trades(base, quote, limit=count)]}
+
+    def _console_doginals(which: str) -> list[dict]:
+        """Doginals listed for DOGE (or Pepinals for PEP mainnet: main) while their coin is unspent."""
+        chain = _doge_asked({"chain": which})
+        if chain is None or not state.chain_ready(chain):
+            raise ValueError("that chain is not open on this arcade yet")
+        return [{"listing": r["id"], "inscription": r["inscription"], "price": r["price_text"],
+                 "seller": r["seller_tag"] or r["seller"], "expires": r["expires"]} for r in _doginals_live(chain)]
+
     @app.get("/r/mintpad/{creator}/{name}")
     def r_mintpad(creator: str, name: str):
         """What a collection's mintpad has left, and one open listing chosen at
@@ -31361,7 +31407,8 @@ def create_app(state: AppState) -> FastAPI:
     #: ...and what it may ask on behalf of anyone at all: reads of what the public pages show.
     public_tools = types.SimpleNamespace(
         feed=lambda sort, author, count: [{k: v for k, v in post.items() if k != "mine"}
-                                          for post in _console_feed(sort, author, count)])
+                                          for post in _console_feed(sort, author, count)],
+        tokens=_console_tokens, book=_console_book, pair=_console_pair, doginals=_console_doginals)
 
     # --- the Cloudflare tunnel wizard (2026-09-25; arcade/tunnel.py) -----
 

@@ -88,6 +88,21 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 4: market queries
+- **New commands, for anyone, read only** (what the Exchange's public pages show): `listtokens` (module `tokens`),
+  `getbook <token>` (a token's resting sells for the chain's coin, as /r/book), `getpair <base> <quote> [count]`
+  (asks, bids, last trades, newest first, price quote per whole base), `listdoginals [doge|main]` (listings whose
+  coin is unspent), module `exchange`. Nothing here trades.
+- app.py `_console_tokens`, `_console_book`, `_console_pair`, `_console_doginals` beside `r_book`: the same index
+  calls as the pages (`properties`, `book` + `pending_takes`, `pair_book` + `pair_trades`, `_doginals_live`), in
+  `public_tools`. Arguments are checked before the node is asked.
+- **Not yet:** the cross-chain swap book (its view is built per reader, `_trade_order_view(request)`) and market
+  execution. Execution is next and needs the exchange-safety rules and R1's confirmation on every mainnet coin
+  leg, in the same prepare/confirm shape as `send`. A plan for it goes here first.
+- Tests: `tests/test_lite_market.py` (3): a real regtest token and resting order read from a visitor's console;
+  the rules; off with their modules, on again with `exchange` alone. With the other Lite tests, test_tokens_web,
+  test_web, test_public, test_doginal_market: 443 passed, 16 skipped.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 3: the feed
 - **New commands** (module `feed`): for anyone, as the Feed tab is public: `readfeed [popular|new] [count]` and
   `readposts <@name or address> [count]` (up to 100; deleted and muted posts left out, as the tab draws them). For

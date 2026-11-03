@@ -351,12 +351,12 @@ def sendmessage(caller, who: str, *text: str) -> dict:
 MOST_POSTS = 100
 
 
-def _reads(caller):
-    """The operator's own reads (which say what is the node's), else anyone's."""
-    tools = caller.node if caller.node is not None else caller.reads
-    if tools is None:
-        raise CommandError("the node answers through the arcade's web app: run this in its console or arcade-cli")
-    return tools
+def _read(caller, name: str):
+    """A read of the node's: the operator's own where there is one (it says what is the node's), else anyone's."""
+    for tools in (caller.node, caller.reads):
+        if tools is not None and hasattr(tools, name):
+            return getattr(tools, name)
+    raise CommandError("the node answers through the arcade's web app: run this in its console or arcade-cli")
 
 
 def _count(count) -> int:
@@ -372,7 +372,7 @@ def readfeed(caller, order: str = "popular", count: int = 20) -> list[dict]:
     readfeed [popular|new] [count]   up to 100"""
     if order not in ("popular", "new"):
         raise CommandError("usage: readfeed [popular|new] [count]")
-    return _ask(_reads(caller).feed, order, "", _count(count))
+    return _ask(_read(caller, "feed"), order, "", _count(count))
 
 
 @command("feed", module="feed")
@@ -380,7 +380,7 @@ def readposts(caller, who: str, count: int = 20) -> list[dict]:
     """One person's posts, newest first, as their page shows them.
 
     readposts <@name or address> [count]"""
-    return _ask(_reads(caller).feed, "new", str(who), _count(count))
+    return _ask(_read(caller, "feed"), "new", str(who), _count(count))
 
 
 @command("feed", audience="operator", module="feed")
@@ -427,6 +427,47 @@ def share(caller, txid: str) -> dict:
 def deletepost(caller, txid: str) -> dict:
     """Delete one of the node's own posts or replies. The chain keeps it; every arcade stops showing it."""
     return _act(caller, "delete", txid)
+
+
+# --- the market: what the Exchange's public pages show, for anyone ---------------------------------------------------
+
+
+def _number(value, what: str) -> int:
+    if not isinstance(value, int) or value < 0:
+        raise CommandError(f"{what} is a token's number; listtokens lists them")
+    return value
+
+
+@command("market", module="tokens")
+def listtokens(caller) -> list[dict]:
+    """The tokens this arcade's index knows: number, name, supply and holders."""
+    return _ask(_read(caller, "tokens"))
+
+
+@command("market", module="exchange")
+def getbook(caller, token: int) -> dict:
+    """A token's resting sell orders for the chain's coin, cheapest first, as its market page shows them.
+
+    getbook <token number>"""
+    token = _number(token, "token")
+    return _ask(_read(caller, "book"), token)
+
+
+@command("market", module="exchange")
+def getpair(caller, base: int, quote: int, count: int = 20) -> dict:
+    """A token-for-token market: its asks, its bids, and its last trades, newest first.
+
+    getpair <base token> <quote token> [count]   prices are quote per whole base"""
+    base, quote, count = _number(base, "base"), _number(quote, "quote"), _count(count)
+    return _ask(_read(caller, "pair"), base, quote, count)
+
+
+@command("market", module="exchange")
+def listdoginals(caller, chain: str = "doge") -> list[dict]:
+    """Doginals listed for sale here while their coin is unspent, or another ord chain's (main: Pepecoin mainnet).
+
+    listdoginals [doge|main]"""
+    return _ask(_read(caller, "doginals"), str(chain))
 
 
 # --- modules: installed and removed as packages are -----------------------------------------------------------------
