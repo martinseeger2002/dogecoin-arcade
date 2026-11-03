@@ -88,6 +88,66 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · ARCADE Lite is chosen at install: editions and modules
+SadFrog: "at the beginning of the installation of the arcade it asks if the downloader wants to install full or lite
+arcade ... it should be the start of the direction for making changes on the full that modularizes applications,
+themes and node modules"; then "messaging, feed and all commands that work on full's uis should be possible in lite
+via a terminal and the use of -help as modules that can be installed like a linux command", "market queries and
+execution should be possible via terminal", "they should be able to have their own indexs and chains on lite".
+This replaces part 1's "/lite beside the full UI".
+- **`arcade/modules.py`, the registry.** Every route (by path prefix) and every background job (by name) belongs to
+  one module: core (`node`, `wallet`, `addressbook`, `accounts`, `mesh`, always on), or an app, theme or node module
+  (messages, feed, ords, collections, tokens, exchange, apps, rooms, llm, affiliates, lora, desktop, dogefeedx), each
+  with `needs`, its Lite default (off) and a `caution`. Full = every module on, as today.
+- **settings.json `edition`**: `full` | `lite`; missing = full (every existing node, never asked, unchanged);
+  `ask` = a fresh install that has not chosen (runs as Full). `modules` = the operator's switches.
+- **Gates, not rewrites.**
+  - Routes: `web/modules_web.py` keeps every route `create_app` registered and serves only those of modules that
+    are on. Last line of `create_app`; a switch applies at once.
+  - Jobs: `watcher.PHASE_JOBS` (read/file/show phases only), `__main__` (ord Runner, sites search, LoRa), lifespan
+    (known collections, push mail); these follow a switch at the next restart. **Never gated:** `_run_watch`,
+    `_run_trader`, `_run_xchain`, `_keep_shop`, the filler, collection resume: what was agreed finishes in every
+    edition. No signing code changed; exchange-safety rules all hold.
+  - Nav (`_nav_for`), Admin tabs, and base.html's Desktop View / home-screen redirects follow the switches.
+  - In Lite, `/` is the Lite window (for visitors, users and the operator); `/overview` sends an account to `/`.
+- **Where the edition is chosen** (the four install paths):
+  - `installer/install.py` (Linux, macOS and Windows, one script): a fresh install at a terminal is asked
+    "Full or Lite? [F/l]" first; `--edition full|lite` answers it; no terminal = `ask`; an existing arcade
+    (settings.json or a message store) is never asked. Written into `~/.dogecoinarcade/settings.json`, keeping every
+    other key. **This is the installer's first question since "no question, ever" (2026-10-13), which was about the
+    chains; please confirm you are fine with it.** `--update` asks nothing.
+  - `arcade-web --edition full|lite` (pip install / source checkout): only for an arcade that has not chosen; a new
+    home with nothing chosen records `ask`.
+  - First run in the web UI: `_edition_ask.html` on Admin and the operator's Your arcade while `edition` is `ask`.
+  - Later: Admin -> Edition & modules (`_modules_panel.html`, `GET/POST /admin/api/modules`). Lite to Full turns
+    everything on; Full to Lite switches off, deletes nothing.
+- **Terminal.** Commands belong to modules (`@command(..., module=)`): off takes them away, with "`install <module>`
+  switches it on" for the operator. New: `install`, `remove` (`remove exchange yes`), `edition [full|lite] [yes]`,
+  `listmodules`; `<command> -help` on any command. `arcade/lite/cli.py` = `arcade-cli` (pyproject, and an installer
+  shim beside `arcade-rpc`), posting to the console as the operator at the machine.
+- **Own indexes and chains on Lite:** switching on Ords gives it its own walk (at restart); Coins & chains is core.
+  The send guard is fail-safe without an index: small coins stay protected until a linked walk answers for them.
+- **Charter:** updated on `team/arcade-lite-charter` (#62's branch, 8419232): your answers, the install-time choice, the
+  registry, terminal commands per module, and Lite's own index (an amendment to answer 2; please confirm).
+- **Open, for you:** (1) the installer question (above); (2) Lite keeping its own ord index when Ords is switched on;
+  (3) while Exchange is off its pages, Cancel among them, are off (settlement still runs): Admin warns, `remove
+  exchange` asks for yes. Should it refuse while a node holds open positions instead? (4) pages still link inside
+  their content to modules that are off (the Wallet's Exchange button): a later pass.
+- **Next parts (one PR each):** wallet commands (send/receive/transactions), then messages, feed, exchange queries,
+  then exchange execution under exchange-safety and R1.
+- **Two commits, meant as two PRs:** (A) editions and modules, about 725 changed lines outside tests, over the
+  400-line rule: the registry is mostly its data table, and gate, switches and choice do not work apart. Please agree
+  here, or say how you want it cut. (B) the terminal: commands per module, `install`/`remove`/`edition`, `-help`,
+  `arcade-cli`, about 230.
+- Tests: `tests/test_modules.py` (15): every route claimed by a module of its own; Lite serves only core routes and
+  jobs, and users as Full does; settlement jobs run in every edition; Full unchanged; switching from Admin, needs, no
+  deletion; the first-run question; the installer's question and its settings write. `tests/test_lite_cli.py` (4):
+  install/remove/edition from the console, `-help`, a module's commands going with it, arcade-cli, its shim.
+  `test_lite.py` updated. Full suite on the workhorse (12 workers, open files raised to 65536; at its 1024 the
+  base fails on "too many open files" too): 4261 passed, 418 skipped. The 3 failures and 4 errors it has are
+  the base's too (test_docs x2, test_update whole-package, the LoRa tests without the lora extra); one regtest
+  test dropped its node under load and passes alone.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · ARCADE Lite phase 1, part 1
 - **New: `arcade/lite/`**, the first part of ARCADE Lite (proposal: PR #62). The running node serves it at
   `/lite` beside the full UI.

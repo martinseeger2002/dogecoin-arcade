@@ -1465,6 +1465,16 @@ fi
 exec "{venv}/bin/arcade-rpc" "$@"
 """
 
+ARCADE_CLI = """\
+#!/bin/sh
+# The running DogecoinArcade's commands in a terminal (shim {version}): arcade-cli -help lists them.
+if [ ! -x "{venv}/bin/arcade-cli" ]; then
+    echo "DogecoinArcade is missing from its environment; repairing it first."
+    "{venv}/bin/python" "{repair}" || exit 1
+fi
+exec "{venv}/bin/arcade-cli" "$@"
+"""
+
 #: Windows has no `exec`, and `||` inside a parenthesised block is a trap, so
 #: each of these is the same shape written the long way round.
 WIN_LAUNCHER = """\
@@ -1500,6 +1510,17 @@ echo DogecoinArcade is missing from its environment; repairing it first.
 if errorlevel 1 exit /b 1
 :run
 "{venv}\\Scripts\\arcade-rpc.exe" %*
+"""
+
+WIN_ARCADE_CLI = """\
+@echo off
+@rem The running DogecoinArcade's commands in a terminal (shim {version}): arcade-cli -help lists them.
+if exist "{venv}\\Scripts\\arcade-cli.exe" goto run
+echo DogecoinArcade is missing from its environment; repairing it first.
+"{venv}\\Scripts\\python.exe" "{repair}"
+if errorlevel 1 exit /b 1
+:run
+"{venv}\\Scripts\\arcade-cli.exe" %*
 """
 
 #: Written beside the environment rather than inside it, and importing nothing
@@ -1613,7 +1634,7 @@ def write_repair(venv: Path, system: str | None = None) -> Path:
 #: Every command the installer puts on the PATH, in the order it writes them.
 #: The updater checks each of these, so a machine installed before one of them
 #: existed gets it at its next update rather than `command not found`.
-SHIMS = ("dogecoinarcade", "dogecoinarcade-update", "arcade-rpc")
+SHIMS = ("dogecoinarcade", "dogecoinarcade-update", "arcade-rpc", "arcade-cli")
 
 
 def shim_names(system: str) -> list[str]:
@@ -1629,11 +1650,13 @@ def write_launcher(venv: Path, target: Path, system: str) -> Path:
     if system == "Windows":
         shims = [("dogecoinarcade.cmd", WIN_LAUNCHER),
                  ("dogecoinarcade-update.cmd", WIN_UPDATER),
-                 ("arcade-rpc.cmd", WIN_BOT_RPC)]
+                 ("arcade-rpc.cmd", WIN_BOT_RPC),
+                 ("arcade-cli.cmd", WIN_ARCADE_CLI)]
     else:
         shims = [("dogecoinarcade", LAUNCHER),
                  ("dogecoinarcade-update", UPDATER),
-                 ("arcade-rpc", BOT_RPC)]
+                 ("arcade-rpc", BOT_RPC),
+                 ("arcade-cli", ARCADE_CLI)]
     written = []
     for name, template in shims:
         text = template.format(venv=venv, repair=repair, version=SHIM_VERSION)
