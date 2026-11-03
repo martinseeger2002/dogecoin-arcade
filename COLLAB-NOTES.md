@@ -88,6 +88,16 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 The updater repairs a src that lost its installer (Claude; the operator's new ThinkPad install)
+- An archive install whose `~/.dogecoinarcade/src/installer/install.py` was gone failed every update with "could not
+  fetch the source archive": the repair runs the installer from src, the very thing that needed repairing, and
+  `_call_installer` answered None without a word. Now update.py fetches the signed archive itself, holds it to the
+  manifest's sha256 before anything in it runs, and runs that archive's installer (`_with_archive_installer`).
+- The installer returns "" (not None) when only `source.rev` could not be read; the updater then writes the signed
+  manifest's revision. Before, a fetch that succeeded was reported as failed.
+- A machine already in this state needs the installer run once (`python3 install.py`), since its own updater is the
+  old one.
+
 ### 2026-11-03 DogeFeedX for accounts on a public arcade; the arcade @handle is the name (Claude; the operator: "all of this stuff is already available for the user end ... wire it in", "the primary at handle should still be the existing arcade @handles with the option of describing your handle on Doge")
 - **door.py** opens the DogeFeedX windows, their files and the reads of public arcade data (feed, posts, profiles,
   collections, ord index, mintpads, apps, `me`, notifications, wallet), each path by name. Still refused there: the
