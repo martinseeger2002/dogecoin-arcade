@@ -72,6 +72,8 @@ def served(tmp_path_factory):
         doge=ChainContext(network="doge", role="ledger", label="Dogecoin", conf=Path("/nonexistent/dogecoin.conf")))
     state.set_setting("ord_index:main", "walk")
     state.set_setting("ord_index:doge", "walk")
+    # An arcade whose operator has a name: the setup wizard (2026-11-02) opens over Admin until it has one.
+    state.operator_tag = lambda: "explorer"
     indexes = {n: state.ord_index(n, wait=30) for n in ("main", "doge")}     # opened on demand (lazy, 2026-10-27)
     content: dict = {}
     ids = {"main": _fill(indexes["main"], 1, 3, "pepi", 45, content),
