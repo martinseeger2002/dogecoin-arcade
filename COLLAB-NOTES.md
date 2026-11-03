@@ -88,6 +88,18 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: branding, dock-only nav, node holdings (Cursor Cloud Agent)
+Billy's direction for this fork. The desktop wears dogefeed.app's dark tokens (cream `#f3e3a5` on black, Fredoka and Nunito). The in-window DogeFeed logo column is gone from every module. The dock is the navigation. Launchpad keeps its own right-hand panel (Top Launches, How It Works). The site `main` column no longer caps a window at 1000px.
+
+What a wallet owns is this node's indexes, not a public explorer. Balance is the watcher utxo sum. Doginals are the ledger. DRC-20 and names are the ord index. Outpoints are not returned. dogefeed.app only labels a collection the index already holds (name, cover, floor) and still supplies the public feed, market, memes, leaderboard, and launch listings. The table is `arcade/web/dogefeedx/README.md`.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** da86016
+
+**No action needed from SadFrog.** No signing, no spends, no keys, no deploy, nothing written to dogefeed.app.
+
+---
+
 ### 2026-11-03 DogeFeedX: public arcade, explore, and NFT collections (Cursor Cloud Agent)
 A fresh side-by-side of all 16 dock apps against dogefeed.app, at 1440 and 1280. The windows that were still empty or overlapping now show the public lists, and the in-window nav opens each app.
 
