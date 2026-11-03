@@ -902,3 +902,34 @@ def test_pictures_go_to_the_app_as_bitmaps_only_with_its_switch_and_their_sound_
     finally:
         server.stop()
         state.mesh.stop()
+
+
+def test_a_page_loading_while_another_tab_writes_storage_throws_nothing(tmp_path, no_nodes):
+    """2026-11-03, live on app.dogecoinarcade.com: "ReferenceError: ARCADE_MEDIA is not defined". The viewer's storage
+    listener ran while the page was still loading, before base.html's script below it had defined its names."""
+    state, server, base = _server(tmp_path)
+    try:
+        with sync_api.sync_playwright() as pw:
+            chrome = _launch(pw)
+            ctx = chrome.new_context()
+            page = ctx.new_page()
+            errors = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            # Locally the page comes too fast for another tab's write to land mid-load, so the moment is made: a storage
+            # event, as another tab's write gives, right before base.html's script (where ARCADE_MEDIA is defined).
+
+            def mid_load(route):
+                body = route.fetch().text()
+                at = body.rindex("<script", 0, body.index("var ARCADE_MEDIA = "))
+                fire = ("<script>window.dispatchEvent(new StorageEvent('storage', {key: 'zz.race', newValue: '1'}));"
+                        "window.dispatchEvent(new StorageEvent('storage', {key: 'arcade.media.allow:x', newValue: null}));"
+                        "</script>")
+                route.fulfill(status=200, content_type="text/html", body=body[:at] + fire + body[at:])
+            page.route(f"{base}/inscriptions/{GAME}/full", mid_load)
+            page.goto(f"{base}/inscriptions/{GAME}/full")
+            page.wait_for_timeout(800)
+            assert not [e for e in errors if "is not defined" in e], errors[:3]
+            chrome.close()
+    finally:
+        server.stop()
+        state.mesh.stop()

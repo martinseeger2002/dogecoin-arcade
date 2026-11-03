@@ -1,0 +1,1131 @@
+{% extends "base.html" %}
+{% block title %}DogeFeed Explorer · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- DogeFeedX Explorer: A Finder-style browser with three categories:
+    1. Collections - NFT/doginal collections with real item images as icons
+    2. DRC-20 Tokens - Token tickers with supply, holders, mint progress
+    3. Names - .doge/.dogefeed names with owner and inscription info
+    
+    Data sources:
+    - this arcade: feed, search, images, tokens, names (its own indexes)
+    
+    Results cached with graceful fallback when services are unreachable. -#}
+<link rel="stylesheet" href="/dogefeedx/aqua.css">
+<style>
+:root {
+  --dfx-brand: #d9a520;
+  --dfx-brand-dark: #b8860b;
+  --dfx-token-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --dfx-name-bg: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+}
+.dfx-explorer {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: #f0f0f0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+.dfx-explorer-main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+.dfx-explorer-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dfx-explorer-grid-wrap {
+  flex: 1;
+  overflow: auto;
+  background: #fff;
+}
+.dfx-path-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: #fff;
+  border-bottom: 1px solid #ddd;
+  font-size: 12px;
+}
+.dfx-path-btn {
+  padding: 2px 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--dfx-brand-dark);
+  font-size: 12px;
+}
+.dfx-path-btn:hover { text-decoration: underline; }
+.dfx-path-sep { color: #aaa; }
+.dfx-search-wrap {
+  flex: 1;
+  max-width: 240px;
+  margin-left: auto;
+}
+.dfx-search-wrap input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 12px;
+  font-size: 12px;
+  background: #f8f8f8;
+}
+.dfx-search-wrap input:focus {
+  outline: none;
+  border-color: var(--dfx-brand);
+  background: #fff;
+}
+.dfx-view-toggle {
+  display: flex;
+  gap: 2px;
+  margin-left: 12px;
+}
+.dfx-view-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dfx-view-btn:first-child { border-radius: 4px 0 0 4px; }
+.dfx-view-btn:last-child { border-radius: 0 4px 4px 0; }
+.dfx-view-btn.active {
+  background: var(--dfx-brand);
+  border-color: var(--dfx-brand-dark);
+  color: #fff;
+}
+.dfx-view-btn svg { width: 14px; height: 14px; }
+.dfx-detail-pane {
+  width: 280px;
+  flex: none;
+  border-left: 1px solid #ccc;
+  background: linear-gradient(180deg, #f8f8f8, #f0f0f0);
+  overflow-y: auto;
+}
+.dfx-detail-pane.hidden { display: none; }
+.dfx-source-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  background: rgba(217, 165, 32, 0.2);
+  color: var(--dfx-brand-dark);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+.dfx-offline-banner {
+  padding: 8px 16px;
+  background: #fff3cd;
+  color: #856404;
+  border-bottom: 1px solid #ffeeba;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dfx-offline-banner.hidden { display: none; }
+.dfx-load-more {
+  padding: 16px;
+  text-align: center;
+}
+
+/* Sidebar with category sections */
+.dfx-sidebar {
+  width: 180px;
+  flex: none;
+  background: linear-gradient(180deg, #f8f8f8, #e8e8e8);
+  border-right: 1px solid #ccc;
+  overflow-y: auto;
+}
+.dfx-sidebar-section {
+  padding: 8px 0;
+  border-bottom: 1px solid #ddd;
+}
+.dfx-sidebar-section:last-child { border-bottom: none; }
+.dfx-sidebar-title {
+  padding: 4px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.dfx-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  color: #333;
+}
+.dfx-sidebar-item:hover { background: rgba(0,0,0,0.05); }
+.dfx-sidebar-item.active {
+  background: var(--dfx-brand);
+  color: #fff;
+}
+.dfx-sidebar-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.dfx-sidebar-item.active .dfx-sidebar-icon { stroke: #fff; }
+
+/* Category indicator badges */
+.dfx-cat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.dfx-cat-badge.collections { background: rgba(217, 165, 32, 0.2); color: var(--dfx-brand-dark); }
+.dfx-cat-badge.tokens { background: rgba(102, 126, 234, 0.2); color: #667eea; }
+.dfx-cat-badge.names { background: rgba(17, 153, 142, 0.2); color: #11998e; }
+
+/* Grid items - Collections with real images */
+.dfx-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 16px;
+  padding: 16px;
+}
+.dfx-grid-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+.dfx-grid-item:hover { background: rgba(0,0,0,0.05); }
+.dfx-grid-item.selected { background: rgba(217, 165, 32, 0.2); }
+.dfx-grid-icon {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f0f0f0;
+  position: relative;
+}
+.dfx-grid-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.dfx-grid-icon svg {
+  width: 32px;
+  height: 32px;
+}
+.dfx-grid-label {
+  font-size: 11px;
+  text-align: center;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #333;
+}
+.dfx-grid-meta {
+  font-size: 9px;
+  color: #888;
+}
+
+/* Token badge icons */
+.dfx-token-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  background: var(--dfx-token-bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+.dfx-token-icon .ticker {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dfx-token-icon .symbol {
+  font-size: 8px;
+  opacity: 0.8;
+  margin-top: 2px;
+}
+.dfx-token-progress {
+  width: 48px;
+  height: 4px;
+  background: rgba(255,255,255,0.3);
+  border-radius: 2px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+.dfx-token-progress-fill {
+  height: 100%;
+  background: #fff;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+/* Name tag icons */
+.dfx-name-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  background: var(--dfx-name-bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(17, 153, 142, 0.3);
+  position: relative;
+}
+.dfx-name-icon::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 12px;
+  height: 4px;
+  background: rgba(255,255,255,0.5);
+  border-radius: 2px;
+}
+.dfx-name-icon .name-text {
+  font-size: 10px;
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  padding: 0 4px;
+}
+.dfx-name-icon .name-suffix {
+  font-size: 8px;
+  opacity: 0.8;
+  margin-top: 2px;
+}
+
+/* Detail pane sections */
+.dfx-detail-header {
+  padding: 16px;
+  display: flex;
+  gap: 12px;
+  border-bottom: 1px solid #ddd;
+}
+.dfx-detail-icon {
+  width: 64px;
+  height: 64px;
+  flex: none;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f0f0f0;
+}
+.dfx-detail-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.dfx-detail-info { flex: 1; min-width: 0; }
+.dfx-detail-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dfx-detail-meta {
+  font-size: 11px;
+  color: #666;
+  margin: 2px 0;
+}
+.dfx-detail-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid #ddd;
+}
+.dfx-detail-section:last-child { border-bottom: none; }
+.dfx-detail-section h3 {
+  font-size: 11px;
+  font-weight: 600;
+  color: #666;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+.dfx-detail-table {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 11px;
+}
+.dfx-detail-label { color: #666; }
+.dfx-detail-value { color: #333; word-break: break-all; }
+.dfx-btn {
+  padding: 6px 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+.dfx-btn:hover { background: #f8f8f8; }
+.dfx-btn.primary {
+  background: var(--dfx-brand);
+  border-color: var(--dfx-brand-dark);
+  color: #fff;
+}
+.dfx-btn.primary:hover { background: var(--dfx-brand-dark); }
+
+.dfx-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  color: #888;
+}
+.dfx-empty.hidden { display: none; }
+.dfx-empty-icon {
+  width: 48px;
+  height: 48px;
+  opacity: 0.5;
+}
+.dfx-empty-text {
+  margin-top: 12px;
+  font-size: 14px;
+}
+.dfx-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #eee;
+  border-top-color: var(--dfx-brand);
+  border-radius: 50%;
+  animation: dfx-spin 0.8s linear infinite;
+}
+@keyframes dfx-spin { to { transform: rotate(360deg); } }
+</style>
+
+<div class="dfx-explorer">
+  <div class="dfx-toolbar">
+    <button type="button" class="dfx-toolbar-btn" id="dfx-back" title="Back">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <button type="button" class="dfx-toolbar-btn" id="dfx-forward" title="Forward">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+    </button>
+    <div class="dfx-toolbar-separator"></div>
+    <button type="button" class="dfx-toolbar-btn" id="dfx-refresh" title="Refresh">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+    </button>
+    <div class="dfx-path-bar">
+      <button type="button" class="dfx-path-btn" id="dfx-path-root">DogeFeed</button>
+      <span class="dfx-path-sep" id="dfx-path-sep1" style="display:none">›</span>
+      <span id="dfx-path-cat" style="display:none"></span>
+      <span class="dfx-path-sep" id="dfx-path-sep2" style="display:none">›</span>
+      <span id="dfx-path-item" style="display:none"></span>
+    </div>
+    <div class="dfx-search-wrap">
+      <input type="search" id="dfx-search" placeholder="Search..." autocomplete="off">
+    </div>
+    <div class="dfx-view-toggle">
+      <button type="button" class="dfx-view-btn active" data-view="grid" title="Grid view">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      </button>
+      <button type="button" class="dfx-view-btn" data-view="list" title="List view">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="4" width="18" height="3"/><rect x="3" y="10.5" width="18" height="3"/><rect x="3" y="17" width="18" height="3"/></svg>
+      </button>
+    </div>
+    <div class="dfx-toolbar-separator"></div>
+    <button type="button" class="dfx-toolbar-btn" id="dfx-info-toggle" title="Show/hide info">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    </button>
+  </div>
+
+  <div class="dfx-offline-banner hidden" id="dfx-offline">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <span>Unable to reach DogeFeed. Showing cached data.</span>
+  </div>
+
+  <div class="dfx-explorer-main">
+    <div class="dfx-sidebar" id="dfx-sidebar">
+      <div class="dfx-sidebar-section">
+        <div class="dfx-sidebar-title">Collections</div>
+        <button type="button" class="dfx-sidebar-item active" data-category="collections" data-filter="all">
+          <svg class="dfx-sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+          All Collections
+        </button>
+        <button type="button" class="dfx-sidebar-item" data-category="collections" data-filter="popular">
+          <svg class="dfx-sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Popular
+        </button>
+      </div>
+      <div class="dfx-sidebar-section">
+        <div class="dfx-sidebar-title">DRC-20 Tokens</div>
+        <button type="button" class="dfx-sidebar-item" data-category="tokens" data-filter="all">
+          <svg class="dfx-sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M6 12h12"/></svg>
+          All Tokens
+        </button>
+        <button type="button" class="dfx-sidebar-item" data-category="tokens" data-filter="minting">
+          <svg class="dfx-sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+          Minting
+        </button>
+      </div>
+      <div class="dfx-sidebar-section">
+        <div class="dfx-sidebar-title">Names</div>
+        <button type="button" class="dfx-sidebar-item" data-category="names" data-filter="all">
+          <svg class="dfx-sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          All Names
+        </button>
+        <button type="button" class="dfx-sidebar-item" data-category="names" data-filter="doge">
+          <svg class="dfx-sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          .doge
+        </button>
+      </div>
+    </div>
+
+    <div class="dfx-explorer-content">
+      <div class="dfx-explorer-grid-wrap" id="dfx-grid-wrap">
+        <div class="dfx-grid" id="dfx-grid"></div>
+        <div class="dfx-load-more" id="dfx-load-more" style="display:none">
+          <button type="button" class="dfx-btn" id="dfx-load-btn">Load More</button>
+        </div>
+        <div class="dfx-empty hidden" id="dfx-empty">
+          <svg class="dfx-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
+          </svg>
+          <div class="dfx-empty-text">No items found</div>
+        </div>
+        <div class="dfx-empty hidden" id="dfx-loading">
+          <div class="dfx-spinner"></div>
+          <div class="dfx-empty-text" style="margin-top:16px">Loading from DogeFeed...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dfx-detail-pane hidden" id="dfx-detail">
+      <div class="dfx-detail" id="dfx-detail-content"></div>
+    </div>
+  </div>
+
+  <div class="dfx-statusbar">
+    <span id="dfx-status">Ready</span>
+    <span id="dfx-count"></span>
+  </div>
+</div>
+
+<script src="/dogefeedx/shell.js"></script>
+<script>
+(function() {
+  'use strict';
+  
+  var API_BASE = '/dogefeedx/api';
+  var CONTENT_BASE = '/content';   // this arcade's own copy
+  
+  var state = {
+    category: 'collections',
+    filter: 'all',
+    search: '',
+    view: 'grid',
+    offset: 0,
+    hasMore: false,
+    selected: null,
+    showDetail: true,
+    items: [],
+    currentCollection: null,
+    currentToken: null,
+    currentName: null,
+    offline: false
+  };
+  
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  
+  function api(path, params) {
+    var url = API_BASE + path;
+    if (params) {
+      var qs = Object.keys(params).map(function(k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
+      url += '?' + qs;
+    }
+    return fetch(url, { cache: 'no-store' })
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(j) {
+        state.offline = false;
+        $('dfx-offline').classList.add('hidden');
+        return j;
+      })
+      .catch(function(e) {
+        state.offline = true;
+        $('dfx-offline').classList.remove('hidden');
+        throw e;
+      });
+  }
+  
+  function contentUrl(id) {
+    return CONTENT_BASE + '/' + encodeURIComponent(id);
+  }
+  
+  function updatePath() {
+    var catNames = { collections: 'Collections', tokens: 'DRC-20 Tokens', names: 'Names' };
+    $('dfx-path-sep1').style.display = '';
+    $('dfx-path-cat').style.display = '';
+    $('dfx-path-cat').textContent = catNames[state.category] || '';
+    
+    if (state.currentCollection) {
+      $('dfx-path-sep2').style.display = '';
+      $('dfx-path-item').style.display = '';
+      $('dfx-path-item').textContent = state.currentCollection.name || 'Collection';
+    } else if (state.currentToken) {
+      $('dfx-path-sep2').style.display = '';
+      $('dfx-path-item').style.display = '';
+      $('dfx-path-item').textContent = '$' + (state.currentToken.ticker || '');
+    } else if (state.currentName) {
+      $('dfx-path-sep2').style.display = '';
+      $('dfx-path-item').style.display = '';
+      $('dfx-path-item').textContent = state.currentName.name || '';
+    } else {
+      $('dfx-path-sep2').style.display = 'none';
+      $('dfx-path-item').style.display = 'none';
+    }
+  }
+  
+  function loadItems(reset) {
+    if (reset) {
+      state.offset = 0;
+      state.items = [];
+    }
+    
+    $('dfx-loading').classList.remove('hidden');
+    $('dfx-empty').classList.add('hidden');
+    $('dfx-grid').innerHTML = '';
+    
+    var params = { offset: state.offset, limit: 50 };
+    if (state.search) params.q = state.search;
+    
+    var endpoint, itemKey;
+    
+    if (state.category === 'collections') {
+      if (state.currentCollection) {
+        endpoint = '/collection/items';
+        params.id = state.currentCollection.id;
+        itemKey = 'items';
+      } else {
+        endpoint = '/collections';
+        itemKey = 'collections';
+        if (state.filter === 'popular') params.sort = 'holders';
+      }
+    } else if (state.category === 'tokens') {
+      endpoint = '/tokens';
+      itemKey = 'tokens';
+      if (state.filter === 'minting') params.sort = 'progress';
+      else params.sort = 'holders';
+    } else if (state.category === 'names') {
+      endpoint = '/names';
+      itemKey = 'names';
+      if (state.filter === 'doge') params.q = '.doge';
+    }
+    
+    api(endpoint, params).then(function(data) {
+      $('dfx-loading').classList.add('hidden');
+      
+      var newItems = data[itemKey] || [];
+      state.items = state.items.concat(newItems);
+      state.hasMore = data.has_more || false;
+      
+      if (!state.items.length) {
+        $('dfx-empty').classList.remove('hidden');
+        $('dfx-status').textContent = 'No items found';
+      } else {
+        renderItems();
+        $('dfx-status').textContent = state.items.length + ' item' + (state.items.length === 1 ? '' : 's');
+      }
+      
+      $('dfx-load-more').style.display = state.hasMore ? 'block' : 'none';
+      $('dfx-count').textContent = state.items.length + (state.hasMore ? '+' : '') + ' items';
+      updatePath();
+    }).catch(function(e) {
+      $('dfx-loading').classList.add('hidden');
+      $('dfx-status').textContent = 'Error: ' + e.message;
+    });
+  }
+  
+  function renderItems() {
+    var grid = $('dfx-grid');
+    grid.innerHTML = '';
+    
+    state.items.forEach(function(item) {
+      var btn = el('button', 'dfx-grid-item');
+      
+      if (state.category === 'collections' && !state.currentCollection) {
+        renderCollectionItem(btn, item);
+      } else if (state.category === 'collections' && state.currentCollection) {
+        renderInscriptionItem(btn, item);
+      } else if (state.category === 'tokens') {
+        renderTokenItem(btn, item);
+      } else if (state.category === 'names') {
+        renderNameItem(btn, item);
+      }
+      
+      btn.addEventListener('click', function() { selectItem(item); });
+      btn.addEventListener('dblclick', function() { openItem(item); });
+      
+      grid.appendChild(btn);
+    });
+  }
+  
+  function renderCollectionItem(btn, c) {
+    btn.dataset.id = c.id;
+    
+    var icon = el('div', 'dfx-grid-icon');
+    var hasImage = false;
+    
+    // Try sample_item_ids first (actual items from collection)
+    if (c.sample_item_ids && c.sample_item_ids.length > 0) {
+      var img = el('img');
+      img.src = contentUrl(c.sample_item_ids[0]);
+      img.alt = c.name || '';
+      img.loading = 'lazy';
+      img.onerror = function() { 
+        this.style.display = 'none';
+        showFallbackIcon(icon);
+      };
+      icon.appendChild(img);
+      hasImage = true;
+    } else if (c.cover_id) {
+      // Then try cover_id
+      var img = el('img');
+      img.src = contentUrl(c.cover_id);
+      img.alt = c.name || '';
+      img.loading = 'lazy';
+      img.onerror = function() { 
+        this.style.display = 'none';
+        showFallbackIcon(icon);
+      };
+      icon.appendChild(img);
+      hasImage = true;
+    }
+    
+    if (!hasImage) {
+      showFallbackIcon(icon);
+    }
+    
+    btn.appendChild(icon);
+    
+    var label = el('span', 'dfx-grid-label', c.name || 'Unnamed');
+    label.title = c.name || '';
+    btn.appendChild(label);
+    
+    if (c.item_count) {
+      var meta = el('span', 'dfx-grid-meta', c.item_count + ' items');
+      btn.appendChild(meta);
+    }
+  }
+  
+  function showFallbackIcon(icon) {
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>';
+  }
+  
+  function renderInscriptionItem(btn, item) {
+    btn.dataset.id = item.id;
+    
+    var icon = el('div', 'dfx-grid-icon');
+    var img = el('img');
+    img.src = contentUrl(item.id);
+    img.alt = item.name || '#' + (item.number || '');
+    img.loading = 'lazy';
+    img.onerror = function() {
+      this.style.display = 'none';
+      icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
+    };
+    icon.appendChild(img);
+    btn.appendChild(icon);
+    
+    var label = el('span', 'dfx-grid-label', item.name || '#' + (item.number != null ? item.number : '?'));
+    label.title = item.name || item.id;
+    btn.appendChild(label);
+  }
+  
+  function renderTokenItem(btn, t) {
+    btn.dataset.ticker = t.ticker;
+    
+    var icon = el('div', 'dfx-token-icon');
+    var ticker = el('span', 'ticker', t.ticker || '?');
+    icon.appendChild(ticker);
+    var symbol = el('span', 'symbol', 'DRC-20');
+    icon.appendChild(symbol);
+    
+    if (t.mint_progress != null && t.mint_progress < 100) {
+      var progress = el('div', 'dfx-token-progress');
+      var fill = el('div', 'dfx-token-progress-fill');
+      fill.style.width = t.mint_progress + '%';
+      progress.appendChild(fill);
+      icon.appendChild(progress);
+    }
+    
+    btn.appendChild(icon);
+    
+    var label = el('span', 'dfx-grid-label', '$' + (t.ticker || ''));
+    label.title = t.ticker;
+    btn.appendChild(label);
+    
+    var meta = el('span', 'dfx-grid-meta');
+    if (t.mint_progress != null && t.mint_progress < 100) {
+      meta.textContent = t.mint_progress + '% minted';
+    } else if (t.holder_count) {
+      meta.textContent = t.holder_count + ' holders';
+    }
+    btn.appendChild(meta);
+  }
+  
+  function renderNameItem(btn, n) {
+    btn.dataset.name = n.name;
+    
+    var icon = el('div', 'dfx-name-icon');
+    var nameText = el('span', 'name-text', n.name ? n.name.replace(/\.(doge|dogefeed)$/, '') : '?');
+    icon.appendChild(nameText);
+    var suffix = el('span', 'name-suffix', n.suffix || '.doge');
+    icon.appendChild(suffix);
+    btn.appendChild(icon);
+    
+    var label = el('span', 'dfx-grid-label', n.name || '?');
+    label.title = n.name;
+    btn.appendChild(label);
+    
+    if (n.owner) {
+      var meta = el('span', 'dfx-grid-meta', n.owner.slice(0, 8) + '...');
+      meta.title = n.owner;
+      btn.appendChild(meta);
+    }
+  }
+  
+  function selectItem(item) {
+    state.selected = item;
+    
+    document.querySelectorAll('.dfx-grid-item').forEach(function(el) {
+      el.classList.toggle('selected', 
+        el.dataset.id === item.id || 
+        el.dataset.ticker === item.ticker || 
+        el.dataset.name === item.name
+      );
+    });
+    
+    if (state.showDetail) {
+      showItemDetail(item);
+    }
+  }
+  
+  function openItem(item) {
+    if (state.category === 'collections' && !state.currentCollection && item.id) {
+      state.currentCollection = item;
+      state.items = [];
+      state.offset = 0;
+      loadItems(true);
+    } else if (state.category === 'tokens' && item.ticker) {
+      state.currentToken = item;
+      showTokenDetail(item);
+    } else if (state.category === 'names' && item.name) {
+      state.currentName = item;
+      showNameDetail(item);
+    }
+  }
+  
+  function showItemDetail(item) {
+    if (state.category === 'collections' && !state.currentCollection) {
+      showCollectionDetail(item);
+    } else if (state.category === 'collections' && state.currentCollection) {
+      showInscriptionDetail(item);
+    } else if (state.category === 'tokens') {
+      showTokenDetail(item);
+    } else if (state.category === 'names') {
+      showNameDetail(item);
+    }
+  }
+  
+  function showCollectionDetail(c) {
+    var detail = $('dfx-detail-content');
+    detail.innerHTML = '';
+    
+    var header = el('div', 'dfx-detail-header');
+    var icon = el('div', 'dfx-detail-icon');
+    if (c.sample_item_ids && c.sample_item_ids.length > 0) {
+      var img = el('img');
+      img.src = contentUrl(c.sample_item_ids[0]);
+      img.alt = c.name || '';
+      icon.appendChild(img);
+    } else if (c.cover_id) {
+      var img = el('img');
+      img.src = contentUrl(c.cover_id);
+      img.alt = c.name || '';
+      icon.appendChild(img);
+    }
+    header.appendChild(icon);
+    
+    var info = el('div', 'dfx-detail-info');
+    info.appendChild(el('h2', 'dfx-detail-title', c.name || 'Unnamed'));
+    if (c.item_count != null) info.appendChild(el('p', 'dfx-detail-meta', c.item_count + ' items'));
+    if (c.holder_count != null) info.appendChild(el('p', 'dfx-detail-meta', c.holder_count + ' holders'));
+    var badge = el('span', 'dfx-cat-badge collections', 'Collection');
+    info.appendChild(badge);
+    header.appendChild(info);
+    detail.appendChild(header);
+    
+    if (c.description) {
+      var desc = el('div', 'dfx-detail-section');
+      desc.appendChild(el('h3', '', 'Description'));
+      desc.appendChild(el('p', '', c.description));
+      detail.appendChild(desc);
+    }
+    
+    var table = el('div', 'dfx-detail-section');
+    table.appendChild(el('h3', '', 'Info'));
+    var grid = el('div', 'dfx-detail-table');
+    if (c.id) { grid.appendChild(el('span', 'dfx-detail-label', 'ID')); grid.appendChild(el('span', 'dfx-detail-value', c.id)); }
+    if (c.created_at) { grid.appendChild(el('span', 'dfx-detail-label', 'Created')); grid.appendChild(el('span', 'dfx-detail-value', new Date(c.created_at).toLocaleDateString())); }
+    table.appendChild(grid);
+    detail.appendChild(table);
+    
+    var actions = el('div', 'dfx-detail-section');
+    var openBtn = el('button', 'dfx-btn primary', 'Open Collection');
+    openBtn.addEventListener('click', function() { openItem(c); });
+    actions.appendChild(openBtn);
+    detail.appendChild(actions);
+    
+    $('dfx-detail').classList.remove('hidden');
+  }
+  
+  function showInscriptionDetail(item) {
+    var detail = $('dfx-detail-content');
+    detail.innerHTML = '';
+    
+    var header = el('div', 'dfx-detail-header');
+    var icon = el('div', 'dfx-detail-icon');
+    var img = el('img');
+    img.src = contentUrl(item.id);
+    img.alt = item.name || '';
+    icon.appendChild(img);
+    header.appendChild(icon);
+    
+    var info = el('div', 'dfx-detail-info');
+    info.appendChild(el('h2', 'dfx-detail-title', item.name || '#' + (item.number || '?')));
+    if (item.content_type) info.appendChild(el('p', 'dfx-detail-meta', item.content_type));
+    if (state.currentCollection) info.appendChild(el('p', 'dfx-detail-meta', 'In: ' + (state.currentCollection.name || 'Collection')));
+    header.appendChild(info);
+    detail.appendChild(header);
+    
+    var table = el('div', 'dfx-detail-section');
+    table.appendChild(el('h3', '', 'Inscription Info'));
+    var grid = el('div', 'dfx-detail-table');
+    grid.appendChild(el('span', 'dfx-detail-label', 'ID'));
+    var idVal = el('span', 'dfx-detail-value');
+    var idCode = el('code', '', item.id);
+    idCode.style.fontSize = '10px';
+    idVal.appendChild(idCode);
+    grid.appendChild(idVal);
+    if (item.number != null) { grid.appendChild(el('span', 'dfx-detail-label', 'Number')); grid.appendChild(el('span', 'dfx-detail-value', '#' + item.number)); }
+    if (item.owner) { grid.appendChild(el('span', 'dfx-detail-label', 'Owner')); grid.appendChild(el('span', 'dfx-detail-value', item.owner)); }
+    table.appendChild(grid);
+    detail.appendChild(table);
+    
+    var actions = el('div', 'dfx-detail-section');
+    var viewBtn = el('button', 'dfx-btn primary', 'View Content');
+    viewBtn.addEventListener('click', function() { window.open(contentUrl(item.id), '_blank'); });
+    actions.appendChild(viewBtn);
+    detail.appendChild(actions);
+    
+    $('dfx-detail').classList.remove('hidden');
+  }
+  
+  function showTokenDetail(t) {
+    var detail = $('dfx-detail-content');
+    detail.innerHTML = '';
+    
+    var header = el('div', 'dfx-detail-header');
+    var icon = el('div', 'dfx-detail-icon');
+    icon.innerHTML = '<div class="dfx-token-icon" style="width:64px;height:64px"><span class="ticker">' + esc(t.ticker) + '</span><span class="symbol">DRC-20</span></div>';
+    header.appendChild(icon);
+    
+    var info = el('div', 'dfx-detail-info');
+    info.appendChild(el('h2', 'dfx-detail-title', '$' + (t.ticker || '')));
+    if (t.holder_count) info.appendChild(el('p', 'dfx-detail-meta', t.holder_count + ' holders'));
+    if (t.mint_progress != null) info.appendChild(el('p', 'dfx-detail-meta', t.mint_progress + '% minted'));
+    var badge = el('span', 'dfx-cat-badge tokens', 'DRC-20');
+    info.appendChild(badge);
+    header.appendChild(info);
+    detail.appendChild(header);
+    
+    var table = el('div', 'dfx-detail-section');
+    table.appendChild(el('h3', '', 'Token Info'));
+    var grid = el('div', 'dfx-detail-table');
+    if (t.max_supply) { grid.appendChild(el('span', 'dfx-detail-label', 'Max Supply')); grid.appendChild(el('span', 'dfx-detail-value', t.max_supply.toLocaleString())); }
+    if (t.minted) { grid.appendChild(el('span', 'dfx-detail-label', 'Minted')); grid.appendChild(el('span', 'dfx-detail-value', t.minted.toLocaleString())); }
+    if (t.decimals != null) { grid.appendChild(el('span', 'dfx-detail-label', 'Decimals')); grid.appendChild(el('span', 'dfx-detail-value', t.decimals)); }
+    if (t.mint_limit) { grid.appendChild(el('span', 'dfx-detail-label', 'Mint Limit')); grid.appendChild(el('span', 'dfx-detail-value', t.mint_limit.toLocaleString())); }
+    if (t.deploy_inscription) { grid.appendChild(el('span', 'dfx-detail-label', 'Deploy ID')); var v = el('span', 'dfx-detail-value'); v.style.fontSize = '10px'; v.textContent = t.deploy_inscription; grid.appendChild(v); }
+    table.appendChild(grid);
+    detail.appendChild(table);
+    
+    $('dfx-detail').classList.remove('hidden');
+  }
+  
+  function showNameDetail(n) {
+    var detail = $('dfx-detail-content');
+    detail.innerHTML = '';
+    
+    var header = el('div', 'dfx-detail-header');
+    var icon = el('div', 'dfx-detail-icon');
+    var nameBase = (n.name || '').replace(/\.(doge|dogefeed)$/, '');
+    icon.innerHTML = '<div class="dfx-name-icon" style="width:64px;height:64px"><span class="name-text">' + esc(nameBase) + '</span><span class="name-suffix">' + esc(n.suffix || '.doge') + '</span></div>';
+    header.appendChild(icon);
+    
+    var info = el('div', 'dfx-detail-info');
+    info.appendChild(el('h2', 'dfx-detail-title', n.name || ''));
+    if (n.owner) info.appendChild(el('p', 'dfx-detail-meta', 'Owner: ' + n.owner.slice(0, 12) + '...'));
+    var badge = el('span', 'dfx-cat-badge names', 'Name');
+    info.appendChild(badge);
+    header.appendChild(info);
+    detail.appendChild(header);
+    
+    var table = el('div', 'dfx-detail-section');
+    table.appendChild(el('h3', '', 'Name Info'));
+    var grid = el('div', 'dfx-detail-table');
+    if (n.inscription_id) { grid.appendChild(el('span', 'dfx-detail-label', 'Inscription')); var v = el('span', 'dfx-detail-value'); v.style.fontSize = '10px'; v.textContent = n.inscription_id; grid.appendChild(v); }
+    if (n.inscription_number != null) { grid.appendChild(el('span', 'dfx-detail-label', 'Number')); grid.appendChild(el('span', 'dfx-detail-value', '#' + n.inscription_number)); }
+    if (n.owner) { grid.appendChild(el('span', 'dfx-detail-label', 'Owner')); grid.appendChild(el('span', 'dfx-detail-value', n.owner)); }
+    if (n.registered_at) { grid.appendChild(el('span', 'dfx-detail-label', 'Registered')); grid.appendChild(el('span', 'dfx-detail-value', new Date(n.registered_at).toLocaleDateString())); }
+    table.appendChild(grid);
+    detail.appendChild(table);
+    
+    $('dfx-detail').classList.remove('hidden');
+  }
+  
+  function goBack() {
+    if (state.currentCollection) {
+      state.currentCollection = null;
+      state.items = [];
+      state.selected = null;
+      loadItems(true);
+    } else if (state.currentToken || state.currentName) {
+      state.currentToken = null;
+      state.currentName = null;
+      updatePath();
+    }
+  }
+  
+  // Event handlers
+  $('dfx-back').addEventListener('click', goBack);
+  $('dfx-forward').addEventListener('click', function() {});
+  $('dfx-refresh').addEventListener('click', function() { loadItems(true); });
+  $('dfx-path-root').addEventListener('click', function() {
+    state.currentCollection = null;
+    state.currentToken = null;
+    state.currentName = null;
+    loadItems(true);
+  });
+  $('dfx-path-cat').addEventListener('click', function() {
+    if (state.currentCollection || state.currentToken || state.currentName) {
+      state.currentCollection = null;
+      state.currentToken = null;
+      state.currentName = null;
+      loadItems(true);
+    }
+  });
+  
+  var searchTimeout = null;
+  $('dfx-search').addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(function() {
+      state.search = $('dfx-search').value.trim();
+      loadItems(true);
+    }, 300);
+  });
+  
+  $('dfx-load-btn').addEventListener('click', function() {
+    state.offset += 50;
+    loadItems(false);
+  });
+  
+  $('dfx-info-toggle').addEventListener('click', function() {
+    state.showDetail = !state.showDetail;
+    $('dfx-detail').classList.toggle('hidden', !state.showDetail);
+  });
+  
+  document.querySelectorAll('.dfx-view-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      state.view = btn.dataset.view;
+      document.querySelectorAll('.dfx-view-btn').forEach(function(b) {
+        b.classList.toggle('active', b === btn);
+      });
+    });
+  });
+  
+  document.querySelectorAll('.dfx-sidebar-item').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var newCat = btn.dataset.category;
+      var newFilter = btn.dataset.filter;
+      
+      document.querySelectorAll('.dfx-sidebar-item').forEach(function(b) {
+        b.classList.toggle('active', b === btn);
+      });
+      
+      if (newCat !== state.category || newFilter !== state.filter) {
+        state.category = newCat;
+        state.filter = newFilter;
+        state.currentCollection = null;
+        state.currentToken = null;
+        state.currentName = null;
+        state.selected = null;
+        $('dfx-search').placeholder = 'Search ' + (newCat === 'tokens' ? 'tokens' : newCat === 'names' ? 'names' : 'collections') + '...';
+        loadItems(true);
+      }
+    });
+  });
+  
+  // Register with shell
+  window.DogeFeedX.registerApp({
+    id: 'explorer',
+    name: 'DogeFeed Explorer',
+    icon: '/dogefeedx/icon-explorer.png',
+    url: '/dogefeedx/explorer'
+  });
+  
+  // Initialize
+  loadItems(true);
+})();
+</script>
+{% endblock %}

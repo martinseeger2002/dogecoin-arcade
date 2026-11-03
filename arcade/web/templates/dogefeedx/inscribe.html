@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Inscribe · {{ brand.name }}{% endblock %}
+{% block body %}
+<style>
+:root { --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
+* { box-sizing:border-box; }
+body { margin:0; background:#000; color:var(--df-text); font-family:Nunito,sans-serif; }
+html.indesk body.df-dogefeed, html.indesk body.df-dogefeed h1 { background:#000 !important; color:#fff6dd !important; }
+.wrap { max-width:880px; margin:0 auto; padding:28px 20px; }
+h1 { font-family:Fredoka,sans-serif; font-size:28px; margin:0 0 8px; }
+p.note { color:var(--df-muted); border:0; background:transparent; padding:0; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-top:18px; }
+a.card { display:block; background:#0a0a0a; border:1px solid var(--df-line); border-radius:16px; padding:18px; color:#fff6dd !important; text-decoration:none; }
+a.card:hover { border-color:#f3e3a5; }
+a.card b { display:block; font-family:Fredoka,sans-serif; font-size:18px; margin-bottom:6px; }
+a.card span { color:var(--df-muted); font-size:14px; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+<div class="wrap">
+  <h1>Inscribe</h1>
+  <p class="note">These use the wallet selected on Profile. An inscription-carrying coin is never spent as a fee.</p>
+  <p class="note" id="inscribe-for" data-wallet=""></p>
+  <textarea id="inscribe-note" maxlength="280" placeholder="Note for this wallet" aria-label="Note for this wallet" style="width:100%;min-height:72px;margin-top:12px;border-radius:12px;border:1px solid var(--df-line);background:#111;color:inherit;padding:10px"></textarea>
+  <p class="note" id="inscribe-shown"></p>
+  <div class="grid">
+    <a class="card" href="/create/ord"><b>Collection</b><span>Inscribe a Doginal and group it into a collection you already hold the pieces for.</span></a>
+    <a class="card" href="/tokens"><b>DRC-20</b><span>Create a DRC-20 with this wallet. The token page is the one that spends.</span></a>
+    <a class="card" href="/create/name"><b>Name</b><span>Claim a name such as yours.doge from this wallet.</span></a>
+  </div>
+</div>
+{% include "dogefeedx/_wallet.js.html" %}
+<script>
+(function () {
+  var note = document.getElementById('inscribe-note');
+  var who = document.getElementById('inscribe-for');
+  var shown = '';
+  function apply(addr) {
+    addr = addr || dfxReadWallet();
+    if (shown && shown !== (addr || '')) dfxWriteJson('dogefeedx.inscribe', {note: note.value}, shown);
+    shown = addr || '';
+    who.setAttribute('data-wallet', shown);
+    who.textContent = shown ? ('Wallet ' + shown) : 'Select a wallet on Profile.';
+    note.value = '';
+    var shownNote = document.getElementById('inscribe-shown');
+    if (!shown) {
+      if (shownNote) shownNote.textContent = '';
+      return;
+    }
+    var saved = dfxReadJson('dogefeedx.inscribe', {}, shown);
+    note.value = saved && typeof saved.note === 'string' ? saved.note : '';
+    if (shownNote) shownNote.textContent = note.value || '';
+  }
+  note.addEventListener('input', function () {
+    if (shown) dfxWriteJson('dogefeedx.inscribe', {note: note.value}, shown);
+    var shownNote = document.getElementById('inscribe-shown');
+    if (shownNote) shownNote.textContent = note.value || '';
+  });
+  dfxBindWallet(apply);
+  dfxEnsureWallet().then(function (w) { apply(w.selected); });
+})();
+</script>
+{% endblock %}

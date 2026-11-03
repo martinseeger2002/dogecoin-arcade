@@ -1,0 +1,450 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard · DogeFeed{% endblock %}
+{% block body %}
+{#- DogeFeedX Leaderboard: DogeFeed's leaderboard, over this arcade's posters
+    Simple numbered list layout (no podium), with time tabs. -#}
+<style>
+:root {
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item.active { font-weight: 700; }
+.df-nav-item svg { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; }
+.df-nav-item.active svg { fill: currentColor; }
+.df-nav-badge {
+  background: var(--df-gold);
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+}
+.df-nav-external svg.ext {
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  opacity: 0.5;
+}
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 8px;
+  position: static;
+}
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+.df-signin-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 0;
+  font-size: 12px;
+  color: var(--df-text-secondary);
+}
+.df-signin-footer svg { width: 24px; height: 24px; fill: var(--df-gold); }
+
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-header h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.df-header p {
+  font-size: 13px;
+  color: var(--df-text-secondary);
+}
+
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
+  flex: 1;
+  padding: 16px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.df-tab:hover { background: var(--df-hover); }
+.df-tab.active { font-weight: 700; color: var(--df-text); }
+.df-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 4px;
+  background: var(--df-gold);
+  border-radius: 2px;
+}
+
+.df-leaderboard { min-height: 400px; }
+.df-leaderboard-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--df-border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-leaderboard-item:hover { background: var(--df-hover); }
+.df-leaderboard-rank {
+  width: 24px;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--df-text-secondary);
+  text-align: center;
+}
+.df-leaderboard-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--df-gold-light);
+}
+.df-leaderboard-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-leaderboard-info { flex: 1; min-width: 0; }
+.df-leaderboard-name {
+  font-weight: 700;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.df-leaderboard-name svg { width: 16px; height: 16px; fill: var(--df-gold); }
+.df-leaderboard-handle { font-size: 15px; color: var(--df-text-secondary); }
+.df-leaderboard-amount {
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--df-gold);
+  white-space: nowrap;
+}
+
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-search input::placeholder { color: var(--df-text-secondary); }
+.df-search-kbd {
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--df-border);
+  font-size: 11px;
+  color: var(--df-text-secondary);
+}
+
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-trend {
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-trend:hover { background: rgba(0,0,0,0.03); }
+.df-trend-label { font-size: 13px; color: var(--df-text-secondary); margin-bottom: 2px; }
+.df-trend-tag { font-size: 15px; font-weight: 700; }
+.df-trend-count { font-size: 13px; color: var(--df-text-secondary); }
+.df-card-more { padding: 16px; color: var(--df-gold); font-size: 15px; cursor: pointer; }
+.df-card-more:hover { background: rgba(0,0,0,0.03); }
+
+.df-follow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-follow:hover { background: rgba(0,0,0,0.03); }
+.df-follow-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--df-gold-light);
+}
+.df-follow-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-follow-info { flex: 1; }
+.df-follow-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+  font-size: 15px;
+}
+.df-follow-name svg { width: 16px; height: 16px; fill: var(--df-gold); }
+.df-follow-handle { font-size: 14px; color: var(--df-text-secondary); }
+.df-follow-btn {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-text);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.df-loading { display: flex; justify-content: center; padding: 40px; }
+.df-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; overflow: auto; position: relative; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; height: 100vh; overflow: auto; position: relative; top: auto; }
+.df-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.df-tab { width: auto; background: transparent; color: inherit; border: 1px solid var(--df-border); border-radius: 999px; padding: 6px 12px; box-shadow: none; }
+.df-tab.active { background: var(--df-gold); color: #000; }
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2, html.indesk body.df-dogefeed h3 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background: #0a0a0a !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-tab { background: transparent !important; color: #fff6dd !important; border: 1px solid rgba(255,255,255,.25) !important; width: auto !important; box-shadow: none !important; }
+html.indesk body.df-dogefeed .df-tab.active { background: #f3e3a5 !important; color: #000 !important; }
+html.indesk body.df-dogefeed .df-signin-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; }
+html.indesk body.df-dogefeed .df-search { background: #111 !important; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+
+<div class="df-app">
+  
+
+  <main class="df-main">
+    <div class="df-header">
+      <h1>Leaderboard</h1>
+      <p>Top earners in DOGE: sends, tips, paid actions and market sales</p>
+    </div>
+    
+    <div class="df-tabs">
+      <button class="df-tab" data-period="1d">1D</button>
+      <button class="df-tab active" data-period="7d">7D</button>
+      <button class="df-tab" data-period="30d">30D</button>
+      <button class="df-tab" data-period="all">ALL</button>
+    </div>
+    
+    <div class="df-leaderboard" id="df-leaderboard">
+      <div class="df-loading"><div class="df-spinner"></div></div>
+    </div>
+    <section id="referrers" style="padding:16px">
+      <h2>Top referrers</h2>
+      <p class="df-empty">Coming soon. No referral system exists yet.</p>
+    </section>
+  </main>
+
+  
+</div>
+
+<script>
+(function() {
+  'use strict';
+  
+  var IMG_BASE = '';   // pictures are this arcade's own /content/<id>
+  
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  
+  var boardRange = '7d';
+  try {
+    var asked = new URLSearchParams(location.search).get('range');
+    if (asked === '1d' || asked === '30d' || asked === 'all' || asked === '7d') boardRange = asked;
+  } catch (e) {}
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
+    tab.classList.toggle('active', tab.getAttribute('data-period') === boardRange);
+  });
+
+  function renderLeaderboard(earners) {
+    var html = (earners || []).map(function(e) {
+      var avatar = e.avatar ? (e.avatar.charAt(0) === '/' ? IMG_BASE + e.avatar : e.avatar) : '';
+      return '<a class="df-leaderboard-item" href="/dogefeedx/profile?u=' + encodeURIComponent(e.handle) + '">' +
+        '<div class="df-leaderboard-rank">' + e.rank + '</div>' +
+        '<div class="df-leaderboard-avatar">' + (avatar ? '<img src="' + esc(avatar) + '" alt="">' : '') + '</div>' +
+        '<div class="df-leaderboard-info">' +
+        '<div class="df-leaderboard-name">' + esc(e.name) +
+        (e.verified ? '<svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
+        '</div>' +
+        '<div class="df-leaderboard-handle">@' + esc(e.handle) + '</div>' +
+        '</div>' +
+        '<div class="df-leaderboard-amount">' + esc(e.amount) + '</div>' +
+        '</a>';
+    }).join('');
+    document.getElementById('df-leaderboard').innerHTML = html || '<div class="df-empty">No earners yet</div>';
+  }
+
+  function loadBoard() {
+    fetch('/dogefeedx/api/leaderboard?range=' + encodeURIComponent(boardRange))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.error && !(data.earners && data.earners.length)) {
+          document.getElementById('df-leaderboard').innerHTML = '<div class="df-empty">Could not load leaderboard</div>';
+          return;
+        }
+        renderLeaderboard(data.earners || []);
+      })
+      .catch(function() {
+        document.getElementById('df-leaderboard').innerHTML = '<div class="df-empty">Could not load leaderboard</div>';
+      });
+  }
+
+  function loadSuggestions() {
+    fetch('/dogefeedx/api/sidebar')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        (document.getElementById('side-trending')||{}).innerHTML = (data.trending || []).map(function(t) {
+          return '<div class="df-trend"><div class="df-trend-label">' + t.rank + ' · Trending on DogeFeed</div>' +
+            '<div class="df-trend-tag">#' + esc(t.tag) + '</div><div class="df-trend-count">' + esc(t.count) + '</div></div>';
+        }).join('') || '<div class="df-empty">No trends</div>';
+        (document.getElementById('df-suggestions')||{}).innerHTML = (data.suggestions || []).slice(0, 3).map(function(u) {
+          var avatar = u.avatar ? (u.avatar.charAt(0) === '/' ? IMG_BASE + u.avatar : u.avatar) : '';
+          return '<a class="df-follow" href="/dogefeedx/profile?u=' + encodeURIComponent(u.handle) + '">' +
+            '<div class="df-follow-avatar">' + (avatar ? '<img src="' + esc(avatar) + '" alt="">' : '') + '</div>' +
+            '<div class="df-follow-info"><div class="df-follow-name">' + esc(u.name || u.handle) + '</div>' +
+            '<div class="df-follow-handle">@' + esc(u.handle) + '</div></div></a>';
+        }).join('') || '<div class="df-empty">No suggestions</div>';
+      })
+      .catch(function() {
+        (document.getElementById('df-suggestions')||{}).innerHTML = '<div class="df-empty">Could not load</div>';
+      });
+  }
+
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      boardRange = tab.getAttribute('data-period') || '7d';
+      loadBoard();
+    });
+  });
+
+  document.querySelectorAll('.df-search input').forEach(function(inp) {
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && inp.value.trim()) location.href = '/dogefeedx/search?q=' + encodeURIComponent(inp.value.trim());
+    });
+  });
+
+  loadBoard();
+  loadSuggestions();
+})();
+</script>
+{% endblock %}

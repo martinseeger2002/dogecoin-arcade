@@ -1,0 +1,599 @@
+{% extends "base.html" %}
+{% block title %}Explore · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- DogeFeedX Explore: DogeFeed's Explore page
+    Light theme with white background, matching exact layout and styling.
+    Shows trending hashtags, who to follow, NFT collections, top earners. -#}
+<style>
+:root {
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+/* Left Sidebar */
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item.active { font-weight: 700; }
+.df-nav-item svg { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; }
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+}
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+
+/* Main Content */
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-topbar {
+  position: sticky;
+  top: 0;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-topbar h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Tabs */
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
+  flex: 1;
+  padding: 16px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.df-tab:hover { background: var(--df-hover); }
+.df-tab.active { font-weight: 700; color: var(--df-text); }
+.df-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  background: var(--df-gold);
+  border-radius: 2px;
+}
+
+/* Section */
+.df-section {
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-chip { display:inline-block; margin:4px 6px 0 0; padding:6px 12px; border-radius:999px; background:rgba(255,255,255,.06); color:#fff6dd; text-decoration:none; font-size:14px; }
+.df-chip span { color:rgba(255,255,255,.45); }
+#trending-list { padding:0 16px 8px; }
+.df-section-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+.df-section-more {
+  display: block;
+  padding: 12px;
+  text-align: center;
+  color: var(--df-gold);
+  font-size: 14px;
+}
+.df-section-more:hover { background: var(--df-hover); }
+
+/* Trending */
+.df-trend {
+  padding: 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-trend:hover { background: var(--df-hover); }
+.df-trend-label { font-size: 13px; color: var(--df-text-secondary); }
+.df-trend-tag { font-size: 15px; font-weight: 700; margin: 2px 0; }
+.df-trend-count { font-size: 13px; color: var(--df-text-secondary); }
+
+/* People */
+.df-person {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-person:hover { background: var(--df-hover); }
+.df-person-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.df-person-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-person-avatar.verified {
+  border: 2px solid var(--df-gold);
+}
+.df-person-info { flex: 1; min-width: 0; }
+.df-person-name {
+  font-weight: 700;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.df-person-name svg { width: 16px; height: 16px; fill: var(--df-gold); }
+.df-person-handle { font-size: 14px; color: var(--df-text-secondary); }
+.df-person-bio {
+  font-size: 14px;
+  color: var(--df-text);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.df-follow-btn {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-text);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.df-follow-btn:hover { background: #272c30; }
+
+/* Collections Grid */
+.df-collections-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+.df-collection-card {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--df-border);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.df-collection-card:hover {
+  border-color: var(--df-gold);
+  transform: translateY(-2px);
+}
+.df-collection-img {
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--df-hover);
+}
+.df-collection-img img { width: 100%; height: 100%; object-fit: cover; }
+.df-collection-info { padding: 12px; }
+.df-collection-name {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.df-collection-meta {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+}
+
+/* Top Earners */
+.df-earner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-earner:hover { background: var(--df-hover); }
+.df-earner-rank {
+  width: 24px;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--df-text-secondary);
+}
+.df-earner-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.df-earner-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-earner-info { flex: 1; }
+.df-earner-name {
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.df-earner-name svg { width: 14px; height: 14px; fill: var(--df-gold); }
+.df-earner-amount {
+  font-weight: 700;
+  color: var(--df-gold);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Right Sidebar */
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-card-more {
+  padding: 16px;
+  color: var(--df-gold);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+/* Loading */
+.df-loading { display: flex; justify-content: center; padding: 40px; }
+.df-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; min-width: 220px; overflow: auto; position: relative; height: 100vh; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; min-width: 220px; height: 100vh; overflow: auto; position: relative; top: auto; }
+html.indesk body.df-dogefeed { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-topbar { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background:#0a0a0a !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-section, html.indesk body.df-dogefeed .df-trend, html.indesk body.df-dogefeed .df-person, html.indesk body.df-dogefeed .df-earner { color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-tab { background:transparent !important; color:#fff6dd !important; border:1px solid rgba(255,255,255,.25) !important; width:auto !important; box-shadow:none !important; }
+html.indesk body.df-dogefeed .df-tab.active { background:#f3e3a5 !important; color:#000 !important; }
+html.indesk body.df-dogefeed a.df-signin-btn { background:#f3e3a5 !important; color:#000 !important; margin-top:8px !important; position:static !important; }
+html.indesk body.df-dogefeed .df-search { background:#111 !important; }
+html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; background:transparent !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-person-handle, html.indesk body.df-dogefeed .df-trend-count, html.indesk body.df-dogefeed .df-collection-meta { color:rgba(255,255,255,.55) !important; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+
+<div class="df-app">
+  <!-- Left Sidebar -->
+  
+
+  <!-- Main Content -->
+  <main class="df-main">
+    <div class="df-topbar">
+      <h1>Explore</h1>
+      <div class="df-search">
+        <input type="text" placeholder="Search DogeFeed" aria-label="Search DogeFeed">
+        <select id="explore-kind" aria-label="What to search">
+          <option value="users">Users</option>
+          <option value="collections">Collections</option>
+          <option value="inscription">Inscription id</option>
+          <option value="item">Collection item</option>
+          <option value="drc20">DRC-20</option>
+          <option value="names">Names</option>
+        </select>
+      </div>
+    </div>
+    
+    
+    <div id="explore-content">
+      <!-- Trending -->
+      <section class="df-section">
+        <h2 class="df-section-title">Trending hashtags</h2>
+        <div id="trending-list">
+          <div class="df-loading"><div class="df-spinner"></div></div>
+        </div>
+      </section>
+      
+      <!-- Who to Follow -->
+      <section class="df-section">
+        <h2 class="df-section-title">People to follow</h2>
+        <div id="people-list">
+          <div class="df-loading"><div class="df-spinner"></div></div>
+        </div>
+        <a href="/dogefeedx/search?kind=users" class="df-section-more">Show more</a>
+      </section>
+      
+      <!-- NFT Collections -->
+      <section class="df-section">
+        <h2 class="df-section-title">NFT collections</h2>
+        <div id="collections-list" class="df-collections-grid">
+          <div class="df-loading"><div class="df-spinner"></div></div>
+        </div>
+        <a href="/dogefeedx/market" class="df-section-more">Market</a>
+      </section>
+      
+      <!-- Top Earners -->
+      <section class="df-section">
+        <h2 class="df-section-title">Top earners today</h2>
+        <div id="earners-list">
+          <div class="df-loading"><div class="df-spinner"></div></div>
+        </div>
+        <a href="/dogefeedx/leaderboard?range=1d" class="df-section-more">Leaderboard</a>
+      </section>
+
+      <section class="df-section">
+        <h2 class="df-section-title">Top posts this week</h2>
+        <div id="top-posts">
+          <div class="df-loading"><div class="df-spinner"></div></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Right Sidebar -->
+  
+</div>
+
+<script>
+(function() {
+  'use strict';
+  
+  var IMG_BASE = '';   // pictures are this arcade's own /content/<id>
+  
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  
+  function absUrl(url) {
+    if (!url) return '';
+    return url.charAt(0) === '/' ? IMG_BASE + url : url;
+  }
+
+  function paintSidebar(data) {
+    var trends = (data.trending || []).map(function(t) {
+      return '<div class="df-trend"><div class="df-trend-label">' + t.rank + ' · Trending on DogeFeed</div>' +
+        '<div class="df-trend-tag">#' + esc(t.tag) + '</div><div class="df-trend-count">' + esc(t.count) + '</div></div>';
+    }).join('');
+    var chips = (data.trending || []).map(function(t) {
+      return '<a class="df-chip" href="/dogefeedx/search?q=' + encodeURIComponent(t.tag) + '&kind=posts">#' + esc(t.tag) + ' <span>' + esc((t.count || '').replace(' posts', '').replace(' post', '')) + '</span></a>';
+    }).join('');
+    var main = document.getElementById('trending-list');
+    if (main) main.innerHTML = chips || '<div class="df-empty">No trends</div>';
+    var side = document.getElementById('side-trending');
+    if (side) side.innerHTML = trends || '<div class="df-empty">No trends</div>';
+
+    var people = (data.suggestions || []).map(function(u) {
+      var avatar = absUrl(u.avatar);
+      return '<a class="df-person" href="/dogefeedx/profile?u=' + encodeURIComponent(u.handle) + '">' +
+        '<div class="df-person-avatar' + (u.verified ? ' verified' : '') + '"><img src="' + esc(avatar) + '" alt=""></div>' +
+        '<div class="df-person-info"><div class="df-person-name">' + esc(u.name || u.handle) + '</div>' +
+        '<div class="df-person-handle">@' + esc(u.handle) + '</div></div></a>';
+    }).join('');
+    var peopleEl = document.getElementById('people-list');
+    if (peopleEl) peopleEl.innerHTML = people || '<div class="df-empty">No users found</div>';
+    var sidePeople = document.getElementById('sidebar-suggestions');
+    if (sidePeople) {
+      sidePeople.innerHTML = (data.suggestions || []).slice(0, 3).map(function(u) {
+        var avatar = absUrl(u.avatar);
+        return '<a href="/dogefeedx/profile?u=' + encodeURIComponent(u.handle) + '" style="display:flex;align-items:center;gap:12px;padding:12px 16px;text-decoration:none;color:inherit">' +
+          '<div style="width:40px;height:40px;border-radius:50%;overflow:hidden">' +
+          (avatar ? '<img src="' + esc(avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover">' : '') +
+          '</div><div><div style="font-weight:700">' + esc(u.name || u.handle) + '</div>' +
+          '<div style="color:var(--df-text-secondary)">@' + esc(u.handle) + '</div></div></a>';
+      }).join('') || '<div class="df-empty">No suggestions</div>';
+    }
+
+  }
+
+  function paintEarners(earners) {
+    var html = (earners || []).map(function(e) {
+      var avatar = absUrl(e.avatar);
+      return '<a class="df-earner" href="/dogefeedx/profile?u=' + encodeURIComponent(e.handle) + '">' +
+        '<div class="df-earner-rank">' + e.rank + '</div>' +
+        '<div class="df-earner-avatar">' + (avatar ? '<img src="' + esc(avatar) + '" alt="">' : '') + '</div>' +
+        '<div class="df-earner-info"><div class="df-earner-name">' + esc(e.name) + '</div></div>' +
+        '<div class="df-earner-amount">' + esc(e.amount) + '</div></a>';
+    }).join('');
+    var earnersEl = document.getElementById('earners-list');
+    if (earnersEl) earnersEl.innerHTML = html || '<div class="df-empty">No earners</div>';
+  }
+
+  function loadSidebar() {
+    fetch('/dogefeedx/api/sidebar')
+      .then(function(r) { return r.json(); })
+      .then(paintSidebar)
+      .catch(function() {
+        ['trending-list', 'people-list', 'side-trending', 'sidebar-suggestions'].forEach(function(id) {
+          var el = document.getElementById(id);
+          if (el) el.innerHTML = '<div class="df-empty">Could not load</div>';
+        });
+      });
+  }
+
+  function loadCollections() {
+    var container = document.getElementById('collections-list');
+    fetch('/dogefeedx/api/market/doginals')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var collections = (data.collections || []).filter(function(c) { return c.chain !== 'evm' && !c.sns; }).slice(0, 8);
+        var html = collections.map(function(c) {
+          var img = absUrl(c.image);
+          return '<a class="df-collection-card" href="/dogefeedx/market">' +
+            '<div class="df-collection-img">' + (img ? '<img src="' + esc(img) + '" alt="" loading="lazy">' : '') + '</div>' +
+            '<div class="df-collection-info"><div class="df-collection-name">' + esc(c.name) + '</div>' +
+            '<div class="df-collection-meta">' + (c.listed || 0) + ' listed · floor ' + esc(c.floor || '—') + '</div></div></a>';
+        }).join('');
+        container.innerHTML = html || '<div class="df-empty">No collections</div>';
+      })
+      .catch(function() {
+        container.innerHTML = '<div class="df-empty">Could not load collections</div>';
+      });
+  }
+  
+  // Register with shell
+  if (window.DogeFeedX && window.DogeFeedX.registerApp) {
+    window.DogeFeedX.registerApp({
+      id: 'explore',
+      name: 'Explore',
+      icon: '/dogefeedx/icon-explorer.png',
+      url: '/dogefeedx/explore'
+    });
+  }
+  
+  // Initial load
+  function loadEarners() {
+    fetch('/dogefeedx/api/leaderboard?range=1d')
+      .then(function(r) { return r.json(); })
+      .then(function(data) { paintEarners(data.earners || []); })
+      .catch(function() {
+        var el = document.getElementById('earners-list');
+        if (el) el.innerHTML = '<div class="df-empty">Could not load</div>';
+      });
+  }
+
+  function loadTopPosts() {
+    var box = document.getElementById('top-posts');
+    fetch('/dogefeedx/api/feed?tab=top&limit=5')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var posts = data.items || [];
+        box.innerHTML = posts.map(function(post) {
+          var author = post.author || {};
+          var avatar = absUrl(author.avatarUrl);
+          var text = String(post.body || '').slice(0, 140);
+          return '<a class="df-person" href="/dogefeedx/post?id=' + encodeURIComponent(post.id || '') + '">' +
+            '<div class="df-person-avatar">' + (avatar ? '<img src="' + esc(avatar) + '" alt="">' : '') + '</div>' +
+            '<div class="df-person-info"><div class="df-person-name">' + esc(author.displayName || author.handle || '') + '</div>' +
+            '<div class="df-person-handle">' + esc(text) + '</div></div></a>';
+        }).join('') || '<div class="df-empty">No posts</div>';
+      })
+      .catch(function() { box.innerHTML = '<div class="df-empty">Could not load</div>'; });
+  }
+
+  loadSidebar();
+  loadCollections();
+  loadEarners();
+  loadTopPosts();
+  document.querySelectorAll('.df-search input').forEach(function(inp) {
+    inp.addEventListener('keydown', function(e) {
+      if (e.key !== 'Enter' || !inp.value.trim()) return;
+      var kind = (document.getElementById('explore-kind') || {}).value || 'users';
+      location.href = '/dogefeedx/search?q=' + encodeURIComponent(inp.value.trim()) + '&kind=' + encodeURIComponent(kind);
+    });
+  });
+})();
+</script>
+{% endblock %}

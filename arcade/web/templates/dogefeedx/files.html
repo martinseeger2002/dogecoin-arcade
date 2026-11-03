@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}Files · {{ brand.name }}{% endblock %}
+{% block body %}
+<style>
+:root { --df-gold:#f3e3a5; --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
+* { box-sizing: border-box; }
+body { margin:0; background:#000; color:var(--df-text); font-family:Nunito,sans-serif; }
+html.indesk body.df-dogefeed { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color:#fff6dd !important; }
+html.indesk body.df-dogefeed button { color:inherit; }
+.finder { display:flex; height:100vh; }
+.side { width:240px; flex:none; display:block; border-right:1px solid var(--df-line); padding:14px 10px; overflow:auto; }
+.side h1 { font-family:Fredoka,sans-serif; font-size:20px; margin:4px 8px 12px; }
+.sec { margin:14px 8px 6px; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--df-muted); }
+.side button { display:flex; width:100%; height:auto; flex:none; align-items:center; justify-content:space-between; gap:8px; text-align:left; background:transparent; color:inherit; border:0; border-radius:8px; padding:8px 10px; cursor:pointer; font:inherit; box-shadow:none; }
+html.indesk body.df-dogefeed .side button { width:100% !important; height:auto !important; background:transparent !important; color:#fff6dd !important; text-align:left !important; box-shadow:none !important; }
+html.indesk body.df-dogefeed .side button.on { background:#f3e3a5 !important; color:#000 !important; }
+.side button.on { background:#f3e3a5; color:#000; }
+.side button .count { color:var(--df-muted); font-size:12px; }
+.side button.on .count { color:#000; }
+.side .empty { margin:0 8px 8px; font-size:13px; }
+.main { flex:1; min-width:0; overflow:auto; padding:16px 18px; }
+.main h2 { font-family:Fredoka,sans-serif; font-size:18px; margin:0 0 12px; }
+.tools { display:flex; gap:8px; margin:0 0 14px; }
+.tools input { flex:1; min-width:0; background:#111; color:inherit; border:1px solid var(--df-line); border-radius:10px; padding:8px 12px; }
+html.indesk body.df-dogefeed .tools input { width:auto !important; background:#111 !important; color:#fff6dd !important; }
+.empty { color:var(--df-muted); }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; }
+.item, .folder { background:#0a0a0a; border:1px solid var(--df-line); border-radius:12px; padding:8px; color:inherit; text-align:left; cursor:pointer; }
+.folder { display:block; width:100%; height:auto; }
+html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !important; background:#0a0a0a !important; color:#fff6dd !important; box-shadow:none !important; }
+.mosaic { display:grid; grid-template-columns:1fr 1fr; gap:2px; height:96px; border-radius:8px; overflow:hidden; background:#111; }
+.mosaic span { background:#161616; display:flex; align-items:center; justify-content:center; overflow:hidden; font-size:11px; color:var(--df-muted); }
+.mosaic img, .item img { width:100%; height:100%; object-fit:cover; }
+.item img { height:96px; border-radius:8px; background:#111; display:block; }
+.item b, .folder b { display:block; margin-top:6px; font-size:13px; }
+.folder small, .item small { color:var(--df-muted); font-size:12px; }
+.row { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--df-line); }
+.more { margin-top:14px; background:#f3e3a5; color:#000; border:0; border-radius:999px; padding:8px 14px; font-weight:700; cursor:pointer; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+<div class="finder">
+  <nav class="side">
+    <h1>Files</h1>
+    <p class="sec">Collections</p>
+    <div id="coll-list"><p class="empty">Reading this arcade wallet…</p></div>
+    <p class="sec">Tokens</p>
+    <button type="button" data-kind="drc20">DRC-20</button>
+    <button type="button" data-kind="names">Names</button>
+  </nav>
+  <div class="main">
+    <h2 id="files-title">Collections</h2>
+    <p class="empty" id="files-reading"></p>
+    <div class="tools"><input id="files-q" type="search" placeholder="Search this wallet" aria-label="Search this wallet"></div>
+    <div id="files-body"><p class="empty">Looking up this arcade wallet…</p></div>
+  </div>
+</div>
+{% include "dogefeedx/_wallet.js.html" %}
+<script>
+(function () {
+  var body = document.getElementById('files-body');
+  var title = document.getElementById('files-title');
+  var list = document.getElementById('coll-list');
+  var qbox = document.getElementById('files-q');
+  var signed = false;
+  var hold = {groups: [], tokens: [], names: [], trouble: ''};
+  var open = {kind: 'all'};
+  var piecePage = [];
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function readingLine(data) {
+    var r = (data && data.reading) || {};
+    var via = r.via === 'peer' ? 'a peer on the arcade network' : "this arcade's node";
+    var sync = r.sync || '';
+    return 'Read from ' + via + (sync ? '. Local sync: ' + sync : '.');
+  }
+  function units(raw, dec) {
+    var digits = String(raw || '0').replace(/^-/, '').replace(/^0+(?=\d)/, '');
+    var n = Number(dec) || 0;
+    if (!n) return digits || '0';
+    var pad = digits.padStart(n + 1, '0');
+    return pad.slice(0, -n).replace(/^0+(?=\d)/, '') + (pad.slice(-n).replace(/0+$/, '') ? '.' + pad.slice(-n).replace(/0+$/, '') : '');
+  }
+  function thumb(piece) {
+    if (piece && piece.image) return '<img src="' + esc(piece.image) + '" alt="" referrerpolicy="no-referrer">';
+    if (String(piece.content_type || '').indexOf('image/') === 0 && piece.txid) {
+      return '<img src="/content/' + esc(piece.txid) + '" alt="">';
+    }
+    return '<span>' + esc(String(piece.content_type || 'file').split('/').pop().slice(0, 8)) + '</span>';
+  }
+  function collName(c) { return c.collection ? c.collection : 'Not in a collection'; }
+  function bindSide() {
+    list.querySelectorAll('button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        open = {kind: 'collection', net: b.getAttribute('data-net'), collection: b.getAttribute('data-collection') || ''};
+        piecePage = [];
+        paint();
+      });
+    });
+  }
+  function paintSide() {
+    if (!signed) {
+      list.innerHTML = '<p class="empty">{{ 'Sign in' if public else 'Import a watch-only address on this node' }}.</p>';
+      return;
+    }
+    var html = '';
+    hold.groups.forEach(function (g) {
+      (g.collections || []).forEach(function (c) {
+        var on = open.kind === 'collection' && open.net === g.net && open.collection === (c.collection || '');
+        html += '<button type="button" data-net="' + esc(g.net) + '" data-collection="' + esc(c.collection || '') + '"'
+          + (on ? ' class="on"' : '') + '><span>' + esc(collName(c)) + '</span><span class="count">' + esc(c.count) + '</span></button>';
+      });
+    });
+    list.innerHTML = html || '<p class="empty">No collections in this wallet.</p>';
+    bindSide();
+    document.querySelectorAll('.side button[data-kind]').forEach(function (b) {
+      b.classList.toggle('on', open.kind === b.getAttribute('data-kind'));
+    });
+  }
+  function folders() {
+    var q = qbox.value.trim().toLowerCase();
+    var cards = [];
+    hold.groups.forEach(function (g) {
+      (g.collections || []).forEach(function (c) {
+        var name = collName(c);
+        if (q && name.toLowerCase().indexOf(q) < 0 && String(g.label || g.net).toLowerCase().indexOf(q) < 0) return;
+        var cover = (c.cover || []).slice(0, 4);
+        while (cover.length < 4) cover.push(null);
+        cards.push('<button type="button" class="folder" data-net="' + esc(g.net) + '" data-collection="' + esc(c.collection || '') + '">'
+          + '<span class="mosaic">' + cover.map(function (p) { return '<span>' + (p ? thumb(p) : '') + '</span>'; }).join('') + '</span>'
+          + '<b>' + esc(name) + '</b><small>' + esc(c.count) + ' · ' + esc(g.label || g.net) + '</small></button>');
+      });
+    });
+    if (!cards.length) {
+      body.innerHTML = '<p class="empty">' + (q ? 'No collection by that name.' : 'No collections in this wallet.') + '</p>';
+      return;
+    }
+    body.innerHTML = '<div class="grid">' + cards.join('') + '</div>';
+    body.querySelectorAll('.folder').forEach(function (b) {
+      b.addEventListener('click', function () {
+        open = {kind: 'collection', net: b.getAttribute('data-net'), collection: b.getAttribute('data-collection') || ''};
+        piecePage = [];
+        paint();
+      });
+    });
+  }
+  function findColl() {
+    var found = null;
+    hold.groups.forEach(function (g) {
+      if (g.net !== open.net) return;
+      (g.collections || []).forEach(function (c) {
+        if ((c.collection || '') === open.collection) found = {group: g, coll: c};
+      });
+    });
+    return found;
+  }
+  function paintPieces() {
+    var found = findColl();
+    var name = found ? collName(found.coll) : (open.collection || 'Not in a collection');
+    title.textContent = name;
+    if (!piecePage.length) {
+      body.innerHTML = '<p class="empty">Nothing in this collection.</p>';
+      return;
+    }
+    var q = qbox.value.trim().toLowerCase();
+    var rows = piecePage.filter(function (p) {
+      if (!q) return true;
+      return String(p.name || '').toLowerCase().indexOf(q) >= 0 || String(p.number || '').indexOf(q) >= 0
+        || String(p.edition || '').indexOf(q) >= 0;
+    });
+    var more = found && piecePage.length < Number(found.coll.count || 0);
+    body.innerHTML = (rows.length ? '<div class="grid">' + rows.map(function (p) {
+      var label = p.name || (p.edition != null ? '#' + p.edition : '#' + (p.number || ''));
+      return '<a class="item" href="/content/' + esc(p.txid) + '">' + thumb(p) + '<b>' + esc(label) + '</b><small>' + esc(p.content_type || '') + '</small></a>';
+    }).join('') + '</div>' : '<p class="empty">Nothing matches.</p>')
+      + (more ? '<button type="button" class="more" id="files-more">More</button>' : '');
+    var btn = document.getElementById('files-more');
+    if (btn) btn.addEventListener('click', function () { loadPieces(); });
+  }
+  function loadPieces() {
+    var found = findColl();
+    title.textContent = found ? collName(found.coll) : 'Collection';
+    piecePage = found && found.coll.pieces ? found.coll.pieces : [];
+    paintPieces();
+  }
+  function paintTokens() {
+    title.textContent = 'DRC-20';
+    if (hold.trouble) { body.innerHTML = '<p class="empty">' + esc(hold.trouble) + '</p>'; return; }
+    var q = qbox.value.trim().toLowerCase();
+    var rows = hold.tokens.filter(function (t) { return !q || String(t.tick || '').toLowerCase().indexOf(q) >= 0; });
+    if (!rows.length) { body.innerHTML = '<p class="empty">' + (q ? 'No token by that tick.' : 'No DRC-20 in this wallet.') + '</p>'; return; }
+    body.innerHTML = rows.map(function (t) {
+      var shown = t.display || t.balance || units(t.units, t.decimals);
+      return '<div class="row"><b>' + esc(t.tick) + '</b><span>' + esc(shown) + (t.chain ? ' · ' + esc(t.chain) : '') + '</span></div>';
+    }).join('');
+  }
+  function paintNames() {
+    title.textContent = 'Names';
+    var q = qbox.value.trim().toLowerCase();
+    var rows = hold.names.filter(function (n) { return !q || String(n.name || '').toLowerCase().indexOf(q) >= 0; });
+    if (!rows.length) { body.innerHTML = '<p class="empty">' + (q ? 'No name matches.' : 'No names in this wallet.') + '</p>'; return; }
+    body.innerHTML = rows.map(function (n) {
+      return '<div class="row"><b>' + esc(n.name) + '</b><span>' + esc(n.chain || '') + '</span></div>';
+    }).join('');
+  }
+  function paint() {
+    paintSide();
+    if (!signed) {
+      title.textContent = 'Collections';
+      body.innerHTML = '<p class="empty">{{ 'Sign in' if public else 'Import a watch-only address on this node' }}. This reads that Dogecoin wallet and does not ask for a key.</p>';
+      return;
+    }
+    if (open.kind === 'drc20') { paintTokens(); return; }
+    if (open.kind === 'names') { paintNames(); return; }
+    if (open.kind === 'collection') {
+      if (!piecePage.length) loadPieces();
+      else paintPieces();
+      return;
+    }
+    title.textContent = 'Collections';
+    folders();
+  }
+  document.querySelectorAll('.side button[data-kind]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      open = {kind: b.getAttribute('data-kind')};
+      piecePage = [];
+      paint();
+    });
+  });
+  qbox.addEventListener('input', function () {
+    if (open.kind === 'collection') paintPieces();
+    else paint();
+  });
+  var filesSeq = 0;
+  function loadFiles() {
+    var mine = ++filesSeq;
+    var addr = dfxReadWallet();
+    signed = false;
+    hold = {groups: [], tokens: [], names: [], trouble: ''};
+    piecePage = [];
+    open = {kind: 'all'};
+    body.innerHTML = '';
+    list.innerHTML = '';
+    title.textContent = '';
+    body.setAttribute('data-wallet', addr);
+    var reading = document.getElementById('files-reading');
+    if (reading) reading.textContent = '';
+    fetch(dfxHoldingsUrl(), {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (data) {
+        if (mine !== filesSeq || dfxReadWallet() !== addr) return;
+        if (reading) reading.textContent = readingLine(data);
+        signed = !!(data && data.imported);
+        if (!signed) { paint(); return; }
+        hold.groups = [{
+          net: 'doge',
+          label: (data.addresses && data.addresses[0]) || 'Dogecoin',
+          collections: (data.collections || []).map(function (c) {
+            var pieces = (c.pieces || []).map(function (p) {
+              return {content_type: 'image/png', image: p.image, name: p.title, edition: p.edition, txid: ''};
+            });
+            return {collection: c.name || c.slug, count: c.count, cover: pieces.slice(0, 4), pieces: pieces};
+          })
+        }];
+        hold.tokens = data.tokens || [];
+        hold.names = (data.names || []).map(function (n) { return {name: n.name, chain: 'Dogecoin'}; });
+        paint();
+      })
+      .catch(function () {
+        if (mine !== filesSeq || dfxReadWallet() !== addr) return;
+        signed = false;
+        body.innerHTML = '<p class="empty">Could not read this wallet.</p>';
+      });
+  }
+  dfxEnsureWallet().then(loadFiles);
+  dfxBindWallet(function () { loadFiles(); });
+})();
+</script>
+{% endblock %}

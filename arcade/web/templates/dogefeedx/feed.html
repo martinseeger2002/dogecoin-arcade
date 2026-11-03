@@ -1,0 +1,1267 @@
+{% extends "base.html" %}
+{% block title %}DogeFeed · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- DogeFeedX Feed: DogeFeed's home timeline
+    Light theme with white background, matching exact layout and styling.
+    Data: this arcade's own feed (/dogefeedx/api/feed). -#}
+<style>
+:root {
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-link: #1d9bf0;
+  --df-hero-bg: linear-gradient(135deg, #fff8e7 0%, #fff5db 100%);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+/* Three-column layout */
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+/* Left Sidebar */
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg {
+  width: 32px;
+  height: 32px;
+}
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+  border: none;
+  background: none;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+}
+.df-nav-item:hover {
+  background: var(--df-hover);
+}
+.df-nav-item.active {
+  font-weight: 700;
+}
+.df-nav-item svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+.df-nav-item.active svg {
+  fill: currentColor;
+}
+.df-nav-badge {
+  background: var(--df-gold);
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+}
+.df-nav-external svg.ext {
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  opacity: 0.5;
+}
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+  transition: background 0.15s;
+}
+.df-signin-btn:hover {
+  background: var(--df-gold-dark);
+}
+
+/* Main Content */
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--df-border);
+  font-size: 13px;
+  color: var(--df-text-secondary);
+}
+.df-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.df-topbar-left svg {
+  width: 16px;
+  height: 16px;
+  fill: var(--df-gold);
+}
+.df-topbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.df-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.df-theme-toggle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--df-border);
+  background: var(--df-bg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Hero Banner */
+.df-hero {
+  background: var(--df-hero-bg);
+  padding: 20px;
+  margin: 16px;
+  border-radius: 16px;
+}
+.df-hero h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--df-text);
+}
+.df-hero p {
+  font-size: 14px;
+  color: var(--df-text-secondary);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.df-hero-btns {
+  display: flex;
+  gap: 12px;
+}
+.df-hero-btn {
+  padding: 10px 20px;
+  border-radius: 9999px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.df-hero-btn.primary {
+  background: var(--df-gold);
+  border: none;
+  color: #000;
+}
+.df-hero-btn.primary:hover {
+  background: var(--df-gold-dark);
+}
+.df-hero-btn.secondary {
+  background: transparent;
+  border: 1px solid var(--df-border);
+  color: var(--df-text);
+}
+.df-hero-btn.secondary:hover {
+  background: var(--df-hover);
+}
+
+/* Tabs */
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
+  flex: 1;
+  padding: 16px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.15s;
+}
+.df-tab:hover {
+  background: var(--df-hover);
+}
+.df-tab.active {
+  font-weight: 700;
+  color: var(--df-text);
+}
+.df-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  background: var(--df-gold);
+  border-radius: 2px;
+}
+
+/* Composer: DogeFeed's bark box. Post puts it on the chain through this arcade (window.dfxPublish). */
+.df-composer {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-composer-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #f3e3a5;
+  color: #1b1b1b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  flex: none;
+}
+.df-composer-body { flex: 1; min-width: 0; }
+.df-composer-id { font-size: 13px; color: var(--df-text-secondary); margin-bottom: 4px; word-break: break-all; }
+.df-composer textarea {
+  width: 100%;
+  min-height: 72px;
+  resize: vertical;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 18px;
+  outline: none;
+}
+.df-composer-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-top: 4px; }
+.df-tool {
+  width: 36px; height: 36px; padding: 0; border: 0; border-radius: 999px;
+  background: transparent; color: #f3e3a5; cursor: pointer; box-shadow: none;
+}
+.df-tool svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; }
+.df-tool.on { background: rgba(243,227,165,.15); }
+.df-x { display: flex; align-items: center; gap: 6px; margin-left: 6px; font-size: 12px; color: rgba(255,255,255,.45); }
+.df-x input { width: auto; }
+.df-count { margin-left: auto; font-size: 12px; color: #f3e3a5; font-variant-numeric: tabular-nums; }
+.df-post-btn {
+  margin-left: 8px; width: auto; border: 0; border-radius: 999px; padding: 6px 16px;
+  background: #f3e3a5; color: #000; font-weight: 700; cursor: pointer;
+}
+.df-post-btn:disabled { opacity: .4; cursor: default; }
+.df-composer-note { margin: 6px 0 0; font-size: 12px; color: rgba(255,255,255,.45); }
+.df-panel { margin-top: 8px; padding: 10px; border: 1px solid var(--df-border); border-radius: 16px; background: #0a0a0a; }
+.df-panel[hidden] { display: none !important; }
+.df-emoji { display: flex; flex-wrap: wrap; gap: 4px; }
+.df-emoji button, .df-lock-modes button, .df-slash button, .df-memes button {
+  width: auto; background: transparent; color: inherit; border: 0; border-radius: 999px; cursor: pointer; box-shadow: none;
+}
+.df-emoji button { font-size: 20px; padding: 4px 6px; }
+.df-lock-modes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.df-lock-modes button { border: 1px solid rgba(255,255,255,.2); padding: 4px 10px; font-weight: 700; }
+.df-lock-modes button.on { background: #f3e3a5; color: #000; }
+.df-paywall input[type=number] { width: 7rem; padding: 6px 8px; border-radius: 8px; border: 0; background: rgba(255,255,255,.1); color: inherit; font-weight: 700; }
+.df-slash button, .df-memes button { display: flex; width: 100%; text-align: left; padding: 8px; gap: 8px; }
+.df-slash b, .df-memes b { color: #f3e3a5; }
+.df-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.df-thumbs figure { position: relative; margin: 0; }
+.df-thumbs img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; }
+.df-thumbs button { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border: 0; border-radius: 999px; background: #000; color: #fff; cursor: pointer; }
+html.indesk body.df-dogefeed .df-tool { width: 36px !important; height: 36px !important; padding: 0 !important; background: transparent !important; color: #f3e3a5 !important; border: 0 !important; box-shadow: none !important; }
+html.indesk body.df-dogefeed .df-post-btn { width: auto !important; background: #f3e3a5 !important; color: #000 !important; }
+html.indesk body.df-dogefeed .df-composer textarea,
+html.indesk body.df-dogefeed .df-paywall input { background: transparent !important; color: #fff6dd !important; width: 100% !important; }
+html.indesk body.df-dogefeed .df-paywall input[type=number] { width: 7rem !important; background: rgba(255,255,255,.1) !important; }
+html.indesk body.df-dogefeed .df-x input { width: auto !important; }
+.df-draft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 12px;
+  padding: 8px;
+  border: 1px solid var(--df-border);
+  border-radius: 12px;
+}
+.df-draft[hidden] { display: none !important; }
+.df-draft img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; }
+.df-draft span { flex: 1; color: var(--df-text-secondary); font-size: 13px; }
+.df-draft button { width: auto; background: transparent; border: 1px solid var(--df-border); border-radius: 999px; padding: 4px 10px; cursor: pointer; }
+
+/* Posts */
+.df-posts {
+  min-height: 400px;
+}
+button.df-more { display:block; width:auto; margin:12px auto 20px; padding:8px 16px; border-radius:999px; border:1px solid rgba(255,255,255,.25); background:transparent; color:#fff6dd; font-weight:700; cursor:pointer; }
+html.indesk body.df-dogefeed button.df-more { width:auto !important; background:transparent !important; color:#fff6dd !important; box-shadow:none !important; }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; min-width: 220px; overflow: auto; position: relative; height: 100vh; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; min-width: 220px; height: 100vh; overflow: auto; position: relative; top: auto; }
+html.indesk body.df-dogefeed { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-topbar { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-card, html.indesk body.df-dogefeed .df-post { background:transparent !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background:#0a0a0a !important; }
+html.indesk body.df-dogefeed a.df-signin-btn { background:#f3e3a5 !important; color:#000 !important; margin-top:8px !important; position:static !important; }
+html.indesk body.df-dogefeed .df-search, html.indesk body.df-dogefeed .df-composer-input { background:#111 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-hero { background:#0a0a0a !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-hero h1 { color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-hero p { color:rgba(255,255,255,.72) !important; }
+html.indesk body.df-dogefeed .df-hero-btn, html.indesk body.df-dogefeed .df-topbar-btn { width:auto !important; background:#f3e3a5 !important; color:#000 !important; }
+html.indesk body.df-dogefeed .df-hero-btn.secondary { background:transparent !important; color:#fff6dd !important; border-color:rgba(255,255,255,.35) !important; }
+html.indesk body.df-dogefeed .df-sidebar { overflow-x:hidden; }
+html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; background:transparent !important; color:#fff6dd !important; }
+.df-post {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--df-border);
+  display: flex;
+  gap: 12px;
+  transition: background 0.15s;
+  cursor: pointer;
+}
+.df-post:hover {
+  background: var(--df-hover);
+}
+.df-post-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.df-post-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.df-post-content {
+  flex: 1;
+  min-width: 0;
+}
+.df-post-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+.df-post-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+.df-post-verified {
+  width: 18px;
+  height: 18px;
+  fill: var(--df-gold);
+}
+.df-post-handle {
+  color: var(--df-text-secondary);
+  font-size: 15px;
+}
+.df-post-time {
+  color: var(--df-text-secondary);
+  font-size: 15px;
+}
+.df-post-time::before {
+  content: "·";
+  margin: 0 4px;
+}
+.df-post-more {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--df-text-secondary);
+}
+.df-post-more:hover {
+  background: rgba(245, 166, 35, 0.1);
+  color: var(--df-gold);
+}
+.df-post-text {
+  font-size: 15px;
+  line-height: 1.4;
+  margin-bottom: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.df-post-media {
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 12px;
+  border: 1px solid var(--df-border);
+}
+.df-post-media img {
+  width: 100%;
+  display: block;
+}
+
+/* Quote Post */
+.df-quote {
+  border: 1px solid var(--df-border);
+  border-radius: 16px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.df-quote-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.df-quote-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.df-quote-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.df-quote-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+.df-quote-handle {
+  color: var(--df-text-secondary);
+  font-size: 13px;
+}
+.df-quote-time {
+  color: var(--df-text-secondary);
+  font-size: 13px;
+}
+.df-quote-text {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* Post Actions */
+.df-post-actions {
+  display: flex;
+  justify-content: space-between;
+  max-width: 400px;
+}
+.df-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  margin: -8px;
+  border-radius: 9999px;
+  border: none;
+  background: none;
+  color: var(--df-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.df-action svg {
+  width: 18px;
+  height: 18px;
+}
+.df-action:hover {
+  color: var(--df-gold);
+  background: rgba(245, 166, 35, 0.1);
+}
+.df-action.liked {
+  color: #f91880;
+}
+
+/* Right Sidebar */
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg {
+  width: 18px;
+  height: 18px;
+  color: var(--df-text-secondary);
+}
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-search input::placeholder {
+  color: var(--df-text-secondary);
+}
+.df-search-kbd {
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--df-border);
+  font-size: 11px;
+  color: var(--df-text-secondary);
+}
+
+/* Trending Card */
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-trend {
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-trend:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+.df-trend-label {
+  font-size: 13px;
+  color: var(--df-text-secondary);
+  margin-bottom: 2px;
+}
+.df-trend-tag {
+  font-size: 15px;
+  font-weight: 700;
+}
+.df-trend-count {
+  font-size: 13px;
+  color: var(--df-text-secondary);
+}
+.df-card-more {
+  padding: 16px;
+  color: var(--df-gold);
+  font-size: 15px;
+  cursor: pointer;
+}
+.df-card-more:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+/* Who to Follow */
+.df-follow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-follow:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+.df-follow-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.df-follow-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.df-follow-info {
+  flex: 1;
+  min-width: 0;
+}
+.df-follow-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+  font-size: 15px;
+}
+.df-follow-handle {
+  font-size: 14px;
+  color: var(--df-text-secondary);
+}
+.df-follow-btn {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-text);
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.df-follow-btn:hover {
+  background: #272c30;
+}
+
+/* Loading */
+.df-loading {
+  display: flex;
+  justify-content: center;
+  padding: 40px;
+}
+.df-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Empty state */
+.df-empty {
+  text-align: center;
+  padding: 40px;
+  color: var(--df-text-secondary);
+}
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+
+<div class="df-app">
+  <!-- Left Sidebar -->
+  
+
+  <!-- Main Content -->
+  <main class="df-main">
+    <form class="df-composer" id="df-bark">
+      <div class="df-composer-avatar" id="df-who-mark" aria-hidden="true">Ð</div>
+      <div class="df-composer-body">
+        <div class="df-composer-id" id="df-who">{{ "Your wallet" if public else "This arcade's wallet" }}</div>
+        <textarea id="df-bark-text" maxlength="10050" placeholder="What's the latest? (every post is a bark)" aria-label="Post text"></textarea>
+        <div id="df-slash" class="df-panel df-slash" hidden></div>
+        <div id="df-emoji" class="df-panel df-emoji" hidden></div>
+        <div id="df-paywall" class="df-panel df-paywall" hidden>
+          <label>Reveal price in DOGE
+            <input id="df-pay-price" type="number" min="0.1" max="1000000" step="any" inputmode="decimal" placeholder="0" aria-label="Reveal price in DOGE">
+          </label>
+          <button type="button" id="df-pay-free">Make free</button>
+          <div class="df-lock-modes" role="radiogroup" aria-label="What to lock">
+            <button type="button" data-lock="text" class="on">Lock text</button>
+            <button type="button" data-lock="text_media">Lock text + image</button>
+            <button type="button" data-lock="media">Lock image only</button>
+          </div>
+          <p id="df-lock-note">The first line stays free; the text below it is locked. Images stay visible.</p>
+        </div>
+        <div id="df-memes" class="df-panel df-memes" hidden></div>
+        <div id="df-thumbs" class="df-thumbs"></div>
+        <div class="df-composer-tools">
+          <input id="df-files" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
+          <button type="button" class="df-tool" id="df-add-images" aria-label="Add images" title="Images (0/4)"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
+          <button type="button" class="df-tool" id="df-memes-btn" aria-label="Meme Library" title="Meme Library"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/></svg></button>
+          <button type="button" class="df-tool" id="df-emoji-btn" aria-label="Emoji" title="Emoji"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 10h.01M15 10h.01"/></svg></button>
+          <button type="button" class="df-tool" id="df-lock-btn" aria-label="Paywall" title="Paid post"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
+          <button type="button" class="df-tool" id="df-send-btn" aria-label="Send" title="/send Doge, a Doginal, a name or DRC-20"><svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg></button>
+          <button type="button" class="df-tool" id="df-draft-btn" aria-label="Save draft" title="Save draft"><svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
+                    <span id="df-count" class="df-count" hidden></span>
+          <button type="submit" class="df-post-btn" id="df-post">Post</button>
+        </div>
+        <p class="df-composer-note" id="df-said">{{ "Posts go on the chain from your wallet." if public else "Posts go on the chain from this arcade's wallet." }}</p>
+      </div>
+    </form>
+
+    <div class="df-tabs">
+      <button class="df-tab active" data-tab="foryou">For You</button>
+      <button class="df-tab" data-tab="latest">Latest</button>
+      <button class="df-tab" data-tab="following">Following</button>
+      <button class="df-tab" data-tab="top">Top</button>
+      <button class="df-tab" data-tab="hot">Hot</button>
+    </div>
+    
+    <div class="df-posts" id="df-posts">
+      <div class="df-loading">
+        <div class="df-spinner"></div>
+      </div>
+    </div>
+    <button type="button" class="df-more" id="df-more" hidden>More</button>
+  </main>
+
+  <!-- Right Sidebar -->
+  
+</div>
+
+{% include "dogefeedx/_wallet.js.html" %}
+<script>
+(function () {
+  var LIMIT = 10000, MAX_IMAGES = 4, MAX_BYTES = 1500000;
+  var EMOJI = ['🐕','🐶','🦴','🐾','🚀','🌕','💎','🔥','😂','😍','🥹','😎','🤝','👀','🙏','💰','🎉','✨','❤️','👍','🤣','😤','🫡','🧡'];
+  var LOCKS = {
+    text: 'The first line stays free; the text below it is locked. Images stay visible.',
+    text_media: 'The first line stays free; the text below it and any images are locked.',
+    media: 'Your text stays free; attached images are locked until someone pays.'
+  };
+  var COMMANDS = [
+    {cmd: '/send', hint: 'Doge, a Doginal or DRC-20, e.g. /send @handle 100 BROS'},
+    {cmd: '/pay', hint: 'Pay a handle, e.g. /pay @handle 5 doge'}
+  ];
+  var text = document.getElementById('df-bark-text');
+  var said = document.getElementById('df-said');
+  var who = document.getElementById('df-who');
+  var thumbs = document.getElementById('df-thumbs');
+  var images = [];
+  var lockMode = 'text';
+  var wallet = '';
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function panel(id, open) {
+    ['df-slash','df-emoji','df-paywall','df-memes'].forEach(function (one) {
+      var el = document.getElementById(one);
+      if (!el) return;
+      el.hidden = one === id ? !open : true;
+    });
+    document.getElementById('df-lock-btn').classList.toggle('on', id === 'df-paywall' && open);
+    document.getElementById('df-emoji-btn').classList.toggle('on', id === 'df-emoji' && open);
+  }
+  function paintWho(addr) {
+    wallet = addr || '';
+    who.textContent = wallet || {{ ("Your wallet" if public else "This arcade's wallet") | tojson }};
+    who.title = wallet || '';
+  }
+  function shortAddr(addr) {
+    return addr && addr.length > 12 ? addr.slice(0, 6) + '…' + addr.slice(-4) : (addr || 'wallet');
+  }
+  function price() {
+    var n = parseFloat(document.getElementById('df-pay-price').value);
+    return isFinite(n) && n > 0 ? n : 0;
+  }
+  function payCommand(value) {
+    return /^\/pay\s+@([a-zA-Z0-9_]{1,30})\s+\$?(\d+(?:\.\d{1,2})?)(?:\s+doge)?\b/i.test(value || '');
+  }
+  function paintButton() {
+    var btn = document.getElementById('df-post');
+    btn.textContent = (price() > 0 || payCommand(text.value)) ? 'Pay & post' : 'Post';
+    var left = LIMIT - text.value.length;
+    var count = document.getElementById('df-count');
+    count.hidden = left > 500;
+    count.textContent = String(left);
+    count.style.color = left < 0 ? '#fe4f4f' : '#f3e3a5';
+    btn.disabled = left < 0 || (!text.value.trim() && !images.length);
+  }
+  function paintThumbs() {
+    thumbs.innerHTML = images.map(function (img, i) {
+      return '<figure><img src="' + img.data + '" alt=""><button type="button" data-i="' + i + '" aria-label="Remove image">×</button></figure>';
+    }).join('');
+    document.getElementById('df-add-images').title = 'Images (' + images.length + '/' + MAX_IMAGES + ')';
+    document.getElementById('df-add-images').disabled = images.length >= MAX_IMAGES;
+    paintButton();
+  }
+  function slashQuery() {
+    var value = text.value.slice(0, text.selectionStart || text.value.length);
+    var m = value.match(/(^|\s)\/([a-z]{0,4})$/i);
+    if (!m) return null;
+    var typed = m[2].toLowerCase();
+    var cmds = COMMANDS.filter(function (c) { return c.cmd.slice(1).indexOf(typed) === 0 && c.cmd.slice(1) !== typed; });
+    return cmds.length ? {cmds: cmds, start: value.length - typed.length - 1} : null;
+  }
+  function paintSlash() {
+    var hit = slashQuery();
+    var box = document.getElementById('df-slash');
+    if (!hit) { box.hidden = true; box.innerHTML = ''; return; }
+    panel('df-slash', true);
+    box.innerHTML = hit.cmds.map(function (c) {
+      return '<button type="button" data-cmd="' + c.cmd + '"><b>' + c.cmd + '</b><span>' + esc(c.hint) + '</span></button>';
+    }).join('');
+  }
+  text.addEventListener('input', function () { paintSlash(); paintButton(); });
+  text.addEventListener('keyup', paintSlash);
+  text.addEventListener('click', paintSlash);
+  document.getElementById('df-emoji').innerHTML = EMOJI.map(function (ch) {
+    return '<button type="button" data-emoji="' + ch + '">' + ch + '</button>';
+  }).join('');
+  document.getElementById('df-emoji').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    var at = text.selectionStart || text.value.length;
+    text.value = text.value.slice(0, at) + b.getAttribute('data-emoji') + text.value.slice(at);
+    text.focus();
+    paintButton();
+  });
+  document.getElementById('df-emoji-btn').addEventListener('click', function () {
+    panel('df-emoji', document.getElementById('df-emoji').hidden);
+  });
+  document.getElementById('df-lock-btn').addEventListener('click', function () {
+    panel('df-paywall', document.getElementById('df-paywall').hidden);
+  });
+  document.getElementById('df-pay-price').addEventListener('input', paintButton);
+  document.getElementById('df-pay-free').addEventListener('click', function () {
+    document.getElementById('df-pay-price').value = '';
+    paintButton();
+  });
+  document.querySelectorAll('.df-lock-modes button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      lockMode = b.getAttribute('data-lock');
+      document.querySelectorAll('.df-lock-modes button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      document.getElementById('df-lock-note').textContent = LOCKS[lockMode];
+    });
+  });
+  document.getElementById('df-send-btn').addEventListener('click', function () {
+    var value = text.value;
+    var next = (value && !/\s$/.test(value) ? value + ' ' : value) + '/send ';
+    text.value = next;
+    text.focus();
+    text.selectionStart = text.selectionEnd = next.length;
+    paintSlash();
+    paintButton();
+  });
+  document.getElementById('df-slash').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    var hit = slashQuery();
+    var cmd = b.getAttribute('data-cmd') + ' ';
+    if (hit) text.value = text.value.slice(0, hit.start) + cmd + text.value.slice(text.selectionStart || text.value.length);
+    else text.value += cmd;
+    document.getElementById('df-slash').hidden = true;
+    text.focus();
+    paintButton();
+  });
+  document.getElementById('df-draft-btn').addEventListener('click', function () {
+    dfxWriteJson('dogefeedx.barkDraft', text.value);
+    said.textContent = 'Draft saved in this browser.';
+  });
+  function shrink(file) {
+    return new Promise(function (resolve) {
+      if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size > MAX_BYTES) { resolve(''); return; }
+      var img = new Image();
+      var url = URL.createObjectURL(file);
+      img.onload = function () {
+        var max = 480, scale = Math.min(1, max / Math.max(img.width, img.height));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL('image/jpeg', 0.72));
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(''); };
+      img.src = url;
+    });
+  }
+  document.getElementById('df-add-images').addEventListener('click', function () {
+    document.getElementById('df-files').click();
+  });
+  document.getElementById('df-files').addEventListener('change', function () {
+    var files = Array.prototype.slice.call(this.files || []).slice(0, MAX_IMAGES - images.length);
+    this.value = '';
+    Promise.all(files.map(shrink)).then(function (made) {
+      made.filter(Boolean).forEach(function (data) { images.push({data: data}); });
+      if (made.some(function (x) { return !x; })) said.textContent = 'Only PNG, JPEG, GIF and WebP images are supported, up to 4.';
+      paintThumbs();
+    });
+  });
+  thumbs.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    images.splice(Number(b.getAttribute('data-i')), 1);
+    paintThumbs();
+  });
+  function memeRows() {
+    var rows = [];
+    try { rows = JSON.parse(localStorage.getItem('dogefeedx.memes') || '[]') || []; } catch (e) {}
+    try {
+      var draftMeme = JSON.parse(localStorage.getItem('dogefeedx.draftMeme') || 'null');
+      if (draftMeme && draftMeme.data) rows = [draftMeme].concat(rows);
+    } catch (e) {}
+    return rows;
+  }
+  document.getElementById('df-memes-btn').addEventListener('click', function () {
+    var box = document.getElementById('df-memes');
+    var open = box.hidden;
+    panel('df-memes', open);
+    if (!open) return;
+    var rows = memeRows();
+    box.innerHTML = rows.length ? rows.slice(0, 8).map(function (m, i) {
+      return '<button type="button" data-i="' + i + '"><img alt="" src="' + m.data + '" style="width:36px;height:36px;object-fit:cover;border-radius:6px"><b>' + esc(m.name || 'Meme') + '</b></button>';
+    }).join('') : '<p>No memes saved in this browser yet. Pick one in Meme Library.</p>';
+  });
+  document.getElementById('df-memes').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b || images.length >= MAX_IMAGES) return;
+    var meme = memeRows()[Number(b.getAttribute('data-i'))];
+    if (!meme || !meme.data) return;
+    images.push({data: meme.data});
+    try { localStorage.setItem('dogefeedx.draftMeme', JSON.stringify({id: meme.id, name: meme.name, data: meme.data})); } catch (err) {}
+    document.getElementById('df-memes').hidden = true;
+    paintThumbs();
+    said.textContent = 'Attached from Meme Library.';
+  });
+  // Post: on the chain through the arcade (2026-11-03, the operator: "Keep UI/UX elements from DogefeedX wire them into the
+  // existing arcade architecture"). An account signs in its own browser (wallet.post, as the Feed page does); the
+  // operator's arcade posts from its own wallet (/dogefeedx/api/post, as /feed/post does). It shows in the timeline
+  // when its block lands, like every post on the Feed.
+  document.getElementById('df-bark').addEventListener('submit', function (e) {
+    e.preventDefault();
+    paintButton();
+    var btn = document.getElementById('df-post');
+    if (btn.disabled) return;
+    if (price() > 0) {
+      said.textContent = 'Paid posts are not on this arcade. Make it free to post.';
+      return;
+    }
+    if (!window.dfxPublish) { said.textContent = 'Posting is not ready yet. Try again in a moment.'; return; }
+    btn.disabled = true;
+    said.textContent = 'Posting…';
+    // A picture already on the chain (Meme Library: /content/<id>) is linked, as a Feed post links an inscription;
+    // only a new picture from this computer is inscribed.
+    var linked = images.filter(function (img) { return /^\/content\//.test(img.data); }).map(function (img) { return img.data; });
+    var fresh = images.filter(function (img) { return !/^\/content\//.test(img.data); }).map(function (img) { return img.data; });
+    var words = (text.value.trim() + (linked.length ? '\n' + linked.join('\n') : '')).trim();
+    window.dfxPublish(words, fresh).then(function (out) {
+      dfxWriteJson('dogefeedx.barkDraft', '');
+      text.value = '';
+      images = [];
+      document.getElementById('df-pay-price').value = '';
+      paintThumbs();
+      said.textContent = 'Posted. It shows here when its block lands (' + String((out && out.txid) || '').slice(0, 12) + '…).';
+    }).catch(function (err) {
+      said.textContent = String((err && err.message) || err || 'Not posted.');
+    }).then(function () { paintButton(); });
+  });
+  var shownWallet = '';
+  function applyWallet(addr) {
+    var next = addr || '';
+    if (shownWallet && shownWallet !== next) {
+      dfxWriteJson('dogefeedx.barkDraft', text.value, shownWallet);
+      images = [];
+      paintThumbs();
+    }
+    shownWallet = next;
+    paintWho(shownWallet);
+    var draft = next ? dfxReadJson('dogefeedx.barkDraft', '', next) : '';
+    text.value = typeof draft === 'string' ? draft : '';
+    paintButton();
+  }
+  dfxEnsureWallet().then(function (w) { applyWallet(w.selected); });
+  dfxBindWallet(applyWallet);
+  paintButton();
+})();
+</script>
+{% include "dogefeedx/_arcade_act.html" %}
+<script>
+(function() {
+  'use strict';
+  
+  var API_BASE = '/dogefeedx/api';
+  var IMG_BASE = '';   // pictures are this arcade's own /content/<id>
+  
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  
+  function timeAgo(dateStr) {
+    if (!dateStr) return '';
+    var date = new Date(dateStr);
+    var now = new Date();
+    var diff = Math.floor((now - date) / 1000);
+    if (diff < 60) return diff + 's';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+    return Math.floor(diff / 86400) + 'd';
+  }
+  
+  function formatCount(n) {
+    if (!n) return '0';
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
+  }
+  
+  function renderPost(post) {
+    var author = post.author || {};
+    var avatar = author.avatarUrl || '';
+    var avatarUrl = avatar.startsWith('/') ? IMG_BASE + avatar : avatar;
+    var handle = author.handle || 'anonymous';
+    var displayName = author.displayName || handle;
+    var verified = author.verifiedPfp;
+    var text = post.body || post.text || '';
+    var media = post.mediaUrls || [];
+    var counts = post.counts || {};
+    var createdAt = post.createdAt || '';
+    var quote = post.quote;
+    
+    var html = '<article class="df-post" data-post="' + esc(post.id || '') + '">';
+    html += '<div class="df-post-avatar">';
+    if (avatarUrl) {
+      html += '<img src="' + esc(avatarUrl) + '" alt="" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%23f5a623%22 width=%2240%22 height=%2240%22/></svg>\'">';
+    }
+    html += '</div>';
+    html += '<div class="df-post-content">';
+    html += '<div class="df-post-header">';
+    html += '<span class="df-post-name" data-profile="' + esc(handle) + '">' + esc(displayName) + '</span>';
+    if (verified) {
+      html += '<svg class="df-post-verified" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
+    }
+    html += '<span class="df-post-handle" data-profile="' + esc(handle) + '">@' + esc(handle) + '</span>';
+    html += '<span class="df-post-time">' + timeAgo(createdAt) + '</span>';
+    html += '<button class="df-post-more">···</button>';
+    html += '</div>';
+    
+    if (text) {
+      html += '<div class="df-post-text">' + esc(text) + '</div>';
+    }
+    
+    if (quote) {
+      var qa = quote.author || {};
+      var qAvatar = qa.avatarUrl ? (qa.avatarUrl.startsWith('/') ? IMG_BASE + qa.avatarUrl : qa.avatarUrl) : '';
+      html += '<div class="df-quote">';
+      html += '<div class="df-quote-header">';
+      html += '<div class="df-quote-avatar"><img src="' + esc(qAvatar) + '" alt=""></div>';
+      html += '<span class="df-quote-name">' + esc(qa.displayName || qa.handle) + '</span>';
+      html += '<span class="df-quote-handle">@' + esc(qa.handle) + '</span>';
+      html += '<span class="df-quote-time">· ' + timeAgo(quote.createdAt) + '</span>';
+      html += '</div>';
+      html += '<div class="df-quote-text">' + esc(quote.body || quote.text || '') + '</div>';
+      html += '</div>';
+    }
+    
+    if (media.length > 0) {
+      html += '<div class="df-post-media">';
+      media.forEach(function(url) {
+        var mediaUrl = url.startsWith('/') ? IMG_BASE + url : url;
+        html += '<img src="' + esc(mediaUrl) + '" alt="" loading="lazy">';
+      });
+      html += '</div>';
+    }
+    
+    html += '<div class="df-post-actions">';
+    html += '<button type="button" class="df-action" data-dfx-do="reply" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>';
+    html += '<button type="button" class="df-action" data-dfx-do="like" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg><span>' + (counts.likes || '') + '</span></button>';
+    html += '<button type="button" class="df-action" data-dfx-do="share" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg><span>' + (counts.branches || '') + '</span></button>';
+    html += '<button type="button" class="df-action" data-dfx-do="link" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>';
+    html += '<button type="button" class="df-action" data-dfx-do="save" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>';
+    html += '<button type="button" class="df-action" data-dfx-do="link" data-txid="' + esc(post.id || '') + '" data-handle="' + esc(handle) + '" data-text="' + esc(text.slice(0, 180)) + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></button>';
+    html += '</div>';
+    html += '</div>';
+    html += '</article>';
+    
+    return html;
+  }
+  
+  var FEED_TABS = {foryou: 'for-you', latest: 'latest', following: 'following', top: 'top', hot: 'hot'};
+  var feedCursor = '';
+
+  function activeFeedTab() {
+    var tab = document.querySelector('.df-tab.active');
+    var key = tab ? tab.getAttribute('data-tab') : 'foryou';
+    return FEED_TABS[key] || 'for-you';
+  }
+
+  function loadFeed(append) {
+    var url = API_BASE + '/feed?limit=20&tab=' + encodeURIComponent(activeFeedTab());
+    if (append && feedCursor) url += '&cursor=' + encodeURIComponent(feedCursor);
+    fetch(url)
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(data) {
+        var posts = data.items || [];
+        var container = document.getElementById('df-posts');
+        var more = document.getElementById('df-more');
+        if (data.error && !posts.length && !append) {
+          container.innerHTML = '<div class="df-empty">Error loading feed: ' + esc(data.error) + '</div>';
+          more.hidden = true;
+          return;
+        }
+        if (!posts.length && !append) {
+          container.innerHTML = '<div class="df-empty">No posts yet</div>';
+          more.hidden = true;
+          return;
+        }
+        var html = posts.map(renderPost).join('');
+        if (append) container.insertAdjacentHTML('beforeend', html);
+        else container.innerHTML = html;
+        feedCursor = data.nextCursor || '';
+        more.hidden = !feedCursor;
+      })
+      .catch(function(err) {
+        console.error('Feed error:', err);
+        if (!append) document.getElementById('df-posts').innerHTML = '<div class="df-empty">Could not load feed. Check your connection.</div>';
+        document.getElementById('df-more').hidden = true;
+      });
+  }
+
+  function renderTrends(trending) {
+    if (!trending || !trending.length) return '<div class="df-empty">No trends</div>';
+    return trending.map(function(t) {
+      return '<a class="df-trend" href="/feed?q=%23' + encodeURIComponent(t.tag) + '">' +
+        '<div class="df-trend-label">' + t.rank + ' · Trending on DogeFeed</div>' +
+        '<div class="df-trend-tag">#' + esc(t.tag) + '</div>' +
+        '<div class="df-trend-count">' + esc(t.count) + '</div>' +
+        '</a>';
+    }).join('');
+  }
+
+  function renderFollows(users) {
+    if (!users || !users.length) return '<div class="df-empty">No suggestions</div>';
+    return users.slice(0, 3).map(function(u) {
+      var avatar = u.avatar ? (u.avatar.charAt(0) === '/' ? IMG_BASE + u.avatar : u.avatar) : '';
+      return '<a class="df-follow" href="/dogefeedx/profile?u=' + encodeURIComponent(u.handle) + '">' +
+        '<div class="df-follow-avatar"><img src="' + esc(avatar) + '" alt="" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%23f5a623%22 width=%2240%22 height=%2240%22/></svg>\'"></div>' +
+        '<div class="df-follow-info">' +
+        '<div class="df-follow-name">' + esc(u.name || u.handle) +
+        (u.verified ? '<svg class="df-post-verified" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
+        '</div>' +
+        '<div class="df-follow-handle">@' + esc(u.handle) + '</div>' +
+        '</div>' +
+        '<span class="df-follow-btn">Follow</span>' +
+        '</a>';
+    }).join('');
+  }
+
+  function loadSidebar() {
+    fetch(API_BASE + '/sidebar')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        (document.getElementById('df-trending')||{}).innerHTML = data.error && !(data.trending && data.trending.length)
+          ? '<div class="df-empty">Could not load trends</div>'
+          : renderTrends(data.trending || []);
+        (document.getElementById('df-suggestions')||{}).innerHTML = renderFollows(data.suggestions || []);
+      })
+      .catch(function() {
+        (document.getElementById('df-trending')||{}).innerHTML = '<div class="df-empty">Could not load trends</div>';
+        (document.getElementById('df-suggestions')||{}).innerHTML = '<div class="df-empty">Could not load suggestions</div>';
+      });
+  }
+  
+  // Tab switching
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      this.classList.add('active');
+      feedCursor = '';
+      loadFeed(false);
+    });
+  });
+
+  document.getElementById('df-more').addEventListener('click', function() { loadFeed(true); });
+  
+  document.getElementById('df-posts').addEventListener('click', function(e) {
+    if (e.target.closest('button, a')) return;
+    var who = e.target.closest('[data-profile]');
+    if (who) {
+      location.href = '/dogefeedx/profile?u=' + encodeURIComponent(who.getAttribute('data-profile'));
+      return;
+    }
+    var post = e.target.closest('[data-post]');
+    if (post && post.getAttribute('data-post')) {
+      location.href = '/dogefeedx/post?id=' + encodeURIComponent(post.getAttribute('data-post'));
+    }
+  });
+
+  document.querySelectorAll('.df-search input').forEach(function(inp) {
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && inp.value.trim()) {
+        location.href = '/dogefeedx/search?q=' + encodeURIComponent(inp.value.trim());
+      }
+    });
+  });
+
+  loadFeed(false);
+  loadSidebar();
+  
+  // Register with shell
+  if (window.DogeFeedX && window.DogeFeedX.registerApp) {
+    window.DogeFeedX.registerApp({
+      id: 'feed',
+      name: 'Feed',
+      icon: '/dogefeedx/icon-feed.png',
+      url: '/dogefeedx/feed'
+    });
+  }
+})();
+</script>
+{% endblock %}

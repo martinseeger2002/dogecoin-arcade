@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Settings · {{ brand.name }}{% endblock %}
+{% block body %}
+<style>
+:root { --df-text:#fff6dd; --df-muted:rgba(255,255,255,.55); --df-line:rgba(255,255,255,.12); }
+* { box-sizing:border-box; }
+body { margin:0; background:#000; color:var(--df-text); font-family:Nunito,sans-serif; }
+html.indesk body.df-dogefeed, html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed input { background:#111 !important; color:#fff6dd !important; border:1px solid rgba(255,255,255,.2) !important; }
+.wrap { max-width:720px; margin:0 auto; padding:28px 20px 48px; }
+h1 { font-family:Fredoka,sans-serif; font-size:28px; margin:0 0 6px; }
+h2 { font-family:Fredoka,sans-serif; font-size:18px; margin:22px 0 8px; }
+p.note, label.note { color:var(--df-muted); display:block; border:0; background:transparent; padding:0; }
+label { display:flex; align-items:center; gap:8px; margin:8px 0; }
+input[type=text] { width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--df-line); background:#111; color:inherit; }
+input[type=checkbox] { width: auto; padding: 0; margin: 0; }
+html.indesk body.df-dogefeed input[type=checkbox] { width: auto !important; padding: 0 !important; background: transparent !important; border: 0 !important; }
+html.indesk body.df-dogefeed label { display: flex !important; align-items: center; gap: 8px; color: #fff6dd; }
+button.save { margin-top:12px; background:#f3e3a5; color:#000; border:0; border-radius:999px; padding:10px 16px; font-weight:700; cursor:pointer; }
+#said { min-height:1.2em; }
+a { color:#f3e3a5; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+<div class="wrap">
+  <h1>Settings</h1>
+  <p class="note">Your profile is what you publish on the chain, the same one every arcade shows. Notification choices stay in this browser.</p>
+
+  <h2>Profile</h2>
+  <p class="note" id="settings-who"></p>
+  <input id="display-name" type="text" readonly placeholder="Your @name" aria-label="Name on the chain">
+  <input id="dns" type="text" maxlength="200" placeholder="Bio" aria-label="Bio">
+  <input id="website" type="text" maxlength="200" placeholder="Website" aria-label="Website">
+  <p class="note" id="chain-name"></p>
+  <button type="button" class="save" id="publish">Publish on the chain</button>
+  <p id="said" class="note"></p>
+
+  <h2>Notifications</h2>
+  <label><input type="checkbox" id="n-likes"> Likes</label>
+  <label><input type="checkbox" id="n-comments"> Comments</label>
+  <label><input type="checkbox" id="n-reposts"> Reposts</label>
+  <label><input type="checkbox" id="n-market"> Market sales, purchases and offers</label>
+  <button type="button" class="save" id="save">Save on this browser</button>
+  <p id="said-n" class="note"></p>
+</div>
+{% include "dogefeedx/_wallet.js.html" %}
+<script>
+(function () {
+  // Settings over the arcade (2026-11-03, the operator: "Keep UI/UX elements from DogefeedX wire them into the existing
+  // arcade architecture"): the name is the @tag the chain says; bio and website are the arcade's profile
+  // (mail.publishProfile below, as Profile on /me does); the notification switches stay in this browser.
+  var KEY = 'dogefeedx.settings';
+  function read() {
+    var s = dfxReadJson(KEY, {}, '');
+    return s && typeof s === 'object' && !Array.isArray(s) ? s : {};
+  }
+  var ids = ['n-likes', 'n-comments', 'n-reposts', 'n-market'];
+  var s = read();
+  ids.forEach(function (id) { document.getElementById(id).checked = s[id] !== false; });
+  document.getElementById('save').addEventListener('click', function () {
+    var next = read();
+    ids.forEach(function (id) { next[id] = document.getElementById(id).checked; });
+    dfxWriteJson(KEY, next, '');
+    document.getElementById('said-n').textContent = 'Saved in this browser.';
+  });
+  fetch('/dogefeedx/api/me', {credentials: 'same-origin', cache: 'no-store'})
+    .then(function (r) { return r.ok ? r.json() : {}; })
+    .then(function (me) {
+      document.getElementById('display-name').value = me.tag ? '@' + me.tag : '';
+      document.getElementById('settings-who').textContent = me.tag ? '' : (me.address ? 'No @name yet: claim one on Profile.' : 'Sign in to publish a profile.');
+      document.getElementById('dns').value = me.bio || '';
+      document.getElementById('website').value = me.url || '';
+      // Your arcade @name is the name; Dogecoin ord names your Doge address holds describe it on Doge.
+      var doge = (me.doge_names || []).join(' · ');
+      document.getElementById('chain-name').textContent = doge ? 'On Dogecoin: ' + doge
+        : (me.doge ? 'No Dogecoin name on your Doge address (' + me.doge.slice(0, 8) + '…) yet.' : '');
+      window.dfxSettingsMe = me;
+    }).catch(function () {});
+})();
+</script>
+{% if chain %}
+{% if not public %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
+<script type="module">
+import * as wallet from "{{ '/wallet.js' if public else '/node-wallet.js' }}";
+import * as mail from "{{ '/messaging.js' if public else '/node-mail.js' }}";
+const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
+const $ = (id) => document.getElementById(id);
+$("publish").onclick = async () => {
+  $("said").textContent = "";
+  $("publish").disabled = true;
+  try {
+    const keys = (await wallet.opened(CHAIN)) || await arcadeKeys(CHAIN);
+    if (!keys) throw new Error("Unlock your wallet to publish.");
+    const me = await mail.identity(keys.phrase);
+    await mail.publishProfile(keys, me, {bio: $("dns").value.trim(), url: $("website").value.trim()});
+    $("said").textContent = "Published. Every arcade shows it once its block lands.";
+  } catch (e) {
+    $("said").textContent = String(e.message || e);
+  } finally { $("publish").disabled = false; }
+};
+</script>
+{% endif %}
+{% endblock %}

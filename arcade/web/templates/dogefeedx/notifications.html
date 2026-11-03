@@ -1,0 +1,304 @@
+{% extends "base.html" %}
+{% block title %}Notifications · DogeFeed{% endblock %}
+{% block body %}
+{#- DogeFeedX Notifications. This arcade's notices. No DogeFeed account. -#}
+<style>
+:root {
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-link: #1d9bf0;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg {
+  width: 32px;
+  height: 32px;
+}
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover {
+  background: var(--df-hover);
+}
+.df-nav-item.active {
+  font-weight: 700;
+}
+.df-nav-item svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+.df-nav-item.active svg {
+  fill: currentColor;
+}
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 8px;
+  position: static;
+  transition: background 0.15s;
+}
+.df-signin-btn:hover {
+  background: var(--df-gold-dark);
+}
+
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-header h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.df-signin-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 40px;
+  text-align: center;
+}
+.df-signin-icon {
+  width: 80px;
+  height: 80px;
+  background: var(--df-gold-light);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+.df-signin-icon svg {
+  width: 40px;
+  height: 40px;
+  stroke: var(--df-gold);
+  stroke-width: 2;
+  fill: none;
+}
+.df-signin-prompt h2 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.df-signin-prompt p {
+  color: var(--df-text-secondary);
+  font-size: 15px;
+  margin-bottom: 24px;
+  max-width: 320px;
+}
+.df-signin-prompt .df-signin-btn {
+  width: auto;
+  padding: 14px 32px;
+}
+
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg {
+  width: 18px;
+  height: 18px;
+  color: var(--df-text-secondary);
+}
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-search input::placeholder {
+  color: var(--df-text-secondary);
+}
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; overflow: auto; position: relative; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; height: 100vh; overflow: auto; position: relative; }
+.df-tabs, #note-filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; }
+.df-tab { width: auto; background: transparent; color: inherit; border: 1px solid var(--df-border); border-radius: 999px; padding: 6px 12px; font-weight: 700; box-shadow: none; }
+.df-tab.active { background: var(--df-gold); color: #000; border-color: var(--df-gold); }
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2, html.indesk body.df-dogefeed h3, html.indesk body.df-dogefeed h4 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background: #0a0a0a !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-tab { background: transparent !important; color: #fff6dd !important; border: 1px solid rgba(255,255,255,.25) !important; width: auto !important; box-shadow: none !important; }
+html.indesk body.df-dogefeed .df-tab.active { background: #f3e3a5 !important; color: #000 !important; }
+html.indesk body.df-dogefeed .df-signin-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; }
+html.indesk body.df-dogefeed .df-search { background: #111 !important; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+
+<div class="df-app">
+  
+
+  <main class="df-main">
+    <div class="df-header">
+      <h1>Notifications</h1>
+    </div>
+    
+    <div class="df-tabs" id="note-filters">
+      <button type="button" class="df-tab active" data-bucket="">All</button>
+      <button type="button" class="df-tab" data-bucket="likes">Likes</button>
+      <button type="button" class="df-tab" data-bucket="comments">Comments</button>
+      <button type="button" class="df-tab" data-bucket="reposts">Reposts</button>
+      <button type="button" class="df-tab" data-bucket="market_sale">Market sale</button>
+      <button type="button" class="df-tab" data-bucket="market_purchase">Market purchase</button>
+      <button type="button" class="df-tab" data-bucket="offer_received">Offer received</button>
+      <button type="button" class="df-tab" data-bucket="offer_accepted">Offer accepted</button>
+      <button type="button" class="df-tab" data-bucket="offer_denied">Offer denied</button>
+    </div>
+    <div id="note-list" data-wallet=""><p class="df-empty">Loading…</p></div>
+  </main>
+{% include "dogefeedx/_wallet.js.html" %}
+<script>
+(function () {
+  var remote = [], bucket = '', seq = 0;
+  var labels = {likes:'Like', comments:'Comment', reposts:'Repost', market_sale:'Market sale', market_purchase:'Market purchase', offer_received:'Offer received', offer_accepted:'Offer accepted', offer_denied:'Offer denied'};
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function localRows(addr) {
+    var rows = addr ? dfxReadJson('dogefeedx.notifications', [], addr) : [];
+    return Array.isArray(rows) ? rows : [];
+  }
+  function paint() {
+    var addr = dfxReadWallet();
+    var box = document.getElementById('note-list');
+    box.setAttribute('data-wallet', addr);
+    box.innerHTML = '';
+    var mine = localRows(addr);
+    if (addr) dfxSetBadge('notifications', mine.filter(function (i) { return i.unread; }).length, addr);
+    var rows = mine.concat(remote).filter(function (i) { return !bucket || i.bucket === bucket; });
+    if (!addr) {
+      box.innerHTML = '<p class="df-empty">Select a wallet on Profile.</p>';
+      return;
+    }
+    if (!rows.length) {
+      box.innerHTML = '<p class="df-empty">No notifications for this wallet.</p>';
+      return;
+    }
+    box.innerHTML = rows.map(function (i) {
+      return '<div class="df-collection"><b>' + esc(labels[i.bucket] || i.kind) + '</b><div>' + esc(i.text || '') + '</div></div>';
+    }).join('');
+  }
+  function load() {
+    var mine = ++seq;
+    var addr = dfxReadWallet();
+    remote = [];
+    paint();
+    if (!addr) return;
+    fetch('/dogefeedx/api/local/notifications?address=' + encodeURIComponent(addr), {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.ok ? r.json() : {items: []}; })
+      .then(function (data) {
+        if (mine !== seq || dfxReadWallet() !== addr) return;
+        remote = (data.items || []).filter(function (i) {
+          return i && (i.address === addr || String(i.text || '').indexOf(addr) >= 0);
+        });
+        paint();
+      })
+      .catch(function () {
+        if (mine !== seq || dfxReadWallet() !== addr) return;
+      });
+  }
+  document.getElementById('note-filters').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-bucket]'); if (!b) return;
+    bucket = b.dataset.bucket;
+    document.querySelectorAll('#note-filters .df-tab').forEach(function (t) { t.classList.toggle('active', t === b); });
+    paint();
+  });
+  dfxBindWallet(function () { remote = []; load(); });
+  dfxEnsureWallet().then(load);
+})();
+</script>
+
+  
+</div>
+{% endblock %}

@@ -1824,6 +1824,12 @@ if (location.hash === "#meshtastic") start();
   <div id="facechoices" style="display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 10px"></div>
   <p class="muted" id="facesaid" hidden></p>
   <button type="button" class="small" id="saveface">Use this face</button>
+  <h3 style="margin:18px 0 4px">Face per web address</h3>
+  <p class="muted" style="margin-top:0">A node published under more than one name can wear a different face on each:
+    a visitor to that address sees its name, colours and icons. The node keeps its own face everywhere else.</p>
+  <div id="facehosts" style="display:grid;grid-template-columns:auto auto;gap:8px 14px;align-items:center;justify-content:start;margin:6px 0 10px"></div>
+  <p class="muted" id="facehostsnone" hidden>This node has no public names (public_hosts in settings.json).</p>
+  <button type="button" class="small" id="savefacehosts" hidden>Save faces per address</button>
   <p class="muted" style="margin:14px 0 0">Which chains run here, are borrowed or are off: <a href="#coins">Coins &amp; chains</a>.</p>
 </section>
 
@@ -2627,6 +2633,20 @@ section.panel h2{margin-top:0}
       i.checked = c[0] === b.current; i.disabled = b.locked;
       l.appendChild(i); l.appendChild(document.createTextNode(' ' + c[1])); box.appendChild(l);
     });
+    var hb = $('facehosts'), names = b.public_hosts || [], own = b.hosts || {};
+    hb.textContent = '';
+    names.forEach(function (host) {
+      var l = document.createElement('label'); l.textContent = host; l.htmlFor = 'face-' + host; l.style.margin = '0';
+      var sel = document.createElement('select'); sel.id = 'face-' + host; sel.dataset.host = host;
+      var o = document.createElement('option'); o.value = ''; o.textContent = 'This node’s own face'; sel.appendChild(o);
+      b.choices.forEach(function (c) {
+        var oc = document.createElement('option'); oc.value = c[0]; oc.textContent = c[1]; sel.appendChild(oc);
+      });
+      sel.value = own[host] || '';
+      hb.appendChild(l); hb.appendChild(sel);
+    });
+    $('facehostsnone').hidden = names.length > 0;
+    $('savefacehosts').hidden = names.length === 0;
     $('saveface').hidden = b.locked;
     $('facesaid').hidden = !b.locked;
     $('facesaid').textContent = b.locked ? 'Set by --brand / ARCADE_BRAND in this node\u2019s service; change it there.' : '';
@@ -2636,6 +2656,15 @@ section.panel h2{margin-top:0}
     if (!on) return;
     call('/admin/api/settings', {brand: on.value})
       .then(function () { location.reload(); }).catch(function (e) { say(e.message, 'err'); });
+  };
+  $('savefacehosts').onclick = function () {
+    var faces = {};
+    document.querySelectorAll('#facehosts select').forEach(function (sel) {
+      if (sel.value) faces[sel.dataset.host] = sel.value;
+    });
+    call('/admin/api/settings', {brand_hosts: faces})
+      .then(function () { say('Saved. Each address shows its face on its next page.', 'ok'); })
+      .catch(function (e) { say(e.message, 'err'); });
   };
   function drawLtc(s, id) {
     var line = $(id || 'ltcline');

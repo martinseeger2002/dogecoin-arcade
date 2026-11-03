@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1{% if fullscreen %},viewport-fit=cover{% endif %}">
+<title>{% block title %}DogeFeedX{% endblock %}</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+</style>
+</head>
+<body class="{% if fullscreen %}fullscreen{% endif %}">
+{% block body %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,559 @@
+{% extends "base.html" %}
+{% block title %}Wallet · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- DogeFeedX Wallet: DogeFeed's wallet page
+    Light theme with white background. READ-ONLY view.
+    
+    SECURITY: This view is READ-ONLY. It only displays inscriptions - no transaction
+    building, no signing, no spending. Per exchange-safety.md, inscription-carrying
+    UTXOs must NEVER be spent as fees. This view fetches and displays only.
+    
+    Supports: Dogecoin mainnet/testnet, Pepecoin mainnet/testnet
+    Data: this node's indexes -#}
+<style>
+:root {
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+/* Left Sidebar */
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item.active { font-weight: 700; }
+.df-nav-item svg { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; }
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+}
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+
+/* Main Content */
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-topbar {
+  position: sticky;
+  top: 0;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-topbar h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Read-only notice */
+.df-notice {
+  background: var(--df-gold-light);
+  border-left: 4px solid var(--df-gold);
+  padding: 12px 16px;
+  margin: 16px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.df-notice strong { color: var(--df-gold-dark); }
+
+/* Chain selector */
+.df-chain-selector {
+  display: flex;
+  gap: 8px;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-chain-btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: 12px;
+  border: 2px solid var(--df-border);
+  background: var(--df-bg);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+}
+.df-chain-btn:hover { border-color: var(--df-gold); }
+.df-chain-btn.active {
+  border-color: var(--df-gold);
+  background: var(--df-gold-light);
+}
+.df-chain-btn svg { width: 24px; height: 24px; margin-bottom: 4px; }
+
+/* Address input */
+.df-address-input {
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-address-input label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.df-address-input-row {
+  display: flex;
+  gap: 8px;
+}
+.df-address-input input {
+  flex: 1;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--df-border);
+  font-size: 14px;
+  font-family: monospace;
+}
+.df-address-input input:focus {
+  outline: none;
+  border-color: var(--df-gold);
+}
+.df-lookup-btn {
+  padding: 12px 20px;
+  border-radius: 12px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.df-lookup-btn:hover { background: var(--df-gold-dark); }
+
+/* Wallet Stats */
+.df-wallet-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-wallet-stat {
+  background: var(--df-hover);
+  padding: 16px;
+  border-radius: 12px;
+  text-align: center;
+}
+.df-wallet-stat-value {
+  font-family: "Fredoka", sans-serif;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--df-text);
+}
+.df-wallet-stat-label {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+  margin-top: 4px;
+}
+
+/* Tabs */
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
+  flex: 1;
+  padding: 16px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.df-tab:hover { background: var(--df-hover); }
+.df-tab.active { font-weight: 700; color: var(--df-text); }
+.df-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  background: var(--df-gold);
+  border-radius: 2px;
+}
+
+/* NFT Grid */
+.df-wallet-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px;
+}
+.df-wallet-item {
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--df-hover);
+  cursor: pointer;
+  position: relative;
+}
+.df-wallet-item img { width: 100%; height: 100%; object-fit: cover; }
+.df-wallet-item:hover { opacity: 0.9; }
+.df-wallet-item-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* Right Sidebar */
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-card-content { padding: 0 16px 16px; }
+
+/* Loading & Empty */
+.df-loading { display: flex; justify-content: center; padding: 40px; }
+.df-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; overflow: auto; position: relative; height: auto; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; height: 100vh; overflow: auto; position: relative; }
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header, html.indesk body.df-dogefeed .df-topbar { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background: #0a0a0a !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-signin-btn, html.indesk body.df-dogefeed .df-lookup-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; width: auto !important; }
+html.indesk body.df-dogefeed .df-search, html.indesk body.df-dogefeed input { background: #111 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-notice { background: #111 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-notice strong { color: #f3e3a5 !important; }
+html.indesk body.df-dogefeed .df-chain-btn { background: #111 !important; color: #fff6dd !important; width: auto !important; box-shadow: none !important; }
+html.indesk body.df-dogefeed .df-chain-btn.active { background: #1a1a1a !important; color: #fff6dd !important; border-color: #f3e3a5 !important; }
+html.indesk body.df-dogefeed .df-wallet-stat { background: #0a0a0a !important; color: #fff6dd !important; border: 1px solid #ffffff1f; }
+html.indesk body.df-dogefeed .df-wallet-item { background: #0a0a0a !important; }
+html.indesk body.df-dogefeed .df-wallet-stat-value, html.indesk body.df-dogefeed .df-wallet-stat-label { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+
+<div class="df-app">
+  <!-- Left Sidebar -->
+  
+
+  <!-- Main Content -->
+  <main class="df-main">
+    <div class="df-topbar">
+      <h1>Wallet</h1>
+    </div>
+    
+    <div class="df-notice">
+      <strong>Read-only view.</strong> Balances, doginals, DRC-20, and names come from this arcade's indexes{{ ', for your own wallet' if public else '' }}. No key, no spending, no signing.
+    </div>
+    <p class="df-notice" id="wallet-reading" hidden></p>
+    
+    <div class="df-chain-selector">
+      <button class="df-chain-btn active" data-chain="doge">
+        <svg viewBox="0 0 24 24" fill="#f3e3a5"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">Ð</text></svg>
+        <div>Dogecoin</div>
+      </button>
+      <button class="df-chain-btn" data-chain="pep">
+        <svg viewBox="0 0 24 24" fill="#3ba55d"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#fff" font-weight="bold">Ᵽ</text></svg>
+        <div>Pepecoin</div>
+      </button>
+    </div>
+    
+    {#- An account reads its own wallet only (apps.api_wallet_holdings), so the look-up of another address is the
+        operator's: hidden from an account rather than offered and always empty. -#}
+    <div class="df-address-input"{% if public %} style="display:none"{% endif %}>
+      <label>Public Dogecoin address (watch-only):</label>
+      <div class="df-address-input-row">
+        <input type="text" id="address-input" placeholder="D... address" autocomplete="off">
+        <button class="df-lookup-btn" onclick="lookupAddress()">View</button>
+      </div>
+    </div>
+    
+    <div class="df-wallet-stats" id="wallet-stats" style="display: none;">
+      <div class="df-wallet-stat">
+        <div class="df-wallet-stat-value" id="stat-balance">0</div>
+        <div class="df-wallet-stat-label">Balance</div>
+      </div>
+      <div class="df-wallet-stat">
+        <div class="df-wallet-stat-value" id="stat-inscriptions">0</div>
+        <div class="df-wallet-stat-label">Inscriptions</div>
+      </div>
+      <div class="df-wallet-stat">
+        <div class="df-wallet-stat-value" id="stat-collections">0</div>
+        <div class="df-wallet-stat-label">Collections</div>
+      </div>
+    </div>
+    
+    <div class="df-tabs">
+      <button class="df-tab active" data-tab="all">All</button>
+      <button class="df-tab" data-tab="nfts">NFTs</button>
+      <button class="df-tab" data-tab="tokens">Tokens</button>
+      <button class="df-tab" data-tab="names">Names</button>
+    </div>
+    
+    <div id="wallet-content">
+      <div class="df-wallet-grid" id="wallet-grid">
+        <div class="df-empty" style="grid-column: 1/-1;">{{ 'Sign in' if public else 'Import a watch-only address on this node' }}.</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Right Sidebar -->
+  
+</div>
+
+{% include "dogefeedx/_wallet.js.html" %}
+<script>
+(function() {
+  'use strict';
+  
+  var IMG_BASE = '/content';   // this arcade's own copy of every inscription
+  var currentChain = 'doge';
+  
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function readingLine(data) {
+    var r = (data && data.reading) || {};
+    var via = r.via === 'peer' ? 'a peer on the arcade network' : "this arcade's node";
+    var sync = r.sync || '';
+    return 'Read from ' + via + (sync ? '. Local sync: ' + sync : '.');
+  }
+  
+  var walletTab = 'all';
+  var lastHoldings = null;
+  var holdSeq = 0;
+
+  function paintHoldings(data) {
+    lastHoldings = data || {};
+    var container = document.getElementById('wallet-grid');
+    var statsEl = document.getElementById('wallet-stats');
+    statsEl.style.display = 'grid';
+    var collections = data.collections || [];
+    var pieces = 0;
+    collections.forEach(function(c) { pieces += Number(c.count) || 0; });
+    document.getElementById('stat-inscriptions').textContent = String(pieces);
+    document.getElementById('stat-collections').textContent = String(collections.length);
+    document.getElementById('stat-balance').textContent = (data.balance_doge || '0') + ' DOGE';
+    var reading = document.getElementById('wallet-reading');
+    if (reading) { reading.hidden = false; reading.textContent = readingLine(data); }
+    var html = '';
+    if (walletTab === 'all' || walletTab === 'nfts') {
+      collections.forEach(function(c) {
+        (c.pieces || []).forEach(function(p) {
+          var href = p.href || c.href || '/dogefeedx/nfts';
+          html += '<a class="df-wallet-item" href="' + esc(href) + '" target="_blank" rel="noopener">';
+          if (p.image) html += '<img src="' + esc(p.image) + '" alt="" loading="lazy" referrerpolicy="no-referrer">';
+          html += '<div class="df-wallet-item-badge">' + esc(c.name || '') + (p.edition ? ' #' + esc(p.edition) : '') + '</div></a>';
+        });
+      });
+    }
+    if (walletTab === 'all' || walletTab === 'names') {
+      (data.names || []).forEach(function(n) {
+        html += '<div class="df-wallet-item"><div class="df-wallet-item-badge">' + esc(n.name) + '</div></div>';
+      });
+    }
+    if (walletTab === 'all' || walletTab === 'tokens') {
+      (data.tokens || []).forEach(function(t) {
+        html += '<div class="df-wallet-item"><div class="df-wallet-item-badge">' + esc(t.tick) + ' ' + esc(t.balance) + '</div></div>';
+      });
+    }
+    if (!html) {
+      html = '<div class="df-empty" style="grid-column:1/-1">' + esc(data.empty || 'No public holdings for this address.') + '</div>';
+    }
+    container.innerHTML = html;
+  }
+
+  function loadHoldings(address) {
+    var mine = ++holdSeq;
+    var want = address || '';
+    var container = document.getElementById('wallet-grid');
+    lastHoldings = null;
+    container.setAttribute('data-wallet', want);
+    container.innerHTML = '';
+    document.getElementById('stat-inscriptions').textContent = '';
+    document.getElementById('stat-collections').textContent = '';
+    document.getElementById('stat-balance').textContent = '';
+    var reading = document.getElementById('wallet-reading');
+    if (reading) { reading.hidden = true; reading.textContent = ''; }
+    var url = '/dogefeedx/api/wallet/holdings';
+    if (want) url += '?address=' + encodeURIComponent(want);
+    fetch(url, {cache: 'no-store'})
+      .then(function(r) { return r.json().then(function(data) { return {ok: r.ok, data: data}; }); })
+      .then(function(res) {
+        if (mine !== holdSeq || (dfxReadWallet() || '') !== want) return;
+        if (!res.ok) {
+          container.innerHTML = '<div class="df-empty" style="grid-column:1/-1">Enter a public Dogecoin address. No key is used.</div>';
+          return;
+        }
+        paintHoldings(res.data || {});
+      })
+      .catch(function() {
+        if (mine !== holdSeq || (dfxReadWallet() || '') !== want) return;
+        container.innerHTML = '<div class="df-empty" style="grid-column:1/-1">Could not load holdings. Try again later.</div>';
+      });
+  }
+
+  var imported = [];
+  window.lookupAddress = function() {
+    var address = document.getElementById('address-input').value.trim();
+    if (!address) address = dfxReadWallet();
+    if (address && imported.indexOf(address) >= 0) dfxWriteWallet(address);
+    var box = document.getElementById('address-input');
+    if (box && address) box.value = address;
+    loadHoldings(address);
+  };
+  
+  // Chain selector
+  document.querySelectorAll('.df-chain-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.df-chain-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentChain = btn.dataset.chain;
+    });
+  });
+  
+  // Tab switching
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      walletTab = tab.getAttribute('data-tab') || 'all';
+      if (lastHoldings) paintHoldings(lastHoldings);
+    });
+  });
+
+  function showSelected(addr) {
+    var box = document.getElementById('address-input');
+    if (box) box.value = addr || '';
+    loadHoldings(addr || '');
+  }
+  dfxEnsureWallet().then(function (w) {
+    imported = w.addresses || [];
+    showSelected(w.selected);
+  });
+  dfxBindWallet(function (addr) { showSelected(addr); });
+  
+  // Register with shell
+  if (window.DogeFeedX && window.DogeFeedX.registerApp) {
+    window.DogeFeedX.registerApp({
+      id: 'wallet',
+      name: 'Wallet',
+      icon: '/dogefeedx/icon-wallet.png',
+      url: '/dogefeedx/wallet'
+    });
+  }
+})();
+</script>
+{% endblock %}

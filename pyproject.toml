@@ -75,7 +75,7 @@ dogecoinarcade-update = "arcade.update:main"
 [tool.setuptools]
 # Only `arcade` is a package. Without this, setuptools sees installer/ as a
 # second top-level package and refuses to build at all.
-packages = ["arcade", "arcade.messaging", "arcade.mesh", "arcade.web", "arcade.lora", "arcade.lite"]
+packages = ["arcade", "arcade.messaging", "arcade.mesh", "arcade.web", "arcade.web.dogefeedx", "arcade.lora", "arcade.lite"]
 
 [tool.setuptools.package-data]
 # Files that are DATA rather than code and must be in the wheel, or an
@@ -90,9 +90,11 @@ packages = ["arcade", "arcade.messaging", "arcade.mesh", "arcade.web", "arcade.l
 "arcade.lite" = ["templates/*.html"]
 "arcade.web" = ["templates/*.html", "templates/*.js", "templates/*.css", "templates/*.md",
                 "templates/*.png", "templates/brands/*/*.png",
+                "templates/dogefeedx/*.html", "templates/dogefeedx/*.css", "templates/dogefeedx/*.js",
                 "docs/*.md", "docs/*/*.md",
                 "vendor/*.js", "vendor/*/*.js", "vendor/*.md",
                 "browser.html"]                                     # the Browser (meshweb.py, 2026-10-26)
+"arcade.web.dogefeedx" = ["README.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

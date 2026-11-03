@@ -1,0 +1,529 @@
+{% extends "base.html" %}
+{% block title %}Launchpad · DogeFeed{% endblock %}
+{% block body %}
+{#- DogeFeedX Launchpad: DogeFeed's launchpad, over this arcade's mintpads -#}
+<style>
+:root {
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-link: #1d9bf0;
+  --df-green: #00ba7c;
+  --df-red: #f4212e;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item.active { font-weight: 700; }
+.df-nav-item svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+.df-nav-item.active svg { fill: currentColor; }
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+  transition: background 0.15s;
+}
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-header {
+  display: block;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-header p { margin: 6px 0 0; color: var(--df-text-secondary); font-size: 14px; }
+.df-header h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.df-hero {
+  background: linear-gradient(135deg, #fff8e7 0%, #ffe4b5 100%);
+  padding: 32px 24px;
+  text-align: center;
+}
+.df-hero-icon {
+  width: 64px;
+  height: 64px;
+  background: var(--df-gold);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+}
+.df-hero-icon svg {
+  width: 32px;
+  height: 32px;
+  stroke: #000;
+  fill: none;
+}
+.df-hero h2 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.df-hero p {
+  color: var(--df-text-secondary);
+  font-size: 15px;
+  margin-bottom: 20px;
+  max-width: 400px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.df-hero-btns {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+a.df-hero-btn { display: inline-block; text-decoration: none; }
+.df-hero-btn {
+  padding: 12px 24px;
+  border-radius: 9999px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.df-hero-btn.primary {
+  background: var(--df-gold);
+  border: none;
+  color: #000;
+}
+.df-hero-btn.primary:hover { background: var(--df-gold-dark); }
+.df-hero-btn.secondary {
+  background: transparent;
+  border: 1px solid var(--df-border);
+  color: var(--df-text);
+}
+.df-hero-btn.secondary:hover { background: var(--df-hover); }
+
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
+  flex: 1;
+  padding: 14px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.df-tab:hover { background: var(--df-hover); }
+.df-tab.active {
+  font-weight: 700;
+  color: var(--df-text);
+}
+.df-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  background: var(--df-gold);
+  border-radius: 2px;
+}
+
+.df-launch-list {
+  min-height: 400px;
+}
+.df-launch {
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-launch:hover { background: var(--df-hover); }
+.df-launch-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.df-launch-img {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--df-gold-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.df-launch-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.df-launch-img svg {
+  width: 32px;
+  height: 32px;
+  stroke: var(--df-gold);
+}
+.df-launch-info {
+  flex: 1;
+  min-width: 0;
+}
+.df-launch-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.df-launch-name {
+  font-weight: 700;
+  font-size: 16px;
+}
+.df-launch-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.df-launch-badge.live {
+  background: var(--df-green);
+  color: #fff;
+}
+.df-launch-badge.upcoming {
+  background: var(--df-gold);
+  color: #000;
+}
+.df-launch-badge.ended {
+  background: var(--df-border);
+  color: var(--df-text-secondary);
+}
+.df-launch-desc {
+  font-size: 14px;
+  color: var(--df-text-secondary);
+  margin-bottom: 8px;
+}
+.df-launch-stats {
+  display: flex;
+  gap: 16px;
+}
+.df-launch-stat {
+  display: flex;
+  flex-direction: column;
+}
+.df-launch-stat-label {
+  font-size: 11px;
+  color: var(--df-text-secondary);
+  text-transform: uppercase;
+}
+.df-launch-stat-value {
+  font-weight: 700;
+  font-size: 14px;
+}
+.df-launch-progress {
+  margin-top: 12px;
+}
+.df-launch-progress-bar {
+  height: 8px;
+  background: var(--df-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.df-launch-progress-fill {
+  height: 100%;
+  background: var(--df-gold);
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+.df-launch-progress-text {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--df-text-secondary);
+}
+
+.df-loading {
+  display: flex;
+  justify-content: center;
+  padding: 40px;
+}
+.df-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.df-empty {
+  text-align: center;
+  padding: 40px;
+  color: var(--df-text-secondary);
+}
+
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-search input::placeholder { color: var(--df-text-secondary); }
+
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-card-item {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-card-item:hover { background: rgba(0,0,0,0.03); }
+.df-card-item-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--df-gold-light);
+}
+.df-card-item-info { flex: 1; }
+.df-card-item-name {
+  font-weight: 700;
+  font-size: 14px;
+}
+.df-card-item-meta {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+}
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; overflow: auto; position: relative; height: auto; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; height: 100vh; overflow: auto; position: relative; }
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-card, html.indesk body.df-dogefeed .df-hero { background: #0a0a0a !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-hero h2, html.indesk body.df-dogefeed .df-hero p, html.indesk body.df-dogefeed .df-header p { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-launch-img { background: #111 !important; }
+html.indesk body.df-dogefeed .df-tab { background: transparent !important; color: #fff6dd !important; border: 1px solid rgba(255,255,255,.25) !important; width: auto !important; box-shadow: none !important; }
+html.indesk body.df-dogefeed .df-tab.active { background: #f3e3a5 !important; color: #000 !important; }
+html.indesk body.df-dogefeed .df-signin-btn, html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; width: auto !important; }
+html.indesk body.df-dogefeed .df-search { background: #111 !important; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+
+<div class="df-app">
+  
+
+  <main class="df-main">
+    <div class="df-header">
+      <h1>Launchpad</h1>
+      <p><a href="/mintpad/new">Launch an already-inscribed collection for sale</a> on this arcade. That uses your wallet here.</p>
+    </div>
+    
+    <div class="df-hero">
+      <div class="df-hero-icon">
+        <svg viewBox="0 0 24 24" stroke-width="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>
+      </div>
+      <h2>Launch on Dogecoin</h2>
+      <p>Discover new projects, participate in mints, and be early to the next big Doginal collection</p>
+      <div class="df-hero-btns">
+        <a class="df-hero-btn primary" href="/mintpad/new">Apply to Launch</a>
+        <button class="df-hero-btn secondary">Learn More</button>
+      </div>
+    </div>
+    
+    <div class="df-tabs">
+      <button class="df-tab active" data-filter="live">Live</button>
+      <button class="df-tab" data-filter="upcoming">Upcoming</button>
+      <button class="df-tab" data-filter="ended">Ended</button>
+    </div>
+    
+    <div class="df-launch-list" id="df-launches">
+      <p class="df-empty">Loading public launches…</p>
+    </div>
+  </main>
+
+  <aside class="df-right">
+    <div class="df-card">
+      <h2 class="df-card-title">Top Launches</h2>
+      <div class="df-card-item">
+        <div class="df-card-item-info">
+          <div class="df-card-item-name">None yet</div>
+          <div class="df-card-item-meta">No public launch list to rank.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="df-card">
+      <h2 class="df-card-title">How It Works</h2>
+      <div style="padding: 16px; font-size: 14px; color: #ffffff80; line-height: 1.5;">
+        1. Browse upcoming launches<br>
+        2. Connect your wallet<br>
+        3. Mint during the live period<br>
+        4. Receive your Doginal NFT
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+(function() {
+  'use strict';
+  var box = document.getElementById('df-launches');
+  var side = document.querySelector('.df-card .df-card-item-info');
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function abs(url) { return url || ''; }   // this arcade's own addresses
+  function empty() {
+    box.innerHTML = '<p class="df-empty">Nothing minting on this arcade right now. Launch a collection you already inscribed.</p>';
+  }
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      this.classList.add('active');
+    });
+  });
+  fetch('/dogefeedx/api/launchpad')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      var rows = data.launches || [];
+      if (!rows.length) { empty(); return; }
+      box.innerHTML = rows.map(function (row) {
+        var src = abs(row.image);
+        var width = String(row.pct || '').replace('%', '');
+        return '<div class="df-launch"><div class="df-launch-header">'
+          + (src ? '<div class="df-launch-img"><img src="' + esc(src) + '" alt=""></div>' : '')
+          + '<div class="df-launch-info"><div class="df-launch-title"><span class="df-launch-name">' + esc(row.name) + '</span>'
+          + '<span class="df-launch-badge live">Live</span></div>'
+          + '<div class="df-launch-desc">' + esc(row.detail) + '</div>'
+          + '<div class="df-launch-stats"><span>' + esc(row.progress) + '</span></div></div></div>'
+          + '<div class="df-launch-progress"><div class="df-launch-progress-bar"><div class="df-launch-progress-fill" style="width:' + esc(width) + '%"></div></div>'
+          + '<div class="df-launch-progress-text"><span>' + esc(row.progress) + '</span><span>' + esc(row.pct) + '</span></div></div></div>';
+      }).join('');
+      if (side) {
+        side.innerHTML = '<div class="df-card-item-name">' + esc(rows[0].name) + '</div>'
+          + '<div class="df-card-item-meta">' + esc(rows[0].progress) + '</div>';
+      }
+    })
+    .catch(empty);
+})();
+</script>
+{% endblock %}

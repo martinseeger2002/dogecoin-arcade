@@ -15,10 +15,18 @@ too, so they are not rebranded.
 
 Adding a face: one entry in BRANDS, and its icons (icon-32/180/192/512.png) in
 templates/brands/<key>/. ``css`` is laid over base.html's own rules, after them,
-so it only names what differs.
+so it only names what differs. A new letter in a name needs the pixel font
+re-cut (base_css.css, "Arcade Pixel").
+
+A face per web address (SadFrog's side, 2026-11-03): one node published under
+more than one name can wear a different face on each -- `brand_hosts` in
+settings.json, {"digibyte-arcade.com": "digibyte"}, set in Admin -> Face. The
+web app sets it for each request (`by_host`); everything else, the mesh and
+the node's own name among them, keeps the node's own face (`own`).
 """
 from __future__ import annotations
 
+import contextvars
 import os
 import sys
 from dataclasses import dataclass
@@ -110,7 +118,35 @@ LITECOIN = Brand(
 .tile:hover{box-shadow:0 2px 4px rgba(16,28,52,.06),0 10px 24px rgba(16,28,52,.1)}
 """)
 
-BRANDS = {b.key: b for b in (DOGECOIN, PEPECOIN, LITECOIN)}
+#: SadFrog's DigiByteArcade (2026-11-03): DigiByte's own bright blue (#0066cc) on a clear,
+#: blue-white ground, so it reads apart from Litecoin's slate; a lighter blue in dark mode.
+DIGIBYTE = Brand(
+    key="digibyte", name="DigiByteArcade",
+    light_bg="#f2f6fb", dark_bg="#0a1020", light_fg="#0f1a2b",
+    accent="#0066cc", dark_accent="#4d9fff", muted="#56647a", dark_muted="#8a9ab3",
+    dark_fg="#e2eaf6",
+    css="""
+:root{
+  --bg:#f2f6fb; --panel:#fbfcff; --fg:#0f1a2b; --muted:#56647a; --line:#d3dded;
+  --accent:#0066cc; --accent-fg:#fff; --ok:#1f7a5c; --code:#e6eef9;
+  --shadow:0 1px 2px rgba(0,40,90,.05),0 4px 14px rgba(0,40,90,.07);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme=light]){
+    --bg:#0a1020; --panel:#111a2e; --fg:#e2eaf6; --muted:#8a9ab3; --line:#1f2b44;
+    --accent:#4d9fff; --accent-fg:#0a1020; --ok:#4cc29a; --code:#141f36;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.22);
+  }
+}
+:root[data-theme=dark]{
+    --bg:#0a1020; --panel:#111a2e; --fg:#e2eaf6; --muted:#8a9ab3; --line:#1f2b44;
+    --accent:#4d9fff; --accent-fg:#0a1020; --ok:#4cc29a; --code:#141f36;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.22);
+}
+.tile:hover{box-shadow:0 2px 4px rgba(0,40,90,.07),0 10px 24px rgba(0,40,90,.11)}
+""")
+
+BRANDS = {b.key: b for b in (DOGECOIN, PEPECOIN, LITECOIN, DIGIBYTE)}
 DEFAULT = DOGECOIN
 
 #: Whether the face was fixed from outside (--brand or ARCADE_BRAND in the service)
@@ -132,7 +168,13 @@ def use(key: str) -> Brand:
 
 
 def current() -> Brand:
-    """The face this process shows: ARCADE_BRAND (set by --brand), else DogecoinArcade.
+    """The face shown now: the web address's own face during a request that came in by one
+    (`brand_hosts`), else the node's own face (`own`)."""
+    return _HOST.get() or own()
+
+
+def own() -> Brand:
+    """The node's own face: ARCADE_BRAND (set by --brand), else DogecoinArcade.
 
     An unknown name is said once on stderr and falls back to the default, so a
     typo in a service file costs the colours, never the node."""
@@ -148,3 +190,36 @@ def current() -> Brand:
 
 
 _warned: set[str] = set()
+
+#: The face of the web address this request came in by, for one request (the web app's `_HostFace`).
+_HOST: "contextvars.ContextVar[Brand | None]" = contextvars.ContextVar("arcade_host_face", default=None)
+
+
+def hosts(said) -> dict[str, str]:
+    """`brand_hosts` as {host: face key}: names lower-cased without a port, unknown faces left out."""
+    out: dict[str, str] = {}
+    if isinstance(said, dict):
+        for host, key in said.items():
+            host = str(host).strip().lower().rsplit(":", 1)[0]
+            key = str(key).strip().lower()
+            if host and key in BRANDS:
+                out[host] = key
+    return out
+
+
+def by_host(host: str | None, said) -> Brand | None:
+    """The face `brand_hosts` gives the web address `host` (a Host header), or None."""
+    if not host:
+        return None
+    key = hosts(said).get(str(host).strip().lower().rsplit(":", 1)[0])
+    return BRANDS.get(key) if key else None
+
+
+class _Current:
+    """The templates' `brand`: whichever face `current()` says when a page reads it."""
+
+    def __getattr__(self, name):
+        return getattr(current(), name)
+
+
+CURRENT = _Current()

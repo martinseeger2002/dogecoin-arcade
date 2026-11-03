@@ -1,0 +1,479 @@
+{% extends "base.html" %}
+{% block title %}NFTs · DogeFeed{% endblock %}
+{% block body %}
+{#- DogeFeedX NFTs: NFTs, from this arcade's indexes -#}
+<style>
+:root {
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-link: #1d9bf0;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item.active { font-weight: 700; }
+.df-nav-item svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+.df-nav-item.active svg { fill: currentColor; }
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+  transition: background 0.15s;
+}
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-header h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.df-hero {
+  background: var(--df-gold-light);
+  padding: 24px;
+  text-align: center;
+}
+.df-hero h2 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.df-hero p {
+  color: var(--df-text-secondary);
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+.df-hero-btn {
+  display: inline-block;
+  padding: 12px 24px;
+  border-radius: 9999px;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+}
+.df-hero-btn:hover { background: var(--df-gold-dark); }
+
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
+  flex: 1;
+  padding: 14px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.df-tab:hover { background: var(--df-hover); }
+.df-tab.active {
+  font-weight: 700;
+  color: var(--df-text);
+}
+.df-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  background: var(--df-gold);
+  border-radius: 2px;
+}
+
+.df-nft-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  padding: 16px;
+  min-height: 400px;
+}
+.df-nft-card {
+  background: var(--df-bg);
+  border: 1px solid var(--df-border);
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.df-nft-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.df-nft-img {
+  aspect-ratio: 1;
+  background: var(--df-gold-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.df-nft-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.df-nft-img svg {
+  width: 48px;
+  height: 48px;
+  fill: var(--df-gold);
+}
+.df-nft-info {
+  padding: 12px;
+}
+.df-nft-collection {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+  margin-bottom: 4px;
+}
+.df-nft-name {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.df-nft-price {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.df-nft-price-label {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+}
+.df-nft-price-value {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--df-gold);
+}
+
+.df-loading {
+  display: flex;
+  justify-content: center;
+  padding: 40px;
+  grid-column: 1 / -1;
+}
+.df-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.df-empty {
+  text-align: center;
+  padding: 40px;
+  color: var(--df-text-secondary);
+  grid-column: 1 / -1;
+}
+
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-search input::placeholder { color: var(--df-text-secondary); }
+
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-stat {
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.df-stat-label {
+  font-size: 14px;
+  color: var(--df-text-secondary);
+}
+.df-stat-value {
+  font-weight: 700;
+  font-size: 14px;
+}
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; overflow: auto; position: relative; height: auto; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; height: 100vh; overflow: auto; position: relative; }
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background: #0a0a0a !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-tab { background: transparent !important; color: #fff6dd !important; border: 1px solid rgba(255,255,255,.25) !important; width: auto !important; box-shadow: none !important; }
+html.indesk body.df-dogefeed .df-tab.active { background: #f3e3a5 !important; color: #000 !important; }
+html.indesk body.df-dogefeed .df-signin-btn { background: #f3e3a5 !important; color: #000 !important; margin-top: 8px !important; position: static !important; }
+html.indesk body.df-dogefeed .df-search { background: #111 !important; }
+html.indesk body.df-dogefeed .df-nft-card { background:#0a0a0a !important; color:#fff6dd !important; border-color:rgba(255,255,255,.12) !important; }
+html.indesk body.df-dogefeed .df-nft-name, html.indesk body.df-dogefeed .df-nft-collection { color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-hero { background: #0a0a0a !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-hero h2 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-hero p { color: rgba(255,255,255,.7) !important; }
+html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; color: #000 !important; width: auto !important; }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+
+<div class="df-app">
+  
+
+  <main class="df-main">
+    <div class="df-header">
+      <h1>NFTs</h1>
+    </div>
+    
+    <div class="df-hero">
+      <h2>{{ 'Held by your wallet' if public else "Held by this node's wallet" }}</h2>
+      <p>Doginals at the imported Dogecoin addresses, named from DogeFeed's public collections. Watch-only.</p>
+      <p id="nft-reading" style="margin:8px 0 0;font-size:13px;color:var(--df-text-secondary)"></p>
+    </div>
+    
+    <div class="df-tabs">
+      <button class="df-tab active" data-filter="all">All NFTs</button>
+      <button class="df-tab" data-filter="listed">Listed</button>
+      <button class="df-tab" data-filter="recent">Recent</button>
+    </div>
+    
+    <div class="df-nft-grid" id="df-nfts">
+      <div class="df-loading"><div class="df-spinner"></div></div>
+    </div>
+  </main>
+
+  
+</div>
+
+{% include "dogefeedx/_wallet.js.html" %}
+<script>
+(function() {
+  'use strict';
+  
+  var IMG_BASE = '/content';   // this arcade's own copy of every inscription
+  
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function readingLine(data) {
+    var r = (data && data.reading) || {};
+    var via = r.via === 'peer' ? 'a peer on the arcade network' : "this arcade's node";
+    var sync = r.sync || '';
+    return 'Read from ' + via + (sync ? '. Local sync: ' + sync : '.');
+  }
+  
+  function renderNFT(item, collection) {
+    var imgUrl = item.id ? IMG_BASE + '/' + item.id : '';
+    
+    return '<div class="df-nft-card" data-id="' + esc(item.id) + '">' +
+      '<div class="df-nft-img">' +
+      (imgUrl ? '<img src="' + esc(imgUrl) + '" alt="" onerror="this.style.display=\'none\'">' :
+       '<svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>') +
+      '</div>' +
+      '<div class="df-nft-info">' +
+      '<div class="df-nft-collection">' + esc(collection || item.collection || 'Doginal') + '</div>' +
+      '<div class="df-nft-name">' + esc(item.name || '#' + (item.number || item.id.substring(0, 8))) + '</div>' +
+      '<div class="df-nft-price">' +
+      '<span class="df-nft-price-label">Price</span>' +
+      '<span class="df-nft-price-value">' + (item.price || '--') + ' DOGE</span>' +
+      '</div>' +
+      '</div>' +
+      '</div>';
+  }
+  
+  var nftRows = [];
+  var nftFilter = 'all';
+
+  function absImg(url) {
+    if (!url) return '';
+    return url;   // this arcade's own addresses
+  }
+
+  function paintNfts() {
+    var container = document.getElementById('df-nfts');
+    var rows = nftRows.slice();
+    if (nftFilter === 'listed') rows = rows.filter(function(c) { return c.floor && c.floor !== '—'; });
+    if (nftFilter === 'recent') rows = rows.slice().reverse();
+    if (!rows.length) {
+      container.innerHTML = '<div class="df-empty">' + (nftRows._empty || '{{ 'Sign in' if public else 'Import a watch-only address on this node' }}.') + '</div>';
+      return;
+    }
+    var cards = [];
+    rows.forEach(function(c) {
+      (c.pieces || []).forEach(function(p) {
+        var img = absImg(p.image || c.cover);
+        cards.push('<a class="df-nft-card" href="' + esc(p.href || c.href || '/dogefeedx/market') + '" target="_blank" rel="noopener">' +
+          '<div class="df-nft-img">' + (img ? '<img src="' + esc(img) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : '') + '</div>' +
+          '<div class="df-nft-info"><div class="df-nft-collection">' + esc(c.name) + '</div>' +
+          '<div class="df-nft-name">' + esc(p.title || (p.edition ? '#' + p.edition : c.name)) + '</div>' +
+          '<div class="df-nft-price"><span class="df-nft-price-label">Floor</span>' +
+          '<span class="df-nft-price-value">' + esc(c.floor || '—') + '</span></div></div></a>');
+      });
+    });
+    container.innerHTML = cards.join('') || '<div class="df-empty">No doginals cross-referenced for this wallet.</div>';
+  }
+
+  var nftSeq = 0;
+  function loadNFTs() {
+    var mine = ++nftSeq;
+    var addr = dfxReadWallet();
+    var container = document.getElementById('df-nfts');
+    nftRows = [];
+    container.setAttribute('data-wallet', addr);
+    container.innerHTML = '';
+    var reading = document.getElementById('nft-reading');
+    if (reading) reading.textContent = '';
+    fetch(dfxHoldingsUrl(), {cache: 'no-store'})
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (mine !== nftSeq || dfxReadWallet() !== addr) return;
+        if (reading) reading.textContent = readingLine(data);
+        nftRows = data.collections || [];
+        nftRows._empty = data.imported ? 'No doginals cross-referenced for this wallet.' : (data.empty || '{{ 'Sign in' if public else 'Import a watch-only address on this node' }}.');
+        paintNfts();
+      })
+      .catch(function() {
+        if (mine !== nftSeq || dfxReadWallet() !== addr) return;
+        container.innerHTML = '<div class="df-empty">Could not load NFTs</div>';
+      });
+  }
+  
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      this.classList.add('active');
+      nftFilter = this.getAttribute('data-filter') || 'all';
+      paintNfts();
+    });
+  });
+  
+  dfxEnsureWallet().then(loadNFTs);
+  dfxBindWallet(function () { loadNFTs(); });
+})();
+</script>
+{% endblock %}

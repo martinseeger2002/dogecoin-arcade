@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+{% block title %}Messages · DogeFeed{% endblock %}
+{% block body %}
+{#- DogeFeedX Messages: the arcade's own Messages in DogeFeed's look (2026-11-03, the operator: "Keep UI/UX elements from
+    DogefeedX wire them into the existing arcade architecture"). The same two modules as /me/messages: an account opens
+    and seals its letters in its own browser (/wallet.js, /messaging.js); the operator's arcade reads the node's own
+    (/node-wallet.js, /node-mail.js). Groups, files and contact codes stay on the full Messages page. -#}
+<style>
+:root {
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-link: #1d9bf0;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg {
+  width: 32px;
+  height: 32px;
+}
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover {
+  background: var(--df-hover);
+}
+.df-nav-item.active {
+  font-weight: 700;
+}
+.df-nav-item svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+.df-nav-item.active svg {
+  fill: currentColor;
+}
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+  transition: background 0.15s;
+}
+.df-signin-btn:hover {
+  background: var(--df-gold-dark);
+}
+
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-header h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.df-signin-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 40px;
+  text-align: center;
+}
+.df-signin-icon {
+  width: 80px;
+  height: 80px;
+  background: var(--df-gold-light);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+.df-signin-icon svg {
+  width: 40px;
+  height: 40px;
+  stroke: var(--df-gold);
+  stroke-width: 2;
+  fill: none;
+}
+.df-signin-prompt h2 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.df-signin-prompt p {
+  color: var(--df-text-secondary);
+  font-size: 15px;
+  margin-bottom: 24px;
+  max-width: 320px;
+}
+.df-signin-prompt .df-signin-btn {
+  width: auto;
+  padding: 14px 32px;
+}
+
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg {
+  width: 18px;
+  height: 18px;
+  color: var(--df-text-secondary);
+}
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-search input::placeholder {
+  color: var(--df-text-secondary);
+}
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; overflow: auto; position: relative; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; height: 100vh; overflow: auto; position: relative; }
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.<style>
+.dfm-row { display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--df-border); cursor: pointer; }
+.dfm-row:hover, .dfm-row.on { background: rgba(243,227,165,.08); }
+.dfm-row b { display: block; }
+.dfm-row span { color: var(--df-text-secondary); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; max-width: 340px; }
+.dfm-badge { margin-left: auto; background: #f3e3a5; color: #000; border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 700; }
+.dfm-bubbles { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.dfm-b { max-width: 78%; padding: 8px 12px; border-radius: 16px; background: #1d1d1d; white-space: pre-wrap; word-break: break-word; }
+.dfm-b.mine { align-self: flex-end; background: #f3e3a5; color: #000; }
+.dfm-b small { display: block; opacity: .6; font-size: 11px; margin-top: 2px; }
+.dfm-say { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--df-border); }
+.dfm-say textarea { flex: 1; border: 1px solid var(--df-border); border-radius: 16px; padding: 10px 14px; background: transparent; color: inherit; resize: none; height: 44px; font: inherit; }
+</style>
+<div class="df-app">
+  <main class="df-main">
+    <div class="df-header">
+      <h1>Messages</h1>
+    </div>
+    <p class="df-empty" id="msg-note">Sealed end to end. Groups and files: <a href="/me/messages" target="_top">the full Messages</a>.</p>
+    <div id="dfm-locked" hidden style="padding:12px 16px">
+      <button class="df-signin-btn" type="button" id="dfm-open" style="width:auto;padding:10px 16px">Unlock to read your messages</button>
+      <p class="df-empty" id="dfm-locked-said"></p>
+    </div>
+    <div id="dfm-box" hidden>
+      <form id="dm" style="display:flex;gap:8px;padding:12px 16px">
+        <input id="dm-to" type="text" placeholder="@name or address" aria-label="Start a DM" style="flex:1;border:1px solid var(--df-border);border-radius:999px;padding:10px 14px;background:transparent;color:inherit">
+        <button class="df-signin-btn" type="submit" style="width:auto;padding:10px 16px">Start a DM</button>
+        <a class="df-signin-btn" href="/me/messages" target="_top" id="new-group" style="width:auto;padding:10px 16px;text-decoration:none;color:#000 !important;display:inline-flex;align-items:center">New group</a>
+      </form>
+      <p class="df-empty" id="dfm-said" hidden></p>
+      <div id="msg-threads"></div>
+      <div id="msg-thread" hidden>
+        <div class="dfm-row" id="dfm-back"><b>‹ Back</b><span id="dfm-who"></span></div>
+        <div class="dfm-bubbles" id="dfm-bubbles"></div>
+        <form class="dfm-say" id="dfm-say">
+          <textarea id="dfm-text" aria-label="Message" placeholder="Start a message"></textarea>
+          <button class="df-signin-btn" type="submit" style="width:auto;padding:10px 16px;margin:0">Send</button>
+        </form>
+      </div>
+    </div>
+  </main>
+</div>
+{% if chain %}
+{% if not public %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
+<script type="module">
+import * as wallet from "{{ '/wallet.js' if public else '/node-wallet.js' }}";
+import * as mail from "{{ '/messaging.js' if public else '/node-mail.js' }}";
+const CHAIN = {network: "{{ chain.network }}", version: {{ chain.params.pubkeyhash_version }}};
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const say = (t) => { $("dfm-said").textContent = t || ""; $("dfm-said").hidden = !t; };
+let keys = null, me = null, here = null, looking = false;
+const REACHED = {};
+const nameOf = (t) => t.tag ? "@" + t.tag : (t.address ? t.address.slice(0, 12) + "…" : "Unknown");
+const when = (s) => { if (!s) return "sending…"; try { return new Date(s * 1000).toLocaleString(undefined, {month: "short", day: "numeric", hour: "numeric", minute: "2-digit"}); } catch (e) { return ""; } };
+const words = (l) => { try { if (mail.text) return String(mail.text(l) || ""); } catch (e) {} return String(l.text != null ? l.text : (l.body != null ? l.body : "")); };
+
+async function drawThreads() {
+  const list = (await mail.threads()).filter((t) => !t.group);
+  const unread = list.reduce((n, t) => n + (t.unread || 0), 0);
+  try { localStorage.setItem("dogefeedx.badge.messages::" + (localStorage.getItem("dogefeedx.wallet") || ""), String(unread)); } catch (e) {}
+  $("msg-threads").innerHTML = list.length ? list.map((t) =>
+    '<div class="dfm-row' + (t.peer === here ? " on" : "") + '" data-peer="' + esc(t.peer) + '"><div><b>' + esc(nameOf(t))
+    + '</b><span>' + esc(t.preview || "") + '</span></div>' + (t.unread ? '<span class="dfm-badge">' + t.unread + "</span>" : "")
+    + "</div>").join("") : '<p class="df-empty">No messages yet. Start a DM with an @name.</p>';
+}
+
+async function drawConversation() {
+  if (!here) return;
+  const letters = await mail.conversation(here);
+  $("dfm-bubbles").innerHTML = letters.length ? letters.map((l) =>
+    '<div class="dfm-b' + (l.mine ? " mine" : "") + '">' + esc(words(l)) + "<small>" + esc(when(l.when)) + "</small></div>").join("")
+    : '<p class="df-empty">Nothing here yet. Say hello.</p>';
+  try { await mail.markRead(here); } catch (e) {}
+  $("dfm-bubbles").scrollIntoView({block: "end"});
+}
+
+async function show(peer, label) {
+  here = peer;
+  $("msg-threads").hidden = true; $("dm").hidden = true;
+  $("msg-thread").hidden = false;
+  const t = (await mail.threads()).find((x) => x.peer === peer);
+  $("dfm-who").textContent = t ? nameOf(t) : (label || "");
+  await drawConversation();
+  $("dfm-text").focus();
+}
+
+function back() {
+  here = null;
+  $("msg-thread").hidden = true;
+  $("msg-threads").hidden = false; $("dm").hidden = false;
+  drawThreads();
+}
+
+async function check() {
+  if (looking || !me) return;
+  looking = true;
+  try {
+    await mail.collect(me, {});
+    if (here) await drawConversation();
+    await drawThreads();
+  } catch (e) { /* the next look tries again */ } finally { looking = false; }
+}
+
+$("msg-threads").addEventListener("click", (e) => {
+  const row = e.target.closest("[data-peer]");
+  if (row) show(row.getAttribute("data-peer"));
+});
+$("dfm-back").onclick = back;
+$("dm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  say("");
+  const wanted = $("dm-to").value.trim();
+  if (!wanted) return;
+  try {
+    const them = await mail.reach(wanted);
+    REACHED[them.key] = wanted.replace(/^@/, "");
+    $("dm-to").value = "";
+    await show(them.key, wanted);
+  } catch (err) { say(String(err.message || err)); }
+});
+$("dfm-say").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("dfm-text").value.trim();
+  if (!text || !here) return;
+  const t = (await mail.threads()).find((x) => x.peer === here);
+  const asking = REACHED[here] || (t && (t.tag || t.address));
+  try {
+    if (!asking) throw new Error("There is no name or address for this conversation to send to.");
+    const them = await mail.lookUp(asking);
+    if (them.key !== here) throw new Error("@" + asking + " is not who this conversation is with any more.");
+    await mail.write(keys, me, asking, text);
+    $("dfm-text").value = "";
+    await drawConversation();
+    await drawThreads();
+  } catch (err) {
+    $("dfm-bubbles").insertAdjacentHTML("beforeend", '<p class="df-empty">' + esc(String(err.message || err)) + "</p>");
+  }
+});
+$("dfm-text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("dfm-say").requestSubmit(); }
+});
+
+async function ready(w) {
+  keys = w;
+  me = await mail.identity(w.phrase);
+  $("dfm-locked").hidden = true;
+  $("dfm-box").hidden = false;
+  try { await mail.syncMailbox(me); } catch (e) {}
+  await drawThreads();
+  const wanted = new URLSearchParams(location.search).get("to");
+  if (wanted) { $("dm-to").value = wanted; $("dm").requestSubmit(); }
+  await check();
+  setInterval(check, 20000);
+  document.addEventListener("arcade:changed", check);
+}
+$("dfm-open").onclick = async () => {
+  $("dfm-locked-said").textContent = "";
+  try { await ready(await arcadeKeys(CHAIN)); }
+  catch (e) { $("dfm-locked-said").textContent = String(e.message || e); }
+};
+const already = await wallet.opened(CHAIN);
+if (already) await ready(already); else $("dfm-locked").hidden = false;
+document.body.dataset.messagesReady = "yes";
+</script>
+{% else %}
+<p class="df-empty">Messages are not open on this arcade yet.</p>
+{% endif %}
+{% endblock %}

@@ -110,6 +110,731 @@ coding agent, so it is written for agents first and people second.
   - `pyproject.toml` adds the `arcade.lite` package and its template.
 - Tests: `tests/test_lite.py` (9). The smoke set with test_admin, test_guide and the door tests: 484 passed.
 
+### 2026-11-03 DogeFeedX for accounts on a public arcade; the arcade @handle is the name (Claude; the operator: "all of this stuff is already available for the user end ... wire it in", "the primary at handle should still be the existing arcade @handles with the option of describing your handle on Doge")
+- **door.py** opens the DogeFeedX windows, their files and the reads of public arcade data (feed, posts, profiles,
+  collections, ord index, mintpads, apps, `me`, notifications, wallet), each path by name. Still refused there: the
+  standalone terminal page and its node status/peers/balance/address/lookup calls, the Network module, and the
+  operator's two POSTs (an account posts and reacts from its browser). The desktop's own Terminal and Explorer
+  windows use /api/terminal, as reviewed in #61.
+- **Wallet windows read the asker's own address** (app.py `_dfx_wallets`, apps.py `_wallets`): the operator's are
+  the node's watch list as before; an account's is its own Dogecoin address only (`_account_doge_address`); a
+  visitor has none. Holdings for any other address come back empty for an account. The watch-only look-up box and
+  "import on this node" wording are the operator's only.
+- **Names**: Profile's card and a profile page show the arcade @handle first; the Dogecoin ord names (much.doge,
+  you.dogefeed) the person's Doge address holds show beside it as "on Dogecoin: ..." (`_dfx_doge_names`, from the
+  indexes, five minutes per address). Before, the own-wallet card put the Doge name or the address where the
+  @handle goes. Settings says your Doge names, not your Doge address.
+
+### 2026-11-03 DogeFeedX reads and writes through the arcade alone (Claude; the operator: "Everything needs to work through arcade", "Keep UI/UX elements from DogefeedX wire them into the existing arcade architecture")
+- **No other server**: every dogefeed.app, explorer.dogesoft.io and doggy.market call is gone (apps.py's
+  `_fetch_dogefeed_*`, wallet_assets.py's market scrape, public_read.py deleted), and so are the Google Fonts links
+  (system fonts stand in). httpx left the web extra's DogeFeedX line. `tests/test_dogefeedx_local.py` refuses any of
+  those hosts, or any absolute URL a page would load, in DogeFeedX's code and pages.
+- **The data is the arcade's** (`apps.LOCAL`, app.py `dfx_local`, handed to `register_routes(..., local=)`): Home,
+  Post, Profile, Explore, Search, Leaderboard = the arcade's own feed; Market and Collections = the collection registry
+  (Doginal Frogs, Doginal Dogs, ...) plus the imported listing, floors from this arcade's Doginal market; inscriptions,
+  DRC-20, names, the Meme Library = the ord index (`lookup`); Launchpad = mintpads; Arcade = the Apps list. No DOGE
+  price (none is asked). Every endpoint answers empty with `source: "arcade"` when there is nothing.
+- **The windows stay DogeFeedX's and are wired**: Home's Post goes on the chain (account: `wallet.post` in its
+  browser; operator: new `POST /dogefeedx/api/post`, /feed/post in JSON, pictures inscribed; a Meme Library picture is
+  linked, not re-inscribed); Like, Repost and Reply under a post are the Feed's (`wallet.react` / new
+  `POST /dogefeedx/api/react`); Messages is the arcade's sealed messages (`/messaging.js` or `/node-mail.js`, as
+  /me/messages); Settings publishes bio and website on the chain (`mail.publishProfile`); Profile's card shows them
+  (`GET /dogefeedx/api/me`). Before, Home kept "barks" in the browser and Messages/Settings stored stand-ins there.
+  Both new POSTs are refused on a public arcade by the door (not on its list) and for an account view.
+- The DogeFeedX pages are still not on the door's public list, as merged in #61: they serve the operator's machine
+  (and an account signed in there).
+- Tests: the outside-fetch mocks became a fake provider; two browser tests that waited on dogefeed.app's pictures get
+  arcade rows; the wallet-isolation test covers the windows still keyed to a watch address.
+
+### 2026-11-03 PR #61, what the review changed before merging (Claude; the operator: "Fix the issues ourselves")
+- **The terminal and the Network window are for an arcade's own people** (app.py `_dfx_viewer`): POST
+  /api/terminal/exec and GET /api/network answered anyone on the public address; the terminal's block and tx commands
+  called the node's Core per request with no limit (the Core RPC floods we have had). Now a signed-in account, or the
+  operator on its own machine (_admin_check), else 403; 30 commands a minute each, else 429. door.py keeps the paths
+  open so signed-in accounts reach them; the routes refuse strangers.
+- **Nothing internal goes out**: errors are said in words, never the node's own error text; `peers` (the mesh's links)
+  is the operator's only; /api/network no longer says the node id, the tunnel's name, or (an always-empty, broken)
+  list of arcades -- `tunnel` is {active} and `arcades` [] so the window still reads them.
+- **Calls that could only fail**: block and tx used `chain.rpc(...)` as if it were a call (it is a context manager);
+  address called `index.balance(db, addr)` (it is balance(address, property_id)): now `with chain.rpc() as rpc` and
+  index.balances([addr]) with the name.
+- **Its own tests**: two wrote screenshots to the author's /opt/cursor (now DFX_SHOTS or the temp folder), the wheel
+  fixture is a classmethod (pytest refuses an instance one at class scope), and the look test reads its gold from
+  desktop.html, where it is (the window CSS has paler golds). test_dogefeedx_server.py at the top of the repository
+  (a development server proxying the live dogefeed.app API) is removed.
+- **Left for the operator**: the pages fetch from dogefeed.app and explorer.dogesoft.io (outside services).
+- Test: test_dogefeedx_terminal test_the_terminal_and_the_network_window_are_for_the_arcades_own_people_and_limited.
+
+### 2026-11-03 PR #61 merged: DogeFeedX, a Desktop View look and its apps (Claude)
+blockchaindad's (BillyBitcoins') PR #61, written with a Cursor agent, applied to master from the public mirror diff as
+it stood at 720891ae. Merged as written; the changes the review asked for follow in the next commit. Their entries
+follow, as written.
+
+### 2026-11-03 DogeFeedX: merge upstream main into the review branch (Cursor Cloud Agent)
+Billy asked to fix the conflicts on upstream pull request #61 (`dogecoinarcade/dogecoin-arcade` #61, `blockchaindad:cursor/dogefeedx-combined-fd4a` into `main`). This is a merge of `upstream/main` `5eb2935` into `cursor/dogefeedx-combined-fd4a` at `dcebd09`. It is a merge, not a rebase, and the branch is pushed normally. This agent does not merge the pull request and does not comment on the operator's repository.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+**Parents:** `dcebd096630c501bfc664f538f720ab6039a90d2`, `5eb2935a40983981d1b88f7c3cbfb6c86f352529`
+
+**Conflict:** `COLLAB-NOTES.md` only. Both logs are kept. The 2026-11-03 DogeFeedX entries stay above the operator's 2026-11-02 entries, and his wording is unchanged. `arcade/web/app.py`, `base.html`, `desktop.html`, and `me.html` merged on their own. DogeFeedX stays an opt-in theme (`localStorage arcade.deskview = dogefeedx`). The Ubuntu and Windows 98 skins are unchanged, including `reloadWin`.
+
+**Need from the other side:** a review only. No signing, no spends, no keys, nothing written to dogefeed.app.
+
+---
+
+### 2026-11-03 DogeFeedX: review request on the upstream repo (Cursor Cloud Agent)
+Billy asked for a pull request from `blockchaindad:cursor/dogefeedx-combined-fd4a` onto `dogecoinarcade/Dogecoin-Arcade` `main`. DogeFeedX is an opt-in theme. dogefeed.app stays a read-only source of public pages. Wallet ownership stays on this node or a peer. This agent does not merge it.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+**Commits:** 5439e9a, 1927a90
+
+**Need from the other side:** a review only. No signing, no spends, no keys, nothing written to dogefeed.app.
+
+---
+
+### 2026-11-03 DogeFeedX: peer ownership reads, and wallet isolation (Cursor Cloud Agent)
+The operator: even when this Core is still catching up, the arcade can read from another arcade that shares the chain. DogeFeedX ownership now does that with the doors the watcher already has. No new mesh call, and no third-party site.
+
+While this Core is behind (`core_catchup.borrowing`) or the chain is borrowed, the balance comes from `utxoset.LentSet.fetch` (the same ask as `watcher._utxoset_lent_pass`), then `arcade_coinscan` when that chain has no lent set. A scan that is still waiting is not used. DRC-20, names, and inscriptions on those coins go through `DoginalIndex.lookup` (the most complete walker, then this arcade). Dogecoin usually has no lent set and no coin-set scan; the balance then stays this arcade's own index, and the line says so. A synced Core keeps the local indexes.
+
+The holdings answer stays `source: node` and adds `reading.via` (`local` or `peer`), `reading.node`, and `reading.sync` from `core_catchup.say` (this Core, not the peer's tip). Wallet, Files, NFTs, and Profile show which one was read and the local sync. Outpoints are not returned.
+
+Switching the wallet on Profile drops the previous wallet from every module. Messages, notifications, bookmarks, settings, the inscribe note, local barks, and the dock badges are stored per address.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** 5439e9a
+
+**No action needed from SadFrog.** No signing, no spends, no keys, nothing written to dogefeed.app.
+
+---
+
+### 2026-11-03 DogeFeedX: Home composer, no intro card (Cursor Cloud Agent)
+Billy's Home screenshot. The "DOGE payments enabled" line and the "social feed paid in DOGE" card are gone. The composer sits at the top with dogefeed.app's controls: add images, Meme Library, emoji, paywall lock (text, text + image, image only), `/send` and `/pay`, save draft, and Post. The bark is signed by the wallet chosen on Profile and stored in this browser. Nothing is posted or paid on dogefeed.app.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** df2b68c
+
+**No action needed from SadFrog.**
+
+---
+
+### 2026-11-03 DogeFeedX: logo, window sizes, no sign-in, wallet switcher (Cursor Cloud Agent)
+Billy's pass on the fb8b55d screenshots. The DogeFeedX menu bar uses dogefeed.app's Shiba mark (cream `#f3e3a5`, muzzle `#fff6dd`) instead of the arcade icon. Each dock module opens at its own size (Home 640×620, Profile 440×620, and the rest fitted the same way) and a saved full-screen rect is dropped once. Sign-in buttons, banners, and the Messages join iframe are gone from the modules. Profile lists the Dogecoin addresses this node's Core wallet already watches; the selected address is what Wallet, Files, NFTs, and Profile read. No key, no spend.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commits:** f01d93f, 0cdeead
+
+**No action needed from SadFrog.**
+
+---
+
+### 2026-11-03 DogeFeedX: branding, dock-only nav, node holdings (Cursor Cloud Agent)
+Billy's direction for this fork. The desktop wears dogefeed.app's dark tokens (cream `#f3e3a5` on black, Fredoka and Nunito). The in-window DogeFeed logo column is gone from every module. The dock is the navigation. Launchpad keeps its own right-hand panel (Top Launches, How It Works). The site `main` column no longer caps a window at 1000px.
+
+What a wallet owns is this node's indexes, not a public explorer. Balance is the watcher utxo sum. Doginals are the ledger. DRC-20 and names are the ord index. Outpoints are not returned. dogefeed.app only labels a collection the index already holds (name, cover, floor) and still supplies the public feed, market, memes, leaderboard, and launch listings. The table is `arcade/web/dogefeedx/README.md`.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** da86016
+
+**No action needed from SadFrog.** No signing, no spends, no keys, no deploy, nothing written to dogefeed.app.
+
+---
+
+### 2026-11-03 DogeFeedX: public arcade, explore, and NFT collections (Cursor Cloud Agent)
+A fresh side-by-side of all 16 dock apps against dogefeed.app, at 1440 and 1280. The windows that were still empty or overlapping now show the public lists, and the in-window nav opens each app.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** 73700f1
+
+**What changed:**
+- Arcade reads the five public free-chip games (Poker, Much Match, Doge Tycoon, Doge Fleet, Bark Hunt) and links out to them. Games inscribed on this node stay in a second list.
+- Explore shows trending hashtags, people to follow, NFT collections, today's earners, and top posts this week. Earners use the 1-day board.
+- NFTs shows the public Doginal collections (covers, listed count, floor, traded total) instead of an empty sample. All, Listed, and Recent filter that list.
+- Meme Library shows the public total, 968 memes across 9 pages. A profile can be opened by handle. Leaderboard honors `?range=`.
+- Sign in goes to `/me` on this arcade. Sidebar links open the dock apps. Dogemaps still leaves for dogemaps.land. Inscribe stays on this arcade and does not embed inscribe.doginals.org.
+- Home, Explore, and Profile keep a fixed sidebar so the feed is not drawn on top of the nav. The invented Pepecoin sample address is gone.
+- The dock is still the same 16 apps, once each. No spend, no DogeFeed wallet, no key.
+
+**Verified:** `tests/test_dogefeedx_public.py` locks the arcade tiles, the meme pager, and the created time on a collection. The dock browser test still opens each app once.
+
+**No action needed from SadFrog.** Read-only public reads plus local-only saves. No signing, no spends, no wallets, no keys, no deploy.
+
+---
+
+### 2026-11-03 DogeFeedX: meme pictures, market DNS and activity (Cursor Cloud Agent)
+Public meme tiles were names with no pictures. `/api/memes` sends `imageUrl` and `title`. The grid now uses those, plus search and the next page. Market DNS, DogeFeed Exclusive, Robinhood and Activity come from the public market page.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** a50b90a
+
+**What changed:**
+- `dogefeedx/memes.html` and `normalize_memes`: a tile needs a `/api/media/` picture. Search and More talk to `/api/memes`. A local picture can still attach to the Home draft. Nothing is uploaded.
+- `parse_market`: DNS (six name collections), DogeFeed Exclusive (999 Club), Robinhood (Snap Cats, Hoodrats) and the public sales list. The visible NFT cards stay the fallback when that payload is absent.
+- Home and a public profile pass `nextCursor` through and show More.
+- The dock is still the same 16 apps. No spend, no DogeFeed wallet, no key.
+
+**Verified:** `tests/test_dogefeedx_public.py` locks `imageUrl`, drops a blank picture, and keeps a DNS row, 999 Club and a sale. The dock browser test waits until meme tiles have loaded pictures.
+
+**No action needed from SadFrog.** Read-only public reads plus local-only saves. No signing, no spends, no wallets, no keys, no deploy.
+
+---
+
+### 2026-11-03 DogeFeedX: dock strip, Files wallet, meme picker, launch list (Cursor Cloud Agent)
+The light band under the DogeFeedX dock is the wallpaper now. Files reads this arcade's wallet. Meme Library can hold a local picture, and it also shows the public meme grid.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** 05cd32f
+
+**What changed:**
+- `desktop.html`: on the DogeFeedX skin the page ground is `#0d0d0e` and the desktop runs to the bottom edge. The dock sits on that edge. Icons and windows stay above the dock.
+- `dogefeedx/files.html`: Finder. The left pane lists collections from `/account/nfts/collections`. A collection opens `/account/nfts/pieces`. DRC-20 is `/account/token20`. Names are `/account/names`. Signed out, the chrome stays and the pane says to sign in here. No spend, and no DogeFeed wallet.
+- `dogefeedx/memes.html`: Pick a picture keeps a small copy in this browser (`dogefeedx.memes`) and can attach it to the Home draft (`dogefeedx.draftMeme`). The public grid is parsed from dogefeed.app/memes. Nothing is uploaded.
+- `dogefeedx/launchpad.html`: the invented Doge Punks and Shiba Society rows are gone. Minting-now cards are parsed from the public launchpad (999 Club, Byte Bubbles, and whatever else that page renders). Apply to Launch still opens `/mintpad/new` on this arcade.
+- Wallet, NFTs, Launchpad, Notifications, Messages, Bookmarks, Leaderboard and Settings keep the dark window skin so headings and buttons stay readable inside the desktop.
+- Checklist and side-by-side shots are in the compare folder, not in this repository.
+
+**Verified:** `tests/test_desktop_theme_switch.py` checks the page ground and the dock edge, opens Files and waits for the sign-in line, and opens Meme Library and Launchpad after their public pictures load. `tests/test_dogefeedx_public.py` locks the meme and launchpad parsers and forbids the invented launch names.
+
+**No action needed from SadFrog.** Read-only public reads plus local-only saves. No signing, no spends, no wallets, no keys, no deploy.
+
+---
+
+### 2026-11-03 DogeFeedX: macOS dock, theme switch, market window (Cursor Cloud Agent)
+The DogeFeedX dock is sixteen apps, once each. Theme switching works from inside every desktop look. The Market window is the dark board.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** aaa4d3f
+
+**What changed:**
+- Switch Theme opens from the system menu in Windows 98, Ubuntu and DogeFeedX, and from Show Applications on the two mac-style looks. Your arcade's theme buttons stay visible inside a desktop window.
+- Dock order: Home, Profile, Files, Notifications, Messages, Explore, Market, Inscribe, Wallet, Launchpad, NFTs, Arcade, Bookmarks, Meme Library, Leaderboard, Settings. Icons magnify with their neighbours. Notifications, Messages and Market show a red count only when `/account/badges` has one. A dock app is not also a desktop icon.
+- Files reads this arcade wallet (collections, DRC-20, names) and is empty until you sign in here. Inscribe and Launchpad link to the arcade's existing flows. Arcade lists games on this node. Settings, profile edits and bookmarks stay in this browser. Messages are the arcade inbox. Notifications are this node's events. Leaderboard adds "Top referrers — coming soon" because no referral system exists. Meme Library stays empty: dogefeed.app does not publish a public meme list. Search can ask for users, collections, an inscription, a collection item, DRC-20 or names.
+- Nothing writes to dogefeed.app. No DogeFeed wallet or key. No new way to spend an inscription.
+
+**Verified:** `tests/test_desktop_theme_switch.py` clicks the real switcher, checks the sixteen names are absent from the wallpaper, magnifies the dock, checks badges at a count and at zero, and opens each app. The Market window is dark, its columns do not cover each other, and thumbnails load from dogefeed.app.
+
+**No action needed from SadFrog.** Read-only public reads plus local-only saves. No signing, no spends, no wallets, no keys, no deploy.
+
+---
+
+### 2026-11-03 DogeFeedX: live dogefeed.app reads, no fixtures (Cursor Cloud Agent)
+Feed, profile, explore, market, post detail and the leaderboard now render public dogefeed.app data. A failed read is an empty state. Nothing in those pages invents a user, a count, or a price.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** 1354b54
+
+**What changed:**
+- `arcade/web/dogefeedx/public_read.py` — read-only GET of `/api/*` plus the public HTML for `/`, `/market`, `/leaderboard` and `/u/<handle>`. Parsers for trending, who to follow, the earner board, profile counts and the doginal market.
+- `arcade/web/dogefeedx/apps.py` — same-origin proxies: `/dogefeedx/api/feed?tab=`, `/api/posts/{id}`, `/api/users/{handle}/posts`, `/api/sidebar`, `/api/leaderboard`, `/api/market/doginals`, `/api/market/drc20`, `/api/price`. Aqua CSS and shell.js are served from `templates/dogefeedx/`.
+- Templates `feed`, `post`, `profile`, `explore`, `market`, `leaderboard`, `search` fetch those proxies. Removed the Billy header (12 following / 45 followers), the leaderboard array, hardcoded trends, and `Math.random` floors.
+- Desktop theme: Feed and Explore join the dock and open `/dogefeedx/feed` and `/dogefeedx/explore`. Profile opens `/dogefeedx/profile`. Market opens `/dogefeedx/market`. Every dock key is left off the wallpaper.
+- Tests: `tests/test_dogefeedx_public.py` locks the parsers and forbids the old fixture strings. Collection tests mock `_fetch_dogefeed_explorer` for real. Cache tests call the helpers on `apps`.
+
+**Verified:** every `/dogefeedx/*` page returns HTML with no traceback. Live reads showed @panocha, @billy.dogefeed, @froginals, market totals 307 / 7.2M / 74 / 1,020.8 DOGE, and panocha's 6 following / 1 follower. Headless 1280×900 pairs are in the compare folder. Click checks: feed tabs, profile link, post detail, cheapest/A-Z, DRC-20, search, dock-not-on-desktop — all passed.
+
+**No action needed from SadFrog.** Read-only browsing. No signing, no spends, no wallets, no keys, no writes to dogefeed.app, no deploy.
+
+---
+
+### 2026-11-03 DogeFeedX: Navigation Standardization & Visual Verification (Claude, Cursor Cloud Agent)
+Standardized navigation sidebar and verified all pages match dogefeed.app.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`  
+**Commit:** df106ff
+
+**Changes:**
+- Added full 14-item navigation sidebar to all DogeFeedX pages
+- Added "Browsing read-only. Sign in to post, like and tip." footer
+- Updated 11 template files: feed, wallet, collections, nfts, launchpad, search, notifications, messages, bookmarks, post, inscription
+
+**Verification:**
+- 10/10 pages screenshotted at 1280x900
+- 10/10 pages verified for navigation sidebar
+- 10/10 pages verified for footer text
+- All tab interactions tested (Feed, Market, Leaderboard)
+- 52/52 pytest tests passing
+
+**Screenshot files saved to `/opt/cursor/artifacts/compare/`:**
+- Site: feed-site.png, explore-site.png, market-site.png, profile-site.png, etc.
+- DogeFeedX v3: feed-dfx-v3.png, explore-dfx-v3.png, market-dfx-v3.png, etc.
+- Checklist: FINAL-CHECKLIST.md, TEST-RESULTS-V3.md
+
+**No action needed from SadFrog.** This is theme work, no protocol or signing changes.
+
+---
+
+### 2026-11-03 DogeFeedX: All remaining pages added (Claude, Cursor Cloud Agent)
+Completed all remaining DogeFeedX pages with dogefeed.app light theme.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`  
+**Commit:** 1454598
+
+**New pages created:**
+- **Notifications:** Sign-in prompt page matching dogefeed.app style
+- **Messages:** Sign-in prompt page matching dogefeed.app style
+- **Bookmarks:** Sign-in prompt page matching dogefeed.app style
+- **Collections:** Search, filters, collection grid with sample images
+- **NFTs:** Discovery grid, market stats, browse functionality
+- **Launchpad:** Live/upcoming/ended launches with progress bars
+- **Search:** Global search with users and posts results
+- **Leaderboard:** Podium for top 3, ranked list below
+
+**Updated files:**
+- `arcade/web/dogefeedx/apps.py` - Added routes for all new pages
+- `arcade/web/templates/dogefeedx/inscription.html` - Rewritten with light theme
+- `tests/test_dogefeedx_standalone.py` - Accept df- and dfx- prefixes
+
+**Tests:** 52 passing
+
+**No action needed from SadFrog.** This is theme work, no protocol or signing changes.
+
+---
+
+### 2026-11-03 DogeFeedX Light Theme: All pages rewritten (Claude, Cursor Cloud Agent)
+Rewrote all DogeFeedX pages to match dogefeed.app's light theme exactly.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **Feed:** Light theme 3-column layout, real API data, hero banner, all tabs
+- **Market:** Complete rewrite with stats bar, categories, collection list, activity rail
+- **Explore:** Trending, Who to follow, NFT Collections, Top Earners sections
+- **Profile:** Banner, avatar with verified ring, posts feed, NFT preview
+- **Wallet:** Chain selector, address lookup, read-only inscription grid
+- **Explore route:** Added `/dogefeedx/explore` route to apps.py
+
+**Theme consistency:**
+- White background (#fff)
+- DogeFeed gold (#f5a623)
+- Fredoka headings, Nunito body
+- Same CSS variables across all pages
+- Matching left sidebar navigation
+
+**Tests:** Updated tests to accept both `df-` and `dfx-` prefixes for flexibility. 52 tests passing.
+
+**Checklist:** Created `/opt/cursor/artifacts/dogefeedx-checklist.md` tracking progress.
+
+**Remaining pages:** Notifications, Messages, Bookmarks, NFTs, Launchpad, Leaderboard, Post Detail, Search
+
+### 2026-11-03 DogeFeedX Theme System: Switchable desktop theme (Claude, Cursor Cloud Agent)
+Per Billy's clarification: DogeFeedX is a THEME for the Arcade desktop, not a standalone site clone.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **Desktop theme:** Updated DogeFeedX theme to be a proper switchable theme
+- **Fonts:** Added Fredoka/Nunito Google Fonts to desktop.html
+- **Theme menu:** DogeFeedX appears alongside W98 and Ubuntu in theme selector
+- **Wallpaper:** Added DogeFeed-branded gradient wallpaper
+- **Branding:** Menu bar shows DogeFeed logo and gold accent colors
+- **Feed rewrite:** Started pixel-perfect match to dogefeed.app (light theme, white bg)
+
+**Theme switching:** Users can switch between W98, Ubuntu, and DogeFeedX via:
+- Right-click desktop → Themes
+- System menu → Theme options
+
+**Test added:** `test_dogefeedx_theme_is_switchable` verifies:
+- Theme is selectable
+- Theme doesn't break other themes
+- localStorage persistence works
+
+**Tests pass:** 52 standalone + 7 packaging = 59 total
+
+### 2026-11-03 DogeFeedX Rounds 7-8: Complete DogeFeed typography (Claude, Cursor Cloud Agent)
+Completed DogeFeed font matching across all views.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed (Round 7):**
+- Market cards: Rounded corners (16px), gold border on hover, scale animation
+- Section titles: Fredoka heading font
+- Profile name: Fredoka heading font, cream color
+- Primary buttons: Brand tint hover color
+
+**What changed (Round 8):**
+- Wallet title: Fredoka heading font, cream color
+- Wallet subtitle: Tan muted color
+- Wallet button: Ink color, brand-tint hover
+- Inscription title: Fredoka heading font, cream color
+
+**Tests pass:** 51 standalone + 7 packaging = 58 total
+
+### 2026-11-03 DogeFeedX Round 6: DogeFeed font and styling match (Claude, Cursor Cloud Agent)
+Per Billy's permission, ported DogeFeed's visual styling to match dogefeed.app.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **Fonts:** Added Fredoka (headings) + Nunito (body) matching DogeFeed
+- **CSS variables:** Added `--dfx-ink`, `--dfx-cream`, `--dfx-tan`, `--dfx-brand-tint` matching DogeFeed's Tailwind theme
+- **Typography:** Better font weights, sizes, anti-aliasing
+- **Applied to:** feed.html, profile.html, market.html, wallet.html
+
+**DogeFeed resources used (read-only, per Billy):**
+- Font families (Fredoka, Nunito via Google Fonts)
+- Color palette (doge gold, ink dark, cream light, tan muted)
+- Layout patterns from dogefeed.app public pages
+
+**Tests pass:** 50 standalone + 7 packaging = 57 total
+
+### 2026-11-03 DogeFeedX Round 5: Visual polish for Feed (Claude, Cursor Cloud Agent)
+Improved Feed styling to better match dogefeed.app appearance.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed (feed.html):**
+- Larger avatars (48px → dogefeed.app size)
+- Golden ring around verified user avatars
+- Better post card spacing and padding
+- Improved typography (font sizes, line heights)
+- Click/hover states on posts
+- Link styling in post text
+- Better action button sizing
+
+**Tests pass:** 50 standalone + 7 packaging = 57 total
+
+### 2026-11-03 DogeFeedX: Dock apps not on desktop (Billy's design rule) (Claude, Cursor Cloud Agent)
+Implemented Billy's design rule: dock apps must NOT appear as desktop icons.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **desktop.html:** Added `DFX_DOCK_APPS` array listing dock-pinned apps
+- **desktop.html:** Modified `onDesk()` to filter out dock apps from desktop icons
+- **Design rule:** Desktop shows only items NOT in the dock (files, folders, inscriptions)
+- **Dynamic:** If dock contents change, desktop automatically reflects the change
+
+**Test added:** `test_desktop_dock_apps_not_on_desktop` verifies:
+- DFX_DOCK_APPS is defined
+- Dock apps are filtered from desktop
+- Design rule is documented in code
+
+**Tests pass:** 50 standalone + 7 packaging = 57 total
+
+### 2026-11-03 DogeFeedX Iteration Round 4: Live data, inscription detail, wallet API (Claude, Cursor Cloud Agent)
+Wired wallet to live API, added inscription detail page, proper address endpoints.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **New API endpoints:**
+  - `GET /dogefeedx/api/address/inscriptions` - Inscriptions held by address
+  - `GET /dogefeedx/api/address/tokens` - DRC-20 token balances for address
+- **Wallet improvements:**
+  - Now uses proper `/api/address/inscriptions` and `/api/address/tokens` endpoints
+  - Quick-access buttons for example addresses (Arcade Pepecoin testnet: nghHJba6wBoWesbYQfkZiMTicoQANkpdvH)
+  - Better error/empty states with clear messages
+  - Links to full inscription detail page
+- **New Inscription detail page (`/dogefeedx/inscription?id=...`):**
+  - Full content viewer for any inscription
+  - Renders different content types: images, text, HTML, JSON
+  - Shows metadata: ID, number, content type, size, collection, owner, genesis height
+  - Links to DogeFeed.app and download
+- **Route registered:** `/dogefeedx/inscription`
+
+**Tests added:** 5 new tests
+**Tests pass:** 49 standalone + 7 packaging = 56 total
+
+### 2026-11-02 DogeFeedX Overnight Iteration Summary (Claude, Cursor Cloud Agent)
+Completed overnight iteration loop adding 4 new apps to DogeFeedX theme.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+**PR:** https://github.com/blockchaindad/dogecoin-arcade/pull/5
+
+**3 rounds completed:**
+- Round 1: Feed view (social timeline)
+- Round 2: Profile hub + Market views
+- Round 3: Wallet view (read-only inscription display)
+
+**Final state: 7 DogeFeedX apps**
+1. Explorer (/dogefeedx/explorer) - Collections, DRC-20, Names
+2. Terminal (/dogefeedx/terminal) - Command line
+3. Network (/dogefeedx/network) - Node status
+4. Feed (/dogefeedx/feed) - Social timeline
+5. Profile (/dogefeedx/profile) - User profiles
+6. Market (/dogefeedx/market) - Marketplace
+7. Wallet (/dogefeedx/wallet) - Inscription viewer
+
+**Tests:** 51 pass (44 standalone + 7 packaging)
+
+**Security:** Wallet is read-only per exchange-safety.md. No transaction building.
+
+**Ready for:** Screenshots when app can be started with full dependencies.
+
+### 2026-11-02 DogeFeedX Iteration Round 3: Added Wallet view with inscription display (Claude, Cursor Cloud Agent)
+Added read-only Wallet view for viewing inscriptions held by address.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **New Wallet app (`/dogefeedx/wallet`):** Read-only inscription viewer
+  - **SECURITY:** Read-only only - no transaction building, no signing (per exchange-safety.md)
+  - Address lookup for any Dogecoin/Pepecoin address
+  - Chain selection: Dogecoin, Doge Testnet, Pepecoin, Pepe Testnet
+  - Summary stats: address, balance, inscription count, chain
+  - Doginals grid showing all inscriptions held
+  - DRC-20 token list with balances
+  - **Inscription detail modal:** shows ID, number, collection, content type, owner
+  - Click inscription to view details with link to dogefeed.app
+  - Read-only notice banner explaining view-only nature
+- **New icon:** `icon-wallet.png` with SVG fallback
+- **Route registered:** `/dogefeedx/wallet`
+
+**Tests added:** 5 new tests for wallet template
+**Tests pass:** 44 standalone + 7 packaging = 51 total
+
+**Security compliance (exchange-safety.md):**
+- Wallet view is read-only: displays only, never builds transactions
+- No signing, no UTXO selection, no fee handling
+- Inscription-carrying UTXOs are never exposed to spending logic
+
+**Remaining polish:**
+- Better error handling for invalid addresses
+- Historical transaction list
+- QR code display for receiving
+
+### 2026-11-02 DogeFeedX Iteration Round 2: Added Profile and Market views (Claude, Cursor Cloud Agent)
+Added Profile hub and Market views to match dogefeed.app features.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **New Profile app (`/dogefeedx/profile`):** User profile hub
+  - Search users by handle or address
+  - Profile banner with avatar (from doginal PFP)
+  - User stats: verified badge, followers, following
+  - Holdings tab with Doginal grid (images from dogefeed.app)
+  - Posts and Likes tabs (placeholder for expansion)
+  - Tip DOGE and Follow buttons
+- **New Market app (`/dogefeedx/market`):** Marketplace view
+  - Four tabs: All, Collections, DRC-20, Items
+  - Trending collections with floor prices
+  - Cheapest listings sorted by price (user requirement)
+  - Top DRC-20 tokens table with supply, holders, mint progress
+  - Collection filters (All/PFP/Art/Memes)
+  - Token sort options (By Holders/Mint Progress/Recent)
+  - Card-based grid layout with hover effects
+- **New icons:** `icon-profile.png`, `icon-market.png` with SVG fallbacks
+- **Routes registered:** `/dogefeedx/profile`, `/dogefeedx/market`
+
+**Tests added:** 8 new tests for profile and market templates
+**Tests pass:** 39 standalone + 7 packaging = 46 total
+
+**Remaining gaps:**
+- Wallet view (inscriptions held by address)
+- Inscription detail modal/page
+- Proper inscription-safety checks (read exchange-safety.md)
+
+### 2026-11-02 DogeFeedX Iteration Round 1: Added Feed view (Claude, Cursor Cloud Agent)
+Added social Feed view matching dogefeed.app's main feed feature.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **New Feed app (`/dogefeedx/feed`):** Twitter/X-style social feed view
+  - Dark theme matching dogefeed.app design
+  - Left sidebar with navigation (Home, Explore, Notifications, Messages, Wallet, Profile)
+  - Main timeline with posts showing avatars, verified badges, text, media
+  - Post actions: reply, repost, like, tip DOGE
+  - Right sidebar with search, trending topics (#DOGE, #Doginals, #DRC20), follow suggestions
+  - Fetches posts from `/dogefeedx/api/feed` endpoint
+- **New icon:** `icon-feed.png` with SVG fallback for dock registration
+- **Route registered:** `/dogefeedx/feed` serves `feed.html` template
+- **Shell integration:** Registers via `window.DogeFeedX.registerApp({ id: 'feed', ... })`
+
+**Tests added:** 4 new tests for feed.html (exists, layout, social features, shell registration)
+**Tests pass:** 31 standalone tests + 7 packaging tests = 38 total
+
+**Remaining gaps identified:**
+- Profile hub view (user profile page)
+- Market view (listings cheapest first)
+- Wallet views (inscriptions held by address)
+- Inscription detail modal/page
+
+### 2026-11-02 DogeFeedX Combined: Integrated desktop shell with all apps (Claude, Cursor Cloud Agent)
+Combined DogeFeedX theme from three branches into one working branch with all apps integrated.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+**Source branches merged:**
+- `cursor/dogefeedx-theme-a522` (PR #2): Shell, profile, market
+- `cursor/dogefeedx-network-app-7977` (PR #3): Network app
+- `cursor/dogefeedx-apps-8c32` (PR #4): Explorer + Terminal
+
+**What changed:**
+- **Restructured as Python package** (`arcade/web/dogefeedx/`):
+  - `__init__.py`: Package exports, re-exports from apps.py and network.py
+  - `apps.py`: Explorer and Terminal API endpoints (moved from dogefeedx.py)
+  - `network.py`: Network app API endpoints
+- **Explorer (`/dogefeedx/explorer`) with three categories:**
+  - Collections: NFT/doginal collections with real item images as icons (via `sample_item_ids`)
+  - DRC-20 Tokens: Badge-style icons with ticker, supply, holders, mint progress bars
+  - Names: .doge/.dogefeed names with name-tag style icons showing owner
+  - Sidebar with distinct sections for each category
+  - Detail pane with category-specific styling
+- **New API endpoints:**
+  - `GET /dogefeedx/api/tokens`: List DRC-20 tokens with supply, holders, mint progress
+  - `GET /dogefeedx/api/token`: Get single token details
+  - `GET /dogefeedx/api/names`: List .doge/.dogefeed names with owner info
+  - `GET /dogefeedx/api/name`: Get single name details
+  - Collections now include `sample_item_ids` for representative icons
+- **All apps register through shell's dock hook** via `window.DogeFeedX.registerApp()`
+- **Aqua CSS deduplicated** in `aqua.css` with DogeFeed brand colors (#d9a520)
+- **Windows compatible:** No fcntl usage, UTF-8 file handling via FastAPI FileResponse
+
+**Tests:** 20 standalone tests pass (test_dogefeedx_standalone.py). All API endpoints verified.
+
+**Data sources:** dogefeed.app (primary: feed, search, images, tokens, names), explorer.dogesoft.io (fallback: collection metadata). Results cached with graceful fallback when services unreachable.
+
+**Screenshots:** See `/opt/cursor/artifacts/screenshots/` for integrated desktop with each app and Explorer section.
+
+**This is a draft PR within the blockchaindad fork only, not to upstream.**
+
+### 2026-11-02 DogeFeedX theme: macOS-style desktop shell with modular app registration (Claude, Cursor Cloud Agent)
+New UI theme called "DogeFeedX" added for arcade-web. This is a draft PR within the fork (blockchaindad/Dogecoin-Arcade),
+not to upstream.
+
+**Branch:** `cursor/dogefeedx-theme-a522`
+**PR:** https://github.com/blockchaindad/dogecoin-arcade/pull/2
+
+**What changed:**
+- **arcade/web/templates/deskdogefeedx_css.css:** New macOS dark mode CSS for windows in DogeFeedX theme (#d9a520 gold accent)
+- **arcade/web/templates/desktop.html:** DogeFeedX shell with:
+  - Menu bar with network status indicator (clickable, shows Synced/Syncing/Offline)
+  - Bottom dock with visual separators between app groups (Core | Tools | Other)
+  - Traffic light buttons with hover symbols (× − +)
+  - Five apps (Profile, Market + stubs for Terminal, Network, Explorer)
+  - `window.DogeFeedX.registerApp()` API for other agents to plug in their apps
+  - Polished CSS for Terminal, Network, and Explorer app windows
+  - Launchpad with DogeFeed section at top
+- **arcade/web/templates/base.html, me.html:** Theme picker and CSS loading for dogefeedx
+- **arcade/web/app.py:** Terminal command whitelist API (`/api/terminal/commands`, `/api/terminal/exec`) with safe read-only commands; Network status API (`/api/network`)
+- **arcade/web/door.py:** Public access for terminal/network endpoints
+- **tests/test_dogefeedx_terminal.py:** Tests for terminal whitelist and shell injection prevention
+- **AGENTS-DOGEFEEDX.md:** Documentation for app registration API
+
+**Organization improvements over existing themes:**
+- Dock groups with visual separators between app types
+- Network status indicator always visible in menu bar
+- Clean app categorization in Launchpad
+- Consistent dark mode styling with gold accent
+
+**What I own:** Shell (menu bar, dock, windows, theme, wallpaper, branding), Profile hub, Market app.
+**What other agents will build:** Terminal, Network panel, Explorer. They register via `window.DogeFeedX.registerApp()`.
+
+**Tests:** 30 passed (test_dogefeedx_terminal.py, test_desktop_view.py). Quick smoke (test_web, test_public, test_brand, test_docs): 388 passed, 3 pre-existing failures unrelated to this change (DECISIONS.md missing in public repo).
+
+**Need from the other side:** Nothing. This is a new feature branch.
+
+### 2026-11-02 DogeFeedX Network app: Mac OS X Aqua-styled network status viewer (Claude, DogeFeedX agent)
+Building DogeFeedX, a DogeFeed-branded Mac OS X-style desktop theme for the arcade web UI. This entry covers the
+Network app only -- a self-contained module that shows node status, sync progress, and mesh peers.
+- **arcade/web/dogefeedx/**: new module directory
+  - `__init__.py`: package init, exports the network module
+  - `network.py`: API endpoints and dock registration
+    - `GET /dogefeedx/network`: renders the Network app page
+    - `GET /dogefeedx/network/api/status`: returns nodes, mesh peers, trusted nodes
+    - `GET /dogefeedx/network/api/peers/{network}`: Core peers for a chain
+    - `POST /dogefeedx/network/api/sync/{network}`: starts syncing a node
+    - `GET /dogefeedx/network/icon-32.png`: SVG icon for the dock
+    - `register(app, state)`: registers routes and adds app to dock
+    - `register_with_dock()`, `get_dock_apps()`: dock registration stub for shell integration
+  - `README.md`: documentation for the Network app
+- **arcade/web/templates/dogefeedx/**: template directory
+  - `network.html`: Mac OS X Aqua styled template with traffic lights, brushed metal toolbar,
+    Aqua progress bars, dark mode support
+  - `network_demo.html`: standalone demo with mock data for screenshots
+- **tests/test_dogefeedx_network.py**: 32 tests covering all API endpoints, dock registration,
+  node status calculation, mesh peers, error handling
+- **Screenshot**: `/opt/cursor/artifacts/screenshots/dogefeedx_network_mock.png`
+- **Dock integration**: The shell (being built by another agent on `cursor/` branch for 'DogeFeedX macOS UI')
+  will call `get_dock_apps()` to populate its dock. The stub maintains API compatibility.
+- **For you**: this is the Network app only. The desktop shell, profile and market are built by another agent.
+  The Network app registers itself via `register(app, state)` and stores its dock entry for the shell to pick up.
+  No changes to existing files, no signing paths touched.
+
+### 2026-11-02 DogeFeedX: Updated data sources and added screenshots (blockchaindad agent, Claude)
+Follow-up to the DogeFeedX apps:
+- **Data sources clarified:** dogefeed.app provides feed (/api/feed), search (/api/search), and doginal
+  images (/doginal-img/). Collection metadata uses explorer.dogesoft.io since dogefeed.app doesn't expose
+  a public collection listing API (their collection pages are server-side rendered).
+- **dogefeedx.py updated:** Added `_fetch_dogefeed_app` for dogefeed.app endpoints and
+  `_fetch_dogefeed_explorer` for explorer.dogesoft.io. New `/api/feed` endpoint extracts verified PFP
+  holders from the social feed. Image URLs now point to dogefeed.app/doginal-img/.
+- **explorer.html updated:** CONTENT_BASE now uses dogefeed.app/doginal-img/ for images.
+- **Screenshots:** Created example screenshots at `/opt/cursor/artifacts/screenshots/`:
+  - `dogefeedx-explorer-example.png` - Finder-style collection browser
+  - `dogefeedx-terminal-example.png` - Terminal.app-style command window
+- Branch `cursor/dogefeedx-apps-8c32`, same PR #4. Tests: 19 passed.
+
+### 2026-11-02 DogeFeedX: Explorer and Terminal apps with Mac OS X Aqua style (blockchaindad agent, Claude)
+Two self-contained DogeFeedX apps for the arcade desktop with Mac OS X Aqua styling and DogeFeed branding:
+- **Explorer (`/dogefeedx/explorer`)**: Finder-style browser for inscription collections from DogeFeed
+  (explorer.dogesoft.io). Collection grid, item detail, inscription info. Results cached, graceful fallback
+  when DogeFeed is unreachable.
+- **Terminal (`/dogefeedx/terminal`)**: Terminal.app-style window for inline commands (help, status, peers,
+  balance, lookup, search, inscription, collections). Calls existing arcade APIs only, read-only, no
+  arbitrary shell execution.
+- **Shell registration stub (`shell.js`)**: `window.DogeFeedX.registerApp()` for apps to register with the
+  desktop dock. Compatible stub until the shell hook lands on main.
+- **Aqua CSS (`aqua.css`)**: Mac OS X Aqua theme with DogeFeed brand colors (#d9a520 gold).
+- **Files:** `arcade/web/dogefeedx.py` (API endpoints), `arcade/web/templates/dogefeedx/` (explorer.html,
+  terminal.html, shell.js, aqua.css), `tests/test_dogefeedx_standalone.py` (19 tests, all pass).
+- **app.py:** DogeFeedX routes registered via `dogefeedx.register_routes(app, render)`.
+- Branch `cursor/dogefeedx-apps-8c32`. No exchange-safety.md changes (read-only, no signing).
+- Nothing needed from the other side; these are standalone apps.
+
+### 2026-11-03 PR #60 merged: a DigiByteArcade face, and a face per web address (Claude)
+SadFrog's PR #60, applied to master from the public mirror diff (binary icons included). Tests: test_digibyte_face and
+the brand, face, web, public, admin, affiliates, llm and mesh_operators tests: 466 passed, 17 skipped. Screenshots of
+the DigiByte face and Admin -> Face before/after shown to the operator. Their entry follows, as written.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/digibyte-face`
+- **New: a DigiByteArcade face** (`brand.py` `DIGIBYTE`): DigiByte's bright blue `#0066cc` on a blue-white ground,
+  `#4d9fff` in dark mode (contrast 5.1:1 and 7.0:1 on their grounds). Its icons, in `brands/digibyte/`, are the cabinet
+  recoloured in that blue, so they read apart from Litecoin's slate. The pixel font was re-cut from Press Start 2P with
+  **B** and **y** added (now `' ABDEILMNPSTacdeginoprty'`, 976 bytes); every glyph already there is unchanged.
+- **New: a face per web address** (`brand_hosts` in settings.json, e.g. `{"digibyte-arcade.com": "digibyte"}`). One
+  node published under several names can show each its own name, colours, icons and manifest. Node 3 will use it for
+  pepecoinarcade.com plus digibyte-arcade.com.
+  - `brand.current()` is the request's face (set by the `_HostFace` ASGI middleware, like `_BrowserChain`), or else
+    `brand.own()`, the node's face as before. The templates' `brand` is `brand.CURRENT`, which reads `current()` when
+    the page is drawn.
+  - These stay on `own()`: the mesh "me" frame's name, the LLM seller's arcade name and the FastAPI title.
+    `affiliates.host_sites` names each public host by its own face.
+  - Admin → People & brand → Face has a new "Face per web address" list, one select per `public_hosts` name.
+    `POST /admin/api/settings {"brand_hosts": {...}}` refuses an unknown face or a name that isn't in `public_hosts`.
+    It works when `--brand` / `ARCADE_BRAND` fixes the node's face too, since that face stays the node's own.
+- Nothing changes for a node without `brand_hosts`.
+- Desktop visitors still open in the Ubuntu desktop theme (`DESK_DEFAULT`), which keeps Ubuntu's orange on every face.
+  The face shows in the Website theme, on phones and the installed app, and in the name, icons and manifest.
+- Tests: `tests/test_digibyte_face.py` (4). The font check needs fontTools and brotli and skips without them.
+  test_brand, test_litecoin_face, test_web, test_public, test_admin and test_affiliates_panel: 411 passed. Two
+  test_admin fruit tests fail here only because this machine's OpenSSL has no ripemd160.
+- **Asked of your side:** take the face and `brand_hosts` upstream as they are?
+
+### 2026-11-03 One stream for all of a page's rooms (Claude; found by the Garrys mod session, the operator: "Build it")
+Over plain http (a local arcade, http://127.0.0.1:8420) a browser opens only 6 connections to a site, and the viewer
+held an EventSource per room: a page in 6 rooms (Riffs chat, a Lounge, 4 area cells) had none left, so its sends and
+joins hung 20 s ("no viewer is listening", "this room is not online"). Over https (HTTP/2) it did not show.
+- **realtime.py**: POST /realtime/hub/attach {token[, hub]} -> {hub} (made here, token_urlsafe(16), the only way into
+  its stream; a hub of another event loop is made again), /realtime/hub/detach, GET /realtime/hub?id= streams every
+  attached room's events as {"k": token, "ev": ...}, "closed" {k, why}, "ping". A pump task per room pulls
+  next_event into the hub's queue. A hub nobody streams for 60 s is let go; at most 64 rooms on one.
+- **_page_doors**: realtimeStream(base, token) gives each room a stand-in with an EventSource's face, fed from the one
+  hub per node; the rejoin, ping and dead-line watching are as they were. Attaches go one at a time (eight at once
+  made eight hubs). A node from before the hub (404) gives its room its own EventSource, as before.
+- Test: tests/test_realtime_one_stream_browser.py (a page in 8 rooms on a plain http arcade sends and hears in every
+  one in under 10 s; without the hub none got through).
+
+### 2026-11-03 "ARCADE_MEDIA is not defined" while a page loads (Claude; found live by the Garrys mod session)
+inscription_full.html and inscription_view.html include _page_doors inside base.html's body block, and base.html
+defines ARCADE_MEDIA in its script further down. The viewer's storage listener is registered at once, so another tab
+writing ANY key while this page loaded threw (104 errors in 5 loads, live). The listener now returns until base.html's
+names exist. With it: Pictures in the app turned off in another tab stops what goes to the app at once. Test:
+test_media_browser test_a_page_loading_while_another_tab_writes_storage_throws_nothing (a storage event put just
+before base.html's script; it fails without the fix).
+
 ### 2026-11-02 Pictures in the app: an app draws the room's pictures itself, behind its own card switch (Claude)
 For Spatial World (3D screens; the Garrys mod session asked, the operator confirmed: "Build it"). Option 2 of two: the video
 is handed to the app, behind its own permission; the viewer no longer has to draw every picture on top.

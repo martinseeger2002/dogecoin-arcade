@@ -1,0 +1,481 @@
+{% extends "base.html" %}
+{% block title %}Inscription · DogeFeed{% endblock %}
+{% block body %}
+{#- DogeFeedX Inscription Detail: Full inscription viewer in DogeFeed's style
+    Light theme with white background. Renders images, text, HTML, JSON.
+    Data: this arcade's ord index; pictures from its own /content/.
+    SECURITY: Read-only content display. No transaction logic. -#}
+<style>
+:root {
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-link: #1d9bf0;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+  transition: background 0.15s;
+}
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--df-border);
+  position: sticky;
+  top: 0;
+  background: var(--df-bg);
+  z-index: 10;
+}
+.df-back {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: none;
+  color: var(--df-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-back:hover { background: var(--df-hover); }
+.df-back svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}
+.df-header-info h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+.df-header-info span {
+  font-size: 13px;
+  color: var(--df-text-secondary);
+}
+
+.df-inscription-content {
+  background: var(--df-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+}
+.df-inscription-content img {
+  max-width: 100%;
+  max-height: 500px;
+  object-fit: contain;
+}
+.df-inscription-content iframe {
+  width: 100%;
+  min-height: 400px;
+  border: none;
+  background: #fff;
+}
+.df-inscription-text {
+  padding: 16px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  background: #f6f8fa;
+  max-height: 500px;
+  overflow: auto;
+  color: var(--df-text);
+}
+
+.df-inscription-details {
+  padding: 16px;
+}
+.df-detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-detail-row:last-child { border-bottom: none; }
+.df-detail-label {
+  font-size: 14px;
+  color: var(--df-text-secondary);
+}
+.df-detail-value {
+  font-size: 14px;
+  font-weight: 600;
+  text-align: right;
+  word-break: break-all;
+  max-width: 60%;
+}
+.df-detail-value a {
+  color: var(--df-link);
+}
+.df-detail-value a:hover { text-decoration: underline; }
+
+.df-inscription-actions {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  border-top: 1px solid var(--df-border);
+}
+.df-btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: 9999px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.15s;
+}
+.df-btn-primary {
+  background: var(--df-gold);
+  border: none;
+  color: #000;
+}
+.df-btn-primary:hover { background: var(--df-gold-dark); }
+.df-btn-secondary {
+  background: none;
+  border: 1px solid var(--df-border);
+  color: var(--df-text);
+}
+.df-btn-secondary:hover { background: var(--df-hover); }
+.df-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-search input::placeholder { color: var(--df-text-secondary); }
+
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-card-item {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-card-item:hover { background: rgba(0,0,0,0.03); }
+.df-card-item-img {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--df-gold-light);
+}
+.df-card-item-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.df-card-item-info { flex: 1; }
+.df-card-item-name {
+  font-weight: 700;
+  font-size: 14px;
+}
+.df-card-item-meta {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+}
+
+.df-loading {
+  display: flex;
+  justify-content: center;
+  padding: 60px;
+}
+.df-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--df-border);
+  border-top-color: var(--df-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.df-empty {
+  text-align: center;
+  padding: 60px 40px;
+  color: var(--df-text-secondary);
+}
+</style>
+
+<div class="df-app">
+  
+
+  <main class="df-main">
+    <div class="df-header">
+      <button class="df-back" onclick="history.back()">
+        <svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      </button>
+      <div class="df-header-info">
+        <h1 id="insc-name">Loading...</h1>
+        <span id="insc-number"></span>
+      </div>
+    </div>
+    
+    <div class="df-inscription-content" id="insc-content">
+      <div class="df-loading"><div class="df-spinner"></div></div>
+    </div>
+    
+    <div class="df-inscription-details" id="insc-details"></div>
+    
+    <div class="df-inscription-actions" id="insc-actions"></div>
+  </main>
+
+  
+</div>
+
+<script>
+(function() {
+  'use strict';
+  
+  var API_BASE = '/dogefeedx/api';
+  var IMG_BASE = '/content';   // this arcade's own copy of every inscription
+  var DOGEFEED_BASE = '';   // this arcade's own pages
+  
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  
+  function getInscriptionId() {
+    var params = new URLSearchParams(window.location.search);
+    return params.get('id') || '';
+  }
+  
+  function renderContent(inscription) {
+    var contentType = inscription.content_type || 'image/png';
+    var id = inscription.id;
+    var content = $('insc-content');
+    
+    if (contentType.startsWith('image/')) {
+      content.innerHTML = '<img src="' + IMG_BASE + '/' + esc(id) + '" alt="Inscription" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23fff8e7%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2250%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23f5a623%22 font-size=%2240%22>?</text></svg>\'">';
+    } else if (contentType.startsWith('text/html')) {
+      content.innerHTML = '<iframe src="' + IMG_BASE + '/' + esc(id) + '" sandbox="allow-scripts"></iframe>';
+    } else if (contentType.startsWith('text/') || contentType === 'application/json') {
+      fetch(IMG_BASE + '/' + id)
+        .then(function(r) { return r.text(); })
+        .then(function(text) {
+          if (contentType === 'application/json') {
+            try {
+              var json = JSON.parse(text);
+              content.innerHTML = '<div class="df-inscription-text">' + esc(JSON.stringify(json, null, 2)) + '</div>';
+            } catch (e) {
+              content.innerHTML = '<div class="df-inscription-text">' + esc(text) + '</div>';
+            }
+          } else {
+            content.innerHTML = '<div class="df-inscription-text">' + esc(text) + '</div>';
+          }
+        })
+        .catch(function() {
+          content.innerHTML = '<img src="' + IMG_BASE + '/' + esc(id) + '" alt="">';
+        });
+    } else {
+      content.innerHTML = '<img src="' + IMG_BASE + '/' + esc(id) + '" alt="">';
+    }
+  }
+  
+  function renderDetails(inscription) {
+    var html = '';
+    
+    html += '<div class="df-detail-row"><span class="df-detail-label">Inscription ID</span><span class="df-detail-value"><a href="' + '/inscriptions/' + esc(inscription.id) + '" target="_blank">' + esc(inscription.id.substring(0, 20)) + '...</a></span></div>';
+    
+    if (inscription.number) {
+      html += '<div class="df-detail-row"><span class="df-detail-label">Number</span><span class="df-detail-value">#' + inscription.number + '</span></div>';
+    }
+    
+    html += '<div class="df-detail-row"><span class="df-detail-label">Content Type</span><span class="df-detail-value">' + esc(inscription.content_type || 'unknown') + '</span></div>';
+    
+    if (inscription.content_size) {
+      html += '<div class="df-detail-row"><span class="df-detail-label">Size</span><span class="df-detail-value">' + Math.round(inscription.content_size / 1024) + ' KB</span></div>';
+    }
+    
+    if (inscription.collection) {
+      html += '<div class="df-detail-row"><span class="df-detail-label">Collection</span><span class="df-detail-value">' + esc(inscription.collection) + '</span></div>';
+    }
+    
+    if (inscription.owner) {
+      html += '<div class="df-detail-row"><span class="df-detail-label">Owner</span><span class="df-detail-value"><a href="/dogefeedx/wallet?address=' + esc(inscription.owner) + '">' + esc(inscription.owner.substring(0, 12)) + '...</a></span></div>';
+    }
+    
+    if (inscription.genesis_height) {
+      html += '<div class="df-detail-row"><span class="df-detail-label">Genesis Height</span><span class="df-detail-value">' + inscription.genesis_height + '</span></div>';
+    }
+    
+    $('insc-details').innerHTML = html;
+    
+    var actionsHtml = '<a href="' + '/inscriptions/' + esc(inscription.id) + '" target="_blank" class="df-btn df-btn-primary">';
+    actionsHtml += '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>';
+    actionsHtml += 'View on DogeFeed</a>';
+    actionsHtml += '<a href="' + IMG_BASE + '/' + esc(inscription.id) + '" target="_blank" class="df-btn df-btn-secondary">Download</a>';
+    $('insc-actions').innerHTML = actionsHtml;
+  }
+  
+  function loadInscription() {
+    var id = getInscriptionId();
+    if (!id) {
+      $('insc-name').textContent = 'No inscription ID';
+      $('insc-content').innerHTML = '<div class="df-empty">Please provide an inscription ID in the URL (?id=...)</div>';
+      return;
+    }
+    
+    fetch(API_BASE + '/inscription?id=' + encodeURIComponent(id))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.inscription) {
+          $('insc-name').textContent = 'Not Found';
+          $('insc-content').innerHTML = '<div class="df-empty">Inscription not found</div>';
+          return;
+        }
+        
+        var inscription = data.inscription;
+        $('insc-name').textContent = inscription.name || inscription.collection || 'Inscription';
+        $('insc-number').textContent = inscription.number ? '#' + inscription.number : id.substring(0, 16) + '...';
+        
+        renderContent(inscription);
+        renderDetails(inscription);
+      })
+      .catch(function(err) {
+        $('insc-name').textContent = 'Error';
+        $('insc-content').innerHTML = '<div class="df-empty">Could not load inscription</div>';
+      });
+  }
+  
+  loadInscription();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,75 @@
+<script>
+function dfxWalletKey() { return 'dogefeedx.wallet'; }
+function dfxReadWallet() {
+  try { return localStorage.getItem(dfxWalletKey()) || ''; } catch (e) { return ''; }
+}
+function dfxWriteWallet(addr) {
+  var next = addr || '';
+  var prev = dfxReadWallet();
+  try {
+    if (next) localStorage.setItem(dfxWalletKey(), next);
+    else localStorage.removeItem(dfxWalletKey());
+  } catch (e) {}
+  if (prev !== next) {
+    try { window.dispatchEvent(new CustomEvent('dogefeedx-wallet', {detail: next})); } catch (e) {}
+  }
+}
+function dfxStoreKey(base, addr) {
+  var who = addr == null ? dfxReadWallet() : (addr || '');
+  return base + '::' + who;
+}
+function dfxReadJson(base, fallback, addr) {
+  try {
+    var raw = localStorage.getItem(dfxStoreKey(base, addr));
+    if (raw == null || raw === '') return fallback;
+    var parsed = JSON.parse(raw);
+    return parsed == null ? fallback : parsed;
+  } catch (e) { return fallback; }
+}
+function dfxWriteJson(base, value, addr) {
+  try { localStorage.setItem(dfxStoreKey(base, addr), JSON.stringify(value)); } catch (e) {}
+}
+function dfxSetBadge(field, count, addr) {
+  var who = addr == null ? dfxReadWallet() : (addr || '');
+  if (!who || (field !== 'messages' && field !== 'notifications' && field !== 'market')) return;
+  try { localStorage.setItem('dogefeedx.badge.' + field + '::' + who, String(count || 0)); } catch (e) {}
+}
+function dfxHoldingsUrl(addr) {
+  var chosen = addr == null ? dfxReadWallet() : addr;
+  return '/dogefeedx/api/wallet/holdings' + (chosen ? ('?address=' + encodeURIComponent(chosen)) : '');
+}
+function dfxBindWallet(onChange) {
+  function fire() { onChange(dfxReadWallet()); }
+  window.addEventListener('storage', function (e) {
+    if (e.key === dfxWalletKey()) fire();
+  });
+  window.addEventListener('dogefeedx-wallet', fire);
+  // A window that was covered or minimized can miss the storage event. The desktop
+  // pings every frame when the wallet changes, and again when the window is shown.
+  window.addEventListener('message', function (e) {
+    if (e.origin !== location.origin) return;
+    if (e.data && e.data.type === 'dogefeedx-wallet') fire();
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) fire();
+  });
+}
+function dfxEnsureWallet() {
+  return fetch('/dogefeedx/api/wallet/addresses', {credentials: 'same-origin', cache: 'no-store'})
+    .then(function (r) { return r.ok ? r.json() : {addresses: []}; })
+    .then(function (data) {
+      var list = (data && data.addresses) || [];
+      var cur = dfxReadWallet();
+      if (list.length && list.indexOf(cur) < 0) {
+        cur = list[0];
+        dfxWriteWallet(cur);
+      }
+      if (!list.length) {
+        cur = '';
+        if (dfxReadWallet()) dfxWriteWallet('');
+      }
+      return {addresses: list, selected: cur};
+    })
+    .catch(function () { return {addresses: [], selected: dfxReadWallet()}; });
+}
+</script>

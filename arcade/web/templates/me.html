@@ -347,6 +347,7 @@
     <button type="button" class="btn small ghost" data-desk-set="" role="radio">Website</button>
     <button type="button" class="btn small ghost" data-desk-set="w98" role="radio">Windows 98 desktop</button>
     <button type="button" class="btn small ghost" data-desk-set="ubuntu" role="radio">Ubuntu desktop</button>
+    <button type="button" class="btn small ghost" data-desk-set="dogefeedx" role="radio">DogeFeedX (macOS)</button>
   </div>
 </div>
 {#- On a phone's browser (2026-10-29: "if they are viewing on a mobile the website make it look like the PWA by
@@ -403,8 +404,14 @@
     (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
   var shell = null;
   try { if (window.top !== window && window.top.location.pathname === '/desktop') shell = window.top; } catch (e) {}
+  // A page inside a Desktop View window is a computer even when that window is narrow.
+  var inDesk = document.documentElement.classList.contains('indesk') || !!shell;
+  var wide = Math.max(screen.width, window.innerWidth) > 640;
+  try { if (window.top.innerWidth > 640) wide = true; } catch (e) {}
   // Not on a phone, nor in the installed app, nor in a window of the phone's home screen.
-  if (installed || (window.top !== window && !shell) || Math.max(screen.width, window.innerWidth) <= 640) return;
+  // The old check used the iframe's own width, so Your arcade inside a desktop window
+  // stayed hidden on a computer. Phone check remains: Math.max(screen.width, window.innerWidth) <= 640) return;
+  if (!inDesk && (installed || (window.top !== window && !shell) || !wide)) return;
   box.hidden = false;
   var bs = box.querySelectorAll('[data-desk-set]');
   function now() {
