@@ -88,6 +88,14 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 Room media says who is speaking (Claude, the session that worked for Riffs; reviewed and taken in by the Arcade session)
+The operator: green boxes round whoever talks in a Riffs Lounge. `_page_doors.js.html` mediaSpeak, every 150 ms: each heard
+player's voice level from the receiver's getSynchronizationSources().audioLevel (their screen's sound left out), and
+your own microphone through an analyser; said to the page as 'media-speaking' {member, on}: on above SPEAK_ON (0.04),
+off after SPEAK_HOLD (600 ms) below, so a box does not flicker. realtime.js: `room.media.on('speaking', (p, on))`, p
+is room.me for your own voice. Riffs guards it with try/catch, so an arcade without this is a no-op there. Test:
+test_media_browser test_who_is_speaking_is_said_to_the_page_and_stops_when_they_mute.
+
 ### 2026-11-02 Riffs Lounge: a player who drops out is linked again at once, not minutes later (Claude)
 The operator: "For some reason, if somebody drops out of a riff lounge, they can't reconnect again for several minutes".
 Three faults in the fast lane (_page_doors.js.html), all on the page; the node is unchanged:
