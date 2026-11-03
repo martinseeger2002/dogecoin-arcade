@@ -88,6 +88,60 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/arcade-lite-charter` · PROPOSAL, no code
+- **Proposal: ARCADE Lite**, a small edition of the arcade in this repository. The draft charter is
+  `docs/arcade-lite/CHARTER.md`.
+- **What it is:**
+  - an `arcade-lite` entry point with its own web layer (`arcade/lite/`), on the same protocol modules;
+  - one protocol and one test suite, so Lite and full nodes are one network;
+  - meant to become the main edition once it covers what operators and users need.
+- **The core:**
+  - Overview ("Your arcade"), Wallet (operator and users), Address book;
+  - Apps (App Store, permissions, themes as a section), Settings, Help;
+  - accounts, the door, the mesh and the signed updater underneath.
+- **Everything else becomes an app** (a sandboxed page app, or a node module), one PR at a time:
+  exchange, ord indexes and Explore, collections, feed, messaging, LLM, rooms, LoRa, affiliates. The full edition
+  keeps each feature until the app API can carry it.
+- **The look:**
+  - the classic Core wallet window: menu bar, Overview / Send / Receive / Transactions / Address book / Apps tabs,
+    a status bar, and Window → Console;
+  - built-in skins: Ubuntu, Classic 98 and Platinum (old Mac).
+- **Publishing without GitHub:**
+  - Any operator can offer an app, skin or node module to every arcade over the mesh, as a package named by its
+    `sha256` and signed by their mesh key.
+  - Each arcade's operator inspects it (manifest, what it needs, source and diff) and marks it Inspected, Affiliated,
+    Installed or Refused.
+  - Marks are signed and shared, so every arcade sees each package's standing. No central approver.
+  - Nothing installs or updates by itself. Node modules run in their own process with no keys, inside a sandbox, and
+    stay off where the arcade can't sandbox.
+- **Themes:**
+  - **Skins** are declarative (manifest + CSS + images, no scripts) and published as App Store cards of kind `theme`.
+  - **Sites** are apps that use the arcade through the page API and Sign in with Arcade.
+  - **Private skins** stay on the operator's machine. The arcade announces their `sha256` in its "me" frame, so other
+    arcades know them and never fetch, push or require them.
+- **Help:** one command list feeds the UI console, an `arcade-cli` terminal client, the docs and
+  `--help`.
+- **Strict PR rules for Lite** (charter, "PR rules"):
+  - one topic, naming its core area;
+  - under ~400 changed lines unless agreed here first;
+  - no new route, setting or dependency outside the area list;
+  - comments say why, while history goes in commits and this file;
+  - no file over ~2,000 lines;
+  - conformance tests a Lite node and a full node must both pass.
+- **Phases:**
+  - 0: agree, and record protocol vectors from `main`;
+  - 1: a skeleton on Pepecoin linking with full nodes;
+  - 2: apps and skins;
+  - 3: builder hooks;
+  - 4: move features out, then Lite becomes the default.
+- **Asked of your side:**
+  1. Agree to an edition inside this repository rather than a separate fork?
+  2. Can Lite read App Store cards from linked arcades' indexes, so it needs no ord index of its own?
+  3. Agree to operator-published apps and node modules over the mesh, inspected and marked by each operator, with
+     the sandbox rules (charter, "Publishing apps and node modules without GitHub")?
+  4. The name?
+  5. Anything in the "Apps, not core" list that you think must stay in the core?
+
 ### 2026-11-02 Pictures in the app: an app draws the room's pictures itself, behind its own card switch (Claude)
 For Spatial World (3D screens; the Garrys mod session asked, the operator confirmed: "Build it"). Option 2 of two: the video
 is handed to the app, behind its own permission; the viewer no longer has to draw every picture on top.
