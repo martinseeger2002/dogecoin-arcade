@@ -1,0 +1,805 @@
+{% extends "base.html" %}
+{% block title %}Profile · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- DogeFeedX Profile: Pixel-perfect reproduction of dogefeed.app/u/username
+    Light theme with white background, matching exact layout and styling.
+    Shows user info, PFP, holdings, activity, and social connections. -#}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #fff8e7;
+  --df-bg: #fff;
+  --df-text: #0f1419;
+  --df-text-secondary: #536471;
+  --df-border: #eff3f4;
+  --df-hover: #f7f9f9;
+  --df-link: #1d9bf0;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  max-width: 1280px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+/* Left Sidebar */
+.df-sidebar {
+  width: 275px;
+  padding: 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item.active { font-weight: 700; }
+.df-nav-item svg { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; }
+.df-signin-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: auto;
+}
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+
+/* Main Content */
+.df-main {
+  flex: 1;
+  max-width: 600px;
+  border-right: 1px solid var(--df-border);
+}
+.df-topbar {
+  position: sticky;
+  top: 0;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--df-border);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.df-back-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.df-back-btn:hover { background: var(--df-hover); }
+.df-topbar-info h1 { font-size: 18px; font-weight: 700; }
+.df-topbar-info span { font-size: 13px; color: var(--df-text-secondary); }
+
+/* Banner */
+.df-banner {
+  height: 96px;
+  background: linear-gradient(135deg, var(--df-gold-light) 0%, var(--df-gold) 100%);
+  position: relative;
+}
+.df-wallet-switch { margin: 4px 0 8px; }
+.df-wallet-switch label { display: block; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--df-text-secondary); margin-bottom: 4px; }
+.df-wallet-switch select { width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--df-border); background: #111; color: inherit; font: inherit; }
+html.indesk body.df-dogefeed .df-wallet-switch select { background: #111 !important; color: #fff6dd !important; width: 100% !important; }
+.df-banner img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Profile Info */
+.df-profile-info {
+  padding: 0 16px 16px;
+  position: relative;
+}
+.df-avatar-container {
+  position: relative;
+  margin-top: -36px;
+  margin-bottom: 8px;
+}
+.df-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 4px solid var(--df-bg);
+  overflow: hidden;
+  background: var(--df-hover);
+}
+.df-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-avatar.verified { border: 4px solid var(--df-gold); }
+.df-profile-actions {
+  position: absolute;
+  top: 16px;
+  right: 0;
+  display: flex;
+  gap: 8px;
+}
+.df-follow-btn {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-text);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.df-follow-btn:hover { background: #272c30; }
+.df-more-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--df-border);
+  background: var(--df-bg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.df-profile-name {
+  font-size: 20px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.df-profile-name svg { width: 20px; height: 20px; fill: var(--df-gold); }
+.df-profile-handle {
+  font-size: 15px;
+  color: var(--df-text-secondary);
+  margin-bottom: 12px;
+}
+.df-profile-bio {
+  font-size: 15px;
+  line-height: 1.4;
+  margin-bottom: 12px;
+}
+.df-profile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--df-text-secondary);
+  margin-bottom: 12px;
+}
+.df-profile-meta svg { width: 16px; height: 16px; margin-right: 4px; }
+.df-profile-stats {
+  display: flex;
+  gap: 16px;
+  font-size: 14px;
+}
+.df-profile-stats strong { font-weight: 700; color: var(--df-text); }
+
+/* Tabs */
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
+  flex: 1;
+  padding: 16px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.df-tab:hover { background: var(--df-hover); }
+.df-tab.active { font-weight: 700; color: var(--df-text); }
+.df-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  background: var(--df-gold);
+  border-radius: 2px;
+}
+
+/* Posts */
+.df-posts { }
+button.df-more { display:block; width:auto; margin:12px auto 20px; padding:8px 16px; border-radius:999px; border:1px solid rgba(255,255,255,.25); background:transparent; color:#fff6dd; font-weight:700; cursor:pointer; }
+html.indesk body.df-dogefeed button.df-more { width:auto !important; background:transparent !important; color:#fff6dd !important; box-shadow:none !important; }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; min-width: 220px; overflow: auto; position: relative; height: 100vh; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; min-width: 220px; height: 100vh; overflow: auto; position: relative; top: auto; }
+html.indesk body.df-dogefeed { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2, html.indesk body.df-dogefeed h3 { color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header, html.indesk body.df-dogefeed .df-topbar { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-card, html.indesk body.df-dogefeed .df-post { background:transparent !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background:#0a0a0a !important; }
+html.indesk body.df-dogefeed .df-tab { background:transparent !important; color:#fff6dd !important; border:1px solid rgba(255,255,255,.25) !important; width:auto !important; box-shadow:none !important; }
+html.indesk body.df-dogefeed .df-tab.active { background:#f3e3a5 !important; color:#000 !important; }
+html.indesk body.df-dogefeed a.df-signin-btn, html.indesk body.df-dogefeed .df-follow-btn { background:#f3e3a5 !important; color:#000 !important; }
+html.indesk body.df-dogefeed a.df-signin-btn { margin-top:8px !important; position:static !important; }
+html.indesk body.df-dogefeed .df-search, html.indesk body.df-dogefeed input { background:#111 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #lookup-u { width:auto !important; flex:1; }
+.df-post {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--df-border);
+  display: flex;
+  gap: 12px;
+  cursor: pointer;
+}
+.df-post:hover { background: var(--df-hover); }
+.df-post-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.df-post-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-post-content { flex: 1; min-width: 0; }
+.df-post-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+.df-post-name { font-weight: 700; font-size: 15px; }
+.df-post-verified { width: 18px; height: 18px; fill: var(--df-gold); }
+.df-post-handle { color: var(--df-text-secondary); font-size: 15px; }
+.df-post-time { color: var(--df-text-secondary); font-size: 15px; }
+.df-post-time::before { content: "·"; margin: 0 4px; }
+.df-post-text { font-size: 15px; line-height: 1.4; margin-bottom: 12px; }
+.df-post-actions {
+  display: flex;
+  justify-content: space-between;
+  max-width: 400px;
+}
+.df-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  margin: -8px;
+  border-radius: 9999px;
+  border: none;
+  background: none;
+  color: var(--df-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.df-action svg { width: 18px; height: 18px; }
+.df-action:hover { color: var(--df-gold); background: rgba(245, 166, 35, 0.1); }
+
+/* NFT Grid */
+.df-nft-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+}
+.df-nft-item {
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--df-hover);
+  cursor: pointer;
+}
+.df-nft-item img { width: 100%; height: 100%; object-fit: cover; }
+.df-nft-item:hover { opacity: 0.9; }
+
+/* Right Sidebar */
+.df-right {
+  width: 350px;
+  padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-card {
+  background: var(--df-hover);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+
+/* Loading & Empty */
+.df-loading { display: flex; justify-content: center; padding: 40px; }
+.df-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+
+<div class="df-app">
+  <!-- Left Sidebar -->
+  
+
+  <!-- Main Content -->
+  <main class="df-main">
+    <div class="df-topbar">
+      <button class="df-back-btn" onclick="history.back()">
+        <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      </button>
+      <div class="df-topbar-info">
+        <h1 id="topbar-name">Profile</h1>
+        <span id="topbar-posts">0 posts</span>
+      </div>
+    </div>
+    
+    <div class="df-banner" id="banner"></div>
+    
+    <div class="df-profile-info">
+      <div class="df-avatar-container">
+        <div class="df-avatar" id="avatar"></div>
+      </div>
+      <div class="df-wallet-switch" id="df-wallet-switch">
+        <label for="df-wallet-select">Wallet</label>
+        <select id="df-wallet-select" aria-label="Imported wallet"></select>
+        <p id="df-wallet-empty" class="df-empty" style="padding:8px 0" hidden>No wallets imported on this node.</p>
+      </div>
+      <div class="df-profile-name" id="profile-name">Profile</div>
+      <div class="df-profile-handle" id="profile-handle"></div>
+      <div class="df-profile-bio" id="profile-bio"></div>
+      <form id="local-profile" style="margin-top:12px;display:grid;gap:8px;max-width:420px">
+        <input id="local-name" type="text" maxlength="40" placeholder="Display name" aria-label="Display name" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
+        <input id="local-dns" type="text" maxlength="64" placeholder="DNS handle" aria-label="DNS handle" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
+        <input id="local-web" type="text" maxlength="200" placeholder="Website" aria-label="Website" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
+        <button type="submit" class="df-follow-btn">Save on this browser</button>
+        <p id="local-said" class="df-empty" style="padding:0"></p>
+      </form>
+      <form id="lookup-handle" style="margin-top:8px;display:flex;gap:8px;max-width:420px">
+        <input id="lookup-u" type="text" maxlength="64" placeholder="Public handle" aria-label="Public handle" style="flex:1;padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
+        <button type="submit" class="df-follow-btn" style="width:auto">Open</button>
+      </form>
+      <div class="df-profile-meta" id="profile-joined"></div>
+      <div class="df-profile-meta" id="profile-reading"></div>
+      <div class="df-profile-stats">
+        <span><strong id="following-count">—</strong> Following</span>
+        <span><strong id="followers-count">—</strong> Followers</span>
+      </div>
+    </div>
+    
+    <div class="df-tabs">
+      <button class="df-tab active" data-tab="posts">Posts</button>
+      <button class="df-tab" data-tab="replies">Replies</button>
+      <button class="df-tab" data-tab="media">Media</button>
+      <button class="df-tab" data-tab="nfts">NFTs</button>
+      <button class="df-tab" data-tab="likes">Likes</button>
+    </div>
+    
+    <div id="profile-content">
+      <div class="df-posts" id="posts-list">
+        <div class="df-loading"><div class="df-spinner"></div></div>
+      </div>
+      <button type="button" class="df-more" id="posts-more" hidden>More</button>
+    </div>
+  </main>
+
+  <!-- Right Sidebar -->
+  
+</div>
+
+{% include "dogefeedx/_wallet.js.html" %}
+<script>
+(function() {
+  'use strict';
+  
+  var IMG_BASE = 'https://dogefeed.app';
+  
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function readingLine(data) {
+    var r = (data && data.reading) || {};
+    var via = r.via === 'peer' ? 'a peer on the arcade network' : "this arcade's node";
+    var sync = r.sync || '';
+    return 'Read from ' + via + (sync ? '. Local sync: ' + sync : '.');
+  }
+  
+  function timeAgo(dateStr) {
+    if (!dateStr) return '';
+    var date = new Date(dateStr);
+    var now = new Date();
+    var diff = Math.floor((now - date) / 1000);
+    if (diff < 60) return diff + 's';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+    return Math.floor(diff / 86400) + 'd';
+  }
+  
+  function renderPost(post) {
+    var author = post.author || {};
+    var avatar = author.avatarUrl || '';
+    var avatarUrl = avatar.startsWith('/') ? IMG_BASE + avatar : avatar;
+    
+    var html = '<article class="df-post" data-post="' + esc(post.id || '') + '">';
+    html += '<div class="df-post-avatar">';
+    html += '<img src="' + esc(avatarUrl) + '" alt="" onerror="this.style.display=\'none\'">';
+    html += '</div>';
+    html += '<div class="df-post-content">';
+    html += '<div class="df-post-header">';
+    html += '<span class="df-post-name">' + esc(author.displayName || author.handle) + '</span>';
+    if (author.verifiedPfp) {
+      html += '<svg class="df-post-verified" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
+    }
+    html += '<span class="df-post-handle">@' + esc(author.handle) + '</span>';
+    html += '<span class="df-post-time">' + timeAgo(post.createdAt) + '</span>';
+    html += '</div>';
+    html += '<div class="df-post-text">' + esc(post.body || post.text || '') + '</div>';
+    html += '<div class="df-post-actions">';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>' + ((post.counts && post.counts.likes) || '') + '</button>';
+    html += '<button class="df-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>';
+    html += '</div>';
+    html += '</div></article>';
+    return html;
+  }
+  
+  var VERIFIED = '<svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:var(--df-gold)"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
+  var profileHandle = new URLSearchParams(location.search).get('u') || '';
+  var profileTab = 'posts';
+
+  function absUrl(url) {
+    if (!url) return '';
+    return url.charAt(0) === '/' ? IMG_BASE + url : url;
+  }
+
+  function fillHeader(data) {
+    var author = data.author || {};
+    var card = data.card || {};
+    var name = author.displayName || data.handle || 'Profile';
+    document.getElementById('profile-name').innerHTML = esc(name) + (author.verifiedPfp ? VERIFIED : '');
+    document.getElementById('topbar-name').textContent = name;
+    document.getElementById('profile-handle').textContent = data.handle ? '@' + data.handle : '';
+    document.getElementById('profile-bio').textContent = author.bio || '';
+    document.getElementById('profile-joined').textContent = card.joined ? 'Joined ' + card.joined : '';
+    document.getElementById('following-count').textContent = card.following == null ? '—' : String(card.following);
+    document.getElementById('followers-count').textContent = card.followers == null ? '—' : String(card.followers);
+    var banner = document.getElementById('banner');
+    banner.innerHTML = author.bannerUrl ? '<img src="' + esc(absUrl(author.bannerUrl)) + '" alt="">' : '';
+    var avatar = document.getElementById('avatar');
+    avatar.innerHTML = author.avatarUrl ? '<img src="' + esc(absUrl(author.avatarUrl)) + '" alt="">' : '';
+  }
+
+  var postCursor = '';
+
+  function loadPosts(append) {
+    var container = document.getElementById('posts-list');
+    var more = document.getElementById('posts-more');
+    if (!profileHandle) {
+      container.innerHTML = '<div class="df-empty">Open a profile from a post</div>';
+      document.getElementById('topbar-posts').textContent = '';
+      more.hidden = true;
+      return;
+    }
+    if (profileTab === 'nfts') {
+      container.innerHTML = '<div class="df-loading"><div class="df-spinner"></div></div>';
+      more.hidden = true;
+      fetch(dfxHoldingsUrl())
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var mine = (data.names || []).some(function(n) { return n.name === profileHandle; }) || data.profile === profileHandle;
+          if (!data.imported) {
+            container.innerHTML = '<div class="df-empty">Import a watch-only address on this node to see the doginals it holds.</div>';
+            return;
+          }
+          if (!mine) {
+            container.innerHTML = '<div class="df-empty">This profile is not a name the node wallet holds.</div>';
+            return;
+          }
+          var cards = [];
+          (data.collections || []).forEach(function(c) {
+            (c.pieces || []).slice(0, 8).forEach(function(p) {
+              var img = absUrl(p.image || '');
+              cards.push('<a class="df-post" href="' + esc(p.href || '#') + '" target="_blank" rel="noopener">' +
+                (img ? '<img src="' + esc(img) + '" alt="" style="width:100%;max-height:180px;object-fit:cover" referrerpolicy="no-referrer">' : '') +
+                '<div><b>' + esc(c.name) + '</b> ' + esc(p.title || '') + '</div></a>');
+            });
+          });
+          container.innerHTML = cards.join('') || '<div class="df-empty">No doginals cross-referenced for this wallet.</div>';
+        })
+        .catch(function() {
+          container.innerHTML = '<div class="df-empty">Could not load this wallet.</div>';
+        });
+      return;
+    }
+    if (!append) {
+      postCursor = '';
+      container.innerHTML = '<div class="df-loading"><div class="df-spinner"></div></div>';
+    }
+    var url = '/dogefeedx/api/users/' + encodeURIComponent(profileHandle) + '/posts?tab=' + encodeURIComponent(profileTab) + '&limit=20';
+    if (append && postCursor) url += '&cursor=' + encodeURIComponent(postCursor);
+    fetch(url)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        fillHeader(data);
+        if (data.error && !(data.items && data.items.length) && !append) {
+          container.innerHTML = '<div class="df-empty">Could not load posts</div>';
+          document.getElementById('topbar-posts').textContent = '';
+          more.hidden = true;
+          return;
+        }
+        var posts = data.items || [];
+        var html = posts.length ? posts.map(renderPost).join('') : '';
+        if (append) container.insertAdjacentHTML('beforeend', html);
+        else container.innerHTML = html || '<div class="df-empty">No posts yet</div>';
+        postCursor = data.nextCursor || '';
+        var shown = container.querySelectorAll('.df-post, article').length;
+        document.getElementById('topbar-posts').textContent = (shown || posts.length) + (postCursor ? '+' : '') + ' posts';
+        more.hidden = !postCursor;
+      })
+      .catch(function() {
+        if (!append) container.innerHTML = '<div class="df-empty">Could not load posts</div>';
+        more.hidden = true;
+      });
+  }
+
+  function loadSidebar() {
+    fetch('/dogefeedx/api/sidebar')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var trends = (data.trending || []).map(function(t) {
+          return '<div class="df-trend" style="padding:12px 16px">' +
+            '<div style="font-size:13px;color:var(--df-text-secondary);margin-bottom:2px">' + t.rank + ' · Trending on DogeFeed</div>' +
+            '<div style="font-size:15px;font-weight:700">#' + esc(t.tag) + '</div>' +
+            '<div style="font-size:13px;color:var(--df-text-secondary)">' + esc(t.count) + '</div></div>';
+        }).join('');
+        (document.getElementById('side-trending')||{}).innerHTML = trends || '<div class="df-empty">No trends</div>';
+        var html = (data.suggestions || []).slice(0, 3).map(function(u) {
+          var avatar = absUrl(u.avatar);
+          return '<a href="/dogefeedx/profile?u=' + encodeURIComponent(u.handle) + '" style="display:flex;align-items:center;gap:12px;padding:12px 16px;text-decoration:none;color:inherit">' +
+            '<div style="width:40px;height:40px;border-radius:50%;overflow:hidden;background:var(--df-gold-light)">' +
+            (avatar ? '<img src="' + esc(avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover">' : '') +
+            '</div><div style="flex:1"><div style="font-weight:700;font-size:15px">' + esc(u.name || u.handle) +
+            '</div><div style="font-size:14px;color:var(--df-text-secondary)">@' + esc(u.handle) + '</div></div></a>';
+        }).join('');
+        (document.getElementById('sidebar-suggestions')||{}).innerHTML = html || '<div class="df-empty">No suggestions</div>';
+      })
+      .catch(function() {
+        (document.getElementById('side-trending')||{}).innerHTML = '<div class="df-empty">Could not load</div>';
+        (document.getElementById('sidebar-suggestions')||{}).innerHTML = '<div class="df-empty">Could not load</div>';
+      });
+  }
+
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      profileTab = tab.getAttribute('data-tab') || 'posts';
+      loadPosts(false);
+    });
+  });
+  var postsMore = document.getElementById('posts-more');
+  if (postsMore) postsMore.addEventListener('click', function() { loadPosts(true); });
+
+  var lookup = document.getElementById('lookup-handle');
+  if (lookup) {
+    if (profileHandle) lookup.hidden = true;
+    lookup.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var handle = (document.getElementById('lookup-u').value || '').trim().replace(/^@/, '');
+      if (handle) location.href = '/dogefeedx/profile?u=' + encodeURIComponent(handle);
+    });
+  }
+
+  var localForm = document.getElementById('local-profile');
+  if (localForm) {
+    if (profileHandle) localForm.hidden = true;
+    else {
+      try {
+        fillLocalProfile();
+      } catch (e) {}
+      localForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var addr = dfxReadWallet();
+        if (!addr) return;
+        dfxWriteJson('dogefeedx.profile', {
+          displayName: document.getElementById('local-name').value.trim(),
+          dns: document.getElementById('local-dns').value.trim(),
+          website: document.getElementById('local-web').value.trim()
+        }, addr);
+        document.getElementById('local-said').textContent = 'Saved in this browser. Not sent to dogefeed.app.';
+      });
+    }
+  }
+
+  document.querySelectorAll('.df-search input').forEach(function(inp) {
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && inp.value.trim()) location.href = '/dogefeedx/search?q=' + encodeURIComponent(inp.value.trim());
+    });
+  });
+
+  function paintSwitch(w) {
+    var sel = document.getElementById('df-wallet-select');
+    var empty = document.getElementById('df-wallet-empty');
+    if (!sel) return;
+    sel.innerHTML = '';
+    var list = (w && w.addresses) || [];
+    if (!list.length) {
+      sel.hidden = true;
+      if (empty) empty.hidden = false;
+      return;
+    }
+    sel.hidden = false;
+    if (empty) empty.hidden = true;
+    list.forEach(function (addr) {
+      var opt = document.createElement('option');
+      opt.value = addr;
+      opt.textContent = addr;
+      if (addr === w.selected) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  var profileSeq = 0;
+  function fillLocalProfile() {
+    var addr = dfxReadWallet();
+    var saved = addr ? dfxReadJson('dogefeedx.profile', {}, addr) : {};
+    if (!saved || typeof saved !== 'object') saved = {};
+    var name = document.getElementById('local-name');
+    var dns = document.getElementById('local-dns');
+    var web = document.getElementById('local-web');
+    if (name) name.value = addr ? (saved.displayName || '') : '';
+    if (dns) dns.value = addr ? (saved.dns || '') : '';
+    if (web) web.value = addr ? (saved.website || '') : '';
+  }
+  function clearIdentity() {
+    ['profile-name', 'topbar-name', 'profile-handle', 'profile-bio', 'profile-joined', 'profile-reading'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = '';
+    });
+  }
+  function loadWalletIdentity(addr) {
+    var mine = ++profileSeq;
+    var want = addr || '';
+    clearIdentity();
+    fillLocalProfile();
+    fetch(dfxHoldingsUrl(want), {cache: 'no-store'})
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (mine !== profileSeq || (dfxReadWallet() || '') !== want) return;
+        var names = (data.names || []).map(function (n) { return n.name; }).filter(Boolean);
+        var saved = want ? dfxReadJson('dogefeedx.profile', {}, want) : {};
+        if (!saved || typeof saved !== 'object') saved = {};
+        var chain = data.profile || names[0] || '';
+        var short = addr && addr.length > 12 ? addr.slice(0, 6) + '…' + addr.slice(-4) : (addr || 'Profile');
+        var label = saved.displayName || chain || short;
+        document.getElementById('profile-name').textContent = label;
+        document.getElementById('topbar-name').textContent = label;
+        document.getElementById('profile-handle').textContent = addr || '';
+        var rest = names.filter(function (n) { return n !== chain; });
+        document.getElementById('profile-bio').textContent = data.empty && !data.imported ? data.empty : rest.join(' · ');
+        var bits = [];
+        if (data.balance_doge) bits.push(data.balance_doge + ' DOGE');
+        var pieces = 0;
+        (data.collections || []).forEach(function (c) { pieces += Number(c.count) || (c.pieces || []).length; });
+        if (pieces) bits.push(pieces + ' doginals');
+        document.getElementById('profile-joined').textContent = bits.join(' · ');
+        var where = document.getElementById('profile-reading');
+        if (where) where.textContent = readingLine(data);
+      })
+      .catch(function () {});
+  }
+
+  var walletSelect = document.getElementById('df-wallet-select');
+  if (walletSelect) {
+    walletSelect.addEventListener('change', function () {
+      dfxWriteWallet(walletSelect.value);
+      if (profileHandle) location.href = '/dogefeedx/profile';
+      else loadWalletIdentity(walletSelect.value);
+    });
+  }
+
+  document.getElementById('posts-list').addEventListener('click', function(e) {
+    var post = e.target.closest('.df-post');
+    if (!post || e.target.closest('button, a')) return;
+    var id = post.getAttribute('data-post');
+    if (id) location.href = '/dogefeedx/post?id=' + encodeURIComponent(id);
+  });
+  
+  // Register with shell
+  if (window.DogeFeedX && window.DogeFeedX.registerApp) {
+    window.DogeFeedX.registerApp({
+      id: 'profile',
+      name: 'Profile',
+      icon: '/dogefeedx/icon-profile.png',
+      url: '/dogefeedx/profile'
+    });
+  }
+  
+  if (!profileHandle) {
+    var tabRow = document.querySelector('.df-tabs');
+    var posts = document.getElementById('profile-content');
+    if (tabRow) tabRow.hidden = true;
+    if (posts) posts.hidden = true;
+    document.getElementById('topbar-posts').textContent = '';
+  }
+  dfxEnsureWallet().then(function (w) {
+    paintSwitch(w);
+    if (!profileHandle) loadWalletIdentity(w.selected);
+  });
+  dfxBindWallet(function (addr) {
+    var sel = document.getElementById('df-wallet-select');
+    if (sel && addr && sel.value !== addr) sel.value = addr;
+    if (!profileHandle) loadWalletIdentity(addr);
+  });
+  if (profileHandle) loadPosts();
+  loadSidebar();
+})();
+</script>
+{% endblock %}

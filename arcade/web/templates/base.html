@@ -93,7 +93,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
       var skin = shell.document.documentElement.getAttribute('data-skin') || 'w98';
       document.documentElement.setAttribute('data-skin', skin);
       var look = document.createElement('link');
-      look.rel = 'stylesheet'; look.href = skin === 'ubuntu' ? '/deskubuntu.css' : '/desk98.css';
+      look.rel = 'stylesheet'; look.href = skin === 'ubuntu' ? '/deskubuntu.css' : skin === 'dogefeedx' ? '/deskdogefeedx.css' : '/desk98.css';
       document.head.appendChild(look);
     }
     document.addEventListener('DOMContentLoaded', function () {
@@ -129,7 +129,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
       !/^\/(admin|join|restore|signin|offline|clone|home)(\/|$)/.test(location.pathname)) {
     var deskOn = false;
     // Nothing chosen yet: the arcade's default look (DESK_DEFAULT, Ubuntu since 2026-10-29); "web" is the website, chosen.
-    try { deskOn = /^(1|w98|ubuntu)$/.test(localStorage.getItem('arcade.deskview') || '{{ desk_default }}'); } catch (e) {}
+    try { deskOn = /^(1|w98|ubuntu|dogefeedx)$/.test(localStorage.getItem('arcade.deskview') || '{{ desk_default }}'); } catch (e) {}
     if (deskOn) {
       var page = location.pathname + location.search + location.hash;
       location.replace(page === '/' ? '/desktop' : '/desktop#open=' + encodeURIComponent(page));

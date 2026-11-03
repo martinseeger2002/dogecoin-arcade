@@ -1218,7 +1218,8 @@ def create_app(state: AppState) -> FastAPI:
     # these were no-store: a stale copy of the code that derives somebody's keys has no acceptable failure mode).
     ASSETS = {"/wallet.js": "wallet_js.js", "/coins.js": "coins.js", "/signin.js": "signin.js",
               "/messaging.js": "messaging_js.js", "/qrscan.js": "qrscan.js", "/base.css": "base_css.css",
-              "/desk98.css": "desk98_css.css", "/deskubuntu.css": "deskubuntu_css.css"}
+              "/desk98.css": "desk98_css.css", "/deskubuntu.css": "deskubuntu_css.css",
+              "/deskdogefeedx.css": "deskdogefeedx_css.css"}
     _asset_kept: dict = {}
 
     def _assets_mark() -> str:
@@ -10432,6 +10433,60 @@ def create_app(state: AppState) -> FastAPI:
                "/exchange": 0 if _account_view(request) else _offers_waiting()}
         return JSONResponse({k: int(v or 0) for k, v in out.items()}, headers={"Cache-Control": "no-store"})
 
+    @app.get("/dogefeedx/api/local/notifications")
+    def dogefeedx_local_notifications(request: Request):
+        """Likes, comments, reposts, sales and offers for this arcade account.
+
+        Read from the node's own notification book. Empty when nobody is signed in.
+        Nothing here is written to dogefeed.app.
+        """
+        account = signed_in(request)
+        if account is None and _account_view(request):
+            return JSONResponse({"signed_in": False, "items": []}, headers={"Cache-Control": "no-store"})
+        try:
+            events = _notif_events(account) if account is not None else _node_notif_events()
+        except Exception:                                 # noqa: BLE001 -- an empty list, not a made-up one
+            events = []
+
+        def bucket(ev) -> str:
+            kind = ev.kind or ""
+            if kind == "liked":
+                return "likes"
+            if kind == "replied to":
+                return "comments"
+            if kind == "shared":
+                return "reposts"
+            if kind == "sold":
+                return "market_sale"
+            if kind == "bought":
+                return "market_purchase"
+            if ev.source == "fill":
+                return "offer_received"
+            return ""
+
+        items = []
+        for ev in list(events)[:100]:
+            which = bucket(ev)
+            if not which:
+                continue
+            items.append({"bucket": which, "kind": ev.kind, "text": ev.text or "",
+                          "unread": bool(ev.unread), "at": int(ev.at or 0)})
+        return JSONResponse({"signed_in": True, "items": items}, headers={"Cache-Control": "no-store"})
+
+    @app.get("/dogefeedx/api/local/games")
+    def dogefeedx_local_games(request: Request):
+        """Games inscribed on this arcade. Identity is the player's on-chain account. Empty when there are none."""
+        try:
+            rows = _games_ranked(request, "popular")
+        except Exception:                                 # noqa: BLE001
+            rows = []
+        games = []
+        for row in rows[:60]:
+            name = row.get("name") or ""
+            if name:
+                games.append({"name": name, "txid": row.get("txid") or "", "net": row.get("netlabel") or ""})
+        return JSONResponse({"games": games, "identity": "on-chain"}, headers={"Cache-Control": "no-store"})
+
     @app.get("/home", response_class=HTMLResponse)
     def home_screen(request: Request):
         """The installed app's one page (PWA only): the tabs and the apps as icons, each opened full screen over it
@@ -10489,6 +10544,300 @@ def create_app(state: AppState) -> FastAPI:
                              for c in state.all_chains]}
         return render(request, "desktop.html", fullscreen=True, apps=_shelf_apps(request), ord_nets=nets,
                       coins=coins, system=system, operator_view=not _account_view(request))
+
+    # ---------- DogeFeedX Terminal API: safe whitelist of read-only commands ----------
+    TERMINAL_COMMANDS = {
+        "help": "Show available commands",
+        "status": "Show node status and version",
+        "balance": "Show wallet balance (requires sign-in)",
+        "peers": "Show connected mesh peers",
+        "sync": "Show chain sync status",
+        "chains": "List all chains this arcade knows",
+        "block": "Look up a block by height or hash (usage: block <chain> <height|hash>)",
+        "tx": "Look up a transaction by txid (usage: tx <chain> <txid>)",
+        "address": "Look up an address (usage: address <chain> <address>)",
+        "inscription": "Look up an inscription by id (usage: inscription <id>)",
+        "collection": "Look up a collection (usage: collection <chain> <slug>)",
+        "clear": "Clear the terminal",
+    }
+
+    @app.get("/api/terminal/commands")
+    def terminal_commands():
+        """List available terminal commands for the DogeFeedX in-UI terminal."""
+        return JSONResponse({"commands": TERMINAL_COMMANDS})
+
+    @app.post("/api/terminal/exec")
+    def terminal_exec(request: Request, payload: Any = Body(None)):
+        """Execute a terminal command. Commands are limited to safe, read-only operations.
+        
+        This endpoint is public but restricted to a whitelist of commands that only read data.
+        It does NOT provide arbitrary shell or RPC access. Admin-only actions (like sending,
+        signing, or changing settings) are not available here.
+        """
+        said = payload if isinstance(payload, dict) else {}
+        cmd = str(said.get("command", "")).strip()
+        args = [a.strip() for a in str(said.get("args", "")).split() if a.strip()]
+        
+        if not cmd:
+            return JSONResponse({"error": "no command given", "output": "Type 'help' for available commands"})
+        
+        if cmd not in TERMINAL_COMMANDS:
+            return JSONResponse({"error": f"unknown command: {cmd}", "output": f"Unknown command '{cmd}'. Type 'help' for available commands."})
+        
+        try:
+            if cmd == "help":
+                lines = ["Available commands:", ""]
+                for name, desc in TERMINAL_COMMANDS.items():
+                    lines.append(f"  {name:12} - {desc}")
+                lines.append("")
+                lines.append("Note: This terminal is read-only. Admin actions require the Admin panel.")
+                return JSONResponse({"output": "\n".join(lines)})
+            
+            if cmd == "status":
+                mesh = getattr(state, "mesh", None)
+                version = str(getattr(state, "running_version", "") or "unknown")
+                node_id = str(getattr(mesh, "node_id", "") or "not connected") if mesh else "mesh disabled"
+                links = len(mesh.node.links) if mesh and hasattr(mesh, "node") else 0
+                lines = [
+                    f"Arcade Version: {version}",
+                    f"Node ID: {node_id[:16]}..." if len(node_id) > 16 else f"Node ID: {node_id}",
+                    f"Mesh Links: {links}",
+                    f"Chains: {len(state.all_chains)}",
+                ]
+                return JSONResponse({"output": "\n".join(lines)})
+            
+            if cmd == "balance":
+                account = signed_in(request)
+                if not account:
+                    return JSONResponse({"output": "Not signed in. Sign in to view your balance."})
+                lines = ["Balances:", ""]
+                for chain in _account_chains():
+                    try:
+                        addr = _home_address_of(account, chain)
+                        if addr:
+                            balance = _balance_of(addr, chain)
+                            lines.append(f"  {chain.label}: {format_amount(balance)} {chain.params.coin}")
+                    except Exception:
+                        lines.append(f"  {chain.label}: (unavailable)")
+                return JSONResponse({"output": "\n".join(lines)})
+            
+            if cmd == "peers":
+                mesh = getattr(state, "mesh", None)
+                if not mesh or not hasattr(mesh, "node"):
+                    return JSONResponse({"output": "Mesh not available."})
+                links = list(mesh.node.links)[:20]
+                if not links:
+                    return JSONResponse({"output": "No peers connected."})
+                lines = [f"Connected peers ({len(mesh.node.links)}):", ""]
+                for link_id in links:
+                    lines.append(f"  {link_id[:16]}...")
+                if len(mesh.node.links) > 20:
+                    lines.append(f"  ... and {len(mesh.node.links) - 20} more")
+                return JSONResponse({"output": "\n".join(lines)})
+            
+            if cmd == "sync":
+                lines = ["Chain sync status:", ""]
+                for c in state.all_chains:
+                    try:
+                        sync = state.chain_sync(c) if hasattr(state, "chain_sync") else {}
+                        if sync.get("ready"):
+                            lines.append(f"  {c.label}: synced")
+                        elif sync.get("progress"):
+                            pct = round(100 * float(sync.get("progress", 0)), 1)
+                            lines.append(f"  {c.label}: syncing ({pct}%)")
+                        else:
+                            lines.append(f"  {c.label}: not available")
+                    except Exception:
+                        lines.append(f"  {c.label}: error")
+                return JSONResponse({"output": "\n".join(lines)})
+            
+            if cmd == "chains":
+                lines = ["Available chains:", ""]
+                for c in state.all_chains:
+                    net_type = "mainnet" if c.is_mainnet else "testnet"
+                    lines.append(f"  {c.network:12} - {c.label} ({net_type})")
+                return JSONResponse({"output": "\n".join(lines)})
+            
+            if cmd == "block":
+                if len(args) < 2:
+                    return JSONResponse({"output": "Usage: block <chain> <height|hash>\nExample: block main 500000"})
+                chain_name, block_ref = args[0], args[1]
+                chain = next((c for c in state.all_chains if c.network == chain_name), None)
+                if not chain:
+                    return JSONResponse({"output": f"Unknown chain: {chain_name}. Use 'chains' to see available chains."})
+                try:
+                    if block_ref.isdigit():
+                        block_hash = chain.rpc("getblockhash", int(block_ref))
+                    else:
+                        block_hash = block_ref
+                    block = chain.rpc("getblock", block_hash)
+                    lines = [
+                        f"Block {block.get('height', '?')}",
+                        f"  Hash: {block.get('hash', '?')[:32]}...",
+                        f"  Time: {block.get('time', '?')}",
+                        f"  Transactions: {len(block.get('tx', []))}",
+                        f"  Size: {block.get('size', '?')} bytes",
+                    ]
+                    return JSONResponse({"output": "\n".join(lines)})
+                except Exception as e:
+                    return JSONResponse({"output": f"Error looking up block: {e}"})
+            
+            if cmd == "tx":
+                if len(args) < 2:
+                    return JSONResponse({"output": "Usage: tx <chain> <txid>\nExample: tx main abc123..."})
+                chain_name, txid = args[0], args[1]
+                chain = next((c for c in state.all_chains if c.network == chain_name), None)
+                if not chain:
+                    return JSONResponse({"output": f"Unknown chain: {chain_name}. Use 'chains' to see available chains."})
+                try:
+                    tx = chain.rpc("getrawtransaction", txid, True)
+                    lines = [
+                        f"Transaction {txid[:32]}...",
+                        f"  Confirmations: {tx.get('confirmations', 0)}",
+                        f"  Size: {tx.get('size', '?')} bytes",
+                        f"  Inputs: {len(tx.get('vin', []))}",
+                        f"  Outputs: {len(tx.get('vout', []))}",
+                    ]
+                    if tx.get("blockhash"):
+                        lines.append(f"  Block: {tx.get('blockhash')[:32]}...")
+                    return JSONResponse({"output": "\n".join(lines)})
+                except Exception as e:
+                    return JSONResponse({"output": f"Error looking up transaction: {e}"})
+            
+            if cmd == "address":
+                if len(args) < 2:
+                    return JSONResponse({"output": "Usage: address <chain> <address>"})
+                chain_name, addr = args[0], args[1]
+                chain = next((c for c in state.token_chains if c.network == chain_name), None)
+                if not chain:
+                    return JSONResponse({"output": f"Unknown chain or not indexed: {chain_name}"})
+                try:
+                    index = state.token_index(chain)
+                    with contextlib.closing(index.open()) as db:
+                        balance = index.balance(db, addr)
+                    lines = [
+                        f"Address: {addr[:20]}...",
+                        f"  Chain: {chain.label}",
+                        f"  Balance: {format_amount(balance)} {chain.params.coin}",
+                    ]
+                    return JSONResponse({"output": "\n".join(lines)})
+                except Exception as e:
+                    return JSONResponse({"output": f"Error looking up address: {e}"})
+            
+            if cmd == "inscription":
+                if not args:
+                    return JSONResponse({"output": "Usage: inscription <id>\nExample: inscription abc123...i0"})
+                iid = args[0]
+                for chain in state.token_chains:
+                    try:
+                        index = state.ord_index(chain.network)
+                        if index:
+                            row = index.inscription(iid)
+                            if row:
+                                lines = [
+                                    f"Inscription: {iid[:32]}...",
+                                    f"  Chain: {chain.label}",
+                                    f"  Number: {row.get('number', '?')}",
+                                    f"  Type: {row.get('content_type', '?')}",
+                                    f"  Size: {row.get('size', '?')} bytes",
+                                ]
+                                return JSONResponse({"output": "\n".join(lines)})
+                    except Exception:
+                        pass
+                return JSONResponse({"output": f"Inscription not found: {iid}"})
+            
+            if cmd == "collection":
+                if len(args) < 2:
+                    return JSONResponse({"output": "Usage: collection <chain> <slug>\nExample: collection main sub1k"})
+                chain_name, slug = args[0], args[1]
+                # This would call the collection lookup API
+                return JSONResponse({"output": f"Collection lookup for {slug} on {chain_name} - use the Explorer for full details."})
+            
+            if cmd == "clear":
+                return JSONResponse({"output": "", "clear": True})
+            
+            return JSONResponse({"error": "not implemented", "output": f"Command '{cmd}' is not yet implemented."})
+        
+        except Exception as e:
+            return JSONResponse({"error": str(e), "output": f"Error: {e}"})
+
+    # ---------- DogeFeedX Network API: public network status endpoint ----------
+    @app.get("/api/network")
+    def api_network_status():
+        """Public network status for the DogeFeedX Network window.
+        
+        Returns safe, non-sensitive network information including:
+        - Chain sync status with progress bars
+        - Connected peers count
+        - Node status
+        - Tunnel status (if available)
+        
+        This endpoint is public and does not require authentication.
+        Sensitive information (like full peer lists or admin details) is not included.
+        """
+        chains = []
+        for c in state.all_chains:
+            try:
+                sync = state.chain_sync(c) if hasattr(state, "chain_sync") else {}
+                chain_info = {
+                    "network": c.network,
+                    "label": c.label,
+                    "coin": c.params.coin,
+                    "mainnet": bool(c.is_mainnet),
+                    "ready": bool(sync.get("ready")),
+                    "progress": round(100 * float(sync.get("progress") or 0), 1) if not sync.get("ready") else 100.0,
+                    "online": bool(sync.get("online")),
+                }
+                if sync.get("headers"):
+                    chain_info["headers"] = sync.get("headers")
+                if sync.get("blocks"):
+                    chain_info["blocks"] = sync.get("blocks")
+                chains.append(chain_info)
+            except Exception:
+                chains.append({
+                    "network": c.network, "label": c.label, "coin": c.params.coin,
+                    "mainnet": bool(c.is_mainnet), "ready": False, "progress": 0, "online": False
+                })
+        
+        mesh = getattr(state, "mesh", None)
+        mesh_status = {"connected": False, "peers": 0}
+        if mesh is not None and getattr(mesh, "loop", None) is not None:
+            mesh_status["connected"] = True
+            mesh_status["node_id"] = str(getattr(mesh, "node_id", "") or "")[:16]
+            if hasattr(mesh, "node") and hasattr(mesh.node, "links"):
+                mesh_status["peers"] = len(mesh.node.links)
+            stun = getattr(mesh, "stun", None)
+            if stun is not None:
+                mesh_status["stun_servers"] = len(stun.mine())
+        
+        tunnel = {"active": False, "name": None}
+        try:
+            tunnel_state = state.setting("tunnel", {})
+            if isinstance(tunnel_state, dict) and tunnel_state.get("active"):
+                tunnel["active"] = True
+                tunnel["name"] = tunnel_state.get("name", "")
+        except Exception:
+            pass
+        
+        arcades = []
+        try:
+            running = _arcades_running()
+            for arc in running[:10]:
+                arcades.append({
+                    "id": str(arc.get("id", ""))[:16],
+                    "name": arc.get("name", ""),
+                    "linked": arc.get("link", {}).get("state") == "linked",
+                })
+        except Exception:
+            pass
+        
+        return JSONResponse({
+            "chains": chains,
+            "mesh": mesh_status,
+            "tunnel": tunnel,
+            "arcades": arcades,
+            "version": str(getattr(state, "running_version", "") or ""),
+        })
 
     @app.post("/account/push/subscribe")
     def push_subscribe(request: Request, payload: Any = Body(None)):
@@ -11244,6 +11593,12 @@ def create_app(state: AppState) -> FastAPI:
         """The Desktop View's Ubuntu look for the pages in its windows (templates/deskubuntu_css.css; Themes on Your
         arcade)."""
         return _asset_response(request, "/deskubuntu.css")
+
+    @app.get("/deskdogefeedx.css")
+    def deskdogefeedx_css(request: Request):
+        """The Desktop View's DogeFeedX macOS look for the pages in its windows (templates/deskdogefeedx_css.css;
+        Themes on Your arcade)."""
+        return _asset_response(request, "/deskdogefeedx.css")
 
     @app.get("/join", response_class=HTMLResponse)
     def join_page(request: Request):
@@ -35327,6 +35682,12 @@ def create_app(state: AppState) -> FastAPI:
     llmweb.register(app, state, signed_in=signed_in, account_address=_account_address, account_chain=_account_chain,
                     admin_check=_admin_check, name_of=_name_of,
                     pay_choices=lambda request: _pair_choices(request, "nobody", everything=True), render=render)
+    # DogeFeedX apps: Explorer and Terminal apps with Mac OS X Aqua styling and DogeFeed branding.
+    from . import dogefeedx
+    dogefeedx.register_routes(app, render)
+    # DogeFeedX Network app: node status, sync progress, and mesh peers.
+    from .dogefeedx import network as dogefeedx_network
+    dogefeedx_network.register(app, state, admin_check=_admin_check)
     return app
 
 

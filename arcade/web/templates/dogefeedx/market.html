@@ -1,0 +1,776 @@
+{% extends "base.html" %}
+{% block title %}Market · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- DogeFeedX Market: Pixel-perfect reproduction of dogefeed.app/market
+    Light theme with white background, matching exact layout and styling.
+    Data from dogefeed.app APIs (read-only). -#}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --df-gold: #f3e3a5;
+  --df-gold-dark: #c9b56e;
+  --df-gold-light: #1a1a1a;
+  --df-bg: #000;
+  --df-text: #fff6dd;
+  --df-text-secondary: rgba(255,255,255,0.55);
+  --df-border: rgba(255,255,255,0.12);
+  --df-hover: rgba(255,255,255,0.06);
+  --df-card: #0a0a0a;
+  --df-link: #f3e3a5;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--df-bg);
+  color: var(--df-text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+.df-app {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--df-bg);
+}
+
+/* Market list */
+.df-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  padding: 8px;
+  height: 100vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--df-border);
+  background: var(--df-bg);
+}
+.df-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 4px;
+}
+.df-logo svg { width: 32px; height: 32px; }
+.df-logo span {
+  font-family: "Fredoka", sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.df-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--df-text);
+  transition: background 0.15s;
+}
+.df-nav-item:hover { background: var(--df-hover); }
+.df-nav-item.active { font-weight: 700; }
+.df-nav-item svg { width: 24px; height: 24px; stroke: currentColor; stroke-width: 2; fill: none; }
+.df-signin-btn {
+  width: 100%;
+  padding: 12px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 8px;
+  flex-shrink: 0;
+  position: static;
+}
+.df-signin-btn:hover { background: var(--df-gold-dark); }
+
+/* Main Content */
+.df-main {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  height: 100vh;
+  overflow: auto;
+  border-right: 1px solid var(--df-border);
+  background: var(--df-bg);
+}
+.df-topbar {
+  position: sticky;
+  top: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-topbar h1, .df-card-title, .df-collection-name, .df-stat-value { color: var(--df-text); }
+.df-topbar h1 {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Tabs */
+.df-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-tab {
+  flex: 1;
+  padding: 16px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--df-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  position: relative;
+}
+.df-tab:hover { background: var(--df-hover); }
+.df-tab.active { font-weight: 700; color: var(--df-text); }
+.df-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  background: var(--df-gold);
+  border-radius: 2px;
+}
+
+/* Stats Bar */
+.df-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--df-border);
+  border-bottom: 1px solid var(--df-border);
+}
+.df-stat {
+  background: var(--df-bg);
+  padding: 16px;
+  text-align: center;
+}
+.df-stat-value {
+  font-family: "Fredoka", sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--df-text);
+}
+.df-stat-label {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+  margin-top: 2px;
+}
+
+/* Category Pills */
+.df-categories {
+  display: flex;
+  gap: 8px;
+  padding: 16px;
+  border-bottom: 1px solid var(--df-border);
+  flex-wrap: wrap;
+}
+.df-category {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: 1px solid var(--df-border);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--df-text);
+  background: var(--df-bg);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.df-category:hover { background: var(--df-hover); }
+.df-category.active {
+  background: var(--df-gold);
+  border-color: var(--df-gold);
+  color: #000;
+}
+.df-chains { display:flex; border-bottom:1px solid var(--df-border); }
+.df-chain {
+  flex:1; padding:12px; text-align:center; font-size:14px; font-weight:500;
+  color:var(--df-text-secondary); background:none; border:0; cursor:pointer; position:relative;
+}
+.df-chain.active { font-weight:700; color:var(--df-text); }
+.df-chain.active::after {
+  content:""; position:absolute; bottom:0; left:50%; transform:translateX(-50%);
+  width:56px; height:4px; background:var(--df-gold); border-radius:2px;
+}
+button.df-more { display:block; width:auto; margin:8px auto 16px; background:transparent; color:inherit; border:1px solid var(--df-border); border-radius:999px; padding:8px 14px; }
+
+/* Search & Filters */
+.df-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--df-border);
+}
+.df-search-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+}
+.df-search-box svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search-box input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 14px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-search-box input::placeholder { color: var(--df-text-secondary); }
+.df-sort-btn, .df-view-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--df-border);
+  background: var(--df-bg);
+  font-size: 13px;
+  color: var(--df-text);
+  cursor: pointer;
+}
+.df-sort-btn:hover, .df-view-btn:hover { background: var(--df-hover); }
+.df-sort-btn svg, .df-view-btn svg { width: 16px; height: 16px; }
+
+/* Collection List */
+.df-collections { }
+.df-collection {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--df-border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.df-collection:hover { background: var(--df-hover); }
+.df-collection-rank {
+  width: 24px;
+  font-size: 14px;
+  color: var(--df-text-secondary);
+  font-weight: 500;
+}
+.df-collection-img {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--df-hover);
+}
+.df-collection-img img { width: 100%; height: 100%; object-fit: cover; }
+.df-collection-info { flex: 1; min-width: 0; }
+.df-collection-name {
+  font-weight: 600;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.df-collection-name svg { width: 16px; height: 16px; fill: var(--df-gold); }
+.df-collection-meta {
+  font-size: 13px;
+  color: var(--df-text-secondary);
+  margin-top: 2px;
+}
+.df-collection-stats {
+  text-align: right;
+  flex-shrink: 0;
+}
+.df-collection-floor {
+  font-weight: 600;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.df-collection-floor svg { width: 14px; height: 14px; fill: var(--df-gold); }
+.df-collection-volume {
+  font-size: 12px;
+  color: var(--df-text-secondary);
+  margin-top: 2px;
+}
+.df-mint-btn {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  border: none;
+  background: var(--df-gold);
+  color: #000;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.df-mint-btn:hover { background: var(--df-gold-dark); }
+
+/* Right Sidebar */
+.df-right {
+  width: 280px;
+  flex-shrink: 0;
+  padding: 12px 16px;
+  height: 100vh;
+  overflow: auto;
+  background: var(--df-bg);
+  position: relative;
+}
+.df-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  background: var(--df-hover);
+  margin-bottom: 16px;
+}
+.df-search svg { width: 18px; height: 18px; color: var(--df-text-secondary); }
+.df-search input {
+  flex: 1;
+  border: none;
+  background: none;
+  font-size: 15px;
+  color: var(--df-text);
+  outline: none;
+}
+.df-card {
+  background: var(--df-card);
+  border: 1px solid var(--df-border);
+  border-radius: 16px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  color: var(--df-text);
+}
+.df-card-title {
+  font-family: "Fredoka", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 12px 16px;
+}
+.df-activity {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+.df-activity:last-child { border-bottom: none; }
+.df-activity-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.df-activity-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  overflow: hidden;
+}
+.df-activity-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.df-activity-user { font-weight: 600; font-size: 13px; }
+.df-activity-action { font-size: 13px; color: var(--df-text-secondary); }
+.df-activity-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.df-activity-item-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.df-activity-item-img img { width: 100%; height: 100%; object-fit: cover; }
+.df-activity-item-info { flex: 1; }
+.df-activity-item-name { font-weight: 500; font-size: 13px; }
+.df-activity-item-price {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--df-gold);
+}
+.df-activity-item-price svg { width: 12px; height: 12px; fill: currentColor; }
+
+/* Loading & Empty */
+.df-loading { display: flex; justify-content: center; padding: 40px; }
+.df-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--df-border);
+  border-top-color: var(--df-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
+
+/* The desktop skin (deskdogefeedx.css) paints every window dark and forces
+   white headings and button chrome with !important. This page is dogefeed.app's
+   own dark board, so those rules must not turn cards white-on-white. */
+html.indesk body.df-dogefeed { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed h1,
+html.indesk body.df-dogefeed h2,
+html.indesk body.df-dogefeed h3,
+html.indesk body.df-dogefeed h4 { color: #fff6dd !important; }
+html.indesk body.df-dogefeed a { color: inherit !important; text-decoration: none !important; }
+html.indesk body.df-dogefeed .df-card,
+html.indesk body.df-dogefeed .df-stat,
+html.indesk body.df-dogefeed .df-topbar,
+html.indesk body.df-dogefeed .df-sidebar,
+html.indesk body.df-dogefeed .df-main,
+html.indesk body.df-dogefeed .df-right { background: #000 !important; color: #fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background: #0a0a0a !important; }
+html.indesk body.df-dogefeed .df-signin-btn,
+html.indesk body.df-dogefeed .df-category.active {
+  background: #f3e3a5 !important; color: #000 !important; border-color: #f3e3a5 !important;
+}
+html.indesk body.df-dogefeed .df-category,
+html.indesk body.df-dogefeed .df-tab,
+html.indesk body.df-dogefeed .df-chain,
+html.indesk body.df-dogefeed .df-sort-btn,
+html.indesk body.df-dogefeed .df-view-btn,
+html.indesk body.df-dogefeed button.df-more {
+  background: transparent !important; color: #fff6dd !important; width: auto !important; box-shadow: none !important;
+}
+html.indesk body.df-dogefeed .df-chain { width: auto !important; flex: 1; }
+html.indesk body.df-dogefeed input {
+  background: transparent !important; color: #fff6dd !important; border: 0 !important; box-shadow: none !important;
+}
+</style>
+<script>document.body.classList.add('df-dogefeed');</script>
+
+<div class="df-app">
+  <!-- Left Sidebar -->
+  
+
+  <!-- Main Content -->
+  <main class="df-main">
+    <div class="df-topbar">
+      <h1>Market</h1>
+      <p style="font-size:14px;color:var(--df-text-secondary);margin-top:4px">Collect and trade. Doginals settle on Dogecoin (L1); other collections may use ETH...</p>
+    </div>
+    
+    <div class="df-tabs">
+      <button class="df-tab active" data-tab="market" type="button">Market</button>
+      <button class="df-tab" data-tab="activity" type="button">Activity</button>
+    </div>
+    <div class="df-chains" id="chain-row">
+      <button class="df-chain active" data-chain="doginals" type="button">Doginals</button>
+      <button class="df-chain" data-chain="robinhood" type="button">Robinhood NFTs</button>
+    </div>
+    
+    <div class="df-stats">
+      <div class="df-stat">
+        <div class="df-stat-value" id="stat-collections">—</div>
+        <div class="df-stat-label">Collections</div>
+      </div>
+      <div class="df-stat">
+        <div class="df-stat-value" id="stat-items">—</div>
+        <div class="df-stat-label">Items</div>
+      </div>
+      <div class="df-stat">
+        <div class="df-stat-value" id="stat-listings">—</div>
+        <div class="df-stat-label">Listings</div>
+      </div>
+      <div class="df-stat">
+        <div class="df-stat-value" id="stat-volume">—</div>
+        <div class="df-stat-label">Traded</div>
+      </div>
+    </div>
+    
+    <div class="df-categories">
+      <button class="df-category active" data-cat="nfts">NFTs</button>
+      <button class="df-category" data-cat="drc20">DRC-20</button>
+      <button class="df-category" data-cat="dns">DNS</button>
+      <button class="df-category" data-cat="exclusive">DogeFeed Exclusive</button>
+    </div>
+    
+    <div class="df-filters">
+      <div class="df-search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" placeholder="Search collections" id="collection-search">
+      </div>
+      <button class="df-sort-btn" id="sort-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M6 12h12M9 18h6"/></svg>
+        Cheapest
+      </button>
+      <button class="df-view-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      </button>
+    </div>
+    
+    <div class="df-collections" id="collections-list">
+      <div class="df-loading"><div class="df-spinner"></div></div>
+    </div>
+  </main>
+
+  <!-- Right Sidebar -->
+  
+</div>
+
+<script>
+(function() {
+  'use strict';
+  
+  var IMG_BASE = 'https://dogefeed.app';
+  var doginals = [];
+  var tokens = [];
+  var activity = [];
+  var totals = {};
+  var sortCheap = true;
+  var activeCat = 'nfts';
+  var activeChain = 'doginals';
+  var activeTab = 'market';
+
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  function floorNumber(floor) {
+    if (floor == null) return null;
+    var s = String(floor).replace(/[, ]/g, '');
+    if (!s || s === '—' || s === '-' || s === '–') return null;
+    var n = parseFloat(s);
+    return isNaN(n) ? null : n;
+  }
+
+  // dogefeed.app publishes some DRC-20 floors in satoshis and some already in DOGE.
+  function dogeFloor(raw) {
+    if (raw == null || raw === '') return null;
+    var n = Number(raw);
+    if (!isFinite(n)) return null;
+    if (n >= 1000) n = n / 1e8;
+    return n;
+  }
+
+  function formatFloor(n) {
+    if (n == null) return '—';
+    if (n >= 1000) return n.toLocaleString(undefined, {maximumFractionDigits: 2});
+    if (n >= 1) return n.toLocaleString(undefined, {maximumFractionDigits: 4});
+    return n.toLocaleString(undefined, {maximumFractionDigits: 8});
+  }
+
+  function absImg(url) {
+    if (!url) return '';
+    if (url.charAt(0) === '/') return IMG_BASE + url;
+    if (url.indexOf('//') === 0) return 'https:' + url;
+    return url;
+  }
+
+  function renderRow(row, rank) {
+    var img = absImg(row.image);
+    return '<a class="df-collection" href="' + esc(row.href) + '" target="_blank" rel="noopener">' +
+      '<div class="df-collection-rank">' + rank + '</div>' +
+      '<div class="df-collection-img">' + (img ? '<img src="' + esc(img) + '" alt="" loading="lazy">' : '') + '</div>' +
+      '<div class="df-collection-info"><div class="df-collection-name">' + esc(row.name) +
+      (row.verified ? '<svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
+      '</div><div class="df-collection-meta">' + esc(row.meta) + '</div></div>' +
+      '<div class="df-collection-stats"><div class="df-collection-floor">' + esc(row.floorText) + '</div>' +
+      '<div class="df-collection-volume">' + esc(row.extra) + '</div></div></a>';
+  }
+
+  function collectionRow(c) {
+    return {name: c.name, href: 'https://dogefeed.app' + c.href, image: c.image, verified: c.verified,
+      meta: (c.listed || 0) + ' listed · ' + (c.sales || 0) + ' sales',
+      floor: floorNumber(c.floor), floorText: c.floor || '—', extra: ''};
+  }
+
+  function currentRows() {
+    var q = (document.getElementById('collection-search').value || '').trim().toLowerCase();
+    var rows = [];
+    if (activeTab === 'activity') {
+      rows = activity.map(function(a) {
+        return {name: a.name, href: 'https://dogefeed.app' + a.href, image: a.image, verified: false,
+          meta: a.collection || '', floor: floorNumber(a.price), floorText: a.price || '—',
+          extra: a.kind === 'listing' ? 'Listing' : 'Sale'};
+      });
+    } else if (activeCat === 'drc20' && activeChain === 'doginals') {
+      rows = tokens.map(function(t) {
+        var floor = dogeFloor(t.floorPrice);
+        return {name: t.tick, href: 'https://dogefeed.app/market', image: t.pic || '', verified: false,
+          meta: (t.holders || 0) + ' holders · ' + (t.listingsDoggy || 0) + ' listings',
+          floor: floor, floorText: formatFloor(floor), extra: ''};
+      });
+    } else {
+      rows = doginals.filter(function(c) {
+        var robinhood = c.chain === 'evm';
+        if (activeChain === 'robinhood') return robinhood;
+        if (robinhood) return false;
+        if (activeCat === 'dns') return !!c.sns;
+        if (activeCat === 'exclusive') return !!c.exclusive && !c.sns;
+        return !c.sns;
+      }).map(collectionRow);
+    }
+    if (q) rows = rows.filter(function(r) { return String(r.name || '').toLowerCase().indexOf(q) >= 0; });
+    if (activeTab !== 'activity') {
+      rows.sort(function(a, b) {
+        if (sortCheap) {
+          if (a.floor == null && b.floor == null) return 0;
+          if (a.floor == null) return 1;
+          if (b.floor == null) return -1;
+          return a.floor - b.floor;
+        }
+        return String(a.name).localeCompare(String(b.name));
+      });
+    }
+    return rows;
+  }
+
+  function applyStats() {
+    var block = null;
+    if (activeChain === 'robinhood') block = totals.robinhood;
+    else if (activeCat === 'dns') block = totals.sns;
+    else block = totals.doginals;
+    if (!block) return;
+    document.getElementById('stat-collections').textContent = block.collections != null ? block.collections : '—';
+    document.getElementById('stat-items').textContent = block.itemsLabel || block.items || '—';
+    document.getElementById('stat-listings').textContent = block.listingsLabel || block.listings || '—';
+    document.getElementById('stat-volume').textContent = block.totalTraded || block.volume || '—';
+  }
+
+  function paint() {
+    var container = document.getElementById('collections-list');
+    document.getElementById('chain-row').style.display = activeTab === 'market' ? 'flex' : 'none';
+    var rows = currentRows();
+    if (!rows.length) {
+      container.innerHTML = '<div class="df-empty">' + (activeTab === 'activity' ? 'No public activity' : 'No listings') + '</div>';
+      return;
+    }
+    container.innerHTML = rows.map(function(r, i) { return renderRow(r, i + 1); }).join('');
+    applyStats();
+  }
+
+  function loadMarket() {
+    var container = document.getElementById('collections-list');
+    fetch('/dogefeedx/api/market/doginals')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        doginals = data.collections || [];
+        activity = data.activity || [];
+        totals = data.totals || {};
+        if (!totals.doginals && data.stats) {
+          totals.doginals = {
+            collections: data.stats.collections,
+            itemsLabel: data.stats.items,
+            listingsLabel: data.stats.listings,
+            totalTraded: data.stats.volume
+          };
+        }
+        if (data.error && !doginals.length) container.innerHTML = '<div class="df-empty">Could not load market</div>';
+        else paint();
+      })
+      .catch(function() {
+        container.innerHTML = '<div class="df-empty">Could not load market</div>';
+      });
+    fetch('/dogefeedx/api/market/drc20')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        tokens = data.tokens || [];
+        if (activeCat === 'drc20') paint();
+      })
+      .catch(function() { tokens = []; });
+  }
+
+  function loadSuggestions() {
+    fetch('/dogefeedx/api/sidebar')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        (document.getElementById('side-trending')||{}).innerHTML = (data.trending || []).map(function(t) {
+          return '<div class="df-trend" style="padding:12px 16px"><div style="font-size:13px;color:var(--df-text-secondary)">' +
+            t.rank + ' · Trending on DogeFeed</div><div style="font-weight:700">#' + esc(t.tag) +
+            '</div><div style="font-size:13px;color:var(--df-text-secondary)">' + esc(t.count) + '</div></div>';
+        }).join('') || '<div class="df-empty">No trends</div>';
+        (document.getElementById('suggestions-list')||{}).innerHTML = (data.suggestions || []).slice(0, 3).map(function(u) {
+          var avatar = u.avatar ? (u.avatar.charAt(0) === '/' ? IMG_BASE + u.avatar : u.avatar) : '';
+          return '<a href="/dogefeedx/profile?u=' + encodeURIComponent(u.handle) + '" style="display:flex;align-items:center;gap:12px;padding:12px 16px;text-decoration:none;color:inherit">' +
+            '<div style="width:40px;height:40px;border-radius:50%;overflow:hidden">' +
+            (avatar ? '<img src="' + esc(avatar) + '" alt="" style="width:100%;height:100%;object-fit:cover">' : '') +
+            '</div><div><div style="font-weight:700">' + esc(u.name || u.handle) + '</div>' +
+            '<div style="color:var(--df-text-secondary)">@' + esc(u.handle) + '</div></div></a>';
+        }).join('') || '<div class="df-empty">No suggestions</div>';
+      })
+      .catch(function() {
+        (document.getElementById('suggestions-list')||{}).innerHTML = '<div class="df-empty">Could not load</div>';
+      });
+  }
+  
+  // Tab switching
+  document.querySelectorAll('.df-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      activeTab = tab.getAttribute('data-tab') || 'market';
+      paint();
+    });
+  });
+
+  document.querySelectorAll('.df-chain').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.df-chain').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      activeChain = btn.getAttribute('data-chain') || 'doginals';
+      paint();
+    });
+  });
+  
+  // Category switching
+  document.querySelectorAll('.df-category').forEach(function(cat) {
+    cat.addEventListener('click', function() {
+      document.querySelectorAll('.df-category').forEach(function(c) { c.classList.remove('active'); });
+      cat.classList.add('active');
+      activeCat = cat.getAttribute('data-cat') || 'nfts';
+      paint();
+    });
+  });
+
+  document.getElementById('sort-btn').addEventListener('click', function() {
+    sortCheap = !sortCheap;
+    this.lastChild.textContent = sortCheap ? ' Cheapest' : ' A-Z';
+    paint();
+  });
+
+  document.getElementById('collection-search').addEventListener('input', paint);
+  document.querySelectorAll('.df-search input').forEach(function(inp) {
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && inp.value.trim()) location.href = '/dogefeedx/search?q=' + encodeURIComponent(inp.value.trim());
+    });
+  });
+  
+  // Register with shell
+  if (window.DogeFeedX && window.DogeFeedX.registerApp) {
+    window.DogeFeedX.registerApp({
+      id: 'market',
+      name: 'Market',
+      icon: '/dogefeedx/icon-market.png',
+      url: '/dogefeedx/market'
+    });
+  }
+  
+  // Initial load
+  loadMarket();
+  loadSuggestions();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,78 @@
+/* Every page in a window of the Desktop View in its DogeFeedX macOS look: a Dogecoin/DogeFeed-branded
+   macOS-style desktop with a menu bar at the top and dock at the bottom. Loaded by base.html only inside
+   a Desktop View window whose desktop wears this look (html.indesk[data-skin=dogefeedx]). */
+html.indesk:root, html.indesk:root[data-theme] {
+  --bg: #000; --panel: #0a0a0a; --fg: #fff6dd; --muted: #ffffff80; --line: #ffffff1f;
+  --accent: #f3e3a5; --accent-fg: #000; --ok: #32d74b; --warn: #ff9f0a; --bad: #fe4f4f; --code: #0a0a0a;
+  --sent: #f3e3a5; --sent-fg: #000;
+  --mac-bar: rgba(0,0,0,0.92); --mac-dock: rgba(10,10,10,0.88); --mac-win: #0a0a0a; --mac-border: #ffffff1f;
+  color-scheme: dark;
+}
+html.indesk body { background: #000; color: #fff6dd;
+  font: 13px/1.5 Nunito, "Nunito", system-ui, sans-serif; }
+html.indesk main { padding-top: 14px; }
+html.indesk h1, html.indesk h2, html.indesk h3, html.indesk h4 { font-family: Fredoka, Nunito, sans-serif; text-transform: none; letter-spacing: -0.01em;
+  font-weight: 600; color: #fff6dd; }
+html.indesk h1 { font-size: 22px; } html.indesk h2 { font-size: 17px; } html.indesk h3 { font-size: 15px; }
+html.indesk a { color: #f3e3a5; }
+html.indesk .muted, html.indesk small { color: #98989d; }
+
+/* Cards and panels: dark glass with subtle borders */
+html.indesk .panel, html.indesk .card, html.indesk .tile, html.indesk fieldset, html.indesk details.panel {
+  background: #0a0a0a !important; border: 1px solid #ffffff1f !important; border-radius: 10px !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,.3) !important; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+html.indesk .unlockbar, html.indesk .signbar, html.indesk .resetnote { background: #0a0a0a !important; color: #fff6dd;
+  border: 0 !important; border-bottom: 1px solid rgba(255,255,255,0.1) !important; box-shadow: none !important; }
+html.indesk .sheet, html.indesk .modal, html.indesk dialog, html.indesk [role="dialog"] { border-radius: 12px !important;
+  background: rgba(44,44,46,0.95) !important; box-shadow: 0 20px 40px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,0.1) !important;
+  backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px); }
+
+/* Buttons: macOS-style with Doge gold accent */
+html.indesk button, html.indesk .btn, html.indesk a.btn, html.indesk input[type="button"], html.indesk input[type="submit"],
+html.indesk .pillpick, html.indesk .chip, html.indesk .tabs a, html.indesk .tabs button {
+  border-radius: 6px !important; font-family: inherit !important; text-transform: none !important; letter-spacing: normal !important;
+  transition: all .15s ease !important; }
+html.indesk button.ghost, html.indesk .btn.ghost, html.indesk .pillpick, html.indesk .chip, html.indesk .tabs a, html.indesk .tabs button,
+html.indesk button.small.ghost {
+  background: rgba(255,255,255,0.1) !important; color: #fff6dd !important; border: 1px solid rgba(255,255,255,0.15) !important;
+  box-shadow: none !important; }
+html.indesk button.ghost:hover, html.indesk .btn.ghost:hover, html.indesk .pillpick:hover { background: rgba(255,255,255,0.15) !important; }
+html.indesk .pillpick.on, html.indesk .chip.on, html.indesk .tabs .on, html.indesk button.on, html.indesk button[aria-selected="true"] {
+  background: var(--accent) !important; color: var(--accent-fg) !important; border-color: var(--accent) !important; }
+html.indesk button:focus-visible, html.indesk .btn:focus-visible { outline: 2px solid rgba(243,227,165,.5) !important; outline-offset: 2px; }
+
+/* Fields: dark with subtle glow on focus */
+html.indesk input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="button"]):not([type="submit"]):not([type="color"]),
+html.indesk select, html.indesk textarea {
+  background: rgba(0,0,0,0.25) !important; color: #fff6dd !important; border: 1px solid rgba(255,255,255,0.15) !important;
+  border-radius: 6px !important; box-shadow: none !important; font-family: inherit !important; }
+html.indesk input:focus, html.indesk select:focus, html.indesk textarea:focus {
+  border-color: var(--accent) !important; box-shadow: 0 0 0 3px rgba(243,227,165,0.28) !important; outline: none !important; }
+html.indesk input[type="checkbox"], html.indesk input[type="radio"], html.indesk input[type="range"] { accent-color: #f3e3a5; }
+html.indesk ::placeholder { color: #636366; }
+
+/* Lists, code, badges */
+html.indesk table { border-collapse: collapse; background: rgba(0,0,0,0.2); border-radius: 8px; overflow: hidden; }
+html.indesk th { color: #98989d; font-weight: 500; background: rgba(255,255,255,0.05); }
+html.indesk td { border-bottom: 1px solid rgba(255,255,255,0.08) !important; }
+html.indesk code, html.indesk pre, html.indesk kbd { background: rgba(0,0,0,0.3) !important; color: #fff6dd !important; border-radius: 5px !important;
+  font-family: "SF Mono", "Menlo", "Monaco", Consolas, monospace !important; }
+html.indesk .pill { border-radius: 999px !important; }
+html.indesk .nav-count, html.indesk .badge { background: #ff3b30 !important; color: #fff !important; }
+
+/* The dock is the only navigation. A window does not carry the DogeFeed logo column
+   (Home, Explore, Notifications, and the rest). A module may still keep its own right-hand panel. */
+html.indesk .df-sidebar, html.indesk nav.df-sidebar {
+  display: none !important; width: 0 !important; min-width: 0 !important; max-width: 0 !important;
+  padding: 0 !important; margin: 0 !important; border: 0 !important; overflow: hidden !important; flex: 0 0 0 !important;
+}
+html.indesk .df-app { display: flex !important; width: 100% !important; max-width: none !important; margin: 0 !important; }
+html.indesk .df-main { flex: 1 1 auto !important; min-width: 0 !important; max-width: none !important; }
+/* The site's own page column (main { max-width: 1000px }) must not frame a module. */
+html.indesk body > main { max-width: none !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }
+
+/* Scroll bars: thin and dark */
+html.indesk * { scrollbar-color: rgba(255,255,255,0.3) transparent; scrollbar-width: thin; }
+html.indesk ::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
+html.indesk ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 4px; }
+html.indesk ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
