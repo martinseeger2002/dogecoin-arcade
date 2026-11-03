@@ -45,6 +45,9 @@ python3 installer/install.py{% if first_peer %} --first-peer {{ first_peer }}{% 
       running the published code. If they match, you know the download is the published
       one &mdash; and still nothing about what this server does with it.</p>
   </div>
+  {% elif packing %}
+  <p class="muted">This arcade was just updated and is packing the download now. Reload this page in a minute for
+    its size and checksum; the commands above already work.</p>
   {% else %}
   <p class="muted">This instance cannot pack its own source, so install from
     wherever you found it.</p>

@@ -92,8 +92,11 @@ coding agent, so it is written for agents first and people second.
 The operator: "When I click run your own, it brings me to /clone ... /clone doesn't do anything". The page is fine, but the
 first visit after every update packed the source archive while it waited: 27 s on .25, and the browser gave up. Now
 `_packed_source` runs in a thread at startup (lifespan), one pack at a time (a page asking meanwhile waits for that
-one). Test: test_clone test_the_source_is_packed_when_the_arcade_starts_not_on_the_pages_first_visit. Open: the page's
-install commands are for Linux only.
+one). Live, that pack still took about 3 minutes right after a reload, so the page no longer waits for a pack that is
+running: it says the arcade is packing the download and to reload in a minute (`_packed_source(wait=False)`); the
+download routes still wait for it. Tests: test_clone test_the_source_is_packed_when_the_arcade_starts_not_on_the_pages_first_visit,
+test_the_page_answers_at_once_while_the_download_is_being_packed. Each arcade's page shows its own domain, its own
+download and itself as `--first-peer`. Open: the page's install commands are for Linux only.
 
 ### 2026-11-02 Index copies between arcades: an index far behind takes a checked copy from linked holders (Claude)
 The operator: an arcade whose Core was at 100% still showed no @name for its operator (@dogefeed), because its own token index

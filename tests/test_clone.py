@@ -313,3 +313,29 @@ def test_the_source_is_packed_when_the_arcade_starts_not_on_the_pages_first_visi
             time.sleep(0.1)
         else:
             raise AssertionError("not packed at startup")
+
+
+def test_the_page_answers_at_once_while_the_download_is_being_packed(client, monkeypatch):
+    """The pack at startup took about 3 minutes on .25 right after an update; the page does not wait for it."""
+    import threading
+    import time
+    from arcade import bootstrap as B
+    app, state = client
+    started, release = threading.Event(), threading.Event()
+    real = B.source_archive
+
+    def slow(*a, **k):
+        started.set()
+        release.wait(10)
+        return real(*a, **k)
+    monkeypatch.setattr(B, "source_archive", slow)
+    t = threading.Thread(target=lambda: app.get("/source.tar.gz.sha256"))
+    t.start()
+    try:
+        assert started.wait(5)
+        begun = time.monotonic()
+        page = app.get("/clone").text
+        assert time.monotonic() - begun < 3 and "packing the download now" in page
+    finally:
+        release.set()
+        t.join(15)

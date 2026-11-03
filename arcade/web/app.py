@@ -30821,13 +30821,16 @@ def create_app(state: AppState) -> FastAPI:
 
     packing = threading.Lock()
 
-    def _packed_source():
-        """This instance's own source, packed if it has not been. One pack at a time: started at startup, and a page
-        asking meanwhile waits for that one rather than packing a second beside it."""
+    def _packed_source(wait: bool = True):
+        """This instance's own source, packed if it has not been. One pack at a time: started at startup, and a
+        download asking meanwhile waits for that one rather than packing a second beside it. With `wait` False (the
+        page), "packing" while one runs: the page answers at once and says to come back in a minute."""
         revision = state.running_version or "unknown"
         said = bootstraplib.source(state.home)
         if said is not None and said.get("revision") == revision:
             return said
+        if not wait and packing.locked():
+            return "packing"
         with packing:
             said = bootstraplib.source(state.home)
             if said is None or said.get("revision") != revision:
@@ -30907,7 +30910,9 @@ def create_app(state: AppState) -> FastAPI:
                 snapshot = None
             if snapshot is not None:
                 copies.append({"chain": context, "snap": snapshot})
-        return render(request, "clone.html", source=_packed_source(),
+        source = _packed_source(wait=False)
+        return render(request, "clone.html", source=None if source == "packing" else source,
+                      packing=source == "packing",
                       copies=copies, here=_origin(request), first_peer=_install_peer(request),
                       seats=state.accounts().seats)
 
