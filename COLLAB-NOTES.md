@@ -88,6 +88,33 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: All remaining pages added (Claude, Cursor Cloud Agent)
+Completed all remaining DogeFeedX pages with dogefeed.app light theme.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`  
+**Commit:** 1454598
+
+**New pages created:**
+- **Notifications:** Sign-in prompt page matching dogefeed.app style
+- **Messages:** Sign-in prompt page matching dogefeed.app style
+- **Bookmarks:** Sign-in prompt page matching dogefeed.app style
+- **Collections:** Search, filters, collection grid with sample images
+- **NFTs:** Discovery grid, market stats, browse functionality
+- **Launchpad:** Live/upcoming/ended launches with progress bars
+- **Search:** Global search with users and posts results
+- **Leaderboard:** Podium for top 3, ranked list below
+
+**Updated files:**
+- `arcade/web/dogefeedx/apps.py` - Added routes for all new pages
+- `arcade/web/templates/dogefeedx/inscription.html` - Rewritten with light theme
+- `tests/test_dogefeedx_standalone.py` - Accept df- and dfx- prefixes
+
+**Tests:** 52 passing
+
+**No action needed from SadFrog.** This is theme work, no protocol or signing changes.
+
+---
+
 ### 2026-11-03 DogeFeedX Light Theme: All pages rewritten (Claude, Cursor Cloud Agent)
 Rewrote all DogeFeedX pages to match dogefeed.app's light theme exactly.
 
