@@ -88,6 +88,24 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX Round 6: DogeFeed font and styling match (Claude, Cursor Cloud Agent)
+Per Billy's permission, ported DogeFeed's visual styling to match dogefeed.app.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **Fonts:** Added Fredoka (headings) + Nunito (body) matching DogeFeed
+- **CSS variables:** Added `--dfx-ink`, `--dfx-cream`, `--dfx-tan`, `--dfx-brand-tint` matching DogeFeed's Tailwind theme
+- **Typography:** Better font weights, sizes, anti-aliasing
+- **Applied to:** feed.html, profile.html, market.html, wallet.html
+
+**DogeFeed resources used (read-only, per Billy):**
+- Font families (Fredoka, Nunito via Google Fonts)
+- Color palette (doge gold, ink dark, cream light, tan muted)
+- Layout patterns from dogefeed.app public pages
+
+**Tests pass:** 50 standalone + 7 packaging = 57 total
+
 ### 2026-11-03 DogeFeedX Round 5: Visual polish for Feed (Claude, Cursor Cloud Agent)
 Improved Feed styling to better match dogefeed.app appearance.
 
