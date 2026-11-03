@@ -23,7 +23,7 @@ nothing is written to dogefeed.app.
 
 | Dock module | What it shows | Source of truth |
 |---|---|---|
-| Home | Public social feed | dogefeed.app `/api/feed` (read-only). Not a wallet. |
+| Home | Public social feed, and a local composer | dogefeed.app `/api/feed` is read-only. The composer (image, meme, emoji, paywall lock, `/send` and `/pay`) saves the bark in this browser as the wallet selected on Profile. It does not post or pay on dogefeed.app. |
 | Profile | The selected Core wallet, as a compact card | Wallet switcher lists addresses from `/dogefeedx/api/wallet/addresses` (this node's watch list). The choice is stored in this browser and is the address Wallet, Files, NFTs, and Profile read. A public handle's posts still come from dogefeed.app. |
 | Files | Collections, DRC-20, names | Node indexes via `/dogefeedx/api/wallet/holdings`. Catalog names and covers from dogefeed.app `/market`. |
 | Notifications | This arcade's notices | Local `/dogefeedx/api/local/notifications`. |

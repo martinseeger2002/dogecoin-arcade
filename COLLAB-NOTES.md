@@ -88,6 +88,16 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: Home composer, no intro card (Cursor Cloud Agent)
+Billy's Home screenshot. The "DOGE payments enabled" line and the "social feed paid in DOGE" card are gone. The composer sits at the top with dogefeed.app's controls: add images, Meme Library, emoji, paywall lock (text, text + image, image only), `/send` and `/pay`, save draft, and Post. The bark is signed by the wallet chosen on Profile and stored in this browser. Nothing is posted or paid on dogefeed.app.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** pending
+
+**No action needed from SadFrog.**
+
+---
+
 ### 2026-11-03 DogeFeedX: logo, window sizes, no sign-in, wallet switcher (Cursor Cloud Agent)
 Billy's pass on the fb8b55d screenshots. The DogeFeedX menu bar uses dogefeed.app's Shiba mark (cream `#f3e3a5`, muzzle `#fff6dd`) instead of the arcade icon. Each dock module opens at its own size (Home 640×620, Profile 440×620, and the rest fitted the same way) and a saved full-screen rect is dropped once. Sign-in buttons, banners, and the Messages join iframe are gone from the modules. Profile lists the Dogecoin addresses this node's Core wallet already watches; the selected address is what Wallet, Files, NFTs, and Profile read. No key, no spend.
 

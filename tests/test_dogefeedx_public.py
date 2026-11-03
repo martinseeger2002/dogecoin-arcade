@@ -280,7 +280,15 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     assert "range=1d" in explore and "document.body.classList.add('df-dogefeed')" in explore
     assert "flex: none" in explore and "flex: none" in feed and "flex: none" in profile
     assert "Sign in" not in feed and "sign-in" not in feed.lower()
-    assert "the social feed paid in DOGE" in feed and "Explore" in feed
+    assert "DOGE payments enabled" not in feed
+    assert "the social feed paid in DOGE" not in feed
+    assert "What's the latest? (every post is a bark)" in feed
+    assert 'aria-label="Add images"' in feed and 'aria-label="Paywall"' in feed
+    assert 'aria-label="Meme Library"' in feed and 'aria-label="Emoji"' in feed
+    assert 'aria-label="Send"' in feed and 'aria-label="Save draft"' in feed
+    assert "/send @handle 100 BROS" in feed and "Lock text + image" in feed
+    assert "dogefeedx.localBarks" in feed and "Nothing is written to dogefeed.app." in feed
+    assert "https://dogefeed.app/api/posts" not in feed
     assert 'href="/me"' not in feed
     wallet = (TEMPLATES / "wallet.html").read_text()
     assert "Sample Addresses" not in wallet and "nghHJba6wBoWesbYQfkZiMTicoQANkpdvH" not in wallet

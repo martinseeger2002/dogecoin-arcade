@@ -268,7 +268,7 @@ def test_theme_buttons_on_your_arcade_show_inside_a_narrow_desktop_window(base):
 
 
 _DOCK = [
-    ("Home", "/dogefeedx/feed", "the social feed paid in DOGE"),
+    ("Home", "/dogefeedx/feed", "What's the latest? (every post is a bark)"),
     ("Profile", "/dogefeedx/profile", "local-profile"),
     ("Files", "/dogefeedx/files", "Collections"),
     ("Notifications", "/dogefeedx/notifications", "Likes"),
