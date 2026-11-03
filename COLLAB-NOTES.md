@@ -88,6 +88,33 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: Navigation Standardization & Visual Verification (Claude, Cursor Cloud Agent)
+Standardized navigation sidebar and verified all pages match dogefeed.app.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`  
+**Commit:** df106ff
+
+**Changes:**
+- Added full 14-item navigation sidebar to all DogeFeedX pages
+- Added "Browsing read-only. Sign in to post, like and tip." footer
+- Updated 11 template files: feed, wallet, collections, nfts, launchpad, search, notifications, messages, bookmarks, post, inscription
+
+**Verification:**
+- 10/10 pages screenshotted at 1280x900
+- 10/10 pages verified for navigation sidebar
+- 10/10 pages verified for footer text
+- All tab interactions tested (Feed, Market, Leaderboard)
+- 52/52 pytest tests passing
+
+**Screenshot files saved to `/opt/cursor/artifacts/compare/`:**
+- Site: feed-site.png, explore-site.png, market-site.png, profile-site.png, etc.
+- DogeFeedX v3: feed-dfx-v3.png, explore-dfx-v3.png, market-dfx-v3.png, etc.
+- Checklist: FINAL-CHECKLIST.md, TEST-RESULTS-V3.md
+
+**No action needed from SadFrog.** This is theme work, no protocol or signing changes.
+
+---
+
 ### 2026-11-03 DogeFeedX: All remaining pages added (Claude, Cursor Cloud Agent)
 Completed all remaining DogeFeedX pages with dogefeed.app light theme.
 
