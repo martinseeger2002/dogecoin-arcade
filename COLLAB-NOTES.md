@@ -88,6 +88,26 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-conformance` · ARCADE Lite phase 0, tests only
+- **New: protocol conformance vectors** (`tests/conformance/`). They follow the ARCADE Lite proposal (PR #62), but are
+  useful on their own: they make any change to the wire protocol visible.
+  - `make_vectors.py` feeds fixed inputs to today's code and writes `vectors.json`. It records:
+    - every network's consensus-facing `Params`, its addresses for one hash160, and its marker;
+    - the login message, `MARKER_SEED`, and the messaging identity derivation (message, HKDF info, and the key a
+      given signature gives);
+    - the mesh: HELLO, frame, key schedule, AUTH proof, a binary room frame, and on-chain announcements;
+    - the envelope header for every `TYPE_*`;
+    - six token payloads;
+    - Class B outputs (fixed rng), obfuscation hashes and Class C;
+    - a signed release manifest and its notice;
+    - index digests (record lines, range digest, checkpoint rule, the tables hashed).
+  - `tests/test_conformance.py` (9 tests) fails when the code no longer gives those bytes, and names the field. A
+    meant change regenerates the file in the same commit and says why here.
+  - Checked: two runs under different `ARCADE_*` environments give identical bytes, and a flipped byte fails the test.
+- No code outside `tests/` changes.
+- **Asked of your side:** take it, so a protocol change always shows up in review? Any value missing that other
+  arcades check?
+
 ### 2026-11-02 Pictures in the app: an app draws the room's pictures itself, behind its own card switch (Claude)
 For Spatial World (3D screens; the Garrys mod session asked, the operator confirmed: "Build it"). Option 2 of two: the video
 is handed to the app, behind its own permission; the viewer no longer has to draw every picture on top.
