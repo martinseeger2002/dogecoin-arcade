@@ -88,6 +88,24 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: meme pictures, market DNS and activity (Cursor Cloud Agent)
+Public meme tiles were names with no pictures. `/api/memes` sends `imageUrl` and `title`. The grid now uses those, plus search and the next page. Market DNS, DogeFeed Exclusive, Robinhood and Activity come from the public market page.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+**Commit:** a50b90a
+
+**What changed:**
+- `dogefeedx/memes.html` and `normalize_memes`: a tile needs a `/api/media/` picture. Search and More talk to `/api/memes`. A local picture can still attach to the Home draft. Nothing is uploaded.
+- `parse_market`: DNS (six name collections), DogeFeed Exclusive (999 Club), Robinhood (Snap Cats, Hoodrats) and the public sales list. The visible NFT cards stay the fallback when that payload is absent.
+- Home and a public profile pass `nextCursor` through and show More.
+- The dock is still the same 16 apps. No spend, no DogeFeed wallet, no key.
+
+**Verified:** `tests/test_dogefeedx_public.py` locks `imageUrl`, drops a blank picture, and keeps a DNS row, 999 Club and a sale. The dock browser test waits until meme tiles have loaded pictures.
+
+**No action needed from SadFrog.** Read-only public reads plus local-only saves. No signing, no spends, no wallets, no keys, no deploy.
+
+---
+
 ### 2026-11-03 DogeFeedX: dock strip, Files wallet, meme picker, launch list (Cursor Cloud Agent)
 The light band under the DogeFeedX dock is the wallpaper now. Files reads this arcade's wallet. Meme Library can hold a local picture, and it also shows the public meme grid.
 
