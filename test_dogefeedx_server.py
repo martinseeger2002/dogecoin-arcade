@@ -6,6 +6,7 @@ Access at: http://localhost:8080/dogefeedx/feed
 """
 from pathlib import Path
 import uvicorn
+from jinja2 import Environment, FileSystemLoader, select_autoescape, TemplateNotFound
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
@@ -14,18 +15,56 @@ app = FastAPI(title="DogeFeedX Test Server")
 
 # Template directory
 TEMPLATE_DIR = Path(__file__).parent / "arcade" / "web" / "templates"
+
+# Create a simple base.html for testing 
+TEST_BASE_HTML = '''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>{% block title %}DogeFeedX{% endblock %}</title>
+<style>* { margin: 0; padding: 0; box-sizing: border-box; } body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }</style>
+</head>
+<body>
+{% block body %}{% endblock %}
+</body>
+</html>'''
+
+class TestTemplateLoader(FileSystemLoader):
+    """Custom loader that substitutes base.html with a simple test version."""
+    def get_source(self, environment, template):
+        if template == "base.html":
+            return TEST_BASE_HTML, "base.html", lambda: True
+        return super().get_source(environment, template)
+
+env = Environment(
+    loader=TestTemplateLoader(str(TEMPLATE_DIR)),
+    autoescape=select_autoescape(['html', 'xml'])
+)
+
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+templates.env = env
 
 # Mock brand object
 class MockBrand:
     name = "Dogecoin Arcade"
+    light_bg = "#ffffff"
+    dark_bg = "#1a1a1a"
     
 brand = MockBrand()
 
-# Mock state object
+# Mock state object with all required attributes
 class MockState:
     generation = "test"
     public = False
+    
+    @staticmethod
+    def setting(key, default=None):
+        return default
+    
+    @staticmethod
+    def _signed_in(request):
+        return None
     
 state = MockState()
 
