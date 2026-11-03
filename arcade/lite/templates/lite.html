@@ -75,14 +75,16 @@ th{font-weight:600;color:var(--muted)}
 <body>
 <nav class="menubar" id="menubar">
   <div class="menu"><button type="button">File</button><ul>
-    <li><button type="button" disabled>Sending addresses</button></li>
-    <li><button type="button" disabled>Receiving addresses</button></li>
-    <li><hr></li>
-    <li><button type="button" data-go="/">Open the full arcade</button></li>
+    {% if audience == 'operator' %}<li><button type="button" data-go="/backup">Backup and restore</button></li>
+    {% elif audience == 'user' %}<li><button type="button" data-go="/me/wallet">Your wallet</button></li>{% endif %}
+    {% if edition == 'full' %}<li><hr></li><li><button type="button" data-go="/">Open the full arcade</button></li>{% endif %}
     {% if audience == 'anyone' %}<li><button type="button" data-go="/join">Sign in or make an account</button></li>{% endif %}
   </ul></div>
   <div class="menu"><button type="button">Settings</button><ul>
-    <li><button type="button" disabled>Options…</button></li>
+    {% if audience == 'operator' %}<li><button type="button" data-go="/admin">Options…</button></li>
+    <li><button type="button" data-go="/admin#modules">Edition and modules…</button></li>
+    {% elif audience == 'user' %}<li><button type="button" data-go="/me">Your account…</button></li>
+    {% else %}<li><button type="button" disabled>Options…</button></li>{% endif %}
   </ul></div>
   <div class="menu"><button type="button">Window</button><ul>
     <li><button type="button" data-win="info">Information</button></li>
@@ -132,11 +134,28 @@ th{font-weight:600;color:var(--muted)}
       </div>
     </div>
   </section>
-  <section data-panel="send" hidden><p class="later">Send comes in the next part of Lite. Until then, use the full arcade's Wallet.</p></section>
-  <section data-panel="receive" hidden><p class="later">Receive comes in the next part of Lite.</p></section>
-  <section data-panel="transactions" hidden><p class="later">Transactions come in the next part of Lite.</p></section>
-  <section data-panel="addresses" hidden><p class="later">The address book comes after the wallet.</p></section>
-  <section data-panel="apps" hidden><p class="later">The App Store comes after the address book.</p></section>
+  {#- Until Lite draws these itself, each tab opens the wallet's own page: the operator's node wallet, or the
+      user's own. -#}
+  {% set pages = {'operator': {'send': '/wallet', 'receive': '/wallet', 'transactions': '/wallet',
+                               'addresses': '/contacts'},
+                  'user': {'send': '/me/wallet', 'receive': '/me/wallet', 'transactions': '/me/wallet',
+                           'addresses': '/me/contacts'}}.get(audience) %}
+  {% for tab, label in (('send', 'Send coins'), ('receive', 'Receive coins'), ('transactions', 'Transactions'),
+                        ('addresses', 'Address book')) %}
+  <section data-panel="{{ tab }}" hidden><p class="later">{% if pages %}<a href="{{ pages[tab] }}">{{ label }}</a>
+    opens the wallet's page.{% else %}<a href="/join">Sign in or make an account</a> to use your wallet.{% endif %}</p></section>
+  {% endfor %}
+  <section data-panel="apps" hidden>
+    <fieldset><legend>Apps, themes and node modules</legend>
+      <table><thead><tr><th>Module</th><th>Kind</th><th>Here</th></tr></thead><tbody>
+      {% for m in apps %}<tr><td title="{{ m.summary }}">{{ m.title }}</td><td>{{ m.kind }}</td>
+        <td class="{{ 'ok' if m.on else 'muted' }}">{{ 'on' if m.on else 'off' }}</td></tr>{% endfor %}
+      </tbody></table>
+      <p class="muted" style="margin:8px 0 0">{% if audience == 'operator' %}Switch them on or off in
+        <a href="/admin#modules">Admin → Edition &amp; modules</a>.{% else %}This arcade's operator chooses what runs
+        here.{% endif %} The App Store comes to Lite in a later part.</p>
+    </fieldset>
+  </section>
 </main>
 
 <footer class="statusbar"><span id="sync">Connecting…</span><span id="links"></span></footer>
@@ -213,7 +232,7 @@ th{font-weight:600;color:var(--muted)}
                   ['Face', n.face], ['Public names', (n.public_names || []).join(', ')],
                   ['Mesh id', short(n.mesh_id)]];
     pairs($('node'), basics);
-    pairs($('info'), basics.concat([['Edition', n.edition]]).concat(!m ? [] : [
+    pairs($('info'), basics.concat([['Edition', n.edition === 'lite' ? 'ARCADE Lite' : 'Full']]).concat(!m ? [] : [
       ['Mesh', m.on ? m.links + ' linked of ' + m.known + ' known' : 'off'],
       ['Listening', m.on ? (m.listening || 'dial-out only') : ''], ['Reachable', m.on ? (m.reachable ? 'yes' : 'not proved') : '']]));
     pairs($('aboutinfo'), [['Version', n.version], ['Face', n.face]]);

@@ -132,9 +132,10 @@ def getnodeinfo(caller) -> dict:
     from ..web import brand as brandlib
     state = caller.state
     mesh = getattr(state, "mesh", None)
-    return {"edition": "lite", "version": state.running_version, "face": brandlib.current().name,
-            "operator": state.operator_tag() or None, "public_names": list(state.public_hosts),
-            "mesh_id": getattr(mesh, "node_id", None)}
+    from .. import modules as modulelib
+    return {"edition": modulelib.edition(state.settings()), "version": state.running_version,
+            "face": brandlib.current().name, "operator": state.operator_tag() or None,
+            "public_names": list(state.public_hosts), "mesh_id": getattr(mesh, "node_id", None)}
 
 
 @command("node")

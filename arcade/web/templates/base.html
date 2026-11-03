@@ -122,6 +122,10 @@ html.indesk body:not(.fullscreen){padding-top:0}
   }
   var installed = window.navigator.standalone === true ||
     (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  {%- if modules_on is defined and 'desktop' not in modules_on %}
+  // The Desktop View and the home screen are switched off here (arcade/modules.py): every page stays the website.
+  return;
+  {%- endif %}
   // THE DESKTOP VIEW (desktop.html; 2026-10-28), on a computer's browser only: while its switch is on, a page opened in
   // a tab of its own goes to the desktop and opens there in a window (on by default, in Ubuntu's look). Never the Admin pages, the sign-in pages, a phone
   // or the installed app.

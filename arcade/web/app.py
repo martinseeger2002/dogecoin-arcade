@@ -59,6 +59,7 @@ from .. import bids as bidslib
 from .. import standing as standinglib
 from .. import collections as collectionlib
 from .. import approvals as approvalslib
+from .. import modules as modulelib
 from .. import send_refs as sendrefs
 from .. import payload as P
 from .. import referee as refereelib
@@ -1064,7 +1065,8 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:              # noqa: BLE001 -- never block startup
             log.info("filler not started: %s", exc)
         try:                                  # known collections from Nintondo, when the operator switched it on
-            _start_known_import()
+            if modulelib.job_on(state.settings(), "known-collections"):
+                _start_known_import()
         except Exception as exc:              # noqa: BLE001 -- never block startup
             log.info("known collections not started: %s", exc)
         try:                                  # the Run your own page's download, packed now rather than on its first visit
@@ -1074,7 +1076,7 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:              # noqa: BLE001 -- never block startup
             log.info("source not packed: %s", exc)
         try:                                  # mail for phones already subscribed
-            push = state.push()
+            push = state.push() if modulelib.job_on(state.settings(), "push-mail") else None
             if push is not None:              # notes every account's mail
                 _watch_for_mail()
         except Exception as exc:              # noqa: BLE001 -- never block startup
@@ -1159,6 +1161,11 @@ def create_app(state: AppState) -> FastAPI:
             request.cookies.get(ADMIN_COOKIE, ""), state.operator)
 
     def _nav_for(request: Request) -> list:
+        """The tabs, less those of modules switched off here (arcade/modules.py)."""
+        settings = state.settings()
+        return [entry for entry in _nav_tabs(request) if modulelib.path_on(settings, entry[0])]
+
+    def _nav_tabs(request: Request) -> list:
         """The tabs: an account's own, the operator's machine's, and Admin for the
         operator either way (the panel itself asks for what it needs). On the
         node's own machine, a signed-in account can switch between its own view
@@ -1319,6 +1326,10 @@ def create_app(state: AppState) -> FastAPI:
             # The look a computer's browser opens in until its reader picks one under Themes (base.html, desktop.html)
             "desk_default": DESK_DEFAULT,
             "phone_default": PHONE_DEFAULT,
+            # What runs here (arcade/modules.py): base.html leaves out the desktop and the home screen when they are off
+            "modules_on": modulelib.enabled(state.settings()),
+            # a fresh install that has not chosen Full or Lite yet (_edition_ask.html)
+            "edition_ask": modulelib.asking(state.settings()),
         }
         base.update(context)
         # What a POST decided, picked up by the GET it redirected to. Last,
@@ -1539,6 +1550,9 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
+        # ARCADE Lite opens on its own window, for visitors, users and the operator alike (arcade/lite/web.py).
+        if modulelib.edition(state.settings()) == "lite":
+            return _lite_home(request)
         # On a public instance the front page is the SPLASH, not the
         # operator's wallet. `/` is in the door's allowlist because a public
         # arcade has to have a front page at all -- so the route itself has
@@ -1569,7 +1583,7 @@ def create_app(state: AppState) -> FastAPI:
     def overview_dashboard(request: Request):
         """The node's dashboard Overview was (chain cards, counts, contact code, scan)."""
         if _account_view(request):
-            return RedirectResponse("/feed", status_code=303)
+            return RedirectResponse("/feed" if modulelib.path_on(state.settings(), "/feed") else "/", status_code=303)
         stats = {}
         if state.store_path.exists():
             with state.store() as store:
@@ -36138,8 +36152,11 @@ def create_app(state: AppState) -> FastAPI:
     dogefeedx_network.register(app, state, admin_check=_admin_check)
     # ARCADE Lite (docs/arcade-lite/CHARTER.md): its Core-style window at /lite, for visitors, users and the operator.
     from ..lite import web as liteweb
-    liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in, account_address=_account_address,
-                     name_of=_name_of)
+    _lite_home = liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in,
+                                  account_address=_account_address, name_of=_name_of)
+    # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
+    from . import modules_web
+    modules_web.register(app, state, admin_check=_admin_check)
     return app
 
 

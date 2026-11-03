@@ -1143,6 +1143,95 @@ def write_first_peer(url: str, dry_run: bool) -> None:
     info(f"meets {url} first on the mesh")
 
 
+#: The arcade's settings file and the key its edition is kept under (arcade/modules.py). "ask": the operator is asked
+#: in Admin on the first run, because nobody was at the terminal to answer.
+SETTINGS_FILE = "settings.json"
+EDITION_SETTING = "edition"
+EDITIONS = ("full", "lite")
+
+EDITION_QUESTION = """
+Which arcade do you want to install?
+
+  Full         Everything the arcade does: the feed, messages, the exchange,
+               ords and Explore, apps and games.
+  ARCADE Lite  The crypto cores only: the chains and their wallets, send and
+               receive, the address book, accounts, settings, help and the
+               mesh link. Anything else can be switched on later in
+               Admin -> Edition & modules, and nothing is ever deleted.
+"""
+
+
+def existing_arcade(home: Path) -> bool:
+    """Whether an arcade already runs from this home: it has settings, or a message store (state.store_path)."""
+    return (home / SETTINGS_FILE).exists() or any((home / f"{net}.sqlite").exists()
+                                                    for net in ("test", "main", "regtest"))
+
+
+def choose_edition(home: Path, given: str | None, ask=input, interactive: bool | None = None) -> str | None:
+    """The edition this install records, or None to leave the arcade's settings alone.
+
+    --edition wins on any arcade that has not chosen yet. An arcade that already runs is never asked: one that never
+    chose is a full arcade, as it always was. A fresh install asks at the terminal, Full by default; with nobody at
+    the terminal it records "ask" and Admin asks on the first run."""
+    settings = read_settings(home)
+    if settings.get(EDITION_SETTING) in EDITIONS:
+        return None
+    if given in EDITIONS:
+        return given
+    if existing_arcade(home):
+        return None
+    if interactive is None:
+        try:                                               # a person at a terminal: both ends of it are one
+            interactive = sys.stdin.isatty() and sys.stdout.isatty()
+        except (AttributeError, ValueError, OSError):
+            interactive = False
+    if not interactive:
+        return "ask"
+    print(EDITION_QUESTION)
+    for _ in range(3):
+        try:
+            said = ask("Full or Lite? [F/l] ").strip().lower()
+        except (EOFError, OSError):
+            return "ask"
+        if said in ("", "f", "full", "1"):
+            return "full"
+        if said in ("l", "lite", "arcade lite", "2"):
+            return "lite"
+        print("  Type f for the full arcade or l for ARCADE Lite.")
+    return "full"
+
+
+def read_settings(home: Path) -> dict:
+    import json as _json
+    try:
+        data = _json.loads((home / SETTINGS_FILE).read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_edition(home: Path, edition: str | None, dry_run: bool) -> None:
+    """Record the edition in the arcade's settings, keeping every other setting; written whole, then renamed."""
+    import json as _json
+    if edition is None:
+        return
+    shown = {"full": "the full arcade", "lite": "ARCADE Lite", "ask": "asked in Admin on the first run"}[edition]
+    if dry_run:
+        info(f"would record the edition: {shown}")
+        return
+    path = home / SETTINGS_FILE
+    if path.exists() and not read_settings(home):
+        info(f"left {path} alone: it could not be read; the edition is asked in Admin")
+        return
+    home.mkdir(parents=True, exist_ok=True)
+    data = read_settings(home)
+    data[EDITION_SETTING] = edition
+    partial = path.with_suffix(".json.partial")
+    partial.write_text(_json.dumps(data, indent=2))
+    os.replace(partial, path)
+    info(f"edition: {shown}")
+
+
 def fetch_bootstraps(dry_run: bool) -> None:
     """Start each chain's index from the latest bootstrap instead of block zero.
 
@@ -1831,6 +1920,10 @@ def main(argv: list[str] | None = None) -> int:
              "(Admin -> Chains).",
     )
     parser.add_argument(
+        "--edition", choices=list(EDITIONS), default=None,
+        help="full, or lite (ARCADE Lite: the crypto cores only; more can be switched on later in Admin). "
+             "Omitted, a fresh install asks; an arcade already installed keeps what it has.")
+    parser.add_argument(
         "--first-peer", default=None, metavar="URL",
         help="the arcade this one meets first on the mesh, before anything is synced "
              f"(the \"Run your own\" page fills it in). Omitted: {DEFAULT_FIRST_PEER}",
@@ -1849,7 +1942,12 @@ def main(argv: list[str] | None = None) -> int:
     print("DogecoinArcade installer")
     print("=" * 58)
 
-    # No question, ever (2026-10-13). A fresh install is Pepecoin testnet only (2026-11-02); the rest
+    # The one question, first (2026-11-03: "at the beginning of the installation of the arcade it asks if the
+    # downloader wants to install full or lite arcade"), and only on a fresh install at a terminal.
+    home = Path.home() / ".dogecoinarcade"
+    edition = choose_edition(home, args.edition)
+
+    # No question about the chains, ever (2026-10-13). A fresh install is Pepecoin testnet only (2026-11-02); the rest
     # is borrowed over the mesh. --coin is for scripted installs that want a Core of their own.
     if args.coin == "both":
         coins = [PEPECOIN, DOGECOIN]
@@ -1879,6 +1977,7 @@ def main(argv: list[str] | None = None) -> int:
         info(f"Python {'.'.join(str(n) for n in sys.version_info[:3])}")
         info(f"binaries  -> {target}")
         info(f"chains    -> {', '.join(c.name for c in coins)}")
+        info(f"edition   -> {'ARCADE Lite' if edition == 'lite' else 'chosen in Admin' if edition == 'ask' else 'full'}")
         # 3.10 is the real floor: the code uses `X | None` annotations and
         # nothing newer. The previous 3.12 requirement was an arbitrary choice
         # that blocked a working machine for no reason.
@@ -1978,6 +2077,7 @@ def main(argv: list[str] | None = None) -> int:
         n += 1
         step(n, total, "Finishing up")
         write_first_peer(first_peer, args.dry_run)
+        write_edition(home, edition, args.dry_run)
         if not args.dry_run and not args.no_services:
             install_web_service(venv, system)
         if not args.dry_run:
@@ -2009,6 +2109,9 @@ def main(argv: list[str] | None = None) -> int:
         print("  It joins the other arcades at once and borrows their chains while its")
         print("  own Pepecoin testnet node syncs. The application shows progress.")
         print()
+        if edition == "lite":
+            print("  ARCADE Lite: switch more on in Admin -> Edition & modules.")
+            print()
 
         if not args.dry_run and not args.no_browser:
             try:

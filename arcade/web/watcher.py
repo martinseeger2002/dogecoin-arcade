@@ -47,6 +47,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .. import modules as modulelib
 from .. import release as releaselib
 from .. import update
 from ..messaging.scanner import (Scanner, repair_announcement_heights,
@@ -82,6 +83,16 @@ SHOP_EVERY = 60.0
 #: about this plus the page's own poll, instead of waiting for the slow pass or the block.
 POOL_SECONDS = 1.5
 
+#: The phases that only read, file or show, by the job each is in arcade/modules.py: left out while their module is
+#: off. Nothing that settles, refunds or pays (swap claims, this node's trades, the cross-chain book, the shops) is
+#: here: what was already agreed finishes whatever the switches say.
+PHASE_JOBS = {
+    "_confirm_sent": "confirm-sent", "_confirm_posts": "confirm-posts", "_check_pending_feed": "pending-feed",
+    "_backfill_history_once": "inscription-history", "_import_listings": "import-listings",
+    "_import_orders": "import-orders", "_scan_collections": "scan-collections",
+    "_check_pending_offers": "pending-offers", "_check_listers": "listers",
+}
+
 
 class BlockWatcher:
     """Scans each chain when its tip moves, on a daemon thread."""
@@ -100,16 +111,26 @@ class BlockWatcher:
         self._thread.start()
         threading.Thread(target=self._run_pool, name="arcade-poolwatch", daemon=True).start()
 
+    def _job_on(self, job: str) -> bool:
+        """Whether a job's module is on here (arcade/modules.py); on when the settings cannot be read."""
+        try:
+            return modulelib.job_on(self.state.settings(), job)
+        except Exception:
+            return True
+
     def _run_pool(self) -> None:
         """The market's mempool, read often and cheaply: one getrawmempool per chain when
         nothing is new (each reader caches by txid)."""
         while not self._stop.is_set():
+            market = self._job_on("pending-offers")
             try:
-                self._check_pending_offers()
+                if market:
+                    self._check_pending_offers()
             except Exception:            # never let it die
                 log.debug("pool watch failed", exc_info=True)
             try:
-                self._check_listers()
+                if market:
+                    self._check_listers()
             except Exception:
                 log.debug("lister watch failed", exc_info=True)
             try:
@@ -119,7 +140,8 @@ class BlockWatcher:
             except Exception:
                 log.debug("talk relay failed", exc_info=True)
             try:
-                self.state.book_relay().tick()       # one swap book across arcades (book_relay.py, 2026-10-19)
+                if self._job_on("book-relay"):
+                    self.state.book_relay().tick()   # one swap book across arcades (book_relay.py, 2026-10-19)
             except Exception:
                 log.debug("book relay failed", exc_info=True)
             try:
@@ -215,6 +237,8 @@ class BlockWatcher:
                       self._keep_faucets,
                       self._run_watch,
                       self._walk_home):
+            if not self._job_on(PHASE_JOBS.get(getattr(phase, "__name__", ""), "")):
+                continue
             try:
                 phase()
             except Exception:

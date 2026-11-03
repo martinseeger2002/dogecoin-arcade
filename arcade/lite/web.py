@@ -1,4 +1,5 @@
-"""Lite's web layer: the Core-style window at /lite, and the commands behind it.
+"""Lite's web layer: the Core-style window, and the commands behind it. It is ARCADE Lite's home screen at /, and
+answers at /lite in either edition.
 
 Everyone who reaches the arcade gets the window. A visitor sees the arcade itself; a signed-in user also sees their
 own account; the operator also sees the node's workings. The page asks for nothing the console cannot: Overview is
@@ -13,6 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from . import commands as cmdlib
+from .. import modules as modulelib
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 NO_STORE = {"Cache-Control": "no-store"}
@@ -20,10 +22,10 @@ NO_STORE = {"Cache-Control": "no-store"}
 LITE_HEADER = "x-arcade-lite"
 
 
-def register(app, state, admin_check, signed_in, account_address, name_of) -> None:
+def register(app, state, admin_check, signed_in, account_address, name_of):
     """Add /lite to the node's app, with the web app's own checks: `admin_check(request, write=False)` raises unless
     the operator is asking, `signed_in(request)` is the account or None, `account_address(pubkey, chain)` and
-    `name_of(address)` look an account up."""
+    `name_of(address)` look an account up. Returns the window's page, which ARCADE Lite also serves at /."""
 
     def caller_for(request: Request, write: bool = False) -> cmdlib.Caller:
         try:
@@ -43,8 +45,11 @@ def register(app, state, admin_check, signed_in, account_address, name_of) -> No
     def lite_page(request: Request):
         from ..web import brand as brandlib
         caller = caller_for(request)
-        return TEMPLATES.TemplateResponse(request, "lite.html", {"name": brandlib.current().name,
-                                                                 "audience": caller.audience}, headers=NO_STORE)
+        settings = state.settings()
+        return TEMPLATES.TemplateResponse(request, "lite.html", {
+            "name": brandlib.current().name, "audience": caller.audience,
+            "edition": modulelib.edition(settings), "asking": modulelib.asking(settings),
+            "apps": [m for m in modulelib.describe(settings)["modules"] if not m["core"]]}, headers=NO_STORE)
 
     @app.get("/lite/api/overview")
     def lite_overview(request: Request):
@@ -80,3 +85,5 @@ def register(app, state, admin_check, signed_in, account_address, name_of) -> No
             return JSONResponse({"ok": False, "error": str(exc)}, headers=NO_STORE)
         except Exception as exc:                           # noqa: BLE001 -- the console says what went wrong
             return JSONResponse({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, headers=NO_STORE)
+
+    return lite_page
