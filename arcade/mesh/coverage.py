@@ -152,6 +152,8 @@ class Coverage:
         stranded: list[tuple[str, set]] = []
         for key in needs:
             who = self.holders(key)
+            if key.startswith("g:") and not who:
+                continue                               # a room only this arcade's players are in: nothing to borrow
             have = who & linked
             self.last[key] = {"linked": len(have), "relayed": len(who & relayed), "known": len(who), "at": now}
             if not have and not (who & relayed) and who:

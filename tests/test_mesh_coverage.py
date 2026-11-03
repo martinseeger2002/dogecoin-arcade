@@ -84,3 +84,20 @@ def test_a_need_no_direct_link_can_cover_is_reached_through_relay_hops(fast, mon
             for n in (a, b, c):
                 await n.stop()
     run(go())
+
+
+def test_a_room_only_this_arcades_players_are_in_is_not_a_need(fast, monkeypatch):
+    """Live on Strawberry 2026-11-02: a dozen rooms only its own pages were in were listed as needed, held by nobody."""
+    monkeypatch.setattr(cov, "EVERY", 0.2)
+
+    async def go():
+        a = mk()
+        ca = _cov(a, [], ["g:0123456789abcdef", "m"])
+        await started(a)
+        try:
+            await ca.step()
+            keys = {r["key"] for r in ca.status()}
+            assert "g:0123456789abcdef" not in keys and "m" in keys
+        finally:
+            await a.stop()
+    run(go())

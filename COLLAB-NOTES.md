@@ -107,6 +107,10 @@ flooded, for what direct links cannot cover (two routers that each pick a new po
   per-sender limit), test_coreshare (Dogecoin borrowed through relay hops, blocks proved as ever), test_mesh_coverage
   (the keeper's relay fallback).
 - The arcades between read what they carry: public chain data, as the end arcades see it.
+- With it, from the first live look at Strawberry's "What this arcade borrows": a room only this arcade's players are in
+  is not a need (a dozen were listed, held by nobody), and a need nobody is known to hold says "none known yet",
+  since arcades on older versions do not say what they hold. Full suite: 4514 passed; the one failure,
+  test_media_browser's speakers test, passed twice alone (a timing flake under load).
 
 ### 2026-11-02 The coverage keeper: every Core, index, media relay and game room from linked holders (Claude)
 The operator: "an auto adjusting mesh that looks for the arcades containing the resources that we need ... at least have
