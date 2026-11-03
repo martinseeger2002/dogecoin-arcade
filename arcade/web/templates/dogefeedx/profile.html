@@ -136,10 +136,11 @@ body {
 .dfx-profile-btn-primary {
   background: var(--dfx-brand);
   border: none;
-  color: #000;
+  color: var(--dfx-ink);
+  font-family: var(--font-body);
 }
 .dfx-profile-btn-primary:hover {
-  background: var(--dfx-brand-dark);
+  background: var(--dfx-brand-tint);
 }
 .dfx-profile-info {
   padding: 12px 16px;
@@ -148,12 +149,14 @@ body {
 .dfx-profile-name {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   margin-bottom: 4px;
 }
 .dfx-profile-name h2 {
-  font-size: 20px;
-  font-weight: 700;
+  font-family: var(--font-heading);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--dfx-cream);
 }
 .dfx-profile-verified {
   width: 20px;
