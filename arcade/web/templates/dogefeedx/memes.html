@@ -48,6 +48,7 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
   <h2>Public</h2>
   <p class="note">Pictures from dogefeed.app/memes. Nothing here is uploaded.</p>
   <input id="meme-q" type="search" placeholder="Search memes, tags, creators" aria-label="Search memes, tags, creators">
+  <p class="note" id="meme-count"></p>
   <div id="memes" class="grid"><p class="note">Loading…</p></div>
   <button type="button" class="more" id="meme-more" hidden>More</button>
 </div>
@@ -163,6 +164,13 @@ html.indesk body.df-dogefeed button.more { width:auto !important; background:tra
         if (append) box.insertAdjacentHTML('beforeend', html);
         else box.innerHTML = html;
         moreBtn.hidden = !data.more;
+        var countEl = document.getElementById('meme-count');
+        if (countEl && data.count) {
+          var page = Math.floor(offset / 120) + 1;
+          countEl.textContent = data.count + ' memes' + (data.pages ? ' · page ' + page + ' of ' + data.pages : '');
+        } else if (countEl && query) {
+          countEl.textContent = '';
+        }
       })
       .catch(function () {
         if (!append) box.innerHTML = '<p class="note">No public meme list.</p>';

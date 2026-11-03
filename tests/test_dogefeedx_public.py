@@ -4,10 +4,12 @@ from pathlib import Path
 
 from arcade.web.dogefeedx.public_read import (
     normalize_memes,
+    parse_arcade,
     parse_launchpad,
     parse_leaderboard,
     parse_leaderboard_page,
     parse_market,
+    parse_meme_count,
     parse_memes,
     parse_profile_card,
     parse_suggestions,
@@ -158,6 +160,34 @@ def test_market_payload_keeps_dns_exclusive_and_a_sale():
     assert parsed["totals"]["robinhood"]["totalTraded"].endswith("ETH")
     assert parsed["activity"][0]["price"] == "10 DOGE"
     assert parsed["activity"][0]["href"] == "/market/sns-doge/1"
+    assert by["999club"]["created"] == "2026-10-23T04:38:10.054Z"
+
+
+ARCADE = (
+    '<a data-testid="arcade-tile-poker" href="/arcade/poker"><div>'
+    + ("x" * 2000)
+    + '</div><p class="font-black">Poker</p>'
+    + '<p class="text-xs text-white/60">Texas Hold\'em · free chips</p></a>'
+    + '<a data-testid="arcade-tile-bark-hunt" href="/arcade/bark-hunt">'
+    + '<p class="font-black">Bark Hunt</p>'
+    + '<p class="text-xs text-white/50">Save the Doginals</p></a>'
+)
+
+
+def test_arcade_tiles_keep_the_name_after_a_long_picture():
+    rows = parse_arcade(ARCADE)
+    assert [row["slug"] for row in rows] == ["poker", "bark-hunt"]
+    assert rows[0]["name"] == "Poker"
+    assert rows[0]["href"] == "/arcade/poker"
+    assert rows[0]["detail"] == "Texas Hold'em · free chips"
+    assert rows[1]["name"] == "Bark Hunt"
+    assert parse_arcade("<div>no games</div>") == []
+
+
+def test_meme_count_reads_the_public_pager():
+    page = 'data-testid="meme-count">968<!-- --> <!-- -->memes<!-- --> · page <!-- -->1<!-- --> of <!-- -->9</span>'
+    assert parse_meme_count(page) == {"count": 968, "pages": 9}
+    assert parse_meme_count("<div>no pager</div>") is None
 
 
 def test_launchpad_cards_keep_the_public_mint_counts():
@@ -238,3 +268,28 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     launch = (TEMPLATES / "launchpad.html").read_text()
     assert "No public launch list" in launch
     assert "Doge Punks" not in launch and "Shiba Society" not in launch
+    arcade = (TEMPLATES / "arcade.html").read_text()
+    assert "Free chips, for fun only" in arcade and "On this arcade" in arcade
+    assert "/dogefeedx/api/arcade" in arcade
+    explore = (TEMPLATES / "explore.html").read_text()
+    assert "Top posts this week" in explore and "Top earners today" in explore
+    assert "range=1d" in explore and "document.body.classList.add('df-dogefeed')" in explore
+    assert "flex: none" in explore and "flex: none" in feed and "flex: none" in profile
+    assert 'class="df-hero-btn primary" href="/me"' in feed
+    wallet = (TEMPLATES / "wallet.html").read_text()
+    assert "Sample Addresses" not in wallet and "nghHJba6wBoWesbYQfkZiMTicoQANkpdvH" not in wallet
+    nfts = (TEMPLATES / "nfts.html").read_text()
+    assert "/dogefeedx/api/market/doginals" in nfts and "Total traded" in nfts
+    assert 'id="meme-count"' in memes
+    assert 'id="lookup-u"' in profile
+    assert "boardRange" in (TEMPLATES / "leaderboard.html").read_text()
+    assert "parse_arcade" in apps and '"/api/arcade"' in apps
+    for name in (
+        "feed.html", "explore.html", "market.html", "nfts.html", "leaderboard.html",
+        "profile.html", "wallet.html", "launchpad.html", "notifications.html",
+        "messages.html", "bookmarks.html", "arcade.html", "memes.html",
+    ):
+        page = (TEMPLATES / name).read_text()
+        assert "Sign in coming soon" not in page
+        assert 'href="#" class="df-nav-item' not in page
+        assert "inscribe.doginals.org" not in page

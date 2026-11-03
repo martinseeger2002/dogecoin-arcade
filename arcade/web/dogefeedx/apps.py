@@ -1267,7 +1267,7 @@ async def api_memes(q: str = "", offset: int = 0):
     `q` and `offset` are the public search and page. A row with no picture is
     dropped. The HTML grid is only a fallback when that route is down.
     """
-    from .public_read import empty, fetch_html, fetch_json, normalize_memes, parse_memes
+    from .public_read import empty, fetch_html, fetch_json, normalize_memes, parse_meme_count, parse_memes
 
     q = " ".join((q or "").split())[:80]
     try:
@@ -1279,13 +1279,32 @@ async def api_memes(q: str = "", offset: int = 0):
         params["q"] = q
     if offset:
         params["offset"] = str(offset)
-    try:
-        data = await fetch_json("/api/memes", params or None)
-    except Exception:
-        data = None
+
+    async def _json():
+        try:
+            return await fetch_json("/api/memes", params or None)
+        except Exception:
+            return None
+
+    async def _count():
+        if q or offset:
+            return None
+        try:
+            return parse_meme_count(await fetch_html("/memes"))
+        except Exception:
+            return None
+
+    data, count = await asyncio.gather(_json(), _count())
     rows = normalize_memes(data) if data else []
     if rows:
-        return {"memes": rows, "offset": offset, "more": len(rows) >= 120, "source": "dogefeed.app"}
+        return {
+            "memes": rows,
+            "offset": offset,
+            "more": len(rows) >= 120,
+            "count": (count or {}).get("count"),
+            "pages": (count or {}).get("pages"),
+            "source": "dogefeed.app",
+        }
     if q or offset:
         return empty("no_public_list", memes=[], offset=offset, more=False)
     try:
@@ -1296,6 +1315,20 @@ async def api_memes(q: str = "", offset: int = 0):
     if rows:
         return {"memes": rows, "offset": 0, "more": False, "source": "dogefeed.app"}
     return empty("no_public_list", memes=[], offset=0, more=False)
+
+
+@router.get("/api/arcade")
+async def api_arcade():
+    """Public game tiles from dogefeed.app/arcade. Empty when that page has none."""
+    from .public_read import empty, fetch_html, parse_arcade
+
+    try:
+        games = parse_arcade(await fetch_html("/arcade"))
+    except Exception:
+        return empty("no_public_list", games=[])
+    if not games:
+        return empty("no_public_list", games=[])
+    return {"games": games, "source": "dogefeed.app"}
 
 
 @router.get("/api/launchpad")

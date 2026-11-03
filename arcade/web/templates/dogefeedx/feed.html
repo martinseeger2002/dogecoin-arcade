@@ -332,6 +332,24 @@ a { color: inherit; text-decoration: none; }
 }
 button.df-more { display:block; width:auto; margin:12px auto 20px; padding:8px 16px; border-radius:999px; border:1px solid rgba(255,255,255,.25); background:transparent; color:#fff6dd; font-weight:700; cursor:pointer; }
 html.indesk body.df-dogefeed button.df-more { width:auto !important; background:transparent !important; color:#fff6dd !important; box-shadow:none !important; }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; min-width: 220px; overflow: auto; position: relative; height: 100vh; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; min-width: 220px; height: 100vh; overflow: auto; position: relative; top: auto; }
+html.indesk body.df-dogefeed { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2 { color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-topbar { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-card, html.indesk body.df-dogefeed .df-post { background:transparent !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background:#0a0a0a !important; }
+html.indesk body.df-dogefeed a.df-signin-btn { background:#f3e3a5 !important; color:#000 !important; margin-top:8px !important; position:static !important; }
+html.indesk body.df-dogefeed .df-search, html.indesk body.df-dogefeed .df-composer-input { background:#111 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-hero { background:#0a0a0a !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-hero h1 { color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-hero p { color:rgba(255,255,255,.72) !important; }
+html.indesk body.df-dogefeed .df-hero-btn, html.indesk body.df-dogefeed .df-topbar-btn { width:auto !important; background:#f3e3a5 !important; color:#000 !important; }
+html.indesk body.df-dogefeed .df-hero-btn.secondary { background:transparent !important; color:#fff6dd !important; border-color:rgba(255,255,255,.35) !important; }
+html.indesk body.df-dogefeed .df-sidebar { overflow-x:hidden; }
+html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; background:transparent !important; color:#fff6dd !important; }
 .df-post {
   padding: 12px 16px;
   border-bottom: 1px solid var(--df-border);
@@ -659,6 +677,7 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
   color: var(--df-text-secondary);
 }
 </style>
+<script>document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <!-- Left Sidebar -->
@@ -684,15 +703,15 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
         Explore
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/notifications" class="df-nav-item">
         <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         Notifications
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/messages" class="df-nav-item">
         <svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
         Messages
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/bookmarks" class="df-nav-item">
         <svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         Bookmarks
       </a>
@@ -700,7 +719,7 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
         <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
         Wallet
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/nfts" class="df-nav-item">
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
         NFTs
       </a>
@@ -708,31 +727,31 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
         <svg viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
         Market
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/launchpad" class="df-nav-item">
         <svg viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>
         Launchpad
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/arcade" class="df-nav-item">
         <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
         Arcade<span class="df-nav-badge">BETA</span>
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/memes" class="df-nav-item">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
         Meme Library
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/leaderboard" class="df-nav-item">
         <svg viewBox="0 0 24 24"><path d="M8.21 13.89L7 23l5-3 5 3-1.21-9.12"/><path d="M19 8a7 7 0 1 0-14 0 7.002 7.002 0 0 0 6 6.92V17h2v-2.08A7.002 7.002 0 0 0 19 8z"/></svg>
         Leaderboard
       </a>
-      <a href="#" class="df-nav-item df-nav-external">
+      <a href="https://dogemaps.land" target="_blank" rel="noopener noreferrer" class="df-nav-item df-nav-external">
         <svg viewBox="0 0 24 24"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
         Dogemaps<svg class="ext" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
       </a>
-      <a href="#" class="df-nav-item df-nav-external">
+      <a href="/dogefeedx/inscribe" class="df-nav-item df-nav-external">
         <svg viewBox="0 0 24 24"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
         Inscribe<svg class="ext" viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/settings" class="df-nav-item">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Settings
       </a>
@@ -742,7 +761,7 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
       Browsing read-only. Sign in to post, like and tip.
     </div>
     
-    <button class="df-signin-btn" onclick="alert('Sign in coming soon')">Sign in</button>
+    <a class="df-signin-btn" href="/me" style="display:block;text-align:center;text-decoration:none;color:#000">Sign in</a>
   </nav>
 
   <!-- Main Content -->
@@ -753,8 +772,7 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
         <span>DOGE payments enabled</span>
       </div>
       <div class="df-topbar-right">
-        <button class="df-theme-toggle">☀️</button>
-        <button class="df-topbar-btn">Sign in</button>
+        <a class="df-topbar-btn" href="/me" style="text-decoration:none;color:#000">Sign in</a>
       </div>
     </div>
     
@@ -762,7 +780,7 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
       <h1>DogeFeed: the social feed paid in DOGE</h1>
       <p>Every post is a bark. Posts are free and off chain; likes, follows and tips go to creators in DOGE on Dogecoin (L1), or ETH on Robinhood Chain (L2). Read everything without an account.</p>
       <div class="df-hero-btns">
-        <button class="df-hero-btn primary">Sign in</button>
+        <a class="df-hero-btn primary" href="/me" style="text-decoration:none;color:#000">Sign in</a>
         <button class="df-hero-btn secondary" onclick="location.href='/dogefeedx/explore'">Explore</button>
       </div>
     </div>

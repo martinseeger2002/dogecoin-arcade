@@ -59,7 +59,7 @@ _LEADERBOARD_RANGES = {"1d", "7d", "30d", "all"}
 
 async def fetch_html(path: str, params: dict | None = None) -> str:
     """GET one public HTML page. Only the public boards and a profile."""
-    allowed = path in ("/", "/market", "/leaderboard", "/memes", "/launchpad") or (
+    allowed = path in ("/", "/market", "/leaderboard", "/memes", "/launchpad", "/arcade") or (
         path.startswith("/u/") and _HANDLE.fullmatch(path[3:])
     )
     if not allowed:
@@ -290,6 +290,7 @@ def _market_payload(html: str) -> dict:
             "exclusive": row[4] == "true",
             "sns": row[17] == "true",
             "chain": row[19],
+            "created": row[15],
         })
 
     totals = {}
@@ -399,6 +400,46 @@ def normalize_memes(data) -> list[dict]:
             "tags": [str(tag) for tag in tags if isinstance(tag, str)][:12],
             "uses": uses,
             "sourceName": unescape(str(row.get("sourceName") or "")).strip(),
+        })
+    return found
+
+
+def parse_meme_count(html: str) -> dict | None:
+    """The public pager, e.g. 968 memes on page 1 of 9. None when the page has no count."""
+    match = re.search(
+        r'data-testid="meme-count">(\d+)[\s\S]{0,120}?of <!-- -->(\d+)',
+        html or "",
+    )
+    if not match:
+        return None
+    return {"count": int(match.group(1)), "pages": int(match.group(2))}
+
+
+def parse_arcade(html: str) -> list[dict]:
+    """Public game tiles from dogefeed.app/arcade. Empty when the grid is absent."""
+    found = []
+    seen: set[str] = set()
+    for match in re.finditer(
+        r'data-testid="arcade-tile-([a-z0-9-]+)" href="(/arcade/[a-z0-9-]+)"',
+        html or "",
+    ):
+        slug, href = match.group(1), match.group(2)
+        if slug in seen:
+            continue
+        chunk = (html or "")[match.start():match.start() + 8000]
+        nxt = chunk.find("arcade-tile-", 20)
+        if nxt > 0:
+            chunk = chunk[:nxt]
+        name = re.search(r'<p class="font-black">([^<]+)</p>', chunk)
+        detail = re.search(r'<p class="text-xs[^"]*">([^<]+)</p>', chunk)
+        if not name:
+            continue
+        seen.add(slug)
+        found.append({
+            "slug": slug,
+            "href": href,
+            "name": unescape(name.group(1)).strip(),
+            "detail": unescape(detail.group(1)).strip() if detail else "",
         })
     return found
 

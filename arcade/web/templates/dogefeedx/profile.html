@@ -248,6 +248,21 @@ a { color: inherit; text-decoration: none; }
 .df-posts { }
 button.df-more { display:block; width:auto; margin:12px auto 20px; padding:8px 16px; border-radius:999px; border:1px solid rgba(255,255,255,.25); background:transparent; color:#fff6dd; font-weight:700; cursor:pointer; }
 html.indesk body.df-dogefeed button.df-more { width:auto !important; background:transparent !important; color:#fff6dd !important; box-shadow:none !important; }
+.df-app { width: 100%; max-width: none; height: 100vh; overflow: hidden; }
+.df-sidebar { width: 220px; flex: none; min-width: 220px; overflow: auto; position: relative; height: 100vh; }
+.df-main { flex: 1; min-width: 0; max-width: none; height: 100vh; overflow: auto; }
+.df-right { width: 260px; flex: none; min-width: 220px; height: 100vh; overflow: auto; position: relative; top: auto; }
+html.indesk body.df-dogefeed { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed h1, html.indesk body.df-dogefeed h2, html.indesk body.df-dogefeed h3 { color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, html.indesk body.df-dogefeed .df-main, html.indesk body.df-dogefeed .df-right, html.indesk body.df-dogefeed .df-header, html.indesk body.df-dogefeed .df-topbar { background:#000 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-card, html.indesk body.df-dogefeed .df-post { background:transparent !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-card { background:#0a0a0a !important; }
+html.indesk body.df-dogefeed .df-tab { background:transparent !important; color:#fff6dd !important; border:1px solid rgba(255,255,255,.25) !important; width:auto !important; box-shadow:none !important; }
+html.indesk body.df-dogefeed .df-tab.active { background:#f3e3a5 !important; color:#000 !important; }
+html.indesk body.df-dogefeed a.df-signin-btn, html.indesk body.df-dogefeed .df-follow-btn { background:#f3e3a5 !important; color:#000 !important; }
+html.indesk body.df-dogefeed a.df-signin-btn { margin-top:8px !important; position:static !important; }
+html.indesk body.df-dogefeed .df-search, html.indesk body.df-dogefeed input { background:#111 !important; color:#fff6dd !important; }
+html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #lookup-u { width:auto !important; flex:1; }
 .df-post {
   padding: 12px 16px;
   border-bottom: 1px solid var(--df-border);
@@ -366,6 +381,7 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
 @keyframes spin { to { transform: rotate(360deg); } }
 .df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
 </style>
+<script>document.body.classList.add('df-dogefeed');</script>
 
 <div class="df-app">
   <!-- Left Sidebar -->
@@ -417,11 +433,11 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
         <svg viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>
         Launchpad
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/arcade" class="df-nav-item">
         <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
         Arcade<span class="df-nav-badge">BETA</span>
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/memes" class="df-nav-item">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
         Meme Library
       </a>
@@ -429,21 +445,21 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
         <svg viewBox="0 0 24 24"><path d="M8.21 13.89L7 23l5-3 5 3-1.21-9.12"/><path d="M19 8a7 7 0 1 0-14 0 7.002 7.002 0 0 0 6 6.92V17h2v-2.08A7.002 7.002 0 0 0 19 8z"/></svg>
         Leaderboard
       </a>
-      <a href="#" class="df-nav-item df-nav-external">
+      <a href="https://dogemaps.land" target="_blank" rel="noopener noreferrer" class="df-nav-item df-nav-external">
         <svg viewBox="0 0 24 24"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
         Dogemaps<svg class="ext" viewBox="0 0 24 24" style="width:14px;height:14px;margin-left:4px;opacity:0.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
       </a>
-      <a href="#" class="df-nav-item df-nav-external">
+      <a href="/dogefeedx/inscribe" class="df-nav-item df-nav-external">
         <svg viewBox="0 0 24 24"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
         Inscribe<svg class="ext" viewBox="0 0 24 24" style="width:14px;height:14px;margin-left:4px;opacity:0.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
       </a>
-      <a href="#" class="df-nav-item">
+      <a href="/dogefeedx/settings" class="df-nav-item">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Settings
       </a>
     </div>
     
-    <button class="df-signin-btn">Sign in</button>
+    <a class="df-signin-btn" href="/me" style="display:block;text-align:center;text-decoration:none;color:#000">Sign in</a>
     <div class="df-signin-footer" style="display:flex;align-items:center;gap:8px;padding:12px 0 0;font-size:12px;color:var(--df-text-secondary)">
       <svg viewBox="0 0 32 32" style="width:24px;height:24px"><circle cx="16" cy="16" r="14" fill="#f5a623"/></svg>
       <span>Browsing read-only. Sign in to post, like and tip.</span>
@@ -469,8 +485,7 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
         <div class="df-avatar" id="avatar"></div>
       </div>
       <div class="df-profile-actions">
-        <button class="df-more-btn">···</button>
-        <button class="df-follow-btn">Follow</button>
+        <a class="df-follow-btn" href="/me" style="text-decoration:none;color:#000;text-align:center">Sign in to follow</a>
       </div>
       <div class="df-profile-name" id="profile-name">Profile</div>
       <div class="df-profile-handle" id="profile-handle"></div>
@@ -481,6 +496,10 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
         <input id="local-web" type="text" maxlength="200" placeholder="Website" aria-label="Website" style="padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
         <button type="submit" class="df-follow-btn">Save on this browser</button>
         <p id="local-said" class="df-empty" style="padding:0"></p>
+      </form>
+      <form id="lookup-handle" style="margin-top:8px;display:flex;gap:8px;max-width:420px">
+        <input id="lookup-u" type="text" maxlength="64" placeholder="Public handle" aria-label="Public handle" style="flex:1;padding:8px 12px;border-radius:10px;border:1px solid var(--df-border);background:transparent;color:inherit">
+        <button type="submit" class="df-follow-btn" style="width:auto">Open</button>
       </form>
       <div class="df-profile-meta" id="profile-joined"></div>
       <div class="df-profile-stats">
@@ -686,6 +705,16 @@ html.indesk body.df-dogefeed button.df-more { width:auto !important; background:
   });
   var postsMore = document.getElementById('posts-more');
   if (postsMore) postsMore.addEventListener('click', function() { loadPosts(true); });
+
+  var lookup = document.getElementById('lookup-handle');
+  if (lookup) {
+    if (profileHandle) lookup.hidden = true;
+    lookup.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var handle = (document.getElementById('lookup-u').value || '').trim().replace(/^@/, '');
+      if (handle) location.href = '/dogefeedx/profile?u=' + encodeURIComponent(handle);
+    });
+  }
 
   var localForm = document.getElementById('local-profile');
   if (localForm) {
