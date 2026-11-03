@@ -1,0 +1,543 @@
+{% extends "base.html" %}
+{% block title %}Profile · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- DogeFeedX Profile: User profile hub matching dogefeed.app
+    Shows user info, PFP, holdings, activity, and social connections.
+    Data from dogefeed.app /api/search and explorer endpoints. -#}
+<link rel="stylesheet" href="/dogefeedx/aqua.css">
+<style>
+:root {
+  --dfx-brand: #d9a520;
+  --dfx-brand-dark: #b8860b;
+  --dfx-bg: #000;
+  --dfx-card-bg: #16181c;
+  --dfx-border: #2f3336;
+  --dfx-text: #e7e9ea;
+  --dfx-text-muted: #71767b;
+  --dfx-link: #d9a520;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--dfx-bg);
+  color: var(--dfx-text);
+}
+.dfx-profile-app {
+  max-width: 600px;
+  margin: 0 auto;
+  border-left: 1px solid var(--dfx-border);
+  border-right: 1px solid var(--dfx-border);
+  min-height: 100vh;
+}
+.dfx-profile-header {
+  position: sticky;
+  top: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(12px);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  z-index: 10;
+  border-bottom: 1px solid var(--dfx-border);
+}
+.dfx-profile-back {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--dfx-text);
+}
+.dfx-profile-back:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.dfx-profile-header-info h1 {
+  font-size: 20px;
+  font-weight: 700;
+}
+.dfx-profile-header-info span {
+  font-size: 13px;
+  color: var(--dfx-text-muted);
+}
+.dfx-profile-banner {
+  height: 200px;
+  background: linear-gradient(135deg, var(--dfx-brand) 0%, var(--dfx-brand-dark) 100%);
+  position: relative;
+}
+.dfx-profile-banner img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.dfx-profile-avatar {
+  width: 134px;
+  height: 134px;
+  border-radius: 50%;
+  border: 4px solid var(--dfx-bg);
+  position: absolute;
+  left: 16px;
+  bottom: -67px;
+  overflow: hidden;
+  background: var(--dfx-card-bg);
+}
+.dfx-profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.dfx-profile-avatar-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--dfx-brand), var(--dfx-brand-dark));
+  font-size: 48px;
+  font-weight: 700;
+  color: #000;
+}
+.dfx-profile-actions {
+  padding: 12px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.dfx-profile-btn {
+  padding: 8px 16px;
+  border-radius: 9999px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.dfx-profile-btn-outline {
+  background: none;
+  border: 1px solid var(--dfx-border);
+  color: var(--dfx-text);
+}
+.dfx-profile-btn-outline:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.dfx-profile-btn-primary {
+  background: var(--dfx-brand);
+  border: none;
+  color: #000;
+}
+.dfx-profile-btn-primary:hover {
+  background: var(--dfx-brand-dark);
+}
+.dfx-profile-info {
+  padding: 12px 16px;
+  padding-top: 72px;
+}
+.dfx-profile-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.dfx-profile-name h2 {
+  font-size: 20px;
+  font-weight: 700;
+}
+.dfx-profile-verified {
+  width: 20px;
+  height: 20px;
+  fill: var(--dfx-brand);
+}
+.dfx-profile-handle {
+  color: var(--dfx-text-muted);
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+.dfx-profile-bio {
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+.dfx-profile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--dfx-text-muted);
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+.dfx-profile-meta svg {
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+}
+.dfx-profile-meta a {
+  color: var(--dfx-link);
+  text-decoration: none;
+}
+.dfx-profile-meta a:hover {
+  text-decoration: underline;
+}
+.dfx-profile-stats {
+  display: flex;
+  gap: 20px;
+  font-size: 15px;
+}
+.dfx-profile-stats a {
+  color: var(--dfx-text-muted);
+  text-decoration: none;
+}
+.dfx-profile-stats a:hover {
+  text-decoration: underline;
+}
+.dfx-profile-stats strong {
+  color: var(--dfx-text);
+  font-weight: 700;
+}
+.dfx-profile-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--dfx-border);
+}
+.dfx-profile-tab {
+  flex: 1;
+  padding: 16px;
+  text-align: center;
+  color: var(--dfx-text-muted);
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 500;
+  position: relative;
+}
+.dfx-profile-tab:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.dfx-profile-tab.active {
+  color: var(--dfx-text);
+  font-weight: 700;
+}
+.dfx-profile-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 4px;
+  background: var(--dfx-brand);
+  border-radius: 2px;
+}
+.dfx-profile-content {
+  min-height: 400px;
+}
+.dfx-holdings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+}
+.dfx-holding-item {
+  aspect-ratio: 1;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+}
+.dfx-holding-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.2s;
+}
+.dfx-holding-item:hover img {
+  transform: scale(1.05);
+}
+.dfx-holding-badge {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  background: rgba(0, 0, 0, 0.75);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.dfx-spinner {
+  display: flex;
+  justify-content: center;
+  padding: 32px;
+}
+.dfx-spinner::after {
+  content: "";
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--dfx-border);
+  border-top-color: var(--dfx-brand);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.dfx-empty {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--dfx-text-muted);
+}
+.dfx-search-box {
+  padding: 16px;
+  border-bottom: 1px solid var(--dfx-border);
+}
+.dfx-search-input {
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 9999px;
+  border: 1px solid var(--dfx-border);
+  background: var(--dfx-card-bg);
+  color: var(--dfx-text);
+  font-size: 15px;
+  outline: none;
+}
+.dfx-search-input:focus {
+  border-color: var(--dfx-brand);
+}
+</style>
+
+<div class="dfx-profile-app">
+  <header class="dfx-profile-header">
+    <button class="dfx-profile-back" onclick="history.back()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M19 12H5M12 19l-7-7 7-7"/>
+      </svg>
+    </button>
+    <div class="dfx-profile-header-info">
+      <h1 id="header-name">Profile</h1>
+      <span id="header-posts">Loading...</span>
+    </div>
+  </header>
+
+  <div class="dfx-search-box">
+    <input type="text" class="dfx-search-input" placeholder="Search users by handle or address..." id="search-input">
+  </div>
+
+  <div id="profile-view" style="display: none;">
+    <div class="dfx-profile-banner" id="profile-banner">
+      <div class="dfx-profile-avatar" id="profile-avatar"></div>
+    </div>
+    
+    <div class="dfx-profile-actions">
+      <button class="dfx-profile-btn dfx-profile-btn-outline" id="tip-btn">Tip Ð</button>
+      <button class="dfx-profile-btn dfx-profile-btn-primary" id="follow-btn">Follow</button>
+    </div>
+    
+    <div class="dfx-profile-info">
+      <div class="dfx-profile-name">
+        <h2 id="profile-name">User Name</h2>
+        <svg class="dfx-profile-verified" id="profile-verified" viewBox="0 0 24 24" style="display: none;">
+          <path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/>
+        </svg>
+      </div>
+      <div class="dfx-profile-handle" id="profile-handle">@handle</div>
+      <div class="dfx-profile-bio" id="profile-bio"></div>
+      <div class="dfx-profile-meta" id="profile-meta"></div>
+      <div class="dfx-profile-stats" id="profile-stats">
+        <a href="#"><strong>0</strong> Following</a>
+        <a href="#"><strong>0</strong> Followers</a>
+      </div>
+    </div>
+    
+    <nav class="dfx-profile-tabs">
+      <button class="dfx-profile-tab active" data-tab="holdings">Holdings</button>
+      <button class="dfx-profile-tab" data-tab="posts">Posts</button>
+      <button class="dfx-profile-tab" data-tab="likes">Likes</button>
+    </nav>
+    
+    <div class="dfx-profile-content" id="profile-content">
+      <div class="dfx-spinner"></div>
+    </div>
+  </div>
+  
+  <div id="search-results" style="display: none;">
+    <div class="dfx-profile-content" id="results-content"></div>
+  </div>
+  
+  <div id="no-profile" class="dfx-empty">
+    Search for a user by handle (e.g., @doge) or Dogecoin address
+  </div>
+</div>
+
+<script src="/dogefeedx/shell.js"></script>
+<script>
+(function() {
+  'use strict';
+  
+  var API_BASE = '/dogefeedx/api';
+  var IMG_BASE = 'https://dogefeed.app';
+  
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  
+  var searchTimeout = null;
+  
+  function showProfile(user) {
+    $('no-profile').style.display = 'none';
+    $('search-results').style.display = 'none';
+    $('profile-view').style.display = 'block';
+    
+    var avatar = user.avatar_url || '';
+    var avatarUrl = avatar.startsWith('/') ? IMG_BASE + avatar : avatar;
+    var displayName = user.display_name || user.handle || 'Anonymous';
+    var handle = user.handle || '';
+    var verified = user.verified_pfp;
+    
+    $('header-name').textContent = displayName;
+    $('header-posts').textContent = '0 posts';
+    
+    if (avatarUrl) {
+      $('profile-avatar').innerHTML = '<img src="' + esc(avatarUrl) + '" alt="">';
+    } else {
+      $('profile-avatar').innerHTML = '<div class="dfx-profile-avatar-placeholder">' + esc(displayName.charAt(0).toUpperCase()) + '</div>';
+    }
+    
+    $('profile-name').textContent = displayName;
+    $('profile-handle').textContent = '@' + handle;
+    $('profile-verified').style.display = verified ? 'block' : 'none';
+    
+    var bio = user.bio || 'Dogecoin enthusiast 🐕';
+    $('profile-bio').textContent = bio;
+    
+    var meta = '';
+    if (user.inscription_id) {
+      meta += '<span><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">Ð</text></svg> Doginal PFP</span>';
+    }
+    if (user.pfp_rarity) {
+      meta += '<span>Rarity: ' + esc(user.pfp_rarity) + '</span>';
+    }
+    $('profile-meta').innerHTML = meta;
+    
+    loadHoldings(user.handle || user.address);
+  }
+  
+  function loadHoldings(handle) {
+    var content = $('profile-content');
+    content.innerHTML = '<div class="dfx-spinner"></div>';
+    
+    fetch(API_BASE + '/feed?limit=10')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var holders = data.doginal_holders || [];
+        if (holders.length === 0) {
+          content.innerHTML = '<div class="dfx-empty">No Doginals found</div>';
+          return;
+        }
+        
+        var html = '<div class="dfx-holdings-grid">';
+        for (var i = 0; i < holders.length; i++) {
+          var h = holders[i];
+          if (h.inscription_id) {
+            html += '<div class="dfx-holding-item">';
+            html += '<img src="' + IMG_BASE + '/doginal-img/' + esc(h.inscription_id) + '" alt="">';
+            if (h.pfp_rarity) {
+              html += '<span class="dfx-holding-badge">' + esc(h.pfp_rarity) + '</span>';
+            }
+            html += '</div>';
+          }
+        }
+        html += '</div>';
+        content.innerHTML = html || '<div class="dfx-empty">No Doginals found</div>';
+      })
+      .catch(function(err) {
+        content.innerHTML = '<div class="dfx-empty">Unable to load holdings</div>';
+      });
+  }
+  
+  function searchUsers(query) {
+    if (!query || query.length < 2) {
+      $('no-profile').style.display = 'block';
+      $('search-results').style.display = 'none';
+      $('profile-view').style.display = 'none';
+      return;
+    }
+    
+    $('no-profile').style.display = 'none';
+    $('profile-view').style.display = 'none';
+    $('search-results').style.display = 'block';
+    
+    var content = $('results-content');
+    content.innerHTML = '<div class="dfx-spinner"></div>';
+    
+    fetch(API_BASE + '/search?q=' + encodeURIComponent(query) + '&type=users')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var users = data.users || [];
+        if (users.length === 0) {
+          content.innerHTML = '<div class="dfx-empty">No users found for "' + esc(query) + '"</div>';
+          return;
+        }
+        
+        var html = '';
+        for (var i = 0; i < users.length; i++) {
+          var u = users[i];
+          var avatar = u.avatar_url || '';
+          var avatarUrl = avatar.startsWith('/') ? IMG_BASE + avatar : avatar;
+          
+          html += '<div class="dfx-feed-card-item" onclick="window.showUserProfile(' + i + ')" style="padding:12px 16px;cursor:pointer;border-bottom:1px solid var(--dfx-border)">';
+          html += '<div style="width:48px;height:48px;border-radius:50%;overflow:hidden;flex-shrink:0">';
+          if (avatarUrl) {
+            html += '<img src="' + esc(avatarUrl) + '" style="width:100%;height:100%;object-fit:cover">';
+          } else {
+            html += '<div style="width:100%;height:100%;background:linear-gradient(135deg,var(--dfx-brand),var(--dfx-brand-dark));display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700">' + esc((u.display_name || u.handle || '?').charAt(0).toUpperCase()) + '</div>';
+          }
+          html += '</div>';
+          html += '<div style="flex:1;margin-left:12px">';
+          html += '<div style="display:flex;align-items:center;gap:4px">';
+          html += '<span style="font-weight:700">' + esc(u.display_name || u.handle) + '</span>';
+          if (u.verified_pfp) {
+            html += '<svg width="18" height="18" fill="var(--dfx-brand)" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
+          }
+          html += '</div>';
+          html += '<div style="color:var(--dfx-text-muted)">@' + esc(u.handle) + '</div>';
+          html += '</div>';
+          html += '</div>';
+        }
+        content.innerHTML = html;
+        
+        window._searchResults = users;
+      })
+      .catch(function(err) {
+        content.innerHTML = '<div class="dfx-empty">Search failed: ' + err.message + '</div>';
+      });
+  }
+  
+  window.showUserProfile = function(index) {
+    if (window._searchResults && window._searchResults[index]) {
+      showProfile(window._searchResults[index]);
+    }
+  };
+  
+  // Tab switching
+  document.querySelectorAll('.dfx-profile-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.dfx-profile-tab').forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+    });
+  });
+  
+  // Search
+  $('search-input').addEventListener('input', function(e) {
+    clearTimeout(searchTimeout);
+    var query = e.target.value.trim();
+    searchTimeout = setTimeout(function() {
+      searchUsers(query);
+    }, 300);
+  });
+  
+  // Register with shell
+  window.DogeFeedX.registerApp({
+    id: 'profile',
+    name: 'Profile',
+    icon: '/dogefeedx/icon-profile.png',
+    url: '/dogefeedx/profile'
+  });
+})();
+</script>
+{% endblock %}

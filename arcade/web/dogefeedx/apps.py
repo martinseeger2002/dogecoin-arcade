@@ -164,6 +164,30 @@ FEED_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <path d="M48 48 L50 50 L53 46" stroke="#000" stroke-width="1.5" fill="none"/>
 </svg>"""
 
+PROFILE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<defs><linearGradient id="pg" x1="0%" y1="0%" x2="0%" y2="100%">
+<stop offset="0%" style="stop-color:#2a2a2a"/><stop offset="100%" style="stop-color:#1a1a1a"/>
+</linearGradient></defs>
+<rect width="64" height="64" rx="12" fill="url(#pg)"/>
+<circle cx="32" cy="24" r="12" fill="#d9a520"/>
+<path d="M16 54 C16 42 24 36 32 36 C40 36 48 42 48 54" fill="#d9a520"/>
+<circle cx="32" cy="24" r="8" fill="#1a1a1a"/>
+<text x="32" y="28" text-anchor="middle" font-size="10" fill="#d9a520" font-weight="bold">D</text>
+</svg>"""
+
+MARKET_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<defs><linearGradient id="mg" x1="0%" y1="0%" x2="0%" y2="100%">
+<stop offset="0%" style="stop-color:#1a1a1a"/><stop offset="100%" style="stop-color:#000"/>
+</linearGradient></defs>
+<rect width="64" height="64" rx="12" fill="url(#mg)"/>
+<rect x="10" y="14" width="20" height="20" rx="4" fill="#d9a520"/>
+<rect x="34" y="14" width="20" height="20" rx="4" fill="#888"/>
+<rect x="10" y="38" width="20" height="20" rx="4" fill="#888"/>
+<rect x="34" y="38" width="20" height="20" rx="4" fill="#d9a520"/>
+<text x="20" y="28" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">Ð</text>
+<text x="44" y="52" text-anchor="middle" font-size="10" fill="#000" font-weight="bold">Ð</text>
+</svg>"""
+
 
 @router.get("/icon-explorer.png")
 async def icon_explorer():
@@ -190,6 +214,24 @@ async def icon_feed():
     if path.is_file():
         return FileResponse(path, media_type="image/png")
     return Response(content=FEED_ICON_SVG, media_type="image/svg+xml")
+
+
+@router.get("/icon-profile.png")
+async def icon_profile():
+    """Serve the Profile app icon (SVG fallback)."""
+    path = Path(__file__).parent / "templates" / "dogefeedx" / "icon-profile.png"
+    if path.is_file():
+        return FileResponse(path, media_type="image/png")
+    return Response(content=PROFILE_ICON_SVG, media_type="image/svg+xml")
+
+
+@router.get("/icon-market.png")
+async def icon_market():
+    """Serve the Market app icon (SVG fallback)."""
+    path = Path(__file__).parent / "templates" / "dogefeedx" / "icon-market.png"
+    if path.is_file():
+        return FileResponse(path, media_type="image/png")
+    return Response(content=MARKET_ICON_SVG, media_type="image/svg+xml")
 
 
 # --- Explorer API ---
@@ -941,3 +983,13 @@ def register_routes(app, render):
     def dogefeedx_feed(request: Request):
         """The DogeFeed social feed - Twitter/X-style post timeline."""
         return render(request, "dogefeedx/feed.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/profile", response_class=HTMLResponse)
+    def dogefeedx_profile(request: Request):
+        """The DogeFeed profile hub - user profiles with holdings and activity."""
+        return render(request, "dogefeedx/profile.html", fullscreen=True)
+    
+    @app.get("/dogefeedx/market", response_class=HTMLResponse)
+    def dogefeedx_market(request: Request):
+        """The DogeFeed market - listings sorted cheapest first."""
+        return render(request, "dogefeedx/market.html", fullscreen=True)

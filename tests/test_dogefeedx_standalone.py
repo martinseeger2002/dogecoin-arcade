@@ -40,6 +40,18 @@ def test_feed_html_exists():
     assert path.is_file(), f"feed.html not found at {path}"
 
 
+def test_profile_html_exists():
+    """Profile template exists."""
+    path = DOGEFEEDX_PATH / "profile.html"
+    assert path.is_file(), f"profile.html not found at {path}"
+
+
+def test_market_html_exists():
+    """Market template exists."""
+    path = DOGEFEEDX_PATH / "market.html"
+    assert path.is_file(), f"market.html not found at {path}"
+
+
 def test_dogefeedx_apps_py_exists():
     """DogeFeedX Python apps module exists."""
     path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py"
@@ -159,6 +171,57 @@ def test_feed_html_registers_with_shell():
     content = path.read_text()
     assert "DogeFeedX.registerApp" in content, "Missing shell registration"
     assert "'feed'" in content or '"feed"' in content, "Missing app ID"
+
+
+def test_profile_html_has_profile_layout():
+    """Profile HTML has user profile layout."""
+    path = DOGEFEEDX_PATH / "profile.html"
+    content = path.read_text()
+    assert "dfx-profile" in content, "Missing profile class"
+    assert "dfx-profile-avatar" in content, "Missing avatar"
+    assert "dfx-profile-stats" in content, "Missing stats"
+
+
+def test_profile_html_has_holdings():
+    """Profile HTML has holdings/doginals section."""
+    path = DOGEFEEDX_PATH / "profile.html"
+    content = path.read_text()
+    assert "Holdings" in content, "Missing holdings tab"
+    assert "dfx-holdings-grid" in content, "Missing holdings grid"
+
+
+def test_profile_html_registers_with_shell():
+    """Profile registers itself with the shell."""
+    path = DOGEFEEDX_PATH / "profile.html"
+    content = path.read_text()
+    assert "DogeFeedX.registerApp" in content, "Missing shell registration"
+    assert "'profile'" in content or '"profile"' in content, "Missing app ID"
+
+
+def test_market_html_has_market_layout():
+    """Market HTML has marketplace layout."""
+    path = DOGEFEEDX_PATH / "market.html"
+    content = path.read_text()
+    assert "dfx-market" in content, "Missing market class"
+    assert "dfx-market-grid" in content, "Missing grid"
+    assert "dfx-market-card" in content, "Missing cards"
+
+
+def test_market_html_has_categories():
+    """Market HTML has collection/DRC-20/items tabs."""
+    path = DOGEFEEDX_PATH / "market.html"
+    content = path.read_text()
+    assert "Collections" in content, "Missing collections tab"
+    assert "DRC-20" in content, "Missing DRC-20 tab"
+    assert "Items" in content, "Missing items tab"
+
+
+def test_market_html_registers_with_shell():
+    """Market registers itself with the shell."""
+    path = DOGEFEEDX_PATH / "market.html"
+    content = path.read_text()
+    assert "DogeFeedX.registerApp" in content, "Missing shell registration"
+    assert "'market'" in content or '"market"' in content, "Missing app ID"
 
 
 def test_dogefeedx_apps_has_api_routes():

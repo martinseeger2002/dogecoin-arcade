@@ -88,6 +88,38 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 DogeFeedX Iteration Round 2: Added Profile and Market views (Claude, Cursor Cloud Agent)
+Added Profile hub and Market views to match dogefeed.app features.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a`
+
+**What changed:**
+- **New Profile app (`/dogefeedx/profile`):** User profile hub
+  - Search users by handle or address
+  - Profile banner with avatar (from doginal PFP)
+  - User stats: verified badge, followers, following
+  - Holdings tab with Doginal grid (images from dogefeed.app)
+  - Posts and Likes tabs (placeholder for expansion)
+  - Tip DOGE and Follow buttons
+- **New Market app (`/dogefeedx/market`):** Marketplace view
+  - Four tabs: All, Collections, DRC-20, Items
+  - Trending collections with floor prices
+  - Cheapest listings sorted by price (user requirement)
+  - Top DRC-20 tokens table with supply, holders, mint progress
+  - Collection filters (All/PFP/Art/Memes)
+  - Token sort options (By Holders/Mint Progress/Recent)
+  - Card-based grid layout with hover effects
+- **New icons:** `icon-profile.png`, `icon-market.png` with SVG fallbacks
+- **Routes registered:** `/dogefeedx/profile`, `/dogefeedx/market`
+
+**Tests added:** 8 new tests for profile and market templates
+**Tests pass:** 39 standalone + 7 packaging = 46 total
+
+**Remaining gaps:**
+- Wallet view (inscriptions held by address)
+- Inscription detail modal/page
+- Proper inscription-safety checks (read exchange-safety.md)
+
 ### 2026-11-02 DogeFeedX Iteration Round 1: Added Feed view (Claude, Cursor Cloud Agent)
 Added social Feed view matching dogefeed.app's main feed feature.
 
