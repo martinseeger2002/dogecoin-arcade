@@ -124,8 +124,10 @@ body {
   margin-bottom: 16px;
 }
 .dfx-market-section-title {
-  font-size: 20px;
-  font-weight: 700;
+  font-family: var(--font-heading);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--dfx-cream);
 }
 .dfx-market-section-more {
   color: var(--dfx-brand);
@@ -142,14 +144,16 @@ body {
 }
 .dfx-market-card {
   background: var(--dfx-card-bg);
-  border-radius: 12px;
+  border-radius: 16px;
   overflow: hidden;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
   cursor: pointer;
+  border: 1px solid transparent;
 }
 .dfx-market-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  transform: translateY(-6px) scale(1.02);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  border-color: var(--dfx-brand);
 }
 .dfx-market-card-image {
   aspect-ratio: 1;
@@ -162,26 +166,28 @@ body {
   object-fit: cover;
 }
 .dfx-market-card-info {
-  padding: 12px;
+  padding: 14px;
 }
 .dfx-market-card-name {
+  font-family: var(--font-heading);
   font-weight: 600;
-  font-size: 14px;
+  font-size: 15px;
   margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--dfx-cream);
 }
 .dfx-market-card-collection {
-  font-size: 12px;
-  color: var(--dfx-text-muted);
-  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--dfx-tan);
+  margin-bottom: 10px;
 }
 .dfx-market-card-price {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 14px;
+  gap: 6px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--dfx-brand);
 }
