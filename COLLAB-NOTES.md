@@ -88,16 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-11-03 DogeFeedX Round 7: UI polish for Market and Profile (Claude, Cursor Cloud Agent)
-Continued matching DogeFeed styling with improved cards and typography.
+### 2026-11-03 DogeFeedX Rounds 7-8: Complete DogeFeed typography (Claude, Cursor Cloud Agent)
+Completed DogeFeed font matching across all views.
 
 **Branch:** `cursor/dogefeedx-combined-fd4a`
 
-**What changed:**
-- **Market cards:** Rounded corners (16px), gold border on hover, scale animation
-- **Section titles:** Fredoka heading font
-- **Profile name:** Fredoka heading font, cream color
-- **Primary buttons:** Brand tint hover color
+**What changed (Round 7):**
+- Market cards: Rounded corners (16px), gold border on hover, scale animation
+- Section titles: Fredoka heading font
+- Profile name: Fredoka heading font, cream color
+- Primary buttons: Brand tint hover color
+
+**What changed (Round 8):**
+- Wallet title: Fredoka heading font, cream color
+- Wallet subtitle: Tan muted color
+- Wallet button: Ink color, brand-tint hover
+- Inscription title: Fredoka heading font, cream color
 
 **Tests pass:** 51 standalone + 7 packaging = 58 total
 
