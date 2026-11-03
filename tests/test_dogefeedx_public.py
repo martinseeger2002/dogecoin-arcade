@@ -249,7 +249,9 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     assert "[data-skin=\"dogefeedx\"] .dk { top: 28px; left: 0; bottom: 0;" in desk
     assert "[data-skin=\"dogefeedx\"] .dk-dock { display: flex; position: fixed; left: 50%; bottom: 0;" in desk
     files = (TEMPLATES / "files.html").read_text()
-    assert "/dogefeedx/api/wallet/holdings" in files
+    helper = (TEMPLATES / "_wallet.js.html").read_text()
+    assert "/dogefeedx/api/wallet/holdings" in helper and "/dogefeedx/api/wallet/addresses" in helper
+    assert 'include "dogefeedx/_wallet.js.html"' in files and "dfxHoldingsUrl" in files
     assert "/account/nfts/collections" not in files and "/account/nfts/pieces" not in files
     assert "/account/token20?chain=" not in files and "/account/names" not in files
     assert "Import a watch-only address on this node" in files
@@ -277,15 +279,23 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     assert "Top posts this week" in explore and "Top earners today" in explore
     assert "range=1d" in explore and "document.body.classList.add('df-dogefeed')" in explore
     assert "flex: none" in explore and "flex: none" in feed and "flex: none" in profile
-    assert 'class="df-hero-btn primary" href="/me"' in feed
+    assert "Sign in" not in feed and "sign-in" not in feed.lower()
+    assert "the social feed paid in DOGE" in feed and "Explore" in feed
+    assert 'href="/me"' not in feed
     wallet = (TEMPLATES / "wallet.html").read_text()
     assert "Sample Addresses" not in wallet and "nghHJba6wBoWesbYQfkZiMTicoQANkpdvH" not in wallet
     nfts = (TEMPLATES / "nfts.html").read_text()
-    assert "/dogefeedx/api/wallet/holdings" in nfts
+    assert 'include "dogefeedx/_wallet.js.html"' in nfts and "dfxHoldingsUrl" in nfts
     assert "Import a watch-only address on this node" in nfts
     assert "/dogefeedx/api/market/doginals" not in nfts
     assert 'id="meme-count"' in memes
     assert 'id="lookup-u"' in profile
+    assert 'id="df-wallet-select"' in profile
+    assert 'include "dogefeedx/_wallet.js.html"' in profile
+    assert "/dogefeedx/api/wallet/addresses" in helper
+    assert "w: 640, h: 620" in desk and "w: 440, h: 560" in desk
+    assert "w: dock.w || 640" in desk and "layout.dfxWin" in desk
+    assert 'class="dk-df-logo"' in desk and "[data-skin=\"dogefeedx\"] .dk-start .dk-brand-icon { display: none !important; }" in desk
     assert "boardRange" in (TEMPLATES / "leaderboard.html").read_text()
     assert "parse_arcade" in apps and '"/api/arcade"' in apps
     for name in (
@@ -295,6 +305,8 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     ):
         page = (TEMPLATES / name).read_text()
         assert "Sign in coming soon" not in page
+        low = page.lower()
+        assert "sign in" not in low and "sign-in" not in low, name
         assert 'href="#" class="df-nav-item' not in page
         assert "inscribe.doginals.org" not in page
         assert '<nav class="df-sidebar">' not in page

@@ -39,8 +39,8 @@ a { color:#f3e3a5; }
   <label><input type="checkbox" id="n-reposts"> Reposts</label>
   <label><input type="checkbox" id="n-market"> Market sales, purchases and offers</label>
 
-  <h2>Account</h2>
-  <p class="note">Sign-in is this arcade's key, not a DogeFeed account. <a href="/join?next=/dogefeedx/settings">Sign in</a> · <a href="/me">Your arcade</a></p>
+  <h2>Wallet</h2>
+  <p class="note">Identity is the wallet chosen on Profile. Those addresses are the ones already imported into this node's Dogecoin Core. No DogeFeed account.</p>
   <button type="button" class="save" id="save">Save on this browser</button>
   <p id="said" class="note"></p>
 </div>
@@ -61,7 +61,6 @@ a { color:#f3e3a5; }
     var bits = [];
     if (a && a.tag) bits.push('Chain name @' + a.tag);
     if (a && a.profile && a.profile.url) bits.push(a.profile.url);
-    if (!a || !a.pubkey) bits.push('Not signed in.');
     document.getElementById('chain-name').textContent = bits.join(' · ');
   }).catch(function () {});
   document.getElementById('save').addEventListener('click', function () {

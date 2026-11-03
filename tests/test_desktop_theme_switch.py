@@ -183,7 +183,7 @@ def test_switch_theme_from_every_look_and_the_dock_does_not_repeat(base):
 
 
 def test_market_window_is_dark_and_its_columns_do_not_cover_each_other(base):
-    """The Market window on the DogeFeedX desktop: dark board, loaded thumbnails, Sign in in the sidebar."""
+    """The Market window on the DogeFeedX desktop: dark board, loaded thumbnails, no site nav."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:

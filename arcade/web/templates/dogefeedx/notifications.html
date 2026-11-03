@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Notifications · DogeFeed{% endblock %}
 {% block body %}
-{#- DogeFeedX Notifications: Sign-in required page matching dogefeed.app/notifications -#}
+{#- DogeFeedX Notifications. This arcade's notices. No DogeFeed account. -#}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -251,7 +251,7 @@ html.indesk body.df-dogefeed .df-search { background: #111 !important; }
     var rows = items.filter(function (i) { return !bucket || i.bucket === bucket; });
     var box = document.getElementById('note-list');
     if (!rows.length) {
-      box.innerHTML = '<p class="df-empty">' + (items.signedOut ? 'Sign in on this arcade to see likes, comments, reposts, sales and offers.' : 'Nothing here yet.') + '</p>';
+      box.innerHTML = '<p class="df-empty">Nothing here yet.</p>';
       return;
     }
     box.innerHTML = rows.map(function (i) {

@@ -141,7 +141,7 @@ def test_the_reader_never_lists_coins_or_asks_for_a_key():
     ):
         assert banned not in MODULE
     apps = (ROOT / "arcade" / "web" / "dogefeedx" / "apps.py").read_text()
-    for name in ("api_balance", "api_address_inscriptions", "api_address_tokens", "api_wallet_holdings", "api_lookup"):
+    for name in ("api_balance", "api_address_inscriptions", "api_address_tokens", "api_wallet_holdings", "api_wallet_addresses", "api_lookup"):
         start = apps.index(f"async def {name}")
         nxt = apps.find("\n@router.", start + 10)
         body = apps[start:nxt if nxt > start else start + 2500]

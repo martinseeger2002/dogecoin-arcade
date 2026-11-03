@@ -55,6 +55,7 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
     <div id="files-body"><p class="empty">Looking up this arcade wallet…</p></div>
   </div>
 </div>
+{% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function () {
   var body = document.getElementById('files-body');
@@ -223,7 +224,8 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
     if (open.kind === 'collection') paintPieces();
     else paint();
   });
-  fetch('/dogefeedx/api/wallet/holdings', {credentials: 'same-origin', cache: 'no-store'})
+  function loadFiles() {
+  fetch(dfxHoldingsUrl(), {credentials: 'same-origin', cache: 'no-store'})
     .then(function (r) { return r.ok ? r.json() : {}; })
     .then(function (data) {
       signed = !!(data && data.imported);
@@ -243,6 +245,9 @@ html.indesk body.df-dogefeed .folder { width:100% !important; height:auto !impor
       paint();
     })
     .catch(function () { signed = false; body.innerHTML = '<p class="empty">Could not read this wallet.</p>'; });
+  }
+  dfxEnsureWallet().then(loadFiles);
+  dfxBindWallet(function () { loadFiles(); });
 })();
 </script>
 {% endblock %}

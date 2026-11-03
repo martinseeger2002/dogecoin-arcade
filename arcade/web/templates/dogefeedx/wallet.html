@@ -415,6 +415,7 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
   
 </div>
 
+{% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function() {
   'use strict';
@@ -484,12 +485,13 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
       });
   }
 
+  var imported = [];
   window.lookupAddress = function() {
     var address = document.getElementById('address-input').value.trim();
-    if (!address) {
-      loadHoldings('');
-      return;
-    }
+    if (!address) address = dfxReadWallet();
+    if (address && imported.indexOf(address) >= 0) dfxWriteWallet(address);
+    var box = document.getElementById('address-input');
+    if (box && address) box.value = address;
     loadHoldings(address);
   };
   
@@ -512,7 +514,16 @@ html.indesk body.df-dogefeed .df-tab { color: #fff6dd !important; }
     });
   });
 
-  loadHoldings('');
+  function showSelected(addr) {
+    var box = document.getElementById('address-input');
+    if (box) box.value = addr || '';
+    loadHoldings(addr || '');
+  }
+  dfxEnsureWallet().then(function (w) {
+    imported = w.addresses || [];
+    showSelected(w.selected);
+  });
+  dfxBindWallet(function (addr) { showSelected(addr); });
   
   // Register with shell
   if (window.DogeFeedX && window.DogeFeedX.registerApp) {

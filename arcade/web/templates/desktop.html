@@ -37,7 +37,7 @@ document.documentElement.setAttribute('data-skin', (function () {
 
 <div class="dk-task" id="dk-task">
   <button type="button" class="dk-start w98-btn" id="dk-start" aria-haspopup="menu" aria-expanded="false">
-    <img src="/icon-32.png" alt="" width="16" height="16"><b>Start</b></button>
+    <img class="dk-brand-icon" src="/icon-32.png" alt="" width="16" height="16"><svg class="dk-df-logo" viewBox="-16 -16 456 472" width="18" height="18" aria-hidden="true"><g transform="translate(-44,-50)"><path d="M90,100 Q94,50 136,74 L222,138 Q256,126 290,138 L376,74 Q418,50 422,100 L440,226 Q462,272 462,318 C462,390 404,444 332,444 L212,444 L100,480 Q62,490 78,454 L106,396 Q50,360 50,304 Q50,266 72,228 Z" fill="#fff6dd" stroke="#fff6dd" stroke-width="32" stroke-linejoin="round"></path><path d="M90,100 Q94,50 136,74 L222,138 Q256,126 290,138 L376,74 Q418,50 422,100 L440,226 Q462,272 462,318 C462,390 404,444 332,444 L212,444 L100,480 Q62,490 78,454 L106,396 Q50,360 50,304 Q50,266 72,228 Z" fill="#f3e3a5"></path><polygon points="124,110 104,196 184,146" fill="#f3e3a5" stroke="#f3e3a5" stroke-width="20" stroke-linejoin="round"></polygon><polygon points="388,110 408,196 328,146" fill="#f3e3a5" stroke="#f3e3a5" stroke-width="20" stroke-linejoin="round"></polygon><path d="M112,354 C132,302 192,300 256,318 C320,300 380,302 400,354 C392,414 330,440 256,440 C182,440 120,414 112,354 Z" fill="#fff6dd"></path><ellipse cx="178" cy="222" rx="20" ry="13" fill="#fff6dd"></ellipse><ellipse cx="334" cy="222" rx="20" ry="13" fill="#fff6dd"></ellipse><ellipse cx="180" cy="274" rx="23" ry="28" fill="#1b1b1b"></ellipse><ellipse cx="332" cy="274" rx="23" ry="28" fill="#1b1b1b"></ellipse><circle cx="188" cy="264" r="7" fill="#fff6dd"></circle><circle cx="340" cy="264" r="7" fill="#fff6dd"></circle><path d="M232,326 C232,313 280,313 280,326 C280,342 266,352 256,352 C246,352 232,342 232,326 Z" fill="#1b1b1b"></path><path d="M256,350 V366 M218,368 C228,384 248,384 256,366 C264,384 284,384 294,368" fill="none" stroke="#1b1b1b" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"></path></g></svg><b>Start</b></button>
   <span class="dk-grip" aria-hidden="true"></span>
   <div class="dk-tbtns" id="dk-tbtns"></div>
   <div class="dk-tray" id="dk-tray">
@@ -643,7 +643,9 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
 [data-skin="dogefeedx"] .dk-task .dk-grip, [data-skin="dogefeedx"] .dk-tbtns { display: none; }
 [data-skin="dogefeedx"] .dk-start { height: 22px; padding: 0 10px !important; background: none !important; box-shadow: none !important;
   color: var(--df-gold) !important; border-radius: 4px !important; font-family: var(--df-font-heading); font-weight: 600; font-size: 14px; }
-[data-skin="dogefeedx"] .dk-start img { display: inline-block; width: 18px; height: 18px; filter: none; }
+.dk-df-logo { display: none; }
+[data-skin="dogefeedx"] .dk-start .dk-brand-icon { display: none !important; }
+[data-skin="dogefeedx"] .dk-df-logo { display: block; width: 18px; height: 18px; flex: none; }
 [data-skin="dogefeedx"] .dk-start b { display: none; }
 [data-skin="dogefeedx"] .dk-start::after { content: " DogeFeed"; font-weight: 600; color: var(--df-gold); }
 [data-skin="dogefeedx"] .dk-start:hover, [data-skin="dogefeedx"] .dk-start.down { background: rgba(255,255,255,.1) !important; }
@@ -942,22 +944,22 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
                      glyph: ['#d9a520', '#141310', 'M3 7a2 2 0 0 1 2-2h11v4M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2zM12 12l4 4M16 12v4h-4']};
   // DogeFeedX dock, in Billy's order. Each one opens a window and is not also a desktop icon.
   var DFX_DOCK = [
-    {k: 'dfxhome', name: 'Home', url: '/dogefeedx/feed', glyph: ['#f3e3a5', '#1b1b1b', 'M4 11l8-7 8 7v9H4z']},
-    {k: 'dfxprofile', name: 'Profile', url: '/dogefeedx/profile', glyph: ['#f3e3a5', '#1b1b1b', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8']},
-    {k: 'dfxfiles', name: 'Files', url: '/dogefeedx/files', glyph: ['#f3e3a5', '#1b1b1b', 'M3 7h6l2 2h10v10H3z']},
-    {k: 'dfxnotifications', name: 'Notifications', url: '/dogefeedx/notifications', glyph: ['#f3e3a5', '#1b1b1b', 'M12 3a6 6 0 0 0-6 6c0 7-3 7-3 7h18s-3 0-3-7a6 6 0 0 0-6-6zM10 20a2 2 0 0 0 4 0']},
-    {k: 'dfxmessages', name: 'Messages', url: '/dogefeedx/messages', glyph: ['#f3e3a5', '#1b1b1b', 'M4 5h16v10H7l-3 3z']},
-    {k: 'dfxexplore', name: 'Explore', url: '/dogefeedx/explore', glyph: ['#f3e3a5', '#1b1b1b', 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35']},
-    {k: 'dfxmarket', name: 'Market', url: '/dogefeedx/market', glyph: ['#f3e3a5', '#1b1b1b', 'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 22V12h6v10']},
-    {k: 'dfxinscribe', name: 'Inscribe', url: '/dogefeedx/inscribe', glyph: ['#f3e3a5', '#1b1b1b', 'M12 20h9M16.5 3.5a2 2 0 0 1 3 3L8 18l-4 1 1-4z']},
-    {k: 'dfxwallet', name: 'Wallet', url: '/dogefeedx/wallet', glyph: ['#f3e3a5', '#1b1b1b', 'M3 7h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3zM16 12h3']},
-    {k: 'dfxlaunchpad', name: 'Launchpad', url: '/dogefeedx/launchpad', glyph: ['#f3e3a5', '#1b1b1b', 'M5 16c-1 1-2 4-2 4s3-1 4-2c1-1 1-2 0-3s-2-1-2 1zM12 14l-2-2c2-2 6-6 10-8-2 4-6 8-8 10z']},
-    {k: 'dfxnfts', name: 'NFTs', url: '/dogefeedx/nfts', glyph: ['#f3e3a5', '#1b1b1b', 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z']},
-    {k: 'dfxarcade', name: 'Arcade', url: '/dogefeedx/arcade', glyph: ['#f3e3a5', '#1b1b1b', 'M6 8h12a2 2 0 0 1 2 2v6H4v-6a2 2 0 0 1 2-2zM8 16v3M16 16v3M8 11h.01M12 11h.01']},
-    {k: 'dfxbookmarks', name: 'Bookmarks', url: '/dogefeedx/bookmarks', glyph: ['#f3e3a5', '#1b1b1b', 'M7 3h10a1 1 0 0 1 1 1v17l-6-4-6 4V4a1 1 0 0 1 1-1z']},
-    {k: 'dfxmemes', name: 'Meme Library', url: '/dogefeedx/memes', glyph: ['#f3e3a5', '#1b1b1b', 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9 10h.01M15 10h.01M8 15s1.5 2 4 2 4-2 4-2']},
-    {k: 'dfxleaderboard', name: 'Leaderboard', url: '/dogefeedx/leaderboard', glyph: ['#f3e3a5', '#1b1b1b', 'M8 21l4-2 4 2V9H8zM6 4h12v3H6z']},
-    {k: 'dfxsettings', name: 'Settings', url: '/dogefeedx/settings', glyph: ['#f3e3a5', '#1b1b1b', 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 12h2M18 12h2M12 4v2M12 18v2']}
+    {k: 'dfxhome', name: 'Home', url: '/dogefeedx/feed', w: 640, h: 620, glyph: ['#f3e3a5', '#1b1b1b', 'M4 11l8-7 8 7v9H4z']},
+    {k: 'dfxprofile', name: 'Profile', url: '/dogefeedx/profile', w: 440, h: 560, glyph: ['#f3e3a5', '#1b1b1b', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8']},
+    {k: 'dfxfiles', name: 'Files', url: '/dogefeedx/files', w: 760, h: 480, glyph: ['#f3e3a5', '#1b1b1b', 'M3 7h6l2 2h10v10H3z']},
+    {k: 'dfxnotifications', name: 'Notifications', url: '/dogefeedx/notifications', w: 480, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M12 3a6 6 0 0 0-6 6c0 7-3 7-3 7h18s-3 0-3-7a6 6 0 0 0-6-6zM10 20a2 2 0 0 0 4 0']},
+    {k: 'dfxmessages', name: 'Messages', url: '/dogefeedx/messages', w: 520, h: 460, glyph: ['#f3e3a5', '#1b1b1b', 'M4 5h16v10H7l-3 3z']},
+    {k: 'dfxexplore', name: 'Explore', url: '/dogefeedx/explore', w: 560, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35']},
+    {k: 'dfxmarket', name: 'Market', url: '/dogefeedx/market', w: 780, h: 560, glyph: ['#f3e3a5', '#1b1b1b', 'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 22V12h6v10']},
+    {k: 'dfxinscribe', name: 'Inscribe', url: '/dogefeedx/inscribe', w: 640, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M12 20h9M16.5 3.5a2 2 0 0 1 3 3L8 18l-4 1 1-4z']},
+    {k: 'dfxwallet', name: 'Wallet', url: '/dogefeedx/wallet', w: 720, h: 540, glyph: ['#f3e3a5', '#1b1b1b', 'M3 7h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3zM16 12h3']},
+    {k: 'dfxlaunchpad', name: 'Launchpad', url: '/dogefeedx/launchpad', w: 900, h: 580, glyph: ['#f3e3a5', '#1b1b1b', 'M5 16c-1 1-2 4-2 4s3-1 4-2c1-1 1-2 0-3s-2-1-2 1zM12 14l-2-2c2-2 6-6 10-8-2 4-6 8-8 10z']},
+    {k: 'dfxnfts', name: 'NFTs', url: '/dogefeedx/nfts', w: 680, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z']},
+    {k: 'dfxarcade', name: 'Arcade', url: '/dogefeedx/arcade', w: 640, h: 480, glyph: ['#f3e3a5', '#1b1b1b', 'M6 8h12a2 2 0 0 1 2 2v6H4v-6a2 2 0 0 1 2-2zM8 16v3M16 16v3M8 11h.01M12 11h.01']},
+    {k: 'dfxbookmarks', name: 'Bookmarks', url: '/dogefeedx/bookmarks', w: 480, h: 420, glyph: ['#f3e3a5', '#1b1b1b', 'M7 3h10a1 1 0 0 1 1 1v17l-6-4-6 4V4a1 1 0 0 1 1-1z']},
+    {k: 'dfxmemes', name: 'Meme Library', url: '/dogefeedx/memes', w: 720, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9 10h.01M15 10h.01M8 15s1.5 2 4 2 4-2 4-2']},
+    {k: 'dfxleaderboard', name: 'Leaderboard', url: '/dogefeedx/leaderboard', w: 640, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M8 21l4-2 4 2V9H8zM6 4h12v3H6z']},
+    {k: 'dfxsettings', name: 'Settings', url: '/dogefeedx/settings', w: 480, h: 560, glyph: ['#f3e3a5', '#1b1b1b', 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 12h2M18 12h2M12 4v2M12 18v2']}
   ];
   // ---------- DogeFeedX Apps (only shown in DogeFeedX theme) ----------
   if (DFX) {
@@ -1001,6 +1003,12 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
 
   // DogeFeedX dock apps: items here appear in the dock, NOT on the desktop (per Billy's design rule)
   var DFX_DOCK_APPS = DFX_DOCK.map(function (a) { return a.k; });
+  // Old builds remembered a near full-screen rect. Drop those once so each module opens at its own size.
+  if (DFX && layout.dfxWin !== 2) {
+    DFX_DOCK_APPS.forEach(function (k) { delete layout.rects[k]; });
+    layout.dfxWin = 2;
+    save();
+  }
   // Arcade pages the dock apps already stand in for. Same name, not a second icon.
   var DFX_COVERS = {
     '/': 'dfxhome', '/feed': 'dfxhome', '/explore': 'dfxexplore',
@@ -1181,7 +1189,8 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
     if (it.kind === 'shortcuts') { openShortcuts(); return; }
     if (it.kind === 'store') { openStore(); return; }
     if (DFX_DOCK_APPS.indexOf(k) >= 0) {
-      openWin({key: k, url: it.href, name: it.name, item: it, w: 1100, h: 760});
+      var dock = DFX_DOCK.filter(function (a) { return a.k === k; })[0] || {};
+      openWin({key: k, url: it.href, name: it.name, item: it, w: dock.w || 640, h: dock.h || 520});
       return;
     }
     // DogeFeedX-specific apps: check for registered app first, then fall back to built-in
@@ -2633,19 +2642,19 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
 
   // ---------- DogeFeedX apps: Profile, Market, Terminal, Network, Explorer ----------
   function openDfxFeed() {
-    openWin({key: 'dfxfeed', url: '/dogefeedx/feed', name: 'Feed', item: byKey.dfxfeed, w: 1100, h: 760});
+    openWin({key: 'dfxfeed', url: '/dogefeedx/feed', name: 'Feed', item: byKey.dfxfeed, w: 640, h: 620});
   }
 
   function openDfxExplore() {
-    openWin({key: 'dfxexplore', url: '/dogefeedx/explore', name: 'Explore', item: byKey.dfxexplore, w: 1100, h: 760});
+    openWin({key: 'dfxexplore', url: '/dogefeedx/explore', name: 'Explore', item: byKey.dfxexplore, w: 560, h: 520});
   }
 
   function openDfxProfile() {
-    openWin({key: 'dfxprofile', url: '/dogefeedx/profile', name: 'Profile', item: byKey.dfxprofile, w: 1100, h: 760});
+    openWin({key: 'dfxprofile', url: '/dogefeedx/profile', name: 'Profile', item: byKey.dfxprofile, w: 440, h: 560});
   }
 
   function openDfxMarket() {
-    openWin({key: 'dfxmarket', url: '/dogefeedx/market', name: 'Market', item: byKey.dfxmarket, w: 1100, h: 760});
+    openWin({key: 'dfxmarket', url: '/dogefeedx/market', name: 'Market', item: byKey.dfxmarket, w: 780, h: 560});
   }
 
   function openDfxTerminal() {

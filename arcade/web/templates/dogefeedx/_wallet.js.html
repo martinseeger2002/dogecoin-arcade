@@ -1,0 +1,39 @@
+<script>
+function dfxWalletKey() { return 'dogefeedx.wallet'; }
+function dfxReadWallet() {
+  try { return localStorage.getItem(dfxWalletKey()) || ''; } catch (e) { return ''; }
+}
+function dfxWriteWallet(addr) {
+  try {
+    if (addr) localStorage.setItem(dfxWalletKey(), addr);
+    else localStorage.removeItem(dfxWalletKey());
+  } catch (e) {}
+}
+function dfxHoldingsUrl(addr) {
+  var chosen = addr == null ? dfxReadWallet() : addr;
+  return '/dogefeedx/api/wallet/holdings' + (chosen ? ('?address=' + encodeURIComponent(chosen)) : '');
+}
+function dfxBindWallet(onChange) {
+  window.addEventListener('storage', function (e) {
+    if (e.key === dfxWalletKey()) onChange(dfxReadWallet());
+  });
+}
+function dfxEnsureWallet() {
+  return fetch('/dogefeedx/api/wallet/addresses', {credentials: 'same-origin', cache: 'no-store'})
+    .then(function (r) { return r.ok ? r.json() : {addresses: []}; })
+    .then(function (data) {
+      var list = (data && data.addresses) || [];
+      var cur = dfxReadWallet();
+      if (list.length && list.indexOf(cur) < 0) {
+        cur = list[0];
+        dfxWriteWallet(cur);
+      }
+      if (!list.length) {
+        cur = '';
+        if (dfxReadWallet()) dfxWriteWallet('');
+      }
+      return {addresses: list, selected: cur};
+    })
+    .catch(function () { return {addresses: [], selected: ''}; });
+}
+</script>

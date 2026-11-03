@@ -691,7 +691,7 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
         <span>DOGE payments enabled</span>
       </div>
       <div class="df-topbar-right">
-        <a class="df-topbar-btn" href="/me" style="text-decoration:none;color:#000">Sign in</a>
+        <span id="df-who"></span>
       </div>
     </div>
     
@@ -699,7 +699,6 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
       <h1>DogeFeed: the social feed paid in DOGE</h1>
       <p>Every post is a bark. Posts are free and off chain; likes, follows and tips go to creators in DOGE on Dogecoin (L1), or ETH on Robinhood Chain (L2). Read everything without an account.</p>
       <div class="df-hero-btns">
-        <a class="df-hero-btn primary" href="/me" style="text-decoration:none;color:#000">Sign in</a>
         <button class="df-hero-btn secondary" onclick="location.href='/dogefeedx/explore'">Explore</button>
       </div>
     </div>
@@ -716,7 +715,7 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
       <div class="df-composer-avatar">
         <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
       </div>
-      <div class="df-composer-input">What's the latest? Sign in to bark.</div>
+      <div class="df-composer-input">What's the latest?</div>
     </div>
     <div class="df-draft" id="df-draft" hidden></div>
     
@@ -732,8 +731,13 @@ html.indesk body.df-dogefeed .df-search input { width:auto !important; flex:1; b
   
 </div>
 
+{% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function () {
+  dfxEnsureWallet().then(function (w) {
+    var who = document.getElementById('df-who');
+    if (who) who.textContent = w.selected || '';
+  });
   var box = document.getElementById('df-draft');
   if (!box) return;
   function show() {

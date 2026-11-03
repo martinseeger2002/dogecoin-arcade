@@ -1203,6 +1203,15 @@ async def api_wallet_holdings(address: str = ""):
     return public_view(merge_holdings(parts) if parts else empty_holdings())
 
 
+@router.get("/api/wallet/addresses")
+async def api_wallet_addresses():
+    """Dogecoin addresses this node's wallet already watches. Address strings only."""
+    from .wallet_assets import node_watch_addresses
+
+    watched = await asyncio.to_thread(node_watch_addresses)
+    return {"addresses": list(watched), "source": "node"}
+
+
 @router.get("/api/lookup")
 async def api_lookup(name: str = ""):
     """A name from this arcade's name index. The claim's outpoint is not returned."""

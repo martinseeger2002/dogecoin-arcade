@@ -124,10 +124,14 @@ a { color: inherit; text-decoration: none; }
 
 /* Banner */
 .df-banner {
-  height: 200px;
+  height: 96px;
   background: linear-gradient(135deg, var(--df-gold-light) 0%, var(--df-gold) 100%);
   position: relative;
 }
+.df-wallet-switch { margin: 4px 0 8px; }
+.df-wallet-switch label { display: block; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--df-text-secondary); margin-bottom: 4px; }
+.df-wallet-switch select { width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--df-border); background: #111; color: inherit; font: inherit; }
+html.indesk body.df-dogefeed .df-wallet-switch select { background: #111 !important; color: #fff6dd !important; width: 100% !important; }
 .df-banner img { width: 100%; height: 100%; object-fit: cover; }
 
 /* Profile Info */
@@ -137,12 +141,12 @@ a { color: inherit; text-decoration: none; }
 }
 .df-avatar-container {
   position: relative;
-  margin-top: -67px;
-  margin-bottom: 12px;
+  margin-top: -36px;
+  margin-bottom: 8px;
 }
 .df-avatar {
-  width: 134px;
-  height: 134px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
   border: 4px solid var(--df-bg);
   overflow: hidden;
@@ -405,8 +409,10 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
       <div class="df-avatar-container">
         <div class="df-avatar" id="avatar"></div>
       </div>
-      <div class="df-profile-actions">
-        <a class="df-follow-btn" href="/me" style="text-decoration:none;color:#000;text-align:center">Sign in to follow</a>
+      <div class="df-wallet-switch" id="df-wallet-switch">
+        <label for="df-wallet-select">Wallet</label>
+        <select id="df-wallet-select" aria-label="Imported wallet"></select>
+        <p id="df-wallet-empty" class="df-empty" style="padding:8px 0" hidden>No wallets imported on this node.</p>
       </div>
       <div class="df-profile-name" id="profile-name">Profile</div>
       <div class="df-profile-handle" id="profile-handle"></div>
@@ -449,6 +455,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
   
 </div>
 
+{% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function() {
   'use strict';
@@ -536,7 +543,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
     if (profileTab === 'nfts') {
       container.innerHTML = '<div class="df-loading"><div class="df-spinner"></div></div>';
       more.hidden = true;
-      fetch('/dogefeedx/api/wallet/holdings')
+      fetch(dfxHoldingsUrl())
         .then(function(r) { return r.json(); })
         .then(function(data) {
           var mine = (data.names || []).some(function(n) { return n.name === profileHandle; }) || data.profile === profileHandle;
@@ -671,13 +678,60 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
     });
   });
 
-  if (!profileHandle) {
-    fetch('/dogefeedx/api/wallet/holdings')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data && data.profile) location.replace('/dogefeedx/profile?u=' + encodeURIComponent(data.profile));
+  function paintSwitch(w) {
+    var sel = document.getElementById('df-wallet-select');
+    var empty = document.getElementById('df-wallet-empty');
+    if (!sel) return;
+    sel.innerHTML = '';
+    var list = (w && w.addresses) || [];
+    if (!list.length) {
+      sel.hidden = true;
+      if (empty) empty.hidden = false;
+      return;
+    }
+    sel.hidden = false;
+    if (empty) empty.hidden = true;
+    list.forEach(function (addr) {
+      var opt = document.createElement('option');
+      opt.value = addr;
+      opt.textContent = addr;
+      if (addr === w.selected) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  function loadWalletIdentity(addr) {
+    fetch(dfxHoldingsUrl(addr || ''))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var names = (data.names || []).map(function (n) { return n.name; }).filter(Boolean);
+        var saved = {};
+        try { saved = JSON.parse(localStorage.getItem('dogefeedx.profile') || '{}'); } catch (e) {}
+        var chain = data.profile || names[0] || '';
+        var short = addr && addr.length > 12 ? addr.slice(0, 6) + '…' + addr.slice(-4) : (addr || 'Profile');
+        var label = saved.displayName || chain || short;
+        document.getElementById('profile-name').textContent = label;
+        document.getElementById('topbar-name').textContent = label;
+        document.getElementById('profile-handle').textContent = addr || '';
+        var rest = names.filter(function (n) { return n !== chain; });
+        document.getElementById('profile-bio').textContent = data.empty && !data.imported ? data.empty : rest.join(' · ');
+        var bits = [];
+        if (data.balance_doge) bits.push(data.balance_doge + ' DOGE');
+        var pieces = 0;
+        (data.collections || []).forEach(function (c) { pieces += Number(c.count) || (c.pieces || []).length; });
+        if (pieces) bits.push(pieces + ' doginals');
+        document.getElementById('profile-joined').textContent = bits.join(' · ');
       })
-      .catch(function() {});
+      .catch(function () {});
+  }
+
+  var walletSelect = document.getElementById('df-wallet-select');
+  if (walletSelect) {
+    walletSelect.addEventListener('change', function () {
+      dfxWriteWallet(walletSelect.value);
+      if (profileHandle) location.href = '/dogefeedx/profile';
+      else loadWalletIdentity(walletSelect.value);
+    });
   }
 
   document.getElementById('posts-list').addEventListener('click', function(e) {
@@ -697,8 +751,23 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
     });
   }
   
-  // Initial load
-  loadPosts();
+  if (!profileHandle) {
+    var tabRow = document.querySelector('.df-tabs');
+    var posts = document.getElementById('profile-content');
+    if (tabRow) tabRow.hidden = true;
+    if (posts) posts.hidden = true;
+    document.getElementById('topbar-posts').textContent = '';
+  }
+  dfxEnsureWallet().then(function (w) {
+    paintSwitch(w);
+    if (!profileHandle) loadWalletIdentity(w.selected);
+  });
+  dfxBindWallet(function (addr) {
+    var sel = document.getElementById('df-wallet-select');
+    if (sel && addr && sel.value !== addr) sel.value = addr;
+    if (!profileHandle) loadWalletIdentity(addr);
+  });
+  if (profileHandle) loadPosts();
   loadSidebar();
 })();
 </script>

@@ -24,7 +24,7 @@ nothing is written to dogefeed.app.
 | Dock module | What it shows | Source of truth |
 |---|---|---|
 | Home | Public social feed | dogefeed.app `/api/feed` (read-only). Not a wallet. |
-| Profile | A handle's public posts; NFT tab | Posts from dogefeed.app. NFT tab is this node's holdings, and only when the open handle is a name the index holds. |
+| Profile | The selected Core wallet, as a compact card | Wallet switcher lists addresses from `/dogefeedx/api/wallet/addresses` (this node's watch list). The choice is stored in this browser and is the address Wallet, Files, NFTs, and Profile read. A public handle's posts still come from dogefeed.app. |
 | Files | Collections, DRC-20, names | Node indexes via `/dogefeedx/api/wallet/holdings`. Catalog names and covers from dogefeed.app `/market`. |
 | Notifications | This arcade's notices | Local `/dogefeedx/api/local/notifications`. |
 | Messages | This arcade's messages | Local arcade account. No dogefeed auth. |

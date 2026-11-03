@@ -374,6 +374,7 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
   
 </div>
 
+{% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function() {
   'use strict';
@@ -436,7 +437,7 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
   function loadNFTs() {
     var container = document.getElementById('df-nfts');
     container.innerHTML = '<div class="df-loading"><div class="df-spinner"></div></div>';
-    fetch('/dogefeedx/api/wallet/holdings')
+    fetch(dfxHoldingsUrl())
       .then(function(r) { return r.json(); })
       .then(function(data) {
         nftRows = data.collections || [];
@@ -457,7 +458,8 @@ html.indesk body.df-dogefeed .df-hero-btn { background: #f3e3a5 !important; colo
     });
   });
   
-  loadNFTs();
+  dfxEnsureWallet().then(loadNFTs);
+  dfxBindWallet(function () { loadNFTs(); });
 })();
 </script>
 {% endblock %}
