@@ -325,6 +325,27 @@ def test_desktop_dock_apps_not_on_desktop():
            "Missing design rule documentation"
 
 
+def test_dogefeedx_uses_dogefeed_fonts():
+    """DogeFeedX views should use DogeFeed's fonts (Fredoka, Nunito)."""
+    views = ["feed.html", "profile.html", "market.html", "wallet.html", "inscription.html"]
+    
+    for view in views:
+        path = DOGEFEEDX_PATH / view
+        content = path.read_text()
+        
+        # Check for Google Fonts link
+        assert "fonts.googleapis.com" in content, f"{view} missing Google Fonts"
+        
+        # Check for Fredoka (heading font)
+        assert "Fredoka" in content, f"{view} missing Fredoka font"
+        
+        # Check for Nunito (body font)
+        assert "Nunito" in content, f"{view} missing Nunito font"
+        
+        # Check for font-heading CSS variable
+        assert "--font-heading" in content, f"{view} missing --font-heading variable"
+
+
 def test_dogefeedx_apps_has_api_routes():
     """DogeFeedX apps module has API routes."""
     path = PROJECT_ROOT / "arcade" / "web" / "dogefeedx" / "apps.py"
