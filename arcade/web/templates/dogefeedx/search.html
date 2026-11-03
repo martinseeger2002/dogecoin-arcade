@@ -467,18 +467,7 @@ a { color: inherit; text-decoration: none; }
   <aside class="df-right">
     <div class="df-card">
       <h2 class="df-card-title">Trending</h2>
-      <div class="df-trend" onclick="document.getElementById('search-input').value='dogecoin';doSearch()">
-        <div class="df-trend-label">1 · Trending</div>
-        <div class="df-trend-tag">#dogecoin</div>
-      </div>
-      <div class="df-trend" onclick="document.getElementById('search-input').value='ordinals';doSearch()">
-        <div class="df-trend-label">2 · Trending</div>
-        <div class="df-trend-tag">#ordinals</div>
-      </div>
-      <div class="df-trend" onclick="document.getElementById('search-input').value='drc20';doSearch()">
-        <div class="df-trend-label">3 · Trending</div>
-        <div class="df-trend-tag">#drc20</div>
-      </div>
+      <div id="side-trending"><div class="df-loading"><div class="df-spinner"></div></div></div>
     </div>
   </aside>
 </div>
@@ -619,6 +608,27 @@ a { color: inherit; text-decoration: none; }
     searchInput.value = q;
     doSearch();
   }
+
+  fetch('/dogefeedx/api/sidebar')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var box = document.getElementById('side-trending');
+      if (!box) return;
+      box.innerHTML = (data.trending || []).map(function(t) {
+        return '<div class="df-trend" data-tag="' + t.tag + '"><div class="df-trend-label">' + t.rank +
+          ' · Trending</div><div class="df-trend-tag">#' + t.tag + '</div></div>';
+      }).join('') || '<div class="df-empty">No trends</div>';
+      box.addEventListener('click', function(e) {
+        var row = e.target.closest('[data-tag]');
+        if (!row) return;
+        searchInput.value = row.getAttribute('data-tag');
+        doSearch();
+      });
+    })
+    .catch(function() {
+      var box = document.getElementById('side-trending');
+      if (box) box.innerHTML = '<div class="df-empty">Could not load trends</div>';
+    });
 })();
 </script>
 {% endblock %}

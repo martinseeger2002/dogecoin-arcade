@@ -3,15 +3,24 @@
 
 Run with: python3 test_dogefeedx_server.py
 Access at: http://localhost:8080/dogefeedx/feed
+
+This server proxies API requests to the real dogefeed.app API.
+NO MOCK DATA - all data comes from the live dogefeed.app API.
 """
 from pathlib import Path
 import uvicorn
+import json
+from markupsafe import Markup
 from jinja2 import Environment, FileSystemLoader, select_autoescape, TemplateNotFound
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 
+from arcade.web.dogefeedx.apps import router as dogefeedx_router
+
 app = FastAPI(title="DogeFeedX Test Server")
+# Same read-only dogefeed.app proxies the arcade serves. No local fixtures.
+app.include_router(dogefeedx_router)
 
 # Template directory
 TEMPLATE_DIR = Path(__file__).parent / "arcade" / "web" / "templates"
@@ -41,6 +50,7 @@ env = Environment(
     loader=TestTemplateLoader(str(TEMPLATE_DIR)),
     autoescape=select_autoescape(['html', 'xml'])
 )
+env.filters["tojson"] = lambda value: Markup(json.dumps(value))
 
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 templates.env = env
@@ -97,92 +107,7 @@ async def shell_js():
         return FileResponse(path, media_type="application/javascript")
     return HTMLResponse("// no shell.js", media_type="application/javascript")
 
-# DogeFeedX API routes (mock data)
-@app.get("/dogefeedx/api/feed")
-async def api_feed(limit: int = 20):
-    """Mock feed data for testing."""
-    return {
-        "items": [
-            {
-                "id": "post1",
-                "author": {
-                    "handle": "dogelord",
-                    "displayName": "Doge Lord",
-                    "avatarUrl": "https://dogefeed.app/doginal-img/sample1",
-                    "verifiedPfp": True
-                },
-                "body": "Much wow, very Dogecoin! The future is here. #dogecoin",
-                "createdAt": "2026-11-03T00:00:00Z",
-                "counts": {"likes": 42, "branches": 5}
-            },
-            {
-                "id": "post2",
-                "author": {
-                    "handle": "shibamaster",
-                    "displayName": "Shiba Master",
-                    "avatarUrl": "https://dogefeed.app/doginal-img/sample2",
-                    "verifiedPfp": True
-                },
-                "body": "Building the future of digital collectibles on Dogecoin.",
-                "createdAt": "2026-11-02T23:30:00Z",
-                "counts": {"likes": 28, "branches": 3}
-            },
-            {
-                "id": "post3",
-                "author": {
-                    "handle": "cryptodoge",
-                    "displayName": "Crypto Doge",
-                    "avatarUrl": "",
-                    "verifiedPfp": False
-                },
-                "body": "GM everyone! Ready for another great day in the Doge ecosystem!",
-                "createdAt": "2026-11-02T23:00:00Z",
-                "counts": {"likes": 15, "branches": 1}
-            }
-        ],
-        "source": "mock"
-    }
-
-@app.get("/dogefeedx/api/collections")
-async def api_collections(limit: int = 50, sort: str = "name", q: str = ""):
-    """Mock collections data."""
-    return {
-        "collections": [
-            {"id": "doginal-dogs", "name": "Doginal Dogs", "item_count": 10000, "holder_count": 2500, "sample_item_ids": []},
-            {"id": "doge-punks", "name": "Doge Punks", "item_count": 5000, "holder_count": 1200, "sample_item_ids": []},
-            {"id": "shiba-society", "name": "Shiba Society", "item_count": 3000, "holder_count": 800, "sample_item_ids": []},
-        ],
-        "total": 3,
-        "source": "mock"
-    }
-
-@app.get("/dogefeedx/api/search")
-async def api_search(q: str = "", type: str = "all"):
-    """Mock search results."""
-    return {
-        "query": q,
-        "users": [
-            {"handle": "dogelord", "display_name": "Doge Lord", "verified_pfp": True, "avatar_url": ""},
-        ],
-        "posts": [],
-        "source": "mock"
-    }
-
-@app.get("/dogefeedx/api/inscription")
-async def api_inscription(id: str = ""):
-    """Mock inscription data."""
-    return {
-        "inscription": {
-            "id": id or "sample123",
-            "number": 12345,
-            "content_type": "image/png",
-            "collection": "Doginal Dogs",
-            "owner": "D1234567890abcdef"
-        },
-        "source": "mock"
-    }
-
-# DogeFeedX page routes
+# DogeFeedX page routes. JSON comes from dogefeedx.router above (live dogefeed.app).
 @app.get("/dogefeedx/feed", response_class=HTMLResponse)
 def dogefeedx_feed(request: Request):
     return render(request, "dogefeedx/feed.html")
@@ -242,6 +167,40 @@ def dogefeedx_inscription(request: Request):
 @app.get("/dogefeedx/post", response_class=HTMLResponse)
 def dogefeedx_post(request: Request):
     return render(request, "dogefeedx/post.html")
+
+@app.get("/dogefeedx/explorer", response_class=HTMLResponse)
+def dogefeedx_explorer(request: Request):
+    return render(request, "dogefeedx/explorer.html")
+
+@app.get("/dogefeedx/terminal", response_class=HTMLResponse)
+def dogefeedx_terminal(request: Request):
+    return render(request, "dogefeedx/terminal.html")
+
+@app.get("/dogefeedx/network", response_class=HTMLResponse)
+def dogefeedx_network(request: Request):
+    return render(request, "dogefeedx/network.html")
+
+@app.get("/desktop", response_class=HTMLResponse)
+def desktop_view(request: Request):
+    """DogeFeedX desktop theme, so pages can be checked inside a window."""
+    nav = [
+        ("/me", "You", None, True),
+        ("/", "Home", None, True),
+        ("/feed", "Feed", None, True),
+        ("/me/wallet", "Wallet", None, True),
+        ("/me/messages", "Messages", None, True),
+    ]
+    return render(
+        request, "desktop.html",
+        nav=nav,
+        desk_default="dogefeedx",
+        apps=[],
+        ord_nets=[],
+        coins=[],
+        system={"version": "test", "node": "", "chains": []},
+        operator_view=False,
+        account_name=None,
+    )
 
 if __name__ == "__main__":
     print("Starting DogeFeedX test server at http://localhost:8080")

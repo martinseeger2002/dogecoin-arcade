@@ -102,10 +102,13 @@ async def _fetch_dogefeed_explorer(path: str, params: dict | None = None) -> dic
 
 # --- Static files ---
 
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "templates" / "dogefeedx"
+
+
 @router.get("/aqua.css")
 async def aqua_css():
     """Serve the Aqua theme CSS."""
-    path = Path(__file__).parent / "templates" / "dogefeedx" / "aqua.css"
+    path = _STATIC_DIR / "aqua.css"
     if path.is_file():
         return FileResponse(path, media_type="text/css")
     raise HTTPException(status_code=404)
@@ -114,7 +117,7 @@ async def aqua_css():
 @router.get("/shell.js")
 async def shell_js():
     """Serve the shell registration JavaScript."""
-    path = Path(__file__).parent / "templates" / "dogefeedx" / "shell.js"
+    path = _STATIC_DIR / "shell.js"
     if path.is_file():
         return FileResponse(path, media_type="application/javascript")
     raise HTTPException(status_code=404)
@@ -257,10 +260,14 @@ async def icon_wallet():
 
 # --- Explorer API ---
 
+_FEED_TABS = {"for-you", "latest", "following", "top", "hot"}
+
+
 @router.get("/api/feed")
 async def api_feed(
     limit: int = 20,
-    cursor: str = ""
+    cursor: str = "",
+    tab: str = "for-you",
 ):
     """Get the DogeFeed social feed from dogefeed.app.
     
@@ -268,14 +275,15 @@ async def api_feed(
     This is the primary dogefeed.app data source.
     """
     limit = min(max(1, limit), 50)
+    tab = tab if tab in _FEED_TABS else "for-you"
     
-    cache_key = f"feed:{cursor}:{limit}"
+    cache_key = f"feed:{tab}:{cursor}:{limit}"
     cached = _get_cached(_collection_cache, cache_key, ttl=60)  # 1 min cache for feed
     if cached is not None:
         return cached
     
     try:
-        params = {"tab": "for-you", "limit": limit}
+        params = {"tab": tab, "limit": limit}
         if cursor:
             params["cursor"] = cursor
         data = await _fetch_dogefeed_app("/api/feed", params)
@@ -315,6 +323,141 @@ async def api_feed(
     except Exception as e:
         logger.warning(f"Error fetching feed: {e}")
         return {"items": [], "doginal_holders": [], "source": "dogefeed.app", "error": str(e)}
+
+
+@router.get("/api/posts/{post_id}")
+async def api_post(post_id: str):
+    """One public post, its ancestors and its replies. Empty on failure."""
+    from .public_read import PublicReadError, empty, fetch_json, valid_post_id
+
+    try:
+        post_id = valid_post_id(post_id)
+        data = await fetch_json(f"/api/posts/{post_id}")
+        data["source"] = "dogefeed.app"
+        return data
+    except (PublicReadError, HTTPException) as e:
+        return empty(str(getattr(e, "detail", e) or e), post=None, replies=[])
+    except Exception as e:
+        logger.warning(f"Error fetching post: {e}")
+        return empty("unreachable", post=None, replies=[])
+
+
+@router.get("/api/users/{handle}/posts")
+async def api_user_posts(handle: str, tab: str = "posts", limit: int = 20):
+    """A public profile's posts, plus follower counts from the public profile page."""
+    from .public_read import (
+        PublicReadError, empty, fetch_html, fetch_json, parse_profile_card, valid_handle,
+    )
+
+    try:
+        handle = valid_handle(handle)
+        tab = tab if tab in ("posts", "replies", "media", "likes") else "posts"
+        limit = min(max(1, limit), 40)
+        data = await fetch_json(
+            f"/api/users/{handle}/posts",
+            {"tab": tab, "limit": limit},
+        )
+        card = {}
+        try:
+            card = parse_profile_card(await fetch_html(f"/u/{handle}"), handle)
+        except Exception:
+            card = {}
+        author = None
+        for item in data.get("items") or []:
+            if item.get("author"):
+                author = item["author"]
+                break
+        return {
+            "handle": handle,
+            "author": author,
+            "card": card,
+            "items": data.get("items") or [],
+            "nextCursor": data.get("nextCursor"),
+            "source": "dogefeed.app",
+        }
+    except (PublicReadError, HTTPException) as e:
+        return empty(str(getattr(e, "detail", e) or e), handle=handle, author=None, card={}, items=[])
+    except Exception as e:
+        logger.warning(f"Error fetching profile: {e}")
+        return empty("unreachable", handle=handle, author=None, card={}, items=[])
+
+
+@router.get("/api/sidebar")
+async def api_sidebar():
+    """Trending tags, who to follow, and the 7-day earner list from the public home page."""
+    from .public_read import empty, fetch_html, parse_leaderboard, parse_suggestions, parse_trending
+
+    try:
+        html = await fetch_html("/")
+        return {
+            "trending": parse_trending(html),
+            "suggestions": parse_suggestions(html),
+            "earners": parse_leaderboard(html),
+            "source": "dogefeed.app",
+        }
+    except Exception as e:
+        logger.warning(f"Error fetching sidebar: {e}")
+        return empty("unreachable", trending=[], suggestions=[], earners=[])
+
+
+@router.get("/api/leaderboard")
+async def api_leaderboard(range: str = "7d"):
+    """Public earner board. `range` is 1d, 7d, 30d or all. Empty on failure."""
+    from .public_read import empty, fetch_html, parse_leaderboard_page
+
+    if range not in ("1d", "7d", "30d", "all"):
+        range = "7d"
+    try:
+        html = await fetch_html("/leaderboard", {"range": range})
+        return {
+            "range": range,
+            "earners": parse_leaderboard_page(html),
+            "source": "dogefeed.app",
+        }
+    except Exception as e:
+        logger.warning(f"Error fetching leaderboard: {e}")
+        return empty("unreachable", range=range, earners=[])
+
+
+@router.get("/api/market/doginals")
+async def api_market_doginals():
+    """Doginal collections as dogefeed.app renders them on /market."""
+    from .public_read import empty, fetch_html, parse_market
+
+    try:
+        return parse_market(await fetch_html("/market"))
+    except Exception as e:
+        logger.warning(f"Error fetching market: {e}")
+        return empty("unreachable", stats={}, collections=[])
+
+
+@router.get("/api/market/drc20")
+async def api_market_drc20(q: str = ""):
+    """Public DRC-20 market board from dogefeed.app."""
+    from .public_read import empty, fetch_json
+
+    try:
+        params = {"q": q} if q else None
+        data = await fetch_json("/api/drc20/market", params)
+        data["source"] = "dogefeed.app"
+        return data
+    except Exception as e:
+        logger.warning(f"Error fetching DRC-20 market: {e}")
+        return empty("unreachable", ok=False, tokens=[])
+
+
+@router.get("/api/price")
+async def api_price():
+    """Public DOGE/USD price dogefeed.app publishes. Empty on failure."""
+    from .public_read import empty, fetch_json
+
+    try:
+        data = await fetch_json("/api/price")
+        data["source"] = "dogefeed.app"
+        return data
+    except Exception as e:
+        logger.warning(f"Error fetching price: {e}")
+        return empty("unreachable", ok=False, price=None)
 
 
 async def _fetch_collection_sample_items(collection_id: str, count: int = 3) -> list[str]:

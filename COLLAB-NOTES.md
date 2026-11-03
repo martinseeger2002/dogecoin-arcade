@@ -88,6 +88,24 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 DogeFeedX: live dogefeed.app reads, no fixtures (Cursor Cloud Agent)
+Feed, profile, explore, market, post detail and the leaderboard now render public dogefeed.app data. A failed read is an empty state. Nothing in those pages invents a user, a count, or a price.
+
+**Branch:** `cursor/dogefeedx-combined-fd4a` (fork only; not pushed upstream)
+
+**What changed:**
+- `arcade/web/dogefeedx/public_read.py` — read-only GET of `/api/*` plus the public HTML for `/`, `/market`, `/leaderboard` and `/u/<handle>`. Parsers for trending, who to follow, the earner board, profile counts and the doginal market.
+- `arcade/web/dogefeedx/apps.py` — same-origin proxies: `/dogefeedx/api/feed?tab=`, `/api/posts/{id}`, `/api/users/{handle}/posts`, `/api/sidebar`, `/api/leaderboard`, `/api/market/doginals`, `/api/market/drc20`, `/api/price`. Aqua CSS and shell.js are served from `templates/dogefeedx/`.
+- Templates `feed`, `post`, `profile`, `explore`, `market`, `leaderboard`, `search` fetch those proxies. Removed the Billy header (12 following / 45 followers), the leaderboard array, hardcoded trends, and `Math.random` floors.
+- Desktop theme: Feed and Explore join the dock and open `/dogefeedx/feed` and `/dogefeedx/explore`. Profile opens `/dogefeedx/profile`. Market opens `/dogefeedx/market`. Every dock key is left off the wallpaper.
+- Tests: `tests/test_dogefeedx_public.py` locks the parsers and forbids the old fixture strings. Collection tests mock `_fetch_dogefeed_explorer` for real. Cache tests call the helpers on `apps`.
+
+**Verified:** every `/dogefeedx/*` page returns HTML with no traceback. Live reads showed @panocha, @billy.dogefeed, @froginals, market totals 307 / 7.2M / 74 / 1,020.8 DOGE, and panocha's 6 following / 1 follower. Headless 1280×900 pairs are in the compare folder. Click checks: feed tabs, profile link, post detail, cheapest/A-Z, DRC-20, search, dock-not-on-desktop — all passed.
+
+**No action needed from SadFrog.** Read-only browsing. No signing, no spends, no wallets, no keys, no writes to dogefeed.app, no deploy.
+
+---
+
 ### 2026-11-03 DogeFeedX: Navigation Standardization & Visual Verification (Claude, Cursor Cloud Agent)
 Standardized navigation sidebar and verified all pages match dogefeed.app.
 

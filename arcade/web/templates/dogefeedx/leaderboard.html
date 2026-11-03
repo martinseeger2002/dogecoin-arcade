@@ -426,36 +426,7 @@ a { color: inherit; text-decoration: none; }
     
     <div class="df-card">
       <h2 class="df-card-title">Trending</h2>
-      <div class="df-trend">
-        <div class="df-trend-label">1 · Trending on DogeFeed</div>
-        <div class="df-trend-tag">#dogecoin</div>
-        <div class="df-trend-count">2 posts</div>
-      </div>
-      <div class="df-trend">
-        <div class="df-trend-label">2 · Trending on DogeFeed</div>
-        <div class="df-trend-tag">#builders</div>
-        <div class="df-trend-count">1 post</div>
-      </div>
-      <div class="df-trend">
-        <div class="df-trend-label">3 · Trending on DogeFeed</div>
-        <div class="df-trend-tag">#devs</div>
-        <div class="df-trend-count">1 post</div>
-      </div>
-      <div class="df-trend">
-        <div class="df-trend-label">4 · Trending on DogeFeed</div>
-        <div class="df-trend-tag">#gm</div>
-        <div class="df-trend-count">1 post</div>
-      </div>
-      <div class="df-trend">
-        <div class="df-trend-label">5 · Trending on DogeFeed</div>
-        <div class="df-trend-tag">#secureyourstations</div>
-        <div class="df-trend-count">1 post</div>
-      </div>
-      <div class="df-trend">
-        <div class="df-trend-label">6 · Trending on DogeFeed</div>
-        <div class="df-trend-tag">#security</div>
-        <div class="df-trend-count">1 post</div>
-      </div>
+      <div id="side-trending"><div class="df-loading"><div class="df-spinner"></div></div></div>
       <div class="df-card-more">Explore more</div>
     </div>
     
@@ -477,77 +448,78 @@ a { color: inherit; text-decoration: none; }
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   
-  var leaderboardData = [
-    { rank: 1, name: 'Bot2 Test', handle: 'bot2test', amount: '+8 DOGE', avatar: '' },
-    { rank: 2, name: 'Billy', handle: 'billy.dogefeed', amount: '+2 DOGE', avatar: '', verified: true },
-    { rank: 3, name: 'mr. Ð', handle: 'immr_d', amount: '+1.1 DOGE', avatar: '' },
-    { rank: 4, name: 'froginal_dogs', handle: 'froginals', amount: '+0.1 DOGE', avatar: '', verified: true },
-    { rank: 5, name: 'Latoshi', handle: 'latoshi', amount: '+0.1 DOGE', avatar: '' },
-    { rank: 6, name: 'Swizz', handle: 'hellododo', amount: '+0.1 DOGE', avatar: '' },
-  ];
-  
-  function renderLeaderboard() {
-    var html = leaderboardData.map(function(e) {
-      return '<div class="df-leaderboard-item">' +
+  var boardRange = '7d';
+
+  function renderLeaderboard(earners) {
+    var html = (earners || []).map(function(e) {
+      var avatar = e.avatar ? (e.avatar.charAt(0) === '/' ? IMG_BASE + e.avatar : e.avatar) : '';
+      return '<a class="df-leaderboard-item" href="/dogefeedx/profile?u=' + encodeURIComponent(e.handle) + '">' +
         '<div class="df-leaderboard-rank">' + e.rank + '</div>' +
-        '<div class="df-leaderboard-avatar"><img src="' + IMG_BASE + (e.avatar || '/api/media/placeholder.png') + '" alt="" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 48 48%22><rect fill=%22%23f5a623%22 width=%2248%22 height=%2248%22/></svg>\'"></div>' +
+        '<div class="df-leaderboard-avatar">' + (avatar ? '<img src="' + esc(avatar) + '" alt="">' : '') + '</div>' +
         '<div class="df-leaderboard-info">' +
         '<div class="df-leaderboard-name">' + esc(e.name) +
         (e.verified ? '<svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
         '</div>' +
         '<div class="df-leaderboard-handle">@' + esc(e.handle) + '</div>' +
         '</div>' +
-        '<div class="df-leaderboard-amount">' + e.amount + '</div>' +
-        '</div>';
+        '<div class="df-leaderboard-amount">' + esc(e.amount) + '</div>' +
+        '</a>';
     }).join('');
-    
     document.getElementById('df-leaderboard').innerHTML = html || '<div class="df-empty">No earners yet</div>';
   }
-  
-  function loadSuggestions() {
-    fetch('/dogefeedx/api/feed?limit=5')
+
+  function loadBoard() {
+    fetch('/dogefeedx/api/leaderboard?range=' + encodeURIComponent(boardRange))
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        var posts = data.items || [];
-        var seen = {};
-        var users = [];
-        posts.forEach(function(p) {
-          if (p.author && !seen[p.author.handle]) {
-            seen[p.author.handle] = true;
-            users.push(p.author);
-          }
-        });
-        
-        var html = users.slice(0, 3).map(function(u) {
-          var avatar = u.avatarUrl ? (u.avatarUrl.startsWith('/') ? IMG_BASE + u.avatarUrl : u.avatarUrl) : '';
-          return '<div class="df-follow">' +
+        if (data.error && !(data.earners && data.earners.length)) {
+          document.getElementById('df-leaderboard').innerHTML = '<div class="df-empty">Could not load leaderboard</div>';
+          return;
+        }
+        renderLeaderboard(data.earners || []);
+      })
+      .catch(function() {
+        document.getElementById('df-leaderboard').innerHTML = '<div class="df-empty">Could not load leaderboard</div>';
+      });
+  }
+
+  function loadSuggestions() {
+    fetch('/dogefeedx/api/sidebar')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        document.getElementById('side-trending').innerHTML = (data.trending || []).map(function(t) {
+          return '<div class="df-trend"><div class="df-trend-label">' + t.rank + ' · Trending on DogeFeed</div>' +
+            '<div class="df-trend-tag">#' + esc(t.tag) + '</div><div class="df-trend-count">' + esc(t.count) + '</div></div>';
+        }).join('') || '<div class="df-empty">No trends</div>';
+        document.getElementById('df-suggestions').innerHTML = (data.suggestions || []).slice(0, 3).map(function(u) {
+          var avatar = u.avatar ? (u.avatar.charAt(0) === '/' ? IMG_BASE + u.avatar : u.avatar) : '';
+          return '<a class="df-follow" href="/dogefeedx/profile?u=' + encodeURIComponent(u.handle) + '">' +
             '<div class="df-follow-avatar">' + (avatar ? '<img src="' + esc(avatar) + '" alt="">' : '') + '</div>' +
-            '<div class="df-follow-info">' +
-            '<div class="df-follow-name">' + esc(u.displayName || u.handle) +
-            (u.verifiedPfp ? '<svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
-            '</div>' +
-            '<div class="df-follow-handle">@' + esc(u.handle) + '</div>' +
-            '</div>' +
-            '<button class="df-follow-btn">Follow</button>' +
-            '</div>';
-        }).join('');
-        
-        document.getElementById('df-suggestions').innerHTML = html || '<div class="df-empty">No suggestions</div>';
+            '<div class="df-follow-info"><div class="df-follow-name">' + esc(u.name || u.handle) + '</div>' +
+            '<div class="df-follow-handle">@' + esc(u.handle) + '</div></div></a>';
+        }).join('') || '<div class="df-empty">No suggestions</div>';
       })
       .catch(function() {
         document.getElementById('df-suggestions').innerHTML = '<div class="df-empty">Could not load</div>';
       });
   }
-  
+
   document.querySelectorAll('.df-tab').forEach(function(tab) {
     tab.addEventListener('click', function() {
       document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
       tab.classList.add('active');
-      renderLeaderboard();
+      boardRange = tab.getAttribute('data-period') || '7d';
+      loadBoard();
     });
   });
-  
-  renderLeaderboard();
+
+  document.querySelectorAll('.df-search input').forEach(function(inp) {
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && inp.value.trim()) location.href = '/dogefeedx/search?q=' + encodeURIComponent(inp.value.trim());
+    });
+  });
+
+  loadBoard();
   loadSuggestions();
 })();
 </script>

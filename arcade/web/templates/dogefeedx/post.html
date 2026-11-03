@@ -683,12 +683,12 @@ a { color: inherit; text-decoration: none; }
     }
     html += '</div>';
     html += '<div class="df-post-author-info">';
-    html += '<div class="df-post-name">' + esc(displayName);
+    html += '<div class="df-post-name"><a href="/dogefeedx/profile?u=' + encodeURIComponent(handle) + '">' + esc(displayName) + '</a>';
     if (verified) {
       html += '<svg class="df-post-verified" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
     }
     html += '</div>';
-    html += '<div class="df-post-handle">@' + esc(handle) + '</div>';
+    html += '<div class="df-post-handle"><a href="/dogefeedx/profile?u=' + encodeURIComponent(handle) + '">@' + esc(handle) + '</a></div>';
     html += '</div>';
     html += '<button class="df-post-more">···</button>';
     html += '</div>';
@@ -763,90 +763,62 @@ a { color: inherit; text-decoration: none; }
   
   function loadPost() {
     var postId = getPostId();
-    
-    fetch(API_BASE + '/feed?limit=20')
-      .then(function(r) { return r.json(); })
+    if (!postId) {
+      document.getElementById('df-post').innerHTML = '<div class="df-empty">No post selected</div>';
+      document.getElementById('df-replies').innerHTML = '';
+      return;
+    }
+
+    fetch(API_BASE + '/posts/' + encodeURIComponent(postId))
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
       .then(function(data) {
-        var posts = data.items || [];
-        var post = null;
-        var postIndex = -1;
-        
-        if (postId) {
-          for (var i = 0; i < posts.length; i++) {
-            if (posts[i].id === postId) {
-              post = posts[i];
-              postIndex = i;
-              break;
-            }
-          }
-        }
-        
-        if (!post && posts.length > 0) {
-          post = posts[0];
-          postIndex = 0;
-        }
-        
-        if (post) {
-          document.getElementById('df-post').innerHTML = renderPost(post);
-          
-          var replies = [];
-          var parentHandle = post.author ? post.author.handle : '';
-          for (var j = postIndex + 1; j < Math.min(postIndex + 4, posts.length); j++) {
-            replies.push(posts[j]);
-          }
-          
-          if (replies.length > 0) {
-            document.getElementById('df-replies').innerHTML = replies.map(function(r) {
-              return renderReply(r, parentHandle);
-            }).join('');
-          } else {
-            document.getElementById('df-replies').innerHTML = '<div class="df-empty">No replies yet</div>';
-          }
-        } else {
-          document.getElementById('df-post').innerHTML = '<div class="df-empty">Post not found</div>';
+        var post = data.post;
+        if (!post) {
+          document.getElementById('df-post').innerHTML = '<div class="df-empty">' + (data.error ? 'Could not load post' : 'Post not found') + '</div>';
           document.getElementById('df-replies').innerHTML = '';
+          return;
         }
+        document.getElementById('df-post').innerHTML = renderPost(post);
+        var parentHandle = post.author ? post.author.handle : '';
+        var replies = data.replies || [];
+        document.getElementById('df-replies').innerHTML = replies.length
+          ? replies.map(function(r) { return renderReply(r, parentHandle); }).join('')
+          : '<div class="df-empty">No replies yet</div>';
       })
       .catch(function(err) {
         console.error('Post error:', err);
-        document.getElementById('df-post').innerHTML = '<div class="df-empty">Could not load post</div>';
+        document.getElementById('df-post').innerHTML = '<div class="df-empty">Could not load post. Check your connection.</div>';
+        document.getElementById('df-replies').innerHTML = '';
       });
   }
-  
+
   function loadSuggestions() {
-    fetch(API_BASE + '/feed?limit=5')
+    fetch(API_BASE + '/sidebar')
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        var posts = data.items || [];
-        var seen = {};
-        var users = [];
-        posts.forEach(function(p) {
-          if (p.author && !seen[p.author.handle]) {
-            seen[p.author.handle] = true;
-            users.push(p.author);
-          }
-        });
-        
+        var users = data.suggestions || [];
         var html = users.slice(0, 3).map(function(u) {
-          var avatar = u.avatarUrl ? (u.avatarUrl.startsWith('/') ? IMG_BASE + u.avatarUrl : u.avatarUrl) : '';
-          return '<div class="df-follow">' +
+          var avatar = u.avatar ? (u.avatar.charAt(0) === '/' ? IMG_BASE + u.avatar : u.avatar) : '';
+          return '<a class="df-follow" href="/dogefeedx/profile?u=' + encodeURIComponent(u.handle) + '">' +
             '<div class="df-follow-avatar">' +
             (avatar ? '<img src="' + esc(avatar) + '" alt="">' : '') +
             '</div>' +
             '<div class="df-follow-info">' +
-            '<div class="df-follow-name">' + esc(u.displayName || u.handle) +
-            (u.verifiedPfp ? '<svg class="df-post-verified" style="width:16px;height:16px" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
+            '<div class="df-follow-name">' + esc(u.name || u.handle) +
+            (u.verified ? '<svg class="df-post-verified" style="width:16px;height:16px" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
             '</div>' +
             '<div class="df-follow-handle">@' + esc(u.handle) + '</div>' +
             '</div>' +
-            '<button class="df-follow-btn">Follow</button>' +
-            '</div>';
+            '<span class="df-follow-btn">Follow</span>' +
+            '</a>';
         }).join('');
-        
         document.getElementById('df-suggestions').innerHTML = html || '<div class="df-empty">No suggestions</div>';
       })
       .catch(function() {
-        document.getElementById('df-suggestions').innerHTML = '<div class="df-empty">Could not load</div>';
+        document.getElementById('df-suggestions').innerHTML = '<div class="df-empty">Could not load suggestions</div>';
       });
   }
   

@@ -72,7 +72,7 @@ class TestDogeFeedXStaticFiles:
 class TestDogeFeedXCollectionsAPI:
     """Test the collections API."""
     
-    @patch('arcade.web.dogefeedx._fetch_dogefeed')
+    @patch('arcade.web.dogefeedx.apps._fetch_dogefeed_explorer', new_callable=AsyncMock)
     def test_collections_list(self, mock_fetch, client):
         """Collections are listed from DogeFeed."""
         mock_fetch.return_value = [
@@ -87,7 +87,7 @@ class TestDogeFeedXCollectionsAPI:
         assert len(data["collections"]) == 2
         assert data["collections"][0]["name"] in ["Another Collection", "Test Collection"]
     
-    @patch('arcade.web.dogefeedx._fetch_dogefeed')
+    @patch('arcade.web.dogefeedx.apps._fetch_dogefeed_explorer', new_callable=AsyncMock)
     def test_collections_with_search(self, mock_fetch, client):
         """Collections can be searched by name."""
         mock_fetch.return_value = [
@@ -101,7 +101,7 @@ class TestDogeFeedXCollectionsAPI:
         assert len(data["collections"]) == 1
         assert data["collections"][0]["name"] == "Doge Dogs"
     
-    @patch('arcade.web.dogefeedx._fetch_dogefeed')
+    @patch('arcade.web.dogefeedx.apps._fetch_dogefeed_explorer', new_callable=AsyncMock)
     def test_collections_pagination(self, mock_fetch, client):
         """Collections support pagination."""
         mock_fetch.return_value = [{"id": f"coll{i}", "name": f"Coll {i}"} for i in range(60)]
@@ -121,7 +121,7 @@ class TestDogeFeedXCollectionItemsAPI:
         response = client.get("/dogefeedx/api/collection/items")
         assert response.status_code == 400
     
-    @patch('arcade.web.dogefeedx._fetch_dogefeed')
+    @patch('arcade.web.dogefeedx.apps._fetch_dogefeed_explorer', new_callable=AsyncMock)
     def test_collection_items_list(self, mock_fetch, client):
         """Collection items are listed."""
         mock_fetch.return_value = [
@@ -145,7 +145,7 @@ class TestDogeFeedXInscriptionAPI:
         response = client.get("/dogefeedx/api/inscription")
         assert response.status_code == 400
     
-    @patch('arcade.web.dogefeedx._fetch_dogefeed')
+    @patch('arcade.web.dogefeedx.apps._fetch_dogefeed_explorer', new_callable=AsyncMock)
     def test_inscription_details(self, mock_fetch, client):
         """Inscription details are returned."""
         mock_fetch.return_value = {
@@ -233,27 +233,27 @@ class TestDogeFeedXCaching:
     def test_cache_helper_set_and_get(self):
         """Cache helper sets and gets values."""
         cache = {}
-        dogefeedx._set_cached(cache, "key1", {"value": 123})
-        result = dogefeedx._get_cached(cache, "key1")
+        dogefeedx.apps._set_cached(cache, "key1", {"value": 123})
+        result = dogefeedx.apps._get_cached(cache, "key1")
         assert result == {"value": 123}
     
     def test_cache_helper_expires(self):
         """Cache entries expire after TTL."""
         import time
         cache = {}
-        dogefeedx._set_cached(cache, "key1", {"value": 123})
-        result = dogefeedx._get_cached(cache, "key1", ttl=0.01)
+        dogefeedx.apps._set_cached(cache, "key1", {"value": 123})
+        result = dogefeedx.apps._get_cached(cache, "key1", ttl=0.01)
         assert result == {"value": 123}
         
         time.sleep(0.02)
-        result = dogefeedx._get_cached(cache, "key1", ttl=0.01)
+        result = dogefeedx.apps._get_cached(cache, "key1", ttl=0.01)
         assert result is None
     
     def test_cache_cleanup_on_overflow(self):
         """Cache cleans up when it exceeds 1000 entries."""
         cache = {}
         for i in range(1100):
-            dogefeedx._set_cached(cache, f"key{i}", {"value": i})
+            dogefeedx.apps._set_cached(cache, f"key{i}", {"value": i})
         assert len(cache) <= 1001
 
 

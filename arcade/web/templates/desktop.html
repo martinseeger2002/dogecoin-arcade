@@ -950,6 +950,10 @@ body.fullscreen #arc-bot { display: none !important; }
                         glyph: ['#5856d6', '#1c1c1e', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10']};
     byKey.dfxexplorer = {key: 'dfxexplorer', kind: 'dfxexplorer', name: 'Explorer',
                          glyph: ['#ff9500', '#1c1c1e', 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35']};
+    byKey.dfxfeed = {key: 'dfxfeed', kind: 'dfxfeed', name: 'Feed',
+                     glyph: ['#f5a623', '#1c1c1e', 'M4 5h16v6H4zM4 13h16v6H4']};
+    byKey.dfxexplore = {key: 'dfxexplore', kind: 'dfxexplore', name: 'Explore',
+                        glyph: ['#ff9500', '#1c1c1e', 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35']};
   }
 
   var layout = load(LAYOUT_LS, {});
@@ -974,7 +978,7 @@ body.fullscreen #arc-bot { display: none !important; }
   var homeApps = [];     // the apps on this account's phone home screen and its stars: on the desktop too
 
   // DogeFeedX dock apps: items here appear in the dock, NOT on the desktop (per Billy's design rule)
-  var DFX_DOCK_APPS = ['dfxprofile', 'dfxmarket', 'dfxterminal', 'dfxnetwork', 'dfxexplorer'];
+  var DFX_DOCK_APPS = ['dfxfeed', 'dfxexplore', 'dfxprofile', 'dfxmarket', 'dfxterminal', 'dfxnetwork', 'dfxexplorer'];
   
   function onDesk() {
     var keys = TABS.map(function (t) { return t.key; }).concat(['store', 'helper']);
@@ -984,6 +988,11 @@ body.fullscreen #arc-bot { display: none !important; }
     homeApps.concat(layout.added).forEach(function (k) { if (byKey[k] && keys.indexOf(k) < 0) keys.push(k); });
     // Filter out dock apps from desktop in DFX mode
     if (DFX) keys = keys.filter(function (k) { return DFX_DOCK_APPS.indexOf(k) < 0; });
+    // The menu bar and the dock already show these. A DogeFeedX desktop does not repeat them as icons.
+    if (DFX) {
+      var inDock = dockKeys().filter(function (k) { return k.indexOf('|') !== 0; });
+      keys = keys.filter(function (k) { return inDock.indexOf(k) < 0; });
+    }
     return keys.filter(function (k) { return layout.gone.indexOf(k) < 0; });
   }
 
@@ -1131,6 +1140,8 @@ body.fullscreen #arc-bot { display: none !important; }
       DFX_APPS[k].opener(_dfxHelpers()); return;
     }
     // Shell-owned DogeFeedX apps
+    if (it.kind === 'dfxfeed') { openDfxFeed(); return; }
+    if (it.kind === 'dfxexplore') { openDfxExplore(); return; }
     if (it.kind === 'dfxprofile') { openDfxProfile(); return; }
     if (it.kind === 'dfxmarket') { openDfxMarket(); return; }
     // Fallback stubs for external apps (if not registered via DogeFeedX.registerApp)
@@ -2321,7 +2332,7 @@ body.fullscreen #arc-bot { display: none !important; }
     // DogeFeedX dock: organized into groups with separators
     // Group 1: Core DFX apps (Profile, Market) | Group 2: Tools (Terminal, Network, Explorer) | Group 3: Other apps
     if (DFX) {
-      var dfxCore = ['dfxprofile', 'dfxmarket'];
+      var dfxCore = ['dfxfeed', 'dfxexplore', 'dfxprofile', 'dfxmarket'];
       var dfxTools = ['dfxterminal', 'dfxnetwork', 'dfxexplorer'];
       var otherApps = fav.filter(function (k) { return dfxCore.indexOf(k) < 0 && dfxTools.indexOf(k) < 0; });
       fav = dfxCore.concat(['|sep1'], dfxTools, ['|sep2'], otherApps);
@@ -2383,6 +2394,8 @@ body.fullscreen #arc-bot { display: none !important; }
     // DogeFeedX: Featured DFX apps at the top
     if (DFX) {
       sections.push({title: 'DogeFeed', rows: [
+        {k: 'dfxfeed', name: 'Feed', it: byKey.dfxfeed},
+        {k: 'dfxexplore', name: 'Explore', it: byKey.dfxexplore},
         {k: 'dfxprofile', name: 'Profile', it: byKey.dfxprofile},
         {k: 'dfxmarket', name: 'Market', it: byKey.dfxmarket},
         {k: 'dfxterminal', name: 'Terminal', it: byKey.dfxterminal},
@@ -2477,26 +2490,20 @@ body.fullscreen #arc-bot { display: none !important; }
   }
 
   // ---------- DogeFeedX apps: Profile, Market, Terminal, Network, Explorer ----------
+  function openDfxFeed() {
+    openWin({key: 'dfxfeed', url: '/dogefeedx/feed', name: 'Feed', item: byKey.dfxfeed, w: 1100, h: 760});
+  }
+
+  function openDfxExplore() {
+    openWin({key: 'dfxexplore', url: '/dogefeedx/explore', name: 'Explore', item: byKey.dfxexplore, w: 1100, h: 760});
+  }
+
   function openDfxProfile() {
-    var account = WHO !== 'guest' && !OPERATOR ? WHO : null;
-    if (!account) {
-      var open = wins.filter(function (x) { return x.key === 'dfxprofile'; })[0];
-      if (open) { focus(open); return; }
-      var d = dialog('dfxprofile', 'Profile', byKey.dfxprofile,
-        '<div class="dfx-center"><p>Sign in to view your profile.</p>'
-        + '<button type="button" class="w98-btn dfx-signin">Sign In</button></div>', 400, 300);
-      d.q('.dfx-signin').addEventListener('click', function () {
-        location.href = '/join?next=' + encodeURIComponent('/desktop#open=/me');
-      });
-      return;
-    }
-    // Open the user's profile page in an iframe
-    openWin({key: 'dfxprofile', url: '/me', name: 'Profile — @' + account, item: byKey.dfxprofile, w: 800, h: 600});
+    openWin({key: 'dfxprofile', url: '/dogefeedx/profile', name: 'Profile', item: byKey.dfxprofile, w: 1100, h: 760});
   }
 
   function openDfxMarket() {
-    // Open the Explore page for marketplace/collections
-    openWin({key: 'dfxmarket', url: '/explore', name: 'Market', item: byKey.dfxmarket, w: 900, h: 700});
+    openWin({key: 'dfxmarket', url: '/dogefeedx/market', name: 'Market', item: byKey.dfxmarket, w: 1100, h: 760});
   }
 
   function openDfxTerminal() {

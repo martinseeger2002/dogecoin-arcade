@@ -803,7 +803,7 @@ a { color: inherit; text-decoration: none; }
 (function() {
   'use strict';
   
-  var API_BASE = 'https://dogefeed.app';
+  var API_BASE = '/dogefeedx/api';
   var IMG_BASE = 'https://dogefeed.app';
   
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -839,7 +839,7 @@ a { color: inherit; text-decoration: none; }
     var createdAt = post.createdAt || '';
     var quote = post.quote;
     
-    var html = '<article class="df-post">';
+    var html = '<article class="df-post" data-post="' + esc(post.id || '') + '">';
     html += '<div class="df-post-avatar">';
     if (avatarUrl) {
       html += '<img src="' + esc(avatarUrl) + '" alt="" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%23f5a623%22 width=%2240%22 height=%2240%22/></svg>\'">';
@@ -847,11 +847,11 @@ a { color: inherit; text-decoration: none; }
     html += '</div>';
     html += '<div class="df-post-content">';
     html += '<div class="df-post-header">';
-    html += '<span class="df-post-name">' + esc(displayName) + '</span>';
+    html += '<span class="df-post-name" data-profile="' + esc(handle) + '">' + esc(displayName) + '</span>';
     if (verified) {
       html += '<svg class="df-post-verified" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
     }
-    html += '<span class="df-post-handle">@' + esc(handle) + '</span>';
+    html += '<span class="df-post-handle" data-profile="' + esc(handle) + '">@' + esc(handle) + '</span>';
     html += '<span class="df-post-time">' + timeAgo(createdAt) + '</span>';
     html += '<button class="df-post-more">···</button>';
     html += '</div>';
@@ -897,12 +897,27 @@ a { color: inherit; text-decoration: none; }
     return html;
   }
   
+  var FEED_TABS = {foryou: 'for-you', latest: 'latest', following: 'following', top: 'top', hot: 'hot'};
+
+  function activeFeedTab() {
+    var tab = document.querySelector('.df-tab.active');
+    var key = tab ? tab.getAttribute('data-tab') : 'foryou';
+    return FEED_TABS[key] || 'for-you';
+  }
+
   function loadFeed() {
-    fetch('/dogefeedx/api/feed?limit=20')
-      .then(function(r) { return r.json(); })
+    fetch(API_BASE + '/feed?limit=20&tab=' + encodeURIComponent(activeFeedTab()))
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
       .then(function(data) {
-        var posts = data.items || data || [];
+        var posts = data.items || [];
         var container = document.getElementById('df-posts');
+        if (data.error) {
+          container.innerHTML = '<div class="df-empty">Error loading feed: ' + esc(data.error) + '</div>';
+          return;
+        }
         if (posts.length === 0) {
           container.innerHTML = '<div class="df-empty">No posts yet</div>';
           return;
@@ -911,63 +926,50 @@ a { color: inherit; text-decoration: none; }
       })
       .catch(function(err) {
         console.error('Feed error:', err);
-        document.getElementById('df-posts').innerHTML = '<div class="df-empty">Could not load feed</div>';
+        document.getElementById('df-posts').innerHTML = '<div class="df-empty">Could not load feed. Check your connection.</div>';
       });
   }
-  
-  function loadTrending() {
-    var trending = [
-      {rank: 1, tag: '#dogecoin', count: '2 posts'},
-      {rank: 2, tag: '#builders', count: '1 post'},
-      {rank: 3, tag: '#devs', count: '1 post'},
-      {rank: 4, tag: '#gm', count: '1 post'},
-      {rank: 5, tag: '#secureyourstations', count: '1 post'},
-      {rank: 6, tag: '#security', count: '1 post'}
-    ];
-    
-    var html = trending.map(function(t) {
-      return '<div class="df-trend">' +
+
+  function renderTrends(trending) {
+    if (!trending || !trending.length) return '<div class="df-empty">No trends</div>';
+    return trending.map(function(t) {
+      return '<a class="df-trend" href="https://dogefeed.app/tag/' + encodeURIComponent(t.tag) + '" target="_blank" rel="noopener">' +
         '<div class="df-trend-label">' + t.rank + ' · Trending on DogeFeed</div>' +
-        '<div class="df-trend-tag">' + t.tag + '</div>' +
-        '<div class="df-trend-count">' + t.count + '</div>' +
-        '</div>';
+        '<div class="df-trend-tag">#' + esc(t.tag) + '</div>' +
+        '<div class="df-trend-count">' + esc(t.count) + '</div>' +
+        '</a>';
     }).join('');
-    
-    document.getElementById('df-trending').innerHTML = html;
   }
-  
-  function loadSuggestions() {
-    fetch('/dogefeedx/api/feed?limit=5')
+
+  function renderFollows(users) {
+    if (!users || !users.length) return '<div class="df-empty">No suggestions</div>';
+    return users.slice(0, 3).map(function(u) {
+      var avatar = u.avatar ? (u.avatar.charAt(0) === '/' ? IMG_BASE + u.avatar : u.avatar) : '';
+      return '<a class="df-follow" href="/dogefeedx/profile?u=' + encodeURIComponent(u.handle) + '">' +
+        '<div class="df-follow-avatar"><img src="' + esc(avatar) + '" alt="" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%23f5a623%22 width=%2240%22 height=%2240%22/></svg>\'"></div>' +
+        '<div class="df-follow-info">' +
+        '<div class="df-follow-name">' + esc(u.name || u.handle) +
+        (u.verified ? '<svg class="df-post-verified" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
+        '</div>' +
+        '<div class="df-follow-handle">@' + esc(u.handle) + '</div>' +
+        '</div>' +
+        '<span class="df-follow-btn">Follow</span>' +
+        '</a>';
+    }).join('');
+  }
+
+  function loadSidebar() {
+    fetch(API_BASE + '/sidebar')
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        var posts = data.items || data || [];
-        var seen = {};
-        var users = [];
-        posts.forEach(function(p) {
-          if (p.author && !seen[p.author.handle]) {
-            seen[p.author.handle] = true;
-            users.push(p.author);
-          }
-        });
-        
-        var html = users.slice(0, 3).map(function(u) {
-          var avatar = u.avatarUrl ? (u.avatarUrl.startsWith('/') ? IMG_BASE + u.avatarUrl : u.avatarUrl) : '';
-          return '<div class="df-follow">' +
-            '<div class="df-follow-avatar"><img src="' + esc(avatar) + '" alt=""></div>' +
-            '<div class="df-follow-info">' +
-            '<div class="df-follow-name">' + esc(u.displayName || u.handle) +
-            (u.verifiedPfp ? '<svg class="df-post-verified" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
-            '</div>' +
-            '<div class="df-follow-handle">@' + esc(u.handle) + '</div>' +
-            '</div>' +
-            '<button class="df-follow-btn">Follow</button>' +
-            '</div>';
-        }).join('');
-        
-        document.getElementById('df-suggestions').innerHTML = html || '<div class="df-empty">No suggestions</div>';
+        document.getElementById('df-trending').innerHTML = data.error && !(data.trending && data.trending.length)
+          ? '<div class="df-empty">Could not load trends</div>'
+          : renderTrends(data.trending || []);
+        document.getElementById('df-suggestions').innerHTML = renderFollows(data.suggestions || []);
       })
       .catch(function() {
-        document.getElementById('df-suggestions').innerHTML = '<div class="df-empty">Could not load</div>';
+        document.getElementById('df-trending').innerHTML = '<div class="df-empty">Could not load trends</div>';
+        document.getElementById('df-suggestions').innerHTML = '<div class="df-empty">Could not load suggestions</div>';
       });
   }
   
@@ -980,10 +982,29 @@ a { color: inherit; text-decoration: none; }
     });
   });
   
-  // Load data
+  document.getElementById('df-posts').addEventListener('click', function(e) {
+    if (e.target.closest('button, a')) return;
+    var who = e.target.closest('[data-profile]');
+    if (who) {
+      location.href = '/dogefeedx/profile?u=' + encodeURIComponent(who.getAttribute('data-profile'));
+      return;
+    }
+    var post = e.target.closest('[data-post]');
+    if (post && post.getAttribute('data-post')) {
+      location.href = '/dogefeedx/post?id=' + encodeURIComponent(post.getAttribute('data-post'));
+    }
+  });
+
+  document.querySelectorAll('.df-search input').forEach(function(inp) {
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && inp.value.trim()) {
+        location.href = '/dogefeedx/search?q=' + encodeURIComponent(inp.value.trim());
+      }
+    });
+  });
+
   loadFeed();
-  loadTrending();
-  loadSuggestions();
+  loadSidebar();
   
   // Register with shell
   if (window.DogeFeedX && window.DogeFeedX.registerApp) {
