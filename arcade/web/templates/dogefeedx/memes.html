@@ -20,12 +20,18 @@ html.indesk body.df-dogefeed button.copy, html.indesk body.df-dogefeed button.dr
   width:auto !important; height:auto !important; background:#f3e3a5 !important; color:#000 !important; box-shadow:none !important;
 }
 input[type=file] { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); }
-.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; margin-top:12px; }
-.card { background:#0a0a0a; border:1px solid var(--df-line); border-radius:12px; padding:8px; }
-.card img { width:100%; height:120px; object-fit:cover; border-radius:8px; background:#111; display:block; }
-.card b { display:block; margin:6px 0; font-size:13px; word-break:break-word; }
-.card .row { display:flex; gap:6px; flex-wrap:wrap; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; margin-top:12px; }
+.card { background:#0a0a0a; border:1px solid var(--df-line); border-radius:16px; padding:8px; overflow:hidden; }
+.card img { width:100%; aspect-ratio:1; height:auto; object-fit:cover; border-radius:12px; background:#111; display:block; }
+.card b { display:block; margin:6px 0 2px; font-size:13px; word-break:break-word; }
+.fmt { display:inline-block; margin-right:4px; padding:0 4px; border-radius:4px; background:rgba(255,255,255,.12); font-size:10px; vertical-align:middle; }
+.meta { color:var(--df-muted); font-size:12px; }
+.card .row { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
 #said { min-height:1.2em; }
+#meme-q { display:block; width:100%; max-width:420px; margin-top:8px; background:#111; color:#fff6dd; border:1px solid var(--df-line); border-radius:999px; padding:8px 14px; }
+html.indesk body.df-dogefeed #meme-q { width:100% !important; max-width:420px; background:#111 !important; color:#fff6dd !important; border:1px solid rgba(255,255,255,.2) !important; box-shadow:none !important; }
+button.more { display:block; width:auto; margin:16px auto 0; background:transparent; color:#fff6dd; border:1px solid rgba(255,255,255,.25); border-radius:999px; padding:8px 16px; font-weight:700; cursor:pointer; }
+html.indesk body.df-dogefeed button.more { width:auto !important; background:transparent !important; color:#fff6dd !important; box-shadow:none !important; }
 </style>
 <script>document.body.classList.add('df-dogefeed');</script>
 <div class="wrap">
@@ -40,7 +46,10 @@ input[type=file] { position:absolute; width:1px; height:1px; overflow:hidden; cl
   <h2>Yours</h2>
   <div id="local-memes" class="grid"></div>
   <h2>Public</h2>
+  <p class="note">Pictures from dogefeed.app/memes. Nothing here is uploaded.</p>
+  <input id="meme-q" type="search" placeholder="Search memes, tags, creators" aria-label="Search memes, tags, creators">
   <div id="memes" class="grid"><p class="note">Loading…</p></div>
+  <button type="button" class="more" id="meme-more" hidden>More</button>
 </div>
 <script>
 (function () {
@@ -124,30 +133,69 @@ input[type=file] { position:absolute; width:1px; height:1px; overflow:hidden; cl
     said.textContent = 'Library cleared on this browser.';
   });
   paintLocal();
-  fetch('/dogefeedx/api/memes')
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      var rows = data.memes || [];
-      if (!rows.length) {
-        box.innerHTML = '<p class="note">No public meme list. dogefeed.app does not publish one to read.</p>';
-        return;
-      }
-      box.innerHTML = rows.map(function (m) {
-        var src = abs(m.image);
-        return '<div class="card">' + (src ? '<img src="' + esc(src) + '" alt="">' : '')
-          + '<b>' + esc(m.name || 'Meme') + '</b>'
-          + (src ? '<button type="button" class="copy" data-src="' + esc(src) + '">Copy link</button>' : '')
-          + '</div>';
-      }).join('');
-      box.querySelectorAll('.copy').forEach(function (b) {
-        b.addEventListener('click', function () {
-          var src = b.getAttribute('data-src');
-          if (navigator.clipboard) navigator.clipboard.writeText(src);
-          b.textContent = 'Copied';
-        });
+  var offset = 0;
+  var query = '';
+  var moreBtn = document.getElementById('meme-more');
+  function card(m) {
+    var src = abs(m.image);
+    var bits = [];
+    if (m.sourceName) bits.push('via ' + m.sourceName);
+    if (m.uses) bits.push(m.uses + ' uses');
+    return '<div class="card"><img src="' + esc(src) + '" alt="' + esc(m.name || 'Meme') + '" referrerpolicy="no-referrer" loading="lazy">'
+      + '<b>' + (m.format ? '<span class="fmt">' + esc(m.format) + '</span>' : '') + esc(m.name || 'Meme') + '</b>'
+      + (bits.length ? '<div class="meta">' + esc(bits.join(' · ')) + '</div>' : '')
+      + '<div class="row"><button type="button" class="use" data-id="' + esc(m.id) + '" data-name="' + esc(m.name) + '" data-src="' + esc(src) + '">Use in a post</button>'
+      + '<button type="button" class="copy" data-src="' + esc(src) + '">Copy link</button></div></div>';
+  }
+  function loadPublic(append) {
+    var url = '/dogefeedx/api/memes?offset=' + offset + (query ? '&q=' + encodeURIComponent(query) : '');
+    if (!append) box.innerHTML = '<p class="note">Loading…</p>';
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var rows = (data.memes || []).filter(function (m) { return abs(m.image); });
+        if (!append && !rows.length) {
+          box.innerHTML = '<p class="note">' + (query ? 'No public memes match that search.' : 'No public meme list. dogefeed.app does not publish one to read.') + '</p>';
+          moreBtn.hidden = true;
+          return;
+        }
+        var html = rows.map(card).join('');
+        if (append) box.insertAdjacentHTML('beforeend', html);
+        else box.innerHTML = html;
+        moreBtn.hidden = !data.more;
+      })
+      .catch(function () {
+        if (!append) box.innerHTML = '<p class="note">No public meme list.</p>';
+        moreBtn.hidden = true;
       });
-    })
-    .catch(function () { box.innerHTML = '<p class="note">No public meme list.</p>'; });
+  }
+  box.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    var src = b.getAttribute('data-src');
+    if (b.classList.contains('copy')) {
+      if (src && navigator.clipboard) navigator.clipboard.writeText(src);
+      b.textContent = 'Copied';
+      return;
+    }
+    if (!b.classList.contains('use') || !src) return;
+    try {
+      localStorage.setItem(DRAFT, JSON.stringify({id: b.getAttribute('data-id') || '', name: b.getAttribute('data-name') || 'Meme', data: src}));
+    } catch (err) { said.textContent = 'Could not attach it.'; return; }
+    said.textContent = 'Attached to your Home draft. Not sent to dogefeed.app.';
+  });
+  var timer = 0;
+  document.getElementById('meme-q').addEventListener('input', function (e) {
+    query = (e.target.value || '').trim();
+    offset = 0;
+    clearTimeout(timer);
+    timer = setTimeout(function () { loadPublic(false); }, 250);
+  });
+  moreBtn.addEventListener('click', function () {
+    offset += 120;
+    loadPublic(true);
+  });
+  loadPublic(false);
 })();
 </script>
 {% endblock %}

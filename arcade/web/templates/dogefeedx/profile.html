@@ -246,6 +246,8 @@ a { color: inherit; text-decoration: none; }
 
 /* Posts */
 .df-posts { }
+button.df-more { display:block; width:auto; margin:12px auto 20px; padding:8px 16px; border-radius:999px; border:1px solid rgba(255,255,255,.25); background:transparent; color:#fff6dd; font-weight:700; cursor:pointer; }
+html.indesk body.df-dogefeed button.df-more { width:auto !important; background:transparent !important; color:#fff6dd !important; box-shadow:none !important; }
 .df-post {
   padding: 12px 16px;
   border-bottom: 1px solid var(--df-border);
@@ -499,6 +501,7 @@ a { color: inherit; text-decoration: none; }
       <div class="df-posts" id="posts-list">
         <div class="df-loading"><div class="df-spinner"></div></div>
       </div>
+      <button type="button" class="df-more" id="posts-more" hidden>More</button>
     </div>
   </main>
 
@@ -599,33 +602,50 @@ a { color: inherit; text-decoration: none; }
     avatar.innerHTML = author.avatarUrl ? '<img src="' + esc(absUrl(author.avatarUrl)) + '" alt="">' : '';
   }
 
-  function loadPosts() {
+  var postCursor = '';
+
+  function loadPosts(append) {
     var container = document.getElementById('posts-list');
+    var more = document.getElementById('posts-more');
     if (!profileHandle) {
       container.innerHTML = '<div class="df-empty">Open a profile from a post</div>';
       document.getElementById('topbar-posts').textContent = '';
+      more.hidden = true;
       return;
     }
     if (profileTab === 'nfts') {
       container.innerHTML = '<div class="df-empty">No public NFT list for this profile</div>';
+      more.hidden = true;
       return;
     }
-    container.innerHTML = '<div class="df-loading"><div class="df-spinner"></div></div>';
-    fetch('/dogefeedx/api/users/' + encodeURIComponent(profileHandle) + '/posts?tab=' + encodeURIComponent(profileTab) + '&limit=20')
+    if (!append) {
+      postCursor = '';
+      container.innerHTML = '<div class="df-loading"><div class="df-spinner"></div></div>';
+    }
+    var url = '/dogefeedx/api/users/' + encodeURIComponent(profileHandle) + '/posts?tab=' + encodeURIComponent(profileTab) + '&limit=20';
+    if (append && postCursor) url += '&cursor=' + encodeURIComponent(postCursor);
+    fetch(url)
       .then(function(r) { return r.json(); })
       .then(function(data) {
         fillHeader(data);
-        if (data.error && !(data.items && data.items.length)) {
+        if (data.error && !(data.items && data.items.length) && !append) {
           container.innerHTML = '<div class="df-empty">Could not load posts</div>';
           document.getElementById('topbar-posts').textContent = '';
+          more.hidden = true;
           return;
         }
         var posts = data.items || [];
-        document.getElementById('topbar-posts').textContent = posts.length + (data.nextCursor ? '+' : '') + ' posts';
-        container.innerHTML = posts.length ? posts.map(renderPost).join('') : '<div class="df-empty">No posts yet</div>';
+        var html = posts.length ? posts.map(renderPost).join('') : '';
+        if (append) container.insertAdjacentHTML('beforeend', html);
+        else container.innerHTML = html || '<div class="df-empty">No posts yet</div>';
+        postCursor = data.nextCursor || '';
+        var shown = container.querySelectorAll('.df-post, article').length;
+        document.getElementById('topbar-posts').textContent = (shown || posts.length) + (postCursor ? '+' : '') + ' posts';
+        more.hidden = !postCursor;
       })
       .catch(function() {
-        container.innerHTML = '<div class="df-empty">Could not load posts</div>';
+        if (!append) container.innerHTML = '<div class="df-empty">Could not load posts</div>';
+        more.hidden = true;
       });
   }
 
@@ -661,9 +681,11 @@ a { color: inherit; text-decoration: none; }
       document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
       tab.classList.add('active');
       profileTab = tab.getAttribute('data-tab') || 'posts';
-      loadPosts();
+      loadPosts(false);
     });
   });
+  var postsMore = document.getElementById('posts-more');
+  if (postsMore) postsMore.addEventListener('click', function() { loadPosts(true); });
 
   var localForm = document.getElementById('local-profile');
   if (localForm) {

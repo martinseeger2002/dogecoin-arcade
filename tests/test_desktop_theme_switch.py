@@ -394,9 +394,12 @@ def test_the_dock_magnifies_shows_real_badges_and_opens_each_app_once(base):
                       const box = f && f.contentDocument && f.contentDocument.getElementById('memes');
                       if (!box || /Loading/.test(box.textContent)) return false;
                       const imgs = [...box.querySelectorAll('img')];
-                      return !imgs.length || imgs.some(i => i.complete && i.naturalWidth > 0);
+                      const cards = [...box.querySelectorAll('.card')];
+                      if (!cards.length || cards.length !== imgs.length) return false;
+                      const loaded = imgs.filter(i => i.complete && i.naturalWidth > 0);
+                      return loaded.length >= 8 && imgs.every(i => (i.getAttribute('src') || '').indexOf('/api/media/') >= 0);
                     }""",
-                    timeout=25000)
+                    timeout=40000)
             if title == "Launchpad":
                 page.wait_for_function(
                     """() => {
@@ -404,7 +407,7 @@ def test_the_dock_magnifies_shows_real_badges_and_opens_each_app_once(base):
                       const box = f && f.contentDocument && f.contentDocument.getElementById('df-launches');
                       if (!box || /Loading/.test(box.textContent)) return false;
                       const imgs = [...box.querySelectorAll('img')];
-                      return !imgs.length || imgs.some(i => i.complete && i.naturalWidth > 0);
+                      return imgs.length > 0 && imgs.some(i => i.complete && i.naturalWidth > 0);
                     }""",
                     timeout=25000)
             if title == "Leaderboard":

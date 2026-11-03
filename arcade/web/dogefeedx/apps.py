@@ -14,8 +14,9 @@ All results are cached locally with graceful fallback when services are unreacha
 from __future__ import annotations
 
 import asyncio
-import time
 import logging
+import re
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -311,6 +312,7 @@ async def api_feed(
         
         result = {
             "items": items[:limit],
+            "nextCursor": data.get("nextCursor") if isinstance(data, dict) else None,
             "doginal_holders": doginal_holders,
             "source": "dogefeed.app",
             "image_base": DOGEFEED_IMG_BASE,
@@ -344,7 +346,7 @@ async def api_post(post_id: str):
 
 
 @router.get("/api/users/{handle}/posts")
-async def api_user_posts(handle: str, tab: str = "posts", limit: int = 20):
+async def api_user_posts(handle: str, tab: str = "posts", limit: int = 20, cursor: str = ""):
     """A public profile's posts, plus follower counts from the public profile page."""
     from .public_read import (
         PublicReadError, empty, fetch_html, fetch_json, parse_profile_card, valid_handle,
@@ -354,9 +356,12 @@ async def api_user_posts(handle: str, tab: str = "posts", limit: int = 20):
         handle = valid_handle(handle)
         tab = tab if tab in ("posts", "replies", "media", "likes") else "posts"
         limit = min(max(1, limit), 40)
+        params = {"tab": tab, "limit": limit}
+        if cursor and len(cursor) <= 40 and re.fullmatch(r"[A-Za-z0-9:._+-]+", cursor):
+            params["cursor"] = cursor
         data = await fetch_json(
             f"/api/users/{handle}/posts",
-            {"tab": tab, "limit": limit},
+            params,
         )
         card = {}
         try:
@@ -1256,41 +1261,41 @@ async def api_lookup(name: str = ""):
 
 
 @router.get("/api/memes")
-async def api_memes():
-    """Public meme library, if dogefeed.app publishes one. Empty when it does not."""
-    from .public_read import empty, fetch_json
+async def api_memes(q: str = "", offset: int = 0):
+    """Public meme library. Pictures come from imageUrl on /api/memes.
 
-    async def _one(path: str):
-        try:
-            return await fetch_json(path)
-        except Exception:
-            return None
+    `q` and `offset` are the public search and page. A row with no picture is
+    dropped. The HTML grid is only a fallback when that route is down.
+    """
+    from .public_read import empty, fetch_html, fetch_json, normalize_memes, parse_memes
 
-    for data in await asyncio.gather(_one("/api/memes"), _one("/api/meme")):
-        if not data:
-            continue
-        rows = data if isinstance(data, list) else data.get("memes") or data.get("items") or []
-        memes = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            memes.append({
-                "id": row.get("id") or "",
-                "name": row.get("name") or row.get("title") or "",
-                "image": row.get("image") or row.get("url") or row.get("src") or "",
-            })
-        if memes:
-            return {"memes": memes, "source": "dogefeed.app"}
-    from .public_read import fetch_html, parse_memes
-
+    q = " ".join((q or "").split())[:80]
+    try:
+        offset = min(max(0, int(offset)), 5000)
+    except (TypeError, ValueError):
+        offset = 0
+    params = {}
+    if q:
+        params["q"] = q
+    if offset:
+        params["offset"] = str(offset)
+    try:
+        data = await fetch_json("/api/memes", params or None)
+    except Exception:
+        data = None
+    rows = normalize_memes(data) if data else []
+    if rows:
+        return {"memes": rows, "offset": offset, "more": len(rows) >= 120, "source": "dogefeed.app"}
+    if q or offset:
+        return empty("no_public_list", memes=[], offset=offset, more=False)
     try:
         page = await fetch_html("/memes")
     except Exception:
         page = ""
     rows = parse_memes(page) if page else []
     if rows:
-        return {"memes": rows, "source": "dogefeed.app"}
-    return empty("no_public_list", memes=[])
+        return {"memes": rows, "offset": 0, "more": False, "source": "dogefeed.app"}
+    return empty("no_public_list", memes=[], offset=0, more=False)
 
 
 @router.get("/api/launchpad")

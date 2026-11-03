@@ -226,7 +226,116 @@ def parse_market(html: str) -> dict:
             "sales": int(sales.group(1)) if sales else 0,
             "verified": 'aria-label="Verified"' in body,
         })
-    return {"stats": stats, "collections": collections, "source": "dogefeed.app"}
+    payload = _market_payload(html)
+    if payload["collections"]:
+        collections = payload["collections"]
+    doginals = payload["totals"].get("doginals")
+    if doginals:
+        stats = {
+            "collections": str(doginals["collections"]),
+            "items": doginals["itemsLabel"],
+            "listings": doginals["listingsLabel"],
+            "volume": doginals["totalTraded"],
+        }
+    result = {"stats": stats, "collections": collections, "source": "dogefeed.app"}
+    if payload["totals"]:
+        result["totals"] = payload["totals"]
+    if payload["activity"]:
+        result["activity"] = payload["activity"]
+    return result
+
+
+_ESC = r"(?:\\.|[^\\])*?"
+
+
+def _unesc(value: str) -> str:
+    text = re.sub(
+        r"\\u([0-9a-fA-F]{4})",
+        lambda match: chr(int(match.group(1), 16)),
+        value or "",
+    )
+    return unescape(text.replace("\\n", " ").replace('\\"', '"').replace("\\\\", "\\")).strip()
+
+
+def _market_payload(html: str) -> dict:
+    """Collections, chain totals and recent sales embedded in the public /market page.
+
+    The visible cards are only the Doginals NFT list. DNS, DogeFeed Exclusive and
+    Robinhood live in the same page payload, with the flags the tabs filter on.
+    """
+    collections = []
+    seen: set[str] = set()
+    cards = re.compile(
+        r'\\"slug\\":\\"([a-z0-9-]+)\\",\\"name\\":\\"(' + _ESC + r')\\",\\"description\\":\\"'
+        + _ESC + r'\\",\\"cover\\":\\"([^\\]*?)\\",\\"verified\\":(true|false),\\"exclusive\\":(true|false),'
+        r'\\"mintOpen\\":(true|false),\\"network\\":\\"([^\\]*?)\\",\\"items\\":(\d+),\\"listed\\":(\d+),'
+        r'\\"owners\\":(\d+),\\"sales\\":(\d+),\\"floorLabel\\":\\"([^\\]*?)\\",\\"volumeLabel\\":\\"([^\\]*?)\\",'
+        r'\\"floorSort\\":(-?\d+(?:\.\d+)?),\\"volumeSort\\":(-?\d+(?:\.\d+)?),\\"createdAt\\":\\"([^\\]*?)\\",'
+        r'\\"isDoginal\\":(true|false),\\"isSns\\":(true|false),\\"snsOrder\\":(-?\d+),\\"chain\\":\\"([^\\"]+)\\"'
+    )
+    for row in cards.findall(html or ""):
+        slug = row[0]
+        if slug in seen or not _SLUG.fullmatch(slug):
+            continue
+        seen.add(slug)
+        collections.append({
+            "slug": slug,
+            "href": f"/market/{slug}",
+            "name": _unesc(row[1]),
+            "image": _unesc(row[2]),
+            "floor": _unesc(row[11]) or None,
+            "listed": int(row[8]),
+            "sales": int(row[10]),
+            "verified": row[3] == "true",
+            "exclusive": row[4] == "true",
+            "sns": row[17] == "true",
+            "chain": row[19],
+        })
+
+    totals = {}
+    for key in ("doginals", "robinhood", "sns"):
+        match = re.search(
+            rf'\\"{key}\\":\{{' + r'\\"collections\\":(\d+),\\"items\\":(\d+),\\"liveListings\\":(\d+),'
+            r'\\"itemsLabel\\":\\"([^\\]*)\\",\\"listingsLabel\\":\\"([^\\]*)\\",\\"totalTraded\\":\\"([^\\]*)\\"',
+            html or "",
+        )
+        if not match:
+            continue
+        totals[key] = {
+            "collections": int(match.group(1)),
+            "items": int(match.group(2)),
+            "liveListings": int(match.group(3)),
+            "itemsLabel": _unesc(match.group(4)),
+            "listingsLabel": _unesc(match.group(5)),
+            "totalTraded": _unesc(match.group(6)),
+        }
+
+    activity = []
+    seen_href: set[str] = set()
+    sales = re.compile(
+        r'\\"kind\\":\\"([a-z]+)\\",\\"listingId\\":\\"([^\\]*)\\",\\"inscriptionId\\":\\"([^\\]*)\\",'
+        r'\\"imageUrl\\":\\"([^\\]*)\\",\\"network\\":\\"([^\\]*)\\",\\"number\\":(null|\d+),'
+        r'\\"name\\":\\"(' + _ESC + r')\\",\\"collectionSlug\\":\\"([^\\]*)\\",\\"collectionName\\":\\"('
+        + _ESC + r')\\",\\"priceDoge\\":\\"([^\\]*)\\",\\"priceLabel\\":\\"([^\\]*)\\",'
+        r'\\"usdLabel\\":(null|\\"[^\\]*\\"),\\"at\\":\\"([^\\]*)\\",\\"href\\":\\"([^\\]*)\\"'
+    )
+    for row in sales.findall(html or ""):
+        href = row[13]
+        if not href.startswith("/market/") or href in seen_href:
+            continue
+        seen_href.add(href)
+        activity.append({
+            "kind": row[0],
+            "name": _unesc(row[6]),
+            "image": _unesc(row[3]),
+            "collection": _unesc(row[8]),
+            "price": _unesc(row[10]),
+            "href": href,
+            "at": row[12],
+        })
+        if len(activity) >= 40:
+            break
+    return {"collections": collections, "totals": totals, "activity": activity}
 
 
 def parse_memes(html: str, limit: int = 48) -> list[dict]:
@@ -248,6 +357,49 @@ def parse_memes(html: str, limit: int = 48) -> list[dict]:
         })
         if len(found) >= limit:
             break
+    return found
+
+
+def _meme_image(url: str) -> str:
+    """A public meme picture. Anything else is dropped so a tile cannot be text-only."""
+    url = (url or "").strip()
+    if ".." in url or url.startswith("//"):
+        return ""
+    if url.startswith("/api/media/"):
+        return url
+    prefix = DOGEFEED_ORIGIN + "/api/media/"
+    if url.startswith(prefix):
+        return url
+    return ""
+
+
+def normalize_memes(data) -> list[dict]:
+    """Rows from /api/memes. The picture field on that route is `imageUrl`, the title is `title`."""
+    rows = data if isinstance(data, list) else (data or {}).get("items") or (data or {}).get("memes") or []
+    found = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        image = _meme_image(str(row.get("imageUrl") or row.get("image") or row.get("url") or row.get("src") or ""))
+        if not image or image in seen:
+            continue
+        seen.add(image)
+        tags = row.get("tags") if isinstance(row.get("tags"), list) else []
+        try:
+            uses = int(row.get("uses") or 0)
+        except (TypeError, ValueError):
+            uses = 0
+        found.append({
+            "id": unescape(str(row.get("id") or "")).strip(),
+            "name": unescape(str(row.get("title") or row.get("name") or "")).strip(),
+            "image": image,
+            "format": unescape(str(row.get("format") or "")).strip(),
+            "category": unescape(str(row.get("category") or "")).strip(),
+            "tags": [str(tag) for tag in tags if isinstance(tag, str)][:12],
+            "uses": uses,
+            "sourceName": unescape(str(row.get("sourceName") or "")).strip(),
+        })
     return found
 
 

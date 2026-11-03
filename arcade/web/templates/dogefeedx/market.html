@@ -168,8 +168,9 @@ a { color: inherit; text-decoration: none; }
 }
 .df-stat-value {
   font-family: "Fredoka", sans-serif;
-  font-size: 20px;
+  font-size: 15px;
   font-weight: 600;
+  line-height: 1.15;
   color: var(--df-text);
 }
 .df-stat-label {
@@ -203,6 +204,17 @@ a { color: inherit; text-decoration: none; }
   border-color: var(--df-gold);
   color: #000;
 }
+.df-chains { display:flex; border-bottom:1px solid var(--df-border); }
+.df-chain {
+  flex:1; padding:12px; text-align:center; font-size:14px; font-weight:500;
+  color:var(--df-text-secondary); background:none; border:0; cursor:pointer; position:relative;
+}
+.df-chain.active { font-weight:700; color:var(--df-text); }
+.df-chain.active::after {
+  content:""; position:absolute; bottom:0; left:50%; transform:translateX(-50%);
+  width:56px; height:4px; background:var(--df-gold); border-radius:2px;
+}
+button.df-more { display:block; width:auto; margin:8px auto 16px; background:transparent; color:inherit; border:1px solid var(--df-border); border-radius:999px; padding:8px 14px; }
 
 /* Search & Filters */
 .df-filters {
@@ -438,10 +450,13 @@ html.indesk body.df-dogefeed .df-category.active {
 }
 html.indesk body.df-dogefeed .df-category,
 html.indesk body.df-dogefeed .df-tab,
+html.indesk body.df-dogefeed .df-chain,
 html.indesk body.df-dogefeed .df-sort-btn,
-html.indesk body.df-dogefeed .df-view-btn {
-  background: transparent !important; color: #fff6dd !important;
+html.indesk body.df-dogefeed .df-view-btn,
+html.indesk body.df-dogefeed button.df-more {
+  background: transparent !important; color: #fff6dd !important; width: auto !important; box-shadow: none !important;
 }
+html.indesk body.df-dogefeed .df-chain { width: auto !important; flex: 1; }
 html.indesk body.df-dogefeed input {
   background: transparent !important; color: #fff6dd !important; border: 0 !important; box-shadow: none !important;
 }
@@ -541,8 +556,12 @@ html.indesk body.df-dogefeed input {
     </div>
     
     <div class="df-tabs">
-      <button class="df-tab active" data-tab="market">Market</button>
-      <button class="df-tab" data-tab="activity">Activity</button>
+      <button class="df-tab active" data-tab="market" type="button">Market</button>
+      <button class="df-tab" data-tab="activity" type="button">Activity</button>
+    </div>
+    <div class="df-chains" id="chain-row">
+      <button class="df-chain active" data-chain="doginals" type="button">Doginals</button>
+      <button class="df-chain" data-chain="robinhood" type="button">Robinhood NFTs</button>
     </div>
     
     <div class="df-stats">
@@ -560,7 +579,7 @@ html.indesk body.df-dogefeed input {
       </div>
       <div class="df-stat">
         <div class="df-stat-value" id="stat-volume">—</div>
-        <div class="df-stat-label">DOGE Vol</div>
+        <div class="df-stat-label">Traded</div>
       </div>
     </div>
     
@@ -621,8 +640,12 @@ html.indesk body.df-dogefeed input {
   var IMG_BASE = 'https://dogefeed.app';
   var doginals = [];
   var tokens = [];
+  var activity = [];
+  var totals = {};
   var sortCheap = true;
   var activeCat = 'nfts';
+  var activeChain = 'doginals';
+  var activeTab = 'market';
 
   function esc(s) { return String(s || '').replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
@@ -669,48 +692,75 @@ html.indesk body.df-dogefeed input {
       '<div class="df-collection-volume">' + esc(row.extra) + '</div></div></a>';
   }
 
+  function collectionRow(c) {
+    return {name: c.name, href: 'https://dogefeed.app' + c.href, image: c.image, verified: c.verified,
+      meta: (c.listed || 0) + ' listed · ' + (c.sales || 0) + ' sales',
+      floor: floorNumber(c.floor), floorText: c.floor || '—', extra: ''};
+  }
+
   function currentRows() {
     var q = (document.getElementById('collection-search').value || '').trim().toLowerCase();
     var rows = [];
-    if (activeCat === 'nfts') {
-      rows = doginals.map(function(c) {
-        return {name: c.name, href: 'https://dogefeed.app' + c.href, image: c.image, verified: c.verified,
-          meta: (c.listed || 0) + ' listed · ' + (c.sales || 0) + ' sales',
-          floor: floorNumber(c.floor), floorText: c.floor || '—', extra: ''};
+    if (activeTab === 'activity') {
+      rows = activity.map(function(a) {
+        return {name: a.name, href: 'https://dogefeed.app' + a.href, image: a.image, verified: false,
+          meta: a.collection || '', floor: floorNumber(a.price), floorText: a.price || '—',
+          extra: a.kind === 'listing' ? 'Listing' : 'Sale'};
       });
-    } else if (activeCat === 'drc20') {
+    } else if (activeCat === 'drc20' && activeChain === 'doginals') {
       rows = tokens.map(function(t) {
         var floor = dogeFloor(t.floorPrice);
         return {name: t.tick, href: 'https://dogefeed.app/market', image: t.pic || '', verified: false,
           meta: (t.holders || 0) + ' holders · ' + (t.listingsDoggy || 0) + ' listings',
           floor: floor, floorText: formatFloor(floor), extra: ''};
       });
+    } else {
+      rows = doginals.filter(function(c) {
+        var robinhood = c.chain === 'evm';
+        if (activeChain === 'robinhood') return robinhood;
+        if (robinhood) return false;
+        if (activeCat === 'dns') return !!c.sns;
+        if (activeCat === 'exclusive') return !!c.exclusive && !c.sns;
+        return !c.sns;
+      }).map(collectionRow);
     }
     if (q) rows = rows.filter(function(r) { return String(r.name || '').toLowerCase().indexOf(q) >= 0; });
-    rows.sort(function(a, b) {
-      if (sortCheap) {
-        if (a.floor == null && b.floor == null) return 0;
-        if (a.floor == null) return 1;
-        if (b.floor == null) return -1;
-        return a.floor - b.floor;
-      }
-      return String(a.name).localeCompare(String(b.name));
-    });
+    if (activeTab !== 'activity') {
+      rows.sort(function(a, b) {
+        if (sortCheap) {
+          if (a.floor == null && b.floor == null) return 0;
+          if (a.floor == null) return 1;
+          if (b.floor == null) return -1;
+          return a.floor - b.floor;
+        }
+        return String(a.name).localeCompare(String(b.name));
+      });
+    }
     return rows;
+  }
+
+  function applyStats() {
+    var block = null;
+    if (activeChain === 'robinhood') block = totals.robinhood;
+    else if (activeCat === 'dns') block = totals.sns;
+    else block = totals.doginals;
+    if (!block) return;
+    document.getElementById('stat-collections').textContent = block.collections != null ? block.collections : '—';
+    document.getElementById('stat-items').textContent = block.itemsLabel || block.items || '—';
+    document.getElementById('stat-listings').textContent = block.listingsLabel || block.listings || '—';
+    document.getElementById('stat-volume').textContent = block.totalTraded || block.volume || '—';
   }
 
   function paint() {
     var container = document.getElementById('collections-list');
-    if (activeCat === 'dns' || activeCat === 'exclusive') {
-      container.innerHTML = '<div class="df-empty">No public list for this category</div>';
-      return;
-    }
+    document.getElementById('chain-row').style.display = activeTab === 'market' ? 'flex' : 'none';
     var rows = currentRows();
     if (!rows.length) {
-      container.innerHTML = '<div class="df-empty">No listings</div>';
+      container.innerHTML = '<div class="df-empty">' + (activeTab === 'activity' ? 'No public activity' : 'No listings') + '</div>';
       return;
     }
     container.innerHTML = rows.map(function(r, i) { return renderRow(r, i + 1); }).join('');
+    applyStats();
   }
 
   function loadMarket() {
@@ -719,11 +769,16 @@ html.indesk body.df-dogefeed input {
       .then(function(r) { return r.json(); })
       .then(function(data) {
         doginals = data.collections || [];
-        var stats = data.stats || {};
-        if (stats.collections) document.getElementById('stat-collections').textContent = stats.collections;
-        if (stats.items) document.getElementById('stat-items').textContent = stats.items;
-        if (stats.listings) document.getElementById('stat-listings').textContent = stats.listings;
-        if (stats.volume) document.getElementById('stat-volume').textContent = String(stats.volume).replace(/\s*DOGE\s*$/i, '');
+        activity = data.activity || [];
+        totals = data.totals || {};
+        if (!totals.doginals && data.stats) {
+          totals.doginals = {
+            collections: data.stats.collections,
+            itemsLabel: data.stats.items,
+            listingsLabel: data.stats.listings,
+            totalTraded: data.stats.volume
+          };
+        }
         if (data.error && !doginals.length) container.innerHTML = '<div class="df-empty">Could not load market</div>';
         else paint();
       })
@@ -767,6 +822,17 @@ html.indesk body.df-dogefeed input {
     tab.addEventListener('click', function() {
       document.querySelectorAll('.df-tab').forEach(function(t) { t.classList.remove('active'); });
       tab.classList.add('active');
+      activeTab = tab.getAttribute('data-tab') || 'market';
+      paint();
+    });
+  });
+
+  document.querySelectorAll('.df-chain').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.df-chain').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      activeChain = btn.getAttribute('data-chain') || 'doginals';
+      paint();
     });
   });
   

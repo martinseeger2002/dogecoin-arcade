@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 
 from arcade.web.dogefeedx.public_read import (
+    normalize_memes,
     parse_launchpad,
     parse_leaderboard,
     parse_leaderboard_page,
@@ -102,6 +103,63 @@ def test_public_memes_come_from_the_library_grid():
     assert parse_memes("<div>no grid</div>") == []
 
 
+def test_meme_json_uses_image_url_and_drops_a_blank():
+    rows = normalize_memes({"items": [
+        {
+            "id": "a", "title": "10 Guy", "imageUrl": "/api/media/local/one.webp",
+            "format": "PNG", "uses": 2, "sourceName": "Imgflip", "tags": ["wow"],
+        },
+        {"id": "b", "title": "No picture", "imageUrl": ""},
+        {"id": "c", "title": "Elsewhere", "imageUrl": "https://evil.example/pic.webp"},
+    ]})
+    assert rows == [{
+        "id": "a",
+        "name": "10 Guy",
+        "image": "/api/media/local/one.webp",
+        "format": "PNG",
+        "category": "",
+        "tags": ["wow"],
+        "uses": 2,
+        "sourceName": "Imgflip",
+    }]
+
+
+PAYLOAD = (
+    r'\"slug\":\"sns-doge\",\"name\":\".doge names\",\"description\":\"DNS\",\"cover\":\"/sns-img/doge\",'
+    r'\"verified\":true,\"exclusive\":false,\"mintOpen\":false,\"network\":\"Doginal (Dogecoin L1)\",'
+    r'\"items\":1170,\"listed\":3,\"owners\":21,\"sales\":0,\"floorLabel\":\"500 DOGE\",\"volumeLabel\":\"0 DOGE\",'
+    r'\"floorSort\":500,\"volumeSort\":0,\"createdAt\":\"2026-10-13T00:00:00.000Z\",\"isDoginal\":true,'
+    r'\"isSns\":true,\"snsOrder\":0,\"chain\":\"dogecoin-sns\"},{\"id\":\"x\",\"slug\":\"999club\",'
+    r'\"name\":\"999 Club\",\"description\":\"club\",\"cover\":\"/api/media/local/club.jpg\",\"verified\":true,'
+    r'\"exclusive\":true,\"mintOpen\":true,\"network\":\"Doginal (Dogecoin L1)\",\"items\":747,\"listed\":0,'
+    r'\"owners\":0,\"sales\":0,\"floorLabel\":\"—\",\"volumeLabel\":\"0 DOGE\",\"floorSort\":0,\"volumeSort\":0,'
+    r'\"createdAt\":\"2026-10-23T04:38:10.054Z\",\"isDoginal\":true,\"isSns\":false,\"snsOrder\":-1,'
+    r'\"chain\":\"dogecoin-l1\"},\"totals\":{\"doginals\":{\"collections\":307,\"items\":7186906,'
+    r'\"liveListings\":74,\"itemsLabel\":\"7.2M\",\"listingsLabel\":\"74\",\"totalTraded\":\"1,020.8 DOGE\"},'
+    r'\"robinhood\":{\"collections\":2,\"items\":2762,\"liveListings\":184,\"itemsLabel\":\"2.8k\",'
+    r'\"listingsLabel\":\"184\",\"totalTraded\":\"108.628059 ETH\"},\"sns\":{\"collections\":6,\"items\":4577,'
+    r'\"liveListings\":8,\"itemsLabel\":\"4.6k\",\"listingsLabel\":\"8\",\"totalTraded\":\"400 DOGE\"}},'
+    r'\"trades\":[{\"kind\":\"trade\",\"listingId\":\"abc\",\"inscriptionId\":\"\",\"imageUrl\":\"/sns-img/doge\",'
+    r'\"network\":\"doginals\",\"number\":1,\"name\":\"anon.doge\",\"collectionSlug\":\"sns-doge\",'
+    r'\"collectionName\":\".doge names\",\"priceDoge\":\"10\",\"priceLabel\":\"10 DOGE\",\"usdLabel\":null,'
+    r'\"at\":\"2026-11-03T00:00:00.000Z\",\"href\":\"/market/sns-doge/1\"'
+)
+
+
+def test_market_payload_keeps_dns_exclusive_and_a_sale():
+    parsed = parse_market(PAYLOAD)
+    by = {c["slug"]: c for c in parsed["collections"]}
+    assert by["sns-doge"]["sns"] is True
+    assert by["sns-doge"]["floor"] == "500 DOGE"
+    assert by["999club"]["exclusive"] is True
+    assert parsed["stats"]["items"] == "7.2M"
+    assert parsed["stats"]["volume"] == "1,020.8 DOGE"
+    assert parsed["totals"]["sns"]["collections"] == 6
+    assert parsed["totals"]["robinhood"]["totalTraded"].endswith("ETH")
+    assert parsed["activity"][0]["price"] == "10 DOGE"
+    assert parsed["activity"][0]["href"] == "/market/sns-doge/1"
+
+
 def test_launchpad_cards_keep_the_public_mint_counts():
     rows = parse_launchpad(LAUNCH)
     assert rows == [{
@@ -167,7 +225,16 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     memes = (TEMPLATES / "memes.html").read_text()
     assert 'id="meme-file"' in memes and "dogefeedx.memes" in memes and "dogefeedx.draftMeme" in memes
     assert "Pick a picture" in memes
+    assert 'id="meme-q"' in memes and "Search memes, tags, creators" in memes
+    assert "m.image" in memes and "referrerpolicy=\"no-referrer\"" in memes
     assert "dogefeedx.draftMeme" in feed
+    assert "data.nextCursor" in feed
+    market = (TEMPLATES / "market.html").read_text()
+    assert 'data-chain="robinhood"' in market
+    assert "No public list for this category" not in market
+    apps = (ROOT / "arcade" / "web" / "dogefeedx" / "apps.py").read_text()
+    assert '"nextCursor": data.get("nextCursor")' in apps
+    assert "normalize_memes" in apps and "imageUrl" in (ROOT / "arcade" / "web" / "dogefeedx" / "public_read.py").read_text()
     launch = (TEMPLATES / "launchpad.html").read_text()
     assert "No public launch list" in launch
     assert "Doge Punks" not in launch and "Shiba Society" not in launch
