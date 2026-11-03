@@ -945,7 +945,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
   // DogeFeedX dock, in Billy's order. Each one opens a window and is not also a desktop icon.
   var DFX_DOCK = [
     {k: 'dfxhome', name: 'Home', url: '/dogefeedx/feed', w: 640, h: 620, glyph: ['#f3e3a5', '#1b1b1b', 'M4 11l8-7 8 7v9H4z']},
-    {k: 'dfxprofile', name: 'Profile', url: '/dogefeedx/profile', w: 440, h: 560, glyph: ['#f3e3a5', '#1b1b1b', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8']},
+    {k: 'dfxprofile', name: 'Profile', url: '/dogefeedx/profile', w: 440, h: 620, glyph: ['#f3e3a5', '#1b1b1b', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8']},
     {k: 'dfxfiles', name: 'Files', url: '/dogefeedx/files', w: 760, h: 480, glyph: ['#f3e3a5', '#1b1b1b', 'M3 7h6l2 2h10v10H3z']},
     {k: 'dfxnotifications', name: 'Notifications', url: '/dogefeedx/notifications', w: 480, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M12 3a6 6 0 0 0-6 6c0 7-3 7-3 7h18s-3 0-3-7a6 6 0 0 0-6-6zM10 20a2 2 0 0 0 4 0']},
     {k: 'dfxmessages', name: 'Messages', url: '/dogefeedx/messages', w: 520, h: 460, glyph: ['#f3e3a5', '#1b1b1b', 'M4 5h16v10H7l-3 3z']},
@@ -2650,7 +2650,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
   }
 
   function openDfxProfile() {
-    openWin({key: 'dfxprofile', url: '/dogefeedx/profile', name: 'Profile', item: byKey.dfxprofile, w: 440, h: 560});
+    openWin({key: 'dfxprofile', url: '/dogefeedx/profile', name: 'Profile', item: byKey.dfxprofile, w: 440, h: 620});
   }
 
   function openDfxMarket() {

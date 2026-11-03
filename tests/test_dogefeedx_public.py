@@ -293,7 +293,7 @@ def test_runtime_pages_do_not_invent_posts_or_prices():
     assert 'id="df-wallet-select"' in profile
     assert 'include "dogefeedx/_wallet.js.html"' in profile
     assert "/dogefeedx/api/wallet/addresses" in helper
-    assert "w: 640, h: 620" in desk and "w: 440, h: 560" in desk
+    assert "w: 640, h: 620" in desk and "w: 440, h: 620" in desk
     assert "w: dock.w || 640" in desk and "layout.dfxWin" in desk
     assert 'class="dk-df-logo"' in desk and "[data-skin=\"dogefeedx\"] .dk-start .dk-brand-icon { display: none !important; }" in desk
     assert "boardRange" in (TEMPLATES / "leaderboard.html").read_text()
