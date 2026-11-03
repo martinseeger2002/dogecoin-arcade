@@ -1891,6 +1891,29 @@ function arcadeGroupsAsk(id, game, publisher, address){
 // Ticked on its card (the box is kept under the page Play opens, as Wallet access is).
 function arcadeMediaOn(page, g){ return arcadeMediaAllowed(page) || !!(g && g.opens && arcadeMediaAllowed(g.opens)); }
 
+// PICTURES IN THE APP, PER APP (2026-11-02, for Spatial World: live cameras and shared screens on screens in a 3D
+// world). With it on, the app itself gets the pictures of the players in its rooms (room.media.frames), so it can draw
+// them where it likes -- and could keep them. Off until the player turns it on; the card must say "pictures": true.
+// The sound stays in the viewer. The on-air pill says while pictures are going to the app.
+var ARCADE_PICTURES = 'arcade.pictures.allow:', ARCADE_PICTURES_USES = 'arcade.pictures.uses:';
+function arcadePicturesAllowed(id){ try { return localStorage.getItem(ARCADE_PICTURES + id) === 'yes'; } catch (e) { return false; } }
+function arcadePicturesAllow(id, on){
+  try { if (on) localStorage.setItem(ARCADE_PICTURES + id, 'yes'); else localStorage.removeItem(ARCADE_PICTURES + id); } catch (e) {}
+  document.dispatchEvent(new CustomEvent('arcade:pictures', {detail: {id: id, on: !!on}}));
+}
+function arcadePicturesUses(id){ try { return localStorage.getItem(ARCADE_PICTURES_USES + id) === 'yes'; } catch (e) { return false; } }
+function arcadePicturesUsed(id){ try { localStorage.setItem(ARCADE_PICTURES_USES + id, 'yes'); } catch (e) {} }
+function arcadePicturesOn(page, g){ return arcadePicturesAllowed(page) || !!(g && g.opens && arcadePicturesAllowed(g.opens)); }
+function arcadePicturesAsk(id, game, publisher, address){
+  return arcadeAsk('Let this app show the pictures itself?',
+    '\u201c' + (game || 'This app') + '\u201d is published by ' + (publisher || 'an account with no @name')
+    + (address ? ' (' + address + ')' : '') + '. It will get the live pictures of the cameras and shared screens in its '
+    + 'rooms, yours too, to draw them where it likes. An app that gets them could also keep them or send them to its own '
+    + 'server: only allow an app you trust, after checking its publisher. The arcade shows while it gets them. You can '
+    + 'turn it off again on the app\u2019s card.', 'Allow pictures in the app')
+    .then(function(yes){ if (yes) arcadePicturesAllow(id, true); return !!yes; });
+}
+
 // NOTIFICATIONS, PER APP (arcade/ring.py; 2026-10-23: call "at any time, even if the application is not open
 // through push notifications ... just like the Wallet access and camera and microphone access switches"; who may
 // ring: "My contacts only"). Kept per ACCOUNT on its node (every phone of the account rings), not in this browser.
@@ -1976,10 +1999,11 @@ function arcadeRingOn(id){
 // then reinstall it"): what the sheets, the app's Permissions window and Remove from arcade all change. ids: the page the
 // app opens first, then its card: a switch may have been set under either (arcadeGameOn reads both), so off clears all.
 // Notifications are kept by the node, so they are read with /account/ring/apps, not here.
-var ARCADE_PERM_KINDS = ['wallet', 'contacts', 'groups', 'media', 'notify'];
+var ARCADE_PERM_KINDS = ['wallet', 'contacts', 'groups', 'media', 'pictures', 'notify'];
 var ARCADE_PERM_DOORS = {
   wallet: [arcadeGameAllowed, arcadeGameAllow], contacts: [arcadeContactsAllowed, arcadeContactsAllow],
-  groups: [arcadeGroupsAllowed, arcadeGroupsAllow], media: [arcadeMediaAllowed, arcadeMediaAllow]
+  groups: [arcadeGroupsAllowed, arcadeGroupsAllow], media: [arcadeMediaAllowed, arcadeMediaAllow],
+  pictures: [arcadePicturesAllowed, arcadePicturesAllow]
 };
 function arcadeAppPerm(kind, ids){ var d = ARCADE_PERM_DOORS[kind]; return !!d && ids.some(function(id){ return d[0](id); }); }
 function arcadeAppPermSet(kind, ids, on){

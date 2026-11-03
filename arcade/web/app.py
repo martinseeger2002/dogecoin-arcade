@@ -10442,7 +10442,7 @@ def create_app(state: AppState) -> FastAPI:
                 "by": ("@" + who) if who else it["creator"][:12] + "…", "address": it["creator"],
                 "version": str(g.get("version") or "")[:24], "players": str(g.get("players") or "")[:40],
                 "likes": it.get("likes", 0), "comments": it.get("comments", 0),
-                "perms": [p for p in ("wallet", "contacts", "groups", "media", "notify") if g.get(p)],
+                "perms": [p for p in ("wallet", "contacts", "groups", "media", "pictures", "notify") if g.get(p)],
                 "timeout": g.get("minimized_timeout"),
             })
         return apps
@@ -26069,6 +26069,7 @@ def create_app(state: AppState) -> FastAPI:
                 said = {"game": True, "card": card["txid"], "name": card["game"]["name"],
                         "wallet": bool(card["game"].get("wallet")),
                         "media": bool(card["game"].get("media")),
+                        "pictures": bool(card["game"].get("pictures")),
                         "contacts": bool(card["game"].get("contacts")),
                         "groups": bool(card["game"].get("groups")),
                         "opens": _game_opens(ix, creator, card["txid"], card["game"]),

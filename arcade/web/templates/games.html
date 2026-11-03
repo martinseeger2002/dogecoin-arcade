@@ -127,6 +127,13 @@
              data-media="{{ g.opens or it.txid }}" data-game="{{ g.name }}"{% if not g.media %} hidden{% endif %}
              data-publisher="{{ ('@' ~ name_of(it.creator)) if name_of(it.creator) else '' }}"
              data-address="{{ it.creator }}"><input type="checkbox" style="margin:0;width:auto"> Camera &amp; microphone</label>
+      {# Pictures in the app, per app (2026-11-02, Spatial World): the app draws the room's pictures itself. Only on a
+         card that says "pictures": true. #}
+      <label class="gamepictures" title="Let this app draw the cameras and shared screens in its rooms itself"
+             style="display:inline-flex;align-items:center;gap:5px;margin:0;font-size:.85rem;cursor:pointer;white-space:nowrap"
+             data-pictures="{{ g.opens or it.txid }}" data-game="{{ g.name }}"{% if not g.pictures %} hidden{% endif %}
+             data-publisher="{{ ('@' ~ name_of(it.creator)) if name_of(it.creator) else '' }}"
+             data-address="{{ it.creator }}"><input type="checkbox" style="margin:0;width:auto"> Pictures in the app</label>
       {# Notifications, per app (arcade/ring.py, 2026-10-23): people in your address book can ring you in it
          while it is closed. Per account, kept on its node; shown on a card that says "notify": true, or once on. #}
       {% if viewer == 'account' and mine_tag %}
@@ -254,6 +261,11 @@
       l.querySelector('input').checked = on;
       if (on || arcadeMediaUses(l.dataset.media)) l.hidden = false;
     });
+    document.querySelectorAll('.gamepictures').forEach(function (l) {
+      var on = arcadePicturesAllowed(l.dataset.pictures);
+      l.querySelector('input').checked = on;
+      if (on || arcadePicturesUses(l.dataset.pictures)) l.hidden = false;
+    });
   }
   // Play no longer holds a game that uses the wallet (2026-10-23, base.html, ASKED IN THE GAME): it opens, and the
   // wallet access card comes up over the game when it first reaches for the wallet. The box here still allows it
@@ -287,6 +299,14 @@
   });
   document.addEventListener('arcade:access', draw);
   document.addEventListener('arcade:media', draw);
+  document.addEventListener('arcade:pictures', draw);
+  document.addEventListener('change', function (e) {
+    var l = e.target.closest && e.target.closest('.gamepictures'); if (!l) return;
+    var box = e.target;
+    if (!box.checked) { arcadePicturesAllow(l.dataset.pictures, false); return; }
+    box.checked = false;
+    arcadePicturesAsk(l.dataset.pictures, l.dataset.game, l.dataset.publisher, l.dataset.address).then(draw);
+  });
   document.addEventListener('arcade:contacts', draw);
   document.addEventListener('arcade:groups', draw);
   document.addEventListener('change', function (e) {

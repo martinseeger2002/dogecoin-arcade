@@ -366,3 +366,17 @@ def test_the_t_deck_app_store_lists_cards_with_a_t_deck_build_by_the_same_creato
     assert page.count('class="pill tdeck"') == 1
     card = page[page.index('id="game-' + "a2" * 32):]
     assert 'class="pill tdeck"' in card[:card.index('class="gamebody"') + 1500]
+
+
+def test_a_card_that_draws_pictures_itself_says_so_and_gets_its_own_switch(client):
+    """2026-11-02, Spatial World: "hand the video to the app, behind its own card permission". A card says
+    "pictures": true; the viewer reads it (/games/<id>/access), the card shows the Pictures in the app switch, and the
+    App Store lists it among the app's permissions. A card that does not say it never gets the pictures."""
+    app, state = client
+    world, plain = "d1" * 32, "d2" * 32
+    _inscribe(state, world, 51, MAKER, {"app": {"name": "Spatial World", "media": True, "pictures": True}})
+    _inscribe(state, plain, 52, MAKER, {"app": {"name": "Plain Call", "media": True}})
+    assert app.get(f"/games/{world}/access").json()["pictures"] is True
+    assert app.get(f"/games/{plain}/access").json()["pictures"] is False
+    page = app.get("/apps").text
+    assert "Pictures in the app" in page and 'data-pictures="' + world + '"' in page

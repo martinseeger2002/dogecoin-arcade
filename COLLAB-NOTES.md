@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 Pictures in the app: an app draws the room's pictures itself, behind its own card switch (Claude)
+For Spatial World (3D screens; the Garrys mod session asked, the operator confirmed: "Build it"). Option 2 of two: the video
+is handed to the app, behind its own permission; the viewer no longer has to draw every picture on top.
+- **Permission**: a card says "pictures": true (games.py parse, /games/<id>/access, App Store perms). base.html PICTURES
+  IN THE APP: arcade.pictures.allow:<id> / .uses:, arcadePicturesAsk ("Let this app show the pictures itself?", says
+  it could keep them), in ARCADE_PERM_KINDS/DOORS; switches on the Games card, Home and Desktop sheets, My access. A
+  page with no card is asked, as for the camera. The on-air pill says "Pictures shown in the app" while any go.
+- **Frames** (`room.media.frames(key, {w, h, fps})`, key = player id, id#screen, 'me', 'me#screen'; null stops):
+  the viewer's own video element for that key, createImageBitmap at most w x h (shape kept, up to 1920x1080 at 30 fps),
+  posted to the frame as a transfer: event 'frame' (key, bitmap, t, p), t = when it was taken. realtime.js says
+  'shown' back after the app's handler: the lag (EWMA, at most 500 ms) holds that key's sound back by as much
+  (DelayNode), so picture and sound stay together.
+- **Levels** (`room.media.levels(keys)`, event 'levels' {key: {rgb, loud}} twice a second): a far screen's average
+  colour (4x4 sample) and loudness (receiver audioLevel) without frames.
+- **Spatial sound** (`room.media.spatial({listener: {p, f, u}, sources: {key: {p, d, cone, full, end}}})`, null
+  undoes): a heard key in the scene, or with frames, plays through delay -> HRTF panner (rolloff 0) -> equal-power
+  distance fade (cos^2 from full to end, 0 past end) -> volume gain -> limiter; the viewer's element is muted then.
+  Sound never leaves the viewer.
+- Tests: test_media_browser test_pictures_go_to_the_app_as_bitmaps_only_with_its_switch_and_their_sound_is_placed_in_its_scene
+  (asked and refused: none; allowed: bitmaps inside the size, stamped; the pill; the placed route; levels; null stops),
+  test_games test_a_card_that_draws_pictures_itself_says_so_and_gets_its_own_switch. Screenshots shown to the operator.
+- Not built yet: an end-to-end flash-and-beep measurement of the ±45 ms sync, frames from a VideoFrame/track transfer
+  (bitmaps for now).
+
 ### 2026-11-02 Room media says who is speaking (Claude, the session that worked for Riffs; reviewed and taken in by the Arcade session)
 The operator: green boxes round whoever talks in a Riffs Lounge. `_page_doors.js.html` mediaSpeak, every 150 ms: each heard
 player's voice level from the receiver's getSynchronizationSources().audioLevel (their screen's sound left out), and

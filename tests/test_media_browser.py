@@ -30,6 +30,8 @@ arcade.realtime.join('call', {game: 'media-test', fast: true}).then(function (r)
   r.media.on('media-off', function (p) { delete window.has[p.id]; window.log.push(['media-off', p.id]); });
   r.media.on('state', function (s) { window.log.push(['state', s]); });
   window.speak = {}; r.media.on('speaking', function (p, on) { window.speak[p.id] = on; window.log.push(['speaking', p.id, on]); });
+  window.pics = []; r.media.on('frame', function (key, bm, t) { window.pics.push([key, bm.width, bm.height, t]); bm.close(); });
+  window.lv = null; r.media.on('levels', function (by) { window.lv = by; });
   r.on('reconnecting', function () { window.log.push(['reconnecting']); });
   r.on('rejoined', function (me, media) { window.log.push(['rejoined', media]); });
 });
@@ -51,10 +53,12 @@ def _server(tmp_path):
     return state, Server(create_app(state), port), f"http://127.0.0.1:{port}"
 
 
-def _player(chrome, base, allowed=True):
+def _player(chrome, base, allowed=True, pictures=False):
     ctx = chrome.new_context(permissions=["camera", "microphone"])
     if allowed:
         ctx.add_init_script(f"try {{ localStorage.setItem('arcade.media.allow:{GAME}', 'yes'); }} catch (e) {{}}")
+    if pictures:
+        ctx.add_init_script(f"try {{ localStorage.setItem('arcade.pictures.allow:{GAME}', 'yes'); }} catch (e) {{}}")
     page = ctx.new_page()
     page.goto(f"{base}/inscriptions/{GAME}/full")
     frame = page.frame_locator(".inscription-frame")
@@ -833,6 +837,67 @@ def test_who_is_speaking_is_said_to_the_page_and_stops_when_they_mute(tmp_path, 
             ga.evaluate("window.room.media.mute({audio: true, video: false})")
             _until(ga, f"window.speak[{ida!r}] === false", "a's own box goes quiet on mute", timeout=10000)
             _until(gb, f"window.speak[{ida!r}] === false", "b sees a go quiet", timeout=15000)
+            chrome.close()
+    finally:
+        server.stop()
+        state.mesh.stop()
+
+
+def test_pictures_go_to_the_app_as_bitmaps_only_with_its_switch_and_their_sound_is_placed_in_its_scene(tmp_path, no_nodes):
+    """2026-11-02, Spatial World: "hand the video to the app, behind its own card permission". With Pictures in
+    the app on, room.media.frames hands the app a player's picture as ImageBitmaps inside the size it asked for, the
+    pill says so, and that player's sound goes the placed way (spatial, held back by the pictures' lag). Without the
+    switch: 'off', and no picture reaches the app."""
+    state, server, base = _server(tmp_path)
+    try:
+        with sync_api.sync_playwright() as pw:
+            chrome = _launch(pw)
+            pa, _, _ = _player(chrome, base)
+            pb, _, _ = _player(chrome, base, pictures=True)
+            pc, _, _ = _player(chrome, base)
+            ga, gb, gc = _game(pa), _game(pb), _game(pc)
+            for g, who in ((ga, "a"), (gb, "b"), (gc, "c")):
+                _until(g, "window.room && window.room.media && window.room.me", who + " in")
+            ida, idb, idc = (g.evaluate("window.room.me.id") for g in (ga, gb, gc))
+            _until(ga, f"window.states[{idb!r}] === 'direct' && window.states[{idc!r}] === 'direct'", "a direct to both")
+            ga.evaluate("window.room.media.start({video: true, audio: true})")
+            for g in (gb, gc):
+                g.evaluate("window.room.media.start({video: false, audio: false})")
+            ga.evaluate(f"window.room.media.share({idb!r}, true)")
+            ga.evaluate(f"window.room.media.share({idc!r}, true)")
+            _until(gb, f"window.has[{ida!r}] && window.has[{ida!r}].video", "b gets a's picture")
+            _until(gc, f"window.has[{ida!r}] && window.has[{ida!r}].video", "c gets a's picture")
+
+            # A page with no card is asked, as for the camera; c says no.
+            gc.evaluate(f"(() => {{ window.asked = window.room.media.frames({ida!r}, {{w: 320, h: 240, fps: 10}}); }})()")
+            pc.wait_for_selector("text=Let this app show the pictures itself?", timeout=10000)
+            assert "could also keep them" in pc.inner_text(".askcard"), "the ask says what it lets the app do"
+            pc.click(".askcard button.ghost")
+            refused = gc.evaluate("window.asked")
+            assert refused == {"ok": False, "error": "off"}, refused
+            said = gb.evaluate(f"window.room.media.frames({ida!r}, {{w: 320, h: 240, fps: 10}})")
+            assert said == {"ok": True}, said
+            gb.evaluate(f"window.room.media.hear({ida!r}, true)")
+            _until(gb, "window.pics.length >= 8", "b's app gets a's pictures", timeout=20000)
+            pics = gb.evaluate("window.pics")
+            assert all(k == ida and 0 < w <= 320 and 0 < h <= 240 for k, w, h, t in pics), pics[:3]
+            assert pics[-1][3] > pics[0][3], "each frame says when it was taken"
+            assert "pictures shown in the app" in pb.inner_text(".arcade-media-pill").lower()
+            pc.wait_for_timeout(1500)
+            assert gc.evaluate("window.pics.length") == 0, "no picture without the switch"
+
+            # Its sound placed in the app's scene: the viewer's own element goes quiet, the sound plays through the graph.
+            gb.evaluate(f"window.room.media.spatial({{listener: {{p: [0, 0, 0], f: [0, 0, -1], u: [0, 1, 0]}},"
+                        f" sources: {{[{ida!r}]: {{p: [2, 0, -3], full: 3, end: 16}}}}}})")
+            _until(pb, f"(() => {{ var v = document.querySelector('.arcade-media-layer video[data-media={ida}]');"
+                       f" return v && v.muted; }})()", "a's sound goes the placed way on b")
+            gb.evaluate(f"window.room.media.levels([{ida!r}])")
+            _until(gb, f"window.lv && window.lv[{ida!r}] && window.lv[{ida!r}].rgb", "a far screen's colour", timeout=10000)
+            gb.evaluate(f"window.room.media.frames({ida!r}, null)")
+            gb.evaluate("window.room.media.levels([])")
+            n = gb.evaluate("window.pics.length")
+            pb.wait_for_timeout(1200)
+            assert gb.evaluate("window.pics.length") - n <= 1, "null stops it"
             chrome.close()
     finally:
         server.stop()

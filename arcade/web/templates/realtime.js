@@ -121,6 +121,22 @@
 // room.media.volume(p.id + '#screen', 0.4). Say so to the others yourself, as you say anything else. hideScreen() ends it, and
 // the browser's own Stop sharing gives state 'screen-off'.
 //
+// PICTURES IN THE APP (2026-11-02, for 3D screens: Spatial World). A card that says "pictures": true gets a Pictures in the
+// app switch; while the player has it on, the app may draw the room's pictures itself instead of placing them:
+//   room.media.frames(p.id, {w: 1280, h: 720, fps: 30});   // also p.id + '#screen', 'me', 'me#screen'; null stops it
+//   room.media.on('frame', function (key, bitmap, t, p) { texture.update(bitmap); bitmap.close(); });   // an ImageBitmap,
+//                                                    // inside w x h, the picture's own shape; t: when it was taken (ms)
+//   room.media.levels([a.id, b.id + '#screen']);     // far screens, twice a second: on('levels', function (by) { ... })
+//                                                    // by[key] = {rgb: [r, g, b] or null, loud: 0..1}; [] stops it
+// {ok: false, error: 'off'} while the switch is off. The sound stays in the arcade: tell it where things are, about ten
+// times a second, in your scene's metres, and it plays each one there (HRTF), faded from `full` to `end` metres and
+// silent past it, and holds each one back by as much as its pictures reach you late, so picture and sound stay together:
+//   room.media.spatial({listener: {p: [x, y, z], f: [fx, fy, fz], u: [0, 1, 0]},
+//                       sources: {[p.id]: {p: [x, y, z], full: 3, end: 16},
+//                                 [p.id + '#screen']: {p: [x, y, z], d: [dx, dy, dz], cone: [90, 240, 0.3], full: 7, end: 24}}});
+//   room.media.spatial(null);                        // back to plain sound
+// volume() still multiplies. The pill shows "pictures shown in the app" while any go to the app.
+//
 // Rectangles are in this page's CSS pixels (getBoundingClientRect), placed again when your layout moves; null hides
 // one. A picture can only be shared over a direct link ('not direct' otherwise: media never goes through the room).
 // The viewer always shows that the camera or microphone is on, with a Stop button, over your page.
@@ -191,10 +207,10 @@
   function Media(room, screen) {
     this.room = room;
     this.screen = screen;                           // this browser can share its screen
-    this._on = {media: [], 'media-off': [], state: [], speaking: []};
+    this._on = {media: [], 'media-off': [], state: [], speaking: [], frame: [], levels: []};
   }
   Media.prototype.on = function (type, fn) {
-    if (!this._on[type]) throw new Error('media events are: media, media-off, state, speaking');
+    if (!this._on[type]) throw new Error('media events are: media, media-off, state, speaking, frame, levels');
     this._on[type].push(fn);
     return this;
   };
@@ -222,6 +238,17 @@
     return this._ask('share', {peer: String(id), on: said})
       .then(function () { return {ok: true}; }, function (err) { return {ok: false, error: err.message}; });
   };
+  Media.prototype.frames = function (key, size) {
+    var k = key === 'me' || key === 'me#screen' ? key : String(key);
+    // Long enough for the player to answer, as start() is: a page with no card asks them first.
+    return this._ask('frames', {key: k, size: size ? {w: Number(size.w), h: Number(size.h), fps: Number(size.fps || 15)} : null}, 600000)
+      .then(function () { return {ok: true}; }, function (err) { return {ok: false, error: err.message}; });
+  };
+  Media.prototype.levels = function (keys) {
+    return this._ask('levels', {keys: (keys || []).map(String)}, 600000)
+      .then(function () { return {ok: true}; }, function (err) { return {ok: false, error: err.message}; });
+  };
+  Media.prototype.spatial = function (scene) { return this._ask('spatial', {scene: scene || null}); };
   Media.prototype.hear = function (id, on) { return this._ask('hear', {peer: String(id), on: on !== false}); };
   Media.prototype.loudest = 4;
   Media.prototype.volume = function (id, level) { return this._ask('volume', {peer: String(id), level: Number(level)}); };
@@ -327,6 +354,14 @@
     else if (ev.type === 'media' && this.media) this.media._emit('media', p, {video: !!ev.video, audio: !!ev.audio});
     else if (ev.type === 'media-off' && this.media) this.media._emit('media-off', p);
     else if (ev.type === 'media-speaking' && this.media) this.media._emit('speaking', p, !!ev.on);
+    else if (ev.type === 'media-frame' && this.media) {
+      // Handed over, then said back: how long the picture took to reach the page holds the sound back as long.
+      var fr = this.media._on.frame;
+      if (!fr.length) { try { ev.bitmap.close(); } catch (err) {} }
+      else fr.forEach(function (fn) { try { fn(ev.key, ev.bitmap, ev.t, p); } catch (err) { setTimeout(function () { throw err; }); } });
+      this.media._ask('shown', {key: ev.key, t: ev.t}).catch(function () {});
+    }
+    else if (ev.type === 'media-levels' && this.media) this.media._emit('levels', ev.levels || {});
     else if (ev.type === 'media-state' && this.media) this.media._emit('state', ev.state);
     else if (ev.type === 'peer' && this.fast) {
       if (ev.state === 'gone') delete this.fast._peers[p.id]; else this.fast._peers[p.id] = ev.state;
