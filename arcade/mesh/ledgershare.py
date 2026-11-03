@@ -115,11 +115,14 @@ class LedgerShare:
             return
         now = time.monotonic()
         asked = [t for t in self._asked.get(link.peer_id, []) if t > now - 60]
-        self._asked[link.peer_id] = asked + [now]
+        # Only what is served counts (2026-11-02, live: refusals counted too, the asker asked again at once, and a
+        # fetch sat at 97 of 411 pieces for ten minutes, every ask refused).
+        busy = len(asked) >= PIECES_PER_MINUTE
+        self._asked[link.peer_id] = asked if busy else asked + [now]
         if self._serving is None:
             self._serving = asyncio.Semaphore(SERVING_AT_ONCE)
         try:
-            if len(asked) >= PIECES_PER_MINUTE:
+            if busy:
                 await link.send({"t": "lx", "op": "gb", "id": rid, "seq": 0, "end": True, "err": "busy"})
                 return
             async with self._serving:
@@ -182,7 +185,8 @@ class LedgerShare:
         if header.get("err") or header.get("seq") != len(w["parts"]) or w["size"] + len(blob) > INFLATE_MAX:
             self._wait.pop(header.get("id"), None)
             if snaps is not None and w["what"] == "piece":
-                await asyncio.to_thread(snaps.piece_failed, w["peer"], w["snap"], int(w["i"]))
+                await asyncio.to_thread(snaps.piece_failed, w["peer"], w["snap"], int(w["i"]),
+                                        header.get("err") == "busy")
             return
         w["parts"].append(blob)
         w["size"] += len(blob)

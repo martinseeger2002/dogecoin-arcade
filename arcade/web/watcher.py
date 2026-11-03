@@ -739,12 +739,16 @@ class BlockWatcher:
         try:
             snaps = self.state.ledger_snapshots(chain)
             snaps.make_in_background(tip)
-            before = index.epoch
+            seen = self.__dict__.setdefault("_copy_epochs", {})
+            before = seen.setdefault(chain.network, index.epoch)
             if share is not None and check is not None:
                 floor = chain.params.index_start
-                snaps.step(share, tip, verify=lambda manifest, maker: check.votes(chain.network, floor,
-                                                                                  int(manifest["cp"])))
-            if index.epoch != before:                          # a copy took the old index's place
+                verify = lambda manifest, maker: check.votes(chain.network, floor, int(manifest["cp"]))  # noqa: E731
+                snaps.step(share, tip, verify=verify)
+                tips = self.state.ledger_tips
+                snaps.keep_fetching(share, lambda: tips.get(chain.network, tip), verify)
+            if index.epoch != before:                          # a copy took the old index's place (on any thread)
+                seen[chain.network] = index.epoch
                 self.state.ledger_tips.pop(chain.network, None)
                 self.state.bump_generation()
             height = index.indexed_height() or 0

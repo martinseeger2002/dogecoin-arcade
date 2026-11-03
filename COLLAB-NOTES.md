@@ -136,6 +136,10 @@ those), so a whole copy is sent in pieces, as the ord index already does (ord_sn
 - Tests: tests/test_ledger_snapshot.py (real regtest chain: privacy, a copy taken and read on from, refused by
   1/1, 1/3 and 2/4 votes, a wrong piece, another chain, confirmed, a wrong name found and rebuilt, made only when
   asked and allowed, and three arcades over real mesh links), test_admin switches.
+- First live run (a throwaway arcade on a test machine, empty index, linked to .25): main and two small chains came from 4 of 4
+  holders. Two fixes from it: a fetch now steps on its own thread every 0.25 s (`keep_fetching`; on a new arcade the
+  watcher's pass took two minutes per chain), and only pieces actually sent count against the 120 a minute, while an
+  arcade that says "busy" is not asked again for 10 s (refusals had counted, and the fetch sat at 97 of 411 pieces).
 - Open: the ord index keeps its own snapshot rules for now; same-height consensus/names checks need two arcades at
   the same height, so a quiet chain confirms sooner than a busy one.
 

@@ -295,3 +295,45 @@ def test_over_real_mesh_links_an_empty_arcade_asks_fetches_checks_and_takes_the_
             for n in nodes.values():
                 await n.stop()
     asyncio.run(asyncio.wait_for(go(), 120))
+
+
+def test_an_arcade_that_says_busy_is_left_alone_for_a_while_and_refusals_do_not_use_up_its_allowance(world, tmp_path,
+                                                                                                      monkeypatch):
+    """2026-11-02, live: refused asks counted against the allowance and were asked again at once, so a fetch sat at 97
+    of 411 pieces. Only pieces sent count, and a busy arcade is not asked again for BUSY_PAUSE."""
+    import asyncio as aio
+    from arcade.mesh import ledgershare as LX
+    node, alice, params, home = world
+    maker = LS.LedgerSnapshots(_synced(node, params, tmp_path / "maker.sqlite"), "regtest")
+    maker.make()
+    taker = LS.LedgerSnapshots(_index(node, params, tmp_path / "taker.sqlite"), "regtest")
+    monkeypatch.setattr(LS, "WORTH_BLOCKS", 1)
+    taker.heard("m" * 64, maker.offer(), maker.indexed())
+    asked = []
+
+    class Busy(Share):
+        def ask_piece(self, node, net, sid, i):
+            asked.append(i)
+            self.taker.piece_failed(node, sid, i, True)
+    share = Busy(maker, taker)
+    for _ in range(4):
+        taker.step(share, node.rpc.get_block_count(), verify=lambda m, mk: {})
+    assert len(asked) == 1, "asked once, then left alone"
+
+    sent = []
+
+    class Link:
+        peer_id = "p" * 64
+
+        async def send(self, header, blob=b""):
+            sent.append(header)
+    monkeypatch.setattr(LX, "PIECES_PER_MINUTE", 2)
+    lx = LX.LedgerShare(lambda: {"regtest": maker})
+    sid = maker.made["id"]
+
+    async def go():
+        for i in range(6):
+            await lx._send(Link(), maker, {"id": i, "what": "piece", "snap": sid, "i": 0, "z": 0})
+    aio.run(go())
+    served = [h for h in sent if h.get("op") == "gb" and not h.get("err")]
+    assert len({h["id"] for h in served}) == 2 and len(lx._asked["p" * 64]) == 2, "refusals did not count"

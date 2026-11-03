@@ -77,6 +77,10 @@ IN_FLIGHT = 6
 PIECE_SECONDS = 60
 FETCH_STALL = 600
 FETCH_SAVE = 15
+#: How long an arcade that said "busy" is not asked for a piece.
+BUSY_PAUSE = 10.0
+#: How often a fetch in progress is stepped on its own thread.
+FETCH_TICK = 0.25
 #: Offers heard within this long count.
 OFFER_FRESH = 600
 
@@ -150,6 +154,7 @@ class LedgerSnapshots:
         self.asked_at = 0.0                        # when this arcade last asked the holders to make one
         self.making = False
         self.refused: dict[str, float] = {}        # copy id -> when it was refused: never fetched again
+        self.paused: dict[str, float] = {}         # node -> not asked for a piece until then (it said "busy")
         self.said = ""
         self.served_at = time.time()
         base = Path(index.path)
@@ -480,7 +485,8 @@ class LedgerSnapshots:
             busy = {node for node, _at in f["asked"].values()}
             for i in missing[:max(0, IN_FLIGHT - len(f["asked"]))]:
                 has = [n for n, o in self.offers.items() if o["id"] == f["id"]
-                       and (o.get("have") == "all" or i in (o.get("have") or []))]
+                       and (o.get("have") == "all" or i in (o.get("have") or []))
+                       and self.paused.get(n, 0) < now]
                 if not has:
                     continue
                 free = [n for n in has if n not in busy] or has
@@ -488,6 +494,28 @@ class LedgerSnapshots:
                 busy.add(node)
                 f["asked"][i] = (node, now)
                 share.ask_piece(node, self.net, f["id"], i)
+
+    def keep_fetching(self, share: Any, tip: Callable[[], int | None], verify) -> bool:
+        """While a copy is being fetched, step it every FETCH_TICK seconds on a thread of its own (2026-11-02, live: on
+        a new arcade the watcher's pass took two minutes per chain reading its node, so a fetch stepped -- six pieces
+        asked -- once every few minutes). True when one was started."""
+        with self.lock:
+            if self.fetch is None or getattr(self, "_fetcher", None) is not None:
+                return False
+            self._fetcher = True
+
+        def run():
+            try:
+                while self.fetch is not None:
+                    try:
+                        self.step(share, tip(), verify=verify)
+                    except Exception:                          # noqa: BLE001 -- the next tick tries again
+                        log.debug("ledger %s: fetch step", self.net, exc_info=True)
+                    time.sleep(FETCH_TICK)
+            finally:
+                self._fetcher = None
+        threading.Thread(target=run, name=f"arcade-{self.net}-copy-fetch", daemon=True).start()
+        return True
 
     def got_manifest(self, node: str, sid: str, manifest: Any) -> None:
         with self.lock:
@@ -532,8 +560,11 @@ class LedgerSnapshots:
             self._save_fetch()
             self.said = f"fetching the index: {len(f['have'])} of {len(m['pieces'])} pieces"
 
-    def piece_failed(self, node: str, sid: str, i: int) -> None:
+    def piece_failed(self, node: str, sid: str, i: int, busy: bool = False) -> None:
+        """`node` did not send piece i: gone (asked elsewhere now), or busy (not asked again for BUSY_PAUSE)."""
         with self.lock:
+            if busy:
+                self.paused[node] = time.time() + BUSY_PAUSE
             f = self.fetch
             if f is not None and f["id"] == sid and f["asked"].get(i, ("",))[0] == node:
                 f["asked"].pop(i, None)
