@@ -1563,6 +1563,19 @@
     }
     // Turned on on the card (in another tab): the note goes.
     window.addEventListener('storage', function(e){
+      // This page is still loading: base.html's script, below this one, has not defined its names yet (2026-11-03,
+      // live: "ARCADE_MEDIA is not defined" whenever another tab wrote to storage while a page loaded).
+      if (typeof ARCADE_MEDIA === 'undefined' || typeof arcadeGameOf !== 'function') return;
+      // Pictures in the app turned off elsewhere: what goes to this app stops now.
+      if (e.key && typeof ARCADE_PICTURES !== 'undefined' && e.key.indexOf(ARCADE_PICTURES) === 0 && e.newValue === null) {
+        arcadeGameOf(here).then(function(g){
+          if (arcadePicturesOn(here, g)) return;
+          for (var k in rt) { var md = rt[k].media; if (!md) continue;
+            Object.keys(md.frames).forEach(function(f){ framesStop(md, f); });
+            if (md.levels) { clearInterval(md.levels.timer); md.levels = null; } }
+          mediaPill();
+        });
+      }
       if (mediaNoteEl && e.key && e.key.indexOf(ARCADE_MEDIA) === 0 && e.newValue === 'yes') { mediaNoteEl.remove(); mediaNoteEl = null; }
       // Turned off elsewhere (its Permissions window, Remove from arcade, Game access): a camera already on stops now.
       if (e.key && e.key.indexOf(ARCADE_MEDIA) === 0 && e.newValue === null && mediaAnyOn()) {

@@ -88,6 +88,14 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 "ARCADE_MEDIA is not defined" while a page loads (Claude; found live by the Garrys mod session)
+inscription_full.html and inscription_view.html include _page_doors inside base.html's body block, and base.html
+defines ARCADE_MEDIA in its script further down. The viewer's storage listener is registered at once, so another tab
+writing ANY key while this page loaded threw (104 errors in 5 loads, live). The listener now returns until base.html's
+names exist. With it: Pictures in the app turned off in another tab stops what goes to the app at once. Test:
+test_media_browser test_a_page_loading_while_another_tab_writes_storage_throws_nothing (a storage event put just
+before base.html's script; it fails without the fix).
+
 ### 2026-11-02 Pictures in the app: an app draws the room's pictures itself, behind its own card switch (Claude)
 For Spatial World (3D screens; the Garrys mod session asked, the operator confirmed: "Build it"). Option 2 of two: the video
 is handed to the app, behind its own permission; the viewer no longer has to draw every picture on top.
