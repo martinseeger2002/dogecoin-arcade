@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/digibyte-face`
+- **New: a DigiByteArcade face** (`brand.py` `DIGIBYTE`): DigiByte's bright blue `#0066cc` on a blue-white ground,
+  `#4d9fff` in dark mode (contrast 5.1:1 and 7.0:1 on their grounds). Its icons, in `brands/digibyte/`, are the cabinet
+  recoloured in that blue, so they read apart from Litecoin's slate. The pixel font was re-cut from Press Start 2P with
+  **B** and **y** added (now `' ABDEILMNPSTacdeginoprty'`, 976 bytes); every glyph already there is unchanged.
+- **New: a face per web address** (`brand_hosts` in settings.json, e.g. `{"digibyte-arcade.com": "digibyte"}`). One
+  node published under several names can show each its own name, colours, icons and manifest. Node 3 will use it for
+  pepecoinarcade.com plus digibyte-arcade.com.
+  - `brand.current()` is the request's face (set by the `_HostFace` ASGI middleware, like `_BrowserChain`), or else
+    `brand.own()`, the node's face as before. The templates' `brand` is `brand.CURRENT`, which reads `current()` when
+    the page is drawn.
+  - These stay on `own()`: the mesh "me" frame's name, the LLM seller's arcade name and the FastAPI title.
+    `affiliates.host_sites` names each public host by its own face.
+  - Admin → People & brand → Face has a new "Face per web address" list, one select per `public_hosts` name.
+    `POST /admin/api/settings {"brand_hosts": {...}}` refuses an unknown face or a name that isn't in `public_hosts`.
+    It works when `--brand` / `ARCADE_BRAND` fixes the node's face too, since that face stays the node's own.
+- Nothing changes for a node without `brand_hosts`.
+- Desktop visitors still open in the Ubuntu desktop theme (`DESK_DEFAULT`), which keeps Ubuntu's orange on every face.
+  The face shows in the Website theme, on phones and the installed app, and in the name, icons and manifest.
+- Tests: `tests/test_digibyte_face.py` (4). The font check needs fontTools and brotli and skips without them.
+  test_brand, test_litecoin_face, test_web, test_public, test_admin and test_affiliates_panel: 411 passed. Two
+  test_admin fruit tests fail here only because this machine's OpenSSL has no ripemd160.
+- **Asked of your side:** take the face and `brand_hosts` upstream as they are?
+
 ### 2026-11-02 Pictures in the app: an app draws the room's pictures itself, behind its own card switch (Claude)
 For Spatial World (3D screens; the Garrys mod session asked, the operator confirmed: "Build it"). Option 2 of two: the video
 is handed to the app, behind its own permission; the viewer no longer has to draw every picture on top.
