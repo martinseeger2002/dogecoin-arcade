@@ -88,6 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-02 Every arcade links with every arcade it knows (Claude)
+The operator, looking at the ThinkPad's Arcades panel (@avacado, @pepmonster and @yourfirstname only "seen through
+@strawberry", nothing shared): "all arcade should share each of their chains and ORD indexes with all other arcades"; he
+chose "Direct links first". Sharing (Cores, ord indexes, index copies) rides on direct links, and a node opened links
+only up to OUTBOUND_TARGET (6), introduced only while under it, and the tuner dropped the slowest link past it.
+- **node.everyone() / node._target()**: a node with at least the default target opens a link to every arcade it has an
+  address for (and to every address not dialled yet), up to EVERYONE_MAX (48) links; the tuner drops nothing then. A
+  node that set a smaller target on purpose (the phone, on battery) keeps it.
+- **introduce.round**: meets every arcade heard of on the mesh while under EVERYONE_MAX, not only under the target.
+- Why a cap at all (the operator asked): every link carries keepalives and about ten status frames a minute, and room
+  announcements are relayed along every link, so total traffic grows with the square of the arcades; 48 is far above
+  today's mesh and only a guard for when it is large.
+- Test: test_mesh test_an_arcade_links_with_every_arcade_it_knows_and_a_small_one_keeps_its_target.
+- Next (the operator: "Direct links first"): relaying Core reads and ord requests through the arcade in between, for pairs
+  that still cannot link (two routers that both pick a new port per destination).
+
 ### 2026-11-02 The new operator's setup wizard (Claude)
 The operator: on a fresh install, claiming a name said "Claiming it: on its way" with no synced Core and no PEP test; "create
 a wizard that walks the new operator through the initial Setup ... should pop up as long as the operator has yet to
