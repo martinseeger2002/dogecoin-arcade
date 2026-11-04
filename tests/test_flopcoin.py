@@ -33,7 +33,7 @@ def test_flopcoin_params_are_its_chainparams():
     assert (FLOP.letter, FLOP.family, FLOP.net_word, FLOP.node_dir, FLOP.node_conf) == (
         "F", "FLOP", "flopcoin", ".flopcoin", "flopcoin.conf")
     assert config.CHAIN_NAMES["flop"] == "main"
-    assert FLOP.activation_height == FLOP.messaging_start_height == config.FLOP_MAINNET_FLOOR == 917_000
+    assert FLOP.activation_height == FLOP.messaging_start_height == config.FLOP_MAINNET_FLOOR == 914_000
     assert FLOP.swaps_from is None and FLOP.take_from is None
     assert "flop" in __import__("arcade.cores", fromlist=["OPTIONAL"]).OPTIONAL
     assert all(p.letter != "F" for n, p in NETWORKS.items() if n != "flop"), "its badge letter is its own"
@@ -200,3 +200,34 @@ def test_real_flopcoin_blocks_read_as_core_prints_them_across_auxpow_and_the_for
     tx = data["tx"]
     mine = rawchain.read_tx(bytes.fromhex(tx["hex"]), tx["txid"]).verbose(FLOP)
     assert mine == {k: v for k, v in tx.items() if k not in ("blockhash", "blocktime", "confirmations", "time")}
+
+
+def test_a_caught_up_flopcoin_node_is_ready_though_its_estimate_stops_short_and_it_says_no_initial_download():
+    """2026-11-04: a Flopcoin node at the tip says verificationprogress 0.99988 and, as a 1.14 Core, no
+    initialblockdownload; it went in and out of "ready", and Flopcoin off the Wallet's coin list. Level with its
+    headers it is ready; behind them it is not."""
+    from arcade.web.state import AppState
+
+    class Chain:
+        def __init__(self, info):
+            self.network, self.params, self.info = "flop", FLOP, info
+
+        def rpc(self):
+            outer = self
+
+            class R:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+                def get_blockchain_info(self):
+                    return outer.info
+            return R()
+
+    state = AppState.__new__(AppState)
+    state._sync = {}
+    tip = {"blocks": 914807, "headers": 914807, "verificationprogress": 0.9998831745255763}
+    assert state._sync_now(Chain(tip))["ready"] is True
+    assert state._sync_now(Chain(dict(tip, blocks=900000, verificationprogress=0.98)))["ready"] is False

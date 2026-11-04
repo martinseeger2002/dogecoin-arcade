@@ -121,7 +121,9 @@ def test_a_wallet_imported_on_one_arcade_shows_on_another_with_its_balance(brows
     record = a.imported_wallets().get(pubkey)
     assert record["signed"] and record["version"] == 1, "saved signed, as version 1, by the browser"
     W.check_record(pubkey, record["version"], record["blob"], record["sig"])
-    # A has this wallet's whole past (watched from the start); a coin arrives.
+    # A has this wallet's whole past (its read-back done: an import onto an empty index is not "watched from the
+    # start" since 2026-11-04); a coin arrives.
+    a.set_setting(f"backfilled:regtest:{address}", 0)
     with a.token_index(a.messaging).open() as db:
         db.conn.execute("INSERT INTO utxo (txid, vout, address, value, height) VALUES (?,?,?,?,?)",
                         ("ab" * 32, 0, address, 5 * 100_000_000, 1))

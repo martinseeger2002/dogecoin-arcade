@@ -236,6 +236,19 @@ and I also don't see the user's full console command list".
     and sends from its console; the operator sends the node's message from the same tab.
   - Workhorse, with the full arcade's messaging tests: 590 passed, 19 skipped.
 
+### 2026-11-04 Flopcoin's floor is below the tip; an import never counts as read before its chain's index holds a block (Claude; the operator: "I imported my flop key, but no balance showed up yet", "All chains should always be updated to the most recent block for the index head")
+
+Branch `claude/flop-floor`. `config.FLOP_MAINNET_FLOOR` was 917,000, two days ahead of the tip, so no arcade had a Flopcoin index (top 0). Three things followed, all fixed in `arcade/web/app.py`:
+
+- An import's address is watched at `indexed_height() or 0`, so with an empty index its watch said since 0, and `_rescan_done` took `since <= floor` as "watched from the floor": the import was **ready at once, with nothing**. A watch at 0 no longer counts.
+- The shared walk reads blocks 0..the index's top; with an empty index that was 0..0. `_walk_start` now queues instead, `_can_read_back` needs the index started, and the page says the index has not started and at which block.
+- The read-back queue dropped an import for good when its chain was briefly not ready (Flopcoin flickered: one sharer). It now waits.
+
+- Flopcoin is `trust_progress=False` (as Wojakcoin): its node says verificationprogress 0.99988 at a live tip and, as a 1.14 Core, no `initialblockdownload`, so it went in and out of "ready" and off the Wallet's coin list. `state._sync_now`: a chain that does not trust its estimate and says no `initialblockdownload` is downloading only while its headers are ahead.
+
+The floor is now **914,000**, below the tip (914,735). No arcade had read a Flopcoin block, so nothing is redone; an arcade still on 917,000 compares fingerprints from another floor until it updates. The rule from now on: a chain's floor is never above its tip when it ships, so its index head always follows the newest block. Nothing needed from your side; if you add a chain, set its floor at or below the tip.
+
+
 ### 2026-11-04 The web worker runs the installed arcade, never an `arcade/` in the directory it starts in (Claude; found on the operator's ThinkPad by its session)
 
 The supervisor spawned workers with `python -m arcade.web`, which puts the current directory first on sys.path, and arcade-web.service has no WorkingDirectory, so it starts in $HOME. On the ThinkPad $HOME held an old `arcade/` unpacked from source.tar.gz, and the live arcade ran THAT, not site-packages; the updater compares versions, not where code was imported from, so nothing said so. New `arcade/pyrun.py` `module_cmd`: a child starts with the `arcade` this process imported. Where that is the current directory (a source checkout, as on .25, and the test suite) exactly as before; otherwise with the current directory off sys.path (`-P` on Python 3.11+, a `-c` bootstrap that drops `sys.path[0]` before that, and for another interpreter). Used by the supervisor's worker spawn and its self-replacing execv, and by the updater's second half (`-m arcade.update --services-only`). The launcher, arcade-cli and the bot-RPC shim run console scripts, which never put the cwd first; the UPDATE shim runs `python -c` and `-m` (the ThinkPad session caught it), so it now starts with `cd` into the venv's folder (Linux and Windows), SHIM_VERSION 4 so every arcade rewrites it at its next update. tests/test_pyrun.py (a decoy `arcade/` in the cwd: the real one loads; unprotected, the decoy does). If your side runs workers some other way, the same applies.
