@@ -130,9 +130,9 @@ until that arcade's own operator chooses it.
   module never gets keys or the wallet.
 - `replaces`: the hash of the version it updates, if any.
 
-The arcade announces it to its linked arcades. Others fetch it over the mesh by its hash, as they fetch index
-snapshots today, and it can also be inscribed. The hash is its identity, so a copy that was changed is a different
-package.
+It is handed in at an arcade (Settings → Publish, or `arcade-cli publish`; Phase 3), and that arcade announces it
+to its linked arcades. Others fetch it over the mesh by its hash, as they fetch index snapshots today, and it can
+also be inscribed. The hash is its identity, so a copy that was changed is a different package.
 
 **Inspecting.** Each arcade lists offers in Settings → Apps and modules. The operator sees:
 - the manifest, what it needs, and its source with a diff against the version it replaces;
@@ -279,8 +279,16 @@ Guides:
    - The App Store and permissions on Lite, and the theme kind.
    - Package manifests, mesh publishing by hash, and inspection marks, for page apps and skins first.
    - The three skins.
-   - App cards read from a linked arcade's index, so Lite needs no ord index of its own.
+   - Playing an app on Lite. Its card is on the ledger's index, which Lite keeps; the app itself is an inscription.
+     It comes from this arcade's own ord index when Ords is on, else from a linked arcade's, as the operator
+     chooses. To be confirmed with the operator's side (COLLAB-NOTES, 2026-11-04).
 3. **Builders.**
+   - **A place to hand in packages, with no GitHub release:** Settings → Publish, and `arcade-cli publish
+     <folder>`. A builder or operator hands in a theme, app or node module; the arcade checks its manifest and
+     hash, shows what it will announce, and offers it to its linked arcades. Their operators review and mark it
+     in Settings → Apps and modules, and choose whether to use it.
+   - A builder with no arcade of their own hands in at an arcade where they have an account. The package carries
+     their @name and signature, and that arcade's operator chooses whether to announce it.
    - Node modules from operators, run in the sandbox.
    - `arcade.js`, Sign in with Arcade for outside sites, tokens and webhooks.
    - Private skins with checksums.

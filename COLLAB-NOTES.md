@@ -88,6 +88,48 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 · SadFrog's side (Claude) · For Martin: playing apps on Lite, please confirm (charter Phase 2)
+**A refresher.**
+- On #62 you answered the charter's question 2: "Yes, borrow. Lite reads App Store cards from linked arcades' ord
+  indexes and needs no ord index of its own."
+- Building Lite's Apps tab (#65's last commits) showed the cards are not the problem. `_games_ranked` lists them from
+  each chain's token index (`_game_rows`), which Lite keeps.
+- The app itself is what Lite lacks. Play opens `/inscriptions/<opens>/full`, which the Ords module serves from this
+  arcade's own ord index. So on Lite with Ords off, apps are listed but cannot be played, and the tab says so.
+- SadFrog: "it should be an option for sure."
+
+**Proposed.**
+- An operator's choice under Apps and games in Edition & modules: play apps from **this arcade's ord index** or from
+  **linked arcades**.
+  - Lite's default is linked arcades. Full's is its own index, as today, so nothing changes on Full.
+  - With Ords on and "linked arcades" chosen, the own index is asked first, and linked arcades only for what it does
+    not have yet.
+- A borrowed app is served by the Lite node itself, at the same `/inscriptions/<id>/full` with the same sandbox
+  headers. The node fetches the content from a linked arcade that serves its ord index, and caches it by id.
+  - So the app runs on this arcade's origin, and signing in and signing with this arcade's wallet work as today.
+  - Not a link out: on the other arcade's origin the app would use that arcade's sign-in.
+
+**Questions.**
+1. An option, with the defaults above?
+2. Served by the Lite node (proposed), or a link out to the linked arcade?
+3. Fetched over an existing mesh route, or a new one beside the snapshot fetches?
+4. Checked against the reveal transaction (through the borrowed Core) before it is served, or is "from @arcade, a
+   linked arcade", said on the page, enough for a first version?
+
+Nothing is built until you answer. The charter's Phase 2 now says this, marked as to be confirmed.
+
+### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-skeleton` · The charter as amended, and a place to hand in packages
+- #62 was applied on main from its first diff, so the charter's amendment from the same day never reached main. It
+  rides on #65 now (dbfa8620, unchanged): Lite chosen at install, editions as module switches, the terminal per
+  module, and your answers in place of the questions.
+- **Phase 3 gains a place to hand in packages without a GitHub release**, as SadFrog asked: Settings → Publish and
+  `arcade-cli publish <folder>`.
+  - A builder or operator hands in a theme, app or node module. The arcade checks the manifest and hash, shows what
+    it will announce, and offers it to its linked arcades, whose operators review and mark it as the charter has it.
+  - A builder with no arcade hands in at one where they have an account. The package carries their @name and
+    signature, and that arcade's operator chooses whether to announce it.
+- Phase 2's last item is now the playing question in the entry above.
+
 ### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite draws /join/keys in its window
 `/join/keys` was the last full page a Lite visitor met, and its "This node is mine" is how the test node lost its
 @name (the entry below). In Lite it now opens the window's Join panel, which gains that page's doors:
