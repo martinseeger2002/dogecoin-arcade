@@ -212,7 +212,10 @@ html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, 
 .dfm-row { display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--df-border); cursor: pointer; }
 .dfm-row:hover, .dfm-row.on { background: rgba(243,227,165,.08); }
 .dfm-row b { display: block; }
-.dfm-row span { color: var(--df-text-secondary); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; max-width: 340px; }
+.dfm-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dfm-name b { display: inline; }
+.dfm-row .dfm-preview { color: var(--df-text-secondary); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; max-width: 340px; }
+#dfm-who { display: inline-flex; align-items: center; gap: 6px; max-width: none; overflow: visible; color: inherit; }
 .dfm-badge { margin-left: auto; background: #f3e3a5; color: #000; border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 700; }
 .dfm-bubbles { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
 .dfm-b { max-width: 78%; padding: 8px 12px; border-radius: 16px; background: #1d1d1d; white-space: pre-wrap; word-break: break-word; }
@@ -252,6 +255,7 @@ html.indesk body.df-dogefeed .df-app, html.indesk body.df-dogefeed .df-sidebar, 
 </div>
 {% if chain %}
 {% if not public %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
+{% include "dogefeedx/_chain.js.html" %}
 <script type="module">
 import * as wallet from "{{ '/wallet.js' if public else '/node-wallet.js' }}";
 import * as mail from "{{ '/messaging.js' if public else '/node-mail.js' }}";
@@ -269,10 +273,12 @@ async function drawThreads() {
   const list = (await mail.threads()).filter((t) => !t.group);
   const unread = list.reduce((n, t) => n + (t.unread || 0), 0);
   try { localStorage.setItem("dogefeedx.badge.messages::" + (localStorage.getItem("dogefeedx.wallet") || ""), String(unread)); } catch (e) {}
-  $("msg-threads").innerHTML = list.length ? list.map((t) =>
-    '<div class="dfm-row' + (t.peer === here ? " on" : "") + '" data-peer="' + esc(t.peer) + '"><div><b>' + esc(nameOf(t))
-    + '</b><span>' + esc(t.preview || "") + '</span></div>' + (t.unread ? '<span class="dfm-badge">' + t.unread + "</span>" : "")
-    + "</div>").join("") : '<p class="df-empty">No messages yet. Start a DM with an @name.</p>';
+  $("msg-threads").innerHTML = list.length ? list.map((t) => {
+    const pill = (typeof dfxChainPill === "function") ? dfxChainPill(t.address || "", t.chain || "") : "";
+    return '<div class="dfm-row' + (t.peer === here ? " on" : "") + '" data-peer="' + esc(t.peer) + '"><div><div class="dfm-name"><b>' + esc(nameOf(t))
+    + "</b>" + pill + '</div><span class="dfm-preview">' + esc(t.preview || "") + "</span></div>" + (t.unread ? '<span class="dfm-badge">' + t.unread + "</span>" : "")
+    + "</div>";
+  }).join("") : '<p class="df-empty">No messages yet. Start a DM with an @name.</p>';
 }
 
 async function drawConversation() {
@@ -290,7 +296,9 @@ async function show(peer, label) {
   $("msg-threads").hidden = true; $("dm").hidden = true;
   $("msg-thread").hidden = false;
   const t = (await mail.threads()).find((x) => x.peer === peer);
-  $("dfm-who").textContent = t ? nameOf(t) : (label || "");
+  const who = t ? nameOf(t) : (label || "");
+  const whoPill = (t && typeof dfxChainPill === "function") ? dfxChainPill(t.address || "", t.chain || "") : "";
+  $("dfm-who").innerHTML = esc(who) + whoPill;
   await drawConversation();
   $("dfm-text").focus();
 }
