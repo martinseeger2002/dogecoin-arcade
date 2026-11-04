@@ -518,7 +518,9 @@ def test_overview_lists_every_arcade_this_one_first_with_its_cores_ords_and_link
     finally:
         state.mesh = was
         state.set_setting("share:regtest", None)
-    assert got["ok"] and got["total"] == 4 and got["running"] == 3 and got["linked"] == 2
+    # `gone` is known only from its announcement on the chain (said nothing this hour): listed, not counted
+    # running (2026-11-03).
+    assert got["ok"] and got["total"] == 3 and got["running"] == 2 and got["linked"] == 2
     rows = got["rows"]
     mine = rows[0]
     assert mine["me"] and mine["tag"] == "strawberry" and mine["node"] == me[:12] and mine["link"] == {"state": "me"}
@@ -536,7 +538,7 @@ def test_overview_lists_every_arcade_this_one_first_with_its_cores_ords_and_link
     assert s["tag"] == "" and s["cores"] == [] and s["link"]["state"] == "slow", "over a second is slow"
     assert [(o["role"], o["helped"]) for o in s["ords"]] == [("help", 4200)], "helping on the PEP index"
     assert [o["role"] for o in g["ords"]] == ["read"], "read only"
-    assert g["link"] == {"state": "none"} and g["cores"] == [], "a Core is known only from an arcade linked now"
+    assert g["link"] == {"state": "quiet"} and g["cores"] == [], "a Core is known only from an arcade linked now"
     assert g["tag"] == "faraway", "what an arcade said stays shown after its link is down"
     assert app.get("/admin/api/arcades", headers=EDGE).status_code != 200, "never shown to a stranger"
 
@@ -593,6 +595,32 @@ def test_overview_names_an_arcade_that_says_none_from_its_announcement_on_the_ch
     assert rows[twice[:12]]["tag"] == "" and "tag_from" not in rows[twice[:12]], "announced by two addresses: no name"
     assert rows[says[:12]]["tag"] == "said_itself" and "tag_from" not in rows[says[:12]], "its own word first"
 
+
+def test_an_arcade_only_announced_on_the_chain_is_listed_but_not_counted_running(public):
+    """2026-11-03, "Why are only eight out of the 13 linked?": three test arcades that had stopped the evening
+    before still counted running, because arcades re-announce on the chain only once a day. Running is word from the
+    mesh within the hour -- a link, a reached address, a linked arcade's say, or its own hello; an announcement alone
+    is listed last as not heard from."""
+    app, state = public
+    me, linked, hello, ghost = "a" * 64, "b" * 64, "c" * 64, "d" * 64
+    was = getattr(state, "mesh", None)
+    state.mesh = _mesh_of(me, [linked], rtts={linked: 9.0},
+                          said={hello: {"tag": "think", "hosts": [], "at": time.time() - 600},
+                                ghost: {"tag": "", "hosts": [], "at": time.time() - 7200}})
+    store_was = state.store
+    state.store = _store_announcing(state, [linked, hello, ghost, me])
+    try:
+        got = app.get("/admin/api/arcades", headers=LOCAL).json()
+    finally:
+        state.mesh = was
+        state.store = store_was
+    assert got["running"] == 2 and got["linked"] == 1 and got["total"] == 3
+    rows = got["rows"][1:]
+    assert [r["node"] for r in rows] == [linked[:12], hello[:12], ghost[:12]], "the quiet one last"
+    assert rows[1]["link"] == {"state": "none"}, "a hello this hour: running, not linked"
+    assert rows[2]["link"] == {"state": "quiet"}, "an announcement alone"
+    page = app.get("/admin", headers=LOCAL).text
+    assert "not heard from" in page
 
 def _store_announcing(state, keys):
     """state.store, with these mesh keys announced on the chain in the last day."""

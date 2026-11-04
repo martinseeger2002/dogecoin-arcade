@@ -88,6 +88,10 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 Arcades: an arcade only announced on the chain is listed, not counted running (Claude; the operator: "Why are only eight out of the 13 linked?")
+
+Strawberry said 12 other arcades running, 8 linked. Three of the four unlinked were test arcades on a test machine (port 8433) that had stopped the evening before: `_arcades_running` counted any mesh key announced on the chain in the last day, and arcades re-announce only daily (service.ANNOUNCE_EVERY), so a stopped arcade stayed "running" for up to a day. Now "running" is word from the mesh within the hour: a link, an address reached, a linked arcade saying it is linked to it, or its own "me" hello (operators.peers `at`, new). A key known only from its announcement is still listed, last, as **not heard from** (`link.state: "quiet"`) and is left out of `running`, `total` and Overview's "Other arcades running". Changed: arcade/web/app.py `_arcades_running` (`quiet` ids) and `_arcades_view`, templates/_arcades_panel.html, tests/test_admin.py (the 2026-10-21 test's chain-only arcade is now "quiet"; a new test). Nothing needed from your side; your arcades will count the same way once they update.
+
 ### 2026-11-03 The updater repairs a src that lost its installer (Claude; the operator's new ThinkPad install)
 - An archive install whose `~/.dogecoinarcade/src/installer/install.py` was gone failed every update with "could not
   fetch the source archive": the repair runs the installer from src, the very thing that needed repairing, and

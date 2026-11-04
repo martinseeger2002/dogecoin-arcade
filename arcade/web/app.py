@@ -1479,26 +1479,36 @@ def create_app(state: AppState) -> FastAPI:
         were for the pages that read only them."""
         mesh = getattr(state, "mesh", None)
         live, me, linked = set(), "", 0
+        now = time.time()
         if mesh is not None and getattr(mesh, "loop", None) is not None:
             me = mesh.node_id
             links = set(dict(mesh.node.links))
             linked = len(links)
-            now = time.time()
             live = links | {e.get("id") for e in list(mesh.node.addrs.values())
                             if e.get("id") and now - float(e.get("ok") or 0) < 3600}
             live |= set(_seen_through(mesh, links))
+            # Its own "me" hello within the hour (mesh/operators.py) is word from it too: a link up for hours that
+            # just dropped has an old dial time but a fresh hello.
+            said = dict(getattr(getattr(mesh, "operators", None), "peers", {}) or {})
+            live |= {p for p, s in said.items() if now - float((s or {}).get("at") or 0) < 3600}
+        # Announced on the chain in the last day but not heard on the mesh within the hour: listed, never counted
+        # running (2026-11-03, "Why are only eight out of the 13 linked?": three test arcades that had stopped
+        # the evening before were counted running for a day, as arcades re-announce only daily).
+        quiet = set()
         try:
             with state.store() as store:
-                live |= {str(r["mesh_key"]) for r in store.mesh_peers(state.messaging.network,
-                                                                      since=int(time.time()) - 86400)}
+                quiet = {str(r["mesh_key"]) for r in store.mesh_peers(state.messaging.network,
+                                                                      since=int(now) - 86400)}
         except Exception:                                 # noqa: BLE001 -- the count is a nicety
             pass
-        live.discard(me)
-        live.discard(None)
-        live.discard("")
+        for gone in (me, None, ""):
+            live.discard(gone)
+            quiet.discard(gone)
+        quiet -= live
         out = {"running": len(live), "linked": linked}
         if with_ids:
             out["ids"] = sorted(live)
+            out["quiet"] = sorted(quiet)
         return out
 
     def _seen_through(mesh, links) -> dict:
@@ -31057,12 +31067,16 @@ def create_app(state: AppState) -> FastAPI:
                  "lora": bool(getattr(getattr(state, "lora", None), "running", False)),
                  "ords": ords.get(me or "this arcade", []), "link": {"state": "me"}}]
         order = {n: i for i, n in enumerate(NETWORKS)}      # the chains in the order the arcade lists them
-        on_chain = _chain_tags([p for p in running["ids"]
+        listed = running["ids"] + running["quiet"]
+        on_chain = _chain_tags([p for p in listed
                                 if not (said.get(p) or {}).get("tag") and not (via.get(p) or {}).get("tag")])
         others = []
-        for peer in running["ids"]:
+        for peer in listed:
             heard = said.get(peer) or {}
-            if peer in links:
+            if peer in running["quiet"]:
+                # Only its announcement on the chain: maybe stopped, maybe reached by nobody (not counted running).
+                link = {"state": "quiet"}
+            elif peer in links:
                 ms = rtts.get(peer)
                 link = {"state": "slow" if ms is not None and ms > 1000 else "linked", "ms": ms}
             elif peer in via:
@@ -31082,7 +31096,7 @@ def create_app(state: AppState) -> FastAPI:
                                      if peer in links],
                            "ords": ords.get(peer, []), "link": link})
         # Linked first, fastest first; then those seen through a linked arcade; then the rest; each by name.
-        rank = {"via": 1, "none": 2}
+        rank = {"via": 1, "none": 2, "quiet": 3}
         others.sort(key=lambda r: (rank.get(r["link"]["state"], 0),
                                    r["link"].get("ms") if r["link"].get("ms") is not None else 9e9,
                                    r["tag"] or "~" + r["node"]))
