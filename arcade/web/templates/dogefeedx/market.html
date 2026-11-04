@@ -468,7 +468,7 @@ html.indesk body.df-dogefeed input {
   <main class="df-main">
     <div class="df-topbar">
       <h1>Market</h1>
-      <p style="font-size:14px;color:var(--df-text-secondary);margin-top:4px">Collect and trade. Doginals settle on Dogecoin (L1); other collections may use ETH...</p>
+      <p style="font-size:14px;color:var(--df-text-secondary);margin-top:4px">Collect and trade. Doginals settle on Dogecoin (L1).</p>
     </div>
     
     <div class="df-tabs">
@@ -477,7 +477,6 @@ html.indesk body.df-dogefeed input {
     </div>
     <div class="df-chains" id="chain-row">
       <button class="df-chain active" data-chain="doginals" type="button">Doginals</button>
-      <button class="df-chain" data-chain="robinhood" type="button">Robinhood NFTs</button>
     </div>
     
     <div class="df-stats">
@@ -529,6 +528,7 @@ html.indesk body.df-dogefeed input {
   
 </div>
 
+{% include "dogefeedx/_chain.js.html" %}
 <script>
 (function() {
   'use strict';
@@ -582,14 +582,19 @@ html.indesk body.df-dogefeed input {
       '<div class="df-collection-rank">' + rank + '</div>' +
       '<div class="df-collection-img">' + (img ? '<img src="' + esc(img) + '" alt="" loading="lazy">' : '') + '</div>' +
       '<div class="df-collection-info"><div class="df-collection-name">' + esc(row.name) +
+      (row.chain && typeof dfxChainPill === 'function' ? dfxChainPill('', row.chain) : '') +
       (row.verified ? '<svg viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>' : '') +
       '</div><div class="df-collection-meta">' + esc(row.meta) + '</div></div>' +
       '<div class="df-collection-stats"><div class="df-collection-floor">' + esc(row.floorText) + '</div>' +
       '<div class="df-collection-volume">' + esc(row.extra) + '</div></div></a>';
   }
 
+  function droppedChain(chain, network) {
+    return typeof dfxIsEvm === 'function' && dfxIsEvm(chain, network);
+  }
+
   function collectionRow(c) {
-    return {name: c.name, href: c.href, image: c.image, verified: c.verified,
+    return {name: c.name, href: c.href, image: c.image, verified: c.verified, chain: c.chain || '',
       meta: (c.listed || 0) + ' listed · ' + (c.sales || 0) + ' sales',
       floor: floorNumber(c.floor), floorText: c.floor || '—', extra: ''};
   }
@@ -598,8 +603,8 @@ html.indesk body.df-dogefeed input {
     var q = (document.getElementById('collection-search').value || '').trim().toLowerCase();
     var rows = [];
     if (activeTab === 'activity') {
-      rows = activity.map(function(a) {
-        return {name: a.name, href: a.href, image: a.image, verified: false,
+      rows = activity.filter(function(a) { return !droppedChain(a.chain, a.network); }).map(function(a) {
+        return {name: a.name, href: a.href, image: a.image, verified: false, chain: a.chain || '',
           meta: a.collection || '', floor: floorNumber(a.price), floorText: a.price || '—',
           extra: a.kind === 'listing' ? 'Listing' : 'Sale'};
       });
@@ -612,9 +617,7 @@ html.indesk body.df-dogefeed input {
       });
     } else {
       rows = doginals.filter(function(c) {
-        var robinhood = c.chain === 'evm';
-        if (activeChain === 'robinhood') return robinhood;
-        if (robinhood) return false;
+        if (droppedChain(c.chain, c.network)) return false;
         if (activeCat === 'dns') return !!c.sns;
         if (activeCat === 'exclusive') return !!c.exclusive && !c.sns;
         return !c.sns;
@@ -637,8 +640,7 @@ html.indesk body.df-dogefeed input {
 
   function applyStats() {
     var block = null;
-    if (activeChain === 'robinhood') block = totals.robinhood;
-    else if (activeCat === 'dns') block = totals.sns;
+    if (activeCat === 'dns') block = totals.sns;
     else block = totals.doginals;
     if (!block) return;
     document.getElementById('stat-collections').textContent = block.collections != null ? block.collections : '—';

@@ -381,6 +381,27 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .df-empty { text-align: center; padding: 40px; color: var(--df-text-secondary); }
+.df-main { position: relative; }
+.df-dogear {
+  position: absolute; top: 0; right: 0; z-index: 120; width: 72px; height: 72px; border: 0;
+  padding: 10px 6px 0 0; cursor: pointer; text-align: right;
+  background: linear-gradient(225deg, #f3e3a5 0 58%, #fff6dd 58% 66%, transparent 66%);
+  filter: drop-shadow(-1px 1px 0 #c9b56e);
+}
+.df-dogear span { display: inline-block; transform: rotate(45deg); font: 800 11px/1 Nunito, sans-serif; color: #1b1b1b; }
+#df-face-profile[hidden], #df-face-book[hidden], .df-book[hidden] { display: none !important; }
+.df-book { animation: df-turn .35s ease; }
+@keyframes df-turn { from { transform: rotateY(88deg); opacity: .15; } to { transform: none; opacity: 1; } }
+.df-book form { display: grid; gap: 8px; padding: 12px 16px; max-width: 420px; }
+.df-book input, .df-book select {
+  padding: 8px 12px; border-radius: 10px; border: 1px solid var(--df-border);
+  background: transparent; color: inherit; font: inherit;
+}
+.df-book-row { padding: 10px 16px; border-bottom: 1px solid var(--df-border); }
+.df-book-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.df-book-addr { display: block; margin-top: 4px; font-size: 12px; color: var(--df-text-secondary); word-break: break-all; }
+.df-book-actions { display: flex; gap: 8px; margin-top: 8px; }
+.df-book-actions button { width: auto; padding: 6px 12px; }
 </style>
 <script>document.body.classList.add('df-dogefeed');</script>
 
@@ -390,6 +411,8 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
 
   <!-- Main Content -->
   <main class="df-main">
+    <button type="button" class="df-dogear" id="df-dogear" aria-label="Address book"><span>Book</span></button>
+    <div id="df-face-profile">
     <div class="df-topbar">
       <button class="df-back-btn" onclick="history.back()">
         <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
@@ -447,12 +470,43 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
       </div>
       <button type="button" class="df-more" id="posts-more" hidden>More</button>
     </div>
+    </div>
+    <div id="df-face-book" class="df-book" hidden>
+      <div class="df-topbar">
+        <button type="button" class="df-back-btn" id="df-book-back" aria-label="Back to Profile">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <div class="df-topbar-info">
+          <h1>Address book</h1>
+        </div>
+      </div>
+      <p class="df-empty" id="df-book-note" style="padding:12px 16px">Saved in this browser for the selected wallet.</p>
+      <form id="df-book-form">
+        <input id="df-book-addr" type="text" maxlength="120" placeholder="Address" aria-label="Contact address" autocomplete="off">
+        <input id="df-book-name" type="text" maxlength="64" placeholder="Name or @handle" aria-label="Contact name" autocomplete="off">
+        <select id="df-book-chain" aria-label="Contact chain">
+          <option value="">Detect from address</option>
+          <option value="DOGE">DOGE</option>
+          <option value="PEPE">PEPE</option>
+          <option value="LTC">LTC</option>
+          <option value="BTC">BTC</option>
+          <option value="BEL">BEL</option>
+          <option value="DGB">DGB</option>
+          <option value="LKY">LKY</option>
+          <option value="KOT">KOT</option>
+          <option value="WJK">WJK</option>
+        </select>
+        <button type="submit" class="df-follow-btn" id="df-book-save">Add contact</button>
+      </form>
+      <div id="df-book-list"></div>
+    </div>
   </main>
 
   <!-- Right Sidebar -->
   
 </div>
 
+{% include "dogefeedx/_chain.js.html" %}
 {% include "dogefeedx/_wallet.js.html" %}
 <script>
 (function() {
@@ -495,6 +549,7 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
       html += '<svg class="df-post-verified" viewBox="0 0 24 24"><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.34 2.19c-1.39-.46-2.9-.2-3.91.81s-1.27 2.52-.81 3.91C2.63 9.33 1.75 10.57 1.75 12s.88 2.67 2.19 3.34c-.46 1.39-.2 2.9.81 3.91s2.52 1.27 3.91.81c.66 1.31 1.91 2.19 3.34 2.19s2.67-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"/></svg>';
     }
     html += '<span class="df-post-handle">@' + esc(author.handle) + '</span>';
+    if (typeof dfxChainPill === 'function') html += dfxChainPill(author.address || '', author.chain || '');
     html += '<span class="df-post-time">' + timeAgo(post.createdAt) + '</span>';
     html += '</div>';
     html += '<div class="df-post-text">' + esc(post.body || post.text || '') + '</div>';
@@ -799,6 +854,110 @@ html.indesk body.df-dogefeed .df-search input, html.indesk body.df-dogefeed #loo
   });
   if (profileHandle) loadPosts();
   loadSidebar();
+})();
+</script>
+<script>
+(function () {
+  var bookEditing = '';
+  function esc(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function readBook() {
+    var addr = dfxReadWallet();
+    var rows = addr ? dfxReadJson('dogefeedx.addressbook', [], addr) : [];
+    return Array.isArray(rows) ? rows.filter(function (c) { return c && typeof c === 'object'; }) : [];
+  }
+  function writeBook(rows) {
+    var addr = dfxReadWallet();
+    if (!addr) return;
+    dfxWriteJson('dogefeedx.addressbook', rows.slice(0, 200), addr);
+  }
+  function clearBookForm() {
+    bookEditing = '';
+    var form = document.getElementById('df-book-form');
+    if (form) form.reset();
+    var save = document.getElementById('df-book-save');
+    if (save) save.textContent = 'Add contact';
+  }
+  function paintBook() {
+    var list = document.getElementById('df-book-list');
+    if (!list) return;
+    var addr = dfxReadWallet();
+    if (!addr) {
+      list.innerHTML = '<p class="df-empty">Select a wallet on Profile. Contacts stay with that wallet.</p>';
+      return;
+    }
+    var rows = readBook();
+    if (!rows.length) {
+      list.innerHTML = '<p class="df-empty">No contacts for this wallet.</p>';
+      return;
+    }
+    list.innerHTML = rows.map(function (c) {
+      var pill = (typeof dfxChainPill === 'function') ? dfxChainPill(c.address, c.chain) : '';
+      return '<article class="df-book-row" data-id="' + esc(c.id) + '"><div class="df-book-top"><b>'
+        + esc(c.name || c.address || '') + '</b>' + pill + '</div><span class="df-book-addr">'
+        + esc(c.address || '') + '</span><div class="df-book-actions"><button type="button" data-edit="' + esc(c.id)
+        + '">Edit</button><button type="button" data-remove="' + esc(c.id) + '">Remove</button></div></article>';
+    }).join('');
+  }
+  function showBook(on) {
+    var profileFace = document.getElementById('df-face-profile');
+    var bookFace = document.getElementById('df-face-book');
+    var ear = document.getElementById('df-dogear');
+    if (profileFace) profileFace.hidden = !!on;
+    if (bookFace) bookFace.hidden = !on;
+    if (ear) ear.hidden = !!on;
+    if (on) paintBook();
+  }
+  var dogEar = document.getElementById('df-dogear');
+  if (dogEar) dogEar.addEventListener('click', function () { showBook(true); });
+  var bookBack = document.getElementById('df-book-back');
+  if (bookBack) bookBack.addEventListener('click', function () { showBook(false); });
+  var bookForm = document.getElementById('df-book-form');
+  if (bookForm) bookForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (!dfxReadWallet()) { paintBook(); return; }
+    var address = document.getElementById('df-book-addr').value.trim();
+    var name = document.getElementById('df-book-name').value.trim();
+    var chain = document.getElementById('df-book-chain').value;
+    if (!address && !name) return;
+    var row = {id: bookEditing || String(Date.now()), address: address, name: name || address, chain: chain};
+    var rows = readBook();
+    if (bookEditing) rows = rows.map(function (c) { return String(c.id) === String(bookEditing) ? row : c; });
+    else rows = [row].concat(rows);
+    writeBook(rows);
+    clearBookForm();
+    paintBook();
+  });
+  var bookList = document.getElementById('df-book-list');
+  if (bookList) bookList.addEventListener('click', function (e) {
+    var rm = e.target.closest('[data-remove]');
+    var ed = e.target.closest('[data-edit]');
+    if (rm) {
+      var id = rm.getAttribute('data-remove');
+      writeBook(readBook().filter(function (c) { return String(c.id) !== String(id); }));
+      if (String(bookEditing) === String(id)) clearBookForm();
+      paintBook();
+      return;
+    }
+    if (!ed) return;
+    var want = ed.getAttribute('data-edit');
+    var row = readBook().filter(function (c) { return String(c.id) === String(want); })[0];
+    if (!row) return;
+    bookEditing = String(row.id);
+    document.getElementById('df-book-addr').value = row.address || '';
+    document.getElementById('df-book-name').value = row.name || '';
+    document.getElementById('df-book-chain').value = row.chain || '';
+    document.getElementById('df-book-save').textContent = 'Save contact';
+  });
+  window.addEventListener('message', function (e) {
+    if (e.origin !== location.origin) return;
+    if (e.data && e.data.type === 'dogefeedx-book') showBook(true);
+  });
+  dfxBindWallet(function () {
+    clearBookForm();
+    var bookFace = document.getElementById('df-face-book');
+    if (bookFace && !bookFace.hidden) paintBook();
+  });
+  if (new URLSearchParams(location.search).get('book') === '1') showBook(true);
 })();
 </script>
 {% endblock %}

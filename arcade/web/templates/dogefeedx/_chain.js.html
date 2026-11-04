@@ -1,0 +1,84 @@
+<style>
+.dfx-chain { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px;
+  font: 700 10px/16px Nunito, sans-serif; letter-spacing: .04em; vertical-align: middle; white-space: nowrap; }
+.dfx-chain-doge { background: #f3e3a5; color: #1b1b1b; }
+.dfx-chain-pepe { background: #3cb54a; color: #06210c; }
+.dfx-chain-ltc { background: #8aa0c4; color: #0e1520; }
+.dfx-chain-btc { background: #f7931a; color: #1b1b1b; }
+.dfx-chain-bel { background: #e07a3d; color: #1b1b1b; }
+.dfx-chain-dgb { background: #2f6fed; color: #fff; }
+.dfx-chain-lky { background: #c6f135; color: #1b1b1b; }
+.dfx-chain-kot { background: #ff5fa2; color: #1b1b1b; }
+.dfx-chain-wjk { background: #8d6e63; color: #fff; }
+.dfx-chain-unknown { background: #c8c8d0; color: #1b1b1b; }
+</style>
+<script>
+/* Same rules as arcade/web/dogefeedx/chains.py. Non-EVM layer ones only. 0x is unknown.
+   A stored xrp, xrpl, ripple, sol, or solana name is unknown and is not a pill. */
+var DFX_CHAIN_NAMES = {
+  doge: 'DOGE', dogecoin: 'DOGE', 'dogecoin-l1': 'DOGE', 'dogecoin-sns': 'DOGE', doginals: 'DOGE',
+  pepe: 'PEPE', pepecoin: 'PEPE', pep: 'PEPE',
+  ltc: 'LTC', litecoin: 'LTC',
+  btc: 'BTC', bitcoin: 'BTC',
+  bel: 'BEL', bells: 'BEL', bellscoin: 'BEL',
+  dgb: 'DGB', digibyte: 'DGB',
+  lky: 'LKY', lucky: 'LKY', luckycoin: 'LKY',
+  kot: 'KOT', kotia: 'KOT',
+  wjk: 'WJK', wojak: 'WJK', wojakcoin: 'WJK'
+};
+var DFX_CHAIN_EVM = {
+  eth: 1, ethereum: 1, evm: 1, bsc: 1, binance: 1, polygon: 1, matic: 1, avax: 1,
+  avalanche: 1, base: 1, arbitrum: 1, arb: 1, optimism: 1, op: 1, fantom: 1, ftm: 1,
+  cronos: 1, gnosis: 1, linea: 1, scroll: 1, zksync: 1, blast: 1, mantle: 1, celo: 1,
+  moonbeam: 1, robinhood: 1, 'robinhood-chain': 1
+};
+var DFX_CHAIN_TICKERS = {DOGE: 1, PEPE: 1, LTC: 1, BTC: 1, BEL: 1, DGB: 1, LKY: 1, KOT: 1, WJK: 1};
+var DFX_CHAIN_PREFIX = {
+  D: 'DOGE', P: 'PEPE', L: 'LTC', M: 'LTC', Q: 'LTC', m: 'LTC', n: 'LTC', '2': 'LTC',
+  '1': 'BTC', '3': 'BTC', B: 'BEL', K: 'LKY', W: 'WJK', S: 'DGB'
+};
+function dfxChainKey(chain) {
+  return String(chain || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+}
+function dfxNamedChain(chain) {
+  var key = dfxChainKey(chain);
+  if (!key) return '';
+  if (DFX_CHAIN_EVM[key] || key.indexOf('robinhood') >= 0 || key.indexOf('0x') === 0
+      || key.indexOf('xrp') >= 0 || key.indexOf('ripple') >= 0
+      || key === 'sol' || key.indexOf('sol-') === 0 || key.slice(-4) === '-sol'
+      || key.indexOf('solana') >= 0) return 'unknown';
+  if (DFX_CHAIN_NAMES[key]) return DFX_CHAIN_NAMES[key];
+  var upper = String(chain || '').trim().toUpperCase();
+  if (DFX_CHAIN_TICKERS[upper]) return upper;
+  return '';
+}
+function dfxChainFromAddress(address) {
+  var text = String(address || '').trim();
+  if (!text || text.charAt(0) === '@') return 'unknown';
+  var low = text.toLowerCase();
+  if (low.indexOf('0x') === 0) return 'unknown';
+  if (low.indexOf('bc1') === 0) return 'BTC';
+  if (low.indexOf('tltc1') === 0 || low.indexOf('ltc1') === 0) return 'LTC';
+  if (low.indexOf('dgb1') === 0) return 'DGB';
+  if (low.indexOf('bel1') === 0) return 'BEL';
+  if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(text)) return 'unknown';
+  var n = text.length;
+  var c = text.charAt(0);
+  if (c === 'r' && n >= 25 && n <= 35) return 'unknown';
+  if (n >= 26 && n <= 35 && DFX_CHAIN_PREFIX[c]) return DFX_CHAIN_PREFIX[c];
+  return 'unknown';
+}
+function dfxChainLabel(address, chain) {
+  var named = dfxNamedChain(chain);
+  if (named) return named;
+  return dfxChainFromAddress(address);
+}
+function dfxIsEvm(chain, network) {
+  return dfxNamedChain(chain) === 'unknown' || dfxNamedChain(network) === 'unknown';
+}
+function dfxChainPill(address, chain) {
+  var label = dfxChainLabel(address, chain);
+  var id = label === 'unknown' ? 'unknown' : label.toLowerCase();
+  return '<span class="dfx-chain dfx-chain-' + id + '">' + label + '</span>';
+}
+</script>
