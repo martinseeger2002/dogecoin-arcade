@@ -98,7 +98,7 @@ def test_a_visitor_from_outside_sees_the_arcade_and_a_way_to_sign_in(app):
     assert not said["ok"]
     names = {c["name"] for c in app.get("/lite/api/commands", headers=OUTSIDE).json()}
     assert names == {"help", "getnodeinfo", "listchains", "listmodules", "readfeed", "readposts",
-                     "listtokens", "getbook", "getpair", "listdoginals"}
+                     "listtokens", "getbook", "getpair", "listdoginals", "listapps"}
 
 
 def test_a_signed_in_user_from_outside_sees_their_own_account(app, app_state):
@@ -195,6 +195,28 @@ def test_messages_is_a_tab_while_its_module_is_on_and_each_module_on_opens_from_
         assert 'data-tab="messages"' not in lite and 'href="/feed">Open</a>' not in lite, "off: no tab, no Open"
     finally:
         app_state.set_setting("edition", None)
+
+
+def test_the_apps_tab_is_the_apps_module_and_hosts_the_others(app, app_state):
+    full = app.get("/lite", headers=LOCAL).text
+    tab = _panel(full, "apps")
+    assert 'data-tab="apps"' in full and 'href="/feed">Open</a>' in tab and 'id="a-list"' in tab
+    assert "Playing an app needs" not in tab, "Ord indexes are on in the full edition"
+    said = app.post("/lite/api/console", headers={**OUTSIDE, **LITE}, json={"line": "listapps new 5"}).json()
+    assert said["ok"] and isinstance(said["result"], list), said
+    app_state.set_setting("edition", "lite")
+    try:
+        lite = app.get("/lite", headers=LOCAL).text
+        assert 'data-tab="apps"' not in lite and '<section data-panel="apps"' not in lite, "off: the tab is gone"
+        app_state.set_setting("modules", {"apps": True})
+        lite = app.get("/lite", headers=LOCAL).text
+        assert 'data-tab="apps"' in lite and "Playing an app needs the Ord indexes module" in _panel(lite, "apps")
+        assert 'href="/#apps"' in app.get("/wallet", headers=LOCAL).text, "and the bar on every page shows it"
+        app_state.set_setting("modules", None)
+        assert 'href="/#apps"' not in app.get("/wallet", headers=LOCAL).text
+    finally:
+        app_state.set_setting("edition", None)
+        app_state.set_setting("modules", None)
 
 
 def test_console_lines_come_only_from_the_lite_page(app):

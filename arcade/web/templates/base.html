@@ -189,7 +189,9 @@ html.indesk body:not(.fullscreen){padding-top:0}
   {#- ARCADE Lite: the window's own tabs, so every page is one window (arcade/lite/templates/lite.html opens /#<tab>) #}
   <nav>
   {%- set lite_nav = [('/', 'Overview'), ('/#send', 'Send'), ('/#receive', 'Receive'), ('/#transactions', 'Transactions'),
-                      ('/#addresses', 'Address book'), ('/#apps', 'Apps'), ('/docs', 'Help')] %}
+                      ('/#addresses', 'Address book')]
+                     + ([('/#messages', 'Messages')] if 'messages' in modules_on else [])
+                     + ([('/#apps', 'Apps')] if 'apps' in modules_on else []) + [('/docs', 'Help')] %}
   {%- if '/admin' in nav|map(attribute=0)|list %}{% set lite_nav = lite_nav + [('/admin', 'Admin')] %}{% endif %}
   {%- for href, label in lite_nav %}
     <a class="{{ 'on' if path == href or (href != '/' and '#' not in href and path.startswith(href + '/')) else '' }}" href="{{ href }}">{{ label }}</a>

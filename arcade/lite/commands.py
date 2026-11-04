@@ -487,6 +487,19 @@ def listdoginals(caller, chain: str = "doge") -> list[dict]:
 # --- modules: installed and removed as packages are -----------------------------------------------------------------
 
 
+# --- apps: the App Store's cards, for anyone, as its tab lists them ----------------------------------------------------
+
+
+@command("apps", module="apps")
+def listapps(caller, sort: str = "popular", count: int = 30) -> list[dict]:
+    """The apps and games on this arcade's chains, as the App Store ranks them: popular or new.
+
+    listapps [popular|new] [count]   up to 100. An app plays at /inscriptions/<opens>/full (Ord indexes on)."""
+    if sort not in ("popular", "new"):
+        raise CommandError("sort is popular or new")
+    return _read(caller, "apps")(sort, _count(count))
+
+
 @command("modules")
 def listmodules(caller) -> list[dict]:
     """What runs on this arcade: the core, and each app, theme and node module, on or off.
