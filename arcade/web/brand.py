@@ -146,13 +146,55 @@ DIGIBYTE = Brand(
 .tile:hover{box-shadow:0 2px 4px rgba(0,40,90,.07),0 10px 24px rgba(0,40,90,.11)}
 """)
 
-BRANDS = {b.key: b for b in (DOGECOIN, PEPECOIN, LITECOIN, DIGIBYTE)}
+#: The neutral face (2026-11-03, SadFrog: "It should not have any default theme ... it should be og core like if
+#: anything by default"; "Full should also be rebranded by default to a neutral theme labeled Arcade"): no coin's name
+#: or colours, the classic Core wallet's greys and its blue selection, system fonts, plain icons. A new arcade starts
+#: with it, in either edition (`first_face`); ARCADE Lite wears it whenever its operator has picked no face.
+CORE = Brand(
+    key="core", name="ARCADE",
+    light_bg="#efefef", dark_bg="#2b2b2b", light_fg="#1d1d1d",
+    accent="#3874d8", dark_accent="#5b93ea", muted="#666666", dark_muted="#a0a0a0",
+    dark_fg="#e6e6e6",
+    css="""
+:root{
+  --bg:#efefef; --panel:#ffffff; --fg:#1d1d1d; --muted:#666666; --line:#c4c4c4;
+  --accent:#3874d8; --accent-fg:#fff; --ok:#2e7d32; --code:#f3f3f3;
+  --shadow:0 1px 2px rgba(0,0,0,.08);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme=light]){
+    --bg:#2b2b2b; --panel:#1f1f1f; --fg:#e6e6e6; --muted:#a0a0a0; --line:#4a4a4a;
+    --accent:#5b93ea; --accent-fg:#fff; --ok:#66bb6a; --code:#333333;
+    --shadow:0 1px 2px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme=dark]{
+    --bg:#2b2b2b; --panel:#1f1f1f; --fg:#e6e6e6; --muted:#a0a0a0; --line:#4a4a4a;
+    --accent:#5b93ea; --accent-fg:#fff; --ok:#66bb6a; --code:#333333;
+    --shadow:0 1px 2px rgba(0,0,0,.3);
+}
+body{font-family:system-ui,-apple-system,"Segoe UI",Ubuntu,sans-serif}
+.brand{font-family:system-ui,-apple-system,"Segoe UI",Ubuntu,sans-serif;font-size:14px;font-weight:600;letter-spacing:0}
+.tile:hover{box-shadow:0 1px 3px rgba(0,0,0,.12)}
+""")
+
+BRANDS = {b.key: b for b in (DOGECOIN, PEPECOIN, LITECOIN, DIGIBYTE, CORE)}
 DEFAULT = DOGECOIN
+
+#: The face a node with no ARCADE_BRAND wears: DogecoinArcade, or what the web app says for its edition (ARCADE
+#: Lite: CORE, until its operator picks a face). Read on every call, so a change of edition shows at once.
+fallback = lambda: DEFAULT  # noqa: E731
 
 #: Whether the face was fixed from outside (--brand or ARCADE_BRAND in the service)
 #: when the process started. Then the admin panel shows it and cannot change it;
 #: otherwise the operator's choice (the `brand` setting) is applied with `use`.
 FROM_ENV = bool((os.environ.get("ARCADE_BRAND") or "").strip())
+
+
+def first_face(settings: dict, fresh: bool) -> str | None:
+    """The face a starting arcade records, or None to leave it: the neutral one on a fresh install that was not told
+    one. An arcade already running keeps the face it shows, DogecoinArcade included, so an update changes no look."""
+    return CORE.key if fresh and not settings.get("brand") and not FROM_ENV else None
 
 
 def use(key: str) -> Brand:
@@ -174,11 +216,11 @@ def current() -> Brand:
 
 
 def own() -> Brand:
-    """The node's own face: ARCADE_BRAND (set by --brand), else DogecoinArcade.
+    """The node's own face: ARCADE_BRAND (set by --brand or the operator's pick), else `fallback()`.
 
     An unknown name is said once on stderr and falls back to the default, so a
     typo in a service file costs the colours, never the node."""
-    key = (os.environ.get("ARCADE_BRAND") or DEFAULT.key).strip().lower()
+    key = (os.environ.get("ARCADE_BRAND") or fallback().key).strip().lower()
     brand = BRANDS.get(key)
     if brand is None:
         if key not in _warned:

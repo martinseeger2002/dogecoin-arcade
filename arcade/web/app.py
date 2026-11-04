@@ -955,6 +955,9 @@ def create_app(state: AppState) -> FastAPI:
         except ValueError:
             pass
     TEMPLATES.env.globals["brand"] = brandlib.CURRENT   # this node's name, colours, icons, or its web address's (brand.py)
+    # ARCADE Lite wears no coin's face until its operator picks one (brand.CORE).
+    brandlib.fallback = lambda: (brandlib.CORE if not state.setting("brand")
+                                 and modulelib.edition(state.settings()) == "lite" else brandlib.DEFAULT)
     # [Claude 2026-10-14] Inscriptions stay put: a wallet's ordinary sends never spend a coin carrying one (arcade/doginals.py).
     # Read from each chain by its own node (2026-10-15, the outside Doginals API removed): Doginals on Dogecoin, and the same ord
     # envelopes on small Pepecoin MAINNET coins ("do the same for small .01 pep txs. Not made by the Arcade").

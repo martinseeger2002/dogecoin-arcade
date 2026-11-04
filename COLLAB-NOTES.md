@@ -88,6 +88,27 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · A neutral face, "ARCADE", for new arcades and for Lite
+SadFrog, on the first real Lite install: "It should not have any default theme - it started off with dogecoinarcade
+theme - it should be og core like if anything by default"; then "Full should also be rebranded by default to a
+neutral theme labeled Arcade".
+- **`brand.CORE`** (key `core`, name "ARCADE"): the classic Core wallet's greys and blue selection, light and dark,
+  system fonts instead of the pixel font, plain icons of its own (templates/brands/core). Listed with the other faces,
+  so Admin -> Face can pick it on any arcade.
+- **Who wears it:**
+  - a **new** arcade, Full or Lite: the installer writes `brand: core` on a fresh install, and arcade-web does on a
+    home it is the first to use (`brand.first_face`), unless `--brand`/ARCADE_BRAND or a pick says otherwise;
+  - **ARCADE Lite** whenever its operator has picked no face (`brand.fallback`, read live, so an edition change shows
+    at once); the Lite window is then "ARCADE Lite" and the mesh hears its face as ARCADE.
+- **Not changed: arcades already running.** One that never picked a face is DogecoinArcade and stays so after an
+  update, dogecoinarcade.com included. **For you:** should those switch to ARCADE too? It is one line
+  (`brand.DEFAULT = CORE`), but it rebrands every default-face node on its next update, so it is your call.
+- Protocol names are untouched (the login challenge, marker seed, messaging identity and the rest keep
+  DogecoinArcade), as for every face.
+- Tests: test_modules (Lite wears ARCADE until a pick, a pick wins; a new arcade starts neutral, an existing one and
+  `--edition` on it keep their face; the installer writes it only on a fresh install). On the workhorse with
+  test_installer, test_brand, test_lite, test_web, test_public: 449 passed, 16 skipped.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · The first real ARCADE Lite install, on a home test machine
 SadFrog: "set it up double check that everything would work and lets start it the install as if someone was trying
 the first time". A small home server (4 cores, 8 GB, SSD) that also runs Pi-hole; this branch packed as a Run your

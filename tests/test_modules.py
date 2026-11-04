@@ -233,10 +233,12 @@ def test_the_installer_asks_a_fresh_install_and_never_an_existing_one(tmp_path, 
     assert install.choose_edition(home, "lite", interactive=True, ask=pytest.fail) is None
 
 
-def test_the_installer_records_the_edition_and_keeps_every_other_setting(tmp_path):
+def test_the_installer_records_the_edition_and_keeps_every_other_setting(tmp_path, monkeypatch):
+    monkeypatch.delenv("ARCADE_BRAND", raising=False)
     home = tmp_path / "home"
-    install.write_edition(home, "lite", dry_run=False)
-    assert json.loads((home / "settings.json").read_text()) == {"edition": "lite"}
+    install.write_edition(home, "lite", dry_run=False, fresh=True)
+    assert json.loads((home / "settings.json").read_text()) == {"edition": "lite", "brand": "core"}, \
+        "a new arcade starts with the neutral face"
     (home / "settings.json").write_text(json.dumps({"auto_update": False, "brand": "pepecoin"}))
     install.write_edition(home, "ask", dry_run=False)
     assert json.loads((home / "settings.json").read_text()) == {"auto_update": False, "brand": "pepecoin",
@@ -266,3 +268,35 @@ def test_every_background_thread_the_app_starts_names_its_job():
     assert starts, "the build-time starts moved: look for them again"
     for at in starts:
         assert "modulelib.job_on(" in source[at:at + 300], source[at - 200:at + 300]
+
+
+def test_lite_wears_no_coins_face_until_its_operator_picks_one(app_state, monkeypatch):
+    """2026-11-03, SadFrog, on the first real Lite install: "It should not have any default theme ... it should be og
+    core like if anything by default"."""
+    from arcade.web import brand as brandlib
+    monkeypatch.delenv("ARCADE_BRAND", raising=False)
+    client = TestClient(create_app(app_state))
+    assert "DogecoinArcade" in client.get("/wallet").text, "Full keeps its face"
+    app_state.set_setting("edition", "lite")
+    page = client.get("/wallet").text
+    assert brandlib.own() is brandlib.CORE and "DogecoinArcade" not in page.split("<body", 1)[0]
+    assert "<title>ARCADE Lite</title>" in client.get("/").text
+    assert brandlib.CORE.icon("icon-192.png") is not None, "its own icons, not the cabinet"
+    app_state.set_setting("brand", "pepecoin")                  # the operator's pick (Admin -> Face) wins in Lite too
+    monkeypatch.setenv("ARCADE_BRAND", "pepecoin")               # what brand.use() sets for it, restored after
+    assert brandlib.own() is brandlib.PEPECOIN and "PepecoinArcade" in client.get("/wallet").text
+
+
+def test_a_new_arcade_starts_neutral_and_an_existing_one_keeps_its_face(tmp_path, monkeypatch):
+    """2026-11-03, SadFrog: "Full should also be rebranded by default to a neutral theme labeled Arcade". New arcades
+    only: one already running, DogecoinArcade by default, looks the same after an update."""
+    from arcade.web import brand as brandlib
+    monkeypatch.delenv("ARCADE_BRAND", raising=False)
+    assert brandlib.first_face({}, fresh=True) == "core" and brandlib.BRANDS["core"].name == "ARCADE"
+    assert brandlib.first_face({}, fresh=False) is None
+    assert brandlib.first_face({"brand": "pepecoin"}, fresh=True) is None
+    home = tmp_path / "old"
+    home.mkdir()
+    (home / "settings.json").write_text(json.dumps({"auto_update": False}))
+    install.write_edition(home, "lite", dry_run=False, fresh=False)        # --edition on an arcade already here
+    assert "brand" not in json.loads((home / "settings.json").read_text())

@@ -213,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
     chosen = modulelib.first_choice(state.settings(), fresh, args.edition)
     if chosen:
         state.set_setting(modulelib.EDITION_SETTING, chosen)
+    face = brandlib.first_face(state.settings(), fresh and not args.brand)
+    if face:                                       # a new arcade wears the neutral face (brand.CORE) until one is picked
+        state.set_setting("brand", face)
     settings = state.settings()
     print(f"  edition {'ARCADE Lite' if modulelib.edition(settings) == 'lite' else 'full'}"
           + (" (not chosen yet: Admin asks)" if modulelib.asking(settings) else ""))

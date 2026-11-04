@@ -1210,8 +1210,13 @@ def read_settings(home: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def write_edition(home: Path, edition: str | None, dry_run: bool) -> None:
-    """Record the edition in the arcade's settings, keeping every other setting; written whole, then renamed."""
+#: The face a new arcade starts with (arcade/web/brand.py CORE, "ARCADE"): no coin's look until its operator picks one.
+FIRST_FACE = "core"
+
+
+def write_edition(home: Path, edition: str | None, dry_run: bool, fresh: bool = False) -> None:
+    """Record the edition in the arcade's settings, keeping every other setting; written whole, then renamed. A fresh
+    install also starts with the neutral face, unless a face was chosen; an arcade already running keeps its own."""
     import json as _json
     if edition is None:
         return
@@ -1226,6 +1231,8 @@ def write_edition(home: Path, edition: str | None, dry_run: bool) -> None:
     home.mkdir(parents=True, exist_ok=True)
     data = read_settings(home)
     data[EDITION_SETTING] = edition
+    if fresh and not data.get("brand") and not os.environ.get("ARCADE_BRAND"):
+        data["brand"] = FIRST_FACE
     partial = path.with_suffix(".json.partial")
     partial.write_text(_json.dumps(data, indent=2))
     os.replace(partial, path)
@@ -1968,6 +1975,7 @@ def main(argv: list[str] | None = None) -> int:
     # The one question, first (2026-11-03: "at the beginning of the installation of the arcade it asks if the
     # downloader wants to install full or lite arcade"), and only on a fresh install at a terminal.
     home = Path.home() / ".dogecoinarcade"
+    fresh = not existing_arcade(home)
     edition = choose_edition(home, args.edition)
 
     # No question about the chains, ever (2026-10-13). A fresh install is Pepecoin testnet only (2026-11-02); the rest
@@ -2100,7 +2108,7 @@ def main(argv: list[str] | None = None) -> int:
         n += 1
         step(n, total, "Finishing up")
         write_first_peer(first_peer, args.dry_run)
-        write_edition(home, edition, args.dry_run)
+        write_edition(home, edition, args.dry_run, fresh=fresh)
         if not args.dry_run and not args.no_services:
             install_web_service(venv, system)
         if not args.dry_run:
