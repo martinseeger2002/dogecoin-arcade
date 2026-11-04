@@ -523,6 +523,16 @@ wallet catches its wallet up once at the next start. An arcade makes copies for 
 installed itself, runs here and shares (**Admin → Chains**, the share box), and deletes a copy nobody
 fetched for two hours. The setting `core_copy_auto` set to false turns the fetching off.
 
+**Pepecoin's own nodes too.** The Pepecoin testnet (and mainnet) node the installer sets up as a user service takes
+its first chain data the same way: a new install, ARCADE Lite's included, copies it from linked arcades whose own
+installer-made node runs and is synced, instead of reading the whole chain. The arcade stops and starts that node
+through its service (`systemctl --user`), and checks a copy with the daemon run by itself, with no peers.
+
+**From every arcade that has it.** An arcade that installed a copy keeps it for two hours to share on (its files
+linked, not copied again), under the maker's own id. The next arcade asks every linked arcade holding that copy for
+pieces at once, torrent-style, each checked against the one manifest, whoever sent it; the copy's coin set is still its
+maker's word, and the row names the maker.
+
 ### A node you already run
 
 If a node's config file already exists, the installer adds the settings the

@@ -2387,7 +2387,7 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
       acts.appendChild(b);
     }
     if (x.installed && copying && ['find', 'headers', 'data'].indexOf(now.key) >= 0) act('Sync on its own instead', 'own', 'ghost');
-    if (x.installed) act('Cancel install', 'cancel', 'ghost ncancel', 'Cancel the ' + net.toUpperCase() + ' install?\n\nIts node stops, its chain data and any copy are deleted, and the chain is borrowed again. Its wallet file is kept.');
+    if (x.installed && !c.service) act('Cancel install', 'cancel', 'ghost ncancel', 'Cancel the ' + net.toUpperCase() + ' install?\n\nIts node stops, its chain data and any copy are deleted, and the chain is borrowed again. Its wallet file is kept.');
     if (acts.childNodes.length) box.appendChild(acts);
     return box;
   }

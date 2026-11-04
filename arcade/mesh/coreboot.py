@@ -69,7 +69,8 @@ class CoreBoot:
         from ..config import NETWORKS
         self.state = state
         self.networks = networks if networks is not None else NETWORKS
-        self.core_of = core_of or (lambda net: cc.Core(self._installed(net), self.networks[net]))
+        self.core_of = core_of or (lambda net: cc.core_for(self._installed(net), self.networks[net]))
+        self._services: dict[str, tuple[float, dict | None]] = {}
         self.node = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self._ids = itertools.count(1)
@@ -99,16 +100,33 @@ class CoreBoot:
         except Exception:                                  # noqa: BLE001
             return {}
 
+    def _service(self, net: str) -> dict | None:
+        """The node the installer runs for `net` as a systemd user unit (core_copy.service_node), looked at once a
+        minute: a Lite install's Pepecoin testnet takes its first chain data from linked arcades this way (the operator
+        2026-11-04: "I would like the Lite install to get the initial Pepecoin test block state from one of the arcade
+        peers")."""
+        now = time.monotonic()
+        kept = self._services.get(net)
+        if kept is None or now - kept[0] > 60:
+            kept = self._services[net] = (now, cc.service_node(net))
+        return kept[1]
+
     def _installed(self, net: str) -> dict:
-        return dict(self._settings().get(f"core_installed:{net}") or {})
+        got = self._settings().get(f"core_installed:{net}")
+        return dict(got) if isinstance(got, dict) else dict(self._service(net) or {})
 
     def nets(self) -> list[str]:
-        """Chains whose Core this arcade installed and runs here."""
+        """Chains whose Core runs here and this arcade may stop and start: those it installed (Coins & chains), and
+        those the installer runs as a user unit."""
         from ..cores import HERE, mode
         s = self._settings()
-        return [k.split(":", 1)[1] for k, v in s.items()
-                if k.startswith("core_installed:") and isinstance(v, dict) and k.split(":", 1)[1] in self.networks
-                and mode(s, k.split(":", 1)[1]) == HERE]
+        out = [k.split(":", 1)[1] for k, v in s.items()
+               if k.startswith("core_installed:") and isinstance(v, dict) and k.split(":", 1)[1] in self.networks
+               and mode(s, k.split(":", 1)[1]) == HERE]
+        for net in cc.SERVICE_UNITS:
+            if net in self.networks and net not in out and mode(s, net) == HERE and self._service(net):
+                out.append(net)
+        return out
 
     def _sharing(self, net: str) -> bool:
         from ..cores import sharing
@@ -213,10 +231,25 @@ class CoreBoot:
                                   f"{', '.join(self._who(p) for p in asks)} (the node pauses for a few seconds)")
             with cc.held(snaps.root.with_name(snaps.root.name + ".lock")) as mine:
                 if mine:
-                    snaps.make()
+                    snaps.make(maker=self._me())
             note(self.state, net, f"{label}: the copy is ready for linked arcades", "ok")
             self._say_all()
         self._spawn(net, make)
+
+    def _me(self) -> str:
+        return str(getattr(self.node, "node_id", "") or "")
+
+    def holders(self, net: str, sid: str) -> list[str]:
+        """Linked arcades that hold copy `sid` whole and say so: its maker, and every arcade that installed it and keeps
+        it to share (core_copy.seed). Pieces are asked of all of them at once, torrent-style (2026-11-04: "Or
+        several of the peers torrent style"); each is checked against the manifest, whoever sent it."""
+        now = time.monotonic()
+        out = []
+        for peer, h in self.heard.items():
+            sn = (((h.get("nets") or {}).get(net) or {}).get("sn") or {})
+            if sn.get("id") == sid and now - h.get("at", 0) <= HEARD_FRESH and self._link(peer) is not None:
+                out.append(peer)
+        return sorted(out)
 
     def _say_all(self) -> None:
         loop = self.loop
@@ -242,6 +275,8 @@ class CoreBoot:
             said = (h.get("nets") or {}).get(net)
             if now - h.get("at", 0) > HEARD_FRESH or not isinstance(said, dict) or peer in refused:
                 continue
+            if isinstance(said.get("sn"), dict) and said["sn"].get("maker") in refused:
+                said = {k: v for k, v in said.items() if k != "sn"}      # a refused maker's copy, whoever holds it
             if said.get("gen") != mine.get("gen") or said.get("ver") != mine.get("ver"):
                 continue
             if self._link(peer) is None:
@@ -271,8 +306,10 @@ class CoreBoot:
             return
         offers = self._offers(net, now)
         best = max([int(s.get("h") or 0) for _, s in offers] + [0])
-        if best:
-            self.jobs.setdefault(net, {})["target"] = max(best, int((self.jobs.get(net) or {}).get("target") or 0))
+        if best and (self.jobs.get(net) or {}).get("phase") not in ("headers", "asked", "copying", "linking"):
+            # The chain's height as linked arcades say it, for the headers step -- but never over the block of the copy
+            # being taken, which is what that step waits for (2026-11-04: it said 915,108 for a copy at 915,080).
+            self.jobs.setdefault(net, {})["target"] = best
         ready = sorted(((p, s) for p, s in offers if isinstance(s.get("sn"), dict)
                         and int(s["sn"].get("h", 0)) - info["blocks"] >= cc.WORTH_BLOCKS),
                        key=lambda x: -int(x[1]["sn"]["h"]))
@@ -341,61 +378,72 @@ class CoreBoot:
         try:
             with cc.held(f.root.with_name(f.root.name + ".lock")) as mine:
                 if mine:
-                    f.begin(sid, peer, manifest)
+                    f.begin(sid, str(manifest.get("maker") or peer), manifest)
         except cc.CopyError as exc:
             self._job(net, state="failed", phase="failed", step=str(exc))
             self._refuse(net, peer)
 
     def _pull(self, net: str, f: cc.Fetch, now: float) -> None:
-        peer = f.state["maker"]
+        sid, maker = f.state["id"], f.state["maker"]
         have, total = f.progress()
-        flight = self._flight.setdefault(net, {})
-        for n, t in list(flight.items()):
+        flight = self._flight.setdefault(net, {})                  # piece number -> (asked at, of whom)
+        for n, (t, _) in list(flight.items()):
             if now - t > cc.PIECE_SECONDS:
                 flight.pop(n, None)
-        link = self._link(peer)
-        sn = (((self.heard.get(peer) or {}).get("nets") or {}).get(net) or {}).get("sn") or {}
+        holders = self.holders(net, sid)
         last = f.state.setdefault("got_at", time.time())
-        if link is None or sn.get("id") != f.state["id"]:
-            if time.time() - last > cc.FETCH_STALL and (self.heard.get(peer) and sn.get("id") != f.state["id"]):
-                log.info("core copy %s: %s no longer offers the copy; let go", net, peer)
+        if not holders:
+            if time.time() - last > cc.FETCH_STALL and self.heard:
+                log.info("core copy %s: no linked arcade offers the copy any more; let go", net)
                 f.drop()
-                self._job(net, state="waiting", phase="none", step=f"{self._who(peer)} no longer has the copy")
+                self._job(net, state="waiting", phase="none", step="no linked arcade has the copy any more")
                 return
-            self._job(net, state="working", phase="linking", step=f"waiting for {self._who(peer)} to be linked again",
-                      done=have, total=total, peer=peer)
+            self._job(net, state="working", phase="linking", done=have, total=total, peer=maker, sources=0,
+                      step=f"waiting for an arcade that has {self._who(maker)}'s copy to be linked again")
             return
         rate, eta = self._rate(net, have, total)
-        self._job(net, state="working", phase="copying", step=f"copying the chain data from {self._who(peer)}",
-                  done=have, total=total, peer=peer, rate=rate, eta=eta,
-                  pieces=[len(f._done), len(f._pieces)])
+        self._job(net, state="working", phase="copying", done=have, total=total, peer=maker, rate=rate, eta=eta,
+                  pieces=[len(f._done), len(f._pieces)], sources=len(holders),
+                  step=f"copying the chain data, {self._who(maker)}'s copy, from "
+                       + (self._who(holders[0]) if len(holders) == 1 else f"{len(holders)} linked arcades at once"))
+        asked = {p: 0 for p in holders}
+        for _, p in flight.values():
+            if p in asked:
+                asked[p] += 1
+        paused = self.__dict__.setdefault("_paused", {})
         for n in f.missing():
-            if len(flight) >= cc.IN_FLIGHT:
-                break
             if n in flight:
                 continue
+            ready = [p for p in holders if asked[p] < cc.IN_FLIGHT and paused.get(p, 0) <= now]
+            if not ready:
+                break
+            peer = min(ready, key=lambda p: (asked[p], p))
             fi, pi = f.where(n)
-            flight[n] = now
-            self._get(peer, net, {"what": "piece", "snap": f.state["id"], "f": fi, "i": pi})
+            flight[n] = (now, peer)
+            asked[peer] += 1
+            self._get(peer, net, {"what": "piece", "snap": sid, "f": fi, "i": pi})
 
     def got_piece(self, peer: str, net: str, sid: str, fi: int, pi: int, data: bytes) -> None:
         f = self.fetch(net)
-        if not f.active or f.state.get("id") != sid or f.state.get("maker") != peer:
+        if not f.active or f.state.get("id") != sid:
             return
         n = f.number(fi, pi)
         if n is None:
             return
         self._flight.get(net, {}).pop(n, None)
-        if f.got(n, data):
+        if f.got(n, data):                                         # checked against the manifest, whoever sent it
             f.state["got_at"] = time.time()
         else:
             log.warning("core copy %s: a piece from %s is not the manifest's", net, peer)
+            self.__dict__.setdefault("_paused", {})[peer] = time.monotonic() + 300
 
-    def piece_failed(self, net: str, fi: int, pi: int) -> None:
+    def piece_failed(self, net: str, fi: int, pi: int, peer: str = "", busy: bool = False) -> None:
         f = self.fetch(net)
         n = f.number(fi, pi) if f.active else None
         if n is not None:
             self._flight.get(net, {}).pop(n, None)
+        if peer and busy:
+            self.__dict__.setdefault("_paused", {})[peer] = time.monotonic() + 10
 
     def _install(self, net: str) -> None:
         f = self.fetch(net)
@@ -466,6 +514,8 @@ class CoreBoot:
                                f"{int(done.get('height', 0)):,}; its coin set is trusted", "peer": done.get("from")}
             if row.get("peer"):
                 row["from"] = self._who(row["peer"])
+            if self._installed(net).get("unit"):
+                row["service"] = True                             # the installer's node: no Cancel here
             info = self.info.get(net)
             if info:
                 row["node"] = {"blocks": info["blocks"], "headers": info["headers"]}
@@ -609,7 +659,7 @@ class CoreBoot:
         if header.get("err") or header.get("seq") != len(w["parts"]) or w["size"] + len(blob) > limit:
             self._wait.pop(header.get("id"), None)
             if w["what"] == "piece":
-                self.piece_failed(w["net"], int(w["f"]), int(w["i"]))
+                self.piece_failed(w["net"], int(w["f"]), int(w["i"]), w["peer"], header.get("err") == "busy")
             return
         w["parts"].append(blob)
         w["size"] += len(blob)

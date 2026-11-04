@@ -361,10 +361,16 @@ def summary(state, nets: list, params_of) -> dict:
     except Exception:                                          # noqa: BLE001
         copies = {}
     rows = {}
+    # The installer's own nodes (Pepecoin testnet and mainnet, run as user units) take copies too: their rows say so.
+    try:
+        served = set(boot.nets()) if boot is not None else set()
+    except Exception:                                          # noqa: BLE001
+        served = set()
+    nets = list(nets) + [n for n in served if n not in nets]
     for net in nets:
         est = state.disk_estimate(net) if hasattr(state, "disk_estimate") else {}
         rows[net] = {**offer(net), "storage": est.get("core"), "ord": est.get("ord"),
-                     "installed": bool(state.setting(f"core_installed:{net}")), "job": jobs.get(net),
+                     "installed": bool(state.setting(f"core_installed:{net}")) or net in served, "job": jobs.get(net),
                      "copy": copies.get(net)}
         rows[net].update(steps(jobs.get(net), copies.get(net), rows[net]["installed"]))
     return {"free": free_bytes(Path(state.home)), "rows": rows}
@@ -471,6 +477,8 @@ def steps(job: dict | None, copy: dict | None, installed: bool) -> dict:
             eta["headers"] = copy.get("eta_headers")
             if copy.get("total"):
                 num["data"] = f"{gb(copy.get('done', 0))} / {gb(copy['total'])}"
+                if int(copy.get("sources") or 0) > 1:
+                    num["data"] += f" · {int(copy['sources'])} arcades"
                 p["data"] = _frac(copy.get("done", 0), copy["total"])
                 eta["data"] = copy.get("eta")
             elif copy.get("copy_bytes"):

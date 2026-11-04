@@ -120,7 +120,9 @@ class Core:
     def rpc(self, timeout: float = 120.0):
         from .config import load_rpc_credentials
         from .rpc import RpcClient
-        return RpcClient(load_rpc_credentials(self.params, conf_path=Path(self.installed["conf"])), timeout=timeout)
+        # Its datadir's .cookie first (the installer's nodes log in by cookie), then rpcuser/rpcpassword in its config.
+        return RpcClient(load_rpc_credentials(self.params, conf_path=Path(self.installed["conf"]),
+                                              datadir=Path(self.installed["datadir"])), timeout=timeout)
 
     def call(self, method: str, *args, timeout: float = 120.0):
         with self.rpc(timeout) as r:
@@ -154,6 +156,76 @@ class Core:
             except Exception:                                  # noqa: BLE001 -- starting, warming up
                 time.sleep(2)
         raise CopyError("the node did not answer after it started")
+
+
+#: The systemd user units the installer writes for a chain's node (installer/install.py, SYSTEMD_UNIT): the arcade
+#: stops and starts those through systemd, never behind its back (Restart=always would start one again at once).
+SERVICE_UNITS = {"test": "pepecoind-testnet.service", "main": "pepecoind-mainnet.service"}
+
+
+def service_node(net: str, unit_dir: Path | None = None) -> dict | None:
+    """A chain's node the installer runs as a systemd user unit, as an installed-Core record with its `unit`, or None.
+    Read from the unit file itself: `ExecStart=<binary> -datadir=<datadir>`."""
+    name = SERVICE_UNITS.get(net)
+    unit = (unit_dir or Path.home() / ".config/systemd/user") / name if name else None
+    try:
+        text = unit.read_text() if unit else ""
+    except OSError:
+        return None
+    m = re.search(r"^ExecStart=(\S+)\s+-datadir=(\S+)\s*$", text, re.M)
+    if not m:
+        return None
+    binary, datadir = Path(m.group(1)), Path(m.group(2))
+    conf = next((datadir / n for n in ("pepecoin.conf", "dogecoin.conf") if (datadir / n).exists()), datadir / "pepecoin.conf")
+    cli = binary.parent / (binary.name[:-1] + "-cli" if binary.name.endswith("d") else binary.name + "-cli")
+    return {"daemon": str(binary), "cli": str(cli), "datadir": str(datadir), "conf": str(conf), "unit": name}
+
+
+class ServiceCore(Core):
+    """A node the installer runs as a systemd user unit: stopped and started by systemctl. The check after a copy runs
+    the daemon itself, with no peers, while its unit is stopped."""
+
+    def __init__(self, installed: dict, params):
+        super().__init__(installed, params)
+        self._alone = None
+
+    def _ctl(self, *args) -> subprocess.CompletedProcess:
+        return subprocess.run(["systemctl", "--user", *args, self.installed["unit"]], capture_output=True, text=True,
+                              timeout=STOP_SECONDS)
+
+    def running(self) -> bool:
+        if self._alone is not None and self._alone.poll() is None:
+            return True
+        try:
+            return self._ctl("is-active").stdout.strip() in ("active", "activating", "deactivating")
+        except Exception:                                      # noqa: BLE001
+            return False
+
+    def stop(self) -> None:
+        if self._alone is not None and self._alone.poll() is None:
+            with contextlib.suppress(Exception):
+                self.call("stop", timeout=30)
+            try:
+                self._alone.wait(STOP_SECONDS)
+            except subprocess.TimeoutExpired:
+                raise CopyError("the node did not stop")
+            self._alone = None
+        self._ctl("stop")                                      # waits for it (TimeoutStopSec)
+        if self.running():
+            raise CopyError("the node did not stop")
+
+    def start(self, extra: Iterable[str] = ()) -> None:
+        extra = tuple(extra)
+        if not extra:
+            self._ctl("start")
+            return
+        self._alone = subprocess.Popen([self.installed["daemon"], f"-datadir={self.installed['datadir']}", *extra],
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def core_for(installed: dict, params) -> Core:
+    return ServiceCore(installed, params) if installed.get("unit") else Core(installed, params)
 
 
 def _utxo_summary(got: dict) -> dict:
@@ -302,10 +374,12 @@ class Snapshots:
         if got is None:
             return None
         sid, m, _ = got
-        return {"id": sid, "h": m["height"], "bytes": m["bytes"], "n": sum(len(f["s"]) for f in m["files"])}
+        return {"id": sid, "h": m["height"], "bytes": m["bytes"], "n": sum(len(f["s"]) for f in m["files"]),
+                "maker": m.get("maker", "")}
 
-    def make(self) -> dict:
-        """Make a copy (on the caller's thread: minutes of hashing; the Core is down for seconds)."""
+    def make(self, maker: str = "") -> dict:
+        """Make a copy (on the caller's thread: minutes of hashing; the Core is down for seconds). `maker`: this
+        arcade's mesh id, said in the manifest: whoever serves a piece of it, the coin set is the maker's word."""
         with self._lock:
             if self.making:
                 raise CopyError("a copy is being made")
@@ -315,7 +389,7 @@ class Snapshots:
             head = take(self.core, self.folder, work / "data", self._say)
             self._say("hashing the copy")
             files, stat = hash_files(work / "data")
-            manifest = {"v": LAYOUT, "net": self.net, **head, "txindex": conf_txindex(self.installed),
+            manifest = {"v": LAYOUT, "net": self.net, **head, "txindex": conf_txindex(self.installed), "maker": maker,
                         "piece": PIECE, "files": files, "bytes": sum(f["n"] for f in files)}
             sid = manifest_id(manifest)
             (work / "manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
@@ -559,6 +633,11 @@ class Fetch:
                 self._phase("swapping")
             say("moving the copy in")
             self._swap_in()
+            # Kept to share on before the node runs on it: its files are exactly the copy's only now.
+            try:
+                seed(self.folder, m)
+            except Exception:                                  # noqa: BLE001 -- sharing it on is a nicety
+                log.warning("core copy: could not keep the copy to share", exc_info=True)
             self._phase("checking")
             say("checking the copy (the node runs with no peers)")
             core.start(ALONE)
@@ -572,6 +651,7 @@ class Fetch:
             with contextlib.suppress(Exception):
                 core.stop()
             self._swap_back()
+            shutil.rmtree(_beside(self.folder, ".arcade-snapshot"), ignore_errors=True)   # never share a refused copy
             self.drop()
             core.start()
             raise
@@ -620,3 +700,40 @@ def held(path: Path):
     finally:
         fcntl.flock(fh, fcntl.LOCK_UN)
         fh.close()
+
+
+def seed(folder: Path, manifest: dict) -> str:
+    """Keep the copy just installed, to share with linked arcades (torrent-style: every arcade that has it serves its
+    pieces): the node's own files as they are now, before it runs again, linked where they never change and copied
+    where they do, under <chain folder>.arcade-snapshot/<id>/ beside a manifest and the files' sizes. The same id as the
+    maker's, so a fetcher takes pieces from both. Deleted like any copy nobody fetched (Snapshots.tidy)."""
+    sid = manifest_id(manifest)
+    root = _beside(folder, ".arcade-snapshot")
+    work = root / "work-seed"
+    shutil.rmtree(work, ignore_errors=True)
+    newest: dict[str, int] = {}
+    for f in manifest["files"]:
+        rel = Path(f["p"])
+        m = _NUM.match(rel.name)
+        if m and rel.parent == Path("blocks"):
+            newest[m.group(1)] = max(newest.get(m.group(1), 0), int(m.group(2)))
+    stat = {}
+    for f in manifest["files"]:
+        rel = Path(f["p"])
+        src, dst = folder / rel, work / "data" / rel
+        if not src.is_file() or src.stat().st_size != int(f["n"]):
+            raise CopyError(f"{rel} is not the copy's any more")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if _linked(rel, newest):
+            os.link(src, dst)
+        else:
+            shutil.copy2(src, dst)
+        st = dst.stat()
+        stat[rel.as_posix()] = [st.st_size, st.st_mtime_ns]
+    (work / "manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
+    (work / "stat.json").write_text(json.dumps(stat))
+    for d in list(root.iterdir()):
+        if d.name != work.name:
+            shutil.rmtree(d, ignore_errors=True)
+    os.replace(work, root / sid)
+    return sid

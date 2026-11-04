@@ -342,3 +342,140 @@ def test_a_frame_from_a_relayed_link_is_ignored():
     relayed = _Link("R", None, None)                 # reached through another arcade: not in node.links
     asyncio.run(side.on_frame(relayed, {"op": "hi", "nets": {"regtest": {"h": 5}}}, b""))
     assert side.heard == {}
+
+
+# --- the installer's own nodes, and copies shared torrent-style (2026-11-04: "I would like the Lite install to
+# get the initial Pepecoin test block state from one of the arcade peers", "Or several of the peers torrent style") ------
+
+def test_the_installer_s_node_is_found_from_its_unit_file(tmp_path):
+    (tmp_path / "pepecoind-testnet.service").write_text(
+        "[Service]\nType=simple\nExecStart=/opt/pep/bin/pepecoind -datadir=/home/a/.pepecoin-testnet\nRestart=always\n")
+    got = cc.service_node("test", tmp_path)
+    assert got == {"daemon": "/opt/pep/bin/pepecoind", "cli": "/opt/pep/bin/pepecoin-cli",
+                   "datadir": "/home/a/.pepecoin-testnet", "conf": "/home/a/.pepecoin-testnet/pepecoin.conf",
+                   "unit": "pepecoind-testnet.service"}
+    assert cc.service_node("main", tmp_path) is None and cc.service_node("doge", tmp_path) is None
+    assert isinstance(cc.core_for(got, REGTEST), cc.ServiceCore) and type(cc.core_for({"datadir": "/x"}, REGTEST)) is cc.Core
+
+
+def test_the_installer_s_node_is_stopped_and_started_by_systemd_and_checked_alone(monkeypatch):
+    calls, spawned = [], []
+
+    class Done:
+        def __init__(self, out=""):
+            self.stdout, self.returncode = out, 0
+    state = {"active": True}
+
+    def run(argv, **kw):
+        calls.append(argv[2:])
+        if argv[2] == "stop":
+            state["active"] = False
+        if argv[2] == "start":
+            state["active"] = True
+        return Done("active" if state["active"] else "inactive")
+
+    class Proc:
+        def __init__(self, argv, **kw):
+            spawned.append(argv)
+
+        def poll(self):
+            return 0
+    monkeypatch.setattr(cc.subprocess, "run", run)
+    monkeypatch.setattr(cc.subprocess, "Popen", Proc)
+    core = cc.ServiceCore({"daemon": "/opt/pepecoind", "datadir": "/d", "conf": "/d/pepecoin.conf",
+                           "unit": "pepecoind-testnet.service"}, REGTEST)
+    monkeypatch.setattr(core, "call", lambda *a, **kw: None)
+    core.stop()
+    assert ["stop", "pepecoind-testnet.service"] in calls and not core.running()
+    core.start(cc.ALONE)
+    assert spawned == [["/opt/pepecoind", "-datadir=/d", *cc.ALONE]], "checked with no peers, outside its unit"
+    core.start()
+    assert calls[-1] == ["start", "pepecoind-testnet.service"]
+
+
+def _mesh(*sides):
+    """Every side linked to every other, in memory; side ids are their names."""
+    for a in sides:
+        for b in sides:
+            if a is not b:
+                a.node.links[b._name] = _Link(b._name, b, (lambda b=b, a=a: b.node.links[a._name]))
+
+
+def test_a_copy_comes_from_every_arcade_that_holds_it_at_once(cores, monkeypatch):
+    """The maker's copy, installed on a second arcade, is kept there and shared on (core_copy.seed): a third arcade
+    asks both for pieces, every piece checked against the one manifest, and its coin set is still the maker's word."""
+    import asyncio
+    from arcade.mesh.coreboot import CoreBoot
+    mk, sd, tk = cores(), cores(), cores()
+    _mine(mk, 60)
+    for c in (mk, sd, tk):
+        Path(c.installed["conf"]).write_text("txindex=1\n")
+    monkeypatch.setattr(cc, "WORTH_BLOCKS", 10)
+    monkeypatch.setattr(cc, "PIECE", 64 * 1024)                    # many small pieces, so both holders send some
+    import arcade.mesh.coreboot as cbmod
+    monkeypatch.setattr(cbmod, "PIECES_PER_MINUTE", 100_000)        # 60 a minute is 8 MB/s at the real piece size
+    monkeypatch.setattr(cc, "header_check", lambda core, m: None)
+    nets = {"regtest": REGTEST}
+
+    def side(name, core):
+        b = CoreBoot(_State(core.installed), core_of=lambda n: core, networks=nets)
+        b._name, b.node = name, _Node()
+        b.node.node_id = name
+        return b
+    M, S, T = side("M", mk), side("S", sd), side("T", tk)
+    _mesh(M, S, T)
+    sent = {"M": 0, "S": 0}
+    for who in (M, S):
+        real = who._send
+
+        async def counting(link, header, real=real, who=who):
+            if header.get("what") == "piece":
+                sent[who._name] += 1
+            return await real(link, header)
+        who._send = counting
+
+    async def run(until_done, sides, seconds=240):
+        for x in sides:
+            x.loop = asyncio.get_running_loop()
+        end = time.time() + seconds
+        while time.time() < end:
+            for x in sides:
+                await asyncio.to_thread(x.step)
+            for x in sides:
+                await x.rebalance()
+            if until_done():
+                return
+            await asyncio.sleep(0.05)
+
+    # S first takes M's copy (T not linked yet: it is not far behind until it asks).
+    T.node.links.clear()
+    for x in (M, S):
+        x.node.links.pop("T", None)
+    asyncio.run(run(lambda: (S.jobs.get("regtest") or {}).get("state") in ("done", "failed"), (M, S)))
+    assert S.jobs["regtest"]["state"] == "done", S.jobs["regtest"]
+    sid = M.snaps("regtest").current()[0]
+    assert S.snaps("regtest").current()[0] == sid, "S keeps the maker's copy, under the maker's id, to share"
+    assert S.snaps("regtest").current()[1]["maker"] == "M"
+    # Now T, linked to both.
+    _mesh(M, S, T)
+    sent.update(M=0, S=0)
+    asyncio.run(run(lambda: (T.jobs.get("regtest") or {}).get("state") in ("done", "failed"), (M, S, T)))
+    job = T.jobs["regtest"]
+    assert job["state"] == "done", job
+    assert sent["M"] > 0 and sent["S"] > 0, f"pieces from both holders: {sent}"
+    assert T.state.setting("core_copied:regtest")["from"] == "M", "the coin set is the maker's word, not a sharer's"
+    tk.wait(120)
+    assert tk.call("getbestblockhash") == mk.call("getbestblockhash")
+
+
+def test_a_refused_maker_s_copy_is_not_taken_from_whoever_shares_it():
+    from arcade.mesh.coreboot import CoreBoot
+    side = CoreBoot(_State({}), networks={"regtest": REGTEST})
+    side.node = _Node()
+    side.node.links["S"] = object()
+    side.info["regtest"] = {"gen": "g", "ver": 1, "blocks": 0, "headers": 0}
+    side.state.set_setting("core_copy_refused:regtest", ["BAD"])
+    side.heard["S"] = {"at": time.monotonic(), "nets": {"regtest": {"gen": "g", "ver": 1, "h": 99, "can": False,
+                                                                     "sn": {"id": "x", "h": 99, "maker": "BAD"}}}}
+    offers = side._offers("regtest", time.monotonic())
+    assert offers and "sn" not in offers[0][1], "S may stay, but not with BAD's copy"
