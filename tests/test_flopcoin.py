@@ -152,3 +152,51 @@ def test_dogefeedx_pills_say_flop():
     assert chains.chain_label("", "flopcoin") == "FLOP"
     pills = (TEMPLATES / "dogefeedx" / "_chain.js.html").read_text()
     assert "F: 'FLOP'" in pills and "flopcoin: 'FLOP'" in pills and ".dfx-chain-flop" in pills
+
+
+# --- blocks borrowed over the mesh are checked as Flopcoin's own (arcade/rawchain.py) ----------------------------
+
+def _raw_data():
+    import gzip
+    import json
+    path = pathlib.Path(__file__).parent / "data/rawchain/flop-blocks.json.gz"
+    return json.loads(gzip.decompress(path.read_bytes()))["flop"]
+
+
+def test_real_flopcoin_blocks_read_as_core_prints_them_across_auxpow_and_the_fork():
+    """Real blocks from Flopcoin Core v2.0.0.0 (the ThinkPad's node, 2026-11-04): 110,101-110,103 around the first AuxPoW
+    block (110,102, between two legacy ones), and 124,998-125,000 across the hard fork (125,000: the first block after
+    it, with the FlopFund output). Each run links on its own; the work is checked under chain id 0xA3 and an AuxPoW
+    block passed off as Dogecoin's (0x62) is refused. 110,102's coinbase pays a P2PK script, which Core prints with its
+    F address: rawchain dropped that address for every P2PK output until 2026-11-03."""
+    from arcade import rawchain
+    data = _raw_data()
+    assert [r["height"] for r in data["runs"]["auxpow_start"]] == [110_101, 110_102, 110_103]
+    assert [r["height"] for r in data["runs"]["hard_fork"]] == [124_998, 124_999, 125_000]
+    auxpow = []
+    for run in data["runs"].values():
+        before = None
+        for row in run:
+            block = rawchain.read_block(bytes.fromhex(row["raw"]), row["hash"])
+            rawchain.check_work(block, FLOP.auxpow_chain_id, FLOP.pow_algo, FLOP.auxpow_chain_mask)
+            rawchain.check_link(block, before)
+            before = block
+            mine = block.verbose(FLOP, height=row["height"], extra=row["verbose"])
+            assert mine == {k: v for k, v in row["verbose"].items() if k != "auxpow"}, row["height"]
+            header = rawchain.read_header(bytes.fromhex(row["header"]), row["hash"])
+            rawchain.check_work(header, FLOP.auxpow_chain_id, FLOP.pow_algo, FLOP.auxpow_chain_mask)
+            if "auxpow" in row["verbose"]:
+                auxpow.append(row["height"])
+                try:
+                    rawchain.check_work(block, 0x62, FLOP.pow_algo, FLOP.auxpow_chain_mask)
+                except rawchain.RawError as exc:
+                    assert "chain id" in str(exc)
+                else:
+                    raise AssertionError(f"{row['height']} passed as Dogecoin's")
+    assert auxpow == [110_102, 124_998, 124_999, 125_000], "110,101 and 110,103 are legacy"
+    p2pk = [o for o in data["runs"]["auxpow_start"][1]["verbose"]["tx"][0]["vout"]
+            if o["scriptPubKey"]["type"] == "pubkey"]
+    assert p2pk and p2pk[0]["scriptPubKey"]["addresses"][0].startswith("F"), "Core names the P2PK output's F address"
+    tx = data["tx"]
+    mine = rawchain.read_tx(bytes.fromhex(tx["hex"]), tx["txid"]).verbose(FLOP)
+    assert mine == {k: v for k, v in tx.items() if k not in ("blockhash", "blocktime", "confirmations", "time")}
