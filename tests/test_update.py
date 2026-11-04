@@ -585,7 +585,8 @@ def test_a_git_node_on_test_fast_forwards_onto_the_test_branch(tmp_path, monkeyp
 def test_an_archive_node_on_test_fetches_the_test_archive_held_to_its_manifest(tmp_path, monkeypatch):
     home = tmp_path / ".dogecoinarcade"
     (home / "venv" / "bin").mkdir(parents=True)
-    (home / "src").mkdir(parents=True)
+    (home / "src" / "installer").mkdir(parents=True)
+    (home / "src" / "installer" / "install.py").write_text("")
     monkeypatch.setattr(update, "HOME", home)
     monkeypatch.setattr(update, "_find_git", lambda: None)
     monkeypatch.setattr(update, "following", lambda: "test")
@@ -603,3 +604,73 @@ def test_an_archive_node_on_test_fetches_the_test_archive_held_to_its_manifest(t
     assert update.update(dry_run=False) == 0
     assert called[0][1:] == ("fetch_source_archive", home / "src", "ab" * 32,
                              update.TEST_ARCHIVE_URL, update.TEST_REVISION_URL)
+
+
+def _archive_with_installer(tmp_path, body: str) -> bytes:
+    import io
+    import tarfile
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as tf:
+        data = body.encode()
+        info = tarfile.TarInfo("dogecoinarcade/installer/install.py")
+        info.size = len(data)
+        tf.addfile(info, io.BytesIO(data))
+    return out.getvalue()
+
+
+def _archive_node(tmp_path, monkeypatch, archive: bytes, signed_sha: str):
+    """An archive install whose src lost its installer (a ThinkPad, 2026-11-03)."""
+    home = tmp_path / ".dogecoinarcade"
+    (home / "venv" / "bin").mkdir(parents=True)
+    (home / "src").mkdir(parents=True)
+    monkeypatch.setattr(update, "HOME", home)
+    monkeypatch.setattr(update, "_find_git", lambda: None)
+    monkeypatch.setattr(update, "following", lambda: "live")
+    monkeypatch.setattr(update, "_signed_manifest",
+                        lambda channel="live": {"channel": channel, "sha256": signed_sha, "revision": "f" * 40})
+    monkeypatch.setattr(update, "_remember", lambda m: None)
+
+    class Body:
+        def __init__(self):
+            import io
+            self.f = io.BytesIO(archive)
+
+        def read(self, *a):
+            return self.f.read(*a)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    asked = []
+    monkeypatch.setattr(update.urllib.request, "urlopen", lambda url, **k: asked.append(url) or Body())
+
+    class Done:
+        returncode = 0
+        stdout = stderr = ""
+
+    monkeypatch.setattr(update, "_run", lambda *a, **k: Done())
+    monkeypatch.setattr(update.subprocess, "run", lambda argv, **k: Done())
+    return home, asked
+
+
+def test_a_src_without_its_installer_is_repaired_from_the_signed_archive(tmp_path, monkeypatch, capsys):
+    import hashlib
+    archive = _archive_with_installer(tmp_path, (
+        "def fetch_source_archive(checkout, sha, *rest):\n"
+        "    (checkout / 'pyproject.toml').write_text('ok')\n"
+        "    return ''\n"))                                      # in place, its revision file unread
+    home, asked = _archive_node(tmp_path, monkeypatch, archive, hashlib.sha256(archive).hexdigest())
+    assert update.update(dry_run=False) == 0
+    assert asked == [update.ARCHIVE_URL]
+    assert (home / "src" / "pyproject.toml").read_text() == "ok", "the archive's own installer did the fetch"
+    assert (home / "src" / update.REVISION_FILE).read_text().strip() == "f" * 40, "the signed revision, written down"
+
+
+def test_an_archive_that_is_not_the_signed_one_runs_nothing(tmp_path, monkeypatch):
+    archive = _archive_with_installer(tmp_path, "raise SystemExit('ran an unsigned installer')\n")
+    home, _asked = _archive_node(tmp_path, monkeypatch, archive, "00" * 32)
+    with pytest.raises(update.UpdateError, match="could not fetch the source archive"):
+        update.update(dry_run=False)
