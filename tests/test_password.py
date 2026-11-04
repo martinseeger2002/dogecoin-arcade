@@ -10,6 +10,7 @@ not already hold.
 import pathlib
 import sys
 import time
+import types
 
 import pytest
 
@@ -236,3 +237,22 @@ def test_a_stranger_who_signs_in_with_words_is_still_a_stranger(named):
         "signature": signature.hex(), "join": True})
     assert seated.status_code == 200, "they get a seat"
     assert app.get("/wallet", headers=EDGE).status_code == 404, "and no wallet"
+
+
+def test_a_password_operator_answers_to_the_nodes_own_name(named, monkeypatch):
+    """2026-11-04: "This node is mine" on a Lite test node that had its @name made the operator a username and a
+    password, and the arcade lost its name. That operator has no wallet of its own: it IS the node (app._account_view),
+    so the arcade keeps the node's name and the setup wizard does not ask for an account's."""
+    app, state = named
+    monkeypatch.setattr(type(state), "derived_address", "nTheNodesOwn")
+    names = {"nTheNodesOwn": "pumpkin"}
+    monkeypatch.setattr(type(state), "token_index", lambda self, chain: types.SimpleNamespace(tag_of=names.get, indexed_height=lambda: 0))
+    assert state.operator_tag() == "pumpkin"
+    op = _claim(app).json()["operator"]
+    assert state.operator == op and state.operator_tag() == "pumpkin"
+    setup = app.get("/admin/api/setup", headers=LOCAL).json()
+    assert setup["operator_is_node"] is True and setup["need"] is False and setup["blocked"] != "operator account"
+    # An operator with a wallet of its own answers to its own name.
+    state.set_setting(f"address:{op}", "nRobinsWallet")
+    names["nRobinsWallet"] = "robin"
+    assert state.operator_tag() == "robin" and app.get("/admin/api/setup", headers=LOCAL).json()["operator_is_node"] is False

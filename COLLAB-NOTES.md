@@ -88,6 +88,20 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-skeleton` · A username-and-password operator keeps the node's @name
+Found on the Lite test node: it had claimed @pumpkin from the setup wizard, then "This node is mine" on `/join/keys`
+set a username and password, and the arcade had no name any more.
+- **Why:** with no operator, `/auth/set-password` makes a random id (not a wallet) and names it the operator.
+  - `_account_view` already says such an operator IS the node.
+  - But `state.operator_tag()` looked only for the operator's own address, and the setup wizard counted any operator
+    as an account. Both found nothing, so Admin said "this arcade's operator is an account".
+  - The same on your main.
+- **Changed:**
+  - `operator_tag()` falls back to the node's own address when the operator has none on file.
+  - The wizard's `operator_is_node` asks the same, through the new `app._operator_wallet()`.
+  - An operator account with a wallet still answers to its own name.
+- **Test:** test_password, a password operator keeps the node's name and the wizard calls it the node.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite: the Apps tab is the Apps and games module, and hosts the rest
 SadFrog: "the apps and games module should be a module but also what's on the tab itself to host all of these
 modules. That way apps can be disabled by node operators as well."

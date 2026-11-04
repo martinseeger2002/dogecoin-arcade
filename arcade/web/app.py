@@ -1142,6 +1142,11 @@ def create_app(state: AppState) -> FastAPI:
         # A username-and-password operator with no wallet of its own IS the node.
         return bool(_account_address(account.pubkey, _account_chain()))
 
+    def _operator_wallet() -> str:
+        """The operator account's address on the tag chain: "" for an arcade that is its own operator, a node or a
+        username and password with no wallet of its own (state.operator_tag)."""
+        return _account_address(state.operator, _account_chain()) if state.operator else ""
+
     def _is_operator(request: Request) -> bool:
         account = signed_in(request)
         return bool(account is not None and state.operator
@@ -30639,7 +30644,7 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:                                  # noqa: BLE001 -- said as none
             tag = ""
         out: dict[str, Any] = {"need": not tag, "tag": tag, "net": chain.network, "label": chain.label,
-                               "operator_is_node": not getattr(state, "operator", None)}
+                               "operator_is_node": not _operator_wallet()}
         # 1. The node, and whether the chain is borrowed meanwhile.
         try:
             sync = state.chain_sync(chain)
