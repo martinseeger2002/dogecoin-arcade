@@ -117,17 +117,26 @@ def test_a_callers_key_reaches_a_module_only_when_it_is_their_addresss(app_state
 
 
 @needs_sandbox
-def test_a_modules_page_is_served_sandboxed_and_only_while_it_is_on(app_state, host, tmp_path):
+def test_a_modules_page_is_served_sandboxed_to_whom_its_manifest_says_and_only_while_it_is_on(app_state, host,
+                                                                                             tmp_path):
+    """A visitor from outside reaches a page for anyone through the door; a page for users is not theirs."""
     from fastapi.testclient import TestClient
     from arcade.web.app import create_app
+    outside = {"host": "arcade.example.com", "cf-connecting-ip": "198.51.100.9"}
+    app_state.set_setting("public_hosts", ["arcade.example.com"])
     app = TestClient(create_app(app_state))
     cmdlib.run_line(_op(app_state), f"installmodule {_module(tmp_path)}")
-    assert app.get("/m/hello/").status_code == 404, "off"
+    assert app.get("/m/hello/", headers=outside).status_code == 404, "off"
     cmdlib.run_line(_op(app_state), "install hello")
-    got = app.get("/m/hello/x?q=1")
+    got = app.get("/m/hello/x?q=1", headers=outside)
     assert got.status_code == 200 and got.text == "<p>GET x 1</p>"
     assert got.headers["content-security-policy"].startswith("sandbox allow-scripts")
     assert "allow-same-origin" not in got.headers["content-security-policy"]
-    assert app.get("/m/nothere/").status_code == 404
+    assert app.post("/m/hello/x", headers=outside, content="a").status_code in (403, 404), "a visitor only reads"
+    assert app.get("/m/nothere/", headers=outside).status_code == 404
 
-
+    cmdlib.run_line(_op(app_state), f"installmodule {_module(tmp_path / 'u', change=lambda m: m.update(pages='user'))}")
+    cmdlib.run_line(_op(app_state), "install hello")
+    assert app.get("/m/hello/x", headers=outside).status_code == 404, "a page for users is not a visitor's"
+    assert app.get("/m/hello/x").status_code == 200, "the operator, at the machine, may open it"
+    app_state.set_setting("public_hosts", [])

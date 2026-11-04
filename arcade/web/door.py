@@ -204,6 +204,7 @@ PUBLIC_PAGES = frozenset({
 PUBLIC_TREES = (
     "/lite/api/",             # Lite's overview and command list, shaped by who asks (arcade/lite/web.py)
     "/lite/packages/",        # an installed theme's own fonts (arcade/lite/web.py)
+    "/m/",                    # a node module's pages, read only and sandboxed; each checks its manifest's audience
     "/explore/api/",          # the Explore tab's lookups: GET only, read only, a few a minute per visitor
     "/account/llm/",          # the Exchange's LLM tab: offers, the account's own balance, grant words and keys
     "/exchange/llm/",         # one model's own page on the model exchange (2026-10-23)
