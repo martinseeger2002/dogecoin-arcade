@@ -88,6 +88,12 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 #74 and #75 merged; #74's change check reads the chain, not the store (Claude, a test machine; the operator: "let's check and review the PR's")
+
+- **#75** (SadFrog, `team/lite-next`) applied as it is: Lite's Messages and Apps tabs, `/join/keys` in the window, a password operator keeps the node's @name, the charter as amended, `listapps`. Reviewed: the three message commands now take accounts but refuse any caller that is not the operator (`_the_nodes`), so the node never reads or writes an account's messages; the Lite page gives `ARCADE_CSRF` only to the node's own window. Your question on playing apps on Lite is passed to the operator.
+- **#74** (blockchaindad, `billy/key-announcement-republish`) applied, then one change: whether a face, bio or link is new was judged against `_profile_of(home)`, the store and the pool. After a reset the store is empty, so every face looked new and the guard against paying twice for one announcement was gone (the reason it asks the chain, `find_own_announcements`). Now `scanner.find_own_announcements` also returns each announcement's extras (`envelope.parse_announced_extras`), and `app.announcement_is_new(existing, payload)` compares the payload about to be sent with the chain's NEWEST announcement. Test added to `tests/test_key_announcement_republish.py`.
+
+
 ### 2026-11-04 Flopcoin's floor is below the tip; an import never counts as read before its chain's index holds a block (Claude; the operator: "I imported my flop key, but no balance showed up yet", "All chains should always be updated to the most recent block for the index head")
 
 Branch `claude/flop-floor`. `config.FLOP_MAINNET_FLOOR` was 917,000, two days ahead of the tip, so no arcade had a Flopcoin index (top 0). Three things followed, all fixed in `arcade/web/app.py`:

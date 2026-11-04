@@ -88,7 +88,7 @@ from ..messaging import contact, content, group
 from ..script import b58check_decode, b58check_encode, hash160, segwit_decode
 from ..messaging.derive import DerivationError, derive_identity
 from ..messaging.envelope import (
-    MAX_ANNOUNCE_NAME, MAX_ANNOUNCE_NAME_CLASS_B,
+    MAX_ANNOUNCE_NAME, MAX_ANNOUNCE_NAME_CLASS_B, parse_announced_extras,
     announcement_fits_one_output, build_key_announcement,
 )
 from .. import pageapi
@@ -956,6 +956,19 @@ def announcement_changed(prior: Any, face: Any, bio: Any, url: Any) -> bool:
     prior = prior or {}
     return any(str(new or "") != str(prior.get(k) or "")
                for k, new in (("pfp", face), ("bio", bio), ("url", url)))
+
+
+def announcement_is_new(existing: Any, payload: bytes) -> bool:
+    """Whether `payload` says a face, bio or link the newest of this key's announcements on the CHAIN
+    (scanner.find_own_announcements, its last field) does not. Never the store: after a reset it is empty, and every
+    face would look new, paying again for what is already there. Both sides as the envelope reads them (a face as
+    its 32 bytes in hex)."""
+    if not existing:
+        return False
+    newest = existing[-1]
+    said = (newest[6] if len(newest) > 6 else None) or {}
+    new = parse_announced_extras(payload)
+    return announcement_changed(said, new.get("pfp"), new.get("bio"), new.get("url"))
 
 
 def create_app(state: AppState) -> FastAPI:
@@ -4725,11 +4738,9 @@ def create_app(state: AppState) -> FastAPI:
             # A new face, bio or link is a new statement, not a repeat
             # (2026-11-03: setting a PFP after the first announcement was
             # refused as 'already published' and never reached the chain).
+            # Against the newest announcement ON THE CHAIN, not the store (announcement_is_new).
             try:
-                _prior = _profile_of(home) if home else {}
-                _changed = announcement_changed(
-                    _prior, face, state.setting("bio", ""),
-                    state.setting("url", ""))
+                _changed = announcement_is_new(existing, payload)
             except Exception:
                 log.warning("announce: change check failed", exc_info=True)
                 _changed = False

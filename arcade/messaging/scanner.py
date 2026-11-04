@@ -895,8 +895,9 @@ def repair_announcement_heights(rpc, params, store) -> int:
 def find_own_announcements(rpc, params, pubkey: bytes, limit: int = 400):
     """Look on the CHAIN for an announcement of `pubkey` we already published.
 
-    Returns every match as (txid, address, height, block_time, stated, name),
-    oldest first, or an empty list.
+    Returns every match as (txid, address, height, block_time, stated, name,
+    extras), oldest first, or an empty list. `extras` is what that
+    announcement says (envelope.parse_announced_extras: its face, bio, link).
 
     ALL of them, not just one: recovering only the earliest puts back the
     12-byte truncation ("Big Chief En") and leaves the full name that replaced
@@ -916,7 +917,7 @@ def find_own_announcements(rpc, params, pubkey: bytes, limit: int = 400):
     """
     from ..indexer import PrevOutCache
     from ..tx import extract
-    from .envelope import parse_key_announcement, parse_announced_identity
+    from .envelope import parse_key_announcement, parse_announced_identity, parse_announced_extras
 
     try:
         entries = rpc.call("listtransactions", "*", limit, 0, True) or []
@@ -962,6 +963,6 @@ def find_own_announcements(rpc, params, pubkey: bytes, limit: int = 400):
         if claimed_hash:
             address = b58check_encode(params.pubkeyhash_version, claimed_hash)
         found.append((txid, address, height, int(raw.get("blocktime") or 0),
-                      bool(claimed_hash), claimed_name))
+                      bool(claimed_hash), claimed_name, parse_announced_extras(body)))
     found.sort(key=lambda row: (row[2] or 1 << 62))
     return found
