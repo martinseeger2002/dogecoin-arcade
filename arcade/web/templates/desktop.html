@@ -679,6 +679,16 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
 [data-skin="dogefeedx"] .dfx-badge { position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px;
   border-radius: 8px; background: #ff3b30; color: #fff; font: 700 10px/16px Nunito, sans-serif; text-align: center;
   box-shadow: 0 0 0 2px rgba(40,40,45,0.9); pointer-events: none; }
+[data-skin="dogefeedx"] .ub-dockbtn.dfx-dock-app { width: 70px; height: 64px; flex-direction: column;
+  align-items: center; justify-content: flex-end; gap: 2px; padding: 0 1px 1px !important; }
+[data-skin="dogefeedx"] .dfx-dock-label { display: block; width: 68px; max-width: 68px; height: 10px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; text-align: center; pointer-events: none; color: #fff6dd;
+  font: 600 8px/10px Nunito, sans-serif; text-shadow: 0 1px 2px rgba(0,0,0,.85); }
+[data-skin="dogefeedx"] .dfx-dock-app .ub-run { bottom: 13px; }
+[data-skin="dogefeedx"] .dfx-dock-app .dfx-badge { top: 0; right: 8px; }
+[data-skin="dogefeedx"] .ub-ico.dfx-mark { background: none; box-shadow: none; overflow: visible; }
+[data-skin="dogefeedx"] .dfx-mark svg { width: 44px; height: 44px; display: block; }
+[data-skin="dogefeedx"] .dk-tglyph.dfx-mark svg { width: 16px; height: 16px; }
 [data-skin="dogefeedx"] .ub-dockbtn.ub-showapps { margin-top: 0; margin-left: 4px; border-left: 1px solid rgba(255,255,255,0.15); padding-left: 8px !important; }
 /* Dock separators for organized groups */
 [data-skin="dogefeedx"] .dfx-dock-sep { width: 1px; height: 36px; background: rgba(255,255,255,0.2); margin: 0 6px; flex-shrink: 0; }
@@ -940,31 +950,129 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
   byKey.run = {key: 'run', kind: 'run', name: 'Run…', glyph: ['#404040', '#fff', 'M5 12h11M12 7l5 5-5 5M19 5v14']};
   byKey.shortcuts = {key: 'shortcuts', kind: 'shortcuts', name: 'Wallet Shortcuts',
                      glyph: ['#d9a520', '#141310', 'M3 7a2 2 0 0 1 2-2h11v4M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2zM12 12l4 4M16 12v4h-4']};
+  // OS X squircles for the dock. One colour each, a gloss cap, then the symbol.
+  function dfxTile(bg, inner) {
+    return '<svg viewBox="0 0 44 44" width="44" height="44" aria-hidden="true">'
+      + '<rect x="1" y="1" width="42" height="42" rx="13" fill="' + bg + '"/>'
+      + '<path d="M14 1h16a13 13 0 0 1 13 13v4H1V14A13 13 0 0 1 14 1z" fill="#ffffff" opacity="0.30"/>'
+      + inner + '</svg>';
+  }
+  function dfxGear() {
+    var teeth = '';
+    for (var i = 0; i < 8; i++) {
+      teeth += '<rect x="19.5" y="6.5" width="5" height="8" rx="1.2" fill="#fff6dd" transform="rotate(' + (i * 45) + ' 22 22)"/>';
+    }
+    return teeth + '<circle cx="22" cy="22" r="7.5" fill="#fff6dd"/><circle cx="22" cy="22" r="3.1" fill="#6b6b70"/>';
+  }
+  var DFX_ICON = {
+    home: dfxTile('#e4bc55',
+      '<path d="M10 23 L22 13 L34 23 V35 H10 Z" fill="#1b1b1b"/>'
+      + '<path d="M19 12 V9 H24 V15" fill="#1b1b1b"/>'
+      + '<rect x="16" y="25" width="12" height="2" rx="1" fill="#f3e3a5"/>'
+      + '<rect x="16" y="29" width="8" height="2" rx="1" fill="#f3e3a5"/>'
+      + '<rect x="16" y="33" width="12" height="2" rx="1" fill="#f3e3a5"/>'),
+    profile: dfxTile('#f4efe4',
+      '<rect x="9" y="8" width="26" height="28" rx="4" fill="#ffffff"/>'
+      + '<path d="M9 12 a4 4 0 0 1 4-4 h18 a4 4 0 0 1 4 4 v5 H9 z" fill="#e4bc55"/>'
+      + '<circle cx="22" cy="22" r="4.2" fill="#1b1b1b"/>'
+      + '<path d="M14.5 33.5 c1.4-4.2 3.8-6.2 7.5-6.2 s6.1 2 7.5 6.2 z" fill="#1b1b1b"/>'),
+    files: dfxTile('#4f8ef7',
+      '<path d="M8 17 h11 l3 3 h14 v15 H8 z" fill="#f7f3e6"/>'
+      + '<path d="M8 17 h11 l2 2 H8 z" fill="#e4bc55"/>'
+      + '<path d="M8 29 h28 v6 H8 z" fill="#e7d7a4"/>'),
+    notifications: dfxTile('#ff5b3a',
+      '<path d="M22 11 a7 7 0 0 1 7 7 v3.5 l2.2 3.2 H12.8 L15 21.5 V18 a7 7 0 0 1 7-7 z" fill="#fff6dd"/>'
+      + '<rect x="19" y="27.5" width="6" height="3.2" rx="1.6" fill="#fff6dd"/>'
+      + '<circle cx="22" cy="10" r="1.5" fill="#fff6dd"/>'),
+    messages: dfxTile('#2f9d68',
+      '<rect x="7" y="11" width="18" height="13" rx="6" fill="#ffffff"/>'
+      + '<path d="M12 24 l-2.4 4.2 6.2-3.2 z" fill="#ffffff"/>'
+      + '<rect x="18" y="19" width="19" height="13" rx="6" fill="#1b1b1b"/>'
+      + '<path d="M31 32 l2.4 4.2 -6.2-3.2 z" fill="#1b1b1b"/>'),
+    explore: dfxTile('#1f5270',
+      '<circle cx="22" cy="23" r="11" fill="none" stroke="#f3e3a5" stroke-width="2"/>'
+      + '<path d="M22 13.5 L25.2 23 L22 21.2 L18.8 23 Z" fill="#ff5b3a"/>'
+      + '<path d="M22 32.5 L18.8 23 L22 24.8 L25.2 23 Z" fill="#fff6dd"/>'
+      + '<circle cx="22" cy="23" r="1.7" fill="#1b1b1b"/>'),
+    market: dfxTile('#c4512a',
+      '<path d="M9 20 h26 l-2.2-6 H11.2 z" fill="#e4bc55"/>'
+      + '<path d="M12 14 h4.2 v6 H12 z M17.6 14 h4.2 v6 h-4.2 z M23.2 14 h4.2 v6 h-4.2 z M28.8 14 h4.2 v6 h-4.2 z" fill="#8a3418"/>'
+      + '<rect x="11" y="20" width="22" height="14" fill="#fff6dd"/>'
+      + '<rect x="19" y="25" width="6" height="9" fill="#1b1b1b"/>'),
+    inscribe: dfxTile('#2c261c',
+      '<circle cx="19" cy="25" r="10" fill="#e4bc55"/>'
+      + '<circle cx="19" cy="25" r="7.2" fill="none" stroke="#1b1b1b" stroke-width="1.2"/>'
+      + '<path d="M16.2 21.4 h3.4 a3.6 3.6 0 0 1 0 7.2 h-3.4 z" fill="none" stroke="#1b1b1b" stroke-width="1.3"/>'
+      + '<path d="M18.6 19.6 v10.8" stroke="#1b1b1b" stroke-width="1.3"/>'
+      + '<path d="M28 9 l7 2.2 -13 15.2 -3.4 1.2 1.1-3.4 z" fill="#fff6dd"/>'),
+    wallet: dfxTile('#6e4524',
+      '<path d="M9 16 h22 a3 3 0 0 1 3 3 v13 a3 3 0 0 1-3 3 H11 a2 2 0 0 1-2-2 V18 a2 2 0 0 1 2-2 z" fill="#f7f3e6"/>'
+      + '<path d="M9 16 h16 v5 H11 a2 2 0 0 1-2-2 v-1 z" fill="#e4bc55"/>'
+      + '<path d="M16 25.2 h3.3 a3.2 3.2 0 0 1 0 6.4 H16 z" fill="none" stroke="#1b1b1b" stroke-width="1.3"/>'
+      + '<path d="M18.3 23.4 v10" stroke="#1b1b1b" stroke-width="1.3"/>'
+      + '<circle cx="29" cy="27" r="2.3" fill="#6e4524"/>'),
+    launchpad: dfxTile('#1b2340',
+      '<path d="M22 8 c6 4 8 11 8 16 l-8 3.5 -8-3.5 c0-5 2-12 8-16 z" fill="#fff6dd"/>'
+      + '<path d="M22 8 c6 4 8 11 8 16 l-4-.6 c-.6-4.4-2.2-9-4-12.4 z" fill="#e4bc55"/>'
+      + '<circle cx="22" cy="18" r="2.3" fill="#1b2340"/>'
+      + '<path d="M14 26 l-5 7 7-2.2 z" fill="#e4bc55"/>'
+      + '<path d="M30 26 l5 7 -7-2.2 z" fill="#e4bc55"/>'
+      + '<path d="M19 31.5 h6 l-1.2 5.2 h-3.6 z" fill="#ff5b3a"/>'
+      + '<path d="M20.4 33.2 h3.2 l-.6 2.6 h-2 z" fill="#ffe08a"/>'),
+    nfts: dfxTile('#f3ead6',
+      '<rect x="8" y="9" width="28" height="26" rx="2" fill="#e4bc55"/>'
+      + '<rect x="11" y="12" width="22" height="20" fill="#7eb6e8"/>'
+      + '<circle cx="16.5" cy="17.5" r="2" fill="#fff6dd"/>'
+      + '<path d="M11 28 l7-7 4 4 5-6 6 9 z" fill="#3d9b4a"/>'),
+    arcade: dfxTile('#2a2a2e',
+      '<rect x="11" y="28" width="22" height="6" rx="2" fill="#5c5c62"/>'
+      + '<rect x="20" y="16" width="4" height="14" rx="1.2" fill="#e8e8ea"/>'
+      + '<circle cx="22" cy="14" r="5.2" fill="#e23b3b"/>'
+      + '<ellipse cx="20.4" cy="12.4" rx="1.6" ry="1" fill="#ffffff" opacity="0.7"/>'),
+    bookmarks: dfxTile('#fff6dd',
+      '<path d="M15 8 h14 v27 l-7-4.5 -7 4.5 z" fill="#d23b3b"/>'
+      + '<path d="M15 8 h14 v6 H15 z" fill="#e4bc55"/>'),
+    memes: dfxTile('#e8923a',
+      '<path d="M11 20 l5-9 5 7 z" fill="#f6e2b8"/>'
+      + '<path d="M23 18 l5-8 6 9 z" fill="#f6e2b8"/>'
+      + '<path d="M13 19 l4-6 3 4 z" fill="#e4bc55"/>'
+      + '<path d="M25 17 l3-5 4 6 z" fill="#e4bc55"/>'
+      + '<circle cx="22" cy="25" r="10" fill="#f6e2b8"/>'
+      + '<circle cx="18" cy="24" r="1.5" fill="#1b1b1b"/>'
+      + '<circle cx="26" cy="24" r="1.5" fill="#1b1b1b"/>'
+      + '<ellipse cx="22" cy="28" rx="1.7" ry="1.2" fill="#1b1b1b"/>'
+      + '<path d="M18 30.2 q4 3 8 0" fill="none" stroke="#1b1b1b" stroke-width="1.2" stroke-linecap="round"/>'),
+    leaderboard: dfxTile('#243044',
+      '<rect x="7" y="24" width="9" height="12" rx="1" fill="#c5ccd4"/>'
+      + '<rect x="17.5" y="14" width="9" height="22" rx="1" fill="#e4bc55"/>'
+      + '<rect x="28" y="28" width="9" height="8" rx="1" fill="#c47a3a"/>'),
+    settings: dfxTile('#6b6b70', dfxGear())
+  };
   // DogeFeedX dock, in Billy's order. Each one opens a window and is not also a desktop icon.
-  var DFX_DOCK = [
-    // Every window is DogeFeedX's own look, wired to this arcade (2026-11-03, the operator: "Keep UI/UX elements from
+  // Every window is DogeFeedX's own look, wired to this arcade (2026-11-03, the operator: "Keep UI/UX elements from
     // DogefeedX wire them into the existing arcade architecture"): no window asks any other server.
-    {k: 'dfxhome', name: 'Home', url: '/dogefeedx/feed', w: 640, h: 620, glyph: ['#f3e3a5', '#1b1b1b', 'M4 11l8-7 8 7v9H4z']},
-    {k: 'dfxprofile', name: 'Profile', url: '/dogefeedx/profile', w: 440, h: 620, glyph: ['#f3e3a5', '#1b1b1b', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8']},
-    {k: 'dfxfiles', name: 'Files', url: '/dogefeedx/files', w: 760, h: 480, glyph: ['#f3e3a5', '#1b1b1b', 'M3 7h6l2 2h10v10H3z']},
-    {k: 'dfxnotifications', name: 'Notifications', url: '/dogefeedx/notifications', w: 480, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M12 3a6 6 0 0 0-6 6c0 7-3 7-3 7h18s-3 0-3-7a6 6 0 0 0-6-6zM10 20a2 2 0 0 0 4 0']},
-    {k: 'dfxmessages', name: 'Messages', url: '/dogefeedx/messages', w: 520, h: 460, glyph: ['#f3e3a5', '#1b1b1b', 'M4 5h16v10H7l-3 3z']},
-    {k: 'dfxexplore', name: 'Explore', url: '/dogefeedx/explore', w: 560, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35']},
-    {k: 'dfxmarket', name: 'Market', url: '/dogefeedx/market', w: 780, h: 560, glyph: ['#f3e3a5', '#1b1b1b', 'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 22V12h6v10']},
-    {k: 'dfxinscribe', name: 'Inscribe', url: '/dogefeedx/inscribe', w: 640, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M12 20h9M16.5 3.5a2 2 0 0 1 3 3L8 18l-4 1 1-4z']},
-    {k: 'dfxwallet', name: 'Wallet', url: '/dogefeedx/wallet', w: 720, h: 540, glyph: ['#f3e3a5', '#1b1b1b', 'M3 7h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3zM16 12h3']},
-    {k: 'dfxlaunchpad', name: 'Launchpad', url: '/dogefeedx/launchpad', w: 900, h: 580, glyph: ['#f3e3a5', '#1b1b1b', 'M5 16c-1 1-2 4-2 4s3-1 4-2c1-1 1-2 0-3s-2-1-2 1zM12 14l-2-2c2-2 6-6 10-8-2 4-6 8-8 10z']},
-    {k: 'dfxnfts', name: 'NFTs', url: '/dogefeedx/nfts', w: 680, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z']},
-    {k: 'dfxarcade', name: 'Arcade', url: '/dogefeedx/arcade', w: 640, h: 480, glyph: ['#f3e3a5', '#1b1b1b', 'M6 8h12a2 2 0 0 1 2 2v6H4v-6a2 2 0 0 1 2-2zM8 16v3M16 16v3M8 11h.01M12 11h.01']},
-    {k: 'dfxbookmarks', name: 'Bookmarks', url: '/dogefeedx/bookmarks', w: 480, h: 420, glyph: ['#f3e3a5', '#1b1b1b', 'M7 3h10a1 1 0 0 1 1 1v17l-6-4-6 4V4a1 1 0 0 1 1-1z']},
-    {k: 'dfxmemes', name: 'Meme Library', url: '/dogefeedx/memes', w: 720, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9 10h.01M15 10h.01M8 15s1.5 2 4 2 4-2 4-2']},
-    {k: 'dfxleaderboard', name: 'Leaderboard', url: '/dogefeedx/leaderboard', w: 640, h: 520, glyph: ['#f3e3a5', '#1b1b1b', 'M8 21l4-2 4 2V9H8zM6 4h12v3H6z']},
-    {k: 'dfxsettings', name: 'Settings', url: '/dogefeedx/settings', w: 480, h: 560, glyph: ['#f3e3a5', '#1b1b1b', 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 12h2M18 12h2M12 4v2M12 18v2']}
+  var DFX_DOCK = [
+    {k: 'dfxhome', name: 'Home', url: '/dogefeedx/feed', w: 640, h: 620, mark: DFX_ICON.home, glyph: ['#e4bc55', '#1b1b1b', 'M4 11l8-7 8 7v9H4zM8 14h8M8 17h5']},
+    {k: 'dfxprofile', name: 'Profile', url: '/dogefeedx/profile', w: 440, h: 620, mark: DFX_ICON.profile, glyph: ['#f4efe4', '#1b1b1b', 'M6 5h12v14H6zM12 9a2 2 0 1 0 0 4 2 2 0 0 0 0-4M9 17c.5-2 1.5-3 3-3s2.5 1 3 3']},
+    {k: 'dfxfiles', name: 'Files', url: '/dogefeedx/files', w: 760, h: 480, mark: DFX_ICON.files, glyph: ['#4f8ef7', '#1b1b1b', 'M3 7h6l2 2h10v10H3z']},
+    {k: 'dfxnotifications', name: 'Notifications', url: '/dogefeedx/notifications', w: 480, h: 520, mark: DFX_ICON.notifications, glyph: ['#ff5b3a', '#fff6dd', 'M12 3a6 6 0 0 0-6 6c0 7-3 7-3 7h18s-3 0-3-7a6 6 0 0 0-6-6zM10 20a2 2 0 0 0 4 0']},
+    {k: 'dfxmessages', name: 'Messages', url: '/dogefeedx/messages', w: 520, h: 460, mark: DFX_ICON.messages, glyph: ['#2f9d68', '#1b1b1b', 'M3 6h12v7H7l-3 2zM9 12h12v7h-8l-3 2z']},
+    {k: 'dfxexplore', name: 'Explore', url: '/dogefeedx/explore', w: 560, h: 520, mark: DFX_ICON.explore, glyph: ['#1f5270', '#f3e3a5', 'M12 4l2 6 6 2-6 2-2 6-2-6-6-2 6-2z']},
+    {k: 'dfxmarket', name: 'Market', url: '/dogefeedx/market', w: 780, h: 560, mark: DFX_ICON.market, glyph: ['#c4512a', '#1b1b1b', 'M4 10h16l-1-3H5zM5 10h14v9H5zM10 14h4v5h-4z']},
+    {k: 'dfxinscribe', name: 'Inscribe', url: '/dogefeedx/inscribe', w: 640, h: 520, mark: DFX_ICON.inscribe, glyph: ['#2c261c', '#e4bc55', 'M12 20a6 6 0 1 0 0-12 6 6 0 0 0 0 12zM16 6l5-2-8 10']},
+    {k: 'dfxwallet', name: 'Wallet', url: '/dogefeedx/wallet', w: 720, h: 540, mark: DFX_ICON.wallet, glyph: ['#6e4524', '#1b1b1b', 'M3 7h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3zM16 12h3M8 11v4']},
+    {k: 'dfxlaunchpad', name: 'Launchpad', url: '/dogefeedx/launchpad', w: 900, h: 580, mark: DFX_ICON.launchpad, glyph: ['#1b2340', '#fff6dd', 'M12 3c3 3 4 7 4 10l-4 2-4-2c0-3 1-7 4-10zM8 15l-3 4 4-1M16 15l3 4-4-1M12 16v5']},
+    {k: 'dfxnfts', name: 'NFTs', url: '/dogefeedx/nfts', w: 680, h: 520, mark: DFX_ICON.nfts, glyph: ['#f3ead6', '#1b1b1b', 'M5 5h14v14H5zM8 8h8v8H8zM8 14l3-3 2 2 2-2 1 3z']},
+    {k: 'dfxarcade', name: 'Arcade', url: '/dogefeedx/arcade', w: 640, h: 480, mark: DFX_ICON.arcade, glyph: ['#2a2a2e', '#e23b3b', 'M8 18h8v3H8zM11 8h2v10h-2zM12 8a3 3 0 1 0 0-1']},
+    {k: 'dfxbookmarks', name: 'Bookmarks', url: '/dogefeedx/bookmarks', w: 480, h: 420, mark: DFX_ICON.bookmarks, glyph: ['#fff6dd', '#d23b3b', 'M7 3h10v18l-5-3-5 3z']},
+    {k: 'dfxmemes', name: 'Meme Library', url: '/dogefeedx/memes', w: 720, h: 520, mark: DFX_ICON.memes, glyph: ['#e8923a', '#1b1b1b', 'M8 10l3-4 3 3M14 9l3-4 3 4M12 20a6 6 0 1 0 0-10']},
+    {k: 'dfxleaderboard', name: 'Leaderboard', url: '/dogefeedx/leaderboard', w: 640, h: 520, mark: DFX_ICON.leaderboard, glyph: ['#243044', '#e4bc55', 'M4 14h5v6H4zM9 8h6v12H9zM15 16h5v4h-5z']},
+    {k: 'dfxsettings', name: 'Settings', url: '/dogefeedx/settings', w: 480, h: 560, mark: DFX_ICON.settings, glyph: ['#6b6b70', '#fff6dd', 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2']}
   ];
   // ---------- DogeFeedX Apps (only shown in DogeFeedX theme) ----------
   if (DFX) {
     DFX_DOCK.forEach(function (a) {
-      byKey[a.k] = {key: a.k, kind: a.k, name: a.name, href: a.url, glyph: a.glyph};
+      byKey[a.k] = {key: a.k, kind: a.k, name: a.name, href: a.url, glyph: a.glyph, mark: a.mark};
     });
     // Kept so a registered tool can still open. Not dock icons: the dock is the sixteen above.
     byKey.dfxprofile = byKey.dfxprofile;
@@ -1016,8 +1124,14 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
     '/me/wallet': 'dfxwallet', '/wallet': 'dfxwallet', '/me/nfts': 'dfxnfts', '/nfts': 'dfxnfts',
     '/notifications': 'dfxnotifications', '/me/notifications': 'dfxnotifications',
     '/create': 'dfxinscribe', '/create/ord': 'dfxinscribe', '/create/name': 'dfxinscribe',
-    '/tokens': 'dfxinscribe', '/apps': 'dfxarcade', '/mintpad/new': 'dfxlaunchpad'
+    '/tokens': 'dfxinscribe', '/apps': 'dfxarcade', '/mintpad/new': 'dfxlaunchpad',
+    '/contacts': 'dfxprofile', '/me/contacts': 'dfxprofile'
   };
+  function dfxAddressBook(it) {
+    if (!it) return false;
+    var href = String(it.href || it.url || '').split('?')[0];
+    return href === '/contacts' || href === '/me/contacts' || String(it.name || '').toLowerCase() === 'address book';
+  }
   
   function onDesk() {
     var keys = TABS.map(function (t) { return t.key; }).concat(['store', 'helper']);
@@ -1028,7 +1142,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
     // Filter out dock apps from desktop in DFX mode
     if (DFX) keys = keys.filter(function (k) { return DFX_DOCK_APPS.indexOf(k) < 0; });
     // Explore (and Feed) already sit in the dock as DogeFeedX apps. The arcade tab is not a second icon.
-    if (DFX) keys = keys.filter(function (k) { return !DFX_COVERS[tabHref(k)]; });
+    if (DFX) keys = keys.filter(function (k) { return !DFX_COVERS[tabHref(k)] && !dfxAddressBook(byKey[k]); });
     // The menu bar and the dock already show these. A DogeFeedX desktop does not repeat them as icons.
     if (DFX) {
       var inDock = dockKeys().filter(function (k) { return k.indexOf('|') !== 0; });
@@ -1049,6 +1163,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
       + '" stroke="' + g[1] + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
   function iconHtml(it) {
+    if (it.mark) return it.mark;
     if (it.kind === 'helper') {
       var face = document.getElementById('arc-bot-face');
       return '<span class="dk-robot">' + (face ? face.innerHTML : '') + '</span>';
@@ -1059,6 +1174,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
   }
   function smallIcon(it) {
     if (!it) return '<span class="dk-tglyph"></span>';
+    if (it.mark) return '<span class="dk-tglyph dfx-mark">' + it.mark + '</span>';
     if (it.img) return '<img src="' + esc(it.img) + '" alt="">';
     if (it.glyph) return '<span class="dk-tglyph" style="background:' + it.glyph[0] + '">' + glyphHtml(it.glyph, 12) + '</span>';
     if (it.kind === 'helper') return '<span class="dk-tglyph" style="background:#1f2933"></span>';
@@ -1070,7 +1186,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
   function deskH() {
     var h = dk.clientHeight;
     /* The dock sits on the wallpaper. Keep icons and windows above it. */
-    if (document.documentElement.getAttribute('data-skin') === 'dogefeedx') h -= 72;
+    if (document.documentElement.getAttribute('data-skin') === 'dogefeedx') h -= 96;
     return Math.max(80, h);
   }
   function freeCells(taken) {
@@ -1182,6 +1298,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
   function openKey(k) {
     var it = byKey[k]; if (!it) return;
     hideMenus();
+    if (DFX && dfxAddressBook(it)) { openDfxAddressBook(); return; }
     if (it.kind === 'helper') { openHelper(); return; }
     if (it.kind === 'display') { openDisplay(); return; }
     if (it.kind === 'sysinfo') { openSysinfo(); return; }
@@ -2438,6 +2555,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
   window.arcadeShell = {
     open: function (url, name) {
       var u = new URL(url, location.href), path = u.pathname + u.search + u.hash;
+      if (DFX && (u.pathname === '/contacts' || u.pathname === '/me/contacts')) { openDfxAddressBook(); return; }
       var app = APPS.filter(function (a) { return a.open === u.pathname; })[0];
       var tab = TABS.filter(function (t) { return t.href === u.pathname && !u.search; })[0];
       if (app) openWin({key: app.key, url: path, name: app.name, item: byKey[app.key]});
@@ -2460,6 +2578,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
       var g = DFX_APPS[key].glyph;
       return '<span class="ub-ico" style="background:' + g[0] + '">' + glyphHtml(g, 28) + '</span>';
     }
+    if (it.mark) return '<span class="ub-ico dfx-mark">' + it.mark + '</span>';
     if (it.img) return '<span class="ub-ico"><img src="' + esc(it.img) + '" alt="" draggable="false"></span>';
     if (it.glyph) return '<span class="ub-ico" style="background:' + it.glyph[0] + '">' + glyphHtml(it.glyph, 28) + '</span>';
     if (it.kind === 'helper') return '<span class="ub-ico" style="background:#1f2933">' + iconHtml(it) + '</span>';
@@ -2531,7 +2650,8 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
       b.title = it.name;
       b.setAttribute('aria-label', it.name);
       var n = dockCount(k);
-      b.innerHTML = bigIcon(it, k) + (mine.length ? '<span class="ub-run"></span>' : '')
+      b.innerHTML = bigIcon(it, k) + '<span class="dfx-dock-label">' + esc(it.name || '') + '</span>'
+        + (mine.length ? '<span class="ub-run"></span>' : '')
         + (n ? '<span class="dfx-badge">' + (n > 99 ? '99+' : n) + '</span>' : '');
       b.addEventListener('click', function () {
         if (mine.length) { var w = mine[0]; if (w === front()) minimize(w); else { restore(w); focus(w); } }
@@ -2700,6 +2820,18 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
 
   function openDfxProfile() {
     openWin({key: 'dfxprofile', url: '/dogefeedx/profile', name: 'Profile', item: byKey.dfxprofile, w: 440, h: 620});
+  }
+
+  function openDfxAddressBook() {
+    var prof = byKey.dfxprofile || {name: 'Profile'};
+    var existing = wins.filter(function (x) { return x.key === 'dfxprofile'; })[0];
+    var w = openWin({key: 'dfxprofile', url: '/dogefeedx/profile?book=1', name: 'Profile', item: prof, w: 440, h: 620});
+    if (!w || !w.frame) return;
+    var ping = function () {
+      try { w.frame.contentWindow.postMessage({type: 'dogefeedx-book'}, location.origin); } catch (e) {}
+    };
+    if (existing) ping();
+    else w.frame.addEventListener('load', ping);
   }
 
   function openDfxMarket() {
