@@ -418,6 +418,7 @@ def test_an_imported_address_s_coins_are_told_only_on_its_key_s_proof(tmp_path, 
     asked = _proof(pk, 0x4141)
     assert home_app.post("/account/imported/address", json=asked).status_code == 200
     address = asked["address"]
+    home.set_setting(f"backfilled:ltctest:{address}", 0)          # home read its whole past
     chain = home.ltc_test
     with contextlib.closing(home.token_index(chain).open()) as db:
         db.conn.execute("INSERT INTO utxo (txid, vout, address, value, height) VALUES (?,?,?,?,?)",
@@ -462,6 +463,7 @@ def test_a_wallet_in_the_record_is_registered_on_another_arcade_with_its_coins(t
     asked = _proof(pk, 0x5151)
     address = asked["address"]
     assert home_app.post("/account/imported/address", json=asked).status_code == 200
+    home.set_setting(f"backfilled:ltctest:{address}", 0)          # home read its whole past
     with contextlib.closing(home.token_index(home.ltc_test).open()) as db:
         for txid in ("aa" * 32, "bb" * 32):
             db.conn.execute("INSERT INTO utxo (txid, vout, address, value, height) VALUES (?,?,?,?,?)",
