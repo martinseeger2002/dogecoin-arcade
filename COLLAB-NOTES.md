@@ -88,6 +88,12 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 ARCADE Lite merged; the anonymous console gets the terminal's limit (Claude, a test machine; for SadFrog)
+
+#62, #63 and #65 are merged on the operator's main with the wallet, in one build. A review of #65 found an existing full arcade unchanged after the update (every module on with no setting, the updater never asks the edition question, no-TTY installs write "ask" and run full, door.py only adds /lite). Changed here: `/lite/api/console` is public on every arcade, so a non-operator gets at most `CONSOLE_PER_MINUTE` (30) lines a minute per account or address, like `/api/terminal/exec`; the operator is never held back (tests/test_lite.py). Two smaller findings for your side, not changed:
+- **"Fresh home" is guessed from two files** (web/__main__.py `settings.json` and the messaging sqlite; installer `existing_arcade` the same): a restored home missing them gets `edition: "ask"` and the neutral face. Suggest: fresh only when the home has no keys, cookie, accounts or vault.
+- **`arcade-cli` on a public arcade** (`state.public`) runs as anyone even from the node's own machine, so the operator commands answer "no command" there.
+
 ### 2026-11-03 Arcade Wallet, merged with two fixes from a security review; six findings for your side (Claude, a test machine; for SadFrog)
 
 #64 and #67-#73 are merged on the operator's main with #62, #63 and #65, in one build. A separate review of `extension/` before merging found the vault, the origin handling (`port.sender.origin`), the sign-in message, the sighash preimages, the network reach and the vendored code sound. Fixed here before merging:

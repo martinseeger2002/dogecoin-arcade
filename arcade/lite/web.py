@@ -22,6 +22,9 @@ NO_STORE = {"Cache-Control": "no-store"}
 LITE_HEADER = "x-arcade-lite"
 
 
+#: Console lines a non-operator may send each minute (the full arcade's terminal allows the same).
+CONSOLE_PER_MINUTE = 30
+
 def register(app, state, admin_check, signed_in, account_address, name_of, node_tools=None, public_tools=None,
              wallet_name=lambda request: "", account_view=lambda request: False, join_facts=None):
     """Add /lite to the node's app, with the web app's own checks: `admin_check(request, write=False)` raises unless
@@ -92,6 +95,27 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
                               "summary": c.summary} for c in cmdlib.available(caller_for(request))],
                             headers=NO_STORE)
 
+    #: Console lines a non-operator may send a minute, per address (2026-11-03, a test machine's review: /lite/api/console is
+    #: public on every arcade; the full arcade's /api/terminal/exec allows 30 a minute).
+    console_seen: dict[str, list[float]] = {}
+
+    def console_limited(caller, request: Request) -> bool:
+        if caller.audience == "operator":
+            return False
+        import time as _time
+        now = _time.time()
+        who = (caller.account or "") or (request.client.host if request.client else "")
+        recent = [t for t in console_seen.get(who, ()) if now - t < 60]
+        if len(recent) >= CONSOLE_PER_MINUTE:
+            console_seen[who] = recent
+            return True
+        recent.append(now)
+        console_seen[who] = recent
+        if len(console_seen) > 10_000:                     # a flood of addresses: forget the oldest half
+            for k in sorted(console_seen, key=lambda k: console_seen[k][-1])[:5_000]:
+                console_seen.pop(k, None)
+        return False
+
     @app.post("/lite/api/console")
     def lite_console(request: Request, payload: dict = Body(...)):
         from ..web import door as doorlib
@@ -99,6 +123,9 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
                                                                         request.headers.get("host", "")):
             raise HTTPException(403, "console lines come from the Lite page")
         caller = caller_for(request, write=True)
+        if console_limited(caller, request):
+            return JSONResponse({"ok": False, "error": f"at most {CONSOLE_PER_MINUTE} lines a minute; wait a little"},
+                                status_code=429, headers=NO_STORE)
         line = str(payload.get("line") or "")
         try:
             return JSONResponse({"ok": True, "result": cmdlib.run_line(caller, line)}, headers=NO_STORE)
