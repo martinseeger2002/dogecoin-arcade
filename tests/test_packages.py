@@ -36,7 +36,7 @@ def test_the_template_is_a_theme_and_its_id_follows_every_byte(tmp_path):
     (lambda m: m["look"]["light"].pop("bar"), "sets every colour"),
     (lambda m: m["look"].update(font="https://fonts.example/x.woff2"), "look.font"),
     (lambda m: m["look"].update(radius=40), "radius"),
-    (lambda m: m.update(kind="module"), "kind"),
+    (lambda m: m.update(kind="app"), "kind"),
     (lambda m: m.update(api=2), "api"),
 ])
 def test_a_theme_that_could_hide_a_send_or_reach_outside_is_refused(tmp_path, change, said):

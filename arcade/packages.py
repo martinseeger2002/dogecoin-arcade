@@ -4,6 +4,9 @@ and node modules without GitHub"). Themes first: an app or a node module is a la
 A package is a folder with a `manifest.json`. Its id is the sha256 of every file's own sha256, by path, so a copy that
 was changed is a different package, and an upstream update of the arcade's code never touches one.
 
+A node module is Python that the arcade runs in a process of its own, confined (arcade/modhost.py, arcade/sandbox.py):
+its manifest names its commands and the chain reads it may ask of the node, and it never holds a key.
+
 A theme is values, not CSS: the Lite window's colours, a font and a corner radius, checked here and written out as CSS
 by `theme_css`. So a theme has no script, loads nothing from outside itself, and cannot make the send confirmation, an
 address or an amount unreadable: its text must stand out from its backgrounds (`CONTRAST`)."""
@@ -17,7 +20,7 @@ import time
 from pathlib import Path
 
 API = 1
-KINDS = ("theme",)
+KINDS = ("theme", "module")
 FOLDER = "packages"
 #: settings.json: every installed package by id; the arcade's theme; the ones people may pick; a folder the operator is
 #: trying at the machine; and each person's own pick, at `lite_theme:<owner>` (an account's key, or "node").
@@ -27,6 +30,23 @@ MOST_BYTES = 1_000_000
 MOST_FILES = 16
 #: What a theme may hold besides its manifest: a readme, and fonts of its own.
 FILES = re.compile(r"^(README\.md|files/[a-z0-9][a-z0-9._-]{0,60}\.woff2)$")
+#: What a node module may hold: its Python (module.py runs; the rest it imports), a readme, and the files its pages
+#: serve. More of them than a theme, and larger.
+MODULE_FILES = re.compile(r"^(README\.md|module\.py|lib/[a-z0-9_]{1,40}\.py|"
+                          r"files/[a-z0-9][a-z0-9._-]{0,60}\.(html|css|js|json|png|svg|woff2))$")
+MODULE_MOST_FILES, MODULE_MOST_BYTES = 64, 2_000_000
+COMMAND = re.compile(r"^[a-z][a-z0-9]{1,31}$")
+#: A module's command or page names who may use it as the Lite commands do (arcade/lite/commands.py, AUDIENCES).
+AUDIENCES = ("anyone", "user", "operator")
+#: What a module may ask a chain's Core: reads, by their names, and never the Core's wallet. A name it lists outside
+#: these is refused when the module is checked, so the operator never has to judge an RPC by its name.
+READS = re.compile(r"^(get|decode|estimate|calculate|validate)[a-z]*$|^(scantxoutset|testmempoolaccept)$")
+WALLET_READS = frozenset({
+    "getbalance", "getbalances", "getwalletinfo", "getnewaddress", "getrawchangeaddress", "gettransaction",
+    "getaddressinfo", "getreceivedbyaddress", "getreceivedbylabel", "getaddressesbylabel", "getunconfirmedbalance",
+    "getdigidollarbalance", "getdigidollaraddress", "getredemptioninfo", "getoraclepubkey"})
+#: The most a prepared transaction may leave to fees unless its manifest says less, in the chain's smallest unit.
+MOST_FEE = 100_000_000
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 VERSION = re.compile(r"^\d{1,4}\.\d{1,4}\.\d{1,4}$")
 COLOUR = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
@@ -53,23 +73,38 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _kind_of(folder: Path) -> str:
+    try:
+        return str(json.loads((folder / MANIFEST).read_bytes()).get("kind"))
+    except (ValueError, AttributeError):
+        return ""
+
+
 def read(folder: Path) -> tuple[dict, dict[str, bytes]]:
     """(manifest, {path: bytes}) of a package folder, refused as a whole if anything in it is not allowed."""
     folder = Path(folder).expanduser()
     if not (folder / MANIFEST).is_file():
         raise PackageError(f"{folder} has no {MANIFEST}")
+    module = _kind_of(folder) == "module"
+    allowed, most_files, most_bytes = ((MODULE_FILES, MODULE_MOST_FILES, MODULE_MOST_BYTES) if module
+                                       else (FILES, MOST_FILES, MOST_BYTES))
     found: dict[str, bytes] = {}
     for path in sorted(folder.rglob("*")):
-        if path.is_dir() or path.name.startswith("."):
+        if path.name.startswith(".") or path.name == "__pycache__" or "__pycache__" in path.parts:
             continue
         if path.is_symlink():
             raise PackageError(f"{path.name} is a link; a package holds its own files")
+        if path.is_dir():
+            continue
         rel = path.relative_to(folder).as_posix()
-        if rel != MANIFEST and not FILES.match(rel):
-            raise PackageError(f"{rel} is not something a theme may hold: a manifest, README.md and files/*.woff2")
+        if rel != MANIFEST and not allowed.match(rel):
+            raise PackageError(f"{rel} is not something a {'module' if module else 'theme'} may hold: "
+                               + ("module.py, lib/*.py, README.md and files/ for its pages" if module
+                                  else "a manifest, README.md and files/*.woff2"))
         found[rel] = path.read_bytes()
-        if len(found) > MOST_FILES or sum(map(len, found.values())) > MOST_BYTES:
-            raise PackageError(f"a theme holds at most {MOST_FILES} files and {MOST_BYTES // 1000} kB")
+        if len(found) > most_files or sum(map(len, found.values())) > most_bytes:
+            raise PackageError(f"a {'module' if module else 'theme'} holds at most {most_files} files and "
+                               f"{most_bytes // 1000} kB")
     try:
         manifest = json.loads(found[MANIFEST])
     except ValueError as exc:
@@ -112,6 +147,8 @@ def check(manifest: dict, files: dict[str, bytes]) -> None:
     for field, most in (("title", 40), ("summary", 200)):
         if not isinstance(manifest.get(field, ""), str) or len(manifest.get(field, "")) > most:
             raise PackageError(f"{field} is text of at most {most} characters")
+    if manifest["kind"] == "module":
+        return check_module(manifest, files)
     look = manifest.get("look")
     if not isinstance(look, dict) or not isinstance(look.get("light"), dict):
         raise PackageError("look.light holds the theme's colours")
@@ -134,6 +171,43 @@ def check(manifest: dict, files: dict[str, bytes]) -> None:
     radius = look.get("radius", 3)
     if not isinstance(radius, int) or not 0 <= radius <= 12:
         raise PackageError("look.radius is a whole number of pixels, 0 to 12")
+
+
+def check_module(manifest: dict, files: dict[str, bytes]) -> None:
+    """Refuse a node module's manifest with the first thing wrong: what it runs, the commands it adds, and what it may
+    ask of the node."""
+    if "module.py" not in files:
+        raise PackageError("a module runs its module.py")
+    needs = manifest.get("needs", {})
+    if not isinstance(needs, dict) or set(needs) - {"chains", "max_fee"}:
+        raise PackageError("needs holds chains (the reads it asks of each chain's Core) and max_fee; a module "
+                           "reaches no host of its own yet")
+    chains = needs.get("chains", {})
+    if not isinstance(chains, dict) or not all(isinstance(m, list) for m in chains.values()):
+        raise PackageError('needs.chains names each chain and its reads: {"dgb": ["getblockcount"]}')
+    for chain, methods in chains.items():
+        for method in methods:
+            if not READS.match(str(method)) or method in WALLET_READS or "wallet" in str(method):
+                raise PackageError(f"needs.chains.{chain}: {method} is not a read a module may ask of a Core")
+    fee = needs.get("max_fee", MOST_FEE)
+    if not isinstance(fee, int) or not 0 <= fee <= MOST_FEE:
+        raise PackageError(f"needs.max_fee is a whole number of the chain's smallest unit, at most {MOST_FEE}")
+    commands = manifest.get("commands", {})
+    if not isinstance(commands, dict):
+        raise PackageError("commands names each command the module adds")
+    for name, said in commands.items():
+        if not COMMAND.match(name):
+            raise PackageError(f"{name}: a command is 2-32 lower-case letters and digits")
+        if not isinstance(said, dict) or said.get("audience", "anyone") not in AUDIENCES:
+            raise PackageError(f"{name}: audience is one of {', '.join(AUDIENCES)}")
+        if not isinstance(said.get("help", ""), str) or not all(
+                isinstance(a, str) and re.fullmatch(r"\[?[a-z][a-z_]{0,20}\]?", a) for a in said.get("args", [])):
+            raise PackageError(f"{name}: args are names, [in brackets] when they may be left out, and help is text")
+        optional = [a.startswith("[") for a in said.get("args", [])]
+        if optional != sorted(optional):
+            raise PackageError(f"{name}: an argument that may be left out comes after every one that may not")
+    if manifest.get("pages", "anyone") not in AUDIENCES:
+        raise PackageError(f"pages is who may open /m/{manifest['name']}/: one of {', '.join(AUDIENCES)}")
 
 
 def theme_css(manifest: dict, files_url: str) -> str:
