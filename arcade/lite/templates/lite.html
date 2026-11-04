@@ -87,8 +87,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     {% else %}<li><button type="button" data-go="/join">Sign in or make an account</button></li>{% endif %}
   </ul></div>
   <div class="menu"><button type="button">Settings</button><ul>
-    {% if audience == 'operator' %}<li><button type="button" data-go="/admin">Options…</button></li>
-    <li><button type="button" data-go="/admin#modules">Edition and modules…</button></li>
+    {% if audience == 'operator' %}<li><button type="button" data-options="general">Options…</button></li>
+    <li><button type="button" data-options="modules">Edition and modules…</button></li>
     {% elif audience == 'user' %}<li><button type="button" data-go="/me">Your account…</button></li>
     {% else %}<li><button type="button" disabled>Options…</button></li>{% endif %}
   </ul></div>
@@ -150,7 +150,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
         <td class="{{ 'ok' if m.on else 'muted' }}">{{ 'on' if m.on else 'off' }}</td></tr>{% endfor %}
       </tbody></table>
       <p class="muted" style="margin:8px 0 0">{% if audience == 'operator' %}Switch them on or off in
-        <a href="/admin#modules">Admin → Edition &amp; modules</a>.{% else %}This arcade's operator chooses what runs
+        <button type="button" data-options="modules">Edition and modules…</button>.{% else %}This arcade's operator chooses what runs
         here.{% endif %} The App Store comes to Lite in a later part.</p>
     </fieldset>
   </section>
@@ -188,6 +188,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
         recorded vectors in tests/conformance.</p></div>
   </div>
 </div>
+
+{% include "_options.html" %}
 
 <script>
 (function () {

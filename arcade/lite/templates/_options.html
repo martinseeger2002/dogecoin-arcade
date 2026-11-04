@@ -1,0 +1,139 @@
+{#- Settings -> Options, a window like the Console: what an operator changes most, drawn plainly, over Admin's own
+    routes (the same checks, the same settings). The rest of Admin is still its own page, linked at the foot. -#}
+{% if audience == 'operator' %}
+<div class="dialog" id="options" role="dialog" aria-label="Options">
+  <div class="window">
+    <header><span>Options</span><button type="button" data-close aria-label="Close">×</button></header>
+    <div class="wtabs" role="tablist">
+      <button type="button" data-otab="general" aria-selected="true">General</button>
+      <button type="button" data-otab="modules">Edition and modules</button>
+      <button type="button" data-otab="password">Admin password</button>
+    </div>
+    <div class="wbody">
+      <div data-opanel="general">
+        <fieldset><legend>Face</legend><div class="grid">
+          <label for="o-face">Face</label><select id="o-face"></select></div>
+          <p class="muted" id="o-face-why" hidden>Fixed by --brand or ARCADE_BRAND in the service; change it there.</p>
+        </fieldset>
+        <fieldset><legend>Updates</legend>
+          <label><input type="checkbox" id="o-auto"> Install updates by themselves</label>
+          <div class="grid" style="margin-top:6px"><label for="o-channel">Channel</label>
+            <select id="o-channel"><option value="live">live</option><option value="test">test</option></select></div>
+        </fieldset>
+        <fieldset><legend>Seats</legend><div class="grid">
+          <label for="o-seats">Accounts</label><span><input id="o-seats" type="number" min="1" max="10000"
+            style="width:8em"> <button type="button" id="o-seats-go">Save</button> <span id="o-seats-said"
+            class="muted"></span></span></div>
+        </fieldset>
+      </div>
+      <div data-opanel="modules" hidden>
+        <fieldset><legend>Edition</legend><div class="grid">
+          <label for="o-edition">Edition</label><select id="o-edition"><option value="full">Full</option>
+            <option value="lite">ARCADE Lite</option></select></div>
+          <p class="muted">Lite to Full turns every module on. Full to Lite only switches them off; nothing is deleted.</p>
+        </fieldset>
+        <fieldset><legend>Modules</legend>
+          <table><thead><tr><th>On</th><th>Module</th><th>Kind</th></tr></thead><tbody id="o-modules"></tbody></table>
+          <p id="o-restart" class="warn" hidden></p>
+        </fieldset>
+      </div>
+      <div data-opanel="password" hidden>
+        <fieldset><legend>Admin password</legend>
+          <p class="muted" id="o-pw-state"></p>
+          <form id="o-pw" class="grid">
+            <label for="o-pw1">New password</label><input id="o-pw1" type="password" autocomplete="new-password">
+            <label for="o-pw2">Again</label><input id="o-pw2" type="password" autocomplete="new-password">
+            <span></span><span><button type="submit">Set it</button></span>
+          </form>
+          <p class="muted">It opens Admin from other machines, and signs every old session out. It is set here, at the
+            node's own machine, only.</p>
+        </fieldset>
+      </div>
+      <p id="o-said" hidden></p>
+      <p class="muted" style="margin:6px 0 0">Chains and Cores, the network, safety and wallet imports:
+        <a href="/admin">the rest of Admin</a>.</p>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function tell(text, cls) { var p = $('o-said'); p.textContent = text; p.className = cls || ''; p.hidden = !text; }
+  function api(path, body) {
+    return fetch(path, body === undefined ? {credentials: 'same-origin', headers: {'X-Arcade-Admin': '1'}, cache: 'no-store'}
+      : {method: 'POST', credentials: 'same-origin', body: JSON.stringify(body),
+         headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'}})
+      .then(function (r) { return r.json().then(function (j) {
+        if (!r.ok) throw new Error(j.detail || ('refused (' + r.status + ')')); return j; }); });
+  }
+  function fail(e) { tell(String(e.message || e), 'bad'); }
+  function tab(name) {
+    document.querySelectorAll('[data-otab]').forEach(function (x) { x.setAttribute('aria-selected', x.dataset.otab === name); });
+    document.querySelectorAll('[data-opanel]').forEach(function (p) { p.hidden = p.dataset.opanel !== name; });
+  }
+  document.querySelectorAll('[data-otab]').forEach(function (b) { b.onclick = function () { tab(b.dataset.otab); }; });
+
+  function general() {
+    return api('/admin/api/state').then(function (s) {
+      var face = $('o-face'); face.textContent = '';
+      s.brand.choices.forEach(function (c) { face.add(new Option(c[1], c[0])); });
+      face.value = s.brand.current; face.disabled = !!s.brand.locked; $('o-face-why').hidden = !s.brand.locked;
+      $('o-auto').checked = !!s.selling.auto_update; $('o-channel').value = s.selling.update_channel || 'live';
+      $('o-seats').value = s.seats.total;
+      $('o-seats-said').textContent = s.seats.taken + ' taken, ' + s.seats.free + ' open';
+      $('o-pw-state').textContent = !s.operator.pubkey ? 'Name the operator account first: sign in at this machine '
+        + 'with the account that runs it.' : s.operator.password_set ? 'A password is set for @' + s.operator.tag + '.'
+        : 'No password yet: Admin opens only at this machine.';
+      $('o-pw').hidden = !s.operator.pubkey || !s.local;
+    });
+  }
+  function setting(body) { tell(''); return api('/admin/api/settings', body).then(function () { tell('Saved.', 'ok'); }, fail); }
+  $('o-face').onchange = function () { setting({brand: $('o-face').value}).then(function () { location.reload(); }); };
+  $('o-auto').onchange = function () { setting({auto_update: $('o-auto').checked}); };
+  $('o-channel').onchange = function () { setting({update_channel: $('o-channel').value}); };
+  $('o-seats-go').onclick = function () {
+    tell(''); api('/admin/api/seats', {seats: Number($('o-seats').value)}).then(general).then(function () { tell('Saved.', 'ok'); }, fail);
+  };
+
+  function modules(said) {
+    $('o-edition').value = said.edition;
+    var tb = $('o-modules'); tb.textContent = '';
+    said.modules.forEach(function (m) {
+      var tr = tb.insertRow(), box = document.createElement('input');
+      box.type = 'checkbox'; box.checked = m.on; box.disabled = m.core;
+      box.onchange = function () {
+        if (!box.checked && m.caution && !window.confirm(m.caution)) { box.checked = true; return; }
+        tell(''); api('/admin/api/modules', {module: m.id, on: box.checked}).then(modules, function (e) { fail(e); load(); });
+      };
+      tr.insertCell().appendChild(box);
+      var name = tr.insertCell(); name.textContent = m.title; name.title = m.summary;
+      tr.insertCell().textContent = m.core ? 'core' : m.kind;
+    });
+    $('o-restart').hidden = !said.restart_for.length;
+    $('o-restart').textContent = 'Restart the arcade for these to start or stop their work: ' + said.restart_for.join(', ') + '.';
+  }
+  function load() { return api('/admin/api/modules').then(modules, fail); }
+  $('o-edition').onchange = function () {
+    var to = $('o-edition').value;
+    if (!window.confirm(to === 'lite' ? 'Switch to ARCADE Lite? Every module but the core switches off; nothing is deleted.'
+                                      : 'Switch to the full edition? Every module switches on.')) { load(); return; }
+    tell(''); api('/admin/api/modules', {edition: to}).then(function () { location.reload(); }, fail);
+  };
+
+  $('o-pw').onsubmit = function (e) {
+    e.preventDefault(); tell('');
+    if ($('o-pw1').value !== $('o-pw2').value) { tell('The two passwords are not the same.', 'bad'); return; }
+    api('/admin/api/password', {password: $('o-pw1').value}).then(function () {
+      $('o-pw1').value = $('o-pw2').value = ''; tell('Set. Every other Admin session is signed out.', 'ok'); general();
+    }, fail);
+  };
+
+  document.querySelectorAll('[data-options]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      $('options').classList.add('open'); tab(b.dataset.options); tell('');
+      general().catch(fail); load();
+    });
+  });
+})();
+</script>
+{% endif %}

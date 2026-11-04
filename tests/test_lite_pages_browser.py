@@ -1,5 +1,5 @@
-"""Lite's own Join and Address book, in a real browser on regtest: an account made and signed in from the Join
-panel ARCADE Lite serves at /join, a claimed name added to the book and paid from it."""
+"""Lite's own Join, Address book and Options, in a real browser on regtest: an account made and signed in from the Join
+panel ARCADE Lite serves at /join, a claimed name added to the book and paid from it, and the operator's Options."""
 
 import pathlib
 import sys
@@ -109,3 +109,25 @@ def test_a_name_is_added_to_the_book_and_paid_from_it(reachable):
     assert browser.find_element(By.ID, "w-to").get_attribute("value") == "@" + them["tag"]
     assert browser.find_element(By.ID, "w-amount").is_displayed(), "the Send tab, ready for the amount"
 
+
+def test_the_operator_changes_seats_and_sees_the_modules_in_options(browser, served):
+    base, state, node = served
+    browser.delete_all_cookies()
+    browser.get(f"{base}/lite")
+    before = state.accounts().seats
+    browser.find_element(By.XPATH, "//nav//button[text()='Settings']").click()
+    browser.find_element(By.CSS_SELECTOR, '[data-options="general"]').click()
+    _wait(browser).until(lambda d: d.find_element(By.ID, "o-seats").get_attribute("value"))
+    assert browser.find_elements(By.CSS_SELECTOR, "#o-face option")
+    seats = browser.find_element(By.ID, "o-seats")
+    seats.clear()
+    seats.send_keys(str(before + 3))
+    browser.find_element(By.ID, "o-seats-go").click()
+    try:
+        _wait(browser).until(lambda d: d.find_element(By.ID, "o-said").text == "Saved.")
+        assert state.accounts().seats == before + 3
+        browser.find_element(By.CSS_SELECTOR, '[data-otab="modules"]').click()
+        _wait(browser).until(lambda d: "Feed" in d.find_element(By.ID, "o-modules").text)
+    finally:
+        state.set_setting("seats", before)
+        state.accounts().seats = before

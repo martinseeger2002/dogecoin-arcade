@@ -161,6 +161,13 @@ def test_join_is_a_panel_of_the_window_and_lite_serves_it_at_join(app, app_state
         app_state.set_setting("edition", None)
 
 
+def test_options_is_a_window_for_the_operator_only(app):
+    operator = app.get("/lite", headers=LOCAL).text
+    assert 'id="options"' in operator and 'data-options="modules"' in operator
+    assert 'data-go="/admin"' not in operator and "/admin#modules" not in operator
+    assert 'id="options"' not in app.get("/lite", headers=OUTSIDE).text
+
+
 def test_console_lines_come_only_from_the_lite_page(app):
     assert app.post("/lite/api/console", headers=LOCAL, json={"line": "help"}).status_code == 403
     refused = app.post("/lite/api/console", headers={**OUTSIDE, **LITE, "origin": "https://evil.example"},
