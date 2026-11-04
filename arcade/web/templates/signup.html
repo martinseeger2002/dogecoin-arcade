@@ -27,6 +27,13 @@
 <div id="forms" {% if not secure_enough or free <= 0 %}hidden{% endif %}>
   {# Issue #15 (2026-10-25): players who "Played on another arcade" made a new character here, with a new empty
      wallet, under their own name. The way to their real account is said first. #}
+  <div class="panel" id="extension-door" hidden style="border-color:var(--accent)">
+    <h2 style="margin-top:0">Sign in with your Arcade Wallet</h2>
+    <p class="muted" style="margin:0 0 10px">Your Arcade Wallet extension is in this browser. Your words stay in it: it
+      asks you, in its own window, before it signs you in here.</p>
+    <button class="btn primary" id="extension-go">Sign in with Arcade Wallet</button>
+  </div>
+
   <div class="panel" id="played-elsewhere" style="border-color:var(--accent)">
     <p style="margin:0"><strong>Played on another arcade?</strong>
       <a href="#in-tag" id="to-signin">Sign in</a> with the same name and password: this arcade finds your account
@@ -365,6 +372,22 @@ function wire() {
       location.href = NEXT;
     } catch (e) { idle(button); say(String(e.message || e)); }
   };
+
+  // The optional Arcade Wallet extension (signin.js): offered only when it is in this browser.
+  import("/signin.js").then(async (signer) => {
+    if (!(await signer.extension())) return;
+    $("extension-door").hidden = false;
+    $("extension-go").onclick = async () => {
+      const button = $("extension-go");
+      if (!busy(button, "Waiting for your Arcade Wallet\u2026")) return;
+      say("");
+      try {
+        await signer.signInWithExtension({join: true});
+        button.textContent = "Signed in \u2713";
+        location.href = NEXT;
+      } catch (e) { idle(button); say(String(e.message || e)); }
+    };
+  });
 
   $("open-file").onclick = async () => {
     const button = $("open-file");

@@ -224,3 +224,15 @@ def test_console_lines_come_only_from_the_lite_page(app):
     refused = app.post("/lite/api/console", headers={**OUTSIDE, **LITE, "origin": "https://evil.example"},
                        json={"line": "help"})
     assert refused.status_code == 403
+
+
+def test_a_visitor_s_console_lines_are_limited_and_the_operator_s_are_not(app):
+    """2026-11-03, a test machine's review: /lite/api/console is public on every arcade, so a visitor gets at most
+    CONSOLE_PER_MINUTE lines a minute, as the full arcade's terminal; the operator at the node is never held back."""
+    from arcade.lite import web as liteweb
+    for _ in range(liteweb.CONSOLE_PER_MINUTE):
+        assert app.post("/lite/api/console", headers={**OUTSIDE, **LITE}, json={"line": "help"}).status_code == 200
+    held = app.post("/lite/api/console", headers={**OUTSIDE, **LITE}, json={"line": "help"})
+    assert held.status_code == 429 and "lines a minute" in held.json()["error"]
+    for _ in range(liteweb.CONSOLE_PER_MINUTE + 5):
+        assert app.post("/lite/api/console", headers={**LOCAL, **LITE}, json={"line": "help"}).status_code == 200

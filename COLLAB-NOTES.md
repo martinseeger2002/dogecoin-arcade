@@ -136,6 +136,57 @@ and I also don't see the user's full console command list".
     and sends from its console; the operator sends the node's message from the same tab.
   - Workhorse, with the full arcade's messaging tests: 590 passed, 19 skipped.
 
+### 2026-11-04 The web worker runs the installed arcade, never an `arcade/` in the directory it starts in (Claude; found on the operator's ThinkPad by its session)
+
+The supervisor spawned workers with `python -m arcade.web`, which puts the current directory first on sys.path, and arcade-web.service has no WorkingDirectory, so it starts in $HOME. On the ThinkPad $HOME held an old `arcade/` unpacked from source.tar.gz, and the live arcade ran THAT, not site-packages; the updater compares versions, not where code was imported from, so nothing said so. New `arcade/pyrun.py` `module_cmd`: a child starts with the `arcade` this process imported. Where that is the current directory (a source checkout, as on .25, and the test suite) exactly as before; otherwise with the current directory off sys.path (`-P` on Python 3.11+, a `-c` bootstrap that drops `sys.path[0]` before that, and for another interpreter). Used by the supervisor's worker spawn and its self-replacing execv, and by the updater's second half (`-m arcade.update --services-only`). The launcher, arcade-cli and the bot-RPC shim run console scripts, which never put the cwd first; the UPDATE shim runs `python -c` and `-m` (the ThinkPad session caught it), so it now starts with `cd` into the venv's folder (Linux and Windows), SHIM_VERSION 4 so every arcade rewrites it at its next update. tests/test_pyrun.py (a decoy `arcade/` in the cwd: the real one loads; unprotected, the decoy does). If your side runs workers some other way, the same applies.
+
+### 2026-11-03 An installed Core on a chain set to borrow or off is not started (Claude; found on the operator's ThinkPad by its session)
+
+`core_install.start_installed` started every `core_installed:<net>` at the arcade's start without looking at Admin -> Chains, so DigiByte, set to borrow after its node ran the ThinkPad out of memory, would have been started again at the next restart. Now only chains whose mode is "here" start (`cores.mode`; an installed chain with no setting is "here", as before). Admin switching a chain away from "here" still does not stop a running Core at once (stopping DigiByte there is what ran out of memory): it takes effect at the next start. tests/test_core_install.py.
+
+### 2026-11-03 ARCADE Lite merged; the anonymous console gets the terminal's limit (Claude, a test machine; for SadFrog)
+
+#62, #63 and #65 are merged on the operator's main with the wallet, in one build. A review of #65 found an existing full arcade unchanged after the update (every module on with no setting, the updater never asks the edition question, no-TTY installs write "ask" and run full, door.py only adds /lite). Changed here: `/lite/api/console` is public on every arcade, so a non-operator gets at most `CONSOLE_PER_MINUTE` (30) lines a minute per account or address, like `/api/terminal/exec`; the operator is never held back (tests/test_lite.py). Two smaller findings for your side, not changed:
+- **"Fresh home" is guessed from two files** (web/__main__.py `settings.json` and the messaging sqlite; installer `existing_arcade` the same): a restored home missing them gets `edition: "ask"` and the neutral face. Suggest: fresh only when the home has no keys, cookie, accounts or vault.
+- **`arcade-cli` on a public arcade** (`state.public`) runs as anyone even from the node's own machine, so the operator commands answer "no command" there.
+
+### 2026-11-03 Arcade Wallet, merged with two fixes from a security review; six findings for your side (Claude, a test machine; for SadFrog)
+
+#64 and #67-#73 are merged on the operator's main with #62, #63 and #65, in one build. A separate review of `extension/` before merging found the vault, the origin handling (`port.sender.origin`), the sign-in message, the sighash preimages, the network reach and the vendored code sound. Fixed here before merging:
+1. **An operation the window cannot show is refused** (`txview.hiddenWrite`, called by `sitetx.plan` and `sends.check`). Omni's Send All is 9 bytes (`omni 00000004 01`): the window said "Writes 9 bytes", so a site's transaction spending one small coin of the person's could move every token. Now refused, nothing signed: more than one OP_RETURN, an OP_RETURN with anything after its first push, an omni/arcd marker anywhere in one that does not decode as a shown operation, and a bare multisig output (Class B). tests/test_extension.py cases 13-16.
+2. **Request ids are random** (`crypto.randomUUID()`), not a counter: the counter restarted with the MV3 service worker, so a "Connect" window left open could answer a later request that got the same number.
+Asked of your side, not changed here:
+- **Fees rest on the linked arcade's word.** Coin values come from `/account/coins` and the offer, and a legacy sighash does not cover them: an arcade reporting a 1,000 coin as 10 shows a fee of 0.1 and burns ~990. Suggest: fetch each previous transaction, check its hash, read the value from its bytes; require every output but the payee to be change in `sends.check`; warn above a fee ceiling.
+- **Approve takes a click at once** (background.js / approve.js): disable it for about a second after focus, place the window, one pending request per origin.
+- **ANYONECANPAY windows show outputs the signature does not cover** (0x83 signs one output; 0x81 lets others add inputs before, which moves an ordinal's landing): mark the covered output, and say a landing is not binding.
+- **Import by @name accepts http** (popup.js `new URL()`): use `arcade.arcadeOrigin` there.
+- **Privacy:** every connected site sees the same account Ed25519 key, so sites can link one person.
+- **Unsure:** whether any arcade message signed with the Pepecoin words falls outside `arcadeWords` and the `arcade-`/`DogecoinArcade` prefixes.
+
+### 2026-11-03 Imports: one node of a chain is enough, and the Core rescan is gone (Claude; the operator: "Why do we have to have two cores on the arcade mesh in order to import a wallet. As this leftover rule from when we were re-scanning with the node?", "Why do any chance require the import rescan?", "Okay cool")
+
+Every import's past has been found by the shared walk since 2026-10-25 (on by default on every chain; Kotia and Litecoin read over RPC, not block files). The Core rescan (2026-10-21: watch-only import into this node's Core, whole-chain rescan, reads borrowed meanwhile) was left as a fallback behind Admin -> Wallet imports' "Shared walk" switch, and its need for a second Core to borrow from was the reason for `IMPORT_CORES_MIN = 2` ("at least 2 nodes on the arcades' network"). Both are gone:
+- `_import_closed` refuses only NO_IMPORTS (PEP TEST). An import opens on a chain with one node; the walk reads once there, with canaries in every job, and every coin it files is checked against the chain.
+- Removed: CORE_RESCAN_ON, `_core_rescan_on`, `_core_batch_start`, the start-up sweep, the rescan's retry/back-off and countdown words, `_rescan_start` (the floor read-back), `_walk_on` and the Admin switch (`import_walk:<net>` is no longer read). `_begin_next` always walks.
+- Kept: a wallet a Core rescan already read (`core_rescanned:<net>:<address>` set) stays ready; core_catchup (a hold from before a restart clears itself; utxos and the mesh still use it); utxos.seed_from_core_wallet and its tests.
+- Tests: test_wallet_imports (the four Core-rescan tests removed; "an import during a read-back" rewritten on the walk; the two-node test turned round: one node is enough, and Admin has no switch back); conftest's `_enough_cores_to_import` removed.
+Nothing needed from your side: your arcades will open imports on single-node chains when they update.
+
+### 2026-11-03 rawchain: a P2PK output keeps its address in a borrowed block's verbose view, on every chain (Claude; found by the ThinkPad's Flopcoin blocks)
+
+`script.classify_script` returns a P2PK output's address with no keys, and `rawchain.script_pubkey` filled `addresses` only `if keys`, so every pay-to-pubkey output (old Dogecoin and Pepecoin coinbases, Flopcoin's AuxPoW-era ones) lost the `reqSigs`/`addresses` Core prints for it. Now `address or keys`. Display only (no spend or check reads it). Proved by real Flopcoin blocks: tests/data/rawchain/flop-blocks.json.gz (110,101-110,103 around the first AuxPoW block, 124,998-125,000 across the hard fork; made on the ThinkPad's synced v2.0.0.0 node, sha256 e3f43c55...4360) and test_flopcoin's real-block test, which fails without the fix. If your side reads borrowed P2PK outputs, you get the address now.
+
+### 2026-11-03 Flopcoin (FLOP) as an add-on chain, with Flopinals (Claude on the ThinkPad wrote and tested it; applied on a test machine by the Arcade fix session; the operator: "do whatever you need to do to get this Flopcoin added release deployed", "There are no flop coin ORD's yet we can incorporate them right now")
+
+Flopcoin Core v2.0.0.0 (github.com/Flopcoin/Flopcoin, tag v2.0.0.0) is Dogecoin 1.14's code, so `config.FLOPCOIN` is DOGECOIN with its own values, checked against a v2.0.0.0 node on the ThinkPad (block 0, validateaddress, signmessagewithprivkey): P2PKH 35 ("F", no other chain's), P2SH 22 (Dogecoin's and Pepecoin's script byte, never a key hash, so `unpayable_versions` is empty), WIF 0x9E (Dogecoin's and Pepecoin mainnet's), ports 32551/32552, genesis 1f103776...9d30d0, AuxPoW chain id 0xA3 from 110,000, CLTV from 111,000 (locks allowed), no SegWit. A mandatory hard fork at 125,000 changed the message-start bytes (fa bf b5 da) and pays 10% of each coinbase to the FlopFund until 600,000 (mining only). Floor 917,000 (tip 913,980 that day, about two days ahead).
+- core_install: v2.0.0.0, x86_64 only, `flopcoin-v2.0.0.0-linux.tar.gz` from the project's own GitHub release, sha256 7e78da4a...9905e, 29,600,108 bytes. The project publishes no sums and its binary says `v2.0.0.0-f5209a6-dirty`, so it is pinned as downloaded (the same trust as the Bellscoin and Luckycoin pins); downloaded again on a test machine, same hash. `_conf_lines` stays generic: a fresh node found its peer from the DNS seeds alone; flopcoin.md says to `addnode=216.45.61.204:32552` if one finds none.
+- Fees, dust and BIG as Dogecoin's (trade.BIG and TRADE.BIG 1,000 FLOP); the browser tables (COIN_TYPE 3, WIF, MAINNETS, REAL_COINS, CLAIM_FEE/FEE_FLOOR 1,000,000, PAYEE_VERSIONS +35, P2SH_VERSION 22, COIN_WORD), badge "F", colors, coin-flop.png (the project's own Qt icon at 128 px), Backup label, swap/admin/LLM names, wallet QR words, DogeFeedX chain pills (F addresses, "flopcoin"). Docs: flopcoin.md, and every page that lists the add-on chains.
+- **Flopinals** (the operator: none exist yet, so in now): the Doginals kind (240-byte parts, an empty one is not an inscription, a reinscription not numbered, as DigiByte's), `doginal_index.STARTS["flop"] = 18,295`: the operator thought none existed yet, but the ThinkPad's scan from block 0 found the first Doginals-style envelope there (txid 3af74671...6d0fbbe, 161 parts of 240 bytes, image/jpeg) and 14 envelope inputs up to block 366,051; like every chain's, the index starts below the floor, which stays at 917,000, sent, listed, bought and swapped (`ord_chains.MOVED`; CLTV, so `swappable`), inscribed from Creator -> Ords, on Explore after DigiByte. Tokens: the DRC-20 rules, as on Dogecoin.
+- Left out: lora device_keys COIN_TYPE (it lacks dgb too), admin delegate-cap names, a raw AuxPoW block fixture for rawchain (the ThinkPad's node is still syncing).
+- Tests: tests/test_flopcoin.py (11), and Flopcoin added to the exact-table checks (test_bells_luckycoin, test_trade_tab, test_ord_inscribe, test_account_mainnet, test_doginal_index, test_doginal_wallet).
+Nothing needed from your side; a Flopcoin you list or swap needs a Flopcoin node on one of the arcades.
+
+### 2026-11-03 Echo: placed and amplified sound plays where Chrome's canceller hears it; a Lounge screen's sound is taken out of the mic (Claude; the operator, live in Spatial World: "so much feedback between the mic and the screen", diagnosed by the Riffs session)
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Admin in the Lite look; Edition & modules by category
 SadFrog: "the admin stack should also be in the same arcade lite style as the user side but with the additional
 controls and features there", then "in edition and modules please categorize the modules in a scalable manner maybe
@@ -459,20 +510,102 @@ Tests: test_media_browser.py (the louder test now also asserts the loopback play
 Strawberry said 12 other arcades running, 8 linked. Three of the four unlinked were test arcades on a test machine (port 8433) that had stopped the evening before: `_arcades_running` counted any mesh key announced on the chain in the last day, and arcades re-announce only daily (service.ANNOUNCE_EVERY), so a stopped arcade stayed "running" for up to a day. Now "running" is word from the mesh within the hour: a link, an address reached, a linked arcade saying it is linked to it, or its own "me" hello (operators.peers `at`, new). A key known only from its announcement is still listed, last, as **not heard from** (`link.state: "quiet"`) and is left out of `running`, `total` and Overview's "Other arcades running". Changed: arcade/web/app.py `_arcades_running` (`quiet` ids) and `_arcades_view`, templates/_arcades_panel.html, tests/test_admin.py (the 2026-10-21 test's chain-only arcade is now "quiet"; a new test). Nothing needed from your side; your arcades will count the same way once they update.
 
 ### 2026-11-03 The updater repairs a src that lost its installer (Claude; the operator's new ThinkPad install)
-- An archive install whose `~/.dogecoinarcade/src/installer/install.py` was gone failed every update with "could not
-  fetch the source archive": the repair runs the installer from src, the very thing that needed repairing, and
-  `_call_installer` answered None without a word. Now update.py fetches the signed archive itself, holds it to the
-  manifest's sha256 before anything in it runs, and runs that archive's installer (`_with_archive_installer`).
-- The installer returns "" (not None) when only `source.rev` could not be read; the updater then writes the signed
-  manifest's revision. Before, a fetch that succeeded was reported as failed.
-- A machine already in this state needs the installer run once (`python3 install.py`), since its own updater is the
-  old one.
+### 2026-11-03 · SadFrog's side (Claude) · PRs #67-#73, stacked on #64 · Arcade Wallet E2: every chain's keys, messages, and sends
+SadFrog: "the extension act as a readonly arcade wallet for signing and making simple transactions for all assets omni
+and ordinal on all chains". The operator on #62: transaction signing is in the first public release. #64 stays as it is;
+E2 is seven PRs stacked on it, each one commit or two and at most 400 lines of its own (the copied web-wallet files
+aside), in this order:
+  - #67 `team/arcade-wallet-e2-keys`: keys and balances;
+  - #68 `-messages`: messages and the verifiers;
+  - #69 `-txview`: the decoded view;
+  - #70 `-sends`: popup sends;
+  - #71 `-sitetx`: site transactions;
+  - #72 `-look`: arcade-nodes.com's look;
+  - #73 `-release`: 0.2.0, the README and this entry.
+Each PR body links the fork's compare view of its own change. No arcade code changed.
+- **Read-only wallet.** It runs no node and keeps no chain data. A **linked arcade** reads the chains for it: the
+  wallet signs in there itself with the account key and uses the routes the arcade's own Wallet page uses
+  (`/account?chains=all`, `/account/address`, `/account/coins`, `/account/doginal-txs`, `/r/balances`, `/r/tokens`,
+  `/r/inscriptions`). Keys never leave the extension.
+- **Keys:** `extension/coins.js` and `extension/vendor/` are the web wallet's own files, byte for byte (a test holds them
+  equal). `extension/chains.js` lists every chain in `config.NETWORKS`; a test holds its bytes to config, so a new chain
+  fails until it is placed. Every chain's address for three phrases is worked out again in Python and compared.
+- **Messages:** `arcade_signMessage` signs as each chain's own Core does. Each chain's message words were checked
+  against its Core with a throwaway key: PEP (main and test), DOGE, LTC (main and test), LKY, and BEL (its words are
+  "Bells Signed Message"). KOT, WJK and DGB sign no messages until someone checks theirs. The arcade's own words
+  (issue #5: realtime certificates, LLM grants and top-ups, anything starting `arcade-` or `DogecoinArcade`) are never
+  signed for a site. `extension/verify.js` and `verify.py` check sign-ins and messages with no server.
+- **Sends from the popup** (coins, Omni tokens, arcade NFTs, inscriptions): the arcade builds them exactly as for its
+  Wallet page (`/account/send`, `/account/token/send`, `/account/nft/send`, `/account/doginal/send`). So its coin
+  choice, inscription guard, fees and coins-in-flight rules are reused, not re-implemented. The wallet checks each offer
+  before signing (`sends.js`):
+  - `coins.js verifyOffer`;
+  - the payee, amount, token id and units, NFT or inscription asked for;
+  - its own ord-index check: on every chain with ords, a coin the index cannot vouch for now is refused.
+  It then shows the transaction decoded from its bytes (`txview.js`) and signs into `/account/sign`.
+- **Sites:** `arcade_signTransaction` and `arcade_sendTransaction` (`sitetx.js`). Only the site's bytes are taken. The
+  linked arcade's coin list says which inputs are this wallet's and what they are worth; its ord index says what they
+  carry. The extension's window shows every output decoded. Signatures follow `exchange-safety.md`: ALL,
+  ALL|ANYONECANPAY, SINGLE|ANYONECANPAY over an existing output. NONE and SINGLE alone are never signed, and only ALL
+  is signed on Kotia and for a send. An inscribed coin is signed only when the site names that inscription, and under
+  ALL only when it lands on an output. A send spends plain coins only, through `/account/broadcast`.
+- **Tests:** `tests/test_extension.py`, 13, all passing at every commit of the stack. The offers are built by `funding.build_one` and the routes'
+  own payload code. Digests equal `funding.sighash` (ALL and SINGLE|ANYONECANPAY), and the signatures verify with the
+  arcade's own secp256k1 code. Each refusal is tested.
+- **Real browser (Playwright, Chromium), PEP testnet only,** against a throwaway loopback test arcade with its own
+  home. The wallet was new, joined through /join with the extension, linked from the popup, and funded from the
+  testnet Core's wallet.
+  - Popup send of 1 PEP TEST: txid 9c6d88c4ab70ce6f8596dfcb0cd3e851a35d14feed3e8037461e82046ff3e5b3.
+  - A page's own transaction through `arcade_sendTransaction`, approved in the extension's window: txid
+    ec5329650d7187175fc078a1b556a5237ac2bf29da080dbb9f19eecfe468ded5.
+  - A NONE request from the page was refused.
+  - No mainnet, Bells or Luckycoin coins moved.
+- **Not yet:** Litecoin's OmniLite (the arcade has no OmniLite yet either); DRC-20/PRC-20 sends (the arcade's three-step
+  `token20` flow); SegWit and imported addresses (the main P2PKH address only); PSBT (raw unsigned bytes only); message
+  words for KOT, WJK, DGB. `arcade/lora/device_keys.py` `COIN_TYPE` lacks `dgb` (it falls back to 1, coins.js says 3).
+- **Look:** the popup and approval window use arcade-nodes.com's colours and pixel font (OFL, in `extension/fonts/`),
+  so the hub and the wallet match. Site origins, addresses and message text stay in plain monospace.
+- **Need from the other side:** a review of #67-#73 in order, after #64.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/arcade-wallet-e1` · Arcade Wallet extension, phase E1
+- **New: `extension/`**, an **optional** MV3 browser extension (design: `docs/arcade-lite/EXTENSION.md` in PR #62).
+  It keeps the person's arcade words outside every page.
+  - `keys.js` is the web wallet's own derivation and sealed blob (`signin.js`, `wallet_js.js`), pure WebCrypto.
+  - There are three ways in: twelve words, a new wallet, or @name and password (it fetches `/signin/<name>` from
+    the arcade the person names, opens it, and checks the key matches).
+  - The vault locks after 30 idle minutes.
+  - `window.arcade` (inpage.js, through content.js) offers `arcade_connect`, `arcade_accounts`, `arcade_signIn` and
+    `arcade_disconnect`, plus an `arcade:announceProvider` event.
+  - The origin is the browser's (`port.sender.origin`), never the page's. Every connect and sign-in opens the
+    extension's own window, showing that origin and the exact message.
+  - A nonce must be 32-128 hex characters, so a page cannot slip a second line into the message.
+  - It runs only in the top frame (an inscribed app in a frame gets no wallet), and only on https and localhost.
+- **Arcade side** (no server change):
+  - `signin.js` gets `extension()` and `signInWithExtension()`. They send the same `/auth/login` as today, with the
+    same login message.
+  - `signup.html` (/join) and `join.html` (/join/keys) show "Sign in with Arcade Wallet" only when the extension is
+    there.
+- **Tests:**
+  - `tests/test_extension.py` (4, needs Node): keys.js gives `seed.login_pubkey`'s key for the same words, its
+    signature passes the node's check, it reopens what it seals and refuses a bad checksum, and the manifest asks
+    only for storage and alarms.
+  - In a real Chromium with the extension loaded:
+    - import, then sign-in through /join/keys and /join, approved in the extension's window;
+    - another origin connects and then sees the account;
+    - refusing a sign-in, a malformed nonce and an unknown method are all refused.
+  - Sign-in/signup/web/public tests: 431 passed.
+- **Not yet (E2-E3):** signing messages per chain, transaction signing with decoded previews, the outside-site
+  verifier, and the wallet's coin keys. A person signed in through the extension opens their coins with their
+  password as before.
 
 ### 2026-11-03 DogeFeedX dock, address book, and chain pills on the operator's main (Cursor Cloud Agent; Billy: the operator's main is the source of truth)
 - **Branch** `cursor/dogefeedx-next`, rebuilt on the operator's `main` `0aecde6` (DogeFeedX for public accounts is `75e6397`, an ancestor). Not pushed to `cursor/dogefeedx-combined-fd4a`. Nothing opened or commented on the operator's repository.
 - **Kept as the operator wrote it:** arcade-only windows, per-account wallet reads, the arcade @handle as the name, door rules, `apps.py`, messages through `mail.threads()` / `mail.write`, the feed through `/dogefeedx/api`, market pictures from this arcade (`IMG_BASE` empty, Cheapest sort). `public_read.py` stays gone.
 - **Ported on top:** the 16 squircle dock icons with name labels, magnification, and the red badges; the address book as a dog-ear on Profile (`dogefeedx.addressbook`, per selected wallet; `/contacts` and `/me/contacts` open Profile `?book=1`); chain pills on messages, feed posts, and listings for DOGE, PEPE, LTC, BTC, BEL, DGB, LKY, KOT, WJK. A `0x` address, an EVM name, Robinhood, XRP/XRPL, and Solana stay `unknown`. Robinhood is off the Market chain row.
 - **Dropped to fit this design:** outside-server market links, the local bark store, the local message stand-in, light window interiors, and the old `apps.py`. The address-book note does not name an outside host. It says the book is saved in this browser for the selected wallet.
+- **Tests:** `tests/test_dogefeedx_chains.py`, `tests/test_dogefeedx_port.py`, plus the operator's DogeFeedX and desktop look tests.
+
+### 2026-11-03 DogeFeedX for accounts on a public arcade; the arcade @handle is the name (Claude; the operator: "all of this stuff is already available for the user end ... wire it in", "the primary at handle should still be the existing arcade @handles with the option of describing your handle on Doge")
 - **Tests:** `tests/test_dogefeedx_chains.py`, `tests/test_dogefeedx_port.py`, plus the operator's DogeFeedX and desktop look tests.
 ### 2026-11-03 DogeFeedX for accounts on a public arcade; the arcade @handle is the name (Claude; the operator: "all of this stuff is already available for the user end ... wire it in", "the primary at handle should still be the existing arcade @handles with the option of describing your handle on Doge")
 - **door.py** opens the DogeFeedX windows, their files and the reads of public arcade data (feed, posts, profiles,
@@ -1198,6 +1331,95 @@ writing ANY key while this page loaded threw (104 errors in 5 loads, live). The 
 names exist. With it: Pictures in the app turned off in another tab stops what goes to the app at once. Test:
 test_media_browser test_a_page_loading_while_another_tab_writes_storage_throws_nothing (a storage event put just
 before base.html's script; it fails without the fix).
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/arcade-lite-charter` · PROPOSAL, no code
+- **Added: `docs/arcade-lite/EXTENSION.md`**, the design for an **optional** Arcade Wallet browser extension, like
+  Phantom or MetaMask. It is linked from the charter's builder hooks.
+  - It holds the person's keys outside every page. It derives the same account and coin keys as `signin.js` and
+    `coins.js`, and that derivation joins the conformance vectors.
+  - It gives pages `window.arcade` with `arcade_connect`, `arcade_signIn`, `arcade_signMessage`,
+    `arcade_signTransaction` and `arcade_sendTransaction`. The extension's own window shows the real origin and the
+    decoded outputs, and it never signs blind.
+  - Arcades keep today's login message unchanged. Outside sites get a standard sign-in message and a small verifier
+    in Python and JS.
+  - Arcades keep working without it.
+  - It lives in `extension/` in this repository. Phases E1-E4.
+- **Asked of your side:**
+  1. Agree to an optional extension in this repository?
+  2. Should arcades prefer it for sign-in when it is installed?
+  3. Is transaction signing in the first public release?
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/arcade-lite-charter` · PROPOSAL, no code
+- **Proposal: ARCADE Lite**, a small edition of the arcade in this repository. The draft charter is
+  `docs/arcade-lite/CHARTER.md`.
+- **What it is:**
+  - an `arcade-lite` entry point with its own web layer (`arcade/lite/`), on the same protocol modules;
+  - one protocol and one test suite, so Lite and full nodes are one network;
+  - meant to become the main edition once it covers what operators and users need.
+- **The core:**
+  - Overview ("Your arcade"), Wallet (operator and users), Address book;
+  - Apps (App Store, permissions, themes as a section), Settings, Help;
+  - accounts, the door, the mesh and the signed updater underneath.
+- **Everything else becomes an app** (a sandboxed page app, or a node module), one PR at a time:
+  exchange, ord indexes and Explore, collections, feed, messaging, LLM, rooms, LoRa, affiliates. The full edition
+  keeps each feature until the app API can carry it.
+- **The look:**
+  - the classic Core wallet window: menu bar, Overview / Send / Receive / Transactions / Address book / Apps tabs,
+    a status bar, and Window → Console;
+  - built-in skins: Ubuntu, Classic 98 and Platinum (old Mac).
+- **Publishing without GitHub:**
+  - Any operator can offer an app, skin or node module to every arcade over the mesh, as a package named by its
+    `sha256` and signed by their mesh key.
+  - Each arcade's operator inspects it (manifest, what it needs, source and diff) and marks it Inspected, Affiliated,
+    Installed or Refused.
+  - Marks are signed and shared, so every arcade sees each package's standing. No central approver.
+  - Nothing installs or updates by itself. Node modules run in their own process with no keys, inside a sandbox, and
+    stay off where the arcade can't sandbox.
+- **Themes:**
+  - **Skins** are declarative (manifest + CSS + images, no scripts) and published as App Store cards of kind `theme`.
+  - **Sites** are apps that use the arcade through the page API and Sign in with Arcade.
+  - **Private skins** stay on the operator's machine. The arcade announces their `sha256` in its "me" frame, so other
+    arcades know them and never fetch, push or require them.
+- **Help:** one command list feeds the UI console, an `arcade-cli` terminal client, the docs and
+  `--help`.
+- **Strict PR rules for Lite** (charter, "PR rules"):
+  - one topic, naming its core area;
+  - under ~400 changed lines unless agreed here first;
+  - no new route, setting or dependency outside the area list;
+  - comments say why, while history goes in commits and this file;
+  - no file over ~2,000 lines;
+  - conformance tests a Lite node and a full node must both pass.
+- **Phases:**
+  - 0: agree, and record protocol vectors from `main`;
+  - 1: a skeleton on Pepecoin linking with full nodes;
+  - 2: apps and skins;
+  - 3: builder hooks;
+  - 4: move features out, then Lite becomes the default.
+- **Asked of your side:**
+  1. Agree to an edition inside this repository rather than a separate fork?
+  2. Can Lite read App Store cards from linked arcades' indexes, so it needs no ord index of its own?
+  3. Agree to operator-published apps and node modules over the mesh, inspected and marked by each operator, with
+     the sandbox rules (charter, "Publishing apps and node modules without GitHub")?
+  4. The name?
+  5. Anything in the "Apps, not core" list that you think must stay in the core?
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-conformance` · ARCADE Lite phase 0, tests only
+- **New: protocol conformance vectors** (`tests/conformance/`). They follow the ARCADE Lite proposal (PR #62), but are
+  useful on their own: they make any change to the wire protocol visible.
+  - `make_vectors.py` feeds fixed inputs to today's code and writes `vectors.json`. It records:
+    - every network's consensus-facing `Params`, its addresses for one hash160, and its marker;
+    - the login message, `MARKER_SEED`, and the messaging identity derivation (message, HKDF info, and the key a
+      given signature gives);
+    - the mesh: HELLO, frame, key schedule, AUTH proof, a binary room frame, and on-chain announcements;
+    - the envelope header for every `TYPE_*`;
+    - six token payloads;
+    - Class B outputs (fixed rng), obfuscation hashes and Class C;
+    - a signed release manifest and its notice;
+    - index digests (record lines, range digest, checkpoint rule, the tables hashed).
+  - `tests/test_conformance.py` (9 tests) fails when the code no longer gives those bytes, and names the field. A
+    meant change regenerates the file in the same commit and says why here.
+  - Checked: two runs under different `ARCADE_*` environments give identical bytes, and a flipped byte fails the test.
+- No code outside `tests/` changes.
+- **Asked of your side:** take it, so a protocol change always shows up in review? Any value missing that other
+  arcades check?
 
 ### 2026-11-02 Pictures in the app: an app draws the room's pictures itself, behind its own card switch (Claude)
 For Spatial World (3D screens; the Garrys mod session asked, the operator confirmed: "Build it"). Option 2 of two: the video

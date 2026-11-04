@@ -13,7 +13,7 @@ from test_doginal_index import FUND, Chain, _tx_to  # noqa: E402
 
 PUBKEY = bytes.fromhex("02" + "11" * 32)
 PARAMS = {"doge": config.DOGECOIN, "main": config.MAINNET, "bel": config.BELLSCOIN, "lky": config.LUCKYCOIN,
-          "wjk": config.WOJAKCOIN, "dgb": config.DIGIBYTE, "test": config.TESTNET}
+          "wjk": config.WOJAKCOIN, "dgb": config.DIGIBYTE, "flop": config.FLOPCOIN, "test": config.TESTNET}
 
 
 def _to(net):

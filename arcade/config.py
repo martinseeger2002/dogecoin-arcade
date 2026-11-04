@@ -723,8 +723,40 @@ DIGIBYTE = dataclasses.replace(
     letter="G", family="DGB", net_word="digibyte", real_coins=True, bech32_hrp="dgb", mweb=False,
 )
 
+# Flopcoin MAINNET (the operator's side, 2026-11-03). Flopcoin Core v2.0.0.0 (github.com/Flopcoin/Flopcoin, tag v2.0.0.0,
+# chainparams.cpp, chainparamsbase.cpp) is Dogecoin 1.14's code, so Dogecoin's Params fit: scrypt with Dogecoin's
+# powLimit, 0.01 FLOP/kB (policy.h RECOMMENDED_MIN_TX_FEE), the 0.01 soft-dust line, an 83-byte OP_RETURN
+# (standard.h MAX_OP_RETURN_RELAY), one-minute blocks. Merge-mined with chain id 0xA3 (fStrictChainId) from block
+# 110,000; BIP65 (CHECKLOCKTIMEVERIFY) from V3ForkHeight 111,000, so swap locks refund as on Dogecoin; no SegWit.
+# v2.0.0.0 is a mandatory hard fork at 125,000 (a 10% FlopFund output in every coinbase until 600,000: mining only,
+# nothing a send or a lock touches) with new message-start bytes fa bf b5 da, so older nodes are not peers.
+# Ports: RPC 32551, P2P 32552. Versions: P2PKH 35 ("F", no other chain's), P2SH 22 (Dogecoin's and Pepecoin's own
+# script byte, never another chain's key hash, already in txbuild.SCRIPTHASH_VERSIONS), WIF 158 (Dogecoin's and
+# Pepecoin mainnet's 0x9E). Seeds: of seed.flopcoin.net and seed2.flopcoin.net only 216.45.61.204 answered a
+# handshake on 2026-11-03. The floor: the tip that day was 913,980 (a peer's version message), rounded up about
+# two days ahead at one-minute blocks.
+FLOP_MAINNET_FLOOR = 917_000
+
+FLOPCOIN = dataclasses.replace(
+    DOGECOIN,
+    name="flop",
+    rpc_port=32551,
+    p2p_port=32552,
+    activation_height=FLOP_MAINNET_FLOOR,
+    messaging_start_height=FLOP_MAINNET_FLOOR,
+    pubkeyhash_version=35,
+    scripthash_version=22,
+    other_pubkeyhash_version=None,
+    coin="FLOP",
+    label="Flopcoin",
+    genesis="1f1037762db00882d3353b8d9dcfd52fc93cbc2d694c62f1ecd6a209cf9d30d0",
+    auxpow_chain_id=0xA3,
+    addon=True, node_dir=".flopcoin", node_conf="flopcoin.conf",
+    letter="F", family="FLOP", net_word="flopcoin", real_coins=True,
+)
+
 NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN, LITECOIN, LITECOIN_TESTNET,
-                                BELLSCOIN, LUCKYCOIN, KOTIA, WOJAKCOIN, DIGIBYTE)}
+                                BELLSCOIN, LUCKYCOIN, KOTIA, WOJAKCOIN, DIGIBYTE, FLOPCOIN)}
 
 def unpayable_versions(params: "Params") -> frozenset:
     """The version bytes of `params`' own script-hash addresses that another known chain uses for a key hash.
@@ -905,6 +937,7 @@ CHAIN_NAMES = {
     "kot": "main",                  # and Kotia
     "wjk": "main",                  # and Wojakcoin
     "dgb": "main",                  # and DigiByte
+    "flop": "main",                 # and Flopcoin
 }
 
 

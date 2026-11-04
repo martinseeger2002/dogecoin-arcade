@@ -1,0 +1,86 @@
+/* The Arcade Wallet, in arcade-nodes.com's look (~/arcade-nodes-site src/style.css): a dark arcade cabinet, pixel
+   headings (Press Start 2P, OFL, carried in fonts/ so nothing is fetched), plain system text for reading. */
+@font-face { font-family: "Pixel"; src: url(fonts/PressStart2P-Regular.woff2) format("woff2"); font-display: swap; }
+
+:root {
+  --bg: #0b0e1a; --bg2: #12162b; --bg3: #1a2040; --line: #2a3260;
+  --ink: #e9ecff; --ink2: #a9afd4; --ink3: #7d86b3;
+  --cyan: #3ee0ff; --pink: #ff5fd2; --gold: #ffd23f; --green: #5cf29a; --bad: #ff6b8b;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+       -webkit-font-smoothing: antialiased; width: 360px; min-height: 200px;
+       background-image: radial-gradient(420px 220px at 100% 0%, rgba(255, 95, 210, .10), transparent 70%),
+                         radial-gradient(380px 200px at 0% 100%, rgba(62, 224, 255, .08), transparent 70%); }
+html { background: var(--bg); }
+body.window { width: auto; }
+a { color: var(--cyan); text-underline-offset: 3px; } a:hover { color: var(--gold); }
+
+/* the cabinet's marquee */
+header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line);
+         background: rgba(11, 14, 26, .92); font-family: "Pixel", monospace; font-size: 12px; letter-spacing: 1px;
+         color: var(--gold); text-shadow: 2px 2px 0 var(--pink); }
+header img { width: 22px; height: 22px; image-rendering: pixelated; }
+main { padding: 14px; }
+
+h2 { font-family: "Pixel", monospace; font-weight: 400; font-size: 11px; line-height: 1.6; letter-spacing: .5px;
+     margin: 0 0 12px; color: var(--gold); }
+p { margin: 0 0 10px; }
+.muted { color: var(--ink2); }
+.kicker { font-family: "Pixel", monospace; font-size: 9px; color: var(--pink); letter-spacing: 1px; text-transform: uppercase;
+          margin: 0 0 8px; }
+.panel { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+
+/* fields and buttons, as the site's .btn */
+input, textarea, select { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+                          border-radius: 8px; padding: 9px 10px; margin: 0 0 8px; }
+input::placeholder, textarea::placeholder { color: var(--ink3); }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--cyan); box-shadow: 0 0 0 2px rgba(62, 224, 255, .18); }
+textarea { min-height: 70px; resize: vertical; }
+select { padding: 8px; flex: 1; min-width: 0; }
+.row > select { width: auto; }
+button { font: inherit; font-weight: 600; border: 2px solid var(--cyan); background: transparent; color: var(--cyan);
+         border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+button:hover { border-color: var(--gold); color: var(--gold); }
+button.primary { background: var(--cyan); color: var(--bg); }
+button.primary:hover { background: var(--gold); border-color: var(--gold); color: var(--bg); }
+button:disabled { opacity: .45; cursor: default; }
+button.link { border: 0; background: none; color: var(--ink3); padding: 0; font-weight: 400; text-decoration: underline;
+              text-underline-offset: 3px; }
+button.link:hover { color: var(--bad); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row > button { flex: 1; }
+label { color: var(--ink2); }
+
+.words { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--gold); background: var(--bg3); border: 1px dashed var(--gold);
+         border-radius: 8px; padding: 10px; word-spacing: 4px; margin-bottom: 10px; }
+.origin { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; font-weight: 700; line-height: 1.5; color: var(--cyan); overflow-wrap: anywhere; margin-bottom: 14px; }
+.message { font-family: ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line);
+           border-left: 4px solid var(--pink); border-radius: 0 8px 8px 0; padding: 8px 10px; font-size: 12px; overflow-wrap: anywhere; }
+.err { color: var(--bad); min-height: 1.2em; }
+code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--ink2); overflow-wrap: anywhere; }
+
+/* lists: connected sites, linked arcades, coins */
+ul.sites, ul.coins { list-style: none; margin: 0 0 8px; padding: 0; }
+ul.sites li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0;
+              border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+ul.sites li button { padding: 4px 10px; font-size: 12px; }
+ul.coins li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+ul.sites li:last-child, ul.coins li:last-child { border-bottom: 0; }
+.coin-head { font-weight: 600; color: var(--ink); }
+
+/* a transaction, output by output */
+ul.outputs { list-style: none; margin: 0 0 10px; padding: 0; }
+ul.outputs li { padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; }
+ul.outputs li.mine { border-style: dashed; }
+ul.outputs li.mine .what { color: var(--ink2); }
+ul.outputs code { display: block; }
+.what { font-weight: 600; color: var(--ink); }
+.ins { color: var(--pink); font-size: 12px; margin-top: 4px; }
+.real { font-family: "Pixel", monospace; font-size: 9px; line-height: 1.7; color: var(--bg); background: var(--gold);
+        border-radius: 6px; padding: 6px 8px; letter-spacing: .5px; }
+.fee { font-weight: 600; color: var(--gold); }
+[hidden] { display: none !important; }
+input[type=checkbox] { width: auto; margin: 0 6px 0 0; accent-color: var(--cyan); vertical-align: middle; }
+#review { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }

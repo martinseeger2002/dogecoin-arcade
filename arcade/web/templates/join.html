@@ -92,6 +92,13 @@
 
 <div id="doors" {% if not secure_enough %}hidden{% endif %}>
 
+  <div class="panel" id="extension-door" hidden style="border-color:var(--accent)">
+    <h2 style="margin-top:0">Sign in with your Arcade Wallet</h2>
+    <p class="muted">Your Arcade Wallet extension is in this browser. Your words stay in it: it asks you, in its own
+      window, before it signs you in here.</p>
+    <button class="btn primary" id="extension-go">Sign in with Arcade Wallet</button>
+  </div>
+
   <div class="panel">
     <h2>Make a new wallet</h2>
     <p class="muted">
@@ -327,6 +334,18 @@ function wire() {
   // enough that "this site is asking for your twelve words" is, on its own,
   // the whole answer.
   $("lost").onchange = () => { $("words-in").hidden = !$("lost").checked; };
+
+  // The optional Arcade Wallet extension (signin.js): offered only when it is here.
+  signer.extension().then((found) => { if (found) $("extension-door").hidden = false; });
+  $("extension-go").onclick = async () => {
+    say("");
+    try {
+      const answer = await signer.signInWithExtension({join: true});
+      show(answer);
+      const next = new URLSearchParams(location.search).get("next") || "";
+      if (next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\")) location.href = next;
+    } catch (e) { say(String(e.message || e)); }
+  };
 
   $("restore").onclick = async () => {
     say("");

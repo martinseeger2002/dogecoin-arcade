@@ -22,7 +22,7 @@ installations reading the same chain agree without talking to each other.
 | | |
 |---|---|
 | Interface | `http://127.0.0.1:8420`, bound to loopback because it can spend |
-| Chains | Pepecoin main, Pepecoin test and Dogecoin main; Litecoin, Litecoin testnet, Bellscoin, Luckycoin, Kotia, Wojakcoin and DigiByte as add-on chains, turned on in **Admin → Coins & chains**, each run on this machine or borrowed from another arcade that shares its Core |
+| Chains | Pepecoin main, Pepecoin test and Dogecoin main; Litecoin, Litecoin testnet, Bellscoin, Luckycoin, Kotia, Wojakcoin, DigiByte and Flopcoin as add-on chains, turned on in **Admin → Coins & chains**, each run on this machine or borrowed from another arcade that shares its Core |
 | Messaging | **Pepecoin test only**, by design |
 | Tokens, inscriptions | Every chain the arcade reads |
 | @tags | Pepecoin test, the messaging chain |
@@ -556,7 +556,7 @@ Everything for sale on a chain, read from the chain itself. The tabs are
   See *AI models and the arcade helper* below.
 * **Ords** — ord inscriptions, each chain on a tab of its own: Doginals on
   Dogecoin, Pepinals on Pepecoin main and test, Bellinals on Bellscoin,
-  Luckinals on Luckycoin, Wojakinals on Wojakcoin, and the ordinals of DigiByte,
+  Luckinals on Luckycoin, Wojakinals on Wojakcoin, Flopinals on Flopcoin, and the ordinals of DigiByte,
   Litecoin and Litecoin testnet. A tab is grayed out until its chain's node has
   synced, and says how far it is.
 * **Offers** — what somebody has offered for an NFT of yours, and what you

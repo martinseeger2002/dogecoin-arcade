@@ -175,8 +175,10 @@ def script_pubkey(script: bytes, params) -> dict[str, Any]:
     said: dict[str, Any] = {"asm": asm(script), "hex": script.hex(), "type": kind.value}
     if kind in (OutputType.PUBKEYHASH, OutputType.SCRIPTHASH) and address:
         said.update(reqSigs=1, addresses=[address])
-    elif kind == OutputType.PUBKEY and keys:
-        said.update(reqSigs=1, addresses=[b58check_encode(params.pubkeyhash_version, hash160(keys[0]))])
+    elif kind == OutputType.PUBKEY and (address or keys):
+        # classify_script gives a P2PK output its address and no keys (2026-11-03, found by Flopcoin block 110,102's
+        # coinbase): with `and keys` alone every P2PK output, on every chain, lost its address here, as Core prints it.
+        said.update(reqSigs=1, addresses=[address or b58check_encode(params.pubkeyhash_version, hash160(keys[0]))])
     elif kind == OutputType.MULTISIG and keys:
         said.update(reqSigs=int(required or 1),
                     addresses=[b58check_encode(params.pubkeyhash_version, hash160(k)) for k in keys])

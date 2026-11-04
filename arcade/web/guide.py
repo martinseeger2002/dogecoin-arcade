@@ -86,6 +86,8 @@ ORDER = (
      "Running a Wojakcoin node, its W addresses, fees, and Wojakinals."),
     ("digibyte.md", "DigiByte on this arcade",
      "Running a DigiByte node, its D and S addresses, fees, and why its proof of work is the sharer's word."),
+    ("flopcoin.md", "Flopcoin on this arcade",
+     "Running a Flopcoin node, finding peers, its F addresses, shared keys, fees, and Flopinals."),
     ("escrow.md", "Escrow: holding players' items for your game",
      "Put a player's NFTs and tokens at stake: your judge decides who gets them, the player can always take them back after the unlock time."),
     ("game-state.md", "Game state: a game's own record on each NFT",

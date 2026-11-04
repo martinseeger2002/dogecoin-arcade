@@ -232,6 +232,42 @@ export async function signIn(phrase, {join = false, passphrase = ""} = {}) {
   return said;
 }
 
+/* --- the Arcade Wallet extension ------------------------------------------
+ * When a person has the optional browser extension (extension/, docs/arcade-lite/EXTENSION.md), the words never come
+ * into this page: the extension signs the same login message with the same account key, after the person approves
+ * it in the extension's own window, which shows this page's real origin.
+ */
+
+/** The extension's provider, waiting up to `ms` for it to announce itself; null when there is none. */
+export function extension(ms = 400) {
+  const found = globalThis.arcade && globalThis.arcade.isArcadeWallet ? globalThis.arcade : null;
+  if (found || typeof window === "undefined") return Promise.resolve(found);
+  return new Promise((done) => {
+    const heard = (e) => { clearTimeout(timer); done(e.detail && e.detail.provider || null); };
+    const timer = setTimeout(() => { window.removeEventListener("arcade:announceProvider", heard); done(null); }, ms);
+    window.addEventListener("arcade:announceProvider", heard, {once: true});
+    window.dispatchEvent(new Event("arcade:requestProvider"));
+  });
+}
+
+export async function signInWithExtension({join = false} = {}) {
+  const wallet = await extension();
+  if (!wallet) throw new Error("the Arcade Wallet extension is not in this browser");
+  const challenge = await (await fetch("/auth/challenge")).json();
+  const said = await wallet.request({method: "arcade_signIn", params: {nonce: challenge.nonce}});
+  if (said.origin !== loginOrigin() || said.nonce !== challenge.nonce)
+    throw new Error("the wallet signed for somewhere else; nothing was sent");
+  const answer = await fetch("/auth/login", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({pubkey: said.pubkey, nonce: challenge.nonce, origin: said.origin,
+                          signature: said.signature, join: !!join}),
+  });
+  const result = await answer.json();
+  if (!answer.ok) throw new Error(result.detail || "that did not open anything");
+  return result;
+}
+
 /* --- keeping the seed on this machine ------------------------------------
  * AES-256-GCM under a key from PBKDF2-HMAC-SHA512 at 600,000 iterations --
  * the WebCrypto-only option, and named here as SECOND BEST rather than

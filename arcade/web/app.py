@@ -26954,75 +26954,25 @@ def create_app(state: AppState) -> FastAPI:
     _rescan_queue: dict[tuple[str, str], float] = {}
     _rescan_queue_running = threading.Event()
 
-    # --- an imported wallet's whole past, from the Core's own wallet (2026-10-21) -------------------------
-    # Dogecoin and Pepecoin Core 1.14 have no scantxoutset, and the block read-back only goes down to the index's
-    # floor (on Dogecoin a week of blocks): coins an imported wallet got before it were never found. On these chains
-    # the address is imported WATCH-ONLY into this node's Core (never a key) with a rescan of the whole chain, while the
-    # chain's reads are borrowed from a linked arcade that shares it (core_catchup.hold): a 1.14 Core answers nothing
-    # until its rescan is done. Never started with nobody to borrow from. PEP TEST stays on the read-back unless
-    # switched on (2026-10-21): the @ashvale Bank's wallet is on that Core, and a rescan makes it wait.
+    # --- an imported wallet's whole past (2026-11-03: the Core rescan and the two-Core rule are gone) -------
+    # Every import's past is found by the shared walk (2026-10-25, below), on every chain. The Core rescan that came
+    # before it (2026-10-21: the address imported watch-only into this node's Core, the whole chain rescanned, reads
+    # borrowed meanwhile) needed a second Core to borrow from, hence "at least two nodes on the network"; the walk
+    # reads with one (once, canaries in every job) or with many (every block twice). A wallet a Core rescan already
+    # read (core_rescanned:<net>:<address> set) stays ready. core_catchup stays: a hold left from before clears itself.
     from .. import core_catchup as catchuplib
     catchuplib.store = (lambda: state.setting("core_rescan_holds", None) or {},
                         lambda holds: state.set_setting("core_rescan_holds", holds or None))
-    CORE_RESCAN_ON = ("doge", "main")
     #: Chains no wallet may be imported on (2026-10-21: "No imports for pep test").
     NO_IMPORTS = ("test",)
-    def _import_cores(chain) -> int:
-        """How many Cores of `chain` there are to read an imported wallet from: this arcade's own (not borrowed), and
-        each linked arcade sharing its Core of it (coreshare tips)."""
-        own = 0 if getattr(chain, "borrowed", False) else 1
-        mesh = getattr(state, "mesh", None)
-        share = getattr(mesh, "coreshare", None) if mesh is not None else None
-        try:
-            others = len(share.tips(chain.network)) if share is not None else 0
-        except Exception:                                  # noqa: BLE001
-            others = 0
-        return own + others
-
     def _import_closed(chain) -> str:
         """Why no wallet may be imported on `chain` now ("" when one may)."""
         if chain.network in NO_IMPORTS:
             return f"Wallets cannot be imported on {chain.title}."
-        n = _import_cores(chain)
-        if n < IMPORT_CORES_MIN:
-            word = chain.params.label if hasattr(chain.params, "label") else chain.title
-            return (f"Importing a wallet on {chain.title} needs at least {IMPORT_CORES_MIN} {word} nodes on the "
-                    f"arcades' network; there {'is' if n == 1 else 'are'} {n} now.")
         return ""
-    #: A chain whose Core rescan failed: network -> (failures in a row, not before this time). A Core is never made to
-    #: rescan its whole chain again at once: 10 minutes, then 20, then it stops until the arcade restarts.
-    _core_retry: dict[str, tuple[int, float]] = {}
-    CORE_RETRY_SECONDS, CORE_RETRY_MAX = 600.0, 3
-    CORE_BUSY_SECONDS = 180.0
-    #: Blocks a Core rescans a second, until one is measured here (Dogecoin 1.14 on a spinning disk, cautious).
-    CORE_RESCAN_RATE_GUESS = 600.0
-
-    def _core_rescan_on(chain) -> bool:
-        if chain.borrowed:
-            return False
-        said = state.setting(f"import_core_rescan:{chain.network}", None)
-        return bool(said) if said is not None else chain.network in CORE_RESCAN_ON
-
-    def _core_rescan_rate(chain) -> float:
-        try:
-            return max(50.0, float(state.setting(f"core_rescan_rate:{chain.network}", None) or CORE_RESCAN_RATE_GUESS))
-        except (TypeError, ValueError):
-            return CORE_RESCAN_RATE_GUESS
-
     def _can_read_back(chain) -> bool:
-        """Whether an import's read-back can start now: the chain readable, and for a Core rescan somebody to borrow
-        its reads from meanwhile, and no failed rescan still waiting out its back-off."""
-        if not _readable(chain):
-            # A Core held at a rescan reads as offline itself (its queue full), yet its reads are borrowed: the batch
-            # is tried, finds it busy, and waits (utxos.CoreBusy), rather than the page saying nobody can be read.
-            if not (_core_rescan_on(chain) and catchuplib.held(chain.network) and catchuplib.can_borrow(chain)):
-                return False
-        if not _core_rescan_on(chain):
-            return True
-        fails, until = _core_retry.get(chain.network, (0, 0.0))
-        if fails >= CORE_RETRY_MAX or time.time() < until:
-            return False
-        return catchuplib.can_borrow(chain)
+        """Whether an import's read-back (the shared walk) can start now: the chain readable."""
+        return _readable(chain)
 
     def _chain_busy(chain) -> dict | None:
         """Whether an import on `chain` must wait (2026-10-21: "the client side needs to know they can't import
@@ -27031,8 +26981,7 @@ def create_app(state: AppState) -> FastAPI:
         running = _chain_rescan(chain.network)
         if running is not None:
             eta = _wait_for(running["address"])
-            nxt = eta + (_run_left({"network": chain.network, "end": state.token_index(chain).indexed_height() or 0,
-                                    "core_next": True}) if _core_rescan_on(chain) else 0)
+            nxt = eta
             return {"eta": int(nxt), "says": "A rescan is running on this coin right now. You can still import: your "
                                              "wallet joins the next rescan, which starts as soon as this one is done "
                                              f"(check back in {importslib.say_wait(nxt)})."}
@@ -27041,123 +26990,6 @@ def create_app(state: AppState) -> FastAPI:
                                          "import: your wallet joins the next rescan, which starts as soon as this one "
                                          "is done. Check back later."}
         return None
-
-    def _sweep_imports() -> None:
-        """At start (and a minute after, once the chains answer): every imported wallet on a chain that rescans in the
-        Core and has not had its whole past read yet -- one imported before 2026-10-21, a batch cut short by a
-        restart -- goes on the queue, and the next batch takes them all."""
-        # A chain whose Core is busy at a rescan is not counted ready at first (_account_chains): tried again each
-        # minute, for an hour, until every chain an import may wait on has been swept (2026-10-21: @apple's Dogecoin
-        # import sat off the queue after a restart while its Core rescanned).
-        swept: set[str] = set()
-        for _ in range(60):
-            time.sleep(60)
-            _sweep_once(swept)
-            if all(chain.network in swept for chain in (state.doge, state.ledger)
-                   if chain is not None and _core_rescan_on(chain)):
-                return
-
-    def _sweep_once(swept: set) -> None:
-        try:
-            for chain in _account_chains():
-                if not _core_rescan_on(chain) or chain.network in swept:
-                    continue
-                swept.add(chain.network)
-                prefix = f"extra_address:{chain.network}:"
-                for name, value in list(state.settings().items()):
-                    if not name.startswith(prefix):
-                        continue
-                    for entry in importslib.entries(value):
-                        try:
-                            if not _rescan_done(chain, entry["a"]):
-                                _rescan_queue.setdefault((chain.network, entry["a"]), time.time())
-                        except Exception:              # noqa: BLE001 -- that chain's index not ready: next start
-                            pass
-            _rescan_queue_wake()
-        except Exception:                              # noqa: BLE001
-            log.warning("the imported-wallet sweep stopped", exc_info=True)
-
-    if getattr(state, "home", None) is not None and not os.environ.get("ARCADE_NO_IMPORT_SWEEP"):
-        threading.Thread(target=_sweep_imports, daemon=True, name="import sweep").start()
-
-    def _core_batch_start(chain) -> None:
-        """One Core rescan for every import waiting on `chain` (taken off the queue together), on a thread; the
-        reads borrowed meanwhile. When it is done, the next batch -- every wallet imported during it -- starts at
-        once (the queue runner), back to back."""
-        index = state.token_index(chain)
-        batch = sorted(a for (net, a) in list(_rescan_queue) if net == chain.network)
-        for a in batch:
-            _rescan_queue.pop((chain.network, a), None)
-        batch = [a for a in batch if _still_imported(chain.network, a) and not _rescan_done(chain, a)]
-        if not batch:
-            return
-        tip = int(index.indexed_height() or 0)
-        run = {"network": chain.network, "start": 0, "end": tip, "progress": {}, "began": time.time(),
-               "imported": True, "core": True, "batch": len(batch)}
-        for a in batch:
-            _backfilling.add(a)
-            _backfill_runs[a] = run
-
-        def go() -> None:
-            try:
-                catchuplib.hold(chain, "rescanning for wallet imports")
-                try:
-                    sent_key = f"core_rescan_sent:{chain.network}"
-                    try:
-                        rpc = chain.local_rpc()
-                    except Exception as exc:               # noqa: BLE001 -- not answering: still at a rescan
-                        # Remembered as sent now, as seed_from_core_wallet does for a busy Core: no second rescan
-                        # once it answers, and the page's countdown starts from here.
-                        sent = state.setting(sent_key, None)
-                        if not (isinstance(sent, dict) and set(batch) <= set(sent.get("addresses") or ())):
-                            state.set_setting(sent_key, {"at": time.time(), "addresses": sorted(batch)})
-                        raise utxoslib.CoreBusy(str(exc)) from None
-                    try:
-                        filed = utxoslib.seed_from_core_wallet(
-                            index, rpc, chain.params, batch, tip, sent=state.setting(sent_key, None),
-                            remember=lambda said: state.set_setting(sent_key, said))
-                    finally:
-                        rpc.close()
-                finally:
-                    catchuplib.finished(chain.network)
-                took = time.time() - run["began"]
-                if filed is None:                      # no wallet in this Core: each address read back instead
-                    for a in batch:
-                        _rescan_queue[(chain.network, a)] = time.time()
-                        state.set_setting(f"core_rescanned:{chain.network}:{a}", 0)
-                else:
-                    if took > 60 and tip:
-                        state.set_setting(f"core_rescan_rate:{chain.network}", round(tip / took, 1))
-                    for a in batch:
-                        state.set_setting(f"core_rescanned:{chain.network}:{a}", int(time.time()))
-                        state.set_setting(f"backfilled:{chain.network}:{a}", filed.get(a, 0))
-                    log.info("imported wallets on %s: one rescan for %d, %.0f min", chain.network, len(batch),
-                             took / 60)
-                state.bump_generation()
-            except utxoslib.CoreBusy as exc:
-                # The Core is busy (most often still at a rescan sent before an arcade restart): not a failure;
-                # asked again in a few minutes, the reads borrowed meanwhile, and that rescan is not sent twice.
-                fails = _core_retry.get(chain.network, (0, 0.0))[0]
-                _core_retry[chain.network] = (fails, time.time() + CORE_BUSY_SECONDS)
-                log.info("rescan for imported wallets on %s waits: the Core is busy (%s)", chain.network, exc)
-                for a in batch:
-                    _rescan_queue[(chain.network, a)] = time.time()
-            except Exception as exc:                   # noqa: BLE001 -- queued again, after a back-off
-                fails = _core_retry.get(chain.network, (0, 0.0))[0] + 1
-                _core_retry[chain.network] = (fails, time.time() + CORE_RETRY_SECONDS * fails)
-                log.warning("rescan for imported wallets on %s stopped (%d in a row): %s; %s", chain.network, fails, exc,
-                            "tried again later" if fails < CORE_RETRY_MAX else "not tried again until a restart")
-                for a in batch:
-                    _rescan_queue[(chain.network, a)] = time.time()
-            else:
-                _core_retry.pop(chain.network, None)
-            finally:
-                for a in batch:
-                    _backfilling.discard(a)
-                    _backfill_runs.pop(a, None)
-                _rescan_queue_wake()
-
-        threading.Thread(target=go, daemon=True, name=f"import rescan {chain.network}").start()
 
     def _imported(account, chain) -> list[dict]:
         return importslib.entries(state.setting(importslib.setting_key(chain.network, account.pubkey), []))
@@ -27198,14 +27030,8 @@ def create_app(state: AppState) -> FastAPI:
 
     def _rescan_done(chain, address: str) -> bool:
         """Whether this node already has the address's whole past: read back before, or watched from the floor."""
-        if _core_rescan_on(chain):
-            # The whole past, from the Core (a week's read-back from before 2026-10-21 is not enough here); a Core
-            # with no wallet (0) falls back to the read-back below.
-            said = state.setting(f"core_rescanned:{chain.network}:{address}", None)
-            if said is None:
-                return False
-            if said:
-                return True
+        if state.setting(f"core_rescanned:{chain.network}:{address}", None):
+            return True                                   # read whole by a Core rescan, before the walk (2026-10-21)
         if state.setting(f"backfilled:{chain.network}:{address}", None) is not None:
             return True
         with contextlib.closing(state.token_index(chain).open()) as db:
@@ -27213,14 +27039,7 @@ def create_app(state: AppState) -> FastAPI:
         return since is not None and since <= _rescan_floor(chain)
 
     def _run_left(run: dict) -> float:
-        """Seconds a read-back still needs: the blocks it has left at the measured pace. A Core rescan says nothing
-        while it runs: the whole chain at the last measured rate, counting down (at least a minute while it runs)."""
-        if run.get("core") or run.get("core_next"):
-            chain = next((c for c in _account_chains() if c.network == run.get("network")), None)
-            total = int(run.get("end") or 0) / (_core_rescan_rate(chain) if chain is not None else CORE_RESCAN_RATE_GUESS)
-            if not run.get("core"):
-                return total
-            return max(60.0, total - (time.time() - float(run.get("began") or time.time())))
+        """Seconds a read-back still needs: the blocks it has left at the measured pace."""
         progress = run.get("progress") or {}
         chain = next((c for c in _account_chains() if c.network == run.get("network")), None)
         per = float(progress.get("per_block") or (utxoslib.read_rate(chain.params) if chain is not None
@@ -27257,27 +27076,6 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:                                  # noqa: BLE001
             return False
 
-    def _core_rescan_said(chain, says: dict) -> dict:
-        """The notice of a whole-chain rescan on this arcade's Core, with the Core's own word on how far it is when its
-        log can be read (core_log; 2026-10-22: "include rescan % ... from RPC" -- the RPC of a 1.14 Core says
-        nothing of it): the share done, the block, and the countdown from its pace now, over the arcade's guess."""
-        from .. import core_log
-        then = says.pop("then", False)
-        try:
-            said = core_log.rescan_progress(chain.params)
-        except Exception:                                  # noqa: BLE001 -- the guess stands
-            said = None
-        if said is None:
-            return says
-        pct = round(said["progress"] * 100, 1)
-        eta = said["eta"]
-        when = f"about {importslib.say_wait(eta)} left" if eta is not None else "working out how long is left"
-        return {**says, "pct": pct, "block": said["block"], "eta": eta,
-                "says": (f"This arcade's node is rescanning the whole chain for imported wallets: {pct:.1f}% done "
-                         f"(block {said['block']:,}), {when}. Meanwhile the arcade reads the chain from another "
-                         f"arcade, so sends work as usual."
-                         + (" After it, one more rescan reads this wallet's coins." if then else ""))}
-
     def _rescan_says(chain, address: str) -> dict:
         """Where an imported address's read-back stands, with what to tell the person:
         "ready", "rescan" (reading back now or next in line), "none" (no node to read the chain), "stopped" (never
@@ -27297,50 +27095,10 @@ def create_app(state: AppState) -> FastAPI:
                                  "finish. You can close this page." if n else
                                  "The arcades are getting ready to walk the chain for this wallet's coins; its balance "
                                  "shows when they finish. You can close this page.")}
-            if run.get("core"):
-                total = _run_left({**run, "core": None, "core_next": True})
-                late = time.time() - float(run.get("began") or time.time()) > total
-                return _core_rescan_said(chain, {"state": "rescan", "eta": int(eta), "core": True,
-                        "says": ("This arcade's node is rescanning the whole chain for this wallet's coins, and it is "
-                                 "taking longer than expected; it is still running. Check back later."
-                                 if late else
-                                 f"This arcade's node is rescanning the whole chain for this wallet's coins (meanwhile "
-                                 f"the arcade reads the chain from another arcade); check back in "
-                                 f"{importslib.say_wait(eta)}.")})
             return {"state": "rescan", "eta": int(eta),
                     "says": f"The arcade is reading back this wallet's coins; check back in "
                             f"{importslib.say_wait(eta)}."}
         if (chain.network, address) in _rescan_queue:
-            fails, until = _core_retry.get(chain.network, (0, 0.0)) if _core_rescan_on(chain) else (0, 0.0)
-            sent = state.setting(f"core_rescan_sent:{chain.network}", None)
-            if _core_rescan_on(chain) and not fails and catchuplib.held(chain.network):
-                if not isinstance(sent, dict):
-                    # Begun before the arcade last restarted, with nothing kept of when or for whom: taken as this
-                    # wallet's, a whole rescan's length from now (the batch, once tried, keeps the real record).
-                    sent = {"at": time.time(), "addresses": [address]}
-                # The Core is at a whole-chain rescan (one an arcade restart cut the connection to goes on all the
-                # same), and waited for: said as what it is, with its countdown (2026-10-21: "the arcades node
-                # is re-scanning and give a estimate time until finished"), never as "no node to borrow".
-                total = _run_left({"network": chain.network, "end": state.token_index(chain).indexed_height() or 0,
-                                   "core_next": True})
-                left = float(sent.get("at") or time.time()) + total - time.time()
-                mine = address in (sent.get("addresses") or ())
-                then = "" if mine else " After it, one more rescan reads this wallet's coins."
-                if left <= 0:
-                    return _core_rescan_said(chain, {"state": "rescan", "eta": None, "core": True, "then": not mine,
-                            "says": "This arcade's node is rescanning the whole chain for imported wallets, and it is "
-                                    "taking longer than expected; it is still running, and the arcade reads the chain "
-                                    f"from another arcade meanwhile.{then} Check back later."})
-                eta = left + (0 if mine else total)
-                return _core_rescan_said(chain, {"state": "rescan", "eta": int(eta), "core": True, "then": not mine,
-                        "says": f"This arcade's node is rescanning the whole chain for imported wallets (meanwhile the "
-                                f"arcade reads the chain from another arcade, so sends work as usual).{then} Check back "
-                                f"in about {importslib.say_wait(eta)}."})
-            if fails:
-                when = ("after the arcade restarts" if fails >= CORE_RETRY_MAX
-                        else f"in {importslib.say_wait(max(0.0, until - time.time()))}")
-                return {"state": "rescan", "eta": None if fails >= CORE_RETRY_MAX else int(until - time.time()),
-                        "says": f"This arcade's node could not finish rescanning for this wallet; it tries again {when}."}
             if not _can_read_back(chain):
                 return {"state": "none",
                         "says": (f"There is no node to borrow right now: this arcade cannot read {chain.title} "
@@ -27350,7 +27108,7 @@ def create_app(state: AppState) -> FastAPI:
             running = _chain_rescan(chain.network)
             eta = (_wait_for(running["address"]) if running else 0.0) + _run_left(
                 {"network": chain.network, "start": _rescan_floor(chain),
-                 "end": state.token_index(chain).indexed_height() or 0, "core_next": _core_rescan_on(chain)})
+                 "end": state.token_index(chain).indexed_height() or 0})
             return {"state": "rescan", "eta": int(eta),
                     "says": f"The arcade is reading back this wallet's coins; check back in "
                             f"{importslib.say_wait(eta)}."}
@@ -27692,7 +27450,7 @@ def create_app(state: AppState) -> FastAPI:
             "walk": live, "waiting": [{"address": a, "tag": tags.get(a, "")} for a in dict.fromkeys(waiting)],
             "readers": readers, "history": [h for h in _walk_history if h["chain"] == net][:WALK_HISTORY],
             "reconcile": {"last": state.setting("coinlists_reconcile_last", None), "running": _reconciling.is_set()},
-            "settings": {"walk": _walk_on(picked), "lend": state.setting("walk_lend", True) is not False,
+            "settings": {"lend": state.setting("walk_lend", True) is not False,
                          "readers_max": int(state.setting("walk_readers_max", WALK_READERS_MAX) or WALK_READERS_MAX)},
             "files": {"readable": bool(mine.get("files")),
                       "dir": str(coinwalklib.blocks_dir(picked, state.setting(f"blocks_dir:{net}", None)) or ""),
@@ -27758,9 +27516,7 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"queued": address})
         if do == "set":
             for k, v in said.items():
-                if k.startswith("walk_") and _walk_chain_by(k[5:]) is not None:
-                    state.set_setting(f"import_walk:{k[5:]}", bool(v))
-                elif k == "lend":
+                if k == "lend":
                     state.set_setting("walk_lend", bool(v))
                 elif k == "readers_max":
                     state.set_setting("walk_readers_max", max(2, min(32, int(v))))
@@ -27771,52 +27527,6 @@ def create_app(state: AppState) -> FastAPI:
                     state.set_setting(f"blocks_dir:{k[11:]}", path or None)
             return JSONResponse({"saved": True})
         return JSONResponse({"detail": "reconcile, walk or set"}, status_code=400)
-
-    def _walk_on(chain) -> bool:
-        said = state.setting(f"import_walk:{chain.network}", None)
-        return bool(said) if said is not None else True
-
-    def _rescan_start(chain, address: str) -> None:
-        """Read back the coins `address` already held, on a thread: the Core's coin set where it has one
-        (`scantxoutset`), else the blocks from the floor to where watching began. Another arcade is NOT asked for an
-        imported address: the arcades answer by @tag only, and a public "what does this address hold here" would
-        tell anybody which addresses this arcade's accounts imported."""
-        key = f"backfilled:{chain.network}:{address}"
-        index = state.token_index(chain)
-        with contextlib.closing(index.open()) as db:
-            since = utxoslib.since(db, address)
-        end = since if since is not None else (index.indexed_height() or 0)
-        start = _rescan_floor(chain)
-        if end < start:
-            state.set_setting(key, 0)
-            return
-        run = {"network": chain.network, "start": start, "end": end, "progress": {}, "began": time.time(),
-               "imported": True}
-        _backfilling.add(address)
-        _backfill_runs[address] = run
-
-        def go() -> None:
-            try:
-                with chain.rpc() as rpc:
-                    filed = None
-                    if not chain.borrowed:
-                        filed = utxoslib.seed_from_core(index, rpc, chain.params, {address},
-                                                        index.indexed_height() or 0)
-                    if filed is None:
-                        filed = utxoslib.backfill(index, rpc, chain.params, address, start, end,
-                                                  progress=run["progress"])
-                state.set_setting(key, filed)
-                state.bump_generation()
-                log.info("imported wallet %s on %s: read back, %d coins", address, chain.network, filed)
-            except Exception as exc:                       # noqa: BLE001 -- the chain went away: queued again
-                log.warning("read-back of imported %s stopped: %s; queued", address, exc)
-                _rescan_queue[(chain.network, address)] = time.time()
-            finally:
-                _backfilling.discard(address)
-                _backfill_runs.pop(address, None)
-                _rescan_queue_wake()
-
-        threading.Thread(target=go, daemon=True, name=f"import read-back {address}").start()
 
     def _still_imported(network: str, address: str) -> bool:
         """Whether any account still lists `address` among its imports on that chain."""
@@ -27838,9 +27548,7 @@ def create_app(state: AppState) -> FastAPI:
                         _rescan_queue.pop((network, address), None)
                         continue
                     if not _can_read_back(chain):
-                        _queue_says(network, address, f"waits: the chain cannot be read back now (readable "
-                                    f"{_readable(chain)}, held {catchuplib.held(network)!r}, sharer "
-                                    f"{catchuplib.can_borrow(chain)}, retry {_core_retry.get(network)})")
+                        _queue_says(network, address, "waits: the chain cannot be read now")
                         continue
                     with _imports_lock:
                         running = _chain_rescan(network)
@@ -27868,19 +27576,9 @@ def create_app(state: AppState) -> FastAPI:
             threading.Thread(target=_rescan_queue_runner, daemon=True, name="import read-back queue").start()
 
     def _begin_next(chain, address: str) -> None:
-        """Start what reads `address`'s past next: the chain's next Core batch (with every other import waiting),
-        or the address's own read-back."""
-        if _walk_on(chain):                                 # the shared walk (2026-10-25): no Core rescan
-            _rescan_queue.pop((chain.network, address), None)
-            _walk_start(chain, address)
-            return
-        core = _core_rescan_on(chain) and state.setting(f"core_rescanned:{chain.network}:{address}", None) is None
-        if core:
-            _rescan_queue.setdefault((chain.network, address), time.time())
-            _core_batch_start(chain)
-        else:
-            _rescan_queue.pop((chain.network, address), None)
-            _rescan_start(chain, address)
+        """Start the shared walk that reads `address`'s past (2026-10-25; the only read-back since 2026-11-03)."""
+        _rescan_queue.pop((chain.network, address), None)
+        _walk_start(chain, address)
 
     def _rescan_begin(chain, address: str) -> dict:
         """Start the read-back of an imported address now, or queue it; and say where it stands."""
@@ -28060,8 +27758,8 @@ def create_app(state: AppState) -> FastAPI:
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         sync = bool(said.get("sync"))
-        # A new import needs two Cores of the chain on the network; a wallet already in the record, brought to this
-        # arcade, is registered here all the same (its import was made where it could be).
+        # No import on a chain in NO_IMPORTS; a wallet already in the record, brought to this arcade, is registered
+        # here all the same (its import was made where it could be).
         closed = _import_closed(chain) if not sync or chain.network in NO_IMPORTS else ""
         if closed:
             return JSONResponse({"detail": closed}, status_code=400)
@@ -28102,8 +27800,6 @@ def create_app(state: AppState) -> FastAPI:
             if got is not None:
                 filed, host = got
                 state.set_setting(f"backfilled:{chain.network}:{address}", filed)
-                if _core_rescan_on(chain):
-                    state.set_setting(f"core_rescanned:{chain.network}:{address}", int(time.time()))
                 _backfill_runs.pop(address, None)
                 _rescan_queue.pop((chain.network, address), None)
                 state.bump_generation()
@@ -28155,8 +27851,6 @@ def create_app(state: AppState) -> FastAPI:
             if got is not None:
                 filed, host = got
                 state.set_setting(f"backfilled:{chain.network}:{address}", filed)
-                if _core_rescan_on(chain):
-                    state.set_setting(f"core_rescanned:{chain.network}:{address}", int(time.time()))
                 state.bump_generation()
                 return JSONResponse({"address": address, "chain": chain.network, "state": "ready", "from": host,
                                      "says": f"Ready: brought over from {host}, every coin checked here."})
@@ -37109,10 +36803,6 @@ def _file_checked_coins(state, chain, address: str, coins) -> int:
     return filed
 
 
-#: Cores of a chain the arcades' network must have for a wallet to be imported on it (2026-10-22: "importing a
-#: wallet to LTC right now should not be possible since there is only one LTC node. So that option should be grayed
-#: out on all arcades"): this arcade's own, and the linked arcades sharing theirs.
-IMPORT_CORES_MIN = 2
 #: Coins another arcade says an imported address holds, checked here at most (a sanity bound, not a wallet's size).
 CHECKED_COINS_MAX = 100_000
 #: Coins read in one batch while checking them.

@@ -168,8 +168,8 @@ def test_admin_wallet_imports_tab(tmp_path, no_nodes, monkeypatch):
     look = client.get(f"/admin/api/imports/lookup?chain={net}&q={ADDR}", headers=LOCAL).json()
     assert look["owner"]["tag"] == "wanderer" and look["coins"] == 1 and look["sats"] == 5 * 10**8
     assert client.post("/admin/api/imports", headers={**LOCAL, **WRITE},
-                       json={"do": "set", f"walk_{net}": False, "lend": False, "readers_max": 3}).json() == {"saved": True}
+                       json={"do": "set", "lend": False, "readers_max": 3}).json() == {"saved": True}
     st = client.get(f"/admin/api/imports?chain={net}", headers=LOCAL).json()["settings"]
-    assert st == {"walk": False, "lend": False, "readers_max": 3}
+    assert st == {"lend": False, "readers_max": 3}, "no switch back to a Core rescan (2026-11-03)"
     assert client.get(f"/coins/walk/can?chain={net}").json()["files"] is False, "not lent when lending is off"
     assert client.get("/admin/api/imports", headers={"host": "node.example.com", "cf-ray": "x"}).status_code in (401, 403, 404)

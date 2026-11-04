@@ -42,6 +42,8 @@ NAMES = {
     "wjk": "WJK",
     "wojak": "WJK",
     "wojakcoin": "WJK",
+    "flop": "FLOP",
+    "flopcoin": "FLOP",
 }
 
 # No badge, no colour. A 0x address is refused in ``_from_address`` as well.
@@ -70,6 +72,7 @@ _PREFIX = {
     "K": "LKY",
     "W": "WJK",
     "S": "DGB",
+    "F": "FLOP",
 }
 
 

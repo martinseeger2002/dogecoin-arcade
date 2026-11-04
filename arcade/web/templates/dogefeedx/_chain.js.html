@@ -10,6 +10,7 @@
 .dfx-chain-lky { background: #c6f135; color: #1b1b1b; }
 .dfx-chain-kot { background: #ff5fa2; color: #1b1b1b; }
 .dfx-chain-wjk { background: #8d6e63; color: #fff; }
+.dfx-chain-flop { background: #7c3aed; color: #fff; }
 .dfx-chain-unknown { background: #c8c8d0; color: #1b1b1b; }
 </style>
 <script>
@@ -24,7 +25,8 @@ var DFX_CHAIN_NAMES = {
   dgb: 'DGB', digibyte: 'DGB',
   lky: 'LKY', lucky: 'LKY', luckycoin: 'LKY',
   kot: 'KOT', kotia: 'KOT',
-  wjk: 'WJK', wojak: 'WJK', wojakcoin: 'WJK'
+  wjk: 'WJK', wojak: 'WJK', wojakcoin: 'WJK',
+  flop: 'FLOP', flopcoin: 'FLOP'
 };
 var DFX_CHAIN_EVM = {
   eth: 1, ethereum: 1, evm: 1, bsc: 1, binance: 1, polygon: 1, matic: 1, avax: 1,
@@ -35,7 +37,7 @@ var DFX_CHAIN_EVM = {
 var DFX_CHAIN_TICKERS = {DOGE: 1, PEPE: 1, LTC: 1, BTC: 1, BEL: 1, DGB: 1, LKY: 1, KOT: 1, WJK: 1};
 var DFX_CHAIN_PREFIX = {
   D: 'DOGE', P: 'PEPE', L: 'LTC', M: 'LTC', Q: 'LTC', m: 'LTC', n: 'LTC', '2': 'LTC',
-  '1': 'BTC', '3': 'BTC', B: 'BEL', K: 'LKY', W: 'WJK', S: 'DGB'
+  '1': 'BTC', '3': 'BTC', B: 'BEL', K: 'LKY', W: 'WJK', S: 'DGB', F: 'FLOP'
 };
 function dfxChainKey(chain) {
   return String(chain || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
