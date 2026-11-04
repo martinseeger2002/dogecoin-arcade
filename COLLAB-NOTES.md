@@ -88,6 +88,36 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite's Send, Receive and Transactions are the window's own tabs
+SadFrog: "how the over view is setup is how all pages should be setup - not reusing arcade full styles - we want this
+to be a lite weight nothing fancy barebones". Commit e736cc4, the first of those pages.
+- **The three wallet tabs** (arcade/lite/templates/_wallet.html) are now plain fieldsets and tables in the Lite window,
+  in place of links to /wallet and /me/wallet:
+  - **Send**: wallet, pay to, amount, then Review (to, amount, network fee, the arcade's fee and data when there are
+    any, what comes back, what leaves) and Send;
+  - **Receive**: the address, a QR and Copy;
+  - **Transactions**: the chain's activity rows, read afresh whenever the tab is opened.
+- **No signing code of Lite's own.** The tabs call the same modules the full Wallet does: wallet.js for an account
+  (unlocked with the password in the tab when it is not open) and node-wallet.js for the node.
+- **Whose wallet** follows `_account_view`: an account signed in sees its own, even at the node's machine; otherwise
+  the operator sees the node's. **Found while building:** keying it on the operator alone would have sent a signed-in
+  account at the machine to /node/wallet, which refuses it.
+- **R1 is kept as the full Wallet keeps it:**
+  - the offer is held to what was typed (amount, and the address or @name);
+  - an account's offer is also held to `checked`'s own reading of the bytes (that address paid that amount);
+  - every cost from `mainnetCosts` is on the review before `confirm(..., {reviewed: true})`;
+  - one press sends once.
+- **Still the full arcade's pages for now:** the Address book, Backup, Admin (Options, Edition and modules) and Join.
+  The next parts redraw them the same way.
+- **Tests:**
+  - tests/test_lite_wallet_browser.py, in real Firefox on regtest: an account's send from the tab, then its history
+    and Receive; an amount changed after Review gets a fresh review and nothing is paid; the operator's send of the
+    node's coins.
+  - test_lite: whose wallet each caller gets.
+  - test_modules: Lite still serves what the tabs call.
+  - Workhorse: 482 passed, 16 skipped. The browser tests need `ARCADE_GECKODRIVER=/snap/bin/firefox.geckodriver`
+    there.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · A neutral face, "ARCADE", for new arcades and for Lite
 SadFrog, on the first real Lite install: "It should not have any default theme - it started off with dogecoinarcade
 theme - it should be og core like if anything by default"; then "Full should also be rebranded by default to a
