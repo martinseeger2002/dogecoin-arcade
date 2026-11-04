@@ -1437,7 +1437,7 @@ def build_failure_hint(output: str) -> str:
 #: comment, and an update rewrites the whole set when the machine's copies are
 #: older. Without that a fix to a command reached only people installing for the
 #: first time, because the updater rewrote shims only when one was missing.
-SHIM_VERSION = 3
+SHIM_VERSION = 4                  # 4 (2026-11-04): the updater shims start in the venv's folder
 
 LAUNCHER = """\
 #!/bin/sh
@@ -1456,6 +1456,9 @@ UPDATER = """\
 # The import test comes first because the updater lives inside the package it
 # updates: with the package gone there is nothing to run, and the command died
 # with ModuleNotFoundError instead of repairing what was wrong.
+# From the venv's own folder (2026-11-04): `python -c` and `-m` put the current directory first on sys.path, so run
+# from a folder holding an `arcade/` (an old one unpacked in $HOME, on the operator's ThinkPad) the update ran THAT code.
+cd "{venv}" || exit 1
 if ! "{venv}/bin/python" -c "import arcade.update" 2>/dev/null; then
     echo "DogecoinArcade is missing from its environment; repairing it first."
     "{venv}/bin/python" "{repair}" || exit 1
@@ -1501,6 +1504,8 @@ WIN_UPDATER = """\
 @echo off
 @rem Update DogecoinArcade to the latest published code (shim {version}).
 @rem Touches only the code: never the identity key, messages or chain data.
+@rem From the venv's own folder: python -c and -m look in the current folder first (2026-11-04).
+cd /d "{venv}" || exit /b 1
 "{venv}\\Scripts\\python.exe" -c "import arcade.update" >NUL 2>&1
 if not errorlevel 1 goto run
 echo DogecoinArcade is missing from its environment; repairing it first.
