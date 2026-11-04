@@ -39,6 +39,7 @@ REPO_URL = "https://dogecoinarcade.com/repo"
 #: installer/install.py). An installation made that way has no .git, so both
 #: "what is installed" and "what is published" have to be read another way.
 REVISION_URL = "https://dogecoinarcade.com/source.rev"
+ARCHIVE_URL = "https://dogecoinarcade.com/source.tar.gz"
 MANIFEST_URL = "https://dogecoinarcade.com/" + releaselib.MANIFEST
 REVISION_FILE = ".revision"
 #: What was installed last, and when it was published. Kept outside the
@@ -292,13 +293,25 @@ def update(dry_run: bool = False) -> int:
         before = current_revision(checkout)
         signed = _signed_manifest(channel)
         test = channel == "test"
-        after = _call_installer(checkout, "fetch_source_archive", checkout, signed["sha256"],
-                                *((TEST_ARCHIVE_URL, TEST_REVISION_URL) if test else ()))
+        args = (checkout, signed["sha256"], *((TEST_ARCHIVE_URL, TEST_REVISION_URL) if test else ()))
+        if (checkout / "installer" / "install.py").is_file():
+            after = _call_installer(checkout, "fetch_source_archive", *args)
+        else:
+            # The checkout lost its installer (a src left half-replaced; a ThinkPad, 2026-11-03: "could not fetch the
+            # source archive" at every check, because the repair needs the installer and the installer lives in what
+            # is being repaired). The signed archive carries it: fetched, held to the signed sha256, and its own
+            # installer does the fetch.
+            after = _with_archive_installer(TEST_ARCHIVE_URL if test else ARCHIVE_URL, signed["sha256"],
+                                            "fetch_source_archive", *args)
         if after is None:
             raise UpdateError(
                 f"could not fetch the source archive into {checkout}.\n"
                 "  Run the installer again from https://dogecoinarcade.com to "
                 "repair this installation.")
+        if not after:                                  # in place, its revision file unread: the signed one
+            after = str(signed.get("revision") or "")
+            if after:
+                (checkout / REVISION_FILE).write_text(after + "\n")
         after = str(after)[:7]
         print(f"  already up to date ({after})" if before == after
               else f"  {before or 'unknown'} -> {after}")
@@ -616,6 +629,38 @@ def _ensure_web_service(checkout: Path, venv: Path) -> bool:
     return bool(_call_installer(checkout, "ensure_web_service", venv))
 
 
+def _with_archive_installer(url: str, sha256: str, function: str, *args):
+    """Run one installer function from the installer inside the release archive, when the checkout has none.
+
+    The archive is checked against `sha256`, the hash out of a manifest whose signature was already checked, before
+    anything in it runs: the site cannot hand over another installer than the one that was signed."""
+    import hashlib
+    import tarfile
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / "source.tar.gz"
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response, archive.open("wb") as out:
+                shutil.copyfileobj(response, out)
+        except (urllib.error.URLError, OSError) as exc:
+            print(f"  could not download {url}: {exc}")
+            return None
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        if digest != sha256:
+            print(f"  the archive's sha256 is not the signed one ({digest[:16]}...): not run")
+            return None
+        with tarfile.open(archive) as tf:
+            member = next((m for m in tf.getmembers() if m.isfile() and m.name.count("/") == 2
+                           and m.name.endswith("/installer/install.py")), None)
+            if member is None:
+                print("  the archive carries no installer")
+                return None
+            unpacked = Path(tmp) / "x"
+            tf.extract(member, unpacked, filter="data")
+        root = unpacked / member.name.split("/", 1)[0]
+        return _call_installer(root, function, *args)
+
+
 def _call_installer(checkout: Path, function: str, *args):
     """Run one function from the freshly pulled installer.
 
@@ -625,6 +670,7 @@ def _call_installer(checkout: Path, function: str, *args):
     """
     script = checkout / "installer" / "install.py"
     if not script.is_file():
+        print(f"  no installer at {script}")
         return None
     try:
         import importlib.util
