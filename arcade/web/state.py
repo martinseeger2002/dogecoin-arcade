@@ -1715,6 +1715,8 @@ class AppState:
     _talk: Any = None
     #: The realtime mesh (arcade/mesh/service.py), when this node runs one.
     mesh: Any = None
+    #: The node modules installed from packages (arcade/modhost.py), set by create_app.
+    module_host: Any = None
     _offers: Any = None
     _listings: Any = None
 

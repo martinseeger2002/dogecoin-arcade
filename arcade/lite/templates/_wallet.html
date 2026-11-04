@@ -203,6 +203,29 @@ $("w-go").onclick = async () => {
     load();
   } catch (x) { $("w-review").hidden = true; tell(String(x.message || x), "bad"); }
 };
+if (!NODE) {
+  // For the console (lite.html): the public keys this account's wallet holds, by chain, and an offer a node module
+  // prepared, reviewed here and signed only on a yes.
+  const hexOf = (u) => Array.from(u, (b) => b.toString(16).padStart(2, "0")).join("");
+  window.litePubkeys = async () => {
+    const k = await wallet.opened(TAGCHAIN);
+    const out = {};
+    if (k) for (const c of said.chains) { try { out[c.network] = hexOf(wallet.keysOn(k, c.network).pubkey); } catch (e) {} }
+    return out;
+  };
+  window.liteSign = async (o) => {
+    const k = await wallet.opened(TAGCHAIN);
+    if (!k) throw new Error("Open your wallet first (Send asks for its password), then run the command again. Nothing was signed.");
+    const read = await wallet.checked(o, k);
+    const c = said.chains.find((x) => x.network === o.chain) || {};
+    const lines = [o.what, `Network fee: ${coinsOf(read.fee)} ${unit(c)}`];
+    if (read.change) lines.push(`Comes back to you: ${coinsOf(read.change)} ${unit(c)}`);
+    if (!window.confirm(lines.join("\n") + "\n\nSign it with your wallet and send it?")) return "Not sent. Nothing was signed.";
+    const out = await wallet.confirm(k, o, {reviewed: true});
+    load();
+    return `Sent. Transaction ${out.txid}`;
+  };
+}
 load();
 </script>
 {% endif %}

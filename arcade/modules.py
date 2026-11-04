@@ -55,6 +55,8 @@ class Module:
     needs: tuple[str, ...] = ()
     lite: bool = False
     caution: str = ""
+    #: A node module installed from a package (arcade/packages.py, arcade/modhost.py): that package's id.
+    package: str = ""
 
     @property
     def core(self) -> bool:
@@ -73,7 +75,7 @@ _MODULES = (
                    "/bip39-english.txt", "/admin/terms", "/admin/login", "/admin/logout", "/admin/api/state",
                    "/admin/api/release", "/admin/api/settings", "/admin/api/cores", "/admin/api/restart",
                    "/admin/api/setup", "/admin/api/welcome", "/admin/api/litecoin", "/admin/api/modules",
-                   "/admin/modules.js"),
+                   "/admin/modules.js", "/m"),
            jobs=("pack-source", "core-installs", "auto-update", "repair", "chain-scan", "token-indexes", "releases",
                  "faucets")),
     Module("wallet", "core", "Wallet", "Every chain's wallet for the operator and for users: Send, Receive, "
@@ -217,9 +219,20 @@ def first_choice(settings: dict, fresh: bool, given: str | None = None) -> str |
     return ASK if fresh and chosen is None else None
 
 
+def packaged(settings: dict) -> list[Module]:
+    """The node modules installed from packages (settings `packages`, kind "module"), by name. A name the arcade's
+    own modules use is not one (packages refuses it when installing)."""
+    rows = settings.get("packages")
+    return [Module(row["name"], "node", str(row.get("title") or row["name"]), str(row.get("summary") or ""),
+                   routes=(f"/m/{row['name']}",), package=pid)
+            for pid, row in sorted((rows if isinstance(rows, dict) else {}).items())
+            if isinstance(row, dict) and row.get("kind") == "module" and row.get("name") not in MODULES]
+
+
 def enabled(settings: dict) -> frozenset[str]:
     """The modules that run: the core, then the edition's defaults with the operator's switches over them, less
-    any whose `needs` are off."""
+    any whose `needs` are off. A module from a package runs only while the operator has it switched on, in either
+    edition."""
     lite = edition(settings) == "lite"
     switches = settings.get(SWITCH_SETTING)
     switches = switches if isinstance(switches, dict) else {}
@@ -228,11 +241,12 @@ def enabled(settings: dict) -> frozenset[str]:
         wanted = switches.get(m.id)
         if m.core or (wanted if isinstance(wanted, bool) else (m.lite or not lite)):
             on.add(m.id)
+    on |= {m.id for m in packaged(settings) if switches.get(m.id) is True}
     dropped = True
     while dropped:
         dropped = False
         for mid in list(on):
-            if not all(n in on for n in MODULES[mid].needs):
+            if mid in MODULES and not all(n in on for n in MODULES[mid].needs):
                 on.discard(mid)
                 dropped = True
     return frozenset(on)
@@ -262,7 +276,7 @@ def needed_by(mid: str) -> list[str]:
 def switch(settings: dict, mid: str, on: bool) -> dict:
     """The `modules` switches after the operator turns `mid` on or off. Turning one on turns on what it needs; turning
     one off leaves the switches of the modules that need it alone, so they come back with it."""
-    module = MODULES.get(mid)
+    module = MODULES.get(mid) or next((m for m in packaged(settings) if m.id == mid), None)
     if module is None:
         raise ValueError(f"no module {mid!r}")
     if module.core:
@@ -278,12 +292,14 @@ def switch(settings: dict, mid: str, on: bool) -> dict:
 def describe(settings: dict) -> dict:
     """The edition and every module, as Admin and the Lite window show them."""
     on = enabled(settings)
-    kinds = [k for k in KIND_TITLES if any(m.kind == k for m in _MODULES)]
-    kinds += sorted({m.kind for m in _MODULES} - set(kinds))
+    every = (*_MODULES, *packaged(settings))
+    kinds = [k for k in KIND_TITLES if any(m.kind == k for m in every)]
+    kinds += sorted({m.kind for m in every} - set(kinds))
     return {"edition": edition(settings), "asking": asking(settings),
             "categories": [{"id": k, "title": KIND_TITLES.get(k, (k.replace("_", " ").capitalize(), ""))[0],
                             "summary": KIND_TITLES.get(k, ("", ""))[1]} for k in kinds],
             "modules": [{"id": m.id, "kind": m.kind, "title": m.title, "summary": m.summary, "core": m.core,
                          "on": m.id in on, "lite": m.lite or m.core, "needs": list(m.needs),
-                         "needed_by": needed_by(m.id), "caution": m.caution,
-                         "page": list(PAGES.get(m.id, ("", "")))} for m in _MODULES]}
+                         "needed_by": needed_by(m.id), "caution": m.caution, "package": m.package,
+                         "page": list(PAGES.get(m.id, (f"/m/{m.id}/", f"/m/{m.id}/") if m.package else ("", "")))}
+                        for m in every]}

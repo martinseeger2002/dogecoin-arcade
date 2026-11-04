@@ -15,7 +15,7 @@ SadFrog's decisions, 2026-11-04:
 |---|---|---|---|
 | Theme | Values: colours, a font, corner rounding | The browser, as CSS the arcade writes from the values | Now |
 | App | HTML and JS, as games are today | A sandboxed frame, through `arcade.js`; spending asks in the wallet | Next |
-| Node module | Python | Its own sandboxed process, with no keys and only what it declares | Last |
+| Node module | Python | Its own sandboxed process, with no keys and only what it declares | Pilot (DigiDollar) |
 
 A package is a folder with a `manifest.json` (`kind`, `api`, `name`, `version`, `title`, `summary`, and what its
 kind needs). Its id is the sha256 of every file's own sha256, by path (`arcade/packages.py`, `package_id`). So a
@@ -67,6 +67,47 @@ The window does the same:
 - **The operator:** Settings → Themes… has the installed themes, the arcade's own, who may pick which, and a folder
   box to check, try and install.
 - **Everyone:** Settings → Theme… is where each person picks their own.
+
+## Node modules
+
+A node module is Python the arcade runs for its people, Linux only (SadFrog's decision). The pilot is DigiDollar
+(`examples/packages/digidollar`, `DIGIDOLLAR.md`).
+
+- **What it holds:** `manifest.json`, `module.py`, `lib/*.py`, `README.md`, and `files/` for its pages (html, css,
+  js, json, png, svg, woff2). At most 64 files and 2 MB.
+- **What its manifest says:**
+  - `commands`: each one's `audience` (anyone, user or operator), `args` (`[in brackets]` when optional, after the
+    rest) and `help`. They join the console, `help` and `arcade-cli` under the module's name. A module cannot take
+    the name of one of the arcade's own modules or commands.
+  - `needs.chains`: the reads it may ask each chain's Core, by name: names starting with get, decode, estimate,
+    calculate or validate, or `scantxoutset` and `testmempoolaccept`, but never the Core's wallet. Anything else is
+    refused when the module is checked.
+  - `needs.max_fee`: the most a transaction it prepares may leave to fees (at most 1 coin).
+  - `pages`: who may open `/m/<name>/`.
+- **Where it runs** (`arcade/modhost.py`): in a process of its own, started at its first use and stopped when it is
+  switched off. Before a line of its code runs, the process confines itself (`arcade/sandbox.py`):
+  - Landlock lets it read only Python and its own package, and write only its data folder, `module-data/<name>/` in
+    the home. The rest of the home and /proc are out of reach.
+  - seccomp makes `socket()` fail, so it has no network, and it cannot trace or read another process.
+  - Limits on memory, open files and file size apply.
+  - A machine without Landlock runs no module, and `installmodule` says why.
+- **What it may do:**
+  - It asks the arcade, over its pipes, for the chain reads it named.
+  - It answers commands and page requests. Pages are served with `Content-Security-Policy: sandbox`, so a page's
+    script never runs as the arcade's own origin.
+- **Spending:** a module never signs. It answers with `{"prepared": {chain, version, inputs, outputs, what}}`:
+  - The arcade reads every input from the chain and refuses any that is not the caller's own coin, and refuses a fee
+    above `max_fee`.
+  - It then makes the transaction an offer (`/account/sign`), which the caller's wallet reviews and signs in the window.
+  - A command run from `arcade-cli` gets the prepared transaction back, but cannot sign it.
+- **The caller's keys:** the window sends the public keys its wallet holds with a module's command. The arcade passes
+  a key on only when it hashes to the caller's address there.
+
+    arcade-cli checkmodule ~/my-module      what it adds and asks for, or what is wrong
+    arcade-cli installmodule ~/my-module    kept under its id; a new version replaces the old and is off again
+    arcade-cli install my-module            switched on, as any module (Edition & modules lists it too)
+    arcade-cli remove my-module             switched off; its process stops
+    arcade-cli removemodule my-module       deleted; its data folder stays
 
 ## Offering a package to other arcades (next)
 

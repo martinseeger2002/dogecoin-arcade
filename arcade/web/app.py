@@ -36333,12 +36333,35 @@ def create_app(state: AppState) -> FastAPI:
     # DogeFeedX Network app: node status, sync progress, and mesh peers.
     from .dogefeedx import network as dogefeedx_network
     dogefeedx_network.register(app, state, admin_check=_admin_check)
+    # Node modules installed from packages (arcade/modhost.py): confined, reading chains through this node's Cores, and
+    # handing what spends to the account's own wallet as an offer, as every account send is.
+    from .. import modhost
+
+    def _module_chain(network: str):
+        chain = next((c for c in state.all_chains if c.network == network), None)
+        if chain is None:
+            raise ValueError(f"this arcade has no {network} chain")
+
+        def call(method: str, params: list):
+            with chain.rpc() as rpc:
+                return rpc.call(method, *params)
+        return chain.params, call
+
+    if getattr(state, "module_host", None) is None:
+        state.module_host = modhost.Host(state.home, _module_chain)
+
+    def _module_offer(pubkey: str):
+        def make(network: str, unsigned) -> dict:
+            offer = _offers.add(pubkey, network, unsigned, unsigned.what)
+            return {"offer": offer.id, "chain": network, **unsigned.as_json()}
+        return make
+
     # ARCADE Lite (docs/arcade-lite/CHARTER.md): its Core-style window at /lite, for visitors, users and the operator.
     from ..lite import web as liteweb
     _lite_home = liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in,
                                   account_address=_account_address, name_of=_name_of, node_tools=node_tools,
                                   public_tools=public_tools, wallet_name=_account_name,
-                                  account_view=_account_view, join_facts=_join_facts)
+                                  account_view=_account_view, join_facts=_join_facts, offer_for=_module_offer)
     # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
     from . import modules_web
     modules_web.register(app, state, admin_check=_admin_check)

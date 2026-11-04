@@ -24,19 +24,26 @@ FOREVER = {"Cache-Control": "public, max-age=31536000, immutable"}
 LITE_HEADER = "x-arcade-lite"
 
 
+#: How a node module's page is served: in a sandbox of its own origin, so its scripts never run as this arcade's.
+MODULE_PAGE = {"Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups; default-src 'self' "
+                                          "'unsafe-inline' data:; connect-src 'none'; form-action 'self'",
+               "X-Content-Type-Options": "nosniff"}
+
 #: Console lines a non-operator may send each minute (the full arcade's terminal allows the same).
 CONSOLE_PER_MINUTE = 30
 
 def register(app, state, admin_check, signed_in, account_address, name_of, node_tools=None, public_tools=None,
-             wallet_name=lambda request: "", account_view=lambda request: False, join_facts=None):
+             wallet_name=lambda request: "", account_view=lambda request: False, join_facts=None, offer_for=None):
     """Add /lite to the node's app, with the web app's own checks: `admin_check(request, write=False)` raises unless
     the operator is asking, `signed_in(request)` is the account or None, `account_address(pubkey, chain)` and
     `name_of(address)` look an account up. `node_tools` is what the operator's commands ask of the node,
     `public_tools` what anyone's may, `wallet_name(request)` the name an account's wallet opens under, and
     `account_view(request)` whether the wallet shown is the account's rather than the node's, and `join_facts(request)`
-    what Join says: seats, free, fruit, secure and why_not (app.py). Returns the window's page, which ARCADE Lite also serves at /."""
+    what Join says: seats, free, fruit, secure and why_not (app.py). `offer_for(pubkey)` makes a node module's prepared
+    transaction an offer that account's wallet signs: (network, unsigned) -> the offer, as /account/sign takes it.
+    Returns the window's page, which ARCADE Lite also serves at /."""
 
-    def caller_for(request: Request, write: bool = False) -> cmdlib.Caller:
+    def caller_for(request: Request, write: bool = False, pubkeys: dict | None = None) -> cmdlib.Caller:
         local = False
         try:
             local = bool((admin_check(request, write=write) or {}).get("local"))
@@ -50,7 +57,8 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         return cmdlib.Caller(state, audience, pubkey,
                              address=(lambda chain: account_address(pubkey, chain)) if pubkey else (lambda chain: ""),
                              name_of=name_of, node=node_tools if audience == "operator" else None, local=local,
-                             reads=public_tools)
+                             reads=public_tools, pubkeys=pubkeys if isinstance(pubkeys, dict) else {},
+                             offer=offer_for(pubkey) if pubkey and offer_for else None)
 
     @app.get("/lite", response_class=HTMLResponse)
     def lite_page(request: Request):
@@ -144,7 +152,8 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
     @app.get("/lite/api/commands")
     def lite_commands(request: Request):
         return JSONResponse([{"name": c.name, "category": c.category, "audience": c.audience, "usage": c.usage,
-                              "summary": c.summary} for c in cmdlib.available(caller_for(request))],
+                              "summary": c.summary, "package": c.module not in modulelib.MODULES}
+                             for c in cmdlib.available(caller_for(request))],
                             headers=NO_STORE)
 
     #: Console lines a non-operator may send a minute, per address (2026-11-03, a test machine's review: /lite/api/console is
@@ -174,7 +183,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         if request.headers.get(LITE_HEADER) != "1" or doorlib.cross_site(request.headers,
                                                                         request.headers.get("host", "")):
             raise HTTPException(403, "console lines come from the Lite page")
-        caller = caller_for(request, write=True)
+        caller = caller_for(request, write=True, pubkeys=payload.get("pubkeys"))
         if console_limited(caller, request):
             return JSONResponse({"ok": False, "error": f"at most {CONSOLE_PER_MINUTE} lines a minute; wait a little"},
                                 status_code=429, headers=NO_STORE)
@@ -185,5 +194,46 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             return JSONResponse({"ok": False, "error": str(exc)}, headers=NO_STORE)
         except Exception as exc:                           # noqa: BLE001 -- the console says what went wrong
             return JSONResponse({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, headers=NO_STORE)
+
+    @app.get("/m/{name}/files/{file}")
+    def module_file(name: str, file: str):
+        """A node module's own files for its pages (files/ in its package): served as they are, never run here."""
+        host = getattr(state, "module_host", None)
+        found = host.installed(state.settings()) if host is not None else {}
+        rel = f"files/{file}"
+        if name not in modulelib.enabled(state.settings()) or name not in found or not packagelib.MODULE_FILES.match(rel):
+            raise HTTPException(404)
+        path = packagelib.home_of(state.home, found[name][0]) / rel
+        if not path.is_file():
+            raise HTTPException(404)
+        kind = {"html": "text/html", "css": "text/css", "js": "text/javascript", "json": "application/json",
+                "png": "image/png", "svg": "image/svg+xml", "woff2": "font/woff2"}[rel.rsplit(".", 1)[1]]
+        return Response(path.read_bytes(), media_type=kind, headers={**FOREVER, **MODULE_PAGE})
+
+    @app.api_route("/m/{name}/{path:path}", methods=["GET", "POST"])
+    async def module_page(request: Request, name: str, path: str = ""):
+        """A node module's pages, answered by its own process. They are served sandboxed (MODULE_PAGE): a module's page
+        runs no script with this arcade's origin, so it can never reach a wallet, a session or a key here."""
+        from .. import modhost
+        settings = state.settings()
+        host = getattr(state, "module_host", None)
+        if host is None or name not in modulelib.enabled(settings) or name not in host.installed(settings):
+            raise HTTPException(404)
+        manifest = host.installed(settings)[name][1]
+        caller = caller_for(request)
+        if not caller.may(manifest.get("pages", "anyone")):
+            raise HTTPException(404)
+        body = (await request.body())[:65536].decode("utf-8", "replace") if request.method == "POST" else ""
+        import anyio
+        try:
+            said = await anyio.to_thread.run_sync(lambda: host.ask(settings, name, {
+                "call": "page", "method": request.method, "path": path, "query": dict(request.query_params),
+                "body": body}, cmdlib.module_caller(caller, manifest.get("needs", {}).get("chains", {}))))
+        except modhost.ModuleFailed as exc:
+            return Response(f"{name}: {exc}", status_code=502, media_type="text/plain", headers=MODULE_PAGE)
+        if isinstance(said, dict) and said.get("type") in ("text/html", "text/plain"):
+            return Response(str(said.get("body") or ""), status_code=int(said.get("status") or 200),
+                            media_type=said["type"], headers={**NO_STORE, **MODULE_PAGE})
+        return JSONResponse(said, headers={**NO_STORE, **MODULE_PAGE})
 
     return lite_page
