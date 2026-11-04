@@ -281,14 +281,15 @@ def _running(installed: dict) -> bool:
         return False
 
 
-def start_one(installed: dict) -> bool:
+def start_one(installed: dict, extra: tuple = ()) -> bool:
     """Start an installed Core unless it is running: as a user unit of its own where there is a user service manager
-    (restarted if it fails), else as a daemon of its own. True when started now."""
+    (restarted if it fails), else as a daemon of its own. True when started now. `extra`: more arguments (a copied
+    chain's data is checked with no peers, arcade/core_copy.py)."""
     if not installed or not Path(installed.get("daemon", "")).is_file():
         return False
     if _running(installed):
         return False
-    args = [installed["daemon"], f"-datadir={installed['datadir']}", f"-conf={installed['conf']}"]
+    args = [installed["daemon"], f"-datadir={installed['datadir']}", f"-conf={installed['conf']}", *extra]
     if _user_systemd():
         subprocess.run(["systemctl", "--user", "reset-failed", _unit(installed)], capture_output=True, timeout=10)
         subprocess.run(["systemd-run", "--user", f"--unit={_unit(installed)}", "--collect",
@@ -311,6 +312,13 @@ def start_installed(state) -> list[str]:
         if k.startswith("core_installed:") and isinstance(v, dict):
             if mode(settings, k.split(":", 1)[1]) != HERE:
                 continue                                       # installed, but borrowed or off: not run
+            try:
+                from .config import NETWORKS
+                from .core_copy import busy
+                if busy(v, NETWORKS[k.split(":", 1)[1]]):
+                    continue                                   # a copy of its chain data is being swapped in
+            except Exception:                                  # noqa: BLE001
+                pass
             try:
                 if start_one(v):
                     started.append(k.split(":", 1)[1])
