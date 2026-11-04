@@ -990,7 +990,9 @@ class AppState:
 
     def operator_tag(self) -> str:
         """The @name of whoever runs this arcade, as the chain has it ("" when none): the operator account's address on
-        the messaging chain, or the node's own derived address for an arcade whose operator is its node (as on .25).
+        the messaging chain, or the node's own derived address for an arcade whose operator is its node (as on .25) --
+        which includes a username-and-password operator, with no wallet of its own (app._account_view; 2026-11-04: a
+        Lite test node lost its @name to "This node is mine").
 
         What this arcade says about itself to linked arcades (mesh/operators.py, "me") and what Admin -> Overview's
         Arcades panel shows on its own row (2026-10-21, approving the mockup). Only ever this arcade's OWN
@@ -999,7 +1001,7 @@ class AppState:
             chain = next(c for c in self.token_chains if c.network == self.messaging.network)
             op = self.operator
             address = ((self.setting(f"address:{chain.network}:{op}") or self.setting(f"address:{op}")) if op
-                       else self.derived_address)
+                       else "") or self.derived_address
             return (self.token_index(chain).tag_of(address) or "") if address else ""
         except Exception:                                  # noqa: BLE001 -- said without a name
             return ""
