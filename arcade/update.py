@@ -372,7 +372,9 @@ def update(dry_run: bool = False) -> int:
         # update late: the machine that most needs it runs the old logic once
         # more and gets it next time. Stdout is inherited so the second half
         # prints in line with the first.
-        return subprocess.run([str(python), "-m", "arcade.update", "--services-only"]).returncode
+        # The new install's own code, never an `arcade/` in the directory this was run from (2026-11-04).
+        from .pyrun import module_cmd
+        return subprocess.run(module_cmd("arcade.update", "--services-only", python=str(python))).returncode
 
     return _update_services(checkout, venv, dry_run)
 

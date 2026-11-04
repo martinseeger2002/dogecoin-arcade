@@ -88,6 +88,10 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 The web worker runs the installed arcade, never an `arcade/` in the directory it starts in (Claude; found on the operator's ThinkPad by its session)
+
+The supervisor spawned workers with `python -m arcade.web`, which puts the current directory first on sys.path, and arcade-web.service has no WorkingDirectory, so it starts in $HOME. On the ThinkPad $HOME held an old `arcade/` unpacked from source.tar.gz, and the live arcade ran THAT, not site-packages; the updater compares versions, not where code was imported from, so nothing said so. New `arcade/pyrun.py` `module_cmd`: a child starts with the `arcade` this process imported. Where that is the current directory (a source checkout, as on .25, and the test suite) exactly as before; otherwise with the current directory off sys.path (`-P` on Python 3.11+, a `-c` bootstrap that drops `sys.path[0]` before that, and for another interpreter). Used by the supervisor's worker spawn and its self-replacing execv, and by the updater's second half (`-m arcade.update --services-only`). The launcher and the update shim run console scripts, which never put the cwd first. tests/test_pyrun.py (a decoy `arcade/` in the cwd: the real one loads; unprotected, the decoy does). If your side runs workers some other way, the same applies.
+
 ### 2026-11-03 An installed Core on a chain set to borrow or off is not started (Claude; found on the operator's ThinkPad by its session)
 
 `core_install.start_installed` started every `core_installed:<net>` at the arcade's start without looking at Admin -> Chains, so DigiByte, set to borrow after its node ran the ThinkPad out of memory, would have been started again at the next restart. Now only chains whose mode is "here" start (`cores.mode`; an installed chain with no setting is "here", as before). Admin switching a chain away from "here" still does not stop a running Core at once (stopping DigiByte there is what ran out of memory): it takes effect at the next start. tests/test_core_install.py.

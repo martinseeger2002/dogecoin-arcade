@@ -1,0 +1,41 @@
+"""A started arcade module imports this arcade's code, never an `arcade/` in the current directory (2026-11-04, found
+on the operator's ThinkPad: an old copy unpacked in $HOME was what the live web worker ran)."""
+import os
+import pathlib
+import subprocess
+import sys
+
+import arcade
+from arcade import pyrun
+
+ROOT = pathlib.Path(arcade.__file__).resolve().parent.parent
+
+
+def _decoy(tmp_path):
+    fake = tmp_path / "arcade"
+    fake.mkdir()
+    (fake / "__init__.py").write_text("print('THE DECOY')\n")
+    (fake / "pyrun.py").write_text("print('THE DECOY')\n")
+    return tmp_path
+
+
+def _run(cmd, cwd):
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}         # where this test's arcade is, as a venv install would be
+    return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=60).stdout
+
+
+def test_a_child_started_from_a_directory_holding_another_arcade_runs_this_one(tmp_path, monkeypatch):
+    home = _decoy(tmp_path)
+    monkeypatch.chdir(home)
+    want = str(pathlib.Path(pyrun.__file__).resolve().parent / "__init__.py")
+    for cmd in (pyrun.module_cmd("arcade.pyrun"),                             # this interpreter (-P on 3.11+)
+                pyrun.module_cmd("arcade.pyrun", python=sys.executable)):    # another one: the bootstrap
+        out = _run(cmd, home)
+        assert "THE DECOY" not in out and out.strip() == want, (cmd[:3], out)
+    # Unprotected, the decoy wins: what the ThinkPad's worker did.
+    assert "THE DECOY" in _run([sys.executable, "-m", "arcade.pyrun"], home)
+
+
+def test_run_from_a_checkout_it_starts_as_it_always_did(monkeypatch):
+    monkeypatch.chdir(ROOT)
+    assert pyrun.module_cmd("arcade.web", "--x")[1:] == ["-m", "arcade.web", "--x"]
