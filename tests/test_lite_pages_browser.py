@@ -137,7 +137,15 @@ def test_the_operator_changes_seats_and_sees_the_modules_in_options(browser, ser
         _wait(browser).until(lambda d: d.find_element(By.ID, "o-said").text == "Saved.")
         assert state.accounts().seats == before + 3
         browser.find_element(By.CSS_SELECTOR, '[data-otab="modules"]').click()
-        _wait(browser).until(lambda d: "Feed" in d.find_element(By.ID, "o-modules").text)
+        cats = [b.text.split()[0] for b in browser.find_elements(By.CSS_SELECTOR, "#o-mui .mui-tabs button")]
+        assert cats == ["All", "Core", "Apps", "Node", "Themes"], cats
+        browser.find_element(By.CSS_SELECTOR, '#o-mui [data-cat="app"]').click()
+        listed = browser.find_element(By.CSS_SELECTOR, "#o-mui tbody").text
+        assert "Feed" in listed and "Address book" not in listed, "Apps lists the apps only"
+        box = browser.find_element(By.CSS_SELECTOR, "#o-mui input[type=search]")
+        box.send_keys("feed")
+        assert [r.text.split("\n")[0] for r in browser.find_elements(By.CSS_SELECTOR, "#o-mui tbody tr")] \
+            and "Messages" not in browser.find_element(By.CSS_SELECTOR, "#o-mui tbody").text
     finally:
         state.set_setting("seats", before)
         state.accounts().seats = before

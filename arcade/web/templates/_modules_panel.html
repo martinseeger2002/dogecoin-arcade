@@ -1,74 +1,11 @@
-{#- Admin -> Edition & modules (arcade/modules.py, web/modules_web.py): the edition, and a switch per app, theme and
-    node module. Routes follow a switch at once; background jobs at the next restart. Its own script scope. -#}
+{#- Admin -> Edition & modules (arcade/modules.py, web/modules_web.py): the edition, and the modules by category, one
+    tab each, drawn by /admin/modules.js (templates/modules_js.js), the same drawing the Lite window's Options uses.
+    Routes follow a switch at once; background jobs at the next restart. -#}
 <section class="panel" id="modules">
-  <h2>Edition</h2>
   <p class="muted" style="margin:0 0 8px;font-size:.84rem"><b>Full</b> runs everything. <b>ARCADE Lite</b> runs the
     crypto cores only (the chains and their wallets, sync and borrowing, send and receive, the address book, accounts,
-    settings, help and the mesh link) and opens on the Lite window. Changing the edition sets every module to that
-    edition's default. Nothing is deleted: a module switched off keeps its data for when it is on again.</p>
-  <p id="modedition" style="margin:0 0 8px">Loading…</p>
-  <div class="act" style="display:flex;gap:8px;flex-wrap:wrap">
-    <button type="button" class="small" data-edition="full">Use Full</button>
-    <button type="button" class="small" data-edition="lite">Use ARCADE Lite</button>
-  </div>
-  <p class="msg" id="modrestart" hidden></p>
-  <h2 style="margin-top:16px">Modules</h2>
-  <p class="muted" style="margin:0 0 8px;font-size:.84rem">The core is always on. Every other module is yours to
-    switch.</p>
-  <table class="mods" style="width:100%;border-collapse:collapse;font-size:.86rem">
-    <thead><tr><th style="text-align:left">Module</th><th style="text-align:left">Kind</th><th>In Lite</th><th>Here</th></tr></thead>
-    <tbody id="modrows"></tbody>
-  </table>
+    settings, help and the mesh link) and opens on the Lite window. A module switched off keeps its data for when it
+    is on again.</p>
+  <div data-modules-ui></div>
 </section>
-<script>
-(function () {
-  var $ = function (id) { return document.getElementById(id); };
-  function call(body) {
-    return fetch('/admin/api/modules', {method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store',
-      headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'}, body: body ? JSON.stringify(body) : undefined})
-      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.statusText); return j; }); });
-  }
-  function draw(d) {
-    $('modedition').textContent = 'This arcade runs ' + (d.edition === 'lite' ? 'ARCADE Lite.' : 'the full edition.')
-      + (d.asking ? ' (Not chosen yet: it runs as Full until you choose.)' : '');
-    document.querySelectorAll('[data-edition]').forEach(function (b) { b.disabled = !d.asking && b.dataset.edition === d.edition; });
-    var tb = $('modrows'); tb.textContent = '';
-    d.modules.forEach(function (m) {
-      var tr = document.createElement('tr'), cells = [m.title, m.kind, m.lite ? 'on' : 'off'];
-      cells.forEach(function (c, i) {
-        var td = document.createElement('td'); td.textContent = c; if (i === 0) td.title = m.summary;
-        if (i === 2) td.style.textAlign = 'center';
-        tr.appendChild(td);
-      });
-      var td = document.createElement('td'); td.style.textAlign = 'center';
-      if (m.core) { td.textContent = 'core'; td.className = 'muted'; }
-      else {
-        var box = document.createElement('input'); box.type = 'checkbox'; box.checked = m.on;
-        box.setAttribute('aria-label', m.title);
-        box.onchange = function () {
-          var off = !box.checked, also = off ? m.needed_by : m.needs;
-          var ask = off && m.caution ? m.caution + '\n\n' : '';
-          if (also.length) ask += (off ? 'Also stops: ' : 'Also turns on: ') + also.join(', ') + '.\n\n';
-          if (ask && !confirm(ask + (off ? 'Switch ' + m.title + ' off?' : 'Switch ' + m.title + ' on?'))) { box.checked = !box.checked; return; }
-          call({module: m.id, on: box.checked}).then(draw).catch(function (e) { alert(e.message); box.checked = !box.checked; });
-        };
-        td.appendChild(box);
-      }
-      tr.appendChild(td); tb.appendChild(tr);
-    });
-    var r = $('modrestart');
-    r.hidden = !d.restart_for.length;
-    r.textContent = d.restart_for.length ? 'Pages follow at once. The background work of ' + d.restart_for.join(', ')
-      + ' follows when the arcade restarts.' : '';
-  }
-  document.querySelectorAll('[data-edition]').forEach(function (b) {
-    b.onclick = function () {
-      var lite = b.dataset.edition === 'lite';
-      if (!confirm(lite ? 'Switch to ARCADE Lite? Every module but the core is switched off. Nothing is deleted.'
-                        : 'Switch to the full edition? Every module is switched on.')) return;
-      call({edition: b.dataset.edition}).then(draw).catch(function (e) { alert(e.message); });
-    };
-  });
-  call(null).then(draw).catch(function (e) { $('modedition').textContent = e.message; });
-})();
-</script>
+<script src="/admin/modules.js"></script>

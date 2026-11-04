@@ -27,15 +27,7 @@
         </fieldset>
       </div>
       <div data-opanel="modules" hidden>
-        <fieldset><legend>Edition</legend><div class="grid">
-          <label for="o-edition">Edition</label><select id="o-edition"><option value="full">Full</option>
-            <option value="lite">ARCADE Lite</option></select></div>
-          <p class="muted">Lite to Full turns every module on. Full to Lite only switches them off; nothing is deleted.</p>
-        </fieldset>
-        <fieldset><legend>Modules</legend>
-          <table><thead><tr><th>On</th><th>Module</th><th>Kind</th></tr></thead><tbody id="o-modules"></tbody></table>
-          <p id="o-restart" class="warn" hidden></p>
-        </fieldset>
+        <fieldset><legend>Edition and modules</legend><div data-modules-ui id="o-mui"></div></fieldset>
       </div>
       <div data-opanel="password" hidden>
         <fieldset><legend>Admin password</legend>
@@ -95,31 +87,6 @@
     tell(''); api('/admin/api/seats', {seats: Number($('o-seats').value)}).then(general).then(function () { tell('Saved.', 'ok'); }, fail);
   };
 
-  function modules(said) {
-    $('o-edition').value = said.edition;
-    var tb = $('o-modules'); tb.textContent = '';
-    said.modules.forEach(function (m) {
-      var tr = tb.insertRow(), box = document.createElement('input');
-      box.type = 'checkbox'; box.checked = m.on; box.disabled = m.core;
-      box.onchange = function () {
-        if (!box.checked && m.caution && !window.confirm(m.caution)) { box.checked = true; return; }
-        tell(''); api('/admin/api/modules', {module: m.id, on: box.checked}).then(modules, function (e) { fail(e); load(); });
-      };
-      tr.insertCell().appendChild(box);
-      var name = tr.insertCell(); name.textContent = m.title; name.title = m.summary;
-      tr.insertCell().textContent = m.core ? 'core' : m.kind;
-    });
-    $('o-restart').hidden = !said.restart_for.length;
-    $('o-restart').textContent = 'Restart the arcade for these to start or stop their work: ' + said.restart_for.join(', ') + '.';
-  }
-  function load() { return api('/admin/api/modules').then(modules, fail); }
-  $('o-edition').onchange = function () {
-    var to = $('o-edition').value;
-    if (!window.confirm(to === 'lite' ? 'Switch to ARCADE Lite? Every module but the core switches off; nothing is deleted.'
-                                      : 'Switch to the full edition? Every module switches on.')) { load(); return; }
-    tell(''); api('/admin/api/modules', {edition: to}).then(function () { location.reload(); }, fail);
-  };
-
   $('o-pw').onsubmit = function (e) {
     e.preventDefault(); tell('');
     if ($('o-pw1').value !== $('o-pw2').value) { tell('The two passwords are not the same.', 'bad'); return; }
@@ -131,9 +98,10 @@
   document.querySelectorAll('[data-options]').forEach(function (b) {
     b.addEventListener('click', function () {
       $('options').classList.add('open'); tab(b.dataset.options); tell('');
-      general().catch(fail); load();
+      general().catch(fail); $('o-mui').refresh && $('o-mui').refresh();
     });
   });
 })();
 </script>
+<script src="/admin/modules.js"></script>
 {% endif %}

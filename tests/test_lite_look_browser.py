@@ -62,6 +62,15 @@ def test_admin_wears_the_lite_look_in_lite_and_its_own_in_full(browser, served):
         _press(browser, '.admintabs button[data-tab="coins"]')
         WebDriverWait(browser, 30).until(lambda d: d.find_element(By.ID, "chainrows").is_displayed())
         _shot(browser, "admin-coins")
+        _press(browser, '.admintabs button[data-tab="modules"]')
+        WebDriverWait(browser, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, '#modules [data-cat="app"]'))
+        cats = [b.text.split()[0] for b in browser.find_elements(By.CSS_SELECTOR, "#modules .mui-tabs button")]
+        assert cats == ["All", "Core", "Apps", "Node", "Themes"], "Admin's Edition & modules, by category"
+        _press(browser, '#modules [data-cat="app"]')
+        browser.execute_script("const w = document.getElementById('setupwizard'); if (w) w.remove();")
+        WebDriverWait(browser, 30).until(
+            lambda d: "Needs: Ord indexes and Explore" in d.find_element(By.CSS_SELECTOR, "#modules tbody").text)
+        _shot(browser, "admin-modules")
         assert browser.find_element(By.LINK_TEXT, "Send").get_attribute("href").endswith("/#send")
         browser.get(base + "/#send")                   # (a test node's setup card covers the bar)
         assert browser.find_element(By.ID, "w-form").is_displayed(), "the bar's Send opens the window's own tab"

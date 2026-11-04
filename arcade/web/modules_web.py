@@ -5,10 +5,11 @@ on. Background jobs are started once, so they follow a switch at the next restar
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import Body, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from .. import modules as modulelib
 
@@ -38,6 +39,12 @@ def register(app, state, admin_check) -> None:
         moved = started ^ modulelib.enabled(settings)
         out["restart_for"] = [m["title"] for m in out["modules"] if m["id"] in moved and modulelib.MODULES[m["id"]].jobs]
         return JSONResponse(out, headers=NO_STORE)
+
+    @app.get("/admin/modules.js")
+    def admin_modules_js():
+        """The one drawing of Edition & modules, for Admin's tab and the Lite window's Options (templates/modules_js.js)."""
+        return Response((Path(__file__).parent / "templates" / "modules_js.js").read_text(),
+                        media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
     @app.get("/admin/api/modules")
     def admin_modules(request: Request):

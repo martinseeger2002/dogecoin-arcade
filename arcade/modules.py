@@ -23,6 +23,12 @@ SWITCH_SETTING = "modules"
 #: The value a fresh install records when nobody chose yet (installer/install.py, arcade-web on a new home).
 ASK = "ask"
 KINDS = ("core", "app", "theme", "node")
+#: How Edition & modules names each kind, in this order: its tab, and a line under it. A kind not named here (one a
+#: module brought from the mesh, say) gets a tab of its own all the same, after these (describe).
+KIND_TITLES = {"core": ("Core", "The crypto cores: always on, in every edition."),
+               "app": ("Apps", "What people use: messages, the feed, the market, games and the rest."),
+               "node": ("Node services", "What this arcade runs for the mesh and its own indexes."),
+               "theme": ("Themes", "How the arcade looks and opens.")}
 
 
 @dataclass(frozen=True)
@@ -58,7 +64,8 @@ _MODULES = (
                    "/manifest.webmanifest", "/sw.js", "/vendor", "/coins.js", "/coin-{name}.png", "/qrscan.js",
                    "/bip39-english.txt", "/admin/terms", "/admin/login", "/admin/logout", "/admin/api/state",
                    "/admin/api/release", "/admin/api/settings", "/admin/api/cores", "/admin/api/restart",
-                   "/admin/api/setup", "/admin/api/welcome", "/admin/api/litecoin", "/admin/api/modules"),
+                   "/admin/api/setup", "/admin/api/welcome", "/admin/api/litecoin", "/admin/api/modules",
+                   "/admin/modules.js"),
            jobs=("pack-source", "core-installs", "auto-update", "repair", "chain-scan", "token-indexes", "releases",
                  "faucets")),
     Module("wallet", "core", "Wallet", "Every chain's wallet for the operator and for users: Send, Receive, "
@@ -263,7 +270,11 @@ def switch(settings: dict, mid: str, on: bool) -> dict:
 def describe(settings: dict) -> dict:
     """The edition and every module, as Admin and the Lite window show them."""
     on = enabled(settings)
+    kinds = [k for k in KIND_TITLES if any(m.kind == k for m in _MODULES)]
+    kinds += sorted({m.kind for m in _MODULES} - set(kinds))
     return {"edition": edition(settings), "asking": asking(settings),
+            "categories": [{"id": k, "title": KIND_TITLES.get(k, (k.replace("_", " ").capitalize(), ""))[0],
+                            "summary": KIND_TITLES.get(k, ("", ""))[1]} for k in kinds],
             "modules": [{"id": m.id, "kind": m.kind, "title": m.title, "summary": m.summary, "core": m.core,
                          "on": m.id in on, "lite": m.lite or m.core, "needs": list(m.needs),
                          "needed_by": needed_by(m.id), "caution": m.caution} for m in _MODULES]}
