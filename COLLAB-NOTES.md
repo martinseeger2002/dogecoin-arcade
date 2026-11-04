@@ -88,6 +88,11 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 A reload no longer hangs on a forked block-scan pool holding web.lock (Claude; app.dogecoinarcade.com down 16:21-16:32)
+
+At a reload the new worker started, said "serving", and waited forever in `flock(web.lock)` (supervisor.py's run lock). Its holders were two children of the old worker: `blkscan.scan_parallel` (an import's shared walk reading the node's block files) made a `ProcessPoolExecutor` with Linux's default *fork*, its children inherited every file the worker had open, web.lock among them, and when the worker was reloaded mid-walk they stayed, waiting on their pipe, holding the lock. Stopping them let the new worker start. The pool is now made from a *spawn* context, as `doginal_index`'s and `blockminer`'s already were. `tests/test_no_forked_pools.py` fails on any process pool in `arcade/` that is not spawned. **For your side:** the same can happen on any arcade whose import walks read block files (`coinwalk` with `blocks_dir` readable), at a reload during a walk.
+
+
 ### 2026-11-04 Game rooms attach again on public arcades: the hub's attach and detach are through the door (Claude; found by the Ashvale golf sim session: "net.join('bank') never comes back")
 
 85d41cd4 (2026-11-03, one realtime stream for all of a page's rooms) added `POST /realtime/hub/attach` and `/realtime/hub/detach` but not to `door.PUBLIC_POST`, so on a public host (app.dogecoinarcade.com) every attach was the door's "Not here" 404: a room joined, never streamed, and a game's `join()` hung until its own timeout (ASHVALE: no multiplayer, no Bank). Both are in `PUBLIC_POST` now: attach needs the room's own token, detach drops only that token's room from its stream. `tests/test_public.py::test_every_realtime_post_is_open_on_a_public_host` fails if any realtime POST is ever left out again. **For your side:** if your public arcade is on a release since 2026-11-03, its game rooms have the same problem until it updates.

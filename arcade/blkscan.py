@@ -273,6 +273,10 @@ def scan_parallel(files: BlockFiles, cache_path: str, top: int, bottom: int, add
     addresses = list(addresses)
     step = (top - bottom + 1) / workers
     parts = [(top - round(i * step), top - round((i + 1) * step) + 1) for i in range(workers)]
-    with cf.ProcessPoolExecutor(workers) as ex:
+    # Spawned, never forked (2026-11-04, app.dogecoinarcade.com down 16:21-16:32): a forked child inherits every file
+    # the worker has open -- web.lock among them -- and two left waiting when the worker was reloaded mid-walk held the
+    # run lock, so the next worker never started. doginal_index's pool and blockminer's are spawned already.
+    import multiprocessing
+    with cf.ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn")) as ex:
         got = ex.map(_scan_part, [(files.dir, cache_path, files.auxpow, t, b, addresses, params) for t, b in parts])
         return [m for part in got for m in part]
