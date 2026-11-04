@@ -41,6 +41,7 @@ ASKED_FRESH = 15 * 60
 ASK_EVERY = 10 * 60
 TICK = 1.0
 INFO_EVERY = 60.0
+CHOOSE_EVERY = 60.0
 #: Disk kept free besides the copy.
 SPARE_BYTES = 2 * 10 ** 9
 
@@ -78,6 +79,7 @@ class CoreBoot:
         self._fetch: dict[str, cc.Fetch] = {}
         self._flight: dict[str, dict[int, float]] = {}   # net -> {piece number: asked at}
         self._asked_at: dict[str, float] = {}
+        self._chose_at: dict[str, float] = {}
         self._busy: set[str] = set()                     # nets with a thread working (making, installing)
         self._info_at = 0.0
         self._stop = threading.Event()
@@ -240,7 +242,8 @@ class CoreBoot:
         if not info or self._settings().get("core_copy_auto", True) is False:
             return
         if info["headers"] - info["blocks"] < cc.WORTH_BLOCKS and info["headers"] > 0:
-            self.jobs.pop(net, None) if (self.jobs.get(net) or {}).get("state") == "waiting" else None
+            if (self.jobs.get(net) or {}).get("state") == "waiting":
+                self.jobs.pop(net, None)                   # caught up by itself
             return
         offers = self._offers(net, now)
         ready = sorted(((p, s) for p, s in offers if isinstance(s.get("sn"), dict)
@@ -248,7 +251,9 @@ class CoreBoot:
                        key=lambda x: -int(x[1]["sn"]["h"]))
         if ready:
             peer, said = ready[0]
-            self._spawn(net, self._choose, net, peer, said["sn"])
+            if now - self._chose_at.get(net, -1e9) >= CHOOSE_EVERY:     # an offer waiting on headers: once a minute
+                self._chose_at[net] = now
+                self._spawn(net, self._choose, net, peer, said["sn"])
             return
         makers = sorted(((p, s) for p, s in offers if s.get("can") and int(s.get("h", 0)) - info["blocks"]
                          >= cc.WORTH_BLOCKS), key=lambda x: -int(x[1].get("h", 0)))
