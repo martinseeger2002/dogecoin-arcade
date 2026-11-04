@@ -72,8 +72,9 @@ IN_FLIGHT = 4
 PIECE_SECONDS = 120
 #: A fetch that got nothing for this long lets that maker go.
 FETCH_STALL = 900
-#: The arguments a copied Core is checked under: no peers, so nothing moves its tip.
-ALONE = ("-maxconnections=0", "-listen=0", "-dnsseed=0")
+#: The arguments a copied Core is checked under: no peers, so nothing moves its tip; no wallet, so the check does not
+#: wait on the wallet catching up (it does that once at the next ordinary start: it is the operator's, never touched).
+ALONE = ("-maxconnections=0", "-listen=0", "-dnsseed=0", "-disablewallet")
 _NUM = re.compile(r"^(blk|rev)(\d+)\.dat$")
 
 
@@ -502,7 +503,7 @@ class Fetch:
             finally:
                 os.close(fd)
             self._done.add(n)
-        self.save()
+        self.save(force=len(self._done) == len(self._pieces))
         return True
 
     def progress(self) -> tuple[int, int]:

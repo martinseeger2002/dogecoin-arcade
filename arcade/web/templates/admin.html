@@ -2281,7 +2281,21 @@ section.panel h2{margin-top:0}
       return;
     }
     if (j && j.state === 'failed') td.appendChild(text('div', 'install failed: ' + j.step, 'idx-bad'));
-    if (j && j.state === 'done') td.appendChild(text('div', j.step));
+    if (j && j.state === 'done' && !x.copy) td.appendChild(text('div', j.step));
+    // The chain's data copied from a linked arcade, by itself (arcade/core_copy.py, 2026-11-04: "The bootstrap
+    // should work automatically from the coins and chains tab just like the installer does now").
+    var c = x.copy;
+    if (c) {
+      if (c.state === 'working') {
+        td.appendChild(text('div', 'Chain data: ' + c.step + (c.total ? ' · ' + gb(c.done || 0) + ' of ' + gb(c.total)
+                                                         + ' (' + Math.floor(100 * (c.done || 0) / c.total) + '%)' : '')));
+        setTimeout(loadNodes, 3000);
+      } else if (c.state === 'failed') td.appendChild(text('div', 'Chain data: ' + c.step, 'idx-bad'));
+      else if (c.step) td.appendChild(text('div', 'Chain data: ' + c.step));
+      if (c.making) td.appendChild(text('div', 'Making a copy of this chain\'s data for a linked arcade: ' + c.making));
+      if (c.holds) td.appendChild(text('div', 'Holds a copy of this chain\'s data for linked arcades (block '
+                                       + c.holds.h.toLocaleString() + ', ' + gb(c.holds.bytes) + ')'));
+    }
     if (td.dataset.now === 'here' || x.installed) { if (x.installed) td.appendChild(text('div', 'installed by this arcade')); return; }
     if (!x.available) { td.appendChild(text('div', x.why || 'cannot be installed here')); return; }
     var free = NODES.free || 0, need = st ? st.bytes : 0;
@@ -2291,8 +2305,9 @@ section.panel h2{margin-top:0}
     b.onclick = function () {
       if (!confirm('Install ' + td.dataset.net.toUpperCase() + ' Core ' + x.version + ' on this machine?\n\nDownload: ' + gb(x.download)
                    + '\nStorage once synced: ' + (need ? 'about ' + gb(need) : 'not known yet') + '\nFree on this disk: ' + gb(free)
-                   + '\n\nIt downloads the official release, checks its SHA-256, starts the node and syncs the whole chain '
-                   + '(hours to days). The arcade reloads to read it.')) return;
+                   + '\n\nIt downloads the official release, checks its SHA-256 and starts the node. If a linked arcade has '
+                   + 'this chain, its data is copied from there and checked (that arcade\'s coin set is trusted); otherwise '
+                   + 'the node syncs the whole chain itself (hours to days). The arcade reloads to read it.')) return;
       b.disabled = true;
       call('/admin/api/cores/install', {net: td.dataset.net}).then(function () { loadNodes(); })
         .catch(function (e) { b.disabled = false; say(e.message, 'err'); });

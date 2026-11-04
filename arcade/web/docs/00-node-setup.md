@@ -506,6 +506,19 @@ Cores*). **Admin → Coins & chains → Install a node** installs an add-on chai
 click. The Bellscoin, Luckycoin, Kotia, Wojakcoin, DigiByte and Flopcoin pages give each node's version and
 config.
 
+**The chain's data comes from a linked arcade.** A node the arcade installed that is far behind (20,000
+blocks or more) does not sync the whole chain by itself if a linked arcade has it: the linked arcade with
+the most blocks, on the same Core version, makes a copy of its chain data (its node is stopped for a few
+seconds), and the copy comes over the mesh, a piece at a time, checked as it comes. Then this node is stopped,
+the copy swapped in, checked with no peers (its newest block is on this node's own header chain, its coin
+set's summary is the copy's, the last 288 blocks verify), and the node started again; it syncs the rest
+itself. Anything off and the node's own data goes back. The Coins & chains tab shows how far it is and,
+afterwards, which arcade it came from: the copy's coin set is that arcade's word (see `exchange-safety.md`).
+Only `blocks/`, `chainstate/` and `indexes/` are copied, never a wallet, config or peers file; a node with a
+wallet catches its wallet up once at the next start. An arcade makes copies for others only of a Core it
+installed itself, runs here and shares (**Admin → Chains**, the share box), and deletes a copy nobody
+fetched for two hours. The setting `core_copy_auto` set to false turns the fetching off.
+
 ### A node you already run
 
 If a node's config file already exists, the installer adds the settings the

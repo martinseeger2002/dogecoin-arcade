@@ -8,7 +8,8 @@ none, and Luckycoin none for x86_64: those are pinned as downloaded that day; Fl
 publishes none either, pinned as downloaded 2026-11-03), unpacks it under
 ~/.dogecoinarcade/cores/<release>/, writes the chain's config where the arcade finds a Core by itself
 (~/<node_dir>/<node_conf>: server, txindex, no pruning, RPC on this machine only with its own password), starts the
-daemon, and reloads the arcade (the supervisor's zero-downtime HUP) so the chain is read from its new Core. No
+daemon, and reloads the arcade (the supervisor's zero-downtime HUP) so the chain is read from its new Core; then the
+chain's data is copied from a linked arcade that has it, by itself, instead of synced (arcade/core_copy.py). No
 sudo, no system service: an arcade that installed a Core starts it again whenever the arcade starts
 (`start_installed`), and the setting `core_installed:<net>` says where it is.
 
@@ -222,7 +223,8 @@ class Installer:
             self._say(net, step="starting the node")
             start_one(self.state.setting(f"core_installed:{net}"))
             self.state.set_setting(f"core:{net}", "here")
-            self._say(net, state="done", step="installed; the arcade reloads to read it")
+            self._say(net, state="done", step="installed; the arcade reloads to read it, then copies the chain's data "
+                                              "from a linked arcade if one has it (else the node syncs on its own)")
             reload_arcade(home)
         except Exception as exc:                               # noqa: BLE001 -- said on the page
             log.warning("core install %s failed", net, exc_info=True)
@@ -346,11 +348,17 @@ def free_bytes(home: Path) -> int:
 def summary(state, nets: list, params_of) -> dict:
     """For the Coins & chains tab: per chain {offer, storage estimate, installed, job}, and this disk's free space."""
     jobs = installer(state).status()
+    boot = getattr(getattr(state, "mesh", None), "coreboot", None)
+    try:
+        copies = boot.status() if boot is not None else {}
+    except Exception:                                          # noqa: BLE001
+        copies = {}
     rows = {}
     for net in nets:
         est = state.disk_estimate(net) if hasattr(state, "disk_estimate") else {}
         rows[net] = {**offer(net), "storage": est.get("core"), "ord": est.get("ord"),
-                     "installed": bool(state.setting(f"core_installed:{net}")), "job": jobs.get(net)}
+                     "installed": bool(state.setting(f"core_installed:{net}")), "job": jobs.get(net),
+                     "copy": copies.get(net)}
     return {"free": free_bytes(Path(state.home)), "rows": rows}
 
 

@@ -354,7 +354,8 @@ class CoreBoot:
         with cc.held(f.root.with_name(f.root.name + ".lock")) as mine:
             if not mine:
                 return
-            f.load()
+            if not f.active:
+                f.load()                                   # after a restart: from its state.json
             if not f.active:
                 return
             f.save(force=True)

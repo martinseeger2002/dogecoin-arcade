@@ -226,6 +226,7 @@ class MeshService:
         self.llmshare = None                    # llmshare.LlmShare: the LLM service with other arcades
         self.indexcheck = None                  # indexcheck.IndexCheck: indexes compared with other arcades'
         self.ledgershare = None                 # ledgershare.LedgerShare: index copies for arcades far behind
+        self.coreboot = None                    # coreboot.CoreBoot: Core chain data copied for arcades far behind
         self.coverage = None                    # coverage.Coverage: every resource needed, from linked holders
         self.stun = None                        # stun.StunShare: STUN addresses for the fast lane, this node's and others'
         self.punch = None                       # punch.PunchShare: the direct-UDP probe with a linked node
@@ -887,6 +888,12 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
         from .ledgershare import LedgerShare
         service.ledgershare = LedgerShare(lambda: {c.network: state.ledger_snapshots(c) for c in state.token_chains})
         service.node.add_extension(service.ledgershare)
+    # A chain's Core data copied for an arcade whose installed Core is far behind, from a linked arcade's, automatically
+    # (coreboot.py, arcade/core_copy.py, 2026-11-04).
+    if hasattr(state, "settings") and hasattr(state, "set_setting"):
+        from .coreboot import CoreBoot
+        service.coreboot = CoreBoot(state)
+        service.node.add_extension(service.coreboot)
     # Fruit names for new arcades' operators (fruitshare.py, arcade/fruit.py, 2026-10-20).
     if hasattr(state, "fruit_stand"):
         from .fruitshare import FruitShare

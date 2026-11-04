@@ -206,6 +206,16 @@ that Kotia's own Core signed.
 * **Bids** are ALL|ANYONECANPAY. Misusing a stored bid needs the node's database *and* the seller, and
   even then the ledger refuses the transfer. The buyer would pay for nothing, which is not a theft by a
   third party.
+* **Core data copied from a linked arcade** (2026-11-04, "Any linked arcade"; `arcade/core_copy.py`,
+  `arcade/mesh/coreboot.py`). A Core the arcade installed that is far behind takes a copy of a linked arcade's
+  chain data instead of syncing. Balances, coins and every lock's funding are read from that Core, so this is
+  trust in the maker. What is checked: each piece against the manifest; the copy's tip on this node's *own*
+  header chain at its height (headers whose work it checked: the copy is of the real chain); after the swap,
+  with no peers, the tip, the coin set's summary (`gettxoutsetinfo`) and `verifychain` over the last 288 blocks.
+  What is not: that the maker's coin set is the one replaying every block makes, which needs
+  `-reindex-chainstate`, the very work the copy saves. A maker that lied about it would show coins that do not
+  exist, or hide some, until the node is reindexed. The maker is named on the Coins & chains tab, a refused
+  copy's maker is never tried again, and no wallet file is ever copied. Tests: `tests/test_core_copy.py`.
 * **The DigiByte branch** (team/digibyte): its "D" addresses are Dogecoin's byte. Coin choice must name
   its chain to the inscription guard (`funding.guard_for(address, network)`), never pick the guard by
   address alone.
