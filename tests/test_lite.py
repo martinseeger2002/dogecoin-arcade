@@ -161,6 +161,26 @@ def test_join_is_a_panel_of_the_window_and_lite_serves_it_at_join(app, app_state
         app_state.set_setting("edition", None)
 
 
+def test_lite_serves_join_keys_in_the_window_and_says_when_a_claim_renames_the_arcade(app, app_state, monkeypatch):
+    """2026-11-04: "This node is mine" on the full /join/keys took a Lite test node's @name. Lite draws that page's
+    doors in its own Join panel, and says so before an account made the operator takes the arcade's name."""
+    assert 'id="password-save"' in app.get("/join/keys", headers=LOCAL).text, "the full edition keeps its own page"
+    app_state.set_setting("edition", "lite")
+    try:
+        page = app.get("/join/keys", headers={"host": "node.localhost:8430"}).text
+        join = _panel(page, "join")
+        for door in ("j-make", "j-in", "j-words-in", "j-ext", "j-op-in", "j-op-set"):
+            assert f'id="{door}"' in join, door
+        assert 'id="password-save"' not in page and "'/join/keys': 'join'" in page
+    finally:
+        app_state.set_setting("edition", None)
+    monkeypatch.setattr(type(app_state), "operator_tag", lambda self: "pumpkin")
+    assert "and its name, @pumpkin" in _panel(app.get("/lite", headers=OUTSIDE).text, "join")
+    assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
+    claim = _panel(app.get("/lite", headers=OUTSIDE).text, "join")
+    assert 'id="j-claim"' in claim and "This arcade answers to @pumpkin now" in claim and 'id="j-op-set"' not in claim
+
+
 def test_an_accounts_backup_is_a_panel_of_the_window(app, app_state):
     assert 'id="k-show"' not in app.get("/lite", headers=LOCAL).text, "the node's own backup is its Core wallets"
     assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200

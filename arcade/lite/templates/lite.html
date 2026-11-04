@@ -275,7 +275,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     a.onclick = function (e) { e.preventDefault(); document.querySelector('.toolbar [data-tab="' + a.dataset.open + '"]').click(); };
   });
   // A page opened at /join or /me/backup, or at /#<tab> from the bar every other page wears (base.html)
-  var opened = {'/join': 'join', '/me/backup': 'backup'}[location.pathname] || location.hash.slice(1);
+  var opened = {'/join': 'join', '/join/keys': 'join', '/me/backup': 'backup'}[location.pathname] || location.hash.slice(1);
   if (opened && document.querySelector('main [data-panel="' + opened + '"]')) panel(opened);
 
   // menus: click to open, click elsewhere to close

@@ -11787,8 +11787,12 @@ def create_app(state: AppState) -> FastAPI:
     def _join_facts(request: Request) -> dict[str, Any]:
         """What ARCADE Lite's Join panel says, as the page below does."""
         register = state.accounts()
+        try:
+            arcade = state.operator_tag() or ""
+        except Exception:                                  # noqa: BLE001 -- said without a name
+            arcade = ""
         return {"seats": register.seats, "free": register.free(), "fruit": _fruit_here(request),
-                "secure": secure_context(request), "why_not": WHY_NOT_SECURE}
+                "secure": secure_context(request), "why_not": WHY_NOT_SECURE, "arcade": arcade}
 
     @app.get("/join", response_class=HTMLResponse)
     def join_page(request: Request):
@@ -11808,6 +11812,8 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/join/keys", response_class=HTMLResponse)
     def join_with_keys(request: Request):
+        if modulelib.edition(state.settings()) == "lite":
+            return _lite_home(request)
         register = state.accounts()
         return render(request, "join.html",
                       seats=register.seats,

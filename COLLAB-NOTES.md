@@ -88,6 +88,19 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite draws /join/keys in its window
+`/join/keys` was the last full page a Lite visitor met, and its "This node is mine" is how the test node lost its
+@name (the entry below). In Lite it now opens the window's Join panel, which gains that page's doors:
+- the twelve words, behind "I have no backup file, and I typed this address myself";
+- the Arcade Wallet, when the extension is in the browser;
+- the operator's username and password: sign in (`/auth/password`), and "Make this node yours"
+  (`/auth/set-password`) at the machine while nobody has;
+- signed in at the machine, "Make this account the operator" (`/auth/operator`, with the handover password).
+  When the arcade has an @name it says first that the account's name becomes the arcade's.
+- Same endpoints and `signin.js` as the full page; the full edition's page is unchanged. `_join_facts` gains `arcade`.
+- Tests: test_lite (the doors, the warning) and test_lite_pages_browser (the password set, then an account in by its
+  words, in Firefox).
+
 ### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-skeleton` · A username-and-password operator keeps the node's @name
 Found on the Lite test node: it had claimed @pumpkin from the setup wizard, then "This node is mine" on `/join/keys`
 set a username and password, and the arcade had no name any more.

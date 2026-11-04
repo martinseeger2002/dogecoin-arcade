@@ -1,11 +1,25 @@
 {#- Join and sign in, drawn in the window like the Overview. ARCADE Lite serves it at /join. The account is the full
     arcade's own, made by its own code (wallet.js): the words are made in this browser, the password never leaves it,
-    and the node is handed a name, a key and a sealed wallet it cannot open. -#}
+    and the node is handed a name, a key and a sealed wallet it cannot open. ARCADE Lite serves /join/keys here too:
+    the twelve words, the Arcade Wallet, and the operator's own doors (/auth/door, /auth/who, the full join.html's). -#}
 <section data-panel="join" hidden>
   {% if audience != 'anyone' and account %}
   <fieldset><legend>Signed in</legend>
     <p style="margin:0 0 8px">You are signed in{{ " as @" ~ me if me }}.</p>
     <button type="button" id="j-out">Sign out</button>
+  </fieldset>
+  <fieldset id="j-claim" hidden><legend>Make this account the operator</legend>
+    <p class="muted" style="margin:0 0 8px">Only from this machine. This account's words then open the node's wallet
+      and Admin from anywhere; everybody else who signs in still gets the public arcade.</p>
+    {% if join.arcade %}<p class="bad" style="margin:0 0 8px">This arcade answers to @{{ join.arcade }} now. Made the
+      operator, this account's name{{ " (@" ~ me ~ ")" if me }} becomes the arcade's instead.</p>{% endif %}
+    <form id="j-claim-form" class="grid">
+      <label for="j-hand-pw" class="j-hand" hidden>Password</label><input id="j-hand-pw" class="j-hand" hidden
+        type="password" autocomplete="current-password" placeholder="this node's password">
+      <span></span><span><button type="submit">Make this account the operator</button></span>
+    </form>
+    <p class="muted j-hand" hidden>This node's operator is its username and password. That password says yes, and the
+      same username and password open this account from then on.</p>
   </fieldset>
   {% elif not join.secure %}
   <fieldset><legend>Sign in or make an account</legend><p class="bad" style="margin:0">{{ join.why_not }}</p>
@@ -45,12 +59,52 @@
       </form>
       <p class="muted">Played on another arcade? The same name and password bring that account here.</p>
     </fieldset>
+    <fieldset id="j-ext" hidden><legend>Arcade Wallet</legend>
+      <p class="muted" style="margin:0 0 8px">Your Arcade Wallet is in this browser. Your words stay in it: it asks
+        you, in its own window, before it signs you in here.</p>
+      <button type="button" id="j-ext-go">Sign in with Arcade Wallet</button>
+    </fieldset>
     <fieldset><legend>Open a backup file</legend>
       <form id="j-file" class="grid">
         <label for="j-file-in">File</label><input id="j-file-in" type="file" accept=".json,application/json" required>
         <label for="j-file-pw">Password</label><input id="j-file-pw" type="password" autocomplete="current-password">
         <span></span><span><button type="submit">Open</button></span>
       </form>
+    </fieldset>
+    <fieldset><legend>Lost the backup file</legend>
+      <p class="muted" style="margin:0 0 8px">The last way in: your twelve words, checked in this browser and never
+        sent. Anything else that asks for them is stealing them. Type them only at an address you typed yourself.</p>
+      <label><input type="checkbox" id="j-lost"> I have no backup file, and I typed this address myself</label>
+      <form id="j-words-in" class="grid" style="margin-top:8px" hidden>
+        <label for="j-phrase">Words</label><textarea id="j-phrase" rows="2" autocomplete="off" autocapitalize="off"
+          spellcheck="false" required></textarea>
+        <span></span><span><button type="submit">Sign in</button></span>
+      </form>
+    </fieldset>
+  </div></div>
+  {% endif %}
+  {% if not (audience != 'anyone' and account) %}
+  <div class="cols"><div>
+    <fieldset id="j-op-in" hidden><legend>The operator</legend>
+      <form id="j-op-form" class="grid">
+        <label for="j-op-name">Username</label><input id="j-op-name" autocomplete="username" required>
+        <label for="j-op-pw">Password</label><input id="j-op-pw" type="password" autocomplete="current-password"
+          required>
+        <span></span><span><button type="submit">Sign in</button></span>
+      </form>
+      <p class="muted">Whoever runs this node.</p>
+    </fieldset>
+  </div><div>
+    <fieldset id="j-op-set" hidden><legend>Make this node yours</legend>
+      <form id="j-set-form" class="grid">
+        <label for="j-set-name">Username</label><input id="j-set-name" autocomplete="off" required>
+        <label for="j-set-pw">Password</label><input id="j-set-pw" type="password" autocomplete="new-password"
+          required placeholder="at least twelve characters">
+        <label for="j-set-pw2">Again</label><input id="j-set-pw2" type="password" autocomplete="new-password" required>
+        <span></span><span><button type="submit">This node is mine</button></span>
+      </form>
+      <p class="muted">Only from this machine, and only while nobody has. The username and password open Admin from
+        anywhere; the node keeps its own wallet{{ " and its name, @" ~ join.arcade if join.arcade }}.</p>
     </fieldset>
   </div></div>
   {% endif %}
@@ -112,4 +166,51 @@ on("j-file", "submit", (e) => { e.preventDefault(); pressed($("j-file").querySel
   location.href = NEXT;
 }); });
 on("j-out", "click", () => pressed($("j-out"), async () => { await wallet.signOut(CHAIN); location.href = "/"; }));
+
+// What /join/keys did in the full arcade, with its own code (signin.js) and the node's own doors.
+const signer = await import("/signin.js");
+async function post(path, body) {
+  const answer = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"},
+                                    body: JSON.stringify(body)});
+  const said = await answer.json().catch(() => ({}));
+  if (!answer.ok) throw new Error(said.detail || `the node said ${answer.status}`);
+  return said;
+}
+/** Signed in by the words: this tab keeps them open and the node learns the addresses (full join.html arrived()). */
+async function byWords(words) {
+  await signer.signIn(words, {join: true});
+  wallet.remember(signer.normalise(words));
+  try { await wallet.tellTheNode(await wallet.opened(CHAIN)); } catch (x) { /* told at the next sign-in */ }
+  location.href = NEXT;
+}
+on("j-lost", "change", () => { $("j-words-in").hidden = !$("j-lost").checked; });
+on("j-words-in", "submit", (e) => { e.preventDefault(); pressed($("j-words-in").querySelector("button"),
+                                                                () => byWords($("j-phrase").value)); });
+if ($("j-ext")) signer.extension().then((found) => { $("j-ext").hidden = !found; });
+on("j-ext-go", "click", () => pressed($("j-ext-go"), async () => {
+  await signer.signInWithExtension({join: true}); location.href = NEXT;
+}));
+on("j-op-form", "submit", (e) => { e.preventDefault(); pressed($("j-op-form").querySelector("button"), async () => {
+  await post("/auth/password", {username: $("j-op-name").value, password: $("j-op-pw").value});
+  try { wallet.noteShort($("j-op-pw").value, "operator"); } catch (x) { /* the floor is said by every page */ }
+  location.href = "/";
+}); });
+on("j-set-form", "submit", (e) => { e.preventDefault(); pressed($("j-set-form").querySelector("button"), async () => {
+  if ($("j-set-pw").value !== $("j-set-pw2").value) throw new Error("The two passwords are not the same.");
+  if (signer.tooShort($("j-set-pw").value)) throw new Error(signer.tooShort($("j-set-pw").value));
+  await post("/auth/set-password", {username: $("j-set-name").value, password: $("j-set-pw").value});
+  location.href = "/";
+}); });
+on("j-claim-form", "submit", (e) => { e.preventDefault(); pressed($("j-claim-form").querySelector("button"), async () => {
+  await post("/auth/operator", $("j-hand-pw").hidden ? {} : {password: $("j-hand-pw").value});
+  location.reload();
+}); });
+fetch("/auth/door", {cache: "no-store"}).then((r) => r.json()).then((door) => {
+  if ($("j-op-in")) $("j-op-in").hidden = !door.password;
+  if ($("j-op-set")) $("j-op-set").hidden = !door.settable;
+}).catch(() => {});
+if ($("j-claim")) fetch("/auth/who", {cache: "no-store"}).then((r) => r.json()).then((who) => {
+  $("j-claim").hidden = !(who.claimable || who.handover);
+  for (const box of document.querySelectorAll(".j-hand")) box.hidden = !who.handover;
+}).catch(() => {});
 </script>

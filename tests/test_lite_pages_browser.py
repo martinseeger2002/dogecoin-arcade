@@ -107,6 +107,41 @@ def reachable(funded):
     return browser, base, state, node, first
 
 
+def test_join_keys_makes_the_node_yours_and_signs_in_by_the_words(browser, lite):
+    """The full /join/keys's doors in Lite's Join panel: the operator's username and password set at the machine (the
+    node stays its own operator, so it keeps its name: state.operator_tag), then an account in by its twelve words."""
+    base, state, node = lite
+    browser.delete_all_cookies()
+    browser.get(f"{base}/join/keys")
+    browser.execute_script("sessionStorage.clear(); localStorage.clear();")
+    browser.get(f"{base}/join/keys")
+    _wait(browser).until(lambda d: d.find_element(By.ID, "j-op-set").is_displayed())
+    assert not browser.find_elements(By.ID, "password-save"), "the window's panel, not the full page"
+    browser.find_element(By.ID, "j-set-name").send_keys("pumpkin")
+    for box in ("j-set-pw", "j-set-pw2"):
+        browser.find_element(By.ID, box).send_keys("a long enough password")
+    browser.find_element(By.CSS_SELECTOR, '#j-set-form button[type="submit"]').click()
+    _wait(browser).until(lambda d: state.operator)
+    assert state.credentials().anybody() and not state.setting(f"address:{state.operator}")
+
+    browser.delete_all_cookies()
+    browser.get(f"{base}/join/keys")
+    _wait(browser).until(lambda d: d.find_element(By.ID, "j-op-in").is_displayed())
+    assert not browser.find_element(By.ID, "j-op-set").is_displayed(), "set once, from the machine"
+    words = browser.execute_async_script("""
+        const done = arguments[arguments.length - 1];
+        import("/signin.js").then((s) => s.generate()).then(done, (e) => done(String(e)));""")
+    assert len(words.split()) == 12, words
+    browser.find_element(By.ID, "j-lost").click()
+    browser.find_element(By.ID, "j-phrase").send_keys(words)
+    browser.find_element(By.CSS_SELECTOR, '#j-words-in button[type="submit"]').click()
+    _wait(browser).until(lambda d: not d.current_url.endswith("/join/keys"))
+    who = browser.execute_async_script("""
+        const done = arguments[0];
+        fetch("/auth/who").then((r) => r.json()).then(done, () => done({}));""")
+    assert who.get("pubkey") and who["pubkey"] != state.operator, who
+
+
 def test_a_name_is_added_to_the_book_and_paid_from_it(reachable):
     browser, base, state, node, them = reachable
     browser.get(f"{base}/lite")
