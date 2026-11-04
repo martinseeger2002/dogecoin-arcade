@@ -150,7 +150,7 @@ def test_the_address_book_is_lites_own_tab(app):
 def test_join_is_a_panel_of_the_window_and_lite_serves_it_at_join(app, app_state):
     visitor = _panel(app.get("/lite", headers=OUTSIDE).text, "join")
     assert "seats open" in visitor or "seats are taken" in visitor or "not served over https" in visitor
-    tunnel = _panel(app.get("/lite", headers={"host": "think.localhost:8430"}).text, "join")
+    tunnel = _panel(app.get("/lite", headers={"host": "node.localhost:8430"}).text, "join")
     assert 'id="j-make"' in tunnel and 'id="j-in"' in tunnel, "*.localhost is a secure context, as browsers say"
     assert 'id="j-make"' not in app.get("/join", headers=LOCAL).text, "the full edition keeps its own Join page"
     app_state.set_setting("edition", "lite")

@@ -110,9 +110,9 @@ with nav bars". Commits b79c539 and 8c16a69.
   - **It scales:** categories come from `modules.describe` (a module's kind, titled by `KIND_TITLES`), and a kind not
     named there, such as chain modules or modules from the mesh later, gets its own tab with nothing changed in the
     page.
-- **Found on think:** its updater installed the published main over the Lite build at 22:33, a minute after a save
+- **Found on the home test node:** its updater installed the published main over the Lite build at 22:33, a minute after a save
   on the full Admin page turned "Install updates by itself" on. Admin's switch save sends that box with the others.
-  Think is back on this branch with updates off. Until Lite is published, a Lite test node must keep updates off.
+  The test node is back on this branch with updates off. Until Lite is published, a Lite test node must keep updates off.
 - **Tests:**
   - tests/test_lite_look_browser.py, in real Firefox: the full edition's own Admin look; then in Lite, Admin, Wallet
     and Address book in the Lite look, the bar's tabs, Admin's Coins & chains still working, the modules' category
@@ -134,7 +134,7 @@ the full arcade's own code and routes.
   - make an account: `signUp`, the twelve words with "I have written them down", then `setUp` puts the name and key
     on the chain in the background;
   - sign in, open a backup file, and sign out.
-- **`secure_context` counts `*.localhost`**, as browsers do. Until now, an ssh tunnel opened as `think.localhost`
+- **`secure_context` counts `*.localhost`**, as browsers do. Until now, an ssh tunnel opened as `node.localhost`
   was told it could not make a key. **For you:** this changes app.py's check for every edition.
 - **Settings → Options** is a window like the Console, operator only, over Admin's own routes:
   - face, updates (on or off, live or test), seats;

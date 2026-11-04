@@ -657,7 +657,7 @@ def secure_context(request: Request) -> bool:
     if proto == "https":
         return True
     name = (request.headers.get("host", "").rsplit(":", 1)[0]).strip().lower()
-    # *.localhost too, as browsers treat it (an ssh tunnel opened as think.localhost:8430 is a secure context).
+    # *.localhost too, as browsers treat it (an ssh tunnel opened as node.localhost:8430 is a secure context).
     return name in LOOPBACK or name.startswith("127.") or name.endswith(".localhost")
 
 
