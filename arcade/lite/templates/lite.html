@@ -334,15 +334,36 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
               function (e) { say(String((e && e.message) || e), 'err'); });
       return;
     }
-    fetch('/lite/api/console', {method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json', 'X-Arcade-Lite': '1', 'X-Arcade-Admin': '1'},
-      body: JSON.stringify({line: text})})
+    // A node module's command is told the keys this browser's wallet holds (only their public halves), so a mint can
+    // name its owner; what it prepares to spend comes back as an offer this wallet reviews and signs (_wallet.html).
+    var keys = moduleWords().then(function (words) {
+      return words[word] && window.litePubkeys ? window.litePubkeys().catch(function () { return {}; }) : {};
+    });
+    keys.then(function (pubkeys) {
+      return fetch('/lite/api/console', {method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-Arcade-Lite': '1', 'X-Arcade-Admin': '1'},
+        body: JSON.stringify({line: text, pubkeys: pubkeys})});
+    })
       .then(function (r) { return r.json(); })
       .then(function (j) {
         if (!j.ok) { say(j.error || j.detail || 'refused', 'err'); return; }
+        var sign = j.result && j.result.sign;
+        if (sign) delete j.result.sign;
         say(typeof j.result === 'string' ? j.result : JSON.stringify(j.result, null, 2));
+        if (sign && window.liteSign) {
+          return window.liteSign(sign).then(function (r) { say(r); }, function (e) { say(String((e && e.message) || e), 'err'); });
+        }
       })
       .catch(function (e) { say('The node did not answer: ' + e.message, 'err'); });
+  }
+  var modWords = null;
+  function moduleWords() {
+    if (!modWords) {
+      modWords = fetch('/lite/api/commands', {credentials: 'same-origin'}).then(function (r) { return r.json(); })
+        .then(function (list) { var out = {}; list.forEach(function (c) { if (c.package) out[c.name] = 1; }); return out; })
+        .catch(function () { modWords = null; return {}; });
+    }
+    return modWords;
   }
   line.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && line.value.trim()) {

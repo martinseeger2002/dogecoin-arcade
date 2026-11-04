@@ -14,7 +14,7 @@ import inspect
 import json
 import shlex
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -35,7 +35,9 @@ class Caller:
 
     `address(chain)` and `name_of(address)` are the web app's own account lookups. `node` is the node's wallet as
     Admin drives it (the operator's only), and `local` says the operator is at the node's own machine. `reads` is what
-    anyone may ask of the node: what its public pages show."""
+    anyone may ask of the node: what its public pages show. `pubkeys` are the keys the caller's own wallet said it
+    holds, by chain ({network: hex}), checked against their addresses before a node module sees one, and `offer` makes
+    a node module's prepared transaction an offer the caller's wallet signs (arcade/modhost.py)."""
     state: Any
     audience: str = "anyone"
     account: str | None = None
@@ -44,6 +46,8 @@ class Caller:
     node: Any = None
     local: bool = False
     reads: Any = None
+    pubkeys: dict = field(default_factory=dict)
+    offer: Any = None
 
     def may(self, audience: str) -> bool:
         return AUDIENCES.index(self.audience) >= AUDIENCES.index(audience)
@@ -90,17 +94,24 @@ def _installed(caller: Caller, cmd: Command) -> bool:
     try:
         return cmd.module in modulelib.enabled(caller.state.settings())
     except Exception:                                      # noqa: BLE001 -- a state with no settings runs the core
-        return modulelib.MODULES[cmd.module].core
+        return getattr(modulelib.MODULES.get(cmd.module), "core", False)
+
+
+def _commands(caller: Caller) -> dict[str, Command]:
+    """Every command: the arcade's own, and those of the node modules installed from packages (`_module_commands`).
+    A module's command never takes the name of one of the arcade's."""
+    return {**_module_commands(caller), **COMMANDS}
 
 
 def run(caller: Caller, name: str, *args: Any) -> Any:
-    cmd = COMMANDS.get(name)
+    cmd = _commands(caller).get(name)
     if cmd is None or not caller.may(cmd.audience):
         # One answer for both, so a visitor cannot list the operator's commands by trying names.
         raise CommandError(f"no command {name!r}; `help` lists them")
     if not _installed(caller, cmd):
         hint = f"; `install {cmd.module}` switches it on" if caller.may("operator") else ""
-        raise CommandError(f"{name}: the {modulelib.MODULES[cmd.module].title} module is off on this arcade{hint}")
+        title = getattr(modulelib.MODULES.get(cmd.module), "title", cmd.module)
+        raise CommandError(f"{name}: the {title} module is off on this arcade{hint}")
     try:
         inspect.signature(cmd.fn).bind(caller, *args)
     except TypeError:
@@ -109,7 +120,7 @@ def run(caller: Caller, name: str, *args: Any) -> Any:
 
 
 def available(caller: Caller) -> list[Command]:
-    return sorted((c for c in COMMANDS.values() if caller.may(c.audience) and _installed(caller, c)),
+    return sorted((c for c in _commands(caller).values() if caller.may(c.audience) and _installed(caller, c)),
                   key=lambda c: (c.category, c.name))
 
 
@@ -117,7 +128,7 @@ def run_line(caller: Caller, line: str) -> Any:
     """One console line, `name arg ...` as in a Core's console. A whole number, true, false, null, a list or an
     object is taken as JSON; everything else, an amount such as 0.00000001 included, as the text typed. A command
     that takes the rest of the line (sendmessage's text) gets it as written, apostrophes and all."""
-    rest = _rest_of_line(line)
+    rest = _rest_of_line(line, _commands(caller))
     if rest is not None:
         name, fixed, tail = rest
         return run(caller, name, *(_value(w) for w in fixed), *([tail] if tail else []))
@@ -134,12 +145,12 @@ def run_line(caller: Caller, line: str) -> Any:
     return run(caller, words[0], *(_value(w) for w in words[1:]))
 
 
-def _rest_of_line(line: str) -> tuple[str, list[str], str] | None:
+def _rest_of_line(line: str, commands: dict[str, Command]) -> tuple[str, list[str], str] | None:
     """(name, its fixed arguments, the rest of the line) for a command whose last argument is the rest of the line;
     None for any other line. The rest is unquoted as a shell would (arcade-cli quotes what it sends) when it can be,
     and kept as typed when it cannot (an apostrophe)."""
     parts = line.split(None, 1)
-    cmd = COMMANDS.get(parts[0]) if parts else None
+    cmd = commands.get(parts[0]) if parts else None
     if cmd is None:
         return None
     params = list(inspect.signature(cmd.fn).parameters.values())[1:]
@@ -182,7 +193,7 @@ def help(caller, name: str = "") -> str:
     help            every command, by category
     help <command>  what it does and what it takes"""
     if name:
-        cmd = COMMANDS.get(name)
+        cmd = _commands(caller).get(name)
         if cmd is None or not caller.may(cmd.audience):
             raise CommandError(f"no command {name!r}")
         return f"{cmd.usage}\n\n{inspect.getdoc(cmd.fn) or ''}"
@@ -528,7 +539,11 @@ def _switched(caller, before: frozenset) -> str:
     on, off = sorted(after - before), sorted(before - after)
     said = [f"on: {', '.join(on)}"] if on else []
     said += [f"off: {', '.join(off)}"] if off else []
-    if any(modulelib.MODULES[m].jobs for m in on + off):
+    host = getattr(caller.state, "module_host", None)
+    for name in off:
+        if name not in modulelib.MODULES and host is not None:
+            host.stop(name)                                # a node module's process stops with its switch
+    if any(getattr(modulelib.MODULES.get(m), "jobs", ()) for m in on + off):
         said.append("pages follow now; background work follows at the next restart")
     return "; ".join(said) or "nothing changed"
 
@@ -673,13 +688,15 @@ def _theme(caller, said: str) -> str:
     return found[0]
 
 
-def _folder(caller, folder: str):
+def _folder(caller, folder: str, kind: str = "theme"):
     if not caller.local:
-        raise CommandError("a theme is read from a folder on the arcade's own machine: run this there")
+        raise CommandError(f"a {kind} is read from a folder on the arcade's own machine: run this there")
     try:
         manifest, files = packagelib.read(folder)
     except (packagelib.PackageError, OSError) as exc:
         raise CommandError(str(exc)) from None
+    if manifest["kind"] != kind:
+        raise CommandError(f"that folder is a {manifest['kind']}, not a {kind}")
     return manifest, files
 
 
@@ -801,3 +818,149 @@ def removetheme(caller, theme: str) -> str:
         caller.state.set_setting(packagelib.THEME, None)
     shutil.rmtree(packagelib.home_of(caller.state.home, pid), ignore_errors=True)
     return f"removed {theme}"
+
+
+# --- node modules ---------------------------------------------------------------------------------------------------
+#
+# A node module is a package too (arcade/packages.py): Python the arcade runs confined, in its own process, with no
+# keys (arcade/modhost.py). Installing one keeps it; `install <name>` switches it on, as any module. Its commands join
+# this list under its own name, for whoever its manifest names, and what spends comes back as an offer to sign.
+
+
+def _module_commands(caller: Caller) -> dict[str, Command]:
+    host = getattr(caller.state, "module_host", None)
+    try:
+        installed = host.installed(caller.state.settings()) if host is not None else {}
+    except Exception:                                      # noqa: BLE001 -- a module that cannot be read adds nothing
+        return {}
+    out = {}
+    for module, (_, manifest) in installed.items():
+        for name, said in (manifest.get("commands") or {}).items():
+            if name not in COMMANDS and name not in out:
+                out[name] = Command(name, module, said.get("audience", "anyone"), _forward(module, name, said), module)
+    return out
+
+
+def _forward(module: str, name: str, said: dict):
+    """A command of a node module, as one of ours: its usage and help from the manifest, its answer from the module."""
+    def fn(caller, *args):
+        return _ask_module(caller, module, {"call": "command", "name": name, "args": list(args)})
+    P = inspect.Parameter
+    fn.__signature__ = inspect.Signature([P("caller", P.POSITIONAL_ONLY)] + [
+        P(a.strip("[]"), P.POSITIONAL_OR_KEYWORD, default=None if a.startswith("[") else P.empty)
+        for a in said.get("args", [])])
+    fn.__doc__ = str(said.get("help") or "")
+    fn.__name__ = name
+    return fn
+
+
+def _keyhash(address: str, params) -> bytes:
+    from ..script import b58check_decode, segwit_decode
+    if params.bech32_hrp and address.lower().startswith(params.bech32_hrp + "1"):
+        return segwit_decode(params.bech32_hrp, address.lower())[1] or b""
+    return b58check_decode(address)[1]
+
+
+def module_caller(caller: Caller, chains) -> dict:
+    """Who is asking, as a node module is told: their audience and account, their address on each chain it names,
+    and the keys their wallet said it holds there, kept only where a key's hash is that address's."""
+    from ..script import hash160
+    out = {"audience": caller.audience, "account": caller.account, "address": {}, "pubkey": {}}
+    for chain in caller.state.all_chains if caller.account else ():
+        if chain.network not in chains:
+            continue
+        address = caller.address(chain)
+        out["address"][chain.network] = address
+        key = str(caller.pubkeys.get(chain.network) or "")
+        try:
+            if address and len(key) == 66 and hash160(bytes.fromhex(key)) == _keyhash(address, chain.params):
+                out["pubkey"][chain.network] = key
+        except ValueError:
+            pass
+    return out
+
+
+def _ask_module(caller: Caller, module: str, request: dict):
+    from .. import modhost
+    host = caller.state.module_host
+    settings = caller.state.settings()
+    chains = host.installed(settings)[module][1].get("needs", {}).get("chains", {})
+    who = module_caller(caller, chains)
+    try:
+        answer = host.ask(settings, module, request, who)
+        if not (isinstance(answer, dict) and isinstance(answer.get("prepared"), dict)):
+            return answer
+        prepared = answer["prepared"]
+        chain, unsigned = host.prepare(settings, module, prepared, who["address"].get(str(prepared.get("chain"))))
+    except modhost.ModuleFailed as exc:
+        raise CommandError(str(exc)) from None
+    said = {k: v for k, v in answer.items() if k != "prepared"}
+    if caller.offer is None:
+        return {**said, "prepared": {"chain": chain, **unsigned.as_json()},
+                "sign": None, "how": "sign it in your wallet: run this in the arcade's window"}
+    return {**said, "sign": caller.offer(chain, unsigned)}
+
+
+def _module_named(caller, said: str) -> tuple[str, dict]:
+    have = caller.state.setting(packagelib.SETTING) or {}
+    found = [pid for pid, row in have.items() if row.get("kind") == "module"
+             and (row.get("name") == said or (len(said) >= 8 and pid.startswith(said)))]
+    if len(found) != 1:
+        raise CommandError(f"no node module '{said}' is installed")
+    return found[0], have[found[0]]
+
+
+@command("modules", audience="operator")
+def checkmodule(caller, folder: str) -> dict:
+    """Read a node module's folder and say what is wrong with it, or what it would add. Nothing is kept or run.
+
+    checkmodule ~/my-module   at the arcade's own machine"""
+    manifest, files = _folder(caller, folder, "module")
+    return {"id": packagelib.package_id(files), "name": manifest["name"], "version": manifest["version"],
+            "commands": sorted(manifest.get("commands") or {}), "reads": manifest.get("needs", {}).get("chains", {}),
+            "max_fee": manifest.get("needs", {}).get("max_fee", packagelib.MOST_FEE), "files": sorted(files)}
+
+
+@command("modules", audience="operator")
+def installmodule(caller, folder: str) -> dict:
+    """Keep a node module from a folder on this machine, under its id. It runs only once `install <name>` switches it
+    on; a new version of one that is installed replaces it and is off until switched on again.
+
+    installmodule ~/my-module"""
+    manifest, files = _folder(caller, folder, "module")
+    name = manifest["name"]
+    if name in modulelib.MODULES or any(c in COMMANDS for c in manifest.get("commands") or {}):
+        raise CommandError(f"{name} takes a name the arcade's own modules or commands use")
+    why = getattr(caller.state, "module_host", None) and caller.state.module_host.why_not()
+    try:
+        pid, row = packagelib.install(caller.state.home, folder)
+    except (packagelib.PackageError, OSError) as exc:
+        raise CommandError(str(exc)) from None
+    have = dict(caller.state.setting(packagelib.SETTING) or {})
+    for old in [p for p, r in have.items() if r.get("kind") == "module" and r.get("name") == name and p != pid]:
+        have.pop(old)
+        shutil.rmtree(packagelib.home_of(caller.state.home, old), ignore_errors=True)
+        caller.state.module_host.stop(name)
+        switches = dict(caller.state.setting(modulelib.SWITCH_SETTING) or {})
+        switches.pop(name, None)
+        caller.state.set_setting(modulelib.SWITCH_SETTING, switches)
+    have[pid] = row
+    caller.state.set_setting(packagelib.SETTING, have)
+    return {"id": pid, "name": name, "version": row["version"],
+            "next": f"cannot run on this machine: {why}" if why else f"`install {name}` switches it on"}
+
+
+@command("modules", audience="operator")
+def removemodule(caller, module: str) -> str:
+    """Remove an installed node module and stop it. Its data folder stays, for when it is installed again."""
+    pid, row = _module_named(caller, module)
+    caller.state.module_host.stop(row["name"])
+    have = dict(caller.state.setting(packagelib.SETTING) or {})
+    have.pop(pid, None)
+    caller.state.set_setting(packagelib.SETTING, have)
+    switches = dict(caller.state.setting(modulelib.SWITCH_SETTING) or {})
+    switches.pop(row["name"], None)
+    caller.state.set_setting(modulelib.SWITCH_SETTING, switches)
+    shutil.rmtree(packagelib.home_of(caller.state.home, pid), ignore_errors=True)
+    _apply(caller)
+    return f"removed {row['name']}"

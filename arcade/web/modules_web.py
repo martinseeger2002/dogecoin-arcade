@@ -37,7 +37,7 @@ def register(app, state, admin_check) -> None:
         settings = state.settings()
         out = modulelib.describe(settings)
         moved = started ^ modulelib.enabled(settings)
-        out["restart_for"] = [m["title"] for m in out["modules"] if m["id"] in moved and modulelib.MODULES[m["id"]].jobs]
+        out["restart_for"] = [m["title"] for m in out["modules"] if m["id"] in moved and getattr(modulelib.MODULES.get(m["id"]), "jobs", ())]
         return JSONResponse(out, headers=NO_STORE)
 
     @app.get("/admin/modules.js")
