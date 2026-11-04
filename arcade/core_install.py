@@ -411,66 +411,124 @@ def events(state, since: float = 0.0) -> list[dict]:
     return [e for e in (state.setting("core_events", []) or []) if isinstance(e, dict) and e.get("at", 0) > since]
 
 
-STEP_LABELS = (("download", "Download"), ("check", "Check"), ("start", "Start node"), ("data", "Chain data"),
-               ("verify", "Check the copy"), ("ready", "Ready"))
+STEP_KEYS = ("download", "check", "start", "find", "headers", "data", "ready")
+#: How much of the whole install each step is, for the row's one percentage.
+STEP_WEIGHT = {"download": 5, "check": 2, "start": 3, "find": 5, "headers": 15, "data": 60, "ready": 10}
+
+
+def _frac(have, total) -> float | None:
+    try:
+        return max(0.0, min(1.0, float(have) / float(total))) if total else None
+    except (TypeError, ValueError):
+        return None
 
 
 def steps(job: dict | None, copy: dict | None, installed: bool) -> dict:
-    """The six steps of an install as the chain's row draws them: each done / now / todo / skip / failed, with a
-    line under it, plus whether anything is still going on (the page then keeps asking)."""
+    """An install's seven steps as the chain's row draws them (2026-11-04 chose the mockup where the line
+    through the steps is the progress bar): each done / now / todo / skip / failed, how far it is (`p`, 0..1, or
+    None), the numbers under it (`num`) and its time left (`eta`, seconds); the whole install's percentage; and
+    whether anything is still going on (the page then keeps asking)."""
     job, copy = job or {}, copy or {}
-    st = {k: "todo" for k, _ in STEP_LABELS}
-    sub = {k: "" for k, _ in STEP_LABELS}
-    label = dict(STEP_LABELS)
-    order = [k for k, _ in STEP_LABELS]
+    label = {"download": "Download", "check": "Check", "start": "Start node", "find": "Find a copy",
+             "headers": "Learn headers", "data": "Copy data", "ready": "Check & ready"}
+    st = {k: "todo" for k in STEP_KEYS}
+    num = {k: "" for k in STEP_KEYS}
+    p: dict = {k: None for k in STEP_KEYS}
+    eta: dict = {k: None for k in STEP_KEYS}
+
+    def gb(b) -> str:
+        b = float(b or 0)
+        return f"{b / 1e9:.1f} GB" if b >= 1e9 else f"{max(1, round(b / 1e6))} MB"
 
     def upto(key, state="now"):
-        for k in order[:order.index(key)]:
-            st[k] = "done"
+        for k in STEP_KEYS[:STEP_KEYS.index(key)]:
+            if st[k] != "skip":
+                st[k] = "done"
         st[key] = state
 
     node = copy.get("node") or {}
     blocks, headers = int(node.get("blocks", 0) or 0), int(node.get("headers", 0) or 0)
     synced = headers > 0 and headers - blocks <= 2
+    target = int(copy.get("target") or 0)
     phase = copy.get("phase") or ""
-    if job.get("state") in ("working", "failed") and not installed:
+    who = copy.get("from") or ""
+    if not installed:
+        if job.get("state") not in ("working", "failed"):
+            return {"steps": [], "active": False, "pct": 0}
         upto(job.get("phase") or "download", "failed" if job.get("state") == "failed" else "now")
-        if job.get("phase") == "download" and job.get("total"):
-            sub["download"] = f"{int(100 * job.get('done', 0) / job['total'])}%"
-    elif not installed:
-        return {"steps": [], "active": False}
+        if job.get("total"):
+            p["download"] = _frac(job.get("done", 0), job["total"])
+            num["download"] = f"{gb(job.get('done', 0))} / {gb(job['total'])}"
     else:
-        if phase in ("checking",):
-            upto("verify")
-            label["data"], sub["data"] = "Copy chain data", copy.get("from") or ""
-        elif phase == "done":
-            upto("ready", "done" if synced else "now")
-            label["data"], sub["data"] = "Copy chain data", copy.get("from") or ""
-            sub["verify"] = "checked here"
-            if not synced and headers:
-                sub["ready"] = f"syncing the last {headers - blocks:,} blocks"
-        elif phase in ("copying", "asked", "linking", "making", "looking") or (phase == "waiting" and copy.get("from")):
-            upto("data")
-            label["data"] = "Copy chain data"
-            sub["data"] = "from " + copy["from"] if copy.get("from") else "looking for one"
-        else:
-            # Synced on its own: no copy (none offered, the operator chose it, or not worth one).
-            st["verify"] = "skip"
-            sub["verify"] = "no copy"
-            label["data"] = "Sync chain"
-            if synced:
-                for k in order:
-                    st[k] = "done" if st[k] != "skip" else "skip"
-            else:
+        num["download"], num["check"], p["download"], p["check"], p["start"] = "done", "SHA-256 ok", 1, 1, 1
+        copying = phase in ("looking", "asked", "headers", "copying", "linking", "checking", "done")
+        if copying:
+            num["find"] = who or "looking"
+            if copy.get("copy_bytes") or copy.get("total"):
+                num["find"] += " · " + gb(copy.get("copy_bytes") or copy.get("total"))
+            num["headers"] = f"{headers:,} / {target:,}" if target else (f"{headers:,}" if headers else "")
+            p["headers"] = _frac(headers, target)
+            eta["headers"] = copy.get("eta_headers")
+            if copy.get("total"):
+                num["data"] = f"{gb(copy.get('done', 0))} / {gb(copy['total'])}"
+                p["data"] = _frac(copy.get("done", 0), copy["total"])
+                eta["data"] = copy.get("eta")
+            elif copy.get("copy_bytes"):
+                num["data"] = f"0 / {gb(copy['copy_bytes'])}"
+            if phase in ("looking", "asked"):
+                upto("find")
+            elif phase == "headers":
+                upto("headers")
+            elif phase in ("copying", "linking"):
                 upto("data")
-                st["verify"] = "skip"
-                sub["data"] = f"{blocks:,} of {headers:,}" if headers else "the node is starting"
-        if phase == "failed" and st["data"] == "now":
-            sub["data"] = "copy refused"
-        sub["download"] = sub["download"] or "done"
-        sub["check"] = sub["check"] or "SHA-256 ok"
-    active = any(v in ("now",) for v in st.values())
-    return {"steps": [{"key": k, "label": label[k], "state": st[k], "sub": sub[k]} for k in order], "active": active}
+                p["headers"] = 1
+            elif phase == "checking":
+                upto("ready")
+                p["headers"], p["data"], num["ready"] = 1, 1, "checking with no peers"
+            else:                                              # done
+                p["headers"], p["data"] = 1, 1
+                upto("ready", "done" if synced else "now")
+                num["ready"] = "checked here" if synced else f"last {max(0, headers - blocks):,} blocks"
+                p["ready"] = 1 if synced else _frac(blocks, headers)
+                eta["ready"] = None if synced else copy.get("eta_blocks")
+            num["start"] = "running"
+        else:
+            # The node syncs the chain itself: no copy offered, the operator chose it, or a copy was refused.
+            label["data"], label["ready"] = "Sync chain", "Ready"
+            st["find"] = "skip"
+            num["find"] = {"own": "you chose: none", "failed": "copy refused"}.get(phase, "none offered")
+            num["start"] = "running" if headers else "starting"
+            if not headers:
+                upto("start")
+                st["find"] = "skip"
+            elif target and headers < target - 2:
+                upto("headers")
+                st["find"] = "skip"
+                num["headers"], p["headers"], eta["headers"] = f"{headers:,} / {target:,}", _frac(headers, target), \
+                    copy.get("eta_headers")
+            else:
+                num["headers"], p["headers"] = f"{headers:,}", 1
+                num["data"] = f"{blocks:,} / {headers:,}"
+                p["data"], eta["data"] = _frac(blocks, headers), copy.get("eta_blocks")
+                if synced:
+                    upto("ready", "done")
+                    p["data"], num["ready"] = 1, "synced"
+                else:
+                    upto("data")
+                st["find"] = "skip"
+    for k in STEP_KEYS:
+        if st[k] == "done":
+            p[k] = 1
+        elif st[k] in ("todo", "skip") and p[k] is None:
+            p[k] = 0
+    total = sum(STEP_WEIGHT.values())
+    done = sum(STEP_WEIGHT[k] * (1 if st[k] in ("done", "skip") else (p[k] or 0) if st[k] == "now" else 0)
+               for k in STEP_KEYS)
+    left = [e for k, e in eta.items() if e and st[k] in ("now", "todo")]
+    return {"steps": [{"key": k, "label": label[k], "state": st[k], "num": num[k], "p": p[k], "eta": eta[k]}
+                      for k in STEP_KEYS],
+            "active": any(v == "now" for v in st.values()), "pct": int(100 * done / total),
+            "eta": sum(left) if left else None}
 
 
 def cancel(state, net: str, params) -> None:

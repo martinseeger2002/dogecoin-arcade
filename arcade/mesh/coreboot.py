@@ -270,6 +270,9 @@ class CoreBoot:
                 self.jobs.pop(net, None)                   # caught up by itself (or never far behind)
             return
         offers = self._offers(net, now)
+        best = max([int(s.get("h") or 0) for _, s in offers] + [0])
+        if best:
+            self.jobs.setdefault(net, {})["target"] = max(best, int((self.jobs.get(net) or {}).get("target") or 0))
         ready = sorted(((p, s) for p, s in offers if isinstance(s.get("sn"), dict)
                         and int(s["sn"].get("h", 0)) - info["blocks"] >= cc.WORTH_BLOCKS),
                        key=lambda x: -int(x[1]["sn"]["h"]))
@@ -304,8 +307,12 @@ class CoreBoot:
                                      "version": (self.info.get(net) or {}).get("ver"),
                                      "height": sn.get("h"), "hash": sn.get("hash")})
         if why:
-            self._job(net, state="waiting", phase="asked" if "waiting" in why else "none", peer=peer,
-                      step=f"the copy on {self._who(peer)}: {why}")
+            waiting = "waiting" in why
+            self._job(net, state="waiting", phase="headers" if waiting else "none", peer=peer,
+                      target=int(sn.get("h") or 0), copy_bytes=int(sn.get("bytes") or 0),
+                      step=(f"{self._who(peer)} made a copy at block {int(sn.get('h') or 0):,}; this node is learning "
+                            f"the chain's headers up to it, to check the copy is of the real chain") if waiting
+                      else f"the copy on {self._who(peer)}: {why}")
             if "waiting" not in why:
                 self._refuse(net, peer)
             return
@@ -315,7 +322,8 @@ class CoreBoot:
             self._job(net, state="waiting", phase="none",
                       step=f"a copy takes {need / 1e9:.0f} GB; this disk has less free, so the node syncs on its own")
             return
-        self._job(net, state="working", phase="asked", step=f"asking {self._who(peer)} for its copy", peer=peer)
+        self._job(net, state="working", phase="asked", step=f"asking {self._who(peer)} for its copy", peer=peer,
+                  target=int(sn.get("h") or 0), copy_bytes=int(sn.get("bytes") or 0))
         self._get(peer, net, {"what": "manifest", "snap": sn["id"]})
 
     def got_manifest(self, peer: str, net: str, sid: str, manifest: dict) -> None:
@@ -461,6 +469,11 @@ class CoreBoot:
             info = self.info.get(net)
             if info:
                 row["node"] = {"blocks": info["blocks"], "headers": info["headers"]}
+                # How fast the node's headers and blocks come, for each step's time left.
+                if row.get("target") and info["headers"] < row["target"]:
+                    row["eta_headers"] = self._rate(net + ":h", info["headers"], int(row["target"]))[1]
+                if info["headers"] and info["blocks"] < info["headers"]:
+                    row["eta_blocks"] = self._rate(net + ":b", info["blocks"], info["headers"])[1]
             s = self._snaps.get(net)
             if s is not None:
                 if s.making:

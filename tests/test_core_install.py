@@ -217,29 +217,44 @@ def _states(got):
     return [s["state"] for s in got["steps"]]
 
 
-def test_the_steps_say_where_an_install_is_and_whether_it_is_still_going_on():
+def test_the_steps_say_where_an_install_is_how_far_each_is_and_whether_it_is_still_going_on():
+    """Seven steps, each with how far it is (the line to it fills: 2026-11-04 chose that mockup)."""
     S = core_install.steps
-    down = S({"state": "working", "phase": "download", "done": 5, "total": 10}, None, False)
-    assert _states(down) == ["now", "todo", "todo", "todo", "todo", "todo"] and down["active"]
-    assert down["steps"][0]["sub"] == "50%"
+    down = S({"state": "working", "phase": "download", "done": 5e6, "total": 10e6}, None, False)
+    assert _states(down) == ["now", "todo", "todo", "todo", "todo", "todo", "todo"] and down["active"]
+    assert down["steps"][0]["p"] == 0.5 and down["steps"][0]["num"] == "5 MB / 10 MB"
     failed = S({"state": "failed", "phase": "check", "step": "SHA-256"}, None, False)
     assert _states(failed)[:2] == ["done", "failed"] and not failed["active"]
-    node = {"blocks": 900, "headers": 914_000}
-    copying = S(None, {"phase": "copying", "from": "@think", "node": node}, True)
-    assert _states(copying) == ["done", "done", "done", "now", "todo", "todo"] and copying["active"]
-    assert copying["steps"][3]["label"] == "Copy chain data" and copying["steps"][3]["sub"] == "from @think"
+    node = {"blocks": 900, "headers": 183_016}
+    asked = S(None, {"phase": "asked", "from": "@think", "node": node}, True)
+    assert _states(asked) == ["done", "done", "done", "now", "todo", "todo", "todo"]
+    heads = S(None, {"phase": "headers", "from": "@think", "target": 915_080, "copy_bytes": 3.1e9, "node": node,
+                     "eta_headers": 400}, True)
+    assert _states(heads) == ["done", "done", "done", "done", "now", "todo", "todo"]
+    h = heads["steps"][4]
+    assert h["label"] == "Learn headers" and h["num"] == "183,016 / 915,080" and abs(h["p"] - 0.2) < 0.001 and h["eta"] == 400
+    assert heads["steps"][3]["num"] == "@think · 3.1 GB" and heads["steps"][5]["num"] == "0 / 3.1 GB"
+    assert heads["pct"] == 18 and heads["eta"] == 400
+    copying = S(None, {"phase": "copying", "from": "@think", "target": 915_080, "done": 1.55e9, "total": 3.1e9,
+                       "eta": 200, "node": {"blocks": 900, "headers": 915_080}}, True)
+    assert _states(copying) == ["done"] * 5 + ["now", "todo"] and copying["steps"][5]["p"] == 0.5
+    assert copying["steps"][5]["label"] == "Copy data" and copying["steps"][4]["p"] == 1
     checking = S(None, {"phase": "checking", "from": "@think", "node": node}, True)
-    assert _states(checking) == ["done", "done", "done", "done", "now", "todo"]
-    own = S(None, {"phase": "none", "node": node}, True)
-    assert _states(own) == ["done", "done", "done", "now", "skip", "todo"] and own["steps"][3]["label"] == "Sync chain"
-    assert own["steps"][3]["sub"] == "900 of 914,000"
-    synced = {"blocks": 914_000, "headers": 914_001}
-    assert _states(S(None, {"phase": "done", "from": "@think", "node": synced}, True)) == ["done"] * 6
-    assert not S(None, {"phase": "done", "node": synced}, True)["active"]
-    last = S(None, {"phase": "done", "node": {"blocks": 913_000, "headers": 914_000}}, True)
-    assert _states(last)[-1] == "now" and "1,000" in last["steps"][-1]["sub"]
-    assert _states(S(None, None, True)) == ["done", "done", "done", "now", "skip", "todo"], "starting: no word yet"
-    assert S(None, None, False) == {"steps": [], "active": False}, "nothing installed: no steps"
+    assert _states(checking) == ["done"] * 6 + ["now"]
+    synced = {"blocks": 915_000, "headers": 915_001}
+    done = S(None, {"phase": "done", "from": "@think", "node": synced}, True)
+    assert _states(done) == ["done"] * 7 and not done["active"] and done["pct"] == 100
+    last = S(None, {"phase": "done", "node": {"blocks": 914_000, "headers": 915_000}}, True)
+    assert _states(last)[-1] == "now" and "1,000" in last["steps"][-1]["num"]
+    own = S(None, {"phase": "none", "target": 915_080, "node": {"blocks": 900, "headers": 400_000}}, True)
+    assert _states(own) == ["done", "done", "done", "skip", "now", "todo", "todo"]
+    assert own["steps"][5]["label"] == "Sync chain" and own["steps"][3]["num"] == "none offered"
+    syncing = S(None, {"phase": "own", "node": {"blocks": 300_000, "headers": 915_080}}, True)
+    assert _states(syncing) == ["done", "done", "done", "skip", "done", "now", "todo"]
+    assert syncing["steps"][5]["num"] == "300,000 / 915,080" and syncing["steps"][3]["num"] == "you chose: none"
+    starting = S(None, None, True)
+    assert _states(starting) == ["done", "done", "now", "skip", "todo", "todo", "todo"], "starting: no word yet"
+    assert S(None, None, False) == {"steps": [], "active": False, "pct": 0}, "nothing installed: no steps"
 
 
 def test_a_cancelled_install_keeps_the_wallet_borrows_again_and_can_be_installed_again(tmp_path, monkeypatch, client):

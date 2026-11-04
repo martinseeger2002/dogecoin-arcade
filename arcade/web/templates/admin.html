@@ -1986,18 +1986,21 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
 .npill.work{background:color-mix(in srgb,var(--accent) 14%,var(--panel));border-color:color-mix(in srgb,var(--accent) 45%,var(--line));color:var(--fg)}
 .npill.ok{background:color-mix(in srgb,var(--ok) 12%,var(--panel));border-color:color-mix(in srgb,var(--ok) 40%,var(--line));color:var(--ok);margin-right:4px}
 .npill.bad{background:color-mix(in srgb,var(--bad) 10%,var(--panel));border-color:color-mix(in srgb,var(--bad) 40%,var(--line));color:var(--bad)}
-.nsteps{display:flex;margin:10px 0 10px;color:var(--fg);max-width:720px}
+.nsteps{display:flex;margin:18px 0 10px;color:var(--fg);max-width:800px}
 .nst{flex:1 1 0;min-width:0;text-align:center;font-size:12px;color:var(--muted);position:relative;overflow-wrap:anywhere}
-.nst .ndot{width:22px;height:22px;border-radius:50%;margin:0 auto 4px;border:2px solid var(--line);background:var(--panel);font-size:12px;line-height:18px;font-weight:700;position:relative;z-index:1}
+.nst .ndot{width:24px;height:24px;border-radius:50%;margin:0 auto 6px;border:2px solid var(--line);background:var(--panel);font-size:12px;line-height:20px;font-weight:700;position:relative;z-index:2}
 .nst.done .ndot{background:var(--ok);border-color:var(--ok);color:#fff}
-.nst.now .ndot{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent)}
+.nst.cur .ndot{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent)}
 .nst.failed .ndot{border-color:var(--bad);background:var(--bad);color:#fff}
 .nst.skip{opacity:.55}
-.nst.done,.nst.now{color:var(--fg)}.nst.now .nlab{font-weight:600}
-.nst .nsub{color:var(--muted);font-size:11px}
-.nst:not(:last-child)::after{content:"";position:absolute;top:11px;left:calc(50% + 13px);right:calc(-50% + 13px);height:2px;background:var(--line)}
-.nst.done:not(:last-child)::after{background:var(--ok)}
-.nnow{max-width:720px;box-sizing:border-box;white-space:normal;background:color-mix(in srgb,var(--accent) 7%,var(--panel));border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:10px;padding:10px 12px;color:var(--fg)}
+.nst.done,.nst.cur{color:var(--fg)}.nst.cur .nlab{font-weight:700}
+.nst .nsub{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}.nst.cur .nsub{color:var(--fg);font-weight:600}
+/* the line to the next step is that step's progress bar */
+.nst:not(:last-child)::before{content:"";position:absolute;top:9px;left:calc(50% + 14px);right:calc(-50% + 14px);height:6px;border-radius:999px;background:color-mix(in srgb,var(--line) 70%,var(--panel));z-index:1}
+.nst:not(:last-child)::after{content:"";position:absolute;top:9px;left:calc(50% + 14px);height:6px;border-radius:999px;z-index:1;width:calc((100% - 28px) * var(--p, 0));background:var(--ok);transition:width .6s}
+.nst.fill::after{background:repeating-linear-gradient(45deg,var(--accent) 0 8px,color-mix(in srgb,var(--accent) 65%,#fff) 8px 16px)}
+.nst .npct{position:absolute;top:-15px;left:calc(50% + 14px);right:calc(-50% + 14px);font-size:11px;font-weight:700;color:var(--accent)}
+.nnow{max-width:800px;box-sizing:border-box;white-space:normal;background:color-mix(in srgb,var(--accent) 7%,var(--panel));border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:10px;padding:10px 12px;color:var(--fg)}
 .nnow.bad{background:color-mix(in srgb,var(--bad) 6%,var(--panel));border-color:color-mix(in srgb,var(--bad) 35%,var(--line))}
 .nnow .nrow{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
 .nbar{height:10px;background:color-mix(in srgb,var(--line) 70%,var(--panel));border-radius:999px;overflow:hidden;margin:8px 0 5px}
@@ -2332,58 +2335,45 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
     var i = document.createElement('i'); i.style.width = Math.max(0, Math.min(100, 100 * frac)).toFixed(1) + '%';
     b.appendChild(i); return b;
   }
-  // The six steps of an install, in the chain's row (core_install.steps), and a box for the one going on now: what
-  // it is doing, how far, what comes next, and the two ways out.
+  // An install's seven steps in the chain's row (core_install.steps; 2026-11-04 chose the mockup where the line
+  // through the steps is the progress bar): the line after a step fills as the next one goes, and under the steps a
+  // box says what is going on now, how long it has left, what comes next, and the two ways out.
   function stepper(x) {
     var w = document.createElement('div'); w.className = 'nsteps';
     x.steps.forEach(function (s, i) {
-      var d = document.createElement('div'); d.className = 'nst ' + s.state;
-      var dot = text('div', s.state === 'done' ? '✓' : s.state === 'failed' ? '!' : s.state === 'skip' ? '–' : String(i + 1), 'ndot');
-      d.appendChild(dot); d.appendChild(text('div', s.label, 'nlab')); d.appendChild(text('div', s.sub || ' ', 'nsub'));
+      var d = document.createElement('div'); d.className = 'nst ' + (s.state === 'now' ? 'cur' : s.state);
+      var nxt = x.steps[i + 1];
+      if (nxt) {
+        d.style.setProperty('--p', String(nxt.state === 'done' || nxt.state === 'skip' ? 1 : (nxt.p || 0)));
+        if (nxt.state === 'now') d.classList.add('fill');
+        if (nxt.state === 'now' && nxt.p != null) d.appendChild(text('span', Math.floor(100 * nxt.p) + '%', 'npct'));
+      }
+      d.appendChild(text('div', s.state === 'done' ? '✓' : s.state === 'failed' ? '!' : s.state === 'skip' ? '–' : String(i + 1), 'ndot'));
+      d.appendChild(text('div', s.label, 'nlab')); d.appendChild(text('div', s.num || ' ', 'nsub'));
       w.appendChild(d);
     });
     return w;
   }
   function nowBox(net, x) {
-    var j = x.job || {}, c = x.copy || {}, now = (x.steps || []).filter(function (s) { return s.state === 'now' || s.state === 'failed'; })[0];
+    var j = x.job || {}, c = x.copy || {}, node = c.node || {}, who = c.from || 'the linked arcade';
+    var now = (x.steps || []).filter(function (s) { return s.state === 'now' || s.state === 'failed'; })[0];
     if (!now) return null;
-    var box = document.createElement('div'); box.className = 'nnow' + (now.state === 'failed' ? ' bad' : '');
+    var box = document.createElement('div'); box.className = 'nnow' + (now.state === 'failed' || c.phase === 'failed' ? ' bad' : '');
+    var title = '', next = '';
+    var copying = x.steps.some(function (s) { return s.key === 'data' && s.label === 'Copy data'; });
+    if (now.state === 'failed') { title = 'The install failed'; next = j.step || ''; }
+    else if (now.key === 'download') { title = 'Downloading the official release: ' + (now.num || ''); next = 'Next: its SHA-256 is checked against the pinned one, then the node starts.'; }
+    else if (now.key === 'check') { title = 'Checking the download and unpacking it'; next = 'Next: the node starts and the arcade reloads to read it.'; }
+    else if (now.key === 'start') { title = c.phase === 'starting' || !node.headers ? 'The node is starting' : 'Starting the node'; next = 'Next: a linked arcade with a copy of the chain’s data is looked for.'; }
+    else if (now.key === 'find') { title = c.step ? c.step.charAt(0).toUpperCase() + c.step.slice(1) : 'Looking for a copy of the chain’s data'; next = 'Next: this node learns the chain’s headers, so the copy can be checked against the real chain.'; }
+    else if (now.key === 'headers') { title = 'Learning the chain’s headers: ' + now.num; next = copying ? 'So the copy from ' + who + ' can be checked against the real chain. Next: the copy comes over the mesh, every piece checked.' : 'Next: the node reads the blocks themselves.'; }
+    else if (now.key === 'data' && copying) { title = 'Copying the chain’s data from ' + who + ': ' + now.num; next = 'Every piece is checked as it arrives' + (c.rate ? ', ' + (c.rate / 1e6).toFixed(1) + ' MB/s' : '') + '. Next: this node stops for a moment, the copy is swapped in and checked with no peers (its newest block, its coin set, the last 288 blocks). Its coin set is ' + who + '’s word.'; }
+    else if (now.key === 'data') { title = (c.phase === 'failed' ? 'The copy was refused, so the node is syncing the chain itself: ' : 'The node is syncing the chain itself: ') + 'block ' + now.num; next = c.phase === 'failed' ? c.step : c.phase === 'own' ? 'Nothing to do: it reads the chain block by block, as you chose.' : 'Nothing to do: it reads the chain block by block; a copy is taken if a linked arcade offers one.'; }
+    else if (now.key === 'ready') { title = copying && c.phase === 'checking' ? 'Checking the copy with no peers' : 'Syncing the last blocks: ' + (now.num || ''); next = c.phase === 'checking' ? 'Next: the node starts as usual and syncs the last blocks itself. A wallet in it catches up once.' : 'Nothing to do: the chain is ready when its blocks reach its headers.'; }
     var head = document.createElement('div'); head.className = 'nrow';
-    var title = '', right = '', frac = null, under = '', next = '';
-    var node = c.node || {}, who = c.from || 'the linked arcade';
-    if (now.key === 'download' || now.key === 'check' || now.key === 'start') {
-      title = now.state === 'failed' ? 'The install failed' : {download: 'Downloading the official release', check: 'Checking and unpacking it', start: 'Starting the node'}[now.key];
-      if (j.total && now.key === 'download') { frac = (j.done || 0) / j.total; under = gb(j.done || 0) + ' of ' + gb(j.total); right = Math.floor(100 * frac) + '%'; }
-      if (now.state === 'failed') under = j.step || '';
-      next = 'Next: the arcade reloads to read its new node, then copies the chain’s data from a linked arcade if one has it, or the node syncs it itself.';
-    } else if (now.key === 'data' && now.label === 'Copy chain data') {
-      title = c.phase === 'copying' ? 'Copying the chain’s data from ' + who : (c.step ? c.step.charAt(0).toUpperCase() + c.step.slice(1) : 'Getting a copy of the chain’s data');
-      if (c.total) {
-        frac = (c.done || 0) / c.total;
-        under = gb(c.done || 0) + ' of ' + gb(c.total) + (c.pieces ? ' · ' + c.pieces[0].toLocaleString() + ' of ' + c.pieces[1].toLocaleString() + ' pieces, each checked as it arrives' : '');
-        right = [ago(c.eta), c.rate ? (c.rate / 1e6).toFixed(1) + ' MB/s' : ''].filter(Boolean).join(' · ');
-      }
-      if (c.phase === 'failed') under = c.step;
-      next = 'Next: this node stops for a moment, the copy is swapped in and checked with no peers (its newest block, its coin set, the last 288 blocks), then it syncs the last few blocks itself. Its coin set is ' + who + '’s word.';
-    } else if (now.key === 'data') {
-      title = c.phase === 'starting' ? 'The node is starting'
-            : c.phase === 'failed' ? 'The copy was refused, so the node is syncing the chain itself'
-            : 'The node is syncing the chain itself';
-      if (node.headers) { frac = node.blocks / node.headers; under = 'block ' + node.blocks.toLocaleString() + ' of ' + node.headers.toLocaleString(); right = Math.floor(100 * frac) + '%'; }
-      if (c.phase === 'failed') box.className += ' bad';
-      next = c.phase === 'own' ? 'Nothing to do: it reads the chain block by block, as you chose.'
-           : (c.step ? c.step.charAt(0).toUpperCase() + c.step.slice(1) + '.' : 'Nothing to do: it reads the chain block by block; a copy is taken if a linked arcade offers one.');
-    } else if (now.key === 'verify') {
-      title = c.step ? c.step.charAt(0).toUpperCase() + c.step.slice(1) : 'Checking the copy';
-      next = 'Next: the node starts as usual and syncs the last blocks itself. A wallet in it catches up once.';
-    } else if (now.key === 'ready') {
-      title = 'Syncing the last blocks';
-      if (node.headers) { frac = node.blocks / node.headers; under = 'block ' + node.blocks.toLocaleString() + ' of ' + node.headers.toLocaleString(); }
-      next = 'Nothing to do: the chain is ready when its blocks reach its headers.';
-    }
-    head.appendChild(text('b', title)); head.appendChild(text('span', right, 'muted small')); box.appendChild(head);
-    if (frac !== null) box.appendChild(bar(frac));
-    if (under) box.appendChild(text('div', under, 'small' + (now.state === 'failed' ? ' idx-bad' : '')));
+    head.appendChild(text('b', title));
+    var times = now.eta ? ago(now.eta).replace(' left', '') + ' for this step' : '';
+    head.appendChild(text('span', times, 'muted small')); box.appendChild(head);
     if (next) box.appendChild(text('div', next, 'ncap'));
     var acts = document.createElement('div'); acts.className = 'nacts';
     function act(label, action, cls, ask) {
@@ -2396,7 +2386,7 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
       };
       acts.appendChild(b);
     }
-    if (x.installed && now.key === 'data' && now.label === 'Copy chain data' && c.phase !== 'failed') act('Sync on its own instead', 'own', 'ghost');
+    if (x.installed && copying && ['find', 'headers', 'data'].indexOf(now.key) >= 0) act('Sync on its own instead', 'own', 'ghost');
     if (x.installed) act('Cancel install', 'cancel', 'ghost ncancel', 'Cancel the ' + net.toUpperCase() + ' install?\n\nIts node stops, its chain data and any copy are deleted, and the chain is borrowed again. Its wallet file is kept.');
     if (acts.childNodes.length) box.appendChild(acts);
     return box;
@@ -2424,7 +2414,7 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
         var pill = x.steps.filter(function (s) { return s.state === 'now' || s.state === 'failed'; })[0];
         if (pill) td.appendChild(text('div', pill.state === 'failed' ? 'Install failed at: ' + pill.label
           : c.phase === 'failed' ? 'Copy refused · syncing on its own'
-          : 'Installing · step ' + (x.steps.indexOf(pill) + 1) + ' of 6: ' + pill.label,
+          : 'Installing · ' + (x.pct || 0) + '% · step ' + (x.steps.indexOf(pill) + 1) + ' of ' + x.steps.length + ': ' + pill.label,
           'npill ' + (pill.state === 'failed' || c.phase === 'failed' ? 'bad' : 'work')));
         td.appendChild(stepper(x));
         var box = nowBox(td.dataset.net, x); if (box) td.appendChild(box);
