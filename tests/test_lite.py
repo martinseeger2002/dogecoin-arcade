@@ -114,6 +114,26 @@ def test_a_signed_in_user_from_outside_sees_their_own_account(app, app_state):
     assert not said["ok"] and "no command" in said["error"]
 
 
+def _wallet_tabs(page):
+    return page.split('<section data-panel="send"', 1)[1].split('<section data-panel="apps"')[0]
+
+
+def test_send_receive_and_transactions_are_lites_own_tabs(app, app_state):
+    """Drawn in the window like the Overview, never the full arcade's Wallet page: the node's wallet for the operator,
+    the account's own (opened and signed in this browser) for a user, a way to sign in for a visitor."""
+    operator = _wallet_tabs(app.get("/lite", headers=LOCAL).text)
+    assert 'id="w-form"' in operator and 'from "/node-wallet.js"' in operator
+    assert "{reviewed: true}" in operator and 'href="/wallet"' not in operator
+    visitor = _wallet_tabs(app.get("/lite", headers=OUTSIDE).text)
+    assert 'id="w-form"' not in visitor and 'href="/join"' in visitor
+    assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
+    page = app.get("/lite", headers=OUTSIDE).text
+    user = _wallet_tabs(page)
+    assert 'from "/wallet.js"' in user and "/node-wallet.js" not in user and 'id="w-unlock"' in user
+    assert "/me/wallet" not in page
+    assert f'"network": "{app_state.messaging.network}"' in user, "the chain an account's words open on"
+
+
 def test_console_lines_come_only_from_the_lite_page(app):
     assert app.post("/lite/api/console", headers=LOCAL, json={"line": "help"}).status_code == 403
     refused = app.post("/lite/api/console", headers={**OUTSIDE, **LITE, "origin": "https://evil.example"},

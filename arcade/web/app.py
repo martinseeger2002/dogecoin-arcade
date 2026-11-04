@@ -36318,7 +36318,8 @@ def create_app(state: AppState) -> FastAPI:
     from ..lite import web as liteweb
     _lite_home = liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in,
                                   account_address=_account_address, name_of=_name_of, node_tools=node_tools,
-                                  public_tools=public_tools)
+                                  public_tools=public_tools, wallet_name=_account_name,
+                                  account_view=_account_view)
     # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
     from . import modules_web
     modules_web.register(app, state, admin_check=_admin_check)

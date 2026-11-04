@@ -22,11 +22,13 @@ NO_STORE = {"Cache-Control": "no-store"}
 LITE_HEADER = "x-arcade-lite"
 
 
-def register(app, state, admin_check, signed_in, account_address, name_of, node_tools=None, public_tools=None):
+def register(app, state, admin_check, signed_in, account_address, name_of, node_tools=None, public_tools=None,
+             wallet_name=lambda request: "", account_view=lambda request: False):
     """Add /lite to the node's app, with the web app's own checks: `admin_check(request, write=False)` raises unless
     the operator is asking, `signed_in(request)` is the account or None, `account_address(pubkey, chain)` and
-    `name_of(address)` look an account up. `node_tools` is what the operator's commands ask of the node and
-    `public_tools` what anyone's may (app.py). Returns the window's page, which ARCADE Lite also serves at /."""
+    `name_of(address)` look an account up. `node_tools` is what the operator's commands ask of the node,
+    `public_tools` what anyone's may, `wallet_name(request)` the name an account's wallet opens under, and
+    `account_view(request)` whether the wallet shown is the account's rather than the node's (app.py). Returns the window's page, which ARCADE Lite also serves at /."""
 
     def caller_for(request: Request, write: bool = False) -> cmdlib.Caller:
         local = False
@@ -52,7 +54,15 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         return TEMPLATES.TemplateResponse(request, "lite.html", {
             "name": brandlib.current().name, "audience": caller.audience,
             "edition": modulelib.edition(settings), "asking": modulelib.asking(settings),
-            "apps": [m for m in modulelib.describe(settings)["modules"] if not m["core"]]}, headers=NO_STORE)
+            "apps": [m for m in modulelib.describe(settings)["modules"] if not m["core"]],
+            # Whose wallet the Send, Receive and Transactions tabs are: the account's when one is signed in, even at
+            # the node's machine, as the full arcade's Wallet decides it; else the node's, for the operator.
+            "wallet": "account" if caller.account and account_view(request)
+                      else "node" if caller.audience == "operator" else "",
+            # What wallet.js unlocks an account's words with, as the full arcade's pages give it (base.html).
+            "me": wallet_name(request) if caller.account else "",
+            "tagchain": {"network": state.messaging.network, "version": state.messaging.params.pubkeyhash_version}},
+            headers=NO_STORE)
 
     @app.get("/lite/api/overview")
     def lite_overview(request: Request):
