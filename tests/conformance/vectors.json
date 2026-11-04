@@ -162,7 +162,7 @@
     "p2sh": "ACkg6hcfJUgN2AaS6LY2KieVVTb8pGEVTR"
    },
    "params": {
-    "activation_height": 917000,
+    "activation_height": 914000,
     "addon": true,
     "asks_from": null,
     "auxpow_chain_id": 163,
@@ -182,7 +182,7 @@
     "genesis": "1f1037762db00882d3353b8d9dcfd52fc93cbc2d694c62f1ecd6a209cf9d30d0",
     "letter": "F",
     "marker_address": null,
-    "messaging_start_height": 917000,
+    "messaging_start_height": 914000,
     "min_difficulty_blocks": false,
     "min_fee_per_kb": 1000000,
     "mweb": false,

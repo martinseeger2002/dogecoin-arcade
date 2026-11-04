@@ -69,7 +69,7 @@ envelope to read.
   - Admin → Ords → Flopcoin, set to *Keep the full index* (walk), *Help scan* (help), *Watch only* (read) or *Off* (off).
   - It starts at block **18,295**, the first Doginals-style inscription found by scanning the whole chain
     from block 0 (Flopcoin has no official ord indexer). It is a long walk, like the other chains': the
-    arcade's own coins and sends still start at block 917,000.
+    arcade's own coins and sends start at block 914,000.
 - **Numbering follows wonky-ord, as on DigiByte:** a new inscription is looked for only when no
   inscription already sits on the coin it is made on (a reinscription is not numbered).
 - **In the wallet:** your Flopinals are shown on the NFTs tab, and they can be sent, listed, bought and

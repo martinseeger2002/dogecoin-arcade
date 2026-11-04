@@ -26970,9 +26970,17 @@ def create_app(state: AppState) -> FastAPI:
         if chain.network in NO_IMPORTS:
             return f"Wallets cannot be imported on {chain.title}."
         return ""
+    def _index_started(chain) -> bool:
+        """Whether this arcade's index of the chain holds a block: the walk reads blocks 0 to its top, so before it
+        holds one there is nothing to read (2026-11-04: Flopcoin's floor two days ahead; the operator's import walked 0..0)."""
+        try:
+            return bool(state.token_index(chain).indexed_height())
+        except Exception:                                  # noqa: BLE001
+            return False
+
     def _can_read_back(chain) -> bool:
-        """Whether an import's read-back (the shared walk) can start now: the chain readable."""
-        return _readable(chain)
+        """Whether an import's read-back (the shared walk) can start now: the chain readable and its index started."""
+        return _readable(chain) and _index_started(chain)
 
     def _chain_busy(chain) -> dict | None:
         """Whether an import on `chain` must wait (2026-10-21: "the client side needs to know they can't import
@@ -27036,7 +27044,10 @@ def create_app(state: AppState) -> FastAPI:
             return True
         with contextlib.closing(state.token_index(chain).open()) as db:
             since = utxoslib.since(db, address)
-        return since is not None and since <= _rescan_floor(chain)
+        # A watch begun while the index held no block says 0 (utxos.watch at indexed_height() or 0): nothing was read
+        # from the floor for it, so it is not "watched from the floor" (2026-11-04, the operator's Flopcoin import: ready at
+        # once with nothing, the floor two days ahead).
+        return since is not None and 0 < since <= _rescan_floor(chain)
 
     def _run_left(run: dict) -> float:
         """Seconds a read-back still needs: the blocks it has left at the measured pace."""
@@ -27099,6 +27110,11 @@ def create_app(state: AppState) -> FastAPI:
                     "says": f"The arcade is reading back this wallet's coins; check back in "
                             f"{importslib.say_wait(eta)}."}
         if (chain.network, address) in _rescan_queue:
+            if _readable(chain) and not _index_started(chain):
+                return {"state": "rescan", "eta": None,
+                        "says": (f"This arcade's index of {chain.title} has not started yet (it starts at block "
+                                 f"{_rescan_floor(chain):,}). The read-back of this wallet's coins is queued and starts "
+                                 "by itself then; its balance shows when it is done. You can close this page.")}
             if not _can_read_back(chain):
                 return {"state": "none",
                         "says": (f"There is no node to borrow right now: this arcade cannot read {chain.title} "
@@ -27350,7 +27366,12 @@ def create_app(state: AppState) -> FastAPI:
     state.walk_resting = _walk_resting
 
     def _walk_start(chain, address: str) -> None:
-        """Queue `address` for its chain's next shared walk (several imports share one), shown like a read-back."""
+        """Queue `address` for its chain's next shared walk (several imports share one), shown like a read-back. Never
+        while the chain's index holds no block: the walk's top would be 0 (queued instead, _rescan_queue_runner)."""
+        if not _index_started(chain):
+            _rescan_queue.setdefault((chain.network, address), time.time())
+            _rescan_queue_wake()
+            return
         run = {"network": chain.network, "start": 0, "end": state.token_index(chain).indexed_height() or 0,
                "progress": {}, "began": time.time(), "imported": True, "walk": True}
         _backfilling.add(address)
@@ -27541,8 +27562,13 @@ def create_app(state: AppState) -> FastAPI:
             while _rescan_queue:
                 for (network, address) in sorted(_rescan_queue, key=_rescan_queue.get):
                     chain = next((c for c in _account_chains() if c.network == network), None)
-                    if chain is None or not _still_imported(network, address):
+                    if not _still_imported(network, address) or (
+                            chain is None and not any(c is not None and c.network == network
+                                                      for c in (state.ledger, *state.addons))):
                         _rescan_queue.pop((network, address), None)
+                        continue
+                    if chain is None:                          # the chain is there, only not ready this minute
+                        _queue_says(network, address, "waits: the chain is not ready now")
                         continue
                     if address in _backfill_runs or _rescan_done(chain, address):
                         _rescan_queue.pop((network, address), None)

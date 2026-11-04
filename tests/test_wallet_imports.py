@@ -118,8 +118,9 @@ def test_an_import_with_its_key_s_signature_is_listed_and_watched(client, monkey
     asked = _proof(account, 0x1111)
     said = app.post("/account/imported/address", json=asked)
     assert said.status_code == 200, said.text
-    # Nothing indexed yet: watched from the start, so it is whole at once.
-    assert said.json()["state"] == "ready"
+    # Nothing indexed yet: watched, but its past is not known -- it waits for a read-back (2026-11-04: an empty index
+    # once made this "ready" with nothing, the operator's Flopcoin import).
+    assert said.json()["state"] != "ready"
     listed = W.entries(state.setting(W.setting_key("ltctest", account)))
     assert [e["a"] for e in listed] == [asked["address"]]
     with state.token_index(chain).open() as db:
@@ -562,3 +563,24 @@ def test_an_import_is_found_by_the_shared_walk_and_is_ready(client, monkeypatch)
     with state.token_index(chain).open() as db:
         assert coinlist.covers(coinlist.coverage(db, first["address"], P.messaging_start_height + 40), 0,
                                P.messaging_start_height + 40)
+
+
+def test_an_import_before_the_chain_s_index_started_waits_for_it_then_walks_from_block_zero(client, monkeypatch):
+    """2026-11-04, "I imported my flop key, but no balance showed up yet": Flopcoin's floor was two days ahead,
+    the index held no block, and the import was "ready" at once with nothing (its watch said since 0). Now it waits,
+    says why, and walks blocks 0..top as soon as the index holds a block."""
+    from arcade import coinwalk
+    app, state, chain, account = _ready(client, monkeypatch, online=True)
+    walked = []
+    monkeypatch.setattr(coinwalk.Reader, "read",
+                        lambda self, c, top, bottom, addresses, progress=None: walked.append((top, bottom)) or [])
+    asked = _proof(account, 0x8301)
+    said = app.post("/account/imported/address", json=asked).json()
+    assert said["state"] == "rescan" and "has not started yet" in said["says"], said
+    time.sleep(0.3)
+    assert walked == [], "no walk of blocks 0..0"
+    again = app.post("/account/imported/rescan", json={"chain": "ltctest", "address": asked["address"]}).json()
+    assert again["state"] != "ready"
+    _tip(state, chain, P.messaging_start_height + 40)
+    assert _wait_ready(app, asked["address"])["state"] == "ready"
+    assert walked and walked[0][1] == 0 and walked[0][0] == P.messaging_start_height + 40, walked

@@ -33,7 +33,7 @@ def test_flopcoin_params_are_its_chainparams():
     assert (FLOP.letter, FLOP.family, FLOP.net_word, FLOP.node_dir, FLOP.node_conf) == (
         "F", "FLOP", "flopcoin", ".flopcoin", "flopcoin.conf")
     assert config.CHAIN_NAMES["flop"] == "main"
-    assert FLOP.activation_height == FLOP.messaging_start_height == config.FLOP_MAINNET_FLOOR == 917_000
+    assert FLOP.activation_height == FLOP.messaging_start_height == config.FLOP_MAINNET_FLOOR == 914_000
     assert FLOP.swaps_from is None and FLOP.take_from is None
     assert "flop" in __import__("arcade.cores", fromlist=["OPTIONAL"]).OPTIONAL
     assert all(p.letter != "F" for n, p in NETWORKS.items() if n != "flop"), "its badge letter is its own"
