@@ -65,6 +65,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
                       else "node" if caller.audience == "operator" else "",
             # What wallet.js unlocks an account's words with, as the full arcade's pages give it (base.html).
             "me": wallet_name(request) if caller.account else "", "account": bool(caller.account),
+            "messages_on": "messages" in modulelib.enabled(settings), "csrf": state.csrf_token,
             "join": (join_facts or (lambda request: {"seats": 0, "free": 0, "secure": True}))(request),
             "tagchain": {"network": state.messaging.network, "version": state.messaging.params.pubkeyhash_version}},
             headers=NO_STORE)

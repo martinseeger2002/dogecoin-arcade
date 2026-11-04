@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite: a Messages tab, an account's message commands, an Open for every module that is on
+SadFrog, with Messages switched on in a Lite arcade: a user account "sees that it's turned on but I don't see a place
+and I also don't see the user's full console command list".
+- **Messages is a tab of the Lite window while the module is on** (`arcade/lite/templates/_messages.html`).
+  - It holds the conversations, one conversation, a reply box, a new one by @name, and Look for new.
+  - It runs on the Messenger's own code: `messaging.js` for an account, with its letters opened and sealed in its
+    browser, and `node-mail.js` for the operator's node.
+  - A reply is written to the @name, as the Messenger does. A conversation with somebody who has no @name can be
+    read, but not replied to, here.
+- **An account's console has `listconversations`, `readmessages` and `sendmessage`.**
+  - The node cannot open an account's letters, so for an account they run in the window itself (`window.liteLocal`).
+  - `commands.py` lists them for users (audience `user`), so `help` shows them.
+  - Asked of the node for anyone but the operator, they answer "your messages open only in your own browser" (from
+    arcade-cli, say).
+  - The operator's run on the node, as before. `-help` still asks the node.
+- **Every module that is on now opens from the Apps tab.** `modules.PAGES` names each module's page, for people and
+  for the operator; the window's own tab for Messages.
+- **Tests:**
+  - test_lite: the tab and the Open links per edition.
+  - test_lite_messages: a user's commands are listed and sent back to the browser.
+  - test_lite_pages_browser, real Firefox on regtest: an account writes to a named account from the tab, then lists
+    and sends from its console; the operator sends the node's message from the same tab.
+  - Workhorse, with the full arcade's messaging tests: 590 passed, 19 skipped.
+
 ### 2026-11-04 The web worker runs the installed arcade, never an `arcade/` in the directory it starts in (Claude; found on the operator's ThinkPad by its session)
 
 The supervisor spawned workers with `python -m arcade.web`, which puts the current directory first on sys.path, and arcade-web.service has no WorkingDirectory, so it starts in $HOME. On the ThinkPad $HOME held an old `arcade/` unpacked from source.tar.gz, and the live arcade ran THAT, not site-packages; the updater compares versions, not where code was imported from, so nothing said so. New `arcade/pyrun.py` `module_cmd`: a child starts with the `arcade` this process imported. Where that is the current directory (a source checkout, as on .25, and the test suite) exactly as before; otherwise with the current directory off sys.path (`-P` on Python 3.11+, a `-c` bootstrap that drops `sys.path[0]` before that, and for another interpreter). Used by the supervisor's worker spawn and its self-replacing execv, and by the updater's second half (`-m arcade.update --services-only`). The launcher, arcade-cli and the bot-RPC shim run console scripts, which never put the cwd first; the UPDATE shim runs `python -c` and `-m` (the ThinkPad session caught it), so it now starts with `cd` into the venv's folder (Linux and Windows), SHIM_VERSION 4 so every arcade rewrites it at its next update. tests/test_pyrun.py (a decoy `arcade/` in the cwd: the real one loads; unprotected, the decoy does). If your side runs workers some other way, the same applies.

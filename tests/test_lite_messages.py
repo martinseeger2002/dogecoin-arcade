@@ -73,12 +73,17 @@ def test_the_rest_of_the_line_is_the_message_as_typed(app_state, line, who, text
     assert node.sent == [(who, text)]
 
 
-def test_messages_are_the_operators_and_go_with_their_module(app_state):
+def test_messages_are_the_operators_and_an_accounts_own_and_go_with_their_module(app_state):
     op = cmdlib.Caller(app_state, "operator", node=_Node(), local=True)
     assert cmdlib.run_line(op, "sendmessage -help").startswith("sendmessage who text...")
     assert "== Messages ==" in cmdlib.run_line(op, "help")
+    user = cmdlib.Caller(app_state, "user", "02" + "ab" * 32)
+    assert "sendmessage" in cmdlib.run_line(user, "help"), "a user's console lists them too"
+    for line in ("sendmessage @bob hi", "listconversations", "readmessages @bob"):
+        with pytest.raises(cmdlib.CommandError, match="open only in your own browser"):
+            cmdlib.run_line(user, line)                  # the node cannot read an account's letters: its window does
     with pytest.raises(cmdlib.CommandError, match="no command 'sendmessage'"):
-        cmdlib.run_line(cmdlib.Caller(app_state, "user", "02" + "ab" * 32), "sendmessage @bob hi")
+        cmdlib.run_line(cmdlib.Caller(app_state, "anyone"), "sendmessage @bob hi")
     app_state.set_setting("edition", "lite")
     with pytest.raises(cmdlib.CommandError, match="Messages module is off on this arcade; `install messages`"):
         cmdlib.run_line(op, "sendmessage @bob hi")
