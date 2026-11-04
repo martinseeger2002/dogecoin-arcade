@@ -202,7 +202,7 @@
     "swaps_from": null,
     "take_from": null,
     "token_pairs_from": null,
-    "trust_progress": true,
+    "trust_progress": false,
     "tx_time": false
    }
   },

@@ -755,6 +755,9 @@ FLOPCOIN = dataclasses.replace(
     auxpow_chain_id=0xA3,
     addon=True, node_dir=".flopcoin", node_conf="flopcoin.conf",
     letter="F", family="FLOP", net_word="flopcoin", real_coins=True,
+    # Its chainTxData is old: verificationprogress is 0.99988 at a live tip (2026-11-04), and a 1.14 Core says no
+    # initialblockdownload, so caught-up headers say it is synced (as Wojakcoin's).
+    trust_progress=False,
 )
 
 NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN, LITECOIN, LITECOIN_TESTNET,

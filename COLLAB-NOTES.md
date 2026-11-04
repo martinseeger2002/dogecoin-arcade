@@ -96,6 +96,8 @@ Branch `claude/flop-floor`. `config.FLOP_MAINNET_FLOOR` was 917,000, two days ah
 - The shared walk reads blocks 0..the index's top; with an empty index that was 0..0. `_walk_start` now queues instead, `_can_read_back` needs the index started, and the page says the index has not started and at which block.
 - The read-back queue dropped an import for good when its chain was briefly not ready (Flopcoin flickered: one sharer). It now waits.
 
+- Flopcoin is `trust_progress=False` (as Wojakcoin): its node says verificationprogress 0.99988 at a live tip and, as a 1.14 Core, no `initialblockdownload`, so it went in and out of "ready" and off the Wallet's coin list. `state._sync_now`: a chain that does not trust its estimate and says no `initialblockdownload` is downloading only while its headers are ahead.
+
 The floor is now **914,000**, below the tip (914,735). No arcade had read a Flopcoin block, so nothing is redone; an arcade still on 917,000 compares fingerprints from another floor until it updates. The rule from now on: a chain's floor is never above its tip when it ships, so its index head always follows the newest block. Nothing needed from your side; if you add a chain, set its floor at or below the tip.
 
 

@@ -1537,10 +1537,12 @@ class AppState:
             progress = float(info.get("verificationprogress", 0) or 0)
             # A Core older than Bitcoin 0.16 never says `initialblockdownload` (Kotia 1.0.0, 2026-10-25: grayed out for
             # good while synced): there, its progress says it.
-            downloading = info.get("initialblockdownload", progress < 0.9999)
-            # verificationprogress is an estimate. A chain whose chainTxData is a stub (Wojakcoin: 100 tx/s)
-            # never reaches 0.9999 at a live tip, so caught-up headers are what "ready" means there.
-            progress_ok = progress >= 0.9999 or not getattr(chain.params, "trust_progress", True)
+            # verificationprogress is an estimate. A chain whose chainTxData is a stub (Wojakcoin: 100 tx/s;
+            # Flopcoin, 2026-11-04: 0.99988 at a live tip, so it went in and out of "ready" and off the Wallet's coin
+            # list) never reaches 0.9999 at a live tip, so caught-up headers are what "ready" means there.
+            trusted = getattr(getattr(chain, "params", None), "trust_progress", True)
+            downloading = info.get("initialblockdownload", progress < 0.9999 if trusted else headers - blocks > 2)
+            progress_ok = progress >= 0.9999 or not trusted
             said = {"online": True, "blocks": blocks, "headers": headers,
                     "progress": min(1.0, progress),
                     "ready": (not downloading
