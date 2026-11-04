@@ -1448,3 +1448,18 @@ def test_the_unlock_bar_shows_the_moment_the_page_draws():
     module = base.index('<script type="module">', bar)
     assert plain < module, "decided before the module, and with the same key wallet.js keeps the open wallet under"
     assert "bar.hidden = !!keys" in base[module:module + 400]
+
+
+def test_every_realtime_post_is_open_on_a_public_host(public):
+    """Game rooms run on public arcades: every POST of realtime.py is in door.PUBLIC_POST (2026-11-04: the hub's
+    attach and detach were left out when a page's rooms moved onto one stream, and every room on
+    app.dogecoinarcade.com failed to attach; ASHVALE's Bank never answered)."""
+    app, state = public
+    posts = sorted({r.path for r in app.app.routes
+                    if r.path.startswith("/realtime/") and "POST" in (getattr(r, "methods", None) or ())})
+    assert "/realtime/hub/attach" in posts and "/realtime/join" in posts
+    missing = [p for p in posts if p not in door.PUBLIC_POST]
+    assert not missing, f"realtime POSTs a public host refuses: {missing}"
+    # Through the door: the route itself answers (an unknown token is its own refusal), never the "Not here" page.
+    said = app.post("/realtime/hub/attach", json={"token": "nope"}, headers=LOCAL)
+    assert "Not here" not in said.text and said.headers.get("content-type", "").startswith("application/json"), said.text[:200]

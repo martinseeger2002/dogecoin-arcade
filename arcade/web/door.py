@@ -343,6 +343,10 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # caller's own token, and an account joins only as the address
                # its own browser signed for
                "/realtime/join", "/realtime/send", "/realtime/leave",
+               # ...and the one stream all of a page's rooms ride (2026-11-03); attach needs the room's own token,
+               # detach drops only that token's room from its own stream (2026-11-04: left out, every room on a public
+               # host failed to attach and ASHVALE's Bank never answered)
+               "/realtime/hub/attach", "/realtime/hub/detach",
                # a trade between two players in a game: the giver signs a leg for
                # one named buyer (its own piece, its own key); the buyer finishes it
                # with /account/fill like any answered leg

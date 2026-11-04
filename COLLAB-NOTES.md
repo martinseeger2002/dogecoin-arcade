@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 Game rooms attach again on public arcades: the hub's attach and detach are through the door (Claude; found by the Ashvale golf sim session: "net.join('bank') never comes back")
+
+85d41cd4 (2026-11-03, one realtime stream for all of a page's rooms) added `POST /realtime/hub/attach` and `/realtime/hub/detach` but not to `door.PUBLIC_POST`, so on a public host (app.dogecoinarcade.com) every attach was the door's "Not here" 404: a room joined, never streamed, and a game's `join()` hung until its own timeout (ASHVALE: no multiplayer, no Bank). Both are in `PUBLIC_POST` now: attach needs the room's own token, detach drops only that token's room from its stream. `tests/test_public.py::test_every_realtime_post_is_open_on_a_public_host` fails if any realtime POST is ever left out again. **For your side:** if your public arcade is on a release since 2026-11-03, its game rooms have the same problem until it updates.
+
+Seen and left for later: `/realtime/nodes` still lists two quick-tunnel names that no longer answer (31ff0098e57e's, 8c95b1358339's). A browser skips them after a failed lookup; they do not hang a join.
+
+
 ### 2026-11-04 A node install's seven steps, the line through them its progress bar (Claude; the operator chose the mockup: "the green line that goes through the different steps could also act as a progress bar")
 
 `core_install.steps` now gives seven steps -- Download, Check, Start node, Find a copy, Learn headers, Copy data (or Sync chain), Check & ready (or Ready) -- each with how far it is (`p`), its numbers (`num`: MB, headers of the copy's block, GB, blocks) and its time left (`eta`), plus the install's percentage. In Admin the line from one step to the next fills as that next step goes (green when done, striped while it goes, its percentage above it), and the box below says what is going on now, its time left, what comes next, and the two buttons. `mesh/coreboot.py` says the copy's block (`target`) and size, a new phase `headers` while this node learns the chain's headers up to the copy's block, and how fast headers and blocks come (`eta_headers`, `eta_blocks`). Tests: `tests/test_core_install.py`. Nothing needed from your side.
