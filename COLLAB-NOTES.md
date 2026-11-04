@@ -88,6 +88,39 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Admin in the Lite look; Edition & modules by category
+SadFrog: "the admin stack should also be in the same arcade lite style as the user side but with the additional
+controls and features there", then "in edition and modules please categorize the modules in a scalable manner maybe
+with nav bars". Commits b79c539 and 8c16a69.
+- **The full arcade's own pages wear the Lite window's look in ARCADE Lite** (`arcade/lite/templates/pages.css`, at
+  `/lite/pages.css`; base.html links it only when the edition is lite):
+  - Core's greys and blue, system fonts, square flat panels, plain buttons;
+  - Admin's tabs drawn as the window's tab row.
+  - Only the look changes: Admin keeps every tab, control and script it has, and no signing or sending path was
+    touched.
+  - Every rule is scoped to `body[data-lite]`, so the full edition is unchanged; the browser test checks both editions.
+  - The bar each page wears is the window's own tabs (Overview, Send, Receive, Transactions, Address book, Apps, Help,
+    and Admin for the operator); `/#<tab>` opens that tab.
+  - **For you:** base.html gains an `edition_lite` branch, and door.py one public path, `/lite/pages.css`.
+- **Edition & modules by category.** One drawing (`/admin/modules.js`, templates/modules_js.js) now serves both
+  Admin's tab and Lite's Options; their two copies of the module list are gone:
+  - "All", then a tab per category, each with how many of its modules are on;
+  - a filter box over name, id and what a module does;
+  - the same questions before a switch (its caution, and what it also turns on or stops, now by name).
+  - **It scales:** categories come from `modules.describe` (a module's kind, titled by `KIND_TITLES`), and a kind not
+    named there, such as chain modules or modules from the mesh later, gets its own tab with nothing changed in the
+    page.
+- **Found on think:** its updater installed the published main over the Lite build at 22:33, a minute after a save
+  on the full Admin page turned "Install updates by itself" on. Admin's switch save sends that box with the others.
+  Think is back on this branch with updates off. Until Lite is published, a Lite test node must keep updates off.
+- **Tests:**
+  - tests/test_lite_look_browser.py, in real Firefox: the full edition's own Admin look; then in Lite, Admin, Wallet
+    and Address book in the Lite look, the bar's tabs, Admin's Coins & chains still working, the modules' category
+    tabs, Apps, and needs by name.
+  - test_lite_pages_browser: Options' category tabs, Apps showing only the apps, and the filter.
+  - Workhorse, twice: 676 passed, 19 skipped, 1 failed. The failure is the snap Firefox `/tmp` upload one, which
+    fails on base too.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite's Address book, Join, Options and an account's Backup, in the window
 SadFrog: "yes re draw all base pages". Commits 961a0a8, c37c894 and 7ca6231, each drawn like the Overview and each over
 the full arcade's own code and routes.
