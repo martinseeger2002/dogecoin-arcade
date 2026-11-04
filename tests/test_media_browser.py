@@ -556,8 +556,44 @@ def test_what_the_speakers_play_is_taken_out_of_the_microphone_and_the_call_stay
         state.mesh.stop()
 
 
+
+def test_a_lounge_screen_shared_with_its_sound_has_the_echo_taken_out_of_the_microphone_in_the_mix(tmp_path, no_nodes):
+    """Riffs 2026-11-03 (the operator, live: "both audios are being transmitted at one time"): a screen started with the microphone, its
+    sound going in ONE track with it (mediaMix), never had the canceller. Now it goes between the microphone and the mix, the screen's
+    sound its reference, and the voice still arrives."""
+    state, server, base = _server(tmp_path)
+    try:
+        with sync_api.sync_playwright() as pw:
+            chrome = _launch(pw)
+            pa, _, _ = _player(chrome, base)
+            pb, _, _ = _player(chrome, base)
+            ga, gb = _game(pa), _game(pb)
+            _until(ga, "window.room && window.room.media && window.room.me", "a in")
+            _until(gb, "window.room && window.room.media && window.room.me", "b in")
+            ida, idb = ga.evaluate("window.room.me.id"), gb.evaluate("window.room.me.id")
+            _until(ga, f"window.states[{idb!r}] === 'direct'", "a direct")
+            pa.evaluate(ROOM)
+            pa.evaluate("""() => { const W = window.AudioWorkletNode; window.__nodes = [];
+                window.AudioWorkletNode = function (ctx, name, o) { window.__nodes.push(name); return new W(ctx, name, o); };
+                window.AudioWorkletNode.prototype = W.prototype; }""")
+            said = ga.evaluate("window.room.media.start({audio: true, screen: true, sound: true})")
+            assert said.get("ok") and said.get("sound"), said
+            _until(pa, "window.__nodes.indexOf('arcade-echo') >= 0", "the canceller in the mix", timeout=10000)
+            ga.evaluate(f"window.room.media.share({idb!r}, true)")
+            gb.evaluate(f"window.room.media.hear({ida!r}, true)")
+            _until(gb, f"window.has[{ida!r}] && window.has[{ida!r}].audio", "b hears a")
+            pb.wait_for_timeout(3000)
+            music, voice = pb.evaluate(EARS, ida)
+            assert voice > -80 and music > -80, ("the voice and the screen both arrive", music, voice)
+            ga.evaluate("window.room.media.stop()")
+            chrome.close()
+    finally:
+        server.stop()
+        state.mesh.stop()
+
 def test_a_player_can_be_louder_than_they_send_and_it_never_crackles(tmp_path, no_nodes):
-    """2026-11-02: past 100%. An element stops at 1, so a gain and a limiter. Read at the speakers: what the page sends to its audio destination."""
+    """2026-11-02: past 100%. An element stops at 1, so a gain and a limiter. Read at the speakers: what the page sends to its audio
+    destination -- since 2026-11-03 the loopback's, so that the echo cancelling hears it."""
     state, server, base = _server(tmp_path)
     try:
         with sync_api.sync_playwright() as pw:
@@ -573,7 +609,9 @@ def test_a_player_can_be_louder_than_they_send_and_it_never_crackles(tmp_path, n
             pa.evaluate("""() => { const q = window.__q, o = q.createOscillator(), g = window.__level = q.createGain(), d = q.createMediaStreamDestination(); g.gain.value = .02; o.connect(g); g.connect(d); o.start();
                 navigator.mediaDevices.getUserMedia = async () => new MediaStream([d.stream.getAudioTracks()[0].clone()]); }""")
             pb.evaluate("""() => { const was = AudioNode.prototype.connect; window.__taps = [];
-                AudioNode.prototype.connect = function (to, ...r) { if (to instanceof AudioDestinationNode) { const a = this.context.createAnalyser(); a.fftSize = 2048; was.call(this, a); window.__taps.push(a); } return was.call(this, to, ...r); };
+                AudioNode.prototype.connect = function (to, ...r) { if (to instanceof AudioDestinationNode || to instanceof MediaStreamAudioDestinationNode) { const a = this.context.createAnalyser(); a.fftSize = 2048; was.call(this, a); window.__taps.push(a); if (to instanceof AudioDestinationNode) window.__direct = (window.__direct || 0) + 1; } return was.call(this, to, ...r); };
+                const play = HTMLMediaElement.prototype.play; window.__plays = [];
+                HTMLMediaElement.prototype.play = function () { window.__plays.push(this); return play.call(this); };
                 window.__peak = () => { const a = window.__taps[window.__taps.length - 1], f = new Float32Array(2048); a.getFloatTimeDomainData(f); return Math.max(...f.map(Math.abs)); }; }""")
             ga.evaluate("window.room.media.start({audio: true})")
             ga.evaluate(f"window.room.media.share({idb!r}, true)")
@@ -583,6 +621,11 @@ def test_a_player_can_be_louder_than_they_send_and_it_never_crackles(tmp_path, n
             gb.evaluate(f"window.room.media.volume({ida!r}, 1.01)")
             pb.wait_for_timeout(1500)
             assert pb.evaluate(tile + ".muted"), "one way out only, or it plays twice"
+            # 2026-11-03 (Spatial World echo): the gain's output plays through a loopback into an <audio> element, which Chrome's
+            # echo cancelling hears, never straight to the AudioContext's speakers, which it does not.
+            pb.wait_for_timeout(1500)
+            assert not pb.evaluate("window.__direct || 0"), "nothing straight to the speakers"
+            assert pb.evaluate("window.__plays.some(e => e.tagName === 'AUDIO' && !e.muted && !e.paused && e.srcObject)"), "the loopback plays"
             low = pb.evaluate("window.__peak()")
             gb.evaluate(f"window.room.media.volume({ida!r}, 3)")
             pb.wait_for_timeout(600)

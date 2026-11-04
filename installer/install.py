@@ -1105,7 +1105,9 @@ def fetch_source_archive(checkout: Path, expect_sha256: str | None = None,
 
     info(f"fetched the application into {checkout}"
          + (f" ({revision[:7]})" if revision else ""))
-    return revision
+    # "" rather than None when only the revision file could not be read: the code is in place, and None is what the
+    # updater reads as "the fetch failed" (arcade/update.py, 2026-11-03).
+    return revision or ""
 
 
 #: Where the arcade finds the first peer the installer was given (web/__main__.py reads it at every start). In the

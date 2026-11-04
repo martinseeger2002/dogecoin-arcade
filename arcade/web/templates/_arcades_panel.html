@@ -144,6 +144,8 @@
         // Not linked here, but an arcade linked to this one is linked to it (2026-11-02).
         if (st === 'via') link.classList.add('via');
         if (st === 'via') link.append('seen through ' + (row.link.by ? '@' + row.link.by : row.link.by_node || 'a linked arcade'));
+        // Only its announcement on the chain (2026-11-03): not heard on the mesh this hour, not counted running.
+        else if (st === 'quiet') { link.classList.add('quiet'); link.title = 'Announced on the chain in the last day, but no arcade has heard from it in the last hour'; link.append('not heard from'); }
         else link.append(st === 'none' ? 'not linked' : 'linked' + (row.link.ms != null ? ' \u00b7 ' + Math.round(row.link.ms) + ' ms' : ''));
       }
       tr.append(who, cores, ords, link); box.appendChild(tr);

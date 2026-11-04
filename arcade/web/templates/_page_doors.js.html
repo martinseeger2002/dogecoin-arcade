@@ -972,7 +972,8 @@
       md.stream = null; md.video = md.audio = md.screen = false; md.share = {};
       Object.keys(md.frames || {}).forEach(function(k){ framesStop(md, k); });
       if (md.levels) { clearInterval(md.levels.timer); md.levels = null; }
-      if (quiet) { if (md.ampCtx) { md.ampCtx.onstatechange = null; try { md.ampCtx.close(); } catch (err) {} }
+      if (quiet) { mediaOutClose(md.ampOut); md.ampOut = null;
+                   if (md.ampCtx) { md.ampCtx.onstatechange = null; try { md.ampCtx.close(); } catch (err) {} }
                    if (md.meterCtx) { try { md.meterCtx.close(); } catch (err) {} } h.media = null; mediaDraw(h, true); }
       else { mediaDraw(h); if (had && !silent) mediaEvent(rtName(h), h, {type: 'media-state', state: 'off'}); }
     }
@@ -992,6 +993,7 @@
     var mediaEchoUrl = null;
     function mediaEchoOn(h){
       var md = h.media, x = md && md.xstream, s = md && md.stream;
+      if (md && md.mix && !md.echo) { mediaEchoInMix(md); return; }
       if (!x || !s || md.mix || md.echo || !x.getAudioTracks().length || !s.getAudioTracks().length) return;
       var Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx || !window.AudioWorkletNode) return;
@@ -1018,11 +1020,39 @@
         if (md.echo === mark) { md.echo = null; try { ctx.close(); } catch (e) {} }
       });
     }
+    // A Riffs Lounge screen shared with its sound goes as ONE track, the microphone and the screen mixed (mediaMix), and the
+    // canceller was never put in (Riffs 2026-11-03: the sharer's speakers playing their own video went back in through the
+    // microphone, "both audios at once"): here it goes between the microphone and the mix, in the mix's own context, with
+    // the screen's sound as the reference. If it cannot start, the bare microphone stays in the mix.
+    function mediaEchoInMix(md){
+      var mix = md.mix;
+      if (!mix.micSrc || !mix.soundSrc || !window.AudioWorkletNode || !mix.ctx.audioWorklet) return;
+      var mark = md.echo = {ctx: mix.ctx, mix: mix, node: null, mics: [], keep: [], clean: null};
+      mediaEchoUrl = mediaEchoUrl || URL.createObjectURL(new Blob(['(' + mediaEchoCode + ')()'], {type: 'text/javascript'}));
+      mix.ctx.audioWorklet.addModule(mediaEchoUrl).then(function(){
+        if (md.echo !== mark || md.mix !== mix) return;
+        var node = new AudioWorkletNode(mix.ctx, 'arcade-echo', {numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [1],
+                                                                 channelCount: 1, channelCountMode: 'explicit', channelInterpretation: 'speakers'});
+        mix.micSrc.disconnect();
+        mix.micSrc.connect(node, 0, 0);
+        mix.soundSrc.connect(node, 0, 1);
+        node.connect(mix.mic);
+        mark.node = node;
+      }).catch(function(err){
+        console.warn('arcade: the microphone goes uncleaned', err);
+        if (md.echo === mark) md.echo = null;
+      });
+    }
     // back: the bare microphone goes on in its place. Without it the whole stream is going, and the microphone with it.
     function mediaEchoOff(h, back){
       var md = h.media, e = md && md.echo;
       if (!e) return;
       md.echo = null;
+      if (e.mix) {                                      // in a mix: the mix's context is the mix's to close
+        if (e.node) { try { e.mix.micSrc.disconnect(); e.mix.soundSrc.disconnect(e.node); e.node.disconnect();
+                            if (back) e.mix.micSrc.connect(e.mix.mic); } catch (err) {} }
+        return;
+      }
       if (e.clean && md.stream && back) {
         md.stream.removeTrack(e.clean);
         e.mics.forEach(function(t){ md.stream.addTrack(t); });
@@ -1039,6 +1069,62 @@
     // Louder than they send (2026-11-02: "amplify the sound ... at least by 200% maybe more"): a video element stops at 1, so past
     // that their sound goes through a gain, and a limiter so that it gets loud and does not crackle. The element stays, muted: a remote
     // track gives the audio graph nothing in Chrome without one. False while it cannot play: the element goes on at full volume instead.
+    // Where the amplified and placed sound plays (2026-11-03, Spatial World: "so much feedback between the mic and the
+    // screen"). Chrome's echo cancelling takes out of the microphone only what WebRTC itself plays, never an AudioContext's own
+    // output (crbug 687574), so every voice and screen played here through the panners went back out of the microphone. In
+    // Chromium the graph's output goes round a loopback pair of RTCPeerConnections on this page and plays from an <audio>
+    // element, which the canceller does hear; stereo, so the panning stays. Elsewhere, or if the loopback fails, the speakers.
+    function mediaOut(md, ctx){
+      var o = md.ampOut;
+      if (o) return o.failed ? ctx.destination : o.node;
+      var chromium = !!window.chrome || /Chrom(e|ium)\//.test(navigator.userAgent || "");   // HeadlessChrome too
+      if (!chromium || !window.RTCPeerConnection || !ctx.createMediaStreamDestination) { md.ampOut = {failed: true}; return ctx.destination; }
+      o = md.ampOut = {node: ctx.createMediaStreamDestination(), failed: false, pcs: [], el: null};
+      try {
+        var a = new RTCPeerConnection(), b = new RTCPeerConnection();
+        o.pcs = [a, b];
+        a.onicecandidate = function(e){ if (e.candidate) b.addIceCandidate(e.candidate).catch(function(){}); };
+        b.onicecandidate = function(e){ if (e.candidate) a.addIceCandidate(e.candidate).catch(function(){}); };
+        b.ontrack = function(e){
+          if (md.ampOut !== o) return;
+          if ('jitterBufferTarget' in e.receiver) e.receiver.jitterBufferTarget = 0;   // as little delay as it will take
+          var el = o.el = document.createElement('audio');
+          el.autoplay = true; el.srcObject = new MediaStream([e.track]);
+          el.play().catch(function(){});
+        };
+        o.node.stream.getAudioTracks().forEach(function(t){ a.addTrack(t, o.node.stream); });
+        var stereo = function(d){
+          var pt = /a=rtpmap:(\d+) opus\/48000/i.exec(d.sdp);
+          if (!pt) return d;
+          var line = new RegExp('(a=fmtp:' + pt[1] + ' [^\\r\\n]*)');
+          return {type: d.type, sdp: d.sdp.replace(line, '$1;stereo=1;sprop-stereo=1;maxaveragebitrate=256000')};
+        };
+        a.createOffer().then(function(d){ d = stereo(d); return a.setLocalDescription(d).then(function(){ return b.setRemoteDescription(d); }); })
+          .then(function(){ return b.createAnswer(); })
+          .then(function(d){ d = stereo(d); return b.setLocalDescription(d).then(function(){ return a.setRemoteDescription(d); }); })
+          .catch(function(err){ mediaOutFail(md, o, err); });
+        // Not playing within a few seconds: the speakers, as before.
+        setTimeout(function(){ if (md.ampOut === o && !o.failed && b.connectionState !== 'connected') mediaOutFail(md, o, b.connectionState); }, 4000);
+      } catch (err) { mediaOutFail(md, o, err); }
+      return o.node;
+    }
+    function mediaOutFail(md, o, why){
+      if (md.ampOut !== o || o.failed) return;
+      console.warn('arcade: placed and amplified sound plays to the speakers directly (echo is not cancelled)', why);
+      o.failed = true;
+      mediaOutClose(o);
+      var ctx = md.ampCtx;
+      if (ctx) Object.keys(md.amps).forEach(function(k){
+        var a = md.amps[k];
+        try { a.limit.disconnect(); a.limit.connect(ctx.destination); } catch (err) {}
+      });
+    }
+    function mediaOutClose(o){
+      if (!o) return;
+      o.pcs.forEach(function(pc){ try { pc.close(); } catch (err) {} });
+      o.pcs = [];
+      if (o.el) { o.el.pause(); o.el.srcObject = null; o.el = null; }
+    }
     function mediaLoud(h, key, stream, level, placed){
       var md = h.media, a = md.amps[key], track = stream && stream.getAudioTracks()[0];
       // In a scene or with pictures in the app the sound goes delay -> panner -> distance fade -> gain -> limiter;
@@ -1054,7 +1140,12 @@
         var ctx = md.ampCtx;
         if (!ctx) {
           ctx = md.ampCtx = new Ctx();
-          ctx.onstatechange = function(){ if (h.media === md) mediaDraw(h); };
+          ctx.onstatechange = function(){
+            if (h.media !== md) return;
+            // Started by the player's press: the loopback's element may have been refused before it.
+            if (ctx.state === 'running' && md.ampOut && md.ampOut.el && md.ampOut.el.paused) md.ampOut.el.play().catch(function(){});
+            mediaDraw(h);
+          };
         }
         if (!a) {
           a = md.amps[key] = {track: track, src: ctx.createMediaStreamSource(new MediaStream([track])), gain: ctx.createGain(), limit: ctx.createDynamicsCompressor()};
@@ -1064,7 +1155,7 @@
             a.pan.panningModel = 'HRTF'; a.pan.distanceModel = 'linear'; a.pan.rolloffFactor = 0;   // the fade does distance
             a.src.connect(a.delay); a.delay.connect(a.pan); a.pan.connect(a.fade); a.fade.connect(a.gain);
           } else a.src.connect(a.gain);
-          a.gain.connect(a.limit); a.limit.connect(ctx.destination);
+          a.gain.connect(a.limit); a.limit.connect(mediaOut(md, ctx));
         }
         a.gain.gain.value = level;
         if (placed) mediaSpatialApply(h);
@@ -1080,14 +1171,17 @@
       if (!Ctx) { sound.forEach(function(t){ t.stop(); }); return null; }
       var ctx = new Ctx(), out = ctx.createMediaStreamDestination(), mic = ctx.createGain(), mics = stream.getAudioTracks();
       if (ctx.state === 'suspended') ctx.resume().catch(function(){});
+      var micSrc = null, soundSrc = ctx.createMediaStreamSource(new MediaStream(sound));
       if (mics.length) {
-        ctx.createMediaStreamSource(new MediaStream(mics)).connect(mic);
+        micSrc = ctx.createMediaStreamSource(new MediaStream(mics));
+        micSrc.connect(mic);
         mic.connect(out);
         mics.forEach(function(t){ stream.removeTrack(t); });
       }
-      ctx.createMediaStreamSource(new MediaStream(sound)).connect(out);
+      soundSrc.connect(out);
       out.stream.getAudioTracks().forEach(function(t){ stream.addTrack(t); });
-      return {ctx: ctx, mic: mic, sound: true, keep: mics.concat(sound)};
+      // micSrc and soundSrc: for the echo canceller put between the microphone and the mix (mediaEchoOn).
+      return {ctx: ctx, mic: mic, micSrc: micSrc, soundSrc: soundSrc, sound: true, keep: mics.concat(sound)};
     }
     function mediaUnmix(mix){
       if (!mix) return;
@@ -1110,7 +1204,7 @@
     function mediaXOff(name, h, told){
       var md = h.media;
       if (!md || !md.xstream) return;
-      mediaEchoOff(h, true);
+      if (!(md.echo && md.echo.mix)) mediaEchoOff(h, true);   // the Lounge mix's canceller is the mix's
       var x = md.xstream; md.xstream = null;
       x.getTracks().forEach(function(t){ t.stop(); });
       if (h.fast) Object.keys(md.share).forEach(function(id){ var pr = h.fast.peers[id]; if (pr) mediaAttachX(h, pr); });

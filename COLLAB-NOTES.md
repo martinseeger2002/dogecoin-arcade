@@ -399,6 +399,33 @@ This replaces part 1's "/lite beside the full UI".
   - `pyproject.toml` adds the `arcade.lite` package and its template.
 - Tests: `tests/test_lite.py` (9). The smoke set with test_admin, test_guide and the door tests: 484 passed.
 
+### 2026-11-03 Echo: placed and amplified sound plays where Chrome's canceller hears it; a Lounge screen's sound is taken out of the mic (Claude; the operator, live in Spatial World: "so much feedback between the mic and the screen", diagnosed by the Riffs session)
+
+Two holes, both in arcade/web/templates/_page_doors.js.html:
+1. **Listener side (the main one).** With pictures in the app, a scene, or a player past 100%, `mediaLoud` played each remote track through an AudioContext to `ctx.destination`. Chrome's echoCancellation takes out only what WebRTC itself plays (crbug 687574), so every voice and screen heard that way went back out of everybody's microphone. New `mediaOut`: in Chromium the graph's output goes round a loopback pair of RTCPeerConnections on the page (Opus stereo, 256 kb/s, jitterBufferTarget 0) and plays from an `<audio>` element; if it is not connected within 4 s it falls back to the speakers as before, with a console warning. Elsewhere (Firefox) the speakers, as before. Closed with the room (`mediaOutClose`).
+2. **Sharer side, Riffs Lounge.** `start({screen, audio, sound})` sends the mic and the screen as one mixed track (`mediaMix`), and `mediaEchoOn` returned early for a mix, so the sharer's speakers playing their own video went back in through the mic. New `mediaEchoInMix`: echo_canceller.js between the mic and the mix, in the mix's own context, the screen's sound as reference; `mediaEchoOff` unwires it; `mediaXOff` leaves it alone.
+Tests: test_media_browser.py (the louder test now also asserts the loopback plays and nothing goes straight to the speakers; a new Lounge-mix test). Not measured with real speakers and a real mic: needs a live check. Nothing needed from your side.
+
+### 2026-11-03 Arcades: an arcade only announced on the chain is listed, not counted running (Claude; the operator: "Why are only eight out of the 13 linked?")
+
+Strawberry said 12 other arcades running, 8 linked. Three of the four unlinked were test arcades on a test machine (port 8433) that had stopped the evening before: `_arcades_running` counted any mesh key announced on the chain in the last day, and arcades re-announce only daily (service.ANNOUNCE_EVERY), so a stopped arcade stayed "running" for up to a day. Now "running" is word from the mesh within the hour: a link, an address reached, a linked arcade saying it is linked to it, or its own "me" hello (operators.peers `at`, new). A key known only from its announcement is still listed, last, as **not heard from** (`link.state: "quiet"`) and is left out of `running`, `total` and Overview's "Other arcades running". Changed: arcade/web/app.py `_arcades_running` (`quiet` ids) and `_arcades_view`, templates/_arcades_panel.html, tests/test_admin.py (the 2026-10-21 test's chain-only arcade is now "quiet"; a new test). Nothing needed from your side; your arcades will count the same way once they update.
+
+### 2026-11-03 The updater repairs a src that lost its installer (Claude; the operator's new ThinkPad install)
+- An archive install whose `~/.dogecoinarcade/src/installer/install.py` was gone failed every update with "could not
+  fetch the source archive": the repair runs the installer from src, the very thing that needed repairing, and
+  `_call_installer` answered None without a word. Now update.py fetches the signed archive itself, holds it to the
+  manifest's sha256 before anything in it runs, and runs that archive's installer (`_with_archive_installer`).
+- The installer returns "" (not None) when only `source.rev` could not be read; the updater then writes the signed
+  manifest's revision. Before, a fetch that succeeded was reported as failed.
+- A machine already in this state needs the installer run once (`python3 install.py`), since its own updater is the
+  old one.
+
+### 2026-11-03 DogeFeedX dock, address book, and chain pills on the operator's main (Cursor Cloud Agent; Billy: the operator's main is the source of truth)
+- **Branch** `cursor/dogefeedx-next`, rebuilt on the operator's `main` `0aecde6` (DogeFeedX for public accounts is `75e6397`, an ancestor). Not pushed to `cursor/dogefeedx-combined-fd4a`. Nothing opened or commented on the operator's repository.
+- **Kept as the operator wrote it:** arcade-only windows, per-account wallet reads, the arcade @handle as the name, door rules, `apps.py`, messages through `mail.threads()` / `mail.write`, the feed through `/dogefeedx/api`, market pictures from this arcade (`IMG_BASE` empty, Cheapest sort). `public_read.py` stays gone.
+- **Ported on top:** the 16 squircle dock icons with name labels, magnification, and the red badges; the address book as a dog-ear on Profile (`dogefeedx.addressbook`, per selected wallet; `/contacts` and `/me/contacts` open Profile `?book=1`); chain pills on messages, feed posts, and listings for DOGE, PEPE, LTC, BTC, BEL, DGB, LKY, KOT, WJK. A `0x` address, an EVM name, Robinhood, XRP/XRPL, and Solana stay `unknown`. Robinhood is off the Market chain row.
+- **Dropped to fit this design:** outside-server market links, the local bark store, the local message stand-in, light window interiors, and the old `apps.py`. The address-book note does not name an outside host. It says the book is saved in this browser for the selected wallet.
+- **Tests:** `tests/test_dogefeedx_chains.py`, `tests/test_dogefeedx_port.py`, plus the operator's DogeFeedX and desktop look tests.
 ### 2026-11-03 DogeFeedX for accounts on a public arcade; the arcade @handle is the name (Claude; the operator: "all of this stuff is already available for the user end ... wire it in", "the primary at handle should still be the existing arcade @handles with the option of describing your handle on Doge")
 - **door.py** opens the DogeFeedX windows, their files and the reads of public arcade data (feed, posts, profiles,
   collections, ord index, mintpads, apps, `me`, notifications, wallet), each path by name. Still refused there: the
