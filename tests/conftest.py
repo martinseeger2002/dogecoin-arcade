@@ -281,9 +281,3 @@ def pages_names_resolve(monkeypatch):
     monkeypatch.setattr(AppState, "_resolves", lambda self, name: True)
 
 
-@pytest.fixture(autouse=True)
-def _enough_cores_to_import(monkeypatch):
-    """A test arcade stands alone, with one Core of each chain it runs: imports are taken as on a network with enough
-    Cores of the chain (app.IMPORT_CORES_MIN, 2026-10-22). The rule itself has its own test, which sets it."""
-    from arcade.web import app as webapp
-    monkeypatch.setattr(webapp, "IMPORT_CORES_MIN", 1)

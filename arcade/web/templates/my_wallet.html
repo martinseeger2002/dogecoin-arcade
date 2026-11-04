@@ -605,7 +605,7 @@ function drawMenu() {
                                                  : "Open your imported wallets…"), null, false, openUnlockImports);
   }
   // No imports on PEP TEST (2026-10-21); the node refuses one there too.
-  // Greyed where a new import cannot be made (2026-10-22: fewer than two of the chain's nodes on the network).
+  // Greyed where a new import cannot be made (import_closed: only NO_IMPORTS since 2026-11-03, when the two-node rule went).
   const closed = ((imp.node || {}).import_closed || {})[c.network];
   if (chainNow() !== "test") {
     if (closed) {

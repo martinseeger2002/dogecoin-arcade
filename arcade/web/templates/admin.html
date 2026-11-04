@@ -676,9 +676,8 @@
         + '</td><td>' + n(rec.accounts) + '</td><td>' + n(rec.hosts) + '</td><td>' + n(rec.filed) + '</td><td>' + n(rec.covered) + ' addresses</td></tr></table>'
       : '<p class="muted">The first pass runs by itself a few minutes after this release starts.</p>';
     var st = d.settings || {}, f = d.files || {};
-    $('wim-settings').innerHTML = '<div class="toggle"><div><b>Shared walk for imports on ' + esc(d.title) + '</b><br><span class="muted" style="font-size:.84rem">Find an imported wallet\'s coins by walking the blocks with the other arcades (instead of a Core rescan).</span></div>'
-      + '<input autocomplete="off" type="checkbox" id="wim-walkon"' + (st.walk ? ' checked' : '') + '></div>'
-      + '<div class="toggle"><div><b>Read for other arcades\' walks</b><br><span class="muted" style="font-size:.84rem">Lend this machine\'s disk and cores to walks other arcades start.</span></div>'
+    // Every import is found by the shared walk (2026-11-03: the Core rescan, and its switch here, are gone).
+    $('wim-settings').innerHTML = '<div class="toggle"><div><b>Read for other arcades\' walks</b><br><span class="muted" style="font-size:.84rem">Lend this machine\'s disk and cores to walks other arcades start.</span></div>'
       + '<input autocomplete="off" type="checkbox" id="wim-lend"' + (st.lend ? ' checked' : '') + '></div>'
       + '<div class="toggle"><div><b>Most arcades in one walk</b><br><span class="muted" style="font-size:.84rem">More arcades finish sooner; every block is read by two whatever the number.</span></div>'
       + '<input autocomplete="off" type="number" id="wim-most" min="2" max="32" value="' + esc(st.readers_max) + '" style="width:70px"></div>'
@@ -719,7 +718,6 @@
   });
   document.addEventListener('change', function (e) {
     var body = null;
-    if (e.target.id === 'wim-walkon') { body = {do: 'set'}; body['walk_' + net] = e.target.checked; }
     if (e.target.id === 'wim-lend') body = {do: 'set', lend: e.target.checked};
     if (e.target.id === 'wim-most') body = {do: 'set', readers_max: Number(e.target.value) || 8};
     if (body) post(body).then(function () { said('Saved.'); }, function (err) { said(err.message, true); });

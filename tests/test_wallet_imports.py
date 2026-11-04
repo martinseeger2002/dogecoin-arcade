@@ -86,12 +86,11 @@ class _Rpc:
         return {"tx": []}
 
 
-def _ready(client, monkeypatch, *, online: bool = False, gate=None, walk: bool = False):
+def _ready(client, monkeypatch, *, online: bool = False, gate=None):
     app, state = client
     chain = _with_ltc_test(state, monkeypatch, ready=True)
-    # These tests read back the old ways (the Core's rescan, the read-back from the floor), kept as the fallback when
-    # the shared walk (2026-10-25, on by default) is switched off; the walk has its own tests (`walk=True`).
-    state.set_setting("import_walk:ltctest", walk)
+    # Every import's past is read by the shared walk (2026-10-25; the only way since 2026-11-03, when the Core rescan
+    # and its two-node rule went).
     if online:
         from arcade.web.state import ChainContext
         real_status, real_rpc = ChainContext.status, ChainContext.rpc
@@ -230,30 +229,42 @@ def test_a_send_from_an_imported_wallet_takes_only_its_coins_and_gives_change_ba
 # --- one read-back per chain ----------------------------------------------------------------------------------------
 
 def test_an_import_during_a_read_back_is_kept_and_read_back_next(client, monkeypatch):
-    """2026-10-21: an import while a read-back runs is not refused -- it waits its turn, back to back."""
+    """2026-10-21: an import while a read-back runs is not refused -- it waits its turn, back to back. The
+    read-back is the shared walk: the first wallet's walk is held, a second wallet is imported meanwhile, and both
+    are ready once the walking is done."""
+    from arcade import coinwalk
     gate = threading.Event()
-    app, state, chain, account = _ready(client, monkeypatch, online=True, gate=gate)
+    app, state, chain, account = _ready(client, monkeypatch, online=True)
     _tip(state, chain, P.messaging_start_height + 40)
+
+    def read(self, c, top, bottom, addresses, progress=None):
+        gate.wait(20)
+        return []
+    monkeypatch.setattr(coinwalk.Reader, "read", read)
     try:
         first = _proof(account, 0x8001)
         said = app.post("/account/imported/address", json=first)
         assert said.status_code == 200, said.text
         assert said.json()["state"] == "rescan"
-        assert said.json()["says"].startswith("The arcade is reading back this wallet's coins; check back in ")
+        until = time.time() + 10
+        while not app.get("/account/imported/busy?chain=ltctest").json()["busy"] and time.time() < until:
+            time.sleep(0.05)
         busy = app.get("/account/imported/busy?chain=ltctest").json()
         assert busy["busy"] and busy["says"].startswith("A rescan is running on this coin right now. You can still "
                                                          "import: your wallet joins the next rescan")
         second = _proof(account, 0x8002)
         queued = app.post("/account/imported/address", json=second)
         assert queued.status_code == 200, queued.text
-        assert queued.json()["state"] == "rescan" and "check back in" in queued.json()["says"]
+        assert queued.json()["state"] == "rescan"
         listed = [e["a"] for e in W.entries(state.setting(W.setting_key("ltctest", account)))]
         assert listed == [first["address"], second["address"]]
     finally:
         gate.set()
     assert _wait_ready(app, first["address"])["state"] == "ready"
     assert _wait_ready(app, second["address"])["state"] == "ready"
-    assert state.setting(f"backfilled:ltctest:{second['address']}") == 0
+    until = time.time() + 10
+    while app.get("/account/imported/busy?chain=ltctest").json()["busy"] and time.time() < until:
+        time.sleep(0.05)
     assert app.get("/account/imported/busy?chain=ltctest").json()["busy"] is False
 
 
@@ -286,44 +297,6 @@ class _WalletCore:
                      "amount": 1.5, "scriptPubKey": txbuild.p2pkh_script(a).hex()}
                     for i, a in enumerate(args[2])]
         raise AssertionError(method)
-
-
-def test_on_a_core_rescan_chain_every_import_waiting_joins_one_rescan_back_to_back(client, monkeypatch):
-    """Dogecoin and Pepecoin 1.14 have no scantxoutset: an import is watched in the Core's wallet with a rescan of the
-    whole chain, reads borrowed meanwhile; every wallet imported during a rescan joins the next one, together."""
-    from arcade import core_catchup
-    from arcade.web.state import ChainContext
-    gate = threading.Event()
-    app, state, chain, account = _ready(client, monkeypatch, online=True)
-    state.set_setting("import_core_rescan:ltctest", True)
-    core = _WalletCore(gate)
-    monkeypatch.setattr(ChainContext, "local_rpc", lambda self: core)
-    monkeypatch.setattr(core_catchup, "can_borrow", lambda chain: True)
-    _tip(state, chain, 400)
-    try:
-        a = _proof(account, 0xA001)
-        assert app.post("/account/imported/address", json=a).json()["state"] == "rescan"
-        until = time.time() + 5
-        while not core.batches and time.time() < until:
-            time.sleep(0.05)
-        assert core.batches == [[a["address"]]], "the first rescan, for the first import"
-        assert core_catchup.held("ltctest") == "rescanning for wallet imports", "reads borrowed while it rescans"
-        said = app.post("/account/imported/rescan", json={"chain": "ltctest", "address": a["address"]}).json()
-        assert said["state"] == "rescan" and said["says"].startswith(
-            "This arcade's node is rescanning the whole chain for this wallet's coins")
-        b, c = _proof(account, 0xA002), _proof(account, 0xA003)
-        for one in (b, c):
-            got = app.post("/account/imported/address", json=one)
-            assert got.status_code == 200 and got.json()["state"] == "rescan", got.text
-    finally:
-        gate.set()
-    for one in (a, b, c):
-        _wait_ready(app, one["address"])
-    assert core.batches == [[a["address"]], sorted([b["address"], c["address"]])], "the next rescan takes both"
-    for one in (a, b, c):
-        assert state.setting(f"core_rescanned:ltctest:{one['address']}")
-        assert state.setting(f"backfilled:ltctest:{one['address']}") == 1, "its coin, filed"
-    assert state.setting("core_rescan_rate:ltctest") is None, "a test rescan is too quick to measure"
 
 
 def test_with_no_node_to_read_the_chain_the_read_back_waits_its_turn(client, monkeypatch):
@@ -470,33 +443,6 @@ def test_the_listed_entries_are_read_defensively():
     assert W.entries([{"a": "x", "k": "taproot"}]) == []
 
 
-def test_a_failing_core_rescan_backs_off_instead_of_rescanning_again_at_once(client, monkeypatch):
-    """A Core that keeps failing the import must not be made to rescan its whole chain back to back: ten minutes,
-    then longer, and after three failures it stops and says so."""
-    from arcade import core_catchup
-    from arcade.web.state import ChainContext
-    app, state, chain, account = _ready(client, monkeypatch, online=True)
-    state.set_setting("import_core_rescan:ltctest", True)
-
-    class _Failing(_WalletCore):
-        def call(self, method, *args):
-            if method == "importmulti":
-                self.batches.append(1)
-                raise RpcError(-4, "disk full")
-            return super().call(method, *args)
-
-    core = _Failing(threading.Event())
-    monkeypatch.setattr(ChainContext, "local_rpc", lambda self: core)
-    monkeypatch.setattr(core_catchup, "can_borrow", lambda chain: True)
-    _tip(state, chain, 400)
-    a = _proof(account, 0xB001)
-    app.post("/account/imported/address", json=a)
-    time.sleep(1.5)
-    assert core.batches == [1], "tried once, then waits: never straight into another whole-chain rescan"
-    said = app.post("/account/imported/rescan", json={"chain": "ltctest", "address": a["address"]}).json()
-    assert said["state"] == "rescan" and "tries again" in said["says"], said
-
-
 def test_no_wallet_is_imported_on_pep_test(client, monkeypatch):
     """2026-10-21: "No imports for pep test"."""
     app, state, chain, account = _ready(client, monkeypatch)
@@ -560,65 +506,6 @@ def test_a_busy_core_is_waited_for_and_a_rescan_it_already_ran_is_not_sent_again
     assert core.batches == [[a]] and kept["addresses"] == [a]
 
 
-def test_a_core_still_rescanning_is_said_so_with_its_countdown(client, monkeypatch):
-    """2026-10-21 (a screenshot of "There is no node to borrow right now" while sends worked through a borrowed
-    node): while this arcade's Core is held at a rescan, waited for, the notice says the node is rescanning and about
-    how long is left -- never that there is nobody to borrow from."""
-    from arcade import core_catchup
-    app, state, chain, account = _ready(client, monkeypatch)
-    state.set_setting("import_core_rescan:ltctest", True)
-    _tip(state, chain, P.messaging_start_height + 40)
-    asked = _proof(account, 0x9101)
-    app.post("/account/imported/address", json=asked)
-    monkeypatch.setitem(core_catchup.HOLDS, "ltctest", "rescanning for wallet imports")
-    monkeypatch.setattr(core_catchup, "_loaded", True)
-    state.set_setting("core_rescan_rate:ltctest", 1.0)                 # a block a second: the tip's height in seconds
-    state.set_setting("core_rescan_sent:ltctest", {"at": time.time() - 10, "addresses": [asked["address"]]})
-    said = app.post("/account/imported/rescan", json={"chain": "ltctest", "address": asked["address"]}).json()
-    assert said["state"] == "rescan" and said["says"].startswith("This arcade's node is rescanning the whole chain")
-    assert "no node to borrow" not in said["says"] and said["eta"] > 0
-    # The Core's log read (core_log): its own share done, block and pace said instead of the guess.
-    from arcade import core_log
-    monkeypatch.setattr(core_log, "rescan_progress",
-                        lambda params, now=None: {"block": 5471263, "progress": 0.597658, "eta": 7200})
-    said = app.post("/account/imported/rescan", json={"chain": "ltctest", "address": asked["address"]}).json()
-    assert said["pct"] == 59.8 and said["block"] == 5471263 and said["eta"] == 7200 and "then" not in said
-    assert "59.8% done (block 5,471,263), about " in said["says"], said
-    monkeypatch.setattr(core_log, "rescan_progress", lambda params, now=None: None)
-    # One sent before this wallet was imported: that one, then one more for it.
-    state.set_setting("core_rescan_sent:ltctest", {"at": time.time() - 10, "addresses": ["someone else"]})
-    said = app.post("/account/imported/rescan", json={"chain": "ltctest", "address": asked["address"]}).json()
-    assert "one more rescan reads this wallet's coins" in said["says"]
-    # Nothing kept of when it began (an arcade restart before 2026-10-21's fix): still said as rescanning.
-    state.set_setting("core_rescan_sent:ltctest", None)
-    said = app.post("/account/imported/rescan", json={"chain": "ltctest", "address": asked["address"]}).json()
-    assert said["says"].startswith("This arcade's node is rescanning the whole chain"), said
-
-
-def test_a_core_that_does_not_answer_at_all_is_remembered_as_rescanning(client, monkeypatch):
-    """The connection check itself fails on a Core at a rescan (its queue full): the batch is remembered as sent then,
-    so the page says the node is rescanning, and the rescan is not sent twice."""
-    from arcade import core_catchup
-    from arcade.web.state import ChainContext
-    app, state, chain, account = _ready(client, monkeypatch, online=True)
-    state.set_setting("import_core_rescan:ltctest", True)
-
-    def busy(self):
-        raise RuntimeError("non-JSON response from dogecoind (HTTP 500): 'Work queue depth exceeded'")
-    monkeypatch.setattr(ChainContext, "local_rpc", busy)
-    monkeypatch.setattr(core_catchup, "can_borrow", lambda chain: True)
-    _tip(state, chain, 400)
-    asked = _proof(account, 0xA101)
-    app.post("/account/imported/address", json=asked)
-    until = time.time() + 10
-    while not state.setting("core_rescan_sent:ltctest") and time.time() < until:
-        time.sleep(0.05)
-    assert state.setting("core_rescan_sent:ltctest")["addresses"] == [asked["address"]]
-    said = app.post("/account/imported/rescan", json={"chain": "ltctest", "address": asked["address"]}).json()
-    assert said["says"].startswith("This arcade's node is rescanning the whole chain"), said
-
-
-
 def test_a_rescan_that_found_history_is_not_sent_again_though_the_peers_are_new(tmp_path):
     """2026-10-22, "looks like rescan started over": a 22-hour Dogecoin rescan drops and makes its peers anew,
     so the peer test said "restarted" and the whole chain was sent again. The wallet already holding transactions for
@@ -643,28 +530,26 @@ def test_a_rescan_that_found_history_is_not_sent_again_though_the_peers_are_new(
     assert empty.batches == [[a]]
 
 
-def test_no_new_import_on_a_chain_with_fewer_than_two_nodes_on_the_network(client, monkeypatch):
-    """2026-10-22: "importing a wallet to LTC right now should not be possible since there is only one LTC node.
-    So that option should be grayed out on all arcades." This arcade's own Core and the linked sharers are counted;
-    under two, the import is refused, and the Wallet page is told why (it greys the option out)."""
+def test_one_node_of_a_chain_is_enough_to_import_on_it(client, monkeypatch):
+    """2026-11-03 ("Why do we have to have two cores on the arcade mesh in order to import a wallet ... a leftover
+    rule from when we were re-scanning with the node?" -- "Okay cool"): the two-node rule went with the Core rescan.
+    A test arcade stands alone with one node of the chain, and the import is open: the walk reads with one reader."""
     from arcade.web import app as webapp
     app, state, chain, account = _ready(client, monkeypatch)
-    monkeypatch.setattr(webapp, "IMPORT_CORES_MIN", 2)
-    view = app.get("/account/imported").json()
-    assert "needs at least 2" in view["import_closed"]["ltctest"]
-    got = app.post("/account/imported/address", json=_proof(account, 0x9201))
-    assert got.status_code == 400 and "needs at least 2" in got.json()["detail"]
-    page = app.get("/me/wallet").text
-    assert "import_closed" in page and "not available" in page
-    monkeypatch.setattr(webapp, "IMPORT_CORES_MIN", 1)          # a second node joins: open again
+    assert not hasattr(webapp, "IMPORT_CORES_MIN")
     assert "ltctest" not in app.get("/account/imported").json()["import_closed"]
-
+    got = app.post("/account/imported/address", json=_proof(account, 0x9201))
+    assert got.status_code == 200, got.text
+    assert "import_closed" in app.get("/me/wallet").text, "PEP TEST is still greyed the same way"
+    admin = app.get("/admin/api/imports?chain=ltctest", headers={"host": "127.0.0.1:8420", "x-arcade-admin": "1"})
+    assert admin.status_code == 200, admin.text
+    assert "walk" not in admin.json()["settings"], "no switch back to a Core rescan"
 
 def test_an_import_is_found_by_the_shared_walk_and_is_ready(client, monkeypatch):
     """2026-10-25: an imported wallet is found by the arcades walking the blocks (no Core rescan); the walk's
     coins are checked here and the wallet says ready."""
     from arcade import coinlist, coinwalk
-    app, state, chain, account = _ready(client, monkeypatch, online=True, walk=True)
+    app, state, chain, account = _ready(client, monkeypatch, online=True)
     _tip(state, chain, P.messaging_start_height + 40)
     walked = []
     monkeypatch.setattr(coinwalk.Reader, "read",

@@ -88,6 +88,15 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 Imports: one node of a chain is enough, and the Core rescan is gone (Claude; the operator: "Why do we have to have two cores on the arcade mesh in order to import a wallet. As this leftover rule from when we were re-scanning with the node?", "Why do any chance require the import rescan?", "Okay cool")
+
+Every import's past has been found by the shared walk since 2026-10-25 (on by default on every chain; Kotia and Litecoin read over RPC, not block files). The Core rescan (2026-10-21: watch-only import into this node's Core, whole-chain rescan, reads borrowed meanwhile) was left as a fallback behind Admin -> Wallet imports' "Shared walk" switch, and its need for a second Core to borrow from was the reason for `IMPORT_CORES_MIN = 2` ("at least 2 nodes on the arcades' network"). Both are gone:
+- `_import_closed` refuses only NO_IMPORTS (PEP TEST). An import opens on a chain with one node; the walk reads once there, with canaries in every job, and every coin it files is checked against the chain.
+- Removed: CORE_RESCAN_ON, `_core_rescan_on`, `_core_batch_start`, the start-up sweep, the rescan's retry/back-off and countdown words, `_rescan_start` (the floor read-back), `_walk_on` and the Admin switch (`import_walk:<net>` is no longer read). `_begin_next` always walks.
+- Kept: a wallet a Core rescan already read (`core_rescanned:<net>:<address>` set) stays ready; core_catchup (a hold from before a restart clears itself; utxos and the mesh still use it); utxos.seed_from_core_wallet and its tests.
+- Tests: test_wallet_imports (the four Core-rescan tests removed; "an import during a read-back" rewritten on the walk; the two-node test turned round: one node is enough, and Admin has no switch back); conftest's `_enough_cores_to_import` removed.
+Nothing needed from your side: your arcades will open imports on single-node chains when they update.
+
 ### 2026-11-03 rawchain: a P2PK output keeps its address in a borrowed block's verbose view, on every chain (Claude; found by the ThinkPad's Flopcoin blocks)
 
 `script.classify_script` returns a P2PK output's address with no keys, and `rawchain.script_pubkey` filled `addresses` only `if keys`, so every pay-to-pubkey output (old Dogecoin and Pepecoin coinbases, Flopcoin's AuxPoW-era ones) lost the `reqSigs`/`addresses` Core prints for it. Now `address or keys`. Display only (no spend or check reads it). Proved by real Flopcoin blocks: tests/data/rawchain/flop-blocks.json.gz (110,101-110,103 around the first AuxPoW block, 124,998-125,000 across the hard fork; made on the ThinkPad's synced v2.0.0.0 node, sha256 e3f43c55...4360) and test_flopcoin's real-block test, which fails without the fix. If your side reads borrowed P2PK outputs, you get the address now.
