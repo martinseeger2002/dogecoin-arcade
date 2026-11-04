@@ -1,5 +1,6 @@
-"""Lite's own Join, Address book and Options, in a real browser on regtest: an account made and signed in from the Join
-panel ARCADE Lite serves at /join, a claimed name added to the book and paid from it, and the operator's Options."""
+"""Lite's own Join, Backup, Address book and Options, in a real browser on regtest: an account made and signed in from
+the Join panel ARCADE Lite serves at /join and its words shown again at /me/backup, a claimed name added to the book and
+paid from it, and the operator's Options."""
 
 import pathlib
 import sys
@@ -43,6 +44,7 @@ def test_an_account_is_made_and_signed_in_from_lites_join(browser, lite):
     browser.find_element(By.ID, "j-pw2").send_keys(password)
     browser.find_element(By.CSS_SELECTOR, '#j-make button[type="submit"]').click()
     _wait(browser).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#j-words li")) == 12)
+    words = [li.text for li in browser.find_elements(By.CSS_SELECTOR, "#j-words li")]
     done = browser.find_element(By.ID, "j-done")
     assert not done.is_enabled(), "Done waits until the words are said to be written down"
     browser.find_element(By.ID, "j-kept").click()
@@ -62,6 +64,14 @@ def test_an_account_is_made_and_signed_in_from_lites_join(browser, lite):
         const done = arguments[0];
         fetch("/auth/who").then((r) => r.json()).then(done, () => done({}));""")
     assert who.get("pubkey"), who
+
+    browser.get(f"{base}/me/backup")
+    browser.find_element(By.ID, "k-pw").send_keys(password)
+    browser.find_element(By.CSS_SELECTOR, '#k-show button[type="submit"]').click()
+    _wait(browser).until(lambda d: len(d.find_elements(By.CSS_SELECTOR, "#k-words li")) == 12
+                         or d.find_element(By.ID, "k-said").text)
+    shown = [li.text for li in browser.find_elements(By.CSS_SELECTOR, "#k-words li")]
+    assert shown == words, browser.find_element(By.ID, "k-said").text
 
 
 @pytest.fixture

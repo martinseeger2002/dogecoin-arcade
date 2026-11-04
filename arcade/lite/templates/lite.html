@@ -81,7 +81,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
 <body>
 <nav class="menubar" id="menubar">
   <div class="menu"><button type="button">File</button><ul>
-    {% if audience == 'operator' %}<li><button type="button" data-go="/backup">Backup and restore</button></li>{% endif %}
+    {% if wallet == 'account' %}<li><button type="button" data-go="/me/backup">Backup…</button></li>
+    {% elif audience == 'operator' %}<li><button type="button" data-go="/backup">Backup and restore</button></li>{% endif %}
     {% if edition == 'full' %}<li><hr></li><li><button type="button" data-go="/">Open the full arcade</button></li>{% endif %}
     {% if account %}<li><button type="button" data-go="/join">Sign out…</button></li>
     {% else %}<li><button type="button" data-go="/join">Sign in or make an account</button></li>{% endif %}
@@ -143,6 +144,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   {% include "_wallet.html" %}
   {% include "_addressbook.html" %}
   {% include "_join.html" %}
+  {% include "_backup.html" %}
   <section data-panel="apps" hidden>
     <fieldset><legend>Apps, themes and node modules</legend>
       <table><thead><tr><th>Module</th><th>Kind</th><th>Here</th></tr></thead><tbody>
@@ -275,7 +277,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     document.querySelectorAll('main [data-panel]').forEach(function (p) { p.hidden = p.dataset.panel !== name; });
   }
   document.querySelectorAll('.toolbar [data-tab]').forEach(function (b) { b.onclick = function () { panel(b.dataset.tab); }; });
-  if (location.pathname === '/join') panel('join');
+  var opened = {'/join': 'join', '/me/backup': 'backup'}[location.pathname];
+  if (opened && document.querySelector('main [data-panel="' + opened + '"]')) panel(opened);
 
   // menus: click to open, click elsewhere to close
   document.querySelectorAll('.menu>button').forEach(function (b) {

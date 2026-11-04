@@ -156,9 +156,22 @@ def test_join_is_a_panel_of_the_window_and_lite_serves_it_at_join(app, app_state
     app_state.set_setting("edition", "lite")
     try:
         page = app.get("/join", headers=LOCAL)
-        assert page.status_code == 200 and 'id="j-make"' in page.text and "panel('join')" in page.text
+        assert page.status_code == 200 and 'id="j-make"' in page.text and "'/join': 'join'" in page.text
     finally:
         app_state.set_setting("edition", None)
+
+
+def test_an_accounts_backup_is_a_panel_of_the_window(app, app_state):
+    assert 'id="k-show"' not in app.get("/lite", headers=LOCAL).text, "the node's own backup is its Core wallets"
+    assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
+    page = app.get("/lite", headers=OUTSIDE).text
+    assert 'id="k-show"' in _panel(page, "backup") and 'data-go="/me/backup"' in page
+    app_state.set_setting("edition", "lite")
+    try:
+        assert 'id="k-show"' in app.get("/me/backup", headers=OUTSIDE).text
+    finally:
+        app_state.set_setting("edition", None)
+    assert 'id="k-show"' not in app.get("/me/backup", headers=OUTSIDE).text, "the full edition keeps its own page"
 
 
 def test_options_is_a_window_for_the_operator_only(app):

@@ -24940,6 +24940,8 @@ def create_app(state: AppState) -> FastAPI:
         account = signed_in(request)
         if account is None:
             return _to_join(request)
+        if modulelib.edition(state.settings()) == "lite":
+            return _lite_home(request)                     # ARCADE Lite draws it in its own window
         mine = state.vault().by_pubkey(account.pubkey) or {}
         return render(request, "my_backup.html", chain=_account_chain(),
                       my_name=mine.get("tag", ""),
