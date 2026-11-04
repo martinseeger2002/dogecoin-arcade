@@ -123,15 +123,16 @@ def test_its_docs_page_is_listed():
     assert any(page == "flopcoin.md" for page, *_ in guide.ORDER)
     text = (pathlib.Path(guide.__file__).resolve().parent / "docs" / "flopcoin.md").read_text()
     assert "v2.0.0.0" in text and "txindex=1" in text and "216.45.61.204" in text
-    assert "## Flopinals" in text and "917,000" in text
+    assert "## Flopinals" in text and "18,295" in text
 
 
 def test_flopinals_are_indexed_from_the_floor_and_move_like_doginals():
-    """2026-11-03: "There are no flop coin ORD's yet we can incorporate them right now." None were inscribed before
-    the arcade reads Flopcoin at all, so the index starts at the floor and misses none. Dogecoin 1.14's code with no
-    SegWit: the Doginals kind, 240-byte parts, a reinscription not numbered (as DigiByte's)."""
+    """2026-11-03: "we can incorporate them right now". A scan of the whole chain from block 0 (the ThinkPad's
+    node, 2026-11-03) found the first Doginals-style envelope at 18,295, well below the floor: the index starts there,
+    as every chain's does below its floor. Dogecoin 1.14's code with no SegWit: the Doginals kind, 240-byte parts, a
+    reinscription not numbered (as DigiByte's)."""
     from arcade import doginal_index, ord_chains, ord_inscribe, ord_rules
-    assert doginal_index.STARTS["flop"] == config.FLOP_MAINNET_FLOOR == FLOP.activation_height
+    assert doginal_index.STARTS["flop"] == 18_295 < FLOP.activation_height, "the first envelope, below the floor"
     assert "flop" in doginal_index.SOURCES
     rules = ord_inscribe.rules_of("flop")
     assert (rules.label, rules.dialect, rules.part, rules.empty_ok) == ("Flopinal", "dogecoin", 240, False), "Doginals' own"
