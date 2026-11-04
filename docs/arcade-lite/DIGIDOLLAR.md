@@ -58,7 +58,8 @@ Sources: R = https://github.com/DigiByte-Core/digibyte, RAW = https://raw.github
     it on only when it hashes to the user's address.
 - **Tested:** the builder against BIP-341's own vectors, and DigiByte's script encoding
   (`tests/test_module_packages.py`). A mint against a real DigiByte Core 9.26.7 on regtest, signed by a key no Core
-  holds (`tests/test_digidollar_regtest.py`, skipped where `digibyted` is not installed).
+  holds (`tests/test_digidollar_regtest.py`, skipped where `digibyted` is not installed). It passed on 2026-11-04
+  against DigiByte Core 9.26.7: the node took the mint into a block, and its supply went from $0 to $100.
 
 ## What does not work yet
 

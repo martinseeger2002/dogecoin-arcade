@@ -126,7 +126,8 @@ mainnet.
 - test_module_sandbox, test_module_host, test_module_packages and test_digidollar: the BIP-341 vectors, and the mint
   laid out byte by byte.
 - test_digidollar_regtest: a mint on a real digibyted regtest, signed by a key no Core holds. It skips without
-  `digibyted`. **Not run yet:** this session was not allowed to run the downloaded DigiByte binary.
+  `digibyted`. **Passed** on a test machine against DigiByte Core 9.26.7: the node took the mint into a block, and
+  `ddstats` went from $0 to $100 of supply and one position.
 
 **Questions for you.**
 1. Taproot (BIP-340) signing in coins.js and Taproot inputs in funding: it is wallet code, so it is yours to say yes
