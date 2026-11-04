@@ -40,8 +40,13 @@ HEARD_FRESH = 600
 ASKED_FRESH = 15 * 60
 ASK_EVERY = 10 * 60
 TICK = 1.0
-INFO_EVERY = 60.0
+INFO_EVERY = 20.0
 CHOOSE_EVERY = 60.0
+#: How long after this arcade starts a chain with no offer is not yet said to have none (offers come once a minute).
+LOOK_SECONDS = 90.0
+#: Phases that are said as notifications too, and how.
+NOTED = {"asked": "info", "copying": "info", "checking": "info", "done": "ok", "failed": "bad", "none": "info",
+         "own": "info", "making": "info"}
 #: Disk kept free besides the copy.
 SPARE_BYTES = 2 * 10 ** 9
 
@@ -80,6 +85,8 @@ class CoreBoot:
         self._flight: dict[str, dict[int, float]] = {}   # net -> {piece number: asked at}
         self._asked_at: dict[str, float] = {}
         self._chose_at: dict[str, float] = {}
+        self._samples: dict[str, list] = {}
+        self._started = time.monotonic()
         self._busy: set[str] = set()                     # nets with a thread working (making, installing)
         self._info_at = 0.0
         self._stop = threading.Event()
@@ -200,9 +207,14 @@ class CoreBoot:
         self.asked[net] = {}
 
         def make():
+            from ..core_install import note
+            label = getattr(self.networks.get(net), "label", net)
+            note(self.state, net, f"{label}: making a copy of this node's chain data for "
+                                  f"{', '.join(self._who(p) for p in asks)} (the node pauses for a few seconds)")
             with cc.held(snaps.root.with_name(snaps.root.name + ".lock")) as mine:
                 if mine:
                     snaps.make()
+            note(self.state, net, f"{label}: the copy is ready for linked arcades", "ok")
             self._say_all()
         self._spawn(net, make)
 
@@ -213,7 +225,14 @@ class CoreBoot:
 
     # ---------------------------------------------------------------- fetching
     def _job(self, net: str, **kw) -> None:
+        """What the Coins & chains row says. A new `phase` is also a notification (core_install.note)."""
+        before = (self.jobs.get(net) or {}).get("phase")
         self.jobs[net] = {**self.jobs.get(net, {}), **kw}
+        phase = kw.get("phase")
+        if phase and phase != before and phase in NOTED:
+            from ..core_install import note
+            label = getattr(self.networks.get(net), "label", net)
+            note(self.state, net, f"{label}: {kw.get('step', '')}", NOTED[phase])
 
     def _offers(self, net: str, now: float) -> list[tuple[str, dict]]:
         mine = self.info.get(net) or {}
@@ -239,11 +258,16 @@ class CoreBoot:
                 return
             self._pull(net, f, now)
             return
-        if not info or self._settings().get("core_copy_auto", True) is False:
+        if not info:
+            if (self.jobs.get(net) or {}).get("phase") in (None, "starting"):
+                self._job(net, state="waiting", phase="starting", step="the node is starting")
+            return
+        if self._settings().get("core_copy_auto", True) is False or self._settings().get(f"core_copy_own:{net}"):
+            self._job(net, state="waiting", phase="own", step="syncing on its own (no copy, as chosen)")
             return
         if info["headers"] - info["blocks"] < cc.WORTH_BLOCKS and info["headers"] > 0:
             if (self.jobs.get(net) or {}).get("state") == "waiting":
-                self.jobs.pop(net, None)                   # caught up by itself
+                self.jobs.pop(net, None)                   # caught up by itself (or never far behind)
             return
         offers = self._offers(net, now)
         ready = sorted(((p, s) for p, s in offers if isinstance(s.get("sn"), dict)
@@ -261,10 +285,17 @@ class CoreBoot:
             if now - self._asked_at.get(net, -1e9) >= ASK_EVERY:
                 self._asked_at[net] = now
                 self._post(makers[0][0], {"op": "sq", "net": net})
-            self._job(net, state="waiting", step=f"asked {self._who(makers[0][0])} for a copy of its chain data")
+            self._job(net, state="waiting", phase="asked", peer=makers[0][0],
+                      step=f"asked {self._who(makers[0][0])} for a copy of its chain data; it makes one (its node "
+                           f"pauses for a few seconds), then the copy comes over")
+        elif now - self._started < LOOK_SECONDS:
+            # Just started (an install reloads the arcade): the linked arcades say what they have within a minute.
+            self._job(net, state="waiting", phase="looking",
+                      step="looking for a linked arcade that has a copy of this chain's data")
         elif (self.jobs.get(net) or {}).get("state") in (None, "waiting"):
-            self._job(net, state="waiting", step="no linked arcade has a copy of this chain's data to give: "
-                                                 "the node syncs on its own")
+            self._job(net, state="waiting", phase="none",
+                      step="no linked arcade has a copy of this chain's data to give, so the node syncs on its own; "
+                           "a copy is taken if one is offered later")
 
     def _choose(self, net: str, peer: str, sn: dict) -> None:
         """Check an offer against this node's own headers and disk, then ask for its manifest."""
@@ -273,16 +304,18 @@ class CoreBoot:
                                      "version": (self.info.get(net) or {}).get("ver"),
                                      "height": sn.get("h"), "hash": sn.get("hash")})
         if why:
-            self._job(net, state="waiting", step=f"the copy on {self._who(peer)}: {why}")
+            self._job(net, state="waiting", phase="asked" if "waiting" in why else "none", peer=peer,
+                      step=f"the copy on {self._who(peer)}: {why}")
             if "waiting" not in why:
                 self._refuse(net, peer)
             return
         folder = cc.chain_dir(self._installed(net), self.networks[net]).parent
         need = int(sn.get("bytes", 0)) + SPARE_BYTES
         if shutil.disk_usage(folder).free < need:
-            self._job(net, state="waiting", step=f"a copy takes {need / 1e9:.0f} GB; this disk has less free")
+            self._job(net, state="waiting", phase="none",
+                      step=f"a copy takes {need / 1e9:.0f} GB; this disk has less free, so the node syncs on its own")
             return
-        self._job(net, state="working", step=f"asking {self._who(peer)} for its copy", peer=peer)
+        self._job(net, state="working", phase="asked", step=f"asking {self._who(peer)} for its copy", peer=peer)
         self._get(peer, net, {"what": "manifest", "snap": sn["id"]})
 
     def got_manifest(self, peer: str, net: str, sid: str, manifest: dict) -> None:
@@ -293,7 +326,8 @@ class CoreBoot:
         if sn.get("id") != sid or manifest.get("hash") != sn.get("hash") or manifest.get("height") != sn.get("h"):
             return
         if not manifest.get("txindex"):
-            self._job(net, state="waiting", step=f"the copy on {self._who(peer)} has no transaction index")
+            self._job(net, state="waiting", phase="none", step=f"the copy on {self._who(peer)} has no transaction "
+                                                              f"index, so the node syncs on its own")
             self._refuse(net, peer)
             return
         try:
@@ -301,7 +335,7 @@ class CoreBoot:
                 if mine:
                     f.begin(sid, peer, manifest)
         except cc.CopyError as exc:
-            self._job(net, state="failed", step=str(exc))
+            self._job(net, state="failed", phase="failed", step=str(exc))
             self._refuse(net, peer)
 
     def _pull(self, net: str, f: cc.Fetch, now: float) -> None:
@@ -318,13 +352,15 @@ class CoreBoot:
             if time.time() - last > cc.FETCH_STALL and (self.heard.get(peer) and sn.get("id") != f.state["id"]):
                 log.info("core copy %s: %s no longer offers the copy; let go", net, peer)
                 f.drop()
-                self._job(net, state="waiting", step=f"{self._who(peer)} no longer has the copy")
+                self._job(net, state="waiting", phase="none", step=f"{self._who(peer)} no longer has the copy")
                 return
-            self._job(net, state="working", step=f"waiting for {self._who(peer)} to be linked again",
+            self._job(net, state="working", phase="linking", step=f"waiting for {self._who(peer)} to be linked again",
                       done=have, total=total, peer=peer)
             return
-        self._job(net, state="working", step=f"copying the chain data from {self._who(peer)}", done=have,
-                  total=total, peer=peer)
+        rate, eta = self._rate(net, have, total)
+        self._job(net, state="working", phase="copying", step=f"copying the chain data from {self._who(peer)}",
+                  done=have, total=total, peer=peer, rate=rate, eta=eta,
+                  pieces=[len(f._done), len(f._pieces)])
         for n in f.missing():
             if len(flight) >= cc.IN_FLIGHT:
                 break
@@ -365,16 +401,38 @@ class CoreBoot:
                 return
             f.save(force=True)
             try:
-                got = f.install(self.core_of(net), lambda s: self._job(net, state="working", step=s, peer=peer))
+                got = f.install(self.core_of(net), lambda s: self._job(net, state="working", phase="checking",
+                                                                        step=s, peer=peer))
             except Exception as exc:                       # noqa: BLE001 -- said on the page; the old data is back
-                self._job(net, state="failed", step=f"the copy from {self._who(peer)} was refused: {exc}"[:300])
+                self._job(net, state="failed", phase="failed",
+                          step=f"the copy from {self._who(peer)} was refused: {exc}. This node's own data is back "
+                               f"and it syncs on its own"[:300])
                 self._refuse(net, peer)
                 return
         self.state.set_setting(f"core_copied:{net}", {"from": peer, "height": got["height"], "hash": got["hash"],
                                                       "at": int(time.time())})
-        self._job(net, state="done", step=f"copied from {self._who(peer)} at block {got['height']:,}; its coin set "
-                                          f"is trusted, the node syncs the rest itself", peer=peer)
+        self._job(net, state="done", phase="done",
+                  step=f"copied from {self._who(peer)} at block {got['height']:,} and checked here; its coin set is "
+                       f"{self._who(peer)}'s word. The node syncs the rest itself", peer=peer)
         log.info("core copy %s: installed the copy from %s at %s", net, peer, got["height"])
+
+    def _rate(self, net: str, have: int, total: int) -> tuple[float, int | None]:
+        """Bytes a second over the last minute or so, and seconds left at that pace."""
+        now = time.monotonic()
+        samples = [x for x in self._samples.get(net, []) if now - x[0] < 90] + [(now, have)]
+        self._samples[net] = samples
+        t0, h0 = samples[0]
+        rate = (have - h0) / (now - t0) if now - t0 >= 5 else 0.0
+        return round(rate), (int((total - have) / rate) if rate > 0 else None)
+
+    def own(self, net: str) -> None:
+        """The operator chose "Sync on its own instead": no copy for this chain (a fetch under way is let go)."""
+        self.state.set_setting(f"core_copy_own:{net}", True)
+        f = self.fetch(net)
+        if f.active and f.state.get("phase") == "fetching":
+            f.drop()
+        self._flight.pop(net, None)
+        self._job(net, state="waiting", phase="own", step="syncing on its own (no copy, as chosen)")
 
     def _refuse(self, net: str, peer: str) -> None:
         refused = self._refused(net)
@@ -395,8 +453,14 @@ class CoreBoot:
             row = dict(self.jobs.get(net) or {})
             done = self._settings().get(f"core_copied:{net}")
             if done and not row:
-                row = {"state": "done", "step": f"chain data copied from {self._who(done.get('from', ''))} at block "
-                                                f"{int(done.get('height', 0)):,}; its coin set is trusted"}
+                row = {"state": "done", "phase": "done",
+                       "step": f"chain data copied from {self._who(done.get('from', ''))} at block "
+                               f"{int(done.get('height', 0)):,}; its coin set is trusted", "peer": done.get("from")}
+            if row.get("peer"):
+                row["from"] = self._who(row["peer"])
+            info = self.info.get(net)
+            if info:
+                row["node"] = {"blocks": info["blocks"], "headers": info["headers"]}
             s = self._snaps.get(net)
             if s is not None:
                 if s.making:

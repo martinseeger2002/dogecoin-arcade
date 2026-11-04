@@ -512,8 +512,12 @@ the most blocks, on the same Core version, makes a copy of its chain data (its n
 seconds), and the copy comes over the mesh, a piece at a time, checked as it comes. Then this node is stopped,
 the copy swapped in, checked with no peers (its newest block is on this node's own header chain, its coin
 set's summary is the copy's, the last 288 blocks verify), and the node started again; it syncs the rest
-itself. Anything off and the node's own data goes back. The Coins & chains tab shows how far it is and,
-afterwards, which arcade it came from: the copy's coin set is that arcade's word (see `exchange-safety.md`).
+itself. Anything off and the node's own data goes back. The chain's row on Coins & chains shows the install's
+six steps (download, check, start, chain data, check the copy, ready) with the one going on now: how far, how
+long, what comes next, and two buttons, **Sync on its own instead** and **Cancel install** (its node stopped and
+its chain data deleted, never its wallet file; the chain is borrowed again). Each step is also a notification on
+every Admin tab, and the bell beside the Admin title keeps the list. Afterwards the row says which arcade the
+copy came from: the copy's coin set is that arcade's word (see `exchange-safety.md`).
 Only `blocks/`, `chainstate/` and `indexes/` are copied, never a wallet, config or peers file; a node with a
 wallet catches its wallet up once at the next start. An arcade makes copies for others only of a Core it
 installed itself, runs here and shares (**Admin → Chains**, the share box), and deletes a copy nobody

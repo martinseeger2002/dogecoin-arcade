@@ -159,7 +159,7 @@ class Installer:
         if not got["available"]:
             raise ValueError(got["why"])
         folder, conf = node_paths(params)
-        if conf.exists() and not (self.state.setting(f"core_installed:{net}") or {}):
+        if conf.exists() and not (self.state.setting(f"core_installed:{net}") or {}) and not _ours(conf):
             raise ValueError(f"{conf} is already there: a node of yours is set up for this chain; turn it on "
                              f"with Runs here instead")
         if need_bytes and free_bytes < need_bytes:
@@ -168,7 +168,8 @@ class Installer:
         with self._lock:
             if any(j.get("state") == "working" for j in self.jobs.values()):
                 raise ValueError("another node is being installed: one at a time")
-            self.jobs[net] = {"state": "working", "step": "starting", "done": 0, "total": got["download"]}
+            self.jobs[net] = {"state": "working", "step": "starting", "phase": "download", "done": 0,
+                              "total": got["download"]}
         threading.Thread(target=self._run, args=(net, params), name=f"core-install-{net}", daemon=True).start()
         return self.jobs[net]
 
@@ -183,7 +184,7 @@ class Installer:
             cores = home / "cores"
             cores.mkdir(parents=True, exist_ok=True)
             archive = cores / (name + ".part")
-            self._say(net, step="downloading", total=size)
+            self._say(net, step="downloading", phase="download", total=size)
             h = hashlib.sha256()
             with urllib.request.urlopen(rel.url + name, timeout=60) as r, open(archive, "wb") as f:
                 while True:
@@ -197,7 +198,9 @@ class Installer:
                 archive.unlink(missing_ok=True)
                 raise ValueError(f"the download's SHA-256 is not the pinned one ({h.hexdigest()[:16]}...): "
                                  f"refused, nothing installed")
-            self._say(net, step="unpacking")
+            note(self.state, net, f"{_label(params)} Core {rel.version}: downloaded ({size / 1e6:.1f} MB), its "
+                                  f"SHA-256 checked")
+            self._say(net, step="unpacking", phase="check")
             target = cores / f"{rel.family}-{rel.version}-{mach}"
             if not target.exists():
                 tmp = cores / (target.name + ".tmp")
@@ -220,15 +223,19 @@ class Installer:
             self.state.set_setting(f"core_installed:{net}", {"daemon": str(daemon), "cli": str(cli),
                                                              "datadir": str(folder), "conf": str(conf),
                                                              "version": rel.version, "at": int(time.time())})
-            self._say(net, step="starting the node")
+            self._say(net, step="starting the node", phase="start")
             start_one(self.state.setting(f"core_installed:{net}"))
             self.state.set_setting(f"core:{net}", "here")
-            self._say(net, state="done", step="installed; the arcade reloads to read it, then copies the chain's data "
-                                              "from a linked arcade if one has it (else the node syncs on its own)")
+            self._say(net, state="done", phase="start", step="installed; the arcade reloads to read it, then copies "
+                                                             "the chain's data from a linked arcade if one has it "
+                                                             "(else the node syncs on its own)")
+            note(self.state, net, f"{_label(params)} node installed and started. Next: its chain's data, copied from "
+                                  f"a linked arcade if one has it", "ok")
             reload_arcade(home)
         except Exception as exc:                               # noqa: BLE001 -- said on the page
             log.warning("core install %s failed", net, exc_info=True)
             self._say(net, state="failed", step=str(exc)[:300])
+            note(self.state, net, f"{_label(params)} install failed: {str(exc)[:200]}", "bad")
 
 
 def _unpack(archive: Path, into: Path) -> None:
@@ -359,6 +366,7 @@ def summary(state, nets: list, params_of) -> dict:
         rows[net] = {**offer(net), "storage": est.get("core"), "ord": est.get("ord"),
                      "installed": bool(state.setting(f"core_installed:{net}")), "job": jobs.get(net),
                      "copy": copies.get(net)}
+        rows[net].update(steps(jobs.get(net), copies.get(net), rows[net]["installed"]))
     return {"free": free_bytes(Path(state.home)), "rows": rows}
 
 
@@ -367,3 +375,126 @@ def installer(state) -> Installer:
     if inst is None:
         inst = state._core_installer = Installer(state)
     return inst
+
+
+# ---------------------------------------------------------------- what the operator is told (2026-11-04: "there
+# is no indication of what is happening or what to do next"; chose the mockup with the steps in the chain's row and
+# notifications that follow him around Admin)
+
+CONF_MARK = "# Written by DogecoinArcade"
+EVENTS_KEPT = 60
+
+
+def _label(params) -> str:
+    return getattr(params, "label", "") or getattr(params, "name", "")
+
+
+def _ours(conf: Path) -> bool:
+    """A config this arcade wrote (Install a node), so a node of its own installed again after a cancel."""
+    try:
+        return conf.read_text().startswith(CONF_MARK)
+    except OSError:
+        return False
+
+
+def note(state, net: str, text: str, level: str = "info") -> None:
+    """A notification for Admin: kept (the last EVENTS_KEPT) so a page opened later still shows what happened."""
+    try:
+        events = list(state.setting("core_events", []) or [])[-(EVENTS_KEPT - 1):]
+        events.append({"at": round(time.time(), 3), "net": net, "text": str(text)[:300], "level": level})
+        state.set_setting("core_events", events)
+    except Exception:                                          # noqa: BLE001 -- a note never stops the work
+        log.debug("core note", exc_info=True)
+
+
+def events(state, since: float = 0.0) -> list[dict]:
+    return [e for e in (state.setting("core_events", []) or []) if isinstance(e, dict) and e.get("at", 0) > since]
+
+
+STEP_LABELS = (("download", "Download"), ("check", "Check"), ("start", "Start node"), ("data", "Chain data"),
+               ("verify", "Check the copy"), ("ready", "Ready"))
+
+
+def steps(job: dict | None, copy: dict | None, installed: bool) -> dict:
+    """The six steps of an install as the chain's row draws them: each done / now / todo / skip / failed, with a
+    line under it, plus whether anything is still going on (the page then keeps asking)."""
+    job, copy = job or {}, copy or {}
+    st = {k: "todo" for k, _ in STEP_LABELS}
+    sub = {k: "" for k, _ in STEP_LABELS}
+    label = dict(STEP_LABELS)
+    order = [k for k, _ in STEP_LABELS]
+
+    def upto(key, state="now"):
+        for k in order[:order.index(key)]:
+            st[k] = "done"
+        st[key] = state
+
+    node = copy.get("node") or {}
+    blocks, headers = int(node.get("blocks", 0) or 0), int(node.get("headers", 0) or 0)
+    synced = headers > 0 and headers - blocks <= 2
+    phase = copy.get("phase") or ""
+    if job.get("state") in ("working", "failed") and not installed:
+        upto(job.get("phase") or "download", "failed" if job.get("state") == "failed" else "now")
+        if job.get("phase") == "download" and job.get("total"):
+            sub["download"] = f"{int(100 * job.get('done', 0) / job['total'])}%"
+    elif not installed:
+        return {"steps": [], "active": False}
+    else:
+        if phase in ("checking",):
+            upto("verify")
+            label["data"], sub["data"] = "Copy chain data", copy.get("from") or ""
+        elif phase == "done":
+            upto("ready", "done" if synced else "now")
+            label["data"], sub["data"] = "Copy chain data", copy.get("from") or ""
+            sub["verify"] = "checked here"
+            if not synced and headers:
+                sub["ready"] = f"syncing the last {headers - blocks:,} blocks"
+        elif phase in ("copying", "asked", "linking", "making", "looking") or (phase == "waiting" and copy.get("from")):
+            upto("data")
+            label["data"] = "Copy chain data"
+            sub["data"] = "from " + copy["from"] if copy.get("from") else "looking for one"
+        else:
+            # Synced on its own: no copy (none offered, the operator chose it, or not worth one).
+            st["verify"] = "skip"
+            sub["verify"] = "no copy"
+            label["data"] = "Sync chain"
+            if synced:
+                for k in order:
+                    st[k] = "done" if st[k] != "skip" else "skip"
+            else:
+                upto("data")
+                st["verify"] = "skip"
+                sub["data"] = f"{blocks:,} of {headers:,}" if headers else "the node is starting"
+        if phase == "failed" and st["data"] == "now":
+            sub["data"] = "copy refused"
+        sub["download"] = sub["download"] or "done"
+        sub["check"] = sub["check"] or "SHA-256 ok"
+    active = any(v in ("now",) for v in st.values())
+    return {"steps": [{"key": k, "label": label[k], "state": st[k], "sub": sub[k]} for k in order], "active": active}
+
+
+def cancel(state, net: str, params) -> None:
+    """Cancel an install (or remove a node this arcade installed): its node stopped, its chain data and any copy
+    deleted, and the chain set back to borrow. Never a wallet: the folder keeps the wallet and the config."""
+    from .core_copy import FOLDERS, Core, chain_dir
+    installed = state.setting(f"core_installed:{net}") or {}
+    if not installed:
+        raise ValueError("this arcade did not install a node for that chain")
+    Core(installed, params).stop()
+    folder = chain_dir(installed, params)
+    for top in FOLDERS:
+        shutil.rmtree(folder / top, ignore_errors=True)
+    for what in (".arcade-copy", ".arcade-old", ".arcade-snapshot", ".arcade-copy.lock", ".arcade-snapshot.lock"):
+        p = folder.with_name(folder.name + what)
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            p.unlink(missing_ok=True)
+    for key in (f"core_installed:{net}", f"core_copied:{net}", f"core_copy_refused:{net}", f"core_copy_own:{net}"):
+        state.set_setting(key, None)
+    state.set_setting(f"core:{net}", "borrow")
+    jobs = installer(state).jobs
+    jobs.pop(net, None)
+    note(state, net, f"{_label(params)} node removed: its chain data deleted, the chain borrowed again (its wallet "
+                     f"file is kept)", "info")
+    reload_arcade(Path(state.home))

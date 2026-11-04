@@ -30444,6 +30444,42 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=400)
         return JSONResponse({"ok": True, "job": job})
 
+    @app.post("/admin/api/cores/copy")
+    def admin_cores_copy(request: Request, payload: Any = Body(None)):
+        """A node install's two buttons (2026-11-04, the mockup with the steps in the row): "own" -- sync on its
+        own instead of taking a copy; "cancel" -- stop the node this arcade installed, delete its chain data (never
+        its wallet) and borrow the chain again."""
+        from .. import core_install
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        net, action = str(said.get("net") or ""), str(said.get("action") or "")
+        params = NETWORKS.get(net)
+        if params is None or not params.addon or not state.setting(f"core_installed:{net}"):
+            return JSONResponse({"detail": "this arcade did not install a node for that chain"}, status_code=400)
+        boot = getattr(getattr(state, "mesh", None), "coreboot", None)
+        if action == "own":
+            if boot is not None:
+                boot.own(net)
+            else:
+                state.set_setting(f"core_copy_own:{net}", True)
+            core_install.note(state, net, f"{params.label}: syncing on its own, no copy (as chosen)")
+            return JSONResponse({"ok": True})
+        if action == "cancel":
+            try:
+                core_install.cancel(state, net, params)
+            except Exception as exc:                       # noqa: BLE001 -- said on the page
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            return JSONResponse({"ok": True})
+        return JSONResponse({"detail": "the action is own or cancel"}, status_code=400)
+
+    @app.get("/admin/api/cores/events")
+    def admin_cores_events(request: Request, since: float = 0.0):
+        """Node installs' notifications since `since` (Admin shows each new one, on any tab, and keeps the list)."""
+        from .. import core_install
+        _admin_check(request)
+        return JSONResponse({"events": core_install.events(state, since), "now": time.time()},
+                            headers={"Cache-Control": "no-store"})
+
     @app.post("/admin/api/cores")
     def admin_cores(request: Request, payload: Any = Body(None)):
         """Which Cores run here, are borrowed, or are off (applies at the next start), and which are

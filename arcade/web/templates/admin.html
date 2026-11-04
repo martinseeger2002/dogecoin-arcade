@@ -1978,6 +1978,44 @@ section.panel h2{margin-top:0}
   .affrow.fixed{grid-template-columns:1fr;justify-items:start}
   .affsite{grid-template-columns:1fr}
 }
+.nodebadge{display:inline-block;min-width:18px;padding:0 6px;margin-left:6px;border-radius:999px;background:var(--accent);color:var(--accent-fg);font-size:11px;line-height:18px;text-align:center}
+.nodebadge[hidden]{display:none}
+.nacts .ncancel{color:var(--bad)}
+td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
+.npill{display:inline-block;padding:1px 10px;border-radius:999px;font-size:12px;border:1px solid var(--line);margin:6px 0 2px}
+.npill.work{background:color-mix(in srgb,var(--accent) 14%,var(--panel));border-color:color-mix(in srgb,var(--accent) 45%,var(--line));color:var(--fg)}
+.npill.ok{background:color-mix(in srgb,var(--ok) 12%,var(--panel));border-color:color-mix(in srgb,var(--ok) 40%,var(--line));color:var(--ok);margin-right:4px}
+.npill.bad{background:color-mix(in srgb,var(--bad) 10%,var(--panel));border-color:color-mix(in srgb,var(--bad) 40%,var(--line));color:var(--bad)}
+.nsteps{display:flex;margin:10px 0 10px;color:var(--fg);max-width:720px}
+.nst{flex:1 1 0;min-width:0;text-align:center;font-size:12px;color:var(--muted);position:relative;overflow-wrap:anywhere}
+.nst .ndot{width:22px;height:22px;border-radius:50%;margin:0 auto 4px;border:2px solid var(--line);background:var(--panel);font-size:12px;line-height:18px;font-weight:700;position:relative;z-index:1}
+.nst.done .ndot{background:var(--ok);border-color:var(--ok);color:#fff}
+.nst.now .ndot{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent)}
+.nst.failed .ndot{border-color:var(--bad);background:var(--bad);color:#fff}
+.nst.skip{opacity:.55}
+.nst.done,.nst.now{color:var(--fg)}.nst.now .nlab{font-weight:600}
+.nst .nsub{color:var(--muted);font-size:11px}
+.nst:not(:last-child)::after{content:"";position:absolute;top:11px;left:calc(50% + 13px);right:calc(-50% + 13px);height:2px;background:var(--line)}
+.nst.done:not(:last-child)::after{background:var(--ok)}
+.nnow{max-width:720px;box-sizing:border-box;white-space:normal;background:color-mix(in srgb,var(--accent) 7%,var(--panel));border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:10px;padding:10px 12px;color:var(--fg)}
+.nnow.bad{background:color-mix(in srgb,var(--bad) 6%,var(--panel));border-color:color-mix(in srgb,var(--bad) 35%,var(--line))}
+.nnow .nrow{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.nbar{height:10px;background:color-mix(in srgb,var(--line) 70%,var(--panel));border-radius:999px;overflow:hidden;margin:8px 0 5px}
+.nbar>i{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .6s}
+.ncap{font-size:12px;color:var(--muted);margin-top:5px}
+.nacts{display:flex;gap:8px;margin-top:9px;flex-wrap:wrap}
+#nbell{position:relative;font-size:18px;background:none;border:0;cursor:pointer;margin-left:auto;padding:2px 8px}
+#nbell .nodebadge{position:absolute;top:-4px;right:-6px;margin:0}
+#ntoasts{position:fixed;right:18px;bottom:18px;z-index:9999;display:flex;flex-direction:column;gap:10px;width:min(360px,calc(100vw - 36px))}
+.ntoast{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:10px 12px;box-shadow:0 6px 18px rgba(0,0,0,.14);font-size:13px}
+.ntoast.ok{border-left-color:var(--ok)}.ntoast.bad{border-left-color:var(--bad)}
+.ntoast .nx{padding:0 4px;box-shadow:none;width:auto;min-height:0;line-height:1}
+.ntoast b{display:block;font-size:13px;margin-bottom:2px}.ntoast .nx{float:right;background:none;border:0;color:var(--muted);cursor:pointer;font-size:14px}
+#npanel{position:absolute;right:0;top:44px;z-index:9998;width:min(380px,calc(100vw - 36px));max-height:420px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,.14);font-size:13px;text-align:left}
+#npanel h3{margin:0;padding:10px 12px;font-size:14px;border-bottom:1px solid var(--line)}
+#npanel .ne{padding:7px 12px;border-bottom:1px dashed var(--line)}#npanel .ne b{color:var(--muted);font-weight:600;margin-right:6px}
+#npanel .ne.bad{color:var(--bad)}#npanel .ne.ok b{color:var(--ok)}
+.adminhead{position:relative}
 </style>
 
 <script>
@@ -2254,16 +2292,114 @@ section.panel h2{margin-top:0}
   // block chain node on the computer. The storage cost should also be displayed for chains"): /admin/api/cores/install.
   var NODES = null;
   function gb(b) { return b >= 1e9 ? (b / 1e9).toFixed(b >= 1e11 ? 0 : 1) + ' GB' : Math.max(1, Math.round(b / 1e6)) + ' MB'; }
+  var NODES_T = null;
   function loadNodes() {
+    clearTimeout(NODES_T);
     fetch('/admin/api/cores/install', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); })
-      .then(function (d) { NODES = d; document.querySelectorAll('td.nodecell').forEach(function (td) { fillNode(td); }); })
-      .catch(function () {});
+      .then(function (d) {
+        NODES = d; document.querySelectorAll('td.nodecell').forEach(function (td) { fillNode(td); });
+        // Kept up to date by itself (2026-11-04: "there is no indication of what is happening"): every 3 s while
+        // an install or a copy is going on, else every 20 s while this tab is open.
+        var rows = (d && d.rows) || {}, active = 0;
+        Object.keys(rows).forEach(function (n) { if (rows[n].active) active++; });
+        var tab = document.querySelector('.admintabs button[data-tab="coins"]');
+        if (tab) {
+          var bd = tab.querySelector('.nodebadge');
+          if (!bd) { bd = document.createElement('span'); bd.className = 'nodebadge'; tab.appendChild(bd); }
+          bd.textContent = active ? String(active) : ''; bd.hidden = !active;
+          bd.title = active ? active + ' node install' + (active === 1 ? '' : 's') + ' going on' : '';
+        }
+        var open = document.querySelector('.admintab[data-tab="coins"].on');
+        NODES_T = setTimeout(loadNodes, active ? 3000 : (open ? 20000 : 60000));
+      })
+      .catch(function () { NODES_T = setTimeout(loadNodes, 20000); });
   }
   function nodeCell(r) {
     var td = document.createElement('td'); td.className = 'nodecell muted'; td.dataset.net = r.net; td.dataset.now = r.now;
     td.colSpan = 5;
     fillNode(td);
     return td;
+  }
+  function ago(secs) {
+    if (secs == null) return '';
+    if (secs < 90) return 'about a minute left';
+    if (secs < 5400) return 'about ' + Math.round(secs / 60) + ' min left';
+    if (secs < 172800) return 'about ' + Math.round(secs / 3600) + ' h left';
+    return 'about ' + Math.round(secs / 86400) + ' days left';
+  }
+  function bar(frac) {
+    var b = document.createElement('div'); b.className = 'nbar';
+    var i = document.createElement('i'); i.style.width = Math.max(0, Math.min(100, 100 * frac)).toFixed(1) + '%';
+    b.appendChild(i); return b;
+  }
+  // The six steps of an install, in the chain's row (core_install.steps), and a box for the one going on now: what
+  // it is doing, how far, what comes next, and the two ways out.
+  function stepper(x) {
+    var w = document.createElement('div'); w.className = 'nsteps';
+    x.steps.forEach(function (s, i) {
+      var d = document.createElement('div'); d.className = 'nst ' + s.state;
+      var dot = text('div', s.state === 'done' ? '✓' : s.state === 'failed' ? '!' : s.state === 'skip' ? '–' : String(i + 1), 'ndot');
+      d.appendChild(dot); d.appendChild(text('div', s.label, 'nlab')); d.appendChild(text('div', s.sub || ' ', 'nsub'));
+      w.appendChild(d);
+    });
+    return w;
+  }
+  function nowBox(net, x) {
+    var j = x.job || {}, c = x.copy || {}, now = (x.steps || []).filter(function (s) { return s.state === 'now' || s.state === 'failed'; })[0];
+    if (!now) return null;
+    var box = document.createElement('div'); box.className = 'nnow' + (now.state === 'failed' ? ' bad' : '');
+    var head = document.createElement('div'); head.className = 'nrow';
+    var title = '', right = '', frac = null, under = '', next = '';
+    var node = c.node || {}, who = c.from || 'the linked arcade';
+    if (now.key === 'download' || now.key === 'check' || now.key === 'start') {
+      title = now.state === 'failed' ? 'The install failed' : {download: 'Downloading the official release', check: 'Checking and unpacking it', start: 'Starting the node'}[now.key];
+      if (j.total && now.key === 'download') { frac = (j.done || 0) / j.total; under = gb(j.done || 0) + ' of ' + gb(j.total); right = Math.floor(100 * frac) + '%'; }
+      if (now.state === 'failed') under = j.step || '';
+      next = 'Next: the arcade reloads to read its new node, then copies the chain’s data from a linked arcade if one has it, or the node syncs it itself.';
+    } else if (now.key === 'data' && now.label === 'Copy chain data') {
+      title = c.phase === 'copying' ? 'Copying the chain’s data from ' + who : (c.step ? c.step.charAt(0).toUpperCase() + c.step.slice(1) : 'Getting a copy of the chain’s data');
+      if (c.total) {
+        frac = (c.done || 0) / c.total;
+        under = gb(c.done || 0) + ' of ' + gb(c.total) + (c.pieces ? ' · ' + c.pieces[0].toLocaleString() + ' of ' + c.pieces[1].toLocaleString() + ' pieces, each checked as it arrives' : '');
+        right = [ago(c.eta), c.rate ? (c.rate / 1e6).toFixed(1) + ' MB/s' : ''].filter(Boolean).join(' · ');
+      }
+      if (c.phase === 'failed') under = c.step;
+      next = 'Next: this node stops for a moment, the copy is swapped in and checked with no peers (its newest block, its coin set, the last 288 blocks), then it syncs the last few blocks itself. Its coin set is ' + who + '’s word.';
+    } else if (now.key === 'data') {
+      title = c.phase === 'starting' ? 'The node is starting'
+            : c.phase === 'failed' ? 'The copy was refused, so the node is syncing the chain itself'
+            : 'The node is syncing the chain itself';
+      if (node.headers) { frac = node.blocks / node.headers; under = 'block ' + node.blocks.toLocaleString() + ' of ' + node.headers.toLocaleString(); right = Math.floor(100 * frac) + '%'; }
+      if (c.phase === 'failed') box.className += ' bad';
+      next = c.phase === 'own' ? 'Nothing to do: it reads the chain block by block, as you chose.'
+           : (c.step ? c.step.charAt(0).toUpperCase() + c.step.slice(1) + '.' : 'Nothing to do: it reads the chain block by block; a copy is taken if a linked arcade offers one.');
+    } else if (now.key === 'verify') {
+      title = c.step ? c.step.charAt(0).toUpperCase() + c.step.slice(1) : 'Checking the copy';
+      next = 'Next: the node starts as usual and syncs the last blocks itself. A wallet in it catches up once.';
+    } else if (now.key === 'ready') {
+      title = 'Syncing the last blocks';
+      if (node.headers) { frac = node.blocks / node.headers; under = 'block ' + node.blocks.toLocaleString() + ' of ' + node.headers.toLocaleString(); }
+      next = 'Nothing to do: the chain is ready when its blocks reach its headers.';
+    }
+    head.appendChild(text('b', title)); head.appendChild(text('span', right, 'muted small')); box.appendChild(head);
+    if (frac !== null) box.appendChild(bar(frac));
+    if (under) box.appendChild(text('div', under, 'small' + (now.state === 'failed' ? ' idx-bad' : '')));
+    if (next) box.appendChild(text('div', next, 'ncap'));
+    var acts = document.createElement('div'); acts.className = 'nacts';
+    function act(label, action, cls, ask) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'small ' + (cls || ''); b.textContent = label;
+      b.onclick = function () {
+        if (ask && !confirm(ask)) return;
+        b.disabled = true;
+        call('/admin/api/cores/copy', {net: net, action: action}).then(function () { loadNodes(); })
+          .catch(function (e) { b.disabled = false; say(e.message, 'err'); });
+      };
+      acts.appendChild(b);
+    }
+    if (x.installed && now.key === 'data' && now.label === 'Copy chain data' && c.phase !== 'failed') act('Sync on its own instead', 'own', 'ghost');
+    if (x.installed) act('Cancel install', 'cancel', 'ghost ncancel', 'Cancel the ' + net.toUpperCase() + ' install?\n\nIts node stops, its chain data and any copy are deleted, and the chain is borrowed again. Its wallet file is kept.');
+    if (acts.childNodes.length) box.appendChild(acts);
+    return box;
   }
   function fillNode(td) {
     td.textContent = '';
@@ -2274,29 +2410,34 @@ section.panel h2{margin-top:0}
                  : 'storage not reported by any linked arcade yet');
     if (x.ord && x.ord.bytes) bits.push('its full ord index about ' + gb(x.ord.bytes));
     var line = document.createElement('span'); line.textContent = 'Node here: ' + bits.join(' · '); td.appendChild(line);
+    var c = x.copy || {};
+    if (x.steps && x.steps.length) {
+      var all = x.steps.every(function (s) { return s.state === 'done' || s.state === 'skip'; });
+      if (all) {
+        var r = document.createElement('div'); r.className = 'small';
+        r.appendChild(text('span', 'Ready', 'npill ok'));
+        var node = c.node || {};
+        r.appendChild(text('span', ' ' + (node.blocks ? node.blocks.toLocaleString() + ' blocks' : 'synced')
+          + (c.phase === 'done' && c.from ? ' · chain data copied from ' + c.from + ' (its coin set trusted)' : '')));
+        td.appendChild(r);
+      } else {
+        var pill = x.steps.filter(function (s) { return s.state === 'now' || s.state === 'failed'; })[0];
+        if (pill) td.appendChild(text('div', pill.state === 'failed' ? 'Install failed at: ' + pill.label
+          : c.phase === 'failed' ? 'Copy refused · syncing on its own'
+          : 'Installing · step ' + (x.steps.indexOf(pill) + 1) + ' of 6: ' + pill.label,
+          'npill ' + (pill.state === 'failed' || c.phase === 'failed' ? 'bad' : 'work')));
+        td.appendChild(stepper(x));
+        var box = nowBox(td.dataset.net, x); if (box) td.appendChild(box);
+      }
+    }
+    if (c.phase === 'failed' && !(x.steps && x.steps.length))
+      td.appendChild(text('div', 'Chain data: ' + c.step, 'idx-bad'));
+    if (c.making) td.appendChild(text('div', 'Making a copy of this chain’s data for a linked arcade: ' + c.making));
+    if (c.holds) td.appendChild(text('div', 'Holds a copy of this chain’s data for linked arcades (block '
+                                     + c.holds.h.toLocaleString() + ', ' + gb(c.holds.bytes) + ')'));
     var j = x.job;
-    if (j && j.state === 'working') {
-      td.appendChild(text('div', j.step + (j.total ? ' ' + Math.round(100 * (j.done || 0) / j.total) + '%' : '')));
-      setTimeout(loadNodes, 2000);
-      return;
-    }
-    if (j && j.state === 'failed') td.appendChild(text('div', 'install failed: ' + j.step, 'idx-bad'));
-    if (j && j.state === 'done' && !x.copy) td.appendChild(text('div', j.step));
-    // The chain's data copied from a linked arcade, by itself (arcade/core_copy.py, 2026-11-04: "The bootstrap
-    // should work automatically from the coins and chains tab just like the installer does now").
-    var c = x.copy;
-    if (c) {
-      if (c.state === 'working') {
-        td.appendChild(text('div', 'Chain data: ' + c.step + (c.total ? ' · ' + gb(c.done || 0) + ' of ' + gb(c.total)
-                                                         + ' (' + Math.floor(100 * (c.done || 0) / c.total) + '%)' : '')));
-        setTimeout(loadNodes, 3000);
-      } else if (c.state === 'failed') td.appendChild(text('div', 'Chain data: ' + c.step, 'idx-bad'));
-      else if (c.step) td.appendChild(text('div', 'Chain data: ' + c.step));
-      if (c.making) td.appendChild(text('div', 'Making a copy of this chain\'s data for a linked arcade: ' + c.making));
-      if (c.holds) td.appendChild(text('div', 'Holds a copy of this chain\'s data for linked arcades (block '
-                                       + c.holds.h.toLocaleString() + ', ' + gb(c.holds.bytes) + ')'));
-    }
-    if (td.dataset.now === 'here' || x.installed) { if (x.installed) td.appendChild(text('div', 'installed by this arcade')); return; }
+    if (x.steps && x.steps.length && !x.installed) return;           // the install is going on (or failed): said above
+    if (td.dataset.now === 'here' || x.installed) { if (x.installed) td.appendChild(text('div', 'installed by this arcade', 'small')); return; }
     if (!x.available) { td.appendChild(text('div', x.why || 'cannot be installed here')); return; }
     var free = NODES.free || 0, need = st ? st.bytes : 0;
     var b = document.createElement('button'); b.type = 'button'; b.className = 'small'; b.textContent = 'Install a node';
@@ -3932,6 +4073,54 @@ section.panel h2{margin-top:0}
     };
   });
   tunLoad();
+})();
+</script>
+
+<script>
+// Node installs' notifications on every Admin tab (2026-11-04, chose "steps in the row" with "notifications
+// that follow you around Admin"): a note for each new one, and the bell keeps the list (/admin/api/cores/events).
+(function () {
+  var head = document.querySelector('.adminhead'); if (!head) return;
+  var bell = document.createElement('button'); bell.type = 'button'; bell.id = 'nbell'; bell.title = 'Node install notifications';
+  bell.textContent = '🔔'; var count = document.createElement('span'); count.className = 'nodebadge'; count.hidden = true;
+  bell.appendChild(count); head.appendChild(bell);
+  var toasts = document.createElement('div'); toasts.id = 'ntoasts'; document.body.appendChild(toasts);
+  var all = [], last = 0, panel = null;
+  var SEEN = 'arcade.nodeEvents.seen', READ = 'arcade.nodeEvents.read';
+  function num(k, d) { var v = parseFloat(localStorage.getItem(k)); return isNaN(v) ? d : v; }
+  function el(tag, txt, cls) { var e = document.createElement(tag); if (txt != null) e.textContent = txt; if (cls) e.className = cls; return e; }
+  function hhmm(t) { return new Date(t * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}); }
+  function badge() { var n = all.filter(function (e) { return e.at > num(READ, 0); }).length; count.textContent = n ? String(n) : ''; count.hidden = !n; }
+  function toast(e) {
+    var t = el('div', null, 'ntoast ' + (e.level || ''));
+    var x = el('button', '✕', 'nx'); x.type = 'button'; x.onclick = function () { t.remove(); }; t.appendChild(x);
+    t.appendChild(el('b', hhmm(e.at) + ' · ' + (e.net || '').toUpperCase())); t.appendChild(el('span', e.text));
+    toasts.appendChild(t); while (toasts.children.length > 4) toasts.firstChild.remove();
+    setTimeout(function () { t.remove(); }, e.level === 'bad' ? 30000 : 12000);
+  }
+  function drawPanel() {
+    if (!panel) return; panel.textContent = ''; panel.appendChild(el('h3', 'Node installs'));
+    if (!all.length) panel.appendChild(el('div', 'Nothing yet: installing a node from Coins & chains says each step here.', 'ne muted'));
+    all.slice().reverse().forEach(function (e) { var d = el('div', null, 'ne ' + (e.level || '')); d.appendChild(el('b', hhmm(e.at) + ' ' + (e.net || '').toUpperCase())); d.appendChild(document.createTextNode(e.text)); panel.appendChild(d); });
+  }
+  bell.onclick = function () {
+    if (panel) { panel.remove(); panel = null; return; }
+    panel = el('div'); panel.id = 'npanel'; head.appendChild(panel); drawPanel();
+    if (all.length) localStorage.setItem(READ, String(all[all.length - 1].at)); badge();
+  };
+  function poll() {
+    if (document.hidden) { setTimeout(poll, 8000); return; }
+    fetch('/admin/api/cores/events?since=' + last, {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.ok ? r.json() : {events: []}; })
+      .then(function (d) {
+        var fresh = (d.events || []).filter(function (e) { return e.at > last; });
+        var seen = num(SEEN, Date.now() / 1000 - 120);
+        fresh.forEach(function (e) { all.push(e); if (e.at > seen) toast(e); });
+        if (fresh.length) { last = fresh[fresh.length - 1].at; localStorage.setItem(SEEN, String(Math.max(seen, last))); drawPanel(); }
+        badge();
+      }).catch(function () {}).then(function () { setTimeout(poll, 8000); });
+  }
+  poll();
 })();
 </script>
 {% endblock %}

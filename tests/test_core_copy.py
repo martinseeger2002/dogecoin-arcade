@@ -324,6 +324,13 @@ def test_an_arcade_far_behind_copies_a_linked_arcade_s_chain_data_by_itself(core
     assert taker_core.call("getbestblockhash") == maker_core.call("getbestblockhash")
     assert taker.state.setting("core_copied:regtest")["from"] == "M"
     assert maker.status()["regtest"]["holds"]["h"] == 40, "the maker says it holds a copy"
+    # Said as it went, for Admin's notifications (core_install.note), on both sides.
+    said = [e["text"] for e in taker.state.setting("core_events")]
+    assert any("asked" in t for t in said) and any("copied from" in t for t in said), said
+    assert not any("no linked arcade" in t for t in said), "not said before the linked arcades had a chance to say"
+    assert any("making a copy" in e["text"] for e in maker.state.setting("core_events"))
+    row = taker.status()["regtest"]
+    assert row["phase"] == "done" and row["from"] == "arcade M" and row["node"]["blocks"] >= 0
     assert maker_core.running() and maker_core.call("getblockcount") == 40
 
 

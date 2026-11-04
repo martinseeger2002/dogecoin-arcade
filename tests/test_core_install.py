@@ -208,3 +208,90 @@ def test_an_installed_core_on_a_chain_set_to_borrow_or_off_is_not_started(monkey
                     "core_installed:flop": {"net": "flop"}}
     assert sorted(core_install.start_installed(State())) == ["flop", "wjk"]
     assert sorted(started) == ["flop", "wjk"]
+
+
+# --- what the operator is told while a node installs (2026-11-04: "there is no indication of what is happening or
+# what to do next"; chose the steps in the chain's row and notifications that follow him around Admin) -------------
+
+def _states(got):
+    return [s["state"] for s in got["steps"]]
+
+
+def test_the_steps_say_where_an_install_is_and_whether_it_is_still_going_on():
+    S = core_install.steps
+    down = S({"state": "working", "phase": "download", "done": 5, "total": 10}, None, False)
+    assert _states(down) == ["now", "todo", "todo", "todo", "todo", "todo"] and down["active"]
+    assert down["steps"][0]["sub"] == "50%"
+    failed = S({"state": "failed", "phase": "check", "step": "SHA-256"}, None, False)
+    assert _states(failed)[:2] == ["done", "failed"] and not failed["active"]
+    node = {"blocks": 900, "headers": 914_000}
+    copying = S(None, {"phase": "copying", "from": "@think", "node": node}, True)
+    assert _states(copying) == ["done", "done", "done", "now", "todo", "todo"] and copying["active"]
+    assert copying["steps"][3]["label"] == "Copy chain data" and copying["steps"][3]["sub"] == "from @think"
+    checking = S(None, {"phase": "checking", "from": "@think", "node": node}, True)
+    assert _states(checking) == ["done", "done", "done", "done", "now", "todo"]
+    own = S(None, {"phase": "none", "node": node}, True)
+    assert _states(own) == ["done", "done", "done", "now", "skip", "todo"] and own["steps"][3]["label"] == "Sync chain"
+    assert own["steps"][3]["sub"] == "900 of 914,000"
+    synced = {"blocks": 914_000, "headers": 914_001}
+    assert _states(S(None, {"phase": "done", "from": "@think", "node": synced}, True)) == ["done"] * 6
+    assert not S(None, {"phase": "done", "node": synced}, True)["active"]
+    last = S(None, {"phase": "done", "node": {"blocks": 913_000, "headers": 914_000}}, True)
+    assert _states(last)[-1] == "now" and "1,000" in last["steps"][-1]["sub"]
+    assert _states(S(None, None, True)) == ["done", "done", "done", "now", "skip", "todo"], "starting: no word yet"
+    assert S(None, None, False) == {"steps": [], "active": False}, "nothing installed: no steps"
+
+
+def test_a_cancelled_install_keeps_the_wallet_borrows_again_and_can_be_installed_again(tmp_path, monkeypatch, client):
+    from arcade import core_copy
+    app, state = client
+    monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: tmp_path))
+    folder, conf = core_install.node_paths(NETWORKS["flop"])
+    for top in ("blocks", "chainstate", "indexes"):
+        (folder / top).mkdir(parents=True)
+        (folder / top / "x").write_text("data")
+    (folder / "wallet.dat").write_text("keys")
+    conf.write_text(core_install.CONF_MARK + " (Admin -> Coins & chains -> Install a node).\nserver=1\n")
+    (folder.with_name(folder.name + ".arcade-copy")).mkdir()
+    state.set_setting("core_installed:flop", {"datadir": str(folder), "conf": str(conf), "daemon": "/x"})
+    state.set_setting("core:flop", "here")
+    stopped, reloaded = [], []
+    monkeypatch.setattr(core_copy.Core, "stop", lambda self: stopped.append(1))
+    monkeypatch.setattr(core_install, "reload_arcade", lambda home: reloaded.append(home))
+    said = app.post("/admin/api/cores/copy", headers={**LOCAL, **WRITE}, json={"net": "flop", "action": "cancel"})
+    assert said.status_code == 200, said.text
+    assert stopped and reloaded
+    assert not any((folder / t).exists() for t in ("blocks", "chainstate", "indexes"))
+    assert (folder / "wallet.dat").read_text() == "keys" and conf.exists(), "never a wallet, never its config"
+    assert not folder.with_name(folder.name + ".arcade-copy").exists()
+    assert state.setting("core_installed:flop") is None and state.setting("core:flop") == "borrow"
+    # Its config is the arcade's own: installing again is not refused as "a node of yours".
+    monkeypatch.setattr(core_install, "offer", lambda net, mach=None: {"available": True, "download": 1})
+    monkeypatch.setattr(threading_mod(), "Thread", _NoThread)
+    core_install.Installer(state).start("flop", NETWORKS["flop"], free_bytes=10 ** 12, need_bytes=None)
+    events = app.get("/admin/api/cores/events", headers=LOCAL).json()["events"]
+    assert any("node removed" in e["text"] and e["net"] == "flop" for e in events)
+    later = app.get(f"/admin/api/cores/events?since={events[-1]['at']}", headers=LOCAL).json()["events"]
+    assert later == []
+
+
+def threading_mod():
+    return core_install.threading
+
+
+class _NoThread:
+    def __init__(self, *a, **kw):
+        pass
+
+    def start(self):
+        pass
+
+
+def test_a_node_of_the_operator_s_own_is_never_cancelled_and_sync_on_its_own_is_kept(client):
+    app, state = client
+    refused = app.post("/admin/api/cores/copy", headers={**LOCAL, **WRITE}, json={"net": "doge", "action": "cancel"})
+    assert refused.status_code == 400, "not installed by this arcade: nothing to cancel"
+    state.set_setting("core_installed:flop", {"datadir": "/nonexistent", "conf": "/nonexistent/c", "daemon": "/x"})
+    own = app.post("/admin/api/cores/copy", headers={**LOCAL, **WRITE}, json={"net": "flop", "action": "own"})
+    assert own.status_code == 200 and state.setting("core_copy_own:flop") is True
+    assert app.post("/admin/api/cores/copy", headers=LOCAL, json={"net": "flop", "action": "own"}).status_code in (401, 403)

@@ -88,6 +88,17 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 A node install says where it is, what comes next, and tells you on every Admin tab (Claude; the operator: "there is no indication of what is happening or what to do next", chose the mockups with the steps in the chain's row and notifications that follow him around Admin)
+
+- **The row:** `core_install.steps(job, copy, installed)` gives each install's six steps (Download, Check, Start node, Chain data -- "Copy chain data" or "Sync chain" --, Check the copy, Ready) as done / now / todo / skip / failed. Admin draws them, and under the one going on now a box: what it is doing, a bar (download bytes, copy bytes with MB/s and time left, or the node's own blocks of headers), "Next: ...", and **Sync on its own instead** / **Cancel install**. The row refreshes itself every 3 s while anything is going on (it did not before: the operator saw nothing after Install), and the Coins & chains tab shows how many installs are going on.
+- **Notifications:** `core_install.note(state, net, text, level)` keeps the last 60 in the setting `core_events`; the installer notes its milestones and `mesh/coreboot.py` notes each new phase (looking, asked, copying, checking, done, failed, none, own; and the maker's "making a copy for @x"). `GET /admin/api/cores/events?since=` -- every Admin tab polls it, shows a note for each new one, and the bell keeps the list.
+- **`POST /admin/api/cores/copy {net, action}`**: `own` (setting `core_copy_own:<net>`, a fetch under way let go) or `cancel` (`core_install.cancel`: its node stopped, `blocks/ chainstate/ indexes/` and any copy deleted, never the wallet or the config; the chain back to borrow). Installing again after a cancel is allowed: a config that starts with the arcade's own mark is the arcade's.
+- `coreboot`: the node's own blocks/headers in the status (read every 20 s); no "no linked arcade has a copy" for the first 90 s after a start (the linked arcades say what they have once a minute).
+- Tests: `tests/test_core_install.py` (+3), `tests/test_core_copy.py` (the two-arcade test checks the notes on both sides).
+
+For your side: nothing needed. Lite's Admin gets the same row and notifications if it shows Coins & chains.
+
+
 ### 2026-11-04 #74 and #75 merged; #74's change check reads the chain, not the store (Claude, a test machine; the operator: "let's check and review the PR's")
 
 - **#75** (SadFrog, `team/lite-next`) applied as it is: Lite's Messages and Apps tabs, `/join/keys` in the window, a password operator keeps the node's @name, the charter as amended, `listapps`. Reviewed: the three message commands now take accounts but refuse any caller that is not the operator (`_the_nodes`), so the node never reads or writes an account's messages; the Lite page gives `ARCADE_CSRF` only to the node's own window. Your question on playing apps on Lite is answered below.
