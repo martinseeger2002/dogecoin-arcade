@@ -1332,6 +1332,7 @@ def create_app(state: AppState) -> FastAPI:
             "phone_default": PHONE_DEFAULT,
             # What runs here (arcade/modules.py): base.html leaves out the desktop and the home screen when they are off
             "modules_on": modulelib.enabled(state.settings()),
+            "edition_lite": modulelib.edition(state.settings()) == "lite",
             # a fresh install that has not chosen Full or Lite yet (_edition_ask.html)
             "edition_ask": modulelib.asking(state.settings()),
         }

@@ -90,6 +90,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   <div class="menu"><button type="button">Settings</button><ul>
     {% if audience == 'operator' %}<li><button type="button" data-options="general">Options…</button></li>
     <li><button type="button" data-options="modules">Edition and modules…</button></li>
+    <li><hr></li><li><button type="button" data-go="/admin">Admin: every control…</button></li>
     {% elif audience == 'user' %}<li><button type="button" data-go="/me">Your account…</button></li>
     {% else %}<li><button type="button" disabled>Options…</button></li>{% endif %}
   </ul></div>
@@ -277,7 +278,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     document.querySelectorAll('main [data-panel]').forEach(function (p) { p.hidden = p.dataset.panel !== name; });
   }
   document.querySelectorAll('.toolbar [data-tab]').forEach(function (b) { b.onclick = function () { panel(b.dataset.tab); }; });
-  var opened = {'/join': 'join', '/me/backup': 'backup'}[location.pathname];
+  // A page opened at /join or /me/backup, or at /#<tab> from the bar every other page wears (base.html)
+  var opened = {'/join': 'join', '/me/backup': 'backup'}[location.pathname] || location.hash.slice(1);
   if (opened && document.querySelector('main [data-panel="' + opened + '"]')) panel(opened);
 
   // menus: click to open, click elsewhere to close

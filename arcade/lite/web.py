@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import Body, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from . import commands as cmdlib
@@ -65,6 +65,12 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             "join": (join_facts or (lambda request: {"seats": 0, "free": 0, "secure": True}))(request),
             "tagchain": {"network": state.messaging.network, "version": state.messaging.params.pubkeyhash_version}},
             headers=NO_STORE)
+
+    @app.get("/lite/pages.css")
+    def lite_pages_css():
+        """The Lite window's look for the full arcade's own pages, Admin and the rest (base.html, Lite edition)."""
+        return Response((Path(__file__).parent / "templates" / "pages.css").read_text(), media_type="text/css",
+                        headers={"Cache-Control": "no-cache"})
 
     @app.get("/lite/api/overview")
     def lite_overview(request: Request):

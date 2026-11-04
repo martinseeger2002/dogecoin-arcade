@@ -177,7 +177,7 @@ def test_an_accounts_backup_is_a_panel_of_the_window(app, app_state):
 def test_options_is_a_window_for_the_operator_only(app):
     operator = app.get("/lite", headers=LOCAL).text
     assert 'id="options"' in operator and 'data-options="modules"' in operator
-    assert 'data-go="/admin"' not in operator and "/admin#modules" not in operator
+    assert "/admin#modules" not in operator and operator.count('data-go="/admin"') == 1, "only Admin: every control"
     assert 'id="options"' not in app.get("/lite", headers=OUTSIDE).text
 
 

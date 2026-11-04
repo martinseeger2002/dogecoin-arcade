@@ -75,6 +75,7 @@ PUBLIC_PAGES = frozenset({
     "/apps",                  # every inscribed app (arcade/games.py; the Apps tab since 2026-10-23)
     "/home",                  # the installed app's home screen (home.html, PWA only, 2026-10-24)
     "/lite",                  # ARCADE Lite's window: each caller sees what they may (arcade/lite/web.py)
+    "/lite/pages.css",        # ...and the look it gives the full arcade's pages in the Lite edition
     "/desktop",               # the Desktop View: the tabs and apps as icons and windows (desktop.html, 2026-10-28)
     "/apps/store-icon.png",   # the App Store's icon on it
     "/games",                 # the old name: redirects to /apps

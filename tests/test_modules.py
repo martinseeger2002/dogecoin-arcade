@@ -89,7 +89,7 @@ def test_a_lite_node_serves_only_the_crypto_cores(lite):
     assert home.status_code == 200 and 'data-tab="overview"' in home.text and "Open the full arcade" not in home.text
     page = client.get("/wallet").text
     nav = page.split("<nav", 1)[1].split("</nav>", 1)[0]
-    assert 'href="/feed"' not in nav and 'href="/exchange"' not in nav and 'href="/wallet"' in nav
+    assert 'href="/feed"' not in nav and 'href="/exchange"' not in nav and 'href="/#send"' in nav, "the window's tabs"
     assert "every page stays the website" in page                          # no Desktop View in Lite
 
 
