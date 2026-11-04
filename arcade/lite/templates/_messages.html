@@ -1,0 +1,172 @@
+{#- Messages, a tab of the window while the Messages module is on, drawn like the Overview. The Messenger's own code
+    does the work: messaging.js for an account (its letters are sealed to its own key, so they are opened, read and
+    written here, in its browser) and node-mail.js for the node's. For an account this also answers the console's
+    listconversations, readmessages and sendmessage (commands.py IN_THE_BROWSER): the node cannot. -#}
+{% if messages_on %}
+<section data-panel="messages" hidden>
+  {% if not wallet %}<p class="later"><a href="/join">Sign in or make an account</a> to send and read messages.</p>
+  {% else %}
+  <fieldset id="m-unlock" hidden><legend>Unlock your wallet</legend>
+    <form id="m-unlock-form" class="grid">
+      <label for="m-password">Password</label><span><input id="m-password" type="password" autocomplete="current-password">
+        <button type="submit">Unlock</button></span>
+    </form>
+    <p class="muted">Your messages are opened in this browser with your own key.</p>
+  </fieldset>
+  <div class="cols" id="m-main" hidden><div>
+    <fieldset><legend>Conversations</legend>
+      <form id="m-new" class="grid">
+        <label for="m-to">New</label><span><input id="m-to" placeholder="@name" autocomplete="off" spellcheck="false"
+          required> <button type="submit">Open</button> <button type="button" id="m-look">Look for new</button></span>
+      </form>
+      <table><thead><tr><th>With</th><th>Last</th><th class="num">Unread</th></tr></thead>
+        <tbody id="m-threads"><tr><td class="muted">Loading…</td></tr></tbody></table>
+    </fieldset>
+  </div><div>
+    <fieldset><legend id="m-with">Messages</legend>
+      <table><tbody id="m-letters"><tr><td class="muted">Pick a conversation.</td></tr></tbody></table>
+      <form id="m-write" class="grid" style="margin-top:8px" hidden>
+        <label for="m-text">Message</label><span><input id="m-text" autocomplete="off" required style="width:70%">
+          <button type="submit">Send</button></span>
+      </form>
+    </fieldset>
+  </div></div>
+  <p id="m-said" hidden></p>
+  {% endif %}
+</section>
+{% if wallet %}
+{% if wallet == 'node' %}<script>window.ARCADE_CSRF = {{ csrf|tojson }};</script>{% endif %}
+<script type="module">
+import * as wallet from "{{ '/node-wallet.js' if wallet == 'node' else '/wallet.js' }}";
+import * as mail from "{{ '/node-mail.js' if wallet == 'node' else '/messaging.js' }}";
+const NODE = {{ 'true' if wallet == 'node' else 'false' }};
+const ME = {{ me|tojson }}, TAGCHAIN = {{ tagchain|tojson }};
+const $ = (id) => document.getElementById(id);
+let keys = null, me = null, peer = null, peerName = "", looking = false;
+function tell(text, cls) { const p = $("m-said"); p.textContent = text; p.className = cls || ""; p.hidden = !text; }
+const when = (t) => (t ? new Date(t * 1000).toLocaleString() : "waiting for a block");
+const named = (t) => (t.tag ? "@" + t.tag : (t.address || t.peer || "").slice(0, 16) + "…");
+
+async function open() {
+  keys = await wallet.opened(TAGCHAIN);
+  if (!keys) { $("m-unlock").hidden = false; return false; }
+  me = NODE ? await mail.identity() : await mail.identity(keys.phrase);
+  $("m-unlock").hidden = true; $("m-main").hidden = false;
+  return true;
+}
+/** Who `who` is, as a conversation's key: a 64-hex key as it is, else a name or code the book or the chain knows. */
+async function keyOf(who) {
+  const said = String(who || "").trim();
+  if (/^[0-9a-f]{64}$/i.test(said)) return said.toLowerCase();
+  const them = await mail.reach(said);
+  if (!them || !them.key) throw new Error(`${said} has not published a key to write to`);
+  return them.key;
+}
+async function look() {
+  if (looking || !me) return;
+  looking = true;
+  try {
+    await mail.collect(me);
+    if (!NODE) { try { await mail.syncMailbox(me); } catch (e) { /* the next look */ } }
+  } catch (e) { tell(String(e.message || e), "bad"); } finally { looking = false; }
+  await draw();
+}
+async function draw() {
+  const tb = $("m-threads"), all = await mail.threads();
+  tb.textContent = "";
+  for (const t of all) {
+    const tr = tb.insertRow();
+    tr.style.cursor = "pointer"; if (t.peer === peer) tr.style.fontWeight = "600";
+    tr.insertCell().textContent = named(t);
+    tr.insertCell().textContent = (t.outgoing ? "You: " : "") + (t.preview || "").slice(0, 60);
+    const n = tr.insertCell(); n.className = "num"; n.textContent = t.unread || "";
+    tr.onclick = () => show(t.peer, named(t), t.tag || "");
+  }
+  if (!all.length) tb.insertRow().insertCell().textContent = "No conversations yet. Open one by @name.";
+  if (peer) await letters();
+}
+async function letters() {
+  const tb = $("m-letters"), all = await mail.conversation(peer);
+  tb.textContent = "";
+  for (const l of all.slice(-50)) {
+    const tr = tb.insertRow();
+    const who = tr.insertCell(); who.textContent = l.mine ? "You" : $("m-with").textContent;
+    who.className = l.mine ? "muted" : ""; who.style.whiteSpace = "nowrap";
+    tr.insertCell().textContent = mail.text(l);
+    const at = tr.insertCell(); at.className = "muted"; at.textContent = when(l.when); at.style.whiteSpace = "nowrap";
+  }
+  if (!all.length) tb.insertRow().insertCell().textContent = "Nothing yet: say hello.";
+  await mail.markRead(peer);
+}
+/** Open a conversation: `name` is the @name a reply is written to (the Messenger writes by name, never by key). */
+async function show(key, label, name) {
+  peer = key; peerName = name; $("m-with").textContent = label; $("m-write").hidden = !name;
+  tell(name ? "" : "They have no @name on the chain, so a reply cannot be written to them here.", "muted");
+  await draw(); $("m-text").focus();
+}
+async function send(who, text) {
+  if (!text.trim()) throw new Error("type the message first");
+  await mail.write(keys, me, who, text);
+}
+
+$("m-unlock-form").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await wallet.unlockHere(ME, $("m-password").value, TAGCHAIN);
+    $("m-password").value = "";
+    if (await open()) look();
+  } catch (x) { tell(String(x.message || x), "bad"); }
+};
+$("m-new").onsubmit = async (e) => {
+  e.preventDefault(); tell("");
+  try {
+    const who = $("m-to").value.trim().replace(/^@/, "");
+    await show(await keyOf(who), "@" + who, who);
+  }
+  catch (x) { tell(String(x.message || x), "bad"); }
+};
+$("m-look").onclick = () => look();
+$("m-write").onsubmit = async (e) => {
+  e.preventDefault(); tell("");
+  const button = $("m-write").querySelector("button"); button.disabled = true;
+  try { await send(peerName, $("m-text").value); $("m-text").value = ""; tell("Sent.", "ok"); await look(); }
+  catch (x) { tell(String(x.message || x), "bad"); } finally { button.disabled = false; }
+};
+document.querySelector('[data-tab="messages"]').addEventListener("click", async () => { if (me || await open()) look(); });
+if (location.hash === "#messages" && await open()) look();
+setInterval(() => { if (me && !$("m-main").closest("section").hidden) look(); }, 20000);
+
+{% if wallet == 'account' %}
+// The console's message commands, for an account: run here, with this browser's keys (commands.py IN_THE_BROWSER).
+async function ready() {
+  if (!me && !(await open())) throw new Error("unlock your wallet in the Messages tab first");
+}
+window.liteLocal = Object.assign(window.liteLocal || {}, {
+  async listconversations() {
+    await ready(); await look();
+    return (await mail.threads()).map((t) => ({who: named(t), key: t.peer, last: t.last, unread: t.unread || 0,
+                                               outgoing: !!t.outgoing, preview: (t.preview || "").slice(0, 80)}));
+  },
+  async readmessages(rest) {
+    await ready();
+    const [who, count] = rest.trim().split(/\s+/);
+    if (!who) throw new Error("usage: readmessages <who> [count]");
+    const n = count === undefined ? 20 : Number(count);
+    if (!Number.isInteger(n) || n < 1) throw new Error("count is a whole number, 1 or more");
+    const key = await keyOf(who);
+    const all = (await mail.conversation(key)).slice(-n);
+    await mail.markRead(key);
+    return all.map((l) => ({when: l.when || null, mine: !!l.mine, text: mail.text(l), txid: l.txid || null}));
+  },
+  async sendmessage(rest) {
+    await ready();
+    const m = /^\s*(\S+)\s+([\s\S]+)$/.exec(rest);
+    if (!m) throw new Error("usage: sendmessage <who> <text...>");
+    await send(m[1], m[2]);
+    return {sent: true, to: m[1]};
+  },
+});
+{% endif %}
+</script>
+{% endif %}
+{% endif %}

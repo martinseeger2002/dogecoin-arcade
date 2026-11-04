@@ -98,7 +98,7 @@ def test_a_visitor_from_outside_sees_the_arcade_and_a_way_to_sign_in(app):
     assert not said["ok"]
     names = {c["name"] for c in app.get("/lite/api/commands", headers=OUTSIDE).json()}
     assert names == {"help", "getnodeinfo", "listchains", "listmodules", "readfeed", "readposts",
-                     "listtokens", "getbook", "getpair", "listdoginals"}
+                     "listtokens", "getbook", "getpair", "listdoginals", "listapps"}
 
 
 def test_a_signed_in_user_from_outside_sees_their_own_account(app, app_state):
@@ -161,6 +161,26 @@ def test_join_is_a_panel_of_the_window_and_lite_serves_it_at_join(app, app_state
         app_state.set_setting("edition", None)
 
 
+def test_lite_serves_join_keys_in_the_window_and_says_when_a_claim_renames_the_arcade(app, app_state, monkeypatch):
+    """2026-11-04: "This node is mine" on the full /join/keys took a Lite test node's @name. Lite draws that page's
+    doors in its own Join panel, and says so before an account made the operator takes the arcade's name."""
+    assert 'id="password-save"' in app.get("/join/keys", headers=LOCAL).text, "the full edition keeps its own page"
+    app_state.set_setting("edition", "lite")
+    try:
+        page = app.get("/join/keys", headers={"host": "node.localhost:8430"}).text
+        join = _panel(page, "join")
+        for door in ("j-make", "j-in", "j-words-in", "j-ext", "j-op-in", "j-op-set"):
+            assert f'id="{door}"' in join, door
+        assert 'id="password-save"' not in page and "'/join/keys': 'join'" in page
+    finally:
+        app_state.set_setting("edition", None)
+    monkeypatch.setattr(type(app_state), "operator_tag", lambda self: "pumpkin")
+    assert "and its name, @pumpkin" in _panel(app.get("/lite", headers=OUTSIDE).text, "join")
+    assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
+    claim = _panel(app.get("/lite", headers=OUTSIDE).text, "join")
+    assert 'id="j-claim"' in claim and "This arcade answers to @pumpkin now" in claim and 'id="j-op-set"' not in claim
+
+
 def test_an_accounts_backup_is_a_panel_of_the_window(app, app_state):
     assert 'id="k-show"' not in app.get("/lite", headers=LOCAL).text, "the node's own backup is its Core wallets"
     assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
@@ -179,6 +199,44 @@ def test_options_is_a_window_for_the_operator_only(app):
     assert 'id="options"' in operator and 'data-options="modules"' in operator
     assert "/admin#modules" not in operator and operator.count('data-go="/admin"') == 1, "only Admin: every control"
     assert 'id="options"' not in app.get("/lite", headers=OUTSIDE).text
+
+
+def test_messages_is_a_tab_while_its_module_is_on_and_each_module_on_opens_from_apps(app, app_state):
+    operator = app.get("/lite", headers=LOCAL).text
+    assert 'data-tab="messages"' in operator and 'from "/node-mail.js"' in _panel(operator, "messages") + operator
+    assert "window.ARCADE_CSRF" in operator and "window.liteLocal = " not in operator, "the node's: run by the node"
+    assert 'href="/feed">Open</a>' in operator and 'data-open="messages"' in operator
+    assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
+    user = app.get("/lite", headers=OUTSIDE).text
+    assert 'from "/messaging.js"' in user and "window.liteLocal = " in user and "window.ARCADE_CSRF" not in user
+    app_state.set_setting("edition", "lite")
+    try:
+        lite = app.get("/lite", headers=LOCAL).text
+        assert 'data-tab="messages"' not in lite and 'href="/feed">Open</a>' not in lite, "off: no tab, no Open"
+    finally:
+        app_state.set_setting("edition", None)
+
+
+def test_the_apps_tab_is_the_apps_module_and_hosts_the_others(app, app_state):
+    full = app.get("/lite", headers=LOCAL).text
+    tab = _panel(full, "apps")
+    assert 'data-tab="apps"' in full and 'href="/feed">Open</a>' in tab and 'id="a-list"' in tab
+    assert "Playing an app needs" not in tab, "Ord indexes are on in the full edition"
+    said = app.post("/lite/api/console", headers={**OUTSIDE, **LITE}, json={"line": "listapps new 5"}).json()
+    assert said["ok"] and isinstance(said["result"], list), said
+    app_state.set_setting("edition", "lite")
+    try:
+        lite = app.get("/lite", headers=LOCAL).text
+        assert 'data-tab="apps"' not in lite and '<section data-panel="apps"' not in lite, "off: the tab is gone"
+        app_state.set_setting("modules", {"apps": True})
+        lite = app.get("/lite", headers=LOCAL).text
+        assert 'data-tab="apps"' in lite and "Playing an app needs the Ord indexes module" in _panel(lite, "apps")
+        assert 'href="/#apps"' in app.get("/wallet", headers=LOCAL).text, "and the bar on every page shows it"
+        app_state.set_setting("modules", None)
+        assert 'href="/#apps"' not in app.get("/wallet", headers=LOCAL).text
+    finally:
+        app_state.set_setting("edition", None)
+        app_state.set_setting("modules", None)
 
 
 def test_console_lines_come_only_from_the_lite_page(app):

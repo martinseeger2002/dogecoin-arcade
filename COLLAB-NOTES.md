@@ -113,6 +113,124 @@ For your side: nothing needed. If your arcades install Cores through Coins & cha
 
 
 ### 2026-11-04 The web worker runs the installed arcade, never an `arcade/` in the directory it starts in (Claude; found on the operator's ThinkPad by its session)
+### 2026-11-04 · SadFrog's side (Claude) · For the operator: playing apps on Lite, please confirm (charter Phase 2)
+**A refresher.**
+- On #62 you answered the charter's question 2: "Yes, borrow. Lite reads App Store cards from linked arcades' ord
+  indexes and needs no ord index of its own."
+- Building Lite's Apps tab (#65's last commits) showed the cards are not the problem. `_games_ranked` lists them from
+  each chain's token index (`_game_rows`), which Lite keeps.
+- The app itself is what Lite lacks. Play opens `/inscriptions/<opens>/full`, which the Ords module serves from this
+  arcade's own ord index. So on Lite with Ords off, apps are listed but cannot be played, and the tab says so.
+- SadFrog: "it should be an option for sure."
+
+**Proposed.**
+- An operator's choice under Apps and games in Edition & modules: play apps from **this arcade's ord index** or from
+  **linked arcades**.
+  - Lite's default is linked arcades. Full's is its own index, as today, so nothing changes on Full.
+  - With Ords on and "linked arcades" chosen, the own index is asked first, and linked arcades only for what it does
+    not have yet.
+- A borrowed app is served by the Lite node itself, at the same `/inscriptions/<id>/full` with the same sandbox
+  headers. The node fetches the content from a linked arcade that serves its ord index, and caches it by id.
+  - So the app runs on this arcade's origin, and signing in and signing with this arcade's wallet work as today.
+  - Not a link out: on the other arcade's origin the app would use that arcade's sign-in.
+
+**Questions.**
+1. An option, with the defaults above?
+2. Served by the Lite node (proposed), or a link out to the linked arcade?
+3. Fetched over an existing mesh route, or a new one beside the snapshot fetches?
+4. Checked against the reveal transaction (through the borrowed Core) before it is served, or is "from @arcade, a
+   linked arcade", said on the page, enough for a first version?
+
+Nothing is built until you answer. The charter's Phase 2 now says this, marked as to be confirmed.
+
+### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-skeleton` · The charter as amended, and a place to hand in packages
+- #62 was applied on main from its first diff, so the charter's amendment from the same day never reached main. It
+  rides on #65 now (dbfa8620, unchanged): Lite chosen at install, editions as module switches, the terminal per
+  module, and your answers in place of the questions.
+- **Phase 3 gains a place to hand in packages without a GitHub release**, as SadFrog asked: Settings → Publish and
+  `arcade-cli publish <folder>`.
+  - A builder or operator hands in a theme, app or node module. The arcade checks the manifest and hash, shows what
+    it will announce, and offers it to its linked arcades, whose operators review and mark it as the charter has it.
+  - A builder with no arcade hands in at one where they have an account. The package carries their @name and
+    signature, and that arcade's operator chooses whether to announce it.
+- Phase 2's last item is now the playing question in the entry above.
+
+### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite draws /join/keys in its window
+`/join/keys` was the last full page a Lite visitor met, and its "This node is mine" is how the test node lost its
+@name (the entry below). In Lite it now opens the window's Join panel, which gains that page's doors:
+- the twelve words, behind "I have no backup file, and I typed this address myself";
+- the Arcade Wallet, when the extension is in the browser;
+- the operator's username and password: sign in (`/auth/password`), and "Make this node yours"
+  (`/auth/set-password`) at the machine while nobody has;
+- signed in at the machine, "Make this account the operator" (`/auth/operator`, with the handover password).
+  When the arcade has an @name it says first that the account's name becomes the arcade's.
+- Same endpoints and `signin.js` as the full page; the full edition's page is unchanged. `_join_facts` gains `arcade`.
+- Tests: test_lite (the doors, the warning) and test_lite_pages_browser (the password set, then an account in by its
+  words, in Firefox).
+
+### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-skeleton` · A username-and-password operator keeps the node's @name
+Found on the Lite test node: it had claimed @pumpkin from the setup wizard, then "This node is mine" on `/join/keys`
+set a username and password, and the arcade had no name any more.
+- **Why:** with no operator, `/auth/set-password` makes a random id (not a wallet) and names it the operator.
+  - `_account_view` already says such an operator IS the node.
+  - But `state.operator_tag()` looked only for the operator's own address, and the setup wizard counted any operator
+    as an account. Both found nothing, so Admin said "this arcade's operator is an account".
+  - The same on your main.
+- **Changed:**
+  - `operator_tag()` falls back to the node's own address when the operator has none on file.
+  - The wizard's `operator_is_node` asks the same, through the new `app._operator_wallet()`.
+  - An operator account with a wallet still answers to its own name.
+- **Test:** test_password, a password operator keeps the node's name and the wizard calls it the node.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite: the Apps tab is the Apps and games module, and hosts the rest
+SadFrog: "the apps and games module should be a module but also what's on the tab itself to host all of these
+modules. That way apps can be disabled by node operators as well."
+- **The Lite window's Apps tab is in the window only while Apps and games is on** (`arcade/lite/templates/_apps.html`),
+  and so is its link in the bar on every page (base.html).
+  - Switching the module off takes away the tab and everything it holds. Messages keeps its own tab and switch.
+  - Apps and games is off by default in Lite, so a Lite operator switches it on to have the tab.
+- **What the tab holds:**
+  - every other module that is on and has a page (`modules.PAGES`), each with Open;
+  - the App Store's apps and games, Popular or New, from the new `listapps` command.
+- **`listapps [popular|new] [count]`** is for anyone, in module `apps`. It reads `_games_ranked`, the App Store tab's
+  own list: the newest card of each app, and the inscription Play opens.
+  - `_games_ranked(None, sort)` now means "for nobody in particular": no viewer's own likes.
+- **For you:** Play opens `/inscriptions/<opens>/full`, which the Ord indexes module serves. So on a Lite node with
+  Apps on and Ords off, apps are listed but cannot be played, and the tab says so.
+  - Should Apps and games need Ords (`needs=("ords",)`)? That would keep an ord index on a Lite node, your open
+    question (3) in the charter.
+  - Or should a Lite node play a card from a linked arcade's ord index? Not changed here.
+- **Tests:**
+  - test_games: listapps against inscribed cards (the newest version, `play` honoured, off in Lite).
+  - test_lite: the tab and the bar follow the switch; Lite with Apps on and Ords off says so.
+  - test_lite_look_browser: the tab fills from listapps, and its Open opens the Messages tab.
+  - Workhorse, with the App Store's tests: 589 passed, 19 skipped.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite: a Messages tab, an account's message commands, an Open for every module that is on
+SadFrog, with Messages switched on in a Lite arcade: a user account "sees that it's turned on but I don't see a place
+and I also don't see the user's full console command list".
+- **Messages is a tab of the Lite window while the module is on** (`arcade/lite/templates/_messages.html`).
+  - It holds the conversations, one conversation, a reply box, a new one by @name, and Look for new.
+  - It runs on the Messenger's own code: `messaging.js` for an account, with its letters opened and sealed in its
+    browser, and `node-mail.js` for the operator's node.
+  - A reply is written to the @name, as the Messenger does. A conversation with somebody who has no @name can be
+    read, but not replied to, here.
+- **An account's console has `listconversations`, `readmessages` and `sendmessage`.**
+  - The node cannot open an account's letters, so for an account they run in the window itself (`window.liteLocal`).
+  - `commands.py` lists them for users (audience `user`), so `help` shows them.
+  - Asked of the node for anyone but the operator, they answer "your messages open only in your own browser" (from
+    arcade-cli, say).
+  - The operator's run on the node, as before. `-help` still asks the node.
+- **Every module that is on now opens from the Apps tab.** `modules.PAGES` names each module's page, for people and
+  for the operator; the window's own tab for Messages.
+- **Tests:**
+  - test_lite: the tab and the Open links per edition.
+  - test_lite_messages: a user's commands are listed and sent back to the browser.
+  - test_lite_pages_browser, real Firefox on regtest: an account writes to a named account from the tab, then lists
+    and sends from its console; the operator sends the node's message from the same tab.
+  - Workhorse, with the full arcade's messaging tests: 590 passed, 19 skipped.
+
+### 2026-11-04 The web worker runs the installed arcade, never an `arcade/` in the directory it starts in (Claude; found on the operator's ThinkPad by its session)
 
 The supervisor spawned workers with `python -m arcade.web`, which puts the current directory first on sys.path, and arcade-web.service has no WorkingDirectory, so it starts in $HOME. On the ThinkPad $HOME held an old `arcade/` unpacked from source.tar.gz, and the live arcade ran THAT, not site-packages; the updater compares versions, not where code was imported from, so nothing said so. New `arcade/pyrun.py` `module_cmd`: a child starts with the `arcade` this process imported. Where that is the current directory (a source checkout, as on .25, and the test suite) exactly as before; otherwise with the current directory off sys.path (`-P` on Python 3.11+, a `-c` bootstrap that drops `sys.path[0]` before that, and for another interpreter). Used by the supervisor's worker spawn and its self-replacing execv, and by the updater's second half (`-m arcade.update --services-only`). The launcher, arcade-cli and the bot-RPC shim run console scripts, which never put the cwd first; the UPDATE shim runs `python -c` and `-m` (the ThinkPad session caught it), so it now starts with `cd` into the venv's folder (Linux and Windows), SHIM_VERSION 4 so every arcade rewrites it at its next update. tests/test_pyrun.py (a decoy `arcade/` in the cwd: the real one loads; unprotected, the decoy does). If your side runs workers some other way, the same applies.
 

@@ -1142,6 +1142,11 @@ def create_app(state: AppState) -> FastAPI:
         # A username-and-password operator with no wallet of its own IS the node.
         return bool(_account_address(account.pubkey, _account_chain()))
 
+    def _operator_wallet() -> str:
+        """The operator account's address on the tag chain: "" for an arcade that is its own operator, a node or a
+        username and password with no wallet of its own (state.operator_tag)."""
+        return _account_address(state.operator, _account_chain()) if state.operator else ""
+
     def _is_operator(request: Request) -> bool:
         account = signed_in(request)
         return bool(account is not None and state.operator
@@ -11782,8 +11787,12 @@ def create_app(state: AppState) -> FastAPI:
     def _join_facts(request: Request) -> dict[str, Any]:
         """What ARCADE Lite's Join panel says, as the page below does."""
         register = state.accounts()
+        try:
+            arcade = state.operator_tag() or ""
+        except Exception:                                  # noqa: BLE001 -- said without a name
+            arcade = ""
         return {"seats": register.seats, "free": register.free(), "fruit": _fruit_here(request),
-                "secure": secure_context(request), "why_not": WHY_NOT_SECURE}
+                "secure": secure_context(request), "why_not": WHY_NOT_SECURE, "arcade": arcade}
 
     @app.get("/join", response_class=HTMLResponse)
     def join_page(request: Request):
@@ -11803,6 +11812,8 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/join/keys", response_class=HTMLResponse)
     def join_with_keys(request: Request):
+        if modulelib.edition(state.settings()) == "lite":
+            return _lite_home(request)
         register = state.accounts()
         return render(request, "join.html",
                       seats=register.seats,
@@ -26295,7 +26306,7 @@ def create_app(state: AppState) -> FastAPI:
         acts += [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])
                  if a.get("target") in targets and a["txid"] not in known]
         said = launchlist.tally(acts)
-        me = _tag_of_whoever_is_asking(request).get("address") or ""
+        me = (_tag_of_whoever_is_asking(request).get("address") or "") if request is not None else ""
         for item in items:
             got = said.get(item["txid"], {"likes": set(), "dislikes": set(), "comments": []})
             item["likes"], item["dislikes"] = len(got["likes"]), len(got["dislikes"])
@@ -26526,7 +26537,7 @@ def create_app(state: AppState) -> FastAPI:
         for a in acts:
             if int(a["kind"]) in (feedlib.TIP, feedlib.TIP_TOKEN):
                 tips[a["target"]] = tips.get(a["target"], 0) + 1
-        me = _tag_of_whoever_is_asking(request).get("address") or ""
+        me = (_tag_of_whoever_is_asking(request).get("address") or "") if request is not None else ""
         for item in items:
             got = said.get(item["txid"], {"likes": set(), "dislikes": set(), "comments": []})
             item["likes"], item["dislikes"] = len(got["likes"]), len(got["dislikes"])
@@ -30665,7 +30676,7 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:                                  # noqa: BLE001 -- said as none
             tag = ""
         out: dict[str, Any] = {"need": not tag, "tag": tag, "net": chain.network, "label": chain.label,
-                               "operator_is_node": not getattr(state, "operator", None)}
+                               "operator_is_node": not _operator_wallet()}
         # 1. The node, and whether the chain is borrowed meanwhile.
         try:
             sync = state.chain_sync(chain)
@@ -31155,10 +31166,20 @@ def create_app(state: AppState) -> FastAPI:
                                        unspent=_node_unspent, peer=_console_peer, message=_console_message,
                                        feed=_console_feed, feed_post=_console_feed_post, feed_act=_console_feed_act)
     #: ...and what it may ask on behalf of anyone at all: reads of what the public pages show.
+    def _console_apps(sort: str, count: int) -> list[dict]:
+        """The App Store's cards, as its tab ranks them for anybody (no viewer's own likes), for listapps."""
+        items = _games_ranked(None, sort)[:count]
+        tags = _tags_for([i["creator"] for i in items])
+        return [{"name": i["name"], "by": "@" + tags[i["creator"]] if tags.get(i["creator"]) else i["creator"],
+                 "description": str(i["game"].get("description") or "")[:200], "version": i["game"].get("version"),
+                 "chain": i["net"], "card": i["txid"], "opens": i["game"].get("opens") or i["txid"],
+                 "likes": i["likes"], "comments": i["comments"]} for i in items]
+
     public_tools = types.SimpleNamespace(
         feed=lambda sort, author, count: [{k: v for k, v in post.items() if k != "mine"}
                                           for post in _console_feed(sort, author, count)],
-        tokens=_console_tokens, book=_console_book, pair=_console_pair, doginals=_console_doginals)
+        tokens=_console_tokens, book=_console_book, pair=_console_pair, doginals=_console_doginals,
+        apps=_console_apps)
 
     # --- the Cloudflare tunnel wizard (2026-09-25; arcade/tunnel.py) -----
 

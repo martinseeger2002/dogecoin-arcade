@@ -29,6 +29,14 @@ KIND_TITLES = {"core": ("Core", "The crypto cores: always on, in every edition."
                "app": ("Apps", "What people use: messages, the feed, the market, games and the rest."),
                "node": ("Node services", "What this arcade runs for the mesh and its own indexes."),
                "theme": ("Themes", "How the arcade looks and opens.")}
+#: Where each module that has one opens, for people and for the operator: the Lite window's Apps tab offers it once the
+#: module is on (Messages is a tab of the window itself). A module with no page of its own (rooms, which apps use)
+#: is not listed.
+PAGES = {"messages": ("/#messages", "/#messages"), "feed": ("/feed", "/feed"), "ords": ("/explore", "/explore"),
+         "collections": ("/collections", "/collections"), "tokens": ("/tokens", "/tokens"),
+         "exchange": ("/exchange", "/exchange"), "apps": ("/apps", "/apps"), "llm": ("", "/admin"),
+         "affiliates": ("/affiliates", "/affiliates"), "lora": ("", "/admin"),
+         "desktop": ("/desktop", "/desktop"), "dogefeedx": ("/dogefeedx/feed", "/dogefeedx/feed")}
 
 
 @dataclass(frozen=True)
@@ -277,4 +285,5 @@ def describe(settings: dict) -> dict:
                             "summary": KIND_TITLES.get(k, ("", ""))[1]} for k in kinds],
             "modules": [{"id": m.id, "kind": m.kind, "title": m.title, "summary": m.summary, "core": m.core,
                          "on": m.id in on, "lite": m.lite or m.core, "needs": list(m.needs),
-                         "needed_by": needed_by(m.id), "caution": m.caution} for m in _MODULES]}
+                         "needed_by": needed_by(m.id), "caution": m.caution,
+                         "page": list(PAGES.get(m.id, ("", "")))} for m in _MODULES]}
