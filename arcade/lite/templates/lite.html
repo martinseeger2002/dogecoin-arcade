@@ -120,8 +120,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="3" width="14" height="18" rx="1"/><circle cx="12" cy="10" r="3"/><path d="M8 17c1-2 7-2 8 0"/></svg><span>Address book</span></button>
   {% if messages_on %}<button type="button" role="tab" data-tab="messages">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Messages</span></button>{% endif %}
-  <button type="button" role="tab" data-tab="apps">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg><span>Apps</span></button>
+{% if apps_on %}  <button type="button" role="tab" data-tab="apps">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg><span>Apps</span></button>{% endif %}
 </div>
 
 <main>
@@ -149,19 +149,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   {% include "_join.html" %}
   {% include "_backup.html" %}
   {% include "_messages.html" %}
-  <section data-panel="apps" hidden>
-    <fieldset><legend>Apps, themes and node modules</legend>
-      <table><thead><tr><th>Module</th><th>Kind</th><th>Here</th><th></th></tr></thead><tbody>
-      {% for m in apps %}{% set page = m.page[1 if audience == 'operator' else 0] %}
-      <tr><td title="{{ m.summary }}">{{ m.title }}</td><td>{{ m.kind }}</td>
-        <td class="{{ 'ok' if m.on else 'muted' }}">{{ 'on' if m.on else 'off' }}</td>
-        <td>{% if m.on and page %}<a href="{{ page }}"{% if page.startswith('/#') %} data-open="{{ page[2:] }}"{% endif %}>Open</a>{% endif %}</td></tr>{% endfor %}
-      </tbody></table>
-      <p class="muted" style="margin:8px 0 0">{% if audience == 'operator' %}Switch them on or off in
-        <button type="button" data-options="modules">Edition and modules…</button>.{% else %}This arcade's operator chooses what runs
-        here.{% endif %} The App Store comes to Lite in a later part.</p>
-    </fieldset>
-  </section>
+  {% include "_apps.html" %}
 </main>
 
 <footer class="statusbar"><span id="sync">Connecting…</span><span id="links"></span></footer>

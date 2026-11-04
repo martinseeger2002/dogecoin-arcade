@@ -1,0 +1,65 @@
+{#- The Apps tab IS the Apps and games module: it is in the window only while the operator has that module on, and it
+    hosts the rest -- every other module that is on and has a page (modules.PAGES), and the App Store's apps and
+    games, read with the console's own listapps. Switched off, the tab and all it holds are gone (Messages keeps a tab
+    and a switch of its own). A card plays at /inscriptions/<opens>/full, which the Ord indexes module serves. -#}
+{% if apps_on %}
+<section data-panel="apps" hidden>
+  <div class="cols"><div>
+    <fieldset><legend>Modules</legend>
+      <table><thead><tr><th>Module</th><th>What it does</th><th></th></tr></thead><tbody>
+      {% for m in apps if m.on and m.id != 'apps' %}{% set page = m.page[1 if audience == 'operator' else 0] %}
+        {% if page %}<tr><td>{{ m.title }}</td><td class="muted">{{ m.summary }}</td>
+          <td><a href="{{ page }}"{% if page.startswith('/#') %} data-open="{{ page[2:] }}"{% endif %}>Open</a></td></tr>{% endif %}
+      {% else %}<tr><td class="muted" colspan="3">No other module is on here.</td></tr>{% endfor %}
+      </tbody></table>
+      <p class="muted" style="margin:8px 0 0">{% if audience == 'operator' %}Switch modules on or off in
+        <button type="button" data-options="modules">Edition and modules…</button>.{% else %}This arcade's operator
+        chooses what runs here.{% endif %}</p>
+    </fieldset>
+  </div><div>
+    <fieldset><legend>Apps and games</legend>
+      <div class="grid" style="margin-bottom:6px"><label for="a-sort">Show</label>
+        <select id="a-sort"><option value="popular">Popular</option><option value="new">New</option></select></div>
+      <table><thead><tr><th>App</th><th>By</th><th>Chain</th><th class="num">♥</th><th></th></tr></thead>
+        <tbody id="a-list"><tr><td class="muted">Loading…</td></tr></tbody></table>
+      {% if not ords_on %}<p class="muted" style="margin:8px 0 0">Playing an app needs the Ord indexes module on
+        here{{ ": switch it on in Edition and modules" if audience == 'operator' }}.</p>{% endif %}
+    </fieldset>
+  </div></div>
+</section>
+<script>
+(function () {
+  var ORDS = {{ 'true' if ords_on else 'false' }};
+  var $ = function (id) { return document.getElementById(id); };
+  function cell(tr, text, cls) { var td = tr.insertCell(); td.textContent = text; if (cls) td.className = cls; return td; }
+  function load() {
+    var tb = $('a-list');
+    fetch('/lite/api/console', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Lite': '1'},
+      body: JSON.stringify({line: 'listapps ' + $('a-sort').value + ' 50'})})
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        tb.textContent = '';
+        if (!j.ok) { cell(tb.insertRow(), j.error || 'The App Store did not answer.', 'bad'); return; }
+        j.result.forEach(function (a) {
+          var tr = tb.insertRow(), name = cell(tr, a.name);
+          name.title = a.description || '';
+          cell(tr, a.by); cell(tr, a.chain, 'muted'); cell(tr, String(a.likes || 0), 'num');
+          var play = tr.insertCell();
+          if (ORDS) {
+            var link = document.createElement('a');
+            link.href = '/inscriptions/' + encodeURIComponent(a.opens) + '/full';
+            link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Play';
+            play.appendChild(link);
+          }
+        });
+        if (!j.result.length) cell(tb.insertRow(), 'No apps on this arcade’s chains yet.', 'muted');
+      })
+      .catch(function () { tb.textContent = ''; cell(tb.insertRow(), 'The node did not answer.', 'bad'); });
+  }
+  $('a-sort').onchange = load;
+  document.querySelector('.toolbar [data-tab="apps"]').addEventListener('click', load);
+  if (location.hash === '#apps') load();
+})();
+</script>
+{% endif %}

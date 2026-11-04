@@ -380,3 +380,28 @@ def test_a_card_that_draws_pictures_itself_says_so_and_gets_its_own_switch(clien
     assert app.get(f"/games/{plain}/access").json()["pictures"] is False
     page = app.get("/apps").text
     assert "Pictures in the app" in page and 'data-pictures="' + world + '"' in page
+
+
+def test_listapps_is_the_app_store_for_the_console_and_lites_apps_tab(client):
+    """The Lite window's Apps tab, arcade-cli and the console read the same list the App Store shows: the newest card
+    of each app, and the inscription Play opens."""
+    from arcade.lite import commands as cmdlib
+    app, state = client
+    real, card, old = "f1" * 32, "f2" * 32, "f3" * 32
+    _inscribe(state, real, 60, MAKER, {}, height=10)
+    _inscribe(state, old, 61, MAKER, {"game": {"name": "Ghost Fleet", "version": "0.9"}}, height=90)
+    _inscribe(state, card, 62, MAKER, {"game": {"name": "Ghost Fleet", "play": real, "version": "1.0",
+                                                "description": "Ships in the fog."}})
+    said = app.post("/lite/api/console", headers={"x-arcade-lite": "1"}, json={"line": "listapps new 10"}).json()
+    assert said["ok"], said
+    fleet = [a for a in said["result"] if a["name"] == "Ghost Fleet"]
+    assert len(fleet) == 1 and fleet[0]["card"] == card and fleet[0]["opens"] == real
+    assert fleet[0]["description"] == "Ships in the fog." and fleet[0]["version"] == "1.0"
+    assert "listapps" in app.post("/lite/api/console", headers={"x-arcade-lite": "1"},
+                                  json={"line": "help"}).json()["result"]
+    state.set_setting("edition", "lite")
+    try:
+        with __import__("pytest").raises(cmdlib.CommandError, match="Apps and games module is off"):
+            cmdlib.run_line(cmdlib.Caller(state, "anyone"), "listapps")
+    finally:
+        state.set_setting("edition", None)

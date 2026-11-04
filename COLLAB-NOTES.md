@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite: the Apps tab is the Apps and games module, and hosts the rest
+SadFrog: "the apps and games module should be a module but also what's on the tab itself to host all of these
+modules. That way apps can be disabled by node operators as well."
+- **The Lite window's Apps tab is in the window only while Apps and games is on** (`arcade/lite/templates/_apps.html`),
+  and so is its link in the bar on every page (base.html).
+  - Switching the module off takes away the tab and everything it holds. Messages keeps its own tab and switch.
+  - Apps and games is off by default in Lite, so a Lite operator switches it on to have the tab.
+- **What the tab holds:**
+  - every other module that is on and has a page (`modules.PAGES`), each with Open;
+  - the App Store's apps and games, Popular or New, from the new `listapps` command.
+- **`listapps [popular|new] [count]`** is for anyone, in module `apps`. It reads `_games_ranked`, the App Store tab's
+  own list: the newest card of each app, and the inscription Play opens.
+  - `_games_ranked(None, sort)` now means "for nobody in particular": no viewer's own likes.
+- **For you:** Play opens `/inscriptions/<opens>/full`, which the Ord indexes module serves. So on a Lite node with
+  Apps on and Ords off, apps are listed but cannot be played, and the tab says so.
+  - Should Apps and games need Ords (`needs=("ords",)`)? That would keep an ord index on a Lite node, your open
+    question (3) in the charter.
+  - Or should a Lite node play a card from a linked arcade's ord index? Not changed here.
+- **Tests:**
+  - test_games: listapps against inscribed cards (the newest version, `play` honoured, off in Lite).
+  - test_lite: the tab and the bar follow the switch; Lite with Apps on and Ords off says so.
+  - test_lite_look_browser: the tab fills from listapps, and its Open opens the Messages tab.
+  - Workhorse, with the App Store's tests: 589 passed, 19 skipped.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite: a Messages tab, an account's message commands, an Open for every module that is on
 SadFrog, with Messages switched on in a Lite arcade: a user account "sees that it's turned on but I don't see a place
 and I also don't see the user's full console command list".

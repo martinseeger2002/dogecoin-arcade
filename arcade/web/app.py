@@ -26295,7 +26295,7 @@ def create_app(state: AppState) -> FastAPI:
         acts += [dict(a, height=a.get("height") or 0) for a in (waiting.acts or [])
                  if a.get("target") in targets and a["txid"] not in known]
         said = launchlist.tally(acts)
-        me = _tag_of_whoever_is_asking(request).get("address") or ""
+        me = (_tag_of_whoever_is_asking(request).get("address") or "") if request is not None else ""
         for item in items:
             got = said.get(item["txid"], {"likes": set(), "dislikes": set(), "comments": []})
             item["likes"], item["dislikes"] = len(got["likes"]), len(got["dislikes"])
@@ -26526,7 +26526,7 @@ def create_app(state: AppState) -> FastAPI:
         for a in acts:
             if int(a["kind"]) in (feedlib.TIP, feedlib.TIP_TOKEN):
                 tips[a["target"]] = tips.get(a["target"], 0) + 1
-        me = _tag_of_whoever_is_asking(request).get("address") or ""
+        me = (_tag_of_whoever_is_asking(request).get("address") or "") if request is not None else ""
         for item in items:
             got = said.get(item["txid"], {"likes": set(), "dislikes": set(), "comments": []})
             item["likes"], item["dislikes"] = len(got["likes"]), len(got["dislikes"])
@@ -31129,10 +31129,20 @@ def create_app(state: AppState) -> FastAPI:
                                        unspent=_node_unspent, peer=_console_peer, message=_console_message,
                                        feed=_console_feed, feed_post=_console_feed_post, feed_act=_console_feed_act)
     #: ...and what it may ask on behalf of anyone at all: reads of what the public pages show.
+    def _console_apps(sort: str, count: int) -> list[dict]:
+        """The App Store's cards, as its tab ranks them for anybody (no viewer's own likes), for listapps."""
+        items = _games_ranked(None, sort)[:count]
+        tags = _tags_for([i["creator"] for i in items])
+        return [{"name": i["name"], "by": "@" + tags[i["creator"]] if tags.get(i["creator"]) else i["creator"],
+                 "description": str(i["game"].get("description") or "")[:200], "version": i["game"].get("version"),
+                 "chain": i["net"], "card": i["txid"], "opens": i["game"].get("opens") or i["txid"],
+                 "likes": i["likes"], "comments": i["comments"]} for i in items]
+
     public_tools = types.SimpleNamespace(
         feed=lambda sort, author, count: [{k: v for k, v in post.items() if k != "mine"}
                                           for post in _console_feed(sort, author, count)],
-        tokens=_console_tokens, book=_console_book, pair=_console_pair, doginals=_console_doginals)
+        tokens=_console_tokens, book=_console_book, pair=_console_pair, doginals=_console_doginals,
+        apps=_console_apps)
 
     # --- the Cloudflare tunnel wizard (2026-09-25; arcade/tunnel.py) -----
 
