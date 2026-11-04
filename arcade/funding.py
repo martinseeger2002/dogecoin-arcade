@@ -109,6 +109,9 @@ class Unsigned:
     #: A Peercoin-style chain's transaction time (Params.tx_time, Kotia): in `raw`, in every sighash, and
     #: written again by `assemble`. None on every other chain.
     ntime: int | None = None
+    #: The transaction's version, in `raw`, every sighash and what `assemble` writes: 1, but for a node module's
+    #: prepared transaction that a chain marks by its version (a DigiDollar mint's 0x01000770, arcade/modhost.py).
+    version: int = 1
 
     def as_json(self) -> dict:
         return {
@@ -808,7 +811,7 @@ def assemble(unsigned: Unsigned, signatures: list[str], pubkey: bytes) -> str:
             f"{len(signatures)} came back")
     if any(coin.get("segwit") for coin in unsigned.inputs):
         return _assemble_witness(unsigned, signatures, pubkey)
-    raw = (1).to_bytes(4, "little") + time_field(unsigned.ntime) + varint(len(unsigned.inputs))
+    raw = unsigned.version.to_bytes(4, "little") + time_field(unsigned.ntime) + varint(len(unsigned.inputs))
     for n, coin in enumerate(unsigned.inputs):
         script_sig = b""
         if n >= first and coin.get("multisig"):
@@ -1345,4 +1348,4 @@ def _assemble_witness(unsigned: "Unsigned", signatures: list[str], pubkey: bytes
             else:
                 item["script_sig"] = push(sig) + push(pubkey)
         ins.append(item)
-    return serialize_segwit(ins, unsigned.outputs, locktime=0, version=1)
+    return serialize_segwit(ins, unsigned.outputs, locktime=0, version=unsigned.version)
