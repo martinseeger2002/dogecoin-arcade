@@ -88,6 +88,46 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite's Address book, Join, Options and an account's Backup, in the window
+SadFrog: "yes re draw all base pages". Commits 961a0a8, c37c894 and 7ca6231, each drawn like the Overview and each over
+the full arcade's own code and routes.
+- **Address book tab:**
+  - an account's book is messaging.js's, kept in its browser (ARCADE_ME set first, so another account starts
+    empty); the operator's is the node's contacts table (node-mail.js);
+  - add by @name, a note, Pay (opens Send with the name filled in), Remove.
+  - **Found:** both scripts were filed under the Messages module, which is off in Lite, so the full Address book page
+    was already broken on a Lite node. They now belong to the Address book module.
+- **Join** is a panel of the window, and ARCADE Lite serves it at `/join` (the full edition keeps its own page):
+  - make an account: `signUp`, the twelve words with "I have written them down", then `setUp` puts the name and key
+    on the chain in the background;
+  - sign in, open a backup file, and sign out.
+- **`secure_context` counts `*.localhost`**, as browsers do. Until now, an ssh tunnel opened as `think.localhost`
+  was told it could not make a key. **For you:** this changes app.py's check for every edition.
+- **Settings → Options** is a window like the Console, operator only, over Admin's own routes:
+  - face, updates (on or off, live or test), seats;
+  - edition and modules (a module's caution is asked first; the restart note is shown);
+  - the admin password, set at the node's machine only.
+  - The rest of Admin (chains and Cores, network, safety, wallet imports) is still its own page, linked at the
+    window's foot.
+- **An account's Backup** is a panel at `/me/backup` in Lite:
+  - the twelve words, opened from the sealed copy with the password typed again and checked against the account's
+    own mainnet address before they are shown;
+  - the encrypted wallet file to keep.
+  - The node's own Backup (its Core wallets) is still its page: those are plain form posts with no JSON answer, so
+    it needs a small endpoint first.
+- **Seeing a Lite node as a visitor from the same network:** `http://<lan-ip>:8420` is not a secure context, so the
+  browser refuses to make a key. An ssh tunnel to the node's LAN address, not its loopback (`-L 8431:<lan-ip>:8420`),
+  is seen by the door as outside, while the browser still sees `localhost`.
+- **Tests:**
+  - tests/test_lite_pages_browser.py, in real Firefox on regtest: an account made at Lite's /join, signed out, signed
+    back in, and its twelve words shown again at /me/backup; a name with a published key added to the book, then Pay;
+    the operator saving seats and seeing the modules in Options.
+  - test_lite: each panel per caller, /join and /me/backup per edition, `*.localhost`.
+  - test_modules: the book's scripts are served in Lite.
+  - Workhorse, with the full arcade's signup, contacts, send, auth and admin tests: 659 passed, 16 skipped, 1 failed.
+    The failure is `test_a_file_and_a_password_open_a_wallet_this_node_never_held`; it fails on base too, because the
+    snap-packaged Firefox cannot read the file it is handed from /tmp.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite's Send, Receive and Transactions are the window's own tabs
 SadFrog: "how the over view is setup is how all pages should be setup - not reusing arcade full styles - we want this
 to be a lite weight nothing fancy barebones". Commit e736cc4, the first of those pages.
