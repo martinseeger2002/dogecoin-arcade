@@ -198,6 +198,7 @@ def test_an_account_writes_from_the_messages_tab_and_from_its_console(reachable)
     browser, base, state, node, them = reachable
     browser.get(f"{base}/lite#messages")
     _wait(browser).until(lambda d: d.find_element(By.ID, "m-main").is_displayed())
+    assert not browser.find_element(By.ID, "m-write").is_displayed(), "no Send before a conversation is open"
     browser.find_element(By.ID, "m-to").send_keys("@" + them["tag"])
     browser.find_element(By.CSS_SELECTOR, '#m-new button[type="submit"]').click()
     _wait(browser).until(lambda d: d.find_element(By.ID, "m-write").is_displayed())
@@ -232,6 +233,7 @@ def test_the_operator_writes_the_nodes_messages_from_the_same_tab(reachable):
     browser.execute_script("sessionStorage.clear();")
     browser.get(f"{base}/lite#messages")
     _wait(browser).until(lambda d: d.find_element(By.ID, "m-main").is_displayed())
+    assert not browser.find_element(By.ID, "m-write").is_displayed(), "no Send before a conversation is open"
     browser.find_element(By.ID, "m-to").send_keys("@" + them["tag"])
     browser.find_element(By.CSS_SELECTOR, '#m-new button[type="submit"]').click()
     _wait(browser).until(lambda d: d.find_element(By.ID, "m-write").is_displayed())

@@ -105,6 +105,7 @@ async function show(key, label, name) {
   await draw(); $("m-text").focus();
 }
 async function send(who, text) {
+  if (!who) throw new Error("open a conversation by its @name first");
   if (!text.trim()) throw new Error("type the message first");
   await mail.write(keys, me, who, text);
 }
