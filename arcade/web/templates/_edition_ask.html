@@ -1,0 +1,29 @@
+{#- The first-run question (arcade/modules.py ASK): a fresh install whose operator has not chosen Full or ARCADE Lite
+    yet. Asked once; the arcade runs as Full until it is answered, and Admin -> Edition & modules changes it later. -#}
+{% if edition_ask %}
+<section class="panel" id="editionask">
+  <h2>Full arcade or ARCADE Lite?</h2>
+  <p style="margin:0 0 8px"><b>Full</b> is everything this arcade does: the feed, messages, the exchange, ords and
+    Explore, apps and games. <b>ARCADE Lite</b> starts with the crypto cores only: the chains and their wallets, send
+    and receive, the address book, accounts, settings, help and the mesh link. Anything else can be switched on later,
+    and nothing is deleted when something is switched off.</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button type="button" data-pick="full">Full arcade</button>
+    <button type="button" data-pick="lite">ARCADE Lite</button>
+  </div>
+  <p class="msg" id="editionsaid" hidden></p>
+</section>
+<script>
+(function () {
+  document.querySelectorAll('#editionask [data-pick]').forEach(function (b) {
+    b.onclick = function () {
+      fetch('/admin/api/modules', {method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'}, body: JSON.stringify({edition: b.dataset.pick})})
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.statusText); return j; }); })
+        .then(function () { location.href = b.dataset.pick === 'lite' ? '/' : location.pathname; })
+        .catch(function (e) { var m = document.getElementById('editionsaid'); m.hidden = false; m.textContent = e.message; });
+    };
+  });
+})();
+</script>
+{% endif %}

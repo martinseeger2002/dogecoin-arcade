@@ -1,0 +1,65 @@
+/* ARCADE Lite's look for the full arcade's own pages (Admin and the rest, base.html), served at /lite/pages.css and
+ * linked only in the Lite edition. The same window as lite.html: Core's greys and blue, system fonts, square
+ * fieldsets, plain buttons. Only the look changes: every page keeps its own markup, controls and code. Each rule is
+ * scoped to body[data-lite], so it outranks base.css, the face's css and a page's own <style>. */
+body[data-lite]{
+  --bg:#efefef; --panel:#fff; --fg:#1d1d1d; --muted:#666; --line:#c4c4c4; --accent:#3874d8; --accent-fg:#fff;
+  --ok:#2e7d32; --warn:#b26a00; --bad:#c62828; --code:#f4f4f4; --bar:#e4e4e4; --shadow:none; --radius:3px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) body[data-lite]{
+  --bg:#2b2b2b; --panel:#1f1f1f; --fg:#e6e6e6; --muted:#a0a0a0; --line:#4a4a4a; --accent:#3d7be0;
+  --ok:#66bb6a; --warn:#ffb74d; --bad:#ef5350; --code:#262626; --bar:#333;
+}}
+:root[data-theme=dark] body[data-lite]{
+  --bg:#2b2b2b; --panel:#1f1f1f; --fg:#e6e6e6; --muted:#a0a0a0; --line:#4a4a4a; --accent:#3d7be0;
+  --ok:#66bb6a; --warn:#ffb74d; --bad:#ef5350; --code:#262626; --bar:#333;
+}
+body[data-lite]{background:var(--bg);color:var(--fg);font:13px/1.4 system-ui,-apple-system,"Segoe UI",Ubuntu,sans-serif}
+body[data-lite] a{color:var(--accent)}
+
+/* the bar: the window's menu strip, its links the toolbar's tabs */
+body[data-lite] header{background:var(--bar);border-bottom:1px solid var(--line);box-shadow:none}
+body[data-lite] .bar{max-width:none;padding:3px 6px;gap:6px}
+body[data-lite] .brand{font-weight:600;font-size:13px;letter-spacing:0;padding:3px 8px;color:var(--fg)}
+body[data-lite] .brand a{color:inherit}
+body[data-lite] nav{gap:2px;margin-left:6px}
+body[data-lite] nav a{padding:3px 10px;border-radius:3px;border:1px solid transparent;font-size:13px;color:var(--fg)}
+body[data-lite] nav a:hover{background:none;border-color:var(--line)}
+body[data-lite] nav a.on{background:var(--panel);border-color:var(--line);color:var(--fg);font-weight:600}
+
+/* the page: fieldsets and tables, nothing larger than it needs */
+body[data-lite] main{max-width:none;padding:12px}
+body[data-lite] h1{font-size:15px;font-weight:600;letter-spacing:0;margin:0 0 4px}
+body[data-lite] h2{font-size:13px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--fg);margin:0 0 8px}
+body[data-lite] h3{font-size:13px;font-weight:600}
+body[data-lite] .sub{font-size:13px;margin:0 0 10px}
+body[data-lite] .panel,body[data-lite] .stat{background:var(--panel);border:1px solid var(--line);border-radius:3px;
+  box-shadow:none;padding:8px 10px;margin:0 0 12px}
+body[data-lite] table{font-size:13px}
+body[data-lite] th{font-size:12px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted);padding:3px 6px}
+body[data-lite] td{padding:3px 6px;border-top:1px solid var(--line)}
+body[data-lite] code,body[data-lite] pre{border-radius:2px}
+body[data-lite] label{font-size:12px}
+body[data-lite] input,body[data-lite] textarea,body[data-lite] select{font:inherit;padding:3px 5px;border-radius:2px;
+  border:1px solid var(--line);background:var(--panel);color:var(--fg);box-shadow:none;min-height:0;height:auto}
+body[data-lite] input[type=checkbox],body[data-lite] input[type=radio]{width:auto}
+body[data-lite] button,body[data-lite] .btn{font:inherit;padding:3px 12px;border-radius:3px;border:1px solid var(--line);
+  background:var(--bar);color:var(--fg);box-shadow:none;min-height:0;font-weight:400;filter:none}
+body[data-lite] button:hover,body[data-lite] .btn:hover{border-color:var(--accent);filter:none}
+body[data-lite] button.small,body[data-lite] .btn.small,body[data-lite] .ghost.small{padding:2px 8px;border-radius:3px;
+  min-height:0;font-size:12px}
+body[data-lite] button.ghost{background:transparent}
+body[data-lite] button.primary,body[data-lite] .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+body[data-lite] button.danger{background:var(--bar);border-color:var(--bad);color:var(--bad)}
+body[data-lite] button:disabled{color:var(--muted);border-color:var(--line)}
+body[data-lite] .msg{border-radius:3px;padding:6px 8px;font-size:13px}
+body[data-lite] .pill,body[data-lite] .tag{border-radius:3px}
+
+/* square and flat, every card, sheet and dialog a page draws (its own styles included); coin icons stay round */
+body[data-lite] :where(*:not(img, .neticon, input[type=radio])){border-radius:3px !important;box-shadow:none !important}
+
+/* Admin's tabs, as the window's tab row */
+body[data-lite] .admintabs{gap:2px;margin:8px 0 10px;padding:0 0 0 2px;border-bottom:1px solid var(--line)}
+body[data-lite] .admintabs button{border:1px solid transparent;border-bottom:0;border-radius:3px 3px 0 0;
+  background:none;color:var(--fg);font-weight:400;padding:4px 10px;margin-bottom:-1px;border-radius:3px 3px 0 0 !important}
+body[data-lite] .admintabs button.on{background:var(--panel);border-color:var(--line);color:var(--fg);font-weight:600}

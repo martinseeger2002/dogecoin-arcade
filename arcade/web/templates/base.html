@@ -122,6 +122,10 @@ html.indesk body:not(.fullscreen){padding-top:0}
   }
   var installed = window.navigator.standalone === true ||
     (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  {%- if modules_on is defined and 'desktop' not in modules_on %}
+  // The Desktop View and the home screen are switched off here (arcade/modules.py): every page stays the website.
+  return;
+  {%- endif %}
   // THE DESKTOP VIEW (desktop.html; 2026-10-28), on a computer's browser only: while its switch is on, a page opened in
   // a tab of its own goes to the desktop and opens there in a window (on by default, in Ubuntu's look). Never the Admin pages, the sign-in pages, a phone
   // or the installed app.
@@ -172,14 +176,26 @@ html.indesk body:not(.fullscreen){padding-top:0}
 <link rel="modulepreload" href="/vendor/hashes/_assert.js"><link rel="modulepreload" href="/vendor/hashes/crypto.js">
 {% endif %}
 {% if brand.css %}<style>/* this node's face (arcade/web/brand.py) */{{ brand.css | safe }}</style>{% endif %}
+{% if edition_lite %}<link rel="stylesheet" href="/lite/pages.css">{% endif %}{# ARCADE Lite's window look (arcade/lite) #}
 </head>
 {# Every page is live. The counter lives on the body rather than in an
    element each page has to remember to add: eight templates had one and the
    rest sat stale until somebody pressed reload (the operator, D-142). #}
-<body{% if embed %} class="embed"{% elif fullscreen %} class="fullscreen"{% endif %} data-generation="{{ state.generation }}">
+<body{% if embed %} class="embed"{% elif fullscreen %} class="fullscreen"{% endif %}{% if edition_lite %} data-lite{% endif %} data-generation="{{ state.generation }}">
 {% if not embed %}
 <header><div class="bar">
-  <span class="brand">{{ brand.name }}</span>
+  <span class="brand">{% if edition_lite %}<a href="/">{{ brand.name }} Lite</a>{% else %}{{ brand.name }}{% endif %}</span>
+  {%- if edition_lite %}
+  {#- ARCADE Lite: the window's own tabs, so every page is one window (arcade/lite/templates/lite.html opens /#<tab>) #}
+  <nav>
+  {%- set lite_nav = [('/', 'Overview'), ('/#send', 'Send'), ('/#receive', 'Receive'), ('/#transactions', 'Transactions'),
+                      ('/#addresses', 'Address book'), ('/#apps', 'Apps'), ('/docs', 'Help')] %}
+  {%- if '/admin' in nav|map(attribute=0)|list %}{% set lite_nav = lite_nav + [('/admin', 'Admin')] %}{% endif %}
+  {%- for href, label in lite_nav %}
+    <a class="{{ 'on' if path == href or (href != '/' and '#' not in href and path.startswith(href + '/')) else '' }}" href="{{ href }}">{{ label }}</a>
+  {%- endfor %}
+  </nav>
+  {%- else %}
   <nav>
   {%- for href, label, chain, built in nav %}
     {%- if built %}
@@ -193,6 +209,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
     {%- endif %}
   {%- endfor %}
   </nav>
+  {%- endif %}
 </div></header>
 {% if stranger_here and not embed and not fullscreen and path not in ('/', '/join', '/restore', '/join/keys') %}
 {# A visitor: everything here can be read, and nothing can be done until they

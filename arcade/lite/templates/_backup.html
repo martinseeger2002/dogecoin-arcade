@@ -1,0 +1,70 @@
+{#- File -> Backup, for an account, drawn like the Overview; ARCADE Lite serves it at /me/backup. The twelve words are
+    the whole account: shown again from the sealed copy with the password typed a second time (even with the wallet
+    open), checked against the account's own address, and never sent anywhere. -#}
+{% if wallet == 'account' %}
+<section data-panel="backup" hidden>
+  <fieldset><legend>Your twelve words</legend>
+    <p style="margin:0 0 8px">The words are the wallet. This arcade keeps only your wallet sealed with your password,
+      which it cannot open; lose the password with the words not written down and nobody can bring them back.</p>
+    <form id="k-show" class="grid">
+      <label for="k-pw">Password</label><span><input id="k-pw" type="password" autocomplete="current-password" required>
+        <button type="submit">Show my twelve words</button></span>
+    </form>
+    <div id="k-shown" hidden>
+      <ol id="k-words" style="columns:3;margin:10px 0;font-family:var(--mono)"></ol>
+      <button type="button" id="k-hide">Hide them</button>
+    </div>
+  </fieldset>
+  <fieldset><legend>An extra copy of your encrypted wallet</legend>
+    <p style="margin:0 0 8px">A file to keep. With your password it opens your wallet on any arcade (Join → Open a
+      backup file); without it, it is no use to anybody.</p>
+    <button type="button" id="k-file">Save the file</button>
+  </fieldset>
+  <p id="k-said" hidden></p>
+</section>
+<script type="module">
+import * as wallet from "/wallet.js";
+const $ = (id) => document.getElementById(id);
+const NAME = {{ me|tojson }};
+function tell(text, cls) { const p = $("k-said"); p.textContent = text; p.className = cls || ""; p.hidden = !text; }
+async function sealed() {
+  if (!NAME) throw new Error("this account's wallet is not kept on this arcade; your own backup file holds it");
+  const answer = await fetch(`/signin/${encodeURIComponent(NAME)}`, {cache: "no-store"});
+  const said = await answer.json();
+  if (!answer.ok) throw new Error(said.detail || "the node would not hand back your sealed wallet");
+  return said;
+}
+const hide = () => { $("k-words").replaceChildren(); $("k-shown").hidden = true; };
+$("k-hide").onclick = hide;
+addEventListener("pagehide", hide);
+$("k-show").onsubmit = async (e) => {
+  e.preventDefault(); tell(""); hide();
+  const button = $("k-show").querySelector("button");
+  button.disabled = true;
+  try {
+    const phrase = await wallet.open((await sealed()).blob, $("k-pw").value);
+    // Words that open with this password but make another account are said, not shown as this one's.
+    const real = ((await wallet.state()).chains || []).find((c) => c.mainnet && c.address);
+    if (real) {
+      const signin = await import("/signin.js"), coins = await import("/coins.js");
+      const key = await coins.coinKey(await signin.toSeed(phrase), real.network);
+      if (await coins.address(key.pubkey, real.version) !== real.address) {
+        throw new Error("that wallet opened, but its words are not this account's");
+      }
+    }
+    $("k-pw").value = "";
+    for (const word of phrase.trim().split(/\s+/)) $("k-words").append(Object.assign(document.createElement("li"),
+                                                                                    {textContent: word}));
+    $("k-shown").hidden = false;
+  } catch (x) { tell(String(x.message || x), "bad"); } finally { button.disabled = false; }
+};
+$("k-file").onclick = async () => {
+  tell("");
+  try {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(await sealed(), null, 2)], {type: "application/json"}));
+    const link = Object.assign(document.createElement("a"), {href: url, download: `arcade-${NAME}.json`});
+    document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+  } catch (x) { tell(String(x.message || x), "bad"); }
+};
+</script>
+{% endif %}

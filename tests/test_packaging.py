@@ -19,9 +19,9 @@ ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = ROOT / "arcade" / "web" / "templates"
 
 
-def _shipped_globs() -> list[str]:
+def _shipped_globs(package: str = "arcade.web") -> list[str]:
     data = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    return data["tool"]["setuptools"]["package-data"]["arcade.web"]
+    return data["tool"]["setuptools"]["package-data"][package]
 
 
 def test_every_template_file_is_shipped():
@@ -53,4 +53,13 @@ def test_every_data_file_beside_the_code_is_shipped():
     left_out = sorted(p.name for p in web.iterdir()
                       if p.is_file() and p.suffix not in (".py", ".pyc") and not p.name.startswith(".")
                       and not any(fnmatch.fnmatch(p.name, g) for g in globs))
+    assert left_out == [], f"not in package-data, so a pip install lacks: {left_out}"
+
+
+def test_every_lite_template_file_is_shipped():
+    """arcade/lite/templates shipped *.html only, and /lite/pages.css (ARCADE Lite's look for the full arcade's pages)
+    answered 500 on the first installed Lite node while every test here passed."""
+    globs, lite = _shipped_globs("arcade.lite"), ROOT / "arcade" / "lite" / "templates"
+    left_out = sorted(p.name for p in lite.iterdir() if p.is_file() and not p.name.startswith(".")
+                      and not any(fnmatch.fnmatch(f"templates/{p.name}", g) for g in globs))
     assert left_out == [], f"not in package-data, so a pip install lacks: {left_out}"

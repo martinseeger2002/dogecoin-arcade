@@ -69,13 +69,14 @@ arcade-msg = "arcade.messaging.cli:main"
 arcade-web = "arcade.web.__main__:main"
 arcade-admin-window = "arcade.adminwindow:main"
 arcade-rpc = "arcade.rpccli:main"
+arcade-cli = "arcade.lite.cli:main"
 arcade-publish = "arcade.publish:main"
 dogecoinarcade-update = "arcade.update:main"
 
 [tool.setuptools]
 # Only `arcade` is a package. Without this, setuptools sees installer/ as a
 # second top-level package and refuses to build at all.
-packages = ["arcade", "arcade.messaging", "arcade.mesh", "arcade.web", "arcade.web.dogefeedx", "arcade.lora"]
+packages = ["arcade", "arcade.messaging", "arcade.mesh", "arcade.web", "arcade.web.dogefeedx", "arcade.lora", "arcade.lite"]
 
 [tool.setuptools.package-data]
 # Files that are DATA rather than code and must be in the wheel, or an
@@ -87,6 +88,7 @@ packages = ["arcade", "arcade.messaging", "arcade.mesh", "arcade.web", "arcade.w
 # leaving it out does not degrade anything: the application does not start.
 "arcade" = ["bip39-english.txt"]
 "arcade.lora" = ["SOURCE.md"]
+"arcade.lite" = ["templates/*.html", "templates/*.css"]
 "arcade.web" = ["templates/*.html", "templates/*.js", "templates/*.css", "templates/*.md",
                 "templates/*.png", "templates/brands/*/*.png",
                 "templates/dogefeedx/*.html", "templates/dogefeedx/*.css", "templates/dogefeedx/*.js",

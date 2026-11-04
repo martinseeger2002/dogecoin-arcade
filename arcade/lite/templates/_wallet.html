@@ -1,0 +1,208 @@
+{#- Send, Receive and Transactions, drawn in the window like the Overview. The keys and the signing are the wallet's own
+    code, never Lite's: wallet.js for an account (the words open in this browser and sign here), node-wallet.js for the
+    operator (the node builds and signs, and holds the send under a ticket until Send is pressed). So a send here is
+    checked as the full arcade's Wallet checks it: the offer against what was typed, its bytes by `checked`, and on a
+    mainnet chain every cost listed on the review before `confirm` (exchange-safety R1). -#}
+{% if not wallet %}
+{% for tab in ('send', 'receive', 'transactions') %}
+<section data-panel="{{ tab }}" hidden><p class="later"><a href="/join">Sign in or make an account</a> to use your
+  wallet.</p></section>
+{% endfor %}
+{% else %}
+<section data-panel="send" hidden>
+  <div class="cols"><div>
+    <fieldset><legend>Send coins</legend>
+      <form id="w-form" class="grid">
+        <label for="w-chain-send">Wallet</label><select id="w-chain-send" data-chain></select>
+        <label for="w-to">Pay to</label><input id="w-to" placeholder="@name or address" autocomplete="off"
+          spellcheck="false" required>
+        <label for="w-amount">Amount</label><span><input id="w-amount" inputmode="decimal" autocomplete="off"
+          required> <span data-unit></span></span>
+        <span></span><span><button type="submit">Review…</button></span>
+      </form>
+    </fieldset>
+    <fieldset id="w-unlock" hidden><legend>Unlock your wallet</legend>
+      <form id="w-unlock-form" class="grid">
+        <label for="w-password">Password</label><input id="w-password" type="password" autocomplete="current-password">
+        <span></span><span><button type="submit">Unlock</button></span>
+      </form>
+      <p class="muted">Your words open in this browser only; the password never leaves it.</p>
+    </fieldset>
+    <fieldset id="w-review" hidden><legend>Review</legend>
+      <dl id="w-terms"></dl>
+      <p id="w-warn" class="warn" hidden>Real coins. A send can't be taken back: check the name and the address.</p>
+      <p class="muted">{{ "Built and signed by this node's own wallet; nothing goes until you press Send." if wallet
+        == 'node' else "Read in this browser from the transaction's own bytes; signed here when you press Send." }}</p>
+      <button type="button" id="w-go">Send</button> <button type="button" id="w-cancel">Cancel</button>
+    </fieldset>
+    <p id="w-said" hidden></p>
+  </div><div>
+    <fieldset><legend>Balances</legend>
+      <table><thead><tr><th>Wallet</th><th class="num">Spendable</th><th class="num">Arriving</th></tr></thead>
+        <tbody id="w-balances"><tr><td class="muted">Loading…</td></tr></tbody></table></fieldset>
+  </div></div>
+</section>
+<section data-panel="receive" hidden>
+  <fieldset><legend>Receive coins</legend>
+    <div class="grid"><label for="w-chain-receive">Wallet</label><select id="w-chain-receive" data-chain></select>
+      <span>Address</span><code id="w-address"></code>
+      <span></span><span><button type="button" id="w-copy">Copy address</button></span></div>
+    <div id="w-qr"></div>
+    <p class="muted" id="w-only"></p>
+  </fieldset>
+</section>
+<section data-panel="transactions" hidden>
+  <fieldset><legend>Transactions</legend>
+    <div class="grid"><label for="w-chain-tx">Wallet</label><select id="w-chain-tx" data-chain></select></div>
+    <table><thead><tr><th>Date</th><th>Type</th><th>With</th><th class="num">Amount</th><th class="num">Confirmations</th>
+      <th>Transaction</th></tr></thead><tbody id="w-history"></tbody></table>
+    <p class="muted" id="w-since"></p>
+  </fieldset>
+</section>
+<script src="/vendor/qrcode.js"></script>
+<script type="module">
+import * as wallet from "{{ '/node-wallet.js' if wallet == 'node' else '/wallet.js' }}";
+const NODE = {{ 'true' if wallet == 'node' else 'false' }};
+const API = NODE ? "/node/wallet" : "/account";
+const ME = {{ me|tojson }}, TAGCHAIN = {{ tagchain|tojson }};
+const ADDRESSY = /^(?:[1-9A-HJ-NP-Za-km-z]{26,35}|[a-z]{1,4}1[02-9ac-hj-np-z]{38,58}|[A-Z]{1,4}1[02-9AC-HJ-NP-Z]{38,58})$/;
+const $ = (id) => document.getElementById(id);
+const coinsOf = (n) => (Number(n || 0) / 1e8).toLocaleString(undefined, {maximumFractionDigits: 8});
+let said = {chains: []}, net = "", offer = null, keys = null;
+
+function satsOf(text) {
+  const m = /^(\d*)(?:\.(\d{0,8}))?$/.exec(String(text).trim());
+  if (!m || (!m[1] && !m[2])) return null;
+  return Number(m[1] || "0") * 1e8 + Number((m[2] || "").padEnd(8, "0"));
+}
+const chain = () => said.chains.find((c) => c.network === net) || said.chains[0] || {};
+const unit = (c) => (c.coin || c.label || "") + (c.mainnet === false && !/test/i.test(c.coin || "") ? " test" : "");
+function tell(text, cls) { const p = $("w-said"); p.textContent = text; p.className = cls || ""; p.hidden = !text; }
+function cell(tr, text, cls) { const td = tr.insertCell(); td.textContent = text; if (cls) td.className = cls; return td; }
+
+async function load() {
+  try { said = await wallet.state(NODE ? undefined : net); } catch (e) { said = {chains: []}; }
+  said.chains = said.chains || [];
+  if (!net && said.chains.length) net = said.chains[0].network;
+  document.querySelectorAll("[data-chain]").forEach((box) => {
+    box.textContent = "";
+    for (const c of said.chains) box.add(new Option(c.label + (c.mainnet ? "" : " (test)"), c.network));
+    box.value = net;
+  });
+  const tb = $("w-balances"); tb.textContent = "";
+  for (const c of said.chains) {
+    const tr = tb.insertRow();
+    cell(tr, c.label); if (c.error) tr.title = c.error;
+    cell(tr, c.balance == null ? "—" : coinsOf(c.spendable ?? c.balance) + " " + unit(c), "num");
+    cell(tr, c.arriving ? coinsOf(c.arriving) : "", "num");
+  }
+  if (!said.chains.length) cell(tb.insertRow(), "No wallet is ready yet: the chains are still syncing.", "muted");
+  draw();
+}
+function draw() {
+  const c = chain();
+  document.querySelectorAll("[data-unit]").forEach((s) => { s.textContent = unit(c); });
+  $("w-address").textContent = c.address || "—";
+  $("w-only").textContent = !c.address ? "" : c.mainnet ? `Send only ${unit(c)} here: real coins.`
+    : `Send only ${unit(c)} here. Test coins have no value.`;
+  $("w-qr").textContent = "";
+  if (c.address && typeof qrcode === "function") {
+    const qr = qrcode(0, "M"); qr.addData(c.address); qr.make();
+    $("w-qr").innerHTML = qr.createSvgTag({cellSize: 4, margin: 2});
+  }
+  history();
+}
+async function history() {
+  const tb = $("w-history"); tb.textContent = ""; $("w-since").textContent = "";
+  if (!net) return;
+  let got;
+  try { got = await (await fetch(`${API}/activity?chain=${encodeURIComponent(net)}&limit=50`, {cache: "no-store"})).json(); }
+  catch (e) { cell(tb.insertRow(), "The node did not answer.", "bad"); return; }
+  for (const r of got.rows || []) {
+    const tr = tb.insertRow(), conf = r.confirmations ?? Math.max(0, (got.tip || 0) - r.height + 1);
+    cell(tr, r.time ? new Date(r.time * 1000).toLocaleString() : "");
+    cell(tr, r.net > 0 ? "Received" : r.net < 0 ? "Sent" : "To yourself");
+    cell(tr, r.other_tag ? "@" + r.other_tag : r.other || "");
+    cell(tr, (r.net > 0 ? "+" : "") + coinsOf(r.net), "num " + (r.net < 0 ? "bad" : "ok"));
+    cell(tr, conf ? String(conf) : "unconfirmed", "num" + (conf ? "" : " warn"));
+    cell(tr, String(r.txid).slice(0, 16) + "…").title = r.txid;
+  }
+  if (!tb.rows.length) cell(tb.insertRow(), got.detail || "Nothing yet.", "muted");
+  if (got.since != null) $("w-since").textContent = `Kept from block ${Number(got.since).toLocaleString()}.`;
+}
+document.querySelectorAll("[data-chain]").forEach((box) => {
+  box.onchange = () => { net = box.value; if (NODE) draw(); else load(); };
+});
+document.querySelector('[data-tab="transactions"]').addEventListener("click", history);   // read afresh when opened
+$("w-copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(chain().address || "");
+
+/** Why the offer is not the send that was typed, or "". */
+function mismatch(o, to, amount, read) {
+  if (Number(o.amount) !== satsOf(amount)) return `The node built a send of ${coinsOf(o.amount)}, and you typed ${amount}.`;
+  if (ADDRESSY.test(to) ? o.to !== to : String(o.to_tag || "").toLowerCase() !== to.replace(/^@/, "").toLowerCase()) {
+    return `The node built a send to ${o.to_tag ? "@" + o.to_tag : o.to}, not ${to}.`;
+  }
+  // An account's review is read from the bytes: the payee and the amount must be in them.
+  if (!NODE && !(read.pays || []).some((p) => !p.mine && p.to === o.to && Number(p.value) === Number(o.amount))) {
+    return "The transaction's own bytes do not pay that address that amount.";
+  }
+  return "";
+}
+function terms(list) {
+  const dl = $("w-terms"); dl.textContent = "";
+  for (const [k, v] of list) {
+    const dt = document.createElement("dt"), dd = document.createElement("dd");
+    dt.textContent = k; dd.textContent = v; dl.append(dt, dd);
+  }
+}
+$("w-form").onsubmit = async (e) => {
+  e.preventDefault();
+  tell(""); $("w-review").hidden = true; offer = null;
+  const c = chain(), to = $("w-to").value.trim(), amount = $("w-amount").value.trim();
+  if (!satsOf(amount)) { tell("Type the amount in coins, like 1.5.", "bad"); return; }
+  keys = await wallet.opened(TAGCHAIN);
+  if (!keys) { $("w-unlock").hidden = false; $("w-password").focus(); return; }
+  try {
+    const o = await wallet.offerSend(to, amount, c.network);
+    const read = await wallet.checked(o, keys);
+    const wrong = mismatch(o, to, amount, read);
+    if (wrong) { tell(wrong + " Nothing was signed.", "bad"); return; }
+    const u = unit(c), list = [["To", (o.to_tag ? "@" + o.to_tag + "  " : "") + o.to], ["Amount", `${coinsOf(o.amount)} ${u}`],
+                               ["Network fee", `${coinsOf(read.fee)} ${u}`]];
+    if (NODE) list.push(["Leaves the wallet", `${coinsOf(Number(o.amount) + Number(read.fee || 0))} ${u}`]);
+    else {
+      const costs = wallet.mainnetCosts(o, read);
+      if (costs.operator) list.push(["Arcade's fee", `${coinsOf(costs.operator)} ${u}`]);
+      if (costs.data) list.push(["Data", `${coinsOf(costs.data)} ${u}`]);
+      if (read.change) list.push(["Comes back to you", `${coinsOf(read.change)} ${u}`]);
+      list.push(["Leaves your wallet", `${coinsOf(costs.total)} ${u}`]);
+    }
+    terms(list);
+    $("w-warn").hidden = !c.mainnet;
+    $("w-go").disabled = false; $("w-go").textContent = `Send ${coinsOf(o.amount)} ${u}`;
+    $("w-review").hidden = false; offer = o; $("w-go").focus();
+  } catch (x) { tell(String(x.message || x), "bad"); }
+};
+$("w-unlock-form").onsubmit = async (e) => {
+  e.preventDefault();
+  if (!ME) { tell("This account's wallet is not kept on this arcade: sign in again to open it here.", "bad"); return; }
+  try {
+    await wallet.unlockHere(ME, $("w-password").value, TAGCHAIN);
+    $("w-password").value = ""; $("w-unlock").hidden = true; $("w-form").requestSubmit();
+  } catch (x) { tell(String(x.message || x), "bad"); }
+};
+$("w-cancel").onclick = () => { offer = null; $("w-review").hidden = true; tell("Not sent.", "muted"); };
+$("w-go").onclick = async () => {
+  if (!offer) return;
+  const o = offer; offer = null; $("w-go").disabled = true;               // one press, one send
+  try {
+    // The review above listed every cost from `checked`, so a mainnet send is not asked about twice.
+    const out = await wallet.confirm(keys, o, {reviewed: true});
+    $("w-review").hidden = true; $("w-to").value = ""; $("w-amount").value = "";
+    tell(`Sent. Transaction ${out.txid}`, "ok");
+    load();
+  } catch (x) { $("w-review").hidden = true; tell(String(x.message || x), "bad"); }
+};
+load();
+</script>
+{% endif %}

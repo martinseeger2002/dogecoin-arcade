@@ -127,6 +127,10 @@ def main(argv: list[str] | None = None) -> int:
         "--mesh-public-port", type=int, default=None, metavar="PORT",
         help="the port the router forwards to --mesh-port, if it is a different number")
     parser.add_argument(
+        "--edition", choices=["full", "lite"], default=None,
+        help="full or lite (ARCADE Lite: the crypto cores only), for an arcade that has not chosen yet; once chosen, "
+             "Admin -> Edition & modules changes it. A new arcade started without it asks in Admin")
+    parser.add_argument(
         "--log-level", default=os.environ.get("ARCADE_LOG_LEVEL", "info"),
         choices=["debug", "info", "warning", "error"],
         help="how much this writes to the journal; info by default")
@@ -201,6 +205,20 @@ def main(argv: list[str] | None = None) -> int:
         **_addon_fields({p.name: _addon_context(args, p, coreslib.mode(chosen, p.name, ""))
                          for p in ADDON_PARAMS}),
     )
+
+    # The edition, chosen once (arcade/modules.py): --edition, or the first-run question on a home this run is the first
+    # to use. Before anything else writes settings.json, which is how a later start knows it is not the first.
+    from .. import modules as modulelib
+    fresh = not (home / state.SETTINGS_FILE).exists() and not state.store_path.exists()
+    chosen = modulelib.first_choice(state.settings(), fresh, args.edition)
+    if chosen:
+        state.set_setting(modulelib.EDITION_SETTING, chosen)
+    face = brandlib.first_face(state.settings(), fresh and not args.brand)
+    if face:                                       # a new arcade wears the neutral face (brand.CORE) until one is picked
+        state.set_setting("brand", face)
+    settings = state.settings()
+    print(f"  edition {'ARCADE Lite' if modulelib.edition(settings) == 'lite' else 'full'}"
+          + (" (not chosen yet: Admin asks)" if modulelib.asking(settings) else ""))
 
     # Bots authenticate to /rpc/main and /rpc/test with this file's contents.
     print(f"  RPC cookie {state.write_rpc_cookie()}")
@@ -284,7 +302,8 @@ def main(argv: list[str] | None = None) -> int:
     # of it; each chain switched on or off in Admin -> Ords.
     try:
         from ..doginal_index import Runner
-        Runner(state.ord_working).start()              # the kept and helped chains open in the background
+        if modulelib.job_on(settings, "ord-index"):
+            Runner(state.ord_working).start()          # the kept and helped chains open in the background
     except Exception as exc:
         print(f"  the ord indexes did not start: {exc}")
     # The Cores this arcade installed itself (Admin -> Coins & chains -> Install a node, arcade/core_install.py): started
@@ -299,7 +318,8 @@ def main(argv: list[str] | None = None) -> int:
     # that chain's ord walk.
     try:
         from ..sites_index import Runner as SitesRunner
-        SitesRunner(state.sites_working).start()
+        if modulelib.job_on(settings, "sites-search"):
+            SitesRunner(state.sites_working).start()
     except Exception as exc:
         print(f"  the sites search did not start: {exc}")
 
@@ -337,7 +357,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         from .lora import LoraService
         state.lora = LoraService(state)
-        threading.Thread(target=state.lora.apply, name="arcade-lora-start", daemon=True).start()
+        if modulelib.job_on(settings, "lora"):
+            threading.Thread(target=state.lora.apply, name="arcade-lora-start", daemon=True).start()
     except Exception as exc:                      # noqa: BLE001 -- the arcade runs without it
         print(f"  LoRa gateway not started: {exc}")
 

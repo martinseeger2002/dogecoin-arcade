@@ -112,6 +112,318 @@ Flopcoin Core v2.0.0.0 (github.com/Flopcoin/Flopcoin, tag v2.0.0.0) is Dogecoin 
 Nothing needed from your side; a Flopcoin you list or swap needs a Flopcoin node on one of the arcades.
 
 ### 2026-11-03 Echo: placed and amplified sound plays where Chrome's canceller hears it; a Lounge screen's sound is taken out of the mic (Claude; the operator, live in Spatial World: "so much feedback between the mic and the screen", diagnosed by the Riffs session)
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Admin in the Lite look; Edition & modules by category
+SadFrog: "the admin stack should also be in the same arcade lite style as the user side but with the additional
+controls and features there", then "in edition and modules please categorize the modules in a scalable manner maybe
+with nav bars". Commits b79c539 and 8c16a69.
+- **The full arcade's own pages wear the Lite window's look in ARCADE Lite** (`arcade/lite/templates/pages.css`, at
+  `/lite/pages.css`; base.html links it only when the edition is lite):
+  - Core's greys and blue, system fonts, square flat panels, plain buttons;
+  - Admin's tabs drawn as the window's tab row.
+  - Only the look changes: Admin keeps every tab, control and script it has, and no signing or sending path was
+    touched.
+  - Every rule is scoped to `body[data-lite]`, so the full edition is unchanged; the browser test checks both editions.
+  - The bar each page wears is the window's own tabs (Overview, Send, Receive, Transactions, Address book, Apps, Help,
+    and Admin for the operator); `/#<tab>` opens that tab.
+  - **For you:** base.html gains an `edition_lite` branch, and door.py one public path, `/lite/pages.css`.
+- **Edition & modules by category.** One drawing (`/admin/modules.js`, templates/modules_js.js) now serves both
+  Admin's tab and Lite's Options; their two copies of the module list are gone:
+  - "All", then a tab per category, each with how many of its modules are on;
+  - a filter box over name, id and what a module does;
+  - the same questions before a switch (its caution, and what it also turns on or stops, now by name).
+  - **It scales:** categories come from `modules.describe` (a module's kind, titled by `KIND_TITLES`), and a kind not
+    named there, such as chain modules or modules from the mesh later, gets its own tab with nothing changed in the
+    page.
+- **Found on the home test node:** its updater installed the published main over the Lite build at 22:33, a minute after a save
+  on the full Admin page turned "Install updates by itself" on. Admin's switch save sends that box with the others.
+  The test node is back on this branch with updates off. Until Lite is published, a Lite test node must keep updates off.
+- **Tests:**
+  - tests/test_lite_look_browser.py, in real Firefox: the full edition's own Admin look; then in Lite, Admin, Wallet
+    and Address book in the Lite look, the bar's tabs, Admin's Coins & chains still working, the modules' category
+    tabs, Apps, and needs by name.
+  - test_lite_pages_browser: Options' category tabs, Apps showing only the apps, and the filter.
+  - Workhorse, twice: 676 passed, 19 skipped, 1 failed. The failure is the snap Firefox `/tmp` upload one, which
+    fails on base too.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite's Address book, Join, Options and an account's Backup, in the window
+SadFrog: "yes re draw all base pages". Commits 961a0a8, c37c894 and 7ca6231, each drawn like the Overview and each over
+the full arcade's own code and routes.
+- **Address book tab:**
+  - an account's book is messaging.js's, kept in its browser (ARCADE_ME set first, so another account starts
+    empty); the operator's is the node's contacts table (node-mail.js);
+  - add by @name, a note, Pay (opens Send with the name filled in), Remove.
+  - **Found:** both scripts were filed under the Messages module, which is off in Lite, so the full Address book page
+    was already broken on a Lite node. They now belong to the Address book module.
+- **Join** is a panel of the window, and ARCADE Lite serves it at `/join` (the full edition keeps its own page):
+  - make an account: `signUp`, the twelve words with "I have written them down", then `setUp` puts the name and key
+    on the chain in the background;
+  - sign in, open a backup file, and sign out.
+- **`secure_context` counts `*.localhost`**, as browsers do. Until now, an ssh tunnel opened as `node.localhost`
+  was told it could not make a key. **For you:** this changes app.py's check for every edition.
+- **Settings → Options** is a window like the Console, operator only, over Admin's own routes:
+  - face, updates (on or off, live or test), seats;
+  - edition and modules (a module's caution is asked first; the restart note is shown);
+  - the admin password, set at the node's machine only.
+  - The rest of Admin (chains and Cores, network, safety, wallet imports) is still its own page, linked at the
+    window's foot.
+- **An account's Backup** is a panel at `/me/backup` in Lite:
+  - the twelve words, opened from the sealed copy with the password typed again and checked against the account's
+    own mainnet address before they are shown;
+  - the encrypted wallet file to keep.
+  - The node's own Backup (its Core wallets) is still its page: those are plain form posts with no JSON answer, so
+    it needs a small endpoint first.
+- **Seeing a Lite node as a visitor from the same network:** `http://<lan-ip>:8420` is not a secure context, so the
+  browser refuses to make a key. An ssh tunnel to the node's LAN address, not its loopback (`-L 8431:<lan-ip>:8420`),
+  is seen by the door as outside, while the browser still sees `localhost`.
+- **Tests:**
+  - tests/test_lite_pages_browser.py, in real Firefox on regtest: an account made at Lite's /join, signed out, signed
+    back in, and its twelve words shown again at /me/backup; a name with a published key added to the book, then Pay;
+    the operator saving seats and seeing the modules in Options.
+  - test_lite: each panel per caller, /join and /me/backup per edition, `*.localhost`.
+  - test_modules: the book's scripts are served in Lite.
+  - Workhorse, with the full arcade's signup, contacts, send, auth and admin tests: 659 passed, 16 skipped, 1 failed.
+    The failure is `test_a_file_and_a_password_open_a_wallet_this_node_never_held`; it fails on base too, because the
+    snap-packaged Firefox cannot read the file it is handed from /tmp.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite's Send, Receive and Transactions are the window's own tabs
+SadFrog: "how the over view is setup is how all pages should be setup - not reusing arcade full styles - we want this
+to be a lite weight nothing fancy barebones". Commit e736cc4, the first of those pages.
+- **The three wallet tabs** (arcade/lite/templates/_wallet.html) are now plain fieldsets and tables in the Lite window,
+  in place of links to /wallet and /me/wallet:
+  - **Send**: wallet, pay to, amount, then Review (to, amount, network fee, the arcade's fee and data when there are
+    any, what comes back, what leaves) and Send;
+  - **Receive**: the address, a QR and Copy;
+  - **Transactions**: the chain's activity rows, read afresh whenever the tab is opened.
+- **No signing code of Lite's own.** The tabs call the same modules the full Wallet does: wallet.js for an account
+  (unlocked with the password in the tab when it is not open) and node-wallet.js for the node.
+- **Whose wallet** follows `_account_view`: an account signed in sees its own, even at the node's machine; otherwise
+  the operator sees the node's. **Found while building:** keying it on the operator alone would have sent a signed-in
+  account at the machine to /node/wallet, which refuses it.
+- **R1 is kept as the full Wallet keeps it:**
+  - the offer is held to what was typed (amount, and the address or @name);
+  - an account's offer is also held to `checked`'s own reading of the bytes (that address paid that amount);
+  - every cost from `mainnetCosts` is on the review before `confirm(..., {reviewed: true})`;
+  - one press sends once.
+- **Still the full arcade's pages for now:** the Address book, Backup, Admin (Options, Edition and modules) and Join.
+  The next parts redraw them the same way.
+- **Tests:**
+  - tests/test_lite_wallet_browser.py, in real Firefox on regtest: an account's send from the tab, then its history
+    and Receive; an amount changed after Review gets a fresh review and nothing is paid; the operator's send of the
+    node's coins.
+  - test_lite: whose wallet each caller gets.
+  - test_modules: Lite still serves what the tabs call.
+  - Workhorse: 482 passed, 16 skipped. The browser tests need `ARCADE_GECKODRIVER=/snap/bin/firefox.geckodriver`
+    there.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · A neutral face, "ARCADE", for new arcades and for Lite
+SadFrog, on the first real Lite install: "It should not have any default theme - it started off with dogecoinarcade
+theme - it should be og core like if anything by default"; then "Full should also be rebranded by default to a
+neutral theme labeled Arcade".
+- **`brand.CORE`** (key `core`, name "ARCADE"): the classic Core wallet's greys and blue selection, light and dark,
+  system fonts instead of the pixel font, plain icons of its own (templates/brands/core). Listed with the other faces,
+  so Admin -> Face can pick it on any arcade.
+- **Who wears it:**
+  - a **new** arcade, Full or Lite: the installer writes `brand: core` on a fresh install, and arcade-web does on a
+    home it is the first to use (`brand.first_face`), unless `--brand`/ARCADE_BRAND or a pick says otherwise;
+  - **ARCADE Lite** whenever its operator has picked no face (`brand.fallback`, read live, so an edition change shows
+    at once); the Lite window is then "ARCADE Lite" and the mesh hears its face as ARCADE.
+- **Not changed: arcades already running.** One that never picked a face is DogecoinArcade and stays so after an
+  update, dogecoinarcade.com included. **For you:** should those switch to ARCADE too? It is one line
+  (`brand.DEFAULT = CORE`), but it rebrands every default-face node on its next update, so it is your call.
+- Protocol names are untouched (the login challenge, marker seed, messaging identity and the rest keep
+  DogecoinArcade), as for every face.
+- Tests: test_modules (Lite wears ARCADE until a pick, a pick wins; a new arcade starts neutral, an existing one and
+  `--edition` on it keep their face; the installer writes it only on a fresh install). On the workhorse with
+  test_installer, test_brand, test_lite, test_web, test_public: 449 passed, 16 skipped.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · The first real ARCADE Lite install, on a home test machine
+SadFrog: "set it up double check that everything would work and lets start it the install as if someone was trying
+the first time". A small home server (4 cores, 8 GB, SSD) that also runs Pi-hole; this branch packed as a Run your
+own download (`git archive` + `.sha256`), then the page's own steps: `sha256sum -c`, `tar xzf`,
+`python3 installer/install.py --first-peer digibyte-arcade.com`.
+- **What worked, as a first-timer meets it:** the installer's first question, "Full or Lite? [F/l]", answered `l`;
+  Pepecoin Core checked (sha256, pinned hash, signature) and installed; the app from the download; both index
+  bootstraps; `edition: lite` written. On start: "edition ARCADE Lite"; linked to 3 arcades in 5 s, 6 of 19 known
+  after ten minutes; its testnet Core peers through them and reads are borrowed while it syncs; Pepecoin main, Doge,
+  Kotia, Wojakcoin and DigiByte (block 24,501,113) borrowed. It asked the mesh for PEP test on its own a minute after
+  start, and @strawberry paid it (block 1,558,810; spendable once its own Core reaches that block). `/` is the Lite
+  window; feed, exchange, desktop 404; `arcade-cli install feed` / `remove feed` turned /feed on and off live. A second
+  installer run asked nothing (an arcade that chose).
+- **Found and fixed here (62cd15e):** the card watch (Apps) started while the app is built, outside the gated startup
+  jobs, so it ran on Lite. It now asks `job_on("card-watch")`; a test keeps every build-time start asking.
+- **Found, for you, not changed:**
+  1. **Auto-update would turn an unpublished Lite install back into Full.** An installer install has
+     `~/.dogecoinarcade/venv`, so `update._layout` says fetchable and the first watcher pass (seconds after start)
+     installs the published main, which has no `arcade/modules.py`; `edition: lite` is then ignored. Harmless once
+     Lite is in main. For this trial `auto_update: false` was set before the first start (installer run with
+     `--no-services`, the setting, then a second run).
+  2. **A fresh install's token index reports a false deep reorg.** With a bootstrap index at the tip and the node's own
+     Core at block 0, `chain.find_fork_height` counts every RpcError ("the node lacks this height") as evidence and
+     raises ReorgTooDeep before borrowing starts (2 s later). It recovered at the next block, 3 minutes on, but the
+     warning says "the chain reorganised further back than the index can unwind". Suggest: when the node's block
+     count is below our tip, say "the node is behind" and wait, as for NodeUnreachable. Not touched here (index code).
+  3. `getnodeinfo` says version "" on a download install (no git, no .revision).
+- **Seeing it from another machine on the home network:** the web port bound to 0.0.0.0 by a systemd drop-in, the
+  firewall open to the home network only. The door treats those browsers as visitors (the Lite window, sign-up and
+  sign-in; wallet and Admin refused), as designed. The operator from another machine: an account, named operator and
+  given an admin password at the machine.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 4: market queries
+- **New commands, for anyone, read only** (what the Exchange's public pages show): `listtokens` (module `tokens`),
+  `getbook <token>` (a token's resting sells for the chain's coin, as /r/book), `getpair <base> <quote> [count]`
+  (asks, bids, last trades, newest first, price quote per whole base), `listdoginals [doge|main]` (listings whose
+  coin is unspent), module `exchange`. Nothing here trades.
+- app.py `_console_tokens`, `_console_book`, `_console_pair`, `_console_doginals` beside `r_book`: the same index
+  calls as the pages (`properties`, `book` + `pending_takes`, `pair_book` + `pair_trades`, `_doginals_live`), in
+  `public_tools`. Arguments are checked before the node is asked.
+- **Not yet:** the cross-chain swap book (its view is built per reader, `_trade_order_view(request)`) and market
+  execution. Execution is next and needs the exchange-safety rules and R1's confirmation on every mainnet coin
+  leg, in the same prepare/confirm shape as `send`. A plan for it goes here first.
+- Tests: `tests/test_lite_market.py` (3): a real regtest token and resting order read from a visitor's console;
+  the rules; off with their modules, on again with `exchange` alone. With the other Lite tests, test_tokens_web,
+  test_web, test_public, test_doginal_market: 443 passed, 16 skipped.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 3: the feed
+- **New commands** (module `feed`): for anyone, as the Feed tab is public: `readfeed [popular|new] [count]` and
+  `readposts <@name or address> [count]` (up to 100; deleted and muted posts left out, as the tab draws them). For
+  the operator: `post <text...>`, `reply <txid> <text...>`, `like`, `unlike`, `share`, `deletepost <txid>`.
+- **The tab's own code:** `_console_feed` reads through `_feed_page` and `_shown`; `_console_feed_post` and
+  `_console_feed_act` are `feed_post` and `feed_act` without the form: the same "claim a @tag first" check
+  (`_needs_a_name`), then `state.post` / `state.send_feed_act`. The reaction table is `_FEED_KINDS`, shared with
+  `feed_act` (moved out of it, unchanged). Text only; a file post (an inscription) stays the tab's. Tips are not in
+  the console yet.
+- **What anyone may ask is kept apart:** app.py hands the console `node_tools` for the operator only and
+  `public_tools` (the feed read, without the node-relative "mine") for everyone.
+- Tests: `tests/test_lite_feed.py` (4): a visitor reads the feed and a person's posts (order, deleted gone, likes
+  counted, no "mine"); a post needs a name and only the operator posts; each command is the tab's button; off with
+  its module. With the other Lite tests, test_feed_web, test_web, test_public: 446 passed, 16 skipped.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 2: the node's messages
+- **New commands** (module `messages`, the operator only): `listconversations` (everyone the node wrote to or heard
+  from, newest first, with unread counts), `readmessages <who> [count]` (oldest first; marks the conversation read, as
+  opening it does), `sendmessage <who> <text...>`. `who` is a key, an @name, a contact code or an announced address
+  (`_resolve_recipient`).
+- **A send is the Messages tab's**, for one-transaction text: app.py `_console_message` beside `send_in_thread`, same
+  steps and guards (funding check, the identity address first and the one that can pay after, one send at a time,
+  not the same message twice, our own copy kept with `record_sent`). Testnet only, as messaging is; at once, as the
+  tab sends on testnet. A message needing more transactions is refused with "send it from Messages" (progress lives
+  there). `send_in_thread` itself is untouched.
+- **The rest of the line is the text as typed**: a command whose last argument is `*text` gets the line's remainder,
+  shell-unquoted when it parses (arcade-cli quotes what it sends) and verbatim when it does not (`don't`); no JSON.
+- app.py's console namespace is `node_tools` now (wallet and messages).
+- Users' messages are sealed and opened in their browser, so these are the operator's.
+- Tests: `tests/test_lite_messages.py` (6): a real regtest message sent from the console, kept as typed, refused
+  twice, listed and read back; a long one, an unknown name or no text sends nothing; the line parsing; operator-only
+  and off with its module. With test_lite_wallet, test_lite, test_lite_cli, test_modules, test_web: 281 passed.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite terminal, part 1: the node's wallet
+SadFrog: "Build the wallet commands next (send, receive, transactions) in the terminal, then messages, feed and
+market queries, one PR each."
+- **New commands** (`arcade/lite/commands.py`, module `wallet`, the operator only): `getbalances` (every wallet of
+  the node and its name: `messaging`, `ledger`, an add-on's network, or `key:<network>`), `getnewaddress <wallet>`,
+  `listtransactions <wallet> [count]` (Core wallets, up to 100), `listunspent <wallet>` (Core and key wallets),
+  `send <wallet> <@name or address> <amount>` and `confirm <ticket>`.
+- **A send is Admin's own two steps**, not a new way to spend: app.py's `/admin/api/send`, `/send/confirm` and
+  `/receive` bodies became `_node_prepare`, `_node_broadcast` and `_node_receive` (unchanged in what they do and
+  answer), shared with the console through `node_wallet`. `send` builds and shows the fee and a ticket (ten
+  minutes, the same store as Admin's); `confirm` broadcasts it once. **`confirm` runs only at the node's machine**:
+  from outside, Admin asks for the admin password, and the console never takes one. This is R1's one confirmation.
+- **Console arguments:** only whole numbers, true/false/null, lists and objects are read as JSON now; an amount
+  such as 0.00000001 stays the text typed (as JSON it was 1e-08).
+- **Users** send from their own wallet page, signed in their browser; the node never holds their keys, so the
+  terminal's wallet commands are the operator's. The Lite window's Send/Receive/Transactions tabs show the operator
+  the console lines.
+- Exchange safety: no signing rule changed (the send code moved, word for word). The checklist's tests
+  (test_account_list, test_doginal_market, test_standing, test_trade, test_trade_tab, test_kotia, test_wojakcoin,
+  test_swap) and test_tokens_web: 137 passed.
+- Tests: `tests/test_lite_wallet.py` (6): against a real regtest node, balances, an address, coins, a send shown
+  then confirmed once, transactions; a wrong wallet or amount builds nothing; amounts as typed; confirm only at the
+  machine; only the operator has the commands. With test_lite, test_lite_cli, test_node_wallet, test_admin: 47 passed.
+- Next: messages, then the feed, then market queries, one PR each.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · ARCADE Lite is chosen at install: editions and modules
+SadFrog: "at the beginning of the installation of the arcade it asks if the downloader wants to install full or lite
+arcade ... it should be the start of the direction for making changes on the full that modularizes applications,
+themes and node modules"; then "messaging, feed and all commands that work on full's uis should be possible in lite
+via a terminal and the use of -help as modules that can be installed like a linux command", "market queries and
+execution should be possible via terminal", "they should be able to have their own indexs and chains on lite".
+This replaces part 1's "/lite beside the full UI".
+- **`arcade/modules.py`, the registry.** Every route (by path prefix) and every background job (by name) belongs to
+  one module: core (`node`, `wallet`, `addressbook`, `accounts`, `mesh`, always on), or an app, theme or node module
+  (messages, feed, ords, collections, tokens, exchange, apps, rooms, llm, affiliates, lora, desktop, dogefeedx), each
+  with `needs`, its Lite default (off) and a `caution`. Full = every module on, as today.
+- **settings.json `edition`**: `full` | `lite`; missing = full (every existing node, never asked, unchanged);
+  `ask` = a fresh install that has not chosen (runs as Full). `modules` = the operator's switches.
+- **Gates, not rewrites.**
+  - Routes: `web/modules_web.py` keeps every route `create_app` registered and serves only those of modules that
+    are on. Last line of `create_app`; a switch applies at once.
+  - Jobs: `watcher.PHASE_JOBS` (read/file/show phases only), `__main__` (ord Runner, sites search, LoRa), lifespan
+    (known collections, push mail); these follow a switch at the next restart. **Never gated:** `_run_watch`,
+    `_run_trader`, `_run_xchain`, `_keep_shop`, the filler, collection resume: what was agreed finishes in every
+    edition. No signing code changed; exchange-safety rules all hold.
+  - Nav (`_nav_for`), Admin tabs, and base.html's Desktop View / home-screen redirects follow the switches.
+  - In Lite, `/` is the Lite window (for visitors, users and the operator); `/overview` sends an account to `/`.
+- **Where the edition is chosen** (the four install paths):
+  - `installer/install.py` (Linux, macOS and Windows, one script): a fresh install at a terminal is asked
+    "Full or Lite? [F/l]" first; `--edition full|lite` answers it; no terminal = `ask`; an existing arcade
+    (settings.json or a message store) is never asked. Written into `~/.dogecoinarcade/settings.json`, keeping every
+    other key. **This is the installer's first question since "no question, ever" (2026-10-13), which was about the
+    chains; please confirm you are fine with it.** `--update` asks nothing.
+  - `arcade-web --edition full|lite` (pip install / source checkout): only for an arcade that has not chosen; a new
+    home with nothing chosen records `ask`.
+  - First run in the web UI: `_edition_ask.html` on Admin and the operator's Your arcade while `edition` is `ask`.
+  - Later: Admin -> Edition & modules (`_modules_panel.html`, `GET/POST /admin/api/modules`). Lite to Full turns
+    everything on; Full to Lite switches off, deletes nothing.
+- **Terminal.** Commands belong to modules (`@command(..., module=)`): off takes them away, with "`install <module>`
+  switches it on" for the operator. New: `install`, `remove` (`remove exchange yes`), `edition [full|lite] [yes]`,
+  `listmodules`; `<command> -help` on any command. `arcade/lite/cli.py` = `arcade-cli` (pyproject, and an installer
+  shim beside `arcade-rpc`), posting to the console as the operator at the machine.
+- **Own indexes and chains on Lite:** switching on Ords gives it its own walk (at restart); Coins & chains is core.
+  The send guard is fail-safe without an index: small coins stay protected until a linked walk answers for them.
+- **Charter:** updated on `team/arcade-lite-charter` (#62's branch, 8419232): your answers, the install-time choice, the
+  registry, terminal commands per module, and Lite's own index (an amendment to answer 2; please confirm).
+- **Open, for you:** (1) the installer question (above); (2) Lite keeping its own ord index when Ords is switched on;
+  (3) while Exchange is off its pages, Cancel among them, are off (settlement still runs): Admin warns, `remove
+  exchange` asks for yes. Should it refuse while a node holds open positions instead? (4) pages still link inside
+  their content to modules that are off (the Wallet's Exchange button): a later pass.
+- **Next parts (one PR each):** wallet commands (send/receive/transactions), then messages, feed, exchange queries,
+  then exchange execution under exchange-safety and R1.
+- **Two commits, meant as two PRs:** (A) editions and modules, about 725 changed lines outside tests, over the
+  400-line rule: the registry is mostly its data table, and gate, switches and choice do not work apart. Please agree
+  here, or say how you want it cut. (B) the terminal: commands per module, `install`/`remove`/`edition`, `-help`,
+  `arcade-cli`, about 230.
+- Tests: `tests/test_modules.py` (15): every route claimed by a module of its own; Lite serves only core routes and
+  jobs, and users as Full does; settlement jobs run in every edition; Full unchanged; switching from Admin, needs, no
+  deletion; the first-run question; the installer's question and its settings write. `tests/test_lite_cli.py` (4):
+  install/remove/edition from the console, `-help`, a module's commands going with it, arcade-cli, its shim.
+  `test_lite.py` updated. Full suite on the workhorse (12 workers, open files raised to 65536; at its 1024 the
+  base fails on "too many open files" too): 4261 passed, 418 skipped. The 3 failures and 4 errors it has are
+  the base's too (test_docs x2, test_update whole-package, the LoRa tests without the lora extra); one regtest
+  test dropped its node under load and passes alone.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · ARCADE Lite phase 1, part 1
+- **New: `arcade/lite/`**, the first part of ARCADE Lite (proposal: PR #62). The running node serves it at
+  `/lite` beside the full UI.
+- **`commands.py`: one list of commands for the UI, the console and the help.**
+  - Each command says who may run it: `anyone`, `user` (signed in, on their own account only) or `operator`.
+  - `help` lists only what the caller may run. A command above the caller answers "no command", as an unknown one
+    does.
+  - The commands so far only read: `help`, `getnodeinfo`, `listchains` (only the operator sees why a chain is
+    offline), `listarcades` (user), `whoami` (user) and `getmeshinfo` (operator).
+- **`web.py` and `templates/lite.html`: the classic Core window.**
+  - Menu bar, tab toolbar, Overview, status bar, and Window → Information / Console / Peers.
+  - Send, Receive, Transactions, Address book and Apps are placeholders for the next parts.
+  - Visitors see the arcade and a sign-in link. Signed-in users see their @name and addresses. The operator also sees
+    the mesh and Peers.
+  - Routes: `/lite`, `GET /lite/api/{overview,commands}`, `POST /lite/api/console`. The console takes lines only
+    with the `X-Arcade-Lite` header from this origin (`door.cross_site`), for outside callers too.
+- **Shared code touched:**
+  - `app.py` registers Lite with its existing helpers (`_admin_check`, `signed_in`, `_account_address`, `_name_of`).
+  - `door.py` adds `/lite`, `/lite/api/` and the console POST.
+  - `pyproject.toml` adds the `arcade.lite` package and its template.
+- Tests: `tests/test_lite.py` (9). The smoke set with test_admin, test_guide and the door tests: 484 passed.
+
+### 2026-11-03 Echo: placed and amplified sound plays where Chrome's canceller hears it; a Lounge screen's sound is taken out of the mic (Claude; the operator, live in Spatial World: "so much feedback between the mic and the screen", diagnosed by the Riffs session)
 
 Two holes, both in arcade/web/templates/_page_doors.js.html:
 1. **Listener side (the main one).** With pictures in the app, a scene, or a player past 100%, `mediaLoud` played each remote track through an AudioContext to `ctx.destination`. Chrome's echoCancellation takes out only what WebRTC itself plays (crbug 687574), so every voice and screen heard that way went back out of everybody's microphone. New `mediaOut`: in Chromium the graph's output goes round a loopback pair of RTCPeerConnections on the page (Opus stereo, 256 kb/s, jitterBufferTarget 0) and plays from an `<audio>` element; if it is not connected within 4 s it falls back to the speakers as before, with a console warning. Elsewhere (Firefox) the speakers, as before. Closed with the room (`mediaOutClose`).
@@ -218,6 +530,8 @@ Each PR body links the fork's compare view of its own change. No arcade code cha
 - **Dropped to fit this design:** outside-server market links, the local bark store, the local message stand-in, light window interiors, and the old `apps.py`. The address-book note does not name an outside host. It says the book is saved in this browser for the selected wallet.
 - **Tests:** `tests/test_dogefeedx_chains.py`, `tests/test_dogefeedx_port.py`, plus the operator's DogeFeedX and desktop look tests.
 
+### 2026-11-03 DogeFeedX for accounts on a public arcade; the arcade @handle is the name (Claude; the operator: "all of this stuff is already available for the user end ... wire it in", "the primary at handle should still be the existing arcade @handles with the option of describing your handle on Doge")
+- **Tests:** `tests/test_dogefeedx_chains.py`, `tests/test_dogefeedx_port.py`, plus the operator's DogeFeedX and desktop look tests.
 ### 2026-11-03 DogeFeedX for accounts on a public arcade; the arcade @handle is the name (Claude; the operator: "all of this stuff is already available for the user end ... wire it in", "the primary at handle should still be the existing arcade @handles with the option of describing your handle on Doge")
 - **door.py** opens the DogeFeedX windows, their files and the reads of public arcade data (feed, posts, profiles,
   collections, ord index, mintpads, apps, `me`, notifications, wallet), each path by name. Still refused there: the
@@ -942,6 +1256,95 @@ writing ANY key while this page loaded threw (104 errors in 5 loads, live). The 
 names exist. With it: Pictures in the app turned off in another tab stops what goes to the app at once. Test:
 test_media_browser test_a_page_loading_while_another_tab_writes_storage_throws_nothing (a storage event put just
 before base.html's script; it fails without the fix).
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/arcade-lite-charter` · PROPOSAL, no code
+- **Added: `docs/arcade-lite/EXTENSION.md`**, the design for an **optional** Arcade Wallet browser extension, like
+  Phantom or MetaMask. It is linked from the charter's builder hooks.
+  - It holds the person's keys outside every page. It derives the same account and coin keys as `signin.js` and
+    `coins.js`, and that derivation joins the conformance vectors.
+  - It gives pages `window.arcade` with `arcade_connect`, `arcade_signIn`, `arcade_signMessage`,
+    `arcade_signTransaction` and `arcade_sendTransaction`. The extension's own window shows the real origin and the
+    decoded outputs, and it never signs blind.
+  - Arcades keep today's login message unchanged. Outside sites get a standard sign-in message and a small verifier
+    in Python and JS.
+  - Arcades keep working without it.
+  - It lives in `extension/` in this repository. Phases E1-E4.
+- **Asked of your side:**
+  1. Agree to an optional extension in this repository?
+  2. Should arcades prefer it for sign-in when it is installed?
+  3. Is transaction signing in the first public release?
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/arcade-lite-charter` · PROPOSAL, no code
+- **Proposal: ARCADE Lite**, a small edition of the arcade in this repository. The draft charter is
+  `docs/arcade-lite/CHARTER.md`.
+- **What it is:**
+  - an `arcade-lite` entry point with its own web layer (`arcade/lite/`), on the same protocol modules;
+  - one protocol and one test suite, so Lite and full nodes are one network;
+  - meant to become the main edition once it covers what operators and users need.
+- **The core:**
+  - Overview ("Your arcade"), Wallet (operator and users), Address book;
+  - Apps (App Store, permissions, themes as a section), Settings, Help;
+  - accounts, the door, the mesh and the signed updater underneath.
+- **Everything else becomes an app** (a sandboxed page app, or a node module), one PR at a time:
+  exchange, ord indexes and Explore, collections, feed, messaging, LLM, rooms, LoRa, affiliates. The full edition
+  keeps each feature until the app API can carry it.
+- **The look:**
+  - the classic Core wallet window: menu bar, Overview / Send / Receive / Transactions / Address book / Apps tabs,
+    a status bar, and Window → Console;
+  - built-in skins: Ubuntu, Classic 98 and Platinum (old Mac).
+- **Publishing without GitHub:**
+  - Any operator can offer an app, skin or node module to every arcade over the mesh, as a package named by its
+    `sha256` and signed by their mesh key.
+  - Each arcade's operator inspects it (manifest, what it needs, source and diff) and marks it Inspected, Affiliated,
+    Installed or Refused.
+  - Marks are signed and shared, so every arcade sees each package's standing. No central approver.
+  - Nothing installs or updates by itself. Node modules run in their own process with no keys, inside a sandbox, and
+    stay off where the arcade can't sandbox.
+- **Themes:**
+  - **Skins** are declarative (manifest + CSS + images, no scripts) and published as App Store cards of kind `theme`.
+  - **Sites** are apps that use the arcade through the page API and Sign in with Arcade.
+  - **Private skins** stay on the operator's machine. The arcade announces their `sha256` in its "me" frame, so other
+    arcades know them and never fetch, push or require them.
+- **Help:** one command list feeds the UI console, an `arcade-cli` terminal client, the docs and
+  `--help`.
+- **Strict PR rules for Lite** (charter, "PR rules"):
+  - one topic, naming its core area;
+  - under ~400 changed lines unless agreed here first;
+  - no new route, setting or dependency outside the area list;
+  - comments say why, while history goes in commits and this file;
+  - no file over ~2,000 lines;
+  - conformance tests a Lite node and a full node must both pass.
+- **Phases:**
+  - 0: agree, and record protocol vectors from `main`;
+  - 1: a skeleton on Pepecoin linking with full nodes;
+  - 2: apps and skins;
+  - 3: builder hooks;
+  - 4: move features out, then Lite becomes the default.
+- **Asked of your side:**
+  1. Agree to an edition inside this repository rather than a separate fork?
+  2. Can Lite read App Store cards from linked arcades' indexes, so it needs no ord index of its own?
+  3. Agree to operator-published apps and node modules over the mesh, inspected and marked by each operator, with
+     the sandbox rules (charter, "Publishing apps and node modules without GitHub")?
+  4. The name?
+  5. Anything in the "Apps, not core" list that you think must stay in the core?
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-conformance` · ARCADE Lite phase 0, tests only
+- **New: protocol conformance vectors** (`tests/conformance/`). They follow the ARCADE Lite proposal (PR #62), but are
+  useful on their own: they make any change to the wire protocol visible.
+  - `make_vectors.py` feeds fixed inputs to today's code and writes `vectors.json`. It records:
+    - every network's consensus-facing `Params`, its addresses for one hash160, and its marker;
+    - the login message, `MARKER_SEED`, and the messaging identity derivation (message, HKDF info, and the key a
+      given signature gives);
+    - the mesh: HELLO, frame, key schedule, AUTH proof, a binary room frame, and on-chain announcements;
+    - the envelope header for every `TYPE_*`;
+    - six token payloads;
+    - Class B outputs (fixed rng), obfuscation hashes and Class C;
+    - a signed release manifest and its notice;
+    - index digests (record lines, range digest, checkpoint rule, the tables hashed).
+  - `tests/test_conformance.py` (9 tests) fails when the code no longer gives those bytes, and names the field. A
+    meant change regenerates the file in the same commit and says why here.
+  - Checked: two runs under different `ARCADE_*` environments give identical bytes, and a flipped byte fails the test.
+- No code outside `tests/` changes.
+- **Asked of your side:** take it, so a protocol change always shows up in review? Any value missing that other
+  arcades check?
 
 ### 2026-11-02 Pictures in the app: an app draws the room's pictures itself, behind its own card switch (Claude)
 For Spatial World (3D screens; the Garrys mod session asked, the operator confirmed: "Build it"). Option 2 of two: the video

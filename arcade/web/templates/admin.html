@@ -12,17 +12,27 @@
 <nav class="admintabs" role="tablist">
   <button type="button" role="tab" data-tab="overview">Overview</button>
   <button type="button" role="tab" data-tab="coins">Coins &amp; chains</button>
-  <button type="button" role="tab" data-tab="trading">Trading</button>
+  {%- if modules_on is not defined or 'exchange' in modules_on %}
+  <button type="button" role="tab" data-tab="trading">Trading</button>{% endif %}
   <button type="button" role="tab" data-tab="safety">Safety</button>
   <button type="button" role="tab" data-tab="network">Network</button>
-  <button type="button" role="tab" data-tab="ords">Ords</button>
+  {%- if modules_on is not defined or 'ords' in modules_on %}
+  <button type="button" role="tab" data-tab="ords">Ords</button>{% endif %}
   <button type="button" role="tab" data-tab="dns">DNS</button>
   <button type="button" role="tab" data-tab="imports">Wallet imports</button>
-  <button type="button" role="tab" data-tab="llm">LLM</button>
-  <button type="button" role="tab" data-tab="meshtastic">Meshtastic</button>
-  <button type="button" role="tab" data-tab="affiliates">Affiliates</button>
+  {%- if modules_on is not defined or 'llm' in modules_on %}
+  <button type="button" role="tab" data-tab="llm">LLM</button>{% endif %}
+  {%- if modules_on is not defined or 'lora' in modules_on %}
+  <button type="button" role="tab" data-tab="meshtastic">Meshtastic</button>{% endif %}
+  {%- if modules_on is not defined or 'affiliates' in modules_on %}
+  <button type="button" role="tab" data-tab="affiliates">Affiliates</button>{% endif %}
   <button type="button" role="tab" data-tab="people">People &amp; brand</button>
+  <button type="button" role="tab" data-tab="modules">Edition &amp; modules</button>
 </nav>
+
+<div class="admintab" data-tab="modules" aria-label="Edition & modules">
+{% include "_modules_panel.html" %}
+</div>
 
 <div class="admintab" data-tab="overview" aria-label="Overview">
 <div class="cards" id="cards"></div>
@@ -30,6 +40,7 @@
   <h2>Needs you</h2>
   <div id="needlist" class="muted">Looking&hellip;</div>
 </section>
+{% include "_edition_ask.html" %}
 {% include "_setup_wizard.html" %}
 {% include "_welcome_panel.html" %}
 {% include "_arcades_panel.html" %}

@@ -74,6 +74,8 @@ PUBLIC_PAGES = frozenset({
     "/exchange/pairs",            # the "open a pair" box: two token ids to a token/token pair's page
     "/apps",                  # every inscribed app (arcade/games.py; the Apps tab since 2026-10-23)
     "/home",                  # the installed app's home screen (home.html, PWA only, 2026-10-24)
+    "/lite",                  # ARCADE Lite's window: each caller sees what they may (arcade/lite/web.py)
+    "/lite/pages.css",        # ...and the look it gives the full arcade's pages in the Lite edition
     "/desktop",               # the Desktop View: the tabs and apps as icons and windows (desktop.html, 2026-10-28)
     "/apps/store-icon.png",   # the App Store's icon on it
     "/games",                 # the old name: redirects to /apps
@@ -198,6 +200,7 @@ PUBLIC_PAGES = frozenset({
 #: one is a promise about a whole subtree: nothing under these may ever
 #: learn to spend.
 PUBLIC_TREES = (
+    "/lite/api/",             # Lite's overview and command list, shaped by who asks (arcade/lite/web.py)
     "/explore/api/",          # the Explore tab's lookups: GET only, read only, a few a minute per visitor
     "/account/llm/",          # the Exchange's LLM tab: offers, the account's own balance, grant words and keys
     "/exchange/llm/",         # one model's own page on the model exchange (2026-10-23)
@@ -319,6 +322,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                # DogeFeedX Terminal: read-only commands, signed-in accounts or the operator only, 30 a minute
                # (app.py _dfx_viewer; reviewed before merging, 2026-11-03)
                "/api/terminal/exec",
+               # Lite's console: each command checks who may run it, and a visitor's run only read (arcade/lite)
+               "/lite/api/console",
                # a browser's yes to the terms: a cookie in that browser, nothing on this node (terms.py, 2026-11-02)
                "/terms/accept",
                # every session of the signed-in account ends, its own only (issue #13, 2026-10-25)

@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ name }} Lite</title>
+<style>
+:root{
+  --win:#efefef; --panel:#fff; --ink:#1d1d1d; --muted:#666; --line:#c4c4c4; --sel:#3874d8; --sel-ink:#fff;
+  --bar:#e4e4e4; --ok:#2e7d32; --warn:#b26a00; --bad:#c62828; --mono:ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --win:#2b2b2b; --panel:#1f1f1f; --ink:#e6e6e6; --muted:#a0a0a0; --line:#4a4a4a; --sel:#3d7be0; --sel-ink:#fff;
+  --bar:#333; --ok:#66bb6a; --warn:#ffb74d; --bad:#ef5350;
+}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--win);color:var(--ink);font:13px/1.4 system-ui,-apple-system,"Segoe UI",Ubuntu,sans-serif;
+  display:flex;flex-direction:column}
+button{font:inherit;color:inherit}
+/* menu bar */
+.menubar{display:flex;background:var(--bar);border-bottom:1px solid var(--line);user-select:none}
+.menu{position:relative}
+.menu>button{background:none;border:0;padding:4px 10px;cursor:default}
+.menu>button:hover,.menu.open>button{background:var(--sel);color:var(--sel-ink)}
+.menu ul{display:none;position:absolute;left:0;top:100%;z-index:20;min-width:210px;margin:0;padding:3px 0;
+  list-style:none;background:var(--panel);border:1px solid var(--line);box-shadow:2px 3px 8px rgba(0,0,0,.2)}
+.menu.open ul{display:block}
+.menu li button{display:block;width:100%;text-align:left;background:none;border:0;padding:4px 18px;cursor:default}
+.menu li button:hover:not(:disabled){background:var(--sel);color:var(--sel-ink)}
+.menu li button:disabled{color:var(--muted)}
+.menu li hr{border:0;border-top:1px solid var(--line);margin:3px 0}
+/* tab toolbar */
+.toolbar{display:flex;gap:2px;padding:4px 6px;border-bottom:1px solid var(--line);overflow-x:auto}
+.toolbar button{display:flex;align-items:center;gap:6px;background:none;border:1px solid transparent;border-radius:3px;
+  padding:5px 10px;white-space:nowrap;cursor:pointer}
+.toolbar button:hover{border-color:var(--line)}
+.toolbar button[aria-selected=true]{background:var(--panel);border-color:var(--line);font-weight:600}
+.toolbar svg{width:18px;height:18px;flex:none}
+main{flex:1;overflow:auto;padding:12px}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+fieldset{border:1px solid var(--line);border-radius:3px;margin:0 0 12px;padding:8px 10px 10px;background:var(--panel)}
+legend{padding:0 4px;font-weight:600}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:0}
+dt{color:var(--muted)} dd{margin:0;overflow-wrap:anywhere}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:3px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:600;color:var(--muted)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)} .muted{color:var(--muted)}
+.later{padding:30px;text-align:center;color:var(--muted)}
+.grid{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 10px;align-items:center}
+input,select{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);padding:3px 5px}
+main button,.wbody button{font:inherit;padding:3px 12px;background:var(--bar);border:1px solid var(--line);border-radius:3px;cursor:pointer}
+main button:disabled,.wbody button:disabled{color:var(--muted);cursor:default}
+code{font:12px var(--mono);overflow-wrap:anywhere}
+#w-qr svg{width:180px;height:180px;margin-top:8px;background:#fff}
+/* status bar */
+.statusbar{display:flex;justify-content:space-between;gap:12px;padding:3px 8px;border-top:1px solid var(--line);
+  background:var(--bar);font-size:12px}
+/* windows (Console, About) */
+.dialog{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.25);z-index:30}
+.dialog.open{display:flex}
+.window{background:var(--win);border:1px solid var(--line);box-shadow:0 8px 30px rgba(0,0,0,.35);width:min(760px,96vw);
+  max-height:90vh;display:flex;flex-direction:column}
+.window>header{display:flex;justify-content:space-between;align-items:center;padding:5px 8px;background:var(--bar);
+  border-bottom:1px solid var(--line);font-weight:600}
+.window>header button{background:none;border:0;font-size:16px;line-height:1;cursor:pointer;padding:0 4px}
+.wtabs{display:flex;gap:2px;padding:6px 8px 0;border-bottom:1px solid var(--line)}
+.wtabs button{background:none;border:1px solid transparent;border-bottom:0;padding:4px 10px;cursor:pointer}
+.wtabs button[aria-selected=true]{background:var(--panel);border-color:var(--line)}
+.wbody{padding:10px;overflow:auto}
+#out{height:340px;overflow:auto;background:var(--panel);border:1px solid var(--line);padding:6px;
+  font:12px/1.45 var(--mono);white-space:pre-wrap}
+#out .in{color:var(--sel)} #out .err{color:var(--bad)}
+#line{width:100%;margin-top:6px;padding:5px 6px;font:12px var(--mono);background:var(--panel);color:var(--ink);
+  border:1px solid var(--line)}
+@media (max-width:700px){.cols{grid-template-columns:1fr} .toolbar span{display:none}}
+</style>
+</head>
+<body>
+<nav class="menubar" id="menubar">
+  <div class="menu"><button type="button">File</button><ul>
+    {% if wallet == 'account' %}<li><button type="button" data-go="/me/backup">Backup…</button></li>
+    {% elif audience == 'operator' %}<li><button type="button" data-go="/backup">Backup and restore</button></li>{% endif %}
+    {% if edition == 'full' %}<li><hr></li><li><button type="button" data-go="/">Open the full arcade</button></li>{% endif %}
+    {% if account %}<li><button type="button" data-go="/join">Sign out…</button></li>
+    {% else %}<li><button type="button" data-go="/join">Sign in or make an account</button></li>{% endif %}
+  </ul></div>
+  <div class="menu"><button type="button">Settings</button><ul>
+    {% if audience == 'operator' %}<li><button type="button" data-options="general">Options…</button></li>
+    <li><button type="button" data-options="modules">Edition and modules…</button></li>
+    <li><hr></li><li><button type="button" data-go="/admin">Admin: every control…</button></li>
+    {% elif audience == 'user' %}<li><button type="button" data-go="/me">Your account…</button></li>
+    {% else %}<li><button type="button" disabled>Options…</button></li>{% endif %}
+  </ul></div>
+  <div class="menu"><button type="button">Window</button><ul>
+    <li><button type="button" data-win="info">Information</button></li>
+    <li><button type="button" data-win="console">Console</button></li>
+    {% if audience == 'operator' %}<li><button type="button" data-win="peers">Peers</button></li>{% endif %}
+  </ul></div>
+  <div class="menu"><button type="button">Help</button><ul>
+    <li><button type="button" data-run="help">Command list</button></li>
+    <li><button type="button" data-go="/docs">Guides</button></li>
+    <li><hr></li>
+    <li><button type="button" data-about>About {{ name }} Lite</button></li>
+  </ul></div>
+</nav>
+
+<div class="toolbar" role="tablist">
+  <button type="button" role="tab" data-tab="overview" aria-selected="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9H3z"/></svg><span>Overview</span></button>
+  <button type="button" role="tab" data-tab="send">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h14M13 6l6 6-6 6"/></svg><span>Send</span></button>
+  <button type="button" role="tab" data-tab="receive">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12H6M11 6l-6 6 6 6"/></svg><span>Receive</span></button>
+  <button type="button" role="tab" data-tab="transactions">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 6h14M5 12h14M5 18h9"/></svg><span>Transactions</span></button>
+  <button type="button" role="tab" data-tab="addresses">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="3" width="14" height="18" rx="1"/><circle cx="12" cy="10" r="3"/><path d="M8 17c1-2 7-2 8 0"/></svg><span>Address book</span></button>
+  <button type="button" role="tab" data-tab="apps">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg><span>Apps</span></button>
+</div>
+
+<main>
+  <section data-panel="overview">
+    <div class="cols">
+      <div>
+        <fieldset><legend>You</legend>
+          {% if audience == 'anyone' %}<p style="margin:0">You are not signed in. <a href="/join">Sign in or make an
+            account</a> to see your own coins and addresses here.</p>
+          {% else %}<dl id="you"><dt>Loading…</dt><dd></dd></dl>{% endif %}</fieldset>
+        <fieldset><legend>This arcade</legend><dl id="node"><dt>Loading…</dt><dd></dd></dl></fieldset>
+        <fieldset><legend>Chains</legend>
+          <table><thead><tr><th>Chain</th><th>Where</th><th class="num">Blocks</th><th>State</th></tr></thead>
+            <tbody id="chains"></tbody></table></fieldset>
+      </div>
+      <div>
+        {% if audience != 'anyone' %}<fieldset><legend>Arcades on the mesh</legend>
+          <table><thead><tr><th>Arcade</th><th>Operator</th><th>Version</th></tr></thead>
+            <tbody id="arcades"></tbody></table></fieldset>{% endif %}
+      </div>
+    </div>
+  </section>
+  {% include "_wallet.html" %}
+  {% include "_addressbook.html" %}
+  {% include "_join.html" %}
+  {% include "_backup.html" %}
+  <section data-panel="apps" hidden>
+    <fieldset><legend>Apps, themes and node modules</legend>
+      <table><thead><tr><th>Module</th><th>Kind</th><th>Here</th></tr></thead><tbody>
+      {% for m in apps %}<tr><td title="{{ m.summary }}">{{ m.title }}</td><td>{{ m.kind }}</td>
+        <td class="{{ 'ok' if m.on else 'muted' }}">{{ 'on' if m.on else 'off' }}</td></tr>{% endfor %}
+      </tbody></table>
+      <p class="muted" style="margin:8px 0 0">{% if audience == 'operator' %}Switch them on or off in
+        <button type="button" data-options="modules">Edition and modules…</button>.{% else %}This arcade's operator chooses what runs
+        here.{% endif %} The App Store comes to Lite in a later part.</p>
+    </fieldset>
+  </section>
+</main>
+
+<footer class="statusbar"><span id="sync">Connecting…</span><span id="links"></span></footer>
+
+<div class="dialog" id="debug" role="dialog" aria-label="Node window">
+  <div class="window">
+    <header><span>{{ name }} Lite: node window</span><button type="button" data-close aria-label="Close">×</button></header>
+    <div class="wtabs" role="tablist">
+      <button type="button" data-wtab="info" aria-selected="true">Information</button>
+      <button type="button" data-wtab="console">Console</button>
+      {% if audience == 'operator' %}<button type="button" data-wtab="peers">Peers</button>{% endif %}
+    </div>
+    <div class="wbody">
+      <div data-wpanel="info"><dl id="info"></dl></div>
+      <div data-wpanel="console" hidden>
+        <div id="out"></div>
+        <input id="line" autocomplete="off" spellcheck="false" placeholder="Type a command, or help" aria-label="Command">
+      </div>
+      {% if audience == 'operator' %}<div data-wpanel="peers" hidden>
+        <table><thead><tr><th>Arcade</th><th>Linked</th><th>Operator</th><th>Face</th><th>Names</th></tr></thead>
+          <tbody id="peers"></tbody></table>
+      </div>{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="dialog" id="about" role="dialog" aria-label="About">
+  <div class="window" style="width:min(460px,96vw)">
+    <header><span>About {{ name }} Lite</span><button type="button" data-close aria-label="Close">×</button></header>
+    <div class="wbody"><p><b>{{ name }} Lite</b>, the small edition of the arcade.</p><dl id="aboutinfo"></dl>
+      <p class="muted">The same network as every arcade: Lite and the full edition speak one protocol, held to the
+        recorded vectors in tests/conformance.</p></div>
+  </div>
+</div>
+
+{% include "_options.html" %}
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var data = null;
+
+  function row(cells) {
+    var tr = document.createElement('tr');
+    cells.forEach(function (c) {
+      var td = document.createElement('td');
+      if (c && typeof c === 'object') { td.textContent = c.text; if (c.cls) td.className = c.cls; }
+      else td.textContent = c == null ? '' : String(c);
+      tr.appendChild(td);
+    });
+    return tr;
+  }
+  function pairs(dl, list) {
+    dl.textContent = '';
+    list.forEach(function (p) {
+      var dt = document.createElement('dt'), dd = document.createElement('dd');
+      dt.textContent = p[0]; dd.textContent = p[1] == null || p[1] === '' ? '—' : String(p[1]);
+      dl.appendChild(dt); dl.appendChild(dd);
+    });
+  }
+  function short(id) { return id ? String(id).slice(0, 12) : '—'; }
+
+  function draw() {
+    var n = data.node || {}, m = data.mesh || null, chains = Array.isArray(data.chains) ? data.chains : [];
+    var arcades = Array.isArray(data.arcades) ? data.arcades : [], you = data.you || null;
+    if (you && $('you')) {
+      var mine = [['@name', you.name ? '@' + you.name : 'none claimed yet']];
+      Object.keys(you.addresses || {}).forEach(function (net) {
+        var c = chains.filter(function (x) { return x.network === net; })[0];
+        mine.push([c ? c.label : net, you.addresses[net]]);
+      });
+      if (data.audience === 'operator') mine.push(['Role', 'operator']);
+      pairs($('you'), mine);
+    }
+    var basics = [['Version', n.version], ['Operator', n.operator ? '@' + n.operator : 'no @name yet'],
+                  ['Face', n.face], ['Public names', (n.public_names || []).join(', ')],
+                  ['Mesh id', short(n.mesh_id)]];
+    pairs($('node'), basics);
+    pairs($('info'), basics.concat([['Edition', n.edition === 'lite' ? 'ARCADE Lite' : 'Full']]).concat(!m ? [] : [
+      ['Mesh', m.on ? m.links + ' linked of ' + m.known + ' known' : 'off'],
+      ['Listening', m.on ? (m.listening || 'dial-out only') : ''], ['Reachable', m.on ? (m.reachable ? 'yes' : 'not proved') : '']]));
+    pairs($('aboutinfo'), [['Version', n.version], ['Face', n.face]]);
+    var tb = $('chains'); tb.textContent = '';
+    var syncing = [];
+    chains.forEach(function (c) {
+      var state = !c.online ? {text: 'offline', cls: 'bad'}
+        : c.synced ? {text: 'synced', cls: 'ok'}
+        : {text: 'syncing ' + (c.headers ? Math.floor(100 * c.blocks / c.headers) : 0) + '%', cls: 'warn'};
+      if (c.online && !c.synced) syncing.push(c.label);
+      var tr = row([c.label, c.where, {text: c.blocks == null ? '' : Number(c.blocks).toLocaleString(), cls: 'num'}, state]);
+
+      if (c.error) tr.title = c.error;
+      tb.appendChild(tr);
+    });
+    var ta = $('arcades'), tp = $('peers');
+    if (ta) ta.textContent = '';
+    if (tp) tp.textContent = '';
+    arcades.forEach(function (a) {
+      if (ta && a.linked) ta.appendChild(row([short(a.id), a.operator ? '@' + a.operator : '', a.version ? String(a.version).slice(0, 8) : '']));
+      if (tp) tp.appendChild(row([short(a.id), a.linked ? 'yes' : 'no', a.operator ? '@' + a.operator : '', a.face || '', (a.hosts || []).join(', ')]));
+    });
+    if (ta && !ta.firstChild) ta.appendChild(row([{text: 'No arcades linked yet.', cls: 'muted'}]));
+    $('sync').textContent = syncing.length ? 'Syncing: ' + syncing.join(', ') : (chains.length ? 'Up to date' : '');
+    var linked = arcades.filter(function (a) { return a.linked; }).length;
+    $('links').textContent = m ? (m.on ? m.links + ' arcade' + (m.links === 1 ? '' : 's') + ' linked' : 'Not on the mesh')
+      : data.audience === 'user' ? linked + ' arcade' + (linked === 1 ? '' : 's') + ' linked' : 'Visitor';
+  }
+  function load() {
+    fetch('/lite/api/overview', {credentials: 'same-origin'})
+      .then(function (r) { return r.json(); })
+      .then(function (j) { data = j; draw(); })
+      .catch(function () { $('sync').textContent = 'The node did not answer.'; });
+  }
+  load(); setInterval(load, 15000);
+
+  // tabs, and the panels with no tab of their own (Join, at /join)
+  function panel(name) {
+    document.querySelectorAll('.toolbar [data-tab]').forEach(function (x) { x.setAttribute('aria-selected', x.dataset.tab === name); });
+    document.querySelectorAll('main [data-panel]').forEach(function (p) { p.hidden = p.dataset.panel !== name; });
+  }
+  document.querySelectorAll('.toolbar [data-tab]').forEach(function (b) { b.onclick = function () { panel(b.dataset.tab); }; });
+  // A page opened at /join or /me/backup, or at /#<tab> from the bar every other page wears (base.html)
+  var opened = {'/join': 'join', '/me/backup': 'backup'}[location.pathname] || location.hash.slice(1);
+  if (opened && document.querySelector('main [data-panel="' + opened + '"]')) panel(opened);
+
+  // menus: click to open, click elsewhere to close
+  document.querySelectorAll('.menu>button').forEach(function (b) {
+    b.onclick = function (e) {
+      e.stopPropagation();
+      var m = b.parentNode, was = m.classList.contains('open');
+      document.querySelectorAll('.menu.open').forEach(function (x) { x.classList.remove('open'); });
+      if (!was) m.classList.add('open');
+    };
+  });
+  document.addEventListener('click', function () {
+    document.querySelectorAll('.menu.open').forEach(function (x) { x.classList.remove('open'); });
+  });
+
+  // windows
+  function open(id) { $(id).classList.add('open'); }
+  function wtab(name) {
+    document.querySelectorAll('[data-wtab]').forEach(function (x) { x.setAttribute('aria-selected', x.dataset.wtab === name); });
+    document.querySelectorAll('[data-wpanel]').forEach(function (p) { p.hidden = p.dataset.wpanel !== name; });
+    if (name === 'console') $('line').focus();
+  }
+  document.querySelectorAll('[data-wtab]').forEach(function (b) { b.onclick = function () { wtab(b.dataset.wtab); }; });
+  document.querySelectorAll('[data-win]').forEach(function (b) { b.onclick = function () { open('debug'); wtab(b.dataset.win); }; });
+  document.querySelectorAll('[data-run]').forEach(function (b) {
+    b.onclick = function () { open('debug'); wtab('console'); send(b.dataset.run); };
+  });
+  document.querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { location.href = b.dataset.go; }; });
+  document.querySelector('[data-about]').onclick = function () { open('about'); };
+  document.querySelectorAll('[data-close]').forEach(function (b) {
+    b.onclick = function () { b.closest('.dialog').classList.remove('open'); };
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') document.querySelectorAll('.dialog.open').forEach(function (d) { d.classList.remove('open'); });
+  });
+
+  // console
+  var out = $('out'), line = $('line'), past = [], back = 0;
+  function say(text, cls) {
+    var div = document.createElement('div'); if (cls) div.className = cls;
+    div.textContent = text; out.appendChild(div); out.scrollTop = out.scrollHeight;
+  }
+  say('Welcome to the {{ name }} Lite console.\nType help for the list of commands, or help <command> for one.');
+  function send(text) {
+    say('> ' + text, 'in');
+    fetch('/lite/api/console', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Lite': '1', 'X-Arcade-Admin': '1'},
+      body: JSON.stringify({line: text})})
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) { say(j.error || j.detail || 'refused', 'err'); return; }
+        say(typeof j.result === 'string' ? j.result : JSON.stringify(j.result, null, 2));
+      })
+      .catch(function (e) { say('The node did not answer: ' + e.message, 'err'); });
+  }
+  line.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && line.value.trim()) {
+      past.push(line.value); back = past.length; send(line.value.trim()); line.value = '';
+    } else if (e.key === 'ArrowUp' && back > 0) { back--; line.value = past[back]; e.preventDefault(); }
+    else if (e.key === 'ArrowDown') { back = Math.min(past.length, back + 1); line.value = past[back] || ''; e.preventDefault(); }
+  });
+})();
+</script>
+</body>
+</html>

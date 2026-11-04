@@ -59,6 +59,7 @@ from .. import bids as bidslib
 from .. import standing as standinglib
 from .. import collections as collectionlib
 from .. import approvals as approvalslib
+from .. import modules as modulelib
 from .. import send_refs as sendrefs
 from .. import payload as P
 from .. import referee as refereelib
@@ -656,7 +657,8 @@ def secure_context(request: Request) -> bool:
     if proto == "https":
         return True
     name = (request.headers.get("host", "").rsplit(":", 1)[0]).strip().lower()
-    return name in LOOPBACK or name.startswith("127.")
+    # *.localhost too, as browsers treat it (an ssh tunnel opened as node.localhost:8430 is a secure context).
+    return name in LOOPBACK or name.startswith("127.") or name.endswith(".localhost")
 
 
 def locked(title: str, detail: str, status: int = 403) -> HTMLResponse:
@@ -954,6 +956,9 @@ def create_app(state: AppState) -> FastAPI:
         except ValueError:
             pass
     TEMPLATES.env.globals["brand"] = brandlib.CURRENT   # this node's name, colours, icons, or its web address's (brand.py)
+    # ARCADE Lite wears no coin's face until its operator picks one (brand.CORE).
+    brandlib.fallback = lambda: (brandlib.CORE if not state.setting("brand")
+                                 and modulelib.edition(state.settings()) == "lite" else brandlib.DEFAULT)
     # [Claude 2026-10-14] Inscriptions stay put: a wallet's ordinary sends never spend a coin carrying one (arcade/doginals.py).
     # Read from each chain by its own node (2026-10-15, the outside Doginals API removed): Doginals on Dogecoin, and the same ord
     # envelopes on small Pepecoin MAINNET coins ("do the same for small .01 pep txs. Not made by the Arcade").
@@ -1064,7 +1069,8 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:              # noqa: BLE001 -- never block startup
             log.info("filler not started: %s", exc)
         try:                                  # known collections from Nintondo, when the operator switched it on
-            _start_known_import()
+            if modulelib.job_on(state.settings(), "known-collections"):
+                _start_known_import()
         except Exception as exc:              # noqa: BLE001 -- never block startup
             log.info("known collections not started: %s", exc)
         try:                                  # the Run your own page's download, packed now rather than on its first visit
@@ -1074,7 +1080,7 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:              # noqa: BLE001 -- never block startup
             log.info("source not packed: %s", exc)
         try:                                  # mail for phones already subscribed
-            push = state.push()
+            push = state.push() if modulelib.job_on(state.settings(), "push-mail") else None
             if push is not None:              # notes every account's mail
                 _watch_for_mail()
         except Exception as exc:              # noqa: BLE001 -- never block startup
@@ -1159,6 +1165,11 @@ def create_app(state: AppState) -> FastAPI:
             request.cookies.get(ADMIN_COOKIE, ""), state.operator)
 
     def _nav_for(request: Request) -> list:
+        """The tabs, less those of modules switched off here (arcade/modules.py)."""
+        settings = state.settings()
+        return [entry for entry in _nav_tabs(request) if modulelib.path_on(settings, entry[0])]
+
+    def _nav_tabs(request: Request) -> list:
         """The tabs: an account's own, the operator's machine's, and Admin for the
         operator either way (the panel itself asks for what it needs). On the
         node's own machine, a signed-in account can switch between its own view
@@ -1319,6 +1330,11 @@ def create_app(state: AppState) -> FastAPI:
             # The look a computer's browser opens in until its reader picks one under Themes (base.html, desktop.html)
             "desk_default": DESK_DEFAULT,
             "phone_default": PHONE_DEFAULT,
+            # What runs here (arcade/modules.py): base.html leaves out the desktop and the home screen when they are off
+            "modules_on": modulelib.enabled(state.settings()),
+            "edition_lite": modulelib.edition(state.settings()) == "lite",
+            # a fresh install that has not chosen Full or Lite yet (_edition_ask.html)
+            "edition_ask": modulelib.asking(state.settings()),
         }
         base.update(context)
         # What a POST decided, picked up by the GET it redirected to. Last,
@@ -1549,6 +1565,9 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def overview(request: Request):
+        # ARCADE Lite opens on its own window, for visitors, users and the operator alike (arcade/lite/web.py).
+        if modulelib.edition(state.settings()) == "lite":
+            return _lite_home(request)
         # On a public instance the front page is the SPLASH, not the
         # operator's wallet. `/` is in the door's allowlist because a public
         # arcade has to have a front page at all -- so the route itself has
@@ -1579,7 +1598,7 @@ def create_app(state: AppState) -> FastAPI:
     def overview_dashboard(request: Request):
         """The node's dashboard Overview was (chain cards, counts, contact code, scan)."""
         if _account_view(request):
-            return RedirectResponse("/feed", status_code=303)
+            return RedirectResponse("/feed" if modulelib.path_on(state.settings(), "/feed") else "/", status_code=303)
         stats = {}
         if state.store_path.exists():
             with state.store() as store:
@@ -2307,6 +2326,52 @@ def create_app(state: AppState) -> FastAPI:
                           if file_bytes else ""),
             attached_name=file_name, attached_type=file_type,
             share_profile=share_profile)
+
+    def _console_message(to: str, text: str) -> dict:
+        """A text message from the node's identity, for the console's sendmessage: one transaction, sent at once as
+        send_in_thread sends one on testnet, with its guards (one send at a time, not the same message twice) and
+        our own copy kept. A message that needs more than one transaction is the Messenger's, which shows progress."""
+        if state.messaging.is_mainnet:
+            raise ValueError("the console sends messages on testnet only; send this one from Messages")
+        if not text.strip():
+            raise ValueError("write something")
+        if not state.unlocked:
+            state.ensure_identity()
+        peer_key = _resolve_recipient(state, to)
+        plan = plan_message(state.identity, peer_key, content.build(text=text))
+        if plan.transactions > 1:
+            raise ValueError(f"that message takes {plan.transactions} transactions: send it from Messages, which "
+                             "shows its progress")
+        digest = hashlib.sha256(peer_key + text.encode()).hexdigest()
+        with state.messaging.rpc() as rpc:
+            funding = Miner(rpc, state.messaging.params).status()
+            if not funding.funded:
+                raise ValueError(f"cannot send: {funding.describe()}")
+            sender = MessageSender(rpc, state.messaging.params)
+            address = funded_address(rpc, prefer=state.derived_address)
+            try:
+                sender.prepare(address, plan.chunk_payloads[0])
+            except SendError:                              # the identity address cannot pay: the one that can
+                address = funded_address(rpc)
+            if state.is_repeat_send(digest):
+                raise ValueError("that exact message was just sent; change something or wait a minute")
+            if not state.begin_send():
+                raise ValueError("a message is already being sent; wait for it to finish")
+            try:
+                txids = sender.send_all(address, plan.chunk_payloads)
+                state.note_send(digest)
+            finally:
+                state.end_send()
+        with state.store() as store:
+            record_sent(store, txids[0], peer_key, state.identity.fingerprint, text.encode(), txids=txids)
+        return {"txid": txids[0], "to": peer_key.hex()}
+
+    def _console_peer(who: str) -> bytes:
+        """A correspondent's key from what the console was given: the key itself, an @name, a contact code or an
+        address with an announced key."""
+        if re.fullmatch(r"[0-9a-fA-F]{64}", who or ""):
+            return bytes.fromhex(who)
+        return _resolve_recipient(state, who)
 
     # --- inbox ----------------------------------------------------------------
 
@@ -4390,6 +4455,15 @@ def create_app(state: AppState) -> FastAPI:
             return RedirectResponse(back if net else f"/feed/{txid}/tip", status_code=303)
         return RedirectResponse(back, status_code=303)
 
+    #: What can be done to a post, by the word for it (feed_act and the console's feed commands).
+    _FEED_KINDS = {"like": feedlib.LIKE, "unlike": feedlib.UNLIKE,
+                   "dislike": feedlib.DISLIKE, "undislike": feedlib.UNDISLIKE,
+                   "reply": feedlib.REPLY, "share": feedlib.SHARE,
+                   "edit": feedlib.EDIT, "delete": feedlib.DELETE,
+                   # An unshare deletes the share itself: the txid in the path is
+                   # the viewer's own share, not the post (2026-09-29).
+                   "unshare": feedlib.DELETE}
+
     @app.post("/feed/{txid}/{doing}")
     def feed_act(request: Request, txid: str, doing: str,
                  text: str = Form(""), csrf_token: str = Form(""),
@@ -4399,13 +4473,7 @@ def create_app(state: AppState) -> FastAPI:
         One route for all of them: they are one message type with a kind
         byte, and a route per kind would be six copies of this (D-138).
         """
-        kinds = {"like": feedlib.LIKE, "unlike": feedlib.UNLIKE,
-                 "dislike": feedlib.DISLIKE, "undislike": feedlib.UNDISLIKE,
-                 "reply": feedlib.REPLY, "share": feedlib.SHARE,
-                 "edit": feedlib.EDIT, "delete": feedlib.DELETE,
-                 # An unshare deletes the share itself: the txid in the path is
-                 # the viewer's own share, not the post (2026-09-29).
-                 "unshare": feedlib.DELETE}
+        kinds = _FEED_KINDS
         try:
             check_csrf(csrf_token)
             if doing == "mute":
@@ -4431,6 +4499,37 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:
             state.flash(str(exc), "err")
         return RedirectResponse(back or "/feed", status_code=303)
+
+    def _console_feed(sort: str, author: str, count: int) -> list[dict]:
+        """A page of the feed as the Feed tab draws it (newest, or popular), or one person's posts: the console's."""
+        network = state.messaging.network
+        address = _tag_address(state, author, mainnet=state.messaging) if author else ""
+        rows, _next, waiting = _feed_page(network, author=address, limit=count, sort=sort)
+        return [{"txid": p.txid, "by": _name_of(p.author) or p.author, "text": p.text, "when": p.block_time,
+                 "likes": p.likes, "replies": len(p.replies), "shares": p.shares, "mine": p.mine,
+                 "confirmed": bool(p.height)} for p in _shown(rows, network, waiting) if not (p.deleted or p.muted)]
+
+    def _console_feed_post(text: str) -> str:
+        """A post from the node, as feed_post makes one (text only): its txid."""
+        complaint = _needs_a_name()
+        if complaint:
+            raise ValueError(complaint)
+        if not text.strip():
+            raise ValueError("say something")
+        return state.post(text.strip())
+
+    def _console_feed_act(doing: str, txid: str, text: str = "") -> str:
+        """A like, reply, share, edit or delete from the node, as feed_act makes one: its txid. Mute is local."""
+        if doing in ("mute", "unmute"):
+            with state.store() as store:
+                store.mute(text.strip() or txid, on=doing == "mute")
+            return ""
+        if doing not in _FEED_KINDS:
+            raise ValueError(f"nothing called {doing!r} is done to a post")
+        complaint = _needs_a_name()
+        if complaint:
+            raise ValueError(complaint)
+        return state.send_feed_act(_FEED_KINDS[doing], txid, text)
 
     @app.post("/contacts/scan")
     def contacts_scan(request: Request, csrf_token: str = Form("")):
@@ -11680,14 +11779,22 @@ def create_app(state: AppState) -> FastAPI:
         Themes on Your arcade)."""
         return _asset_response(request, "/deskdogefeedx.css")
 
+    def _join_facts(request: Request) -> dict[str, Any]:
+        """What ARCADE Lite's Join panel says, as the page below does."""
+        register = state.accounts()
+        return {"seats": register.seats, "free": register.free(), "fruit": _fruit_here(request),
+                "secure": secure_context(request), "why_not": WHY_NOT_SECURE}
+
     @app.get("/join", response_class=HTMLResponse)
     def join_page(request: Request):
         """What a person meets: a name, a password, and a wallet.
 
         `/join/keys` is the same door for somebody who would rather hold
         their own words -- it is the older page and it is still the whole
-        of what this one does underneath.
+        of what this one does underneath. ARCADE Lite draws it in its own window.
         """
+        if modulelib.edition(state.settings()) == "lite":
+            return _lite_home(request)
         register = state.accounts()
         return render(request, "signup.html", chain=_account_chain(), fruit=_fruit_here(request),
                       seats=register.seats, free=register.free(),
@@ -24844,6 +24951,8 @@ def create_app(state: AppState) -> FastAPI:
         account = signed_in(request)
         if account is None:
             return _to_join(request)
+        if modulelib.edition(state.settings()) == "lite":
+            return _lite_home(request)                     # ARCADE Lite draws it in its own window
         mine = state.vault().by_pubkey(account.pubkey) or {}
         return render(request, "my_backup.html", chain=_account_chain(),
                       my_name=mine.get("tag", ""),
@@ -25823,6 +25932,52 @@ def create_app(state: AppState) -> FastAPI:
         return contentlib._json({"property_id": property_id, "name": prop["name"],
                                  "divisible": bool(prop["divisible"]), "asks": asks})
 
+    # --- the market for the console (arcade/lite/commands.py): what the Exchange's public pages show ---------------
+
+    def _console_tokens() -> list[dict]:
+        """The tokens this arcade's token index knows, as the Tokens tab lists them."""
+        _chain, index = _token_chain()
+        return [{"id": p["property_id"], "name": p["name"], "divisible": p["divisible"],
+                 "supply": p["total_display"], "holders": p["holder_count"]} for p in index.properties()]
+
+    def _console_book(property_id: int) -> dict:
+        """A token's resting sell orders for this chain's coin, as /r/book answers them, amounts in words."""
+        chain, index = _token_chain()
+        prop = index.property(property_id)
+        if prop is None:
+            raise ValueError("no such token")
+        book, taking = index.book(property_id), index.pending_takes()
+        return {"token": prop["name"], "coin": chain.params.coin, "asks": [
+            {"order": o["txid"], "seller": _name_of(o["address"]) or o["address"],
+             "tokens": format_amount(int(o["tokens"]), prop["divisible"]), "coins": format_amount(int(o["coins"]), True),
+             "pending": bool(o.get("pending")), "taking": int(taking.get(o["txid"], 0))} for o in book.get("asks", [])]}
+
+    def _console_pair(base: int, quote: int, count: int) -> dict:
+        """BASE/QUOTE's book and its last trades, as the pair page shows them."""
+        _chain, index = _token_chain()
+        base_prop, quote_prop = index.property(base), index.property(quote)
+        if base_prop is None or quote_prop is None or base == quote:
+            raise ValueError("a pair is two different tokens this node knows")
+        book = index.pair_book(base, quote)
+        scale = (COIN if base_prop["divisible"] else 1) / (COIN if quote_prop["divisible"] else 1)
+
+        def amounts(row: dict) -> dict:
+            return {"base": format_amount(row["base"], base_prop["divisible"]),
+                    "quote": format_amount(row["quote"], quote_prop["divisible"])}
+        return {"pair": f"{base_prop['name']}/{quote_prop['name']}",
+                "asks": [{"order": r["txid"], **amounts(r), "each": float(r["price"]) * scale} for r in book["asks"]],
+                "bids": [{"order": r["txid"], **amounts(r), "each": float(r["price"]) * scale} for r in book["bids"]],
+                "trades": [{"when": t["when"], "side": t["side"], "txid": t["txid"], **amounts(t)}
+                           for t in index.pair_trades(base, quote, limit=count)]}
+
+    def _console_doginals(which: str) -> list[dict]:
+        """Doginals listed for DOGE (or Pepinals for PEP mainnet: main) while their coin is unspent."""
+        chain = _doge_asked({"chain": which})
+        if chain is None or not state.chain_ready(chain):
+            raise ValueError("that chain is not open on this arcade yet")
+        return [{"listing": r["id"], "inscription": r["inscription"], "price": r["price_text"],
+                 "seller": r["seller_tag"] or r["seller"], "expires": r["expires"]} for r in _doginals_live(chain)]
+
     @app.get("/r/mintpad/{creator}/{name}")
     def r_mintpad(creator: str, name: str):
         """What a collection's mintpad has left, and one open listing chosen at
@@ -26290,7 +26445,8 @@ def create_app(state: AppState) -> FastAPI:
             running.wait()
         _cardwatch_loop()
 
-    if not getattr(state, "no_background", False) and "PYTEST_CURRENT_TEST" not in os.environ:
+    if not getattr(state, "no_background", False) and "PYTEST_CURRENT_TEST" not in os.environ \
+            and modulelib.job_on(state.settings(), "card-watch"):
         threading.Thread(target=_cardwatch_when_running, name="card-watch", daemon=True).start()
 
     def _game_by_txid(txid: str) -> dict | None:
@@ -30873,26 +31029,29 @@ def create_app(state: AppState) -> FastAPI:
         _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
         try:
-            which = str(said.get("which", ""))
-            ctx = _keyed_context(which) if which.startswith("key:") else _context(which)
-            sats = walletlib.parse_amount(str(said.get("amount", "")))
-            to = _tag_address(state, str(said.get("to", "")), mainnet=ctx)
-            if which.startswith("key:"):
-                prepared = keywalletlib.prepare(state, ctx, to, sats)
-            else:
-                with ctx.rpc() as rpc:
-                    prepared = walletlib.prepare_send(rpc, to, sats)
+            return JSONResponse(_node_prepare(str(said.get("which", "")), str(said.get("to", "")),
+                                              str(said.get("amount", ""))))
         except Exception as exc:                        # noqa: BLE001
             return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    def _node_prepare(which: str, to: str, amount: str) -> dict:
+        """A send from the node's own wallet, built and held for ten minutes under a ticket, with its fee: the first
+        of the two steps, for Admin and for the console (arcade/lite/commands.py `send`)."""
+        ctx = _keyed_context(which) if which.startswith("key:") else _context(which)
+        sats = walletlib.parse_amount(str(amount))
+        to = _tag_address(state, str(to), mainnet=ctx)
+        if which.startswith("key:"):
+            prepared = keywalletlib.prepare(state, ctx, to, sats)
+        else:
+            with ctx.rpc() as rpc:
+                prepared = walletlib.prepare_send(rpc, to, sats)
         ticket = secrets.token_urlsafe(16)
         now = time.time()
         for key in [k for k, v in _admin_prepared.items() if now - v[0] > 600]:
             _admin_prepared.pop(key, None)
-        _admin_prepared[ticket] = (now, str(said.get("which")), prepared)
-        return JSONResponse({"ticket": ticket, "to": to,
-                             "amount": f"{sats / 1e8:.8f}".rstrip("0").rstrip("."),
-                             "fee": f"{prepared.fee_sats / 1e8:.8f}".rstrip("0").rstrip("."),
-                             "network": ctx.label})
+        _admin_prepared[ticket] = (now, which, prepared)
+        return {"ticket": ticket, "to": to, "amount": f"{sats / 1e8:.8f}".rstrip("0").rstrip("."),
+                "fee": f"{prepared.fee_sats / 1e8:.8f}".rstrip("0").rstrip("."), "network": ctx.label}
 
     @app.post("/admin/api/send/confirm")
     def admin_send_confirm(request: Request, payload: Any = Body(None)):
@@ -30903,26 +31062,29 @@ def create_app(state: AppState) -> FastAPI:
                                                        request):
             return JSONResponse({"detail": "the admin password, to send the node's coins"},
                                 status_code=403)
-        held = _admin_prepared.pop(str(said.get("ticket", "")), None)
-        if held is None or time.time() - held[0] > 600:
-            return JSONResponse({"detail": "that send has expired -- prepare it again"},
-                                status_code=400)
         try:
-            if held[1].startswith("tok:"):
-                # A token or NFT send from the node's Wallet page (/node/wallet/token|nft/send).
-                ctx = _node_wallet(held[1].split(":", 1)[1])[0]
-                with ctx.rpc() as rpc:
-                    txid = tokenlib.TokenSender(rpc, ctx.params).broadcast(held[2])
-                state.pending_tokens.append({"txid": txid, "what": getattr(held[2], "what", "send"),
-                                             "at": time.time(), "network": ctx.network})
-            elif held[1].startswith("key:"):
-                txid = keywalletlib.broadcast(_keyed_context(held[1]), held[2])
-            else:
-                with _context(held[1]).rpc() as rpc:
-                    txid = walletlib.broadcast(rpc, held[2])
+            return JSONResponse({"txid": _node_broadcast(str(said.get("ticket", "")))})
         except Exception as exc:                        # noqa: BLE001
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        return JSONResponse({"txid": txid})
+
+    def _node_broadcast(ticket: str) -> str:
+        """The second step: broadcast what a ticket holds, once. The caller has checked who is asking."""
+        held = _admin_prepared.pop(ticket, None)
+        if held is None or time.time() - held[0] > 600:
+            raise ValueError("that send has expired -- prepare it again")
+        if held[1].startswith("tok:"):
+            # A token or NFT send from the node's Wallet page (/node/wallet/token|nft/send).
+            ctx = _node_wallet(held[1].split(":", 1)[1])[0]
+            with ctx.rpc() as rpc:
+                txid = tokenlib.TokenSender(rpc, ctx.params).broadcast(held[2])
+            state.pending_tokens.append({"txid": txid, "what": getattr(held[2], "what", "send"),
+                                         "at": time.time(), "network": ctx.network})
+        elif held[1].startswith("key:"):
+            txid = keywalletlib.broadcast(_keyed_context(held[1]), held[2])
+        else:
+            with _context(held[1]).rpc() as rpc:
+                txid = walletlib.broadcast(rpc, held[2])
+        return txid
 
     def _keyed_context(which: str):
         """The chain a `key:<net>` wallet card names (keywallet.py): P main or an add-on chain, never P test."""
@@ -30936,13 +31098,41 @@ def create_app(state: AppState) -> FastAPI:
     def admin_receive(request: Request, payload: Any = Body(None)):
         _admin_check(request, write=True)
         try:
-            which = str((payload or {}).get("which", ""))
-            if which.startswith("key:"):
-                return JSONResponse({"address": state.key_address(_keyed_context(which))})
-            with _context(which).rpc() as rpc:
-                return JSONResponse({"address": walletlib.receive_address(rpc, "admin")})
+            return JSONResponse({"address": _node_receive(str((payload or {}).get("which", "")))})
         except Exception as exc:                        # noqa: BLE001
             return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    def _node_receive(which: str) -> str:
+        """An address the node's wallet `which` is paid at: a new one from a Core wallet, the key's own otherwise."""
+        if which.startswith("key:"):
+            return state.key_address(_keyed_context(which))
+        with _context(which).rpc() as rpc:
+            return walletlib.receive_address(rpc, "admin")
+
+    def _node_history(which: str, count: int) -> list[dict]:
+        """A Core wallet's last `count` transactions, newest first."""
+        if which.startswith("key:"):
+            raise ValueError(f"{which} is a key wallet: it keeps no history here; listunspent shows its coins")
+        with _context(which).rpc() as rpc:
+            return walletlib.recent(rpc, count)
+
+    def _node_unspent(which: str) -> list[dict]:
+        """The coins the node's wallet `which` can spend."""
+        if which.startswith("key:"):
+            return keywalletlib.coins(state, _keyed_context(which))
+        with _context(which).rpc() as rpc:
+            return list(rpc.call("listunspent") or [])
+
+    #: What the console asks of the node (arcade/lite/commands.py): its wallet in Admin's own steps, its messages.
+    node_tools = types.SimpleNamespace(wallets=lambda: _admin_wallets(), prepare=_node_prepare,
+                                       broadcast=_node_broadcast, receive=_node_receive, history=_node_history,
+                                       unspent=_node_unspent, peer=_console_peer, message=_console_message,
+                                       feed=_console_feed, feed_post=_console_feed_post, feed_act=_console_feed_act)
+    #: ...and what it may ask on behalf of anyone at all: reads of what the public pages show.
+    public_tools = types.SimpleNamespace(
+        feed=lambda sort, author, count: [{k: v for k, v in post.items() if k != "mine"}
+                                          for post in _console_feed(sort, author, count)],
+        tokens=_console_tokens, book=_console_book, pair=_console_pair, doginals=_console_doginals)
 
     # --- the Cloudflare tunnel wizard (2026-09-25; arcade/tunnel.py) -----
 
@@ -35844,6 +36034,15 @@ def create_app(state: AppState) -> FastAPI:
     # DogeFeedX Network app: node status, sync progress, and mesh peers.
     from .dogefeedx import network as dogefeedx_network
     dogefeedx_network.register(app, state, admin_check=_admin_check)
+    # ARCADE Lite (docs/arcade-lite/CHARTER.md): its Core-style window at /lite, for visitors, users and the operator.
+    from ..lite import web as liteweb
+    _lite_home = liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in,
+                                  account_address=_account_address, name_of=_name_of, node_tools=node_tools,
+                                  public_tools=public_tools, wallet_name=_account_name,
+                                  account_view=_account_view, join_facts=_join_facts)
+    # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
+    from . import modules_web
+    modules_web.register(app, state, admin_check=_admin_check)
     return app
 
 

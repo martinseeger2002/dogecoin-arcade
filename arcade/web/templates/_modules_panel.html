@@ -1,0 +1,11 @@
+{#- Admin -> Edition & modules (arcade/modules.py, web/modules_web.py): the edition, and the modules by category, one
+    tab each, drawn by /admin/modules.js (templates/modules_js.js), the same drawing the Lite window's Options uses.
+    Routes follow a switch at once; background jobs at the next restart. -#}
+<section class="panel" id="modules">
+  <p class="muted" style="margin:0 0 8px;font-size:.84rem"><b>Full</b> runs everything. <b>ARCADE Lite</b> runs the
+    crypto cores only (the chains and their wallets, sync and borrowing, send and receive, the address book, accounts,
+    settings, help and the mesh link) and opens on the Lite window. A module switched off keeps its data for when it
+    is on again.</p>
+  <div data-modules-ui></div>
+</section>
+<script src="/admin/modules.js"></script>
