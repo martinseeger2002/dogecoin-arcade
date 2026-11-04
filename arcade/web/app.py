@@ -946,6 +946,18 @@ DESK_DEFAULT = "ubuntu"
 #: mobile the website make it look like the PWA by default"): "home" (the installed app's home screen) or "" (the website).
 PHONE_DEFAULT = "home"
 
+def announcement_changed(prior: Any, face: Any, bio: Any, url: Any) -> bool:
+    """Whether a key announcement would say something the published one does not.
+
+    ``prior`` is the published profile (``pfp``/``bio``/``url``). A changed
+    face, bio or link is a new statement worth its fee, not a repeat of one
+    already on the chain, so the 'already published' refusal must not apply.
+    """
+    prior = prior or {}
+    return any(str(new or "") != str(prior.get(k) or "")
+               for k, new in (("pfp", face), ("bio", bio), ("url", url)))
+
+
 def create_app(state: AppState) -> FastAPI:
     TEMPLATES._screen_of = state.screen          # the feed card's screen_text()
     # The operator's own choice of face (admin panel, `brand` setting) when the service did not
@@ -4705,7 +4717,18 @@ def create_app(state: AppState) -> FastAPI:
             # starting block where no rescan could ever find it.
             existing = find_own_announcements(
                 rpc, state.messaging.params, state.identity.public_bytes)
-            if existing and not claimed:
+            # A new face, bio or link is a new statement, not a repeat
+            # (2026-11-03: setting a PFP after the first announcement was
+            # refused as 'already published' and never reached the chain).
+            try:
+                _prior = _profile_of(home) if home else {}
+                _changed = announcement_changed(
+                    _prior, face, state.setting("bio", ""),
+                    state.setting("url", ""))
+            except Exception:
+                log.warning("announce: change check failed", exc_info=True)
+                _changed = False
+            if existing and not claimed and not _changed:
                 # Refuse, and do NOT write the rows back. Restoring them
                 # would undo a reset the user asked for -- these are the
                 # very transactions they cleared. Knowing the announcement
