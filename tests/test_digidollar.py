@@ -65,10 +65,12 @@ def test_the_pilot_says_its_core_is_still_syncing_rather_than_not_active():
     class Ctx:
         caller = {}
         def rpc(self, chain, method, *params):
-            return {"getblockchaininfo": {"chain": "main", "blocks": 23_552_457, "headers": 24_505_489},
-                    "getdigidollardeploymentinfo": {"enabled": False, "activation_height": 23_869_440}}[method]
+            # While the Core catches up, the arcade borrows getblockchaininfo from a sharer further on.
+            return {"getblockchaininfo": {"chain": "main", "blocks": 24_505_510, "headers": 24_505_510},
+                    "getdigidollardeploymentinfo": {"enabled": False, "activation_height": 23_869_440,
+                                                    "thaw_day": {"tip_height": 23_552_457}}}[method]
     for run in (lambda: pilot.command_ddstats(Ctx()), lambda: pilot.command_ddcollateral(Ctx(), 100),
                 lambda: pilot.command_ddmint(Ctx(), 100)):
         with pytest.raises(ValueError, match="starts at block 23,869,440, and this arcade's DigiByte Core has checked "
-                                             "blocks to 23,552,457 of 24,505,489, still syncing"):
+                                             "blocks to 23,552,457: it is still syncing"):
             run()
