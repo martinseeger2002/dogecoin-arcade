@@ -191,3 +191,20 @@ def test_a_folder_with_only_a_config_is_not_counted_as_the_chain(tmp_path):
     assert disk_sizes.node_folder(chain) in (None,) or disk_sizes.node_folder(chain) != conf_dir
     (conf_dir / "dogecoin.conf").write_text(f"datadir={data}\n")
     assert disk_sizes.node_folder(chain) == data
+
+
+def test_an_installed_core_on_a_chain_set_to_borrow_or_off_is_not_started(monkeypatch):
+    """2026-11-03, the ThinkPad: DigiByte, set to borrow after its node ran the machine out of memory, was started again
+    at the arcade's next start because start_installed looked only at what was installed. Only chains run here start;
+    an installed chain with no setting is run here, as before."""
+    started = []
+    monkeypatch.setattr(core_install, "start_one", lambda installed: started.append(installed["net"]) or True)
+
+    class State:
+        def settings(self):
+            return {"core_installed:dgb": {"net": "dgb"}, "core:dgb": "borrow",
+                    "core_installed:lky": {"net": "lky"}, "core:lky": "off",
+                    "core_installed:wjk": {"net": "wjk"}, "core:wjk": "here",
+                    "core_installed:flop": {"net": "flop"}}
+    assert sorted(core_install.start_installed(State())) == ["flop", "wjk"]
+    assert sorted(started) == ["flop", "wjk"]

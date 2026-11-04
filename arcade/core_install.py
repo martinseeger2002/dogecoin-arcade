@@ -301,10 +301,16 @@ def start_one(installed: dict) -> bool:
 
 
 def start_installed(state) -> list[str]:
-    """At the arcade's start: every Core this arcade installed, started if it is not running."""
+    """At the arcade's start: every Core this arcade installed, started if it is not running -- unless its chain is set
+    to borrow or off in Admin -> Chains (2026-11-03, the ThinkPad: DigiByte set to borrow after it ran the machine out
+    of memory was started again at the next restart, because this looked only at what was installed)."""
+    from .cores import HERE, mode
+    settings = state.settings() or {}
     started = []
-    for k, v in list((state.settings() or {}).items()):
+    for k, v in list(settings.items()):
         if k.startswith("core_installed:") and isinstance(v, dict):
+            if mode(settings, k.split(":", 1)[1]) != HERE:
+                continue                                       # installed, but borrowed or off: not run
             try:
                 if start_one(v):
                     started.append(k.split(":", 1)[1])

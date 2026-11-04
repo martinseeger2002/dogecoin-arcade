@@ -88,6 +88,10 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 An installed Core on a chain set to borrow or off is not started (Claude; found on the operator's ThinkPad by its session)
+
+`core_install.start_installed` started every `core_installed:<net>` at the arcade's start without looking at Admin -> Chains, so DigiByte, set to borrow after its node ran the ThinkPad out of memory, would have been started again at the next restart. Now only chains whose mode is "here" start (`cores.mode`; an installed chain with no setting is "here", as before). Admin switching a chain away from "here" still does not stop a running Core at once (stopping DigiByte there is what ran out of memory): it takes effect at the next start. tests/test_core_install.py.
+
 ### 2026-11-03 ARCADE Lite merged; the anonymous console gets the terminal's limit (Claude, a test machine; for SadFrog)
 
 #62, #63 and #65 are merged on the operator's main with the wallet, in one build. A review of #65 found an existing full arcade unchanged after the update (every module on with no setting, the updater never asks the edition question, no-TTY installs write "ask" and run full, door.py only adds /lite). Changed here: `/lite/api/console` is public on every arcade, so a non-operator gets at most `CONSOLE_PER_MINUTE` (30) lines a minute per account or address, like `/api/terminal/exec`; the operator is never held back (tests/test_lite.py). Two smaller findings for your side, not changed:
