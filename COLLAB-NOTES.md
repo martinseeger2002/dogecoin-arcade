@@ -88,6 +88,53 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 · SadFrog's side (Claude) · branches `team/lite-modules-*`, `team/lite-digidollar` · Node modules, piloted with DigiDollar
+SadFrog asked for a trial of node-module packages, with DigiDollar on DigiByte as the pilot. Four stacked branches on
+`team/lite-themes`, one PR each when SadFrog says to push (none pushed yet):
+1. **`team/lite-modules-sandbox`: the package and the sandbox.**
+   - `packages.py` gains `kind: "module"`: `module.py`, `lib/*.py` and `files/` for its pages.
+   - Its manifest names its commands (audience, args, help), `needs.chains` and `needs.max_fee`.
+   - `needs.chains` lists the Core reads it may ask, which must be get/decode/estimate/calculate/validate or
+     `scantxoutset`, never a wallet RPC.
+   - `arcade/sandbox.py`: Landlock, so the process reads Python and its package and writes only its own data folder;
+     seccomp, so `socket()`, `ptrace` and `process_vm_*` fail; and rlimits.
+   - `arcade/modrun.py` confines the process, then loads `module.py`.
+2. **`team/lite-modules-host`: the host.** `arcade/modhost.py` runs each module in its own process, from the arcade's
+   home, and answers only the chain reads its manifest names.
+   - `prepare()` turns a module's `{"prepared": ...}` into a `funding.Unsigned`. Every input is read from the chain
+     and must be the caller's own coin, and the fee is capped.
+   - **For you, exchange safety:** `funding.Unsigned` gains `version`, default 1, which `assemble` and
+     `_assemble_witness` now write. Nothing existing changes; a DigiDollar mint needs 0x01000770.
+3. **`team/lite-modules-console`: in the arcade.**
+   - `modules.packaged()`: an installed module is a module, kind "node", off in both editions until switched on.
+   - Commands: `checkmodule`, `installmodule` and `removemodule`; a module's commands join `help` and `arcade-cli`.
+   - Pages at `/m/<name>/`, served with `Content-Security-Policy: sandbox`.
+   - The window sends its wallet's public keys with a module's command (passed on only if they hash to the caller's
+     address), and signs a returned offer through `wallet.checked` and `wallet.confirm` (`/account/sign`).
+4. **`team/lite-digidollar`: the pilot.**
+   - `examples/packages/digidollar`: `ddstats`, `ddcollateral` and `ddmint`.
+   - A mint is built in the module, as DigiByte Core 9.26.7's builder makes one: a vault with an unspendable (NUMS)
+     internal key and two CLTV paths, the 0-value DD output, and the "DD" OP_RETURN.
+   - It is paid from the user's own P2PKH coins, which the browser wallet signs (ECDSA).
+   - `docs/arcade-lite/DIGIDOLLAR.md` has the research and the sources.
+
+**Why the pilot only mints.** DigiByte has no PSBT or unsigned path: mint, send and redeem are Core wallet RPCs. Send
+and redeem spend Taproot outputs (BIP-340 Schnorr), which coins.js cannot sign. So the module refuses to mint on
+mainnet.
+
+**Tests.**
+- test_module_sandbox, test_module_host, test_module_packages and test_digidollar: the BIP-341 vectors, and the mint
+  laid out byte by byte.
+- test_digidollar_regtest: a mint on a real digibyted regtest, signed by a key no Core holds. It skips without
+  `digibyted`. **Not run yet:** this session was not allowed to run the downloaded DigiByte binary.
+
+**Questions for you.**
+1. Taproot (BIP-340) signing in coins.js and Taproot inputs in funding: it is wallet code, so it is yours to say yes
+   to. DigiDollar send and redeem need it.
+2. A module's prepared transaction can pay any output. The wallet shows the module's summary, the fee and the change.
+   Should a module's offer also list every output in words?
+3. Should `modhost.prepare` refuse coins that carry inscriptions, as `funding.choose` does?
+
 ### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-themes` · Theme packages: made, tried and worn without a release
 SadFrog: our job is now to modularize Lite down to a bare self-custody core (Billy takes most full-arcade build-outs),
 starting with operators making their own themes, apps and node modules without GitHub. Themes first; the design is

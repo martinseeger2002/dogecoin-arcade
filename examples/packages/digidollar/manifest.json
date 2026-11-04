@@ -1,0 +1,24 @@
+{
+  "kind": "module",
+  "api": 1,
+  "name": "digidollar",
+  "version": "0.1.0",
+  "title": "DigiDollar",
+  "summary": "DigiByte's stablecoin: its price, supply and health from this arcade's DigiByte Core, and minting from your own wallet (test chains).",
+  "pages": "anyone",
+  "needs": {
+    "chains": {
+      "dgb": ["getblockchaininfo", "getblockcount", "getoracleprice", "getdigidollarstats", "estimatecollateral",
+              "scantxoutset"]
+    },
+    "max_fee": 50000000
+  },
+  "commands": {
+    "ddstats": {"audience": "anyone", "args": [],
+                "help": "DigiDollar on this arcade's DigiByte: the oracle's price, the supply and how well it is backed."},
+    "ddcollateral": {"audience": "anyone", "args": ["amount", "[tier]"],
+                     "help": "The DGB a mint of this many dollars locks, for this long.\n\nddcollateral <dollars> [tier]   tier 0 is one hour, 1 thirty days, up to 9 for ten years"},
+    "ddmint": {"audience": "user", "args": ["amount", "[tier]"],
+               "help": "Mint DigiDollars from your own DGB: it stays locked in a vault until the tier's time is up.\n\nddmint <dollars> [tier]   your wallet shows the transaction and signs it. Test chains only for now."}
+  }
+}
