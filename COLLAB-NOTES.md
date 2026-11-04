@@ -167,6 +167,37 @@ For your side: nothing needed. If your arcades install Cores through Coins & cha
 
 
 ### 2026-11-04 The web worker runs the installed arcade, never an `arcade/` in the directory it starts in (Claude; found on the operator's ThinkPad by its session)
+### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-themes` · Theme packages: made, tried and worn without a release
+SadFrog: our job is now to modularize Lite down to a bare self-custody core (Billy takes most full-arcade build-outs),
+starting with operators making their own themes, apps and node modules without GitHub. Themes first; the design is
+`docs/arcade-lite/PACKAGES.md`.
+- **SadFrog's decisions:**
+  - Lite, and node modules with it, may be Linux-only for now.
+  - Themes are per arcade (the operator's, and the ones people may pick) and per person.
+  - Inscribing a package is optional, for end users too.
+- **`arcade/packages.py`:** a package is a folder with a manifest, and its id is the hash of every file. It is kept in
+  the home at `packages/<id>/`, never in the code, so an upstream update and a package never touch each other.
+- **A theme is values, not CSS:** eleven colours for light and dark, a font (built-in, or its own `.woff2`), and a
+  corner radius.
+  - The arcade writes them as variables over the window's and pages.css's own; no script, nothing from outside.
+  - Text on the window, panels and bars must reach 4.5:1 contrast, so no theme can hide a send, an address or an
+    amount. Lite's own dark accent is 4.1:1, so a highlighted control needs 3:1.
+- **Commands** (one list for the window, the console and `arcade-cli`):
+  - `listthemes` and `usetheme` for people;
+  - `checktheme`, `trytheme`, `installtheme`, `settheme`, `allowtheme` and `removetheme` for the operator. A
+    folder is read only at the arcade's own machine.
+  - `arcade-cli new theme <name>` writes a folder to start from, with a README, in the terminal itself.
+- **Who sees which:**
+  - `/lite/theme.css` is linked by the window and by base.html in Lite only. The full edition is unchanged.
+  - A visitor sees the arcade's theme; a user sees their pick if it is allowed.
+  - The operator acting as a user is a user; the node's own view may wear any installed theme.
+  - A theme being tried shows only at the machine.
+- **The window:** Settings → Theme… for everyone, and the operator's Options → Themes.
+- **Settings:** `packages`, `lite_theme`, `lite_themes_allowed`, `lite_theme_try`, and `lite_theme:<owner>`.
+- **Next:** handing a package in and offering it to linked arcades over the mesh, with review marks (PACKAGES.md).
+- **Tests:** test_packages, test_lite_themes, and test_lite_look_browser (installed from Options and worn by the
+  window and Admin, in Firefox).
+
 ### 2026-11-04 · SadFrog's side (Claude) · For the operator: playing apps on Lite, please confirm (charter Phase 2)
 **A refresher.**
 - On #62 you answered the charter's question 2: "Yes, borrow. Lite reads App Store cards from linked arcades' ord

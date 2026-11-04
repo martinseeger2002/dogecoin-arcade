@@ -1,0 +1,113 @@
+{#- Themes (arcade/packages.py), through the console's own commands. Settings -> Theme… is everyone's: the arcade's
+    theme, and a signed-in person's own pick from the ones the operator allows (listthemes, usetheme). Options ->
+    Themes is the operator's: the installed ones, the arcade's own, who may pick which, and a folder on this machine
+    to check, try and install (checktheme, trytheme, installtheme). -#}
+<div class="dialog" id="theme" role="dialog" aria-label="Theme">
+  <div class="window">
+    <header><span>Theme</span><button type="button" data-close aria-label="Close">×</button></header>
+    <div class="wbody">
+      <fieldset><legend>Your theme</legend>
+        {% if account or audience == 'operator' %}<div id="t-pick"><span class="muted">Loading…</span></div>
+        {% else %}<p style="margin:0">This arcade wears <span id="t-arcade">its own look</span>.
+          <a href="/join">Sign in</a> to pick your own.</p>{% endif %}
+      </fieldset>
+      <p id="t-said" hidden></p>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var NODE = {{ 'true' if audience == 'operator' and not account else 'false' }};
+  function run(line) {
+    return fetch('/lite/api/console', {method: 'POST', credentials: 'same-origin', body: JSON.stringify({line: line}),
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Lite': '1', 'X-Arcade-Admin': '1'}})
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (!j.ok) throw new Error(j.error || 'refused'); return j.result; });
+  }
+  function tell(id, text, cls) { var p = $(id); if (!p) return; p.textContent = text; p.className = cls || ''; p.hidden = !text; }
+  function restyle() {
+    var link = document.querySelector('link[href^="/lite/theme.css"]');
+    if (link) link.href = '/lite/theme.css?' + Date.now();
+  }
+  function titleOf(t, id) {
+    var all = (t.installed || []).concat(t.pick || []);
+    for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i].title;
+    return id ? 'a theme of its own' : "ARCADE Lite's own look";
+  }
+
+  function pick() {
+    return run('listthemes').then(function (t) {
+      if ($('t-arcade')) { $('t-arcade').textContent = titleOf(t, t.arcade); return; }
+      var box = $('t-pick'), choices = [{id: 'none', title: "The arcade's: " + titleOf(t, t.arcade)}]
+        .concat(NODE ? t.installed : t.pick);
+      box.textContent = '';
+      choices.forEach(function (c) {
+        var label = document.createElement('label'), input = document.createElement('input');
+        input.type = 'radio'; input.name = 't-choice'; input.value = c.id;
+        input.checked = c.id === (t.yours || 'none');
+        input.onchange = function () {
+          tell('t-said', ''); run('usetheme ' + c.id).then(function () { restyle(); tell('t-said', 'Saved.', 'ok'); },
+            function (e) { tell('t-said', String(e.message || e), 'bad'); });
+        };
+        label.style.display = 'block'; label.append(input, ' ' + c.title);
+        if (c.summary) label.title = c.summary;
+        box.appendChild(label);
+      });
+      if (choices.length === 1) box.insertAdjacentHTML('beforeend',
+        '<p class="muted" style="margin:6px 0 0">This arcade\'s operator has not let people pick a theme yet.</p>');
+    }).catch(function (e) { tell('t-said', String(e.message || e), 'bad'); });
+  }
+  document.querySelectorAll('[data-theme-open]').forEach(function (b) {
+    b.addEventListener('click', function () { $('theme').classList.add('open'); tell('t-said', ''); pick(); });
+  });
+
+  {% if audience == 'operator' %}
+  function installed() {
+    return run('listthemes').then(function (t) {
+      var tb = $('o-themes'); tb.textContent = '';
+      var rows = [{id: 'none', title: "ARCADE Lite's own look", version: ''}].concat(t.installed);
+      rows.forEach(function (r) {
+        var tr = tb.insertRow();
+        tr.insertCell().textContent = r.title;
+        var v = tr.insertCell(); v.className = 'muted'; v.textContent = r.version ? r.version + ' · ' + r.id.slice(0, 12) : '';
+        var arcade = document.createElement('input');
+        arcade.type = 'radio'; arcade.name = 'o-arcade-theme'; arcade.checked = (t.arcade || 'none') === r.id;
+        arcade.onchange = function () { act('settheme ' + r.id); };
+        tr.insertCell().appendChild(arcade);
+        var allow = tr.insertCell(), drop = tr.insertCell();
+        if (r.id === 'none') return;
+        var box = document.createElement('input');
+        box.type = 'checkbox'; box.checked = !!r.allowed;
+        box.onchange = function () { act('allowtheme ' + r.id + (box.checked ? ' on' : ' off')); };
+        allow.appendChild(box);
+        var gone = document.createElement('button');
+        gone.type = 'button'; gone.textContent = 'Remove';
+        gone.onclick = function () { if (confirm('Remove ' + r.title + '? Whoever wears it sees the arcade\'s theme.')) act('removetheme ' + r.id); };
+        drop.appendChild(gone);
+      });
+      $('o-trying').hidden = !t.trying;
+      $('o-trying-at').textContent = t.trying || '';
+    }).catch(function (e) { tell('o-said', String(e.message || e), 'bad'); });
+  }
+  function act(line, said) {
+    tell('o-said', '');
+    return run(line).then(function (out) {
+      restyle(); tell('o-said', said ? said(out) : (typeof out === 'string' ? out : 'Done.'), 'ok'); return installed();
+    }, function (e) { tell('o-said', String(e.message || e), 'bad'); });
+  }
+  function folder() { return JSON.stringify($('o-tfolder').value.trim()); }
+  $('o-tcheck').onclick = function () {
+    act('checktheme ' + folder(), function (o) { return o.name + ' ' + o.version + ' is a theme this arcade can wear: ' + o.id.slice(0, 12); });
+  };
+  $('o-ttry').onclick = function () { act('trytheme ' + folder()); };
+  $('o-tinstall').onclick = function () {
+    act('installtheme ' + folder(), function (o) { return 'Installed ' + o.name + ' ' + o.version + '. Choose it below.'; });
+  };
+  $('o-tstop').onclick = function () { act('trytheme off'); };
+  document.querySelectorAll('[data-otab="themes"], [data-options="themes"]').forEach(function (b) {
+    b.addEventListener('click', installed);
+  });
+  {% endif %}
+})();
+</script>

@@ -13,10 +13,13 @@ from __future__ import annotations
 import inspect
 import json
 import shlex
+import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from .. import modules as modulelib
+from .. import packages as packagelib
 
 #: Who may run a command, least to most.
 AUDIENCES = ("anyone", "user", "operator")
@@ -649,3 +652,152 @@ def whoami(caller) -> dict:
             out["addresses"][chain.network] = address
             out["name"] = out["name"] or (caller.name_of(address) or None)
     return out
+
+
+# --- themes ---------------------------------------------------------------------------------------------------------
+#
+# A theme is a package the operator makes or chooses (arcade/packages.py), kept in the arcade's home. The operator
+# sets the arcade's own and which ones people may pick; each person picks theirs. The operator's own choice, and what
+# `trytheme` shows, are the machine's: from a folder on it.
+
+
+def _theme(caller, said: str) -> str:
+    """An installed theme by its name, or its id or the start of it (8 characters or more)."""
+    said = (said or "").strip().lower()
+    have = caller.state.setting(packagelib.SETTING) or {}
+    found = [pid for pid, row in have.items() if row.get("kind") == "theme"
+             and (row.get("name") == said or (len(said) >= 8 and pid.startswith(said)))]
+    if len(found) != 1:
+        raise CommandError(f"no installed theme '{said}'" if not found
+                           else f"more than one theme is called '{said}': use its id")
+    return found[0]
+
+
+def _folder(caller, folder: str):
+    if not caller.local:
+        raise CommandError("a theme is read from a folder on the arcade's own machine: run this there")
+    try:
+        manifest, files = packagelib.read(folder)
+    except (packagelib.PackageError, OSError) as exc:
+        raise CommandError(str(exc)) from None
+    return manifest, files
+
+
+def _owner(caller) -> str:
+    return caller.account.lower() if caller.account else "node"
+
+
+@command("themes")
+def listthemes(caller) -> dict:
+    """The arcade's theme, the ones you may pick, and yours. The operator also sees every installed one."""
+    settings = caller.state.settings()
+    have = {pid: row for pid, row in (settings.get(packagelib.SETTING) or {}).items() if row.get("kind") == "theme"}
+    allowed = set(settings.get(packagelib.ALLOWED) or [])
+    row = lambda pid: {"id": pid, "name": have[pid]["name"], "title": have[pid]["title"],  # noqa: E731
+                       "version": have[pid]["version"], "summary": have[pid]["summary"], "allowed": pid in allowed}
+    out = {"arcade": settings.get(packagelib.THEME) or None,
+           "pick": [row(pid) for pid in sorted(have, key=lambda p: have[p]["title"]) if pid in allowed]}
+    if caller.may("user"):          # your own pick while you may wear it, not the arcade's that you see without one
+        seen = packagelib.chosen(settings, _owner(caller))
+        out["yours"] = seen if seen and settings.get(f"{packagelib.THEME}:{_owner(caller)}") == seen else None
+    if caller.may("operator"):
+        out["installed"] = [row(pid) for pid in sorted(have, key=lambda p: have[p]["title"])]
+        out["trying"] = settings.get(packagelib.TRY) or None
+    return out
+
+
+@command("themes", audience="user")
+def usetheme(caller, theme: str = "none") -> str:
+    """Pick your own theme from the ones this arcade lets people pick, or `none` for the arcade's.
+
+    usetheme <name>   listthemes names them
+    usetheme none"""
+    owner = _owner(caller)
+    if theme == "none":
+        caller.state.set_setting(f"{packagelib.THEME}:{owner}", None)
+        return "you see the arcade's theme"
+    pid = _theme(caller, theme)
+    if owner != "node" and pid not in (caller.state.setting(packagelib.ALLOWED) or []):
+        raise CommandError("this arcade's operator has not let people pick that theme")
+    caller.state.set_setting(f"{packagelib.THEME}:{owner}", pid)
+    return f"you see {theme}"
+
+
+@command("themes", audience="operator")
+def checktheme(caller, folder: str) -> dict:
+    """Read a theme's folder and say what is wrong with it, or its id. Nothing is kept.
+
+    checktheme ~/my-theme   at the arcade's own machine
+    `arcade-cli new theme <name>` makes a folder to start from."""
+    manifest, files = _folder(caller, folder)
+    return {"id": packagelib.package_id(files), "name": manifest["name"], "version": manifest["version"],
+            "files": sorted(files)}
+
+
+@command("themes", audience="operator")
+def trytheme(caller, folder: str) -> str:
+    """Show a theme's folder in this machine's browser only, as it is now, until `trytheme off`.
+
+    trytheme ~/my-theme   change the folder and reload the page to see it again
+    trytheme off"""
+    if folder == "off":
+        caller.state.set_setting(packagelib.TRY, None)
+        return "trying nothing"
+    _folder(caller, folder)
+    caller.state.set_setting(packagelib.TRY, str(Path(folder).expanduser().resolve()))
+    return "reload the page on this machine to see it; nobody else does"
+
+
+@command("themes", audience="operator")
+def installtheme(caller, folder: str) -> dict:
+    """Keep a theme from a folder on this machine, under its id. It shows nowhere until it is chosen.
+
+    installtheme ~/my-theme   then settheme or allowtheme"""
+    _folder(caller, folder)
+    try:
+        pid, row = packagelib.install(caller.state.home, folder)
+    except (packagelib.PackageError, OSError) as exc:
+        raise CommandError(str(exc)) from None
+    have = dict(caller.state.setting(packagelib.SETTING) or {})
+    have[pid] = row
+    caller.state.set_setting(packagelib.SETTING, have)
+    return {"id": pid, "name": row["name"], "version": row["version"]}
+
+
+@command("themes", audience="operator")
+def settheme(caller, theme: str = "none") -> str:
+    """Make an installed theme this arcade's own look, for everyone who has not picked one, or `none`.
+
+    settheme <name>
+    settheme none   ARCADE Lite's own look"""
+    pid = None if theme == "none" else _theme(caller, theme)
+    caller.state.set_setting(packagelib.THEME, pid)
+    return f"this arcade wears {theme}" if pid else "this arcade wears ARCADE Lite's own look"
+
+
+@command("themes", audience="operator")
+def allowtheme(caller, theme: str, on: str = "on") -> str:
+    """Let people pick an installed theme for themselves, or stop them (`off`; who had it goes back to the arcade's).
+
+    allowtheme <name> [on|off]"""
+    pid = _theme(caller, theme)
+    allowed = [p for p in caller.state.setting(packagelib.ALLOWED) or [] if p != pid]
+    if on not in ("on", "off"):
+        raise CommandError("usage: allowtheme <name> [on|off]")
+    caller.state.set_setting(packagelib.ALLOWED, allowed + ([pid] if on == "on" else []))
+    return f"people {'may' if on == 'on' else 'may not'} pick {theme}"
+
+
+@command("themes", audience="operator")
+def removetheme(caller, theme: str) -> str:
+    """Remove an installed theme. Whoever wore it sees the arcade's theme again."""
+    pid = _theme(caller, theme)
+    have = dict(caller.state.setting(packagelib.SETTING) or {})
+    have.pop(pid, None)
+    caller.state.set_setting(packagelib.SETTING, have)
+    allowed = caller.state.setting(packagelib.ALLOWED) or []
+    caller.state.set_setting(packagelib.ALLOWED, [p for p in allowed if p != pid])
+    if caller.state.setting(packagelib.THEME) == pid:
+        caller.state.set_setting(packagelib.THEME, None)
+    shutil.rmtree(packagelib.home_of(caller.state.home, pid), ignore_errors=True)
+    return f"removed {theme}"

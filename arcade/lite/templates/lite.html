@@ -77,6 +77,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   border:1px solid var(--line)}
 @media (max-width:700px){.cols{grid-template-columns:1fr} .toolbar span{display:none}}
 </style>
+<link rel="stylesheet" href="/lite/theme.css">{# the theme this caller sees: arcade/packages.py #}
 </head>
 <body>
 <nav class="menubar" id="menubar">
@@ -90,9 +91,11 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   <div class="menu"><button type="button">Settings</button><ul>
     {% if audience == 'operator' %}<li><button type="button" data-options="general">Options…</button></li>
     <li><button type="button" data-options="modules">Edition and modules…</button></li>
+    <li><button type="button" data-options="themes">Themes…</button></li>
     <li><hr></li><li><button type="button" data-go="/admin">Admin: every control…</button></li>
     {% elif audience == 'user' %}<li><button type="button" data-go="/me">Your account…</button></li>
     {% else %}<li><button type="button" disabled>Options…</button></li>{% endif %}
+    <li><button type="button" data-theme-open>Theme…</button></li>
   </ul></div>
   <div class="menu"><button type="button">Window</button><ul>
     <li><button type="button" data-win="info">Information</button></li>
@@ -186,6 +189,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
 </div>
 
 {% include "_options.html" %}
+{% include "_themes.html" %}
 
 <script>
 (function () {
