@@ -83,3 +83,49 @@ def test_admin_wears_the_lite_look_in_lite_and_its_own_in_full(browser, served):
         assert browser.find_element(By.ID, "w-form").is_displayed(), "the bar's Send opens the window's own tab"
     finally:
         state.set_setting("edition", None)
+
+
+def test_the_operator_installs_a_theme_from_options_and_the_window_and_admin_wear_it(browser, served, tmp_path):
+    """Options -> Themes, as an operator meets it: a folder made with `arcade-cli new theme`, checked and installed
+    from the window, made the arcade's, and worn by the window and by Admin in Lite; then Settings -> Theme… back to
+    the arcade's own look for the node's view."""
+    import json
+    from arcade import packages
+    base, state, node = served
+    folder = packages.template(tmp_path, "sunset")
+    manifest = json.loads((folder / "manifest.json").read_text())
+    manifest["look"]["light"].update(window="#fdf0e0", bar="#f6dcc0")
+    manifest["look"]["dark"] = None
+    del manifest["look"]["dark"]
+    (folder / "manifest.json").write_text(json.dumps(manifest))
+    state.set_setting("edition", "lite")
+    try:
+        browser.delete_all_cookies()
+        browser.get(f"{base}/lite")
+        browser.execute_script("document.documentElement.dataset.theme = 'light'")
+        _press(browser, '[data-options="themes"]')
+        wait = WebDriverWait(browser, 30, poll_frequency=0.2)
+        wait.until(lambda d: d.find_element(By.ID, "o-themes").text)
+        browser.find_element(By.ID, "o-tfolder").send_keys(str(folder))
+        _press(browser, "#o-tcheck")
+        wait.until(lambda d: "can wear" in d.find_element(By.ID, "o-said").text)
+        _press(browser, "#o-tinstall")
+        wait.until(lambda d: "Sunset" in d.find_element(By.ID, "o-themes").text)
+        _press(browser, '#o-themes tr:nth-child(2) input[type="radio"]')
+        wait.until(lambda d: _look(d, "body", "background-color")[0] == "rgb(253, 240, 224)")
+        _shot(browser, "lite-theme")
+        browser.get(f"{base}/admin")
+        assert _look(browser, "body", "background-color")[0] == "rgb(253, 240, 224)", "Admin wears it too"
+        assert _look(browser, "header", "background-color")[0] == "rgb(246, 220, 192)"
+
+        browser.get(f"{base}/lite")
+        _press(browser, "[data-theme-open]")
+        wait.until(lambda d: d.find_elements(By.CSS_SELECTOR, '#t-pick input[value="none"]'))
+        assert browser.execute_script("return document.querySelector('#t-pick input[value=\"none\"]').checked"), \
+            "wearing the arcade's theme is not a pick of one's own"
+        _press(browser, '#t-pick input[type="radio"]:not([value="none"])')
+        wait.until(lambda d: d.find_element(By.ID, "t-said").text)
+        assert "Saved" in browser.find_element(By.ID, "t-said").text, browser.find_element(By.ID, "t-said").text
+        assert state.setting(f"{packages.THEME}:node"), "the node's own view picked its theme"
+    finally:
+        state.set_setting("edition", None)
