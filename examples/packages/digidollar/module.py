@@ -43,14 +43,17 @@ def _sats(value) -> int:
 
 def _active(ctx) -> dict:
     """The Core's chain, refused in plain words while it has not checked DigiDollar's first block: a Core still
-    syncing answers every DigiDollar read with "not yet active", whatever its headers say."""
-    chain = ctx.rpc(CHAIN, "getblockchaininfo")
+    syncing answers every DigiDollar read with "not yet active", whatever its headers say. The height is the one that
+    Core gives with its answer: while it catches up, the arcade reads getblockchaininfo from an arcade sharing the
+    chain, which is further on."""
     said = ctx.rpc(CHAIN, "getdigidollardeploymentinfo")
     if not said.get("enabled"):
-        syncing = f" of {chain['headers']:,}, still syncing" if chain.get("headers", 0) > chain["blocks"] else ""
-        raise ValueError(f"DigiDollar starts at block {said.get('activation_height', 0):,}, and this arcade's "
-                         f"DigiByte Core has checked blocks to {chain['blocks']:,}{syncing}")
-    return chain
+        start, tip = said.get("activation_height", 0), (said.get("thaw_day") or {}).get("tip_height")
+        if tip is None:
+            raise ValueError(f"DigiDollar is not active on this arcade's DigiByte Core yet (from block {start:,})")
+        raise ValueError(f"DigiDollar starts at block {start:,}, and this arcade's DigiByte Core has checked blocks "
+                         f"to {tip:,}" + (": it is still syncing" if tip < start else ""))
+    return ctx.rpc(CHAIN, "getblockchaininfo")
 
 
 def command_ddstats(ctx):
