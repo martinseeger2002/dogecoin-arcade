@@ -733,9 +733,11 @@ DIGIBYTE = dataclasses.replace(
 # Ports: RPC 32551, P2P 32552. Versions: P2PKH 35 ("F", no other chain's), P2SH 22 (Dogecoin's and Pepecoin's own
 # script byte, never another chain's key hash, already in txbuild.SCRIPTHASH_VERSIONS), WIF 158 (Dogecoin's and
 # Pepecoin mainnet's 0x9E). Seeds: of seed.flopcoin.net and seed2.flopcoin.net only 216.45.61.204 answered a
-# handshake on 2026-11-03. The floor: the tip that day was 913,980 (a peer's version message), rounded up about
-# two days ahead at one-minute blocks.
-FLOP_MAINNET_FLOOR = 917_000
+# handshake on 2026-11-03. The floor: below the tip (914,735 on 2026-11-04). It was 917,000 at first, two days ahead,
+# and until the chain got there no arcade had a Flopcoin index: an import's walk (blocks 0 to the index's top) had
+# nothing to read, and no Flopcoin balance showed (2026-11-04, "I imported my flop key, but no balance showed up
+# yet"). No arcade had read a block of it, so lowering it redid nothing.
+FLOP_MAINNET_FLOOR = 914_000
 
 FLOPCOIN = dataclasses.replace(
     DOGECOIN,
@@ -753,6 +755,9 @@ FLOPCOIN = dataclasses.replace(
     auxpow_chain_id=0xA3,
     addon=True, node_dir=".flopcoin", node_conf="flopcoin.conf",
     letter="F", family="FLOP", net_word="flopcoin", real_coins=True,
+    # Its chainTxData is old: verificationprogress is 0.99988 at a live tip (2026-11-04), and a 1.14 Core says no
+    # initialblockdownload, so caught-up headers say it is synced (as Wojakcoin's).
+    trust_progress=False,
 )
 
 NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN, LITECOIN, LITECOIN_TESTNET,
