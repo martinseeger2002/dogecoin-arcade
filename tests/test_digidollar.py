@@ -50,3 +50,25 @@ def test_the_pilot_mints_as_digibyte_core_builds_a_mint():
     assert bs == change and 10_000_000 < 10 ** 12 - vault - back < 13_000_000, "0.35 DGB a kB, over the 0.1 floor"
     with pytest.raises(ValueError, match="needs"):
         pilot.mint(pub[1:], 10000, 0, 1000, 0, 2 * 10 ** 12, coins, change)
+
+
+def test_the_pilot_says_its_core_is_still_syncing_rather_than_not_active():
+    """A Core whose headers are past DigiDollar's first block but whose checked blocks are not answers every DigiDollar
+    read "not yet active" (seen on the Lite test node): the module says why instead."""
+    sys.path.insert(0, str(PILOT))
+    try:
+        import importlib
+        pilot = importlib.import_module("module")
+    finally:
+        sys.path.remove(str(PILOT))
+
+    class Ctx:
+        caller = {}
+        def rpc(self, chain, method, *params):
+            return {"getblockchaininfo": {"chain": "main", "blocks": 23_552_457, "headers": 24_505_489},
+                    "getdigidollardeploymentinfo": {"enabled": False, "activation_height": 23_869_440}}[method]
+    for run in (lambda: pilot.command_ddstats(Ctx()), lambda: pilot.command_ddcollateral(Ctx(), 100),
+                lambda: pilot.command_ddmint(Ctx(), 100)):
+        with pytest.raises(ValueError, match="starts at block 23,869,440, and this arcade's DigiByte Core has checked "
+                                             "blocks to 23,552,457 of 24,505,489, still syncing"):
+            run()
