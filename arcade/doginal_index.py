@@ -44,7 +44,8 @@ log = logging.getLogger("arcade.doginal_index")
 #: read from each indexer's src/chain.rs `first_inscription_height`. Every arcade cuts the same chunks from these,
 #: so they never change without a new protocol word.
 STARTS = {"doge": 4_600_000, "main": 186_920, "test": 34_237, "ltc": 2_424_429, "ltctest": 2_669_127,
-          "bel": 22_470, "lky": 88_554, "wjk": 1, "dgb": 0}
+          "bel": 22_470, "lky": 88_554, "wjk": 1, "dgb": 0,
+          "flop": 917_000}
 SOURCES = {
     "doge": "ord-dogecoin (apezord) and wonky-ord: 4,600,000",
     "main": "ord-pepecoin (mvdnbrk) and pepecoin-ord-indexer: 186,920",
@@ -55,6 +56,9 @@ SOURCES = {
     "lky": "the first Doginals-style envelope on Luckycoin (no official indexer height found; scanned): 88,554",
     "wjk": "ord-wojakcoin chain.rs first_inscription_height: 1 (Doginals envelopes; SegWit is not active)",
     "dgb": "wonky-ord-digibyte (reallyshadydev) chain.rs first_inscription_height: 0 (Doginals envelopes in the first input)",
+    # 2026-11-03: "There are no flop coin ORD's yet we can incorporate them right now": none inscribed before the
+    # arcade reads the chain at all (config.FLOP_MAINNET_FLOOR), so the index starts there and misses nothing.
+    "flop": "none inscribed before the arcade reads Flopcoin (config.FLOP_MAINNET_FLOOR): 917,000",
 }
 #: Chains whose ords are mostly Taproot (ord's witness envelope) as well as the Doginals kind.
 TAPROOT = frozenset({"ltc", "ltctest", "bel"})     # Bellscoin: Nintondo/ord reads Taproot envelopes too

@@ -1,4 +1,4 @@
-"""Inscribing an ord -- a Doginal, a Pepinal, a Bellinal, a Luckinal, a Wojakinal or a DigiByte ordinal -- from the account's own wallet (the operator
+"""Inscribing an ord -- a Doginal, a Pepinal, a Bellinal, a Luckinal, a Wojakinal, a DigiByte ordinal or a Flopinal -- from the account's own wallet (the operator
 2026-10-23: "We created a Doge ord inscriber for completing the anti doginal dogs collection I want to add the option to
 inscribe an ORD under the creator tab. Make sure that the inscriber follows the rules of each chain individually because
 some of them are different"; asked, DOGE, PEP, BEL and LKY first, the player's own wallet signs).
@@ -76,11 +76,13 @@ RULES = {
     "wjk": Rules(_word("wjk"), "dogecoin", 240, False, "wojakinals (Doginals kind)"),
     # digibyteordinals.js writes 240-byte parts and wonky-ord-digibyte reads a 0-part envelope as nothing (2026-10-25).
     "dgb": Rules(_word("dgb"), "dogecoin", 240, False, "wonky-ord-digibyte (Doginals kind)"),
+    # Flopinals (2026-11-03): Dogecoin 1.14's code, so Doginals' own parts; the arcade's index is the first to read them.
+    "flop": Rules(_word("flop"), "dogecoin", 240, False, "the Doginals kind (this arcade's index)"),
     # Pepecoin testnet, for trying it with coins that cost nothing.
     "test": Rules(_word("test"), "pepecoin", 240, True, "pepecoin-ord-indexer"),
 }
 #: The ones the page offers first (the operator's answer); test chains are added where the arcade runs them.
-CHAINS = ("doge", "main", "bel", "lky", "wjk", "dgb")
+CHAINS = ("doge", "main", "bel", "lky", "wjk", "dgb", "flop")
 
 
 class OrdError(ValueError):
@@ -90,7 +92,7 @@ class OrdError(ValueError):
 def rules_of(net: str) -> Rules:
     got = RULES.get(net)
     if got is None:
-        raise OrdError("ords are inscribed on Dogecoin, Pepecoin, Bellscoin, Luckycoin, Wojakcoin and DigiByte")
+        raise OrdError("ords are inscribed on Dogecoin, Pepecoin, Bellscoin, Luckycoin, Wojakcoin, DigiByte and Flopcoin")
     return got
 
 

@@ -4,7 +4,8 @@ chains"; asked how: the arcade installs it).
 
 One click downloads the chain's official Core release for this machine, checks it against the SHA-256 pinned here
 (each one compared with the release's own published sums when this file was written, 2026-10-27; Bellscoin publishes
-none, and Luckycoin none for x86_64: those are pinned as downloaded that day), unpacks it under
+none, and Luckycoin none for x86_64: those are pinned as downloaded that day; Flopcoin
+publishes none either, pinned as downloaded 2026-11-03), unpacks it under
 ~/.dogecoinarcade/cores/<release>/, writes the chain's config where the arcade finds a Core by itself
 (~/<node_dir>/<node_conf>: server, txindex, no pruning, RPC on this machine only with its own password), starts the
 daemon, and reloads the arcade (the supervisor's zero-downtime HUP) so the chain is read from its new Core. No
@@ -88,6 +89,12 @@ RELEASES: dict[str, Release] = {
         "aarch64": ("digibyte-9.26.7-aarch64-linux-gnu.tar.gz",
                     "e194e267306fbf12953812d402c1cd49ccc3ed32186a754e5b8683325dfd754e", 66876600)},
         "digibyte-9.26.7/bin/digibyted", "digibyte-9.26.7/bin/digibyte-cli"),
+    # Flopcoin (2026-11-03): one Linux build, x86_64, the binaries at the archive's top level. The release publishes
+    # no sums, so this one is pinned as downloaded that day.
+    "flop": Release("flopcoin", "2.0.0.0", _GH.format("Flopcoin/Flopcoin", "v2.0.0.0"), {
+        "x86_64": ("flopcoin-v2.0.0.0-linux.tar.gz",
+                   "7e78da4a8e8c993a90f855c43cbce186bf84269d139c3695ad15606ae3d9905e", 29600108)},
+        "flopcoind", "flopcoin-cli"),
 }
 # Litecoin testnet: the same Core, its own folder, testnet=1.
 RELEASES["ltctest"] = Release("litecoin", "0.21.5.8", RELEASES["ltc"].url, RELEASES["ltc"].assets,

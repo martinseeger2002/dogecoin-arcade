@@ -817,7 +817,7 @@ export async function llmTopupSign(mine, {seller = "", here = false, network, tx
 //: names are config.py NETWORKS (`real_coins`; tests/test_mainnet_review_names.py holds them to it). A name this file
 //: does not know is mainnet too: asked about, never waved through. The test chains also sign with the m/44'/1' key
 //: (coins.COIN_TYPE), which holds no mainnet coin, so a node calling a mainnet chain "test" gets a signature for nothing.
-export const MAINNETS = new Set(["main", "doge", "ltc", "bel", "lky", "kot", "wjk", "dgb"]);
+export const MAINNETS = new Set(["main", "doge", "ltc", "bel", "lky", "kot", "wjk", "dgb", "flop"]);
 export const TESTNETS = new Set(["test", "regtest", "ltctest"]);
 export function isMainnet(network) {
   return !TESTNETS.has(String(network || ""));
@@ -3163,7 +3163,7 @@ export const TRADE = {
   CONFIRMATIONS: 0, CONFIRMATIONS_BIG: 1,       // 0 below the big line, 1 at or above it (2026-10-17; trade.py)
   BIG: {main: 1_000_000 * 100_000_000, doge: 1_000 * 100_000_000, ltc: 2 * 100_000_000,
        bel: 200 * 100_000_000, lky: 20 * 100_000_000, kot: 100 * 100_000_000, wjk: 100 * 100_000_000,
-       dgb: 1_000 * 100_000_000},
+       dgb: 1_000 * 100_000_000, flop: 1_000 * 100_000_000},
   // The most one delegated order may give (node_trader.DELEGATE_CAP, 2026-10-25): its key goes to the node, so the
   // operator could spend it. Another real-coin chain: its BIG line; a test chain: no cap.
   DELEGATE_CAP: {doge: 1_000 * 100_000_000, main: 100_000 * 100_000_000, ltc: 1 * 100_000_000},
@@ -3176,19 +3176,19 @@ export const TRADE = {
   // = htlc.dust_of), and the version bytes it may be paid to (trade.PAYEE_VERSIONS). tests/test_trade_fees.py holds
   // these to the Python numbers.
   CLAIM_FEE: {main: 1_000_000, test: 1_000_000, regtest: 1_000_000, doge: 1_000_000, ltc: 10_000, ltctest: 10_000,
-              bel: 10_000, lky: 1_000_000, kot: 100_000, wjk: 10_000, dgb: 400_000},
+              bel: 10_000, lky: 1_000_000, kot: 100_000, wjk: 10_000, dgb: 400_000, flop: 1_000_000},
   FEE_FLOOR: {main: 1_000_000, test: 1_000_000, regtest: 1_000_000, doge: 1_000_000, ltc: 10_000, ltctest: 10_000,
-              bel: 10_000, lky: 1_000_000, kot: 100_000, wjk: 10_000, dgb: 10_000},
+              bel: 10_000, lky: 1_000_000, kot: 100_000, wjk: 10_000, dgb: 10_000, flop: 1_000_000},
   FEE_BPS_CEILING: 10_000,
   // The lending arcade's part of a fee on a borrowed chain (trade.SHARE_PERCENT, 2026-10-28).
   SHARE_PERCENT: 20,
-  PAYEE_VERSIONS: [25, 30, 46, 47, 48, 56, 73, 111, 113],
+  PAYEE_VERSIONS: [25, 30, 35, 46, 47, 48, 56, 73, 111, 113],
 };
 //: The real-coin chains (config.py `real_coins`): their legs are mainnet tier (trade.Leg.tier).
 //: Each chain's coin as a leg says it (config.py `coin`).
 const COIN_WORD = {doge: "DOGE", main: "PEP", ltc: "LTC", ltctest: "LTC TEST", bel: "BEL", lky: "LKY", kot: "KOT", wjk: "WJK",
-                   dgb: "DGB"};
-const REAL_COINS = new Set(["main", "doge", "ltc", "bel", "lky", "kot", "wjk", "dgb"]);
+                   dgb: "DGB", flop: "FLOP"};
+const REAL_COINS = new Set(["main", "doge", "ltc", "bel", "lky", "kot", "wjk", "dgb", "flop"]);
 //: Chains whose consensus never enforces CHECKLOCKTIMEVERIFY (config.Params.cltv_enforced): a swap lock there refunds
 //: at any moment, so the side that locked could take it back after the other side claimed. No lock is made on them.
 const NO_CLTV = new Set(["wjk"]);
@@ -3520,7 +3520,7 @@ const TRADES = "arcade-trades";
 //: A lock's address on each chain: P2SH version bytes (arcade/config.py). The node's own
 //: word (/account chains[].p2sh) wins: a chain standing in for another has its own.
 const P2SH_VERSION = {main: 22, doge: 22, ltc: 50, ltctest: 58, test: 196, regtest: 196,   // ltc: "M" (2026-10-17)
-                      bel: 30, lky: 5, kot: 45, wjk: 5, dgb: 63};    // bel: the node refuses a lock there (config.require_p2sh_payable)
+                      bel: 30, lky: 5, kot: 45, wjk: 5, dgb: 63, flop: 22};    // bel: the node refuses a lock there (config.require_p2sh_payable)
 let p2shKnown = null;
 async function p2shOf(network) {
   if (!p2shKnown) {

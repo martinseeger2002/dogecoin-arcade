@@ -41,6 +41,8 @@ WORDS = {
     "wjk": OrdWords("Wojakinal", "Wojakcoin", "Wojakcoin"),
     # DigiByte ordinals (2026-10-25): wonky-ord-digibyte's, inscribed the Doginals way (digibyteordinals.js).
     "dgb": OrdWords("DigiByte ordinal", "DigiByte", "DigiByte", "dgbordinals"),
+    # Flopinals (2026-11-03): Flopcoin is Dogecoin 1.14's code with no SegWit, so its ords are the Doginals kind.
+    "flop": OrdWords("Flopinal", "Flopcoin", "Flopcoin"),
     # Litecoin ords (ord-litecoin), mainnet and testnet: those held at a legacy "L..." / "m..." address (2026-10-25).
     "ltc": OrdWords("LTC ordinal", "Litecoin", "Litecoin", "ltcordinals"),
     "ltctest": OrdWords("LTC ordinal", "Litecoin testnet", "LTC TEST", "ltctestordinals"),
@@ -52,9 +54,10 @@ WORDS = {
 #: legacy inputs as Dogecoin does, so the SINGLE|ANYONECANPAY listing digest is the same), then Luckinals, Wojakinals,
 #: DigiByte ordinals, Litecoin ords and Pepecoin testnet's the same way (legacy inputs, the same digest; Litecoin's
 #: proven on regtest, tests/test_ord_chains_more.py, and DigiByte signs legacy inputs with Bitcoin Core's code as
-#: Litecoin does). Wojakinals are never swapped (no CLTV, `swappable`). Kotia has no ords
+#: Litecoin does), and Flopinals (2026-11-03: Dogecoin's code, the same digest). Wojakinals are never swapped (no CLTV,
+#: `swappable`). Kotia has no ords
 #: (timed transactions, Params.tx_time).
-MOVED = ("doge", "main", "bel", "lky", "wjk", "dgb", "ltc", "ltctest", "test")
+MOVED = ("doge", "main", "bel", "lky", "wjk", "dgb", "flop", "ltc", "ltctest", "test")
 
 
 def word(net: str, default: str = "Inscription") -> str:
@@ -147,7 +150,7 @@ def wallet_table() -> dict:
 #: kind: "ord" (inscriptions), "token" (the JSON -20 tokens the chain's ord index reads), "omni" (Omni Layer).
 #: DigiByte (2026-10-26) with the rest, before the testnets: a chain whose index this arcade does not have is skipped, so it
 #: is listed before DigiByte's chain lands (PR #29).
-EXPLORE_ORDER = ("doge", "main", "bel", "ltc", "lky", "wjk", "dgb", "ltctest", "test")
+EXPLORE_ORDER = ("doge", "main", "bel", "ltc", "lky", "wjk", "dgb", "flop", "ltctest", "test")
 OMNI_NETS = ("ltc", "ltctest")
 
 

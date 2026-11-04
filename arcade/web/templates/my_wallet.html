@@ -947,7 +947,7 @@ function drawHead() {
   if (c.held) bits.push(["out", `${coinsOf(c.held)} held for your offers`]);
   // Coins carrying an inscription are held, not spendable (2026-10-15): said beside the number they are left out of.
   const inscWord = c.network === "doge" ? "Doginals" : (c.network === "ltc" || c.network === "ltctest") ? "Litecoin inscriptions" : c.network === "main" ? "Pepinals"
-    : c.network === "bel" ? "Bellinals" : c.network === "lky" ? "Luckinals" : c.network === "wjk" ? "Wojakinals" : c.network === "dgb" ? "DigiByte ordinals" : "inscriptions";
+    : c.network === "bel" ? "Bellinals" : c.network === "lky" ? "Luckinals" : c.network === "wjk" ? "Wojakinals" : c.network === "dgb" ? "DigiByte ordinals" : c.network === "flop" ? "Flopinals" : "inscriptions";
   // An imported wallet's own (2026-10-22): its number is what it can send; what is held is said beside it.
   const held1 = w ? (w.status || {}) : c;
   if (held1.inscribed) bits.push(["out", `${coinsOf(held1.inscribed)} held in ${inscWord}`]);
@@ -1473,11 +1473,13 @@ async function step1(s, d) {
       : (s.startsWith("bel")) ? "bel" : (s.startsWith("lucky") || s.startsWith("lky")) ? "lky"
       : (s.startsWith("kotia") || s.startsWith("kot")) ? "kot"
       : (s.startsWith("wojak") || s.startsWith("wjk")) ? "wjk"
-      : (s.startsWith("digibyte") || s.startsWith("dgb")) ? "dgb" : "pep";
+      : (s.startsWith("digibyte") || s.startsWith("dgb")) ? "dgb"
+      : (s.startsWith("flop")) ? "flop" : "pep";
     const named = {doge: "Dogecoin", ltc: "Litecoin", pep: "Pepecoin", bel: "Bellscoin", lky: "Luckycoin", kot: "Kotia", wjk: "Wojakcoin",
-                   dgb: "DigiByte"};
+                   dgb: "DigiByte", flop: "Flopcoin"};
     const here = c.network === "doge" ? "doge" : (c.network === "ltc" || c.network === "ltctest") ? "ltc"
-      : (c.network === "bel" || c.network === "lky" || c.network === "kot" || c.network === "wjk" || c.network === "dgb")
+      : (c.network === "bel" || c.network === "lky" || c.network === "kot" || c.network === "wjk" || c.network === "dgb"
+         || c.network === "flop")
         ? c.network : "pep";
     if (got.coin && family(got.coin) !== here)
       toast(`That code asks for ${named[family(got.coin)]}: switch coins at the top first.`);

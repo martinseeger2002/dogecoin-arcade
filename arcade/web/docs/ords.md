@@ -1,7 +1,7 @@
 # Inscribing ords from your wallet
 
 **Creator → Ords** inscribes a file as an ord on Dogecoin (a Doginal), Pepecoin (a Pepinal), Bellscoin (a Bellinal),
-Luckycoin (a Luckinal), Wojakcoin (a Wojakinal) or DigiByte (a DigiByte ordinal). Your own wallet pays and signs, and the ord lands on your own address on that chain.
+Luckycoin (a Luckinal), Wojakcoin (a Wojakinal), DigiByte (a DigiByte ordinal) or Flopcoin (a Flopinal). Your own wallet pays and signs, and the ord lands on your own address on that chain.
 
 ## How it works
 
@@ -34,6 +34,7 @@ planned transactions back under those rules.
 | Luckycoin | Luckinal | Doginals-kind indexers | 240 bytes | 0.01 LKY a kB, plus the soft-dust fee | not an inscription |
 | Wojakcoin | Wojakinal | wojakinals (the Doginals kind) | 240 bytes | 0.0001 WJK a kB, no soft-dust fee | not an inscription |
 | DigiByte | DigiByte ordinal | wonky-ord-digibyte (the Doginals kind) | 240 bytes | 0.01 DGB a kB, no soft-dust fee | not an inscription |
+| Flopcoin | Flopinal | this arcade's own index (the Doginals kind) | 240 bytes | 0.01 FLOP a kB, plus the soft-dust fee | not an inscription |
 
 Files up to 400 kB are taken.
 

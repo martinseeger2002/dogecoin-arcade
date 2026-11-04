@@ -411,9 +411,10 @@ const plural = (n, one, many) => `${n === 1 ? one : many}`;
 // --- coins and tokens, said as icons (2026-10-27: "Coins/tokens are shown as ICONS, not a dropdown") ------------
 // Chains said by name, never a bare "mainnet" (2026-10-27).
 const NET_NAMES = {main: "Pepecoin mainnet", test: "Pepecoin testnet", regtest: "Pepecoin regtest", doge: "Dogecoin",
-  ltc: "Litecoin", ltctest: "Litecoin testnet", bel: "Bellscoin", lky: "Luckycoin", kot: "Kotia", wjk: "Wojakcoin", dgb: "DigiByte"};
+  ltc: "Litecoin", ltctest: "Litecoin testnet", bel: "Bellscoin", lky: "Luckycoin", kot: "Kotia", wjk: "Wojakcoin", dgb: "DigiByte",
+  flop: "Flopcoin"};
 const COIN_CODES = {main: "PEP", test: "PEP TEST", regtest: "PEP TEST", doge: "DOGE", ltc: "LTC", ltctest: "LTC TEST",
-  bel: "BEL", lky: "LKY", kot: "KOT", wjk: "WJK", dgb: "DGB"};
+  bel: "BEL", lky: "LKY", kot: "KOT", wjk: "WJK", dgb: "DGB", flop: "FLOP"};
 function coinOf(p) {
   const leg = p.leg, net = legNet(leg);
   if (legIsToken(leg)) {
