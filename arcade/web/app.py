@@ -11514,20 +11514,45 @@ def create_app(state: AppState) -> FastAPI:
                   else f"{n / COIN:,.8f}".rstrip("0").rstrip("."))
         return f"{amount} {leg['name']}"
 
+    #: How long a page waits for its red counts (2026-11-04: app.dogecoinarcade.com's /feed hung 48-74 s for a signed-in
+    #: account, its counts waiting on the ledger's trade list after a block; the operator: "Why can't I reach
+    #: app.dogecoinarcade.com"). Past that the page is drawn with the last counts known for that account, and the count
+    #: goes on by itself; the next page or /account/badges has it.
+    COUNTS_WAIT = 2.0
+    _counts_last: dict[str, dict] = {}
+    _counts_running: dict[str, threading.Thread] = {}
+    _counts_lock = threading.Lock()
+
     def _account_counts(request: Request) -> dict:
-        """The red counts for an account's tabs, or for the operator's Notifications."""
+        """The red counts for an account's tabs, or for the operator's Notifications: never more than COUNTS_WAIT of a
+        page's time. One count per account at a time; a page that asks while one is going on waits on that one."""
         if not _account_view(request):
-            try:
-                return {"notif_count": sum(1 for e in _node_notif_events() if e.unread)}
-            except Exception:                             # noqa: BLE001 -- never break a page
+            key, work = "node", lambda: {"notif_count": sum(1 for e in _node_notif_events() if e.unread)}
+        else:
+            account = signed_in(request)
+            if account is None:
                 return {}
-        account = signed_in(request)
-        if account is None:
-            return {}
-        try:
-            events = _notif_events(account)
-        except Exception:                                 # noqa: BLE001 -- never break a page
-            return {}
+            key, work = account.pubkey, (lambda: _account_counts_of(account))
+        with _counts_lock:
+            running = _counts_running.get(key)
+            if running is None or not running.is_alive():
+                def count() -> None:
+                    try:
+                        _counts_last[key] = work()
+                    except Exception:                     # noqa: BLE001 -- never break a page
+                        log.debug("counts", exc_info=True)
+                    finally:
+                        with _counts_lock:
+                            if _counts_running.get(key) is threading.current_thread():
+                                _counts_running.pop(key, None)
+                running = threading.Thread(target=count, name="counts", daemon=True)
+                _counts_running[key] = running
+                running.start()
+        running.join(COUNTS_WAIT)
+        return dict(_counts_last.get(key) or {})
+
+    def _account_counts_of(account) -> dict:
+        events = _notif_events(account)
         seen = _notif_seen(account.pubkey)
         mail = sum(1 for e in events if e.source == "message"
                    and e.seq > int(seen.get("message_tab", 0)))

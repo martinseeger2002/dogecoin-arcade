@@ -88,6 +88,11 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 A page is never held up by its red counts (Claude; the operator: "Why can't I reach app.dogecoinarcade.com", "App.DogecoinArcade.com is not loading", "Yes please fix them")
+
+app.dogecoinarcade.com's `/feed` hung 48-74 s for a signed-in account, four times since noon: `render` -> `_account_counts` -> `_notif_events` waited on the ledger's trade list (`LedgerIndex.trades`, rebuilt after every block; the first asker waits). `_account_counts` now counts on a thread of its own, one per account at a time, and a page waits at most `COUNTS_WAIT` (2 s): past that it is drawn with the last counts known for that account, and the count lands for the next page and `/account/badges`. When the count is quick, as nearly always, a page gets exactly what it got before. Not yet found: why that read took 48 s on .25 when the same query takes 2.6 s cold. Test: `tests/test_counts_never_block.py`. Nothing needed from your side.
+
+
 ### 2026-11-04 A node install says where it is, what comes next, and tells you on every Admin tab (Claude; the operator: "there is no indication of what is happening or what to do next", chose the mockups with the steps in the chain's row and notifications that follow him around Admin)
 
 - **The row:** `core_install.steps(job, copy, installed)` gives each install's six steps (Download, Check, Start node, Chain data -- "Copy chain data" or "Sync chain" --, Check the copy, Ready) as done / now / todo / skip / failed. Admin draws them, and under the one going on now a box: what it is doing, a bar (download bytes, copy bytes with MB/s and time left, or the node's own blocks of headers), "Next: ...", and **Sync on its own instead** / **Cancel install**. The row refreshes itself every 3 s while anything is going on (it did not before: the operator saw nothing after Install), and the Coins & chains tab shows how many installs are going on.
