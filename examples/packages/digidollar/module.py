@@ -41,11 +41,24 @@ def _sats(value) -> int:
     return int(Decimal(str(value)) * COIN)
 
 
+def _active(ctx) -> dict:
+    """The Core's chain, refused in plain words while it has not checked DigiDollar's first block: a Core still
+    syncing answers every DigiDollar read with "not yet active", whatever its headers say."""
+    chain = ctx.rpc(CHAIN, "getblockchaininfo")
+    said = ctx.rpc(CHAIN, "getdigidollardeploymentinfo")
+    if not said.get("enabled"):
+        syncing = f" of {chain['headers']:,}, still syncing" if chain.get("headers", 0) > chain["blocks"] else ""
+        raise ValueError(f"DigiDollar starts at block {said.get('activation_height', 0):,}, and this arcade's "
+                         f"DigiByte Core has checked blocks to {chain['blocks']:,}{syncing}")
+    return chain
+
+
 def command_ddstats(ctx):
     """DigiDollar on this arcade's DigiByte: the oracle's price, the supply and how well it is backed."""
+    chain = _active(ctx)
     price = ctx.rpc(CHAIN, "getoracleprice")
     stats = ctx.rpc(CHAIN, "getdigidollarstats")
-    return {"chain": ctx.rpc(CHAIN, "getblockchaininfo")["chain"],
+    return {"chain": chain["chain"],
             "dgb_usd": price.get("price_usd"), "oracle": price.get("status"), "stale": price.get("is_stale"),
             "supply_usd": (stats.get("total_dd_supply") or 0) / 100, "collateral_dgb": stats.get("total_collateral_dgb"),
             "health_percent": stats.get("health_percentage"), "health": stats.get("health_status"),
@@ -54,6 +67,7 @@ def command_ddstats(ctx):
 
 def command_ddcollateral(ctx, amount, tier=0):
     """The DGB a mint of this many dollars locks, for this long."""
+    _active(ctx)
     said = ctx.rpc(CHAIN, "estimatecollateral", _cents(amount), int(tier))
     return {"dollars": str(amount), "tier": int(tier), "lock_days": said["lock_days"],
             "locks_dgb": said["wallet_collateral_dgb"], "ratio_percent": said["effective_ratio"],
@@ -100,7 +114,7 @@ def command_ddmint(ctx, amount, tier=0):
 
     ddmint <dollars> [tier]   tier 0 is one hour (test chains), 1 thirty days, up to 9 for ten years
     Your wallet shows the transaction and signs it. Test chains only for now: see the module's README."""
-    if ctx.rpc(CHAIN, "getblockchaininfo")["chain"] == "main":
+    if _active(ctx)["chain"] == "main":
         raise ValueError("this module mints on DigiByte's test chains only: this arcade's wallet cannot yet sign a "
                          "redeem, so DGB locked on mainnet would wait for another wallet")
     address = ctx.caller.get("address", {}).get(CHAIN)

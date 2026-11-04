@@ -8,8 +8,8 @@
   "pages": "anyone",
   "needs": {
     "chains": {
-      "dgb": ["getblockchaininfo", "getblockcount", "getoracleprice", "getdigidollarstats", "estimatecollateral",
-              "scantxoutset"]
+      "dgb": ["getblockchaininfo", "getblockcount", "getdigidollardeploymentinfo", "getoracleprice",
+              "getdigidollarstats", "estimatecollateral", "scantxoutset"]
     },
     "max_fee": 50000000
   },
