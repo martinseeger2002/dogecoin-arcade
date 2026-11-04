@@ -181,6 +181,22 @@ def test_options_is_a_window_for_the_operator_only(app):
     assert 'id="options"' not in app.get("/lite", headers=OUTSIDE).text
 
 
+def test_messages_is_a_tab_while_its_module_is_on_and_each_module_on_opens_from_apps(app, app_state):
+    operator = app.get("/lite", headers=LOCAL).text
+    assert 'data-tab="messages"' in operator and 'from "/node-mail.js"' in _panel(operator, "messages") + operator
+    assert "window.ARCADE_CSRF" in operator and "window.liteLocal = " not in operator, "the node's: run by the node"
+    assert 'href="/feed">Open</a>' in operator and 'data-open="messages"' in operator
+    assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
+    user = app.get("/lite", headers=OUTSIDE).text
+    assert 'from "/messaging.js"' in user and "window.liteLocal = " in user and "window.ARCADE_CSRF" not in user
+    app_state.set_setting("edition", "lite")
+    try:
+        lite = app.get("/lite", headers=LOCAL).text
+        assert 'data-tab="messages"' not in lite and 'href="/feed">Open</a>' not in lite, "off: no tab, no Open"
+    finally:
+        app_state.set_setting("edition", None)
+
+
 def test_console_lines_come_only_from_the_lite_page(app):
     assert app.post("/lite/api/console", headers=LOCAL, json={"line": "help"}).status_code == 403
     refused = app.post("/lite/api/console", headers={**OUTSIDE, **LITE, "origin": "https://evil.example"},

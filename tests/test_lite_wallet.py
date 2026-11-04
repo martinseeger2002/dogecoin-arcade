@@ -87,7 +87,7 @@ def test_only_the_operator_has_the_node_wallet(app_state):
         for name in ("getbalances", "getnewaddress", "listtransactions", "listunspent", "send", "confirm"):
             with pytest.raises(cmdlib.CommandError, match=f"no command '{name}'"):
                 cmdlib.run_line(who, f"{name} ledger")
-        assert "send" not in cmdlib.run_line(who, "help")
+        assert "send wallet to amount" not in cmdlib.run_line(who, "help"), "the wallet's send is the operator's"
     op = cmdlib.Caller(app_state, "operator")
     assert "== Wallet ==" in cmdlib.run_line(op, "help") and "send wallet to amount" in cmdlib.run_line(op, "help")
     with pytest.raises(cmdlib.CommandError, match="answers through the arcade's web app"):

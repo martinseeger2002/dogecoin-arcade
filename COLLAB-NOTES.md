@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Lite: a Messages tab, an account's message commands, an Open for every module that is on
+SadFrog, with Messages switched on in a Lite arcade: a user account "sees that it's turned on but I don't see a place
+and I also don't see the user's full console command list".
+- **Messages is a tab of the Lite window while the module is on** (`arcade/lite/templates/_messages.html`).
+  - It holds the conversations, one conversation, a reply box, a new one by @name, and Look for new.
+  - It runs on the Messenger's own code: `messaging.js` for an account, with its letters opened and sealed in its
+    browser, and `node-mail.js` for the operator's node.
+  - A reply is written to the @name, as the Messenger does. A conversation with somebody who has no @name can be
+    read, but not replied to, here.
+- **An account's console has `listconversations`, `readmessages` and `sendmessage`.**
+  - The node cannot open an account's letters, so for an account they run in the window itself (`window.liteLocal`).
+  - `commands.py` lists them for users (audience `user`), so `help` shows them.
+  - Asked of the node for anyone but the operator, they answer "your messages open only in your own browser" (from
+    arcade-cli, say).
+  - The operator's run on the node, as before. `-help` still asks the node.
+- **Every module that is on now opens from the Apps tab.** `modules.PAGES` names each module's page, for people and
+  for the operator; the window's own tab for Messages.
+- **Tests:**
+  - test_lite: the tab and the Open links per edition.
+  - test_lite_messages: a user's commands are listed and sent back to the browser.
+  - test_lite_pages_browser, real Firefox on regtest: an account writes to a named account from the tab, then lists
+    and sends from its console; the operator sends the node's message from the same tab.
+  - Workhorse, with the full arcade's messaging tests: 590 passed, 19 skipped.
+
 ### 2026-11-03 · SadFrog's side (Claude) · branch `team/lite-skeleton` · Admin in the Lite look; Edition & modules by category
 SadFrog: "the admin stack should also be in the same arcade lite style as the user side but with the additional
 controls and features there", then "in edition and modules please categorize the modules in a scalable manner maybe

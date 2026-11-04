@@ -306,11 +306,23 @@ def _store(caller):
     return state.store()
 
 
-@command("messages", audience="operator", module="messages")
+#: An account's messages are sealed to its own key and opened in its own browser: the node cannot read or write
+#: them, so for an account these three run in the Lite window's console (templates/_messages.html), never here.
+IN_THE_BROWSER = ("your messages open only in your own browser: run this in the Lite window's console, with your "
+                  "wallet unlocked")
+
+
+def _the_nodes(caller) -> None:
+    if caller.audience != "operator":
+        raise CommandError(IN_THE_BROWSER)
+
+
+@command("messages", audience="user", module="messages")
 def listconversations(caller) -> list[dict]:
-    """Everyone the node has written to or heard from, newest first, with what is unread.
+    """Everyone you have written to or heard from, newest first, with what is unread. The node's, for its operator.
 
     `readmessages <who>` opens one: their key, @name, contact code or address."""
+    _the_nodes(caller)
     with _store(caller) as store:
         threads = store.conversations(caller.state.identity.fingerprint)
     return [{"who": t.get("name") or caller.name_of(t.get("address") or "") or t.get("address") or "",
@@ -319,13 +331,14 @@ def listconversations(caller) -> list[dict]:
              "preview": _text(t.get("preview"))[:80]} for t in threads]
 
 
-@command("messages", audience="operator", module="messages")
+@command("messages", audience="user", module="messages")
 def readmessages(caller, who: str, count: int = 20) -> list[dict]:
     """One conversation's last messages, oldest first; they are then read, as when the conversation is opened.
 
     readmessages <who> [count]   who: their key, @name, contact code or address"""
     if not isinstance(count, int) or count < 1:
         raise CommandError("count is a whole number, 1 or more")
+    _the_nodes(caller)
     peer = _ask(_wallet(caller).peer, str(who))
     with _store(caller) as store:
         fingerprint = caller.state.identity.fingerprint
@@ -335,12 +348,13 @@ def readmessages(caller, who: str, count: int = 20) -> list[dict]:
              "txid": m.get("txid"), "confirmed": m.get("height") is not None} for m in items]
 
 
-@command("messages", audience="operator", module="messages")
+@command("messages", audience="user", module="messages")
 def sendmessage(caller, who: str, *text: str) -> dict:
-    """Send a message from the node, on testnet, at once, as the Messages tab sends one.
+    """Send a message, on testnet, at once, as the Messages tab sends one: yours, or the node's for its operator.
 
     sendmessage <who> <text...>   for example: sendmessage @alice see you at the table
     A message long enough to need more than one transaction is sent from Messages, which shows its progress."""
+    _the_nodes(caller)
     return _ask(_wallet(caller).message, str(who), " ".join(str(t) for t in text))
 
 
