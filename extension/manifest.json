@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Arcade Wallet",
+  "version": "0.2.0",
+  "description": "Your arcade keys, outside every page: sign in, sign messages and send coins, tokens and inscriptions on every arcade chain.",
+  "minimum_chrome_version": "137",
+  "icons": {"16": "icon-16.png", "48": "icon-48.png", "128": "icon-128.png"},
+  "action": {"default_popup": "popup.html", "default_icon": {"16": "icon-16.png", "48": "icon-48.png"}},
+  "background": {"service_worker": "background.js", "type": "module"},
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "content_scripts": [{
+    "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+    "js": ["content.js"],
+    "run_at": "document_start",
+    "all_frames": false
+  }],
+  "web_accessible_resources": [{
+    "resources": ["inpage.js"],
+    "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"]
+  }],
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'"}
+}

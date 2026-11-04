@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Arcade Wallet</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header><img src="icon-48.png" alt="">Arcade Wallet</header>
+<main>
+  <section id="none" hidden>
+    <div class="panel">
+      <h2>Bring your arcade account</h2>
+      <p class="muted">Sign in with your @name and password, as on any arcade.</p>
+      <input id="arcade" type="url" placeholder="https://your-arcade.com">
+      <input id="tag" placeholder="@name" autocomplete="username">
+      <input id="tag-password" type="password" placeholder="password" autocomplete="current-password">
+      <button class="primary" id="import-name" style="width:100%">Bring it here</button>
+    </div>
+    <div class="panel">
+      <h2>Or use your twelve words</h2>
+      <textarea id="phrase" placeholder="your words, separated by spaces" spellcheck="false"></textarea>
+      <div class="row"><button id="import-words">Use these words</button><button id="make">Make a new wallet</button></div>
+    </div>
+    <div class="panel" id="password-box" hidden>
+      <h2>A password for this browser</h2>
+      <p class="muted">It opens the wallet here. At least 12 characters; nobody else ever sees it.</p>
+      <input id="new-password" type="password" placeholder="password" autocomplete="new-password">
+      <input id="new-password2" type="password" placeholder="the same again" autocomplete="new-password">
+      <button class="primary" id="keep" style="width:100%">Keep it in this browser</button>
+    </div>
+    <div class="panel" id="new-words" hidden>
+      <h2>Write these down</h2>
+      <p class="muted">They are the only way back to this wallet if this browser is lost.</p>
+      <div class="words" id="made-words"></div>
+      <label><input type="checkbox" id="wrote" style="width:auto"> I wrote them down</label>
+    </div>
+  </section>
+
+  <section id="locked" hidden>
+    <div class="panel">
+      <h2>Unlock</h2>
+      <input id="password" type="password" placeholder="password" autocomplete="current-password">
+      <button class="primary" id="unlock" style="width:100%">Unlock</button>
+    </div>
+  </section>
+
+  <section id="open" hidden>
+    <div class="panel">
+      <h2>Your account</h2>
+      <p><code id="pubkey"></code></p>
+      <div class="row"><button id="lock">Lock</button></div>
+    </div>
+    <div class="panel">
+      <h2>Coins</h2>
+      <p class="muted" id="no-arcade">Link an arcade to see what your addresses hold. The wallet keeps no chain data of
+        its own; an arcade reads the chains for it.</p>
+      <p class="muted" id="read-from" hidden></p>
+      <ul class="coins" id="coins"></ul>
+    </div>
+    <div class="panel" id="send-box" hidden>
+      <h2>Send</h2>
+      <div class="row"><select id="send-chain"></select><select id="send-kind">
+        <option value="coin">Coins</option><option value="token">An Omni token</option>
+        <option value="nft">An arcade NFT</option><option value="inscription">An inscription</option></select></div>
+      <select id="send-token" hidden></select>
+      <select id="send-piece" hidden></select>
+      <input id="send-to" placeholder="to: an address or @name" spellcheck="false">
+      <input id="send-amount" placeholder="amount" inputmode="decimal">
+      <button class="primary" id="send-prepare" style="width:100%">Review</button>
+      <div id="review" hidden>
+        <p class="muted" id="review-who"></p>
+        <div id="review-tx"></div>
+        <div class="row"><button id="send-cancel">Cancel</button><button class="primary" id="send-yes">Sign and send</button></div>
+      </div>
+      <p class="muted" id="sent"></p>
+    </div>
+    <div class="panel">
+      <h2>Linked arcades</h2>
+      <ul class="sites" id="arcades"></ul>
+      <div class="row"><input id="link-origin" type="url" placeholder="https://your-arcade.com" style="flex:3;margin:0">
+        <button id="link">Link</button></div>
+    </div>
+    <div class="panel">
+      <h2>Connected sites</h2>
+      <ul class="sites" id="sites"></ul>
+      <p class="muted" id="no-sites">No site is connected yet.</p>
+    </div>
+    <p><button class="link" id="remove">Remove this wallet from this browser</button></p>
+  </section>
+  <p class="err" id="err"></p>
+</main>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

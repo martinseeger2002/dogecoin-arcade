@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Arcade Wallet: a site is asking</title><link rel="stylesheet" href="style.css"></head>
+<body class="window">
+<header><img src="icon-48.png" alt="">Arcade Wallet</header>
+<main>
+  <p class="kicker">This site is asking</p>
+  <p class="origin" id="origin"></p>
+  <div class="panel">
+    <h2 id="what"></h2>
+    <p class="muted" id="why"></p>
+    <div class="message" id="message" hidden></div>
+    <div id="tx" hidden></div>
+  </div>
+  <div class="panel">
+    <p class="kicker">As your account</p>
+    <p><code id="pubkey">locked</code></p>
+    <input id="password" type="password" placeholder="password, to unlock" autocomplete="current-password" hidden>
+  </div>
+  <p class="err" id="err"></p>
+  <div class="row"><button id="no">Refuse</button><button class="primary" id="yes">Approve</button></div>
+</main>
+<script type="module" src="approve.js"></script>
+</body>
+</html>

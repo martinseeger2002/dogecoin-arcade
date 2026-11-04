@@ -123,14 +123,93 @@ Tests: test_media_browser.py (the louder test now also asserts the loopback play
 Strawberry said 12 other arcades running, 8 linked. Three of the four unlinked were test arcades on a test machine (port 8433) that had stopped the evening before: `_arcades_running` counted any mesh key announced on the chain in the last day, and arcades re-announce only daily (service.ANNOUNCE_EVERY), so a stopped arcade stayed "running" for up to a day. Now "running" is word from the mesh within the hour: a link, an address reached, a linked arcade saying it is linked to it, or its own "me" hello (operators.peers `at`, new). A key known only from its announcement is still listed, last, as **not heard from** (`link.state: "quiet"`) and is left out of `running`, `total` and Overview's "Other arcades running". Changed: arcade/web/app.py `_arcades_running` (`quiet` ids) and `_arcades_view`, templates/_arcades_panel.html, tests/test_admin.py (the 2026-10-21 test's chain-only arcade is now "quiet"; a new test). Nothing needed from your side; your arcades will count the same way once they update.
 
 ### 2026-11-03 The updater repairs a src that lost its installer (Claude; the operator's new ThinkPad install)
-- An archive install whose `~/.dogecoinarcade/src/installer/install.py` was gone failed every update with "could not
-  fetch the source archive": the repair runs the installer from src, the very thing that needed repairing, and
-  `_call_installer` answered None without a word. Now update.py fetches the signed archive itself, holds it to the
-  manifest's sha256 before anything in it runs, and runs that archive's installer (`_with_archive_installer`).
-- The installer returns "" (not None) when only `source.rev` could not be read; the updater then writes the signed
-  manifest's revision. Before, a fetch that succeeded was reported as failed.
-- A machine already in this state needs the installer run once (`python3 install.py`), since its own updater is the
-  old one.
+### 2026-11-03 · SadFrog's side (Claude) · PRs #67-#73, stacked on #64 · Arcade Wallet E2: every chain's keys, messages, and sends
+SadFrog: "the extension act as a readonly arcade wallet for signing and making simple transactions for all assets omni
+and ordinal on all chains". The operator on #62: transaction signing is in the first public release. #64 stays as it is;
+E2 is seven PRs stacked on it, each one commit or two and at most 400 lines of its own (the copied web-wallet files
+aside), in this order:
+  - #67 `team/arcade-wallet-e2-keys`: keys and balances;
+  - #68 `-messages`: messages and the verifiers;
+  - #69 `-txview`: the decoded view;
+  - #70 `-sends`: popup sends;
+  - #71 `-sitetx`: site transactions;
+  - #72 `-look`: arcade-nodes.com's look;
+  - #73 `-release`: 0.2.0, the README and this entry.
+Each PR body links the fork's compare view of its own change. No arcade code changed.
+- **Read-only wallet.** It runs no node and keeps no chain data. A **linked arcade** reads the chains for it: the
+  wallet signs in there itself with the account key and uses the routes the arcade's own Wallet page uses
+  (`/account?chains=all`, `/account/address`, `/account/coins`, `/account/doginal-txs`, `/r/balances`, `/r/tokens`,
+  `/r/inscriptions`). Keys never leave the extension.
+- **Keys:** `extension/coins.js` and `extension/vendor/` are the web wallet's own files, byte for byte (a test holds them
+  equal). `extension/chains.js` lists every chain in `config.NETWORKS`; a test holds its bytes to config, so a new chain
+  fails until it is placed. Every chain's address for three phrases is worked out again in Python and compared.
+- **Messages:** `arcade_signMessage` signs as each chain's own Core does. Each chain's message words were checked
+  against its Core with a throwaway key: PEP (main and test), DOGE, LTC (main and test), LKY, and BEL (its words are
+  "Bells Signed Message"). KOT, WJK and DGB sign no messages until someone checks theirs. The arcade's own words
+  (issue #5: realtime certificates, LLM grants and top-ups, anything starting `arcade-` or `DogecoinArcade`) are never
+  signed for a site. `extension/verify.js` and `verify.py` check sign-ins and messages with no server.
+- **Sends from the popup** (coins, Omni tokens, arcade NFTs, inscriptions): the arcade builds them exactly as for its
+  Wallet page (`/account/send`, `/account/token/send`, `/account/nft/send`, `/account/doginal/send`). So its coin
+  choice, inscription guard, fees and coins-in-flight rules are reused, not re-implemented. The wallet checks each offer
+  before signing (`sends.js`):
+  - `coins.js verifyOffer`;
+  - the payee, amount, token id and units, NFT or inscription asked for;
+  - its own ord-index check: on every chain with ords, a coin the index cannot vouch for now is refused.
+  It then shows the transaction decoded from its bytes (`txview.js`) and signs into `/account/sign`.
+- **Sites:** `arcade_signTransaction` and `arcade_sendTransaction` (`sitetx.js`). Only the site's bytes are taken. The
+  linked arcade's coin list says which inputs are this wallet's and what they are worth; its ord index says what they
+  carry. The extension's window shows every output decoded. Signatures follow `exchange-safety.md`: ALL,
+  ALL|ANYONECANPAY, SINGLE|ANYONECANPAY over an existing output. NONE and SINGLE alone are never signed, and only ALL
+  is signed on Kotia and for a send. An inscribed coin is signed only when the site names that inscription, and under
+  ALL only when it lands on an output. A send spends plain coins only, through `/account/broadcast`.
+- **Tests:** `tests/test_extension.py`, 13, all passing at every commit of the stack. The offers are built by `funding.build_one` and the routes'
+  own payload code. Digests equal `funding.sighash` (ALL and SINGLE|ANYONECANPAY), and the signatures verify with the
+  arcade's own secp256k1 code. Each refusal is tested.
+- **Real browser (Playwright, Chromium), PEP testnet only,** against a throwaway loopback test arcade with its own
+  home. The wallet was new, joined through /join with the extension, linked from the popup, and funded from the
+  testnet Core's wallet.
+  - Popup send of 1 PEP TEST: txid 9c6d88c4ab70ce6f8596dfcb0cd3e851a35d14feed3e8037461e82046ff3e5b3.
+  - A page's own transaction through `arcade_sendTransaction`, approved in the extension's window: txid
+    ec5329650d7187175fc078a1b556a5237ac2bf29da080dbb9f19eecfe468ded5.
+  - A NONE request from the page was refused.
+  - No mainnet, Bells or Luckycoin coins moved.
+- **Not yet:** Litecoin's OmniLite (the arcade has no OmniLite yet either); DRC-20/PRC-20 sends (the arcade's three-step
+  `token20` flow); SegWit and imported addresses (the main P2PKH address only); PSBT (raw unsigned bytes only); message
+  words for KOT, WJK, DGB. `arcade/lora/device_keys.py` `COIN_TYPE` lacks `dgb` (it falls back to 1, coins.js says 3).
+- **Look:** the popup and approval window use arcade-nodes.com's colours and pixel font (OFL, in `extension/fonts/`),
+  so the hub and the wallet match. Site origins, addresses and message text stay in plain monospace.
+- **Need from the other side:** a review of #67-#73 in order, after #64.
+
+### 2026-11-03 · SadFrog's side (Claude) · branch `team/arcade-wallet-e1` · Arcade Wallet extension, phase E1
+- **New: `extension/`**, an **optional** MV3 browser extension (design: `docs/arcade-lite/EXTENSION.md` in PR #62).
+  It keeps the person's arcade words outside every page.
+  - `keys.js` is the web wallet's own derivation and sealed blob (`signin.js`, `wallet_js.js`), pure WebCrypto.
+  - There are three ways in: twelve words, a new wallet, or @name and password (it fetches `/signin/<name>` from
+    the arcade the person names, opens it, and checks the key matches).
+  - The vault locks after 30 idle minutes.
+  - `window.arcade` (inpage.js, through content.js) offers `arcade_connect`, `arcade_accounts`, `arcade_signIn` and
+    `arcade_disconnect`, plus an `arcade:announceProvider` event.
+  - The origin is the browser's (`port.sender.origin`), never the page's. Every connect and sign-in opens the
+    extension's own window, showing that origin and the exact message.
+  - A nonce must be 32-128 hex characters, so a page cannot slip a second line into the message.
+  - It runs only in the top frame (an inscribed app in a frame gets no wallet), and only on https and localhost.
+- **Arcade side** (no server change):
+  - `signin.js` gets `extension()` and `signInWithExtension()`. They send the same `/auth/login` as today, with the
+    same login message.
+  - `signup.html` (/join) and `join.html` (/join/keys) show "Sign in with Arcade Wallet" only when the extension is
+    there.
+- **Tests:**
+  - `tests/test_extension.py` (4, needs Node): keys.js gives `seed.login_pubkey`'s key for the same words, its
+    signature passes the node's check, it reopens what it seals and refuses a bad checksum, and the manifest asks
+    only for storage and alarms.
+  - In a real Chromium with the extension loaded:
+    - import, then sign-in through /join/keys and /join, approved in the extension's window;
+    - another origin connects and then sees the account;
+    - refusing a sign-in, a malformed nonce and an unknown method are all refused.
+  - Sign-in/signup/web/public tests: 431 passed.
+- **Not yet (E2-E3):** signing messages per chain, transaction signing with decoded previews, the outside-site
+  verifier, and the wallet's coin keys. A person signed in through the extension opens their coins with their
+  password as before.
 
 ### 2026-11-03 DogeFeedX dock, address book, and chain pills on the operator's main (Cursor Cloud Agent; Billy: the operator's main is the source of truth)
 - **Branch** `cursor/dogefeedx-next`, rebuilt on the operator's `main` `0aecde6` (DogeFeedX for public accounts is `75e6397`, an ancestor). Not pushed to `cursor/dogefeedx-combined-fd4a`. Nothing opened or commented on the operator's repository.
