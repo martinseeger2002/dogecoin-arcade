@@ -98,7 +98,7 @@ def test_a_visitor_from_outside_sees_the_arcade_and_a_way_to_sign_in(app):
     assert not said["ok"]
     names = {c["name"] for c in app.get("/lite/api/commands", headers=OUTSIDE).json()}
     assert names == {"help", "getnodeinfo", "listchains", "listmodules", "readfeed", "readposts",
-                     "listtokens", "getbook", "getpair", "listdoginals", "listapps"}
+                     "listtokens", "getbook", "getpair", "listdoginals", "listapps", "listthemes"}
 
 
 def test_a_signed_in_user_from_outside_sees_their_own_account(app, app_state):

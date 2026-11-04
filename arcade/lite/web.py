@@ -15,9 +15,11 @@ from fastapi.templating import Jinja2Templates
 
 from . import commands as cmdlib
 from .. import modules as modulelib
+from .. import packages as packagelib
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 NO_STORE = {"Cache-Control": "no-store"}
+FOREVER = {"Cache-Control": "public, max-age=31536000, immutable"}
 #: Sent by the Lite page with every console line; another site's page cannot add it without a preflight.
 LITE_HEADER = "x-arcade-lite"
 
@@ -76,6 +78,54 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         """The Lite window's look for the full arcade's own pages, Admin and the rest (base.html, Lite edition)."""
         return Response((Path(__file__).parent / "templates" / "pages.css").read_text(), media_type="text/css",
                         headers={"Cache-Control": "no-cache"})
+
+    @app.get("/lite/theme.css")
+    def lite_theme_css(request: Request):
+        """The theme this caller sees (arcade/packages.py), as CSS over the window's look; empty for Lite's own.
+
+        The operator at the machine sees a folder they are trying (`trytheme`) instead, read afresh on every load,
+        and what is wrong with it as a comment."""
+        caller = caller_for(request)
+        settings = state.settings()
+        trying = settings.get(packagelib.TRY) if caller.audience == "operator" and caller.local else None
+        try:
+            if trying:
+                manifest, _ = packagelib.read(Path(trying))
+                css = packagelib.theme_css(manifest, "/lite/packages/try")
+            else:
+                owner = (caller.account.lower() if caller.account and account_view(request)
+                         else "node" if caller.audience == "operator" else None)
+                pid = packagelib.chosen(settings, owner)
+                css = ""
+                if pid:
+                    manifest, files = packagelib.read(packagelib.home_of(state.home, pid))
+                    if packagelib.package_id(files) != pid:
+                        raise packagelib.PackageError(f"the theme kept as {pid[:12]} was changed on disk")
+                    css = packagelib.theme_css(manifest, f"/lite/packages/{pid}")
+        except (packagelib.PackageError, OSError) as exc:          # the arcade's own look, and why
+            css = f"/* {'trytheme' if trying else 'theme'}: {str(exc).replace('*/', '* /')} */\n"
+        return Response(css, media_type="text/css", headers=NO_STORE)
+
+    @app.get("/lite/packages/{pid}/files/{name}")
+    def lite_package_file(request: Request, pid: str, name: str):
+        """A theme's own font: an installed theme's, or the operator's at the machine while it is being tried."""
+        rel = f"files/{name}"
+        if not packagelib.FILES.match(rel):
+            raise HTTPException(404)
+        if pid == "try":
+            caller = caller_for(request)
+            trying = state.setting(packagelib.TRY)
+            if not (trying and caller.audience == "operator" and caller.local):
+                raise HTTPException(404)
+            folder, cache = Path(trying), NO_STORE
+        else:
+            if pid not in (state.setting(packagelib.SETTING) or {}):
+                raise HTTPException(404)
+            folder, cache = packagelib.home_of(state.home, pid), FOREVER    # an id is its bytes
+        path = folder / rel
+        if not path.is_file():
+            raise HTTPException(404)
+        return Response(path.read_bytes(), media_type="font/woff2", headers=cache)
 
     @app.get("/lite/api/overview")
     def lite_overview(request: Request):

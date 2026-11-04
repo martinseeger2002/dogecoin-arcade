@@ -176,7 +176,7 @@ html.indesk body:not(.fullscreen){padding-top:0}
 <link rel="modulepreload" href="/vendor/hashes/_assert.js"><link rel="modulepreload" href="/vendor/hashes/crypto.js">
 {% endif %}
 {% if brand.css %}<style>/* this node's face (arcade/web/brand.py) */{{ brand.css | safe }}</style>{% endif %}
-{% if edition_lite %}<link rel="stylesheet" href="/lite/pages.css">{% endif %}{# ARCADE Lite's window look (arcade/lite) #}
+{% if edition_lite %}<link rel="stylesheet" href="/lite/pages.css"><link rel="stylesheet" href="/lite/theme.css">{% endif %}{# ARCADE Lite's window look (arcade/lite) #}
 </head>
 {# Every page is live. The counter lives on the body rather than in an
    element each page has to remember to add: eight templates had one and the
