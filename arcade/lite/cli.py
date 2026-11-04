@@ -5,6 +5,7 @@
     arcade-cli install feed          switch a module on, as a package is installed
     arcade-cli remove feed
     arcade-cli listchains -help      what one command does and takes
+    arcade-cli new theme <name>      a theme's folder to start from, here (arcade/packages.py)
     arcade-cli                       an interactive console (type exit to leave)
 
 It runs the same command list as the Lite window's console (arcade/lite/commands.py), as the operator at the node's
@@ -44,6 +45,22 @@ def send(url: str, line: str) -> tuple[bool, str]:
     return True, result if isinstance(result, str) else json.dumps(result, indent=2)
 
 
+def new_theme(args: list[str]) -> int:
+    """`new theme <name> [folder]`: written here, on this machine, not by the arcade: it is the builder's own folder."""
+    from pathlib import Path
+    from .. import packages
+    if not 1 <= len(args) <= 2:
+        print("usage: arcade-cli new theme <name> [folder]", file=sys.stderr)
+        return 1
+    try:
+        made = packages.template(Path(args[1] if len(args) > 1 else "."), args[0])
+    except (packages.PackageError, OSError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    print(f"made {made}: change its manifest.json, then `arcade-cli trytheme {made}` (its README says the rest)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     url = DEFAULT_URL
@@ -51,6 +68,8 @@ def main(argv: list[str] | None = None) -> int:
         url, args = args[1], args[2:]
     if args[:1] in (["-help"], ["--help"], ["-h"]) and len(args) == 1:
         print(__doc__.strip() + "\n")
+    if args[:2] == ["new", "theme"]:
+        return new_theme(args[2:])
     if args:
         ok, text = send(url, shlex.join(args))
         print(text, file=sys.stdout if ok else sys.stderr)
