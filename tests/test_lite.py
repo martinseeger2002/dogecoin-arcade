@@ -114,6 +114,10 @@ def test_a_signed_in_user_from_outside_sees_their_own_account(app, app_state):
     assert not said["ok"] and "no command" in said["error"]
 
 
+def _panel(page, name):
+    return page.split(f'<section data-panel="{name}"', 1)[1].split("</section>", 1)[0]
+
+
 def _wallet_tabs(page):
     return page.split('<section data-panel="send"', 1)[1].split('<section data-panel="apps"')[0]
 
@@ -132,6 +136,29 @@ def test_send_receive_and_transactions_are_lites_own_tabs(app, app_state):
     assert 'from "/wallet.js"' in user and "/node-wallet.js" not in user and 'id="w-unlock"' in user
     assert "/me/wallet" not in page
     assert f'"network": "{app_state.messaging.network}"' in user, "the chain an account's words open on"
+
+
+def test_the_address_book_is_lites_own_tab(app):
+    operator = app.get("/lite", headers=LOCAL).text
+    assert 'id="b-add"' in operator and 'from "/node-mail.js"' in operator and 'href="/contacts"' not in operator
+    assert 'href="/join"' in _panel(app.get("/lite", headers=OUTSIDE).text, "addresses")
+    assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
+    user = app.get("/lite", headers=OUTSIDE).text
+    assert 'from "/messaging.js"' in user and "window.ARCADE_ME" in user and "/me/contacts" not in user
+
+
+def test_join_is_a_panel_of_the_window_and_lite_serves_it_at_join(app, app_state):
+    visitor = _panel(app.get("/lite", headers=OUTSIDE).text, "join")
+    assert "seats open" in visitor or "seats are taken" in visitor or "not served over https" in visitor
+    tunnel = _panel(app.get("/lite", headers={"host": "think.localhost:8430"}).text, "join")
+    assert 'id="j-make"' in tunnel and 'id="j-in"' in tunnel, "*.localhost is a secure context, as browsers say"
+    assert 'id="j-make"' not in app.get("/join", headers=LOCAL).text, "the full edition keeps its own Join page"
+    app_state.set_setting("edition", "lite")
+    try:
+        page = app.get("/join", headers=LOCAL)
+        assert page.status_code == 200 and 'id="j-make"' in page.text and "panel('join')" in page.text
+    finally:
+        app_state.set_setting("edition", None)
 
 
 def test_console_lines_come_only_from_the_lite_page(app):

@@ -1,0 +1,69 @@
+{#- The Address book, drawn in the window like the Overview. The book is the one the full arcade keeps: messaging.js's
+    in this browser for an account (followed by ARCADE_ME, so another account signing in here starts from empty), and
+    the node's contacts table for the operator (node-mail.js). Only names claimed on the chain go in. -#}
+{% if not wallet %}
+<section data-panel="addresses" hidden><p class="later"><a href="/join">Sign in or make an account</a> to keep an
+  address book.</p></section>
+{% else %}
+<section data-panel="addresses" hidden>
+  <fieldset><legend>Address book</legend>
+    <form id="b-add" class="grid">
+      <label for="b-tag">Add</label><span><input id="b-tag" placeholder="@name" autocomplete="off" spellcheck="false"
+        required> <button type="submit">Add</button></span>
+    </form>
+    <p id="b-said" hidden></p>
+    <table><thead><tr><th>Name</th><th>Address</th><th>Note</th><th></th></tr></thead>
+      <tbody id="b-people"><tr><td class="muted">Loading…</td></tr></tbody></table>
+  </fieldset>
+</section>
+<script>window.ARCADE_ME = {{ me|tojson }};</script>
+<script type="module">
+import * as mail from "{{ '/node-mail.js' if wallet == 'node' else '/messaging.js' }}";
+const $ = (id) => document.getElementById(id);
+function tell(text, cls) { const p = $("b-said"); p.textContent = text; p.className = cls || ""; p.hidden = !text; }
+function button(text, act) {
+  const b = document.createElement("button"); b.type = "button"; b.textContent = text; b.onclick = act; return b;
+}
+
+async function draw() {
+  const tb = $("b-people"), people = await mail.book();
+  tb.textContent = "";
+  for (const p of people) {
+    const tr = tb.insertRow();
+    tr.insertCell().textContent = (p.name ? p.name + "  " : "") + "@" + p.tag;
+    const at = tr.insertCell(); at.textContent = p.address || ""; at.style.fontFamily = "var(--mono)";
+    tr.insertCell().textContent = p.note || "";
+    const acts = tr.insertCell(); acts.style.whiteSpace = "nowrap";
+    acts.append(button("Pay", () => {
+      const to = $("w-to");
+      if (!to) return;
+      to.value = "@" + p.tag;
+      document.querySelector('[data-tab="send"]').click();
+      $("w-amount").focus();
+    }), " ", button("Note…", async () => {
+      const note = window.prompt(`A note on @${p.tag}, kept only here:`, p.note || "");
+      if (note === null) return;
+      try { await mail.updateBookEntry(p.tag, {note: note.slice(0, 500)}); draw(); }
+      catch (x) { tell(String(x.message || x), "bad"); }
+    }), " ", button("Remove", async () => {
+      if (!window.confirm(`Take @${p.tag} out of the address book?`)) return;
+      try { await mail.removeFromBook(p.tag); tell(`@${p.tag} taken out.`, "muted"); draw(); }
+      catch (x) { tell(String(x.message || x), "bad"); }
+    }));
+  }
+  if (!people.length) tb.insertRow().insertCell().textContent = "Nobody yet. Add someone by their @name.";
+}
+$("b-add").onsubmit = async (e) => {
+  e.preventDefault();
+  const tag = $("b-tag").value.trim().replace(/^@/, "");
+  if (!tag) return;
+  try {
+    const got = await mail.addToBook(tag);
+    $("b-tag").value = "";
+    tell(`@${got.tag || tag} added.`, "ok");
+    draw();
+  } catch (x) { tell(String(x.message || x), "bad"); }
+};
+draw();
+</script>
+{% endif %}

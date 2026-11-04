@@ -51,8 +51,8 @@ th{font-weight:600;color:var(--muted)}
 .later{padding:30px;text-align:center;color:var(--muted)}
 .grid{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 10px;align-items:center}
 input,select{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);padding:3px 5px}
-main button{font:inherit;padding:3px 12px;background:var(--bar);border:1px solid var(--line);border-radius:3px;cursor:pointer}
-main button:disabled{color:var(--muted);cursor:default}
+main button,.wbody button{font:inherit;padding:3px 12px;background:var(--bar);border:1px solid var(--line);border-radius:3px;cursor:pointer}
+main button:disabled,.wbody button:disabled{color:var(--muted);cursor:default}
 code{font:12px var(--mono);overflow-wrap:anywhere}
 #w-qr svg{width:180px;height:180px;margin-top:8px;background:#fff}
 /* status bar */
@@ -83,7 +83,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   <div class="menu"><button type="button">File</button><ul>
     {% if audience == 'operator' %}<li><button type="button" data-go="/backup">Backup and restore</button></li>{% endif %}
     {% if edition == 'full' %}<li><hr></li><li><button type="button" data-go="/">Open the full arcade</button></li>{% endif %}
-    {% if audience == 'anyone' %}<li><button type="button" data-go="/join">Sign in or make an account</button></li>{% endif %}
+    {% if account %}<li><button type="button" data-go="/join">Sign out…</button></li>
+    {% else %}<li><button type="button" data-go="/join">Sign in or make an account</button></li>{% endif %}
   </ul></div>
   <div class="menu"><button type="button">Settings</button><ul>
     {% if audience == 'operator' %}<li><button type="button" data-go="/admin">Options…</button></li>
@@ -140,10 +141,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     </div>
   </section>
   {% include "_wallet.html" %}
-  {#- Until Lite draws it itself, the address book opens its own page: the operator's, or the user's. -#}
-  {% set book = {'operator': '/contacts', 'user': '/me/contacts'}.get(audience) %}
-  <section data-panel="addresses" hidden><p class="later">{% if book %}<a href="{{ book }}">Address book</a> opens
-    its own page.{% else %}<a href="/join">Sign in or make an account</a> to keep an address book.{% endif %}</p></section>
+  {% include "_addressbook.html" %}
+  {% include "_join.html" %}
   <section data-panel="apps" hidden>
     <fieldset><legend>Apps, themes and node modules</legend>
       <table><thead><tr><th>Module</th><th>Kind</th><th>Here</th></tr></thead><tbody>
@@ -268,13 +267,13 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   }
   load(); setInterval(load, 15000);
 
-  // tabs
-  document.querySelectorAll('.toolbar [data-tab]').forEach(function (b) {
-    b.onclick = function () {
-      document.querySelectorAll('.toolbar [data-tab]').forEach(function (x) { x.setAttribute('aria-selected', x === b); });
-      document.querySelectorAll('main [data-panel]').forEach(function (p) { p.hidden = p.dataset.panel !== b.dataset.tab; });
-    };
-  });
+  // tabs, and the panels with no tab of their own (Join, at /join)
+  function panel(name) {
+    document.querySelectorAll('.toolbar [data-tab]').forEach(function (x) { x.setAttribute('aria-selected', x.dataset.tab === name); });
+    document.querySelectorAll('main [data-panel]').forEach(function (p) { p.hidden = p.dataset.panel !== name; });
+  }
+  document.querySelectorAll('.toolbar [data-tab]').forEach(function (b) { b.onclick = function () { panel(b.dataset.tab); }; });
+  if (location.pathname === '/join') panel('join');
 
   // menus: click to open, click elsewhere to close
   document.querySelectorAll('.menu>button').forEach(function (b) {

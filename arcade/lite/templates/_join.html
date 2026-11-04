@@ -1,0 +1,115 @@
+{#- Join and sign in, drawn in the window like the Overview. ARCADE Lite serves it at /join. The account is the full
+    arcade's own, made by its own code (wallet.js): the words are made in this browser, the password never leaves it,
+    and the node is handed a name, a key and a sealed wallet it cannot open. -#}
+<section data-panel="join" hidden>
+  {% if audience != 'anyone' and account %}
+  <fieldset><legend>Signed in</legend>
+    <p style="margin:0 0 8px">You are signed in{{ " as @" ~ me if me }}.</p>
+    <button type="button" id="j-out">Sign out</button>
+  </fieldset>
+  {% elif not join.secure %}
+  <fieldset><legend>Sign in or make an account</legend><p class="bad" style="margin:0">{{ join.why_not }}</p>
+    <p class="muted">On this network, an ssh tunnel to the arcade's address and port opened at localhost is enough.</p>
+  </fieldset>
+  {% else %}
+  <div class="cols"><div>
+    <fieldset><legend>Make an account</legend>
+      {% if join.free > 0 %}
+      <form id="j-make" class="grid">
+        <label for="j-tag">Name</label><span>@<input id="j-tag" autocomplete="username" autocapitalize="off"
+          spellcheck="false" required value="{{ join.fruit or '' }}"> <span id="j-tag-said" class="muted"></span></span>
+        <label for="j-pw">Password</label><input id="j-pw" type="password" autocomplete="new-password" required
+          placeholder="at least twelve characters">
+        <label for="j-pw2">Again</label><input id="j-pw2" type="password" autocomplete="new-password" required>
+        <span></span><span><button type="submit">Make the account</button></span>
+      </form>
+      <p class="muted">{{ join.free }} of {{ join.seats }} seats open. Your wallet is made in this browser; nobody can
+        reset the password, and the twelve words shown next are the only way back.
+        {% if join.fruit %}This arcade has no operator yet: keep @{{ join.fruit }} and this account becomes it.{% endif %}</p>
+      {% else %}<p class="muted" style="margin:0">All {{ join.seats }} seats are taken.</p>{% endif %}
+    </fieldset>
+    <fieldset id="j-words-box" hidden><legend>Your twelve words</legend>
+      <ol id="j-words" style="columns:3;margin:0;font-family:var(--mono)"></ol>
+      <p id="j-gift" class="muted"></p>
+      <p id="j-setup" class="muted"></p>
+      <label><input type="checkbox" id="j-kept"> I have written them down, in order, somewhere safe.</label>
+      <p style="margin:8px 0 0"><button type="button" id="j-done" disabled>Done</button></p>
+    </fieldset>
+  </div><div>
+    <fieldset><legend>Sign in</legend>
+      <form id="j-in" class="grid">
+        <label for="j-in-tag">Name</label><input id="j-in-tag" autocomplete="username" autocapitalize="off"
+          spellcheck="false" required>
+        <label for="j-in-pw">Password</label><input id="j-in-pw" type="password" autocomplete="current-password" required>
+        <span></span><span><button type="submit">Sign in</button></span>
+      </form>
+      <p class="muted">Played on another arcade? The same name and password bring that account here.</p>
+    </fieldset>
+    <fieldset><legend>Open a backup file</legend>
+      <form id="j-file" class="grid">
+        <label for="j-file-in">File</label><input id="j-file-in" type="file" accept=".json,application/json" required>
+        <label for="j-file-pw">Password</label><input id="j-file-pw" type="password" autocomplete="current-password">
+        <span></span><span><button type="submit">Open</button></span>
+      </form>
+    </fieldset>
+  </div></div>
+  {% endif %}
+  <p id="j-said" hidden></p>
+</section>
+<script type="module">
+import * as wallet from "/wallet.js";
+const $ = (id) => document.getElementById(id);
+const CHAIN = {{ tagchain|tojson }};
+const NEXT = (() => { const n = new URLSearchParams(location.search).get("next") || "";
+                      return /^\/(?![\/\\])/.test(n) ? n : "/"; })();
+function tell(text, cls) { const p = $("j-said"); p.textContent = text; p.className = cls || ""; p.hidden = !text; }
+async function pressed(button, what) {
+  if (button.disabled) return;
+  button.disabled = true; tell("");
+  try { await what(); } catch (x) { tell(String(x.message || x), "bad"); } finally { button.disabled = false; }
+}
+const on = (id, event, fn) => { const box = $(id); if (box) box.addEventListener(event, fn); };
+
+let asking = null;
+on("j-tag", "input", () => {
+  clearTimeout(asking);
+  asking = setTimeout(async () => {
+    const wanted = $("j-tag").value.trim(), out = $("j-tag-said");
+    if (!wanted) { out.textContent = ""; return; }
+    const said = await wallet.available(wanted);
+    out.textContent = said.free ? `@${said.tag} is free` : said.elsewhere ? `@${said.tag} is taken: sign in instead`
+      : (said.detail || "that name cannot be used");
+    out.className = said.free ? "ok" : "bad";
+  }, 300);
+});
+on("j-make", "submit", (e) => { e.preventDefault(); pressed(e.submitter || $("j-make").querySelector("button"), async () => {
+  if ($("j-pw").value !== $("j-pw2").value) throw new Error("The two passwords are not the same.");
+  const made = await wallet.signUp($("j-tag").value.trim(), $("j-pw").value, CHAIN);
+  for (const word of made.wallet.phrase.split(" ")) $("j-words").append(Object.assign(document.createElement("li"),
+                                                                                     {textContent: word}));
+  $("j-gift").textContent = made.given ? `You have been sent ${(made.given / 1e8).toLocaleString()} test coins to `
+    + "start with; they arrive in a minute or two." : (made.no_coins || "No coins this time; you can still sign in.");
+  $("j-make").closest("fieldset").hidden = true; $("j-words-box").hidden = false;
+  // The name and the key put on the chain, as the full arcade's Join does: in the background, said when done.
+  const mail = await import("/messaging.js");
+  wallet.setUp(made.wallet, await mail.identity(made.wallet.phrase), made.tag, {faucetRefusal: made.no_coins,
+                                                                                fruit: !!made.fruit,
+    onStep: ({how}) => { $("j-setup").textContent = how; }})
+    .then((out) => { $("j-setup").textContent = out.trouble.length ? out.trouble.join("; ") + "." :
+                     `Done: @${made.tag} and your key are on the chain.`; }, () => {});
+}); });
+on("j-kept", "change", () => { $("j-done").disabled = !$("j-kept").checked; });
+on("j-done", "click", () => { location.href = NEXT; });
+on("j-in", "submit", (e) => { e.preventDefault(); pressed($("j-in").querySelector("button"), async () => {
+  await wallet.signIn($("j-in-tag").value.trim(), $("j-in-pw").value, CHAIN);
+  location.href = NEXT;
+}); });
+on("j-file", "submit", (e) => { e.preventDefault(); pressed($("j-file").querySelector("button"), async () => {
+  let said;
+  try { said = JSON.parse(await $("j-file-in").files[0].text()); }
+  catch (x) { throw new Error("That file is not something this can read."); }
+  await wallet.openFile(said, $("j-file-pw").value, CHAIN);
+  location.href = NEXT;
+}); });
+on("j-out", "click", () => pressed($("j-out"), async () => { await wallet.signOut(CHAIN); location.href = "/"; }));
+</script>

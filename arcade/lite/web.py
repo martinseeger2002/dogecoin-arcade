@@ -23,12 +23,13 @@ LITE_HEADER = "x-arcade-lite"
 
 
 def register(app, state, admin_check, signed_in, account_address, name_of, node_tools=None, public_tools=None,
-             wallet_name=lambda request: "", account_view=lambda request: False):
+             wallet_name=lambda request: "", account_view=lambda request: False, join_facts=None):
     """Add /lite to the node's app, with the web app's own checks: `admin_check(request, write=False)` raises unless
     the operator is asking, `signed_in(request)` is the account or None, `account_address(pubkey, chain)` and
     `name_of(address)` look an account up. `node_tools` is what the operator's commands ask of the node,
     `public_tools` what anyone's may, `wallet_name(request)` the name an account's wallet opens under, and
-    `account_view(request)` whether the wallet shown is the account's rather than the node's (app.py). Returns the window's page, which ARCADE Lite also serves at /."""
+    `account_view(request)` whether the wallet shown is the account's rather than the node's, and `join_facts(request)`
+    what Join says: seats, free, fruit, secure and why_not (app.py). Returns the window's page, which ARCADE Lite also serves at /."""
 
     def caller_for(request: Request, write: bool = False) -> cmdlib.Caller:
         local = False
@@ -60,7 +61,8 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             "wallet": "account" if caller.account and account_view(request)
                       else "node" if caller.audience == "operator" else "",
             # What wallet.js unlocks an account's words with, as the full arcade's pages give it (base.html).
-            "me": wallet_name(request) if caller.account else "",
+            "me": wallet_name(request) if caller.account else "", "account": bool(caller.account),
+            "join": (join_facts or (lambda request: {"seats": 0, "free": 0, "secure": True}))(request),
             "tagchain": {"network": state.messaging.network, "version": state.messaging.params.pubkeyhash_version}},
             headers=NO_STORE)
 

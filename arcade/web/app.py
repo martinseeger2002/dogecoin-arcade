@@ -657,7 +657,8 @@ def secure_context(request: Request) -> bool:
     if proto == "https":
         return True
     name = (request.headers.get("host", "").rsplit(":", 1)[0]).strip().lower()
-    return name in LOOPBACK or name.startswith("127.")
+    # *.localhost too, as browsers treat it (an ssh tunnel opened as think.localhost:8430 is a secure context).
+    return name in LOOPBACK or name.startswith("127.") or name.endswith(".localhost")
 
 
 def locked(title: str, detail: str, status: int = 403) -> HTMLResponse:
@@ -11767,14 +11768,22 @@ def create_app(state: AppState) -> FastAPI:
         Themes on Your arcade)."""
         return _asset_response(request, "/deskdogefeedx.css")
 
+    def _join_facts(request: Request) -> dict[str, Any]:
+        """What ARCADE Lite's Join panel says, as the page below does."""
+        register = state.accounts()
+        return {"seats": register.seats, "free": register.free(), "fruit": _fruit_here(request),
+                "secure": secure_context(request), "why_not": WHY_NOT_SECURE}
+
     @app.get("/join", response_class=HTMLResponse)
     def join_page(request: Request):
         """What a person meets: a name, a password, and a wallet.
 
         `/join/keys` is the same door for somebody who would rather hold
         their own words -- it is the older page and it is still the whole
-        of what this one does underneath.
+        of what this one does underneath. ARCADE Lite draws it in its own window.
         """
+        if modulelib.edition(state.settings()) == "lite":
+            return _lite_home(request)
         register = state.accounts()
         return render(request, "signup.html", chain=_account_chain(), fruit=_fruit_here(request),
                       seats=register.seats, free=register.free(),
@@ -36319,7 +36328,7 @@ def create_app(state: AppState) -> FastAPI:
     _lite_home = liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in,
                                   account_address=_account_address, name_of=_name_of, node_tools=node_tools,
                                   public_tools=public_tools, wallet_name=_account_name,
-                                  account_view=_account_view)
+                                  account_view=_account_view, join_facts=_join_facts)
     # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
     from . import modules_web
     modules_web.register(app, state, admin_check=_admin_check)

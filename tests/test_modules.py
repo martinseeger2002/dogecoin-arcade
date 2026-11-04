@@ -115,8 +115,9 @@ def test_lite_serves_users_as_full_does(lite, app_state):
     assert _sign_in(client, key, headers=OUTSIDE).status_code == 200
     page = client.get("/", headers=OUTSIDE)
     assert page.status_code == 200 and 'id="w-form"' in page.text and "Edition and modules" not in page.text
-    for asked in ("/wallet.js", "/vendor/qrcode.js", "/account", "/account/activity", "/me/wallet"):
-        assert client.get(asked, headers=OUTSIDE).status_code == 200, f"Lite's wallet tabs need {asked}"
+    for asked in ("/wallet.js", "/vendor/qrcode.js", "/account", "/account/activity", "/me/wallet", "/messaging.js"):
+        assert client.get(asked, headers=OUTSIDE).status_code == 200, f"Lite's tabs need {asked}"
+    assert client.get("/node-mail.js", headers={"host": "127.0.0.1:8420"}).status_code == 200, "the operator's book"
     assert client.get("/me/contacts", headers=OUTSIDE).status_code == 200
     assert client.get("/feed", headers=OUTSIDE).status_code == 404
     app_state.set_setting("public_hosts", [])

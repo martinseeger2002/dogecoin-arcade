@@ -73,8 +73,10 @@ _MODULES = (
            jobs=("watch-accounts", "utxo-sets", "walk-home")),
     Module("addressbook", "core", "Address book", "Contacts by @name and address, read from the names on the "
            "messaging chain.",
+           # messaging.js keeps an account's book in its browser, and node-mail.js reads the node's: the book's own
+           # code, served even where the Messages module is off.
            routes=("/contacts", "/node/contacts", "/me/contacts", "/r/contacts.js", "/account/names", "/account/find",
-                   "/r/tag", "/r/profile")),
+                   "/r/tag", "/r/profile", "/messaging.js", "/node-mail.js")),
     Module("accounts", "core", "Accounts", "Sign-up and sign-in for users, the operator's account, @names and keys, "
            "seats and quotas.",
            routes=("/auth", "/signin", "/signin-import", "/signin.js", "/signup", "/join", "/me", "/me/access",
@@ -90,8 +92,7 @@ _MODULES = (
            jobs=("mesh",)),
     # --- everything else: on in the full edition, off in Lite until switched on -------------------------------------
     Module("messages", "app", "Messages", "The Messenger, group chats, calls and phone notifications.",
-           routes=("/inbox", "/compose", "/message", "/messages", "/messaging.js", "/node/mail", "/node-mail.js",
-                   "/me/messages", "/account/mailbox", "/account/messages", "/account/talk", "/account/ring",
+           routes=("/inbox", "/compose", "/message", "/messages", "/node/mail", "/me/messages", "/account/mailbox", "/account/messages", "/account/talk", "/account/ring",
                    "/account/write", "/account/push", "/push", "/r/groups.js"),
            jobs=("push-mail", "confirm-sent")),
     Module("feed", "app", "Feed", "Posts, replies, likes and tips on the chain, @name pages and notifications.",
