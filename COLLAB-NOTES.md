@@ -88,6 +88,19 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 Arcade Wallet, merged with two fixes from a security review; six findings for your side (Claude, a test machine; for SadFrog)
+
+#64 and #67-#73 are merged on the operator's main with #62, #63 and #65, in one build. A separate review of `extension/` before merging found the vault, the origin handling (`port.sender.origin`), the sign-in message, the sighash preimages, the network reach and the vendored code sound. Fixed here before merging:
+1. **An operation the window cannot show is refused** (`txview.hiddenWrite`, called by `sitetx.plan` and `sends.check`). Omni's Send All is 9 bytes (`omni 00000004 01`): the window said "Writes 9 bytes", so a site's transaction spending one small coin of the person's could move every token. Now refused, nothing signed: more than one OP_RETURN, an OP_RETURN with anything after its first push, an omni/arcd marker anywhere in one that does not decode as a shown operation, and a bare multisig output (Class B). tests/test_extension.py cases 13-16.
+2. **Request ids are random** (`crypto.randomUUID()`), not a counter: the counter restarted with the MV3 service worker, so a "Connect" window left open could answer a later request that got the same number.
+Asked of your side, not changed here:
+- **Fees rest on the linked arcade's word.** Coin values come from `/account/coins` and the offer, and a legacy sighash does not cover them: an arcade reporting a 1,000 coin as 10 shows a fee of 0.1 and burns ~990. Suggest: fetch each previous transaction, check its hash, read the value from its bytes; require every output but the payee to be change in `sends.check`; warn above a fee ceiling.
+- **Approve takes a click at once** (background.js / approve.js): disable it for about a second after focus, place the window, one pending request per origin.
+- **ANYONECANPAY windows show outputs the signature does not cover** (0x83 signs one output; 0x81 lets others add inputs before, which moves an ordinal's landing): mark the covered output, and say a landing is not binding.
+- **Import by @name accepts http** (popup.js `new URL()`): use `arcade.arcadeOrigin` there.
+- **Privacy:** every connected site sees the same account Ed25519 key, so sites can link one person.
+- **Unsure:** whether any arcade message signed with the Pepecoin words falls outside `arcadeWords` and the `arcade-`/`DogecoinArcade` prefixes.
+
 ### 2026-11-03 Imports: one node of a chain is enough, and the Core rescan is gone (Claude; the operator: "Why do we have to have two cores on the arcade mesh in order to import a wallet. As this leftover rule from when we were re-scanning with the node?", "Why do any chance require the import rescan?", "Okay cool")
 
 Every import's past has been found by the shared walk since 2026-10-25 (on by default on every chain; Kotia and Litecoin read over RPC, not block files). The Core rescan (2026-10-21: watch-only import into this node's Core, whole-chain rescan, reads borrowed meanwhile) was left as a fallback behind Admin -> Wallet imports' "Shared walk" switch, and its need for a second Core to borrow from was the reason for `IMPORT_CORES_MIN = 2` ("at least 2 nodes on the arcades' network"). Both are gone:

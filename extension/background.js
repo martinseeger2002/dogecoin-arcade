@@ -16,7 +16,9 @@ import * as sitetx from "./sitetx.js";
 
 const LOCK_MINUTES = 30;
 const pending = new Map();          // request id -> {origin, method, params, resolve, window}
-let nextId = 1;
+// Request ids are random (2026-11-03, a test machine's review): a counter restarted with the service worker, so an old
+// approval window could answer a new request with the same number.
+const newId = () => crypto.randomUUID();
 
 /* --- the vault ------------------------------------------------------------------------------------------------ */
 
@@ -77,7 +79,7 @@ async function prepare(ask) {
   const marks = txview.ORD_CHAINS.has(ask.chain)
     ? await arcade.inscriptionsOn(origin, key, ask.chain, k.address, offer.inputs || []) : {};
   const {hashes, view} = await sends.check(offer, k, ask, marks);
-  const id = String(nextId++);
+  const id = newId();
   prepared.set(id, {origin, ask, offer, hashes, at: Date.now()});
   return {id, view, tokens: await tokenNames(origin, view), arcade: origin};
 }
@@ -238,7 +240,7 @@ const METHODS = {
 /** Open the approval window and wait for the person's answer; throws if they refuse or close it. */
 function approve(origin, kind, detail) {
   return new Promise(async (resolve, reject) => {
-    const id = String(nextId++);
+    const id = newId();
     const win = await chrome.windows.create({url: `approve.html?id=${id}`, type: "popup", width: 420, height: 600});
     pending.set(id, {origin, kind, detail, resolve, reject, window: win.id});
   });

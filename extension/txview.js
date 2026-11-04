@@ -42,6 +42,34 @@ export function payload(script) {
   return {kind: "data", bytes: data.length};
 }
 
+/** Why a transaction may carry an operation the window cannot show, or null when it shows all of it (2026-11-03,
+ *  a test machine's review of #73: Omni's "Send All" is 9 bytes, which the window said only as "Writes 9 bytes", so a site's
+ *  transaction spending one small coin could move every token). Refused: more than one OP_RETURN; an OP_RETURN with
+ *  anything after its first push (Omni joins pushes); an Omni or arcade marker anywhere in one that does not decode
+ *  as an operation the window shows; and a bare multisig output (Omni's Class B encoding). */
+export function hiddenWrite(tx) {
+  let writes = 0;
+  const has = (data, mark) => { for (let i = 0; i + mark.length <= data.length; i++) if (SAME([...data.slice(i, i + mark.length)], mark)) return true; return false; };
+  for (const [n, o] of tx.outputs.entries()) {
+    const s = o.script;
+    if (s.length && s[0] === 0x6a) {
+      writes += 1;
+      if (s.length === 1) continue;
+      let at, length = s[1];
+      if (length === 0x4c) { length = s[2]; at = 3; } else if (length <= 0x4b) at = 2;
+      else return `Output ${n} writes data in a form this wallet cannot show.`;
+      if (at + length !== s.length) return `Output ${n} writes more than one piece of data, which this wallet cannot show.`;
+      const data = s.slice(at, at + length);
+      if ((has(data, OMNI) || has(data, ARCD)) && payload(s).kind === "data")
+        return `Output ${n} carries a token operation this wallet cannot show.`;
+    } else if (s.length && s[s.length - 1] === 0xae) {
+      return `Output ${n} is a bare multisig script, which can carry token data this wallet cannot show.`;
+    }
+  }
+  if (writes > 1) return "It writes data to the chain more than once, which this wallet cannot show.";
+  return null;
+}
+
 /** Omni's recipient (tx.determine_reference): the one output with an address, else the last of them after the
  *  first one back to the sender. Its index, or -1. */
 export function reference(addresses, sender) {

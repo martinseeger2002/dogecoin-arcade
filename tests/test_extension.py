@@ -371,6 +371,15 @@ def test_a_sites_transaction_is_signed_only_as_exchange_safety_allows_and_only_o
          "marks": marks},                                                                         # 11 no output beside it
         {"params": p(listing, sign=[1], sighash=0x83, inscriptions=[ins]), "own": own, "marks": marks,
          "send": True},                                                                           # 12 send: ALL only
+        # 2026-11-03, a test machine's review: an operation the window cannot show is refused.
+        {"params": p(build_raw_tx([a], pay + [(0, bytes([0x6a, 9]) + b"omni" + bytes([0, 0, 0, 4, 1]))])),
+         "own": own, "marks": marks},                                                             # 13 Omni Send All
+        {"params": p(build_raw_tx([a], pay + [(0, bytes([0x6a, 4]) + b"omni" + bytes([5, 0, 0, 0, 4, 1]))])),
+         "own": own, "marks": marks},                                                             # 14 two pushes
+        {"params": p(build_raw_tx([a], pay + [(0, bytes([0x6a, 2, 1, 2])), (0, bytes([0x6a, 2, 3, 4]))])),
+         "own": own, "marks": marks},                                                             # 15 two OP_RETURNs
+        {"params": p(build_raw_tx([a], pay + [(10**6, bytes([0x51, 33]) + pub + bytes([0x51, 0xae]))])),
+         "own": own, "marks": marks},                                                             # 16 bare multisig
     ]
     asked = tmp_path / "sitetx.json"
     asked.write_text(json.dumps({"phrase": PHRASES[0], "cases": cases}))
@@ -415,5 +424,9 @@ def test_a_sites_transaction_is_signed_only_as_exchange_safety_allows_and_only_o
     assert "not a coin of this wallet's" in got[10]["error"]
     assert "no output beside it" in got[11]["error"]
     assert "Only SIGHASH_ALL" in got[12]["error"]
+    assert "token operation this wallet cannot show" in got[13]["error"]
+    assert "more than one piece of data" in got[14]["error"]
+    assert "more than once" in got[15]["error"]
+    assert "bare multisig" in got[16]["error"]
     for n, case in enumerate(got):
         assert case.get("error", "Nothing was signed.").endswith("Nothing was signed."), n

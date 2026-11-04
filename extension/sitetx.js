@@ -50,6 +50,8 @@ export async function plan(params, own, marks, keys, {send = false} = {}) {
     if (send && named[n].inscriptions.length) refuse(`Input ${n} carries an inscription; a send never spends it.`);
     if (undeclared.length) refuse(`Input ${n} carries ${undeclared.map((i) => i.id).join(", ")}, which the site did not say it moves.`);
   }
+  const hidden = txview.hiddenWrite(tx);
+  if (hidden) refuse(hidden);
   const view = await txview.describe(tx, chain, named, keys.address);
   if (type === txview.SIGHASH.ALL) {
     for (const l of view.lands) {

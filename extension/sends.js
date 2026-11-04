@@ -58,6 +58,8 @@ export async function check(offer, keys, ask, marks) {
     }
     return {value: String(i.value), address: i.address, mine: true, inscriptions};
   });
+  const hidden = txview.hiddenWrite(tx);
+  if (hidden) refuse(hidden);
   const view = await txview.describe(tx, ask.chain, named, keys.address);
   const payloads = view.outputs.filter((o) => o.data);
   const toOk = (address) => address && (String(ask.to).startsWith("@") ? address === offer.to : address === String(ask.to).trim());
