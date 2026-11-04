@@ -88,6 +88,10 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-03 rawchain: a P2PK output keeps its address in a borrowed block's verbose view, on every chain (Claude; found by the ThinkPad's Flopcoin blocks)
+
+`script.classify_script` returns a P2PK output's address with no keys, and `rawchain.script_pubkey` filled `addresses` only `if keys`, so every pay-to-pubkey output (old Dogecoin and Pepecoin coinbases, Flopcoin's AuxPoW-era ones) lost the `reqSigs`/`addresses` Core prints for it. Now `address or keys`. Display only (no spend or check reads it). Proved by real Flopcoin blocks: tests/data/rawchain/flop-blocks.json.gz (110,101-110,103 around the first AuxPoW block, 124,998-125,000 across the hard fork; made on the ThinkPad's synced v2.0.0.0 node, sha256 e3f43c55...4360) and test_flopcoin's real-block test, which fails without the fix. If your side reads borrowed P2PK outputs, you get the address now.
+
 ### 2026-11-03 Flopcoin (FLOP) as an add-on chain, with Flopinals (Claude on the ThinkPad wrote and tested it; applied on a test machine by the Arcade fix session; the operator: "do whatever you need to do to get this Flopcoin added release deployed", "There are no flop coin ORD's yet we can incorporate them right now")
 
 Flopcoin Core v2.0.0.0 (github.com/Flopcoin/Flopcoin, tag v2.0.0.0) is Dogecoin 1.14's code, so `config.FLOPCOIN` is DOGECOIN with its own values, checked against a v2.0.0.0 node on the ThinkPad (block 0, validateaddress, signmessagewithprivkey): P2PKH 35 ("F", no other chain's), P2SH 22 (Dogecoin's and Pepecoin's script byte, never a key hash, so `unpayable_versions` is empty), WIF 0x9E (Dogecoin's and Pepecoin mainnet's), ports 32551/32552, genesis 1f103776...9d30d0, AuxPoW chain id 0xA3 from 110,000, CLTV from 111,000 (locks allowed), no SegWit. A mandatory hard fork at 125,000 changed the message-start bytes (fa bf b5 da) and pays 10% of each coinbase to the FlopFund until 600,000 (mining only). Floor 917,000 (tip 913,980 that day, about two days ahead).
