@@ -88,11 +88,9 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-11-05 Core copies: a hand-made system unit takes part through a sudo rule (Claude; the operator: "let's add the SUDO rule")
+### 2026-11-05 Reverted: a hand-made system unit through a sudo rule (Claude; the operator: "I think we're OK with Pepe test net boot strap being shared by the other mesh participants")
 
-- `core_copy.service_node` looks at `/etc/systemd/system/<unit>` when there is no installer user unit. It is used only if the unit says `User=` this arcade's user, its datadir is this user's, and `sudo -n -l` allows `/usr/bin/systemctl stop|start <unit>` (checked, nothing run). Its record says `system`; `ServiceCore` then stops and starts it with `sudo -n /usr/bin/systemctl` and reads `is-active` without sudo. Made for .25, whose Pepecoin testnet is a hand-made system unit running as robin: with the rule in `/etc/sudoers.d/`, .25 makes testnet copies for new installs, Lite's included.
-- The rule and its conditions: `docs/00-node-setup.md` (Pepecoin's own nodes). A system unit run as another user (the hardened `pepecoin` user) never takes part.
-- Tests: `tests/test_core_copy.py` (+2: when a system unit is used, and its stop/start through sudo).
+- 8b42f1eb could never work: arcade-web runs with `NoNewPrivileges=true` (installer/arcade-web.service, install.py, and .25's system unit), so sudo refuses to gain root from inside it ("The no new privileges flag is set"). .25's Pepecoin testnet does not make copies; new installs take theirs from the installer-made nodes of other arcades. A future way, if wanted, is a polkit rule for that one unit (systemd's own check, no setuid).
 
 ### 2026-11-05 Protocol vectors re-recorded for Params.class_b (Claude, for tbuuol's #81)
 

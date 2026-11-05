@@ -163,62 +163,22 @@ class Core:
 SERVICE_UNITS = {"test": "pepecoind-testnet.service", "main": "pepecoind-mainnet.service"}
 
 
-#: A node set up by hand as a SYSTEM unit (2026-11-05, the operator on .25's Pepecoin testnet: "let's add the SUDO rule"): used
-#: only when it runs as this arcade's own user, on a datadir this user owns, and sudo lets this user stop and start that
-#: one unit with no password. The rule, in /etc/sudoers.d/ (docs/00-node-setup.md):
-#:   <user> ALL=(root) NOPASSWD: /usr/bin/systemctl stop <unit>, /usr/bin/systemctl start <unit>
-SYSTEM_UNIT_DIR = Path("/etc/systemd/system")
-SYSTEMCTL = "/usr/bin/systemctl"
-SUDO = ("sudo", "-n")
-
-
-def sudo_allows(unit: str) -> bool:
-    """Whether sudo lets this user stop and start `unit` with no password (`sudo -n -l <command>`: runs nothing)."""
-    try:
-        return all(subprocess.run([*SUDO, "-l", SYSTEMCTL, cmd, unit], capture_output=True, timeout=10).returncode == 0
-                   for cmd in ("stop", "start"))
-    except Exception:                                          # noqa: BLE001 (no sudo here, or it hung)
-        return False
-
-
-def _whoami() -> str:
-    import pwd
-    return pwd.getpwuid(os.getuid()).pw_name
-
-
-def service_node(net: str, unit_dir: Path | None = None, system_dir: Path | None = None) -> dict | None:
-    """A chain's node run by systemd, as an installed-Core record with its `unit`, or None. The installer's user unit
-    first; else a system unit of the same name that this arcade may stop and start (SYSTEM_UNIT_DIR: its record says
-    `system`). Read from the unit file itself: `ExecStart=<binary> -datadir=<datadir>`."""
+def service_node(net: str, unit_dir: Path | None = None) -> dict | None:
+    """A chain's node the installer runs as a systemd user unit, as an installed-Core record with its `unit`, or None.
+    Read from the unit file itself: `ExecStart=<binary> -datadir=<datadir>`."""
     name = SERVICE_UNITS.get(net)
-    if not name:
+    unit = (unit_dir or Path.home() / ".config/systemd/user") / name if name else None
+    try:
+        text = unit.read_text() if unit else ""
+    except OSError:
         return None
-    for unit, system in (((unit_dir or Path.home() / ".config/systemd/user") / name, False),
-                         ((system_dir or SYSTEM_UNIT_DIR) / name, True)):
-        try:
-            text = unit.read_text()
-        except OSError:
-            continue
-        m = re.search(r"^ExecStart=(\S+)\s+-datadir=(\S+)\s*$", text, re.M)
-        if not m:
-            continue
-        binary, datadir = Path(m.group(1)), Path(m.group(2))
-        if system:
-            user = re.search(r"^User=(\S+)\s*$", text, re.M)
-            try:
-                ours = datadir.stat().st_uid == os.getuid()
-            except OSError:
-                ours = False
-            if not (user and user.group(1) == _whoami() and ours and sudo_allows(name)):
-                continue
-        conf = next((datadir / n for n in ("pepecoin.conf", "dogecoin.conf") if (datadir / n).exists()),
-                    datadir / "pepecoin.conf")
-        cli = binary.parent / (binary.name[:-1] + "-cli" if binary.name.endswith("d") else binary.name + "-cli")
-        out = {"daemon": str(binary), "cli": str(cli), "datadir": str(datadir), "conf": str(conf), "unit": name}
-        if system:
-            out["system"] = True
-        return out
-    return None
+    m = re.search(r"^ExecStart=(\S+)\s+-datadir=(\S+)\s*$", text, re.M)
+    if not m:
+        return None
+    binary, datadir = Path(m.group(1)), Path(m.group(2))
+    conf = next((datadir / n for n in ("pepecoin.conf", "dogecoin.conf") if (datadir / n).exists()), datadir / "pepecoin.conf")
+    cli = binary.parent / (binary.name[:-1] + "-cli" if binary.name.endswith("d") else binary.name + "-cli")
+    return {"daemon": str(binary), "cli": str(cli), "datadir": str(datadir), "conf": str(conf), "unit": name}
 
 
 class ServiceCore(Core):
@@ -230,11 +190,8 @@ class ServiceCore(Core):
         self._alone = None
 
     def _ctl(self, *args) -> subprocess.CompletedProcess:
-        if self.installed.get("system"):                       # a system unit: stop/start through the sudo rule
-            argv = [SYSTEMCTL, *args] if args[0] == "is-active" else [*SUDO, SYSTEMCTL, *args]
-        else:
-            argv = ["systemctl", "--user", *args]
-        return subprocess.run([*argv, self.installed["unit"]], capture_output=True, text=True, timeout=STOP_SECONDS)
+        return subprocess.run(["systemctl", "--user", *args, self.installed["unit"]], capture_output=True, text=True,
+                              timeout=STOP_SECONDS)
 
     def running(self) -> bool:
         if self._alone is not None and self._alone.poll() is None:
