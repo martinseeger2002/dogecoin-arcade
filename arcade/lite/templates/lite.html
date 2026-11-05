@@ -278,7 +278,14 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   function draw() {
     var n = data.node || {}, m = data.mesh || null, chains = Array.isArray(data.chains) ? data.chains : [];
     var arcades = Array.isArray(data.arcades) ? data.arcades : [], you = data.you || null;
-    if (you && $('you')) {
+    if (you && $('you') && !you.account) {
+      // The arcade's own machine with nobody signed in: the node itself, which is nobody's account, so there is no
+      // @name to show; the way in is (2026-11-04: "that should instead say sign in/sign up").
+      var p = document.createElement('p'), a = document.createElement('a');
+      p.style.margin = '0'; a.href = '/join'; a.textContent = 'Sign in or make an account';
+      p.append("You are at this arcade's machine, signed in as nobody. ", a, ' to use it as yourself.');
+      $('you').replaceChildren(p);
+    } else if (you && $('you')) {
       var mine = [['@name', you.name ? '@' + you.name : 'none claimed yet']];
       Object.keys(you.addresses || {}).forEach(function (net) {
         var c = chains.filter(function (x) { return x.network === net; })[0];

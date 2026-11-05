@@ -2,8 +2,8 @@
 
 The node's own key is the place: it signs the arcade's broadcasts, takes its fees and keeps its own @name. The account
 that owns it is the person, with its own @name and its coins in its own browser. Before this an account made the
-operator took over the arcade's name; now a new owner leaves the arcade its name, and an arcade that already answered
-to its owner's name keeps doing so until the owner chooses otherwise in Admin -> This node.
+operator took over the arcade's name; now the arcade answers to its node's own name when its key has one, and to its
+owner's when it has none, until the owner chooses otherwise in Admin -> This node.
 """
 
 import pathlib
@@ -47,19 +47,24 @@ def test_a_node_with_nobody_answers_to_its_own_name(names):
     assert state.arcade_name() == "node"
 
 
-def test_an_arcade_owned_before_plan_b_keeps_its_owners_name_until_the_owner_chooses(names):
-    """Nothing changes name by updating: unset, an owner account's arcade answers to the owner's name, as before."""
+def test_an_owned_arcade_answers_to_its_own_name_when_its_key_has_one(names):
+    """Unset, an owner account's arcade answers to the node's own name when its key has one (SadFrog: a node whose own
+    key holds @orange "should be presenting as @orange" with its owner as owner), and to the owner's when it has none.
+    The owner chooses either in Admin -> This node."""
     app, state, known = names
     _owner(state, known)
-    assert state.owner_kind() == "account" and state.arcade_name() == "owner"
-    assert (state.operator_tag(), state.node_tag(), state.owner_tag()) == ("sadfrog", "pumpkin", "sadfrog")
+    assert state.owner_kind() == "account" and state.arcade_name() == "node"
+    assert (state.operator_tag(), state.node_tag(), state.owner_tag()) == ("pumpkin", "pumpkin", "sadfrog")
     assert app.post("/admin/api/settings", headers={**LOCAL, "X-Arcade-Admin": "1"},
-                    json={"arcade_name": "node"}).status_code == 200
-    assert state.operator_tag() == "pumpkin" and state.owner_tag() == "sadfrog"
+                    json={"arcade_name": "owner"}).status_code == 200
+    assert state.operator_tag() == "sadfrog" and state.owner_tag() == "sadfrog"
     setup = app.get("/admin/api/setup", headers=LOCAL).json()
-    assert setup["operator_is_node"] is True, "the node's key claims the name the arcade answers to"
+    assert setup["operator_is_node"] is False, "the owner's own key claims the owner's name"
     refused = app.post("/admin/api/settings", headers={**LOCAL, "X-Arcade-Admin": "1"}, json={"arcade_name": "both"})
-    assert refused.status_code == 400 and state.arcade_name() == "node"
+    assert refused.status_code == 400 and state.arcade_name() == "owner"
+    state.set_setting("arcade_name", None)
+    del known["nTheNodesOwn"]
+    assert state.arcade_name() == "owner" and state.operator_tag() == "sadfrog", "a node with no name of its own"
 
 
 def test_a_new_owner_leaves_the_arcade_its_name(names):
@@ -88,7 +93,8 @@ def test_admin_shows_both_names_and_the_till(names):
     _owner(state, known)
     page = app.get("/admin", headers=LOCAL).text
     assert "owned by <strong>@sadfrog</strong>" in page
-    assert 'value="owner" checked' in page and 'value="@sadfrog"' in page, "the till sends to the owner by default"
+    assert 'value="node" checked' in page and 'value="@sadfrog"' in page, "the till sends to the owner by default"
+    assert '>Status</button>' in page, "not a second Overview inside Lite's"
     info = app.post("/lite/api/console", headers={**LOCAL, "X-Arcade-Lite": "1"}, json={"line": "getnodeinfo"}).json()
     assert info["ok"] and {k: info["result"][k] for k in ("operator", "node_name", "owner", "owned_by")} == {
-        "operator": "sadfrog", "node_name": "pumpkin", "owner": "sadfrog", "owned_by": "account"}
+        "operator": "pumpkin", "node_name": "pumpkin", "owner": "sadfrog", "owned_by": "account"}
