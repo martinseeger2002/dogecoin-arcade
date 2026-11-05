@@ -25,8 +25,9 @@ class MineError(ValueError):
     """Mining could not start, said for the operator."""
 
 
-def start(state, chain, address: str, blocks: int = 0) -> dict:
-    """Start mining `chain` to `address` until stopped, or until `blocks` blocks are found (0: no limit)."""
+def start(state, chain, address: str, blocks: int = 0, until: float | None = None) -> dict:
+    """Start mining `chain` to `address` until stopped, until `blocks` blocks are found (0: no limit), or until the
+    time `until` (Admin -> Chains -> Mine's hours)."""
     from .messaging.miner import Miner
     if getattr(chain, "borrowed", False):
         raise MineError(f"{chain.label} is borrowed from another arcade here: only a chain whose node runs on this "
@@ -41,6 +42,7 @@ def start(state, chain, address: str, blocks: int = 0) -> dict:
     algos = tuple(getattr(chain.params, "mine_algos", ()) or ()) or (None,)
     run = {"started": time.time(), "address": address, "tries": 0, "rate": 0.0, "expected": 0, "stop": False,
            "net": chain.network, "chain": chain.label, "want": max(int(blocks), 0), "from_height": height,
+           "until": until, "algos": [a or "default" for a in algos], "chain_ctx": chain,
            "found": [], "rates": {}, "tries_by": {}, "errors": {}, "threads": len(algos), "lock": threading.Lock()}
     state.mining = run
     for algo in algos:
@@ -50,7 +52,8 @@ def start(state, chain, address: str, blocks: int = 0) -> dict:
 
 
 def _done(run: dict) -> bool:
-    return bool(run["stop"]) or bool(run["want"] and len(run["found"]) >= run["want"])
+    return (bool(run["stop"]) or bool(run["want"] and len(run["found"]) >= run["want"])
+            or bool(run.get("until") and time.time() >= run["until"]))
 
 
 def _work(state, chain, run: dict, algo: str | None) -> None:

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from test_web import app_state  # noqa: F401,E402
+from test_web import app_state, client  # noqa: F401,E402
 
 from arcade import testmine  # noqa: E402
 from arcade.config import NETWORKS  # noqa: E402
@@ -109,3 +109,37 @@ def test_arcade_cli_mines_to_the_operators_account_once_its_wallet_said_its_addr
     app_state.set_setting(f"address:dgbtest:{'ef' * 32}", "s-operator")
     assert cmdlib.run_line(cli, "mine dgbtest 1")["to"] == "s-operator"
     _wait(app_state)
+
+
+def test_admin_mine_has_digibyte_testnets_own_node_mine_it_by_algorithm_to_the_address_given(client, monkeypatch):
+    """Admin -> Chains -> Mine on a chain with mine_algos runs testmine, not the panel's scrypt in Python."""
+    from arcade import blockminer
+    app, state = client
+    chain = Chain()
+    monkeypatch.setattr(type(state), "all_chains", property(lambda s: [chain]))
+    monkeypatch.setattr(blockminer, "mine", lambda *a, **k: pytest.fail("not the Python scrypt miner"))
+    local, write = {"host": "127.0.0.1:8420"}, {"x-arcade-admin": "1"}
+    to = "stz68hi2MaAvriRgHbzpFzTQPf6NE9kQzN"
+    assert [c["net"] for c in app.get("/admin/api/mine", headers=local).json()["chains"]] == ["dgbtest"]
+    said = app.post("/admin/api/mine", headers={**local, **write}, json={"net": "dgbtest", "address": to})
+    assert said.status_code == 200, said.text
+    assert said.json()["running"] and said.json()["algos"] == ["odo", "qubit", "skein"] and said.json()["address"] == to
+    assert app.post("/admin/api/mine", headers={**local, **write}, json={"net": "dgbtest"}).status_code == 409
+    time.sleep(0.2)
+    app.post("/admin/api/mine", headers={**local, **write}, json={"stop": True})
+    _wait(state)
+    assert not app.get("/admin/api/mine", headers=local).json()["running"]
+    assert {c[1] for c in chain.node.calls} == {to}
+    refused = app.post("/admin/api/mine", headers={**local, **write}, json={"net": "dgbtest", "pay": "faucet"})
+    assert refused.status_code == 400 and "not to the faucet" in refused.text
+
+
+def test_the_console_mines_to_an_address_it_is_given(app_state, monkeypatch):
+    chain = Chain()
+    monkeypatch.setattr(type(app_state), "all_chains", property(lambda s: [chain]))
+    cli = cmdlib.Caller(app_state, "operator", local=True)
+    assert cmdlib.run_line(cli, "mine dgbtest 1 stz68hi2MaAvriRgHbzpFzTQPf6NE9kQzN")["to"] == \
+        "stz68hi2MaAvriRgHbzpFzTQPf6NE9kQzN"
+    _wait(app_state)
+    with pytest.raises(cmdlib.CommandError, match="not a DigiByte testnet address"):
+        cmdlib.run_line(cli, "mine dgbtest 1 DPepeIsNotHere")
