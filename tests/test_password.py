@@ -252,7 +252,10 @@ def test_a_password_operator_answers_to_the_nodes_own_name(named, monkeypatch):
     assert state.operator == op and state.operator_tag() == "pumpkin"
     setup = app.get("/admin/api/setup", headers=LOCAL).json()
     assert setup["operator_is_node"] is True and setup["need"] is False and setup["blocked"] != "operator account"
-    # An operator with a wallet of its own answers to its own name.
+    # An owner with a wallet of its own: the arcade still answers to its node's own name, until the owner chooses
+    # theirs in Admin -> This node (state.arcade_name, 2026-11-04).
     state.set_setting(f"address:{op}", "nRobinsWallet")
     names["nRobinsWallet"] = "robin"
+    assert state.operator_tag() == "pumpkin" and state.owner_tag() == "robin"
+    state.set_setting("arcade_name", "owner")
     assert state.operator_tag() == "robin" and app.get("/admin/api/setup", headers=LOCAL).json()["operator_is_node"] is False

@@ -10,7 +10,8 @@
 <p class="msg" id="said" hidden></p>
 
 <nav class="admintabs" role="tablist">
-  <button type="button" role="tab" data-tab="overview">Overview</button>
+  {#- "Status", not "Overview": in Lite, Admin is a tab of a window that has an Overview of its own (2026-11-04). #}
+  <button type="button" role="tab" data-tab="overview">Status</button>
   <button type="button" role="tab" data-tab="coins">Coins &amp; chains</button>
   {%- if modules_on is not defined or 'exchange' in modules_on %}
   <button type="button" role="tab" data-tab="trading">Trading</button>{% endif %}
@@ -34,7 +35,7 @@
 {% include "_modules_panel.html" %}
 </div>
 
-<div class="admintab" data-tab="overview" aria-label="Overview">
+<div class="admintab" data-tab="overview" aria-label="Status">
 <div class="cards" id="cards"></div>
 <section class="panel" id="needs">
   <h2>Needs you</h2>

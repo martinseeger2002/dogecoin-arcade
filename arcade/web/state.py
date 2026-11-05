@@ -1007,14 +1007,19 @@ class AppState:
         return self._tag_of(self.owner_address())
 
     #: Which @name the arcade answers to when an account owns it (2026-11-04, "Who runs this node", Plan B): "node",
-    #: its own key's; "owner", the account's. Unset is "owner", what every arcade did before, so none changes name.
+    #: its own key's; "owner", the account's. Unset, it is the node's own when its key has one, and the owner's
+    #: otherwise (SadFrog, on a node whose own key holds @orange but which went by its owner's @name: "it should be
+    #: presenting as @orange with @[the owner] as owner").
     ARCADE_NAME = "arcade_name"
 
     def arcade_name(self) -> str:
         """"node" or "owner": whose @name this arcade answers to. An arcade with no owner account answers to its own."""
         if not self.owner_address():
             return "node"
-        return "node" if self.setting(self.ARCADE_NAME) == "node" else "owner"
+        said = self.setting(self.ARCADE_NAME)
+        if said in ("node", "owner"):
+            return said
+        return "node" if self.node_tag() else "owner"
 
     def node_tag(self) -> str:
         """The @name of this node's own key (the place: it signs the arcade's broadcasts and takes its fees)."""
