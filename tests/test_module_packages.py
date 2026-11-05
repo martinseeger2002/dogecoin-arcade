@@ -29,6 +29,27 @@ def _op(state):
     return cmdlib.Caller(state, "operator", local=True)
 
 
+def test_a_commands_form_reaches_the_window_with_its_arguments_and_the_tab_says_it_is_a_package(app_state, host,
+                                                                                                tmp_path):
+    """2026-11-05: each step of a module gets a control in the Lite window as well as its console line. The manifest's
+    form (words only, packages._check_form) goes out with /lite/api/commands; the window builds the controls and runs
+    the line a person could type."""
+    form = {"title": "Greet", "button": "Say hello", "fields": {"who": {"label": "Whom", "type": "choice",
+                                                                        "choices": [["you", "You"], ["me", "Me"]]}}}
+    folder = _module(tmp_path, change=lambda m: m["commands"]["hello"].update(form=form))
+    cmdlib.run_line(_op(app_state), f"installmodule {folder}")
+    cmdlib.run_line(_op(app_state), "install hello")
+    found = {c.name: c for c in cmdlib.available(cmdlib.Caller(app_state))}
+    assert found["hello"].form == form and found["hello"].module == "hello" and found["sneak"].form is None
+    tab = next(t for t in modulelib.tabs(app_state.settings(), "anyone") if t["id"] == "hello")
+    assert tab["package"] is True and tab["page"] == "/m/hello/"
+    from fastapi.testclient import TestClient
+    from arcade.web.app import create_app
+    listed = {c["name"]: c for c in TestClient(create_app(app_state)).get("/lite/api/commands").json()}
+    assert listed["hello"]["form"] == form and listed["hello"]["args"] == ["who"] and listed["hello"]["module"] == "hello"
+    assert "form" not in listed["sneak"]
+
+
 @needs_sandbox
 def test_a_module_runs_confined_and_asks_the_chain_only_what_it_named(app_state, host, tmp_path):
     the_host, chain = host

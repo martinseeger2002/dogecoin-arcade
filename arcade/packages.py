@@ -214,8 +214,50 @@ def check_module(manifest: dict, files: dict[str, bytes]) -> None:
         optional = [a.startswith("[") for a in said.get("args", [])]
         if optional != sorted(optional):
             raise PackageError(f"{name}: an argument that may be left out comes after every one that may not")
+        if "form" in said:
+            _check_form(name, said["form"], [a.strip("[]") for a in said.get("args", [])])
     if manifest.get("pages", "anyone") not in AUDIENCES:
         raise PackageError(f"pages is who may open /m/{manifest['name']}/: one of {', '.join(AUDIENCES)}")
+
+
+#: A command's form (2026-11-05): how the Lite window draws it as a button and fields above the module's page, so each
+#: step has a control as well as its console line. Words only, checked here; the window builds the controls itself and
+#: runs the very line a person could type, so a form can do nothing its command can't.
+FIELD_TYPES = ("text", "number", "choice")
+MOST_WORDS = 80
+
+
+def _words(where: str, value, most: int = MOST_WORDS) -> str:
+    if not isinstance(value, str) or len(value) > most or any(ord(ch) < 32 for ch in value):
+        raise PackageError(f"{where} is text of at most {most} characters, on one line")
+    return value
+
+
+def _check_form(name: str, form, args: list[str]) -> None:
+    """A command's `form`: {"title", "button", "fields": {arg: {"label", "type", "value", "choices"}}}, every field one
+    of the command's own arguments, in their order."""
+    if not isinstance(form, dict) or set(form) - {"title", "button", "fields", "note"}:
+        raise PackageError(f"{name}: form has a title, a button, a note and fields, and nothing else")
+    for key in ("title", "button"):
+        _words(f"{name}: form.{key}", form.get(key, ""))
+    _words(f"{name}: form.note", form.get("note", ""), 240)
+    fields = form.get("fields", {})
+    if not isinstance(fields, dict) or [a for a in args if a in fields] != list(fields):
+        raise PackageError(f"{name}: form.fields name the command's own arguments, in their order")
+    for arg, field in fields.items():
+        if not isinstance(field, dict) or set(field) - {"label", "type", "value", "choices"}:
+            raise PackageError(f"{name}: form.fields.{arg} has a label, a type, a value and choices, and nothing else")
+        _words(f"{name}: form.fields.{arg}.label", field.get("label", arg))
+        if field.get("type", "text") not in FIELD_TYPES:
+            raise PackageError(f"{name}: form.fields.{arg}.type is one of {', '.join(FIELD_TYPES)}")
+        _words(f"{name}: form.fields.{arg}.value", field.get("value", ""))
+        if (field.get("type") == "choice") != ("choices" in field):
+            raise PackageError(f"{name}: form.fields.{arg} has choices when, and only when, its type is choice")
+        choices = field.get("choices", [])
+        if not isinstance(choices, list) or len(choices) > 20 or not all(
+                isinstance(c, list) and len(c) == 2 and re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", str(c[0]))
+                and _words(f"{name}: form.fields.{arg}.choices", c[1]) for c in choices):
+            raise PackageError(f"{name}: form.fields.{arg}.choices are at most 20 [value, label] pairs, each value a word")
 
 
 def theme_css(manifest: dict, files_url: str) -> str:

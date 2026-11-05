@@ -60,6 +60,8 @@ class Command:
     audience: str
     fn: Callable[..., Any]
     module: str = "node"
+    #: A node module's form for this command (packages._check_form): drawn by the Lite window above the module's page.
+    form: dict | None = field(default=None, compare=False)
 
     @property
     def summary(self) -> str:
@@ -979,7 +981,8 @@ def _module_commands(caller: Caller) -> dict[str, Command]:
     for module, (_, manifest) in installed.items():
         for name, said in (manifest.get("commands") or {}).items():
             if name not in COMMANDS and name not in out:
-                out[name] = Command(name, module, said.get("audience", "anyone"), _forward(module, name, said), module)
+                out[name] = Command(name, module, said.get("audience", "anyone"), _forward(module, name, said), module,
+                                    said.get("form"))
     return out
 
 
