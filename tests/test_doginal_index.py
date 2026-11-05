@@ -1632,6 +1632,49 @@ def test_the_coin_filter_is_kept_on_disk_and_a_start_adds_only_what_came_since(t
     assert not path.exists(), "a reset lets the kept filter go"
 
 
+def test_a_kept_coin_filter_is_read_back_without_counting_every_coin_and_made_again_once_full(tmp_path, monkeypatch):
+    """2026-11-04: Bellscoin's index, moved to a hard disk, stood still at every start on COUNT(*) FROM at -- the coin
+    index read a page at a time in random order, for hours. A kept filter is checked by its own count; `at` is counted
+    only to make one again, when there is none or the kept one is full."""
+    chain = _story_chain()
+    first = _walker(tmp_path, chain)
+    first.walker.step(chain, dx.BASE + 11, budget=60)
+    again = dx.DoginalIndex(tmp_path / "walk.sqlite", lambda: chain, lambda: "walk")
+    asked = []
+    q = again.store.q
+    monkeypatch.setattr(again.store, "q", lambda sql, args=(): (asked.append(sql), q(sql, args))[1])
+    again.walker._load()
+    assert not any("COUNT(*) FROM at" in sql for sql in asked), "read back without counting `at`"
+    assert not any("FROM at WHERE height" in sql for sql in asked), "the rows since, from the undo records by key"
+    for tx, vout in q("SELECT tx, vout FROM at"):
+        assert bytes(tx) + vout.to_bytes(4, "little") in again.walker.tracked
+
+    import struct
+    path = again.walker._seen_path()
+    raw = bytearray(path.read_bytes())
+    m, capacity, added, since = struct.unpack("<QQQQ", raw[8:40])
+    raw[8:40] = struct.pack("<QQQQ", m, capacity, capacity, 0)          # as full as it was made for
+    path.write_bytes(bytes(raw))
+    full = dx.DoginalIndex(tmp_path / "walk.sqlite", lambda: chain, lambda: "walk")
+    full.walker._load()
+    assert full.walker.tracked.added == len(q("SELECT 1 FROM at")), "made again from every row"
+    assert not full.walker.tracked.full()
+
+
+def test_a_kept_coin_filter_older_than_the_undo_records_adds_the_rows_since_from_all_of_at(tmp_path, monkeypatch):
+    """The undo records reach back UNDO_BLOCKS: a filter kept before them gets the rows placed since from all of `at`."""
+    monkeypatch.setattr(dx, "UNDO_BLOCKS", 2)
+    chain = _story_chain()
+    first = _walker(tmp_path, chain)
+    first.walker.step(chain, dx.BASE + 5, budget=60)
+    first.walker.save_seen()
+    first.walker.step(chain, dx.BASE + 11, budget=60)               # more placed, past the two undo records kept
+    again = dx.DoginalIndex(tmp_path / "walk.sqlite", lambda: chain, lambda: "walk")
+    again.walker._load()
+    for tx, vout in again.store.q("SELECT tx, vout FROM at"):
+        assert bytes(tx) + vout.to_bytes(4, "little") in again.walker.tracked, "every coin an inscription sits on"
+
+
 def test_every_coin_the_walk_saw_is_kept_on_disk_and_never_asked_of_a_core_again(tmp_path):
     """2026-10-25 ("Remember + parallel asks"): the walk kept 500,000 values in memory, only of coins of 1 or
     less, lost at every start -- and asked a lender's disk again for transactions it had walked (Strawberry, Dogecoin

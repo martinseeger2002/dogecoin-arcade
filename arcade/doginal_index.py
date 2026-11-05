@@ -1085,8 +1085,9 @@ class Walker:
     def _seen_path(self) -> Path:
         return Path(str(self.store.path) + ".seen")
 
-    def _read_seen(self, n: int) -> tuple[_Seen, int] | None:
-        """(the filter as kept, the height to add rows from), or None when there is none usable."""
+    def _read_seen(self, n: int | None = None) -> tuple[_Seen, int] | None:
+        """(the filter as kept, the height to add rows from), or None when there is none usable. `n`, when given: the
+        coins there are now, more than it was made for and it is not used."""
         import struct
         try:
             with open(self._seen_path(), "rb") as f:
@@ -1094,7 +1095,7 @@ class Walker:
                 if len(head) != 40 or head[:8] != self.SEEN_MAGIC:
                     return None
                 m, capacity, added, since = struct.unpack("<QQQQ", head[8:])
-                if capacity < n or m % 8 or m < (1 << 20):
+                if (n is not None and capacity < n) or m % 8 or m < (1 << 20):
                     return None                          # made for fewer coins than there are now: made again
                 seen = _Seen.__new__(_Seen)
                 seen.capacity, seen.m, seen.added = capacity, m, added
@@ -1127,20 +1128,19 @@ class Walker:
 
     def _load(self) -> None:
         """The filter of coins inscriptions sit on, from `at` (made for twice as many, so it rarely needs making
-        again): the one kept on disk and the rows placed since, or -- none kept, or too small now -- made from all
-        of `at`, then kept."""
-        n = int(self.store.q("SELECT COUNT(*) FROM at")[0][0])
-        kept = self._read_seen(n)
+        again): the one kept on disk and the rows placed since, or -- none kept, or full with them -- made from all
+        of `at`, then kept. The kept one is checked by its own count (every coin ever added to it, never fewer than
+        the rows of `at`), not by counting `at` (2026-11-04, Bellscoin's index moved to a hard disk: COUNT(*) read
+        the coin index a page at a time in random order, hours, and the walk stood still at every start)."""
+        kept = self._read_seen()
         if kept is not None and not kept[0].full():
             seen, since = kept
-            db = sqlite3.connect(self.store.path, timeout=60)
-            try:
-                for tx, vout in db.execute("SELECT tx, vout FROM at WHERE height >= ?", (since,)):
-                    seen.add(bytes(tx) + vout.to_bytes(4, "little"))
-            finally:
-                db.close()
-            self.tracked = seen
-            return
+            for tx, vout in self._placed_since(since):
+                seen.add(bytes(tx) + vout.to_bytes(4, "little"))
+            if not seen.full():
+                self.tracked = seen
+                return
+        n = int(self.store.q("SELECT COUNT(*) FROM at")[0][0])
         seen = _Seen(2 * n + 100_000)
         # Read a row at a time on a connection of its own: a list of 22 million rows was itself gigabytes.
         db = sqlite3.connect(self.store.path, timeout=60)
@@ -1151,6 +1151,25 @@ class Walker:
             db.close()
         self.tracked = seen
         self.save_seen()
+
+    def _placed_since(self, since: int):
+        """The coins of every `at` row placed or moved from block `since` on: read by key from the rows those blocks'
+        undo records name, when the records reach back that far (the last UNDO_BLOCKS); else from all of `at`, which
+        has no index on height (2026-11-04, Bellscoin's index on a hard disk: that scan took hours at every start)."""
+        nxt = self.next_height()
+        heights = self.store.q("SELECT COUNT(*) FROM undo WHERE height >= ? AND height < ?", (since, nxt))[0][0]
+        if heights == max(0, nxt - since):
+            rids = set()
+            for (doc,) in self.store.q("SELECT doc FROM undo WHERE height >= ? AND height < ?", (since, nxt)):
+                rids.update(key[0] for table, key, _old in _unpack(doc)["rows"] if table == "at")
+            for rid in sorted(rids):
+                yield from self.store.q("SELECT tx, vout FROM at WHERE rid=?", (rid,))
+            return
+        db = sqlite3.connect(self.store.path, timeout=60)
+        try:
+            yield from db.execute("SELECT tx, vout FROM at WHERE height >= ?", (since,))
+        finally:
+            db.close()
 
     @staticmethod
     def _on(db, txid: str, vout: int) -> list[tuple[int, int]]:
