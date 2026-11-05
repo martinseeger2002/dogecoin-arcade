@@ -7,12 +7,16 @@ caller's wallet shows it and signs it.
 
 A mint spends ordinary DGB coins, which the wallet signs as any send. A redeem spends the vault by its script path and
 the DigiDollars by their key path, both Taproot: the wallet signs those with Schnorr (BIP-340), checking first that each
-is its own key's. Both happen on DigiByte's test chain (testnet26) only, while the wallet's Schnorr signing is new:
-see the README. A DigiDollar send is not here yet.
+is its own key's. `ddgather` puts many small coins into one first, as a mint may spend only a few.
+
+Every command takes the chain, test (testnet26) unless main is said. Mainnet mints wait for the arcade's operator:
+`ddmainnet on yes` (the README says what to check first). A DigiDollar send is not here yet.
 """
 from __future__ import annotations
 
 import html
+import json
+import time
 from decimal import Decimal, InvalidOperation
 
 from lib import taproot as tr
@@ -35,13 +39,25 @@ COIN = 100_000_000
 #: The sequence of an input that waits for the transaction's lock time (a vault's CHECKLOCKTIMEVERIFY).
 WAITS = 0xFFFFFFFE
 DUST = 10_000
+#: The most a transaction this module prepares leaves to fees: the manifest's needs.max_fee, which the arcade enforces.
+#: At DigiDollar's rate each coin spent adds about 0.05 DGB, so a mint or a redeem spends at most about eight.
+MAX_FEE = 50_000_000
+#: A gather is an ordinary send to yourself: twice DigiByte Core's relay fee (0.001 DGB a kB), and at most this many
+#: coins (the arcade's own limit on a module's spend).
+GATHER_FEE_PER_BYTE, GATHER_MOST = 200, 50
+#: What DigiByte Core takes in one mint (consensus: $100 to $100,000), in cents.
+LEAST_MINT, MOST_MINT = 10_000, 10_000_000
 
 
 def _chain(name) -> str:
     try:
-        return CHAINS[str(name).lower()]
+        return CHAINS[str(name or "test").lower()]
     except KeyError:
         raise ValueError(f"{name} is not a DigiByte chain here: main or test") from None
+
+
+def _word(net: str) -> str:
+    return "main" if net == MAIN else "test"
 
 
 def _cents(amount) -> int:
@@ -112,16 +128,18 @@ def _leaves(owner: bytes, cents: int, lock: int) -> tuple[bytes, bytes]:
 
 def _pay(coins: list[dict], outputs: list, need: int, spend_size: int, change_script: bytes, extra: int = 0):
     """(the coins chosen, the fee, the change) to pay `need` plus the fee from `coins`, largest first. `spend_size`
-    is what each coin adds to the transaction, `extra` the bytes of anything else it carries (a witness)."""
+    is what each coin adds to the transaction, `extra` the bytes of anything else it carries (a witness). Each coin
+    adds to the fee, and the fee may not pass MAX_FEE: a wallet of many small coins is gathered first (`ddgather`)."""
     chosen, total = [], 0
     for coin in sorted(coins, key=lambda c: -c["value"]):
-        if len(chosen) == MOST_COINS:
-            raise ValueError(f"your DGB is in {len(coins)} small coins, and this needs more than {MOST_COINS} of them: "
-                             f"gather it first by sending it all to your own address in your wallet, then try again")
         chosen.append(coin)
         total += coin["value"]
         size = 10 + extra + spend_size * len(chosen) + sum(9 + len(s) for _, s in outputs) + 9 + len(change_script)
         fee = max(size * FEE_PER_BYTE, LEAST_FEE)
+        if fee > MAX_FEE:
+            raise ValueError(f"your DGB is in {len(coins)} coins, and this would need more than {len(chosen) - 1} of "
+                             f"them, too many for one DigiDollar transaction's fee: gather them first (Gather, or "
+                             f"ddgather), then try again")
         if total >= need + fee:
             change = total - need - fee
             return chosen, (fee + change if change < DUST else fee), (change if change >= DUST else 0)
@@ -218,9 +236,6 @@ def _owner(ctx, net: str) -> tuple[str, bytes]:
 
 #: A mined block's coins can be spent once the chain is this many blocks further (consensus.h COINBASE_MATURITY_2).
 RIPE = 100
-#: The most coins one mint or redeem spends: each adds about 0.05 DGB of fee at DigiDollar's rate, and the arcade caps
-#: a module's fee.
-MOST_COINS = 50
 
 
 def _coins(ctx, net: str, address: str) -> tuple[list[dict], bytes]:
@@ -232,37 +247,103 @@ def _coins(ctx, net: str, address: str) -> tuple[list[dict], bytes]:
     return coins, (bytes.fromhex(ripe[0]["scriptPubKey"]) if coins else b"")
 
 
-def command_ddmint(ctx, amount, tier=0):
+def _mainnet_on(ctx) -> bool:
+    try:
+        return bool(json.loads((ctx.data / "mainnet.json").read_text()).get("on"))
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def _ready(ctx, net: str) -> dict:
+    """The chain's Core, checked to be the chain it is said to be, and DigiDollar active on it."""
+    info = _active(ctx, net)
+    if (info.get("chain") == "main") != (net == MAIN):
+        raise ValueError(f"this arcade's {'DigiByte' if net == MAIN else 'DigiByte testnet'} answers as "
+                         f"{info.get('chain')}: refused")
+    return info
+
+
+def command_ddmint(ctx, amount, tier=None, chain="test"):
     """Mint DigiDollars from your own DGB: the DGB stays locked in a vault until the tier's time is up.
 
-    ddmint <dollars> [tier]   tier 0 is one hour (test chains), 1 thirty days, up to 9 for ten years
-    Your wallet shows the transaction and signs it. DigiByte's test chain only: see the module's README."""
-    if _active(ctx, TEST)["chain"] == "main":
-        raise ValueError("this arcade's DigiByte testnet answers as mainnet: minting refused")
-    address, owner = _owner(ctx, TEST)
-    cents, tier = _cents(amount), int(tier)
-    said = ctx.rpc(TEST, "estimatecollateral", cents, tier)
+    ddmint <dollars> [tier] [main|test]   tier 0 is one hour (test chain only), 1 thirty days, up to 9 for ten years
+    Your wallet shows the transaction and signs it. On mainnet only once this arcade's operator has turned it on."""
+    net = _chain(chain)
+    tier = int(0 if tier is None and net == TEST else 1 if tier is None else tier)
+    if net == MAIN and not _mainnet_on(ctx):
+        raise ValueError("mainnet mints are off on this arcade: its operator turns them on (ddmainnet), once they "
+                         "have read what the module's README asks them to check")
+    if net == MAIN and tier == 0:
+        raise ValueError("tier 0, one hour, is for the test chain: a mainnet vault locks 30 days (tier 1) or longer")
+    if not 0 <= tier <= 9:
+        raise ValueError("a tier is 0 to 9")
+    cents = _cents(amount)
+    if not LEAST_MINT <= cents <= MOST_MINT:
+        raise ValueError("a mint is $100 to $100,000")
+    _ready(ctx, net)
+    address, owner = _owner(ctx, net)
+    said = ctx.rpc(net, "estimatecollateral", cents, tier)
     if said.get("minting_restricted"):
         raise ValueError(f"minting is closed now: {said.get('minting_restricted_reason')}")
-    coins, script = _coins(ctx, TEST, address)
-    return {"prepared": mint(owner, cents, tier, ctx.rpc(TEST, "getblockcount"), int(said["lock_days"]),
-                             _sats(said["wallet_collateral_dgb"]), coins, script)}
+    coins, script = _coins(ctx, net, address)
+    return {"prepared": mint(owner, cents, tier, ctx.rpc(net, "getblockcount"), int(said["lock_days"]),
+                             _sats(said["wallet_collateral_dgb"]), coins, script, net)}
 
 
-def command_ddvaults(ctx):
-    """Your DigiDollars and your vaults on DigiByte's test chain: what each vault holds, and when it unlocks."""
-    _active(ctx, TEST)
-    _, owner = _owner(ctx, TEST)
-    height = ctx.rpc(TEST, "getblockcount")
-    held = _holdings(ctx, TEST, owner)
-    vaults = [{"vault": v["txid"], "dollars": v["cents"] / 100, "locks_dgb": v["collateral"] / COIN,
-               "unlocks_at": v["lock"], "tier": v["tier"],
-               "redeem": "now" if height >= v["lock"] else f"in {v['lock'] - height} blocks (about "
-                                                           f"{(v['lock'] - height) * 15 // 60} minutes)"}
-              for v in _vaults(ctx, TEST, owner, held)]
-    return {"height": height, "digidollars": sum(c["cents"] for c in held) / 100,
+def gather(coins: list[dict], script: bytes, chain: str = TEST) -> dict:
+    """The prepared gather: up to GATHER_MOST of the caller's smallest coins into one, back to their own address."""
+    if len(coins) < 2:
+        raise ValueError("your DGB is in one coin already: nothing to gather")
+    chosen = sorted(coins, key=lambda c: c["value"])[:GATHER_MOST]
+    total = sum(c["value"] for c in chosen)
+    fee = (10 + 148 * len(chosen) + 9 + len(script)) * GATHER_FEE_PER_BYTE
+    if total - fee < DUST:
+        raise ValueError("those coins are worth less than gathering them costs")
+    left = len(coins) - len(chosen)
+    return {"chain": chain, "version": 2, "inputs": [{"txid": c["txid"], "vout": c["vout"]} for c in chosen],
+            "outputs": [(total - fee, script.hex())],
+            "what": f"gather {len(chosen)} of your {len(coins)} coins into one ({(total - fee) / COIN:,.8f} DGB) "
+                    f"at your own address" + (f"; {left} more after this, gather again once it is in a block"
+                                              if left else "")}
+
+
+def command_ddgather(ctx, chain="test"):
+    """Put many small coins of yours into one, so a mint or a redeem can pay from it.
+
+    ddgather [main|test]   up to 50 coins at a time, back to your own address; your wallet signs it"""
+    net = _chain(chain)
+    _ready(ctx, net)
+    address, _ = _owner(ctx, net)
+    coins, script = _coins(ctx, net, address)
+    return {"prepared": gather(coins, script, net)}
+
+
+def command_ddvaults(ctx, chain="test"):
+    """Your DigiDollars and your vaults: what each vault holds, and when it unlocks.
+
+    ddvaults [main|test]"""
+    net = _chain(chain)
+    _ready(ctx, net)
+    _, owner = _owner(ctx, net)
+    height = ctx.rpc(net, "getblockcount")
+    held = _holdings(ctx, net, owner)
+    vaults = []
+    for v in _vaults(ctx, net, owner, held):
+        left = v["lock"] - height
+        vaults.append({"vault": v["txid"], "dollars": v["cents"] / 100, "locks_dgb": v["collateral"] / COIN,
+                       "unlocks_at": v["lock"], "tier": v["tier"],
+                       "redeem": "now" if left <= 0 else f"in {left} blocks ({_about(left)})",
+                       **({"actions": [{"label": "Redeem", "line": f"ddredeem {v['txid']} {_word(net)}"}]}
+                          if left <= 0 else {})})
+    return {"chain": _word(net), "height": height, "digidollars": sum(c["cents"] for c in held) / 100,
             "coins": [{"txid": c["txid"], "vout": c["vout"], "dollars": c["cents"] / 100} for c in held],
             "vaults": vaults}
+
+
+def _about(blocks: int) -> str:
+    minutes = blocks * 15 // 60
+    return f"about {minutes} minutes" if minutes < 120 else f"about {minutes // 60} hours" if minutes < 2880 \
+        else f"about {minutes // 1440} days"
 
 
 def redeem(vault: dict, owner: bytes, held: list[dict], coins: list[dict], pay_script: bytes,
@@ -301,31 +382,54 @@ def redeem(vault: dict, owner: bytes, held: list[dict], coins: list[dict], pay_s
                     f"{vault['collateral'] / COIN:,.8f} DGB from its vault"}
 
 
-def command_ddredeem(ctx, vault):
+def command_ddredeem(ctx, vault, chain="test"):
     """Redeem a vault once it unlocks: burn the DigiDollars it minted and take back all its DGB.
 
-    ddredeem <vault>   the vault's transaction id, from ddvaults
+    ddredeem <vault> [main|test]   the vault's transaction id, from ddvaults
     Your wallet shows the transaction and signs it (with Schnorr, as DigiDollar's Taproot coins need)."""
-    _active(ctx, TEST)
-    address, owner = _owner(ctx, TEST)
-    held = _holdings(ctx, TEST, owner)
-    found = [v for v in _vaults(ctx, TEST, owner, held) if v["txid"].startswith(str(vault).lower())]
+    net = _chain(chain)
+    _ready(ctx, net)
+    address, owner = _owner(ctx, net)
+    held = _holdings(ctx, net, owner)
+    found = [v for v in _vaults(ctx, net, owner, held) if v["txid"].startswith(str(vault).lower())]
     if len(found) != 1:
         raise ValueError("that is not one of your locked vaults: ddvaults lists them" if not found else
                          "more than one of your vaults starts like that: give more of its id")
-    height = ctx.rpc(TEST, "getblockcount")
+    height = ctx.rpc(net, "getblockcount")
     if height < found[0]["lock"]:
         raise ValueError(f"that vault unlocks at block {found[0]['lock']:,} and the chain is at {height:,}: "
-                         f"{found[0]['lock'] - height} blocks more, about {(found[0]['lock'] - height) * 15 // 60} "
-                         f"minutes")
-    coins, script = _coins(ctx, TEST, address)
+                         f"{found[0]['lock'] - height} blocks more, {_about(found[0]['lock'] - height)}")
+    coins, script = _coins(ctx, net, address)
     if not coins:
         raise ValueError("a redeem pays its fee (about 0.15 DGB) from your own DGB, and your wallet has none here")
-    return {"prepared": redeem(found[0], owner, held, coins, script)}
+    return {"prepared": redeem(found[0], owner, held, coins, script, net)}
+
+
+def command_ddmainnet(ctx, state="status", confirm=""):
+    """Whether this arcade's people may mint DigiDollars on DigiByte mainnet, with real DGB (operator only).
+
+    ddmainnet [status|on|off] [yes]   on needs yes; off at once. Off until turned on."""
+    if ctx.caller.get("audience") != "operator":
+        raise ValueError("only this arcade's operator turns mainnet mints on or off")
+    state = str(state or "status").lower()
+    path = ctx.data / "mainnet.json"
+    if state == "on":
+        if str(confirm).lower() != "yes":
+            raise ValueError("mainnet mints lock real DGB until their tier's time is up (30 days or more). Read the "
+                             "module's README first, then: ddmainnet on yes")
+        path.write_text(json.dumps({"on": True, "since": int(time.time())}))
+    elif state == "off":
+        path.unlink(missing_ok=True)
+    elif state != "status":
+        raise ValueError("ddmainnet status, ddmainnet on yes, or ddmainnet off")
+    on = _mainnet_on(ctx)
+    return {"mainnet_mints": "on" if on else "off",
+            "means": "people here may mint on DigiByte mainnet with their own DGB" if on else
+                     "mints on DigiByte mainnet are refused here; the test chain is open"}
 
 
 def page(ctx, method, path, query, body):
-    """/m/digidollar/: the numbers, and how to mint from the console."""
+    """/m/digidollar/: the numbers on both chains, and how to use the forms above it or the console."""
     rows = ""
     for chain, title in (("test", "DigiByte testnet"), ("main", "DigiByte mainnet")):
         rows += f"<tr><th colspan=2>{title}</th></tr>"
@@ -335,14 +439,20 @@ def page(ctx, method, path, query, body):
                             for k, v in stats.items())
         except Exception as exc:                           # noqa: BLE001 -- the page says what the Core said
             rows += f"<tr><td colspan=2>Its Core did not answer: {html.escape(str(exc))}</td></tr>"
-    return {"type": "text/html", "body": PAGE.format(rows=rows)}
+    mainnet = "open on this arcade" if _mainnet_on(ctx) else "off on this arcade until its operator turns them on"
+    return {"type": "text/html", "body": PAGE.format(rows=rows, mainnet=mainnet)}
 
 
 PAGE = """<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DigiDollar</title><link rel="stylesheet" href="/m/digidollar/files/page.css">
-<h1>DigiDollar</h1><p>DigiByte's stablecoin, read from this arcade's DigiByte Core.</p>
+<h1>DigiDollar</h1><p>DigiByte's stablecoin, read from this arcade's DigiByte Cores. Lock DGB in a vault, get dollars
+for it, and burn them later to take every DGB back.</p>
 <table>{rows}</table>
-<p>On the test chain: open the arcade's window and type <code>ddmint 100 0</code> in its console to mint; your
-wallet shows the transaction and signs it. <code>ddcollateral 100 0</code> says what a mint locks,
-<code>ddvaults</code> lists your vaults, and <code>ddredeem &lt;vault&gt;</code> takes the DGB back once it
-unlocks.</p>"""
+<h2>How</h2>
+<ol><li><b>Cost:</b> what a mint locks, for each lock time.</li>
+<li><b>Gather:</b> many small coins into one; a mint spends only a few.</li>
+<li><b>Mint:</b> your wallet shows the transaction and signs it.</li>
+<li><b>My vaults:</b> each vault, and when it unlocks; Redeem appears once it has.</li></ol>
+<p>Use the forms above this page in the arcade's window, or type the same in its console: <code>ddcollateral 100 0</code>,
+<code>ddgather</code>, <code>ddmint 100 0</code>, <code>ddvaults</code>, <code>ddredeem &lt;vault&gt;</code>. Each takes
+<code>main</code> or <code>test</code> last. Mainnet mints are {mainnet}.</p>"""
