@@ -195,7 +195,7 @@ export const LTC_WIF = 0xb0;
 //: Flopcoin 0x9E (2026-11-03, chainparams.cpp SECRET_KEY 158): Dogecoin's and Pepecoin mainnet's byte, so one key text
 //: imports on all three.
 export const WIF = {main: 0x9e, doge: 0x9e, ltc: LTC_WIF, test: 0xf1, regtest: 0xf1, ltctest: 0xef,
-                    bel: 0x99, lky: 0xaf, kot: 0xad, wjk: 0xc9, dgb: 0x80, flop: 0x9e};
+                    bel: 0x99, lky: 0xaf, kot: 0xad, wjk: 0xc9, dgb: 0x80, dgbtest: 0xfe, flop: 0x9e};
 
 //: Litecoin's other address kinds, for saying who a send pays (2026-10-20, tbuuol: L test pays P2SH and
 //: native SegWit). The script-hash version (config.py `scripthash_version`) and the bech32 prefix.
@@ -214,7 +214,8 @@ const WIF_CHAIN = {main: "Pepecoin main or Dogecoin", doge: "Pepecoin main or Do
                    ltc: "Litecoin mainnet", test: "a Pepecoin or Dogecoin test chain",
                    regtest: "a Pepecoin or Dogecoin test chain", ltctest: "Litecoin testnet",
                    bel: "Bellscoin mainnet", lky: "Luckycoin mainnet", kot: "Kotia mainnet",
-                   wjk: "Wojakcoin mainnet", dgb: "DigiByte mainnet", flop: "Flopcoin mainnet"};
+                   wjk: "Wojakcoin mainnet", dgb: "DigiByte mainnet", dgbtest: "DigiByte testnet",
+                   flop: "Flopcoin mainnet"};
 
 /** A private key out of Wallet Import Format text, for `network` (plan item 18, importing a wallet): base58check,
  *  the version byte this chain's (WIF above), 32 bytes of key, and a trailing 0x01 when its public key is

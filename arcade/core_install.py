@@ -49,6 +49,9 @@ class Release:
     daemon: str                          # the daemon's path inside the archive, with {m} for the machine
     cli: str
     extra: tuple = field(default_factory=tuple)   # config lines besides the common ones (testnet=1, ...)
+    #: The section a test chain's network-only RPC lines go under ("test"): DigiByte Core 9.26.7 will not start on its
+    #: test chain with rpcbind outside it. Its user and password stay above it, where the arcade reads them.
+    section: str = ""
 
 
 _GH = "https://github.com/{}/releases/download/{}/"
@@ -100,6 +103,10 @@ RELEASES: dict[str, Release] = {
 # Litecoin testnet: the same Core, its own folder, testnet=1.
 RELEASES["ltctest"] = Release("litecoin", "0.21.5.8", RELEASES["ltc"].url, RELEASES["ltc"].assets,
                               RELEASES["ltc"].daemon, RELEASES["ltc"].cli, extra=("testnet=1",))
+# DigiByte testnet26: the same Core, its own folder, and its RPC address in a [test] section, without which DigiByte
+# Core 9.26.7 will not start on its test chain ("-rpcbind only applied on test network when in [test] section").
+RELEASES["dgbtest"] = Release("digibyte", "9.26.7", RELEASES["dgb"].url, RELEASES["dgb"].assets,
+                              RELEASES["dgb"].daemon, RELEASES["dgb"].cli, extra=("testnet=1",), section="test")
 #: Chains with no install here yet, and why (shown on their row).
 NOT_OFFERED = {
     "kot": "Kotia publishes an x86_64 build only (v2.4), newer than the Kotia 1.0.0 this arcade was written against: "
@@ -133,6 +140,7 @@ def _conf_lines(params, rel: Release) -> list[str]:
     return ["# Written by DogecoinArcade (Admin -> Coins & chains -> Install a node).",
             "server=1", "txindex=1", "prune=0", "listen=1", *rel.extra,
             f"rpcuser=arcade{secrets.token_hex(4)}", f"rpcpassword={secrets.token_urlsafe(24)}",
+            *([f"[{rel.section}]"] if rel.section else []),
             "rpcbind=127.0.0.1", "rpcallowip=127.0.0.1",
             *([f"rpcport={params.rpcport}"] if getattr(params, "rpcport", None) else [])]
 

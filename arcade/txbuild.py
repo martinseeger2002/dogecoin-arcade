@@ -43,7 +43,8 @@ def push(data: bytes) -> bytes:
 #: DigiByte (2026-10-25): 63 ("S"), no chain's key-hash byte. Without it an S-address got a pubkey-hash script.
 #: Kotia's 45 ("K", 2026-10-25) was missing the same way since Kotia was added: _check_address took a Kotia script
 #: address and this gave it a key-hash script. 45 is no chain's key-hash byte (Kotia's own is 46).
-SCRIPTHASH_VERSIONS = frozenset({22, 196, 50, 5, 58, 63, 45})
+#: DigiByte testnet's 140 (2026-11-04), no chain's key-hash byte either.
+SCRIPTHASH_VERSIONS = frozenset({22, 196, 50, 5, 58, 63, 45, 140})
 
 
 def p2pkh_script(address: str) -> bytes:
