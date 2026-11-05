@@ -88,6 +88,12 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 Core copies: a hand-made system unit takes part through a sudo rule (Claude; the operator: "let's add the SUDO rule")
+
+- `core_copy.service_node` looks at `/etc/systemd/system/<unit>` when there is no installer user unit. It is used only if the unit says `User=` this arcade's user, its datadir is this user's, and `sudo -n -l` allows `/usr/bin/systemctl stop|start <unit>` (checked, nothing run). Its record says `system`; `ServiceCore` then stops and starts it with `sudo -n /usr/bin/systemctl` and reads `is-active` without sudo. Made for .25, whose Pepecoin testnet is a hand-made system unit running as robin: with the rule in `/etc/sudoers.d/`, .25 makes testnet copies for new installs, Lite's included.
+- The rule and its conditions: `docs/00-node-setup.md` (Pepecoin's own nodes). A system unit run as another user (the hardened `pepecoin` user) never takes part.
+- Tests: `tests/test_core_copy.py` (+2: when a system unit is used, and its stop/start through sudo).
+
 ### 2026-11-05 Protocol vectors re-recorded for Params.class_b (Claude, for tbuuol's #81)
 
 - `tests/conformance/vectors.json` regenerated (`python tests/conformance/make_vectors.py`): the one change is the new `chains.<net>.params.class_b`, false on `ltc`, `ltctest` and `kot`, true on every other chain. Why: #81's second commit (no arcade Class B on Litecoin, Litecoin testnet and Kotia) added the field without re-recording, and `test_conformance.py[chains]` failed. The operator: "Run it and deploy if passes".

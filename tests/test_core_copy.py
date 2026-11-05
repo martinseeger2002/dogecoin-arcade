@@ -354,8 +354,53 @@ def test_the_installer_s_node_is_found_from_its_unit_file(tmp_path):
     assert got == {"daemon": "/opt/pep/bin/pepecoind", "cli": "/opt/pep/bin/pepecoin-cli",
                    "datadir": "/home/a/.pepecoin-testnet", "conf": "/home/a/.pepecoin-testnet/pepecoin.conf",
                    "unit": "pepecoind-testnet.service"}
-    assert cc.service_node("main", tmp_path) is None and cc.service_node("doge", tmp_path) is None
+    assert cc.service_node("main", tmp_path, tmp_path) is None and cc.service_node("doge", tmp_path) is None
     assert isinstance(cc.core_for(got, REGTEST), cc.ServiceCore) and type(cc.core_for({"datadir": "/x"}, REGTEST)) is cc.Core
+
+
+def test_a_system_unit_is_used_only_as_this_user_on_its_own_datadir_with_the_sudo_rule(tmp_path, monkeypatch):
+    """2026-11-05, the operator: "let's add the SUDO rule" (.25's Pepecoin testnet is a hand-made system unit)."""
+    user_dir, system_dir, datadir = tmp_path / "user", tmp_path / "system", tmp_path / "data"
+    user_dir.mkdir(), system_dir.mkdir(), datadir.mkdir()
+    unit = system_dir / "pepecoind-testnet.service"
+    me = cc._whoami()
+    allowed = {"yes": True}
+    monkeypatch.setattr(cc, "sudo_allows", lambda name: allowed["yes"] and name == "pepecoind-testnet.service")
+
+    unit.write_text(f"[Service]\nExecStart=/usr/local/bin/pepecoind -datadir={datadir}\nUser={me}\nRestart=always\n")
+    got = cc.service_node("test", user_dir, system_dir)
+    assert got and got["system"] is True and got["unit"] == "pepecoind-testnet.service" and got["datadir"] == str(datadir)
+
+    allowed["yes"] = False                                       # no sudo rule: not ours to stop
+    assert cc.service_node("test", user_dir, system_dir) is None
+    allowed["yes"] = True
+    unit.write_text(f"[Service]\nExecStart=/usr/local/bin/pepecoind -datadir={datadir}\nUser=pepecoin\n")
+    assert cc.service_node("test", user_dir, system_dir) is None    # another user's node
+    unit.write_text(f"[Service]\nExecStart=/usr/local/bin/pepecoind -datadir={datadir}\n")
+    assert cc.service_node("test", user_dir, system_dir) is None    # root's node
+    unit.write_text(f"[Service]\nExecStart=/usr/local/bin/pepecoind -datadir={tmp_path}/gone\nUser={me}\n")
+    assert cc.service_node("test", user_dir, system_dir) is None    # a datadir that is not this user's
+
+    # The installer's user unit, when there is one, comes first.
+    (user_dir / "pepecoind-testnet.service").write_text(f"[Service]\nExecStart=/opt/pepecoind -datadir={datadir}\n")
+    assert "system" not in cc.service_node("test", user_dir, system_dir)
+
+
+def test_a_system_unit_is_stopped_and_started_through_sudo(monkeypatch):
+    calls = []
+
+    class Done:
+        returncode, stdout = 0, "inactive\n"
+
+    monkeypatch.setattr(cc.subprocess, "run", lambda argv, **kw: calls.append(argv) or Done())
+    core = cc.ServiceCore({"daemon": "/usr/local/bin/pepecoind", "datadir": "/d", "conf": "/d/pepecoin.conf",
+                           "unit": "pepecoind-testnet.service", "system": True}, REGTEST)
+    core.stop()
+    core.start()
+    assert ["sudo", "-n", "/usr/bin/systemctl", "stop", "pepecoind-testnet.service"] in calls
+    assert ["/usr/bin/systemctl", "is-active", "pepecoind-testnet.service"] in calls
+    assert calls[-1] == ["sudo", "-n", "/usr/bin/systemctl", "start", "pepecoind-testnet.service"]
+    assert not any("--user" in c for c in calls)
 
 
 def test_the_installer_s_node_is_stopped_and_started_by_systemd_and_checked_alone(monkeypatch):

@@ -528,6 +528,19 @@ its first chain data the same way: a new install, ARCADE Lite's included, copies
 installer-made node runs and is synced, instead of reading the whole chain. The arcade stops and starts that node
 through its service (`systemctl --user`), and checks a copy with the daemon run by itself, with no peers.
 
+**A node you set up by hand as a system service** (`/etc/systemd/system/pepecoind-testnet.service`, or
+`pepecoind-mainnet.service`) takes part too, when its unit runs as the arcade's own user (`User=`), on a datadir that
+user owns, with `ExecStart=<binary> -datadir=<datadir>`, and sudo lets that user stop and start that one unit with no
+password. Add the rule with `sudo visudo -f /etc/sudoers.d/arcade-pepecoin-testnet`:
+
+```
+youruser ALL=(root) NOPASSWD: /usr/bin/systemctl stop pepecoind-testnet.service, /usr/bin/systemctl start pepecoind-testnet.service
+```
+
+The arcade checks the rule with `sudo -n -l` (which runs nothing) and uses only those two commands. Without it, such a
+node neither makes nor takes copies. A system unit run by another user (the hardened `pepecoin` user above) never does:
+its files are not the arcade's to swap.
+
 **From every arcade that has it.** An arcade that installed a copy keeps it for two hours to share on (its files
 linked, not copied again), under the maker's own id. The next arcade asks every linked arcade holding that copy for
 pieces at once, torrent-style, each checked against the one manifest, whoever sent it; the copy's coin set is still its
