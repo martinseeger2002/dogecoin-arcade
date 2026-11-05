@@ -265,7 +265,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
       // The arcade's own machine with nobody signed in: the node itself, which is nobody's account, so there is no
       // @name to show; the way in is (2026-11-04: "that should instead say sign in/sign up").
       var p = document.createElement('p'), a = document.createElement('a');
-      p.style.margin = '0'; a.href = '/join'; a.textContent = 'Sign in or make an account';
+      p.style.margin = '0'; p.style.gridColumn = '1 / -1'; a.href = '/join'; a.textContent = 'Sign in or make an account';
       p.append("You are at this arcade's machine, signed in as nobody. ", a, ' to use it as yourself.');
       $('you').replaceChildren(p);
     } else if (you && $('you')) {

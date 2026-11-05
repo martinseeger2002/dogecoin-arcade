@@ -98,3 +98,16 @@ def test_admin_shows_both_names_and_the_till(names):
     info = app.post("/lite/api/console", headers={**LOCAL, "X-Arcade-Lite": "1"}, json={"line": "getnodeinfo"}).json()
     assert info["ok"] and {k: info["result"][k] for k in ("operator", "node_name", "owner", "owned_by")} == {
         "operator": "pumpkin", "node_name": "pumpkin", "owner": "sadfrog", "owned_by": "account"}
+
+
+def test_a_node_nobody_owns_points_to_signing_in(names):
+    """2026-11-04, SadFrog on the test node: where nobody's @name can be shown, the way in is."""
+    app, state, known = names
+    page = app.get("/admin", headers=LOCAL).text
+    assert "Nobody owns it yet: <a href=\"/join\" target=\"_top\">sign in or make an account</a>" in page
+    assert "Nobody owns this node yet: sign in or make an account, then make it the owner" in page
+    state.set_setting("edition", "lite")
+    try:
+        assert "make it this node's owner: one account" in app.get("/join", headers=LOCAL).text
+    finally:
+        state.set_setting("edition", None)
