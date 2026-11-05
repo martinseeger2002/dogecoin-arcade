@@ -101,12 +101,31 @@ command takes `main` or `test`. On mainnet:
 What mainnet still needs: the review of the wallet's Schnorr signing; a run of the regtest test against the Core the
 arcade runs; a DigiDollar send (`0x02000770`) and the `DD...` address format, so dollars can be paid to someone.
 
+## Send, receive and hold (2026-11-05)
+
+SadFrog: "add capability to send and receive store digidollar test and digidollar". DigiDollar 0.4.0:
+- **Receive** (`ddreceive`): the caller's DigiDollar address, `base58check(52 85 | b1 29, Taproot output key)` (DigiByte
+  Core base58.cpp `CDigiDollarAddress`), and the DigiDollars they hold, each coin said as from a mint, a send or a
+  redeem's change.
+- **Send** (`ddsend <address> <dollars>`): as DigiByte Core's `BuildTransferTransaction` builds it (version
+  `0x02000770`, lock time 0): the caller's DigiDollar coins by key path first, then a DGB coin for the fee; the payee's
+  zero-value P2TR, the DigiDollar change to the caller's own, the DGB change, and `OP_RETURN "DD" 2 <cents>...` in the
+  order of the zero-value outputs (validation.cpp `ValidateTransferTransaction`: $1 to $100,000 an output, conservation
+  to the cent). Fees as a mint's: 0.35 DGB a kB, at least 0.1 DGB.
+- **The wallet's question** (coins.js `verifyOffer`, `ddRecordAmounts`, `ddAddress`) reads the record from the
+  transaction itself and says each zero-value Taproot output as "$40.00 in DigiDollars to TD...", or as the signer's own.
+- **Vaults are kept** by the module when it prepares a mint (`module-data/digidollar/vaults.json`: the vault's script,
+  dollars, lock and tier), so `ddvaults` finds a vault after its own DigiDollar output moved, and `ddredeem` burns any
+  of the owner's DigiDollars for it.
+- **Mainnet sends** wait for the same operator switch as mints (`ddmainnet`). Reads and `ddreceive main` are open.
+- **Tested against a real DigiByte Core 9.26.7 on regtest** (`tests/test_digidollar_regtest.py`): a miner's coins
+  gathered, $100 minted, $40 sent to a second key and back, the supply unchanged, Core's `validateddaddress` taking the
+  address in regtest's version, and the vault redeemed with the two coins that came back.
+
 ## What does not work yet
 
-- **Sending DigiDollars** (version `0x02000770`, `OP_RETURN "DD" 2 <cents>...`). The signing is the redeem's key path;
-  the builder and the `DD...` address format are not written.
 - **Mainnet mints** wait for the operator's switch (above).
-- **A vault whose dollars were sent on** is not found by `ddvaults`: it is found by its own DigiDollar output.
+- **A vault minted outside this arcade** whose dollars were sent on is not found by `ddvaults`.
 
 ## Decisions for the user and for the operator
 

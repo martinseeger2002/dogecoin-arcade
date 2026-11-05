@@ -162,3 +162,31 @@ def push_int(n: int) -> bytes:
     if n == -1 or 1 <= n <= 16:
         return bytes([0x50 + n])
     return push(num(n))
+
+
+B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def base58check(body: bytes) -> str:
+    """`body` and its four check bytes (sha256d), in base58."""
+    whole = body + _sha(_sha(body))[:4]
+    n, out = int.from_bytes(whole, "big"), ""
+    while n:
+        n, r = divmod(n, 58)
+        out = B58[r] + out
+    return "1" * (len(whole) - len(whole.lstrip(b"\0"))) + out
+
+
+def unbase58check(text: str) -> bytes:
+    """The body base58check text holds, or ValueError when it is not one."""
+    n = 0
+    for ch in text:
+        at = B58.find(ch)
+        if at < 0:
+            raise ValueError("not base58")
+        n = n * 58 + at
+    whole = n.to_bytes((n.bit_length() + 7) // 8, "big")
+    whole = b"\0" * (len(text) - len(text.lstrip("1"))) + whole
+    if len(whole) < 5 or _sha(_sha(whole[:-4]))[:4] != whole[-4:]:
+        raise ValueError("its check bytes are wrong")
+    return whole[:-4]

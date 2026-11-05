@@ -16,9 +16,9 @@ PILOT = Path(__file__).parent.parent / "examples" / "packages" / "digidollar"
 def test_the_pilot_package_is_a_module_this_arcade_reads():
     manifest, files = packages.read(PILOT)
     assert manifest["kind"] == "module" and set(manifest["commands"]) == {
-        "ddstats", "ddcollateral", "ddgather", "ddmint", "ddvaults", "ddredeem", "ddmainnet"}
+        "ddstats", "ddcollateral", "ddgather", "ddmint", "ddvaults", "ddredeem", "ddreceive", "ddsend", "ddmainnet"}
     shown = [n for n, c in manifest["commands"].items() if "form" in c]
-    assert shown == ["ddstats", "ddcollateral", "ddgather", "ddmint", "ddvaults", "ddmainnet"], \
+    assert shown == ["ddstats", "ddcollateral", "ddgather", "ddmint", "ddvaults", "ddreceive", "ddsend", "ddmainnet"], \
         "a control for every step; a redeem is the vault list's own button"
     assert manifest["commands"]["ddmainnet"]["audience"] == "operator"
     assert "lib/taproot.py" in files and not any("wallet" in m for m in manifest["needs"]["chains"]["dgb"])
@@ -234,3 +234,54 @@ def test_minting_says_open_when_core_says_none():
     _, pilot = _pilot()
     assert pilot._minting("none") == pilot._minting(None) == pilot._minting("") == "open"
     assert pilot._minting("health_state_not_ready") == "health_state_not_ready"
+
+
+def test_a_digidollar_address_is_the_owners_taproot_key_in_digibyte_cores_versions():
+    """DigiByte Core base58.cpp CDigiDollarAddress: base58check of {0x52, 0x85} ("DD", mainnet) or {0xb1, 0x29} ("TD",
+    testnet) and the 32-byte Taproot output key, the key a mint pays its owner (CreateTapTweak with no script tree)."""
+    tr, pilot = _pilot()
+    owner = _key()[0][1:]
+    test, main = pilot.dd_address("dgbtest", owner), pilot.dd_address("dgb", owner)
+    assert test.startswith("TD") and main.startswith("DD")
+    assert pilot.dd_key("dgbtest", test) == pilot.dd_key("dgb", main) == tr.tweak(owner)
+    assert tr.unbase58check(test) == bytes([0xb1, 0x29]) + tr.tweak(owner)
+    with pytest.raises(ValueError, match="on the other chain"):
+        pilot.dd_key("dgb", test)
+    with pytest.raises(ValueError, match="not a DigiDollar address"):
+        pilot.dd_key("dgbtest", test[:-1] + ("1" if test[-1] != "1" else "2"))
+    with pytest.raises(ValueError, match="not a DigiDollar address"):
+        pilot.dd_key("dgbtest", "stz68hi2MaAvriRgHbzpFzTQPf6NE9kQzN")
+
+
+def test_a_send_is_built_as_digibyte_cores_transfer():
+    """txbuilder.cpp BuildTransferTransaction: DigiDollar inputs by key path, then a DGB coin for the fee; the payee's
+    zero-value Taproot output, the sender's DigiDollar change, the DGB change, and OP_RETURN "DD" 2 <each amount>."""
+    tr, pilot = _pilot()
+    owner, payee = _key()[0][1:], bytes.fromhex("aa" * 32)
+    pay = b"\x76\xa9\x14" + bytes(20) + b"\x88\xac"
+    held = [{"txid": "11" * 32, "vout": 1, "cents": 2500}, {"txid": "22" * 32, "vout": 1, "cents": 10000}]
+    fee_coin = [{"txid": "33" * 32, "vout": 0, "value": 10 ** 8}]
+    made = pilot.send(owner, held, fee_coin, pay, payee, 4000, "dgbtest", "TDpayee")
+    assert made["version"] == 0x02000770 and "locktime" not in made
+    assert made["inputs"] == [{"txid": "22" * 32, "vout": 1, "taproot": {"key": True}}, {"txid": "33" * 32, "vout": 0}]
+    (to, ts), (back, bs), (change, cs), (rec, rs) = [(v, bytes.fromhex(s)) for v, s in made["outputs"]]
+    assert (to, ts) == (0, tr.p2tr(payee)) and (back, bs) == (0, tr.p2tr(tr.tweak(owner))) and cs == pay
+    assert rec == 0 and rs == b"\x6a\x02DD\x01\x02" + tr.push(tr.num(4000)) + tr.push(tr.num(6000))
+    assert 10_000_000 <= 10 ** 8 - change <= 30_000_000, "DigiDollar's rate, over its 0.1 DGB floor"
+    assert made["what"] == "send $40.00 DigiDollar to TDpayee, $60.00 back to you"
+    exact = pilot.send(owner, held, fee_coin, pay, payee, 12500, "dgbtest")
+    assert len(exact["inputs"]) == 3 and len(exact["outputs"]) == 3, "no DigiDollar change when it all goes"
+    with pytest.raises(ValueError, match="under DigiDollar's \\$1"):
+        pilot.send(owner, held, fee_coin, pay, payee, 9950, "dgbtest")
+    with pytest.raises(ValueError, match="you hold \\$125.00"):
+        pilot.send(owner, held, fee_coin, pay, payee, 20000, "dgbtest")
+    with pytest.raises(ValueError, match="\\$1 to \\$100,000"):
+        pilot.send(owner, held, fee_coin, pay, payee, 99, "dgbtest")
+
+
+def test_mainnet_sends_wait_for_the_operator_too(tmp_path):
+    _, pilot = _pilot()
+    pub, _ = _key()
+    main = _ctx(pub, tmp_path, chain="main")
+    with pytest.raises(ValueError, match="mainnet DigiDollar sends are off"):
+        pilot.command_ddsend(main, pilot.dd_address("dgb", pub[1:]), 5, "main")

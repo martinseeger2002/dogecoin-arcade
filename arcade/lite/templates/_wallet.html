@@ -224,8 +224,9 @@ if (!NODE) {
     const paid = (read.pays || []).filter((x) => !x.mine);
     const lines = [`The module says: ${o.what || "a transaction"}`, "", "This transaction pays:"];
     for (const x of paid) {
-      lines.push(x.bytes !== undefined ? `  ${x.bytes} bytes written to the chain${x.value ? ` (${coinsOf(x.value)} ${unit(c)})` : ""}`
-                                       : `  ${coinsOf(x.value)} ${unit(c)} to ${x.to}`);
+      lines.push(x.dd !== undefined ? `  $${(x.dd / 100).toFixed(2)} in DigiDollars to ${x.to}`
+                 : x.bytes !== undefined ? `  ${x.bytes} bytes written to the chain${x.value ? ` (${coinsOf(x.value)} ${unit(c)})` : ""}`
+                                         : `  ${coinsOf(x.value)} ${unit(c)} to ${x.to}`);
     }
     if (!paid.length) lines.push("  nobody but you");
     lines.push(`Network fee: ${coinsOf(read.fee)} ${unit(c)}`);

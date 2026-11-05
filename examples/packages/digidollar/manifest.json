@@ -2,9 +2,9 @@
   "kind": "module",
   "api": 1,
   "name": "digidollar",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "title": "DigiDollar",
-  "summary": "DigiByte's stablecoin: price, supply and health from this arcade's DigiByte Cores, and minting and redeeming from your own wallet, a form for each step.",
+  "summary": "DigiByte's stablecoin from your own wallet: mint, hold, send, receive and redeem DigiDollars, a form for each step, with its price and health.",
   "pages": "anyone",
   "needs": {
     "chains": {
@@ -287,15 +287,81 @@
       ],
       "help": "Redeem a vault once it unlocks: burn the DigiDollars it minted and take back all its DGB.\n\nddredeem <vault> [main|test]   the vault's id, from ddvaults; your wallet shows the transaction and signs it"
     },
+    "ddreceive": {
+      "audience": "user",
+      "args": [
+        "[chain]"
+      ],
+      "help": "Your DigiDollar address, to be paid at, and the DigiDollars you hold.\n\nddreceive [main|test]   anyone may send DigiDollars to it; it is your wallet's key, on that chain",
+      "form": {
+        "title": "Receive",
+        "button": "Show my address",
+        "note": "Your DigiDollar address (TD... test, DD... mainnet), and what you hold.",
+        "fields": {
+          "chain": {
+            "label": "Chain",
+            "type": "choice",
+            "choices": [
+              [
+                "test",
+                "DigiByte testnet"
+              ],
+              [
+                "main",
+                "DigiByte mainnet"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "ddsend": {
+      "audience": "user",
+      "args": [
+        "address",
+        "amount",
+        "[chain]"
+      ],
+      "help": "Send DigiDollars to a DigiDollar address (DD... on mainnet, TD... on the test chain).\n\nddsend <address> <dollars> [main|test]   your wallet shows the transaction and signs it",
+      "form": {
+        "title": "Send",
+        "button": "Send…",
+        "note": "DigiDollars to anyone's DigiDollar address. The fee is in DGB.",
+        "fields": {
+          "address": {
+            "label": "To (a DigiDollar address)",
+            "type": "text"
+          },
+          "amount": {
+            "label": "Dollars ($1 to $100,000)",
+            "type": "number"
+          },
+          "chain": {
+            "label": "Chain",
+            "type": "choice",
+            "choices": [
+              [
+                "test",
+                "DigiByte testnet"
+              ],
+              [
+                "main",
+                "DigiByte mainnet"
+              ]
+            ]
+          }
+        }
+      }
+    },
     "ddmainnet": {
       "audience": "operator",
       "args": [
         "[state]",
         "[confirm]"
       ],
-      "help": "Whether this arcade's people may mint DigiDollars on DigiByte mainnet, with real DGB.\n\nddmainnet [status|on|off] [yes]   off until turned on; on needs yes",
+      "help": "Whether this arcade's people may mint and send DigiDollars on DigiByte mainnet, with real DGB.\n\nddmainnet [status|on|off] [yes]   off until turned on; on needs yes",
       "form": {
-        "title": "Mainnet mints (operator)",
+        "title": "Mainnet (operator)",
         "button": "Apply",
         "note": "Off until you turn it on. Read the module's README first.",
         "fields": {

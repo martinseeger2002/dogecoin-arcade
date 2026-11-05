@@ -28,7 +28,13 @@ CHAINS = {"main": MAIN, "dgb": MAIN, "mainnet": MAIN, "test": TEST, "dgbtest": T
 #: A DigiDollar transaction's version: the "DD" marker 0x0770 with its type in the top byte (primitives/transaction.h):
 #: 1 a mint, 2 a send, 3 a redeem.
 MINT_VERSION = (1 << 24) | 0x0770
+SEND_VERSION = (2 << 24) | 0x0770
 REDEEM_VERSION = (3 << 24) | 0x0770
+#: A DigiDollar address (DigiByte Core base58.cpp CDigiDollarAddress): base58check of this two-byte version and a
+#: Taproot output key. "DD..." on mainnet, "TD..." on the test chain.
+DD_VERSIONS = {MAIN: bytes([0x52, 0x85]), TEST: bytes([0xb1, 0x29])}
+#: What one DigiDollar output of a send may hold (consensus: $1 to $100,000), in cents.
+LEAST_OUTPUT, MOST_OUTPUT = 100, 10_000_000
 #: Blocks between building a mint and its lock (consensus/digidollar.h MINT_LOCK_CONFIRMATION_BUFFER_BLOCKS): a mint
 #: must be in a block within this many blocks of being built.
 BUFFER = 100
@@ -152,12 +158,17 @@ def _pay(coins: list[dict], outputs: list, need: int, spend_size: int, change_sc
                      f"{(need + LEAST_FEE) / COIN:,.8f} DGB or more")
 
 
+def _lock(height: int, lock_days: int) -> int:
+    """A vault's lock height: tier 0's 240 blocks on the test chain, or the days, and the mint's buffer."""
+    return height + (240 if lock_days == 0 else lock_days * BLOCKS_PER_DAY) + BUFFER
+
+
 def mint(owner: bytes, cents: int, tier: int, height: int, lock_days: int, collateral: int,
          coins: list[dict], change_script: bytes, chain: str = TEST) -> dict:
     """The prepared mint: the vault, the DigiDollar output, the "DD" record and the change, paid from `coins`.
 
     `owner` is the caller's x-only key: it alone can redeem the vault and spend the DigiDollars."""
-    lock = height + (240 if lock_days == 0 else lock_days * BLOCKS_PER_DAY) + BUFFER
+    lock = _lock(height, lock_days)
     normal, emergency = _leaves(owner, cents, lock)
     vault = tr.p2tr(tr.tweak(tr.NUMS, tr.branch(tr.leaf(normal), tr.leaf(emergency))))
     record = bytes([tr.OP_RETURN]) + tr.push(b"DD") + tr.push(tr.num(1)) + tr.push(tr.num(cents)) \
@@ -213,20 +224,49 @@ def _holdings(ctx, net: str, owner: bytes) -> list[dict]:
 
 
 def _vaults(ctx, net: str, owner: bytes, held: list[dict]) -> list[dict]:
-    """The caller's vaults still locked: each mint whose own DigiDollar output is still theirs, and whose vault (its
-    first output) is unspent. A vault whose dollars were sent on is not found here (it is still the owner's to redeem
-    with other DigiDollars)."""
-    out = []
+    """The caller's vaults still locked: each mint whose own DigiDollar output is still theirs, and each vault this
+    arcade prepared for their key (kept in the module's data, as a vault's script can't be worked out from the key
+    alone), whose coin is unspent on the chain. So a vault whose dollars were sent on is still found here."""
+    out, seen = [], set()
     for coin in held:
         if coin["kind"] != 1 or len(coin["record"]) < 4 or coin["record"][3] != owner:
             continue
         vault = ctx.rpc(net, "gettxout", coin["txid"], 0, True)
         if not vault:
             continue
+        seen.add(coin["txid"])
         out.append({"txid": coin["txid"], "cents": tr.read_num(coin["record"][0]),
                     "lock": tr.read_num(coin["record"][1]), "tier": tr.read_num(coin["record"][2]),
                     "collateral": round(float(vault["value"]) * COIN)})
+    kept = _kept(ctx).get(net, {}).get(owner.hex(), [])
+    if kept:
+        found = ctx.rpc(net, "scantxoutset", "start", [f"raw({v['script']})" for v in kept])
+        for u in found.get("unspents", []):
+            v = next((k for k in kept if k["script"] == u.get("scriptPubKey")), None)
+            if v and u["vout"] == 0 and u["txid"] not in seen:
+                seen.add(u["txid"])
+                out.append({"txid": u["txid"], "cents": v["cents"], "lock": v["lock"], "tier": v["tier"],
+                            "collateral": _sats(u["amount"])})
     return out
+
+
+def _kept(ctx) -> dict:
+    try:
+        return json.loads((ctx.data / "vaults.json").read_text())
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def _keep(ctx, net: str, owner: bytes, vault: dict) -> None:
+    """Remember a vault prepared for `owner`, so it is found once its dollars have moved (`_vaults`)."""
+    kept = _kept(ctx)
+    mine = kept.setdefault(net, {}).setdefault(owner.hex(), [])
+    if not any(v["script"] == vault["script"] for v in mine):
+        mine.append(vault)
+        try:
+            (ctx.data / "vaults.json").write_text(json.dumps(kept))
+        except (OSError, AttributeError):
+            pass
 
 
 def _owner(ctx, net: str) -> tuple[str, bytes]:
@@ -291,8 +331,12 @@ def command_ddmint(ctx, amount, tier=None, chain="test"):
     if said.get("minting_restricted"):
         raise ValueError(f"minting is closed now: {said.get('minting_restricted_reason')}")
     coins, script = _coins(ctx, net, address)
-    return {"prepared": mint(owner, cents, tier, ctx.rpc(net, "getblockcount"), int(said["lock_days"]),
-                             _sats(said["wallet_collateral_dgb"]), coins, script, net)}
+    height = ctx.rpc(net, "getblockcount")
+    made = mint(owner, cents, tier, height, int(said["lock_days"]), _sats(said["wallet_collateral_dgb"]), coins,
+                script, net)
+    _keep(ctx, net, owner, {"script": made["outputs"][0][1], "cents": cents, "tier": tier,
+                            "lock": _lock(height, int(said["lock_days"]))})
+    return {"prepared": made}
 
 
 def gather(coins: list[dict], script: bytes, chain: str = TEST) -> dict:
@@ -410,8 +454,92 @@ def command_ddredeem(ctx, vault, chain="test"):
     return {"prepared": redeem(found[0], owner, held, coins, script, net)}
 
 
+def dd_address(net: str, owner: bytes) -> str:
+    """The DigiDollar address of the caller's key on `net`: their key's Taproot output, the one a mint pays them."""
+    return tr.base58check(DD_VERSIONS[net] + tr.tweak(owner))
+
+
+def dd_key(net: str, address: str) -> bytes:
+    """The Taproot output key a DigiDollar address on `net` names, or ValueError in plain words."""
+    try:
+        body = tr.unbase58check(str(address).strip())
+    except ValueError:
+        body = b""
+    if len(body) != 34 or body[:2] not in DD_VERSIONS.values():
+        raise ValueError(f"{address} is not a DigiDollar address: one starts DD (mainnet) or TD (test chain)")
+    if body[:2] != DD_VERSIONS[net]:
+        raise ValueError(f"{address} is a DigiDollar address on the other chain: this sends on "
+                         f"{'mainnet (DD...)' if net == MAIN else 'the test chain (TD...)'}")
+    tr.lift_x(body[2:])                                    # a point on the curve, or ValueError
+    return body[2:]
+
+
+def send(owner: bytes, held: list[dict], coins: list[dict], pay_script: bytes, to_key: bytes, cents: int,
+         chain: str = TEST, to_address: str = "") -> dict:
+    """The prepared send of `cents` DigiDollars to the Taproot output key `to_key`, as DigiByte Core builds one
+    (txbuilder.cpp BuildTransferTransaction): the caller's DigiDollar coins by their key path, then DGB coins for the
+    fee; the payee's output, the caller's DigiDollar change, the DGB change, and the record of each output's dollars."""
+    if not LEAST_OUTPUT <= cents <= MOST_OUTPUT:
+        raise ValueError("a DigiDollar send is $1 to $100,000")
+    spend, have = [], 0
+    for coin in sorted(held, key=lambda c: -c["cents"]):
+        if have >= cents:
+            break
+        spend.append(coin)
+        have += coin["cents"]
+    if have < cents:
+        raise ValueError(f"you hold ${have / 100:,.2f} in DigiDollars here and this sends ${cents / 100:,.2f}")
+    back = have - cents
+    if 0 < back < LEAST_OUTPUT:
+        raise ValueError(f"that would leave ${back / 100:,.2f} in DigiDollars as change, under DigiDollar's $1 "
+                         f"least: send ${have / 100:,.2f}, or at most ${(have - LEAST_OUTPUT) / 100:,.2f}")
+    outputs = [(0, tr.p2tr(to_key))] + ([(0, tr.p2tr(tr.tweak(owner)))] if back else [])
+    record = bytes([tr.OP_RETURN]) + tr.push(b"DD") + tr.push(tr.num(2)) + tr.push(tr.num(cents)) \
+        + (tr.push(tr.num(back)) if back else b"")
+    witness = 2 + (41 + 1 + 65) * len(spend)
+    chosen, fee, change = _pay(coins, outputs + [(0, record)], 0, 148, pay_script, extra=witness)
+    outputs += ([(change, pay_script)] if change else []) + [(0, record)]
+    inputs = [{"txid": c["txid"], "vout": c["vout"], "taproot": {"key": True}} for c in spend]
+    inputs += [{"txid": c["txid"], "vout": c["vout"]} for c in chosen]
+    return {"chain": chain, "version": SEND_VERSION, "inputs": inputs, "outputs": [(v, s.hex()) for v, s in outputs],
+            "what": f"send ${cents / 100:,.2f} DigiDollar to {to_address or to_key.hex()}"
+                    + (f", ${back / 100:,.2f} back to you" if back else "")}
+
+
+def command_ddreceive(ctx, chain="test"):
+    """Your DigiDollar address, to be paid at, and the DigiDollars you hold.
+
+    ddreceive [main|test]   anyone may send DigiDollars to it; it is your wallet's key, on that chain"""
+    net = _chain(chain)
+    _ready(ctx, net)
+    _, owner = _owner(ctx, net)
+    held = _holdings(ctx, net, owner)
+    return {"chain": _word(net), "address": dd_address(net, owner),
+            "digidollars": sum(c["cents"] for c in held) / 100,
+            "coins": [{"txid": c["txid"], "vout": c["vout"], "dollars": c["cents"] / 100,
+                       "from": {1: "a mint", 2: "a send", 3: "a redeem's change"}.get(c["kind"], "")} for c in held]}
+
+
+def command_ddsend(ctx, address, amount, chain="test"):
+    """Send DigiDollars to a DigiDollar address (DD... on mainnet, TD... on the test chain).
+
+    ddsend <address> <dollars> [main|test]   your wallet shows the transaction and signs it"""
+    net = _chain(chain)
+    if net == MAIN and not _mainnet_on(ctx):
+        raise ValueError("mainnet DigiDollar sends are off on this arcade: its operator turns them on (ddmainnet)")
+    key = dd_key(net, address)
+    cents = _cents(amount)
+    _ready(ctx, net)
+    pay_address, owner = _owner(ctx, net)
+    held = _holdings(ctx, net, owner)
+    coins, script = _coins(ctx, net, pay_address)
+    if not coins:
+        raise ValueError("a DigiDollar send pays its fee (about 0.15 DGB) from your own DGB, and your wallet has none here")
+    return {"prepared": send(owner, held, coins, script, key, cents, net, str(address).strip())}
+
+
 def command_ddmainnet(ctx, state="status", confirm=""):
-    """Whether this arcade's people may mint DigiDollars on DigiByte mainnet, with real DGB (operator only).
+    """Whether this arcade's people may mint and send DigiDollars on DigiByte mainnet, with real DGB (operator only).
 
     ddmainnet [status|on|off] [yes]   on needs yes; off at once. Off until turned on."""
     if ctx.caller.get("audience") != "operator":
@@ -420,8 +548,8 @@ def command_ddmainnet(ctx, state="status", confirm=""):
     path = ctx.data / "mainnet.json"
     if state == "on":
         if str(confirm).lower() != "yes":
-            raise ValueError("mainnet mints lock real DGB until their tier's time is up (30 days or more). Read the "
-                             "module's README first, then: ddmainnet on yes")
+            raise ValueError("mainnet mints lock real DGB until their tier's time is up (30 days or more), and sends "
+                             "move real dollars. Read the module's README first, then: ddmainnet on yes")
         path.write_text(json.dumps({"on": True, "since": int(time.time())}))
     elif state == "off":
         path.unlink(missing_ok=True)
@@ -429,8 +557,8 @@ def command_ddmainnet(ctx, state="status", confirm=""):
         raise ValueError("ddmainnet status, ddmainnet on yes, or ddmainnet off")
     on = _mainnet_on(ctx)
     return {"mainnet_mints": "on" if on else "off",
-            "means": "people here may mint on DigiByte mainnet with their own DGB" if on else
-                     "mints on DigiByte mainnet are refused here; the test chain is open"}
+            "means": "people here may mint and send DigiDollars on DigiByte mainnet with their own DGB" if on else
+                     "mints and sends on DigiByte mainnet are refused here; the test chain is open"}
 
 
 def page(ctx, method, path, query, body):
@@ -457,7 +585,10 @@ for it, and burn them later to take every DGB back.</p>
 <ol><li><b>Cost:</b> what a mint locks, for each lock time.</li>
 <li><b>Gather:</b> many small coins into one; a mint spends only a few.</li>
 <li><b>Mint:</b> your wallet shows the transaction and signs it.</li>
-<li><b>My vaults:</b> each vault, and when it unlocks; Redeem appears once it has.</li></ol>
+<li><b>My vaults:</b> each vault, and when it unlocks; Redeem appears once it has.</li>
+<li><b>Receive:</b> your DigiDollar address (TD... on the test chain, DD... on mainnet) and what you hold.</li>
+<li><b>Send:</b> DigiDollars to anyone's DigiDollar address.</li></ol>
 <p>Use the forms above this page in the arcade's window, or type the same in its console: <code>ddcollateral 100 0</code>,
-<code>ddgather</code>, <code>ddmint 100 0</code>, <code>ddvaults</code>, <code>ddredeem &lt;vault&gt;</code>. Each takes
-<code>main</code> or <code>test</code> last. Mainnet mints are {mainnet}.</p>"""
+<code>ddgather</code>, <code>ddmint 100 0</code>, <code>ddvaults</code>, <code>ddredeem &lt;vault&gt;</code>,
+<code>ddreceive</code>, <code>ddsend &lt;address&gt; &lt;dollars&gt;</code>. Each takes
+<code>main</code> or <code>test</code> last. Mainnet mints and sends are {mainnet}.</p>"""

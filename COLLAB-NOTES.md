@@ -185,6 +185,18 @@ coding agent, so it is written for agents first and people second.
 - **Collections work handed off** to blockchaindad at GitHub issue #91 (2026-11-05).
 
 ### 2026-11-05 A peer that stops reading no longer freezes the mesh; DRC-20 mints out of the Wallet's grid (Claude; the operator: "a lot of my ords are not displaying", "The DRC 20 mints should be [out] from the ORD grid but we shouldn't count them towards tokens")
+### 2026-11-05 · SadFrog's side (Claude) · DigiDollar 0.4.0: send, receive and hold
+SadFrog: "add capability to send and receive store digidollar test and digidollar".
+- **Module:** `ddreceive` (the caller's DigiDollar address and holdings) and `ddsend` (DigiByte Core's transfer,
+  `0x02000770`), each with a form; DigiDollar addresses in `lib/taproot.py` (`base58check`, `unbase58check`) and
+  `module.py` (`dd_address`, `dd_key`, `send`). Mainnet sends wait for `ddmainnet` like mints. A mint's vault is kept in
+  the module's data (`_keep`, `_vaults`) so it is found after its dollars move. DIGIDOLLAR.md has the shapes.
+- **Wallet:** `coins.js` reads a DigiDollar record and says each zero-value Taproot output on DigiByte as dollars to
+  its `TD...`/`DD...` address, or as the signer's own (`ddAddress`, `ddRecordAmounts`, `readScriptNum`);
+  `_wallet.html` liteSign words it. `extension/coins.js` is the same file again.
+- **Tests:** test_digidollar (+3), test_lite_schnorr_browser (+1: the send's words and its key-path signature in
+  Firefox), test_digidollar_regtest (+1: gather, mint, send there and back, redeem, against DigiByte Core 9.26.7).
+
 ### 2026-11-05 · SadFrog's side (Claude) · DigiDollar: a control for every step, and mainnet's groundwork
 SadFrog: "Make sure every aspect of the Digibyte digidollar has ui for the whole process with the ability to also do it
 in the console", and "lay the ground work for making this process work for digidollar on mainnet".
