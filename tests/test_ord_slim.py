@@ -293,6 +293,32 @@ def test_a_snapshot_nobody_fetches_from_is_let_go_of(tmp_path, monkeypatch, idle
     assert index.snapshots.snap_path.exists() is not idle
 
 
+def test_an_index_linked_from_another_disk_is_copied_and_swapped_beside_its_real_file(tmp_path):
+    """2026-11-05, node 2: the Bells index (46 GB) lives on a hard disk, linked from the arcade's folder on an SSD with
+    92 GB free. Its snapshot was written beside the link (the SSD), and a fetched copy swapped in replaced the link
+    with a file on the SSD, leaving the old -wal beside the real one."""
+    chain = Chain()
+    chain.add([])
+    disk, home = tmp_path / "disk", tmp_path / "home"
+    disk.mkdir()
+    home.mkdir()
+    made = _walker(disk, chain)
+    made.walker.step(chain, dx.BASE, budget=60)
+    (home / "walk.sqlite").symlink_to(disk / "walk.sqlite")
+    index = dx.DoginalIndex(home / "walk.sqlite", lambda: chain, lambda: "walk")
+    snaps = index.snapshots
+    assert snaps.snap_path.parent == disk.resolve() and snaps.part_path.parent == disk.resolve()
+    snaps.make()
+    assert (disk / "walk.sqlite.snap").exists() and not (home / "walk.sqlite.snap").exists()
+    copy = disk / "walk.sqlite.part"
+    copy.write_bytes((disk / "walk.sqlite.snap").read_bytes())
+    index.status()                                     # opens the writer: its -wal is beside the real file
+    index.install(copy)
+    assert (home / "walk.sqlite").is_symlink(), "the link stays a link"
+    assert not copy.exists() and (disk / "walk.sqlite").stat().st_size == (disk / "walk.sqlite.snap").stat().st_size
+    assert index.status()["mode"] == "walk"
+
+
 # --------------------------------------------------------------------------- layout 3 (2026-10-21, "whole copies, slimmer")
 
 LAYOUT_2_INDEXES = """

@@ -92,7 +92,7 @@ class Snapshots:
         self.offers: dict[str, dict] = {}        # node -> its "sn" word: {"id", "h", "n", "have" (all or a list)}
         self.said = ""                           # what happened last, for the Ords tab
         self.single = False                      # the index here is one arcade's copy (no second holder checked it)
-        base = Path(index.store.path)
+        base = index.store.real                  # beside the index file itself, on its disk (Store.real)
         self.snap_path = base.with_name(base.name + ".snap")
         self.part_path = base.with_name(base.name + ".part")
         self.manifest_path = base.with_name(base.name + ".snap.json")
