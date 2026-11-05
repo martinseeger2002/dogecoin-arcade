@@ -88,6 +88,26 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 A home-screen app window stuck loading is started again; Reload in the pull-down bar (Claude, from the Ashvale golf sim session's report; the operator: "People should not have to do that")
+
+- **What happened.** On the operator's iPhone (installed PWA, /home), ASHVALE sat on the launcher's "Loading Ashvale…" and
+  only loaded after Remove from arcade and adding it again. Not reproduced. `openWin` showed the window it already had
+  for an app without ever reloading it, and nothing noticed a frame that never finished loading. (Remove from Home Screen
+  does not close a running window, so the stuck frame was most likely a fresh load left hanging: a phone that sleeps
+  mid-load leaves requests that never answer.)
+- **Now (home.html).**
+  - Each window records its frame's `load`, which comes only once everything inside has loaded, the game's launcher
+    frame and its first scripts included. `about:blank`, `reloadWin`'s step in between, does not count.
+  - A window still loading on screen after `STUCK_AFTER` (45 s) is loaded afresh once by itself, with a toast. A second
+    stall says "tap Reload" instead of reloading again.
+  - Coming back to the home screen after more than `AWAY_LONG` (60 s) away, or from the page cache (`pageshow`
+    persisted), reloads every window that never finished loading. Tapping the icon of one that has been loading for
+    over 45 s does too.
+  - **Reload** in the pull-down bar, between the name and Close, loads the app in front afresh (a new `src`).
+  - A window that loaded is never reloaded by any of this.
+- **Tests.** `tests/test_home_stuck_window_browser.py`, a real browser: Reload, the reload by itself once, the second
+  stall's message, and an app that loaded left alone. test_home_screen passes. Screenshot ~/ordmock/stuck-reload-bar.png.
+
 ### 2026-11-05 Lazy wallets: an imported wallet's coins are read when it is opened (Claude; the operator: "we shouldn't be downloading all of the wallet balances all at once only when each wallet is open")
 
 - **Before.** Every Wallet page load (`loadImports`) asked `/account/imported`, which read and sorted the coins of every
