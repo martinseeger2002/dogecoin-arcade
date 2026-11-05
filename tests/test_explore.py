@@ -19,14 +19,14 @@ from arcade.web import door                                                     
 # --------------------------------------------------------------------------- the coins and their protocols
 
 def test_the_coins_in_sadfrogs_order_each_with_its_protocols():
-    assert ord_chains.EXPLORE_ORDER[:4] == ("doge", "main", "bel", "ltc"), "Doginals, Pepinals, Bellinals, LTC ords"
+    assert ord_chains.EXPLORE_ORDER[:3] == ("doge", "main", "bel"), "Doginals, Pepinals, Bellinals"
     assert [p["label"] for p in ord_chains.explore_protocols("doge")] == ["Doginals", "DRC-20"]
     assert [p["label"] for p in ord_chains.explore_protocols("main")] == ["Pepinals", "PRC-20"]
-    assert [p["kind"] for p in ord_chains.explore_protocols("ltc")] == ["ord", "token", "omni"], "Litecoin has Omni"
+    assert ord_chains.explore_protocols("ltc") == [], "no token protocols on Litecoin (2026-11-05)"
     assert [p["label"] for p in ord_chains.explore_protocols("bel")] == ["Bellinals", "BEL-20"]
     assert ord_chains.explore_protocols("nope") == []
     order = ord_chains.EXPLORE_ORDER
-    assert order.index("wjk") < order.index("dgb") < order.index("ltctest"), "DigiByte with the rest, before the testnets"
+    assert order.index("wjk") < order.index("dgb") < order.index("test"), "DigiByte with the rest, before the testnet"
 
 
 def test_explore_is_open_to_anybody_for_reading_only():

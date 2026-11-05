@@ -110,6 +110,22 @@ Seen and left for later: `/realtime/nodes` still lists two quick-tunnel names th
 
 
 ### 2026-11-04 A node install's seven steps, the line through them its progress bar (Claude; the operator chose the mockup: "the green line that goes through the different steps could also act as a progress bar")
+### 2026-11-05 · SadFrog's side (Claude) · No ords, no -20 tokens, no Omni tab on Litecoin and Litecoin testnet (tbuuol: "Die 3 Chains LTC tLTC und KOT sollten keinerlei Token Protokolle benutzen")
+
+Branch `team/ltc-no-protocols`. Found on node 3: an L test wallet said "held in Litecoin inscriptions" for a coin that carries none. L test's ord index there was never built (Read only, no linked arcade walks it: tip 0), so the guard answered every coin up to 0.1 LTC "unknown, wait: index", `_inscribed` counted it held and `funding.choose` would not spend it.
+
+- `doginal_index.STARTS` / `SOURCES`: no `ltc`, `ltctest` -> no ord index for either (Admin -> Ords, Explore, coverage and the mesh all list from STARTS).
+- `app.py` guard setup: an add-on chain not in STARTS gets no guard (Kotia was already skipped by `tx_time`), so `guard_for` is None for L/M/3 and m/n/Q addresses and every coin is spendable.
+- `ord_chains`: `ltc`, `ltctest` out of WORDS, MOVED and EXPLORE_ORDER; `OMNI_NETS` empty. Their Exchange ord tabs and the Wallet's ord view go with them.
+- Left as code, read by nothing now: ord-litecoin's readings (`ord_rules.ORD_LITE`, `RULES_BY_NET`, `TOKEN_PROTOCOLS["ltc"]`, `doginal_index.TAPROOT`), `ltc_ord.py` (its Doginals-format writer is still token20_send's for every chain). Delete them if you prefer.
+- Not touched: the arcade's own Class B transactions on Litecoin, as on Kotia; coin swaps PEP/LTC, DOGE/LTC; `counter("test")` still prices a P test ord in L test coins.
+- Docs: litecoin.md (no inscriptions or tokens), swaps.md. Wallet: the "Litecoin inscriptions" word is gone.
+- Tests: test_ord_chains, test_ord_chains_more, test_explore, test_doginal_index, test_litecoin_network, test_litecoin_testnet, test_litecoin_face, test_doginal_wallet changed to say the new rule; with test_litecoin_chain, test_litecoin_safety, test_ord_lite, test_ord_dialects, test_taproot_content, test_bells_index, test_chains, test_wallet_imports, test_imports_everywhere, test_trade_tab, test_admin and test_kotia all pass (318 passed, 14 skipped: no litecoind regtest here).
+
+From your side: this undoes the Explore tab's "litecoin ordinals, litecoin omni" (SadFrog's own ask of 2026-10-25, now withdrawn by tbuuol). The `ltc-inscriptions.sqlite` / `ord-ltc*.sqlite` files an arcade already has stay on disk, unused.
+
+
+### 2026-11-04 A node install's seven steps, the line through them its progress bar (Claude; the operator chose the mockup: "the green line that goes through the different steps could also act as a progress bar")
 
 `core_install.steps` now gives seven steps -- Download, Check, Start node, Find a copy, Learn headers, Copy data (or Sync chain), Check & ready (or Ready) -- each with how far it is (`p`), its numbers (`num`: MB, headers of the copy's block, GB, blocks) and its time left (`eta`), plus the install's percentage. In Admin the line from one step to the next fills as that next step goes (green when done, striped while it goes, its percentage above it), and the box below says what is going on now, its time left, what comes next, and the two buttons. `mesh/coreboot.py` says the copy's block (`target`) and size, a new phase `headers` while this node learns the chain's headers up to the copy's block, and how fast headers and blocks come (`eta_headers`, `eta_blocks`). Tests: `tests/test_core_install.py`. Nothing needed from your side.
 

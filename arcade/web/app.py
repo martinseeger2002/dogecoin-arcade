@@ -1031,8 +1031,11 @@ def create_app(state: AppState) -> FastAPI:
         _others.setdefault(5, set()).add("ltc")            # Litecoin's legacy "3" P2SH
         for _lchain in state.addons:
             # Kotia (2026-10-23) has no ord envelopes on its coins, and the guard's reader does not know its
-            # timed transactions (Params.tx_time): no guard there, as on any chain without ords.
-            if _lchain.network == "doge" or _lchain.params.tx_time:
+            # timed transactions (Params.tx_time): no guard there, as on any chain without ords. Litecoin and
+            # Litecoin testnet neither (2026-11-05, tbuuol: no token protocols on LTC, tLTC and KOT): with no ord
+            # index every small coin there waited "unknown" and the Wallet called it "held in Litecoin
+            # inscriptions". A chain without an ord index (doginal_index.STARTS) has no guard.
+            if _lchain.network == "doge" or _lchain.params.tx_time or _lchain.network not in _ORD_STARTS:
                 continue
             # Litecoin (2026-10-17, SadFrog's side): the same guard, reading Doginals-format envelopes
             # (arcade/ltc_ord.py) through the Litecoin node. On regtest a node's wallet carried an

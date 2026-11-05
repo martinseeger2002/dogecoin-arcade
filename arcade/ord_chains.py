@@ -43,21 +43,18 @@ WORDS = {
     "dgb": OrdWords("DigiByte ordinal", "DigiByte", "DigiByte", "dgbordinals"),
     # Flopinals (2026-11-03): Flopcoin is Dogecoin 1.14's code with no SegWit, so its ords are the Doginals kind.
     "flop": OrdWords("Flopinal", "Flopcoin", "Flopcoin"),
-    # Litecoin ords (ord-litecoin), mainnet and testnet: those held at a legacy "L..." / "m..." address (2026-10-25).
-    "ltc": OrdWords("LTC ordinal", "Litecoin", "Litecoin", "ltcordinals"),
-    "ltctest": OrdWords("LTC ordinal", "Litecoin testnet", "LTC TEST", "ltctestordinals"),
+    # No Litecoin and no Kotia (2026-11-05, tbuuol: "Die 3 Chains LTC tLTC und KOT sollten keinerlei Token Protokolle
+    # benutzen"): their coins carry no ords here, so no guard holds them back (doginal_index.STARTS).
     # Pepecoin testnet, for the Creator tab's tries with coins that cost nothing.
     "test": OrdWords("Pepinal", "Pepecoin test", "PEP TEST", "pepinalstest"),
 }
 
 #: The chains whose ords are sent, listed and bought here: Doginals, Pepinals, and Bellinals (2026-10-25; Bells 3 signs
 #: legacy inputs as Dogecoin does, so the SINGLE|ANYONECANPAY listing digest is the same), then Luckinals, Wojakinals,
-#: DigiByte ordinals, Litecoin ords and Pepecoin testnet's the same way (legacy inputs, the same digest; Litecoin's
-#: proven on regtest, tests/test_ord_chains_more.py, and DigiByte signs legacy inputs with Bitcoin Core's code as
-#: Litecoin does), and Flopinals (2026-11-03: Dogecoin's code, the same digest). Wojakinals are never swapped (no CLTV,
-#: `swappable`). Kotia has no ords
-#: (timed transactions, Params.tx_time).
-MOVED = ("doge", "main", "bel", "lky", "wjk", "dgb", "flop", "ltc", "ltctest", "test")
+#: DigiByte ordinals and Pepecoin testnet's the same way (legacy inputs, the same digest; DigiByte signs legacy inputs
+#: with Bitcoin Core's code), and Flopinals (2026-11-03: Dogecoin's code, the same digest). Wojakinals are never swapped
+#: (no CLTV, `swappable`). Litecoin, Litecoin testnet and Kotia have no ords (2026-11-05, WORDS).
+MOVED = ("doge", "main", "bel", "lky", "wjk", "dgb", "flop", "test")
 
 
 def word(net: str, default: str = "Inscription") -> str:
@@ -150,8 +147,9 @@ def wallet_table() -> dict:
 #: kind: "ord" (inscriptions), "token" (the JSON -20 tokens the chain's ord index reads), "omni" (Omni Layer).
 #: DigiByte (2026-10-26) with the rest, before the testnets: a chain whose index this arcade does not have is skipped, so it
 #: is listed before DigiByte's chain lands (PR #29).
-EXPLORE_ORDER = ("doge", "main", "bel", "ltc", "lky", "wjk", "dgb", "flop", "ltctest", "test")
-OMNI_NETS = ("ltc", "ltctest")
+#: No Litecoin (2026-11-05: no token protocols on LTC, tLTC and KOT): no Litecoin ords and no Omni tab.
+EXPLORE_ORDER = ("doge", "main", "bel", "lky", "wjk", "dgb", "flop", "test")
+OMNI_NETS: tuple[str, ...] = ()
 
 
 def token_word(net: str) -> str:
