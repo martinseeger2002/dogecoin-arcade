@@ -204,6 +204,9 @@ mining on each chain where possible on cpu as well as a section to hookup local 
   - LAN-only unless the operator says otherwise. The server comes back with the arcade.
 - **A mining run survives a restart** (`testmine.resume`, setting `mining_run`), so an update no longer stops it.
 - **Console:** `mine <chain> [blocks] [address]`, `mining`, `listmining`, `stratum [start|stop]`.
+- **tests/conformance/vectors.json regenerated:** `dgbtest` (a new chain), and the new `Params.mine_algos` and
+  `Params.algos` on every chain (empty but on DigiByte, mainnet and testnet). Nothing recorded before changed. The
+  browser's TESTNETS, CLAIM_FEE and FEE_FLOOR gain `dgbtest`, as config's.
 - **Tests:** test_stratum (a simulated ASIC against a node that checks every block), test_stratum_regtest (a real
   DigiByte Core 9.26.7 regtest took a scrypt block and a SHA-256 block mined over stratum: **passed**), test_testmine.
 - **Not here: merge-mined chains for ASICs.** That needs an AuxPoW parent with the aux chains' commitment, and is its

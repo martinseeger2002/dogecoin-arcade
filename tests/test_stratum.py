@@ -182,14 +182,14 @@ def test_version_rolling_is_offered_within_bip310s_mask_and_checked():
 
     class Writer:
         def get_extra_info(self, _):
-            return ("192.168.1.50", 4000)
+            return ("10.0.0.50", 4000)
         def write(self, data):
             sent.append(json.loads(data))
     miner = stratum.Miner(server, Writer(), 1)
     server._answer(miner, {"id": 1, "method": "mining.configure",
                            "params": [["version-rolling"], {"version-rolling.mask": "ffffffff"}]})
     assert sent[-1]["result"] == {"version-rolling": True, "version-rolling.mask": "1fffe000"}
-    assert server._allowed("192.168.1.50") and server._allowed("10.0.0.2") and server._allowed("127.0.0.1")
+    assert server._allowed("10.0.0.50") and server._allowed("10.0.0.2") and server._allowed("127.0.0.1")
     assert not server._allowed("8.8.8.8"), "a stranger on the internet is refused unless the operator says"
 
 
