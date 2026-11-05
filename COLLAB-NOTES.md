@@ -88,7 +88,7 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-11-05 · SadFrog's side (Claude) · No ords, no -20 tokens, no Omni tab on Litecoin and Litecoin testnet (tbuuol: "Die 3 Chains LTC tLTC und KOT sollten keinerlei Token Protokolle benutzen")
+### 2026-11-05 · SadFrog's side (Claude) · No token protocols at all on Litecoin, Litecoin testnet and Kotia: no ords, -20 tokens, Omni tab or Class B (tbuuol: "Die 3 Chains LTC tLTC und KOT sollten keinerlei Token Protokolle benutzen")
 
 Branch `team/ltc-no-protocols`. Found on node 3: an L test wallet said "held in Litecoin inscriptions" for a coin that carries none. L test's ord index there was never built (Read only, no linked arcade walks it: tip 0), so the guard answered every coin up to 0.1 LTC "unknown, wait: index", `_inscribed` counted it held and `funding.choose` would not spend it.
 
@@ -96,7 +96,13 @@ Branch `team/ltc-no-protocols`. Found on node 3: an L test wallet said "held in 
 - `app.py` guard setup: an add-on chain not in STARTS gets no guard (Kotia was already skipped by `tx_time`), so `guard_for` is None for L/M/3 and m/n/Q addresses and every coin is spendable.
 - `ord_chains`: `ltc`, `ltctest` out of WORDS, MOVED and EXPLORE_ORDER; `OMNI_NETS` empty. Their Exchange ord tabs and the Wallet's ord view go with them.
 - Left as code, read by nothing now: ord-litecoin's readings (`ord_rules.ORD_LITE`, `RULES_BY_NET`, `TOKEN_PROTOCOLS["ltc"]`, `doginal_index.TAPROOT`), `ltc_ord.py` (its Doginals-format writer is still token20_send's for every chain). Delete them if you prefer.
-- Not touched: the arcade's own Class B transactions on Litecoin, as on Kotia; coin swaps PEP/LTC, DOGE/LTC; `counter("test")` still prices a P test ord in L test coins.
+- **Then Class B too** (tbuuol: "Ich sagte alles abschalten"): new `Params.class_b` (default True), False on `ltc`, `ltctest`, `kot` (Wojakcoin and DigiByte copy Litecoin's Params and say True again).
+  - `indexer.ArcadeHandler.on_connect`: on such a chain the coins are followed and nothing else is read (no tokens, NFTs, names, posts, offers).
+  - Nothing is checked on a send there (tbuuol: "null Prüfung auf irgendwelche Daten"): no guard, no refusal; coins go back and forth plainly.
+  - `state.arcade_chains` (token_chains with class_b): `token_chain`, `switch_token_chain`, `_token_chain`, `_per_browser_chain` and the chain switch on Tokens, Create, Collections and Exchange use it. The Coins tab and the wallet still show every chain.
+  - `/create/chain` says "<chain> carries coins only" instead of "still syncing".
+  - Tests: `tests/test_classb_off.py`, test_litecoin_network (+1). 24 files, 373+ passed. Docs: litecoin.md, kotia.md.
+- Not touched: coin swaps PEP/LTC, DOGE/LTC (lock scripts, no payload); `counter("test")` still prices a P test ord in L test coins.
 - Docs: litecoin.md (no inscriptions or tokens), swaps.md. Wallet: the "Litecoin inscriptions" word is gone.
 - Tests: test_ord_chains, test_ord_chains_more, test_explore, test_doginal_index, test_litecoin_network, test_litecoin_testnet, test_litecoin_face, test_doginal_wallet changed to say the new rule; with test_litecoin_chain, test_litecoin_safety, test_ord_lite, test_ord_dialects, test_taproot_content, test_bells_index, test_chains, test_wallet_imports, test_imports_everywhere, test_trade_tab, test_admin and test_kotia all pass (318 passed, 14 skipped: no litecoind regtest here).
 

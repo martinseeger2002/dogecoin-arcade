@@ -264,6 +264,13 @@ class Params:
     #: HTLC, an escrow) refunds through CHECKLOCKTIMEVERIFY; where it is a no-op the refunder can take a lock back at
     #: any moment, so a swap there could be robbed (`require_cltv`). Wojakcoin (2026-10-25): BIP65Height is max.
     cltv_enforced: bool = True
+    #: Whether the arcade's own Class B / Class C transactions (its tokens, NFTs, names, posts, inscriptions, offers:
+    #: anything carrying config.MARKER or paying the marker address) are read and sent on this chain. False on
+    #: Litecoin, Litecoin testnet and Kotia (2026-11-05, tbuuol: "Die 3 Chains LTC tLTC und KOT sollten keinerlei Token
+    #: Protokolle benutzen" -- "alles abschalten"): the index follows their coins only (indexer.ArcadeHandler) and the
+    #: token pages do not switch to them. Nothing is checked on a send there (tbuuol: "null Prüfung auf irgendwelche
+    #: Daten"): coins go back and forth as on any plain wallet.
+    class_b: bool = True
 
     @property
     def index_start(self) -> int | None:
@@ -516,6 +523,7 @@ LITECOIN = dataclasses.replace(
     auxpow_chain_id=None,       # scrypt, mined on its own (it is the PARENT Dogecoin merge-mines with)
     addon=True, node_dir=".litecoin", node_conf="litecoin.conf",
     letter="L", family="LTC", net_word="litecoin", real_coins=True, bech32_hrp="ltc", mweb=True,
+    class_b=False,              # no arcade tokens on Litecoin (2026-11-05); Wojakcoin and DigiByte say True again
 )
 
 # Litecoin TESTNET (SadFrog's side, 2026-10-17; plan B, the arcade's own "hello world" inscription).
@@ -547,6 +555,7 @@ LITECOIN_TESTNET = dataclasses.replace(
     # Testnet's 20-minute rule: a block after a long gap may be at the easiest difficulty.
     min_difficulty_blocks=True,
     node_dir=".litecoin-testnet", real_coins=False, bech32_hrp="tltc",
+    class_b=False,              # no arcade tokens on Litecoin testnet (2026-11-05)
 )
 
 # Bellscoin MAINNET (SadFrog's side, 2026-10-22: "integrate them as fully as Dogecoin"). An add-on chain like
@@ -645,6 +654,7 @@ KOTIA = dataclasses.replace(
     letter="T", family="KOT", net_word="kotia", real_coins=True, bech32_hrp="", mweb=False,
     tx_time=True, block_sig=True, scrypt_headers_below=7,
     full_utxo_set=True,         # Kotia only (utxoset.py)
+    class_b=False,              # no arcade tokens on Kotia (2026-11-05): storage (MoonBrix OP_RETURN) and coin only
 )
 
 # Wojakcoin MAINNET. WojakCoin 1.21.3 (wojakcore chainparams.cpp / chainparamsbase.cpp) is Bitcoin Core's code:
@@ -659,6 +669,7 @@ WJK_MAINNET_FLOOR = 228_000
 
 WOJAKCOIN = dataclasses.replace(
     LITECOIN,
+    class_b=True,               # Litecoin's Params, not its "no arcade tokens" (2026-11-05)
     name="wjk",
     rpc_port=20760,
     p2p_port=20759,
@@ -704,6 +715,7 @@ DGB_MAINNET_FLOOR = 24_450_000
 
 DIGIBYTE = dataclasses.replace(
     LITECOIN,
+    class_b=True,               # Litecoin's Params, not its "no arcade tokens" (2026-11-05)
     name="dgb",
     rpc_port=14022,
     p2p_port=12024,
