@@ -24,6 +24,8 @@ log = logging.getLogger("arcade.disk")
 
 #: How often this arcade measures its own folders (seconds).
 MEASURE_EVERY = 6 * 3600
+#: Where the running processes are read from (Linux); a test points it elsewhere.
+PROC = Path("/proc")
 #: The largest a peer's figure may be and still be taken (a typo or a lie bigger than any chain is dropped).
 MOST = 50 * 10 ** 12
 
@@ -120,8 +122,7 @@ def _holds_chain(folder: Path) -> bool:
     """A Core's data folder holds its blocks (a folder with only a config in it is not one: 2026-10-27, .25's
     ~/.dogecoin held only dogecoin.conf, its node's data in /var/lib/dogecoind, and Dogecoin was said to take 278 B)."""
     try:
-        return (folder / "blocks").is_dir() or (folder / "testnet4" / "blocks").is_dir() \
-            or (folder / "testnet3" / "blocks").is_dir()
+        return any((folder / sub / "blocks").is_dir() for sub in ("", "testnet4", "testnet3", "testnet26"))
     except OSError:
         return False
 
@@ -137,10 +138,12 @@ def _conf_datadir(conf: Path) -> Path | None:
     return None
 
 
-def _process_datadir(daemon: str) -> Path | None:
-    """The -datadir= of a running `daemon` (Linux /proc): a system install keeps its data where its service says."""
+def _process_datadir(daemon: str, conf: Path | None = None) -> Path | None:
+    """The -datadir= of a running `daemon` (Linux /proc): a system install keeps its data where its service says. With
+    `conf`, only a daemon started with that -conf= (2026-11-05: DigiByte's testnet node runs beside its mainnet one,
+    and the testnet was said to take the mainnet's 51.6 GB)."""
     try:
-        for proc in Path("/proc").iterdir():
+        for proc in PROC.iterdir():
             if not proc.name.isdigit():
                 continue
             try:
@@ -149,8 +152,11 @@ def _process_datadir(daemon: str) -> Path | None:
                 continue
             if not argv or Path(argv[0].decode("utf-8", "replace")).name != daemon:
                 continue
-            for a in argv[1:]:
-                a = a.decode("utf-8", "replace")
+            args = [a.decode("utf-8", "replace") for a in argv[1:]]
+            confs = [Path(a.split("=", 1)[1]).expanduser() for a in args if a.startswith("-conf=")]
+            if conf is not None and confs and confs[0] != Path(conf).expanduser():
+                continue
+            for a in args:
                 if a.startswith("-datadir="):
                     return Path(a.split("=", 1)[1]).expanduser()
     except OSError:
@@ -165,7 +171,7 @@ def node_folder(chain) -> Path | None:
     conf = getattr(chain, "conf", None)
     stem = Path(getattr(params, "node_conf", "") or "").stem
     candidates = [getattr(chain, "datadir", None), _conf_datadir(conf) if conf else None,
-                  _process_datadir(stem + "d") if stem else None,
+                  _process_datadir(stem + "d", conf) if stem else None,
                   Path(conf).parent if conf else None,
                   (Path.home() / params.node_dir) if getattr(params, "node_dir", "") else None]
     for c in candidates:

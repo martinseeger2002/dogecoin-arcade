@@ -310,3 +310,23 @@ def test_a_node_of_the_operator_s_own_is_never_cancelled_and_sync_on_its_own_is_
     own = app.post("/admin/api/cores/copy", headers={**LOCAL, **WRITE}, json={"net": "flop", "action": "own"})
     assert own.status_code == 200 and state.setting("core_copy_own:flop") is True
     assert app.post("/admin/api/cores/copy", headers=LOCAL, json={"net": "flop", "action": "own"}).status_code in (401, 403)
+
+
+def test_a_test_chain_beside_its_mainnet_is_measured_in_its_own_folder(tmp_path, monkeypatch):
+    """2026-11-05, a test node: DigiByte testnet (testnet26/blocks under ~/.digibyte-testnet) was said to take 51.6 GB, the
+    mainnet node's folder, found by the running digibyted's -datadir=. A testnet26 folder holds the chain, and only a
+    daemon started with this chain's own -conf= is asked."""
+    from types import SimpleNamespace
+    main, test = tmp_path / "main", tmp_path / "test"
+    (main / "blocks").mkdir(parents=True)
+    (test / "testnet26" / "blocks").mkdir(parents=True)
+    (test / "digibyte.conf").write_text("testnet=1\n")
+    chain = SimpleNamespace(datadir=None, conf=test / "digibyte.conf", params=NETWORKS["dgbtest"])
+    procs = tmp_path / "proc"
+    for pid, conf, data in (("10", main / "digibyte.conf", main), ("11", test / "digibyte.conf", test)):
+        (procs / pid).mkdir(parents=True)
+        (procs / pid / "cmdline").write_bytes(b"\0".join([b"/x/digibyted", f"-datadir={data}".encode(),
+                                                          f"-conf={conf}".encode()]))
+    monkeypatch.setattr(disk_sizes, "PROC", procs)
+    assert disk_sizes._process_datadir("digibyted", chain.conf) == test
+    assert disk_sizes.node_folder(chain) == test
