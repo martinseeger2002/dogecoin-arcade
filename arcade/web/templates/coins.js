@@ -990,6 +990,11 @@ export async function verifyOffer(offer, keys) {
   const ltc = LTC_KINDS[keys.network || offer.chain] || null;
   let paid = 0n, change = 0n;
   const pays = [];
+  // DigiDollars (2026-11-05): on DigiByte, a zero-value Taproot output holds the dollars the "DD" record gives it, in
+  // order, and is said as a payment of dollars to its DigiDollar address, or as the signer's own.
+  const ddVersion = DD_VERSIONS[keys.network || offer.chain];
+  const ddAmounts = ddVersion ? ddRecordAmounts(tx.outputs) : null;
+  let ddAt = 0, ddOwn = null;
   for (const out of tx.outputs) {
     paid += out.value;
     const script = out.script;
@@ -1006,6 +1011,11 @@ export async function verifyOffer(offer, keys) {
       const hrp = ltc ? ltc.hrp : /^[a-z]+1/.test(own) ? own.slice(0, own.lastIndexOf("1")) : "";
       pays.push({to: hrp ? segwitEncode(hrp, 0, script.slice(2, 22)) : "a segwit address",
                  value: Number(out.value), mine: false});
+    } else if (ddAmounts && out.value === 0n && script.length === 34 && script[0] === 0x51 && script[1] === 0x20
+               && ddAt < ddAmounts.length) {
+      if (!ddOwn) ddOwn = (await tweaked(keys.pubkey.slice(1))).key;
+      const key = script.slice(2, 34), cents = ddAmounts[ddAt++];
+      pays.push({to: await ddAddress(keys.network || offer.chain, key), dd: cents, value: 0, mine: SAME(key, ddOwn)});
     } else if (script.length === 34 && script[0] === 0x51 && script[1] === 0x20) {
       // A Taproot (v1) output (2026-11-05 review: a DigiDollar vault read as "34 bytes written to the chain"): said as
       // a payment, with its address where this key's hrp is known, else its key's first characters.
@@ -1315,6 +1325,63 @@ export async function signInput(priv, sighash, sighashType = 1) {
   out.set(der);
   out[der.length] = sighashType;
   return out;
+}
+
+/* --- DigiDollar addresses and records (2026-11-05, send and receive) ------
+ *
+ * A DigiDollar address is base58check of a two-byte version and a Taproot output key (DigiByte Core base58.cpp
+ * CDigiDollarAddress: "DD" mainnet, "TD" testnet). A DigiDollar transaction's dollars are in its OP_RETURN "DD"
+ * record, after its type: a mint's first number, a send's every number, a redeem's change, each for the next
+ * zero-value Taproot output in order (validation.cpp).
+ */
+const DD_VERSIONS = {dgb: [0x52, 0x85], dgbtest: [0xb1, 0x29]};
+
+/** The DigiDollar address of a Taproot output key on `network`. */
+export async function ddAddress(network, key) {
+  const v = DD_VERSIONS[network];
+  if (!v || key.length !== 32) throw new Error("that is not a DigiDollar address here");
+  const body = new Uint8Array([...v, ...key]);
+  return base58(join([body, (await hash256(body)).slice(0, 4)]));
+}
+
+/** The pushes of a script, as byte arrays (OP_0 and OP_1..OP_16 as their numbers' bytes), or null if it is not
+ * pushes alone. */
+function scriptPushes(script) {
+  const out = [];
+  let at = 0;
+  while (at < script.length) {
+    const op = script[at];
+    if (op === 0) { out.push(new Uint8Array(0)); at += 1; continue; }
+    if (op >= 0x51 && op <= 0x60) { out.push(new Uint8Array([op - 0x50])); at += 1; continue; }
+    let n, from;
+    if (op > 0 && op < 0x4c) { n = op; from = at + 1; }
+    else if (op === 0x4c && at + 1 < script.length) { n = script[at + 1]; from = at + 2; }
+    else if (op === 0x4d && at + 2 < script.length) { n = script[at + 1] | (script[at + 2] << 8); from = at + 3; }
+    else return null;
+    if (from + n > script.length) return null;
+    out.push(script.slice(from, from + n)); at = from + n;
+  }
+  return out;
+}
+
+/** A script number's value (little-endian, the top bit of the last byte its sign). */
+function readScriptNum(bytes) {
+  if (bytes.length > 8) throw new Error("a DigiDollar record's number is too long");
+  let n = 0n;
+  for (let i = bytes.length - 1; i >= 0; i--) n = (n << 8n) | BigInt(i === bytes.length - 1 ? bytes[i] & 0x7f : bytes[i]);
+  return bytes.length && bytes[bytes.length - 1] & 0x80 ? -n : n;
+}
+
+/** The cents a DigiDollar transaction's record gives its zero-value Taproot outputs, in order, or null. */
+function ddRecordAmounts(outputs) {
+  for (const out of outputs) {
+    if (!out.script.length || out.script[0] !== 0x6a) continue;
+    const items = scriptPushes(out.script.slice(1));
+    if (!items || items.length < 2 || items[0].length !== 2 || items[0][0] !== 0x44 || items[0][1] !== 0x44) continue;
+    const kind = Number(readScriptNum(items[1])), rest = items.slice(2).map((b) => Number(readScriptNum(b)));
+    return kind === 2 ? rest : (kind === 1 || kind === 3) && rest.length ? [rest[0]] : [];
+  }
+  return null;
 }
 
 /* --- Taproot (2026-11-04, a DigiDollar redeem) -------------------------
