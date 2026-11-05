@@ -6,7 +6,8 @@
  * KIND_TITLES), so a new kind -- chains, or modules brought from the mesh -- is a new tab with nothing changed here.
  * "All" lists every one; the filter box narrows whichever tab is open, by name, id or what it does. Each tab says how
  * many of its modules are on. A switch asks first when the module carries a caution, or when it turns others on or
- * off with it. The tab picked last is kept in this browser. */
+ * off with it. The tab picked last is kept in this browser. "Who may use it" says who gets a module's tab and pages:
+ * only the operator, signed-in users too, or everyone (modules.access; 2026-11-04). */
 (function () {
   var KEPT = 'arcade.modules.tab';
   var CSS = '.mui-tabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--line);margin:8px 0 6px}'
@@ -17,7 +18,8 @@
     + '.mui-tools{display:flex;gap:8px;align-items:center;margin:0 0 6px}.mui-tools input{flex:1;min-width:0}'
     + '.mui table{width:100%;border-collapse:collapse}.mui td,.mui th{text-align:left;vertical-align:top;'
     + 'padding:3px 6px;border-bottom:1px solid var(--line)}.mui td.c{text-align:center;width:3em}'
-    + '.mui .why{color:var(--muted)}';
+    + '.mui .why{color:var(--muted)}.mui select{font:inherit}';
+  var WHO = [['operator', 'Only me'], ['user', 'Signed-in'], ['anyone', 'Everyone']];
 
   function call(body) {
     return fetch('/admin/api/modules', {method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store',
@@ -55,7 +57,7 @@
     filter.type = 'search'; filter.placeholder = 'Filter modules'; filter.setAttribute('aria-label', 'Filter modules');
     tools.append(filter);
     var blurb = el('p', '', 'why'), table = el('table'), body = el('tbody');
-    table.innerHTML = '<thead><tr><th class="c">On</th><th>Module</th><th>What it does</th><th class="c">In Lite</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th class="c">On</th><th>Module</th><th>What it does</th><th>Who may use it</th><th class="c">In Lite</th></tr></thead>';
     table.append(body);
     root.append(el('h2', 'Edition'), edition, acts, restart, el('h2', 'Modules'), tabs, tools, blurb, table);
     filter.oninput = rows;
@@ -102,6 +104,17 @@
         tr.insertCell().textContent = m.title;
         var what = tr.insertCell(); what.textContent = m.summary;
         if (m.needs.length) what.append(el('div', 'Needs: ' + names(m.needs), 'why'));
+        var who = tr.insertCell();
+        if (m.core) who.append(el('span', 'everyone', 'why'));
+        else {
+          var pick = el('select'); pick.setAttribute('aria-label', 'Who may use ' + m.title);
+          WHO.forEach(function (w) { var o = el('option', w[1]); o.value = w[0]; pick.append(o); });
+          pick.value = m.access || 'anyone';
+          pick.onchange = function () {
+            call({module: m.id, access: pick.value}).then(draw).catch(function (e) { alert(e.message); pick.value = m.access; });
+          };
+          who.append(pick);
+        }
         var lite = tr.insertCell(); lite.className = 'c why'; lite.textContent = m.lite ? 'on' : 'off';
       });
       if (!body.rows.length) body.insertRow().insertCell().textContent = 'No module matches.';

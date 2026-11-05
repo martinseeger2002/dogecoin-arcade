@@ -328,6 +328,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/api/terminal/exec",
                # Lite's console: each command checks who may run it, and a visitor's run only read (arcade/lite)
                "/lite/api/console",
+               # the tabs a signed-in account shows in its own Lite window: that account's choice only (arcade/lite)
+               "/lite/api/tabs",
                # a browser's yes to the terms: a cookie in that browser, nothing on this node (terms.py, 2026-11-02)
                "/terms/accept",
                # every session of the signed-in account ends, its own only (issue #13, 2026-10-25)

@@ -73,7 +73,7 @@ def test_the_rest_of_the_line_is_the_message_as_typed(app_state, line, who, text
     assert node.sent == [(who, text)]
 
 
-def test_messages_are_the_operators_and_an_accounts_own_and_go_with_their_module(app_state):
+def test_messages_are_the_operators_and_an_accounts_own_in_every_edition(app_state):
     op = cmdlib.Caller(app_state, "operator", node=_Node(), local=True)
     assert cmdlib.run_line(op, "sendmessage -help").startswith("sendmessage who text...")
     assert "== Messages ==" in cmdlib.run_line(op, "help")
@@ -84,7 +84,7 @@ def test_messages_are_the_operators_and_an_accounts_own_and_go_with_their_module
             cmdlib.run_line(user, line)                  # the node cannot read an account's letters: its window does
     with pytest.raises(cmdlib.CommandError, match="no command 'sendmessage'"):
         cmdlib.run_line(cmdlib.Caller(app_state, "anyone"), "sendmessage @bob hi")
-    app_state.set_setting("edition", "lite")
-    with pytest.raises(cmdlib.CommandError, match="Messages module is off on this arcade; `install messages`"):
-        cmdlib.run_line(op, "sendmessage @bob hi")
-    assert "sendmessage" not in cmdlib.run_line(op, "help")
+    app_state.set_setting("edition", "lite")             # Messages is part of the core (2026-11-04)
+    assert "sendmessage" in cmdlib.run_line(op, "help")
+    with pytest.raises(cmdlib.CommandError, match="part of the core"):
+        cmdlib.run_line(op, "remove messages")

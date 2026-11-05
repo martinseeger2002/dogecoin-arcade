@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from .. import modules as modulelib
 
@@ -28,8 +28,34 @@ def gate(app, state):
     return apply
 
 
-def register(app, state, admin_check) -> None:
-    """The panel's two calls, then the gate over every route the app has (so this goes last in create_app)."""
+def audience_of(request: Request, admin_check, signed_in) -> str:
+    """"operator", "user" or "anyone", as the Lite window decides it (arcade/lite/web.py caller_for)."""
+    try:
+        admin_check(request)
+        return "operator"
+    except HTTPException:
+        pass
+    return "user" if signed_in is not None and signed_in(request) is not None else "anyone"
+
+
+def guard(app, state, admin_check, signed_in) -> None:
+    """Who may use each module that is on (Admin -> Edition & modules, "Who may use it"): a caller below a module's
+    access gets "not on this arcade" from its pages and actions, as if it were off. Its read APIs and inscriptions'
+    content stay open (modules.OPEN_ALWAYS), so other arcades' pages and inscribed apps keep working."""
+
+    @app.middleware("http")
+    async def module_access(request: Request, call_next):
+        path = request.url.path
+        settings = state.settings()
+        mid = modulelib.module_of(path)
+        if modulelib.access(settings, mid) != "anyone" and not path.startswith(modulelib.OPEN_ALWAYS):
+            if not modulelib.may_use(settings, mid, audience_of(request, admin_check, signed_in)):
+                return PlainTextResponse("Not on this arcade.", status_code=404, headers=NO_STORE)
+        return await call_next(request)
+
+
+def register(app, state, admin_check, signed_in=None) -> None:
+    """The panel's calls, then the gate over every route the app has (so this goes last in create_app)."""
     #: What ran when this arcade started: a module whose switch moved since then has jobs waiting for a restart.
     started = modulelib.enabled(state.settings())
 
@@ -53,9 +79,10 @@ def register(app, state, admin_check) -> None:
 
     @app.post("/admin/api/modules")
     def admin_modules_set(request: Request, payload: Any = Body(None)):
-        """{edition: "full" | "lite"}, or {module: id, on: true | false}. A change of edition sets every module to that
-        edition's default: Lite to Full turns everything on, Full to Lite switches off all but the core. Nothing is
-        deleted either way."""
+        """{edition: "full" | "lite"}, {module: id, on: true | false}, or {module: id, access: "operator" | "user" |
+        "anyone"}. A change of edition sets every module to that edition's default: Lite to Full turns everything on,
+        Full to Lite switches off all but the core. Nothing is deleted either way, and who may use each module stays
+        as the operator said."""
         admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
         if "edition" in said:
@@ -63,6 +90,12 @@ def register(app, state, admin_check) -> None:
                 raise HTTPException(400, "the edition is full or lite")
             state.set_setting(modulelib.EDITION_SETTING, said["edition"])
             state.set_setting(modulelib.SWITCH_SETTING, None)
+        elif "module" in said and "access" in said:
+            try:
+                levels = modulelib.set_access(state.settings(), str(said["module"]), str(said["access"]))
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from None
+            state.set_setting(modulelib.ACCESS_SETTING, levels)
         elif "module" in said:
             try:
                 switches = modulelib.switch(state.settings(), str(said["module"]), bool(said.get("on")))
@@ -74,5 +107,6 @@ def register(app, state, admin_check) -> None:
         apply()
         return answer()
 
+    guard(app, state, admin_check, signed_in)
     apply = gate(app, state)
     state.apply_modules = apply                            # the console's install and remove (arcade/lite/commands.py)

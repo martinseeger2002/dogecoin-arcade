@@ -38,6 +38,12 @@ button{font:inherit;color:inherit}
 .toolbar button[aria-selected=true]{background:var(--panel);border-color:var(--line);font-weight:600}
 .toolbar svg{width:18px;height:18px;flex:none}
 main{flex:1;overflow:auto;padding:12px}
+/* a module's or Admin's own page, inside the window (base.html draws it without its bar when it is in here) */
+main.framed{padding:0;overflow:hidden}
+section.frame{height:100%}
+section.frame iframe{display:block;width:100%;height:100%;border:0;background:var(--win)}
+.toolbar .sep{flex:none;width:1px;align-self:stretch;margin:3px 6px;background:var(--line)}
+.toolbar .end{margin-left:auto}
 .cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
 fieldset{border:1px solid var(--line);border-radius:3px;margin:0 0 12px;padding:8px 10px 10px;background:var(--panel)}
 legend{padding:0 4px;font-weight:600}
@@ -92,9 +98,10 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     {% if audience == 'operator' %}<li><button type="button" data-options="general">Options…</button></li>
     <li><button type="button" data-options="modules">Edition and modules…</button></li>
     <li><button type="button" data-options="themes">Themes…</button></li>
-    <li><hr></li><li><button type="button" data-go="/admin">Admin: every control…</button></li>
+    <li><hr></li><li><button type="button" data-open-tab="admin">Admin: every control…</button></li>
     {% elif audience == 'user' %}<li><button type="button" data-go="/me">Your account…</button></li>
     {% else %}<li><button type="button" disabled>Options…</button></li>{% endif %}
+    <li><button type="button" data-yourtabs>Your tabs…</button></li>
     <li><button type="button" data-theme-open>Theme…</button></li>
   </ul></div>
   <div class="menu"><button type="button">Window</button><ul>
@@ -121,10 +128,16 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 6h14M5 12h14M5 18h9"/></svg><span>Transactions</span></button>
   <button type="button" role="tab" data-tab="addresses">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="3" width="14" height="18" rx="1"/><circle cx="12" cy="10" r="3"/><path d="M8 17c1-2 7-2 8 0"/></svg><span>Address book</span></button>
-  {% if messages_on %}<button type="button" role="tab" data-tab="messages">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Messages</span></button>{% endif %}
-{% if apps_on %}  <button type="button" role="tab" data-tab="apps">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg><span>Apps</span></button>{% endif %}
+  <button type="button" role="tab" data-tab="messages">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Messages</span></button>
+  {#- The modules' tabs (modules.tabs): each that is on, open to this caller and not hidden by them. Apps keeps the
+      window's own panel (_apps.html); every other one opens its page inside the window. #}
+  {% if tabs %}<span class="sep" aria-hidden="true"></span>{% endif %}
+  {% for t in tabs %}<button type="button" role="tab" data-tab="{{ 'apps' if t.id == 'apps' else 'm-' ~ t.id }}" data-module="{{ t.id }}"{% if t.id != 'apps' %} data-src="{{ t.page }}"{% endif %}>
+    {{ icons.get(t.id, icons['module'])|safe }}<span>{{ t.title }}</span></button>
+  {% endfor %}
+  {% if audience == 'operator' %}<button type="button" role="tab" class="end" data-tab="admin" data-src="/admin">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/></svg><span>Admin</span></button>{% endif %}
 </div>
 
 <main>
@@ -153,6 +166,9 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   {% include "_backup.html" %}
   {% include "_messages.html" %}
   {% include "_apps.html" %}
+  {% for t in tabs if t.id != 'apps' %}<section data-panel="m-{{ t.id }}" class="frame" hidden><iframe title="{{ t.title }}" data-src="{{ t.page }}"></iframe></section>
+  {% endfor %}
+  {% if audience == 'operator' %}<section data-panel="admin" class="frame" hidden><iframe title="Admin" data-src="/admin"></iframe></section>{% endif %}
 </main>
 
 <footer class="statusbar"><span id="sync">Connecting…</span><span id="links"></span></footer>
@@ -185,6 +201,20 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     <div class="wbody"><p><b>{{ name }} Lite</b>, the small edition of the arcade.</p><dl id="aboutinfo"></dl>
       <p class="muted">The same network as every arcade: Lite and the full edition speak one protocol, held to the
         recorded vectors in tests/conformance.</p></div>
+  </div>
+</div>
+
+<div class="dialog" id="yourtabs" role="dialog" aria-label="Your tabs">
+  <div class="window" style="width:min(520px,96vw)">
+    <header><span>Your tabs</span><button type="button" data-close aria-label="Close">×</button></header>
+    <div class="wbody">
+      <p class="muted" style="margin:0 0 8px">The core tabs are always there. Pick which of this arcade's modules you see{% if not tab_owner %}
+        (kept in this browser; sign in to keep them with your account){% endif %}.</p>
+      <table><thead><tr><th>Tab</th><th>What it is</th></tr></thead><tbody id="yourtabs-list"></tbody></table>
+      <p class="muted" id="yourtabs-none" hidden>This arcade has no modules open to you yet.</p>
+      <p style="margin:10px 0 0;text-align:right"><button type="button" data-close>Cancel</button>
+        <button type="button" id="yourtabs-save">Save</button></p>
+    </div>
   </div>
 </div>
 
@@ -269,18 +299,77 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   }
   load(); setInterval(load, 15000);
 
-  // tabs, and the panels with no tab of their own (Join, at /join)
-  function panel(name) {
+  // tabs, and the panels with no tab of their own (Join, at /join). A module's tab and Admin hold that page in a
+  // frame, loaded the first time the tab is opened and kept while the window is open.
+  function panel(name, href) {
+    var shown = null;
     document.querySelectorAll('.toolbar [data-tab]').forEach(function (x) { x.setAttribute('aria-selected', x.dataset.tab === name); });
-    document.querySelectorAll('main [data-panel]').forEach(function (p) { p.hidden = p.dataset.panel !== name; });
+    document.querySelectorAll('main [data-panel]').forEach(function (p) {
+      p.hidden = p.dataset.panel !== name;
+      if (!p.hidden) shown = p;
+    });
+    var frame = shown && shown.querySelector('iframe');
+    document.querySelector('main').classList.toggle('framed', !!frame);
+    if (frame && (href || !frame.getAttribute('src'))) frame.setAttribute('src', href || frame.dataset.src);
+    if (history.replaceState) history.replaceState(null, '', name === 'overview' ? location.pathname : '#' + name);
   }
   document.querySelectorAll('.toolbar [data-tab]').forEach(function (b) { b.addEventListener('click', function () { panel(b.dataset.tab); }); });
+  document.querySelectorAll('[data-open-tab]').forEach(function (b) { b.onclick = function () { panel(b.dataset.openTab); }; });
+  // For a page inside a frame (base.html): which tab a link of its belongs in, and opening it there.
+  window.liteWindow = {
+    route: function (path) {
+      if (path === '/' || path === '/lite') return 'overview';
+      var best = null, len = 0;
+      document.querySelectorAll('main section.frame iframe').forEach(function (f) {
+        var base = f.dataset.src.replace(/\/+$/, '');
+        if ((path === base || path.indexOf(base + '/') === 0) && base.length > len) { best = f.parentNode.dataset.panel; len = base.length; }
+      });
+      return best;
+    },
+    open: function (name, href) { if (document.querySelector('main [data-panel="' + name + '"]')) panel(name, href); }
+  };
   document.querySelectorAll('[data-open]').forEach(function (a) {
     a.onclick = function (e) { e.preventDefault(); document.querySelector('.toolbar [data-tab="' + a.dataset.open + '"]').click(); };
   });
   // A page opened at /join or /me/backup, or at /#<tab> from the bar every other page wears (base.html)
   var opened = {'/join': 'join', '/join/keys': 'join', '/me/backup': 'backup'}[location.pathname] || location.hash.slice(1);
   if (opened && document.querySelector('main [data-panel="' + opened + '"]')) panel(opened);
+
+  // Settings -> Your tabs: an account's choice is kept with it (and the operator's for the node's view); a visitor's
+  // stays in this browser.
+  var KEPT = {{ 'true' if tab_owner else 'false' }}, LOCAL = 'lite_tabs_hidden', yourTabs = [];
+  function localHidden() { try { return JSON.parse(localStorage.getItem(LOCAL) || '[]'); } catch (e) { return []; } }
+  if (!KEPT) localHidden().forEach(function (id) {
+    var b = document.querySelector('.toolbar [data-module="' + id + '"]');
+    if (b) b.hidden = true;
+  });
+  document.querySelector('[data-yourtabs]').onclick = function () {
+    fetch('/lite/api/tabs', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (j) {
+      yourTabs = j.tabs || [];
+      var hidden = KEPT ? yourTabs.filter(function (t) { return t.hidden; }).map(function (t) { return t.id; }) : localHidden();
+      var list = $('yourtabs-list'); list.textContent = '';
+      yourTabs.forEach(function (t) {
+        var tr = document.createElement('tr'), a = document.createElement('td'), b = document.createElement('td');
+        var label = document.createElement('label'), box = document.createElement('input');
+        box.type = 'checkbox'; box.value = t.id; box.checked = hidden.indexOf(t.id) < 0;
+        label.appendChild(box); label.appendChild(document.createTextNode(' ' + t.title));
+        a.appendChild(label); b.textContent = t.summary; b.className = 'muted';
+        tr.appendChild(a); tr.appendChild(b); list.appendChild(tr);
+      });
+      $('yourtabs-none').hidden = yourTabs.length > 0;
+      open('yourtabs');
+    });
+  };
+  $('yourtabs-save').onclick = function () {
+    var hidden = [];
+    document.querySelectorAll('#yourtabs-list input').forEach(function (x) { if (!x.checked) hidden.push(x.value); });
+    var done = KEPT
+      ? fetch('/lite/api/tabs', {method: 'POST', credentials: 'same-origin',
+          headers: {'Content-Type': 'application/json', 'X-Arcade-Lite': '1'}, body: JSON.stringify({hidden: hidden})})
+          .then(function (r) { if (!r.ok) throw new Error('not kept'); })
+      : Promise.resolve().then(function () { try { localStorage.setItem(LOCAL, JSON.stringify(hidden)); } catch (e) {} });
+    done.then(function () { location.reload(); }, function () { alert('Your tabs were not kept. Try again.'); });
+  };
 
   // menus: click to open, click elsewhere to close
   document.querySelectorAll('.menu>button').forEach(function (b) {
