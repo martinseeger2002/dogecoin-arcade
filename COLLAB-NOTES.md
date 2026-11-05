@@ -89,6 +89,24 @@ coding agent, so it is written for agents first and people second.
 ## Log (newest first)
 
 ### 2026-11-05 The Exchange's token tab: trades read without reading every payload (Claude; the operator: "figure out why the token exchange tab takes so long to load", "build it")
+### 2026-11-05 Ord walk: two stalls of a moved-in index on a hard disk (SadFrog's side, Claude)
+Branch `team/walk-own-chunk`, two commits on the newest main. SadFrog's Bellscoin index was walked to the tip on another
+machine (NVMe) and moved to node 2's hard disk (2026-11-04). Node 2's walk stood still at 1,304,200 for two reasons:
+- **Lanes never came to the walk's chunk** (`_notes_for`): it waited whenever lanes existed ("the lanes here take
+  every chunk in line"), but the moved-in index had said only some chunks, the lanes went back to cover/audit lower ones,
+  and the walk's chunk at the tip was in nobody's line. New `_lanes_come_to(c)`: wait only when `Chunks.choose` gives
+  c next; otherwise the walk reads it from its own Core and leases it, as it already did for a slow follow-back. A fresh
+  walk is unchanged (its chunk is the cover's lowest unsaid one). `test_a_chunk_only_an_older_arcade_said_...`'s
+  "before" case now goes on too (noted in the test).
+- **Every start read all of `at`** (`Walker._load`): COUNT(*) to check the kept coin filter, then rows `WHERE height >=
+  since` (no index on height). On the hard disk both were random page reads at under 3 MB/s, hours, every restart.
+  The kept filter is now checked by its own count (made again only once full), and the rows since come from the
+  undo records' `at` keys (`_placed_since`), falling back to the old scan when the filter is older than UNDO_BLOCKS.
+- **Result on node 2** (main addfa671 + these two): walking again 3 minutes after the HUP, 1,304,201 -> 1,304,449 in
+  2 minutes, at the tip. Tests: three new in test_doginal_index; full suite on the workhorse: 3,987 passed, same 3
+  machine-only failures as main (test_docs x2, test_update), regtest errors (no pepecoind).
+
+### 2026-11-05 Core copies: a hand-made system unit takes part through a sudo rule (Claude; the operator: "let's add the SUDO rule")
 
 - **Why it was slow.** `ledger.trades()` found swaps with `payload_hex LIKE '000000c8494e53430105%'`: swaps share type 200 with inscriptions, so on Pepecoin testnet (454 MB on .25) it read 33,380 payloads, 363 MB, to find 33 swaps, on .25's busy laptop disk minutes, the first page after each block holding every other page. `_backfill_takes` scanned every payload again on every call, and `_pairs` priced every token over all 5,000 trades.
 - **Now.** `trade_seen` (the swaps' txids) and `trade_scan` (how far `arcade_tx` was read, by rowid) in the ledger schema. `_trade_scan` reads only rows above the mark and the last `TRADE_REORG_BLOCKS` (60) blocks -- a reorg's new rows may reuse old row ids -- and backfills takes from those rows only (a take whose price could not be read is retried by txid). Swaps are read `trade_seen CROSS JOIN arcade_tx` (by txid, never arcade_tx in block order): 1.2 ms on a copy of a test machine's testnet ledger where the LIKE took 160 ms in memory. A ledger file over 64 MB has its first full scan on a thread of its own (trades meanwhile answered, not kept). The memo key has the tip's hash (a reorg at the same height). The indexer warms `trades()` after each block (`_warm_trades`). `_pairs` sorts trades by token once.
