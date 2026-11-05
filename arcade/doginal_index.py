@@ -634,6 +634,13 @@ class Store:
             except FileNotFoundError:
                 pass
 
+    @property
+    def real(self) -> Path:
+        """The index file itself, where its path is a link to it (2026-11-05: node 2's Bells index lives on a hard disk
+        of its own, linked from the arcade's folder on a small SSD). SQLite keeps its -wal and -shm beside this file,
+        and a file built to take its place is built beside it too: the same disk, so it is swapped in by a rename."""
+        return Path(os.path.realpath(self.path))
+
     def swap(self, other: Path) -> None:
         """Put another index file in this one's place (a snapshot fetched from peers), and read from it from now on:
         the writer reopens at once, every thread's reader on its next read."""
@@ -641,12 +648,13 @@ class Store:
         self.forget_seen()
         with self._lock:
             self._db.close()
+            real = self.real
             for tail in ("-wal", "-shm"):
                 try:
-                    os.remove(str(self.path) + tail)
+                    os.remove(str(real) + tail)
                 except FileNotFoundError:
                     pass
-            os.replace(other, self.path)
+            os.replace(other, real)
             self._gen += 1
             self._open()
 
@@ -663,7 +671,7 @@ class Store:
         does this, never a page); nothing else changes, and nothing is walked again."""
         self.forget_seen()
         import os
-        new = self.path.with_name(self.path.name + ".upgrade")
+        new = self.real.with_name(self.real.name + ".upgrade")
         for tail in ("", "-wal", "-shm", "-journal"):
             try:
                 os.remove(str(new) + tail)
