@@ -986,7 +986,11 @@ class AppState:
         return self._admin_sessions
 
     def claim_operator(self, pubkey: str) -> None:
-        self.set_setting("operator", (pubkey or "").strip().lower())
+        pubkey = (pubkey or "").strip().lower()
+        if pubkey != self.operator:
+            # The last owner's word that it owns this node goes with it (arcade/owner.py).
+            self.set_setting("owner_statement", None)
+        self.set_setting("operator", pubkey)
 
     def operator_tag(self) -> str:
         """The @name of whoever runs this arcade, as the chain has it ("" when none): the operator account's address on

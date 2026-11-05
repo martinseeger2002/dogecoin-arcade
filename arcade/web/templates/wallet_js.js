@@ -768,6 +768,17 @@ export async function realtimeSign(mine, hello, {there = false} = {}) {
   return {sig: await coins.signWords(mine, words), expires, words};
 }
 
+/** The owner's statement that `mine` ({key, address} on the messaging chain) owns `node`, this arcade's own mesh
+ *  node, for `days` (arcade/owner.py). Asked in words first, and only for the node this wallet keeps as this arcade's. */
+export async function ownerSign(mine, network, node, days = 365) {
+  const expires = Math.floor(Date.now() / 1000) + days * 86400;
+  const words = coins.ownerWords(String(network || ""), String(node || ""), mine.address, expires);
+  if (!await ownNode(node, words)) throw notSigned("you said no");
+  if (!await askToSign(`You own this arcade's node ${String(node).slice(0, 16)}… Linked arcades will be able to check `
+    + "that your name says so. Sign only on a node you run.", words)) throw notSigned("you said no");
+  return {a: mine.address, x: expires, s: await coins.signWords(mine, words)};
+}
+
 /** A grant for `seller`, the other arcade the player picked: `mine` lets it serve the player for `days`. */
 export async function llmGrantSign(mine, seller, days = 3649) {
   seller = String(seller || "");
