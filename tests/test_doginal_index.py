@@ -537,6 +537,31 @@ def test_the_walks_own_chunk_is_finished_first_and_read_by_the_walk_when_its_fol
     assert _dump(index) == _dump(plain)
 
 
+def test_the_walk_reads_its_own_chunk_when_the_lanes_go_elsewhere_first(tmp_path):
+    """2026-11-04, Bellscoin: an index walked on another machine to the tip and moved to node 2 had said only some of
+    its chunks. Node 2's lanes went back to cover the lowest unsaid chunk first, the walk's chunk was not in their line,
+    and the walk waited on its chunk for good at 1,304,200. It waits only for a chunk the lanes take next; any other it
+    reads from its own Core. The index is the one a plain walk files."""
+    chain = _busy_chain(16)                                   # four chunks of four
+    index = dx.DoginalIndex(tmp_path / "w.sqlite", lambda: chain, lambda: "walk", cores=lambda: 3)
+    index.tip = int(chain.call("getblockcount"))
+    index.walker.step(chain, dx.BASE + 7, budget=60)         # chunks 0 and 1 walked elsewhere, never said
+    assert index.walker.next_height() == dx.BASE + 8 and index._lane_sources(walking=True)
+    index.store.say(0, "", "x", 0)
+    index.store.say(1, "", "y", 0)
+    assert index._notes_for(2) is False, "the cover's next chunk is the walk's: the lanes take it"
+    index.store.x("DELETE FROM seen")
+    assert index._lanes_come_to(2) is False, "the lanes would cover chunk 0 first"
+    assert index._notes_for(2) is None, "so the walk reads its chunk from its own Core"
+    for _ in range(12):
+        index.step()
+    plain = dx.DoginalIndex(tmp_path / "p.sqlite", lambda: chain, lambda: "walk")
+    for _ in range(12):
+        plain.step()
+    assert index.walker.next_height() == plain.walker.next_height() == dx.BASE + 16
+    assert _dump(index) == _dump(plain)
+
+
 def test_cores_are_lanes_each_reading_a_chunk_of_its_own_side_by_side(tmp_path, monkeypatch):
     """2026-10-20: "dedicate the number of cores to your ord index". Three cores: three chunks at once, their
     blocks fetched side by side and read in worker processes; the hashes are the same as one core's."""
@@ -1131,7 +1156,9 @@ def test_a_chunk_only_an_older_arcade_said_is_scanned_here_not_waited_for(tmp_pa
         for _ in range(3):
             holder.step()
         return holder.walker.next_height() - dx.BASE
-    assert holder_after_three_passes("before", needed=False) == 4, "it waited at chunk 1 for notes nobody has"
+    # Before the needed list it waited at chunk 1 for notes nobody has (4 blocks); since 2026-11-04 a chunk the lanes do
+    # not take next is read by the walk itself, so even without the list it does not wait.
+    assert holder_after_three_passes("before", needed=False) >= 8
     assert holder_after_three_passes("now") >= 8
 
 
