@@ -24,6 +24,8 @@
   <button type="button" role="tab" data-tab="llm">LLM</button>{% endif %}
   {%- if modules_on is not defined or 'lora' in modules_on %}
   <button type="button" role="tab" data-tab="meshtastic">Meshtastic</button>{% endif %}
+  {%- if modules_on is not defined or 'mining' in modules_on %}
+  <button type="button" role="tab" data-tab="mining">Mining</button>{% endif %}
   {%- if modules_on is not defined or 'affiliates' in modules_on %}
   <button type="button" role="tab" data-tab="affiliates">Affiliates</button>{% endif %}
   <button type="button" role="tab" data-tab="people">People &amp; brand</button>
@@ -224,24 +226,6 @@
   <p class="muted" style="margin-top:0;font-size:.84rem">Every Core, index, media relay and game room this arcade uses
     and does not hold itself, and how many linked arcades hold it. It links to more holders on its own until three do.</p>
   <div id="coverrows" class="muted" style="font-size:.86rem">Nothing borrowed.</div>
-  <h3 style="margin:14px 0 6px">Mine test coins</h3>
-  <p class="muted" style="margin-top:0;font-size:.84rem">This machine's CPU mines blocks on a test-coin chain, with
-    work from its Core: the one here, or the one it borrows. On a borrowed chain a tenth of every block goes to the
-    arcade that shares the Core, in the block itself. A testnet lets anyone mine its next block at the lowest
-    difficulty when none has been found for a while, which is when a CPU wins.</p>
-  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
-    <select id="minenet" aria-label="Chain to mine"></select>
-    <input autocomplete="off" id="mineaddr" style="flex:1;min-width:220px" placeholder="address the reward goes to" aria-label="Reward address">
-    <input autocomplete="off" id="mineworkers" style="width:70px" inputmode="numeric" aria-label="CPU workers" title="CPU workers">
-    <label class="muted" style="display:flex;gap:4px;align-items:center;font-size:.86rem">for
-      <input autocomplete="off" id="minehours" style="width:64px" inputmode="decimal" placeholder="&infin;"
-             aria-label="Hours to mine, blank until stopped" title="Hours, up to 72; blank mines until stopped"> hours</label>
-    <label class="muted" style="display:flex;gap:4px;align-items:center;font-size:.86rem" id="minefaucetl">
-      <input type="checkbox" id="minefaucet" style="width:auto"> pay this chain&rsquo;s faucet</label>
-    <button type="button" class="small" id="minego">Mine</button>
-    <button type="button" class="small ghost" id="minestop" hidden>Stop</button>
-  </div>
-  <div id="minesaid" class="muted" style="font-size:.86rem;margin-top:6px"></div>
   <h3 style="margin:14px 0 6px">Litecoin nodes on this machine</h3>
   <p class="muted" style="margin:4px 0 0">Litecoin node: <span id="ltcline">checking&hellip;</span></p>
   <p class="muted" style="margin:4px 0 0">Litecoin testnet node: <span id="ltctestline">checking&hellip;</span></p>
@@ -269,6 +253,142 @@
 
 </div>
 
+{%- if modules_on is not defined or 'mining' in modules_on %}
+<div class="admintab" data-tab="mining" aria-label="Mining">
+<section class="panel">
+  <h2>Mining</h2>
+  <p class="muted" style="margin-top:0;font-size:.84rem">The Mining module (Edition &amp; modules switches it): this
+    machine's CPU on the chains it can mine, and ASICs on your own network over stratum. A chain of real coins is never
+    mined on a CPU; a merge-mined chain (Dogecoin, Pepecoin and the others mined beside Litecoin) is not mined here yet.</p>
+  <h3 style="margin:14px 0 6px">How each chain is mined here</h3>
+  <div style="overflow-x:auto"><table style="width:100%;font-size:.86rem">
+    <thead><tr><th style="text-align:left">Chain</th><th style="text-align:left">This machine</th>
+      <th style="text-align:left">ASICs</th></tr></thead>
+    <tbody id="miningrows"><tr><td colspan="3" class="muted">Reading&hellip;</td></tr></tbody></table></div>
+  <h3 style="margin:14px 0 6px">Mine on this machine</h3>
+  <p class="muted" style="margin-top:0;font-size:.84rem">This machine's CPU mines blocks on a test-coin chain, with
+    work from its Core: the one here, or the one it borrows. A chain of several algorithms (DigiByte testnet) is mined
+    by its own node here, each algorithm beside the others, which wins far more of its blocks. On a borrowed chain a tenth of every block goes to the
+    arcade that shares the Core, in the block itself. A testnet lets anyone mine its next block at the lowest
+    difficulty when none has been found for a while, which is when a CPU wins.</p>
+  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+    <select id="minenet" aria-label="Chain to mine"></select>
+    <input autocomplete="off" id="mineaddr" style="flex:1;min-width:220px" placeholder="address the reward goes to" aria-label="Reward address">
+    <input autocomplete="off" id="mineworkers" style="width:70px" inputmode="numeric" aria-label="CPU workers" title="CPU workers">
+    <label class="muted" style="display:flex;gap:4px;align-items:center;font-size:.86rem">for
+      <input autocomplete="off" id="minehours" style="width:64px" inputmode="decimal" placeholder="&infin;"
+             aria-label="Hours to mine, blank until stopped" title="Hours, up to 72; blank mines until stopped"> hours</label>
+    <label class="muted" style="display:flex;gap:4px;align-items:center;font-size:.86rem" id="minefaucetl">
+      <input type="checkbox" id="minefaucet" style="width:auto"> pay this chain&rsquo;s faucet</label>
+    <button type="button" class="small" id="minego">Mine</button>
+    <button type="button" class="small ghost" id="minestop" hidden>Stop</button>
+  </div>
+  <div id="minesaid" class="muted" style="font-size:.86rem;margin-top:6px"></div>
+  <h3 style="margin:18px 0 6px">ASICs on your network</h3>
+  <p class="muted" style="margin-top:0;font-size:.84rem">A stratum server on this machine, with work from a chain's
+    node here: point a scrypt or SHA-256 ASIC at the address it gives, any worker name and password. Solo mining: a
+    block it finds pays the address below whole. Only machines on your own network may connect, unless you tick the
+    box. It comes back by itself when the arcade restarts.</p>
+  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+    <select id="stratumnet" aria-label="Chain for ASICs"></select>
+    <select id="stratumalgo" aria-label="Algorithm"></select>
+    <input autocomplete="off" id="stratumaddr" style="flex:1;min-width:220px" placeholder="address the blocks pay" aria-label="Payout address">
+    <input autocomplete="off" id="stratumport" style="width:80px" inputmode="numeric" placeholder="3333" aria-label="Port" title="Port">
+    <label class="muted" style="display:flex;gap:4px;align-items:center;font-size:.86rem">
+      <input type="checkbox" id="stratumanyone" style="width:auto"> from outside this network too</label>
+    <button type="button" class="small" id="stratumgo">Start</button>
+    <button type="button" class="small ghost" id="stratumstop" hidden>Stop</button>
+  </div>
+  <div id="stratumsaid" class="muted" style="font-size:.86rem;margin-top:6px"></div>
+  <div style="overflow-x:auto"><table style="width:100%;font-size:.84rem;margin-top:6px">
+    <tbody id="stratumminers"></tbody></table></div>
+</section>
+<script>
+(function () {
+  // Admin -> Mining (the Mining module, 2026-11-04): /admin/api/mining for the table and the stratum server.
+  var $ = function (id) { return document.getElementById(id); }, data = null, drawn = false;
+  function post(path, body) {
+    return fetch(path, {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'}, body: JSON.stringify(body || {})})
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error(j.detail || ('refused (' + r.status + ')')); return j; }); });
+  }
+  function cell(text, muted) { var td = document.createElement('td'); td.textContent = text; if (muted) td.className = 'muted'; return td; }
+  function way(w, kind) {
+    if (w.why) return [w.why, true];
+    if (kind === 'asic') return ['stratum: ' + w.algos.join(' or '), false];
+    return [(w.by === 'node' ? 'its node mines it' + (w.algos.length ? ': ' + w.algos.join(', ') : '')
+                             : 'CPU: ' + w.algos.join(', ')), false];
+  }
+  function asicChains() { return (data.chains || []).filter(function (c) { return c.asic && c.asic.algos; }); }
+  function algos() {
+    var c = asicChains().find(function (x) { return x.net === $('stratumnet').value; });
+    var sel = $('stratumalgo'), keep = sel.value; sel.innerHTML = '';
+    ((c && c.asic.algos) || []).forEach(function (a) { var o = document.createElement('option'); o.value = o.textContent = a; sel.appendChild(o); });
+    if (keep) sel.value = keep;
+    if (c && !$('stratumaddr').value) $('stratumaddr').value = c.address || '';
+  }
+  function draw(d) {
+    data = d;
+    var rows = $('miningrows'); rows.innerHTML = '';
+    (d.chains || []).forEach(function (c) {
+      var tr = document.createElement('tr'), cpu = way(c.cpu, 'cpu'), asic = way(c.asic, 'asic');
+      tr.append(cell(c.label + (c.here ? '' : ' (borrowed)')), cell(cpu[0], cpu[1]), cell(asic[0], asic[1]));
+      rows.appendChild(tr);
+    });
+    var st = d.stratum || {}, conf = st.conf || {};
+    if (!drawn) {
+      drawn = true;
+      var sel = $('stratumnet');
+      asicChains().forEach(function (c) { var o = document.createElement('option'); o.value = c.net; o.textContent = c.label; sel.appendChild(o); });
+      if (conf.net) sel.value = conf.net;
+      sel.onchange = function () { $('stratumaddr').value = ''; algos(); };
+      algos();
+      if (conf.algo) $('stratumalgo').value = conf.algo;
+      if (conf.address) $('stratumaddr').value = conf.address;
+      $('stratumport').value = conf.port || 3333;
+      $('stratumanyone').checked = !!conf.anyone;
+    }
+    $('stratumgo').hidden = !!st.running; $('stratumstop').hidden = !st.running;
+    ['stratumnet', 'stratumalgo', 'stratumaddr', 'stratumport', 'stratumanyone'].forEach(function (id) { $(id).disabled = !!st.running; });
+    if (!asicChains().length) { $('stratumsaid').textContent = 'No chain here an ASIC can mine: a chain whose node runs here, not merge-mined, in scrypt or SHA-256.'; return; }
+    var bits = [];
+    if (st.running) {
+      bits.push('Listening at ' + st.url + ' for ' + st.chain + ' (' + st.algo + '), block ' + (st.height || 0).toLocaleString()
+                + ', ' + (st.miners || []).length + ' miner' + ((st.miners || []).length === 1 ? '' : 's')
+                + ', about ' + (st.hashrate || 0).toLocaleString() + ' hashes a second');
+      if ((st.blocks || []).length) bits.push(st.blocks.length + ' block' + (st.blocks.length > 1 ? 's' : '') + ' found: '
+        + st.blocks.map(function (b) { return b.height.toLocaleString() + ' ' + b.result; }).join(', '));
+    } else bits.push(st.on ? 'Not running.' : 'Off.');
+    if (st.error) bits.push(st.error);
+    $('stratumsaid').textContent = bits.join(' \u00b7 ');
+    var tb = $('stratumminers'); tb.innerHTML = '';
+    (st.miners || []).forEach(function (m) {
+      var tr = document.createElement('tr');
+      tr.append(cell(m.worker || '(no name)'), cell(m.peer, true), cell('difficulty ' + Number(m.difficulty).toPrecision(4)),
+                cell(m.shares + ' shares, ' + m.rejected + ' refused'), cell((m.hashrate || 0).toLocaleString() + ' H/s'));
+      tb.appendChild(tr);
+    });
+  }
+  function load() {
+    return fetch('/admin/api/mining', {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.json(); }).then(draw).catch(function () {});
+  }
+  $('stratumgo').onclick = function () {
+    $('stratumsaid').textContent = 'Starting\u2026';
+    post('/admin/api/stratum', {on: true, net: $('stratumnet').value, algo: $('stratumalgo').value,
+                                address: $('stratumaddr').value.trim(), port: parseInt($('stratumport').value, 10) || 3333,
+                                anyone: $('stratumanyone').checked})
+      .then(load).catch(function (e) { $('stratumsaid').textContent = e.message; });
+  };
+  $('stratumstop').onclick = function () { post('/admin/api/stratum', {on: false}).then(load).catch(function (e) { $('stratumsaid').textContent = e.message; }); };
+  document.querySelectorAll('.admintabs button[data-tab="mining"]').forEach(function (b) { b.addEventListener('click', load); });
+  setInterval(function () { if (document.querySelector('.admintab[data-tab="mining"].on') && !document.hidden) load(); }, 5000);
+  load();
+})();
+</script>
+</div>
+{% endif %}
 <div class="admintab" data-tab="trading" aria-label="Trading">
 <section class="panel" id="tradeswitches">
   <h2>Trading switches</h2>
@@ -2764,8 +2884,9 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
     }).catch(function (e) { say(e.message, 'err'); });
   };
 
-  // Mine test coins (arcade/blockminer.py, 2026-10-18)
-  var mine = null;
+  // Mine on this machine (arcade/blockminer.py, 2026-10-18; Admin -> Mining since 2026-11-04, so only where the
+  // Mining module is on and its controls are on the page).
+  var mine = null, mineHere = !!$('minenet');
   function drawMine(m) {
     mine = m;
     var sel = $('minenet');
@@ -2800,7 +2921,10 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
     $('mineaddr').disabled = !!m.running || $('minefaucet').checked;
     if (!(m.chains || []).length) { $('minesaid').textContent = 'No test-coin chain here that can be mined this way.'; return; }
     var bits = [];
-    if (m.running) bits.push('Mining ' + m.net + (m.faucet ? ' to its faucet' : '') + ' at ' + (m.rate || 0).toLocaleString()
+    if (m.running && m.algos) bits.push('Mining ' + m.net + ' by its node (' + m.algos.join(', ') + ') to ' + m.address + ' at '
+                                        + (m.rate || 0).toLocaleString() + ' hashes a second'
+                                        + (m.until ? ', until ' + new Date(m.until * 1000).toLocaleString() : ''));
+    else if (m.running) bits.push('Mining ' + m.net + (m.faucet ? ' to its faucet' : '') + ' at ' + (m.rate || 0).toLocaleString()
                              + ' hashes a second, block ' + (m.height || 0).toLocaleString() + ', '
                              + (m.tries || 0).toLocaleString() + ' tried'
                              + (m.until ? ', until ' + new Date(m.until * 1000).toLocaleString() : ''));
@@ -2823,7 +2947,7 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
     return fetch('/admin/api/mine', {credentials: 'same-origin', cache: 'no-store'})
       .then(function (r) { return r.json(); }).then(drawMine).catch(function () {});
   }
-  $('minego').onclick = function () {
+  if (mineHere) $('minego').onclick = function () {
     var hours = $('minehours').value.trim();
     if (hours && !(Number(hours) > 0 && Number(hours) <= 72)) { say('Mine for up to 72 hours, or leave it blank.', 'err'); return; }
     var body = {net: $('minenet').value, workers: parseInt($('mineworkers').value, 10) || 0, hours: Number(hours || 0)};
@@ -2831,11 +2955,13 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
     call('/admin/api/mine', body)
       .then(loadMine).catch(function (e) { say(e.message, 'err'); });
   };
-  $('minestop').onclick = function () {
+  if (mineHere) $('minestop').onclick = function () {
     call('/admin/api/mine', {stop: true}).then(loadMine).catch(function (e) { say(e.message, 'err'); });
   };
-  loadMine();
-  setInterval(function () { if (!document.hidden && mine && mine.running) loadMine(); }, 3000);
+  if (mineHere) {
+    loadMine();
+    setInterval(function () { if (!document.hidden && mine && mine.running) loadMine(); }, 3000);
+  }
 
   // --- the card watch (arcade/cardwatch.py, 2026-10-18) ---
   function loadCards() {

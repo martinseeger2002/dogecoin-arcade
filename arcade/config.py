@@ -220,6 +220,10 @@ class Params:
     #: multi-algorithm chain: each has its own difficulty, so a CPU does best on the ones little else mines. Empty:
     #: the node's one way (2026-11-04, DigiByte testnet).
     mine_algos: tuple = ()
+    #: Every proof-of-work algorithm a multi-algorithm chain's blocks may use (DigiByte's five), which its node's
+    #: `getblocktemplate` takes as its second argument; empty for a chain of one algorithm (`pow_algo`). What a local
+    #: ASIC can mine is the ones of these it hashes (arcade/stratum.py).
+    algos: tuple = ()
 
     # --- what a chain is, as data (2026-10-18, the operator: "Eventually, we want to add Digi bite and
     # other aux pow chains"): a new chain is a Params entry, not code. -------------------------------
@@ -733,7 +737,7 @@ DIGIBYTE = dataclasses.replace(
     min_fee_per_kb=1_000_000,   # 0.01 DGB/kB: ten times the 0.001 DGB/kB minimum relay fee, and its wallet's fallback fee
     soft_dust=False, dust_limit=10_000,     # no soft-dust fee; change from 0.0001 DGB (P2PKH dust is 5,460 satoshis)
     genesis="7497ea1b465eb39f1c8f507bc877078fe016d6fcb6dfad3a64c98dcc6e1e8496",
-    auxpow_chain_id=None, pow_algo="",
+    auxpow_chain_id=None, pow_algo="", algos=("sha256d", "scrypt", "skein", "qubit", "odo"),
     addon=True, node_dir=".digibyte", node_conf="digibyte.conf",
     # "G": "D" is Dogecoin's badge.
     letter="G", family="DGB", net_word="digibyte", real_coins=True, bech32_hrp="dgb", mweb=False,

@@ -94,6 +94,8 @@ ORDER = (
      "Conditions, charges and counts that travel with a piece, written only by its game: arcade.state."),
     ("broadcasts.md", "Broadcasts: one node telling every node",
      "Public machine talk under a topic, and the sensitive-material flags it carries."),
+    ("mining.md", "Mining on this arcade",
+     "The Mining module: this machine's CPU on test chains, and your own ASICs over stratum, chain by chain."),
     ("shared-cores.md", "Shared Cores: running some chains, borrowing the rest",
      "Share a chain's Core with other arcades, borrow the chains you do not run, and compare indexes."),
     ("adding-a-chain.md", "Adding a chain: the checklist",

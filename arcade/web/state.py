@@ -1760,6 +1760,8 @@ class AppState:
     mesh: Any = None
     #: The node modules installed from packages (arcade/modhost.py), set by create_app.
     module_host: Any = None
+    #: The stratum server for this network's ASICs (arcade/stratum.py Service), when the Mining module is on.
+    stratum: Any = None
     _offers: Any = None
     _listings: Any = None
 

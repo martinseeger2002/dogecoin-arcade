@@ -85,7 +85,7 @@ _MODULES = (
     Module("node", "core", "Your arcade", "Overview, Admin and settings, the chains' Cores, sync and borrowing, "
            "updates, help, and the Lite window.",
            routes=("/", "/overview", "/admin", "/settings", "/settings/updates", "/docs", "/guide", "/lite", "/events",
-                   "/offline", "/terms", "/rpc", "/scan", "/fund", "/view", "/bootstrap", "/clone", "/source.rev",
+                   "/offline", "/terms", "/rpc", "/scan", "/view", "/bootstrap", "/clone", "/source.rev",
                    "/source.tar.gz", "/source.tar.gz.sha256", "/openapi.json", "/.well-known", "/base.css",
                    "/favicon.ico", "/icon-32.png", "/icon-180.png", "/icon-192.png", "/icon-512.png",
                    "/manifest.webmanifest", "/sw.js", "/vendor", "/coins.js", "/coin-{name}.png", "/qrscan.js",
@@ -104,7 +104,7 @@ _MODULES = (
                    "/account/chain-stats", "/account/coins", "/account/doge-stray", "/account/dust",
                    "/account/imported", "/account/mainnet", "/account/segwit", "/account/send", "/account/sign",
                    "/account/split", "/account/vault", "/account/wallets", "/admin/api/imports",
-                   "/admin/api/utxoset", "/admin/api/mine", "/admin/api/receive", "/admin/api/send"),
+                   "/admin/api/utxoset", "/admin/api/receive", "/admin/api/send"),
            jobs=("watch-accounts", "utxo-sets", "walk-home")),
     Module("addressbook", "core", "Address book", "Contacts by @name and address, read from the names on the "
            "messaging chain.",
@@ -181,6 +181,15 @@ _MODULES = (
            routes=("/v1", "/admin/llm", "/admin/api/llm", "/account/llm", "/r/llm.js", "/exchange/llm")),
     Module("affiliates", "app", "Affiliates", "Who this arcade works with.",
            routes=("/affiliates", "/affiliates.json", "/admin/api/affiliates")),
+    # Mining (2026-11-04, SadFrog: "making mining on the node a module that can be enabled per node"): the CPU mining
+    # of every chain it can be done on, local ASICs over stratum (arcade/stratum.py), and the work this node's Cores
+    # give other arcades' miners. Off in Lite until switched on, as every module that is not the core.
+    Module("mining", "node", "Mining", "This machine's CPU mining each chain it can, local ASICs over stratum, and "
+           "work for other arcades' miners.",
+           routes=("/fund", "/wallet/mining", "/admin/api/mine", "/admin/api/mining", "/admin/api/stratum",
+                   "/rpc/work"),
+           jobs=("stratum", "mining-resume"),
+           caution="Switching Mining off stops this machine's mining runs and the stratum server for ASICs."),
     Module("lora", "node", "Meshtastic and T-Decks", "The LoRa gateway, T-Decks over WiFi and the .mesh web.",
            routes=("/admin/api/lora", "/r/tdeck", "/meshweb", "/r/mesh", "/r/mesh/picture"),
            jobs=("lora",)),

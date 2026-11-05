@@ -122,7 +122,7 @@
       post('/admin/api/mine', {net: d.net, blocks: 1}).then(function () { watchMine(ms, mine); })
         .catch(function (e) { mine.disabled = false; ms.textContent = e.message; });
     };
-    s2.append(mine, ms);
+    if (d.mining === false) s2.append(el('p', 'Switch Mining on in Admin \u2192 Edition & modules to mine one here.', 'muted')); else s2.append(mine, ms);
     var s3 = el('div', null, 'wstep');
     s3.append(el('h4', 'Then tell other operators who you are'));
     var ol = el('ol');
