@@ -30799,7 +30799,7 @@ def create_app(state: AppState) -> FastAPI:
         if run and not (m and m["thread"].is_alive()):
             # A chain its own node mines, by algorithm (arcade/testmine.py: DigiByte testnet, 2026-11-04), in this
             # panel's shape: a "worker" is an algorithm.
-            found = [{"hash": f["hash"], "algo": f["algo"], "at": f["at"],
+            found = [{"hash": f["hash"], "algo": f["algo"], "at": f["at"], "result": "accepted",
                       "confirmations": _block_fate(run["chain_ctx"], f["hash"])["confirmations"]}
                      for f in list(run["found"])[-5:]]
             return {"running": True, "net": run["net"], "address": run["address"], "workers": len(run["algos"]),
@@ -30914,6 +30914,41 @@ def create_app(state: AppState) -> FastAPI:
                            stop=False, thread=threading.Thread(target=run, name="arcade-cpu-miner", daemon=True))
         _cpu_mining["thread"].start()
         return JSONResponse({"ok": True, **_mining_status()})
+
+    @app.get("/admin/api/mining")
+    def admin_mining(request: Request):
+        """Admin -> Mining (the Mining module, 2026-11-04): every chain here and how it can be mined -- by its node, by
+        this CPU, by ASICs on this network -- what this machine is mining now, and the stratum server's state."""
+        from .. import mining as mininglib
+        _admin_check(request)
+        service = getattr(state, "stratum", None)
+        def paid(row: dict) -> dict:                       # where its blocks pay by default: the operator's own
+            chain = next((c for c in state.all_chains if c.network == row["net"]), None)
+            try:
+                return {**row, "address": state.payout_address(chain) if chain is not None else ""}
+            except Exception:                              # noqa: BLE001 -- no address here yet
+                return {**row, "address": ""}
+        return JSONResponse({"chains": [paid(r) for r in mininglib.table(state)], "cpu": _mining_status(),
+                             "stratum": service.status() if service is not None else {"running": False}})
+
+    @app.post("/admin/api/stratum")
+    def admin_stratum(request: Request, payload: Any = Body(None)):
+        """Start, change or stop the stratum server for this network's ASICs: {on, net, algo, address, port,
+        difficulty, anyone}. The choice is kept, and the server comes back with the arcade."""
+        from .. import stratum as stratumlib
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        if getattr(state, "stratum", None) is None:
+            state.stratum = stratumlib.Service(state)
+        changes = {k: said.get(k) for k in ("on", "net", "algo", "address", "port", "difficulty", "anyone")
+                   if k in said}
+        if "port" in changes and not (1024 <= int(changes["port"] or 0) <= 65535):
+            return JSONResponse({"detail": "a port from 1024 to 65535"}, status_code=400)
+        got = state.stratum.configure(**changes)
+        if changes.get("on") and not got.get("running"):
+            return JSONResponse({"detail": got.get("error") or "the stratum server did not start", **got},
+                                status_code=400)
+        return JSONResponse(got)
 
     @app.post("/admin/api/restart")
     def admin_restart(request: Request):
@@ -31173,7 +31208,10 @@ def create_app(state: AppState) -> FastAPI:
         _admin_check(request)
         from . import welcoming
         book, key, _ = _welcome()
-        return JSONResponse(welcoming.view(state, book, key), headers={"Cache-Control": "no-store"})
+        # "mining": whether Mine a block can be offered (the Mining module, off in Lite until switched on).
+        return JSONResponse({**welcoming.view(state, book, key),
+                             "mining": "mining" in modulelib.enabled(state.settings())},
+                            headers={"Cache-Control": "no-store"})
 
     @app.post("/admin/api/welcome/send")
     def admin_welcome_send(request: Request, payload: Any = Body(None)):

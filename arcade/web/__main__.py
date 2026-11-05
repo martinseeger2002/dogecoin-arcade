@@ -362,6 +362,19 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:                      # noqa: BLE001 -- the arcade runs without it
         print(f"  LoRa gateway not started: {exc}")
 
+    # Mining (the Mining module, 2026-11-04): the stratum server for this network's ASICs, as Admin -> Mining left it,
+    # and a mining run a restart cut short (an update, a reload), picked up once its node answers. Here, by the worker
+    # holding the run lock, so one server holds the port.
+    try:
+        from .. import stratum as stratumlib, testmine
+        state.stratum = stratumlib.Service(state)
+        if modulelib.job_on(settings, "stratum"):
+            threading.Thread(target=state.stratum.apply, name="arcade-stratum-start", daemon=True).start()
+        if modulelib.job_on(settings, "mining-resume"):
+            threading.Thread(target=testmine.resume, args=(state,), name="arcade-mining-resume", daemon=True).start()
+    except Exception as exc:                      # noqa: BLE001 -- the arcade runs without it
+        print(f"  mining not started: {exc}")
+
     if state.public:
         # Said at startup, every time. An operator who does not know which
         # of the two things they are running is an operator who will one

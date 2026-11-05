@@ -630,7 +630,7 @@ def listchains(caller) -> list[dict]:
     return out
 
 
-@command("node", audience="operator")
+@command("mining", audience="operator", module="mining")
 def mine(caller, chain: str, blocks: int = 0, to: str = "") -> dict:
     """Mine a test chain's blocks to your own account, on this machine's CPU, until `mine stop`.
 
@@ -662,11 +662,46 @@ def mine(caller, chain: str, blocks: int = 0, to: str = "") -> dict:
         raise CommandError(f"mine: {exc}") from exc
 
 
-@command("node", audience="operator")
+@command("mining", audience="operator", module="mining")
 def mining(caller) -> dict:
     """How the mining goes: the chain, the blocks found, each algorithm's hashes a second; or how it last ended."""
     from .. import testmine
     return testmine.status(caller.state)
+
+
+@command("mining", audience="operator", module="mining")
+def listmining(caller) -> list[dict]:
+    """Every chain here and how it can be mined: by its node or this CPU (test chains), by ASICs on this network."""
+    from .. import mining as mininglib
+    return mininglib.table(caller.state)
+
+
+@command("mining", audience="operator", module="mining")
+def stratum(caller, action: str = "", chain: str = "", algo: str = "", address: str = "", port: int = 0) -> dict:
+    """The stratum server for ASICs on this network: its state, or start and stop it.
+
+    stratum                                   what it is doing: its URL, the miners on it, their hashrate, its blocks
+    stratum start <chain> <algo> <address> [port]   for example: stratum start ltc scrypt <your address> 3333
+    stratum stop
+    Point an ASIC at the URL it gives, any worker name and password. Solo mining: a block it finds pays the address
+    whole. A chain whose node runs here and is not merge-mined, in scrypt or sha256d; only miners on this network."""
+    from .. import stratum as stratumlib
+    if getattr(caller.state, "stratum", None) is None:
+        caller.state.stratum = stratumlib.Service(caller.state)
+    service = caller.state.stratum
+    if action in ("", "status"):
+        return service.status()
+    if action == "stop":
+        return service.configure(on=False)
+    if action != "start":
+        raise CommandError("stratum, stratum start <chain> <algo> <address> [port], or stratum stop")
+    if not (chain and algo and address):
+        raise CommandError("stratum start <chain> <algo> <address> [port]: `listmining` says what each chain takes")
+    got = service.configure(on=True, net=str(chain), algo=str(algo), address=str(address),
+                            port=int(port) if port else None)
+    if not got.get("running"):
+        raise CommandError(f"stratum: {got.get('error') or 'did not start'}")
+    return got
 
 
 # --- the mesh -----------------------------------------------------------------------------------------------------

@@ -19,6 +19,8 @@ log = logging.getLogger(__name__)
 
 #: A thread gives up after this many failures in a row (a node that stopped, a chain that is not ready).
 MOST_FAILURES = 3
+#: Where a run keeps what it was asked, so a restart of the arcade (an update, a reload) picks it up again (`resume`).
+SETTING = "mining_run"
 
 
 class MineError(ValueError):
@@ -45,6 +47,7 @@ def start(state, chain, address: str, blocks: int = 0, until: float | None = Non
            "until": until, "algos": [a or "default" for a in algos], "chain_ctx": chain,
            "found": [], "rates": {}, "tries_by": {}, "errors": {}, "threads": len(algos), "lock": threading.Lock()}
     state.mining = run
+    _keep(state, {"net": chain.network, "address": address, "want": run["want"], "until": until})
     for algo in algos:
         threading.Thread(target=_work, args=(state, chain, run, algo), name=f"arcade-mine-{algo or chain.network}",
                          daemon=True).start()
@@ -91,6 +94,7 @@ def _work(state, chain, run: dict, algo: str | None) -> None:
             run["threads"] -= 1
             last = run["threads"] == 0
         if last:
+            _keep(state, None)                             # ended here: nothing to pick up again
             state.last_mined = {"net": chain.network, "chain": chain.label, "ended": time.time(),
                                 "outcome": "stopped" if run["stop"] else "found" if run["found"] else "failed",
                                 "blocks": [f["hash"] for f in run["found"]]}
@@ -129,3 +133,39 @@ def status(state) -> dict:
     if run.get("errors"):
         out["errors"] = dict(run["errors"])
     return out
+
+
+def _keep(state, run: dict | None) -> None:
+    try:
+        state.set_setting(SETTING, run)
+    except Exception:                                      # noqa: BLE001 -- a state with no settings (tests)
+        pass
+
+
+def resume(state, wait: float = 900.0) -> bool:
+    """At the arcade's start: the run a restart cut short, started again once its chain's node answers. Threads that
+    end are the run's end; a restart kills them where they stand, so what was kept is still there. True if resumed."""
+    kept = getattr(state, "setting", lambda *_: None)(SETTING)
+    if not isinstance(kept, dict) or getattr(state, "mining", None) is not None:
+        return False
+    until = kept.get("until")
+    if until and time.time() >= until:
+        _keep(state, None)
+        return False
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        chain = next((c for c in state.all_chains if c.network == kept.get("net")), None)
+        try:
+            if chain is not None:
+                with chain.rpc() as rpc:
+                    rpc.get_block_count()
+                start(state, chain, str(kept.get("address") or ""), int(kept.get("want") or 0), until)
+                log.info("mining %s resumed after a restart", kept.get("net"))
+                return True
+        except MineError as exc:
+            log.warning("mining not resumed: %s", exc)
+            return False
+        except Exception:                                  # noqa: BLE001 -- its node not up yet
+            pass
+        time.sleep(10)
+    return False

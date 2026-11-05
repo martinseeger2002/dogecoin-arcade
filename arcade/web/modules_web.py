@@ -23,9 +23,26 @@ def gate(app, state):
     def apply() -> None:
         settings = state.settings()
         app.router.routes = [r for r in every if modulelib.path_on(settings, getattr(r, "path", ""))]
+        _mining(state, "mining" in modulelib.enabled(settings))
 
     apply()
     return apply
+
+
+def _mining(state, on: bool) -> None:
+    """Mining's background work follows its switch at once (2026-11-04): off stops a mining run and the stratum
+    server; on starts the stratum server again if the operator had it on."""
+    from .. import testmine
+    service = getattr(state, "stratum", None)
+    try:
+        if not on:
+            testmine.stop(state)
+            if service is not None:
+                service.stop()
+        elif service is not None and service.server is None and service.conf().get("on"):
+            service.apply()
+    except Exception:                                      # noqa: BLE001 -- the switch holds; the work follows later
+        pass
 
 
 def audience_of(request: Request, admin_check, signed_in) -> str:

@@ -121,7 +121,8 @@
         call('/admin/api/mine', {net: d.net, blocks: 1}).then(function () { watchMine(ms, mine); })
           .catch(function (e) { mine.disabled = false; ms.textContent = e.message; });
       };
-      var r2 = el('div', null, 'act'); r2.append(mine); o2.append(r2, ms);
+      var r2 = el('div', null, 'act');
+      if (d.mining === false) o2.append(el('div', 'Switch Mining on in Admin \u2192 Edition & modules to mine one here.', 'muted')); else { r2.append(mine); o2.append(r2, ms); }
       two.append(o1, o2); b.append(two);
     }
     var rows = el('div', null, 'rows');

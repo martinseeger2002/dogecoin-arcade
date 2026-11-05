@@ -143,3 +143,33 @@ def test_the_console_mines_to_an_address_it_is_given(app_state, monkeypatch):
     _wait(app_state)
     with pytest.raises(cmdlib.CommandError, match="not a DigiByte testnet address"):
         cmdlib.run_line(cli, "mine dgbtest 1 DPepeIsNotHere")
+
+
+def test_a_run_a_restart_cut_short_picks_up_again_and_one_that_ended_does_not(app_state, monkeypatch):
+    chain = Chain()
+    monkeypatch.setattr(type(app_state), "all_chains", property(lambda s: [chain]))
+    testmine.start(app_state, chain, "s-kept", blocks=2)
+    assert app_state.setting(testmine.SETTING)["address"] == "s-kept", "kept while it runs"
+    _wait(app_state)
+    assert app_state.setting(testmine.SETTING) is None, "a run that ended is not picked up again"
+    # A restart kills the threads where they stand: what was kept is still there, and the next start mines on.
+    app_state.set_setting(testmine.SETTING, {"net": "dgbtest", "address": "s-kept", "want": 1, "until": None})
+    assert testmine.resume(app_state, wait=5)
+    _wait(app_state)
+    assert app_state.last_mined["outcome"] == "found" and app_state.setting(testmine.SETTING) is None
+    app_state.set_setting(testmine.SETTING, {"net": "dgbtest", "address": "s-kept", "want": 0, "until": 1.0})
+    assert not testmine.resume(app_state, wait=1), "a run whose hours are over is not"
+
+
+def test_the_console_says_how_each_chain_is_mined_and_drives_the_stratum_server(app_state, monkeypatch):
+    chain = Chain()
+    monkeypatch.setattr(type(app_state), "all_chains", property(lambda s: [chain]))
+    op = cmdlib.Caller(app_state, "operator", local=True)
+    (row,) = cmdlib.run_line(op, "listmining")
+    assert row["net"] == "dgbtest" and row["cpu"]["by"] == "node" and row["asic"]["algos"] == ["sha256d", "scrypt"]
+    assert cmdlib.run_line(op, "stratum")["running"] is False
+    with pytest.raises(cmdlib.CommandError, match="stratum start <chain> <algo> <address>"):
+        cmdlib.run_line(op, "stratum start dgbtest")
+    with pytest.raises(cmdlib.CommandError, match="not mined with odo"):
+        cmdlib.run_line(op, "stratum start dgbtest odo stz68hi2MaAvriRgHbzpFzTQPf6NE9kQzN 3399")
+    assert cmdlib.run_line(op, "stratum stop")["on"] is False

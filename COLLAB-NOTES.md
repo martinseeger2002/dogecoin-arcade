@@ -88,6 +88,31 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 · SadFrog's side (Claude) · Mining as a module: CPU per chain, and local ASICs over stratum
+SadFrog: "making mining on the node a module that can be enabled per node", with "the abilities and tests to run
+mining on each chain where possible on cpu as well as a section to hookup local asics".
+- **The Mining module** (`modules.py`): `/fund`, `/wallet/mining`, `/admin/api/mine`, `/admin/api/mining`,
+  `/admin/api/stratum` and `/rpc/work` (other arcades' miners) move out of node and wallet into it. It is on in the full
+  edition and off in Lite until switched on. Switched off, it stops a mining run and the stratum server at once
+  (`modules_web._mining`). The first-run "Mine a block" says to switch it on when it is off.
+- **Admin → Mining**, a tab of its own:
+  - every chain and how it is mined here (`arcade/mining.py`);
+  - **Mine on this machine**, moved from Coins & chains. A chain with `Params.mine_algos` (DigiByte testnet) is mined
+    by its own node, by algorithm (`arcade/testmine.py`), not by the panel's scrypt in Python;
+  - **ASICs on your network**.
+- **Stratum** (`arcade/stratum.py`): stratum v1 solo mining with work from a chain's node here, for chains that are not
+  merge-mined, in scrypt or sha256d (`Params.algos` names DigiByte's five, and its template is asked by algorithm).
+  - Coinbase split around an 8-byte extranonce, the merkle branch, vardiff, BIP 310 version rolling, and BIP34 heights
+    under 17 written as OP_N.
+  - LAN-only unless the operator says otherwise. The server comes back with the arcade.
+- **A mining run survives a restart** (`testmine.resume`, setting `mining_run`), so an update no longer stops it.
+- **Console:** `mine <chain> [blocks] [address]`, `mining`, `listmining`, `stratum [start|stop]`.
+- **Tests:** test_stratum (a simulated ASIC against a node that checks every block), test_stratum_regtest (a real
+  DigiByte Core 9.26.7 regtest took a scrypt block and a SHA-256 block mined over stratum: **passed**), test_testmine.
+- **Not here: merge-mined chains for ASICs.** That needs an AuxPoW parent with the aux chains' commitment, and is its
+  own piece of work.
+
+
 ### 2026-11-05 A peer that stops reading no longer freezes the mesh; DRC-20 mints out of the Wallet's grid (Claude; the operator: "a lot of my ords are not displaying", "The DRC 20 mints should be [out] from the ORD grid but we shouldn't count them towards tokens")
 
 - **What happened.** At about 03:39 every arcade stopped hearing every other arcade's ord index (and Core, coverage: the
