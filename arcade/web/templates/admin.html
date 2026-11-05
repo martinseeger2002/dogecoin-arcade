@@ -73,6 +73,43 @@
   });
   </script>
   {% endif %}
+  {% if names.owner_kind == "account" %}
+  {#- The owner's signed word that it owns this node (arcade/owner.py): what lets its other nodes list it. #}
+  {% set st = names.statement %}
+  <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 8px" id="ownerproof"
+       data-node="{{ st.node }}" data-network="{{ st.network }}" data-version="{{ st.version }}"
+       data-address="{{ st.address }}">
+    <span>{% if st.signed %}You signed that you own this node, until
+      <span class="mono" data-when="{{ st.expires }}"></span>.{% else %}Sign that you own this node, so your other
+      nodes can list it with yours.{% endif %}</span>
+    {% if st.due and st.node %}<button type="button" class="small" id="owner-sign">{{ "Sign again" if st.signed else "Sign with my wallet" }}</button>{% endif %}
+    <label><input type="checkbox" id="owner-say" {{ "checked" if st.say }}> Tell linked arcades I own it</label>
+    <span class="muted" id="owner-said"></span>
+  </div>
+  <script type="module">
+  const box = document.getElementById("ownerproof"), said = document.getElementById("owner-said");
+  box.querySelectorAll("[data-when]").forEach((e) => { e.textContent = new Date(1000 * e.dataset.when).toLocaleDateString(); });
+  const keep = (body) => fetch("/admin/api/owner", {method: "POST", credentials: "same-origin", body: JSON.stringify(body),
+    headers: {"Content-Type": "application/json", "X-Arcade-Admin": "1"}})
+    .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.detail || r.status); return j; });
+  document.getElementById("owner-say").addEventListener("change", (e) => {
+    keep({say: e.target.checked}).then(() => { said.textContent = "Saved."; }, (err) => { said.textContent = String(err.message); });
+  });
+  const sign = document.getElementById("owner-sign");
+  if (sign) sign.addEventListener("click", async () => {
+    said.textContent = "";
+    try {
+      const w = await import("/wallet.js");
+      const d = box.dataset, keys = await w.opened({network: d.network, version: Number(d.version)});
+      const mine = keys && keys.on && keys.on[d.network];
+      if (!mine) throw new Error("Unlock your wallet first: sign in here as this node's owner.");
+      if (mine.address !== d.address) throw new Error("The wallet open in this tab is not this node's owner.");
+      await keep({statement: await w.ownerSign(mine, d.network, d.node), say: document.getElementById("owner-say").checked});
+      location.reload();
+    } catch (err) { said.textContent = String(err.message || err); }
+  });
+  </script>
+  {% endif %}
   <p class="muted" style="margin:0 0 6px;font-size:.84rem">
   {% if update_status %}Updates last checked {{ when(update_status.at) }}: <strong>{{ update_status.what }}</strong>
     {%- if update_status.installed %}, running <code class="mono">{{ update_status.installed[:7] }}</code>{% endif %}

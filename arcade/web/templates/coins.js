@@ -370,10 +370,11 @@ async function signMessage(priv, message, magic) {
  * browser from fixed templates; check node/seller ids equal this arcade's own; pin the signing magic per chain. B. as
  * a fallback, show the exact text and require a click for anything unusual." Before, the page signed whatever
  * /realtime/hello, /account/llm/grant and /account/llm/topup said, with the magic they said, so a hostile arcade
- * could have had a player's key sign any words at all. Now there are three shapes of words, built here field by
+ * could have had a player's key sign any words at all. Now there are a few shapes of words, built here field by
  * field, each field checked; the magic is fixed here per chain and never read from a server; and `signWords`
  * signs nothing else (signMessage is no longer exported). The server rebuilds the same words from its own data:
- * arcade/mesh/service.py cert_message, arcade/llm.py grant_words / topup_words.
+ * arcade/mesh/service.py cert_message, arcade/llm.py grant_words / topup_words. 2026-11-04: a fourth, an owner's
+ * statement that it owns a node (arcade/owner.py words), signed only for this arcade's own node (wallet ownerSign).
  */
 export const ARCADE_MAGIC = "Pepecoin Signed Message:\n";
 // Pinned per use, the same on every chain: a realtime certificate (mesh network "arcade-<chain>") is checked by the
@@ -424,7 +425,18 @@ export function topupWords(network, txid, seller, address) {
   return `arcade-llm-topup\n${network}\n${txid}\n${seller}\n${address}`;
 }
 
-/** `message` read back as one of the three shapes ({kind, magic, address, ...its fields}), or null for anything
+/** The longest an owner's statement may run: arcade/owner.py MOST_DAYS, plus an hour. */
+export const OWNER_MOST = 400 * 86400 + 3600;
+
+/** What an owner's key signs to say it owns mesh node `node` until `expires` (arcade/owner.py words, 2026-11-04). */
+export function ownerWords(network, node, address, expires, now = Date.now() / 1000) {
+  if (!NET.test(network)) wordsRefused("that is not a chain");
+  if (!NODE_ID.test(node)) wordsRefused("that is not a node id");
+  if (!ADDR.test(address)) wordsRefused("that is not an address");
+  return `arcade-owner\n${network}\n${node}\n${address}\n${untilOk(expires, OWNER_MOST, now)}`;
+}
+
+/** `message` read back as one of the four shapes ({kind, magic, address, ...its fields}), or null for anything
  *  else. Each is built again from what was read, so only words the builders above would make come through. */
 export function arcadeWords(message, now = Date.now() / 1000) {
   const text = String(message);
@@ -440,6 +452,11 @@ export function arcadeWords(message, now = Date.now() / 1000) {
       if (grantWords(seller, address, Number(expires), now) !== text) return null;
       return {kind: "grant", magic: LLM_MAGIC, seller, address, expires: Number(expires)};
     }
+    if ((m = /^arcade-owner\n([^\n]*)\n([^\n]*)\n([^\n]*)\n([0-9]{1,12})$/.exec(text))) {
+      const [, network, node, address, expires] = m;
+      if (ownerWords(network, node, address, Number(expires), now) !== text) return null;
+      return {kind: "owner", magic: ARCADE_MAGIC, network, node, address, expires: Number(expires)};
+    }
     if ((m = /^arcade-llm-topup\n([^\n]*)\n([^\n]*)\n([^\n]*)\n([^\n]*)$/.exec(text))) {
       const [, network, txid, seller, address] = m;
       if (topupWords(network, txid, seller, address) !== text) return null;
@@ -449,7 +466,7 @@ export function arcadeWords(message, now = Date.now() / 1000) {
   return null;
 }
 
-/** Sign `words` with `mine` ({key, address}: a key this page derived): only words of the three shapes, naming
+/** Sign `words` with `mine` ({key, address}: a key this page derived): only words of the four shapes, naming
  *  mine.address, with the magic pinned above for their chain -- Core's `signmessage` base64. */
 export async function signWords(mine, words, now = Date.now() / 1000, {owner = null} = {}) {
   const read = arcadeWords(words, now);

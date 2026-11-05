@@ -1068,7 +1068,18 @@ def operator_about(state) -> dict:
             "lora": bool(getattr(getattr(state, "lora", None), "running", False)),
             # What each chain takes on this disk, Core and ord index (arcade/disk_sizes.py, 2026-10-27: "The
             # size of all indexes should be broadcast to the network").
-            **_disk(state)}
+            **_disk(state), **_owner(state)}
+
+
+def _owner(state) -> dict:
+    """{"owner": {a, x, s}}: its owner's signed word that it owns this node (arcade/owner.py), only when the owner
+    ticked "Tell linked arcades I own it" in Admin -> This node and the statement has not run out (2026-11-04)."""
+    try:
+        from .. import owner as ownerlib
+        said = ownerlib.shaped(state.setting("owner_statement")) if state.setting("owner_say") else None
+        return {"owner": said} if said and said["x"] > time.time() else {}
+    except Exception:                                      # noqa: BLE001 -- said without it
+        return {}
 
 
 def _disk(state) -> dict:

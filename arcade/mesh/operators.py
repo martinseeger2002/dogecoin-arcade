@@ -30,6 +30,10 @@ links on purpose (node.outbound_target), so what it reaches itself is a fraction
 Overview's Arcades panel show the rest as "seen through @x". Each id must be a mesh id's shape (64 hex), each tag pass
 said_tag and each host _HOST, or that part is dropped. Display only, like the rest of the frame: it is the speaker's
 word, and only from a speaker linked now and heard within VIA_FRESH seconds (seen_through).
+
+`owner` (2026-11-04, "Who runs this node"): optional, {a, x, s}, its owner's statement that it owns this node
+(arcade/owner.py), said only when its owner ticked to. The words it signs name the speaker's node id, so it is kept as
+it came and checked from its bytes where it is shown; a malformed one is kept as None.
 """
 from __future__ import annotations
 
@@ -40,6 +44,7 @@ import time
 from typing import Any, Callable
 
 from ..disk_sizes import clean as clean_disk
+from ..owner import shaped as shaped_owner
 
 log = logging.getLogger("arcade.mesh")
 
@@ -74,6 +79,7 @@ def clean_links(value) -> list[dict]:
             row["host"] = host
         out.append(row)
     return out
+
 
 
 def seen_through(peers: dict, linked, me: str = "", now: float | None = None) -> dict[str, dict]:
@@ -145,6 +151,9 @@ class OperatorsShare:
             "disk": clean_disk(header.get("disk")),
             # The arcades it is linked to now (an older arcade says none): Overview's "seen through" rows.
             "links": clean_links(header.get("links")),
+            # Its owner's signed word that it owns this node (arcade/owner.py, 2026-11-04), kept as it came and
+            # checked only where it is shown (Admin -> Your nodes); an arcade that says none has None.
+            "owner": shaped_owner(header.get("owner")),
             "at": time.time()}
         if "sites" in header and self.heard is not None:
             from ..affiliates import clean_sites
@@ -181,6 +190,6 @@ class OperatorsShare:
         """Every arcade heard from, linked now or not, newest first."""
         linked = set(self.node.links) if self.node else set()
         rows = [{"node": peer[:12], "linked": peer in linked,
-                 **{k: v for k, v in said.items() if k not in ("gone", "links")}}
+                 **{k: v for k, v in said.items() if k not in ("gone", "links", "owner")}}
                 for peer, said in self.peers.items()]
         return sorted(rows, key=lambda r: (not r["linked"], -r["at"]))

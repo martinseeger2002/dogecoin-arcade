@@ -52,6 +52,7 @@ from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import COIN, AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain, unpayable_versions
 from .. import inscribe as inscribelib
+from .. import owner as ownerlib
 from .. import games as gameslib
 from .. import ring as ringlib
 from .. import gamestate as gamestatelib
@@ -28766,7 +28767,36 @@ def create_app(state: AppState) -> FastAPI:
         (the place), its owner's (the person), which one it answers to, and what owns it: "account", "password"
         (a username and password with no wallet) or "" (nobody yet: the node runs itself)."""
         return {"node": state.node_tag(), "owner": state.owner_tag(), "answers": state.arcade_name(),
-                "owner_kind": state.owner_kind()}
+                "owner_kind": state.owner_kind(), "statement": _owner_statement()}
+
+    def _owner_statement() -> dict:
+        """The owner's signed word that it owns this node (arcade/owner.py), as Admin -> This node shows it: whether
+        one is kept, when it ends, whether it is due again, whether linked arcades hear it, and what the owner's wallet
+        signs for (this node's mesh id, the messaging chain's network, the owner's address)."""
+        kept = ownerlib.shaped(state.setting("owner_statement"))
+        return {"signed": bool(kept and kept["x"] > time.time()), "expires": kept["x"] if kept else 0,
+                "due": ownerlib.due(kept), "say": bool(state.setting("owner_say")),
+                "node": str(getattr(getattr(state, "mesh", None), "node_id", "") or ""),
+                "network": state.messaging.network, "version": state.messaging.params.pubkeyhash_version,
+                "address": state.owner_address()}
+
+    @app.post("/admin/api/owner")
+    def admin_owner(request: Request, payload: Any = Body(None)):
+        """Keep the owner's signed statement that it owns this node, checked first, and whether linked arcades hear it
+        (mesh/service.py operator_about). The statement must name this node and the owner account's own address."""
+        _admin_check(request, write=True)
+        said = payload if isinstance(payload, dict) else {}
+        if "statement" in said:
+            want = state.owner_address()
+            node = _owner_statement()["node"]
+            got = ownerlib.check(said["statement"], state.messaging.network, node)
+            if not want or not node or got != want:
+                return JSONResponse({"detail": "that is not this node's owner saying it owns this node"},
+                                    status_code=400)
+            state.set_setting("owner_statement", ownerlib.shaped(said["statement"]))
+        if "say" in said:
+            state.set_setting("owner_say", bool(said["say"]))
+        return JSONResponse(_owner_statement())
 
     @app.get("/admin/login", response_class=HTMLResponse)
     def admin_login_page(request: Request):
