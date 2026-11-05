@@ -88,6 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 Ord index: copies made and swapped in beside the index's real file (SadFrog's side, Claude)
+Branch `team/index-real-path`, one commit on the newest main. Node 2 keeps its Bells index (46 GB) on a hard disk,
+linked from the arcade's folder on an SSD (92 GB free). Found while making node 2 a Bells source for other arcades:
+- **A snapshot went onto the SSD.** `Snapshots` put `.snap`, `.part`, `.snap.json` beside `store.path`, the link.
+- **A fetched copy replaced the link.** `Store.swap` did `os.replace(other, self.path)`: the link became a file on the
+  SSD, the old index stayed on the hard disk, and `-wal`/`-shm` were removed beside the link, where SQLite never keeps
+  them (it resolves the link). With `.part` beside the real file, the rename would cross disks and fail.
+- **Now.** `Store.real` (realpath of the index file). Snapshots, fetched copies, `upgrade`'s `.upgrade` file and the
+  `-wal`/`-shm` cleanup use it. An index that is not linked behaves as before.
+- **Tests.** New `test_an_index_linked_from_another_disk_is_copied_and_swapped_beside_its_real_file` (fails on main).
+  286 index/ord/core-copy tests pass; `test_an_index_of_layout_1_is_converted_in_place...` fails on node 2 with or
+  without this (SQLite 3.37 has no `unhex`).
+- **Note.** `make()`'s second `VACUUM` still writes a temporary copy into SQLite's temp folder (often the system disk).
+  Not changed here.
+- Node 2 runs this; its Bells Core is also registered for chain-data copies (`core_installed:bel` with its user unit).
+
 ### 2026-11-05 A peer that stops reading no longer freezes the mesh; DRC-20 mints out of the Wallet's grid (Claude; the operator: "a lot of my ords are not displaying", "The DRC 20 mints should be [out] from the ORD grid but we shouldn't count them towards tokens")
 
 - **What happened.** At about 03:39 every arcade stopped hearing every other arcade's ord index (and Core, coverage: the
