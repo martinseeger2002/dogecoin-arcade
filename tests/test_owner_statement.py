@@ -159,4 +159,4 @@ def test_admin_asks_once_and_lists_your_nodes(owned):
     assert app.post("/auth/set-password", headers=LOCAL,
                     json={"username": "robin", "password": "correct horse battery"}).status_code == 200
     page = app.get("/admin", headers=LOCAL).text
-    assert 'id="yournodes"' not in page and "This node runs with a machine password. Make your account" in page
+    assert 'id="yournodes"' not in page and "This node runs with a machine password: make your account its owner" in page
