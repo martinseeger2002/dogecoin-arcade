@@ -383,7 +383,7 @@ def tabs(settings: dict, audience: str, hidden: list[str] = ()) -> list[dict]:
         if not page or page == "/admin" or page.startswith("/#"):
             continue
         out.append({"id": m.id, "title": TAB_TITLES.get(m.id, m.title), "page": page, "hidden": m.id in hidden,
-                    "summary": m.summary})
+                    "summary": m.summary, "package": bool(m.package)})
     return out
 
 

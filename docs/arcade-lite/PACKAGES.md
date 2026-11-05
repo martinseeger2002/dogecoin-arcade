@@ -79,6 +79,12 @@ A node module is Python the arcade runs for its people, Linux only (SadFrog's de
   - `commands`: each one's `audience` (anyone, user or operator), `args` (`[in brackets]` when optional, after the
     rest) and `help`. They join the console, `help` and `arcade-cli` under the module's name. A module cannot take
     the name of one of the arcade's own modules or commands.
+  - `commands.<name>.form` (optional, 2026-11-05): the command's control in the Lite window, above the module's page:
+    `title`, `button`, `note`, and `fields` keyed by the command's own arguments in order, each with `label`, `type`
+    (text, number or choice), `value` and, for a choice, `choices` as `[value, label]` pairs. Words only: the window
+    builds the controls and runs the line the console would take, shown under the answer. An answer's `actions`
+    (`[{label, line}]`, on the answer or on a row of a list in it) become buttons when the line is one of the module's
+    own commands.
   - `needs.chains`: the reads it may ask each chain's Core, by name: names starting with get, decode, estimate,
     calculate or validate, or `scantxoutset` and `testmempoolaccept`, but never the Core's wallet. Anything else is
     refused when the module is checked.

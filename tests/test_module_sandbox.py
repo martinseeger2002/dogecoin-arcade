@@ -58,6 +58,13 @@ def _module(tmp_path, name="hello", change=None, code=MODULE_PY) -> Path:
     (lambda m: m["commands"].update(BAD={}), "lower-case"),
     (lambda m: m["commands"]["hello"].update(audience="root"), "audience"),
     (lambda m: m["commands"]["hello"].update(args=["[who]", "what"]), "comes after"),
+    (lambda m: m["commands"]["hello"].update(form={"script": "x"}), "nothing else"),
+    (lambda m: m["commands"]["hello"].update(form={"fields": {"whom": {}}}), "own arguments"),
+    (lambda m: m["commands"]["hello"].update(form={"fields": {"who": {"type": "html"}}}), "type is one of"),
+    (lambda m: m["commands"]["hello"].update(form={"fields": {"who": {"type": "choice"}}}), "has choices when"),
+    (lambda m: m["commands"]["hello"].update(form={"fields": {"who": {"type": "choice", "choices": [["a b", "x"]]}}}),
+     "each value a word"),
+    (lambda m: m["commands"]["hello"].update(form={"title": "x" * 81}), "at most 80"),
 ])
 def test_a_module_that_asks_for_the_wallet_or_too_much_is_refused(tmp_path, change, said):
     with pytest.raises(packages.PackageError, match=said):
