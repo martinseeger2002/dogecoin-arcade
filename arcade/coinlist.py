@@ -88,7 +88,11 @@ def coverage(db, address: str, tip: int) -> list[Range]:
     """The ranges over which this index's coins for `address` are complete (watching, plus `covered`)."""
     ranges: list[Range] = []
     row = db.conn.execute("SELECT since FROM watched WHERE address = ?", (address,)).fetchone()
-    if row is not None and tip >= int(row[0]):
+    # A watch begun while the index held no block says 0 (utxos.watch at indexed_height() or 0): nothing was read for
+    # it, so it covers nothing (2026-11-05, the operator's Flopcoin imports: listed as "covered 0..tip" with no coins, so
+    # Admin called them whole and another arcade or browser would take "no coins, all of it known" for the truth).
+    # The same rule as app._rescan_done.
+    if row is not None and int(row[0]) > 0 and tip >= int(row[0]):
         ranges.append((int(row[0]), int(tip)))
     try:
         for lo, hi in db.conn.execute("SELECT lo, hi FROM covered WHERE address = ?", (address,)):
