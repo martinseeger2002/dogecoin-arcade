@@ -445,6 +445,32 @@ def _coins_from_peer(chain, address: str) -> list[dict] | None:
         return None
 
 
+def _core_behind(chain) -> bool:
+    """This Core was behind at its last check (core_catchup), whether or not a sharer is linked."""
+    try:
+        from arcade import core_catchup
+        return bool(core_catchup.known_behind(getattr(chain, "network", "") or "doge"))
+    except Exception:
+        return False
+
+
+def _coins_from_mesh(address: str) -> tuple[list[dict] | None, str]:
+    """A bare address's coins from a synced arcade in the mesh (GET /peer/address/{a}/coins, signed with this
+    node's mesh key), and that arcade's host; (None, "") when none could say. Never a third-party site."""
+    from arcade import peer_address
+    hook = peer_address.PEERS
+    if hook is None:
+        return None, ""
+    try:
+        hosts, key, ask = hook()
+        said = peer_address.ask_peers(address, list(hosts), ask, key)
+    except Exception:
+        return None, ""
+    if not said:
+        return None, ""
+    return [row for row in (_as_coin(c) for c in said.get("coins") or []) if row], str(said.get("from") or "")
+
+
 def _postage_first(coins: list[dict]) -> list[dict]:
     from arcade.doginals import POSTAGE_MAX
 
@@ -543,6 +569,10 @@ def index_owned(address: str) -> dict:
         return out
     wanted_peer = _wants_peer(chain)
     peer_rows = _coins_from_peer(chain, address) if wanted_peer else None
+    mesh_host = ""
+    if peer_rows is None and (wanted_peer or _core_behind(chain)):
+        peer_rows, mesh_host = _coins_from_mesh(address)
+        wanted_peer = wanted_peer or peer_rows is not None
     coins_from_peer = peer_rows is not None
     from arcade.web import state
     from arcade import utxos as utxoslib
@@ -631,7 +661,7 @@ def index_owned(address: str) -> dict:
     out["reading"] = _clean_reading({
         "via": "peer" if any_peer else "local",
         "sync": _sync_text(chain, wanted_peer=wanted_peer, coins_from_peer=coins_from_peer),
-        "node": peer_node or ("a peer on the arcade network" if any_peer else "this arcade"),
+        "node": peer_node or mesh_host or ("a peer on the arcade network" if any_peer else "this arcade"),
     })
     return out
 
