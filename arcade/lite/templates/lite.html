@@ -45,6 +45,14 @@ section.frame{height:100%}
 section.frame iframe{display:block;width:100%;height:100%;border:0;background:var(--win)}
 .toolbar .sep{flex:none;width:1px;align-self:stretch;margin:3px 6px;background:var(--line)}
 .toolbar .end{margin-left:auto}
+/* module tabs that do not fit wait under More, in a list of its own (the bar would clip a menu inside it) */
+.more-list{position:fixed;z-index:20;margin:0;padding:3px 0;list-style:none;min-width:180px;background:var(--panel);
+  border:1px solid var(--line);box-shadow:2px 3px 8px rgba(0,0,0,.2)}
+.more-list button{display:flex;gap:6px;align-items:center;width:100%;text-align:left;background:none;border:0;
+  padding:5px 14px;cursor:pointer;white-space:nowrap}
+.more-list button:hover{background:var(--sel);color:var(--sel-ink)}
+.more-list svg{width:16px;height:16px}
+#yourtabs-list td:first-child{white-space:nowrap}
 .cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
 fieldset{border:1px solid var(--line);border-radius:3px;margin:0 0 12px;padding:8px 10px 10px;background:var(--panel)}
 legend{padding:0 4px;font-weight:600}
@@ -109,6 +117,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     <li><button type="button" data-win="info">Information</button></li>
     <li><button type="button" data-win="console">Console</button></li>
     {% if audience == 'operator' %}<li><button type="button" data-win="peers">Peers</button></li>{% endif %}
+    <li><hr></li><li><button type="button" data-build>Build…</button></li>
   </ul></div>
   <div class="menu"><button type="button">Help</button><ul>
     <li><button type="button" data-run="help">Command list</button></li>
@@ -137,10 +146,12 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   {% for t in tabs %}<button type="button" role="tab" data-tab="{{ 'apps' if t.id == 'apps' else 'm-' ~ t.id }}" data-module="{{ t.id }}"{% if t.id != 'apps' %} data-src="{{ t.page }}"{% endif %}>
     {{ icons.get(t.id, icons['module'])|safe }}<span>{{ t.title }}</span></button>
   {% endfor %}
+  <button type="button" id="tab-more" aria-haspopup="true" hidden><span>More ▾</span></button>
   {% if audience == 'operator' %}<button type="button" role="tab" class="end" data-tab="admin" data-src="/admin">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/></svg><span>Admin</span></button>{% endif %}
 </div>
 
+<ul class="more-list" id="tab-more-list" hidden></ul>
 <main>
   <section data-panel="overview">
     <div class="cols">
@@ -220,6 +231,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
 </div>
 
 {% include "_options.html" %}
+{% include "_build.html" %}
 {% include "_themes.html" %}
 
 <script>
@@ -313,7 +325,33 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     document.querySelector('main').classList.toggle('framed', !!frame);
     if (frame && (href || !frame.getAttribute('src'))) frame.setAttribute('src', href || frame.dataset.src);
     if (history.replaceState) history.replaceState(null, '', name === 'overview' ? location.pathname : '#' + name);
+    fit();
   }
+  // Module tabs that do not fit in the bar go under More, last first.
+  function fit() {
+    var bar = document.querySelector('.toolbar'), more = $('tab-more'), list = $('tab-more-list');
+    var mods = [].slice.call(bar.querySelectorAll('[data-module]')).filter(function (b) { return !b.dataset.off; });
+    mods.forEach(function (b) { b.hidden = false; });
+    more.hidden = true; list.hidden = true; list.textContent = '';
+    for (var i = mods.length - 1; i >= 0 && bar.scrollWidth > bar.clientWidth + 1; i--) { more.hidden = false; mods[i].hidden = true; }
+    var picked = false;
+    mods.filter(function (b) { return b.hidden; }).forEach(function (b) {
+      var li = document.createElement('li'), item = document.createElement('button');
+      item.type = 'button'; item.innerHTML = b.innerHTML;
+      item.onclick = function () { list.hidden = true; panel(b.dataset.tab); };
+      li.appendChild(item); list.appendChild(li);
+      if (b.getAttribute('aria-selected') === 'true') picked = true;
+    });
+    more.setAttribute('aria-selected', picked);
+  }
+  $('tab-more').onclick = function (e) {
+    e.stopPropagation();
+    var list = $('tab-more-list'), r = this.getBoundingClientRect();
+    list.style.top = r.bottom + 'px'; list.style.left = Math.max(0, Math.min(r.left, innerWidth - 200)) + 'px';
+    list.hidden = !list.hidden;
+  };
+  document.addEventListener('click', function () { $('tab-more-list').hidden = true; });
+  addEventListener('resize', fit);
   document.querySelectorAll('.toolbar [data-tab]').forEach(function (b) { b.addEventListener('click', function () { panel(b.dataset.tab); }); });
   document.querySelectorAll('[data-open-tab]').forEach(function (b) { b.onclick = function () { panel(b.dataset.openTab); }; });
   // For a page inside a frame (base.html): which tab a link of its belongs in, and opening it there.
@@ -342,8 +380,9 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   function localHidden() { try { return JSON.parse(localStorage.getItem(LOCAL) || '[]'); } catch (e) { return []; } }
   if (!KEPT) localHidden().forEach(function (id) {
     var b = document.querySelector('.toolbar [data-module="' + id + '"]');
-    if (b) b.hidden = true;
+    if (b) { b.hidden = true; b.dataset.off = '1'; }
   });
+  fit();
   document.querySelector('[data-yourtabs]').onclick = function () {
     fetch('/lite/api/tabs', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (j) {
       yourTabs = j.tabs || [];
@@ -399,6 +438,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   });
   document.querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { location.href = b.dataset.go; }; });
   document.querySelector('[data-about]').onclick = function () { open('about'); };
+  document.querySelector('[data-build]').onclick = function () { open('build'); };
   document.querySelectorAll('[data-close]').forEach(function (b) {
     b.onclick = function () { b.closest('.dialog').classList.remove('open'); };
   });

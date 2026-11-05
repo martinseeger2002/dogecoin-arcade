@@ -823,6 +823,68 @@ def removetheme(caller, theme: str) -> str:
     return f"removed {theme}"
 
 
+# --- themes between arcades: offered, and taken (arcade/mesh/themeshare.py; Window -> Build) ---------------------------
+
+
+def _themeshare(caller):
+    share = getattr(getattr(caller.state, "mesh", None), "themeshare", None)
+    if share is None:
+        raise CommandError("this arcade is not on the mesh, so it cannot offer or take themes")
+    return share
+
+
+@command("themes", audience="operator")
+def sharetheme(caller, theme: str, on: str = "on") -> str:
+    """Offer an installed theme to the arcades this one links with, or stop (`off`). Each of their operators sees it
+    under Window -> Build -> Shared by others and chooses whether to install it; nothing installs by itself.
+
+    sharetheme <name> [on|off]"""
+    from ..mesh.themeshare import SHARED
+    pid = _theme(caller, theme)
+    if on not in ("on", "off"):
+        raise CommandError("usage: sharetheme <name> [on|off]")
+    shared = [p for p in caller.state.setting(SHARED) or [] if p != pid]
+    caller.state.set_setting(SHARED, shared + ([pid] if on == "on" else []))
+    return (f"{theme} is offered to the arcades you link with" if on == "on"
+            else f"{theme} is no longer offered; arcades that installed it keep it")
+
+
+@command("themes", audience="operator")
+def sharedthemes(caller) -> dict:
+    """The themes this arcade offers, and those linked arcades offer it (with which arcades offer each)."""
+    from ..mesh.themeshare import SHARED
+    settings = caller.state.settings()
+    have = settings.get(packagelib.SETTING) or {}
+    share = getattr(getattr(caller.state, "mesh", None), "themeshare", None)
+    mine = [{"id": pid, "name": have[pid]["name"], "title": have[pid].get("title") or have[pid]["name"],
+             "shared": pid in (settings.get(SHARED) or []), "from": have[pid].get("from") or "local"}
+            for pid in sorted(have, key=lambda p: have[p].get("title") or "") if have[pid].get("kind") == "theme"]
+    offered = [{**row, "installed": row["id"] in have} for row in (share.offered() if share is not None else [])]
+    return {"mine": mine, "offered": offered, "mesh": share is not None}
+
+
+@command("themes", audience="operator")
+def taketheme(caller, theme_id: str) -> dict:
+    """Install a theme a linked arcade offers, by its id (`sharedthemes` lists them). It is checked against its id and
+    as a theme from a folder is, then kept like one: it shows nowhere until you settheme or allowtheme it.
+
+    taketheme <id>"""
+    share = _themeshare(caller)
+    theme_id = (theme_id or "").strip().lower()
+    matches = [row["id"] for row in share.offered() if row["id"].startswith(theme_id)] if len(theme_id) >= 8 else []
+    if len(matches) != 1:
+        raise CommandError("no linked arcade offers a theme with that id" if not matches
+                           else "more than one theme starts so: give more of its id")
+    try:
+        pid, row = share.install(matches[0])
+    except Exception as exc:                               # noqa: BLE001 -- the console says what went wrong
+        raise CommandError(f"not installed: {exc}") from None
+    have = dict(caller.state.setting(packagelib.SETTING) or {})
+    have[pid] = row
+    caller.state.set_setting(packagelib.SETTING, have)
+    return {"id": pid, "name": row["name"], "version": row["version"], "from": row["from"]}
+
+
 # --- node modules ---------------------------------------------------------------------------------------------------
 #
 # A node module is a package too (arcade/packages.py): Python the arcade runs confined, in its own process, with no

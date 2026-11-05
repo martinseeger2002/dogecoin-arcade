@@ -935,6 +935,11 @@ def for_state(state, *, listen_host: str | None = None, listen_port: int | None 
             return kclib.mode_of(state.setting(kclib.MODE_SETTING)) if hasattr(state, "setting") else "demand"
         service.collectionshare = CollectionShare(state.known_collections, mode=kc_mode)
         service.node.add_extension(service.collectionshare)
+    # Themes an operator offers to the arcades it links with (themeshare.py; Window -> Build, 2026-11-04).
+    if hasattr(state, "settings") and hasattr(state, "home"):
+        from .themeshare import ThemeShare
+        service.themeshare = ThemeShare(state)
+        service.node.add_extension(service.themeshare)
     # Each account's imported wallets, to every arcade that holds the account (importshare.py, 2026-10-21).
     if hasattr(state, "imported_wallets"):
         from .importshare import ImportShare, StateRecords

@@ -109,9 +109,21 @@ A node module is Python the arcade runs for its people, Linux only (SadFrog's de
     arcade-cli remove my-module             switched off; its process stops
     arcade-cli removemodule my-module       deleted; its data folder stays
 
+## Offering a theme to other arcades (built, 2026-11-04)
+
+Themes go first, because a theme runs no code: Window -> Build in the Lite window, or the console.
+
+    sharetheme my-theme [on|off]   offer an installed theme to the arcades this one links with, or stop
+    sharedthemes                   what this arcade offers, and what linked arcades offer it
+    taketheme <id>                 install one a linked arcade offers; it shows nowhere until settheme/allowtheme
+
+On the mesh: frames of kind "pk" (arcade/mesh/themeshare.py). A fetched theme is kept only when its files hash to the
+offered id and pass the same check as a folder; only a theme's own file names are taken. Tests: tests/test_themeshare.py.
+Window -> Build also holds the seven-step guide to making a theme (arcade/lite/templates/_build.html).
+
 ## Offering a package to other arcades (next)
 
-This is in the charter already. It is built after the local slice above.
+This is in the charter already. Themes travel as above; node modules wait for the review marks below.
 1. **Hand in:** Settings → Publish, or `arcade-cli publish <folder>`. The arcade checks the package, signs its id
    with the publisher's key, and shows what it will announce.
 2. **Offer:** linked arcades are told the id, name, kind and publisher, and fetch the files by id over the mesh, as

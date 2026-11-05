@@ -1,0 +1,200 @@
+{#- Window -> Build (2026-11-04, SadFrog: "a guide and how to for people making new themes, how to make them and how to
+    add them to the shared themes other operators can enable"). The guide is for everyone; offering a theme and taking
+    one from linked arcades are the operator's, through the console's own sharetheme, sharedthemes and taketheme. -#}
+<div class="dialog" id="build" role="dialog" aria-label="Build">
+  <div class="window" style="width:min(820px,96vw)">
+    <header><span>Build</span><button type="button" data-close aria-label="Close">×</button></header>
+    <div class="wtabs" role="tablist">
+      <button type="button" data-btab="guide" aria-selected="true">Make a theme</button>
+      {% if audience == 'operator' %}<button type="button" data-btab="share">Share a theme</button>
+      <button type="button" data-btab="others">Shared by others</button>{% endif %}
+    </div>
+    <div class="wbody">
+      <div data-bpanel="guide" class="steps">
+        <ol id="b-steps">
+          <li><button type="button" data-step="1" aria-selected="true">Make a folder</button></li>
+          <li><button type="button" data-step="2">Pick the colours</button></li>
+          <li><button type="button" data-step="3">A font (optional)</button></li>
+          <li><button type="button" data-step="4">Try it on</button></li>
+          <li><button type="button" data-step="5">Check and install</button></li>
+          <li><button type="button" data-step="6">Wear it</button></li>
+          <li><button type="button" data-step="7">Share it</button></li>
+        </ol>
+        <div>
+          <section data-stepbody="1">
+            <h3>1 · Make a folder</h3>
+            <p>A theme is a folder with a <code>manifest.json</code>: values only, no CSS and no scripts. Start from
+              ARCADE Lite's own look. In a terminal on the arcade's own machine:</p>
+            <pre>arcade-cli new theme my-theme</pre>
+            <p class="muted">That makes <code>~/my-theme</code> with every value named and a README. A name is 2 to 32
+              lower-case letters, digits and dashes.</p>
+          </section>
+          <section data-stepbody="2" hidden>
+            <h3>2 · Pick the colours</h3>
+            <p>Open <code>~/my-theme/manifest.json</code> and change the colours under <code>look.light</code> and
+              <code>look.dark</code>. Each has the same eleven:</p>
+            <table class="b-keys"><tbody>
+              <tr><td><code>window</code></td><td>the window's background</td><td><code>panel</code></td><td>boxes and fields</td></tr>
+              <tr><td><code>text</code></td><td>words</td><td><code>muted</code></td><td>quieter words</td></tr>
+              <tr><td><code>line</code></td><td>borders</td><td><code>bar</code></td><td>menu, tab and status bars</td></tr>
+              <tr><td><code>accent</code></td><td>what is picked</td><td><code>accent_text</code></td><td>words on the accent</td></tr>
+              <tr><td><code>ok</code></td><td>synced, done</td><td><code>warn</code> · <code>bad</code></td><td>waiting · failed</td></tr>
+            </tbody></table>
+            <pre>"look": {
+  "light": { "window": "#f5eadc", "panel": "#fff8f0", "text": "#1d1d1d", "accent": "#b85c2e", ... },
+  "dark":  { "window": "#2b2622", "panel": "#211d1a", "text": "#ece4da", "accent": "#d0773f", ... },
+  "font": "system", "radius": 3 }</pre>
+            <p class="muted">Leave <code>dark</code> out to use the light colours in both. Words must stand out from
+              what they sit on: <code>checktheme</code> (step 5) refuses a pair too faint to read an address in, and
+              says which one.</p>
+          </section>
+          <section data-stepbody="3" hidden>
+            <h3>3 · A font (optional)</h3>
+            <p><code>look.font</code> is one of {{ fonts|join(', ') }}. Or put a font of your own in the folder as
+              <code>files/name.woff2</code> and name it there. <code>look.radius</code> rounds corners, 0 to 12 pixels.</p>
+            <p class="muted">A theme holds at most {{ most_files }} files and {{ most_kb }} kB, so other arcades can fetch it
+              quickly.</p>
+          </section>
+          <section data-stepbody="4" hidden>
+            <h3>4 · Try it on</h3>
+            <p>See it in this machine's browser only, as the folder is now. Change the folder and reload to see it again.</p>
+            <pre>trytheme ~/my-theme</pre>
+            <p class="muted">Nobody else sees it. <code>trytheme off</code> goes back.</p>
+            {% if audience == 'operator' %}<button type="button" data-type="trytheme ~/my-theme">Type it in the console</button>{% endif %}
+          </section>
+          <section data-stepbody="5" hidden>
+            <h3>5 · Check and install</h3>
+            <pre>checktheme ~/my-theme
+installtheme ~/my-theme</pre>
+            <p class="muted"><code>checktheme</code> says what is wrong, or the theme's id: a hash of every file, so a
+              changed theme is a new id. <code>installtheme</code> keeps it under that id; it shows nowhere yet.</p>
+            {% if audience == 'operator' %}<button type="button" data-type="checktheme ~/my-theme">Type it in the console</button>{% endif %}
+          </section>
+          <section data-stepbody="6" hidden>
+            <h3>6 · Wear it</h3>
+            <pre>settheme my-theme        this arcade's look, for everyone who has not picked one
+allowtheme my-theme      people may pick it in Settings → Theme…</pre>
+            <p class="muted"><code>settheme none</code> goes back to ARCADE Lite's own look.</p>
+          </section>
+          <section data-stepbody="7" hidden>
+            <h3>7 · Share it</h3>
+            <p>Offer it to the arcades this one links with: <b>Share a theme</b> here, or</p>
+            <pre>sharetheme my-theme</pre>
+            <p class="muted">Each of their operators sees it under <b>Shared by others</b> and chooses whether to install
+              it; nothing installs by itself. It travels over the mesh, checked against its id on arrival, and since a
+              theme is colours and a font only, no code goes with it. <code>sharetheme my-theme off</code> stops
+              offering it; arcades that installed it keep it.</p>
+          </section>
+          <p class="b-nav"><button type="button" id="b-prev">‹ Back</button> <button type="button" id="b-next">Next ›</button></p>
+        </div>
+      </div>
+      {% if audience == 'operator' %}
+      <div data-bpanel="share" hidden>
+        <p style="margin:0 0 8px">Offer one of your themes to the arcades you link with. Each operator sees it under
+          <b>Shared by others</b> and decides whether to install it.</p>
+        <table><thead><tr><th>Your theme</th><th>Id</th><th>From</th><th>Offered</th><th></th></tr></thead>
+          <tbody id="b-mine"><tr><td class="muted" colspan="5">Loading…</td></tr></tbody></table>
+        <p class="muted" style="margin:8px 0 0">Install a theme first (Make a theme, step 5) to offer it.</p>
+      </div>
+      <div data-bpanel="others" hidden>
+        <p style="margin:0 0 8px">Themes the arcades you link with offer. Installing one keeps it here; it shows nowhere
+          until you wear it or let people pick it.</p>
+        <table><thead><tr><th>Theme</th><th>Id</th><th>Offered by</th><th></th></tr></thead>
+          <tbody id="b-others"><tr><td class="muted" colspan="4">Loading…</td></tr></tbody></table>
+        <p class="err bad" id="b-err"></p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+<style>
+#build .steps{display:grid;grid-template-columns:170px minmax(0,1fr);gap:14px}
+#build .steps ol{margin:0;padding-left:20px}
+#build .steps ol button{background:none;border:0;padding:3px 0;text-align:left;cursor:pointer;color:var(--ink)}
+#build .steps ol button[aria-selected=true]{font-weight:600}
+#build h3{margin:0 0 6px;font-size:14px}
+#build pre{margin:6px 0;padding:8px;background:var(--panel);border:1px solid var(--line);font:12px/1.45 var(--mono);overflow:auto}
+#build .b-keys td{border:0;padding:1px 8px 1px 0}
+#build .b-nav{margin:12px 0 0}
+@media (max-width:700px){ #build .steps{grid-template-columns:1fr} }
+</style>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var step = 1;
+  function show(n) {
+    step = Math.max(1, Math.min(7, n));
+    document.querySelectorAll('#build [data-step]').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.step == step); });
+    document.querySelectorAll('#build [data-stepbody]').forEach(function (s) { s.hidden = s.dataset.stepbody != step; });
+    $('b-prev').disabled = step === 1; $('b-next').disabled = step === 7;
+  }
+  document.querySelectorAll('#build [data-step]').forEach(function (b) { b.onclick = function () { show(+b.dataset.step); }; });
+  $('b-prev').onclick = function () { show(step - 1); };
+  $('b-next').onclick = function () { show(step + 1); };
+  show(1);
+  function tab(name) {
+    document.querySelectorAll('#build [data-btab]').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.btab === name); });
+    document.querySelectorAll('#build [data-bpanel]').forEach(function (p) { p.hidden = p.dataset.bpanel !== name; });
+    if (name !== 'guide') load();
+  }
+  document.querySelectorAll('#build [data-btab]').forEach(function (b) { b.onclick = function () { tab(b.dataset.btab); }; });
+  document.querySelectorAll('#build [data-type]').forEach(function (b) {
+    b.onclick = function () {
+      $('build').classList.remove('open');
+      document.querySelector('[data-win="console"]').click();
+      $('line').value = b.dataset.type; $('line').focus();
+    };
+  });
+  {% if audience == 'operator' %}
+  function run(line) {
+    return fetch('/lite/api/console', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Lite': '1', 'X-Arcade-Admin': '1'},
+      body: JSON.stringify({line: line})}).then(function (r) { return r.json(); })
+      .then(function (j) { if (!j.ok) throw new Error(j.error || 'refused'); return j.result; });
+  }
+  function cells(tr, list) {
+    list.forEach(function (c) {
+      var td = tr.insertCell();
+      if (c && c.nodeType) td.appendChild(c); else { td.textContent = c == null ? '' : String(c); }
+    });
+  }
+  function button(text, act) {
+    var b = document.createElement('button'); b.type = 'button'; b.textContent = text;
+    b.onclick = function () {
+      b.disabled = true; $('b-err').textContent = '';
+      act().then(load, function (e) { b.disabled = false; $('b-err').textContent = e.message; });
+    };
+    return b;
+  }
+  function load() {
+    Promise.all([run('sharedthemes'), fetch('/lite/api/overview', {credentials: 'same-origin'}).then(function (r) { return r.json(); })])
+      .then(function (got) {
+        var d = got[0], names = {};
+        (got[1].arcades || []).forEach(function (a) { names[a.id] = a.operator ? '@' + a.operator : String(a.id).slice(0, 12); });
+        var mine = $('b-mine'), others = $('b-others');
+        mine.textContent = ''; others.textContent = '';
+        d.mine.forEach(function (t) {
+          var tr = mine.insertRow();
+          cells(tr, [t.title, t.id.slice(0, 8) + '…', t.from === 'local' ? 'made here' : 'taken from the mesh',
+                     t.shared ? 'yes' : 'not yet',
+                     button(t.shared ? 'Stop offering' : 'Offer to the mesh', function () {
+                       return run('sharetheme ' + t.id + ' ' + (t.shared ? 'off' : 'on'));
+                     })]);
+        });
+        if (!d.mine.length) cells(mine.insertRow(), ['No theme is installed here yet.']);
+        d.offered.forEach(function (t) {
+          var tr = others.insertRow();
+          cells(tr, [t.title + ' ' + t.version, t.id.slice(0, 8) + '…',
+                     t.from.map(function (p) { return names[p] || String(p).slice(0, 12); }).join(', '),
+                     t.installed ? 'installed' : button('Install', function () { return run('taketheme ' + t.id); })]);
+          tr.title = t.summary || '';
+        });
+        if (!d.offered.length) cells(others.insertRow(), [d.mesh ? 'No linked arcade offers a theme yet.' : 'This arcade is not on the mesh.']);
+      })
+      .catch(function (e) { $('b-err').textContent = e.message; });
+  }
+  {% else %}
+  function load() {}
+  {% endif %}
+})();
+</script>
