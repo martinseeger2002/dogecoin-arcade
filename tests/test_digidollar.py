@@ -113,3 +113,20 @@ def test_the_pilot_redeems_a_vault_by_its_normal_path_and_burns_what_it_minted()
     assert outs[2] == (0, b"\x6a\x02DD\x01\x03" + tr.push(tr.num(1500)))
     with pytest.raises(ValueError, match="burns at least what the vault minted"):
         pilot.redeem({**vault, "cents": 20000}, owner, held, fee_coin, pay)
+
+
+def test_the_pilot_spends_mined_coins_only_once_ripe_and_asks_to_gather_many_small_ones():
+    _, pilot = _pilot()
+
+    class Ctx:
+        caller = {}
+        def rpc(self, chain, method, *params):
+            return {"height": 1000, "unspents": [
+                {"txid": "aa" * 32, "vout": 0, "amount": 1043, "coinbase": True, "height": 950, "scriptPubKey": "76a9"},
+                {"txid": "bb" * 32, "vout": 0, "amount": 1043, "coinbase": True, "height": 901, "scriptPubKey": "76a9"},
+                {"txid": "cc" * 32, "vout": 1, "amount": 5, "coinbase": False, "height": 999, "scriptPubKey": "76a9"}]}
+    coins, _ = pilot._coins(Ctx(), "dgbtest", "s-mine")
+    assert [c["txid"] for c in coins] == ["bb" * 32, "cc" * 32], "a block mined 50 deep is not ripe; 100 deep is"
+    many = [{"txid": f"{n:064x}", "vout": 0, "value": 1043 * 10 ** 8} for n in range(300)]
+    with pytest.raises(ValueError, match="gather it first"):
+        pilot.mint(_key()[0][1:], 10000, 0, 1000, 0, 319_015 * 10 ** 8, many, b"\x76")

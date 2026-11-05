@@ -630,6 +630,38 @@ def listchains(caller) -> list[dict]:
     return out
 
 
+@command("node", audience="operator")
+def mine(caller, chain: str, blocks: int = 0) -> dict:
+    """Mine a test chain's blocks to your own account, on this machine's CPU, until `mine stop`.
+
+    mine <chain> [blocks]   for example: mine dgbtest; then `mining`, and `mine stop`
+    From arcade-cli, to the operator's account, once its wallet has been opened here. The chain's own node mines, here. DigiByte testnet mines odo, qubit and skein side by side, a thread each. Coins
+    from a mined block can be spent once the chain is 100 blocks further."""
+    from .. import testmine
+    if str(chain) == "stop":
+        return {"stopping": testmine.stop(caller.state)}
+    found = next((c for c in caller.state.all_chains if c.network == str(chain)), None)
+    if found is None:
+        raise CommandError(f"this arcade has no {chain} chain; `listchains` lists them")
+    if not isinstance(blocks, int) or blocks < 0:
+        raise CommandError("blocks is a whole number: how many to mine before stopping, 0 for until `mine stop`")
+    address = caller.address(found) if caller.account else ""
+    op = getattr(caller.state, "operator", "") if not caller.account else ""
+    if op:                                                 # arcade-cli: the operator's own account, as its wallet said
+        address = str(caller.state.setting(f"address:{found.network}:{op}", "") or "")
+    try:
+        return testmine.start(caller.state, found, address, blocks)
+    except Exception as exc:                               # noqa: BLE001 -- said to the operator
+        raise CommandError(f"mine: {exc}") from exc
+
+
+@command("node", audience="operator")
+def mining(caller) -> dict:
+    """How the mining goes: the chain, the blocks found, each algorithm's hashes a second; or how it last ended."""
+    from .. import testmine
+    return testmine.status(caller.state)
+
+
 # --- the mesh -----------------------------------------------------------------------------------------------------
 
 

@@ -142,6 +142,7 @@ class Miner:
         on_progress: Callable[[int, float], None] | None = None,
         stop: Callable[[], bool] | None = None,
         max_tries: int = MAX_TRIES,
+        algo: str | None = None,
     ) -> str | None:
         """Attempt a single block. Returns its hash, or None if the attempt failed.
 
@@ -150,13 +151,14 @@ class Miner:
         is a normal outcome to try again rather than an error. It is asked in
         batches (see FIRST_TRIES); after each, `on_progress(tries, rate)` is
         told how many hashes have been tried and how fast, and `stop()` may
-        say to give up.
+        say to give up. `algo` names a multi-algorithm chain's algorithm (DigiByte's odo, qubit, skein...), which
+        its node takes as `generatetoaddress`'s fourth argument.
         """
         tries, batch = 0, FIRST_TRIES
         while tries < max_tries:
             started = time.monotonic()
             try:
-                result = self.rpc.call("generatetoaddress", 1, address, batch)
+                result = self.rpc.call("generatetoaddress", 1, address, batch, *([algo] if algo else []))
             except RpcError as exc:
                 raise MiningError(f"the node refused to mine: {exc}") from exc
             tries += batch
