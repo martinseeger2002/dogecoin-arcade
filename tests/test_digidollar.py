@@ -15,9 +15,9 @@ PILOT = Path(__file__).parent.parent / "examples" / "packages" / "digidollar"
 
 def test_the_pilot_package_is_a_module_this_arcade_reads():
     manifest, files = packages.read(PILOT)
-    assert manifest["kind"] == "module" and set(manifest["commands"]) == {"ddstats", "ddcollateral", "ddmint"}
+    assert manifest["kind"] == "module" and set(manifest["commands"]) == {"ddstats", "ddcollateral", "ddmint", "ddvaults", "ddredeem"}
     assert "lib/taproot.py" in files and not any("wallet" in m for m in manifest["needs"]["chains"]["dgb"])
-
+    assert manifest["needs"]["chains"]["dgbtest"] == manifest["needs"]["chains"]["dgb"]
 
 
 def test_the_pilot_mints_as_digibyte_core_builds_a_mint():
@@ -69,8 +69,47 @@ def test_the_pilot_says_its_core_is_still_syncing_rather_than_not_active():
             return {"getblockchaininfo": {"chain": "main", "blocks": 24_505_510, "headers": 24_505_510},
                     "getdigidollardeploymentinfo": {"enabled": False, "activation_height": 23_869_440,
                                                     "thaw_day": {"tip_height": 23_552_457}}}[method]
-    for run in (lambda: pilot.command_ddstats(Ctx()), lambda: pilot.command_ddcollateral(Ctx(), 100),
-                lambda: pilot.command_ddmint(Ctx(), 100)):
+    for run in (lambda: pilot.command_ddstats(Ctx()), lambda: pilot.command_ddstats(Ctx(), "main"),
+                lambda: pilot.command_ddcollateral(Ctx(), 100), lambda: pilot.command_ddmint(Ctx(), 100),
+                lambda: pilot.command_ddvaults(Ctx()), lambda: pilot.command_ddredeem(Ctx(), "ab")):
         with pytest.raises(ValueError, match="starts at block 23,869,440, and this arcade's DigiByte Core has checked "
                                              "blocks to 23,552,457: it is still syncing"):
             run()
+
+
+def _pilot():
+    sys.path.insert(0, str(PILOT))
+    try:
+        import importlib
+        return importlib.import_module("lib.taproot"), importlib.import_module("module")
+    finally:
+        sys.path.remove(str(PILOT))
+
+
+def test_the_pilot_redeems_a_vault_by_its_normal_path_and_burns_what_it_minted():
+    from arcade import taproot
+    tr, pilot = _pilot()
+    pub, _ = _key()
+    owner, pay = pub[1:], b"\x76\xa9\x14" + bytes(20) + b"\x88\xac"
+    made = pilot.mint(owner, 10000, 0, 1000, 0, 2 * 10 ** 11, [{"txid": "22" * 32, "vout": 0, "value": 10 ** 12}], pay)
+    vault_script = bytes.fromhex(made["outputs"][0][1])
+    vault = {"txid": "aa" * 32, "cents": 10000, "lock": 1340, "tier": 0, "collateral": 2 * 10 ** 11}
+    held = [{"txid": "bb" * 32, "vout": 1, "cents": 2500}, {"txid": "aa" * 32, "vout": 1, "cents": 10000}]
+    fee_coin = [{"txid": "cc" * 32, "vout": 3, "value": 10 ** 8}]
+    said = pilot.redeem(vault, owner, held, fee_coin, pay)
+    assert said["version"] == 0x03000770 and said["locktime"] == 1340
+    (v, *dd), fees = said["inputs"][:-1], said["inputs"][-1]
+    assert v["txid"] == "aa" * 32 and v["vout"] == 0 and v["sequence"] == 0xFFFFFFFE
+    assert taproot.leaf_mine(vault_script, bytes.fromhex(v["taproot"]["leaf"]), bytes.fromhex(v["taproot"]["control"]),
+                             pub), "the leaf and control block open the vault the mint made, for this key"
+    assert [(c["txid"], c["taproot"]) for c in dd] == [("aa" * 32, {"key": True})], "the mint's own dollars, enough"
+    assert fees == {"txid": "cc" * 32, "vout": 3}
+    (back, bs), (change, cs) = [(o[0], bytes.fromhex(o[1])) for o in said["outputs"]]
+    assert back == 2 * 10 ** 11 and bs == pay and cs == pay and 10_000_000 <= 10 ** 8 - change <= 30_000_000
+
+    said = pilot.redeem({**vault, "cents": 11000}, owner, held, fee_coin, pay)
+    outs = [(o[0], bytes.fromhex(o[1])) for o in said["outputs"]]
+    assert len(said["inputs"]) == 4 and outs[1] == (0, tr.p2tr(tr.tweak(owner))), "over the vault's: change in DD"
+    assert outs[2] == (0, b"\x6a\x02DD\x01\x03" + tr.push(tr.num(1500)))
+    with pytest.raises(ValueError, match="burns at least what the vault minted"):
+        pilot.redeem({**vault, "cents": 20000}, owner, held, fee_coin, pay)
