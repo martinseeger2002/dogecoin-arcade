@@ -491,6 +491,10 @@ def test_every_account_route_is_one_a_public_node_will_reach(client):
              if (getattr(route, "methods", None) or set()) & {"POST"}
              and route.path.startswith("/account/")}
     listed = {path.rstrip("/") or "/" for path in door.PUBLIC_POST}
+    # A route with a part in its path ({kid}) is listed by its shape (door.PUBLIC_POST_SHAPES), tried with a sample.
+    import re as _re
+    listed |= {p for p in asked if "{" in p and any(shape.match(_re.sub(r"\{[^}]+\}", "0" * 8, p))
+                                                    for shape in door.PUBLIC_POST_SHAPES)}
     assert asked - listed == set(), \
         f"{sorted(asked - listed)} needs adding to door.PUBLIC_POST"
 
