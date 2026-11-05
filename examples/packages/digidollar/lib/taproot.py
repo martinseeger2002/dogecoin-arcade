@@ -61,12 +61,19 @@ def lift_x(xonly: bytes):
     return x, y if y % 2 == 0 else P - y
 
 
-def tweak(xonly: bytes, merkle_root: bytes = b"") -> bytes:
-    """The output key of a Taproot output with this internal key and script tree (BIP-341 taproot_tweak_pubkey)."""
+def tweaked(xonly: bytes, merkle_root: bytes = b"") -> tuple[bytes, int]:
+    """(the output key, the parity of its y) of a Taproot output with this internal key and script tree (BIP-341
+    taproot_tweak_pubkey). The parity goes in a script path's control block."""
     t = int.from_bytes(tagged("TapTweak", xonly + merkle_root), "big")
     if t >= N:
         raise ValueError("tweak out of range")
-    return _add(lift_x(xonly), _mul(t, G))[0].to_bytes(32, "big")
+    q = _add(lift_x(xonly), _mul(t, G))
+    return q[0].to_bytes(32, "big"), q[1] & 1
+
+
+def tweak(xonly: bytes, merkle_root: bytes = b"") -> bytes:
+    """The output key alone."""
+    return tweaked(xonly, merkle_root)[0]
 
 
 def compact(n: int) -> bytes:
@@ -109,6 +116,43 @@ def push(data: bytes) -> bytes:
     if len(data) <= 0xFF:
         return b"\x4c" + bytes([len(data)]) + data
     return b"\x4d" + len(data).to_bytes(2, "little") + data
+
+
+def pushes(script: bytes) -> list:
+    """A script's items: the bytes of each push, and each opcode as an int. Enough to read an OP_RETURN record."""
+    out, at = [], 0
+    while at < len(script):
+        op = script[at]
+        at += 1
+        if 1 <= op <= 0x4B:
+            size = op
+        elif op in (0x4C, 0x4D):
+            width = 1 if op == 0x4C else 2
+            size, at = int.from_bytes(script[at:at + width], "little"), at + width
+        else:
+            out.append(op)
+            continue
+        if at + size > len(script):
+            raise ValueError("that script ends inside a push")
+        out.append(script[at:at + size])
+        at += size
+    return out
+
+
+def read_num(data) -> int:
+    """CScriptNum, the other way: a push's bytes (or OP_0, OP_1 to OP_16) as a number."""
+    if isinstance(data, int):
+        if data == OP_0:
+            return 0
+        if 0x51 <= data <= 0x60:
+            return data - 0x50
+        raise ValueError(f"opcode {data:#x} is not a number")
+    if not data:
+        return 0
+    n = int.from_bytes(data, "little")
+    if data[-1] & 0x80:
+        return -(n & ~(0x80 << (8 * (len(data) - 1))))
+    return n
 
 
 def push_int(n: int) -> bytes:

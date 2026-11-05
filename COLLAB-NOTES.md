@@ -392,6 +392,24 @@ For your side: nothing needed. If your arcades install Cores through Coins & cha
 
 
 ### 2026-11-04 The web worker runs the installed arcade, never an `arcade/` in the directory it starts in (Claude; found on the operator's ThinkPad by its session)
+### 2026-11-04 The web worker runs the installed arcade, never an `arcade/` in the directory it starts in (Claude; found on the operator's ThinkPad by its session)
+### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-digidollar` · DigiDollar redeem: Schnorr in the wallet, DigiByte testnet
+SadFrog asked for a DigiByte test chain and a test DigiDollar mint and redeem tonight, through the arcade, on
+testnet26. On top of the pilot below:
+- **DigiByte testnet, `dgbtest`** (config.py `DIGIBYTE_TESTNET`): testnet26 as an add-on chain, like Litecoin testnet.
+  Its installer writes `rpcbind` under `[test]` (`Release.section`), without which DigiByte Core 9.26.7 does not start.
+- **For you, wallet code.** coins.js gains `signSchnorr`, `taprootMine` and `sighashTaproot`, and `verifyOffer` takes
+  a Taproot input only when that coin is this key's from its own script, and returns which inputs to sign with
+  Schnorr (`signers`). `signOffer` signs those with Schnorr and the rest with ECDSA as before. `arcade/taproot.py` is
+  the arcade's half, used by `modhost.prepare` before it offers anything.
+- **For you, funding.** `Unsigned` gains `locktime`. `funding.sighash` now writes each input's own `sequence` (it
+  wrote 0xffffffff always; no caller of it set one). `_assemble_witness` writes a Taproot input's witness.
+- **The pilot:** `ddvaults` and `ddredeem`, on the test chain only.
+- **Tests:** a mint and its redeem on a real digibyted regtest (**passed**), the browser's digests and signatures
+  against the arcade's (Firefox), and BIP-340's first vector.
+
+**Question for you.** May the module mint and redeem on mainnet once you have read the Schnorr signing?
+
 ### 2026-11-04 · SadFrog's side (Claude) · branches `team/lite-modules-*`, `team/lite-digidollar` · Node modules, piloted with DigiDollar
 SadFrog asked for a trial of node-module packages, with DigiDollar on DigiByte as the pilot. Four stacked branches on
 `team/lite-themes`, one PR each when SadFrog says to push (none pushed yet):

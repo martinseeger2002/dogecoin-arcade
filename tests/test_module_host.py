@@ -28,6 +28,7 @@ class Chain:
     """A Core that answers the reads these tests ask, and says which it was asked."""
     def __init__(self, address=""):
         self.address, self.asked = address, []
+        self.outs = {}                                     # more coins: (txid, vout) -> (value, script)
 
     def __call__(self, network):
         if network != "main":
@@ -38,6 +39,9 @@ class Chain:
         self.asked.append(method)
         if method == "getblockcount":
             return 812
+        if method == "gettxout" and (params[0], params[1]) in self.outs:
+            value, script = self.outs[params[0], params[1]]
+            return {"value": value / 100_000_000, "scriptPubKey": {"hex": script.hex()}}
         if method == "gettxout":
             return {"value": 1.5, "scriptPubKey": {"hex": p2pkh_script(self.address).hex()}} \
                 if params[0] == "aa" * 32 else None
@@ -123,3 +127,63 @@ def test_the_module_sign_box_says_every_payment_and_the_prepared_spend_is_bounde
     coins = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/coins.js").read_text()
     assert "a Taproot output" in coins, "a vault is said as a payment, not as bytes"
     assert modhost.MOST_INPUTS <= 100 and modhost.BUSY_WAIT < modhost.TIMEOUT
+
+def redeem_offer(host, settings, chain):
+    """A DigiDollar redeem as the pilot prepares it, and the arcade's offer for it: the vault by its normal path, the
+    DigiDollars by their key path, and a DGB coin of the caller's for the fee. (pubkey, secret, prepared, unsigned)"""
+    import importlib
+    from test_taproot import keypair
+    pilot_dir = str(Path(__file__).parent.parent / "examples" / "packages" / "digidollar")
+    sys.path.insert(0, pilot_dir)
+    try:
+        tr, pilot = importlib.import_module("lib.taproot"), importlib.import_module("module")
+    finally:
+        sys.path.remove(pilot_dir)
+    pub, secret = keypair()
+    # The test module's fee cap is a test's; a redeem pays about 0.2 DGB, under the pilot's 0.5.
+    found = host.installed
+    host.installed = lambda s: {k: (v[0], {**v[1], "needs": {**v[1]["needs"], "max_fee": 50_000_000}})
+                                for k, v in found(s).items()}
+    chain.address = b58check_encode(PEP.pubkeyhash_version, hash160(pub))
+    pay = p2pkh_script(chain.address)
+    made = pilot.mint(pub[1:], 10000, 0, 1000, 0, 2 * 10 ** 9, [{"txid": "22" * 32, "vout": 0, "value": 10 ** 11}], pay)
+    chain.outs = {("cc" * 32, 0): (2 * 10 ** 9, bytes.fromhex(made["outputs"][0][1])),
+                  ("cc" * 32, 1): (0, bytes.fromhex(made["outputs"][1][1]))}
+    vault = {"txid": "cc" * 32, "cents": 10000, "lock": 1340, "tier": 0, "collateral": 2 * 10 ** 9}
+    prepared = {**pilot.redeem(vault, pub[1:], [{"txid": "cc" * 32, "vout": 1, "cents": 10000}],
+                               [{"txid": "aa" * 32, "vout": 0, "value": 150_000_000}], pay), "chain": "main"}
+    return pub, secret, prepared, host.prepare(settings, "hello", prepared, chain.address, pub)[1]
+
+
+def test_a_prepared_transaction_spends_the_callers_taproot_coins_by_their_key_or_a_leaf_for_it(installed):
+    from arcade import taproot
+    from test_taproot import keypair, schnorr, tweaked_secret
+    host, settings, chain = installed
+    pub, secret, prepared, unsigned = redeem_offer(host, settings, chain)
+    assert unsigned.version == 0x03000770 and unsigned.locktime == 1340 and unsigned.raw.endswith("3c050000")
+    (vault, dd, fee) = unsigned.inputs
+    assert vault["taproot"]["leaf"] and dd["taproot"] == {"key": True} and "taproot" not in fee
+    assert vault["sequence"] == dd["sequence"] == 0xFFFFFFFE and "sequence" not in fee
+    assert unsigned.fee == 150_000_000 - unsigned.outputs[1][0] and unsigned.outputs[0][0] == 2 * 10 ** 9
+    shown = unsigned.as_json()["inputs"]
+    assert shown[0]["spent"] == chain.outs["cc" * 32, 0][1].hex() and "spent" not in shown[2]
+    # The digests are BIP-341's over every coin: signed by the key (leaf) and the tweaked key (key path), they verify.
+    for h, by, key in ((unsigned.sighashes[0], secret, pub[1:]),
+                       (unsigned.sighashes[1], tweaked_secret(secret), chain.outs["cc" * 32, 1][1][2:])):
+        assert taproot.verify(key, bytes.fromhex(h), schnorr(by, bytes.fromhex(h)))
+    raw = funding.assemble(unsigned, [schnorr(secret, bytes.fromhex(unsigned.sighashes[0])).hex(),
+                                      schnorr(tweaked_secret(secret), bytes.fromhex(unsigned.sighashes[1])).hex(),
+                                      "30" + "00" * 8], pub)
+    assert raw.startswith("700700030001") and raw.endswith("3c050000"), "segwit, and the vault's lock time"
+
+    other, _ = keypair()
+    with pytest.raises(modhost.ModuleFailed, match="not a Taproot coin of your key"):
+        host.prepare(settings, "hello", prepared, chain.address, other)
+    with pytest.raises(modhost.ModuleFailed, match="open your wallet"):
+        host.prepare(settings, "hello", prepared, chain.address)
+    sneaky = {**prepared, "inputs": prepared["inputs"][:2] + [{**prepared["inputs"][2], "sequence": 0}]}
+    with pytest.raises(modhost.ModuleFailed, match="does not wait"):
+        host.prepare(settings, "hello", sneaky, chain.address, pub)
+    keyless = {**prepared, "inputs": [{**prepared["inputs"][0], "taproot": {"key": True}}] + prepared["inputs"][1:]}
+    with pytest.raises(modhost.ModuleFailed, match="not a Taproot coin of your key"):
+        host.prepare(settings, "hello", keyless, chain.address, pub)

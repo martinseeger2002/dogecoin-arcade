@@ -50,33 +50,45 @@ Sources: R = https://github.com/DigiByte-Core/digibyte, RAW = https://raw.github
 ## The pilot: what works
 
 - **A node module package, `digidollar`,** runs confined in the arcade's home, with no keys: `ddstats` and
-  `ddcollateral` for anyone, and `ddmint` for a signed-in user, plus a page at `/m/digidollar/`.
-- **A mint needs no Core wallet.** Its inputs are ordinary DGB coins, and DigiByte's mint rules say nothing about
-  them. So the module builds the mint itself, exactly as the Core's builder does, from the user's own coins. The arcade
-  checks the coins are the user's and hands it to the user's wallet, which signs it like any send (ECDSA).
+  `ddcollateral` for anyone; `ddmint`, `ddvaults` and `ddredeem` for a signed-in user; and a page at `/m/digidollar/`.
+- **No Core wallet is needed for a mint or a redeem.** The module builds each exactly as the Core's builder does, from
+  the user's own coins, and the arcade checks every coin is the user's before the user's wallet signs.
   - The module names the user's key as the vault's owner. The key comes from the user's wallet, and the arcade passes
     it on only when it hashes to the user's address.
-- **Tested:** the builder against BIP-341's own vectors, and DigiByte's script encoding
-  (`tests/test_module_packages.py`). A mint against a real DigiByte Core 9.26.7 on regtest, signed by a key no Core
-  holds (`tests/test_digidollar_regtest.py`, skipped where `digibyted` is not installed). It passed on 2026-11-04
-  against DigiByte Core 9.26.7: the node took the mint into a block, and its supply went from $0 to $100.
+  - **Mint:** ordinary DGB coins in, signed with ECDSA like any send.
+  - **Redeem** (version `0x03000770`, lock time = the vault's lock height): the vault first, by its normal script path
+    (witness: signature, leaf, control block with the NUMS key and the emergency leaf's hash), then the DigiDollars to
+    burn, by their key path (one signature by the tweaked key), then a DGB coin for the fee. Both Taproot inputs wait
+    (sequence `0xFFFFFFFE`). Every DGB in the vault comes back; dollars over the vault's come back as DigiDollars
+    (`OP_RETURN "DD" 3 <cents>`). Signed with Schnorr (BIP-340, SIGHASH_DEFAULT) by the wallet.
+- **The wallet's Schnorr signing (coins.js):** `taprootMine` checks a Taproot coin is this key's from its own script
+  (the key path of this key, or a leaf ending in this key and OP_CHECKSIG that opens the coin); `sighashTaproot` works
+  out BIP-341's digest from the transaction and every input's value and script; `signSchnorr` signs. `arcade/taproot.py`
+  is the arcade's half (the same checks in `modhost.prepare`, and the digests it offers).
+- **DigiByte's test chain in the arcade:** `dgbtest` (testnet26), an add-on chain like Litecoin testnet: P2PKH 126,
+  P2SH 140, RPC 14026, P2P 12033, its node in `~/.digibyte-testnet/` with its RPC address under `[test]`.
+- **Tested:**
+  - The builder against BIP-341's vectors, the wallet's signer against BIP-340's first vector, and the browser's
+    digests against the arcade's (`tests/test_lite_schnorr_browser.py`).
+  - A mint and its redeem against a real DigiByte Core 9.26.7 on regtest, signed by a key no Core holds
+    (`tests/test_digidollar_regtest.py`, skipped where `digibyted` is not installed). It passed on 2026-11-04: the node
+    took the mint ($0 to $100 of supply), then 340 blocks later the redeem (back to $0, every DGB returned).
 
 ## What does not work yet
 
-- **Send and redeem.** Both spend Taproot outputs, and the arcade's wallet (coins.js) signs ECDSA only. They need
-  BIP-340 signing in the wallet and Taproot spends in the arcade's builder. Until then **the module refuses to mint on
-  mainnet**: the DGB would sit in a vault that the same wallet cannot open.
-- **A public test network.** Testnet26 needs a sync of unknown size and test DGB from the project's chat. Regtest has
-  everything a test needs, the mock oracle included.
+- **Sending DigiDollars** (version `0x02000770`, `OP_RETURN "DD" 2 <cents>...`). The signing is the redeem's key path;
+  the builder and the `DD...` address format are not written.
+- **Mainnet.** The module mints and redeems on the test chain only until the wallet's Schnorr signing is reviewed.
+- **A vault whose dollars were sent on** is not found by `ddvaults`: it is found by its own DigiDollar output.
 
 ## Decisions for the user and for the operator
 
-1. **Taproot signing in the wallet** (BIP-340 in coins.js, and Taproot inputs in the arcade's builder). Send, redeem
-   and mainnet minting all need it. It is wallet code, so it is the operator's to review.
+1. **Taproot signing in the wallet** (BIP-340 in coins.js, Taproot inputs in `funding` and `modhost.prepare`): written
+   and tested on 2026-11-04 for the redeem. It is wallet code, so it is the operator's to review before mainnet.
 2. **Prepared transactions from modules.** The arcade checks that every coin is the caller's and caps the fee, but a
    module chooses the outputs. The wallet shows the module's summary, the fee and the change. Is that enough, or
    should a module's transaction also list every output in plain words before signing?
 3. **Coins that carry an inscription.** The module picks coins from the user's address. The arcade's own sends avoid
    coins with inscriptions on them, but `modhost.prepare` does not check that yet.
-4. **Testnet26 or regtest only** for the arcade's DigiByte test chain. A DigiByte test chain in the arcade itself (its
-   Params, keys and coin type) is not part of this pilot.
+4. **Testnet26** is the arcade's DigiByte test chain (SadFrog, 2026-11-04). Its oracle is the real 7-of-35, so a mint or
+   redeem waits for a signed price as on mainnet. Test DGB comes from DigiByte's community.
