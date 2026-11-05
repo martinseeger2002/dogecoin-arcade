@@ -10,6 +10,7 @@
    "params": {
     "activation_height": 1289000,
     "addon": true,
+    "algos": [],
     "asks_from": null,
     "auxpow_chain_id": 16,
     "auxpow_chain_mask": 31,
@@ -64,6 +65,13 @@
    "params": {
     "activation_height": 24450000,
     "addon": true,
+    "algos": [
+     "sha256d",
+     "scrypt",
+     "skein",
+     "qubit",
+     "odo"
+    ],
     "asks_from": null,
     "auxpow_chain_id": null,
     "auxpow_chain_mask": 65535,
@@ -118,6 +126,13 @@
    "params": {
     "activation_height": 595000,
     "addon": true,
+    "algos": [
+     "sha256d",
+     "scrypt",
+     "skein",
+     "qubit",
+     "odo"
+    ],
     "asks_from": null,
     "auxpow_chain_id": null,
     "auxpow_chain_mask": 65535,
@@ -175,6 +190,7 @@
    "params": {
     "activation_height": 6415000,
     "addon": true,
+    "algos": [],
     "asks_from": null,
     "auxpow_chain_id": 98,
     "auxpow_chain_mask": 65535,
@@ -228,6 +244,7 @@
    "params": {
     "activation_height": 914000,
     "addon": true,
+    "algos": [],
     "asks_from": null,
     "auxpow_chain_id": 163,
     "auxpow_chain_mask": 65535,
@@ -281,6 +298,7 @@
    "params": {
     "activation_height": 1530000,
     "addon": true,
+    "algos": [],
     "asks_from": null,
     "auxpow_chain_id": null,
     "auxpow_chain_mask": 65535,
@@ -334,6 +352,7 @@
    "params": {
     "activation_height": 1153000,
     "addon": true,
+    "algos": [],
     "asks_from": null,
     "auxpow_chain_id": 8211,
     "auxpow_chain_mask": 65535,
@@ -388,6 +407,7 @@
    "params": {
     "activation_height": 3197300,
     "addon": true,
+    "algos": [],
     "asks_from": null,
     "auxpow_chain_id": null,
     "auxpow_chain_mask": 65535,
@@ -442,6 +462,7 @@
    "params": {
     "activation_height": 4926300,
     "addon": true,
+    "algos": [],
     "asks_from": null,
     "auxpow_chain_id": null,
     "auxpow_chain_mask": 65535,
@@ -495,6 +516,7 @@
    "params": {
     "activation_height": 1208000,
     "addon": false,
+    "algos": [],
     "asks_from": null,
     "auxpow_chain_id": 63,
     "auxpow_chain_mask": 65535,
@@ -548,6 +570,7 @@
    "params": {
     "activation_height": 0,
     "addon": false,
+    "algos": [],
     "asks_from": 0,
     "auxpow_chain_id": null,
     "auxpow_chain_mask": 65535,
@@ -601,6 +624,7 @@
    "params": {
     "activation_height": 1496133,
     "addon": false,
+    "algos": [],
     "asks_from": 1496133,
     "auxpow_chain_id": null,
     "auxpow_chain_mask": 65535,
@@ -654,6 +678,7 @@
    "params": {
     "activation_height": 228000,
     "addon": true,
+    "algos": [],
     "asks_from": null,
     "auxpow_chain_id": null,
     "auxpow_chain_mask": 65535,
