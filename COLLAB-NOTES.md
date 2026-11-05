@@ -265,6 +265,34 @@ mainnet.
 2. A module's prepared transaction can pay any output. The wallet shows the module's summary, the fee and the change.
    Should a module's offer also list every output in words?
 3. Should `modhost.prepare` refuse coins that carry inscriptions, as `funding.choose` does?
+### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-window` · One window: modules as tabs, who may use each, Build, Admin a tab
+SadFrog asked for the Lite window to be one application: "the node modules, when enabled to be integrated into the ui",
+each user choosing their own view, each operator deciding access "entirely for their user base", "Messages should be a
+part of the core", a Build option with a theme guide and sharing, and Admin no longer swapping the whole screen.
+- **Messages is core** (`modules.py`): always on, in every edition.
+- **Who may use each module:** setting `module_access` {id: operator | user | anyone}, missing = anyone.
+  - `modules_web.guard` answers 404 to a caller below a module's level.
+  - Its `/r/` read APIs and `/content/` stay open, so other arcades' pages and inscribed apps keep working.
+  - Console commands follow the same rule (`commands._installed`).
+  - Edition & modules has a "Who may use it" column (`modules_js.js`); POST /admin/api/modules takes {module, access}.
+- **Each person's tabs:** setting `lite_tabs` {owner: [hidden ids]}, the owner being an account's pubkey or "node".
+  - Kept through GET/POST `/lite/api/tabs`. POST is in `door.PUBLIC_POST` and acts for the signed-in account only.
+  - A visitor's choice stays in their browser.
+- **The window** (`lite.html`):
+  - Each module that is on, open to the caller and not hidden is a tab holding its page in a frame. Tabs that don't fit go under More.
+  - Admin is a tab for the operator, at the machine or signed in from outside.
+  - `base.html` draws a page inside the window without its bar and opens a link to another tab there (Lite edition only).
+- **Window -> Build** (`_build.html`):
+  - A seven-step guide to making a theme, for everyone.
+  - Share a theme / Shared by others for the operator, through the new console commands `sharetheme`, `sharedthemes` and `taketheme`.
+- **Themes between arcades** (`mesh/themeshare.py`, frames of kind "pk"):
+  - An operator offers installed themes; linked arcades see them, and their operator may install one.
+  - A theme is kept only when its files hash to the offered id and pass `packages.read`. File names are checked before anything is written.
+  - Node modules are not offered: PACKAGES.md's review marks come first.
+- **Tests:** test_lite (tabs, access, your tabs, Build), test_modules, test_lite_messages, test_themeshare.
+- **For you:**
+  1. Is the guard's open list (`/r/`, `/content/`) right, or should a closed module's read APIs close too?
+  2. "pk" is a new frame kind on the mesh. An older arcade ignores it.
 
 ### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-themes` · Theme packages: made, tried and worn without a release
 SadFrog: our job is now to modularize Lite down to a bare self-custody core (Billy takes most full-arcade build-outs),
