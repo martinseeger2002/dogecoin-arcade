@@ -105,8 +105,10 @@ RELEASES["ltctest"] = Release("litecoin", "0.21.5.8", RELEASES["ltc"].url, RELEA
                               RELEASES["ltc"].daemon, RELEASES["ltc"].cli, extra=("testnet=1",))
 # DigiByte testnet26: the same Core, its own folder, and its RPC address in a [test] section, without which DigiByte
 # Core 9.26.7 will not start on its test chain ("-rpcbind only applied on test network when in [test] section").
+# Sixteen RPC threads: `mine` holds one per algorithm while it hashes, and the arcade's own reads need the rest.
 RELEASES["dgbtest"] = Release("digibyte", "9.26.7", RELEASES["dgb"].url, RELEASES["dgb"].assets,
-                              RELEASES["dgb"].daemon, RELEASES["dgb"].cli, extra=("testnet=1",), section="test")
+                              RELEASES["dgb"].daemon, RELEASES["dgb"].cli, extra=("testnet=1", "rpcthreads=16"),
+                              section="test")
 #: Chains with no install here yet, and why (shown on their row).
 NOT_OFFERED = {
     "kot": "Kotia publishes an x86_64 build only (v2.4), newer than the Kotia 1.0.0 this arcade was written against: "

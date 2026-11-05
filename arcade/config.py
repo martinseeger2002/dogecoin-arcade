@@ -216,6 +216,10 @@ class Params:
     #: work this arcade cannot check (a multi-algorithm chain such as DigiByte): its blocks are still
     #: proved by hash, merkle root and linkage, and the admin panel says the work is the sharer's word.
     pow_algo: str = "scrypt"
+    #: The algorithms a test chain's own node mines with, side by side (`generatetoaddress ... <algo>`), for a
+    #: multi-algorithm chain: each has its own difficulty, so a CPU does best on the ones little else mines. Empty:
+    #: the node's one way (2026-11-04, DigiByte testnet).
+    mine_algos: tuple = ()
 
     # --- what a chain is, as data (2026-10-18, the operator: "Eventually, we want to add Digi bite and
     # other aux pow chains"): a new chain is a Params entry, not code. -------------------------------
@@ -758,6 +762,9 @@ DIGIBYTE_TESTNET = dataclasses.replace(
     label="DigiByte testnet",
     genesis="0c9af936f28f7bd0e90c8f6235399063a026ed267bb53da398313b5d7aa55d82",
     node_dir=".digibyte-testnet", real_coins=False, bech32_hrp="dgbt",
+    # Measured on a 4-core test node on 2026-11-04, one thread each against the whole network: odo 12 kH/s (network
+    # 8 kH/s), qubit 71 kH/s (104 kH/s), skein 661 kH/s (1.07 MH/s), scrypt 2.7 kH/s (29 kH/s), sha256d hardware's.
+    mine_algos=("odo", "qubit", "skein"),
 )
 
 # Flopcoin MAINNET (the operator's side, 2026-11-03). Flopcoin Core v2.0.0.0 (github.com/Flopcoin/Flopcoin, tag v2.0.0.0,

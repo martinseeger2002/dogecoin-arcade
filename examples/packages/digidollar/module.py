@@ -115,6 +115,9 @@ def _pay(coins: list[dict], outputs: list, need: int, spend_size: int, change_sc
     is what each coin adds to the transaction, `extra` the bytes of anything else it carries (a witness)."""
     chosen, total = [], 0
     for coin in sorted(coins, key=lambda c: -c["value"]):
+        if len(chosen) == MOST_COINS:
+            raise ValueError(f"your DGB is in {len(coins)} small coins, and this needs more than {MOST_COINS} of them: "
+                             f"gather it first by sending it all to your own address in your wallet, then try again")
         chosen.append(coin)
         total += coin["value"]
         size = 10 + extra + spend_size * len(chosen) + sum(9 + len(s) for _, s in outputs) + 9 + len(change_script)
@@ -213,10 +216,20 @@ def _owner(ctx, net: str) -> tuple[str, bytes]:
     return address, bytes.fromhex(key)[1:]
 
 
+#: A mined block's coins can be spent once the chain is this many blocks further (consensus.h COINBASE_MATURITY_2).
+RIPE = 100
+#: The most coins one mint or redeem spends: each adds about 0.05 DGB of fee at DigiDollar's rate, and the arcade caps
+#: a module's fee.
+MOST_COINS = 50
+
+
 def _coins(ctx, net: str, address: str) -> tuple[list[dict], bytes]:
+    """The caller's coins that can be spent now (a mined block's only once ripe), and the script they pay."""
     found = ctx.rpc(net, "scantxoutset", "start", [f"addr({address})"])
-    coins = [{"txid": u["txid"], "vout": u["vout"], "value": _sats(u["amount"])} for u in found.get("unspents", [])]
-    return coins, (bytes.fromhex(found["unspents"][0]["scriptPubKey"]) if coins else b"")
+    tip = found.get("height", 0)
+    ripe = [u for u in found.get("unspents", []) if not u.get("coinbase") or tip - u.get("height", tip) + 1 >= RIPE]
+    coins = [{"txid": u["txid"], "vout": u["vout"], "value": _sats(u["amount"])} for u in ripe]
+    return coins, (bytes.fromhex(ripe[0]["scriptPubKey"]) if coins else b"")
 
 
 def command_ddmint(ctx, amount, tier=0):
