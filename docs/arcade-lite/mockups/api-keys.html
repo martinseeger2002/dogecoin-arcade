@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lite API Mockups</title>
+<style>
+:root{--win:#f5eadc;--panel:#fff8f0;--ink:#1d1d1d;--muted:#7a6a58;--line:#d9bf9f;--sel:#b85c2e;--bar:#ecd3b6;
+  --ok:#2e7d32;--warn:#b26a00;--bad:#c62828;--new:#1f6fd6;--page:#e9e4dc;--mono:ui-monospace,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--win:#2b2622;--panel:#211d1a;--ink:#ece4da;
+  --muted:#a8998a;--line:#55483c;--sel:#d0773f;--bar:#3a322b;--ok:#66bb6a;--warn:#ffb74d;--bad:#ef5350;--new:#64a8ff;--page:#171412}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font:13px/1.45 system-ui,-apple-system,"Segoe UI",Ubuntu,sans-serif;padding:24px 16px 60px}
+.wrap{max-width:1000px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px} h2{font-size:16px;margin:34px 0 4px}
+.lead,.cap{color:var(--muted);max-width:800px;margin:0 0 12px}
+.window{background:var(--win);border:1px solid var(--line);box-shadow:0 8px 30px rgba(0,0,0,.18)}
+.window>header{display:flex;justify-content:space-between;padding:5px 8px;background:var(--bar);border-bottom:1px solid var(--line);font-weight:600}
+.wtabs{display:flex;gap:2px;padding:6px 8px 0;border-bottom:1px solid var(--line);overflow-x:auto}
+.wtabs span{padding:4px 10px;border:1px solid transparent;border-bottom:0;white-space:nowrap}
+.wtabs span.on{background:var(--panel);border-color:var(--line);font-weight:600}
+.wtabs .new{outline:2px dashed var(--new);outline-offset:-2px}
+.wbody{padding:12px}
+fieldset{border:1px solid var(--line);border-radius:3px;margin:0 0 12px;padding:8px 10px 10px;background:var(--panel)}
+legend{padding:0 4px;font-weight:600}
+table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600}
+.muted{color:var(--muted)} .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+.btn{display:inline-block;padding:3px 12px;background:var(--bar);border:1px solid var(--line);border-radius:3px;white-space:nowrap}
+.pill{display:inline-block;padding:1px 8px;border:1px solid var(--line);border-radius:10px;font-size:12px;margin:1px}
+.pill.on{background:var(--sel);color:#fff;border-color:var(--sel)}
+.input{display:inline-block;min-width:220px;padding:3px 6px;border:1px solid var(--line);background:var(--panel)}
+pre{margin:6px 0;padding:8px;background:var(--panel);border:1px solid var(--line);font:12px/1.45 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+code{font:12px var(--mono)}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.key{font:13px var(--mono);background:#fff3c4;color:#1d1d1d;padding:6px 8px;border:1px solid #d6b84a}
+.q{margin:22px 0 0;padding:10px 12px;border-left:3px solid var(--new);background:var(--panel)}
+@media (max-width:720px){.cols{grid-template-columns:1fr}}
+</style>
+</head>
+<body><div class="wrap">
+<h1>Everything by API, with keys the operator gives out</h1>
+<p class="lead">Mockups for Window → Build → API. Nothing is built yet. Every page and action the arcade has belongs to
+one module, so a key opens exactly the modules its operator picks: Explore and Feed to read, say, or the Exchange to
+trade. A key works where the operator would, at the machine or from anywhere, and it never opens anything the arcade
+itself does not have. Under the API the arcade is unchanged: the same chains, wallet, mesh and rules.</p>
+
+<h2>1 · Window → Build → API keys</h2>
+<p class="cap">The operator makes a key, names it, and picks what it opens. The key is shown once; the arcade keeps
+only its hash. Each key shows when it was last used, and can be switched off or deleted at once.</p>
+<div class="window"><header><span>Build</span><span>×</span></header>
+  <div class="wtabs"><span>Make a theme</span><span>Share a theme</span><span>Shared by others</span><span class="on new">API keys</span><span class="new">API reference</span></div>
+  <div class="wbody">
+    <table><thead><tr><th>Key</th><th>Opens</th><th>Can</th><th>Last used</th><th></th></tr></thead><tbody>
+      <tr><td><b>feed-bot</b><div class="muted"><code>ak_7f3c…</code></div></td><td>Feed, Explore</td><td>read, write</td><td>2 min ago</td><td><span class="btn">Switch off</span> <span class="btn">Delete</span></td></tr>
+      <tr><td><b>dashboard</b><div class="muted"><code>ak_19be…</code></div></td><td>Overview, Explore, Mesh</td><td>read</td><td>never</td><td><span class="btn">Switch off</span> <span class="btn">Delete</span></td></tr>
+      <tr><td><b>market-maker</b><div class="muted"><code>ak_c02d…</code></div></td><td>Exchange, Wallet</td><td>read, write, <span class="bad">spend ≤ 50 DOGE a day</span></td><td>1 h ago</td><td><span class="btn">Switch off</span> <span class="btn">Delete</span></td></tr>
+    </tbody></table>
+    <p style="margin:10px 0 0"><span class="btn">New key…</span></p>
+  </div></div>
+
+<h2>2 · New key</h2>
+<p class="cap">The modules listed are the ones that run on this arcade. <b>Read</b> is GET only. <b>Write</b> also posts,
+such as a feed post or an order. <b>Spend</b> moves the node's own coins: off unless you tick it, and then only up to a
+daily cap per chain.</p>
+<div class="window"><header><span>New API key</span><span>×</span></header><div class="wbody">
+  <div class="cols">
+    <div>
+      <p>Name <span class="input">feed-bot</span></p>
+      <table><thead><tr><th>Module</th><th>Read</th><th>Write</th></tr></thead><tbody>
+        <tr><td>Your arcade <span class="muted">(overview, chains)</span></td><td>☑</td><td>☐</td></tr>
+        <tr><td>Messages</td><td>☐</td><td>☐</td></tr>
+        <tr><td>Feed</td><td>☑</td><td>☑</td></tr>
+        <tr><td>Explore</td><td>☑</td><td>☐</td></tr>
+        <tr><td>Exchange</td><td>☐</td><td>☐</td></tr>
+        <tr><td>Mesh link</td><td>☐</td><td>☐</td></tr>
+        <tr><td>Wallet</td><td>☐</td><td>☐</td></tr>
+        <tr><td>DigiDollar <span class="muted">node module</span></td><td>☐</td><td>☐</td></tr>
+      </tbody></table>
+    </div>
+    <div>
+      <fieldset><legend>Spend the node's coins</legend>
+        <p style="margin:0 0 6px">☐ This key may send, inscribe and trade with the node's wallet</p>
+        <p class="muted" style="margin:0">Daily cap per chain: <span class="input" style="min-width:80px">50</span> DOGE …</p></fieldset>
+      <fieldset><legend>Where from</legend>
+        <p style="margin:0"><span class="pill on">Anywhere</span> <span class="pill">This machine only</span> <span class="pill">These addresses…</span></p></fieldset>
+      <fieldset><legend>Ends</legend>
+        <p style="margin:0"><span class="pill on">Never</span> <span class="pill">30 days</span> <span class="pill">On a date…</span></p></fieldset>
+    </div>
+  </div>
+  <p style="text-align:right;margin:4px 0 0"><span class="btn">Cancel</span> <span class="btn">Make the key</span></p>
+</div></div>
+<div class="window" style="margin-top:12px"><header><span>Your new key</span><span>×</span></header><div class="wbody">
+  <p style="margin:0 0 6px">Copy it now. It is not shown again; the arcade keeps only its hash.</p>
+  <div class="key">ak_7f3c9e0b5d214a6c8f2e91b07d44c3a1e6f0b2d9c8a75e14</div>
+</div></div>
+
+<h2>3 · Window → Build → API reference</h2>
+<p class="cap">Every route of every module that runs here, grouped by module, read from the arcade's own routes, so it
+is never out of date. Pick a key and it shows only what that key opens, with a ready-to-copy call in curl, JavaScript or
+Python, and a Try button that runs it.</p>
+<div class="window"><header><span>Build</span><span>×</span></header>
+  <div class="wtabs"><span>Make a theme</span><span>Share a theme</span><span>Shared by others</span><span>API keys</span><span class="on new">API reference</span></div>
+  <div class="wbody"><div class="cols">
+    <div>
+      <p>As key <span class="input" style="min-width:160px">feed-bot ▾</span></p>
+      <table><thead><tr><th>Module</th><th>Routes</th></tr></thead><tbody>
+        <tr><td><b>Feed</b></td><td>34</td></tr>
+        <tr><td>Explore</td><td>61 <span class="muted">read</span></td></tr>
+        <tr><td>Your arcade</td><td>18 <span class="muted">read</span></td></tr>
+      </tbody></table>
+      <p class="muted">Also: the console's commands, one call each: <code>POST /api/v1/run {"line": "readfeed new 20"}</code></p>
+    </div>
+    <div>
+      <p><code>GET /r/feed?order=new&amp;count=20</code> <span class="muted">· read</span></p>
+      <pre>curl -H "Authorization: Bearer $ARCADE_KEY" \
+  https://your-arcade.example/r/feed?order=new&amp;count=20</pre>
+      <p><code>POST /account/post</code> <span class="muted">· write</span></p>
+      <pre>await fetch("https://your-arcade.example/account/post", {
+  method: "POST",
+  headers: {"Authorization": "Bearer " + KEY, "Content-Type": "application/json"},
+  body: JSON.stringify({text: "gm from my bot"})})</pre>
+      <span class="btn">Try it</span>
+    </div>
+  </div></div></div>
+
+<div class="q"><b>Three things to decide before I build:</b>
+<ol style="margin:6px 0 0;padding-left:18px">
+  <li><b>Spending.</b> Should a key ever be able to spend the node's coins? I'd allow it only when ticked, with a daily
+    cap per chain, as drawn. The alternative is never: keys could read and post, but anything that spends would still
+    need you at the window.</li>
+  <li><b>Whose keys.</b> Here only the operator makes keys, and a key acts as the node. Should signed-in users also get
+    keys of their own, acting as their account within what you allow? They could come in a later step.</li>
+  <li><b>From outside.</b> A key works from anywhere over HTTPS by default, with “this machine only” or an address list
+    per key. Is that right, or should keys work only on the machine and the LAN at first?</li>
+</ol></div>
+</div></body>
+</html>

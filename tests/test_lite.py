@@ -338,3 +338,6 @@ def test_window_build_guides_everyone_and_lets_the_operator_share_themes(app):
     visitor = app.get("/lite", headers=OUTSIDE).text
     assert "arcade-cli new theme my-theme" in visitor, "anyone may learn to make one"
     assert 'data-btab="share"' not in visitor and "taketheme" not in visitor, "offering and taking are the operator's"
+    # API keys: the operator's own and the say over users'; a visitor is told how to get one
+    assert 'data-btab="keys"' in operator and 'id="k-users"' in operator and 'data-btab="apiref"' in operator
+    assert 'data-btab="keys"' in visitor and 'id="k-make"' not in visitor and "Run an arcade of your own" in visitor

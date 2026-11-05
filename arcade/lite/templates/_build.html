@@ -8,6 +8,8 @@
       <button type="button" data-btab="guide" aria-selected="true">Make a theme</button>
       {% if audience == 'operator' %}<button type="button" data-btab="share">Share a theme</button>
       <button type="button" data-btab="others">Shared by others</button>{% endif %}
+      <button type="button" data-btab="keys">API keys</button>
+      <button type="button" data-btab="apiref">API reference</button>
     </div>
     <div class="wbody">
       <div data-bpanel="guide" class="steps">
@@ -104,6 +106,60 @@ allowtheme my-theme      people may pick it in Settings → Theme…</pre>
         <p class="err bad" id="b-err"></p>
       </div>
       {% endif %}
+      {#- API keys (arcade/apikeys.py): the operator's own and the say over users'; an account's own; a visitor is told
+          how to get one. -#}
+      <div data-bpanel="keys" hidden>
+        {% if audience == 'anyone' %}
+        <p>An API key lets a program or a website use this arcade as you would: read, post, trade, all of it, with
+          the key in the <code>Authorization</code> header. <a href="/join">Sign in or make an account</a> to get
+          one, then come back here.</p>
+        <p class="muted">Like what you can build? Run an arcade of your own: then the keys, the coins and the data are
+          yours alone.</p>
+        {% else %}
+        <p style="margin:0 0 8px">{% if audience == 'operator' %}A key you make here acts as you, the operator: every
+          page and action you have, spending included, unless you narrow it below. Use it for the websites that run on
+          this arcade.{% else %}A key you make here acts as your account, as you would signed in here: never as the
+          node, and never anyone else. Try what an arcade can do; then run your own.{% endif %} A key is shown once.</p>
+        <table><thead><tr><th>Key</th><th>Opens</th><th>Can</th><th>From</th><th>Last used</th><th></th></tr></thead>
+          <tbody id="k-list"><tr><td class="muted" colspan="6">Loading…</td></tr></tbody></table>
+        <fieldset style="margin-top:10px"><legend>New key</legend>
+          <div class="grid">
+            <label for="k-name">Name</label><input id="k-name" maxlength="40" placeholder="my-website">
+            <label>Opens</label><div><label><input type="radio" name="k-scope" value="all" checked> every module</label>
+              <label><input type="radio" name="k-scope" value="some"> only these:</label>
+              <div id="k-mods" class="b-mods" hidden></div></div>
+            <label>Can</label><div><label><input type="checkbox" id="k-write" checked> write too (post, trade{% if audience == 'operator' %},
+              spend the node's coins{% endif %}); off reads only</label></div>
+            <label for="k-where">From</label><div><select id="k-where"><option value="anywhere">anywhere</option>
+              <option value="lan">this machine and its network</option><option value="machine">this machine only</option>
+              <option value="list">these addresses…</option></select> <input id="k-ips" placeholder="1.2.3.4, 10.0.0.0/8" hidden></div>
+            <label for="k-days">Ends</label><div><select id="k-days"><option value="">never</option><option value="1">in a day</option>
+              <option value="30">in 30 days</option><option value="365">in a year</option></select></div>
+          </div>
+          <p style="margin:8px 0 0"><button type="button" id="k-make">Make the key</button></p>
+          <div id="k-new" hidden><p style="margin:8px 0 4px">Copy it now; it is not shown again:</p>
+            <code id="k-shown" class="b-key"></code></div>
+        </fieldset>
+        {% if audience == 'operator' %}
+        <fieldset><legend>Users' keys</legend>
+          <div class="grid">
+            <label>Users</label><label><input type="checkbox" id="k-users"> may make keys of their own, acting as their account</label>
+            <label for="k-per">Each</label><div><input id="k-per" type="number" min="0" max="100" style="width:5em"> keys at most</div>
+            <label for="k-rate">Calls</label><div><input id="k-rate" type="number" min="0" style="width:6em"> a minute per key (0: no limit)</div>
+          </div>
+          <p style="margin:8px 0 0"><button type="button" id="k-rules">Keep</button></p>
+        </fieldset>
+        {% endif %}
+        {% endif %}
+        <p class="err bad" id="k-err"></p>
+      </div>
+      <div data-bpanel="apiref" hidden>
+        <div class="b-ref">
+          <div><table><thead><tr><th>Module</th><th class="num">Routes</th></tr></thead><tbody id="r-mods"></tbody></table>
+            <p class="muted">And the console: <code>POST /api/v1/run {"line": "help"}</code> runs any command it lists.</p></div>
+          <div id="r-routes"><p class="muted">Pick a module.</p></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -117,7 +173,13 @@ allowtheme my-theme      people may pick it in Settings → Theme…</pre>
   white-space:pre-wrap;overflow-wrap:anywhere}
 #build .b-keys td{border:0;padding:1px 8px 1px 0}
 #build .b-nav{margin:12px 0 0}
-@media (max-width:700px){ #build .steps{grid-template-columns:1fr} }
+#build .grid{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 10px;align-items:start}
+#build .b-mods{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 10px;margin:4px 0 0}
+#build .b-key{display:block;padding:6px 8px;background:#fff3c4;color:#1d1d1d;border:1px solid #d6b84a;user-select:all}
+#build .b-ref{display:grid;grid-template-columns:220px minmax(0,1fr);gap:14px}
+#build .b-ref tbody tr{cursor:pointer} #build .b-ref tr.on td{font-weight:600}
+#build .b-route{border-bottom:1px solid var(--line);padding:6px 0}
+@media (max-width:700px){ #build .steps, #build .b-ref{grid-template-columns:1fr} }
 </style>
 <script>
 (function () {
@@ -136,7 +198,107 @@ allowtheme my-theme      people may pick it in Settings → Theme…</pre>
   function tab(name) {
     document.querySelectorAll('#build [data-btab]').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.btab === name); });
     document.querySelectorAll('#build [data-bpanel]').forEach(function (p) { p.hidden = p.dataset.bpanel !== name; });
-    if (name !== 'guide') load();
+    if (name === 'share' || name === 'others') load();
+    if (name === 'keys') keys();
+    if (name === 'apiref') reference();
+  }
+
+  // --- API keys and the reference (arcade/apikeys.py, web/apikeys_web.py) ---
+  var OPERATOR = {{ 'true' if audience == 'operator' else 'false' }}, SIGNED = {{ 'false' if audience == 'anyone' else 'true' }};
+  var KEYS = OPERATOR ? '/admin/api/keys' : '/account/keys', routes = null;
+  function call(url, method, body) {
+    return fetch(url, {method: method || 'GET', credentials: 'same-origin', cache: 'no-store',
+      headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'}, body: body ? JSON.stringify(body) : undefined})
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.statusText); return j; }); });
+  }
+  function getRoutes() { return routes || (routes = fetch('/api/v1/routes', {credentials: 'same-origin'}).then(function (r) { return r.json(); })); }
+  function ago(t) {
+    if (!t) return 'never';
+    var s = Date.now() / 1000 - t;
+    return s < 120 ? 'just now' : s < 7200 ? Math.round(s / 60) + ' min ago' : s < 172800 ? Math.round(s / 3600) + ' h ago'
+      : new Date(t * 1000).toLocaleDateString();
+  }
+  function keys() {
+    if (!SIGNED) return;
+    var err = $('k-err'); err.textContent = '';
+    Promise.all([call(KEYS), getRoutes()]).then(function (got) {
+      var d = got[0], mods = got[1].modules, list = $('k-list'), titles = {};
+      mods.forEach(function (m) { titles[m.id] = m.title; });
+      var box = $('k-mods');
+      if (!box.childNodes.length) mods.forEach(function (m) {
+        var l = document.createElement('label'), c = document.createElement('input');
+        c.type = 'checkbox'; c.value = m.id; l.appendChild(c); l.appendChild(document.createTextNode(' ' + m.title)); box.appendChild(l);
+      });
+      list.textContent = '';
+      d.keys.forEach(function (k) {
+        var tr = list.insertRow();
+        var name = tr.insertCell(); name.innerHTML = '<b></b><div class="muted"><code></code></div>';
+        name.querySelector('b').textContent = k.name + (k.owner === 'account' && OPERATOR ? ' (a user\'s)' : '');
+        name.querySelector('code').textContent = 'ak_' + k.id + '…';
+        tr.insertCell().textContent = k.modules ? k.modules.map(function (m) { return titles[m] || m; }).join(', ') : 'everything';
+        tr.insertCell().textContent = (k.write ? 'read, write' : 'read') + (k.off ? ' · off' : '')
+          + (k.expires ? ' · ends ' + new Date(k.expires * 1000).toLocaleDateString() : '');
+        tr.insertCell().textContent = k.where;
+        tr.insertCell().textContent = ago(k.used);
+        var acts = tr.insertCell();
+        [[k.off ? 'Switch on' : 'Switch off', function () { return call(KEYS + '/' + k.id, 'POST', {off: !k.off}); }],
+         ['Delete', function () { return confirm('Delete the key ' + k.name + '? Whatever uses it stops at once.')
+           ? call(KEYS + '/' + k.id, 'DELETE') : Promise.reject(new Error('')); }]].forEach(function (a) {
+          var b = document.createElement('button'); b.type = 'button'; b.textContent = a[0];
+          b.onclick = function () { a[1]().then(keys, function (e) { err.textContent = e.message; }); };
+          acts.appendChild(b); acts.appendChild(document.createTextNode(' '));
+        });
+      });
+      if (!d.keys.length) list.insertRow().insertCell().textContent = 'No keys yet.';
+      if (OPERATOR) { $('k-users').checked = d.rules.users; $('k-per').value = d.rules.per_user; $('k-rate').value = d.rules.per_minute; }
+      else if (!d.rules.users) { err.textContent = 'This arcade\'s operator does not give users keys now.'; }
+    }).catch(function (e) { err.textContent = e.message; });
+  }
+  if (SIGNED) {
+    document.querySelectorAll('#build [name="k-scope"]').forEach(function (r) {
+      r.onchange = function () { $('k-mods').hidden = !document.querySelector('#build [name="k-scope"][value="some"]').checked; };
+    });
+    $('k-where').onchange = function () { $('k-ips').hidden = $('k-where').value !== 'list'; };
+    $('k-make').onclick = function () {
+      var some = document.querySelector('#build [name="k-scope"][value="some"]').checked;
+      var body = {name: $('k-name').value, write: $('k-write').checked, days: $('k-days').value || null,
+                  where: $('k-where').value === 'list' ? $('k-ips').value : $('k-where').value,
+                  modules: some ? [].map.call(document.querySelectorAll('#k-mods input:checked'), function (c) { return c.value; }) : null};
+      $('k-err').textContent = '';
+      call(KEYS, 'POST', body).then(function (j) {
+        $('k-shown').textContent = j.key; $('k-new').hidden = false; $('k-name').value = ''; keys();
+      }, function (e) { $('k-err').textContent = e.message; });
+    };
+    if (OPERATOR) $('k-rules').onclick = function () {
+      call('/admin/api/keys/rules', 'POST', {users: $('k-users').checked, per_user: +$('k-per').value || 0,
+                                             per_minute: +$('k-rate').value || 0})
+        .then(keys, function (e) { $('k-err').textContent = e.message; });
+    };
+  }
+  function reference() {
+    getRoutes().then(function (d) {
+      var tb = $('r-mods'); tb.textContent = '';
+      d.modules.forEach(function (m) {
+        var tr = tb.insertRow(); tr.insertCell().textContent = m.title;
+        var n = tr.insertCell(); n.className = 'num'; n.textContent = m.routes.length;
+        tr.onclick = function () {
+          tb.querySelectorAll('tr').forEach(function (x) { x.classList.toggle('on', x === tr); });
+          var box = $('r-routes'); box.textContent = '';
+          m.routes.forEach(function (r) {
+            var div = document.createElement('div'); div.className = 'b-route';
+            var head = document.createElement('code'); head.textContent = r.methods.join(' ') + ' ' + r.path;
+            div.appendChild(head);
+            if (r.about) { var p = document.createElement('div'); p.className = 'muted'; p.textContent = r.about; div.appendChild(p); }
+            var pre = document.createElement('pre');
+            var write = r.methods.indexOf('GET') < 0;
+            pre.textContent = 'curl ' + (write ? '-X ' + r.methods[0] + ' -H "Content-Type: application/json" -d \'{}\' ' : '')
+              + '-H "Authorization: Bearer $ARCADE_KEY" \\\n  ' + location.origin + r.path;
+            div.appendChild(pre); box.appendChild(div);
+          });
+        };
+      });
+      if (tb.rows[0]) tb.rows[0].onclick();
+    });
   }
   document.querySelectorAll('#build [data-btab]').forEach(function (b) { b.onclick = function () { tab(b.dataset.btab); }; });
   document.querySelectorAll('#build [data-type]').forEach(function (b) {

@@ -248,7 +248,14 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         if console_limited(caller, request):
             return JSONResponse({"ok": False, "error": f"at most {CONSOLE_PER_MINUTE} lines a minute; wait a little"},
                                 status_code=429, headers=NO_STORE)
-        line = str(payload.get("line") or "")
+        return answer_line(caller, str(payload.get("line") or ""))
+
+    def run_for(request: Request, line: str):
+        """One console line for an API key's caller (/api/v1/run, web/apikeys_web.py): the key was checked on the
+        way in, and its calls a minute are the key's own limit."""
+        return answer_line(caller_for(request, write=True), line)
+
+    def answer_line(caller, line: str):
         try:
             return JSONResponse({"ok": True, "result": cmdlib.run_line(caller, line)}, headers=NO_STORE)
         except cmdlib.CommandError as exc:
@@ -297,4 +304,5 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
                             media_type=said["type"], headers={**NO_STORE, **MODULE_PAGE})
         return JSONResponse(said, headers={**NO_STORE, **MODULE_PAGE})
 
+    lite_page.run_line = run_for
     return lite_page
