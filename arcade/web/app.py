@@ -12997,6 +12997,59 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"tag": found["tag"], "chains": out, "v": coinlistlib.VERSION,
                              "lists": _coin_lists(found["pubkey"])})
 
+    @app.get("/peer/address/{address}/coins")
+    def peer_address_coins(request: Request, address: str):
+        """One bare address's coins, for another arcade in the mesh whose own Core is behind (arcade/peer_address.py,
+        2026-11-05: borrow only from a node in the shared arcade network). Signed by a mesh key announced on chain,
+        or refused; answered only while this Core is at the tip, so a borrower never copies a stale coin set."""
+        from arcade import peer_address as peeraddr
+        from arcade.web.dogefeedx.wallet_assets import valid_address
+        if _peer_data_limited(request):
+            return JSONResponse({"detail": "too many in a row. Wait a few minutes."}, status_code=429)
+        try:
+            address = valid_address(address)
+        except ValueError:
+            return JSONResponse({"detail": "Dogecoin address required"}, status_code=400)
+        try:
+            with state.store() as store:
+                known = [str(r["mesh_key"]) for r in store.mesh_peers(state.messaging.network,
+                                                                      since=int(time.time()) - 3 * 86400)]
+        except Exception:                                   # noqa: BLE001 -- nobody known: nobody served
+            known = []
+        why = peeraddr.check_ask(request.headers, address, known)
+        if why:
+            return JSONResponse({"detail": why}, status_code=403)
+        chain = next((c for c in _account_chains() if c.network == state.messaging.network), None)
+        if chain is None or chain.borrowed:
+            return JSONResponse({"detail": "no Core of its own for that chain here"}, status_code=503)
+        try:
+            with chain.rpc() as rpc:
+                info = rpc.get_blockchain_info()
+        except Exception:                                   # noqa: BLE001
+            info = None
+        if not peeraddr.synced(info):
+            return JSONResponse({"detail": "this Core is not at the tip; ask another arcade", "synced": False},
+                                status_code=503)
+        try:
+            index = state.token_index(chain)
+            with contextlib.closing(index.open()) as db:
+                coins = utxoslib.unspent(db, address)
+                try:
+                    marks = _coin_marks(db, address)
+                except Exception:                           # noqa: BLE001 -- unmarked rather than no answer
+                    marks = {}
+        except Exception:                                   # noqa: BLE001
+            return JSONResponse({"detail": "no index for that chain here"}, status_code=503)
+        return JSONResponse(peeraddr.answer(address, int(info.get("blocks", 0)), coins, marks))
+
+    def _peer_address_peers():
+        """(hosts, mesh key, ask) for wallet_assets' bare-address borrowing (peer_address.PEERS)."""
+        from arcade.mesh.service import load_or_make_key
+        return _arcade_hosts(), load_or_make_key(Path(state.home) / "mesh.key"), _ask_arcade
+
+    import arcade.peer_address as _peeraddr_hook
+    _peeraddr_hook.PEERS = _peer_address_peers
+
     def _coin_marks(db, address: str) -> dict[tuple[str, int], str]:
         """(txid, vout) -> "ins" (an inscription sits on it) or "ins:?" (a small coin not checked yet, held meanwhile)
         for this address's coins, from what is already known and reading NOTHING new (guard.sort_known): other arcades
