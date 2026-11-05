@@ -4605,10 +4605,15 @@ async function recordKey(password, blob) {
 
 /** What the node keeps for this account's imports: the sealed record (parsed), when it was written, the main
  *  wallet's sealed blob, each chain's imported addresses with balance and read-back state, the main wallets' names. */
-export async function importedOnNode({recordOnly = false} = {}) {
+export async function importedOnNode({recordOnly = false, open = null} = {}) {
   // `recordOnly`: the record and the vault without each chain's balances (what opening and tidying need; the balances
   // read every coin of every imported address -- ~4 s for 7,000 coins, 2026-11-05).
-  const got = await fetch("/account/imported" + (recordOnly ? "?record=1" : ""), {cache: "no-store"});
+  // `open` ({chain, address}, or {} for none): lazy wallets -- coins read only for the wallet open on the page; every
+  // other comes back `lazy` with its read-back state (2026-11-05).
+  const q = recordOnly ? "?record=1"
+    : open ? "?lazy=1" + (open.chain && open.address
+      ? `&chain=${encodeURIComponent(open.chain)}&address=${encodeURIComponent(open.address)}` : "") : "";
+  const got = await fetch("/account/imported" + q, {cache: "no-store"});
   const said = await got.json().catch(() => ({}));
   if (!got.ok) throw new Error(said.detail || "this arcade did not answer about your imported wallets");
   let record = null;
@@ -4645,7 +4650,7 @@ async function openImportsWith(wallet, password) {
 /** Open a record sealed under an EARLIER password (after a Restore), with that password. Only opens it in this
  *  tab: the next change seals it again under the current password. */
 export async function openStaleImports(wallet, oldPassword) {
-  const said = await importedOnNode();
+  const said = await importedOnNode({recordOnly: true});
   if (!said.record) throw new Error("you have no imported wallets on this arcade");
   const opened = JSON.parse(await openText(said.record, await recordKey(oldPassword, said.record)));
   keepImports(wallet.pubkey, {updated: said.updated, wallets: (opened && opened.wallets) || [], reseal: true});
@@ -4949,7 +4954,7 @@ export async function importWallet(chain, {kind, secret, name = "", addrKind = "
       throw new Error("That is your arcade wallet's own key on this coin, already here.");
     }
     // Before anything is registered: the password, when this page does not hold the record's key yet.
-    const said = await importedOnNode();
+    const said = await importedOnNode({recordOnly: true});
     await keyForChange(wallet, said, password);
     const here = importsOpen(wallet.pubkey);
     const dupe = ((here && here.wallets) || []).find((w) => w.chain === chain.network && w.address === mine.address);
@@ -5039,7 +5044,7 @@ export function importsKeyHere(account) {
  *  whose copy was lost). A password that opens the main wallet and not the record means the record was sealed under
  *  an earlier one: said so (`stale`), and `openStaleImports` takes that earlier password. */
 export async function openImports(wallet, password) {
-  const said = await importedOnNode();
+  const said = await importedOnNode({recordOnly: true});
   if (!said.record) { keepImports(wallet.pubkey, {updated: 0, wallets: []}); return []; }
   const keyed = await recordKey(password, said.record);
   try {
@@ -5047,7 +5052,7 @@ export async function openImports(wallet, password) {
     importKey = {account: wallet.pubkey, ...keyed};
     keepImports(wallet.pubkey, {updated: said.updated, version: said.version,
                                 wallets: (opened && opened.wallets) || []});
-    await tidyImports(wallet, password);
+    await tidyImports(wallet, password, said);
     return (importsOpen(wallet.pubkey) || {}).wallets || opened.wallets || [];
   } catch (e) {
     const main = said.vault ? await open(said.vault, password).catch(() => null) : null;

@@ -616,3 +616,25 @@ def test_the_addresses_a_sign_in_checks_come_without_balances(client, monkeypatc
     assert said["pubkey"] == account
     assert {c["network"]: c["address"] for c in said["chains"]} == {c["network"]: c["address"] for c in full["chains"]}
     assert all("balance" not in c for c in said["chains"])
+
+
+def test_lazy_wallets_read_coins_only_for_the_wallet_open(client, monkeypatch):
+    app, state, chain, account = _ready(client, monkeypatch)
+    one, two = _proof(account, 0x1111), _proof(account, 0x2222)
+    for asked in (one, two):
+        assert app.post("/account/imported/address", json=asked).status_code == 200
+    import arcade.utxos as U
+    real, read = U.unspent, []
+    monkeypatch.setattr(U, "unspent", lambda db, address, *a, **k: read.append(address) or real(db, address, *a, **k))
+    said = app.get(f"/account/imported?lazy=1&chain=ltctest&address={one['address']}").json()
+    rows = {r["address"]: r for r in said["chains"]["ltctest"]}
+    assert read == [one["address"]], "only the open wallet's coins are read"
+    assert rows[one["address"]].get("lazy") is None and rows[one["address"]]["spendable"] == 0
+    assert rows[two["address"]]["lazy"] is True and rows[two["address"]]["spendable"] is None
+    assert "state" in rows[two["address"]], "its read-back state is still said"
+    read.clear()
+    none_open = app.get("/account/imported?lazy=1").json()
+    assert read == [] and all(r["lazy"] for r in none_open["chains"]["ltctest"])
+    read.clear()
+    app.get("/account/imported")
+    assert sorted(read) == sorted([one["address"], two["address"]]), "without lazy, every one as before"

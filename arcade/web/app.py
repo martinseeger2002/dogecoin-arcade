@@ -27870,13 +27870,23 @@ def create_app(state: AppState) -> FastAPI:
                     _rescan_queue_wake()
         return _rescan_says(chain, address)
 
-    def _imported_view(account, chain) -> list[dict]:
-        """This account's imported addresses on one chain, each with its balance and where its read-back stands."""
+    def _imported_view(account, chain, balances_for: set | None = None) -> list[dict]:
+        """This account's imported addresses on one chain, each with its balance and where its read-back stands.
+
+        `balances_for` (lazy wallets, 2026-11-05: "we shouldn't be downloading all of the wallet balances all at
+        once only when each wallet is open"): the (network, address) pairs whose coins are read; any other comes back
+        with its read-back state and `"lazy": true`, balances None. None reads every one, as before."""
         out = []
         gone = _flights.spent_by(account.pubkey, chain.network)
         index = state.token_index(chain)
         for entry in _imported(account, chain):
             address = entry["a"]
+            if balances_for is not None and (chain.network, address) not in balances_for:
+                out.append({"address": address, "kind": entry["k"], "since": None, "lazy": True,
+                            "spendable": None, "inscribed": None, "inscribed_n": None,
+                            "unchecked": None, "unchecked_n": None,
+                            "registered": entry["t"], **_rescan_says(chain, address)})
+                continue
             with contextlib.closing(index.open()) as db:
                 coins = utxoslib.unspent(db, address)
                 since = utxoslib.since(db, address)
@@ -27902,8 +27912,11 @@ def create_app(state: AppState) -> FastAPI:
         return out
 
     @app.get("/account/imported")
-    def account_imported(request: Request, record: int = 0):
-        return _account_imported(request, record_only=bool(record))
+    def account_imported(request: Request, record: int = 0, lazy: int = 0, chain: str = "", address: str = ""):
+        """`?lazy=1`: coins read only for the wallet open on the page (`chain` + `address`, or none); `?record=1`: no
+        wallets at all (a sign-in)."""
+        opened = {(chain, address.strip())} if lazy and chain and address.strip() else set()
+        return _account_imported(request, record_only=bool(record), balances_for=opened if lazy else None)
 
     @app.get("/account/imported/busy")
     def account_imported_busy(request: Request, chain: str = ""):
@@ -27917,7 +27930,7 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"chain": picked.network, "busy": said is not None, **(said or {})},
                             headers={"Cache-Control": "no-store"})
 
-    def _account_imported(request: Request, record_only: bool = False):
+    def _account_imported(request: Request, record_only: bool = False, balances_for: set | None = None):
         """This account's sealed record of imported wallets, for its browser to open; the main wallet's sealed
         blob beside it (the same one /signin hands anybody), so the browser can check a password against it before
         it seals anything; each chain's imported addresses and where they stand; the main wallet's names.
@@ -27942,7 +27955,7 @@ def create_app(state: AppState) -> FastAPI:
         for chain in _account_chains():
             names[chain.network] = str(state.setting(importslib.name_key(chain.network, account.pubkey), "") or "")
             try:
-                chains[chain.network] = _imported_view(account, chain)
+                chains[chain.network] = _imported_view(account, chain, balances_for)
             except Exception:                              # noqa: BLE001 -- a chain with no index yet
                 chains[chain.network] = []
         busy = {}
