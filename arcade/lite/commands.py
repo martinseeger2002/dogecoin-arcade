@@ -200,12 +200,15 @@ def help(caller, name: str = "") -> str:
 
 @command("node")
 def getnodeinfo(caller) -> dict:
-    """This arcade: its version, face, operator and the names it is published under."""
+    """This arcade: its version, face, operator and the names it is published under. `operator` is the @name it answers
+    to; `node_name` and `owner` are its node's own and its owner account's, and `owned_by` is state.owner_kind()
+    (2026-11-04, "Who runs this node")."""
     from ..web import brand as brandlib
     state = caller.state
     mesh = getattr(state, "mesh", None)
     return {"edition": modulelib.edition(state.settings()), "version": state.running_version,
             "face": brandlib.current().name, "operator": state.operator_tag() or None,
+            "node_name": state.node_tag() or None, "owner": state.owner_tag() or None, "owned_by": state.owner_kind(),
             "public_names": list(state.public_hosts), "mesh_id": getattr(mesh, "node_id", None)}
 
 

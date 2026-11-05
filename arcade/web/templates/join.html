@@ -38,21 +38,21 @@
   <p>This browser is signed in as <code id="who-key"></code><span id="who-tag"></span>.</p>
   <p class="muted" id="who-since"></p>
   <div class="panel" id="claim" hidden style="border-color:var(--accent)">
-    <strong>Make this your wallet</strong>
+    <strong>Make this node yours</strong>
     <p class="muted" style="margin:6px 0 10px">
-      This node has no operator yet. Claim it and these words open its
-      wallet &mdash; its coins, its messages, its address book &mdash; from
-      anywhere, not only from the machine it runs on. Everybody else who
-      signs in still gets the public arcade, because they are not this key.
+      This account becomes the node's owner. These words then open its Admin
+      and its till from anywhere, not only from the machine it runs on. The
+      arcade keeps its own name, and your coins stay in your wallet. Everybody
+      else who signs in still gets the public arcade, because they are not this key.
     </p>
     <p class="muted" style="margin:0 0 10px">
       It can only be done from the machine itself, which is the whole of
       why it is safe. Do it once, from here.
     </p>
     <div id="handover-in" hidden>
-      <p class="muted" style="margin:0 0 8px">This node's operator is the username
-        and password set on it. Type that password to make this account the
-        operator instead; the same username and password then open this account.</p>
+      <p class="muted" style="margin:0 0 8px">This node runs with a machine
+        password. Type it to make this account the owner instead; the same
+        username and password then open this account.</p>
       <input type="password" id="handover-pw" autocomplete="current-password"
              placeholder="this node's password">
     </div>
@@ -65,8 +65,8 @@
 </div>
 
 <div class="panel" id="password-door" hidden>
-  <h2 style="margin-top:0">Sign in</h2>
-  <p class="muted" style="margin:0 0 10px">Whoever runs this node.</p>
+  <h2 style="margin-top:0">Machine password</h2>
+  <p class="muted" style="margin:0 0 10px">The username and password set on this machine, for whoever runs it.</p>
   <input type="text" id="username" autocomplete="username" placeholder="username">
   <input type="password" id="password" autocomplete="current-password"
          placeholder="password">

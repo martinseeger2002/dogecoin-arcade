@@ -48,7 +48,7 @@ def _operator(app, state):
 def test_at_the_node_machine_it_opens_without_a_password(public):
     app, state = public
     page = app.get("/admin", headers=LOCAL)
-    assert page.status_code == 200 and "The node's coins" in page.text
+    assert page.status_code == 200 and "This node's till" in page.text
     got = app.get("/admin/api/state", headers=LOCAL).json()
     assert got["local"] is True
     assert {"seats", "accounts", "quotas", "wallets", "faucet"} <= set(got)
