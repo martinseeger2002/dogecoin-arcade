@@ -533,7 +533,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     moduleCommands().then(function (list) {
       var mine = list.filter(function (c) { return c.module === id && c.form; })
         .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
-      var own = {}; mine.forEach(function (c) { own[c.name] = 1; });
+      var own = {}; list.forEach(function (c) { if (c.module === id) own[c.name] = 1; });
       box.hidden = !mine.length;
       if (!mine.length) return;
       var forms = document.createElement('div'), out = document.createElement('div');

@@ -214,8 +214,9 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
     def lite_commands(request: Request):
         return JSONResponse([{"name": c.name, "category": c.category, "audience": c.audience, "usage": c.usage,
                               "summary": c.summary, "package": c.module not in modulelib.MODULES,
-                              **({"module": c.module, "form": c.form, "order": c.order,
-                                  "args": [a.strip("[]") for a in c.usage.split()[1:]]} if c.form else {})}
+                              **({"module": c.module, "order": c.order} if c.module not in modulelib.MODULES else {}),
+                              **({"form": c.form, "args": [a.strip("[]") for a in c.usage.split()[1:]]}
+                                 if c.form else {})}
                              for c in cmdlib.available(caller_for(request))],
                             headers=NO_STORE)
 

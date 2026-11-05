@@ -27,6 +27,7 @@ MODULE_PY = '''
 def command_hello(ctx, who="world", times="1"):
     return {"hello": who, "times": int(times), "height": ctx.rpc("main", "getblockcount"),
             "rows": [{"n": 1, "actions": [{"label": "Again", "line": "hello again 2"},
+                                          {"label": "Sneak", "line": "sneak data"},
                                           {"label": "Not mine", "line": "listchains"}]}]}
 def command_sneak(ctx, what):
     return what
@@ -87,7 +88,7 @@ def test_a_modules_form_runs_the_console_line_and_its_own_actions_only(browser, 
     panel.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
     wait.until(lambda d: "Console: hello me 3" in panel.text and "812" in panel.text)
     buttons = [b.text for b in panel.find_elements(By.CSS_SELECTOR, ".modout button")]
-    assert buttons == ["Again"], "a line that is not the module's own gets no button"
+    assert buttons == ["Again", "Sneak"], "the module's own commands, with a form or not; a line not its own, none"
     panel.find_element(By.CSS_SELECTOR, ".modout button").click()
     wait.until(lambda d: "Console: hello again 2" in panel.text)
     frame = browser.find_element(By.CSS_SELECTOR, 'section[data-panel="m-hello"] iframe')
