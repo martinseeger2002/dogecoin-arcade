@@ -88,6 +88,21 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 Lazy wallets: an imported wallet's coins are read when it is opened (Claude; the operator: "we shouldn't be downloading all of the wallet balances all at once only when each wallet is open")
+
+- **Before.** Every Wallet page load (`loadImports`) asked `/account/imported`, which read and sorted the coins of every
+  imported address on every chain. @apple has four (one DOGE import with 7,139 coins: 5.9 s cold on .25's disk).
+- **Now.** `GET /account/imported?lazy=1&chain=&address=`: coins read only for that wallet; every other row comes back
+  `lazy: true` with balances None and its read-back state (`_rescan_says`, in memory). `?lazy=1` alone reads none. Without
+  `lazy` it is the full answer, as before. `_imported_view(account, chain, balances_for)`.
+- **The page.** `loadImports` asks for the imported wallet picked on this chain; `pickWallet` reloads when the picked
+  one is lazy. Balances already seen are kept in `imp.seen`, so the drop-down shows the last one and "—" before a first
+  open. `openImports`, `openStaleImports` and `importWallet` now read the record only (`?record=1`).
+- **Tests.** `test_lazy_wallets_read_coins_only_for_the_wallet_open` (test_wallet_imports.py).
+  `test_imports_everywhere_browser.py` now opens the imported wallet before it expects its balance. The import, sign-in
+  and Doginal wallet suites pass (93).
+- **Handed to blockchaindad** in issue #91: a paged Doginals tab for wallets with thousands of inscriptions.
+
 ### 2026-11-05 Unlock no longer reads balances it never shows (Claude; the operator: "take a look at why it takes so long to unlock the Apple account")
 
 - **What happened.** Unlocking @apple (an imported DOGE address with ~7,100 coins) took about 12-18 s. The per-minute
