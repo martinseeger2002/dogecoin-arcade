@@ -88,6 +88,23 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 Ord walk: two stalls of a moved-in index on a hard disk (SadFrog's side, Claude)
+Branch `team/walk-own-chunk`, two commits on the newest main. SadFrog's Bellscoin index was walked to the tip on another
+machine (NVMe) and moved to node 2's hard disk (2026-11-04). Node 2's walk stood still at 1,304,200 for two reasons:
+- **Lanes never came to the walk's chunk** (`_notes_for`): it waited whenever lanes existed ("the lanes here take
+  every chunk in line"), but the moved-in index had said only some chunks, the lanes went back to cover/audit lower ones,
+  and the walk's chunk at the tip was in nobody's line. New `_lanes_come_to(c)`: wait only when `Chunks.choose` gives
+  c next; otherwise the walk reads it from its own Core and leases it, as it already did for a slow follow-back. A fresh
+  walk is unchanged (its chunk is the cover's lowest unsaid one). `test_a_chunk_only_an_older_arcade_said_...`'s
+  "before" case now goes on too (noted in the test).
+- **Every start read all of `at`** (`Walker._load`): COUNT(*) to check the kept coin filter, then rows `WHERE height >=
+  since` (no index on height). On the hard disk both were random page reads at under 3 MB/s, hours, every restart.
+  The kept filter is now checked by its own count (made again only once full), and the rows since come from the
+  undo records' `at` keys (`_placed_since`), falling back to the old scan when the filter is older than UNDO_BLOCKS.
+- **Result on node 2** (main addfa671 + these two): walking again 3 minutes after the HUP, 1,304,201 -> 1,304,449 in
+  2 minutes, at the tip. Tests: three new in test_doginal_index; full suite on the workhorse: 3,987 passed, same 3
+  machine-only failures as main (test_docs x2, test_update), regtest errors (no pepecoind).
+
 ### 2026-11-05 Core copies: a hand-made system unit takes part through a sudo rule (Claude; the operator: "let's add the SUDO rule")
 
 - `core_copy.service_node` looks at `/etc/systemd/system/<unit>` when there is no installer user unit. It is used only if the unit says `User=` this arcade's user, its datadir is this user's, and `sudo -n -l` allows `/usr/bin/systemctl stop|start <unit>` (checked, nothing run). Its record says `system`; `ServiceCore` then stops and starts it with `sudo -n /usr/bin/systemctl` and reads `is-active` without sudo. Made for .25, whose Pepecoin testnet is a hand-made system unit running as robin: with the rule in `/etc/sudoers.d/`, .25 makes testnet copies for new installs, Lite's included.
