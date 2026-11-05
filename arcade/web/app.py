@@ -13650,7 +13650,7 @@ def create_app(state: AppState) -> FastAPI:
         if account is None:
             return _account_state(request)
         # One answer per account AND per set of chains asked for (lazy wallets, 2026-10-27).
-        fkey = (account.pubkey, request.query_params.get("chains", ""))
+        fkey = (account.pubkey, request.query_params.get("chains", ""), request.query_params.get("only", ""))
         with _account_flight_lock:
             flight = _account_flight.get(fkey)
             first = flight is None
@@ -13693,6 +13693,14 @@ def create_app(state: AppState) -> FastAPI:
             # BEFORE anybody signs up: the browser derives a key on each
             # from the same words and hands over both addresses at once.
             return JSONResponse({"pubkey": None, "chains": chains})
+        if request.query_params.get("only") == "addresses":
+            # The address this node has on file for each chain, and nothing read from an index: what a sign-in checks
+            # before it registers an address the node does not know (wallet.js tellTheNode). 2026-11-05: an
+            # unlock of an account holding 7,000 coins took 12-18 s, ~4 s of it this page reading balances it never
+            # showed.
+            return JSONResponse({"pubkey": account.pubkey,
+                                 "chains": [{**row, "address": _account_address(account.pubkey, one)}
+                                            for row, one in zip(chains, _account_chains())]})
         chain = _account_chain()
         said: dict[str, Any] = {
             # This node on the mesh: a swap a tab lists names it, and shows on other
@@ -27894,8 +27902,8 @@ def create_app(state: AppState) -> FastAPI:
         return out
 
     @app.get("/account/imported")
-    def account_imported(request: Request):
-        return _account_imported(request)
+    def account_imported(request: Request, record: int = 0):
+        return _account_imported(request, record_only=bool(record))
 
     @app.get("/account/imported/busy")
     def account_imported_busy(request: Request, chain: str = ""):
@@ -27909,14 +27917,26 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"chain": picked.network, "busy": said is not None, **(said or {})},
                             headers={"Cache-Control": "no-store"})
 
-    def _account_imported(request: Request):
+    def _account_imported(request: Request, record_only: bool = False):
         """This account's sealed record of imported wallets, for its browser to open; the main wallet's sealed
         blob beside it (the same one /signin hands anybody), so the browser can check a password against it before
-        it seals anything; each chain's imported addresses and where they stand; the main wallet's names."""
+        it seals anything; each chain's imported addresses and where they stand; the main wallet's names.
+
+        `record_only` (`?record=1`, what a sign-in asks): the record and the vault without each chain's addresses,
+        balances and rescans. Those read every coin of every imported address (2026-11-05: ~4 s a time for an
+        account holding 7,000 coins, asked twice per unlock) and opening the record needs none of them."""
         account = _signed_in_account(request)
         record = state.imported_wallets()
         have = record.get(account.pubkey) or {"blob": "", "updated": 0, "version": 0, "signed": False}
         vault = state.vault().by_pubkey(account.pubkey)
+        if record_only:
+            return JSONResponse({"blob": have["blob"], "updated": have["updated"], "record_only": True,
+                                 "version": int(have.get("version") or 0), "signed": bool(have.get("signed")),
+                                 "siblings": [{"digest": one["digest"], "version": one["version"], "blob": one["blob"]}
+                                              for one in record.siblings(account.pubkey)],
+                                 "tag": str((vault or {}).get("tag") or ""), "host": _proof_host(),
+                                 "vault": json.loads(vault["blob"]) if vault else None},
+                                headers={"Cache-Control": "no-store"})
         chains: dict[str, Any] = {}
         names: dict[str, str] = {}
         for chain in _account_chains():

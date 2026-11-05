@@ -584,3 +584,35 @@ def test_an_import_before_the_chain_s_index_started_waits_for_it_then_walks_from
     _tip(state, chain, P.messaging_start_height + 40)
     assert _wait_ready(app, asked["address"])["state"] == "ready"
     assert walked and walked[0][1] == 0 and walked[0][0] == P.messaging_start_height + 40, walked
+
+
+# --- a sign-in reads only what it needs (2026-11-05: @apple's unlock, 7,000 coins, took 12-18 s) --------------
+
+def test_a_sign_in_reads_the_record_without_reading_any_coins(client, monkeypatch):
+    app, state, chain, account = _ready(client, monkeypatch)
+    asked = _proof(account, 0x1111)
+    assert app.post("/account/imported/address", json=asked).status_code == 200
+    full = app.get("/account/imported").json()
+    assert [w["address"] for w in full["chains"]["ltctest"]] == [asked["address"]]
+    import arcade.utxos as U
+    read = []
+    monkeypatch.setattr(U, "unspent", lambda *a, **k: read.append(a) or [])
+    light = app.get("/account/imported?record=1").json()
+    assert read == [], "opening the record reads no imported address's coins"
+    assert light["record_only"] is True and "chains" not in light and "busy" not in light
+    for key in ("blob", "updated", "version", "signed", "siblings", "vault", "tag", "host"):
+        assert light[key] == full[key], key
+
+
+def test_the_addresses_a_sign_in_checks_come_without_balances(client, monkeypatch):
+    app, state = client
+    account = _seat(app)
+    full = app.get("/account").json()
+    import arcade.utxos as U
+    monkeypatch.setattr(U, "balance", lambda *a, **k: (_ for _ in ()).throw(AssertionError("a balance was read")))
+    light = app.get("/account?only=addresses")
+    assert light.status_code == 200, light.text
+    said = light.json()
+    assert said["pubkey"] == account
+    assert {c["network"]: c["address"] for c in said["chains"]} == {c["network"]: c["address"] for c in full["chains"]}
+    assert all("balance" not in c for c in said["chains"])

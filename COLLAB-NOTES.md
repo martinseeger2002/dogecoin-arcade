@@ -88,6 +88,27 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 Unlock no longer reads balances it never shows (Claude; the operator: "take a look at why it takes so long to unlock the Apple account")
+
+- **What happened.** Unlocking @apple (an imported DOGE address with ~7,100 coins) took about 12-18 s. The per-minute
+  request log on .25 for that sign-in showed `/account` 6x 25.7 s and `/account/imported` 2x 8.6 s: about 4.3 s each.
+  After `seatWith`, the sign-in waited on `tellTheNode` (a full `/account`: balances of the tag chain and the first
+  chain) and `openImportsWith`, which fetched `/account/imported` (every imported address's coins read and sorted,
+  `_imported_view`), stretched the password again for the record, then `tidyImports` fetched `/account/imported` a
+  second time (a third time inside `changeImports`). A cold read of the 7,139 coins took 5.9 s on .25's busy disk.
+- **Now.**
+  - `GET /account?only=addresses`: each chain's row with the address this node has on file, no index read.
+    `tellTheNode` uses it.
+  - `GET /account/imported?record=1`: the record, version, signed, siblings, vault, tag and host, without `chains`,
+    `busy`, `names` or `import_closed`. `openImportsWith`, `tidyImports` and `changeImports` use it.
+    `importedOnNode({recordOnly})` picks it. The Wallet page's own read of imports is unchanged (full).
+  - `tidyImports` is handed the answer the record was just opened from; `changeImports({read})` starts from it on its
+    first try (a 409 retry reads again).
+- **Tests.** `tests/test_wallet_imports.py`: `test_a_sign_in_reads_the_record_without_reading_any_coins`,
+  `test_the_addresses_a_sign_in_checks_come_without_balances`. The sign-in, sign-up, password-floor, import and
+  test_web suites pass (337).
+- **Collections work handed off** to blockchaindad at GitHub issue #91 (2026-11-05).
+
 ### 2026-11-05 A peer that stops reading no longer freezes the mesh; DRC-20 mints out of the Wallet's grid (Claude; the operator: "a lot of my ords are not displaying", "The DRC 20 mints should be [out] from the ORD grid but we shouldn't count them towards tokens")
 
 - **What happened.** At about 03:39 every arcade stopped hearing every other arcade's ord index (and Core, coverage: the
