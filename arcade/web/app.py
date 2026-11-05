@@ -31944,9 +31944,15 @@ def create_app(state: AppState) -> FastAPI:
         except Exception:
             pending = ([], set())
         books = index.coin_books(limit=1, pending=pending)
+        # Each token's own trades, sorted out once (2026-11-05: token_prices went through every one of up to 5,000 trades
+        # for every token, most of a warm Tokens tab's 2.7 s).
+        by_token: dict[int, list] = {}
+        for t in trades:
+            for pid_of in {leg.property_id for leg in (t["give"], t["take"]) if leg.kind == inscriptionlib.LEG_TOKEN}:
+                by_token.setdefault(pid_of, []).append(t)
         out = []
         for pid, prop in wanted.items():
-            points = chartlib.token_prices(trades, pid, prop["divisible"])
+            points = chartlib.token_prices(by_token.get(pid, ()), pid, prop["divisible"])
             book = books.get(pid) or {"asks": [], "bids": []}
             if not points and not (book["asks"] or book["bids"]):
                 continue

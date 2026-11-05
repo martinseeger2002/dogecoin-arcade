@@ -209,6 +209,18 @@ CREATE TABLE IF NOT EXISTS take_trade (
     maker         TEXT    NOT NULL
 );
 
+-- The swaps found in arcade_tx (ledger.trades, 2026-11-05: the Exchange's token tab read every type-200 payload --
+-- 363 MB on Pepecoin testnet, minutes on a laptop disk -- to find 33 swaps). Only txids: a swap's legs are read back
+-- from its own payload, and a row dropped by a reorg leaves arcade_tx, so the join drops it too. `trade_scan` holds how
+-- far arcade_tx has been read for them (k "rowid"); each read looks at newer rows and the last few blocks only.
+CREATE TABLE IF NOT EXISTS trade_seen (
+    txid          TEXT    PRIMARY KEY
+);
+CREATE TABLE IF NOT EXISTS trade_scan (
+    k             TEXT    PRIMARY KEY,
+    v             INTEGER NOT NULL
+);
+
 -- A match between two token/token orders (Params.token_pairs_from): the
 -- taker's order (txid) met a resting one (maker_txid). `gave` of property
 -- `gave_property` went from taker to maker and `got` of `got_property` came

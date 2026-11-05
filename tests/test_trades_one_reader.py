@@ -18,7 +18,7 @@ def test_one_reader_and_the_rest_get_the_last_answer(monkeypatch):
             return self
 
         def fetchone(self):
-            return (tips["tip"],)
+            return (tips["tip"], f"hash{tips['tip']}")   # the tip's height and hash, or the newest row id
 
         def __enter__(self):
             return self

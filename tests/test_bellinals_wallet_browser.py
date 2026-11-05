@@ -130,7 +130,8 @@ def test_a_bellinal_has_send_and_list_and_no_swap(browser, served, signed_in):
     assert "Bellinals" in text and "not ready yet" not in text, text
     links = browser.execute_script(f'return [...document.querySelectorAll("{card} .wl-piecesend")]'
                                    '.map(e => [e.textContent, e.getAttribute("href") || ""])')
-    assert links == [["Send", ""], ["List", "/exchange?tab=bellinals"]], links
+    # List opens the piece's card, where it is priced and listed from the Wallet (2026-11-05), not a link away.
+    assert links == [["Send", ""], ["List", ""]], links
 
     browser.find_element(By.CSS_SELECTOR, f'#doginals [data-doginal="{INS}"] button').click()
     to = _wait(browser, 'return document.getElementById("send-to")')

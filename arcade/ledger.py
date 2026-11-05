@@ -287,9 +287,18 @@ class LedgerIndex:
             self.last_result = result
             if result.connected or result.disconnected:
                 log.info("ledger %s: %s", self.params.name, result)
+                self._warm_trades()
             return result
         finally:
             self._sync_lock.release()
+
+    def _warm_trades(self) -> None:
+        """The new blocks' trades read here, by the indexer, so no page pays for them (2026-11-05: the first page after a
+        block read them while every other page waited). Never raises: a page reads them itself if this could not."""
+        try:
+            self.trades()
+        except Exception:                                              # noqa: BLE001
+            log.debug("trades not warmed", exc_info=True)
 
     def _start_again(self, exc: IndexFromAnotherFloor) -> None:
         """Move this index aside and rebuild it from the new floor.
@@ -771,7 +780,9 @@ class LedgerIndex:
         # page asking in between memoised "no trades" for that tip and kept saying it after the trade was read
         # (test_account_order, a full run under load).
         with self.open() as db:
-            tip = db.conn.execute("SELECT MAX(height) FROM block").fetchone()[0]
+            # The tip's hash too (2026-11-05): a reorg at the same height can reuse the deleted rows' ids.
+            got = db.conn.execute("SELECT height, hash FROM block ORDER BY height DESC LIMIT 1").fetchone()
+            tip = (got[0], got[1]) if got else None
             last = db.conn.execute("SELECT MAX(rowid) FROM arcade_tx").fetchone()[0]
         memo = getattr(self, "_trades_memo", None)
         if not (memo and memo[0] == (tip, last, since_height)):
@@ -786,7 +797,10 @@ class LedgerIndex:
             try:
                 memo = getattr(self, "_trades_memo", None)
                 if not (memo and memo[0] == (tip, last, since_height)):
-                    memo = ((tip, last, since_height), self._trades_uncached(5000, since_height))
+                    got = self._trades_uncached(5000, since_height)
+                    if getattr(self, "_trades_partial", False):
+                        return list(got[:max(1, min(limit, 5000))])
+                    memo = ((tip, last, since_height), got)
                     self._trades_memo = memo
             finally:
                 lock.release()
@@ -795,13 +809,17 @@ class LedgerIndex:
     def _trades_uncached(self, limit: int, since_height: int) -> list[dict]:
         from . import inscriptions as I
 
+        # The swaps already found (trade_seen, kept up to date by _trade_scan), never the whole table (2026-11-05).
+        # While a big file's first scan runs, what is found so far is answered and not kept (`_trades_partial`).
+        self._trades_partial = not self._trade_scan()
         sql = ("SELECT a.txid, a.block_height, a.sender, a.payload_hex, b.time "
-               "FROM arcade_tx a JOIN block b ON b.height = a.block_height "
-               "WHERE a.valid = 1 AND a.payload_hex LIKE ? AND a.block_height >= ? "
+               # CROSS JOIN: the few swaps first, each looked up by txid -- never arcade_tx walked in block order
+               "FROM trade_seen s CROSS JOIN arcade_tx a ON a.txid = s.txid JOIN block b ON b.height = a.block_height "
+               "WHERE a.valid = 1 AND substr(a.payload_hex, 1, 20) = ? AND a.block_height >= ? "
                "ORDER BY a.block_height DESC, a.position DESC LIMIT ?")
         out = []
         with self.open() as db:
-            rows = db.conn.execute(sql, (self.SWAP_PREFIX + "%", int(since_height),
+            rows = db.conn.execute(sql, (self.SWAP_PREFIX, int(since_height),
                                          max(1, min(limit, 5000)))).fetchall()
         for row in rows:
             try:
@@ -816,13 +834,13 @@ class LedgerIndex:
         # Takes (type 29): a buy from a resting ask with its maker away. Read
         # from take_trade, which the engine writes as it applies one; takes
         # indexed before that table existed are filled in from their own
-        # transactions, once (_backfill_takes).
-        self._backfill_takes(since_height)
+        # transactions, once (_backfill_takes, from _trade_scan: only rows it
+        # has not looked at yet, 2026-11-05).
         with self.open() as db:
             for row in db.conn.execute(
                     "SELECT t.txid, t.property_id, t.tokens, t.coins, t.maker, "
                     "a.block_height, b.time FROM take_trade t "
-                    "JOIN arcade_tx a ON a.txid = t.txid "
+                    "CROSS JOIN arcade_tx a ON a.txid = t.txid "
                     "JOIN block b ON b.height = a.block_height "
                     "WHERE a.valid = 1 AND a.block_height >= ?", (int(since_height),)):
                 out.append({"txid": row["txid"], "height": row["block_height"],
@@ -834,18 +852,101 @@ class LedgerIndex:
         return out[:max(1, min(limit, 5000))]
 
     TAKE_PREFIX = "0000001d"
+    #: Blocks read again on every scan: a reorg deletes rows and its new ones may take row ids at or below the mark.
+    TRADE_REORG_BLOCKS = 60
+    #: A ledger file this big has its first scan done in the background (2026-11-05, .25's laptop disk: minutes).
+    TRADE_FIRST_SCAN_BACKGROUND_BYTES = 64 * 1024 * 1024
 
-    def _backfill_takes(self, since_height: int = 0) -> None:
+    def _trade_scan(self) -> bool:
+        """Bring trade_seen up to date: the arcade_tx rows not read yet (rowid above the mark) and those of the last
+        TRADE_REORG_BLOCKS blocks, checked for a swap's or a take's prefix -- a few rows a block, where every call
+        read every payload before (2026-11-05). The first scan reads the whole table once; on a big file it runs on a
+        thread of its own and trades() answers what it knew meanwhile. False while that first scan has not finished."""
+        lock = self.__dict__.setdefault("_trade_scan_lock", threading.Lock())
+        with self.open() as db:
+            row = db.conn.execute("SELECT v FROM trade_scan WHERE k='rowid'").fetchone()
+        if row is None:
+            if not getattr(self, "_trade_first_sync", False):
+                try:
+                    size = Path(self.path).stat().st_size
+                except (OSError, TypeError, AttributeError):
+                    size = 0
+                if size > self.TRADE_FIRST_SCAN_BACKGROUND_BYTES:
+                    if not getattr(self, "_trade_first_thread", None):
+                        self._trade_first_thread = threading.Thread(target=self._trade_scan_locked, args=(lock,),
+                                                                    name="trade-first-scan", daemon=True)
+                        self._trade_first_thread.start()
+                    return False
+            self._trade_scan_locked(lock)
+            return True
+        if not lock.acquire(blocking=False):
+            return True                      # another reader is scanning: what is kept is at most a block old
+        try:
+            self._trade_scan_once()
+        finally:
+            lock.release()
+        return True
+
+    def _trade_scan_locked(self, lock) -> None:
+        with lock:
+            self._trade_scan_once()
+
+    def _trade_scan_once(self) -> None:
+        with self.open() as db:
+            got = db.conn.execute("SELECT v FROM trade_scan WHERE k='rowid'").fetchone()
+            mark = int(got[0]) if got else None
+            top = int(db.conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM arcade_tx").fetchone()[0])
+            tip = int(db.conn.execute("SELECT COALESCE(MAX(height), 0) FROM block").fetchone()[0])
+            picked = ("SELECT a.rowid, a.txid, a.sender, a.block_height, substr(a.payload_hex, 1, 20) AS head "
+                      "FROM arcade_tx a WHERE a.valid = 1 AND (substr(a.payload_hex, 1, 20) = ? OR "
+                      "substr(a.payload_hex, 1, 8) = ?) AND ")
+            prefixes = (self.SWAP_PREFIX, self.TAKE_PREFIX)
+            if mark is None:
+                rows = db.conn.execute(picked + "1", prefixes).fetchall()
+            else:
+                mark = min(mark, top)        # rows deleted since (a reorg): their replacements are read below
+                rows = db.conn.execute(picked + "a.rowid > ?", prefixes + (mark,)).fetchall()
+                rows += db.conn.execute(picked + "a.block_height >= ?",
+                                        prefixes + (tip - self.TRADE_REORG_BLOCKS,)).fetchall()
+            swaps = [(r["txid"],) for r in rows if r["head"] == self.SWAP_PREFIX]
+            # Takes not written down last time (the node could not be asked) are tried again, by txid alone.
+            retry = self.__dict__.setdefault("_takes_retry", set())
+            takes = sorted({r["txid"] for r in rows if r["head"].startswith(self.TAKE_PREFIX)} | retry)
+            if swaps:
+                db.conn.executemany("INSERT OR IGNORE INTO trade_seen(txid) VALUES(?)", swaps)
+            db.conn.execute("INSERT OR REPLACE INTO trade_scan(k, v) VALUES('rowid', ?)", (top,))
+            db.conn.commit()
+        if takes:
+            self._backfill_takes(txids=takes)
+            with self.open() as db:
+                done = set()
+                for i in range(0, len(takes), 500):
+                    part = takes[i:i + 500]
+                    done |= {r[0] for r in db.conn.execute(
+                        f"SELECT txid FROM take_trade WHERE txid IN ({','.join('?' * len(part))})", part)}
+            self._takes_retry = set(takes) - done
+
+    def _backfill_takes(self, since_height: int = 0, txids: list[str] | None = None) -> None:
         """Takes the engine applied before it wrote them down as trades: their
         token amount from the payload, their coins from what the transaction
-        paid anybody but the taker. Written once; the engine writes the rest."""
+        paid anybody but the taker. Written once; the engine writes the rest.
+        `txids`: only these (the rows _trade_scan has just read); none given, every take not written yet."""
         with self.open() as db:
-            missing = db.conn.execute(
-                "SELECT a.txid, a.sender, a.payload_hex FROM arcade_tx a "
-                "LEFT JOIN take_trade t ON t.txid = a.txid "
-                "WHERE a.valid = 1 AND a.payload_hex LIKE ? AND t.txid IS NULL "
-                "AND a.block_height >= ? LIMIT 200",
-                (self.TAKE_PREFIX + "%", int(since_height))).fetchall()
+            if txids is not None:
+                missing = []
+                for i in range(0, len(txids), 500):
+                    part = txids[i:i + 500]
+                    missing += db.conn.execute(
+                        "SELECT a.txid, a.sender, a.payload_hex FROM arcade_tx a "
+                        "LEFT JOIN take_trade t ON t.txid = a.txid "
+                        f"WHERE a.txid IN ({','.join('?' * len(part))}) AND t.txid IS NULL", part).fetchall()
+            else:
+                missing = db.conn.execute(
+                    "SELECT a.txid, a.sender, a.payload_hex FROM arcade_tx a "
+                    "LEFT JOIN take_trade t ON t.txid = a.txid "
+                    "WHERE a.valid = 1 AND a.payload_hex LIKE ? AND t.txid IS NULL "
+                    "AND a.block_height >= ? LIMIT 200",
+                    (self.TAKE_PREFIX + "%", int(since_height))).fetchall()
         if not missing:
             return
         found = []
