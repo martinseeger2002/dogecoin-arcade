@@ -829,7 +829,7 @@ export async function llmTopupSign(mine, {seller = "", here = false, network, tx
 //: does not know is mainnet too: asked about, never waved through. The test chains also sign with the m/44'/1' key
 //: (coins.COIN_TYPE), which holds no mainnet coin, so a node calling a mainnet chain "test" gets a signature for nothing.
 export const MAINNETS = new Set(["main", "doge", "ltc", "bel", "lky", "kot", "wjk", "dgb", "flop"]);
-export const TESTNETS = new Set(["test", "regtest", "ltctest"]);
+export const TESTNETS = new Set(["test", "regtest", "ltctest", "dgbtest"]);
 export function isMainnet(network) {
   return !TESTNETS.has(String(network || ""));
 }
@@ -3191,9 +3191,11 @@ export const TRADE = {
   // = htlc.dust_of), and the version bytes it may be paid to (trade.PAYEE_VERSIONS). tests/test_trade_fees.py holds
   // these to the Python numbers.
   CLAIM_FEE: {main: 1_000_000, test: 1_000_000, regtest: 1_000_000, doge: 1_000_000, ltc: 10_000, ltctest: 10_000,
-              bel: 10_000, lky: 1_000_000, kot: 100_000, wjk: 10_000, dgb: 400_000, flop: 1_000_000},
+              bel: 10_000, lky: 1_000_000, kot: 100_000, wjk: 10_000, dgb: 400_000, dgbtest: 400_000,
+              flop: 1_000_000},
   FEE_FLOOR: {main: 1_000_000, test: 1_000_000, regtest: 1_000_000, doge: 1_000_000, ltc: 10_000, ltctest: 10_000,
-              bel: 10_000, lky: 1_000_000, kot: 100_000, wjk: 10_000, dgb: 10_000, flop: 1_000_000},
+              bel: 10_000, lky: 1_000_000, kot: 100_000, wjk: 10_000, dgb: 10_000, dgbtest: 10_000,
+              flop: 1_000_000},
   FEE_BPS_CEILING: 10_000,
   // The lending arcade's part of a fee on a borrowed chain (trade.SHARE_PERCENT, 2026-10-28).
   SHARE_PERCENT: 20,
