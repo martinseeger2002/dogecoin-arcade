@@ -313,6 +313,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
 
   // tabs, and the panels with no tab of their own (Join, at /join). A module's tab and Admin hold that page in a
   // frame, loaded the first time the tab is opened and kept while the window is open.
+  var PATHS = {'/join': 'join', '/join/keys': 'join', '/me/backup': 'backup'};
   function panel(name, href) {
     var shown = null;
     document.querySelectorAll('.toolbar [data-tab]').forEach(function (x) { x.setAttribute('aria-selected', x.dataset.tab === name); });
@@ -323,7 +324,10 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     var frame = shown && shown.querySelector('iframe');
     document.querySelector('main').classList.toggle('framed', !!frame);
     if (frame && (href || !frame.getAttribute('src'))) frame.setAttribute('src', href || frame.dataset.src);
-    if (history.replaceState) history.replaceState(null, '', name === 'overview' ? location.pathname : '#' + name);
+    // The address names the tab, so a reload opens it again; a page with a path of its own (/join, /me/backup) keeps it.
+    if (history.replaceState && document.querySelector('.toolbar [data-tab="' + name + '"]') && !PATHS[location.pathname]) {
+      history.replaceState(null, '', name === 'overview' ? location.pathname : '#' + name);
+    }
     fit();
   }
   // Module tabs that do not fit in the bar go under More, last first.
@@ -370,7 +374,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     a.onclick = function (e) { e.preventDefault(); document.querySelector('.toolbar [data-tab="' + a.dataset.open + '"]').click(); };
   });
   // A page opened at /join or /me/backup, or at /#<tab> from the bar every other page wears (base.html)
-  var opened = {'/join': 'join', '/join/keys': 'join', '/me/backup': 'backup'}[location.pathname] || location.hash.slice(1);
+  var opened = PATHS[location.pathname] || location.hash.slice(1);
   if (opened && document.querySelector('main [data-panel="' + opened + '"]')) panel(opened);
 
   // Settings -> Your tabs: an account's choice is kept with it (and the operator's for the node's view); a visitor's
