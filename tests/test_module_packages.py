@@ -47,6 +47,7 @@ def test_a_commands_form_reaches_the_window_with_its_arguments_and_the_tab_says_
     from arcade.web.app import create_app
     listed = {c["name"]: c for c in TestClient(create_app(app_state)).get("/lite/api/commands").json()}
     assert listed["hello"]["form"] == form and listed["hello"]["args"] == ["who"] and listed["hello"]["module"] == "hello"
+    assert listed["hello"]["order"] == 0, "the manifest's order, the steps' own"
     assert "form" not in listed["sneak"]
 
 

@@ -45,7 +45,7 @@ section.frame iframe{display:block;width:100%;height:100%;border:0;background:va
 /* a node module's tab: its commands' forms (manifest "form") above its page, each running the line the console would */
 section.modframe{display:flex;flex-direction:column}
 section.modframe iframe{flex:1;height:auto;min-height:120px}
-.modpanel{flex:none;max-height:60%;overflow:auto;padding:10px 12px 0;border-bottom:1px solid var(--line)}
+.modpanel{flex:none;max-height:70%;overflow:auto;padding:10px 12px 0;border-bottom:1px solid var(--line)}
 .modforms{display:flex;flex-wrap:wrap;gap:0 10px}
 .modforms fieldset{flex:1 1 220px;max-width:420px}
 .modforms label{display:block;margin:0 0 6px;color:var(--muted);font-size:12px}
@@ -531,7 +531,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   function drawModule(box) {
     var id = box.dataset.modpanel;
     moduleCommands().then(function (list) {
-      var mine = list.filter(function (c) { return c.module === id && c.form; });
+      var mine = list.filter(function (c) { return c.module === id && c.form; })
+        .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
       var own = {}; mine.forEach(function (c) { own[c.name] = 1; });
       box.hidden = !mine.length;
       if (!mine.length) return;
@@ -542,7 +543,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
         var block = document.createElement('div'), said = document.createElement('div');
         said.className = 'line'; said.textContent = 'Console: ' + line;
         block.appendChild(said); out.replaceChildren(block);
-        runLine(line, function (result) { block.appendChild(answer(result)); })
+        block.scrollIntoView({block: 'nearest'});
+        runLine(line, function (result) { block.appendChild(answer(result)); block.scrollIntoView({block: 'nearest'}); })
           .then(function (signed) { if (signed) block.appendChild(note(signed)); },
                 function (e) { block.appendChild(note(String((e && e.message) || e), 'err')); });
       }
