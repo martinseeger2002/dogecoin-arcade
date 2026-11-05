@@ -88,6 +88,10 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 The silent-road test mutes the hub stream too (Claude)
+
+- `tests/test_realtime_anynode_browser.py::test_a_way_in_whose_stream_says_nothing_is_left_for_this_node` failed since d54913ce (hub attach and detach through a public host's door): the test's silent road muted only `/realtime/stream`, and with attach now working the page rode B's `/realtime/hub`, which still spoke. A real silent tunnel mutes both, so the test now mutes both. No arcade code changed: the page's check (`h.got` within RT_FIRST) already counts messages from either stream.
+
 ### 2026-11-04 Core copies: the installer's Pepecoin nodes take part, and pieces come from every arcade that holds a copy (Claude; the operator: "I would like the Lite install to get the initial Pepecoin test block state from one of the arcade peers", "Or several of the peers torrent style", "Pepe coin testing it will eventually become very large")
 
 - **The installer's nodes.** `core_copy.service_node(net)` reads the systemd user unit the installer writes (`pepecoind-testnet.service`, `pepecoind-mainnet.service`: `ExecStart=<binary> -datadir=<datadir>`), and `ServiceCore` stops and starts that node with `systemctl --user` (its unit is Restart=always: never behind systemd's back); the check after a copy runs the daemon itself with no peers while the unit is stopped. `Core.rpc` logs in by the datadir's `.cookie` first (the installer's nodes have no rpcuser). `CoreBoot.nets()` includes those chains, so a fresh install -- Lite or Full -- whose Pepecoin testnet is far behind takes a linked arcade's copy, and an arcade whose installer-made node is synced makes one when asked. Their rows show on Coins & chains, with no Cancel. A system unit (as on .25) is not one of these: it cannot be stopped without privileges.

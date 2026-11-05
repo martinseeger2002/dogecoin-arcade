@@ -108,7 +108,9 @@ def _mute_streams(app):
     import asyncio
 
     async def muted(scope, receive, send):
-        if scope["type"] == "http" and scope["path"] == "/realtime/stream":
+        # Both streams a room can ride: its own, and the one hub stream (2026-11-04: once hub/attach went through a
+        # public host's door, the page rode B's hub, which this left speaking, and the road never looked silent).
+        if scope["type"] == "http" and scope["path"] in ("/realtime/stream", "/realtime/hub"):
             await send({"type": "http.response.start", "status": 200,
                         "headers": [(b"content-type", b"text/event-stream"), (b"access-control-allow-origin", b"*")]})
             await send({"type": "http.response.body", "body": b"", "more_body": True})
