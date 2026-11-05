@@ -88,6 +88,37 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-window` · API keys: the whole arcade by program
+SadFrog: "making everything available completely via api locked to node operator provided keys". The decisions were:
+- "keys should be able to do everything an operator would be able to do. configuration should be on their end";
+- "operators can issue keys for node operation for websites they are using the arcade as a back bone - and users
+  should get api keys for testing";
+- where a key works from is the operator's choice.
+
+What changed:
+- **`arcade/apikeys.py`** is the key store (apikeys.sqlite, SHA-256 of each key; the key is shown once).
+  - Each key has a name, an owner ("node" or an account pubkey), optional modules, read only or not, where from (anywhere, lan, machine or IPs) and an optional end.
+  - The setting `api_keys` {users, per_user, per_minute} is the operator's say over users' keys.
+- **`web/apikeys_web.py`** adds the outermost middleware and the key routes.
+  - The middleware checks `Authorization: Bearer ak_...` before the door: unknown, off, ended, out of place, outside the key's modules, a write on a read-only key, or over a user's calls a minute → refused.
+  - It carries the key in `apikeys.CURRENT`.
+- **Four places ask the key, so no route needs to know about keys:**
+  - `_request_outside`: an operator's key is the machine;
+  - `the_door`: an operator's key passes, also under `--public`;
+  - `_admin_check`: an operator's key is local, without the admin page's header or password;
+  - `check_csrf`: a key is not a browser, so no form token.
+
+  `signed_in` also follows the key: a user's key is that account and ignores cookies.
+- **Routes:**
+  - `/api/v1/whoami`, `/api/v1/routes` (every route by module) and `/api/v1/run {line}` (the console);
+  - `/admin/api/keys` for the operator: every key, plus users' rules;
+  - `/account/keys` for an account's own. A key cannot make keys for an account.
+- **The door:** `/api/v1/` is a public tree; `/account/keys`, `/api/v1/run` and `/account/keys/<id>` are public POSTs. Each acts only for the account.
+- **Window -> Build:** an API keys tab (make, switch off, delete; users' rules for the operator) and an API reference tab (every route by module with a curl line).
+- **Tests:** tests/test_apikeys.py (7), and the Build tab in test_lite.
+- **Not yet:** a daily spending cap per key (the mockup drew one; SadFrog chose keys that do everything the operator can, so none is enforced). CORS for calling straight from a browser page: keys are for servers.
+- **For you:** this touches the door and the operator check, so please read `the_door` and `_admin_check` closely.
+
 ### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-window` · One window: modules as tabs, who may use each, Build, Admin a tab
 SadFrog asked for the Lite window to be one application: "the node modules, when enabled to be integrated into the ui",
 each user choosing their own view, each operator deciding access "entirely for their user base", "Messages should be a

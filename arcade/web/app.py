@@ -51,6 +51,7 @@ from . import terms as termslib
 from .. import backup, media, tokens as tokenlib, wallet as walletlib
 from ..ledger import COIN, AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain, unpayable_versions
+from .. import apikeys as apikeylib
 from .. import inscribe as inscribelib
 from .. import games as gameslib
 from .. import ring as ringlib
@@ -671,7 +672,11 @@ def locked(title: str, detail: str, status: int = 403) -> HTMLResponse:
 
 
 def _request_outside(state, request) -> bool:
-    """door.from_outside for one request: its headers, Host and TCP peer."""
+    """door.from_outside for one request: its headers, Host and TCP peer. A call with an operator's API key is the
+    operator at the machine, wherever it comes from (arcade/apikeys.py; the key's own limits were checked first)."""
+    key = apikeylib.CURRENT.get()
+    if key is not None and key.operator:
+        return False
     client = getattr(request, "client", None)
     return doorlib.from_outside(request.headers, request.headers.get("host", ""),
                                 state.public_hosts,
@@ -692,7 +697,8 @@ def _terms_first(state, request):
     """A redirect to the terms when this request is a public visitor opening a page who has not accepted them as they
     stand now, else None (terms.py). The cheap questions first: this runs for every request the node answers."""
     if not termslib.opens_a_page(request.method, request.url.path, request.headers) \
-            or termslib.exempt(request.url.path) or not _terms_visitor(state, request):
+            or termslib.exempt(request.url.path) or apikeylib.CURRENT.get() is not None \
+            or not _terms_visitor(state, request):
         return None
     if request.cookies.get(termslib.COOKIE) == termslib.version(termslib.text(state)):
         return None
@@ -759,6 +765,10 @@ def the_door(state: AppState):
             return terms
 
         outside = _request_outside(state, request)
+        # An operator's API key is the operator, even on an instance that is public as a whole (--public).
+        key = apikeylib.CURRENT.get()
+        if key is not None and key.operator:
+            return await call_next(request)
 
         # Being on the operator's machine needs no cookie, so a page on any
         # other site the operator has open could otherwise post to this one as
@@ -1453,6 +1463,8 @@ def create_app(state: AppState) -> FastAPI:
         and the wallet before concluding the protection worked. A check nobody
         can verify from the outside is a poor check even when it is sound.
         """
+        if apikeylib.CURRENT.get() is not None:
+            return                    # an API key is not a browser: no other site's page can send it
         import secrets as _s
         if not _s.compare_digest(token or "", state.csrf_token):
             raise HTTPException(
@@ -11658,7 +11670,16 @@ def create_app(state: AppState) -> FastAPI:
 
     def signed_in(request: Request):
         """The account this request belongs to, or None. Touches the seat. On the arcade's own machine with nobody
-        signed in, its operator account (_operator_here)."""
+        signed in, its operator account (_operator_here). A user's API key is that account, and only that account:
+        the key, not a cookie that came with it, says who is calling (arcade/apikeys.py)."""
+        key = apikeylib.CURRENT.get()
+        if key is not None and not key.operator:
+            try:
+                return state.accounts().account(key.owner)
+            except Exception:                              # noqa: BLE001
+                return None
+        if key is not None:
+            return _operator_here(request)
         try:
             found = state.accounts().session(
                 request.cookies.get(SESSION_COOKIE, ""))
@@ -28659,7 +28680,11 @@ def create_app(state: AppState) -> FastAPI:
     # header and, when the browser says where it came from, this very origin.
 
     def _admin_check(request: Request, write: bool = False) -> dict:
-        """Who is using the panel, or an HTTPException saying what is missing."""
+        """Who is using the panel, or an HTTPException saying what is missing. An operator's API key is the operator
+        at the machine; it needs neither the admin page's header nor its password (arcade/apikeys.py)."""
+        key = apikeylib.CURRENT.get()
+        if key is not None and key.operator:
+            return {"local": True, "key": key.id}
         local = not (state.public or _from_outside(request))
         if write:
             if request.headers.get(ADMIN_HEADER) != "1":
@@ -36110,9 +36135,14 @@ def create_app(state: AppState) -> FastAPI:
                                   account_address=_account_address, name_of=_name_of, node_tools=node_tools,
                                   public_tools=public_tools, wallet_name=_account_name,
                                   account_view=_account_view, join_facts=_join_facts, offer_for=_module_offer)
+    # API keys (arcade/apikeys.py): their routes, kept by the gate below like every other.
+    from . import apikeys_web
+    apikeys_web.register(app, state, admin_check=_admin_check, signed_in=signed_in, run_line=_lite_home.run_line)
     # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
     from . import modules_web
     modules_web.register(app, state, admin_check=_admin_check, signed_in=signed_in)
+    # And outermost: a keyed call is checked before the door sees it.
+    apikeys_web.guard(app, state)
     return app
 
 

@@ -92,7 +92,7 @@ _MODULES = (
                    "/bip39-english.txt", "/admin/terms", "/admin/login", "/admin/logout", "/admin/api/state",
                    "/admin/api/release", "/admin/api/settings", "/admin/api/cores", "/admin/api/restart",
                    "/admin/api/setup", "/admin/api/welcome", "/admin/api/litecoin", "/admin/api/modules",
-                   "/admin/modules.js", "/m"),
+                   "/admin/modules.js", "/m", "/api/v1", "/admin/api/keys", "/account/keys"),
            jobs=("pack-source", "core-installs", "auto-update", "repair", "chain-scan", "token-indexes", "releases",
                  "faucets")),
     Module("wallet", "core", "Wallet", "Every chain's wallet for the operator and for users: Send, Receive, "

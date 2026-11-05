@@ -195,12 +195,14 @@ PUBLIC_PAGES = frozenset({
     "/account/claimpools",            # this account's own prize pools, to withdraw
     "/account/pagesends",             # what pages have asked this account to send
     "/account/run/item",              # one item of this account's own run, as uploaded
+    "/account/keys",                  # this account's own API keys (arcade/apikeys.py; signed in)
 })
 
 #: Prefixes a stranger may read. Everything under them is public, so each
 #: one is a promise about a whole subtree: nothing under these may ever
 #: learn to spend.
 PUBLIC_TREES = (
+    "/api/v1/",               # the API (arcade/apikeys.py): who a key is, the routes; an account's key acts as it
     "/lite/api/",             # Lite's overview and command list, shaped by who asks (arcade/lite/web.py)
     "/lite/packages/",        # an installed theme's own fonts (arcade/lite/web.py)
     "/m/",                    # a node module's pages, read only and sandboxed; each checks its manifest's audience
@@ -329,6 +331,9 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/lite/api/console",
                # the tabs a signed-in account shows in its own Lite window: that account's choice only (arcade/lite)
                "/lite/api/tabs",
+               # an account's own API keys, and a console line run as the key's account (arcade/apikeys.py): each
+               # acts only for the account itself, as it would signed in
+               "/account/keys", "/api/v1/run",
                # a browser's yes to the terms: a cookie in that browser, nothing on this node (terms.py, 2026-11-02)
                "/terms/accept",
                # every session of the signed-in account ends, its own only (issue #13, 2026-10-25)
@@ -578,6 +583,7 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
 #: that address's key signed (web/app.py signin_imported_coins; nothing without it).
 PUBLIC_POST_SHAPES = (
     re.compile(r"^/signin/[^/]{1,64}/imported-coins$"),
+    re.compile(r"^/account/keys/[0-9a-f]{8}$"),     # switching off or deleting one of the account's own keys
     re.compile(r"^/coins/walk/job$"),      # another arcade's part of a shared walk: blocks to read, never a spend
 )
 
