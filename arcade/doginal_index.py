@@ -2254,8 +2254,8 @@ class DoginalIndex:
             return False
         if getattr(self, "_reading", None) == c and self.own_core():
             return None                                  # a lane's follow-back was too slow: read here (_help)
-        if self._lane_sources(walking=True):
-            return False                                 # the lanes here take every chunk in line, this one too
+        if self._lane_sources(walking=True) and self._lanes_come_to(c):
+            return False                                 # the lanes here take this chunk next
         lo = chunk_range(c, self.base)[0]
         now = time.time()
         for node, (until, at) in self.chunks.leases.get(c, {}).items():
@@ -2267,6 +2267,15 @@ class DoginalIndex:
             self._reading = c
             self._say_lease({"c": c, "at": self.walker.next_height()})
         return None
+
+    def _lanes_come_to(self, c: int) -> bool:
+        """Whether the lanes here take chunk c next, in their own order (Chunks.choose: the chunks the walk needs, then
+        the lowest one nobody has said). 2026-11-04, Bellscoin: an index walked on another machine and moved here had
+        said only some chunks; the lanes went back to cover the lowest, the walk's chunk at the tip was none of them,
+        and the walk waited on it for good. A chunk the lanes do not come to next, the walk reads itself."""
+        held = {lane["c"] for lane in self.chunks.lanes}
+        first = self._needed() if self.mode() == "walk" else ()
+        return self.chunks.choose(ready_chunks(self.tip, self.base), time.time(), exclude=held, first=first) == c
 
     def _needed(self) -> list[int]:
         """Chunks just ahead of the walk with no notes here, none on their way, and nobody to send them -- said only by
