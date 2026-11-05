@@ -74,11 +74,38 @@ Sources: R = https://github.com/DigiByte-Core/digibyte, RAW = https://raw.github
     (`tests/test_digidollar_regtest.py`, skipped where `digibyted` is not installed). It passed on 2026-11-04: the node
     took the mint ($0 to $100 of supply), then 340 blocks later the redeem (back to $0, every DGB returned).
 
+## Every step in the window (2026-11-05)
+
+SadFrog: "Make sure every aspect of the Digibyte digidollar has ui for the whole process with the ability to also do it
+in the console." The module's tab in the Lite window has a control for each step, drawn by the window from the
+manifest's `form` (PACKAGES.md): DigiDollar now, Cost, Gather, Mint, My vaults (with Redeem beside an unlocked vault),
+and, for the operator, Mainnet mints. Each runs the line the console takes (`ddstats`, `ddcollateral`, `ddgather`,
+`ddmint`, `ddvaults`, `ddredeem`, `ddmainnet`) and shows it under its answer. The module's README has the table.
+
+- **A mint spends at most about eight coins.** At 0.35 DGB a kB each coin adds about 0.05 DGB of fee, and the arcade
+  caps a module's fee at 0.5 DGB (`max_fee`); before this, a mint of 9 to 50 coins was refused by the arcade with a
+  fee message. `ddgather` sends up to 50 small coins to the caller's own address first.
+
+## Mainnet: the groundwork (2026-11-05)
+
+SadFrog: "lay the ground work for making this process work for digidollar on mainnet with mainnet Digibyte". Every
+command takes `main` or `test`. On mainnet:
+- **Mints are off until the operator turns them on** (`ddmainnet on yes`, kept in the module's own data folder). The
+  module's README lists what to check first.
+- **Mainnet's rules** are the module's too: $100 to $100,000, tiers 1 to 9 only, and Core's minting restrictions
+  (`estimatecollateral`'s `minting_restricted`, which Thaw Day's rules feed) refuse a mint with Core's reason.
+- **Each Core is checked to be the chain it is named** (`getblockchaininfo.chain`), both ways.
+- **The wallet's question says "Real DGB"** for a spend on a chain of real coins (`_wallet.html` liteSign).
+- **Redeem is open on both chains:** it only gives the owner's DGB back.
+
+What mainnet still needs: the review of the wallet's Schnorr signing; a run of the regtest test against the Core the
+arcade runs; a DigiDollar send (`0x02000770`) and the `DD...` address format, so dollars can be paid to someone.
+
 ## What does not work yet
 
 - **Sending DigiDollars** (version `0x02000770`, `OP_RETURN "DD" 2 <cents>...`). The signing is the redeem's key path;
   the builder and the `DD...` address format are not written.
-- **Mainnet.** The module mints and redeems on the test chain only until the wallet's Schnorr signing is reviewed.
+- **Mainnet mints** wait for the operator's switch (above).
 - **A vault whose dollars were sent on** is not found by `ddvaults`: it is found by its own DigiDollar output.
 
 ## Decisions for the user and for the operator

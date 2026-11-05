@@ -230,6 +230,8 @@ if (!NODE) {
     if (!paid.length) lines.push("  nobody but you");
     lines.push(`Network fee: ${coinsOf(read.fee)} ${unit(c)}`);
     if (read.change) lines.push(`Comes back to you: ${coinsOf(read.change)} ${unit(c)}`);
+    // A module's spend on a chain of real coins says so, as Send's review does (w-warn).
+    if (c.mainnet) lines.push("", `Real ${unit(c)}. Once it is in a block it can't be taken back.`);
     if (!window.confirm(lines.join("\n") + "\n\nSign it with your wallet and send it?")) return "Not sent. Nothing was signed.";
     const out = await wallet.confirm(k, o, {reviewed: true});
     load();

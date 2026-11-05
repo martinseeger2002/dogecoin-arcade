@@ -88,6 +88,21 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 · SadFrog's side (Claude) · DigiDollar: a control for every step, and mainnet's groundwork
+SadFrog: "Make sure every aspect of the Digibyte digidollar has ui for the whole process with the ability to also do it
+in the console", and "lay the ground work for making this process work for digidollar on mainnet".
+- **Module forms** (`packages._check_form`, `commands.Command.form`, `/lite/api/commands` gives `form`, `args`,
+  `module`; `modules.tabs` gives `package`): a node module's tab in the Lite window draws each command's form above its
+  page (`lite.html` drawModule) and runs the console's line through the same path (`runLine`, which `send` now uses
+  too): a spend still goes to `liteSign`. Answers are drawn as a list and tables; `actions` become buttons for the
+  module's own commands only. PACKAGES.md has the fields. Tests: test_module_sandbox (+6 refusals),
+  test_module_packages (+1), test_lite_module_panel_browser (new).
+- **DigiDollar 0.3.0**: `ddgather`, `ddmainnet` (operator; off until `on yes`), a chain on every command, mainnet's
+  rules, Redeem as an action on an unlocked vault, a form for each step. A mint's coins are chosen to stay under the
+  module's 0.5 DGB fee cap (about eight coins): before, 9 to 50 coins made a mint the arcade refused for its fee.
+  Tests: test_digidollar (+3, two changed).
+- **`liteSign`** says "Real DGB" for a module's spend on a chain of real coins.
+
 ### 2026-11-05 · SadFrog's side (Claude) · Mining as a module: CPU per chain, and local ASICs over stratum
 SadFrog: "making mining on the node a module that can be enabled per node", with "the abilities and tests to run
 mining on each chain where possible on cpu as well as a section to hookup local asics".

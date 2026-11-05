@@ -15,7 +15,12 @@ PILOT = Path(__file__).parent.parent / "examples" / "packages" / "digidollar"
 
 def test_the_pilot_package_is_a_module_this_arcade_reads():
     manifest, files = packages.read(PILOT)
-    assert manifest["kind"] == "module" and set(manifest["commands"]) == {"ddstats", "ddcollateral", "ddmint", "ddvaults", "ddredeem"}
+    assert manifest["kind"] == "module" and set(manifest["commands"]) == {
+        "ddstats", "ddcollateral", "ddgather", "ddmint", "ddvaults", "ddredeem", "ddmainnet"}
+    shown = [n for n, c in manifest["commands"].items() if "form" in c]
+    assert shown == ["ddstats", "ddcollateral", "ddgather", "ddmint", "ddvaults", "ddmainnet"], \
+        "a control for every step; a redeem is the vault list's own button"
+    assert manifest["commands"]["ddmainnet"]["audience"] == "operator"
     assert "lib/taproot.py" in files and not any("wallet" in m for m in manifest["needs"]["chains"]["dgb"])
     assert manifest["needs"]["chains"]["dgbtest"] == manifest["needs"]["chains"]["dgb"]
 
@@ -128,5 +133,98 @@ def test_the_pilot_spends_mined_coins_only_once_ripe_and_asks_to_gather_many_sma
     coins, _ = pilot._coins(Ctx(), "dgbtest", "s-mine")
     assert [c["txid"] for c in coins] == ["bb" * 32, "cc" * 32], "a block mined 50 deep is not ripe; 100 deep is"
     many = [{"txid": f"{n:064x}", "vout": 0, "value": 1043 * 10 ** 8} for n in range(300)]
-    with pytest.raises(ValueError, match="gather it first"):
+    with pytest.raises(ValueError, match="gather them first"):
         pilot.mint(_key()[0][1:], 10000, 0, 1000, 0, 319_015 * 10 ** 8, many, b"\x76")
+    # The fee caps a DigiDollar spend at a few coins (0.05 DGB each at its rate; the arcade allows the module 0.5).
+    made = pilot.mint(_key()[0][1:], 10000, 0, 1000, 0, 7 * 1043 * 10 ** 8, many, b"\x76")
+    assert len(made["inputs"]) == 8
+    with pytest.raises(ValueError, match="gather them first"):
+        pilot.mint(_key()[0][1:], 10000, 0, 1000, 0, 9 * 1043 * 10 ** 8, many, b"\x76")
+
+
+def test_a_gather_puts_up_to_fifty_of_the_smallest_coins_into_one_at_the_relay_fee():
+    _, pilot = _pilot()
+    coins = [{"txid": f"{n:064x}", "vout": n % 3, "value": (n + 1) * 10 ** 8} for n in range(120)]
+    script = b"\x76\xa9\x14" + bytes(20) + b"\x88\xac"
+    made = pilot.gather(coins, script, "dgb")
+    assert made["chain"] == "dgb" and made["version"] == 2 and len(made["inputs"]) == 50
+    assert {i["txid"] for i in made["inputs"]} == {f"{n:064x}" for n in range(50)}, "the smallest first"
+    (value, out), = made["outputs"]
+    fee = sum(range(1, 51)) * 10 ** 8 - value
+    assert bytes.fromhex(out) == script and 1_000_000 < fee < 2_000_000, "about 0.015 DGB for 50 coins"
+    assert "70 more after this" in made["what"]
+    with pytest.raises(ValueError, match="one coin already"):
+        pilot.gather(coins[:1], script)
+
+
+class _Chain:
+    """A DigiByte Core for the module's commands: `chain` says which network it answers as."""
+    def __init__(self, pub, chain="test", height=2000, coins=(), outs=()):
+        self.pub, self.chain, self.height, self.coins, self.outs = pub, chain, height, list(coins), dict(outs)
+
+    def rpc(self, net, method, *params):
+        if method == "getdigidollardeploymentinfo":
+            return {"enabled": True}
+        if method == "getblockchaininfo":
+            return {"chain": self.chain, "blocks": self.height}
+        if method == "getblockcount":
+            return self.height
+        if method == "estimatecollateral":
+            return {"lock_days": 0 if params[1] == 0 else 30, "wallet_collateral_dgb": 1000, "effective_ratio": 500}
+        if method == "scantxoutset":
+            return {"height": self.height, "unspents": self.coins}
+        if method == "gettxout":
+            return self.outs.get((params[0], params[1]))
+        raise AssertionError(method)
+
+
+def _ctx(pub, tmp_path, audience="user", **chain):
+    from types import SimpleNamespace
+    core = _Chain(pub, **chain)
+    caller = {"audience": audience, "address": {"dgb": "D-mine", "dgbtest": "s-mine"},
+              "pubkey": {"dgb": pub.hex(), "dgbtest": pub.hex()}}
+    return SimpleNamespace(rpc=core.rpc, caller=caller, data=tmp_path)
+
+
+def test_mainnet_mints_wait_for_the_operator_and_keep_mainnet_s_rules(tmp_path):
+    _, pilot = _pilot()
+    pub, _ = _key()
+    coin = [{"txid": "aa" * 32, "vout": 0, "amount": 5000, "coinbase": False, "height": 10, "scriptPubKey": "76a9"}]
+    main = _ctx(pub, tmp_path, chain="main", coins=coin)
+    with pytest.raises(ValueError, match="mainnet mints are off on this arcade"):
+        pilot.command_ddmint(main, 100, 1, "main")
+    with pytest.raises(ValueError, match="only this arcade's operator"):
+        pilot.command_ddmainnet(main, "on", "yes")
+    op = _ctx(pub, tmp_path, audience="operator", chain="main")
+    assert pilot.command_ddmainnet(op)["mainnet_mints"] == "off"
+    with pytest.raises(ValueError, match="ddmainnet on yes"):
+        pilot.command_ddmainnet(op, "on")
+    assert pilot.command_ddmainnet(op, "on", "yes")["mainnet_mints"] == "on"
+    with pytest.raises(ValueError, match="tier 0, one hour, is for the test chain"):
+        pilot.command_ddmint(main, 100, 0, "main")
+    for dollars in (99.99, 100_000.01):
+        with pytest.raises(ValueError, match=r"\$100 to \$100,000"):
+            pilot.command_ddmint(main, dollars, 1, "main")
+    made = pilot.command_ddmint(main, 100, None, "main")["prepared"]
+    assert made["chain"] == "dgb" and "until block" in made["what"], "tier 1 unless said, on mainnet"
+    assert f"{2000 + 30 * 5760 + 100:,}" in made["what"]
+    with pytest.raises(ValueError, match="answers as test"):
+        pilot.command_ddmint(_ctx(pub, tmp_path, chain="test", coins=coin), 100, 1, "main")
+    with pytest.raises(ValueError, match="answers as main"):
+        pilot.command_ddmint(_ctx(pub, tmp_path, chain="main", coins=coin), 100, 0, "test")
+    assert pilot.command_ddmainnet(op, "off")["mainnet_mints"] == "off"
+    with pytest.raises(ValueError, match="mainnet mints are off"):
+        pilot.command_ddmint(main, 100, 1, "main")
+
+
+def test_an_unlocked_vault_carries_its_redeem_button(tmp_path, monkeypatch):
+    _, pilot = _pilot()
+    pub, _ = _key()
+    vaults = [{"txid": "aa" * 32, "cents": 10000, "lock": 1990, "tier": 0, "collateral": 10 ** 11},
+              {"txid": "bb" * 32, "cents": 10000, "lock": 2100, "tier": 0, "collateral": 10 ** 11}]
+    monkeypatch.setattr(pilot, "_holdings", lambda ctx, net, owner: [{"txid": "aa" * 32, "vout": 1, "cents": 20000}])
+    monkeypatch.setattr(pilot, "_vaults", lambda ctx, net, owner, held: vaults)
+    said = pilot.command_ddvaults(_ctx(pub, tmp_path), "test")
+    (now, later) = said["vaults"]
+    assert now["redeem"] == "now" and now["actions"] == [{"label": "Redeem", "line": f"ddredeem {'aa' * 32} test"}]
+    assert later["redeem"] == "in 100 blocks (about 25 minutes)" and "actions" not in later
