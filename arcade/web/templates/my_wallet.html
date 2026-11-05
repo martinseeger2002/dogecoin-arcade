@@ -227,6 +227,35 @@ a.wl-act:hover{text-decoration:none}
 .wl-dgpager{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
 .wl-dgpager select{flex:1 1 140px;min-width:0}
 .wl-pieces{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;margin-top:8px}
+/* the Wallet's Doginals in order, and their card (2026-11-05) */
+.dg-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:12px 0 4px}
+.dg-chip{border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:999px;padding:4px 11px;font-size:.8rem;box-shadow:none}
+.dg-chip b{margin-left:5px;color:var(--muted);font-weight:600}.dg-chip.on{border-color:var(--accent);color:var(--accent)}.dg-chip.on b{color:var(--accent)}
+.dg-sp{flex:1 0 100%;height:0}.wl-dg .dg-pick,.wl-dg .dg-go{width:auto;flex:1 1 140px;font-size:.8rem;padding:5px 8px;min-width:0;margin:0}
+.dg-grid{grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px}
+.dg-tile{cursor:pointer;border:1px solid var(--line);border-radius:12px;padding:6px;background:var(--panel)}
+.dg-tile:hover,.dg-tile:focus-visible{border-color:var(--accent)}.dg-tile.dg-focus{outline:2px solid var(--accent)}
+.dg-num{font-weight:700;font-size:.92rem}.dg-coll{font-size:.74rem;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1.1em}
+.dg-coll.none{color:var(--muted)}.dg-acts{display:flex;gap:5px}.dg-acts .wl-piecesend{flex:1}
+.dg-textpic{padding:8px;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);word-break:break-all;text-align:center;overflow:hidden}
+.dg-shade{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.62);display:flex;align-items:flex-start;justify-content:center;padding:40px 14px;overflow:auto}
+.dg-modal{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:18px;max-width:820px;width:100%;display:grid;grid-template-columns:minmax(0,340px) 1fr;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+@media (max-width:680px){.dg-modal{grid-template-columns:1fr}}
+.dg-x{position:absolute;top:6px;right:8px;background:transparent;color:var(--muted);font-size:1.4rem;box-shadow:none;padding:2px 8px;z-index:1}
+.dg-big{width:100%;aspect-ratio:1;border:0;display:block;background:var(--code)}
+.dg-bigtext{margin:0;padding:14px;min-height:100%;white-space:pre-wrap;word-break:break-all;background:var(--code);font-size:.8rem}
+.dg-side{padding:16px 18px}.dg-side h3{margin:0;font-size:1.5rem}.dg-cn{color:var(--accent);font-weight:600;margin:2px 0 10px}
+.dg-desc{color:var(--muted);font-size:.85rem;margin:0 0 10px}.dg-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 6px}
+.dg-attrs{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;margin-bottom:12px}
+.dg-attr{border:1px solid var(--line);border-radius:8px;padding:5px 7px}.dg-attr i{display:block;font-style:normal;font-size:.7rem;color:var(--muted)}
+.dg-attr em{font-style:normal;font-size:.7rem;color:var(--accent);float:right}
+.dg-dl{display:grid;grid-template-columns:110px 1fr;gap:4px 10px;margin:0 0 12px;font-size:.85rem}.dg-dl dt{color:var(--muted)}.dg-dl dd{margin:0;word-break:break-all}
+.dg-copy{padding:0 6px;font-size:.75rem;box-shadow:none;background:transparent;color:var(--link)}
+.dg-links{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:12px;font-size:.85rem}
+.dg-bigacts{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}.dg-send{padding:8px 18px}
+.dg-pricebox{flex:1;display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:10px;padding:3px 3px 3px 10px;min-width:200px}
+.dg-pricebox input{flex:1;min-width:0;border:0;background:transparent;padding:4px 0}
+.dg-listed{flex:1;align-self:center;color:var(--accent);font-weight:600}
 .wl-piece{display:block;aspect-ratio:1;border-radius:12px;overflow:hidden;position:relative;background:var(--code);max-width:100%}
 .wl-piece em{position:absolute;left:0;right:0;bottom:0;padding:4px 6px;font-style:normal;font-size:.7rem;font-weight:700;color:#fff;
   background:linear-gradient(transparent,rgba(0,0,0,.6));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1825,7 +1854,9 @@ async function drawTokens() {
   const starred = (t) => !!(favs && favs.has(favKey(t)));
   const held = here.filter((t) => Number(t.balance) > 0 || t.issuer_is_me)
     .map((t, i) => [t, i]).sort((a, b) => (starred(b[0]) - starred(a[0])) || (a[1] - b[1])).map((p) => p[0]);
-  if (!held.length) box.append(el("div", "wl-empty", `No tokens on ${c ? c.label.toLowerCase() : "this chain"} yet.`));
+  // Where DRC-20 / PRC-20 follow below (2026-11-05), "no tokens" was read as none at all: these are the arcade's own.
+  const has20 = !!(c && (c.network === "doge" || c.network === "main"));
+  if (!held.length) box.append(el("div", "wl-empty", `No ${has20 ? "arcade " : ""}tokens on ${c ? c.label.toLowerCase() : "this chain"} yet.`));
   const anyStar = held.some(starred);
   if (anyStar) box.append(el("div", "wl-favhead", "Favorites"));
   let shownRest = false;
@@ -2262,6 +2293,257 @@ function dgPageGo(n) {
 const ORD = {{ ord_wallet()|tojson }};
 const ORD_WORDS = Object.fromEntries(Object.entries(ORD).map(([net, o]) => [net, o.words]));
 
+// --- The Wallet's Doginals in order, each with its card (2026-11-05, the operator: "they should be ordered by inscription
+// number earliest first", "sent and listed on the marketplace right from my wallet", "if they are a part of a
+// collection, they should have the collection metadata with them", "Each one should be able to be clicked, and their
+// card should open with all of the information and a content link") ---------------------------------------------------
+const DG_META = "arcade.wallet.dgmeta:", DG_VIEW = "arcade.wallet.dgview:", DG_META_MAX = 500, DG_META_RETRY_MS = 60000;
+function dgMetaLoad(net) {
+  try { return JSON.parse(localStorage.getItem(DG_META + net) || "{}") || {}; } catch (e) { return {}; }
+}
+function dgMetaSave(net, meta) {
+  try { localStorage.setItem(DG_META + net, JSON.stringify(meta)); } catch (e) { /* asked again next time */ }
+}
+function dgViewLoad(net) {
+  let v = {};
+  try { v = JSON.parse(localStorage.getItem(DG_VIEW + net) || "{}") || {}; } catch (e) {}
+  return {kind: ["all", "art", "text"].includes(v.kind) ? v.kind : "all", coll: typeof v.coll === "string" ? v.coll : "",
+          order: v.order === "new" ? "new" : "old"};
+}
+function dgViewSet(change) {
+  dg.view = {...dg.view, ...change};
+  try { localStorage.setItem(DG_VIEW + dg.net, JSON.stringify(dg.view)); } catch (e) {}
+  dg.page = 0; dg.focus = null;
+  drawDoginals().catch(() => {});
+}
+// The numbers and collections of those not known here yet, DG_META_MAX at a time, one call after the other.
+function dgMetaAsk(net, found) {
+  const mine = dg;
+  if (mine.metaAsking) return;                 // the ones missed wait for the retry below; new ones are asked now
+  const want = found.map((g) => g.id).filter((id) => !mine.meta[id] && !mine.metaMiss.has(id));
+  if (!want.length) return;
+  mine.metaAsking = true;
+  (async () => {
+    while (want.length && dg === mine) {
+      const ids = want.splice(0, DG_META_MAX);
+      const r = await fetch("/account/doginal-meta", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                      body: JSON.stringify({chain: net, ids})});
+      const got = await r.json().catch(() => ({}));
+      if (!r.ok) { mine.metaErr = got.detail || "the index did not answer"; for (const id of ids) mine.metaMiss.add(id); break; }
+      mine.metaErr = "";
+      for (const id of ids) {
+        const m = (got.meta || {})[id];
+        if (m && m.number != null) mine.meta[id] = m; else mine.metaMiss.add(id);
+      }
+      dgMetaSave(net, mine.meta);
+      if (dg === mine) drawDoginals().catch(() => {});
+    }
+  })().catch((e) => { mine.metaErr = String(e.message || e); }).finally(() => {
+    mine.metaAsking = false;
+    // Those not answered yet (the index not there, or a call that failed) are asked again in a minute.
+    if (dg === mine && !mine.metaWait && (mine.metaErr || mine.metaMiss.size)) {
+      mine.metaWait = setTimeout(() => { mine.metaWait = null; mine.metaMiss.clear(); drawDoginals().catch(() => {}); },
+                                 DG_META_RETRY_MS);
+    }
+    if (dg === mine) drawDoginals().catch(() => {});
+  });
+}
+// "Go to #number or id": the page holding it, marked, and its card opened.
+function dgGoTo(said) {
+  const q = String(said || "").trim().toLowerCase().replace(/^#/, "").replace(/,/g, "");
+  if (!q) return;
+  const list = dg.list || [];
+  const at = list.findIndex((g) => g.id === q || (/^-?\d+$/.test(q) && dg.meta[g.id] && String(dg.meta[g.id].number) === q));
+  if (at < 0) { toast(`That one is not among those shown here.`); return; }
+  dg.focus = list[at].id;
+  dgPageGo(Math.floor(at / DG_PAGE));
+  openDgCard(list[at]);
+}
+// A text inscription's first words in place of a picture.
+function dgTextPic(g) {
+  const box = el("span", "wl-dgpic dg-textpic");
+  const words = el("span", "", dg.texts[g.id] || "…");
+  box.append(words);
+  if (dg.texts[g.id] == null) {
+    dg.texts[g.id] = "…";
+    fetch(`/content/${encodeURIComponent(g.id)}`).then((r) => r.ok ? r.text() : "")
+      .then((t) => { dg.texts[g.id] = (t || "").slice(0, 160) || "(empty)"; words.textContent = dg.texts[g.id]; })
+      .catch(() => { dg.texts[g.id] = "(not readable just now)"; words.textContent = dg.texts[g.id]; });
+  }
+  return box;
+}
+async function dgPost(path, body) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, credentials: "same-origin",
+                               body: JSON.stringify(body)});
+  const said = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(said.detail || "the node would not do that");
+  return said;
+}
+async function dgKeys(net) {
+  const w = await import("/wallet.js");
+  const chain = {network: net, version: ORD[net].version};
+  const held = (await w.opened(chain)) || await arcadeKeys(chain);
+  return {w, held, keys: w.keysOn(held, net)};
+}
+// List one on the NFT Exchange at a price (the Exchange's own two calls, /account/doginals/list then /list/sign: the
+// seller signs one SINGLE|ANYONECANPAY input, so anybody may buy it at that price, paid to the seller's own address).
+async function dgList(g, amount) {
+  const net = dg.net, [W, C] = ORD_WORDS[net];
+  const coins = await import("/coins.js");
+  const ask = await dgPost("/account/doginals/list", {chain: net, txid: g.txid, vout: g.vout, inscription: g.id, amount});
+  const {keys} = await dgKeys(net);
+  const digest = await coins.verifyDoginalAsk(ask, keys);
+  if (!await arcadeAsk(`List this ${W} for ${Number(ask.price) / 1e8} ${C}?`,
+        "Anybody can buy it for that price, paid to your own address, until you unlist it. It stays held as listed "
+        + `meanwhile. Unlisting is a small send of the ${W} to yourself.`, "List it")) return false;
+  const signature = coins.hex(await coins.signInput(keys.key, digest, coins.SINGLE_ANYONECANPAY));
+  await dgPost("/account/doginals/list/sign", {chain: net, txid: ask.coin.txid, vout: ask.coin.vout,
+                                               inscription: ask.inscription, amount, signature,
+                                               pubkey: coins.hex(keys.pubkey)});
+  return true;
+}
+// Unlist: the Doginal moves to this wallet's own address, which ends the signature the listing gave.
+async function dgUnlist(listing) {
+  const net = dg.net, [W] = ORD_WORDS[net];
+  const offer = await dgPost("/account/doginals/cancel", {chain: net, listing});
+  const {w, held} = await dgKeys(net);
+  const shown = await w.checked(offer, held);
+  if (!await arcadeAsk("Unlist it?", `The ${W} moves to your own address, which is what ends the listing: ${shown.says}`,
+                       "Unlist")) return false;
+  await w.confirm(held, offer);
+  return true;
+}
+// The card: everything about one, its content link, and Send and List.
+async function openDgCard(g, wantPrice = false) {
+  const net = dg.net, [W, C] = ORD_WORDS[net], can = ORD[net];
+  const owned = !pickedNow() && can.send;
+  document.querySelector(".dg-shade")?.remove();
+  const shade = el("div", "dg-shade"), modal = el("div", "dg-modal");
+  modal.setAttribute("role", "dialog"); modal.setAttribute("aria-modal", "true");
+  const close = () => { shade.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  shade.onclick = (e) => { if (e.target === shade) close(); };
+  const x = el("button", "dg-x", "×"); x.type = "button"; x.setAttribute("aria-label", "Close"); x.onclick = close;
+  const left = el("div", "dg-left");
+  if (g.text) {
+    const pre = el("pre", "dg-bigtext", dg.texts[g.id] || "…"); left.append(pre);
+    fetch(`/content/${encodeURIComponent(g.id)}`).then((r) => r.ok ? r.text() : "").then((t) => { pre.textContent = t.slice(0, 4000); });
+  } else {
+    const frame = el("iframe", "dg-big"); frame.src = `/content/${encodeURIComponent(g.id)}/fit`; frame.title = g.id;
+    frame.setAttribute("sandbox", "allow-scripts"); frame.setAttribute("scrolling", "no");
+    left.append(frame);
+  }
+  const side = el("div", "dg-side");
+  const m0 = dg.meta[g.id];
+  const title = el("h3", "", m0 && m0.number != null ? `#${Number(m0.number).toLocaleString()}` : W); title.id = "dg-card-title";
+  modal.setAttribute("aria-labelledby", title.id);
+  const coll = el("div", "dg-cn", m0 && m0.collection ? (m0.collection.item || m0.collection.name) : "");
+  const body = el("div", "", "Reading its details…");
+  side.append(title, coll, body);
+  modal.append(x, left, side);
+  shade.append(modal);
+  document.body.append(shade);
+  x.focus();
+  let got;
+  try {
+    const r = await fetch(`/account/doginal-card?chain=${encodeURIComponent(net)}&id=${encodeURIComponent(g.id)}`,
+                          {cache: "no-store"});
+    got = await r.json();
+    if (!r.ok) throw new Error(got.detail || "the node would not say");
+  } catch (e) {
+    body.replaceChildren(el("p", "msg err", `Its details can't be read just now: ${e.message || e}`));
+    got = null;
+  }
+  const parts = [];
+  const ins = got ? got.inscription : {id: g.id};
+  if (got) {
+    title.textContent = `#${Number(ins.number).toLocaleString()}`;
+    const k = got.collection;
+    if (k) {
+      coll.textContent = k.item && k.item !== k.name ? `${k.name} · ${k.item}` : (k.name || k.item || "");
+      if (k.description) parts.push(el("p", "dg-desc", k.description));
+      const facts = [k.supply ? `${Number(k.supply).toLocaleString()} pieces` : "",
+                     k.holders ? `${Number(k.holders).toLocaleString()} holders` : "",
+                     k.created ? `since ${new Date(k.created * 1000).toLocaleDateString()}` : ""].filter(Boolean);
+      if (facts.length) parts.push(el("p", "dg-desc", facts.join(" · ")));
+      if (k.traits && k.traits.length) {
+        parts.push(el("p", "dg-label", "Traits"));
+        const grid = el("div", "dg-attrs");
+        for (const t of k.traits) {
+          const a = el("div", "dg-attr");
+          a.append(el("i", "", t.trait), el("span", "", t.value));
+          if (t.share != null) a.append(el("em", "", `${(t.share * 100).toFixed(t.share < 0.1 ? 1 : 0)}%`));
+          grid.append(a);
+        }
+        parts.push(grid);
+      }
+    } else coll.textContent = "No collection";
+    const dl = el("dl", "dg-dl");
+    const row = (k2, v, mono) => { dl.append(el("dt", "", k2)); const d = el("dd", mono ? "mono" : "", v); dl.append(d); return d; };
+    const idd = row("Inscription id", ins.id, true);
+    const copy = el("button", "dg-copy", "copy"); copy.type = "button";
+    copy.onclick = () => navigator.clipboard.writeText(ins.id).then(() => toast("Copied.")).catch(() => {});
+    idd.append(" ", copy);
+    row("Content", `${ins.content_type || "unknown"}${ins.size != null ? ` · ${Number(ins.size).toLocaleString()} bytes` : ""}`);
+    row("Inscribed", `block ${Number(ins.height).toLocaleString()}${got.made ? " · " + new Date(got.made * 1000).toLocaleDateString() : ""}`);
+    if (ins.output) row("On coin", `${short(ins.output.split(":")[0])}:${ins.output.split(":")[1]} · offset ${ins.offset ?? 0}`
+                        + (g.value != null ? ` · ${coinsOf(g.value)} ${C}` : ""), true);
+    if (ins.owner) row("Owner", ins.owner + (owned ? " (you)" : ""), true);
+    parts.push(dl);
+    const links = el("div", "dg-links");
+    const open = el("a", "", "Open content ↗"); open.href = got.content || `/content/${g.id}`; open.target = "_blank"; open.rel = "noopener";
+    links.append(open);
+    if (k && k.root) { const a = el("a", "", "Collection page"); a.href = `/exchange/ord/${k.root}`; links.append(a); }
+    const ex = el("a", "", "In Explore"); ex.href = `/explore?net=${encodeURIComponent(net)}&id=${encodeURIComponent(g.id)}`;
+    links.append(ex);
+    parts.push(links);
+  }
+  // Send, and one price box with List (2026-11-05, the operator: "There shouldn't be two list options"). A listed one: Unlist.
+  if (owned) {
+    const listing = got && got.listing;
+    const acts = el("div", "dg-bigacts");
+    if (listing) {
+      acts.append(el("span", "dg-listed", `Listed for ${Number(listing.price) / 1e8} ${C}`));
+      const un = el("button", "", "Unlist"); un.type = "button";
+      un.onclick = async () => {
+        un.disabled = true;
+        try { if (await dgUnlist(listing.id)) { toast("Unlisted: it ends when its block lands."); close(); } }
+        catch (e) { toast(String(e.message || e)); } finally { un.disabled = false; }
+      };
+      acts.append(un);
+    } else {
+      const send = el("button", "dg-send", "Send"); send.type = "button";
+      send.onclick = () => { close(); openSend("", g); };
+      acts.append(send);
+      if (can.list) {
+        const box = el("span", "dg-pricebox");
+        const price = el("input"); price.inputMode = "decimal"; price.placeholder = "Price";
+        price.setAttribute("aria-label", `Price in ${C}`);
+        const list = el("button", "dg-send", "List"); list.type = "button";
+        list.onclick = async () => {
+          const amount = price.value.trim();
+          if (!amount) { price.focus(); return; }
+          list.disabled = true;
+          try {
+            if (await dgList(g, amount)) {
+              toast(`Listed for ${amount} ${C} on the NFT Exchange.`);
+              dg.listed = null; close(); drawDoginals().catch(() => {});
+            }
+          } catch (e) { toast(String(e.message || e)); } finally { list.disabled = false; }
+        };
+        price.onkeydown = (e) => { if (e.key === "Enter") list.click(); };
+        box.append(price, el("span", "", C), list);
+        acts.append(box);
+        if (wantPrice) setTimeout(() => price.focus(), 0);
+      }
+    }
+    parts.push(acts);
+    if (!listing && can.list) parts.push(el("p", "wl-note", "List puts it on the NFT Exchange at your price. It stays held until it sells or you unlist it."));
+  }
+  body.replaceChildren(...parts);
+}
+
 async function drawDoginals() {
   const box = $("doginals");
   const c = chainNow();
@@ -2276,7 +2558,11 @@ async function drawDoginals() {
   if (dg.net !== c.network || (dg.addr || "") !== addr) {
     let page = 0;
     try { page = Number(sessionStorage.getItem(DG_PAGEKEY + c.network + ":" + addr) || 0) || 0; } catch (e) {}
-    dg = {net: c.network, addr, coins: null, answers: {}, failed: 0, asking: false, page};
+    // `meta`: each inscription's number and collection (/account/doginal-meta), kept in this browser: a number never
+    // changes. `view`: which kind, collection and order the grid shows (2026-11-05: earliest number first).
+    dg = {net: c.network, addr, coins: null, answers: {}, failed: 0, asking: false, page,
+          meta: dgMetaLoad(c.network), metaMiss: new Set(), metaAsking: false, metaErr: "", texts: {},
+          view: dgViewLoad(c.network)};
     dgUi = null;
   }
   // Pepinals (2026-10-17: "Add pepinals support"): the same ord inscriptions on Pepecoin mainnet. Bellinals and
@@ -2284,10 +2570,10 @@ async function drawDoginals() {
   const [W, C, coinWord] = ORD_WORDS[c.network];
   if (!dgUi || !box.contains(dgUi.head)) {
     const head = el("h2", "", `${W}s`); head.id = "dg-title";
-    dgUi = {head, status: el("div", ""), notes: el("div", ""), stray: el("div", ""), grid: el("div", "wl-pieces"),
-            pager: el("div", "wl-dgpager"), shown: null, paged: null};
-    box.replaceChildren(head, el("p", "wl-note dg-credit", "Read from the chain by this arcade's node."),
-                        dgUi.status, dgUi.notes, dgUi.stray, dgUi.grid, dgUi.pager);
+    dgUi = {head, credit: el("p", "wl-note dg-credit", "Read from the chain by this arcade's node."),
+            status: el("div", ""), notes: el("div", ""), stray: el("div", ""), bar: el("div", "dg-bar"),
+            grid: el("div", "wl-pieces dg-grid"), pager: el("div", "wl-dgpager"), shown: null, paged: null, barKey: null};
+    box.replaceChildren(head, dgUi.credit, dgUi.status, dgUi.notes, dgUi.stray, dgUi.bar, dgUi.grid, dgUi.pager);
     if (doge && !w) strayDoginals(dgUi.stray).catch(() => {});
   }
   const ui = dgUi;
@@ -2308,15 +2594,18 @@ async function drawDoginals() {
   }
   const left = txids.filter((t) => !dg.answers[t]);
   const found = [], unread = [];
-  let notArt = 0;
   for (const coin of dg.coins) {
     for (const i of dg.answers[coin.txid] || []) {
       if (i.vout !== coin.vout) continue;
       if (i.unknown || !i.id) unread.push(coin);
-      else if (i.ctype && DG_NOT_ART.test(i.ctype)) notArt++;   // text, JSON, scripts: not shown as pictures
-      else found.push({...i, txid: coin.txid, vout: coin.vout, value: coin.value, doginal: true});
+      // Text, JSON and scripts too (2026-11-05, the operator: "I have over 7000 of them, but I'm only seeing ... 10 pages"):
+      // counted and shown, with a filter to leave them out.
+      else found.push({...i, txid: coin.txid, vout: coin.vout, value: coin.value, doginal: true,
+                       text: !!(i.ctype && DG_NOT_ART.test(i.ctype))});
     }
   }
+  // Each one's number and collection, asked in the background a few hundred at a time; the grid redraws as they come.
+  dgMetaAsk(c.network, found);
   // The few lines above the cards: redrawn freely, they hold no pictures.
   const status = [];
   if (dg.failed) {
@@ -2343,41 +2632,41 @@ async function drawDoginals() {
     status.push(el("p", "wl-note", `${n} small coin${n === 1 ? "" : "s"} could not be traced all `
       + "the way back, so they are kept out of ordinary sends in case they carry one."));
   }
-  if (notArt) {
-    status.push(el("p", "wl-note", `${notArt.toLocaleString()} text, JSON and script inscription${notArt === 1 ? " is" : "s are"} `
-      + "not shown here. They stay held like the rest: an ordinary send never spends them."));
+  const numbered = found.filter((g) => dg.meta[g.id]).length;
+  const pending = found.filter((g) => !dg.meta[g.id] && !dg.metaMiss.has(g.id)).length;
+  if (found.length && numbered < found.length) {
+    status.push(el("p", "wl-note", dg.metaErr
+      ? `Numbers for ${(found.length - numbered).toLocaleString()} of them can't be read just now (${dg.metaErr}); `
+        + "they are shown last and asked again in a minute."
+      : pending
+        ? `Reading numbers and collections: ${numbered.toLocaleString()} of ${found.length.toLocaleString()}…`
+        : `${(found.length - numbered).toLocaleString()} of them ${found.length - numbered === 1 ? "is" : "are"} not in `
+          + `the ${W} index yet: shown last, and asked again in a minute.`));
   }
   if (!left.length && !dg.failed && !found.length) {
     status.push(el("div", "wl-empty", `No ${W}s on ${w ? w.name + "'s" : "your"} ${coinWord} coins.`));
   }
   ui.status.replaceChildren(...status);
+  ui.credit.textContent = "Read from the chain by this arcade's node." + (found.length
+    ? ` ${found.length.toLocaleString()} on ${w ? w.name + "'s" : "your"} coins, in inscription order, `
+      + `${dg.view.order === "new" ? "newest" : "earliest"} first.` : "");
   // Moving a Doginal costs Dogecoin on top of it (2026-10-15: "grayed out unless they have a balance of Dogecoin on
-  // top of their asset"): the send's fee, or the swap lock's fee and reserve. `spendable` already leaves the Doginals out.
+  // top of their asset"): the send's fee. `spendable` already leaves the Doginals out. A listing costs the seller nothing.
   const free = Number(c.spendable || 0);
   const sendShort = !w && free < Number(c.doginal_send_need || 0);
-  const swapShort = !w && free < Number(c.doginal_lock_need || 0);
   const notes = [];
   if (viewOnly && found.length) {
-    notes.push(el("p", "wl-note", `Your ${W}s, read from the chain. Sending, listing and swapping a ${W} from the `
+    notes.push(el("p", "wl-note", `Your ${W}s, read from the chain. Sending and listing a ${W} from the `
       + "arcade is not ready yet: they stay safe here, and an ordinary send never spends one."));
   } else if (w && found.length) {
-    notes.push(el("p", "wl-note", `These are ${w.name}'s. Sending or swapping a ${W} from an imported wallet is not `
+    notes.push(el("p", "wl-note", `These are ${w.name}'s. Sending or listing a ${W} from an imported wallet is not `
       + "ready yet: choose your arcade wallet above to send one of its own."));
-  } else if (found.length && (sendShort || swapShort)) {
-    const need = sendShort ? c.doginal_send_need : c.doginal_lock_need;
-    notes.push(el("p", "wl-note dg-need", sendShort
-      ? `To send ${doge ? "or swap " : ""}a ${W} you need some ${C} besides it for the network fee: about `
-        + `${coinsOf(doge ? c.doginal_lock_need : c.doginal_send_need)} ${C}${doge ? ` (${coinsOf(c.doginal_send_need)} to send)` : ""}. `
-        + `This wallet has ${coinsOf(free)} ${C} to spend.`
-      : `To swap a Doginal you need about ${coinsOf(need)} DOGE besides it (the network fee and the coin that moves it out of `
-        + `the swap's lock). This wallet has ${coinsOf(free)} DOGE to spend.`));
+  } else if (found.length && sendShort) {
+    notes.push(el("p", "wl-note dg-need", `To send a ${W} you need some ${C} besides it for the network fee: about `
+      + `${coinsOf(c.doginal_send_need)} ${C}. This wallet has ${coinsOf(free)} ${C} to spend.`));
   }
   ui.notes.replaceChildren(...notes);
-  // One page of cards, built only when what is on it changed.
-  const pages = Math.max(1, Math.ceil(found.length / DG_PAGE));
-  const page = Math.min(Math.max(0, dg.page | 0), pages - 1);
-  const here = found.slice(page * DG_PAGE, (page + 1) * DG_PAGE);
-  // Listed ones are held (2026-10-22: "locked as listed until it is unlisted or purchased"): no Send or Swap.
+  // Listed ones are held (2026-10-22: "locked as listed until it is unlisted or purchased"): no Send.
   if (!w && !dg.listed) {
     dg.listed = new Set();
     fetch("/account/listed", {cache: "no-store"}).then((r) => r.json()).then((got) => {
@@ -2386,50 +2675,105 @@ async function drawDoginals() {
     }).catch(() => {});
   }
   const isListed = (g) => !!(dg.listed && dg.listed.has(g.id));
-  const shown = JSON.stringify([here.map((g) => g.id + ":" + g.txid + ":" + g.vout + (isListed(g) ? ":L" : "")),
-                                sendShort, swapShort, !!w]);
+  // The bar: which kind, which collection, which order, and a box to go to one (2026-11-05 mockup).
+  const view = dg.view;
+  const metaOf = (g) => dg.meta[g.id] || null;
+  const collOf = (g) => { const m = metaOf(g); return m && m.collection ? m.collection : null; };
+  const collKey = (k) => k ? (k.slug || k.root || k.name) : "";
+  const arts = found.filter((g) => !g.text).length;
+  const colls = new Map();
+  let loose = 0;
+  for (const g of found) {
+    const k = collOf(g);
+    if (!k) { if (metaOf(g)) loose++; continue; }
+    const key = collKey(k), had = colls.get(key);
+    colls.set(key, {name: k.name || key, n: (had ? had.n : 0) + 1});
+  }
+  const barKey = JSON.stringify([found.length, arts, [...colls].map(([k, v]) => k + ":" + v.n), loose, view]);
+  if (ui.barKey !== barKey) {
+    ui.barKey = barKey;
+    const chip = (kind, label, n) => {
+      const b = el("button", "dg-chip" + (view.kind === kind ? " on" : ""), label); b.type = "button";
+      b.append(el("b", "", n.toLocaleString()));
+      b.setAttribute("aria-pressed", String(view.kind === kind));
+      b.onclick = () => dgViewSet({kind});
+      return b;
+    };
+    const pickColl = el("select", "dg-pick"); pickColl.setAttribute("aria-label", "Collection");
+    const opts = [["", "Every collection"], ...[...colls].sort((a, b) => a[1].name.localeCompare(b[1].name))
+      .map(([k, v]) => [k, `${v.name} (${v.n.toLocaleString()})`]), ["-", `Not in a collection (${loose.toLocaleString()})`]];
+    for (const [v, t] of opts) { const o = el("option", "", t); o.value = v; o.selected = v === (view.coll || ""); pickColl.append(o); }
+    pickColl.onchange = () => dgViewSet({coll: pickColl.value});
+    const pickOrder = el("select", "dg-pick"); pickOrder.setAttribute("aria-label", "Order");
+    for (const [v, t] of [["old", "Earliest first"], ["new", "Newest first"]]) {
+      const o = el("option", "", t); o.value = v; o.selected = v === view.order; pickOrder.append(o);
+    }
+    pickOrder.onchange = () => dgViewSet({order: pickOrder.value});
+    const go = el("input", "dg-go"); go.type = "search"; go.placeholder = "Go to #number or id";
+    go.setAttribute("aria-label", `Go to a ${W} by number or id`);
+    go.onkeydown = (e) => { if (e.key === "Enter") dgGoTo(go.value); };
+    ui.bar.replaceChildren(chip("all", "All", found.length), chip("art", "Pictures & pages", arts),
+                           chip("text", "Text", found.length - arts), el("span", "dg-sp"), pickColl, pickOrder, go);
+    ui.bar.style.display = found.length ? "" : "none";
+  }
+  // What the grid shows, in number order (an inscription whose number is not known yet comes last).
+  let shownList = found.filter((g) => view.kind === "all" || (view.kind === "text") === g.text);
+  if (view.coll === "-") shownList = shownList.filter((g) => metaOf(g) && !collOf(g));
+  else if (view.coll) shownList = shownList.filter((g) => collKey(collOf(g)) === view.coll);
+  const num = (g) => { const m = metaOf(g); return m && m.number != null ? Number(m.number) : null; };
+  shownList.sort((a, b) => {
+    const x = num(a), y = num(b);
+    if (x === null || y === null) return x === null ? (y === null ? a.id.localeCompare(b.id) : 1) : -1;
+    return view.order === "new" ? y - x : x - y;
+  });
+  dg.list = shownList;
+  const pages = Math.max(1, Math.ceil(shownList.length / DG_PAGE));
+  const page = Math.min(Math.max(0, dg.page | 0), pages - 1);
+  const here = shownList.slice(page * DG_PAGE, (page + 1) * DG_PAGE);
+  const shown = JSON.stringify([here.map((g) => g.id + ":" + g.txid + ":" + g.vout + (isListed(g) ? ":L" : "")
+                                          + ":" + (num(g) ?? "") + ":" + collKey(collOf(g))), sendShort, !!w, dg.focus]);
   if (ui.shown !== shown) {
     ui.shown = shown;
     const cards = [];
     for (const g of here) {
-      const card = el("div", "wl-piececard");
+      const card = el("div", "wl-piececard dg-tile" + (dg.focus === g.id ? " dg-focus" : ""));
       card.dataset.doginal = g.id;
-      const id = el("div", "wl-dgid", g.id); id.title = g.id;
-      card.append(doginalPic(g), id);
-      if (viewOnly) {
+      card.tabIndex = 0; card.setAttribute("role", "button");
+      const n = num(g), k = collOf(g);
+      card.setAttribute("aria-label", `${W} ${n !== null ? "#" + n.toLocaleString() : g.id}: open its card`);
+      card.onclick = (e) => { if (!e.target.closest("button,a,input")) openDgCard(g); };
+      card.onkeydown = (e) => { if (e.key === "Enter" && e.target === card) openDgCard(g); };
+      card.append(g.text ? dgTextPic(g) : doginalPic(g));
+      card.append(el("div", "dg-num", n !== null ? `#${n.toLocaleString()}` : "#…"));
+      card.append(el("div", "dg-coll" + (k ? "" : " none"), k ? (k.item || k.name) : (metaOf(g) ? "No collection" : "")));
+      if (viewOnly || w) {
         // shown only (above)
-      } else if (!w && isListed(g)) {
-        card.append(el("span", "wl-piecesend ghost", "Listed"));
-      } else if (!w) {
+      } else if (isListed(g)) {
+        const un = el("button", "wl-piecesend ghost", "Unlist"); un.type = "button";
+        un.setAttribute("aria-label", `Unlist ${W} ${g.id}`);
+        un.onclick = () => openDgCard(g);
+        card.append(un);
+      } else {
+        const row = el("div", "dg-acts");
         const send = el("button", "wl-piecesend", "Send"); send.type = "button";
         send.setAttribute("aria-label", `Send ${W} ${g.id}`);
         send.onclick = () => openSend("", g);
         if (sendShort) { send.disabled = true; send.title = `Needs ${C} besides the ${W} for the network fee`; }
-        card.append(send);
-        if (!doge && can.list) {
-          // Sold for its own coin on the Exchange's tab for it (the seller signs once; the buyer completes it).
-          const list = el("a", "wl-piecesend ghost", "List");
-          list.href = `/exchange?tab=${can.tab}`; list.setAttribute("aria-label", `List ${W} ${g.id}`);
-          card.append(list);
+        row.append(send);
+        if (can.list) {
+          const list = el("button", "wl-piecesend ghost", "List"); list.type = "button";
+          list.setAttribute("aria-label", `List ${W} ${g.id}`);
+          list.onclick = () => openDgCard(g, true);
+          row.append(list);
         }
-        // Priced in any coin or token through lock scripts (2026-10-15; Pepinals too, 2026-10-17): its own market.
-        // Only where a lock can be made (ord_chains.swappable).
-        if (can.swap) {
-          const swap = el("a", "wl-piecesend ghost", "Swap");
-          swap.setAttribute("aria-label", `Swap ${W} ${g.id}`);
-          if (swapShort) {
-            swap.setAttribute("aria-disabled", "true"); swap.style.cssText = "opacity:.45;pointer-events:none";
-            swap.title = `Needs ${C} besides the ${W} for the network fee`;
-          } else swap.href = `/exchange/swap/${c.network}-doginal-${encodeURIComponent(g.id)}/${can.counter}-coin`;
-          card.append(swap);
-        }
+        card.append(row);
       }
       cards.push(card);
     }
     ui.grid.replaceChildren(...cards);
     ui.grid.style.display = cards.length ? "" : "none";
   }
-  const paged = `${page}/${pages}/${found.length}`;
+  const paged = `${page}/${pages}/${shownList.length}/${here.length ? num(here[0]) + "-" + num(here[here.length - 1]) : ""}`;
   if (ui.paged !== paged) {
     ui.paged = paged;
     ui.pager.replaceChildren();
@@ -2444,7 +2788,10 @@ async function drawDoginals() {
         pick.append(o);
       }
       pick.onchange = () => dgPageGo(Number(pick.value));
-      ui.pager.append(prev, pick, next, el("span", "wl-note", `${found.length.toLocaleString()} ${W}s`));
+      const a = here.length ? num(here[0]) : null, b = here.length ? num(here[here.length - 1]) : null;
+      ui.pager.append(prev, pick, next, el("span", "wl-note", a !== null && b !== null
+        ? `#${a.toLocaleString()} – #${b.toLocaleString()} on this page · ${shownList.length.toLocaleString()} ${W}s`
+        : `${shownList.length.toLocaleString()} ${W}s`));
     }
   }
   if (left.length && !dg.asking && !dg.failed) {

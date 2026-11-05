@@ -82,6 +82,7 @@ PUBLIC_PAGES = frozenset({
     "/games",                 # the old name: redirects to /apps
     "/account/escrows",       # an account's own escrows (needs a session)
     "/account/doginals",      # this account's own Doginals on Dogecoin, to list (needs a session)
+    "/account/doginal-card",  # one of them in full, for the Wallet's card (needs a session)
     "/account/segwit/balance",  # the account's registered segwit address (native or P2SH), test chains (needs a session)
     "/account/imported",      # the account's own sealed record of imported wallets, and their addresses (needs a session)
     "/account/imported/busy", # whether an import on a chain must wait for a rescan (needs a session)
@@ -547,6 +548,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/imported/bring", "/account/imported/siblings/drop",
                # what sits on the caller's own coins, many transactions at once (the Wallet's Doginals)
                "/account/doginal-txs",
+               # their numbers and collections, many at once (the Wallet's Doginals in order, 2026-11-05)
+               "/account/doginal-meta",
                # a DRC-20 / PRC-20 send of the caller's own tokens: its three offers, one after the other
                "/account/token20/send",
                # an ord from the caller's own wallet: its commit and reveals, one after the other; its list

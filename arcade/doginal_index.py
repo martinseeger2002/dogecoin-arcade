@@ -481,8 +481,11 @@ def _pct(part: Any, whole: Any) -> float | None:
 #: Questions the explorer asks (2026-10-21) that a walking arcade from before does not know.
 #: The most coins one "names_on" question reads.
 NAMES_ON_MAX = 3000
+#: The Wallet's Doginals in inscription order (2026-11-05, the operator: "they should be ordered by inscription number earliest
+#: first"): the numbers of this many ids asked at once ({"what": "numbers"}).
+NUMBERS_MAX = 500
 NEWER_QUESTIONS = ("number", "ticks", "holders", "note", "ticklist", "mesh", "mesh_directory", "typed", "names_on",
-                   "sites_search")
+                   "sites_search", "numbers")
 
 
 def _first_page_of(token: dict | None) -> dict | None:
@@ -3065,6 +3068,8 @@ class DoginalIndex:
             return {"name": self.name(str(question.get("name") or ""))}
         if what == "on":
             return {"on": self.on(str(question.get("txid") or ""), int(question.get("vout") or 0))}
+        if what == "numbers":                            # the Wallet's Doginals, in order (2026-11-05)
+            return {"numbers": self.numbers([str(i) for i in (question.get("ids") or [])[:NUMBERS_MAX]])}
         if what == "note":
             return {"note": self.note(str(question.get("id") or ""))}
         if what == "ticklist":
@@ -3265,6 +3270,23 @@ class DoginalIndex:
             return int(got) if got is not None else -1
         got = self.store.q("SELECT MAX(rid) FROM insc")[0][0]
         return int(got) - 1 if got else -1
+
+    def numbers(self, ids: list[str]) -> dict:
+        """{id: {number, height, content_type, size}} for each of these ids the index holds (at most NUMBERS_MAX); an
+        id it does not hold is left out. No owner: the Wallet asks only about its own coins."""
+        out: dict = {}
+        if self.store.old_layout:
+            return out
+        for iid in ids[:NUMBERS_MAX]:
+            key = iid_parts(iid)
+            if not key:
+                continue
+            rows = self.store.q("SELECT i.number, i.height, c.ctype, i.size FROM insc i JOIN ctypes c ON c.ct = i.ct "
+                                "WHERE substr(i.tx, 1, 8)=? AND i.tx=? AND i.n=?", (key[0][:8],) + key)
+            if rows:
+                num, height, ctype, size = rows[0]
+                out[iid.strip().lower()] = {"number": num, "height": height, "content_type": ctype, "size": size}
+        return out
 
     def inscription(self, number: Any = None, iid: str = "") -> dict:
         """2026-10-21: "display ord 0 of the chain that is selected with arrows to navigate by ord number". One

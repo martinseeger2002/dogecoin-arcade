@@ -15610,6 +15610,148 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"chain": one.network, "address": address, "txs": out},
                             headers={"Cache-Control": "no-store"})
 
+    # The Wallet's Doginals in order, each with its collection (2026-11-05, the operator: "they should be ordered by inscription
+    # number earliest first", "if they are a part of a collection, they should have the collection metadata with them";
+    # "Our explorer has all of the collections ... We should use it as well"): the known collections (Explore's, from
+    # the collections' own sites) and the collections that describe themselves on the chain (collection_registry).
+    _registry_rarity: dict[str, tuple[float, dict]] = {}
+
+    def _wallet_collection(net: str, iid: str, full: bool = False) -> dict | None:
+        """The collection holding `iid`: {name, item, position, slug | root, source}; `full` adds the collection's own
+        details (supply, holders, created, description) and the item's traits with how many pieces share each."""
+        found = None
+        reg = None
+        try:
+            reg = state.collection_registry()
+            got = reg.item(net, iid)
+        except Exception:                                          # noqa: BLE001
+            got = None
+        if got is not None:
+            found = {"name": got.get("name") or "", "item": f"{got.get('name') or ''} #{got['number']}".strip(),
+                     "position": got["number"], "root": got["root"], "source": "chain"}
+            if full:
+                root = (reg.root(got["root"]) or {}) if hasattr(reg, "root") else {}
+                found["description"] = root.get("description") or ""
+                found["supply"] = root.get("supply") or None
+                found["traits"] = _traits_with_rarity(reg, got["root"], got.get("traits") or {})
+        store = state.known_collections() if hasattr(state, "known_collections") else None
+        known = None
+        if store is not None:
+            try:
+                known = store.in_collection(net, iid)
+            except Exception:                                      # noqa: BLE001
+                known = None
+        if known is not None:
+            item = known["name"] or (known["collection"] + (f" #{known['position']}" if known["position"] else ""))
+            if found is None:
+                found = {"name": known["collection"], "item": item, "position": known["position"],
+                         "slug": known["slug"], "source": known["source"]}
+            else:
+                found.setdefault("slug", known["slug"])
+            if full:
+                try:
+                    k = store.collection(net, known["slug"]) or {}
+                except Exception:                                  # noqa: BLE001
+                    k = {}
+                found.setdefault("supply", None)
+                found["supply"] = found["supply"] or k.get("supply")
+                found["holders"] = k.get("owners")
+                found["created"] = k.get("created")
+        return found
+
+    def _traits_with_rarity(reg, root: str, traits: dict) -> list[dict]:
+        """[{trait, value, share}]: `share` the fraction of the collection's pieces with that value (kept 10 minutes)."""
+        now = time.time()
+        kept = _registry_rarity.get(root)
+        if kept is None or now - kept[0] > 600:
+            counts: dict = {}
+            total = 0
+            try:
+                for it in reg.items(root, limit=10**7):
+                    total += 1
+                    for k, v in (it.get("traits") or {}).items():
+                        counts[(str(k), str(v))] = counts.get((str(k), str(v)), 0) + 1
+            except Exception:                                      # noqa: BLE001
+                counts, total = {}, 0
+            kept = _registry_rarity[root] = (now, {"total": total, "counts": counts})
+        total, counts = kept[1]["total"], kept[1]["counts"]
+        return [{"trait": str(k), "value": str(v),
+                 "share": (counts.get((str(k), str(v)), 0) / total) if total else None}
+                for k, v in traits.items()]
+
+    @app.post("/account/doginal-meta")
+    def account_doginal_meta(request: Request, payload: Any = Body(None)):
+        """Each inscription's number, block, content type and size, and its collection, for up to NUMBERS_MAX ids at once
+        (the Wallet's Doginals, sorted by number). The numbers come from the most complete copy of the chain's ord index
+        (DoginalIndex.lookup "numbers"); an id no copy holds yet is left out and asked again later."""
+        from ..doginal_index import NUMBERS_MAX
+        from ..doginals import INSCRIPTION_ID
+        _signed_in_account(request)
+        said = payload if isinstance(payload, dict) else {}
+        net = str(said.get("chain") or "doge")
+        index = state.ord_index(net)
+        if index is None:
+            return JSONResponse({"detail": "this arcade does not read that chain's inscriptions"}, status_code=404)
+        ids = said.get("ids")
+        if not isinstance(ids, list) or not 0 < len(ids) <= NUMBERS_MAX or not all(
+                isinstance(i, str) and INSCRIPTION_ID.match(i.strip().lower()) for i in ids):
+            return JSONResponse({"detail": f"1 to {NUMBERS_MAX} inscription ids"}, status_code=400)
+        ids = list(dict.fromkeys(i.strip().lower() for i in ids))
+        try:
+            got = index.lookup({"what": "numbers", "ids": ids})
+        except Exception as exc:                                   # noqa: BLE001 -- no copy could answer just now
+            return JSONResponse({"detail": f"the {net} index could not say just now: {exc}"}, status_code=503)
+        numbers = got.get("numbers") if isinstance(got.get("numbers"), dict) else {}
+        out = {}
+        for iid in ids:
+            row = dict(numbers.get(iid) or {})
+            coll = _wallet_collection(net, iid)
+            if coll:
+                row["collection"] = coll
+            if row:
+                out[iid] = row
+        return JSONResponse({"chain": net, "meta": out, "walked_to": got.get("walked_to")},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/account/doginal-card")
+    def account_doginal_card(request: Request, chain: str = "doge", id: str = ""):
+        """Everything the Wallet's card shows of one inscription: the index's details (number, block, type, size, the
+        coin it sits on, who holds it), when its block was made, its collection with traits, and its listing if it is
+        listed for a coin here."""
+        from .. import doginals as doginalslib
+        _signed_in_account(request)
+        iid = (id or "").strip().lower()
+        if not doginalslib.INSCRIPTION_ID.match(iid):
+            return JSONResponse({"detail": "an inscription id: <txid>i<n>"}, status_code=400)
+        index = state.ord_index(chain)
+        if index is None:
+            return JSONResponse({"detail": "this arcade does not read that chain's inscriptions"}, status_code=404)
+        try:
+            got = index.lookup({"what": "number", "id": iid})
+        except Exception as exc:                                   # noqa: BLE001
+            return JSONResponse({"detail": f"the {chain} index could not say just now: {exc}"}, status_code=503)
+        ins = (got.get("number") or {}).get("inscription") if isinstance(got.get("number"), dict) else None
+        if not ins:
+            return JSONResponse({"detail": "no copy of the index holds that inscription yet"}, status_code=404)
+        one = next((c for c in state.all_chains if c.network == chain), None)
+        made = None
+        if one is not None and ins.get("height") is not None:
+            try:
+                with one.rpc() as rpc:
+                    made = int(rpc.call("getblockheader", rpc.call("getblockhash", int(ins["height"])))["time"])
+            except Exception:                                      # noqa: BLE001 -- the date is left out
+                made = None
+        listing = None
+        if one is not None:
+            try:
+                listing = next((r for r in _doginals_live(one) if r.get("inscription") == iid), None)
+            except Exception:                                      # noqa: BLE001
+                listing = None
+        return JSONResponse({"chain": chain, "inscription": ins, "made": made,
+                             "collection": _wallet_collection(chain, iid, full=True),
+                             "content": doginalslib.content_url(iid), "listing": listing},
+                            headers={"Cache-Control": "no-store"})
+
     @app.get("/account/token20")
     def account_token20(request: Request, chain: str = "doge", address: str = ""):
         """This account's DRC-20 (Dogecoin) or PRC-20 (Pepecoin) balances, for the Wallet's Tokens tab (the operator
@@ -31756,7 +31898,9 @@ def create_app(state: AppState) -> FastAPI:
 
     TEMPLATES.env.globals["ord_tabs"] = _ord_tabs
     TEMPLATES.env.globals["ord_tab_names"] = lambda: tuple(ORD_TABS)
-    TEMPLATES.env.globals["ord_wallet"] = ordchainslib.wallet_table
+    # With each chain's address version, for signing a listing in the Wallet (wallet.opened takes {network, version}).
+    TEMPLATES.env.globals["ord_wallet"] = lambda: {n: {**v, "version": NETWORKS[n].pubkeyhash_version if n in NETWORKS
+                                                         else None} for n, v in ordchainslib.wallet_table().items()}
 
     def _coins_each(price: Any, divisible: bool) -> float:
         """The book's price ratio as coins per whole token.

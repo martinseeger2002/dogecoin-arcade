@@ -312,3 +312,16 @@ def test_a_chain_this_arcade_keeps_opens_for_the_walk_without_a_visit(client):
     assert "main" in state.ord_working()
     state.set_setting("ord_index:doge", "off")
     assert "doge" not in state.ord_working(), "a chain switched off is never opened for the walk"
+
+
+def test_many_numbers_at_once_by_id_for_the_wallet(tmp_path):
+    """2026-11-05: the Wallet's Doginals in inscription order -- the numbers of many ids in one question."""
+    from arcade import doginal_index as dx
+    _chain, index = _walked(tmp_path)
+    rows = [index.inscription(n)["inscription"] for n in range(4)]
+    ids = [r["id"] for r in rows] + ["ab" * 32 + "i0", "not an id"]
+    got = index.answer({"what": "numbers", "ids": ids})["numbers"]
+    assert {i: got[i]["number"] for i in got} == {r["id"]: r["number"] for r in rows}, "the unknown ones left out"
+    assert got[rows[0]["id"]]["content_type"] == rows[0]["content_type"] and got[rows[0]["id"]]["height"] == rows[0]["height"]
+    many = index.numbers([rows[0]["id"]] * (dx.NUMBERS_MAX + 50))
+    assert list(many) == [rows[0]["id"]]

@@ -148,7 +148,9 @@ def test_the_wallet_finds_its_doginal_asks_once_and_sends_it_to_review(browser, 
     _open_doginals(browser, base)
     _wait(browser, f'return document.querySelector("#doginals [data-doginal=\\"{INS}\\"]")')
     text = browser.execute_script('return document.getElementById("doginals").textContent')
-    assert "Doginals" in text and INS in text and "Read from the chain" in text
+    # A tile shows its number (once read) and collection, not its id (2026-11-05); the id is on its card.
+    assert "Doginals" in text and "Read from the chain" in text
+    assert browser.find_elements(By.CSS_SELECTOR, f'#doginals .dg-tile[data-doginal="{INS}"]')
     src = browser.execute_script(f'return document.querySelector("#doginals [data-doginal=\\"{INS}\\"] iframe").src')
     assert src == f"{base}/content/{INS}/fit", "this arcade's own /content, read off the chain, fitted to the frame"
     assert len(browser.find_elements(By.CSS_SELECTOR, "#doginals [data-doginal]")) == 1, "the clean coin is not one"
@@ -228,3 +230,124 @@ def test_many_doginals_come_a_page_at_a_time(browser, served, signed_in, reads):
     _open_doginals(browser, base)
     _wait(browser, 'return document.querySelectorAll("#doginals [data-doginal]").length === 6')
     assert len(reads[1]) == count
+
+
+def test_doginals_come_in_inscription_order_with_their_collections_and_a_card(browser, served, signed_in, reads):
+    """2026-11-05, the operator: "they should be ordered by inscription number earliest first", "if they are a part of a
+    collection, they should have the collection metadata with them", "Each one should be able to be clicked, and
+    their card should open with all of the information and a content link"; Send and one List on the card."""
+    import random
+    base, state = served
+    txs = [f"{n:064x}" for n in range(0x7000, 0x7000 + 40)]
+    rng = random.Random(5)
+    numbers = {t + "i0": n for t, n in zip(txs, rng.sample(range(1000, 900000), len(txs)))}
+    texts = set(txs[::5])
+    for t in txs:
+        ANSWERS[t] = {"txid": t, "inscriptions": [{"vout": 0, "inscription_id": t + "i0", "sat_offset": 0}]}
+    with state.token_index(state.doge).open() as db:
+        for t in txs:
+            db.conn.execute("INSERT OR REPLACE INTO utxo(txid,vout,address,value,height) VALUES (?,?,?,?,?)",
+                            (t, 0, signed_in, 100_000, 3))
+        db.conn.commit()
+    funding.GUARD.ctype_of = lambda iid: "text/plain" if iid[:64] in texts else "image/png"
+    asked = []
+
+    class Index:
+        tip = 6_000_000
+
+        def lookup(self, q):
+            asked.append(q.get("what"))
+            if q["what"] == "numbers":
+                return {"numbers": {i: {"number": numbers[i], "height": 4_700_000, "content_type": "image/png",
+                                        "size": 900} for i in q["ids"] if i in numbers}, "walked_to": 6_000_000}
+            if q["what"] == "number":
+                i = q["id"]
+                return {"number": {"inscription": {"id": i, "number": numbers.get(i, 0), "height": 4_700_000,
+                                                   "content_type": "image/png", "size": 900, "output": f"{i[:64]}:0",
+                                                   "offset": 0, "owner": signed_in}}}
+            raise ValueError("no such question")
+
+    class Known:
+        def in_collection(self, chain, iid):
+            if iid in list(numbers)[:12]:
+                return {"slug": "dogepunks", "collection": "DogePunks", "position": list(numbers).index(iid) + 1,
+                        "name": f"DogePunk #{list(numbers).index(iid) + 1}", "source": "nintondo"}
+            return None
+
+        def collection(self, chain, slug):
+            return {"supply": 10000, "owners": 2210, "created": 1677000000}
+    real = (state.ord_indexes, getattr(state, "known_collections", None))
+    state.ord_indexes = lambda: {"doge": Index()}
+    state.known_collections = lambda: Known()
+    try:
+        browser.execute_script("localStorage.clear(); sessionStorage.clear()")
+        browser.set_window_size(1100, 1300)
+        _open_doginals(browser, base)
+        # Once the numbers are in, the first page is the earliest of them all.
+        _wait(browser, 'return !document.getElementById("doginals").textContent.includes("Reading numbers")'
+                       ' && document.querySelectorAll("#doginals .dg-num").length >= 30', 40)
+        shown = browser.execute_script('return [...document.querySelectorAll("#doginals .dg-tile")].map(c => c.dataset.doginal)')
+        mine = sorted((n, i) for i, n in numbers.items())
+        assert shown[:10] == [i for _, i in mine[:10]], "earliest number first"
+        assert "numbers" in asked
+        tiles = browser.execute_script('return document.getElementById("doginals").textContent')
+        assert "DogePunks" not in tiles or "DogePunk #" in tiles
+        assert "Pictures & pages" in tiles and "Text" in tiles
+        browser.execute_script('document.getElementById("doginals").scrollIntoView()')
+        browser.save_screenshot(str(pathlib.Path.home() / "ordmock" / "real-grid.png"))
+        # Newest first, then back.
+        browser.execute_script('const s = [...document.querySelectorAll("#doginals .dg-pick")][1]; s.value = "new";'
+                               ' s.dispatchEvent(new Event("change"))')
+        _wait(browser, f'return document.querySelector("#doginals .dg-tile").dataset.doginal === {json.dumps(mine[-1][1])}')
+        browser.execute_script('const s = [...document.querySelectorAll("#doginals .dg-pick")][1]; s.value = "old";'
+                               ' s.dispatchEvent(new Event("change"))')
+        # A collection piece's card: its number, collection and the content link, Send and one List.
+        punk = next(i for _, i in mine if i in list(numbers)[:12] and i[:64] not in texts)
+        browser.execute_script(f'document.getElementById("doginals").querySelector(".dg-go").value = "#{numbers[punk]}";'
+                               'document.getElementById("doginals").querySelector(".dg-go").dispatchEvent('
+                               'new KeyboardEvent("keydown", {key: "Enter"}))')
+        card = _wait(browser, 'const m = document.querySelector(".dg-modal");'
+                              ' return m && m.textContent.includes("Open content") && m.textContent')
+        assert f"#{numbers[punk]:,}" in card and "DogePunks" in card and "10,000 pieces" in card, card
+        assert "Send" in card and card.count("List") == 2, "one List button (and the sentence about it)"
+        link = browser.execute_script('return [...document.querySelectorAll(".dg-modal a")].find(a => '
+                                      'a.textContent.startsWith("Open content")).getAttribute("href")')
+        assert link == f"/content/{punk}"
+        browser.save_screenshot(str(pathlib.Path.home() / "ordmock" / "real-card.png"))
+        browser.execute_script('document.querySelector(".dg-x").click()')
+        assert not browser.find_elements(By.CSS_SELECTOR, ".dg-modal")
+    finally:
+        state.ord_indexes = real[0]
+        if real[1] is not None:
+            state.known_collections = real[1]
+
+
+def test_drc20_tokens_are_in_the_tokens_tab_and_send_like_any_token(browser, served, signed_in):
+    """2026-11-05, the operator: "make sure we have DRC 20s in the Wallet tokens tab they should be able to be sent just like
+    any other of our tokens like on Pepe": the balance from the ord index, tapped, and Send is for that token."""
+    base, state = served
+
+    class Index:
+        tip = 6_000_000
+
+        def lookup(self, q):
+            if q["what"] == "balances":
+                return {"balances": [{"tick": "dogi", "units": "150000", "transferable_units": "0", "decimals": 2}],
+                        "walked_to": 6_000_000}
+            raise ValueError("no such question")
+    real = state.ord_indexes
+    state.ord_indexes = lambda: {"doge": Index()}
+    try:
+        _open_doginals(browser, base)
+        browser.find_element(By.ID, "tab-tokens").click()
+        row = _wait(browser, 'return [...document.querySelectorAll(".wl-tok")].find(r => r.textContent.includes("dogi"))')
+        assert "DRC-20" in row.text and "1,500" in row.text, row.text
+        row.click()
+        _wait(browser, 'return document.getElementById("unit") && document.body.textContent.includes("Send is for it now")')
+        browser.save_screenshot(str(pathlib.Path.home() / "ordmock" / "real-drc20.png"))
+        browser.find_element(By.ID, "do-send").click()
+        sheet = _wait(browser, 'const s = document.querySelector(".wl-sheet"); return s && s.textContent')
+        assert "dogi" in sheet, sheet
+        browser.save_screenshot(str(pathlib.Path.home() / "ordmock" / "real-drc20-send.png"))
+    finally:
+        state.ord_indexes = real
