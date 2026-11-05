@@ -112,6 +112,9 @@ class Unsigned:
     #: The transaction's version, in `raw`, every sighash and what `assemble` writes: 1, but for a node module's
     #: prepared transaction that a chain marks by its version (a DigiDollar mint's 0x01000770, arcade/modhost.py).
     version: int = 1
+    #: The transaction's lock time, in `raw` and every sighash: 0, but for a spend that waits for a height (a
+    #: DigiDollar redeem, which may not be mined before its vault's lock).
+    locktime: int = 0
 
     def as_json(self) -> dict:
         return {
@@ -126,7 +129,12 @@ class Unsigned:
                         # A DRC-20 / PRC-20 note's reveal (token20_send): the envelope the node puts in front of the
                         # signature, so the browser can show the note it is signing for (coins.js reads it back).
                         **({"envelope": i["envelope"]} if i.get("envelope") else {}),
-                        **({"segwit": i["segwit"]} if i.get("segwit") else {})}
+                        **({"segwit": i["segwit"]} if i.get("segwit") else {}),
+                        # A Taproot coin the wallet signs with Schnorr (arcade/taproot.py): "key", or the leaf and
+                        # control block of a script path, and the script it spends, which the browser checks is
+                        # this key's and hashes with every other input's (BIP-341 commits to them all).
+                        **({"taproot": {k: v for k, v in i["taproot"].items()}, "spent": i["spent"]}
+                           if i.get("taproot") else {})}
                        for i in self.inputs],
             "sighashes": self.sighashes,
             "signed_from": self.signed_from,
@@ -343,7 +351,8 @@ def sighash(raw_inputs: list[dict], outputs: list[tuple[int, bytes]],
             raw += varint(len(script)) + script
         else:
             raw += varint(0)
-        raw += b"\xff\xff\xff\xff"
+        # The input's own sequence: 0xffffffff but for an input that waits for the lock time (a DigiDollar vault's).
+        raw += int(coin.get("sequence", 0xFFFFFFFF)).to_bytes(4, "little")
     raw += varint(len(outs))
     for value, script_out in outs:
         # Masked rather than written straight, because the empty output a
@@ -809,7 +818,7 @@ def assemble(unsigned: Unsigned, signatures: list[str], pubkey: bytes) -> str:
         raise FundingError(
             f"{len(unsigned.inputs) - first} signatures were needed and "
             f"{len(signatures)} came back")
-    if any(coin.get("segwit") for coin in unsigned.inputs):
+    if any(coin.get("segwit") or coin.get("taproot") for coin in unsigned.inputs):
         return _assemble_witness(unsigned, signatures, pubkey)
     raw = unsigned.version.to_bytes(4, "little") + time_field(unsigned.ntime) + varint(len(unsigned.inputs))
     for n, coin in enumerate(unsigned.inputs):
@@ -1330,10 +1339,17 @@ def _assemble_witness(unsigned: "Unsigned", signatures: list[str], pubkey: bytes
     ins = []
     for n, coin in enumerate(unsigned.inputs):
         item = {"txid": coin["txid"], "vout": coin["vout"],
-                "sequence": 0xFFFFFFFF, "script_sig": b"", "witness": []}
+                "sequence": coin.get("sequence", 0xFFFFFFFF), "script_sig": b"", "witness": []}
         if n >= first:
             sig = bytes.fromhex(signatures[n - first])
-            if coin.get("segwit") == "p2wpkh":
+            if coin.get("taproot"):
+                # A 64-byte Schnorr signature (SIGHASH_DEFAULT), then for a script path the leaf and control block.
+                if len(sig) != 64:
+                    raise FundingError(f"input {n} is a Taproot coin and needs a 64-byte Schnorr signature")
+                tap = coin["taproot"]
+                item["witness"] = [sig] + ([bytes.fromhex(tap["leaf"]), bytes.fromhex(tap["control"])]
+                                           if tap.get("leaf") else [])
+            elif coin.get("segwit") == "p2wpkh":
                 item["witness"] = [sig, pubkey]
             elif coin.get("segwit") == "p2sh-p2wpkh":
                 # BIP49: the scriptSig only pushes the redeemScript (the P2WPKH
@@ -1348,4 +1364,4 @@ def _assemble_witness(unsigned: "Unsigned", signatures: list[str], pubkey: bytes
             else:
                 item["script_sig"] = push(sig) + push(pubkey)
         ins.append(item)
-    return serialize_segwit(ins, unsigned.outputs, locktime=0, version=unsigned.version)
+    return serialize_segwit(ins, unsigned.outputs, locktime=unsigned.locktime, version=unsigned.version)

@@ -959,7 +959,10 @@ def _ask_module(caller: Caller, module: str, request: dict):
         if not (isinstance(answer, dict) and isinstance(answer.get("prepared"), dict)):
             return answer
         prepared = answer["prepared"]
-        chain, unsigned = host.prepare(settings, module, prepared, who["address"].get(str(prepared.get("chain"))))
+        net = str(prepared.get("chain"))
+        key = who.get("pubkey", {}).get(net)
+        chain, unsigned = host.prepare(settings, module, prepared, who["address"].get(net),
+                                       bytes.fromhex(key) if key else None)
     except modhost.ModuleFailed as exc:
         raise CommandError(str(exc)) from None
     said = {k: v for k, v in answer.items() if k != "prepared"}

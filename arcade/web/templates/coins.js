@@ -902,8 +902,32 @@ export async function verifyOffer(offer, keys) {
   // P2SH-nested segwit (BIP49): OP_HASH160 <hash160 of the P2WPKH program> OP_EQUAL
   const mineNested = new Uint8Array([0xa9, 0x14, ...await hash160(mineSegwit), 0x87]);
   const own = keys.address || await address(keys.pubkey, keys.version);
-  const hashes = [];
+  const hashes = [], signers = [];
+  // A Taproot input commits to every input's value and script (BIP-341), so each one is known or nothing is signed:
+  // a Taproot coin's comes with it, and an ordinary coin of this address is this key's P2PKH.
+  const tapped = named.some((coin) => coin.taproot);
+  const spentAll = tapped ? named.map((coin) => ({value: BigInt(String(coin.value || 0)),
+    script: coin.taproot ? unhex(String(coin.spent || "")) : mine})) : null;
+  if (tapped && (from !== 0 || named.some((coin) => !coin.taproot && coin.address !== own))) {
+    throw new Error("that transaction spends Taproot coins beside coins that are not this key's. Nothing was signed.");
+  }
   for (let n = from; n < to; n++) {
+    if (named[n].taproot) {
+      // A DigiDollar or its vault (2026-11-04): the coin is checked to be this key's from its own script.
+      if (!await taprootMine(spentAll[n].script, named[n].taproot, keys.pubkey)) {
+        throw new Error(`input ${n} is a Taproot coin that this key does not hold. Nothing was signed.`);
+      }
+      const leaf = named[n].taproot.leaf ? unhex(String(named[n].taproot.leaf)) : null;
+      const derived = hex(await sighashTaproot(tx, n, spentAll, leaf));
+      if (derived !== asked[n - from]) {
+        throw new Error("those signatures were asked for over different bytes than this transaction -- what this "
+          + `browser worked out for input ${n} is not what the offer carries. Nothing was signed.`);
+      }
+      hashes.push(derived);
+      signers.push(leaf ? "leaf" : "key");
+      continue;
+    }
+    signers.push(null);
     // A refereed prize pool's coin, closed by its creator (2026-09-29): signed
     // over the pool's script, and only if this key is the one that closes it.
     const redeem = named[n].redeem ? unhex(String(named[n].redeem)) : null;
@@ -1031,7 +1055,7 @@ export async function verifyOffer(offer, keys) {
   ].join(", ") + `; ${coinsOf(fee)} in fees`
     // The change said once, as change (2026-10-27, the operator: the payment read as four destinations, the change twice).
     + (change > 0n ? `; ${coinsOf(change)} back to you as change` : "");
-  return {tx, hashes, pays, fee: Number(fee), change: Number(change),
+  return {tx, hashes, signers, pays, fee: Number(fee), change: Number(change),
           what: offer.what || "", signs: {from, of: tx.inputs.length},
           coinsOf, says};
 }
@@ -1291,6 +1315,91 @@ export async function signInput(priv, sighash, sighashType = 1) {
   out.set(der);
   out[der.length] = sighashType;
   return out;
+}
+
+/* --- Taproot (2026-11-04, a DigiDollar redeem) -------------------------
+ *
+ * A coin of this key's that is a Taproot output, signed with Schnorr (BIP-340) under SIGHASH_DEFAULT: the key path of
+ * this key tweaked with no script tree (a DigiDollar), or a script path whose leaf ends in this key and OP_CHECKSIG (a
+ * DigiDollar vault). `arcade/taproot.py` is the node's half; these are checked against it in
+ * tests/test_lite_schnorr_browser.py, and the signatures against a real DigiByte Core in test_digidollar_regtest.py.
+ */
+const POINT = secp.ProjectivePoint;
+const modN = (a) => ((a % N) + N) % N;
+const big = (bytes) => BigInt("0x" + (hex(bytes) || "0"));
+const bytes32 = (n) => unhex(n.toString(16).padStart(64, "0"));
+
+async function tagged(tag, data) {
+  const t = await sha256(enc.encode(tag));
+  return sha256(join([t, t, data]));
+}
+
+/** (the output key, its y's parity) of a Taproot output with this x-only internal key and script tree (BIP-341). */
+async function tweaked(internal, root = new Uint8Array(0)) {
+  const t = big(await tagged("TapTweak", join([internal, root])));
+  if (t >= N) throw new Error("tweak out of range");
+  const q = POINT.fromHex("02" + hex(internal)).add(POINT.BASE.mul(t)).aff();
+  return {key: bytes32(q.x), parity: Number(q.y & 1n)};
+}
+
+const leafHash = (script) => tagged("TapLeaf", join([new Uint8Array([0xc0]), sizeOf(script.length), script]));
+
+function lessThan(a, b) {
+  for (let n = 0; n < 32; n++) if (a[n] !== b[n]) return a[n] < b[n];
+  return false;
+}
+
+/** Whether the Taproot coin `spent` is this key's to sign as `tap` says: {key: true}, or {leaf, control}. */
+export async function taprootMine(spent, tap, pubkey) {
+  if (spent.length !== 34 || spent[0] !== 0x51 || spent[1] !== 0x20) return false;
+  const own = pubkey.slice(1, 33);
+  if (!tap.leaf) return SAME(spent.slice(2), (await tweaked(own)).key);
+  const leaf = unhex(String(tap.leaf)), control = unhex(String(tap.control || ""));
+  const tail = join([new Uint8Array([0x20]), own, new Uint8Array([0xac])]);
+  if (leaf.length < tail.length || !SAME(leaf.slice(leaf.length - tail.length), tail)) return false;
+  if (control.length < 33 || (control.length - 33) % 32 || (control[0] & 0xfe) !== 0xc0) return false;
+  let node = await leafHash(leaf);
+  for (let at = 33; at < control.length; at += 32) {
+    const other = control.slice(at, at + 32);
+    node = await tagged("TapBranch", lessThan(other, node) ? join([other, node]) : join([node, other]));
+  }
+  const q = await tweaked(control.slice(1, 33), node);
+  return SAME(q.key, spent.slice(2)) && q.parity === (control[0] & 1);
+}
+
+/** The digest input `index` signs under SIGHASH_DEFAULT (BIP-341): `spent` is every input's {value, script}. */
+export async function sighashTaproot(tx, index, spent, leaf = null) {
+  const each = (f) => sha256(join(tx.inputs.map(f)));
+  const parts = [new Uint8Array([0, 0]), writeLE(tx.version, 4), writeLE(tx.locktime, 4),
+    await each((input) => join([unhex(input.txid).reverse(), writeLE(input.vout, 4)])),
+    await sha256(join(spent.map((s) => writeLE(s.value, 8)))),
+    await sha256(join(spent.map((s) => join([sizeOf(s.script.length), s.script])))),
+    await each((input) => writeLE(input.sequence === undefined ? 0xffffffffn : BigInt(input.sequence), 4)),
+    await sha256(join(tx.outputs.map((out) => join([writeLE(out.value, 8), sizeOf(out.script.length), out.script])))),
+    new Uint8Array([leaf ? 2 : 0]), writeLE(index, 4)];
+  if (leaf) parts.push(await leafHash(leaf), new Uint8Array([0, 0xff, 0xff, 0xff, 0xff]));
+  return tagged("TapSighash", join(parts));
+}
+
+/** A BIP-340 signature by `priv` over `message`, or by its key-path output's key when `keyPath` (TapTweak, no tree):
+ *  64 bytes, no sighash byte (SIGHASH_DEFAULT). `aux` is fresh randomness but for a test vector. */
+export async function signSchnorr(priv, message, keyPath = false, aux = null) {
+  let d = big(priv);
+  let point = POINT.BASE.mul(d).aff();
+  if (point.y & 1n) d = N - d;
+  if (keyPath) {
+    d = modN(d + big(await tagged("TapTweak", bytes32(point.x))));
+    point = POINT.BASE.mul(d).aff();
+    if (point.y & 1n) d = N - d;
+  }
+  const px = bytes32(point.x);
+  const t = bytes32(d ^ big(await tagged("BIP0340/aux", aux || crypto.getRandomValues(new Uint8Array(32)))));
+  const k0 = modN(big(await tagged("BIP0340/nonce", join([t, px, message]))));
+  if (k0 === 0n) throw new Error("no nonce for that message; nothing was signed");
+  const r = POINT.BASE.mul(k0).aff();
+  const k = r.y & 1n ? N - k0 : k0;
+  const e = modN(big(await tagged("BIP0340/challenge", join([bytes32(r.x), px, message]))));
+  return join([bytes32(r.x), bytes32(modN(k + e * d))]);
 }
 
 /* --- pre-signed offers (2026-09-27) --------------------------------
