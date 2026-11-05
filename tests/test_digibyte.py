@@ -34,7 +34,8 @@ def test_digibyte_params_are_its_chainparams():
     assert DGB.activation_height == DGB.messaging_start_height == config.DGB_MAINNET_FLOOR == 24_450_000
     assert DGB.swaps_from is None and DGB.take_from is None
     assert "dgb" in __import__("arcade.cores", fromlist=["OPTIONAL"]).OPTIONAL
-    assert all(p.letter != "G" for n, p in NETWORKS.items() if n != "dgb"), "its badge letter is its own"
+    assert all(p.letter != "G" for n, p in NETWORKS.items() if n not in ("dgb", "dgbtest")), \
+        "its badge letter is its own, and its test chain's, as Litecoin testnet's is Litecoin's"
 
 
 def test_its_d_is_dogecoins_d_and_its_s_is_nobodys():
@@ -212,3 +213,19 @@ def test_a_borrowed_block_far_easier_than_the_one_under_it_is_not_refused():
     hard, easy = 0x1A00FFFF, 0x1D00FFFF
     assert not rawchain.too_easy(easy, hard, DGB)
     assert rawchain.too_easy(easy, hard, NETWORKS["ltc"])
+
+
+def test_digibyte_testnet26_is_a_test_chain_of_its_own_with_its_rpc_address_in_a_test_section():
+    """DigiByte's test chain (2026-11-04), for DigiDollar on a public network: testnet26's versions, ports and folder,
+    and a node config DigiByte Core 9.26.7 starts with (its rpcbind under [test]) and the arcade reads (its user and
+    password above it)."""
+    from arcade import config, core_install
+    from arcade.config import NETWORKS
+    test = NETWORKS["dgbtest"]
+    assert (test.pubkeyhash_version, test.scripthash_version, test.rpc_port, test.p2p_port) == (126, 140, 14026, 12033)
+    assert test.datadir_subdir == "testnet26" and test.node_dir == ".digibyte-testnet" and not test.real_coins
+    assert test.addon and config.CHAIN_NAMES["dgbtest"] == "test" and test.bech32_hrp == "dgbt"
+    assert not config.unpayable_versions(test), "no other chain's key hash is 140"
+    lines = core_install._conf_lines(test, core_install.RELEASES["dgbtest"])
+    assert "testnet=1" in lines and lines.index("[test]") < lines.index("rpcbind=127.0.0.1")
+    assert all(lines.index(l) < lines.index("[test]") for l in lines if l.startswith(("rpcuser=", "rpcpassword=")))

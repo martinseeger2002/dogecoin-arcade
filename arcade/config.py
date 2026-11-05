@@ -735,6 +735,31 @@ DIGIBYTE = dataclasses.replace(
     letter="G", family="DGB", net_word="digibyte", real_coins=True, bech32_hrp="dgb", mweb=False,
 )
 
+# DigiByte TESTNET, "testnet26" (SadFrog's side, 2026-11-04: a DigiByte test chain, for a DigiDollar mint and redeem
+# on a public network with its real oracles). DigiByte Core 9.26.7's reset test chain (kernel/chainparams.cpp
+# CTestNetParams, chainparamsbase.cpp): genesis 2026-05-30, its node's chain in testnet26/, P2P 12033, RPC 14026.
+# P2PKH 126, P2SH 140, WIF 254, bech32 "dgbt". 15-second blocks, no minimum-difficulty rule. Everything is buried
+# from the first blocks: CLTV, CSV, SegWit and Taproot, and DigiDollar from block 600 (Thaw Day 432,100). Keys on
+# coin type 1, as every test chain. Its node needs its RPC lines in a [test] section (core_install), as every
+# Bitcoin-Core-based test chain does. The floor: under the tip of about 595,814 on 2026-11-04.
+DGB_TESTNET_FLOOR = 595_000
+
+DIGIBYTE_TESTNET = dataclasses.replace(
+    DIGIBYTE,
+    name="dgbtest",
+    rpc_port=14026,
+    p2p_port=12033,
+    activation_height=DGB_TESTNET_FLOOR,
+    messaging_start_height=DGB_TESTNET_FLOOR,
+    datadir_subdir="testnet26",
+    pubkeyhash_version=126,
+    scripthash_version=140,
+    coin="DGB TEST",
+    label="DigiByte testnet",
+    genesis="0c9af936f28f7bd0e90c8f6235399063a026ed267bb53da398313b5d7aa55d82",
+    node_dir=".digibyte-testnet", real_coins=False, bech32_hrp="dgbt",
+)
+
 # Flopcoin MAINNET (the operator's side, 2026-11-03). Flopcoin Core v2.0.0.0 (github.com/Flopcoin/Flopcoin, tag v2.0.0.0,
 # chainparams.cpp, chainparamsbase.cpp) is Dogecoin 1.14's code, so Dogecoin's Params fit: scrypt with Dogecoin's
 # powLimit, 0.01 FLOP/kB (policy.h RECOMMENDED_MIN_TX_FEE), the 0.01 soft-dust line, an 83-byte OP_RETURN
@@ -773,7 +798,7 @@ FLOPCOIN = dataclasses.replace(
 )
 
 NETWORKS = {p.name: p for p in (MAINNET, TESTNET, REGTEST, DOGECOIN, LITECOIN, LITECOIN_TESTNET,
-                                BELLSCOIN, LUCKYCOIN, KOTIA, WOJAKCOIN, DIGIBYTE, FLOPCOIN)}
+                                BELLSCOIN, LUCKYCOIN, KOTIA, WOJAKCOIN, DIGIBYTE, DIGIBYTE_TESTNET, FLOPCOIN)}
 
 def unpayable_versions(params: "Params") -> frozenset:
     """The version bytes of `params`' own script-hash addresses that another known chain uses for a key hash.
@@ -954,6 +979,7 @@ CHAIN_NAMES = {
     "kot": "main",                  # and Kotia
     "wjk": "main",                  # and Wojakcoin
     "dgb": "main",                  # and DigiByte
+    "dgbtest": "test",
     "flop": "main",                 # and Flopcoin
 }
 

@@ -3194,7 +3194,7 @@ export const TRADE = {
   FEE_BPS_CEILING: 10_000,
   // The lending arcade's part of a fee on a borrowed chain (trade.SHARE_PERCENT, 2026-10-28).
   SHARE_PERCENT: 20,
-  PAYEE_VERSIONS: [25, 30, 35, 46, 47, 48, 56, 73, 111, 113],
+  PAYEE_VERSIONS: [25, 30, 35, 46, 47, 48, 56, 73, 111, 113, 126],
 };
 //: The real-coin chains (config.py `real_coins`): their legs are mainnet tier (trade.Leg.tier).
 //: Each chain's coin as a leg says it (config.py `coin`).
