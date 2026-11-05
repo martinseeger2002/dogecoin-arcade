@@ -88,6 +88,10 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 Protocol vectors re-recorded for Params.class_b (Claude, for tbuuol's #81)
+
+- `tests/conformance/vectors.json` regenerated (`python tests/conformance/make_vectors.py`): the one change is the new `chains.<net>.params.class_b`, false on `ltc`, `ltctest` and `kot`, true on every other chain. Why: #81's second commit (no arcade Class B on Litecoin, Litecoin testnet and Kotia) added the field without re-recording, and `test_conformance.py[chains]` failed. The operator: "Run it and deploy if passes".
+
 ### 2026-11-04 The silent-road test mutes the hub stream too (Claude)
 
 - `tests/test_realtime_anynode_browser.py::test_a_way_in_whose_stream_says_nothing_is_left_for_this_node` failed since d54913ce (hub attach and detach through a public host's door): the test's silent road muted only `/realtime/stream`, and with attach now working the page rode B's `/realtime/hub`, which still spoke. A real silent tunnel mutes both, so the test now mutes both. No arcade code changed: the page's check (`h.got` within RT_FIRST) already counts messages from either stream.
