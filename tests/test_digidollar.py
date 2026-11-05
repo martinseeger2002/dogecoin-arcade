@@ -228,3 +228,9 @@ def test_an_unlocked_vault_carries_its_redeem_button(tmp_path, monkeypatch):
     (now, later) = said["vaults"]
     assert now["redeem"] == "now" and now["actions"] == [{"label": "Redeem", "line": f"ddredeem {'aa' * 32} test"}]
     assert later["redeem"] == "in 100 blocks (about 25 minutes)" and "actions" not in later
+
+
+def test_minting_says_open_when_core_says_none():
+    _, pilot = _pilot()
+    assert pilot._minting("none") == pilot._minting(None) == pilot._minting("") == "open"
+    assert pilot._minting("health_state_not_ready") == "health_state_not_ready"

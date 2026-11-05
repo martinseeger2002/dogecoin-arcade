@@ -60,6 +60,11 @@ def _word(net: str) -> str:
     return "main" if net == MAIN else "test"
 
 
+def _minting(reason) -> str:
+    """Core's reason minting is held back, or "open": it says "none" when nothing holds it back."""
+    return "open" if str(reason or "none").lower() == "none" else str(reason)
+
+
 def _cents(amount) -> int:
     try:
         dollars = Decimal(str(amount))
@@ -101,7 +106,7 @@ def command_ddstats(ctx, chain="test"):
             "dgb_usd": price.get("price_usd"), "oracle": price.get("status"), "stale": price.get("is_stale"),
             "supply_usd": (stats.get("total_dd_supply") or 0) / 100, "collateral_dgb": stats.get("total_collateral_dgb"),
             "health_percent": stats.get("health_percentage"), "health": stats.get("health_status"),
-            "positions": stats.get("active_positions"), "minting": stats.get("minting_restricted_reason") or "open"}
+            "positions": stats.get("active_positions"), "minting": _minting(stats.get("minting_restricted_reason"))}
 
 
 def command_ddcollateral(ctx, amount, tier=0, chain="test"):
@@ -111,7 +116,7 @@ def command_ddcollateral(ctx, amount, tier=0, chain="test"):
     said = ctx.rpc(net, "estimatecollateral", _cents(amount), int(tier))
     return {"dollars": str(amount), "tier": int(tier), "lock_days": said["lock_days"],
             "locks_dgb": said["wallet_collateral_dgb"], "ratio_percent": said["effective_ratio"],
-            "minting": said.get("minting_restricted_reason") or "open"}
+            "minting": _minting(said.get("minting_restricted_reason"))}
 
 
 def _leaves(owner: bytes, cents: int, lock: int) -> tuple[bytes, bytes]:
