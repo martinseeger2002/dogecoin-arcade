@@ -30795,6 +30795,18 @@ def create_app(state: AppState) -> FastAPI:
 
     def _mining_status() -> dict:
         m = _cpu_mining
+        run = state.mining if isinstance(state.mining, dict) and state.mining.get("chain_ctx") else None
+        if run and not (m and m["thread"].is_alive()):
+            # A chain its own node mines, by algorithm (arcade/testmine.py: DigiByte testnet, 2026-11-04), in this
+            # panel's shape: a "worker" is an algorithm.
+            found = [{"hash": f["hash"], "algo": f["algo"], "at": f["at"],
+                      "confirmations": _block_fate(run["chain_ctx"], f["hash"])["confirmations"]}
+                     for f in list(run["found"])[-5:]]
+            return {"running": True, "net": run["net"], "address": run["address"], "workers": len(run["algos"]),
+                    "algos": run["algos"], "tries": run["tries"], "rate": round(run["rate"]), "height": 0, "bits": "",
+                    "note": "; ".join(f"{a}: {e}" for a, e in run.get("errors", {}).items()), "found": found,
+                    "blocks": len(run["found"]), "seconds": int(time.time() - run["started"]),
+                    "until": run.get("until"), "faucet": False, "share_to": None, "stopping": bool(run["stop"])}
         if not m:
             return {"running": False}
         p = m["progress"]
@@ -30824,14 +30836,15 @@ def create_app(state: AppState) -> FastAPI:
         sharer is paid a tenth of each block in its coinbase. {"pay": "faucet"} pays this chain's faucet, the
         node's own Core wallet (2026-10-18: one set of mining controls, with the faucet buttons' end time and
         payee folded in)."""
-        from .. import blockminer
+        from .. import blockminer, testmine
         _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
         if said.get("stop"):
             if _cpu_mining:
                 _cpu_mining["stop"] = True
+            testmine.stop(state)
             return JSONResponse({"ok": True, **_mining_status()})
-        if _cpu_mining and _cpu_mining["thread"].is_alive():
+        if (_cpu_mining and _cpu_mining["thread"].is_alive()) or state.mining is not None:
             return JSONResponse({"detail": "already mining; stop it first"}, status_code=409)
         chain = next((c for c in state.all_chains if c.network == str(said.get("net", ""))), None)
         if not _minable(chain):
@@ -30853,6 +30866,9 @@ def create_app(state: AppState) -> FastAPI:
         if not 0 <= blocks <= 100:
             return JSONResponse({"detail": "mine up to 100 blocks, or leave it blank"}, status_code=400)
         to_faucet = said.get("pay") == "faucet"
+        if getattr(chain.params, "mine_algos", ()) and (chain.borrowed or to_faucet):
+            return JSONResponse({"detail": f"{chain.label} is mined by its own node here, to an address: not "
+                                           f"borrowed, and not to the faucet"}, status_code=400)
         if to_faucet and chain.borrowed:
             return JSONResponse({"detail": "a borrowed chain has no faucet wallet here"}, status_code=400)
         try:
@@ -30864,6 +30880,14 @@ def create_app(state: AppState) -> FastAPI:
             blockminer.output_script(address, chain.params)
         except Exception as exc:                           # noqa: BLE001
             return JSONResponse({"detail": f"that address: {exc}"}, status_code=400)
+        if getattr(chain.params, "mine_algos", ()):
+            # A multi-algorithm chain (DigiByte testnet, 2026-11-04): its own node mines each algorithm side by side,
+            # where a CPU wins far more blocks than this panel's scrypt in Python (arcade/testmine.py).
+            try:
+                testmine.start(state, chain, address, blocks, until)
+            except Exception as exc:                       # noqa: BLE001 -- said in the panel
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            return JSONResponse({"ok": True, **_mining_status()})
         # Half the CPUs unless asked: the arcade's own pages run on the rest.
         workers = max(1, min(int(said.get("workers") or max(1, (os.cpu_count() or 2) // 2)), os.cpu_count() or 1))
         progress = blockminer.Progress()

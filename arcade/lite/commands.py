@@ -631,13 +631,15 @@ def listchains(caller) -> list[dict]:
 
 
 @command("node", audience="operator")
-def mine(caller, chain: str, blocks: int = 0) -> dict:
+def mine(caller, chain: str, blocks: int = 0, to: str = "") -> dict:
     """Mine a test chain's blocks to your own account, on this machine's CPU, until `mine stop`.
 
-    mine <chain> [blocks]   for example: mine dgbtest; then `mining`, and `mine stop`
-    From arcade-cli, to the operator's account, once its wallet has been opened here. The chain's own node mines, here. DigiByte testnet mines odo, qubit and skein side by side, a thread each. Coins
-    from a mined block can be spent once the chain is 100 blocks further."""
+    mine <chain> [blocks] [address]   for example: mine dgbtest; then `mining`, and `mine stop`
+    To your account's address on that chain, or the address given. From arcade-cli, to the operator's account once
+    its wallet has been opened here. The chain's own node mines: DigiByte testnet mines odo, qubit and skein side by
+    side, a thread each. Coins from a mined block can be spent once the chain is 100 blocks further."""
     from .. import testmine
+    from ..blockminer import output_script
     if str(chain) == "stop":
         return {"stopping": testmine.stop(caller.state)}
     found = next((c for c in caller.state.all_chains if c.network == str(chain)), None)
@@ -645,10 +647,15 @@ def mine(caller, chain: str, blocks: int = 0) -> dict:
         raise CommandError(f"this arcade has no {chain} chain; `listchains` lists them")
     if not isinstance(blocks, int) or blocks < 0:
         raise CommandError("blocks is a whole number: how many to mine before stopping, 0 for until `mine stop`")
-    address = caller.address(found) if caller.account else ""
-    op = getattr(caller.state, "operator", "") if not caller.account else ""
+    address = str(to or "").strip() or (caller.address(found) if caller.account else "")
+    op = getattr(caller.state, "operator", "") if not (to or caller.account) else ""
     if op:                                                 # arcade-cli: the operator's own account, as its wallet said
         address = str(caller.state.setting(f"address:{found.network}:{op}", "") or "")
+    if to:
+        try:
+            output_script(address, found.params)
+        except Exception as exc:                           # noqa: BLE001 -- said to the operator
+            raise CommandError(f"mine: {to} is not a {found.label} address: {exc}") from exc
     try:
         return testmine.start(caller.state, found, address, blocks)
     except Exception as exc:                               # noqa: BLE001 -- said to the operator
