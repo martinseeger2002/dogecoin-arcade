@@ -1180,11 +1180,6 @@ def create_app(state: AppState) -> FastAPI:
         # A username-and-password operator with no wallet of its own IS the node.
         return bool(_account_address(account.pubkey, _account_chain()))
 
-    def _operator_wallet() -> str:
-        """The operator account's address on the tag chain: "" for an arcade that is its own operator, a node or a
-        username and password with no wallet of its own (state.operator_tag)."""
-        return _account_address(state.operator, _account_chain()) if state.operator else ""
-
     def _is_operator(request: Request) -> bool:
         account = signed_in(request)
         return bool(account is not None and state.operator
@@ -28935,7 +28930,14 @@ def create_app(state: AppState) -> FastAPI:
                           signed_in=signed_in(request) is not None, need_account=True)
         return render(request, "admin.html", local=who["local"], update_status=state.update_status, when=_when,
                       update_every=watcherlib.BlockWatcher.UPDATE_EVERY, release_key=releaselib.PUBLIC_KEY,
-                      trade_cut=swaplib.cut_bps(state.setting("trade_cut", TRADE_CUT)) / 100)
+                      trade_cut=swaplib.cut_bps(state.setting("trade_cut", TRADE_CUT)) / 100, names=_arcade_names())
+
+    def _arcade_names() -> dict:
+        """The arcade's two names for Admin -> This node (2026-11-04, "Who runs this node", Plan B): its node's own
+        (the place), its owner's (the person), which one it answers to, and what owns it: "account", "password"
+        (a username and password with no wallet) or "" (nobody yet: the node runs itself)."""
+        return {"node": state.node_tag(), "owner": state.owner_tag(), "answers": state.arcade_name(),
+                "owner_kind": state.owner_kind()}
 
     @app.get("/admin/login", response_class=HTMLResponse)
     def admin_login_page(request: Request):
@@ -30300,6 +30302,11 @@ def create_app(state: AppState) -> FastAPI:
                     raise ValueError(f"the terms are limited to {termslib.TEXT_MAX:,} characters")
                 state.set_setting(termslib.TEXT_SETTING,
                                   None if words == termslib.clean(termslib.DEFAULT) else words or None)
+            if "arcade_name" in said:
+                # Whose @name the arcade answers to (state.arcade_name): its own, or its owner account's.
+                if said["arcade_name"] not in ("node", "owner"):
+                    raise ValueError("the arcade answers to its own name or its owner's")
+                state.set_setting(state.ARCADE_NAME, said["arcade_name"])
             if "update_channel" in said:
                 # main live or main test (arcade/update.py CHANNELS), read by the updater at its next check
                 if said["update_channel"] not in updatelib.CHANNELS:
@@ -30944,8 +30951,9 @@ def create_app(state: AppState) -> FastAPI:
             tag = state.operator_tag() or ""
         except Exception:                                  # noqa: BLE001 -- said as none
             tag = ""
+        # operator_is_node: the arcade answers to its node's own name (state.arcade_name), so the node's key claims it.
         out: dict[str, Any] = {"need": not tag, "tag": tag, "net": chain.network, "label": chain.label,
-                               "operator_is_node": not _operator_wallet()}
+                               "operator_is_node": state.arcade_name() == "node"}
         # 1. The node, and whether the chain is borrowed meanwhile.
         try:
             sync = state.chain_sync(chain)
@@ -31633,6 +31641,10 @@ def create_app(state: AppState) -> FastAPI:
                     status_code=403)
             creds.conn.execute("UPDATE credential SET pubkey=? WHERE pubkey=?",
                                (account.pubkey.lower(), held))
+        if held != account.pubkey.lower():
+            # 2026-11-04 ("Who runs this node", Plan B): an arcade changes hands, not names. It keeps answering to its
+            # own name; the new owner can choose theirs in Admin -> This node.
+            state.set_setting(state.ARCADE_NAME, "node")
         state.claim_operator(account.pubkey)
         return JSONResponse({"operator": account.pubkey})
 

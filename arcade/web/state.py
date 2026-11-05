@@ -996,12 +996,48 @@ class AppState:
 
         What this arcade says about itself to linked arcades (mesh/operators.py, "me") and what Admin -> Overview's
         Arcades panel shows on its own row (2026-10-21, approving the mockup). Only ever this arcade's OWN
-        operator: never an account that merely signed in here."""
+        operator: never an account that merely signed in here. Since 2026-11-04 its owner chooses (arcade_name):
+        the arcade's own name, or the owner account's."""
+        if self.arcade_name() == "node":
+            return self.node_tag()
+        return self._tag_of(self.owner_address())
+
+    #: Which @name the arcade answers to when an account owns it (2026-11-04, "Who runs this node", Plan B): "node",
+    #: its own key's; "owner", the account's. Unset is "owner", what every arcade did before, so none changes name.
+    ARCADE_NAME = "arcade_name"
+
+    def arcade_name(self) -> str:
+        """"node" or "owner": whose @name this arcade answers to. An arcade with no owner account answers to its own."""
+        if not self.owner_address():
+            return "node"
+        return "node" if self.setting(self.ARCADE_NAME) == "node" else "owner"
+
+    def node_tag(self) -> str:
+        """The @name of this node's own key (the place: it signs the arcade's broadcasts and takes its fees)."""
+        return self._tag_of(self.derived_address)
+
+    def owner_tag(self) -> str:
+        """The @name of the account that owns this arcade (the person), "" for none or a password with no wallet."""
+        return self._tag_of(self.owner_address())
+
+    def owner_kind(self) -> str:
+        """What owns this arcade: "account" (keys in its owner's browser), "password" (a username and password with no
+        wallet of its own) or "" (nobody yet: the node runs itself)."""
+        if not self.operator:
+            return ""
+        return "account" if self.owner_address() else "password"
+
+    def owner_address(self) -> str:
+        """The owner account's address on the messaging chain, "" without an owner account (no operator, or a
+        username and password, which has no wallet of its own)."""
+        op = self.operator
+        if not op:
+            return ""
+        return str(self.setting(f"address:{self.messaging.network}:{op}") or self.setting(f"address:{op}") or "")
+
+    def _tag_of(self, address) -> str:
         try:
             chain = next(c for c in self.token_chains if c.network == self.messaging.network)
-            op = self.operator
-            address = ((self.setting(f"address:{chain.network}:{op}") or self.setting(f"address:{op}")) if op
-                       else "") or self.derived_address
             return (self.token_index(chain).tag_of(address) or "") if address else ""
         except Exception:                                  # noqa: BLE001 -- said without a name
             return ""
@@ -1382,6 +1418,9 @@ class AppState:
                     if attempt == 9:
                         raise
                     time.sleep(0.05 * (attempt + 1))
+            # settings() keys its cache on the file's mtime and size, which two quick writes of values the same
+            # length can leave unchanged (2026-11-04: a handover's new operator read back as the old one).
+            self._settings_cached = None
 
     @property
     def key_path(self) -> Path:

@@ -8,18 +8,18 @@
     <p style="margin:0 0 8px">You are signed in{{ " as @" ~ me if me }}.</p>
     <button type="button" id="j-out">Sign out</button>
   </fieldset>
-  <fieldset id="j-claim" hidden><legend>Make this account the operator</legend>
+  <fieldset id="j-claim" hidden><legend>Make this account the owner</legend>
     <p class="muted" style="margin:0 0 8px">Only from this machine. This account's words then open the node's wallet
       and Admin from anywhere; everybody else who signs in still gets the public arcade.</p>
-    {% if join.arcade %}<p class="bad" style="margin:0 0 8px">This arcade answers to @{{ join.arcade }} now. Made the
-      operator, this account's name{{ " (@" ~ me ~ ")" if me }} becomes the arcade's instead.</p>{% endif %}
+    {% if join.arcade %}<p style="margin:0 0 8px">@{{ join.arcade }} keeps its name: this account becomes its owner.
+      Admin &rarr; This node can make the arcade answer to{{ " @" ~ me if me else " this account's name" }} instead.</p>{% endif %}
     <form id="j-claim-form" class="grid">
       <label for="j-hand-pw" class="j-hand" hidden>Password</label><input id="j-hand-pw" class="j-hand" hidden
         type="password" autocomplete="current-password" placeholder="this node's password">
-      <span></span><span><button type="submit">Make this account the operator</button></span>
+      <span></span><span><button type="submit">Make this account the owner</button></span>
     </form>
-    <p class="muted j-hand" hidden>This node's operator is its username and password. That password says yes, and the
-      same username and password open this account from then on.</p>
+    <p class="muted j-hand" hidden>This node runs with a machine password. That password says yes, and the same
+      username and password open this account from then on.</p>
   </fieldset>
   {% elif not join.secure %}
   <fieldset><legend>Sign in or make an account</legend><p class="bad" style="margin:0">{{ join.why_not }}</p>
@@ -85,14 +85,14 @@
   {% endif %}
   {% if not (audience != 'anyone' and account) %}
   <div class="cols"><div>
-    <fieldset id="j-op-in" hidden><legend>The operator</legend>
+    <fieldset id="j-op-in" hidden><legend>Machine password</legend>
       <form id="j-op-form" class="grid">
         <label for="j-op-name">Username</label><input id="j-op-name" autocomplete="username" required>
         <label for="j-op-pw">Password</label><input id="j-op-pw" type="password" autocomplete="current-password"
           required>
         <span></span><span><button type="submit">Sign in</button></span>
       </form>
-      <p class="muted">Whoever runs this node.</p>
+      <p class="muted">The username and password set on this machine, for whoever runs it.</p>
     </fieldset>
   </div><div>
     <fieldset id="j-op-set" hidden><legend>Make this node yours</legend>

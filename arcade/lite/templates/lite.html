@@ -267,10 +267,12 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
         var c = chains.filter(function (x) { return x.network === net; })[0];
         mine.push([c ? c.label : net, you.addresses[net]]);
       });
-      if (data.audience === 'operator') mine.push(['Role', 'operator']);
+      if (data.audience === 'operator') mine.push(['Role', 'owner']);
       pairs($('you'), mine);
     }
-    var basics = [['Version', n.version], ['Operator', n.operator ? '@' + n.operator : 'no @name yet'],
+    var basics = [['Version', n.version], ['Arcade', n.operator ? '@' + n.operator : 'no @name yet'],
+                  ['Owner', n.owner ? '@' + n.owner : {account: 'an account with no @name yet',
+                    password: 'a machine password'}[n.owned_by] || 'nobody yet: the node runs itself'],
                   ['Face', n.face], ['Public names', (n.public_names || []).join(', ')],
                   ['Mesh id', short(n.mesh_id)]];
     pairs($('node'), basics);

@@ -46,6 +46,33 @@
 {% include "_arcades_panel.html" %}
 <section class="panel" id="nodeswitch">
   <h2>This node</h2>
+  {#- 2026-11-04, "Who runs this node" (Plan B): the place and the person are two names that never swap. #}
+  <p style="margin:0 0 6px" id="arcadenames">This arcade is
+    <strong>{{ "@" ~ names.node if names.node else "not named yet" }}</strong>
+    {%- if names.owner_kind == "account" %}, owned by <strong>{{ "@" ~ names.owner if names.owner else "an account with no name yet" }}</strong>
+    {%- elif names.owner_kind == "password" %}, run with this machine's password{% endif %}.</p>
+  {% if names.owner_kind == "account" and names.owner %}
+  <div class="row" style="gap:14px;flex-wrap:wrap;margin:0 0 4px" role="radiogroup" aria-label="The arcade answers to">
+    <span class="muted">It answers to</span>
+    <label><input type="radio" name="arcade_name" value="node" {{ "checked" if names.answers == "node" }}>
+      its own name{{ ", @" ~ names.node if names.node }}</label>
+    <label><input type="radio" name="arcade_name" value="owner" {{ "checked" if names.answers == "owner" }}>
+      your name, @{{ names.owner }}</label>
+    <span class="muted" id="arcadename-said"></span>
+  </div>
+  <p class="muted" style="margin:0 0 8px;font-size:.84rem">Linked arcades see the name chosen here. Nothing moves on
+    chain: the node's coins stay with its own name, and yours stay in your wallet.</p>
+  <script>
+  document.querySelectorAll('input[name="arcade_name"]').forEach(function (r) {
+    r.addEventListener('change', function () {
+      var said = document.getElementById('arcadename-said');
+      fetch('/admin/api/settings', {method: 'POST', credentials: 'same-origin', body: JSON.stringify({arcade_name: r.value}),
+        headers: {'Content-Type': 'application/json', 'X-Arcade-Admin': '1'}})
+        .then(function (res) { said.textContent = res.ok ? 'Saved.' : 'Not saved (' + res.status + ').'; });
+    });
+  });
+  </script>
+  {% endif %}
   <p class="muted" style="margin:0 0 6px;font-size:.84rem">
   {% if update_status %}Updates last checked {{ when(update_status.at) }}: <strong>{{ update_status.what }}</strong>
     {%- if update_status.installed %}, running <code class="mono">{{ update_status.installed[:7] }}</code>{% endif %}
@@ -72,12 +99,15 @@
 
 <div class="admintab" data-tab="coins" aria-label="Coins & chains">
 <section class="panel">
-  <h2>The node's coins</h2>
+  <h2>{{ "@" ~ names.node if names.node else "This node" }}'s till</h2>
+  <p class="muted" style="margin-top:0">What this node earns and spends by itself: its fees, its share as a sharer,
+    the coins it mines. Its key is on this machine{{ "; your own coins stay in your wallet" if names.owner_kind == "account" }}.</p>
   <div id="wallets"></div>
   <h3 style="margin-bottom:6px">Send</h3>
   <form class="sendform" id="sendform" onsubmit="return false">
     <select id="sendwhich"></select>
-    <input id="sendto" placeholder="@name or address" autocomplete="off" spellcheck="false">
+    <input id="sendto" placeholder="@name or address" autocomplete="off" spellcheck="false"
+      {%- if names.owner %} value="@{{ names.owner }}" title="To your own wallet, unless you change it"{% endif %}>
     <input id="sendamount" placeholder="amount" inputmode="decimal" autocomplete="off">
     <button type="submit" class="small">Prepare</button>
   </form>
