@@ -131,6 +131,39 @@
     up rather than going back.</p>
   <button type="button" class="small saveswitches">Save switches</button>
 </section>
+{% if names.owner_kind == "account" %}
+{#- 2026-11-04, "Who runs this node" (Plan B): the owner's other nodes, by their signed statements (arcade/owner.py). #}
+<section class="panel" id="yournodes">
+  <h2>Your nodes</h2>
+  <p class="muted" style="margin-top:0;font-size:.84rem">Every node that says {{ "@" ~ names.owner if names.owner else "your key" }}
+    owns it, heard over the mesh and checked here from the owner's signature. A node that doesn't say so, or that the
+    mesh doesn't reach now, isn't listed.</p>
+  <div class="tablewrap"><table class="admintable">
+    <thead><tr><th>Arcade</th><th>Heard</th><th>Open</th></tr></thead>
+    <tbody id="yourrows"><tr><td colspan="3" class="muted">Looking&hellip;</td></tr></tbody>
+  </table></div>
+  <script>
+  fetch('/admin/api/your-nodes', {credentials: 'same-origin', cache: 'no-store'}).then(function (r) { return r.json(); })
+    .then(function (got) {
+      var body = document.getElementById('yourrows'); body.replaceChildren();
+      var rows = [{tag: got.me, here: true}].concat(got.rows || []);
+      rows.forEach(function (n) {
+        var tr = body.insertRow(), name = tr.insertCell(), heard = tr.insertCell(), open = tr.insertCell();
+        var b = document.createElement('b'); b.textContent = n.tag ? '@' + n.tag : String(n.id || '').slice(0, 12);
+        name.append(b);
+        if (n.here) { name.append(' this one'); heard.textContent = 'now'; return; }
+        heard.textContent = n.linked ? 'linked now' : 'seen through @' + n.by_tag;
+        if (n.host) { var a = document.createElement('a'); a.href = 'https://' + n.host + '/admin'; a.textContent = n.host;
+          a.rel = 'noopener'; open.append(a); } else open.textContent = 'no public name';
+      });
+      if (!(got.rows || []).length) {
+        var tr = body.insertRow(), td = tr.insertCell(); td.colSpan = 3; td.className = 'muted';
+        td.textContent = 'No other node says you own it yet. Sign on each of them in Admin -> This node.';
+      }
+    }).catch(function () {});
+  </script>
+</section>
+{% endif %}
 
 </div>
 
@@ -3902,6 +3935,9 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
       arcCard(); window.arcadesPanel.draw(arcSaid);
       if (hidden.length) lines.push(['gamecards', hidden.length + ' game card' + (hidden.length > 1 ? 's' : '') + ' hidden, waiting for you to look']);
       if (mesh.ok && !mesh.linked) lines.push(['mesh', 'This node is not linked to any other arcade']);
+      // The owner's one-time asks (2026-11-04, "Who runs this node"): sign for this node, or give it an owner account.
+      {% if names.owner_kind == "account" and names.statement.due and names.statement.node %}lines.push(['overview', 'Sign that you own this node, so your other nodes list it (This node)']);
+      {% elif names.owner_kind == "password" %}lines.push(['overview', 'This node runs with a machine password. Make your account its owner at /join/keys on this machine, to see it with your other nodes']);{% endif %}
       (mesh.chains || []).forEach(function (c) { if (c.syncing) lines.push(['coins', c.label + ' is still syncing (' + c.progress + '%)']); });
       drawMesh(mesh);
       box.replaceChildren();

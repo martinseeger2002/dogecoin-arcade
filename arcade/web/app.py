@@ -28951,6 +28951,25 @@ def create_app(state: AppState) -> FastAPI:
                 "network": state.messaging.network, "version": state.messaging.params.pubkeyhash_version,
                 "address": state.owner_address()}
 
+    @app.get("/admin/api/your-nodes")
+    def admin_your_nodes(request: Request):
+        """The other nodes this node's owner owns, for Admin -> Your nodes: every arcade heard over the mesh, itself or
+        passed on by a linked one, whose owner's statement names the same address and checks out (mesh/operators.py
+        owned_by, arcade/owner.py). Empty without an owner account or a mesh."""
+        _admin_check(request)
+        from ..mesh.operators import owned_by
+        address, mesh = state.owner_address(), getattr(state, "mesh", None)
+        operators = getattr(mesh, "operators", None)
+        rows: list = []
+        if address and operators is not None:
+            try:
+                links = set(dict(mesh.node.links))
+            except Exception:                              # noqa: BLE001 -- none linked now
+                links = set()
+            rows = owned_by(dict(operators.peers), links, address, state.messaging.network, ownerlib.check,
+                            mesh.node_id or "")
+        return JSONResponse({"rows": rows, "owner": state.owner_tag(), "me": state.operator_tag()})
+
     @app.post("/admin/api/owner")
     def admin_owner(request: Request, payload: Any = Body(None)):
         """Keep the owner's signed statement that it owns this node, checked first, and whether linked arcades hear it

@@ -111,6 +111,29 @@ coding agent, so it is written for agents first and people second.
 ### 2026-11-05 Protocol vectors re-recorded for Params.class_b (Claude, for tbuuol's #81)
 
 - `tests/conformance/vectors.json` regenerated (`python tests/conformance/make_vectors.py`): the one change is the new `chains.<net>.params.class_b`, false on `ltc`, `ltctest` and `kot`, true on every other chain. Why: #81's second commit (no arcade Class B on Litecoin, Litecoin testnet and Kotia) added the field without re-recording, and `test_conformance.py[chains]` failed. The operator: "Run it and deploy if passes".
+### 2026-11-04 · SadFrog's side (Claude) · branch `team/node-owner` · Who runs this node: the arcade and its owner, one owner across nodes
+
+SadFrog chose Plan B of a proposal ("Who runs this node"): one person signs in to and manages any number of nodes,
+without a second account per node, and without the person's coins on any node.
+
+- **Two names that never swap.** The node's own key is the place (its @name, broadcasts, fees, the till). The owner
+  account is the person (its @name, its coins in its browser). `state.arcade_name` is the owner's choice of which
+  @name the arcade answers to; unset is the owner's, as before, so no arcade changes name by updating. A new owner
+  (`/auth/operator`) leaves the arcade its own name. Admin -> This node shows both; "The node's coins" is the till.
+- **The owner's statement** (`arcade/owner.py`): `arcade-owner / network / node mesh id / owner's address /
+  expires`, signed by the owner's wallet (coins.js `ownerWords`, wallet.js `ownerSign`), checked from the bytes.
+  Said in the mesh's "me" frame only when the owner ticks it; passed on unchanged in `links`.
+- **Admin -> Your nodes:** the arcades whose statements name the owner's address, heard directly or through a
+  linked arcade (`operators.owned_by`), with a link to each one's Admin. Needs you asks once: sign, or, on a node
+  run by a machine password, make an account its owner.
+- Fixed on the way: a settings write now clears the process's settings cache (keyed on mtime and size, two quick
+  writes of same-length values read back the old one).
+
+For your side, open questions: (1) should the arcade's own @name and its owner's both travel in "me" (today only the
+one it answers to does)? (2) should saying who owns a node stay opt-in? (3) from outside, does Admin still need the
+machine password on top of the owner's words? (4) should the till move to the owner by itself above an amount?
+(5) does anything planned for the full arcade's Admin Overview overlap Your nodes? (6) the Arcade Wallet extension signs only
+sign-ins: an owner using it, rather than words, cannot sign the statement yet.
 
 ### 2026-11-04 The silent-road test mutes the hub stream too (Claude)
 
