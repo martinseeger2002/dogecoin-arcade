@@ -31,13 +31,13 @@ def _leg(network):
             "taker_key": "03" + "22" * 32}
 
 
-@pytest.mark.parametrize("net", ["doge", "main", "lky", "ltc", "ltctest", "test"])
+@pytest.mark.parametrize("net", ["doge", "main", "lky", "test"])
 def test_a_doginal_leg_is_read_on_each_swappable_chain(net):
     assert trade_messages.leg_from(_leg(net)).network == net
     assert trade_orders.one_chain_offer({"network": net, "kind": "doginal"}, {"network": net, "kind": "coin"})
 
 
-@pytest.mark.parametrize("net", ["wjk", "bel", "kot"])
+@pytest.mark.parametrize("net", ["wjk", "bel", "kot", "ltc", "ltctest"])
 def test_a_doginal_leg_is_refused_where_it_cannot_be_locked(net):
     with pytest.raises(trade_messages.TradeMessageError, match="Dogecoin"):
         trade_messages.leg_from(_leg(net))

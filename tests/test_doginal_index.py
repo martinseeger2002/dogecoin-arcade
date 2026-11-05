@@ -483,13 +483,14 @@ def test_ords_witness_envelopes_are_read_on_a_taproot_chain():
 
 
 def test_each_chain_starts_at_its_official_first_inscription_height(tmp_path):
-    assert dx.STARTS == {"doge": 4_600_000, "main": 186_920, "test": 34_237, "ltc": 2_424_429, "ltctest": 2_669_127,
+    # No Litecoin and no Kotia (2026-11-05, tbuuol: no token protocols on LTC, tLTC and KOT).
+    assert dx.STARTS == {"doge": 4_600_000, "main": 186_920, "test": 34_237,
                          "bel": 22_470, "lky": 88_554, "wjk": 1, "dgb": 0,
                          "flop": 18_295}
-    ltc = dx.DoginalIndex(tmp_path / "ltc.sqlite", None, lambda: "off", net="ltc", mweb=True)
-    assert ltc.base == 2_424_429 and ltc.taproot and ltc.walker.mweb
-    assert dx.chunk_range(0, ltc.base) == (2_424_429, 2_424_429 + dx.CHUNK)
-    assert ltc.status()["source"].startswith("ord-litecoin")
+    bel = dx.DoginalIndex(tmp_path / "bel.sqlite", None, lambda: "off", net="bel")
+    assert bel.base == 22_470 and bel.taproot
+    assert dx.chunk_range(0, bel.base) == (22_470, 22_470 + dx.CHUNK)
+    assert bel.status()["source"].startswith("Nintondo")
 
 
 def test_a_helper_says_how_many_it_found_in_the_chunks_it_read(tmp_path):

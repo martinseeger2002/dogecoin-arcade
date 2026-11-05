@@ -30,7 +30,7 @@ from arcade.txbuild import p2pkh_script                                         
 
 COIN = 100_000_000
 SELLER_KEY, BUYER_KEY = 0x5E11E4, 0xB0B
-NEW = ("lky", "wjk", "ltc", "ltctest")
+NEW = ("lky", "wjk")
 
 
 def _addr(net, key):
@@ -40,24 +40,25 @@ def _addr(net, key):
 # --- the shared definition ------------------------------------------------------------------------------------------
 
 def test_every_ord_chain_is_moved_on_a_tab_of_its_own():
-    assert set(ord_chains.MOVED) == set(ord_chains.WORDS) - {"kot"}
+    assert set(ord_chains.MOVED) == set(ord_chains.WORDS)
     tabs = ord_chains.tab_nets()
     assert len(tabs) == len(ord_chains.MOVED), "no two chains share an Exchange tab"
-    assert (tabs["luckinals"], tabs["wojakinals"], tabs["ltcordinals"], tabs["ltctestordinals"],
-            tabs["pepinals"], tabs["pepinalstest"]) == ("lky", "wjk", "ltc", "ltctest", "main", "test")
+    assert (tabs["luckinals"], tabs["wojakinals"], tabs["pepinals"], tabs["pepinalstest"]) == ("lky", "wjk", "main", "test")
     assert all(t.isalnum() for t in tabs), "a tab is a plain URL word"
-    assert ord_chains.word("ltc") == "LTC ordinal" and ord_chains.word("lky") == "Luckinal"
+    assert ord_chains.word("lky") == "Luckinal"
+    # No token protocols on Litecoin, Litecoin testnet and Kotia (2026-11-05, tbuuol).
+    assert not {"ltc", "ltctest", "kot"} & (set(ord_chains.WORDS) | set(ord_chains.MOVED) | set(ord_chains.EXPLORE_ORDER))
 
 
 def test_wojakinals_are_never_swapped_and_testnets_price_against_testnets():
-    assert {n: ord_chains.swappable(n) for n in NEW} == {"lky": True, "wjk": False, "ltc": True, "ltctest": True}
-    assert (ord_chains.counter("ltctest"), ord_chains.counter("test")) == ("test", "ltctest")
-    assert (ord_chains.counter("ltc"), ord_chains.counter("lky")) == ("doge", "doge")
+    assert {n: ord_chains.swappable(n) for n in NEW} == {"lky": True, "wjk": False}
+    assert ord_chains.counter("test") == "ltctest", "a test ord is priced in test coins"
+    assert ord_chains.counter("lky") == "doge"
     table = ord_chains.wallet_table()
     assert table["test"]["send"] and table["test"]["tab"] == "pepinalstest", "Pepecoin testnet's ords shown too"
     leg = {"kind": "doginal", "asset": INSCRIPTION, "amount": 1, "giver_key": "02" + "11" * 32,
            "taker_key": "03" + "22" * 32}
-    for net in ("lky", "ltc"):
+    for net in ("lky",):
         assert trade_messages.leg_from({**leg, "network": net}).network == net
         assert trade_orders._side({**leg, "network": net})["network"] == net
     with pytest.raises(trade_messages.TradeMessageError):

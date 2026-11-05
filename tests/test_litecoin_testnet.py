@@ -84,13 +84,15 @@ def test_an_l_test_address_is_the_pepecoin_testnet_keys_twin():
         "only a test key: a mainnet key is never turned into a test address"
 
 
-def test_l_test_coins_have_their_own_guard(app_state, monkeypatch):
+def test_l_test_coins_are_never_held_for_ords(app_state, monkeypatch):
+    # 2026-11-05: an L test wallet said "held in Litecoin inscriptions" for a coin with none -- the guard asked an
+    # ord index that was never built, and every small coin waited "unknown". No ords on L test, so no guard.
+    monkeypatch.setattr(funding, "GUARDS", [])
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {})
     _with_ltc_test(app_state, monkeypatch, ready=True)
     TestClient(__import__("arcade.web.app", fromlist=["create_app"]).create_app(app_state))
-    guard = funding.guard_on("ltctest")
-    assert guard is not None
-    assert funding.guard_for(LTC_TEST) is guard and funding.guard_for(LTC_TEST_Q) is guard
-    assert funding.guard_for(PEP_TEST_P2SH) is not guard, "196 is Pepecoin testnet's P2SH too"
+    assert funding.guard_on("ltctest") is None
+    assert funding.guard_for(LTC_TEST) is None and funding.guard_for(LTC_TEST_Q) is None
     assert funding.guard_for(LTC_MAIN) is None, "no L main node here"
 
 

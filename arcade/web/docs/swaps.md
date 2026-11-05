@@ -34,7 +34,7 @@ through CHECKLOCKTIMEVERIFY: the owner may take it back only after its time has 
 
 * **Pepecoin, Dogecoin and Litecoin** (and their test chains) swap with each other.
 * **Ords** swap wherever a lock can be made: Doginals, Pepinals (Pepecoin main and test), Luckinals,
-  DigiByte ordinals and Litecoin ordinals (main and test) (`ord_chains.swappable`). Bellinals and
+  and DigiByte ordinals (`ord_chains.swappable`). Litecoin and Kotia carry no ords or tokens here. Bellinals and
   Wojakinals are sent, listed and bought, but never swapped.
 * **DRC-20 / PRC-20 tokens** swap from Dogecoin and Pepecoin mainnet.
 * **Wojakcoin cannot swap.** Its chain never turns on CHECKLOCKTIMEVERIFY (BIP65), so there a lock's

@@ -3,10 +3,10 @@
 Litecoin is an **add-on chain**, and so is Litecoin testnet. An operator turns either on in
 **Admin → Chains**: run it here, with a Litecoin node on this machine, or borrow it from an arcade that
 shares its Litecoin Core over the mesh (see *Shared Cores*), with no Litecoin node at all. This page
-says what works, and what to know before you trade or inscribe on Litecoin.
+says what works, and what to know before you trade on Litecoin.
 
-**Status:** the protocol is proven on a test chain: the arcade's own inscriptions, Doginals-format
-inscriptions, and lock-script swaps all work on Litecoin. Litecoin is in the wallet (one key for PEP,
+**Status:** the protocol is proven on a test chain: the arcade's own Class B transactions and
+lock-script swaps work on Litecoin. Ords and -20 tokens are not read on Litecoin (see below). Litecoin is in the wallet (one key for PEP,
 DOGE and LTC) and on the Exchange (PEP/LTC and DOGE/LTC).
 
 ## What works the same as on Pepecoin
@@ -16,7 +16,7 @@ DOGE and LTC) and on the Exchange (PEP/LTC and DOGE/LTC).
   Dogecoin. Nothing is different about them on Litecoin except the coin and the fee.
 - **Fees are Litecoin's own.** Litecoin relays at 1/1000 of Pepecoin's minimum fee. Here a Litecoin
   transaction pays 0.0001 LTC per kB, ten times Litecoin's minimum.
-- **Lock-script swaps.** LTC for PEP, and a Litecoin inscription for PEP, use the same lock scripts
+- **Lock-script swaps.** LTC for PEP uses the same lock scripts
   as PEP for DOGE (see *Swaps between chains*).
 
 ## Address types
@@ -26,37 +26,19 @@ SegWit (P2SH) wallet beside the legacy one, each its own entry, and every kind c
 Litecoin mainnet SegWit wallets are not offered yet: the node refuses to register one on a real-coin
 chain.
 
-## Inscriptions on Litecoin, and Taproot
+## No inscriptions or tokens on Litecoin
 
-Litecoin has two kinds of inscription, and they are not interchangeable.
-
-- **Made here: the Doginals format.** The inscription's data rides in an ordinary (legacy) input, the
-  same way Doginals work on Dogecoin. Its coin is an ordinary address, so this arcade's wallet can
-  hold, send and trade it.
-- **Made elsewhere: Taproot ordinals.** Most Litecoin ordinals tools write the data into a Taproot
-  witness and keep the coin on a Taproot address (`ltc1p…`).
-
-What that means for you:
-
-- **Litecoin's Taproot ordinals indexers and marketplaces do not show Doginals-format
-  inscriptions.** An inscription made here is seen by this arcade and by Doginals-style indexers
-  pointed at Litecoin, but not by Taproot-only sites.
-- **The arcade's ord index for Litecoin reads both kinds.** It is *Watch only* until the operator picks another in **Admin → Ords**. It
-  starts at block 2,424,429 (2,669,127 on Litecoin testnet), as ord-litecoin does, and reads Taproot
-  envelopes as well as the Doginals kind.
-- **Taproot inscriptions show here.** `/content/<id>` reads a Taproot inscription's content from the
-  reveal transaction's witness, through this arcade's own Litecoin node.
-- **This arcade cannot yet move inscriptions on Taproot (`ltc1p…`) addresses.** Use a Taproot
-  wallet for those.
-- **Nothing is converted.** Content already on the chain never changes. An inscription made here is
-  never presented as the same item as one made elsewhere.
+This arcade keeps no ord index on Litecoin or Litecoin testnet, as on Kotia (2026-11-05). It reads no
+inscriptions, LTC-20 tokens or Omni there, and holds no Litecoin coin back as "held in inscriptions":
+every coin in a Litecoin wallet is spendable. An inscription someone made elsewhere on a coin you hold
+is not seen here, so keep such coins in a wallet that knows them.
 
 ## Exchanging across chains
 
 A swap between Litecoin and Pepecoin (or Dogecoin) is two lock-script trades, one on each chain,
 tied together by one secret:
 
-1. Each side locks their coins (or their inscription) in a script on their own chain.
+1. Each side locks their coins in a script on their own chain.
 2. One side claims the other side's lock, and that claim publishes the secret.
 3. The other side uses that secret to claim theirs.
 
@@ -71,9 +53,6 @@ Before you trade:
   land up to about 15 minutes after the clock time shown.
 - **Each chain confirms at its own pace.** A trade is done when both claims are in blocks on both
   chains, not when the first page says "sold".
-- **Inscriptions travel by position.** An inscription sits on its coin's first litoshi. Send or lock
-  the exact coin it sits on, and nothing else in front of it, or it can move to the wrong place.
-  This arcade does that for you; another wallet might not.
 - **Never send to an MWEB address (`ltcmweb1…`).** The arcade cannot see or spend Litecoin's
   private extension blocks.
 - **Lock-script swaps are not the same as a node-facilitated swap.** A lock-script swap is
