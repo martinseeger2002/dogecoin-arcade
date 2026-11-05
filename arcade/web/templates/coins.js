@@ -981,6 +981,13 @@ export async function verifyOffer(offer, keys) {
       const hrp = ltc ? ltc.hrp : /^[a-z]+1/.test(own) ? own.slice(0, own.lastIndexOf("1")) : "";
       pays.push({to: hrp ? segwitEncode(hrp, 0, script.slice(2, 22)) : "a segwit address",
                  value: Number(out.value), mine: false});
+    } else if (script.length === 34 && script[0] === 0x51 && script[1] === 0x20) {
+      // A Taproot (v1) output (2026-11-05 review: a DigiDollar vault read as "34 bytes written to the chain"): said as
+      // a payment, with its address where this key's hrp is known, else its key's first characters.
+      const hrp = ltc ? ltc.hrp : /^[a-z]+1/.test(own) ? own.slice(0, own.lastIndexOf("1")) : "";
+      pays.push({to: hrp ? segwitEncode(hrp, 1, script.slice(2, 34))
+                         : `a Taproot output (a vault or someone's Taproot address, key ${hex(script.slice(2, 10))}…)`,
+                 value: Number(out.value), mine: false});
     } else if (ltc && script.length === 23 && script[0] === 0xa9 && script[1] === 0x14
                && script[22] === 0x87) {
       // Somebody's P2SH address (Q... on L test, M... on Litecoin): a payment, said as one. Litecoin

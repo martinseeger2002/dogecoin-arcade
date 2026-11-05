@@ -111,3 +111,15 @@ def test_a_prepared_transaction_assembles_with_its_own_version():
                                 version=0x01000770)
     raw = funding.assemble(unsigned, ["30" + "00" * 8], bytes(33))
     assert raw.startswith("70070001")
+
+
+def test_the_module_sign_box_says_every_payment_and_the_prepared_spend_is_bounded():
+    """2026-11-05 review: the box showed only the module's own words, the fee and the change, so a module could pay
+    itself the wallet's coins under any description; and a prepared spend had no limit on its coins."""
+    import pathlib
+    from arcade import modhost
+    box = (pathlib.Path(__file__).resolve().parent.parent / "arcade/lite/templates/_wallet.html").read_text()
+    assert "This transaction pays:" in box and "read.pays" in box and "The module says:" in box
+    coins = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/coins.js").read_text()
+    assert "a Taproot output" in coins, "a vault is said as a payment, not as bytes"
+    assert modhost.MOST_INPUTS <= 100 and modhost.BUSY_WAIT < modhost.TIMEOUT

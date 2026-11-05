@@ -128,8 +128,9 @@ def test_your_nodes_are_the_ones_whose_statements_name_your_key(owned, tmp_path)
             {"id": stranger, "tag": "stranger", "owner": fig_said}]},       # fig's statement says nothing of stranger
     }
     rows = operators.owned_by(peers, {fig, hub}, key.address, state.messaging.network, owner.check, me)
-    assert [(r["id"], r["tag"], r["linked"], r["by_tag"]) for r in rows] == [
-        (fig, "fig", True, ""), (quince, "quince", False, "bigchiefenergy")]
+    # quince's host and @name were the hub's word, unsigned: not shown (2026-11-05 review), only who passed it on.
+    assert [(r["id"], r["tag"], r["host"], r["linked"], r["by_tag"]) for r in rows] == [
+        (fig, "fig", "fig.example.net", True, ""), (quince, "", "", False, "bigchiefenergy")]
     assert operators.owned_by(peers, {fig, hub}, "n" + "Z" * 33, state.messaging.network, owner.check, me) == []
     clean = operators.clean_links(peers[hub]["links"])
     assert clean[0]["owner"] == quince_said, "passed on unchanged"

@@ -28888,7 +28888,9 @@ def create_app(state: AppState) -> FastAPI:
         at the machine; it needs neither the admin page's header nor its password (arcade/apikeys.py)."""
         key = apikeylib.CURRENT.get()
         if key is not None and key.operator:
-            return {"local": True, "key": key.id}
+            # The operator, but never "at the machine" (2026-11-05 review): a key is used from elsewhere, so what only
+            # the node's own machine may do (confirm sends from the node wallet) still needs the machine.
+            return {"local": False, "key": key.id}
         local = not (state.public or _from_outside(request))
         if write:
             if request.headers.get(ADMIN_HEADER) != "1":
@@ -31617,6 +31619,9 @@ def create_app(state: AppState) -> FastAPI:
         if state.accounts().account(pubkey) is None:
             return JSONResponse({"detail": "no account with that key has a seat here"},
                                 status_code=400)
+        # As /auth/operator does (2026-11-05 review): an arcade changes hands, not names.
+        if (state.operator or "").lower() != pubkey:
+            state.set_setting(state.ARCADE_NAME, "node")
         state.claim_operator(pubkey)
         state.admin_sessions().close_all()
         return JSONResponse({"ok": True})

@@ -218,7 +218,17 @@ if (!NODE) {
     if (!k) throw new Error("Open your wallet first (Send asks for its password), then run the command again. Nothing was signed.");
     const read = await wallet.checked(o, k);
     const c = said.chains.find((x) => x.network === o.chain) || {};
-    const lines = [o.what, `Network fee: ${coinsOf(read.fee)} ${unit(c)}`];
+    // Every payment as this browser read it from the transaction itself (coins.verifyOffer), never the module's own
+    // words alone (2026-11-05 review: the box said only the module's "what", the fee and the change, so a module could
+    // pay itself the wallet's coins under any description).
+    const paid = (read.pays || []).filter((x) => !x.mine);
+    const lines = [`The module says: ${o.what || "a transaction"}`, "", "This transaction pays:"];
+    for (const x of paid) {
+      lines.push(x.bytes !== undefined ? `  ${x.bytes} bytes written to the chain${x.value ? ` (${coinsOf(x.value)} ${unit(c)})` : ""}`
+                                       : `  ${coinsOf(x.value)} ${unit(c)} to ${x.to}`);
+    }
+    if (!paid.length) lines.push("  nobody but you");
+    lines.push(`Network fee: ${coinsOf(read.fee)} ${unit(c)}`);
     if (read.change) lines.push(`Comes back to you: ${coinsOf(read.change)} ${unit(c)}`);
     if (!window.confirm(lines.join("\n") + "\n\nSign it with your wallet and send it?")) return "Not sent. Nothing was signed.";
     const out = await wallet.confirm(k, o, {reviewed: true});

@@ -3,8 +3,9 @@
 Linux only, and no root or user namespaces (Ubuntu 24.04 refuses those to unprivileged programs):
 - **Landlock** (Linux 5.13+): the process may read only Python's own folders and the module's package, and write only
   its own data folder. Nothing else on disk, the arcade's home and keys among it, and nothing in /proc.
-- **seccomp**: `socket()` fails, so the module reaches no network at all, TCP, UDP or a Unix socket, and it cannot
-  `ptrace` or read another process's memory. It talks to the arcade only over the pipes it was started with.
+- **seccomp**: `socket()` fails, and so does io_uring (which makes sockets without it), so the module reaches no
+  network at all, TCP, UDP or a Unix socket, and it cannot `ptrace`, read another process's memory or take another
+  process's open files (`pidfd_getfd`). It talks to the arcade only over the pipes it was started with.
 - **Limits:** memory, open files and the size of a file it writes.
 
 A machine that cannot do all of this runs no module: `confine` raises, and `available` says why first."""
@@ -26,8 +27,17 @@ _EXECUTE, _WRITE_FILE, _READ_FILE, _READ_DIR = 1 << 0, 1 << 1, 1 << 2, 1 << 3
 #: IOCTL_DEV from 5.
 _ALL_FS = {1: (1 << 13) - 1, 2: (1 << 14) - 1, 3: (1 << 15) - 1, 4: (1 << 15) - 1, 5: (1 << 16) - 1}
 _READ = _EXECUTE | _READ_FILE | _READ_DIR
+#: Landlock's network rights (ABI 4: bind and connect TCP) and scopes (ABI 6: abstract Unix sockets and signals).
+_NET_TCP = (1 << 0) | (1 << 1)
+_SCOPED = (1 << 0) | (1 << 1)
 #: Per machine: the audit arch seccomp reports, and the syscalls refused: socket, ptrace, process_vm_readv/writev.
-_ARCHES = {"x86_64": (0xC000003E, (41, 101, 310, 311)), "aarch64": (0xC00000B7, (198, 117, 270, 271))}
+#: And (2026-11-05 review) every other way to a socket or another process's insides: io_uring_setup/enter/register
+#: (socketpair too; 425-427: an io_uring opens and connects sockets with no socket() call, and 127.0.0.1 is the operator to the
+#: arcade), pidfd_open/pidfd_getfd (434, 438: a module runs as the arcade's user, so it could take a copy of the web
+#: process's own sockets), process_madvise (440), kcmp, bpf and perf_event_open.
+_SHARED = (425, 426, 427, 434, 438, 440)
+_ARCHES = {"x86_64": (0xC000003E, (41, 53, 101, 310, 311, 312, 321, 298) + _SHARED),
+           "aarch64": (0xC00000B7, (198, 199, 117, 270, 271, 272, 280, 241) + _SHARED)}
 _PR_SET_NO_NEW_PRIVS, _PR_SET_SECCOMP, _SECCOMP_MODE_FILTER = 38, 22, 2
 _ALLOW, _KILL, _EPERM = 0x7FFF0000, 0x80000000, 0x00050000 | 1
 #: What a module's process may use: memory, open files, and the largest file it may write.
@@ -66,9 +76,18 @@ def available() -> str:
 
 
 def _landlock(read: list[str], write: list[str]) -> None:
-    abi = min(landlock_abi(), max(_ALL_FS))
+    real = landlock_abi()
+    abi = min(real, max(_ALL_FS))
     handled = _ALL_FS[abi]
-    attr = struct.pack("Q", handled)                       # handled_access_fs only: the network is seccomp's
+    # The network and signals too, where the kernel has them (2026-11-05 review), with no rule that allows any:
+    # ABI 4 refuses every TCP bind and connect (whatever made the socket, io_uring included); ABI 6 keeps signals and
+    # abstract Unix sockets inside the module's own domain, so it cannot kill the arcade or a coin daemon (same user).
+    if real >= 6:
+        attr = struct.pack("QQQ", handled, _NET_TCP, _SCOPED)
+    elif real >= 4:
+        attr = struct.pack("QQ", handled, _NET_TCP)
+    else:
+        attr = struct.pack("Q", handled)
     libc = _libc()
     ruleset = libc.syscall(_CREATE, ctypes.c_char_p(attr), ctypes.c_size_t(len(attr)), ctypes.c_uint32(0))
     if ruleset < 0:

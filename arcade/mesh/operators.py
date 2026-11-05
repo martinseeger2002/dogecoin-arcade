@@ -103,7 +103,10 @@ def owned_by(peers: dict, linked, address: str, network: str, check: Callable, m
         for entry in said.get("links") or []:
             node = entry.get("id")
             if node and node != me and node not in found and (entry.get("owner") or {}).get("a") == address:
-                found[node] = {"id": node, "tag": entry.get("tag") or "", "host": entry.get("host") or "",
+                # Its host and @name only from its own word (2026-11-05 review): beside a statement passed on, they are
+                # the passing arcade's, unsigned, and a hostile one could put its own admin page under your node's row.
+                own = peers.get(node) or {}
+                found[node] = {"id": node, "tag": own.get("tag") or "", "host": (own.get("hosts") or [""])[0],
                                "linked": False, "by_tag": said.get("tag") or peer[:12],
                                "at": float(said.get("at") or 0), "owner": entry["owner"]}
     rows = [r for r in found.values() if check(r.pop("owner"), network, r["id"]) == address]

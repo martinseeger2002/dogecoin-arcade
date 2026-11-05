@@ -101,7 +101,11 @@ def _hash(key: str) -> str:
 def caller_ip(headers, peer: str | None) -> tuple[str, bool]:
     """(the caller's address, whether it came through an edge such as a tunnel). An edge's header names the caller;
     without one the TCP peer is the caller."""
-    edge = headers.get("cf-connecting-ip") or (headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    # X-Forwarded-For only from this machine itself (the arcade's own tunnel or proxy): from anybody else it is the
+    # caller's own word, and a key limited to an address could be used from anywhere by naming it (2026-11-05 review).
+    edge = headers.get("cf-connecting-ip") or ""
+    if not edge and peer in ("127.0.0.1", "::1"):
+        edge = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
     return (edge, True) if edge else (peer or "", False)
 
 

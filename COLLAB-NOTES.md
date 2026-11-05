@@ -88,6 +88,19 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 PRs #77-#80, #82-#86 merged, with the review's fixes (Claude; the operator: "Fix the problems get all 82 through 86 merged test everything make sure all the functionality works and then deploy it")
+
+Merged as their own commits: node modules (#77-#79), DigiDollar (#80), the Lite window and API keys (#85, on #79), who runs this node (#82-#84), the ord walk stalls (#86). Then these fixes, for your side to keep:
+
+- **A module's sign box says every payment** (`lite/templates/_wallet.html` liteSign): "The module says: …" (one line), then each output as this browser read it from the transaction (`coins.verifyOffer` `pays`), the fee and the change. Before it showed only the module's own `what`, the fee and the change, so a module could pay itself the wallet's coins under any description. A Taproot output (a DigiDollar vault) is said as a payment, not as "34 bytes" (`coins.js`).
+- **The sandbox** (`arcade/sandbox.py`): seccomp also refuses io_uring (425-427: it makes and connects sockets without socket()), socketpair, pidfd_open/pidfd_getfd (a module runs as the arcade's user and could copy the web process's sockets), process_madvise, kcmp, bpf and perf_event_open. Landlock adds, where the kernel has them, its TCP rules (ABI 4: no bind or connect at all) and its scopes (ABI 6: no signals or abstract Unix sockets outside the module, so it cannot kill the arcade). Test: `test_a_confined_process_reaches_no_socket_by_io_uring_and_no_other_process_s_files`.
+- **The module host** (`modhost.py`): stop kills the module's whole process group; a busy module answers "busy" after 5 s, with at most 4 waiting (each waiter held a server thread for up to 30 s); a dead module or a malformed chain read is a module error, not a 500; a prepared spend has at most 50 coins and none twice.
+- **Reads a module may ask** (`packages.NOT_READS`): not Dogecoin's account calls, getauxblock/getblocktemplate/getwork, validateaddress, getpeerinfo/getnodeaddresses/getaddednodeinfo, getrpcinfo, getmemoryinfo, getzmqnotifications, nor any name with "account".
+- **Module pages** are GET only (a POST was refused publicly and unguarded against other sites privately; no module posts); their files are asked again each time (an upgrade keeps the names).
+- **API keys** (#85): an operator key is the operator but never "at the machine" (`_admin_check` local False), so `confirm` still needs the machine; `/api/v1/run` needs a key, and refuses one limited to some modules (a console line reaches any); `/api/v1/routes` needs a key or a signed-in caller; a key's address limit trusts `X-Forwarded-For` only from this machine itself (cf-connecting-ip as before); the key's sqlite checks run on a thread, not the event loop.
+- **Your nodes** (#84, `operators.owned_by`): a node passed on by a linked arcade shows its host and @name only from its own word, never the passing arcade's (a hostile one could put its admin page under your node's row).
+- **Naming an owner from Admin** keeps the arcade's own name, as /auth/operator does.
+
 ### 2026-11-05 The Exchange's token tab: trades read without reading every payload (Claude; the operator: "figure out why the token exchange tab takes so long to load", "build it")
 ### 2026-11-05 Ord walk: two stalls of a moved-in index on a hard disk (SadFrog's side, Claude)
 Branch `team/walk-own-chunk`, two commits on the newest main. SadFrog's Bellscoin index was walked to the tip on another

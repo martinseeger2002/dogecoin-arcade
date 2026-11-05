@@ -106,3 +106,38 @@ def test_a_confined_process_reads_its_package_writes_its_folder_and_reaches_noth
     assert json.loads(out) == {"home": "PermissionError", "proc": "PermissionError", "socket": "PermissionError",
                                "package": "\nimpor", "data": "4"}
     assert (home / "module-data" / "hello" / "kept.txt").read_text() == "mine"
+
+
+NO_RING = """
+import ctypes, errno, os, sys
+from arcade import sandbox
+package, data = sys.argv[1:]
+libc = ctypes.CDLL(None, use_errno=True)
+def call(nr, *args):
+    got = libc.syscall(nr, *args)
+    return "EPERM" if got == -1 and ctypes.get_errno() == errno.EPERM else ("ok" if got >= 0 else errno.errorcode.get(ctypes.get_errno(), "?"))
+KILL = 62 if os.uname().machine == "x86_64" else 129
+before = {"pidfd_open": call(434, os.getppid(), 0), "kill": call(KILL, os.getppid(), 0)}
+sandbox.confine(read=[package], write=[data])
+params = ctypes.create_string_buffer(120)
+after = {"io_uring_setup": call(425, 8, params), "pidfd_open": call(434, os.getppid(), 0),
+         "pidfd_getfd": call(438, 0, 0, 0), "socket": call(41 if os.uname().machine == "x86_64" else 198, 2, 1, 0),
+         "kill": call(KILL, os.getppid(), 0) if sandbox.landlock_abi() >= 6 else "EPERM"}
+print(__import__("json").dumps({"before": before, "after": after}))
+"""
+
+
+@needs_sandbox
+def test_a_confined_process_reaches_no_socket_by_io_uring_and_no_other_process_s_files(tmp_path):
+    """2026-11-05 review: the filter refused socket(), but io_uring makes and connects sockets without it, and a module
+    runs as the arcade's own user, so pidfd_getfd could take a copy of the web process's sockets. All refused now."""
+    (tmp_path / "data").mkdir()
+    package = _module(tmp_path)
+    root = str(Path(__file__).parent.parent)
+    out = subprocess.run([sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {root!r})\n" + NO_RING,
+                          str(package), str(tmp_path / "data")], capture_output=True, text=True, timeout=60, check=True).stdout
+    said = json.loads(out)
+    assert said["before"] == {"pidfd_open": "ok", "kill": "ok"}, "outside the sandbox these work (so the refusals are its)"
+    # kill: Landlock's signal scope (ABI 6): the module cannot signal the arcade or a coin daemon, though the same user
+    assert said["after"] == {"io_uring_setup": "EPERM", "pidfd_open": "EPERM", "pidfd_getfd": "EPERM", "socket": "EPERM",
+                             "kill": "EPERM"}

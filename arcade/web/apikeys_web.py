@@ -42,6 +42,20 @@ def guard(app, state) -> None:
             if request.headers.get("authorization", "")[:10].lower() == "bearer ak_":
                 return _refuse(401, "that is not an API key of this arcade")
             return await call_next(request)
+        # The key's checks read (and now and then write) sqlite: on a thread, never the event loop that every request
+        # waits on (2026-11-05 review: on a slow disk, every keyed call stalled the whole server).
+        import anyio
+        got = await anyio.to_thread.run_sync(lambda: _check(request, said))
+        if isinstance(got, JSONResponse):
+            return got
+        mark = keylib.CURRENT.set(got)
+        try:
+            return await call_next(request)
+        finally:
+            keylib.CURRENT.reset(mark)
+
+    def _check(request: Request, said: str):
+        """The key, or the refusal to answer with."""
         store = state.api_keys()
         key = store.find(said)
         if key is None or key.off or (key.expires is not None and key.expires <= time.time()):
@@ -63,11 +77,7 @@ def guard(app, state) -> None:
             return _refuse(429, f"at most {rules['per_minute']} calls a minute with a user's key; wait a little")
         if key.used is None or time.time() - key.used > 60:
             store.touch(said)
-        mark = keylib.CURRENT.set(key)
-        try:
-            return await call_next(request)
-        finally:
-            keylib.CURRENT.reset(mark)
+        return key
 
 
 def register(app, state, admin_check, signed_in, run_line) -> None:
@@ -191,8 +201,13 @@ def register(app, state, admin_check, signed_in, run_line) -> None:
     @app.get("/api/v1/routes")
     def api_routes(request: Request):
         """Every route that runs here, by module, with its methods and what its handler says it does. A key's own
-        modules are marked, so Build -> API shows each key what it opens."""
+        modules are marked, so Build -> API shows each key what it opens. A key's or a signed-in caller's only."""
         key = keylib.CURRENT.get()
+        if key is None and signed_in(request) is None:
+            try:
+                admin_check(request)
+            except HTTPException:
+                raise HTTPException(401, "an API key, or sign in") from None
         groups: dict[str, dict] = {}
         for route in app.router.routes:
             path = getattr(route, "path", "")
@@ -214,6 +229,14 @@ def register(app, state, admin_check, signed_in, run_line) -> None:
     @app.post("/api/v1/run")
     def api_run(request: Request, body: Any = Body(None)):
         """{line}: one console line (`help` lists them), run as this key's caller: the operator, or the account."""
+        # A key's own (2026-11-05 review: with none it was the public console with none of its limits), and one that
+        # opens every module: a console line reaches any of them, so a key limited to some runs none.
+        key = keylib.CURRENT.get()
+        if key is None:
+            raise HTTPException(401, "an API key: Authorization: Bearer ak_...")
+        if key.modules is not None:
+            raise HTTPException(403, "this API key opens some modules only, and a console line can reach any: use those "
+                                     "modules' own routes, or a key for every module")
         line = str((body or {}).get("line") or "") if isinstance(body, dict) else ""
         if not line.strip():
             raise HTTPException(400, "say a line to run, such as help")

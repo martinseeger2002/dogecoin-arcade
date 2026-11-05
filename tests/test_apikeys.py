@@ -134,7 +134,9 @@ def test_a_users_key_has_its_calls_a_minute(app, app_state):
 
 
 def test_the_routes_are_listed_by_module_for_build(app):
-    got = app.get("/api/v1/routes", headers=OUTSIDE).json()["modules"]
+    # A stranger is not told every route (2026-11-05 review); a key or a signed-in caller is.
+    assert app.get("/api/v1/routes", headers=OUTSIDE).status_code == 401
+    got = app.get("/api/v1/routes", headers=_with(_key(app))).json()["modules"]
     ids = [m["id"] for m in got]
     assert ids[0] == "node" and "feed" in ids and "wallet" in ids
     feed = next(m for m in got if m["id"] == "feed")
@@ -151,3 +153,18 @@ def test_keys_are_kept_as_hashes(tmp_path):
     assert store.find(key).id == row.id and store.find(key[:-1] + "x") is None
     with pytest.raises(keylib.KeyRefused):
         store.make("node", "late", expires=time.time() - 1)
+
+
+def test_a_key_runs_console_lines_only_as_itself_and_never_as_the_machine(app):
+    """2026-11-05 review: /api/v1/run took no key at all, a key limited to some modules ran the whole console, and an
+    operator key counted as the node's own machine, so `confirm` would send from the node wallet."""
+    assert app.post("/api/v1/run", headers=OUTSIDE, json={"line": "help"}).status_code == 401
+    games = _key(app, modules=["feed"])
+    assert app.post("/api/v1/run", headers=_with(games), json={"line": "help"}).status_code == 403
+    whole = _key(app)
+    said = app.post("/api/v1/run", headers=_with(whole), json={"line": "help"})
+    assert said.status_code == 200 and said.json()["ok"], said.text
+    from arcade import apikeys as keylib
+    assert keylib.caller_ip({"x-forwarded-for": "203.0.113.5"}, "198.51.100.9") == ("198.51.100.9", False), \
+        "a stranger's X-Forwarded-For is not taken"
+    assert keylib.caller_ip({"x-forwarded-for": "203.0.113.5"}, "127.0.0.1") == ("203.0.113.5", True)

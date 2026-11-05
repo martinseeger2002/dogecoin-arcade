@@ -45,6 +45,13 @@ WALLET_READS = frozenset({
     "getbalance", "getbalances", "getwalletinfo", "getnewaddress", "getrawchangeaddress", "gettransaction",
     "getaddressinfo", "getreceivedbyaddress", "getreceivedbylabel", "getaddressesbylabel", "getunconfirmedbalance",
     "getdigidollarbalance", "getdigidollaraddress", "getredemptioninfo", "getoraclepubkey"})
+#: Names the pattern lets through that are not reads a module may have (2026-11-05 review): Dogecoin 1.14's account
+#: calls (getaccountaddress makes an address; the rest are the node wallet's), mining (getauxblock makes or submits a
+#: block and uses up node keys, getblocktemplate), validateaddress (says ismine and the node's pubkeys) and the peers'
+#: IP addresses.
+NOT_READS = frozenset({"getaccountaddress", "getaccount", "getaddressesbyaccount", "getreceivedbyaccount",
+                       "getauxblock", "getblocktemplate", "getwork", "validateaddress", "getpeerinfo",
+                       "getnodeaddresses", "getaddednodeinfo", "getrpcinfo", "getmemoryinfo", "getzmqnotifications"})
 #: The most a prepared transaction may leave to fees unless its manifest says less, in the chain's smallest unit.
 MOST_FEE = 100_000_000
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
@@ -187,7 +194,8 @@ def check_module(manifest: dict, files: dict[str, bytes]) -> None:
         raise PackageError('needs.chains names each chain and its reads: {"dgb": ["getblockcount"]}')
     for chain, methods in chains.items():
         for method in methods:
-            if not READS.match(str(method)) or method in WALLET_READS or "wallet" in str(method):
+            if (not READS.match(str(method)) or method in WALLET_READS or method in NOT_READS
+                    or "wallet" in str(method) or "account" in str(method)):
                 raise PackageError(f"needs.chains.{chain}: {method} is not a read a module may ask of a Core")
     fee = needs.get("max_fee", MOST_FEE)
     if not isinstance(fee, int) or not 0 <= fee <= MOST_FEE:

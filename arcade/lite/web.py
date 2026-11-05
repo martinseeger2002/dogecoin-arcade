@@ -276,9 +276,12 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             raise HTTPException(404)
         kind = {"html": "text/html", "css": "text/css", "js": "text/javascript", "json": "application/json",
                 "png": "image/png", "svg": "image/svg+xml", "woff2": "font/woff2"}[rel.rsplit(".", 1)[1]]
-        return Response(path.read_bytes(), media_type=kind, headers={**FOREVER, **MODULE_PAGE})
+        # Asked again each time (not kept for a year): an upgraded module keeps the same file names.
+        return Response(path.read_bytes(), media_type=kind, headers={"Cache-Control": "no-cache", **MODULE_PAGE})
 
-    @app.api_route("/m/{name}/{path:path}", methods=["GET", "POST"])
+    # GET only (2026-11-05 review): a POST was refused on a public host and unguarded against other sites on a private
+    # one, and no module posts; a module takes input by its console commands.
+    @app.api_route("/m/{name}/{path:path}", methods=["GET"])
     async def module_page(request: Request, name: str, path: str = ""):
         """A node module's pages, answered by its own process. They are served sandboxed (MODULE_PAGE): a module's page
         runs no script with this arcade's origin, so it can never reach a wallet, a session or a key here."""
@@ -291,7 +294,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         caller = caller_for(request)
         if not caller.may(manifest.get("pages", "anyone")):
             raise HTTPException(404)
-        body = (await request.body())[:65536].decode("utf-8", "replace") if request.method == "POST" else ""
+        body = ""
         import anyio
         try:
             said = await anyio.to_thread.run_sync(lambda: host.ask(settings, name, {

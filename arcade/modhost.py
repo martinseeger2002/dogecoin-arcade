@@ -13,9 +13,11 @@ Python, writes its own data folder, and has no network. It never holds a key. Wh
 Linux only: a machine that cannot confine a module runs none, and `why_not` says why."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import select
+import signal
 import subprocess
 import sys
 import threading
@@ -33,6 +35,11 @@ DATA = "module-data"
 #: How long a module may take over one command or page, chain reads included.
 TIMEOUT = 30.0
 MOST_LINE = 4_000_000
+#: A busy module: how long a request waits for it, and how many may wait at once, before "busy" (2026-11-05 review).
+BUSY_WAIT = 5.0
+MOST_WAITING = 4
+#: The coins a module's prepared transaction may spend at most (one chain read each).
+MOST_INPUTS = 50
 _BOOT = ("import sys; sys.path.insert(0, {root!r}); from arcade.modrun import main; "
          "raise SystemExit(main(sys.argv[1:]))")
 
@@ -45,7 +52,7 @@ class _Process:
     def __init__(self, name: str, folder: Path, data: Path, log: Path):
         root = str(Path(__file__).resolve().parent.parent)
         data.mkdir(parents=True, exist_ok=True)
-        self.name, self.buffer, self.lock = name, b"", threading.Lock()
+        self.name, self.buffer, self.lock, self.waiting = name, b"", threading.Lock(), 0
         with open(log, "ab") as err:                      # the child keeps its own copy
             self.proc = subprocess.Popen(
                 [sys.executable, "-I", "-c", _BOOT.format(root=root), str(folder), str(data)],
@@ -60,8 +67,12 @@ class _Process:
         return self.proc.poll() is None
 
     def write(self, said: dict) -> None:
-        self.proc.stdin.write(json.dumps(said).encode() + b"\n")
-        self.proc.stdin.flush()
+        try:
+            self.proc.stdin.write(json.dumps(said).encode() + b"\n")
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError, ValueError) as exc:  # a module that died: said as such, not a 500
+            self.stop()
+            raise ModuleFailed(f"{self.name} stopped (its log says why)") from exc
 
     def read(self, deadline: float) -> dict:
         fd = self.proc.stdout.fileno()
@@ -79,6 +90,10 @@ class _Process:
         return json.loads(line)
 
     def stop(self) -> None:
+        # The whole group (2026-11-05 review): a module started in a session of its own, so whatever it forked is in
+        # the group, and is stopped with it rather than left running after a stop or removemodule.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(self.proc.pid, signal.SIGKILL)
         if self.proc.poll() is None:
             self.proc.kill()
         self.proc.wait(5)
@@ -143,22 +158,46 @@ class Host:
             raise ModuleFailed(f"no node module {name} is installed")
         reads = manifest.get("needs", {}).get("chains", {})
         proc = self._process(name, pid)
-        with proc.lock:
-            deadline = time.monotonic() + TIMEOUT
-            proc.write({"id": 1, **request, "caller": caller})
-            while True:
-                said = proc.read(deadline)
-                if "rpc" not in said:
-                    break
-                chain, method, params = (said["rpc"] + [None, None, None])[:3]
-                if method not in reads.get(chain, ()):
-                    proc.write({"id": 1, "rpc_error": f"{name} may not ask {chain} for {method}: its manifest "
-                                                      "does not name it"})
-                    continue
-                try:
-                    proc.write({"id": 1, "rpc_result": self.chain_for(chain)[1](method, list(params or []))})
-                except Exception as exc:                   # noqa: BLE001 -- the Core's refusal, for the module
-                    proc.write({"id": 1, "rpc_error": str(exc)})
+        # One request at a time per module, as before, but nobody waits long for a busy one (2026-11-05 review: each
+        # waiter held one of the web server's threads for up to TIMEOUT, so one slow module could stall the arcade).
+        with self.lock:
+            if proc.waiting >= MOST_WAITING:
+                raise ModuleFailed(f"{name} is busy; try again in a moment")
+            proc.waiting += 1
+        try:
+            got = proc.lock.acquire(timeout=BUSY_WAIT)
+        finally:
+            with self.lock:
+                proc.waiting -= 1
+        if not got:
+            raise ModuleFailed(f"{name} is busy; try again in a moment")
+        try:
+            return self._ask_locked(proc, name, reads, request, caller)
+        finally:
+            proc.lock.release()
+
+    def _ask_locked(self, proc: "_Process", name: str, reads: dict, request: dict, caller: dict) -> Any:
+        deadline = time.monotonic() + TIMEOUT
+        proc.write({"id": 1, **request, "caller": caller})
+        while True:
+            said = proc.read(deadline)
+            if "rpc" not in said:
+                break
+            if not isinstance(said["rpc"], list):
+                proc.write({"id": 1, "rpc_error": "a chain read is [chain, method, params]"})
+                continue
+            chain, method, params = (said["rpc"] + [None, None, None])[:3]
+            if not isinstance(params, (list, type(None))):
+                proc.write({"id": 1, "rpc_error": "a chain read's params are a list"})
+                continue
+            if method not in reads.get(chain, ()):
+                proc.write({"id": 1, "rpc_error": f"{name} may not ask {chain} for {method}: its manifest "
+                                                  "does not name it"})
+                continue
+            try:
+                proc.write({"id": 1, "rpc_result": self.chain_for(chain)[1](method, list(params or []))})
+            except Exception as exc:                   # noqa: BLE001 -- the Core's refusal, for the module
+                proc.write({"id": 1, "rpc_error": str(exc)})
         if "error" in said:
             raise ModuleFailed(str(said["error"]))
         return said.get("result")
@@ -176,8 +215,15 @@ class Host:
         params, call = self.chain_for(chain)
         spend = funding.spend_for(address, params)
         inputs, total = [], 0
-        for coin in prepared.get("inputs") or []:
+        asked = list(prepared.get("inputs") or [])
+        if len(asked) > MOST_INPUTS:
+            raise ModuleFailed(f"{name} asked to spend {len(asked)} coins, more than {MOST_INPUTS}")
+        seen = set()
+        for coin in asked:
             txid, vout = str(coin.get("txid") or ""), int(coin.get("vout", -1))
+            if (txid, vout) in seen:
+                raise ModuleFailed(f"{name} asked to spend {txid[:16]}:{vout} twice")
+            seen.add((txid, vout))
             out = call("gettxout", [txid, vout, True])
             if not out or out["scriptPubKey"]["hex"] != spend["change_script"].hex():
                 raise ModuleFailed(f"{name} asked to spend {txid[:16]}:{vout}, which is not an unspent coin of yours")
