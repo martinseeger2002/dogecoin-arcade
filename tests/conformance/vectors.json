@@ -127,6 +127,7 @@
     "bundles_from": null,
     "cancels_last_from": null,
     "chain_name": "",
+    "class_b": true,
     "cltv_enforced": true,
     "coin": "DGB TEST",
     "dust_limit": 10000,

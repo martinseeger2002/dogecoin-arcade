@@ -128,6 +128,7 @@ def test_the_module_sign_box_says_every_payment_and_the_prepared_spend_is_bounde
     assert "a Taproot output" in coins, "a vault is said as a payment, not as bytes"
     assert modhost.MOST_INPUTS <= 100 and modhost.BUSY_WAIT < modhost.TIMEOUT
 
+
 def redeem_offer(host, settings, chain):
     """A DigiDollar redeem as the pilot prepares it, and the arcade's offer for it: the vault by its normal path, the
     DigiDollars by their key path, and a DGB coin of the caller's for the fee. (pubkey, secret, prepared, unsigned)"""
