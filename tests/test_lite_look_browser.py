@@ -40,10 +40,10 @@ def test_admin_wears_the_lite_look_in_lite_and_its_own_in_full(browser, served):
     browser.get(f"{base}/admin")
     full_tab = _look(browser, ".admintabs button", "border-radius")
     assert full_tab and full_tab[0] != "3px 3px 0px 0px", "the full edition keeps its own look"
-    browser.get(f"{base}/lite#apps")                     # the full edition: Apps is on, and hosts the rest
+    browser.get(f"{base}/lite#apps")                     # the full edition: Apps is on, and holds the App Store
     WebDriverWait(browser, 30).until(lambda d: "Loading" not in d.find_element(By.ID, "a-list").text)
     assert "did not answer" not in browser.find_element(By.ID, "a-list").text
-    _press(browser, 'section[data-panel="apps"] [data-open="messages"]')
+    _press(browser, '.toolbar [data-tab="messages"]')    # Messages is a tab of the core (2026-11-04)
     WebDriverWait(browser, 30).until(lambda d: d.find_element(By.ID, "m-main").is_displayed()
                                      or d.find_element(By.ID, "m-unlock").is_displayed())
     state.set_setting("edition", "lite")
@@ -63,8 +63,8 @@ def test_admin_wears_the_lite_look_in_lite_and_its_own_in_full(browser, served):
         tabs = [b.text for b in browser.find_elements(By.CSS_SELECTOR, ".admintabs button")]
         assert "Coins & chains" in tabs and "Edition & modules" in tabs, "every control Admin has is still there"
         bar = [a.text for a in browser.find_elements(By.CSS_SELECTOR, "header nav a")]
-        assert bar == ["Overview", "Send", "Receive", "Transactions", "Address book", "Help", "Admin"], \
-            "Lite's own modules only: Messages and Apps join the bar when they are switched on"
+        assert bar == ["Overview", "Send", "Receive", "Transactions", "Address book", "Messages", "Help", "Admin"], \
+            "Lite's own modules only: Messages is the core's; Apps joins the bar when it is switched on"
         assert _look(browser, ".admintabs + *, .panel", "box-shadow") == ["none"]
         _press(browser, '.admintabs button[data-tab="coins"]')
         WebDriverWait(browser, 30).until(lambda d: d.find_element(By.ID, "chainrows").is_displayed())
