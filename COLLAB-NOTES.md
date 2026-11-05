@@ -405,6 +405,9 @@ testnet26. On top of the pilot below:
 - **For you, funding.** `Unsigned` gains `locktime`. `funding.sighash` now writes each input's own `sequence` (it
   wrote 0xffffffff always; no caller of it set one). `_assemble_witness` writes a Taproot input's witness.
 - **The pilot:** `ddvaults` and `ddredeem`, on the test chain only.
+- **tests/conformance/vectors.json regenerated** (2026-11-05): a new chain, `dgbtest` (its params and addresses), and
+  the new `Params.mine_algos` on every chain (empty but on DigiByte testnet). Nothing recorded before changed. The
+  browser's tables gain `dgbtest` too (wallet_js TESTNETS, CLAIM_FEE and FEE_FLOOR, as config's).
 - **Tests:** a mint and its redeem on a real digibyted regtest (**passed**), the browser's digests and signatures
   against the arcade's (Firefox), and BIP-340's first vector.
 
