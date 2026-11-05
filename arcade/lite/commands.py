@@ -62,6 +62,8 @@ class Command:
     module: str = "node"
     #: A node module's form for this command (packages._check_form): drawn by the Lite window above the module's page.
     form: dict | None = field(default=None, compare=False)
+    #: Where it stands in its module's manifest: the window draws the forms in that order, the steps' own.
+    order: int = 0
 
     @property
     def summary(self) -> str:
@@ -979,10 +981,10 @@ def _module_commands(caller: Caller) -> dict[str, Command]:
         return {}
     out = {}
     for module, (_, manifest) in installed.items():
-        for name, said in (manifest.get("commands") or {}).items():
+        for n, (name, said) in enumerate((manifest.get("commands") or {}).items()):
             if name not in COMMANDS and name not in out:
                 out[name] = Command(name, module, said.get("audience", "anyone"), _forward(module, name, said), module,
-                                    said.get("form"))
+                                    said.get("form"), n)
     return out
 
 
