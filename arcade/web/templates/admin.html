@@ -2835,8 +2835,9 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
   function mineControls(r, f, mining) {
     var box = document.createElement('div'); box.className = 'minebox'; box.style.marginTop = '6px';
     if (mining.mining && mining.net === r.net) {
-      box.appendChild(text('div', 'Mining a block to this faucet now' + (mining.rate ? ', ' +
-        Number(mining.rate).toLocaleString() + ' hashes/s' : '') + '. Stop it on the Wallet page.', 'muted'));
+      var rate = mining.rate ? ', ' + Number(mining.rate).toLocaleString() + ' hashes/s' : '';
+      box.appendChild(text('div', mining.address ? 'Mining to ' + mining.address + ' now' + rate + '. Stop it under Mining.'
+        : 'Mining a block to this faucet now' + rate + '. Stop it on the Wallet page.', 'muted'));
     } else if (f.last) {
       box.appendChild(text('div', lastMined(f.last), 'muted'));
     }

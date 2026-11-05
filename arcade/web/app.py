@@ -5703,7 +5703,9 @@ def create_app(state: AppState) -> FastAPI:
                 "expected": int(mining.get("expected", 0)),
                 # At the rate seen so far; 0 until the first batch is in.
                 "expected_seconds": int(mining["expected"] / rate) if rate else 0,
-                "stopping": bool(mining.get("stop")), "chain": mining.get("chain") or state.messaging.title}
+                "stopping": bool(mining.get("stop")), "chain": mining.get("chain") or state.messaging.title,
+                # A run to an address of the operator's choosing (arcade/testmine.py), not the faucet's one block.
+                "address": (mining.get("address") or "") if mining.get("chain_ctx") else ""}
 
     # --- tokens ---------------------------------------------------------------
     # Shown for one chain at a time: mainnet, the ledger (D-012), or testnet,
