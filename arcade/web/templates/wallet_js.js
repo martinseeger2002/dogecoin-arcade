@@ -900,8 +900,12 @@ async function signOffer(wallet, offer, given = null, options = null) {
   const shown = await coins.verifyOffer(offer, keys);
   await mainnetOk(offer, shown, network, options);
   const signatures = [];
-  for (const sighash of shown.hashes) {
-    signatures.push(coinsHex(await coins.signInput(keys.key, unhex(sighash))));
+  for (const [n, sighash] of shown.hashes.entries()) {
+    // A Taproot coin (a DigiDollar redeem, 2026-11-04) is signed with Schnorr: by the key itself for a script path,
+    // by its tweaked key for the key path. Every other coin with ECDSA, as always.
+    const how = (shown.signers || [])[n];
+    signatures.push(coinsHex(how ? await coins.signSchnorr(keys.key, unhex(sighash), how === "key")
+                                 : await coins.signInput(keys.key, unhex(sighash))));
   }
   // The wallet's lane (/account/sign) is held only while one broadcast goes out, and claimed before the offer is taken,
   // so "still going" refuses nothing for good: wait a moment and send again (2026-10-25: a collection's lanes sign
