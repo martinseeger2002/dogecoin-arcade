@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from test_web import app_state  # noqa: F401,E402
 from test_auth_web import _sign_in  # noqa: E402
 
+from arcade import modules as modulelib  # noqa: E402
 from arcade.lite import commands as cmdlib  # noqa: E402
 from arcade.web.app import create_app  # noqa: E402
 
@@ -197,30 +198,101 @@ def test_an_accounts_backup_is_a_panel_of_the_window(app, app_state):
 def test_options_is_a_window_for_the_operator_only(app):
     operator = app.get("/lite", headers=LOCAL).text
     assert 'id="options"' in operator and 'data-options="modules"' in operator
-    assert "/admin#modules" not in operator and operator.count('data-go="/admin"') == 1, "only Admin: every control"
+    assert "/admin#modules" not in operator and operator.count('data-open-tab="admin"') == 1, "only Admin: every control"
     assert 'id="options"' not in app.get("/lite", headers=OUTSIDE).text
 
 
-def test_messages_is_a_tab_while_its_module_is_on_and_each_module_on_opens_from_apps(app, app_state):
+def test_messages_is_a_tab_of_the_core_in_every_edition(app, app_state):
     operator = app.get("/lite", headers=LOCAL).text
     assert 'data-tab="messages"' in operator and 'from "/node-mail.js"' in _panel(operator, "messages") + operator
     assert "window.ARCADE_CSRF" in operator and "window.liteLocal = " not in operator, "the node's: run by the node"
-    assert 'href="/feed">Open</a>' in operator and 'data-open="messages"' in operator
     assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
     user = app.get("/lite", headers=OUTSIDE).text
     assert 'from "/messaging.js"' in user and "window.liteLocal = " in user and "window.ARCADE_CSRF" not in user
     app_state.set_setting("edition", "lite")
     try:
         lite = app.get("/lite", headers=LOCAL).text
-        assert 'data-tab="messages"' not in lite and 'href="/feed">Open</a>' not in lite, "off: no tab, no Open"
+        assert 'data-tab="messages"' in lite and 'data-tab="m-feed"' not in lite, "Messages stays; Feed is off"
+        with pytest.raises(ValueError):
+            modulelib.switch(app_state.settings(), "messages", False)
     finally:
         app_state.set_setting("edition", None)
 
 
-def test_the_apps_tab_is_the_apps_module_and_hosts_the_others(app, app_state):
+def test_each_module_on_is_a_tab_that_opens_its_page_inside_the_window(app, app_state):
+    full = app.get("/lite", headers=LOCAL).text
+    bar = full.split('<div class="toolbar"', 1)[1].split("</div>", 1)[0]
+    for mid, page in (("ords", "/explore"), ("feed", "/feed"), ("exchange", "/exchange")):
+        assert f'data-tab="m-{mid}"' in bar and f'data-src="{page}"' in bar, mid
+        assert f'<iframe title="' in _panel(full, f"m-{mid}") and f'data-src="{page}"' in _panel(full, f"m-{mid}")
+    assert 'data-tab="m-desktop"' not in bar, "a look is worn, not opened"
+    assert 'data-tab="admin"' in bar and 'data-src="/admin"' in _panel(full, "admin"), "Admin: a tab of the window"
+    visitor = app.get("/lite", headers=OUTSIDE).text
+    assert 'data-tab="admin"' not in visitor and 'data-tab="m-feed"' in visitor
+    app_state.set_setting("edition", "lite")
+    try:
+        lite = app.get("/lite", headers=LOCAL).text
+        assert 'data-tab="m-' not in lite and 'data-tab="apps"' not in lite, "Lite: no module is on yet"
+        app_state.set_setting("modules", {"ords": True})
+        assert 'data-tab="m-ords"' in app.get("/lite", headers=LOCAL).text
+    finally:
+        app_state.set_setting("edition", None)
+        app_state.set_setting("modules", None)
+    # a page in the window is drawn without its own bar, and its links to another tab open there (base.html)
+    assert "window.parent.liteWindow" not in app.get("/wallet", headers=LOCAL).text, "the full edition's pages"
+    app_state.set_setting("edition", "lite")
+    try:
+        assert "window.parent.liteWindow" in app.get("/wallet", headers=LOCAL).text
+    finally:
+        app_state.set_setting("edition", None)
+
+
+def test_the_operator_says_who_may_use_each_module(app, app_state):
+    def access(mid, level):
+        return app.post("/admin/api/modules", headers={**LOCAL, "x-arcade-admin": "1"},
+                        json={"module": mid, "access": level})
+    assert access("feed", "nobody").status_code == 400 and access("messages", "operator").status_code == 400
+    try:
+        said = access("feed", "operator").json()
+        assert [m["access"] for m in said["modules"] if m["id"] == "feed"] == ["operator"]
+        assert 'data-tab="m-feed"' in app.get("/lite", headers=LOCAL).text, "the operator keeps it"
+        assert 'data-tab="m-feed"' not in app.get("/lite", headers=OUTSIDE).text
+        assert app.get("/feed", headers=OUTSIDE).status_code == 404 and app.get("/feed", headers=LOCAL).status_code == 200
+        refused = app.post("/lite/api/console", headers={**OUTSIDE, **LITE}, json={"line": "readfeed"}).json()
+        assert not refused["ok"] and "off on this arcade" in refused["error"]
+        assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
+        assert 'data-tab="m-feed"' not in app.get("/lite", headers=OUTSIDE).text, "a user is not the operator"
+        access("feed", "user")
+        assert 'data-tab="m-feed"' in app.get("/lite", headers=OUTSIDE).text and \
+            app.get("/feed", headers=OUTSIDE).status_code == 200, "signed in: open"
+        access("ords", "operator")
+        assert app.get("/explore", headers=OUTSIDE).status_code == 404
+        assert app.get("/r/inscriptions", headers=OUTSIDE).status_code != 404, "its read API stays open to the mesh"
+    finally:
+        app_state.set_setting(modulelib.ACCESS_SETTING, None)
+
+
+def test_each_person_hides_the_tabs_they_do_not_want(app, app_state):
+    post = lambda body, headers: app.post("/lite/api/tabs", headers={**headers, **LITE}, json=body)
+    assert post({"hidden": ["feed"]}, OUTSIDE).status_code == 403, "a visitor's choice stays in their browser"
+    assert app.post("/lite/api/tabs", headers=OUTSIDE, json={"hidden": []}).status_code == 403, "from the window only"
+    key = SigningKey.generate()
+    assert _sign_in(app, key, headers=OUTSIDE).status_code == 200
+    try:
+        said = post({"hidden": ["feed", "nothing-such"]}, OUTSIDE).json()
+        assert [t["id"] for t in said["tabs"] if t["hidden"]] == ["feed"] and said["kept"]
+        page = app.get("/lite", headers=OUTSIDE).text
+        assert 'data-tab="m-feed"' not in page and 'data-tab="m-exchange"' in page
+        assert 'data-tab="m-feed"' in app.get("/lite", headers=LOCAL).text, "the operator's own view is apart"
+        assert app.get("/feed", headers=OUTSIDE).status_code == 200, "hidden is not closed"
+    finally:
+        app_state.set_setting(modulelib.TABS_SETTING, None)
+
+
+def test_the_apps_tab_is_the_apps_module_and_holds_the_app_store(app, app_state):
     full = app.get("/lite", headers=LOCAL).text
     tab = _panel(full, "apps")
-    assert 'data-tab="apps"' in full and 'href="/feed">Open</a>' in tab and 'id="a-list"' in tab
+    assert 'data-tab="apps"' in full and 'id="a-list"' in tab and "<legend>Modules</legend>" not in tab
     assert "Playing an app needs" not in tab, "Ord indexes are on in the full edition"
     said = app.post("/lite/api/console", headers={**OUTSIDE, **LITE}, json={"line": "listapps new 5"}).json()
     assert said["ok"] and isinstance(said["result"], list), said

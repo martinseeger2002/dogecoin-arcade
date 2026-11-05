@@ -6,6 +6,28 @@
     input field it zoomed in. I don't like that"). iOS still lets a person pinch to zoom. #}
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1{% if fullscreen %},viewport-fit=cover{% endif %}">
 <title>{% block title %}{{ brand.name }}{% endblock %}</title>
+{% if edition_lite %}<script>
+/* Inside the ARCADE Lite window (arcade/lite/templates/lite.html; 2026-11-04, SadFrog: "one cohesive application"): a page
+   in one of its tabs is drawn without its own bar, and a link that belongs in another of the window's tabs opens there. */
+(function () {
+  var win = null;
+  try { if (window.parent !== window && window.parent.liteWindow) win = window.parent.liteWindow; } catch (e) {}
+  if (!win) return;
+  document.documentElement.classList.add('in-window');
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a[href]');
+    if (!a || (a.target && a.target !== '_self') || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    var u = new URL(a.getAttribute('href'), location.href);
+    if (u.origin !== location.origin) return;
+    var home = u.pathname === '/' || u.pathname === '/lite';
+    var tab = home ? (u.hash.slice(1) || 'overview') : win.route(u.pathname);
+    if (tab && tab !== win.route(location.pathname)) {
+      e.preventDefault();
+      win.open(tab, home ? undefined : u.pathname + u.search + u.hash);
+    }
+  });
+})();
+</script><style>.in-window body>header{display:none}</style>{% endif %}
 <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png">
 <link rel="manifest" href="/manifest.webmanifest">

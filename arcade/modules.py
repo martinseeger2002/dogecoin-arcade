@@ -12,6 +12,10 @@ settings.json keys:
   edition  "full" or "lite". Missing means full: a node that was never asked is a full node, as it always was.
            "ask" means a fresh install that has not chosen yet; it runs as full until the operator chooses.
   modules  {module id: true/false}, the operator's switches over the edition's defaults.
+  module_access  {module id: "operator" | "user" | "anyone"}, who may use a module that is on: only the operator,
+           signed-in users too, or everyone, visitors included. Missing means everyone, as before.
+  lite_tabs  {owner: [module ids]}, the module tabs each person hid in their own window (owner: an account's
+           public key, or "node" for the operator's own view).
 """
 from __future__ import annotations
 
@@ -20,6 +24,16 @@ from dataclasses import dataclass
 EDITIONS = ("full", "lite")
 EDITION_SETTING = "edition"
 SWITCH_SETTING = "modules"
+ACCESS_SETTING = "module_access"
+TABS_SETTING = "lite_tabs"
+#: Who may use a module that is on, narrowest first: Admin -> Edition & modules names them Only me, Signed-in and
+#: Everyone (2026-11-04, SadFrog: "each node operator can enable and disable access to these modules entirely for
+#: their user base").
+ACCESS = ("operator", "user", "anyone")
+_RANK = {"anyone": 0, "user": 1, "operator": 2}
+#: Paths a module's access leaves open to everyone: the read APIs other arcades' pages and inscribed apps call, and
+#: inscriptions' content. Only who opens the module's pages, and acts through them, follows its access.
+OPEN_ALWAYS = ("/r/", "/content/")
 #: The value a fresh install records when nobody chose yet (installer/install.py, arcade-web on a new home).
 ASK = "ask"
 KINDS = ("core", "app", "theme", "node")
@@ -37,6 +51,9 @@ PAGES = {"messages": ("/#messages", "/#messages"), "feed": ("/feed", "/feed"), "
          "exchange": ("/exchange", "/exchange"), "apps": ("/apps", "/apps"), "llm": ("", "/admin"),
          "affiliates": ("/affiliates", "/affiliates"), "lora": ("", "/admin"),
          "desktop": ("/desktop", "/desktop"), "dogefeedx": ("/dogefeedx/feed", "/dogefeedx/feed")}
+
+#: A module's name on its tab, where its title is too long for one.
+TAB_TITLES = {"ords": "Explore", "collections": "Collections", "apps": "Apps", "llm": "LLM market"}
 
 
 @dataclass(frozen=True)
@@ -108,7 +125,9 @@ _MODULES = (
                    "/admin/api/arcades", "/admin/api/tunnel"),
            jobs=("mesh",)),
     # --- everything else: on in the full edition, off in Lite until switched on -------------------------------------
-    Module("messages", "app", "Messages", "The Messenger, group chats, calls and phone notifications.",
+    # Messages is part of the core (2026-11-04, SadFrog: "Messages should be a part of the core"): always on, in every
+    # edition, and a tab of the window's own.
+    Module("messages", "core", "Messages", "The Messenger, group chats, calls and phone notifications.",
            routes=("/inbox", "/compose", "/message", "/messages", "/node/mail", "/me/messages", "/account/mailbox", "/account/messages", "/account/talk", "/account/ring",
                    "/account/write", "/account/push", "/push", "/r/groups.js"),
            jobs=("push-mail", "confirm-sent")),
@@ -289,6 +308,75 @@ def switch(settings: dict, mid: str, on: bool) -> dict:
     return switches
 
 
+def access(settings: dict, mid: str | None) -> str:
+    """Who may use module `mid`: "operator", "user" or "anyone". The core, and anything no module claims, is
+    everyone's (each of its routes still says who it answers)."""
+    module = MODULES.get(mid) if mid else None
+    if mid is None or (module is not None and module.core):
+        return "anyone"
+    levels = settings.get(ACCESS_SETTING)
+    level = levels.get(mid) if isinstance(levels, dict) else None
+    return level if level in ACCESS else "anyone"
+
+
+def may_use(settings: dict, mid: str | None, audience: str) -> bool:
+    """Whether a caller of `audience` ("anyone", "user" or "operator") may use module `mid`."""
+    return _RANK.get(audience, 0) >= _RANK[access(settings, mid)]
+
+
+def path_allowed(settings: dict, path: str, audience: str) -> bool:
+    """Whether a caller of `audience` may reach `path`, by its module's access (path_on says whether it runs)."""
+    if path.startswith(OPEN_ALWAYS):
+        return True
+    return may_use(settings, module_of(path), audience)
+
+
+def set_access(settings: dict, mid: str, level: str) -> dict:
+    """The `module_access` setting after the operator says who may use `mid`."""
+    module = MODULES.get(mid) or next((m for m in packaged(settings) if m.id == mid), None)
+    if module is None:
+        raise ValueError(f"no module {mid!r}")
+    if module.core:
+        raise ValueError(f"{module.title} is part of the core: everyone with an account uses it")
+    if level not in ACCESS:
+        raise ValueError("who may use it is operator, user or anyone")
+    levels = dict(settings.get(ACCESS_SETTING) or {})
+    levels[mid] = level
+    return levels
+
+
+def hidden_tabs(settings: dict, owner: str | None) -> list[str]:
+    """The module tabs `owner` hid in their own window."""
+    rows = settings.get(TABS_SETTING)
+    got = rows.get(owner) if owner and isinstance(rows, dict) else None
+    return [str(m) for m in got if isinstance(m, str)] if isinstance(got, list) else []
+
+
+def set_hidden_tabs(settings: dict, owner: str, hidden: list) -> dict:
+    """The `lite_tabs` setting after `owner` hides `hidden` (module ids) and shows the rest."""
+    known = set(MODULES) | {m.id for m in packaged(settings)}
+    rows = dict(settings.get(TABS_SETTING) or {})
+    rows[owner] = sorted({str(m) for m in hidden if str(m) in known})
+    return rows
+
+
+def tabs(settings: dict, audience: str, hidden: list[str] = ()) -> list[dict]:
+    """The module tabs of the Lite window for a caller of `audience`: every module that is on, has a page of its own,
+    that this caller may use, and that they have not hidden. The core's tabs (Overview to Messages) are the window's
+    own, and a look (a theme module, such as the desktops) is worn, not opened, so neither is listed here."""
+    on, out = enabled(settings), []
+    for m in (*_MODULES, *packaged(settings)):
+        if m.core or m.kind == "theme" or m.id not in on or not may_use(settings, m.id, audience):
+            continue
+        pages = PAGES.get(m.id, (f"/m/{m.id}/", f"/m/{m.id}/") if m.package else ("", ""))
+        page = pages[1 if audience == "operator" else 0]
+        if not page or page == "/admin" or page.startswith("/#"):
+            continue
+        out.append({"id": m.id, "title": TAB_TITLES.get(m.id, m.title), "page": page, "hidden": m.id in hidden,
+                    "summary": m.summary})
+    return out
+
+
 def describe(settings: dict) -> dict:
     """The edition and every module, as Admin and the Lite window show them."""
     on = enabled(settings)
@@ -301,5 +389,6 @@ def describe(settings: dict) -> dict:
             "modules": [{"id": m.id, "kind": m.kind, "title": m.title, "summary": m.summary, "core": m.core,
                          "on": m.id in on, "lite": m.lite or m.core, "needs": list(m.needs),
                          "needed_by": needed_by(m.id), "caution": m.caution, "package": m.package,
+                         "access": access(settings, m.id),
                          "page": list(PAGES.get(m.id, (f"/m/{m.id}/", f"/m/{m.id}/") if m.package else ("", "")))}
                         for m in every]}

@@ -29,6 +29,24 @@ MODULE_PAGE = {"Content-Security-Policy": "sandbox allow-scripts allow-forms all
                                           "'unsafe-inline' data:; connect-src 'none'; form-action 'self'",
                "X-Content-Type-Options": "nosniff"}
 
+def _icon(path: str) -> str:
+    return (f'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">{path}'
+            '</svg>')
+
+
+#: Each module's icon on its tab in the window; one that has none of its own (a node module) gets "module".
+ICONS = {"ords": _icon('<circle cx="12" cy="12" r="9"/><path d="M15 9l-2 4-4 2 2-4z"/>'),
+         "feed": _icon('<path d="M4 6h16M4 12h16M4 18h10"/>'),
+         "exchange": _icon('<path d="M4 8h13l-3-3M20 16H7l3 3"/>'),
+         "tokens": _icon('<circle cx="9" cy="9" r="5"/><circle cx="15" cy="15" r="5"/>'),
+         "collections": _icon('<rect x="4" y="4" width="16" height="12" rx="1"/><path d="M7 20h10"/>'),
+         "apps": _icon('<rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/>'
+                       '<rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/>'),
+         "affiliates": _icon('<circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M3 19c1-3 9-3 10 0'
+                             'M11 19c1-3 9-3 10 0"/>'),
+         "llm": _icon('<rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6v6H9z"/>'),
+         "module": _icon('<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/>')}
+
 #: Console lines a non-operator may send each minute (the full arcade's terminal allows the same).
 CONSOLE_PER_MINUTE = 30
 
@@ -60,6 +78,17 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
                              reads=public_tools, pubkeys=pubkeys if isinstance(pubkeys, dict) else {},
                              offer=offer_for(pubkey) if pubkey and offer_for else None)
 
+    def tab_owner(caller, request: Request) -> str | None:
+        """Whose choice of tabs this window shows: the account's when one is signed in and looking as itself, the
+        node's for the operator, nobody's for a visitor (their browser keeps it)."""
+        if caller.account and account_view(request):
+            return caller.account.lower()
+        return "node" if caller.audience == "operator" else None
+
+    def module_tabs(caller, request: Request) -> list[dict]:
+        settings = state.settings()
+        return modulelib.tabs(settings, caller.audience, modulelib.hidden_tabs(settings, tab_owner(caller, request)))
+
     @app.get("/lite", response_class=HTMLResponse)
     def lite_page(request: Request):
         from ..web import brand as brandlib
@@ -75,6 +104,10 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
                       else "node" if caller.audience == "operator" else "",
             # What wallet.js unlocks an account's words with, as the full arcade's pages give it (base.html).
             "me": wallet_name(request) if caller.account else "", "account": bool(caller.account),
+            # The window's tabs after the core's: each module that is on, open to this caller and not hidden by
+            # them, opened inside the window (2026-11-04, SadFrog: "when enabled should be a part of the ui").
+            "tabs": [t for t in module_tabs(caller, request) if not t["hidden"]],
+            "tab_owner": bool(tab_owner(caller, request)), "icons": ICONS,
             "messages_on": "messages" in modulelib.enabled(settings), "apps_on": "apps" in modulelib.enabled(settings),
             "ords_on": "ords" in modulelib.enabled(settings), "csrf": state.csrf_token,
             "join": (join_facts or (lambda request: {"seats": 0, "free": 0, "secure": True}))(request),
@@ -148,6 +181,31 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             except Exception as exc:                       # noqa: BLE001 -- one part failing still shows the rest
                 out[key] = {"error": str(exc)}
         return JSONResponse(out, headers=NO_STORE)
+
+    @app.get("/lite/api/tabs")
+    def lite_tabs(request: Request):
+        """The module tabs this caller may have, each with whether they hid it (Settings -> Your tabs...)."""
+        caller = caller_for(request)
+        return JSONResponse({"tabs": module_tabs(caller, request), "kept": bool(tab_owner(caller, request))},
+                            headers=NO_STORE)
+
+    @app.post("/lite/api/tabs")
+    def lite_tabs_set(request: Request, payload: dict = Body(...)):
+        """{hidden: [module ids]}: the tabs this account (or the operator, for the node's own view) hides. A visitor's
+        choice stays in their browser, so there is nothing to keep here for one."""
+        from ..web import door as doorlib
+        if request.headers.get(LITE_HEADER) != "1" or doorlib.cross_site(request.headers,
+                                                                        request.headers.get("host", "")):
+            raise HTTPException(403, "your tabs are chosen in the Lite window")
+        caller = caller_for(request, write=True)
+        owner = tab_owner(caller, request)
+        if owner is None:
+            raise HTTPException(403, "sign in to keep your tabs with your account")
+        hidden = payload.get("hidden") if isinstance(payload, dict) else None
+        if not isinstance(hidden, list) or len(hidden) > 200:
+            raise HTTPException(400, "say the tabs to hide, as a list of module ids")
+        state.set_setting(modulelib.TABS_SETTING, modulelib.set_hidden_tabs(state.settings(), owner, hidden))
+        return JSONResponse({"tabs": module_tabs(caller, request), "kept": True}, headers=NO_STORE)
 
     @app.get("/lite/api/commands")
     def lite_commands(request: Request):

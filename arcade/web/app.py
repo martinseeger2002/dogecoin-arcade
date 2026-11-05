@@ -36112,7 +36112,7 @@ def create_app(state: AppState) -> FastAPI:
                                   account_view=_account_view, join_facts=_join_facts, offer_for=_module_offer)
     # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
     from . import modules_web
-    modules_web.register(app, state, admin_check=_admin_check)
+    modules_web.register(app, state, admin_check=_admin_check, signed_in=signed_in)
     return app
 
 

@@ -91,8 +91,11 @@ HELP_FLAGS = ("-help", "--help", "-h")
 
 
 def _installed(caller: Caller, cmd: Command) -> bool:
+    """Whether the command's module is on here, and open to this caller (Admin -> Edition & modules, "Who may use
+    it"): a module closed to a caller is, to them, a module this arcade does not run."""
     try:
-        return cmd.module in modulelib.enabled(caller.state.settings())
+        settings = caller.state.settings()
+        return cmd.module in modulelib.enabled(settings) and modulelib.may_use(settings, cmd.module, caller.audience)
     except Exception:                                      # noqa: BLE001 -- a state with no settings runs the core
         return getattr(modulelib.MODULES.get(cmd.module), "core", False)
 

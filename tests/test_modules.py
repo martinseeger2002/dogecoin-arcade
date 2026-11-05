@@ -80,9 +80,10 @@ def test_a_lite_node_serves_only_the_crypto_cores(lite):
     for path in served(lite):
         assert modulelib.MODULES[modulelib.module_of(path)].core, f"{path} runs in Lite"
     client = TestClient(lite)
-    for path in ("/wallet", "/wallet/tools", "/contacts", "/backup", "/admin", "/docs", "/lite"):
+    # Messages is part of the core (2026-11-04): its pages run in Lite as the wallet's do
+    for path in ("/wallet", "/wallet/tools", "/contacts", "/backup", "/admin", "/docs", "/lite", "/inbox"):
         assert client.get(path).status_code == 200, path
-    for path in ("/feed", "/exchange", "/explore", "/apps", "/inbox", "/desktop", "/home", "/dogefeedx/feed",
+    for path in ("/feed", "/exchange", "/explore", "/apps", "/desktop", "/home", "/dogefeedx/feed",
                  "/v1/models", "/affiliates"):
         assert client.get(path).status_code == 404, path
     home = client.get("/")
@@ -144,11 +145,13 @@ def test_lite_runs_only_the_cores_jobs_and_every_settlement_job(app_state):
     app_state.set_setting("edition", "lite")
     lite = _Phases(app_state)
     lite._tick()
-    assert not set(PHASE_JOBS) & set(lite.ran)
+    # Messages' own job is the core's now; every other module's is off
+    assert not (set(PHASE_JOBS) - {"_confirm_sent"}) & set(lite.ran) and "_confirm_sent" in lite.ran
     # what was agreed finishes whatever the switches say (arcade/web/docs/exchange-safety.md)
     assert {"_run_watch", "_run_trader", "_run_xchain", "_keep_shop", "_sync_ledgers", "_walk_home"} <= set(lite.ran)
-    for job in ("ord-index", "sites-search", "lora", "push-mail", "known-collections", "book-relay", "card-watch"):
+    for job in ("ord-index", "sites-search", "lora", "known-collections", "book-relay", "card-watch"):
         assert not modulelib.job_on(app_state.settings(), job) and modulelib.job_on({}, job), job
+    assert modulelib.job_on(app_state.settings(), "push-mail"), "Messages runs in every edition"
     assert modulelib.job_on(app_state.settings(), "mesh") and modulelib.job_on(app_state.settings(), "chain-scan")
 
 

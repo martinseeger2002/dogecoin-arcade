@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lite Window Mockups</title>
+<style>
+:root{
+  --win:#f5eadc; --panel:#fff8f0; --ink:#1d1d1d; --muted:#7a6a58; --line:#d9bf9f; --sel:#b85c2e; --sel-ink:#fff;
+  --bar:#ecd3b6; --ok:#2e7d32; --warn:#b26a00; --bad:#c62828; --new:#1f6fd6; --mono:ui-monospace,Menlo,Consolas,monospace;
+  --page:#e9e4dc;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --win:#2b2622; --panel:#211d1a; --ink:#ece4da; --muted:#a8998a; --line:#55483c; --sel:#d0773f; --bar:#3a322b;
+  --ok:#66bb6a; --warn:#ffb74d; --bad:#ef5350; --new:#64a8ff; --page:#171412;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font:13px/1.45 system-ui,-apple-system,"Segoe UI",Ubuntu,sans-serif;padding:24px 16px 60px}
+.wrap{max-width:1100px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px}
+.lead{color:var(--muted);margin:0 0 28px;max-width:760px}
+h2{font-size:16px;margin:36px 0 4px}
+.cap{color:var(--muted);margin:0 0 10px;max-width:820px}
+.new{outline:2px dashed var(--new);outline-offset:2px;border-radius:3px}
+.tag{display:inline-block;font-size:11px;padding:0 6px;border-radius:9px;background:var(--new);color:#fff;margin-left:4px;vertical-align:1px}
+/* the window */
+.app{border:1px solid var(--line);background:var(--win);box-shadow:0 6px 24px rgba(0,0,0,.12);overflow:hidden}
+.menubar{display:flex;background:var(--bar);border-bottom:1px solid var(--line);font-size:13px}
+.menubar>span{padding:4px 10px}
+.menubar>span.open{background:var(--sel);color:var(--sel-ink)}
+.toolbar{display:flex;gap:2px;padding:4px 6px;border-bottom:1px solid var(--line);overflow-x:auto;align-items:center}
+.tb{display:flex;align-items:center;gap:6px;border:1px solid transparent;border-radius:3px;padding:5px 10px;white-space:nowrap}
+.tb.on{background:var(--panel);border-color:var(--line);font-weight:600}
+.tb svg{width:18px;height:18px;flex:none}
+.sep{width:1px;align-self:stretch;background:var(--line);margin:3px 6px}
+.tb.more{color:var(--muted)}
+.tb.admin{margin-left:auto}
+main{padding:12px;min-height:220px}
+fieldset{border:1px solid var(--line);border-radius:3px;margin:0 0 12px;padding:8px 10px 10px;background:var(--panel)}
+legend{padding:0 4px;font-weight:600}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-weight:600;color:var(--muted)}
+.muted{color:var(--muted)} .ok{color:var(--ok)}
+.statusbar{display:flex;justify-content:space-between;padding:3px 8px;border-top:1px solid var(--line);background:var(--bar);font-size:12px}
+.subtabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:0 0 10px;overflow-x:auto}
+.subtabs span{padding:4px 10px;border:1px solid transparent;border-bottom:0;white-space:nowrap}
+.subtabs span.on{background:var(--panel);border-color:var(--line);font-weight:600}
+.btn{display:inline-block;padding:3px 12px;background:var(--bar);border:1px solid var(--line);border-radius:3px}
+.input{display:inline-block;min-width:260px;padding:3px 6px;border:1px solid var(--line);background:var(--panel);color:var(--muted)}
+.pill{display:inline-block;padding:1px 8px;border:1px solid var(--line);border-radius:10px;font-size:12px}
+.pill.on{background:var(--sel);color:#fff;border-color:var(--sel)}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.menu-drop{position:relative}
+.drop{position:absolute;left:0;top:100%;z-index:3;min-width:220px;background:var(--panel);color:var(--ink);font-weight:400;border:1px solid var(--line);box-shadow:2px 3px 8px rgba(0,0,0,.2);padding:3px 0}
+.drop div{padding:4px 18px} .drop hr{border:0;border-top:1px solid var(--line);margin:3px 0}
+.drop .hl{background:var(--sel);color:#fff}
+.dialog{background:rgba(0,0,0,.18);padding:26px 12px;display:flex;justify-content:center}
+.window{background:var(--win);border:1px solid var(--line);box-shadow:0 8px 30px rgba(0,0,0,.3);width:min(780px,100%)}
+.window>header{display:flex;justify-content:space-between;padding:5px 8px;background:var(--bar);border-bottom:1px solid var(--line);font-weight:600}
+.wtabs{display:flex;gap:2px;padding:6px 8px 0;border-bottom:1px solid var(--line);overflow-x:auto}
+.wtabs span{padding:4px 10px;border:1px solid transparent;border-bottom:0;white-space:nowrap}
+.wtabs span.on{background:var(--panel);border-color:var(--line)}
+.wbody{padding:12px}
+.steps{display:grid;grid-template-columns:150px minmax(0,1fr);gap:12px}
+.steps ol{margin:0;padding-left:18px} .steps li{padding:3px 0} .steps li.on{font-weight:600}
+pre{margin:6px 0;padding:8px;background:var(--panel);border:1px solid var(--line);font:12px/1.45 var(--mono);overflow:auto}
+.swatches{display:flex;gap:4px;margin:6px 0} .swatches i{width:22px;height:22px;border:1px solid var(--line);display:block}
+.check{display:inline-block;width:14px;height:14px;border:1px solid var(--muted);border-radius:2px;vertical-align:-2px;margin-right:6px;text-align:center;line-height:12px;font-size:11px}
+.check.y{background:var(--sel);border-color:var(--sel);color:#fff}
+.q{margin:18px 0 0;padding:10px 12px;border-left:3px solid var(--new);background:var(--panel)}
+@media (max-width:720px){.cols,.steps{grid-template-columns:1fr} .tb span{display:none}}
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>ARCADE Lite: one window for everything</h1>
+<p class="lead">Mockups of the changes you asked for, drawn in node 9's current look (the beige theme).
+<span class="tag">new</span> and <span class="new">&nbsp;dashed blue&nbsp;</span> mark what changes. Nothing is built yet.</p>
+
+<!-- 1 -->
+<h2>1 · Modules become tabs of the window</h2>
+<p class="cap">The tab row keeps the core on the left: Overview, Send, Receive, Transactions, Address book, and
+<b>Messages, now part of the core</b>. Every module that is switched on, that this person may use, and that they
+haven't hidden, gets its own tab after a divider. A module's page opens <b>inside</b> the window, so the menu bar,
+tabs and status bar stay put. If there are more tabs than fit, the rest go under “More ▾”.</p>
+<div class="app">
+  <div class="menubar"><span>File</span><span>Settings</span><span>Window</span><span>Help</span></div>
+  <div class="toolbar">
+    <span class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-7 9 7v9H3z"/></svg><span>Overview</span></span>
+    <span class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h14M13 6l6 6-6 6"/></svg><span>Send</span></span>
+    <span class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12H6M11 6l-6 6 6 6"/></svg><span>Receive</span></span>
+    <span class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 6h14M5 12h14M5 18h9"/></svg><span>Transactions</span></span>
+    <span class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="3" width="14" height="18" rx="1"/><circle cx="12" cy="10" r="3"/></svg><span>Address book</span></span>
+    <span class="tb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Messages</span></span>
+    <span class="sep"></span>
+    <span class="tb on new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M15 9l-2 4-4 2 2-4z"/></svg><span>Explore</span></span>
+    <span class="tb new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>Feed</span></span>
+    <span class="tb new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span>Exchange</span></span>
+    <span class="tb new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M9 10h6"/></svg><span>DigiDollar</span></span>
+    <span class="tb more new"><span>More ▾</span></span>
+  </div>
+  <main>
+    <div class="subtabs"><span class="on">Dogecoin</span><span>Pepecoin</span><span>Bellscoin</span><span>Litecoin</span><span>Luckycoin</span><span>DigiByte</span><span>Flopcoin</span></div>
+    <fieldset><legend>Search</legend><span class="input">inscription number or id, txid:vout, address</span> <span class="btn">Search</span>
+      <p class="muted" style="margin:6px 0 0">Explore's own page, drawn in the window's look: no second top bar, no desktop around it.</p></fieldset>
+    <div class="cols"><fieldset><legend>By file type</legend><span class="input" style="min-width:160px">Any image</span> <span class="btn">Show</span></fieldset>
+      <fieldset><legend>Collections</legend><span class="input" style="min-width:160px">Search collections by name</span></fieldset></div>
+  </main>
+  <div class="statusbar"><span>Up to date</span><span>9 arcades linked</span></div>
+</div>
+
+<!-- 2 -->
+<h2>2 · Each person picks their tabs: Settings → Your tabs…</h2>
+<p class="cap">This lists only the modules the operator has opened to this person. Turning one off hides its tab
+for that person only, and the choice is remembered with their account, not in the browser. A module the operator hasn't
+opened doesn't appear at all.</p>
+<div class="app">
+  <div class="menubar"><span>File</span><span class="open menu-drop">Settings
+    <div class="drop"><div>Your account…</div><div class="hl new">Your tabs…</div><div>Theme…</div></div></span><span>Window</span><span>Help</span></div>
+  <div class="dialog" style="padding-top:70px"><div class="window new" style="width:min(520px,100%)">
+    <header><span>Your tabs</span><span>×</span></header>
+    <div class="wbody">
+      <p class="muted" style="margin:0 0 8px">The core tabs are always there. Pick which of this arcade's modules you see.</p>
+      <table><thead><tr><th>Tab</th><th>What it is</th></tr></thead><tbody>
+        <tr><td><span class="check y">✓</span>Explore</td><td class="muted">Inscriptions, tokens and collections</td></tr>
+        <tr><td><span class="check y">✓</span>Feed</td><td class="muted">Posts, replies, likes and tips</td></tr>
+        <tr><td><span class="check y">✓</span>Exchange</td><td class="muted">Swaps and orders</td></tr>
+        <tr><td><span class="check"></span>Apps</td><td class="muted">Games and the App Store</td></tr>
+        <tr><td><span class="check y">✓</span>DigiDollar</td><td class="muted">DigiByte's stablecoin (node module)</td></tr>
+      </tbody></table>
+      <p style="margin:10px 0 0;text-align:right"><span class="btn">Cancel</span> <span class="btn">Save</span></p>
+    </div></div></div>
+</div>
+
+<!-- 3 -->
+<h2>3 · The operator opens or closes each module for everyone: Admin → Edition &amp; modules</h2>
+<p class="cap">There are two switches per module. <b>Running</b> says whether this node runs it at all, as today.
+<b>Who may use it</b> says who gets its tab and its pages: nobody but you, signed-in users, or everyone including visitors.
+Closing a module to users removes its tab and makes its pages answer “not on this arcade” for them. The pages it
+serves to other arcades over the mesh aren't affected.</p>
+<div class="app">
+  <main>
+    <fieldset class="new"><legend>Modules</legend>
+      <table><thead><tr><th>Module</th><th>Running</th><th>Who may use it</th></tr></thead><tbody>
+        <tr><td><b>Messages</b> <span class="muted">core</span></td><td class="ok">always</td><td class="muted">everyone with an account</td></tr>
+        <tr><td><b>Explore</b> <span class="muted">Ord indexes</span></td><td><span class="pill on">On</span> <span class="pill">Off</span></td><td><span class="pill">Only me</span> <span class="pill">Signed-in</span> <span class="pill on">Everyone</span></td></tr>
+        <tr><td><b>Feed</b></td><td><span class="pill on">On</span> <span class="pill">Off</span></td><td><span class="pill">Only me</span> <span class="pill on">Signed-in</span> <span class="pill">Everyone</span></td></tr>
+        <tr><td><b>Exchange</b></td><td><span class="pill on">On</span> <span class="pill">Off</span></td><td><span class="pill on">Only me</span> <span class="pill">Signed-in</span> <span class="pill">Everyone</span></td></tr>
+        <tr><td><b>LLM market</b></td><td><span class="pill">On</span> <span class="pill on">Off</span></td><td class="muted">—</td></tr>
+        <tr><td><b>DigiDollar</b> <span class="muted">node module</span></td><td><span class="pill on">On</span> <span class="pill">Off</span></td><td><span class="pill">Only me</span> <span class="pill">Signed-in</span> <span class="pill on">Everyone</span></td></tr>
+      </tbody></table>
+    </fieldset>
+  </main>
+</div>
+
+<!-- 4 -->
+<h2>4 · Window → Build: make a theme, and share it</h2>
+<p class="cap">A new item in the Window menu opens a guide. It walks through making a theme step by step, from an
+empty folder to a theme that other operators can turn on. The window's own Console runs each step, so nothing needs
+GitHub. A “Node modules” tab, for module makers, can come later.</p>
+<div class="app">
+  <div class="menubar"><span>File</span><span>Settings</span><span class="open menu-drop">Window
+    <div class="drop"><div>Information</div><div>Console</div><div>Peers</div><hr><div class="hl new">Build…</div></div></span><span>Help</span></div>
+  <div class="dialog" style="padding-top:130px"><div class="window new">
+    <header><span>Build</span><span>×</span></header>
+    <div class="wtabs"><span class="on">Themes</span><span>Share a theme</span><span>Shared by others</span><span class="muted">Node modules (later)</span></div>
+    <div class="wbody"><div class="steps">
+      <ol><li>Make a folder</li><li class="on">Pick the colours</li><li>A font (optional)</li><li>Try it on</li><li>Package it</li><li>Wear it</li><li>Share it</li></ol>
+      <div>
+        <b>2 · Pick the colours</b>
+        <p style="margin:4px 0">A theme is values, not CSS: eleven colours for light mode and eleven for dark. Put them in <code>manifest.json</code>:</p>
+<pre>{ "kind": "theme", "name": "Pumpkin",
+  "light": { "win": "#f5eadc", "panel": "#fff8f0", "ink": "#1d1d1d",
+             "sel": "#b85c2e", ... },
+  "dark":  { "win": "#2b2622", ... } }</pre>
+        <div class="swatches"><i style="background:#f5eadc"></i><i style="background:#fff8f0"></i><i style="background:#1d1d1d"></i><i style="background:#b85c2e"></i><i style="background:#ecd3b6"></i><i style="background:#d9bf9f"></i></div>
+        <p class="muted" style="margin:4px 0 8px">The guide checks each pair for contrast as you go and says which one is too faint.</p>
+        <span class="btn">Open the console with <code>trytheme ~/my-theme</code></span> <span class="btn">Next ›</span>
+      </div>
+    </div></div>
+  </div></div>
+</div>
+<div class="app" style="margin-top:12px"><div class="dialog" style="padding:16px 12px"><div class="window new">
+  <header><span>Build</span><span>×</span></header>
+  <div class="wtabs"><span>Themes</span><span class="on">Share a theme</span><span>Shared by others</span><span class="muted">Node modules (later)</span></div>
+  <div class="wbody">
+    <p style="margin:0 0 8px">Offer one of your themes to the arcades you link with. Each operator sees it under <b>Shared by others</b>
+      and decides whether to install it. Nothing goes on until they choose.</p>
+    <table><thead><tr><th>Your theme</th><th>Id</th><th>Shared</th><th></th></tr></thead><tbody>
+      <tr><td>Pumpkin</td><td><code>a91f…3c</code></td><td class="muted">not yet</td><td><span class="btn">Offer to the mesh</span></td></tr>
+      <tr><td>Night shift</td><td><code>07be…d2</code></td><td class="ok">offered · 3 arcades installed it</td><td><span class="btn">Stop offering</span></td></tr>
+    </tbody></table>
+    <p class="muted" style="margin:8px 0 0">A theme is colours and an optional font only. It runs no code, so another arcade can install it safely.
+      Inscribing it on a chain is optional.</p>
+  </div></div></div></div>
+
+<!-- 5 -->
+<h2>5 · Admin is a tab of the same window, at the node's machine only</h2>
+<p class="cap">Today, opening Admin swaps the whole screen for a different top bar. Instead, Admin becomes the last
+tab of the window, with its sections as a second row inside it. The menu bar, the tabs and the status bar don't
+move. The tab appears only when the window is opened on the node's own machine (localhost); anyone opening the
+window from elsewhere never sees it.</p>
+<div class="app">
+  <div class="menubar"><span>File</span><span>Settings</span><span>Window</span><span>Help</span></div>
+  <div class="toolbar">
+    <span class="tb"><span>Overview</span></span><span class="tb"><span>Send</span></span><span class="tb"><span>Receive</span></span>
+    <span class="tb"><span>Transactions</span></span><span class="tb"><span>Address book</span></span><span class="tb"><span>Messages</span></span>
+    <span class="sep"></span><span class="tb"><span>Explore</span></span><span class="tb"><span>Feed</span></span><span class="tb"><span>Exchange</span></span>
+    <span class="tb on admin new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/></svg><span>Admin</span></span>
+  </div>
+  <main>
+    <div class="subtabs new"><span class="on">Overview</span><span>Coins &amp; chains</span><span>Trading</span><span>Safety</span><span>Network</span><span>Ords</span><span>DNS</span><span>Wallet imports</span><span>LLM</span><span>People &amp; brand</span><span>Edition &amp; modules</span></div>
+    <div class="cols"><fieldset><legend>Seats</legend><b style="font-size:20px">48 / 50</b> <span class="muted">open</span></fieldset>
+      <fieldset><legend>Arcades</legend><b style="font-size:20px">10</b> <span class="muted">running, 9 linked to this one</span></fieldset></div>
+    <fieldset><legend>Needs you</legend>• 2 game cards hidden, waiting for you to look<br>• Luckycoin is still syncing (0%)</fieldset>
+  </main>
+  <div class="statusbar"><span>Up to date</span><span>9 arcades linked · at the node machine</span></div>
+</div>
+
+<div class="q"><b>Two things to confirm before I build:</b>
+<ol style="margin:6px 0 0;padding-left:18px">
+  <li><b>Admin from elsewhere.</b> I read “another tab for the localhost” as: the Admin tab exists only at the node's
+    machine. Today a password operator can also open Admin from another computer. Should that stop, or should they
+    also get the Admin tab?</li>
+  <li><b>Who may use it.</b> Are three levels right (only me, signed-in users, everyone)? Or is a plain on/off for
+    users enough?</li>
+</ol></div>
+
+</div></body>
+</html>
