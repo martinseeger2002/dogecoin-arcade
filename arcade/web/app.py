@@ -5738,7 +5738,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         wanted = _BROWSER_CHAIN.get()
         if wanted:
-            for chain in state.token_chains:
+            for chain in state.arcade_chains:              # no arcade tokens on LTC, L test, KOT (Params.class_b)
                 if chain.network == wanted:
                     return chain, state.token_index(chain)
         chain = state.token_chain
@@ -5747,7 +5747,7 @@ def create_app(state: AppState) -> FastAPI:
     def _per_browser_chain(request: Request) -> str | None:
         """The chain an account's browser picked, set for this request only (_BrowserChain)."""
         wanted = request.cookies.get(CHAIN_COOKIE, "")
-        if wanted and any(c.network == wanted for c in state.token_chains):
+        if wanted and any(c.network == wanted for c in state.arcade_chains):
             try:
                 mine = _account_view(request)
             except Exception:
@@ -5773,11 +5773,15 @@ def create_app(state: AppState) -> FastAPI:
     @app.get("/create/chain")
     def create_chain(request: Request, to: str = "", back: str = "/create"):
         """Pick the chain this browser creates on: Testnet or Mainnet."""
-        chosen = next((c for c in state.token_chains
-                       if to in (c.network, c.net, c.network if c.is_addon else
-                                 "main" if c.is_mainnet else "test")), None)
+        named = lambda c: to in (c.network, c.net, c.network if c.is_addon else "main" if c.is_mainnet else "test")  # noqa: E731
         where = back if back.startswith("/") and not back.startswith("//") else "/create"
         answer = RedirectResponse(where, status_code=303)
+        # Litecoin, L test and Kotia carry coins only (Params.class_b, 2026-11-05): nothing to create there.
+        coins_only = next((c for c in state.token_chains if named(c) and not getattr(c.params, "class_b", True)), None)
+        if coins_only is not None:
+            state.flash(f"{coins_only.params.label} carries coins only: no tokens, NFTs or inscriptions.", "err")
+            return answer
+        chosen = next((c for c in state.arcade_chains if named(c)), None)
         if chosen is None and state.doge is not None and to in ("doge", "dogecoin"):
             state.flash("Dogecoin is not open yet: its node is still syncing.", "err")
         if chosen is None and getattr(state, "ltc", None) is not None and to in ("ltc", "litecoin"):
@@ -5841,7 +5845,7 @@ def create_app(state: AppState) -> FastAPI:
         chain, index = _token_chain()
         data: dict[str, Any] = {
             "chain": chain, "node": chain.status(),
-            "other_chains": [c for c in state.token_chains if c is not chain],
+            "other_chains": [c for c in state.arcade_chains if c is not chain],
             "index": index.status(node_tip=state.ledger_tips.get(chain.network)),
             "tokens": [], "pending_tokens": [], "holdings": [],
             "funded": [], "owned": set(),
@@ -5932,7 +5936,7 @@ def create_app(state: AppState) -> FastAPI:
         chain, index = _token_chain()
         data: dict[str, Any] = {
             "chain": chain, "node": chain.status(),
-            "other_chains": [c for c in state.token_chains if c is not chain],
+            "other_chains": [c for c in state.arcade_chains if c is not chain],
             "index": index.status(node_tip=state.ledger_tips.get(chain.network)),
             "inscriptions": [], "mine": [], "unfinished": [], "owned": set(),
             "funded": [], "error": error, "plan": plan, "node_error": None,
@@ -6140,7 +6144,7 @@ def create_app(state: AppState) -> FastAPI:
     def collections_page(request: Request, page: int = 1):
         chain, index = _token_chain()
         data: dict[str, Any] = {"chain": chain, "node": chain.status(),
-                                "other_chains": [c for c in state.token_chains
+                                "other_chains": [c for c in state.arcade_chains
                                                  if c is not chain],
                                 "collections": [], "node_error": None, "tags": {},
                                 "page": page, "pages": 1, "total": 0}
@@ -35391,7 +35395,7 @@ def create_app(state: AppState) -> FastAPI:
         # only the Offers tab, whose count the other tabs fetch after they show.
         offers_tab, pads_tab = tab == "offers", tab == "mintpads"
         data: dict[str, Any] = {"tab": tab, "chain": chain, "node": {},
-                                "other_chains": [c for c in state.token_chains
+                                "other_chains": [c for c in state.arcade_chains
                                                  if c is not chain],
                                 "shops": [], "node_error": None, "owned": set(),
                                 "offers_in": [], "offers_out": [], "tags": {},

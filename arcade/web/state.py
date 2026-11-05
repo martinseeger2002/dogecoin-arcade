@@ -1450,6 +1450,13 @@ class AppState:
         return chains
 
     @property
+    def arcade_chains(self) -> list[ChainContext]:
+        """The ready chains that carry the arcade's own tokens, NFTs and inscriptions (Params.class_b): token_chains less
+        Litecoin, Litecoin testnet and Kotia (2026-11-05, tbuuol: no token protocols there). What the Create, Tokens,
+        Collections and Exchange pages switch between; the wallet still shows every chain's coins."""
+        return [c for c in self.token_chains if getattr(c.params, "class_b", True)]
+
+    @property
     def all_chains(self) -> list[ChainContext]:
         """Every chain this node has, ready or not, for the pages to SHOW: a
         picker draws Dogecoin grayed out while it syncs (2026-10-13: "Have
@@ -1601,13 +1608,13 @@ class AppState:
                 self._token_chain = self.token_chain_path.read_text().strip()
             except OSError:
                 self._token_chain = self.messaging.network
-        for chain in self.token_chains:
+        for chain in self.arcade_chains:
             if chain.network == self._token_chain:
                 return chain
         return self.ledger
 
     def switch_token_chain(self, network: str) -> ChainContext:
-        for chain in self.token_chains:
+        for chain in self.arcade_chains:
             if chain.network == network:
                 self._token_chain = network
                 try:

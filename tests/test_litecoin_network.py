@@ -6,6 +6,7 @@ import argparse
 import json
 import pathlib
 import sys
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -280,8 +281,9 @@ def test_a_page_reads_the_tag_chain_whatever_the_operators_view(client, monkeypa
     from the Litecoin index. The page API stays on the tag chain, and an address's balances are read on its chain."""
     app, state = client
     ltc = _with_ltc(state, monkeypatch, ready=True)
-    state.switch_token_chain("ltc")
-    assert state.token_chain is ltc
+    with pytest.raises(ValueError):
+        state.switch_token_chain("ltc")             # no arcade tokens on Litecoin (Params.class_b, 2026-11-05)
+    assert state.token_chain is not ltc, "the view stays on a chain with tokens"
     asked = []
     real = state.token_index
     monkeypatch.setattr(state, "token_index", lambda chain: (asked.append(chain.network), real(chain))[1])
@@ -327,3 +329,13 @@ def test_a_page_never_waits_for_a_borrowed_chains_answer(client, monkeypatch):
     while _t.time() < end and not state.chain_sync(ltc).get("ready"):
         _t.sleep(0.05)
     assert state.chain_sync(ltc)["ready"] is True, "and ready once it has answered"
+
+
+def test_create_says_litecoin_carries_coins_only(client, monkeypatch):
+    """2026-11-05 (Params.class_b): Create never switches to Litecoin, and says why instead of "still syncing"."""
+    app, state = client
+    _with_ltc(state, monkeypatch, ready=True)
+    went = app.get("/create/chain?to=ltc&back=/create", follow_redirects=False)
+    assert went.status_code == 303 and "chain=" not in went.headers.get("set-cookie", "")
+    page = app.get("/create").text
+    assert "Litecoin carries coins only" in page and "still syncing" not in page

@@ -5,6 +5,10 @@ Kotia (KOT) is an **add-on chain**, like Dogecoin and Litecoin. An operator turn
 arcade that shares its Kotia Core over the mesh (see *Shared Cores*). It is shown grayed out
 until its node has synced.
 
+**Coins and data only (2026-11-05).** Kotia carries no arcade tokens, NFTs, names, posts or
+inscriptions (`Params.class_b`, as on Litecoin): the index reads its coins only, and nothing is checked
+when you send.
+
 **Status:**
 - **In the wallet,** on the same key as PEP, DOGE and LTC: receive and send KOT. The operator's sends
   from the node key (Admin, when Kotia is borrowed or its Core has no wallet) write the transaction

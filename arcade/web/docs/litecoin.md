@@ -5,15 +5,12 @@ Litecoin is an **add-on chain**, and so is Litecoin testnet. An operator turns e
 shares its Litecoin Core over the mesh (see *Shared Cores*), with no Litecoin node at all. This page
 says what works, and what to know before you trade on Litecoin.
 
-**Status:** the protocol is proven on a test chain: the arcade's own Class B transactions and
-lock-script swaps work on Litecoin. Ords and -20 tokens are not read on Litecoin (see below). Litecoin is in the wallet (one key for PEP,
+**Status:** Litecoin carries coins only: no tokens, NFTs, inscriptions or other arcade transactions
+(see below). Lock-script coin swaps work. Litecoin is in the wallet (one key for PEP,
 DOGE and LTC) and on the Exchange (PEP/LTC and DOGE/LTC).
 
 ## What works the same as on Pepecoin
 
-- **The arcade's own tokens, NFTs and inscriptions.** These use the arcade's Class B transactions
-  (bare multisig plus OP_RETURN), and Litecoin relays them under the same rules as Pepecoin and
-  Dogecoin. Nothing is different about them on Litecoin except the coin and the fee.
 - **Fees are Litecoin's own.** Litecoin relays at 1/1000 of Pepecoin's minimum fee. Here a Litecoin
   transaction pays 0.0001 LTC per kB, ten times Litecoin's minimum.
 - **Lock-script swaps.** LTC for PEP uses the same lock scripts
@@ -29,7 +26,10 @@ chain.
 ## No inscriptions or tokens on Litecoin
 
 This arcade keeps no ord index on Litecoin or Litecoin testnet, as on Kotia (2026-11-05). It reads no
-inscriptions, LTC-20 tokens or Omni there, and holds no Litecoin coin back as "held in inscriptions":
+inscriptions, LTC-20 tokens or Omni there, and none of its own transactions either: no arcade tokens,
+NFTs, names or posts (`Params.class_b`), and the Create, Tokens and Exchange pages do not switch to
+Litecoin. Nothing is checked when you send: coins go back and forth as in any plain wallet. It holds no Litecoin coin
+back as "held in inscriptions":
 every coin in a Litecoin wallet is spendable. An inscription someone made elsewhere on a coin you hold
 is not seen here, so keep such coins in a wallet that knows them.
 

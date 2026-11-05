@@ -129,6 +129,11 @@ class ArcadeHandler:
             self.stats["coins_in"] = self.stats.get("coins_in", 0) + moved["added"]
             self.stats["coins_out"] = self.stats.get("coins_out", 0) + moved["spent"]
 
+        # No arcade transactions on this chain (Params.class_b, 2026-11-05: Litecoin, Litecoin testnet, Kotia): its
+        # coins only. Whatever someone writes there with the arcade's marker does nothing here.
+        if not getattr(self.params, "class_b", True):
+            return
+
         # From `cancels_last_from`, a block's cancels wait for the rest of it:
         # see `later` below and config.Params.cancels_last_from.
         cancels_last = (self.params.cancels_last_from is not None
