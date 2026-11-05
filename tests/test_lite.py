@@ -328,3 +328,13 @@ def test_a_visitor_s_console_lines_are_limited_and_the_operator_s_are_not(app):
     assert held.status_code == 429 and "lines a minute" in held.json()["error"]
     for _ in range(liteweb.CONSOLE_PER_MINUTE + 5):
         assert app.post("/lite/api/console", headers={**LOCAL, **LITE}, json={"line": "help"}).status_code == 200
+
+
+def test_window_build_guides_everyone_and_lets_the_operator_share_themes(app):
+    operator = app.get("/lite", headers=LOCAL).text
+    assert "data-build>Build…" in operator and 'id="build"' in operator
+    assert "arcade-cli new theme my-theme" in operator and "sharetheme my-theme" in operator, "the guide's steps"
+    assert 'data-btab="share"' in operator and 'data-btab="others"' in operator
+    visitor = app.get("/lite", headers=OUTSIDE).text
+    assert "arcade-cli new theme my-theme" in visitor, "anyone may learn to make one"
+    assert 'data-btab="share"' not in visitor and "taketheme" not in visitor, "offering and taking are the operator's"
