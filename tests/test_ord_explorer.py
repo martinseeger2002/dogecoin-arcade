@@ -323,5 +323,6 @@ def test_many_numbers_at_once_by_id_for_the_wallet(tmp_path):
     got = index.answer({"what": "numbers", "ids": ids})["numbers"]
     assert {i: got[i]["number"] for i in got} == {r["id"]: r["number"] for r in rows}, "the unknown ones left out"
     assert got[rows[0]["id"]]["content_type"] == rows[0]["content_type"] and got[rows[0]["id"]]["height"] == rows[0]["height"]
+    assert all("protocol" in got[i] for i in got), "each says its JSON protocol (None when it has none)"
     many = index.numbers([rows[0]["id"]] * (dx.NUMBERS_MAX + 50))
     assert list(many) == [rows[0]["id"]]

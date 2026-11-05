@@ -593,6 +593,24 @@ def test_the_wallet_reads_its_doginals_numbers_and_collections_many_at_once(clie
     assert "/account/doginal-meta" in door.PUBLIC_POST and "/account/doginal-card" in door.PUBLIC_PAGES
 
 
+def test_the_wallet_is_told_which_are_token_operations(client, monkeypatch, tmp_path):
+    """2026-11-05, the operator: "The DRC 20 mints should be [out] from the ORD grid but we shouldn't count them towards
+    tokens because we already have a token index". The index's `protocol` becomes `token` for this chain's token "p";
+    another JSON protocol is not a token, and an older walker that gives no protocol says nothing either way."""
+    app, state = client
+    _doge_account(app, state, monkeypatch, tmp_path)
+    mint, name, old = T2 + "i0", T2 + "i1", T2 + "i2"
+
+    class Index:
+        def lookup(self, q):
+            return {"numbers": {mint: {"number": 7, "content_type": "text/plain", "protocol": "drc-20"},
+                                name: {"number": 8, "content_type": "text/plain", "protocol": "dns"},
+                                old: {"number": 9, "content_type": "text/plain"}}, "walked_to": 6_444_000}
+    monkeypatch.setattr(type(state), "ord_indexes", lambda self: {"doge": Index()})
+    meta = app.post("/account/doginal-meta", json={"chain": "doge", "ids": [mint, name, old]}).json()["meta"]
+    assert meta[mint]["token"] is True and meta[name]["token"] is False and "token" not in meta[old]
+
+
 def test_the_wallet_card_says_everything_about_one(client, monkeypatch, tmp_path):
     """The card: the index's details, its collection, and the content link."""
     app, state = client

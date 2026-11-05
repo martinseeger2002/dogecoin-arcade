@@ -12,6 +12,8 @@ And /content serves a delegate's content. Blocks are made up byte for byte (test
 import sys
 from pathlib import Path
 
+import time
+
 import pytest
 
 from arcade import doginal_index as dx
@@ -405,6 +407,19 @@ def test_the_explorer_asks_a_linked_walker_further_along_than_this_arcade(tmp_pa
     me, others = _walkers(tmp_path, dx.BASE + 4, {"far": (dx.BASE + 12, ord_rules.rules_for("doge"))})
     said = me.lookup({"what": "number", "number": 0})
     assert said["node"] == "far" and said["walked_to"] == dx.BASE + 12 and said["from"] != "this arcade"
+
+
+def test_a_further_copy_is_asked_though_its_hello_is_hours_old(tmp_path):
+    """2026-11-05, the operator: "An arcade should be able to both read its own ORD index along with shared ORD index". Every
+    hello stopped for five hours (a stuck link) and .25 answered from its own 7% walk though Strawberry's whole copy was
+    linked. A further copy heard within LOOKUP_HEARD_WITHIN is asked; one heard longer ago than that is not."""
+    me, others = _walkers(tmp_path, dx.BASE + 4, {"far": (dx.BASE + 12, ord_rules.rules_for("doge"))})
+    me.chunks.peers["far"]["at"] = time.time() - 5 * 3600
+    assert me.walkers() == [], "not for the walk's own sharing (five minutes)"
+    said = me.lookup({"what": "number", "number": 0})
+    assert said["node"] == "far" and said["walked_to"] == dx.BASE + 12
+    me.chunks.peers["far"]["at"] = time.time() - dx.LOOKUP_HEARD_WITHIN - 60
+    assert me.lookup({"what": "number", "number": 0})["from"] == "this arcade"
 
 
 def test_this_arcade_answers_when_its_own_walk_is_furthest_or_tied(tmp_path):

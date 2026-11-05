@@ -322,6 +322,50 @@ def test_doginals_come_in_inscription_order_with_their_collections_and_a_card(br
             state.known_collections = real[1]
 
 
+def test_drc20_mints_are_left_out_of_the_doginals_grid(browser, served, signed_in, reads):
+    """2026-11-05, the operator: "it is showing a bunch of DRC 20 transactions along with my doginals" -- "The DRC 20 mints
+    should be [out] from the ORD grid but we shouldn't count them towards tokens". The index says which are this
+    chain's token operations (meta.token): they leave the grid and its counts; a plain text one stays."""
+    base, state = served
+    txs = [f"{n:064x}" for n in range(0x7400, 0x7400 + 12)]
+    mints, note = set(txs[:8]), txs[8]
+    for t in txs:
+        ANSWERS[t] = {"txid": t, "inscriptions": [{"vout": 0, "inscription_id": t + "i0", "sat_offset": 0}]}
+    with state.token_index(state.doge).open() as db:
+        for t in txs:
+            db.conn.execute("INSERT OR REPLACE INTO utxo(txid,vout,address,value,height) VALUES (?,?,?,?,?)",
+                            (t, 0, signed_in, 100_000, 3))
+        db.conn.commit()
+    funding.GUARD.ctype_of = lambda iid: "text/plain" if iid[:64] in mints or iid[:64] == note else "image/png"
+
+    class Index:
+        tip = 6_000_000
+
+        def lookup(self, q):
+            if q["what"] == "numbers":
+                return {"numbers": {i: {"number": 500 + txs.index(i[:64]), "height": 4_700_000,
+                                        "content_type": "text/plain" if i[:64] in mints or i[:64] == note else "image/png",
+                                        "size": 60, "protocol": "drc-20" if i[:64] in mints else None}
+                                    for i in q["ids"] if i[:64] in txs}, "walked_to": 6_000_000}
+            raise ValueError("no such question")
+    real = state.ord_indexes
+    state.ord_indexes = lambda: {"doge": Index()}
+    try:
+        browser.execute_script("localStorage.clear(); sessionStorage.clear()")
+        browser.set_window_size(1100, 1300)
+        _open_doginals(browser, base)
+        _wait(browser, 'return document.getElementById("doginals").textContent.includes("token inscriptions are")', 40)
+        shown = browser.execute_script('return [...document.querySelectorAll("#doginals .dg-tile")].map(c => c.dataset.doginal)')
+        mine = [i for i in shown if i[:64] in txs]                  # (the earlier tests' coins are here too)
+        assert sorted(mine) == sorted(t + "i0" for t in txs if t not in mints), mine
+        text = browser.execute_script('return document.getElementById("doginals").textContent')
+        assert "8 token inscriptions are not shown here" in text and "Tokens tab" in text
+        browser.execute_script('document.getElementById("doginals").scrollIntoView()')
+        browser.save_screenshot(str(pathlib.Path.home() / "ordmock" / "no-mints.png"))
+    finally:
+        state.ord_indexes = real
+
+
 def test_drc20_tokens_are_in_the_tokens_tab_and_send_like_any_token(browser, served, signed_in):
     """2026-11-05, the operator: "make sure we have DRC 20s in the Wallet tokens tab they should be able to be sent just like
     any other of our tokens like on Pepe": the balance from the ord index, tapped, and Send is for that token."""

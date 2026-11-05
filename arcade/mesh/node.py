@@ -162,6 +162,9 @@ TUNE_MARGIN = 0.8           # a newcomer must be this much faster than the slowe
 MAX_INBOUND = 32             # the default; a server takes more (MeshNode(max_inbound=...), --mesh-inbound)
 PING_EVERY = 15.0
 DEAD_AFTER = 45.0
+REBALANCE_EVERY = 60.0
+#: The most one extension's minute rebalance may take before the next extension's goes (node._rebalancer).
+REBALANCE_TIMEOUT = 90.0
 SEEN_MAX = 50_000
 
 
@@ -471,14 +474,18 @@ class MeshNode:
 
     async def _rebalancer(self) -> None:
         while not self._stopping:
-            await asyncio.sleep(60)
+            await asyncio.sleep(REBALANCE_EVERY)
             try:
-                await self.relays.tidy()
+                await asyncio.wait_for(self.relays.tidy(), REBALANCE_TIMEOUT)
             except Exception:                      # noqa: BLE001
                 log.exception("mesh relays")
             for ext in list(self.extensions):
+                # One extension stuck (a send to a peer that stopped reading, 2026-11-05) must not hold up the rest.
                 try:
-                    await ext.rebalance()
+                    await asyncio.wait_for(ext.rebalance(), REBALANCE_TIMEOUT)
+                except asyncio.TimeoutError:
+                    log.warning("mesh: %s's rebalance took over %.0f s: left for the next minute",
+                                type(ext).__name__, REBALANCE_TIMEOUT)
                 except Exception:                  # noqa: BLE001
                     log.exception("mesh extension")
 

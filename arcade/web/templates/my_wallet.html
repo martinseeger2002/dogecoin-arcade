@@ -2297,7 +2297,7 @@ const ORD_WORDS = Object.fromEntries(Object.entries(ORD).map(([net, o]) => [net,
 // number earliest first", "sent and listed on the marketplace right from my wallet", "if they are a part of a
 // collection, they should have the collection metadata with them", "Each one should be able to be clicked, and their
 // card should open with all of the information and a content link") ---------------------------------------------------
-const DG_META = "arcade.wallet.dgmeta:", DG_VIEW = "arcade.wallet.dgview:", DG_META_MAX = 500, DG_META_RETRY_MS = 60000;
+const DG_META = "arcade.wallet.dgmeta2:", DG_VIEW = "arcade.wallet.dgview:", DG_META_MAX = 500, DG_META_RETRY_MS = 60000;
 function dgMetaLoad(net) {
   try { return JSON.parse(localStorage.getItem(DG_META + net) || "{}") || {}; } catch (e) { return {}; }
 }
@@ -2593,7 +2593,8 @@ async function drawDoginals() {
     if (!dg.answers[t]) { const kept = dgKept(c.network, t); if (kept) dg.answers[t] = kept; }
   }
   const left = txids.filter((t) => !dg.answers[t]);
-  const found = [], unread = [];
+  let found = [];
+  const unread = [];
   for (const coin of dg.coins) {
     for (const i of dg.answers[coin.txid] || []) {
       if (i.vout !== coin.vout) continue;
@@ -2606,6 +2607,10 @@ async function drawDoginals() {
   }
   // Each one's number and collection, asked in the background a few hundred at a time; the grid redraws as they come.
   dgMetaAsk(c.network, found);
+  // DRC-20 / PRC-20 mints, transfers and deploys are not NFTs (2026-11-05): left out of the grid once the index
+  // says so (meta.token). Their balances are the token index's, on the Tokens tab; these coins stay held all the same.
+  const tokenOps = found.filter((g) => dg.meta[g.id] && dg.meta[g.id].token).length;
+  if (tokenOps) found = found.filter((g) => !(dg.meta[g.id] && dg.meta[g.id].token));
   // The few lines above the cards: redrawn freely, they hold no pictures.
   const status = [];
   if (dg.failed) {
@@ -2643,7 +2648,11 @@ async function drawDoginals() {
         : `${(found.length - numbered).toLocaleString()} of them ${found.length - numbered === 1 ? "is" : "are"} not in `
           + `the ${W} index yet: shown last, and asked again in a minute.`));
   }
-  if (!left.length && !dg.failed && !found.length) {
+  if (tokenOps) {
+    status.push(el("p", "wl-note", `${tokenOps.toLocaleString()} token inscription${tokenOps === 1 ? " is" : "s are"} `
+      + "not shown here: your token balances are on the Tokens tab."));
+  }
+  if (!left.length && !dg.failed && !found.length && !tokenOps) {
     status.push(el("div", "wl-empty", `No ${W}s on ${w ? w.name + "'s" : "your"} ${coinWord} coins.`));
   }
   ui.status.replaceChildren(...status);

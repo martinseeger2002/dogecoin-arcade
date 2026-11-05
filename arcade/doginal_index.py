@@ -484,6 +484,9 @@ NAMES_ON_MAX = 3000
 #: The Wallet's Doginals in inscription order (2026-11-05, the operator: "they should be ordered by inscription number earliest
 #: first"): the numbers of this many ids asked at once ({"what": "numbers"}).
 NUMBERS_MAX = 500
+#: How long ago another arcade's index may have said hello and still be asked a question this arcade's own walk is
+#: behind on (DoginalIndex.lookup): a day.
+LOOKUP_HEARD_WITHIN = 86_400.0
 NEWER_QUESTIONS = ("number", "ticks", "holders", "note", "ticklist", "mesh", "mesh_directory", "typed", "names_on",
                    "sites_search", "numbers")
 
@@ -3129,7 +3132,13 @@ class DoginalIndex:
         this), the next furthest is asked, down to this arcade's own walk when it walks (which always answers). A
         walker on other rules is never asked (`walkers`)."""
         own = self.walker.next_height() if self.mode() == "walk" else None
-        peers = self.walkers() if self.share is not None and hasattr(self.share, "ask") else []
+        # 2026-11-05: "An arcade should be able to both read its own ORD index along with shared ORD index".
+        # A copy further than this arcade's own is asked even when its last hello is old (LOOKUP_HEARD_WITHIN, not the
+        # five minutes the walk's own sharing needs): on 2026-11-05 every hello stopped for five hours and .25 answered
+        # from its 7% walk though Strawberry's whole copy was linked. One that cannot answer costs a failed ask, then
+        # the next, down to this arcade's own walk.
+        peers = [(n, h) for n, h in self.walkers(LOOKUP_HEARD_WITHIN) if own is None or h > own] \
+            if self.share is not None and hasattr(self.share, "ask") else []
         order: list[tuple[str | None, int]] = peers + ([(None, own)] if own is not None else [])
         order.sort(key=lambda o: (-o[1], o[0] is not None))
         if not order:
@@ -3166,12 +3175,12 @@ class DoginalIndex:
                              f"once it updates")
         raise ValueError("no linked arcade that walks this chain could answer: " + "; ".join(failed))
 
-    def walkers(self) -> list[tuple[str, int]]:
+    def walkers(self, heard_within: float = 300.0) -> list[tuple[str, int]]:
         """Linked arcades that walk this chain, furthest first: (node, the block they have walked to)."""
         # Only arcades on these rules (2026-10-21): an index built under other rules numbers otherwise.
         rows = [(node, int(p.get("walk") or 0)) for node, p in self.chunks.peers.items()
                 if p.get("mode") == "walk" and p.get("rules") == self.rules
-                and time.time() - float(p.get("at") or 0) < 300]
+                and time.time() - float(p.get("at") or 0) < heard_within]
         return sorted(rows, key=lambda r: -r[1])
 
     def where(self, inscription: str) -> dict | None:
@@ -3300,7 +3309,7 @@ class DoginalIndex:
         return int(got) - 1 if got else -1
 
     def numbers(self, ids: list[str]) -> dict:
-        """{id: {number, height, content_type, size}} for each of these ids the index holds (at most NUMBERS_MAX); an
+        """{id: {number, height, content_type, size, protocol}} for each of these ids the index holds (at most NUMBERS_MAX); an
         id it does not hold is left out. No owner: the Wallet asks only about its own coins."""
         out: dict = {}
         if self.store.old_layout:
@@ -3309,11 +3318,13 @@ class DoginalIndex:
             key = iid_parts(iid)
             if not key:
                 continue
-            rows = self.store.q("SELECT i.number, i.height, c.ctype, i.size FROM insc i JOIN ctypes c ON c.ct = i.ct "
+            rows = self.store.q("SELECT i.number, i.height, c.ctype, i.size, i.proto FROM insc i JOIN ctypes c ON c.ct = i.ct "
                                 "WHERE substr(i.tx, 1, 8)=? AND i.tx=? AND i.n=?", (key[0][:8],) + key)
             if rows:
-                num, height, ctype, size = rows[0]
-                out[iid.strip().lower()] = {"number": num, "height": height, "content_type": ctype, "size": size}
+                num, height, ctype, size, proto = rows[0]
+                # `protocol`: a JSON body's "p" (drc-20, ...), so the Wallet leaves token operations out of its grid.
+                out[iid.strip().lower()] = {"number": num, "height": height, "content_type": ctype, "size": size,
+                                            "protocol": proto}
         return out
 
     def inscription(self, number: Any = None, iid: str = "") -> dict:

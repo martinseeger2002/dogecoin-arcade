@@ -37,6 +37,10 @@ VERSION = 2   # 2026-10-12: mesh v2 -- rooms as fingerprints, members in the roo
 MAGIC = b"ARCM"
 MAX_FRAME = 64 * 1024
 HANDSHAKE_TIMEOUT = 10.0
+#: How long one frame may take to go out (2026-11-05: a peer that stopped reading left .25's and Strawberry's links to it
+#: with full send buffers for 5 hours; each side's reader was waiting to send its reply, so neither read again, and the
+#: minute's rebalance -- every ord index's hello with it -- waited behind them). Past this the link is cut; it links again.
+SEND_TIMEOUT = 30.0
 _AUTH_CONTEXT = b"arcade-mesh-auth-v1"
 
 
@@ -153,6 +157,13 @@ class Link:
     async def send(self, header: dict, blob: bytes = b"") -> None:
         if self.closed:
             raise LinkError("link is closed")
+        try:
+            await asyncio.wait_for(self._send(header, blob), SEND_TIMEOUT)
+        except asyncio.TimeoutError:
+            self.abort()
+            raise LinkError(f"a frame could not go out in {SEND_TIMEOUT:.0f} s: the other side stopped reading") from None
+
+    async def _send(self, header: dict, blob: bytes) -> None:
         async with self._lock:                    # nonces must go out in order
             if self.path is not None:
                 if self.path.usable:
@@ -195,6 +206,18 @@ class Link:
 
     async def recv(self) -> tuple[dict, bytes]:
         return self.unpack(self._open(await _read_frame(self.reader)))
+
+    def abort(self) -> None:
+        """Cut the connection at once, unsent bytes and all (a close would wait for them to go)."""
+        self.closed = True
+        try:
+            transport = getattr(self.writer, "transport", None)
+            if transport is not None:
+                transport.abort()
+            else:
+                self.writer.close()
+        except (ConnectionError, OSError, RuntimeError):
+            pass
 
     async def close(self) -> None:
         if self.closed:

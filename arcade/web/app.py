@@ -15701,6 +15701,7 @@ def create_app(state: AppState) -> FastAPI:
         """Each inscription's number, block, content type and size, and its collection, for up to NUMBERS_MAX ids at once
         (the Wallet's Doginals, sorted by number). The numbers come from the most complete copy of the chain's ord index
         (DoginalIndex.lookup "numbers"); an id no copy holds yet is left out and asked again later."""
+        from .. import ord_rules
         from ..doginal_index import NUMBERS_MAX
         from ..doginals import INSCRIPTION_ID
         _signed_in_account(request)
@@ -15719,9 +15720,15 @@ def create_app(state: AppState) -> FastAPI:
         except Exception as exc:                                   # noqa: BLE001 -- no copy could answer just now
             return JSONResponse({"detail": f"the {net} index could not say just now: {exc}"}, status_code=503)
         numbers = got.get("numbers") if isinstance(got.get("numbers"), dict) else {}
+        token_p = ord_rules.token_protocol(net)
         out = {}
         for iid in ids:
             row = dict(numbers.get(iid) or {})
+            # A DRC-20 / PRC-20 operation (mint, transfer, deploy) is not an NFT: the Wallet's grid leaves it out (the operator
+            # 2026-11-05); its balance is the token index's, on the Tokens tab. `token` is only said by an index that
+            # gives `protocol` (an older walker gives none: shown as text, as before).
+            if row.get("protocol"):
+                row["token"] = str(row["protocol"]).lower() == token_p
             coll = _wallet_collection(net, iid)
             if coll:
                 row["collection"] = coll

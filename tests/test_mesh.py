@@ -1167,3 +1167,68 @@ def test_an_arcade_links_with_every_arcade_it_knows_and_a_small_one_keeps_its_ta
             for n in (a, small, *others):
                 await n.stop()
     run(go())
+
+
+# ------------------------------------------------------------------ a peer that stops reading (2026-11-05)
+
+def test_a_frame_that_cannot_go_out_cuts_the_link(monkeypatch):
+    """.25 and Strawberry each held a link to an arcade that stopped reading: the send buffers filled, each side's reader
+    waited to send its reply, and nothing moved for five hours. A send now has SEND_TIMEOUT; past it the link is cut
+    (unsent bytes dropped) and LinkError raised, so the reader and the minute's rebalance carry on."""
+    monkeypatch.setattr(linklib, "SEND_TIMEOUT", 0.2)
+
+    class Transport:
+        aborted = False
+
+        def abort(self):
+            Transport.aborted = True
+
+    class Stuck:
+        transport = Transport()
+
+        def write(self, data):
+            pass
+
+        async def drain(self):
+            await asyncio.sleep(60)                     # the other side never reads
+
+        def get_extra_info(self, name, default=None):
+            return default
+
+    async def go():
+        link = linklib.Link(None, Stuck(), b"\x01" * 32, True, b"\x02" * 32, b"\x03" * 32, None)
+        started = time.monotonic()
+        with pytest.raises(linklib.LinkError):
+            await link.send({"t": "dx", "op": "hi"})
+        assert time.monotonic() - started < 2 and link.closed and Transport.aborted
+        with pytest.raises(linklib.LinkError):
+            await link.send({"t": "dx", "op": "hi"})    # closed: refused at once
+    run(go())
+
+
+def test_one_stuck_extension_does_not_hold_up_the_minute_for_the_rest(monkeypatch):
+    """The ord index's hello rides the minute's rebalance: an extension before it that never finishes left every index
+    unheard (lookups fell back to .25's own 7% walk). Each extension now has REBALANCE_TIMEOUT."""
+    monkeypatch.setattr(meshlib, "REBALANCE_EVERY", 0.05)
+    monkeypatch.setattr(meshlib, "REBALANCE_TIMEOUT", 0.2)
+    ran = []
+
+    class Stuck:
+        async def rebalance(self):
+            ran.append("stuck")
+            await asyncio.sleep(60)
+
+    class Hello:
+        async def rebalance(self):
+            ran.append("hello")
+
+    async def go():
+        a = mk()
+        a.add_extension(Stuck())
+        a.add_extension(Hello())
+        await started(a)
+        try:
+            await until(lambda: ran.count("hello") >= 2, timeout=5, what="the next extension's rebalance, twice")
+        finally:
+            await stop(a)
+    run(go())

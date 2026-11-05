@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 A peer that stops reading no longer freezes the mesh; DRC-20 mints out of the Wallet's grid (Claude; the operator: "a lot of my ords are not displaying", "The DRC 20 mints should be [out] from the ORD grid but we shouldn't count them towards tokens")
+
+- **What happened.** At about 03:39 every arcade stopped hearing every other arcade's ord index (and Core, coverage: the
+  whole minute's rebalance). One linked arcade (207.244.232.43) stopped reading: .25's and Strawberry's links to it sat
+  with full send buffers for 5+ hours. A link's reader handles each frame inline and a reply waits for room to send, so
+  neither side read again; the minute's rebalance waited on a send to it, and every ord hello after it never went.
+  `DoginalIndex.walkers()` only asks indexes heard in the last 5 minutes, so .25 answered from its own walk (block
+  4,737,510 of 6,445,108): the Wallet's Doginals had no numbers, collections, places (no Send or List) and no DRC-20
+  balances, though Strawberry's index is whole.
+- **mesh/link.py** `SEND_TIMEOUT` 30 s: a frame that cannot go out cuts the link (`abort()`, unsent bytes dropped,
+  `LinkError`); it links again. **mesh/node.py** each extension's rebalance (and the relays' tidy) at most
+  `REBALANCE_TIMEOUT` 90 s; `REBALANCE_EVERY` for tests.
+- **doginal_index.numbers** gives `protocol`; **/account/doginal-meta** adds `token` (the chain's token "p",
+  ord_rules.token_protocol); **my_wallet.html** leaves token operations out of the grid and its counts, with one line
+  pointing to the Tokens tab (their balances are the token index's, unchanged). The kept meta is
+  `arcade.wallet.dgmeta2:` so answers from before (no `token`) are asked again. An older walker gives no protocol:
+  those stay under Text.
+- **doginal_index.lookup** (the operator: "An arcade should be able to both read its own ORD index along with shared ORD
+  index"): a copy further than this arcade's own walk is asked when heard within `LOOKUP_HEARD_WITHIN` (a day), not
+  only within the five minutes `walkers()` keeps for the walk's own sharing; one that cannot answer is passed over,
+  down to this arcade's own walk.
+- Tests: test_mesh (+2), test_doginal_wallet (+1), test_ord_explorer (protocol), test_doginal_wallet_browser (+1),
+  test_ord_dialects (+1).
+
 ### 2026-11-05 PRs #77-#80, #82-#86 merged, with the review's fixes (Claude; the operator: "Fix the problems get all 82 through 86 merged test everything make sure all the functionality works and then deploy it")
 
 Merged as their own commits: node modules (#77-#79), DigiDollar (#80), the Lite window and API keys (#85, on #79), who runs this node (#82-#84), the ord walk stalls (#86). Then these fixes, for your side to keep:
