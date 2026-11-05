@@ -2,7 +2,7 @@
   "kind": "module",
   "api": 1,
   "name": "digidollar",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "title": "DigiDollar",
   "summary": "DigiByte's stablecoin: price, supply and health from this arcade's DigiByte Cores, and minting and redeeming from your own wallet, a form for each step.",
   "pages": "anyone",
