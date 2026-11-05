@@ -28,6 +28,8 @@ export const CHAINS = {
   kot: {label: "Kotia", coin: "KOT", pubkeyhash: 46, scripthash: 45, real: true, magic: null},
   wjk: {label: "Wojakcoin", coin: "WJK", pubkeyhash: 73, scripthash: 5, real: true, magic: null},
   dgb: {label: "DigiByte", coin: "DGB", pubkeyhash: 30, scripthash: 63, real: true, hrp: "dgb", magic: null},
+  dgbtest: {label: "DigiByte testnet", coin: "DGB TEST", pubkeyhash: 126, scripthash: 140, real: false, hrp: "dgbt",
+            magic: null},
   flop: {label: "Flopcoin", coin: "FLOP", pubkeyhash: 35, scripthash: 22, real: true, magic: null},
 };
 
