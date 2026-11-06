@@ -88,6 +88,41 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 The shared walk survives restarts, reads in chunks, and uses the mesh's shared Cores (Claude; the operator: "it says it's going to take 21 days for my wallet balances", "Use cores shared over the mesh as extra readers right away. 1-4. I thought that was how we designed the walk")
+
+- **What was wrong.**
+  - No shared walk had finished on .25 in three days. A walk lived only in the arcade process, so each reload (four
+    deploys on 2026-11-05) started it again from block 0.
+  - Readers were only arcades with a public web address. The Cores other arcades share over the mesh (three of the
+    four Flopcoin nodes) were never asked, though the 2026-10-25 design cut the chain per arcade with a node.
+  - The wallet's wait was the per-block Core pace: "21 days" for a walk of ~15 minutes from block files.
+  - pepecoinarcade.com's Flopcoin block files lack block 80,597, so both its halves failed after half an hour.
+  - `coinlist.coverage` counted a watch begun on an empty index (`since` 0) as covering 0..tip: Admin called the
+    Flopcoin imports "whole", and the coin lists arcades swap said "no coins, all of it known" (commit 46feb509).
+- **Now.**
+  - `arcade/walkstore.py` (`walks.sqlite`): a walk is fixed `chunks` (≥ 20,000 blocks, about 48 a walk). Each chunk is
+    read by two different readers (one with one reader), and every read is written down as it comes back
+    (`walk_read`).
+  - A reader takes the next chunk nobody has, then second copies; a fast reader reads more. A reader that fails 3
+    times leaves that walk.
+  - A walk with chunks nobody could read stays unfinished with its good reads. `go()` finishes it first, and
+    `_walks_resume` (60 s after start, `WALK_RESUME_AFTER`) picks every unfinished walk up after a restart.
+  - Readers are this arcade, public arcades (files, else RPC), and every `coreshare.lenders` Core as `core:<node>`.
+    Those are read here with `Reader.read_over`: getblockhash then raw getblock, 50 a round trip, each block proved
+    by BorrowedRpc. One arcade is one reader: `/coins/walk/can` now says `node`, and mesh announcements map
+    wss:// hosts to keys. `walk_readers_max` still caps it (files first).
+  - Verification: every good read of a chunk must agree, or the chunk is read again here. A canary miss rests the
+    reader at once, and a late read is still judged against the chunk's verdict.
+  - After a whole walk, blocks after `hi` are marked covered for watched addresses ("watched through the walk").
+  - `Reader.read`: "not in the block files" falls back to the node's RPC for that range.
+  - The wallet says "N readers … (x of y parts done, about T left)", and queued imports use `WalkStore.pace` (the last
+    walks' measured pace). Admin → Wallet imports shows the readers, the chunks and the time left.
+- **Live check.** `read_over` against a test machine's Pepecoin main Core: 2,000 blocks, 1,013 matches, identical to the
+  block-file reader, ~3,000 blocks/s on localhost.
+- **Tests.** `tests/test_shared_walk.py` (rewritten for chunks, plus cut-short-and-resume, mesh Cores counted once,
+  batched mesh read, file-to-RPC fallback). test_wallet_imports' two walk tests now check chunks from 0 to the top.
+  446 pass across walk, import, coin-list, web, mesh, coreshare and admin.
+
 ### 2026-11-05 A home-screen app window stuck loading is started again; Reload in the pull-down bar (Claude, from the Ashvale golf sim session's report; the operator: "People should not have to do that")
 
 - **What happened.** On the operator's iPhone (installed PWA, /home), ASHVALE sat on the launcher's "Loading Ashvale…" and

@@ -559,7 +559,7 @@ def test_an_import_is_found_by_the_shared_walk_and_is_ready(client, monkeypatch)
     said = app.post("/account/imported/address", json=first)
     assert said.status_code == 200, said.text
     assert _wait_ready(app, first["address"])["state"] == "ready"
-    assert walked and walked[0][1] == 0, "walked from block 0"
+    assert walked and min(b for _, b in walked) == 0, "walked from block 0 (in chunks since 2026-11-05)"
     with state.token_index(chain).open() as db:
         assert coinlist.covers(coinlist.coverage(db, first["address"], P.messaging_start_height + 40), 0,
                                P.messaging_start_height + 40)
@@ -583,7 +583,8 @@ def test_an_import_before_the_chain_s_index_started_waits_for_it_then_walks_from
     assert again["state"] != "ready"
     _tip(state, chain, P.messaging_start_height + 40)
     assert _wait_ready(app, asked["address"])["state"] == "ready"
-    assert walked and walked[0][1] == 0 and walked[0][0] == P.messaging_start_height + 40, walked
+    assert walked and min(b for _, b in walked) == 0 and max(t for t, _ in walked) == P.messaging_start_height + 40, \
+        walked
 
 
 # --- a sign-in reads only what it needs (2026-11-05: @apple's unlock, 7,000 coins, took 12-18 s) --------------
