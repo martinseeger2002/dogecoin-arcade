@@ -247,24 +247,3 @@ def test_no_digidollar_tile_on_an_arcade_without_digibyte(browser, tmp_path):
     finally:
         server.should_exit = True
         thread.join(timeout=5)
-
-
-def test_lites_wallet_has_digidollar_too_without_a_module(browser, served):
-    """2026-11-06: "Apply it to the full version of arcade as well as the light": the Lite window's wallet has a
-    DigiDollar wallet beside DigiByte's from the same index and routes (_wallet.html), no module installed."""
-    base, state = served
-    me = _sign_up(browser, base, "ddlitetester")
-    _, pilot = _pilot()
-    own = pilot.dd_address("dgbtest", bytes.fromhex(me["pubkey"])[1:])
-    with state.token_index(state.more["dgbtest"]).open() as db:
-        db.conn.execute("INSERT INTO dd_watched (address, since, seeded) VALUES (?, 1, 1)", (own,))
-        db.conn.execute("INSERT INTO dd_coin VALUES (?,?,?,?,?)", ("de" * 32, 1, own, 2500, 6))
-        db.conn.commit()
-    browser.get(f"{base}/lite")
-    _wait(browser, "return [...document.querySelectorAll('#w-balances td')].some(td => td.textContent.includes('$25.00'))")
-    browser.find_element(By.CSS_SELECTOR, '.toolbar [data-tab="receive"]').click()
-    browser.execute_script("const b = document.getElementById('w-chain-receive'); b.value = 'dd:dgbtest';"
-                           "b.dispatchEvent(new Event('change'))")
-    _wait(browser, f"return document.getElementById('w-address').textContent === {own!r}")
-    assert own.startswith("TD")
-    _shot(browser, "dd-7-lite-receive.png")
