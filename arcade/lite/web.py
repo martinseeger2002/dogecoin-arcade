@@ -51,7 +51,8 @@ ICONS = {"ords": _icon('<circle cx="12" cy="12" r="9"/><path d="M15 9l-2 4-4 2 2
 CONSOLE_PER_MINUTE = 30
 
 def register(app, state, admin_check, signed_in, account_address, name_of, node_tools=None, public_tools=None,
-             wallet_name=lambda request: "", account_view=lambda request: False, join_facts=None, offer_for=None):
+             wallet_name=lambda request: "", account_view=lambda request: False, join_facts=None, offer_for=None,
+             admin_password_ok=None):
     """Add /lite to the node's app, with the web app's own checks: `admin_check(request, write=False)` raises unless
     the operator is asking, `signed_in(request)` is the account or None, `account_address(pubkey, chain)` and
     `name_of(address)` look an account up. `node_tools` is what the operator's commands ask of the node,
@@ -61,13 +62,23 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
     transaction an offer that account's wallet signs: (network, unsigned) -> the offer, as /account/sign takes it.
     Returns the window's page, which ARCADE Lite also serves at /."""
 
-    def caller_for(request: Request, write: bool = False, pubkeys: dict | None = None) -> cmdlib.Caller:
+    def caller_for(request: Request, write: bool = False, pubkeys: dict | None = None,
+                   password: str = "") -> cmdlib.Caller:
         local = False
+        who: dict = {}
         try:
-            local = bool((admin_check(request, write=write) or {}).get("local"))
+            who = admin_check(request, write=write) or {}
+            local = bool(who.get("local"))
             audience = "operator"
         except HTTPException:
             audience = "anyone"
+        # An operator API key is not the machine (_admin_check). It may prepare a node-wallet send only with
+        # the admin password. A person at the machine, and a remote admin session, keep today's prepare step;
+        # confirm stays local-only either way.
+        may_spend = True
+        if who.get("key"):
+            may_spend = bool(password) and admin_password_ok is not None and bool(
+                admin_password_ok(str(password), request))
         account = signed_in(request)
         pubkey = getattr(account, "pubkey", None)
         if pubkey and audience == "anyone":
@@ -76,7 +87,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
                              address=(lambda chain: account_address(pubkey, chain)) if pubkey else (lambda chain: ""),
                              name_of=name_of, node=node_tools if audience == "operator" else None, local=local,
                              reads=public_tools, pubkeys=pubkeys if isinstance(pubkeys, dict) else {},
-                             offer=offer_for(pubkey) if pubkey and offer_for else None)
+                             offer=offer_for(pubkey) if pubkey and offer_for else None, may_spend=may_spend)
 
     def tab_owner(caller, request: Request) -> str | None:
         """Whose choice of tabs this window shows: the account's when one is signed in and looking as itself, the
@@ -333,16 +344,18 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         if request.headers.get(LITE_HEADER) != "1" or doorlib.cross_site(request.headers,
                                                                         request.headers.get("host", "")):
             raise HTTPException(403, "console lines come from the Lite page")
-        caller = caller_for(request, write=True, pubkeys=payload.get("pubkeys"))
+        caller = caller_for(request, write=True, pubkeys=payload.get("pubkeys"),
+                            password=str(payload.get("password") or ""))
         if console_limited(caller, request):
             return JSONResponse({"ok": False, "error": f"at most {CONSOLE_PER_MINUTE} lines a minute; wait a little"},
                                 status_code=429, headers=NO_STORE)
         return answer_line(caller, str(payload.get("line") or ""))
 
-    def run_for(request: Request, line: str):
+    def run_for(request: Request, line: str, password: str = ""):
         """One console line for an API key's caller (/api/v1/run, web/apikeys_web.py): the key was checked on the
-        way in, and its calls a minute are the key's own limit."""
-        return answer_line(caller_for(request, write=True), line)
+        way in, and its calls a minute are the key's own limit. `password` is the admin password, asked only when
+        the line would sign the node wallet and the caller is an operator key."""
+        return answer_line(caller_for(request, write=True, password=password), line)
 
     def answer_line(caller, line: str):
         try:

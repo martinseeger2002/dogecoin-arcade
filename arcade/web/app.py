@@ -2861,9 +2861,11 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/backup/{which}/save")
     def backup_save(request: Request, which: str, folder: str = Form(""),
-                    csrf_token: str = Form("")):
+                    csrf_token: str = Form(""), password: str = Form("")):
         try:
             check_csrf(csrf_token)
+            # backupwallet writes the wallet file, which is the keys.
+            _require_local_or_admin_password(request, password)
             chain = _chain_for(which)
             target = Path(folder.strip()).expanduser() if folder.strip() \
                 else backup.default_backup_dir()
@@ -2887,10 +2889,11 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/backup/{which}/print", response_class=HTMLResponse)
     def backup_print(request: Request, which: str, understand: str = Form(""),
-                     csrf_token: str = Form("")):
+                     csrf_token: str = Form(""), password: str = Form("")):
         """Render every private key once, for printing. Never written to disk."""
         try:
             check_csrf(csrf_token)
+            _require_local_or_admin_password(request, password)
             if understand != "yes":
                 raise ValueError("tick the box first -- these keys spend your coins")
             chain = _chain_for(which)
@@ -2910,9 +2913,11 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/backup/{which}/import-key")
     def backup_import_key(request: Request, which: str, key: str = Form(""),
-                          label: str = Form("imported"), csrf_token: str = Form("")):
+                          label: str = Form("imported"), csrf_token: str = Form(""),
+                          password: str = Form("")):
         try:
             check_csrf(csrf_token)
+            _require_local_or_admin_password(request, password)
             chain = _chain_for(which)
             running = imports.get(which)
             if running and not running.done:
@@ -2936,9 +2941,11 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/backup/{which}/restore")
     def backup_restore(request: Request, which: str, source: str = Form(""),
-                       understand: str = Form(""), csrf_token: str = Form("")):
+                       understand: str = Form(""), csrf_token: str = Form(""),
+                       password: str = Form("")):
         try:
             check_csrf(csrf_token)
+            _require_local_or_admin_password(request, password)
             if understand != "yes":
                 raise ValueError(
                     "tick the box to confirm you want to replace the wallet that "
@@ -5217,8 +5224,9 @@ def create_app(state: AppState) -> FastAPI:
     def node_wallet_send(request: Request, payload: Any = Body(None)):
         """An offer the way /account/send makes one -- who, how much, the fee -- built and signed by the node's own
         wallet and held under a ticket until /admin/api/send/confirm (password from outside, as there)."""
-        _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
+        # Signing is the spend. The same local-or-password rule as confirm, before any wallet RPC.
+        _require_local_or_admin_password(request, str(said.get("password", "")), write=True)
         try:
             ctx, which = _node_wallet(str(said.get("chain", "")))
             sats = walletlib.parse_amount(str(said.get("amount", "")))
@@ -5260,8 +5268,8 @@ def create_app(state: AppState) -> FastAPI:
     @app.post("/node/wallet/token/send")
     def node_wallet_token_send(request: Request, payload: Any = Body(None)):
         """/account/token/send for the node: the token comes out of whichever of its addresses holds enough."""
-        _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
+        _require_local_or_admin_password(request, str(said.get("password", "")), write=True)
         try:
             ctx = _node_token_chain(str(said.get("chain", "")))
             index = state.token_index(ctx)
@@ -5287,8 +5295,8 @@ def create_app(state: AppState) -> FastAPI:
     @app.post("/node/wallet/nft/send")
     def node_wallet_nft_send(request: Request, payload: Any = Body(None)):
         """/account/nft/send for the node: one piece one of its addresses holds."""
-        _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
+        _require_local_or_admin_password(request, str(said.get("password", "")), write=True)
         try:
             ctx = _node_token_chain(str(said.get("chain", "")))
             index = state.token_index(ctx)
@@ -5436,7 +5444,7 @@ def create_app(state: AppState) -> FastAPI:
     @app.post("/wallet/send", response_class=HTMLResponse)
     def wallet_send(request: Request, which: str = Form(""), destination: str = Form(""),
                     amount: str = Form(""), confirmed: str = Form(""),
-                    csrf_token: str = Form("")):
+                    csrf_token: str = Form(""), password: str = Form("")):
         """Prepare, then broadcast only on a second explicit submission.
 
         The two-step is not decoration. On mainnet these are real coins, and the
@@ -5448,6 +5456,8 @@ def create_app(state: AppState) -> FastAPI:
         txid = None
         try:
             check_csrf(csrf_token)
+            # Funds, signs, and on confirmed=yes broadcasts. A bearer key is not the machine.
+            _require_local_or_admin_password(request, password)
             ctx = _context(which)
             sats = walletlib.parse_amount(amount)
             destination = _tag_address(state, destination,
@@ -5483,7 +5493,8 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/wallet/split")
     def wallet_split(request: Request, csrf_token: str = Form(""),
-                     pieces: str = Form("30"), each: str = Form("10")):
+                     pieces: str = Form("30"), each: str = Form("10"),
+                     password: str = Form("")):
         """Cut the messaging wallet into many small outputs.
 
         Chunks of a long message chain through change outputs only because there
@@ -5492,6 +5503,7 @@ def create_app(state: AppState) -> FastAPI:
         """
         try:
             check_csrf(csrf_token)
+            _require_local_or_admin_password(request, password)
             count = max(2, min(200, int(pieces or 30)))
             amount = walletlib.parse_amount(each or "10")
             with state.messaging.rpc() as rpc:
@@ -9866,8 +9878,11 @@ def create_app(state: AppState) -> FastAPI:
     @app.post("/tokens/send", response_class=HTMLResponse)
     def tokens_send(request: Request, sender: str = Form(""), property_id: str = Form(""),
                     amount: str = Form(""), recipient: str = Form(""),
-                    confirmed: str = Form(""), csrf_token: str = Form("")):
+                    confirmed: str = Form(""), csrf_token: str = Form(""),
+                    password: str = Form("")):
         check_csrf(csrf_token)
+        # Signs and, once confirmed, broadcasts from the node's wallet.
+        _require_local_or_admin_password(request, password)
         fields = dict(sender=sender, property_id=property_id, amount=amount,
                       recipient=recipient)
 
@@ -29378,6 +29393,20 @@ def create_app(state: AppState) -> FastAPI:
         except accountslib.AccountError:
             return False
 
+    def _require_local_or_admin_password(request: Request, password: str = "", *,
+                                         write: bool = False, who: dict | None = None) -> dict:
+        """The machine, or the admin password. The same rule as /admin/api/send/confirm.
+
+        An operator API key is not the machine (`_admin_check` returns local False).
+        The password is hashed only when the caller is not local, so a person at
+        the machine pays nothing extra. Raises 403 before any wallet RPC.
+        """
+        if who is None:
+            who = _admin_check(request, write=write)
+        if not who.get("local") and not _admin_password_ok(str(password or ""), request):
+            raise HTTPException(403, "the admin password, to send the node's coins")
+        return who
+
     @app.get("/admin", response_class=HTMLResponse)
     def admin_page(request: Request):
         try:
@@ -31910,8 +31939,14 @@ def create_app(state: AppState) -> FastAPI:
     def admin_send(request: Request, payload: Any = Body(None)):
         """Prepare a send from the node's own wallet: the fee is shown before
         anything goes (the same two steps as the wallet page)."""
-        _admin_check(request, write=True)
+        who = _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
+        # A remote admin session already opened the panel with the password, and confirm
+        # asks again before anything is broadcast. An operator API key has not, and
+        # prepare signs, so the key gives the same password here. The session's prepare
+        # is unchanged.
+        if who.get("key"):
+            _require_local_or_admin_password(request, str(said.get("password", "")), who=who)
         try:
             return JSONResponse(_node_prepare(str(said.get("which", "")), str(said.get("to", "")),
                                               str(said.get("amount", ""))))
@@ -31940,12 +31975,8 @@ def create_app(state: AppState) -> FastAPI:
     @app.post("/admin/api/send/confirm")
     def admin_send_confirm(request: Request, payload: Any = Body(None)):
         """Broadcast a prepared send. From outside, the password again, every time."""
-        who = _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
-        if not who["local"] and not _admin_password_ok(str(said.get("password", "")),
-                                                       request):
-            return JSONResponse({"detail": "the admin password, to send the node's coins"},
-                                status_code=403)
+        _require_local_or_admin_password(request, str(said.get("password", "")), write=True)
         try:
             return JSONResponse({"txid": _node_broadcast(str(said.get("ticket", "")))})
         except Exception as exc:                        # noqa: BLE001
@@ -36971,7 +37002,8 @@ def create_app(state: AppState) -> FastAPI:
     _lite_home = liteweb.register(app, state, admin_check=_admin_check, signed_in=signed_in,
                                   account_address=_account_address, name_of=_name_of, node_tools=node_tools,
                                   public_tools=public_tools, wallet_name=_account_name,
-                                  account_view=_account_view, join_facts=_join_facts, offer_for=_module_offer)
+                                  account_view=_account_view, join_facts=_join_facts, offer_for=_module_offer,
+                                  admin_password_ok=_admin_password_ok)
     # API keys (arcade/apikeys.py): their routes, kept by the gate below like every other.
     from . import apikeys_web
     apikeys_web.register(app, state, admin_check=_admin_check, signed_in=signed_in, run_line=_lite_home.run_line)

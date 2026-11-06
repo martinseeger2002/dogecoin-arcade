@@ -48,6 +48,10 @@ class Caller:
     reads: Any = None
     pubkeys: dict = field(default_factory=dict)
     offer: Any = None
+    #: False only when the web layer has decided this caller may not sign the node wallet (an operator API key
+    #: that has not given the admin password). A caller built here keeps True, which is what the console's own
+    #: tests use; `confirm` is still local-only.
+    may_spend: bool = True
 
     def may(self, audience: str) -> bool:
         return AUDIENCES.index(self.audience) >= AUDIENCES.index(audience)
@@ -296,7 +300,11 @@ def send(caller, wallet: str, to: str, amount: str) -> dict:
     """Prepare a send from the node's wallet and show its fee. Nothing goes until `confirm`.
 
     send <wallet> <@name or address> <amount>   for example: send ledger @alice 1.5
-    The send is held for ten minutes under a ticket, the same as Admin's Send; `confirm <ticket>` broadcasts it."""
+    The send is held for ten minutes under a ticket, the same as Admin's Send; `confirm <ticket>` broadcasts it.
+    An operator API key is not the machine, so it prepares a send only with the admin password. `confirm` stays
+    at the machine either way."""
+    if not caller.may_spend:
+        raise CommandError("the admin password, to send the node's coins")
     held = _ask(_wallet(caller).prepare, str(wallet), str(to), str(amount))
     return {**held, "next": f"confirm {held['ticket']}"}
 
