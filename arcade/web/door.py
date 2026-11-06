@@ -338,6 +338,8 @@ PUBLIC_POST = ("/auth/challenge", "/auth/login", "/auth/logout",
                "/account/keys", "/api/v1/run",
                # a browser's yes to the terms: a cookie in that browser, nothing on this node (terms.py, 2026-11-02)
                "/terms/accept",
+               # a DigiDollar send offered to the signed-in account's own wallet, signed in its browser (digidollar.py)
+               "/account/digidollar/send",
                # every session of the signed-in account ends, its own only (issue #13, 2026-10-25)
                "/auth/logout-everywhere",
                # the LLM service (llmweb.py, 2026-10-23): each acts only for the signed-in account, its own grants,

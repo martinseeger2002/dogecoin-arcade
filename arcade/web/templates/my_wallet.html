@@ -415,16 +415,15 @@ const chainNow = () => chains().find((c) => c.network === net) || chains()[0] ||
 const mine = (address) => (said.chains || []).some((c) => c.address && c.address === address);
 
 /* --- DigiDollar, a coin of its own (2026-11-05: "add the digi dollar to the main app ... it should be its own
- * wallet coin option") ---------------------------------------------------------------------------------------------
- * A tile beside DigiByte's in the coin picker, on the DigiByte chains this arcade runs while the DigiDollar node module
- * is on (app.py _digidollar_nets). It is shown as an `asset` on the DigiByte chain, as a token is: the balance is the
- * module's `ddreceive` (dollars, read from this account's key's Taproot outputs), Receive shows its DigiDollar address
- * (DD... on mainnet, TD... on the test chain), and Send is the module's `ddsend`, which this wallet reads from the
+ * wallet coin option", "just like any other coin or chain is added or borrowed") ---------------------------------------
+ * A tile right after DigiByte's in the coin picker, on every DigiByte chain this arcade gives its accounts, run here or
+ * borrowed (app.py _digidollar_nets). Shown as an `asset` on the DigiByte chain, as a token is: the balance and the
+ * DigiDollar address are /account/digidollar (the arcade's own index, arcade/digidollar.py), Receive shows that address
+ * (DD... on mainnet, TD... on the test chain), and Send is /account/digidollar/send, which this wallet reads from the
  * transaction's own bytes (coins.verifyOffer: each DigiDollar output said in dollars) before it signs. Fees are DGB. */
 const DD_NETS = {{ (dd_nets or [])|tojson }};
 const DDNET = `arcade.wallet.dd.${ME}`;
 const DD_ICON = {dgb: "/coin-dd.png", dgbtest: "/coin-ddtest.png"};
-const ddWord = (network) => network === "dgb" ? "main" : "test";
 const ddCoin = (c) => ({network: c.network, dd: true, icon: DD_ICON[c.network], letter: "D",
                         coin: c.mainnet ? "DD" : "DD TEST", label: c.mainnet ? "DigiDollar" : "DigiDollar testnet"});
 const ddAsset = (c) => ({dd: true, network: c.network, name: c.mainnet ? "DD" : "DD TEST", balance: null, address: "",
@@ -438,27 +437,27 @@ function centsOf(text) {
   return Number(m[1] || "0") * 100 + Number((m[2] || "").padEnd(2, "0"));
 }
 const DD_ADDRESSY = /^(?:DD|TD)[1-9A-HJ-NP-Za-km-z]{40,60}$/;
-/** One line of the DigiDollar module, as this account, with its wallet's public keys (the module names the owner). */
-async function ddLine(line) {
+/** This wallet's public key on a DigiByte chain, as hex: the arcade checks it is the account's, and names its coins. */
+async function ddKey(network) {
   if (!keys) keys = await wallet.opened(TAGCHAIN);
   if (!keys) throw new Error("Unlock your wallet to see your DigiDollars.");
-  const hexOf = (u) => Array.from(u, (b) => b.toString(16).padStart(2, "0")).join("");
-  const pubkeys = {};
-  for (const n of DD_NETS) { try { pubkeys[n] = hexOf(wallet.keysOn(keys, n).pubkey); } catch (e) {} }
-  const r = await fetch("/lite/api/console", {method: "POST", credentials: "same-origin",
-    headers: {"Content-Type": "application/json", "X-Arcade-Lite": "1"}, body: JSON.stringify({line, pubkeys})});
+  return Array.from(wallet.keysOn(keys, network).pubkey, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function ddAsk(url, body) {
+  const r = await fetch(url, body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}
+                                  : {cache: "no-store"});
   let j = {};
   try { j = await r.json(); } catch (e) { /* said below */ }
-  if (!j.ok) throw new Error(j.error || j.detail || "The DigiDollar module did not answer.");
-  return j.result;
+  if (!r.ok) throw new Error(j.detail || "The arcade did not answer.");
+  return j;
 }
 /** The DigiDollars this account holds on the card's chain, and its DigiDollar address. */
 async function ddLoad() {
   const a = asset;
   if (!a || !a.dd) return;
   try {
-    const got = await ddLine(`ddreceive ${ddWord(a.network)}`);
-    a.balance = Math.round(Number(got.digidollars || 0) * 100); a.address = got.address || ""; a.problem = "";
+    const got = await ddAsk(`/account/digidollar?chain=${encodeURIComponent(a.network)}&pubkey=${await ddKey(a.network)}`);
+    a.balance = Number(got.cents || 0); a.address = got.address || ""; a.problem = "";
   } catch (e) { a.problem = String(e.message || e); }
   if (asset === a) drawHead();
 }
@@ -1515,10 +1514,8 @@ function openSend(prefill = "", piece = null) {
 async function offerFor(what, to, amount, network) {
   if (what.kind === "coin") return wallet.offerSend(to, amount, network, what.from || "");
   if (what.kind === "dd") {
-    // The DigiDollar module prepares it (ddsend); the arcade checks every coin is this account's and caps the fee.
-    const got = await ddLine(`ddsend ${to} ${amount} ${ddWord(network)}`);
-    if (!got || !got.sign) throw new Error("The DigiDollar module prepared nothing to sign.");
-    return got.sign;
+    // The arcade builds it as DigiByte Core does (arcade/digidollar.py), every coin checked to be this account's.
+    return ddAsk("/account/digidollar/send", {chain: network, pubkey: await ddKey(network), to, amount});
   }
   // A DRC-20 / PRC-20 send (2026-10-22): the node checks the balance and offers the first of its three transactions.
   if (what.kind === "token20") return wallet.startToken20(keys, {chain: network, tick: what.tick, amount, to});

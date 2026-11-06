@@ -218,66 +218,9 @@ class Host:
         if not address:
             raise ModuleFailed(f"you have no address on {chain} here")
         params, call = self.chain_for(chain)
-        spend = funding.spend_for(address, params)
-        inputs, scripts, total = [], [], 0
-        asked = list(prepared.get("inputs") or [])
-        if len(asked) > MOST_INPUTS:
-            raise ModuleFailed(f"{name} asked to spend {len(asked)} coins, more than {MOST_INPUTS}")
-        seen = set()
-        for coin in asked:
-            txid, vout = str(coin.get("txid") or ""), int(coin.get("vout", -1))
-            if (txid, vout) in seen:
-                raise ModuleFailed(f"{name} asked to spend {txid[:16]}:{vout} twice")
-            seen.add((txid, vout))
-            out = call("gettxout", [txid, vout, True])
-            script = bytes.fromhex(out["scriptPubKey"]["hex"]) if out else b""
-            value = round(float(out["value"]) * 100_000_000) if out else 0
-            sequence = int(coin.get("sequence", 0xFFFFFFFF))
-            tap = coin.get("taproot")
-            if tap is not None:
-                tap = self._taproot(name, tap, script, pubkey, txid, vout)
-            elif not out or script != spend["change_script"]:
-                raise ModuleFailed(f"{name} asked to spend {txid[:16]}:{vout}, which is not an unspent coin of yours")
-            if not 0 <= sequence <= 0xFFFFFFFF or (sequence != 0xFFFFFFFF and tap is None):
-                raise ModuleFailed(f"{name} asked for sequence {sequence} on an input that does not wait")
-            total += value
-            scripts.append(script)
-            inputs.append({"txid": txid, "vout": vout, "value": value, "address": address,
-                           **({"spent": script.hex()} if tap is not None else {}),
-                           **({"sequence": sequence} if sequence != 0xFFFFFFFF else {}),
-                           **({"taproot": tap} if tap is not None else
-                              {"segwit": spend["kind"]} if spend["kind"] != "p2pkh" else {})})
-        outputs = [(int(v), bytes.fromhex(str(s))) for v, s in prepared.get("outputs") or []]
-        if not inputs or not outputs or any(v < 0 for v, _ in outputs):
-            raise ModuleFailed(f"{name} prepared a transaction with nothing to spend or nothing to pay")
-        fee = total - sum(v for v, _ in outputs)
-        if not 0 <= fee <= manifest.get("needs", {}).get("max_fee", packagelib.MOST_FEE):
-            raise ModuleFailed(f"{name} prepared a transaction that leaves {fee} to fees, more than it may")
-        version, locktime = int(prepared.get("version", 1)), int(prepared.get("locktime", 0))
-        if not 1 <= version < 2 ** 31:
-            raise ModuleFailed(f"{name} prepared a transaction of version {version}")
-        if not 0 <= locktime < 500_000_000:
-            raise ModuleFailed(f"{name} prepared a lock time of {locktime}, which is not a block height")
-        tapped = any(c.get("taproot") for c in inputs)
-        if tapped and spend["kind"] != "p2pkh":
-            raise ModuleFailed("a Taproot spend here pays its fee from an ordinary (P2PKH) address only")
-        hashes = []
-        for n, c in enumerate(inputs):
-            if c.get("taproot"):
-                rows = [{**i, "spent": spent} for i, spent in zip(inputs, scripts)]
-                leaf = bytes.fromhex(c["taproot"]["leaf"]) if c["taproot"].get("leaf") else None
-                hashes.append(taproot.sighash(rows, outputs, n, version=version, locktime=locktime, leaf=leaf).hex())
-            elif spend["kind"] == "p2pkh":
-                hashes.append(funding.sighash(inputs, outputs, n, spend["script_code"], version=version,
-                                              locktime=locktime).hex())
-            else:
-                hashes.append(funding.sighash_witness(inputs, outputs, n, spend["script_code"], c["value"],
-                                                      version=version, locktime=locktime).hex())
-        what = f"{manifest.get('title') or name}: {str(prepared.get('what') or 'a transaction')[:200]}"
-        # Unsigned, so with no witness: the plain serialisation, each input's sequence in it.
-        raw = funding.serialize_segwit(inputs, outputs, locktime=locktime, version=version)
-        return chain, funding.Unsigned(raw, inputs, outputs, hashes, fee=fee, what=what, version=version,
-                                       locktime=locktime)
+        return chain, build_offer(name, prepared, params, call, address, pubkey,
+                                  max_fee=manifest.get("needs", {}).get("max_fee", packagelib.MOST_FEE),
+                                  title=manifest.get("title") or name)
 
     @staticmethod
     def _taproot(name: str, tap: dict, script: bytes, pubkey: bytes | None, txid: str, vout: int) -> dict:
@@ -295,3 +238,71 @@ class Host:
         if not taproot.key_path_mine(script, pubkey):
             raise theirs
         return {"key": True}
+
+
+def build_offer(name: str, prepared: dict, params, call: Callable, address: str, pubkey: bytes | None, *,
+                max_fee: int, title: str) -> funding.Unsigned:
+    """An unsigned offer from a prepared transaction -- a node module's (Host.prepare), or the arcade's own DigiDollar
+    send (arcade/digidollar.py) -- for the caller whose address on the chain is `address` and whose key is `pubkey`:
+    every input read from the chain (`call`: gettxout) and refused unless it is the caller's, the fee at most `max_fee`.
+    `name` is who prepared it, in a refusal's words; `title` heads the offer's description."""
+    spend = funding.spend_for(address, params)
+    inputs, scripts, total = [], [], 0
+    asked = list(prepared.get("inputs") or [])
+    if len(asked) > MOST_INPUTS:
+        raise ModuleFailed(f"{name} asked to spend {len(asked)} coins, more than {MOST_INPUTS}")
+    seen = set()
+    for coin in asked:
+        txid, vout = str(coin.get("txid") or ""), int(coin.get("vout", -1))
+        if (txid, vout) in seen:
+            raise ModuleFailed(f"{name} asked to spend {txid[:16]}:{vout} twice")
+        seen.add((txid, vout))
+        out = call("gettxout", [txid, vout, True])
+        script = bytes.fromhex(out["scriptPubKey"]["hex"]) if out else b""
+        value = round(float(out["value"]) * 100_000_000) if out else 0
+        sequence = int(coin.get("sequence", 0xFFFFFFFF))
+        tap = coin.get("taproot")
+        if tap is not None:
+            tap = Host._taproot(name, tap, script, pubkey, txid, vout)
+        elif not out or script != spend["change_script"]:
+            raise ModuleFailed(f"{name} asked to spend {txid[:16]}:{vout}, which is not an unspent coin of yours")
+        if not 0 <= sequence <= 0xFFFFFFFF or (sequence != 0xFFFFFFFF and tap is None):
+            raise ModuleFailed(f"{name} asked for sequence {sequence} on an input that does not wait")
+        total += value
+        scripts.append(script)
+        inputs.append({"txid": txid, "vout": vout, "value": value, "address": address,
+                       **({"spent": script.hex()} if tap is not None else {}),
+                       **({"sequence": sequence} if sequence != 0xFFFFFFFF else {}),
+                       **({"taproot": tap} if tap is not None else
+                          {"segwit": spend["kind"]} if spend["kind"] != "p2pkh" else {})})
+    outputs = [(int(v), bytes.fromhex(str(s))) for v, s in prepared.get("outputs") or []]
+    if not inputs or not outputs or any(v < 0 for v, _ in outputs):
+        raise ModuleFailed(f"{name} prepared a transaction with nothing to spend or nothing to pay")
+    fee = total - sum(v for v, _ in outputs)
+    if not 0 <= fee <= max_fee:
+        raise ModuleFailed(f"{name} prepared a transaction that leaves {fee} to fees, more than it may")
+    version, locktime = int(prepared.get("version", 1)), int(prepared.get("locktime", 0))
+    if not 1 <= version < 2 ** 31:
+        raise ModuleFailed(f"{name} prepared a transaction of version {version}")
+    if not 0 <= locktime < 500_000_000:
+        raise ModuleFailed(f"{name} prepared a lock time of {locktime}, which is not a block height")
+    tapped = any(c.get("taproot") for c in inputs)
+    if tapped and spend["kind"] != "p2pkh":
+        raise ModuleFailed("a Taproot spend here pays its fee from an ordinary (P2PKH) address only")
+    hashes = []
+    for n, c in enumerate(inputs):
+        if c.get("taproot"):
+            rows = [{**i, "spent": spent} for i, spent in zip(inputs, scripts)]
+            leaf = bytes.fromhex(c["taproot"]["leaf"]) if c["taproot"].get("leaf") else None
+            hashes.append(taproot.sighash(rows, outputs, n, version=version, locktime=locktime, leaf=leaf).hex())
+        elif spend["kind"] == "p2pkh":
+            hashes.append(funding.sighash(inputs, outputs, n, spend["script_code"], version=version,
+                                          locktime=locktime).hex())
+        else:
+            hashes.append(funding.sighash_witness(inputs, outputs, n, spend["script_code"], c["value"],
+                                                  version=version, locktime=locktime).hex())
+    what = f"{title}: {str(prepared.get('what') or 'a transaction')[:200]}"
+    # Unsigned, so with no witness: the plain serialisation, each input's sequence in it.
+    raw = funding.serialize_segwit(inputs, outputs, locktime=locktime, version=version)
+    return funding.Unsigned(raw, inputs, outputs, hashes, fee=fee, what=what, version=version,
+                           locktime=locktime)

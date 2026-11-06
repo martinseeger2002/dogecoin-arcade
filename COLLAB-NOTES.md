@@ -103,6 +103,31 @@ coding agent, so it is written for agents first and people second.
   route needs a claim, and a Lite node serves only the core's): claimed by the Wallet module (core) in modules.py.
 - **Tests.** The whole suite on a test machine (`pytest -n 8 tests`): 5,027 passed, then the fix above; 6 more failures under
   -n 8 load (module sandbox timeouts, two browser tests) passed run alone, and on master before the merge.
+### 2026-11-05 DigiDollar is a coin of its own in the Wallet, wherever DigiByte is (Claude; the operator: "add the digi dollar to the main app. Find the digi dollar icon it should be its own wallet coin option", "It should be able to be added, just like any other coin or chain is added or borrowed ... not dependent on the installation of a module")
+
+- **What.** The Wallet's coin picker has a DigiDollar tile right after each DigiByte chain the arcade gives its
+  accounts, run here or borrowed (`_digidollar_nets`). Picking it shows the account's DigiDollars in dollars, its
+  DigiDollar address (DD... mainnet, TD... test chain) under Receive, and Send. Fees are DGB. No module needed.
+- **The coins** come from the arcade's own DigiByte index (new `arcade/digidollar.py`, beside utxos): `dd_watched` and
+  a journalled `dd_coin`, filled by `indexer.ArcadeHandler.on_connect` from the same blocks as DGB's. An account is
+  watched from its first look at DigiDollar; what it got before is read once from the Core's coin set
+  (`scantxoutset raw(...)`) where the arcade runs its Core. A borrowed Core has no coin set to lend for this, so there
+  it counts from the first look.
+- **Routes.** `GET /account/digidollar?chain=&pubkey=` (the key is checked against the account's DGB address) and
+  `POST /account/digidollar/send` (in door.py PUBLIC_POST). The send is built as DigiByte Core builds one
+  (BuildTransferTransaction, version 0x02000770) and checked by `modhost.build_offer`, now a function that
+  `Host.prepare` calls too. The browser reads it from its own bytes (coins.verifyOffer says each DigiDollar output in
+  dollars), refuses anything but one payment of the dollars typed to the address typed, and signs the Taproot inputs
+  with Schnorr, as Lite does for the module.
+- **Mainnet.** Sends are on, on mainnet too: a send only moves DigiDollars by the owner's key, and a bad signature is
+  refused by the network, not lost. Mints and redeems (vaults) stay in the DigiDollar module, behind its switch.
+- **Icons.** `coin-dd.png` / `coin-ddtest.png`: the inner disc of DigiByte Core's own DigiDollar badge
+  (DigiByte-Core/digibyte `presentation/slides/images/DigiDollar.jpg`), purple for the test chain as DigiByte's is.
+- **Tests.** `tests/test_digidollar_core.py` (addresses and sends match the pilot module, which a real DigiByte Core
+  checks in test_digidollar_regtest.py; the index in and out), `tests/test_digidollar_wallet_browser.py` (tile, balance,
+  Receive, a send to its review, a refusal said, no tile without DigiByte).
+- **For your side.** Nothing needed; your DigiByte arcades show it after the update. The DigiDollar module still works
+  as before for mint and redeem.
 
 ### 2026-11-05 The shared walk survives restarts, reads in chunks, and uses the mesh's shared Cores (Claude; the operator: "it says it's going to take 21 days for my wallet balances", "Use cores shared over the mesh as extra readers right away. 1-4. I thought that was how we designed the walk")
 

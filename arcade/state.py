@@ -351,6 +351,9 @@ def install_schema(db: Database) -> None:
     # The block ranges each watched address's coins are complete over, beyond watching (arcade/coinlist.py).
     from . import coinlist
     coinlist.install(db)
+    # DigiDollar coins of the accounts that opened DigiDollar (arcade/digidollar.py): journalled like the coins.
+    from . import digidollar
+    digidollar.install(db)
     _rekey_moves(db)
     _file_collections(db)
 
