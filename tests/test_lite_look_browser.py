@@ -48,23 +48,35 @@ def test_admin_wears_the_lite_look_in_lite_and_its_own_in_full(browser, served):
                                      or d.find_element(By.ID, "m-unlock").is_displayed())
     state.set_setting("edition", "lite")
     try:
-        for page in ("/admin", "/wallet", "/contacts"):
+        for page in ("/wallet", "/contacts"):
             browser.get(base + page)
             assert browser.find_element(By.CSS_SELECTOR, "body[data-lite]")
             body = _look(browser, "body", "font-size", "font-family", "background-color")
             assert body[0] == "13px" and "system-ui" in body[1], (page, body)
             _shot(browser, page.strip("/"))
+            if page == "/wallet":           # a page on its own wears Lite's bar (Admin, PR #94, lives in the window)
+                assert browser.find_element(By.CSS_SELECTOR, ".brand a").text.endswith(" Lite")
+                bar = [a.text for a in browser.find_elements(By.CSS_SELECTOR, "header nav a")]
+                assert bar == ["Overview", "Send", "Receive", "Transactions", "Address book", "Messages", "Help",
+                               "Admin"], "Lite's own modules only: Messages is the core's; Apps joins when switched on"
+        # Admin opened on its own lands in the window's Admin tab (PR #94, 2026-11-05), and wears the Lite look there.
         browser.get(base + "/admin")
+        WebDriverWait(browser, 30).until(lambda d: d.current_url.endswith("/#admin"))
+        frame = WebDriverWait(browser, 30).until(
+            lambda d: d.find_element(By.CSS_SELECTOR, 'section[data-panel="admin"] iframe'))
+        WebDriverWait(browser, 30).until(lambda d: (frame.get_attribute("src") or "").endswith("/admin"))
+        browser.switch_to.frame(frame)
+        WebDriverWait(browser, 30).until(lambda d: d.find_elements(By.CSS_SELECTOR, ".admintabs button"))
+        assert browser.find_element(By.CSS_SELECTOR, "body[data-lite]")
+        body = _look(browser, "body", "font-size", "font-family")
+        assert body[0] == "13px" and "system-ui" in body[1], ("/admin", body)
+        _shot(browser, "admin")
         tab = _look(browser, ".admintabs button", "border-radius", "font-weight")
         assert tab[0] == "3px 3px 0px 0px", tab
         panel = _look(browser, ".panel", "border-radius")
         assert panel == ["3px"], panel
-        assert browser.find_element(By.CSS_SELECTOR, ".brand a").text.endswith(" Lite")
         tabs = [b.text for b in browser.find_elements(By.CSS_SELECTOR, ".admintabs button")]
         assert "Coins & chains" in tabs and "Edition & modules" in tabs, "every control Admin has is still there"
-        bar = [a.text for a in browser.find_elements(By.CSS_SELECTOR, "header nav a")]
-        assert bar == ["Overview", "Send", "Receive", "Transactions", "Address book", "Messages", "Help", "Admin"], \
-            "Lite's own modules only: Messages is the core's; Apps joins the bar when it is switched on"
         assert _look(browser, ".admintabs + *, .panel", "box-shadow") == ["none"]
         _press(browser, '.admintabs button[data-tab="coins"]')
         WebDriverWait(browser, 30).until(lambda d: d.find_element(By.ID, "chainrows").is_displayed())
@@ -78,10 +90,13 @@ def test_admin_wears_the_lite_look_in_lite_and_its_own_in_full(browser, served):
         WebDriverWait(browser, 30).until(
             lambda d: "Needs: Ord indexes and Explore" in d.find_element(By.CSS_SELECTOR, "#modules tbody").text)
         _shot(browser, "admin-modules")
+        browser.switch_to.default_content()
+        browser.get(base + "/wallet")
         assert browser.find_element(By.LINK_TEXT, "Send").get_attribute("href").endswith("/#send")
         browser.get(base + "/#send")                   # (a test node's setup card covers the bar)
         assert browser.find_element(By.ID, "w-form").is_displayed(), "the bar's Send opens the window's own tab"
     finally:
+        browser.switch_to.default_content()
         state.set_setting("edition", None)
 
 
