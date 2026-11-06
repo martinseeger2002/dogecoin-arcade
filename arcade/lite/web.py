@@ -108,6 +108,9 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             # them, opened inside the window (2026-11-04, SadFrog: "when enabled should be a part of the ui").
             "tabs": [t for t in module_tabs(caller, request) if not t["hidden"]],
             "tab_owner": bool(tab_owner(caller, request)), "icons": ICONS,
+            # DigiDollars in the wallet's own Send, Receive and balances, while the DigiDollar module is on and this
+            # caller may use it (2026-11-06, SadFrog: "along side their wallet receives. and add them to send").
+            "digidollar": any(t["id"] == "digidollar" for t in module_tabs(caller, request)),
             # Window -> Build's guide (_build.html) names a theme's limits as packages.py holds them
             "fonts": list(packagelib.FONTS), "most_files": packagelib.MOST_FILES,
             "most_kb": packagelib.MOST_BYTES // 1000,
@@ -184,6 +187,84 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             except Exception as exc:                       # noqa: BLE001 -- one part failing still shows the rest
                 out[key] = {"error": str(exc)}
         return JSONResponse(out, headers=NO_STORE)
+
+    dd_keys: dict[str, bytes] = {}          # an @name's coin key, once read and checked against its address
+
+    def dd_key_of_name(tag: str) -> bytes:
+        """The coin key behind an @name on the name chain (arcade/ddaddress.py), or ValueError in plain words."""
+        from .. import ddaddress as ddlib
+        from ..script import b58check_decode
+        name = tag.lstrip("@").strip().lower()
+        if name in dd_keys:
+            return dd_keys[name]
+        claim = state.token_index(state.messaging).claim_of(name)
+        if not claim:
+            raise ValueError(f"nobody holds @{name}")
+        address = claim["address"]
+        key_hash = b58check_decode(address)[1]
+        key = None
+        # An account of this arcade told it its key when it signed up: the cheap answer, checked all the same.
+        for k, v in state.settings().items():
+            if k.startswith("address:") and v == address:
+                said = state.setting("coinkey:" + k.split(":", 1)[1], "")
+                try:
+                    found = bytes.fromhex(str(said or ""))
+                except ValueError:
+                    found = b""
+                if len(found) == 33 and ddlib.hash160(found) == key_hash:
+                    key = found
+        txids = [claim["claimed_txid"]]
+        if key is None:
+            with state.store() as store:
+                row = store.key_for(address)
+            if row is not None:
+                txids.append(row["txid"])
+        for txid in txids:
+            if key is not None:
+                break
+            try:
+                with state.messaging.rpc() as rpc:
+                    key = ddlib.key_in(rpc.call("getrawtransaction", txid, 1), key_hash)
+            except Exception:
+                key = None
+        if key is None:
+            raise ValueError(f"@{name}'s key is not on the chain yet: ask them for their DigiDollar address (TD...)")
+        dd_keys[name] = key
+        return key
+
+    @app.get("/lite/api/ddaddress")
+    def lite_ddaddress(request: Request, to: str = "", chain: str = "dgbtest"):
+        """{address, tag}: the DigiDollar address an @name is paid at on `chain` (dgbtest), a DD... / TD... address as
+        typed, or the signed-in account's own (`to=me`). Wallet -> Receive and Send ask it (_wallet.html)."""
+        from .. import ddaddress as ddlib
+        to, chain = str(to or "").strip(), str(chain or "")
+        if chain not in ddlib.VERSIONS:
+            return JSONResponse({"detail": "DigiDollars are on dgb and dgbtest"}, status_code=400, headers=NO_STORE)
+        try:
+            if to == "me":
+                account = signed_in(request)
+                if account is None:
+                    raise ValueError("sign in to have a DigiDollar address")
+                said = state.setting(f"coinkey:{chain}:{account.pubkey}", "") or (
+                    state.setting(f"coinkey:{account.pubkey}", "") if chain in ddlib.BY_NAME else "")
+                if not said:
+                    raise ValueError("open your wallet once in this arcade's window, so it knows your key")
+                return JSONResponse({"address": ddlib.address(chain, bytes.fromhex(str(said))), "tag": ""},
+                                    headers=NO_STORE)
+            typed = ddlib.network_of(to)
+            if typed is not None:
+                if typed != chain:
+                    raise ValueError(f"{to} is a DigiDollar address on the other chain")
+                return JSONResponse({"address": to, "tag": ""}, headers=NO_STORE)
+            if not to.startswith("@") and not to.replace("_", "").isalnum():
+                raise ValueError(f"{to} is neither an @name nor a DigiDollar address (TD... or DD...)")
+            if chain not in ddlib.BY_NAME:
+                raise ValueError("on mainnet, pay a DigiDollar address (DD...): an @name's mainnet key is not on the "
+                                 "name chain")
+            return JSONResponse({"address": ddlib.address(chain, dd_key_of_name(to)), "tag": to.lstrip("@").lower()},
+                                headers=NO_STORE)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400, headers=NO_STORE)
 
     @app.get("/lite/api/tabs")
     def lite_tabs(request: Request):
