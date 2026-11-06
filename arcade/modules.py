@@ -106,9 +106,7 @@ _MODULES = (
                    "/account/split", "/account/vault", "/account/wallets", "/admin/api/imports",
                    "/admin/api/utxoset", "/admin/api/receive", "/admin/api/send",
                    # one bare address's coins for a signed mesh arcade (peer_address.py, PR #92)
-                   "/peer/address",
-                   # DigiDollar, a coin of the Wallet's on DigiByte (digidollar.py) and its icons
-                   "/account/digidollar"),
+                   "/peer/address"),
            jobs=("watch-accounts", "utxo-sets", "walk-home")),
     Module("addressbook", "core", "Address book", "Contacts by @name and address, read from the names on the "
            "messaging chain.",
