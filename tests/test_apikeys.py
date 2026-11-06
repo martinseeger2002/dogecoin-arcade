@@ -160,7 +160,7 @@ def test_a_key_runs_console_lines_only_as_itself_and_never_as_the_machine(app):
     operator key counted as the node's own machine, so `confirm` would send from the node wallet."""
     assert app.post("/api/v1/run", headers=OUTSIDE, json={"line": "help"}).status_code == 401
     games = _key(app, modules=["feed"])
-    assert app.post("/api/v1/run", headers=_with(games), json={"line": "help"}).status_code == 403
+    assert app.post("/api/v1/run", headers=_with(games), json={"line": "getbalances"}).status_code == 403
     whole = _key(app)
     said = app.post("/api/v1/run", headers=_with(whole), json={"line": "help"})
     assert said.status_code == 200 and said.json()["ok"], said.text
@@ -168,3 +168,42 @@ def test_a_key_runs_console_lines_only_as_itself_and_never_as_the_machine(app):
     assert keylib.caller_ip({"x-forwarded-for": "203.0.113.5"}, "198.51.100.9") == ("198.51.100.9", False), \
         "a stranger's X-Forwarded-For is not taken"
     assert keylib.caller_ip({"x-forwarded-for": "203.0.113.5"}, "127.0.0.1") == ("203.0.113.5", True)
+
+
+def _run(app, key, line):
+    return app.post("/api/v1/run", headers=_with(key), json={"line": line})
+
+
+def test_a_key_limited_to_some_modules_runs_their_console_lines_and_the_cores_public_reads_only(app):
+    """2026-11-06: a key limited to some modules was refused every console line; now the line is held to the key's
+    modules, and the core's public reads (help, getnodeinfo, listchains) stay open to every key."""
+    feed = _key(app, modules=["feed"])
+    said = _run(app, feed, "readfeed")
+    assert said.status_code == 200, said.text
+    for line in ("help", "getnodeinfo", "listchains"):
+        assert _run(app, feed, line).status_code == 200, line
+    assert "readfeed" in _run(app, feed, "help").json()["result"]
+    assert "getbalances" not in _run(app, feed, "help").json()["result"], "help lists only what the key may run"
+    refused = _run(app, feed, "getbalances")
+    assert refused.status_code == 403 and "Wallet module" in refused.json()["detail"], refused.text
+    assert _run(app, feed, "install mining").status_code == 403, "the core's changes are not the feed's"
+    assert _run(app, feed, "getmeshinfo").status_code == 403, "the core's operator reads are not every key's"
+    assert _run(app, feed, "post hello from a feed key").status_code == 200, "a feed key with write posts"
+
+
+def test_a_key_that_reads_only_runs_the_console_lines_that_read_and_no_others(app):
+    """2026-11-06: a key made to read only could not post to /api/v1/run at all; now it runs the lines that only read
+    and is refused, by name, every line that changes something. Its other posts are refused as before."""
+    reader = _key(app, write=False)
+    for line in ("listchains", "getnodeinfo", "help", "getmeshinfo"):
+        said = _run(app, reader, line)
+        assert said.status_code == 200 and said.json()["ok"], (line, said.text)
+    for line in ("post hello", "install mining", "edition lite", "look web", "confirm 1234"):
+        said = _run(app, reader, line)
+        assert said.status_code == 403 and "reads only" in said.json()["detail"], (line, said.text)
+    assert "install" not in _run(app, reader, "help").json()["result"].split()
+    assert app.post("/admin/api/modules", headers=_with(reader), json={"module": "feed", "on": False}).status_code == 403
+    both = _key(app, write=False, modules=["feed"])
+    assert _run(app, both, "readfeed").status_code == 200
+    assert _run(app, both, "post hello").status_code == 403
+    assert _run(app, both, "getbalances").status_code == 403

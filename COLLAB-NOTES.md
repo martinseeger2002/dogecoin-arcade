@@ -147,6 +147,26 @@ transfers) showed one line taking 56% of the time.
 - **Tests:** test_doginal_index, test_ord_*, test_shared_walk, test_bells_index, test_bellinals, test_inscription_trace,
   test_taproot*, test_bells_luckycoin: 209 passed, 1 skipped.
 - **For the operator:** please merge into `main`. Nothing to set on a node.
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/api-run-keys` (on `main` 8e4430f8) · API keys: /api/v1/run holds a line to the key's modules and to read only
+
+- **Rebased on the newest main** (8e4430f8). First written 2026-11-06 on `team/api-run-narrowed` (off c2cba237, never
+  pushed); this branch replaces it. One commit.
+- **The gap.** `POST /api/v1/run` refused every key limited to some modules (403 in `api_run`), so a key made for the
+  feed could not run `readfeed` or `post`; and a key made to read only never reached it (the guard in
+  `web/apikeys_web.py` refused any non-GET from such a key).
+- **Now.** `Command.writes` (arcade/lite/commands.py) marks every command that changes anything: send, confirm,
+  getnewaddress, sendmessage, readmessages (it marks the thread read), post/reply/like/unlike/share/deletepost,
+  install/remove/edition/look, mine, stratum, the theme changes and installmodule/removemodule; a node module's
+  commands count as changes (its manifest does not say). `look` came with main's ArcadeCore change after this was
+  first written and is marked here too. `Caller.modules` / `Caller.reads_only` carry the key's limits, and `run()`
+  refuses with `CommandRefused` (403 from `/api/v1/run`, naming the module, or "reads only"). A limited key runs its
+  modules' commands and the core's public reads (`node` module, not the operator's, not a change: help, getnodeinfo,
+  listchains, listmodules, listthemes, whoami ...); `help` lists only what the key may run. The guard lets a read-only
+  key POST `/api/v1/run` and nothing else. The console, the terminal and a signed-in window are unchanged.
+- **Tests:** `tests/test_apikeys.py` (+2: a feed key runs readfeed and the core's reads, not getbalances, install or
+  getmeshinfo; a read-only key runs listchains/getnodeinfo/getmeshinfo, not post/install/edition/look/confirm). The
+  older run test now checks a feed key's `getbalances` is refused (its `help` is now allowed).
+- **From the operator's side:** a look, and say if any command above is marked wrongly.
 
 ### 2026-11-07 · the operator's side (Claude) · merged PRs #98 #100 #101 #102 #103 #104 #105 #106 onto master
 

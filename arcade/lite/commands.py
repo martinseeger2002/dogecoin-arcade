@@ -29,6 +29,11 @@ class CommandError(Exception):
     """A command could not run: an unknown name, a wrong argument, or the node could not answer."""
 
 
+class CommandRefused(CommandError):
+    """The caller's API key does not let it run this command: a module it does not open, or a change by a key that
+    reads only. The web layer answers it with 403 (/api/v1/run)."""
+
+
 @dataclass(frozen=True)
 class Caller:
     """Who is asking: the node's state, their audience, and their account's public key when signed in.
@@ -52,6 +57,10 @@ class Caller:
     #: that has not given the admin password). A caller built here keeps True, which is what the console's own
     #: tests use; `confirm` is still local-only.
     may_spend: bool = True
+    #: An API key's own limits (/api/v1/run, web/apikeys_web.py): the modules it opens (None for every one), and
+    #: whether it was made to read only. The console, the terminal and a signed-in window keep None and False.
+    modules: frozenset | None = None
+    reads_only: bool = False
 
     def may(self, audience: str) -> bool:
         return AUDIENCES.index(self.audience) >= AUDIENCES.index(audience)
@@ -68,6 +77,9 @@ class Command:
     form: dict | None = field(default=None, compare=False)
     #: Where it stands in its module's manifest: the window draws the forms in that order, the steps' own.
     order: int = 0
+    #: True when it changes anything: sends, posts, switches, installs, or marks something read. A key that reads only
+    #: does not run it. A node module's commands count as changes: its manifest does not say which only read.
+    writes: bool = False
 
     @property
     def summary(self) -> str:
@@ -84,12 +96,12 @@ class Command:
 COMMANDS: dict[str, Command] = {}
 
 
-def command(category: str, audience: str = "anyone", module: str = "node"):
+def command(category: str, audience: str = "anyone", module: str = "node", writes: bool = False):
     assert audience in AUDIENCES, audience
     assert module in modulelib.MODULES, module
 
     def register(fn):
-        COMMANDS[fn.__name__] = Command(fn.__name__, category, audience, fn, module)
+        COMMANDS[fn.__name__] = Command(fn.__name__, category, audience, fn, module, writes=writes)
         return fn
     return register
 
@@ -108,6 +120,19 @@ def _installed(caller: Caller, cmd: Command) -> bool:
         return getattr(modulelib.MODULES.get(cmd.module), "core", False)
 
 
+def _refused(caller: Caller, cmd: Command) -> str:
+    """Why the caller's API key may not run this command, or "" when it may. A key limited to some modules runs their
+    commands, and the core's that only read and are not the operator's (help, getnodeinfo, listchains, whoami ...),
+    which tell anyone about this arcade and the caller; a key that reads only runs no command that changes anything."""
+    if caller.modules is not None and cmd.module not in caller.modules \
+            and not (cmd.module == "node" and not cmd.writes and cmd.audience != "operator"):
+        title = getattr(modulelib.MODULES.get(cmd.module), "title", cmd.module)
+        return f"{cmd.name}: this API key does not open the {title} module ({cmd.module})"
+    if caller.reads_only and cmd.writes:
+        return f"{cmd.name}: this API key reads only, and {cmd.name} changes something"
+    return ""
+
+
 def _commands(caller: Caller) -> dict[str, Command]:
     """Every command: the arcade's own, and those of the node modules installed from packages (`_module_commands`).
     A module's command never takes the name of one of the arcade's."""
@@ -119,6 +144,9 @@ def run(caller: Caller, name: str, *args: Any) -> Any:
     if cmd is None or not caller.may(cmd.audience):
         # One answer for both, so a visitor cannot list the operator's commands by trying names.
         raise CommandError(f"no command {name!r}; `help` lists them")
+    refused = _refused(caller, cmd)
+    if refused:
+        raise CommandRefused(refused)
     if not _installed(caller, cmd):
         hint = f"; `install {cmd.module}` switches it on" if caller.may("operator") else ""
         title = getattr(modulelib.MODULES.get(cmd.module), "title", cmd.module)
@@ -131,7 +159,8 @@ def run(caller: Caller, name: str, *args: Any) -> Any:
 
 
 def available(caller: Caller) -> list[Command]:
-    return sorted((c for c in _commands(caller).values() if caller.may(c.audience) and _installed(caller, c)),
+    return sorted((c for c in _commands(caller).values()
+                   if caller.may(c.audience) and _installed(caller, c) and not _refused(caller, c)),
                   key=lambda c: (c.category, c.name))
 
 
@@ -261,7 +290,7 @@ def getbalances(caller) -> list[dict]:
     return _ask(_wallet(caller).wallets)
 
 
-@command("wallet", audience="operator", module="wallet")
+@command("wallet", audience="operator", module="wallet", writes=True)
 def getnewaddress(caller, wallet: str) -> str:
     """An address the node's wallet is paid at: a new one from a Core wallet, the key's own on a key wallet.
 
@@ -295,7 +324,7 @@ def listunspent(caller, wallet: str) -> list[dict]:
              if k in ("txid", "vout", "address", "amount", "confirmations", "value", "height")} for r in rows]
 
 
-@command("wallet", audience="operator", module="wallet")
+@command("wallet", audience="operator", module="wallet", writes=True)
 def send(caller, wallet: str, to: str, amount: str) -> dict:
     """Prepare a send from the node's wallet and show its fee. Nothing goes until `confirm`.
 
@@ -309,7 +338,7 @@ def send(caller, wallet: str, to: str, amount: str) -> dict:
     return {**held, "next": f"confirm {held['ticket']}"}
 
 
-@command("wallet", audience="operator", module="wallet")
+@command("wallet", audience="operator", module="wallet", writes=True)
 def confirm(caller, ticket: str) -> dict:
     """Broadcast a send that `send` prepared. Only at the node's own machine.
 
@@ -363,7 +392,7 @@ def listconversations(caller) -> list[dict]:
              "preview": _text(t.get("preview"))[:80]} for t in threads]
 
 
-@command("messages", audience="user", module="messages")
+@command("messages", audience="user", module="messages", writes=True)
 def readmessages(caller, who: str, count: int = 20) -> list[dict]:
     """One conversation's last messages, oldest first; they are then read, as when the conversation is opened.
 
@@ -380,7 +409,7 @@ def readmessages(caller, who: str, count: int = 20) -> list[dict]:
              "txid": m.get("txid"), "confirmed": m.get("height") is not None} for m in items]
 
 
-@command("messages", audience="user", module="messages")
+@command("messages", audience="user", module="messages", writes=True)
 def sendmessage(caller, who: str, *text: str) -> dict:
     """Send a message, on testnet, at once, as the Messages tab sends one: yours, or the node's for its operator.
 
@@ -429,7 +458,7 @@ def readposts(caller, who: str, count: int = 20) -> list[dict]:
     return _ask(_read(caller, "feed"), "new", str(who), _count(count))
 
 
-@command("feed", audience="operator", module="feed")
+@command("feed", audience="operator", module="feed", writes=True)
 def post(caller, *text: str) -> dict:
     """Post on the feed as the node's @name, in one transaction.
 
@@ -441,7 +470,7 @@ def _act(caller, doing: str, txid: str, text: str = "") -> dict:
     return {"txid": _ask(_wallet(caller).feed_act, doing, str(txid), text)}
 
 
-@command("feed", audience="operator", module="feed")
+@command("feed", audience="operator", module="feed", writes=True)
 def reply(caller, txid: str, *text: str) -> dict:
     """Reply to a post or a reply.
 
@@ -451,25 +480,25 @@ def reply(caller, txid: str, *text: str) -> dict:
     return _act(caller, "reply", txid, " ".join(str(t) for t in text))
 
 
-@command("feed", audience="operator", module="feed")
+@command("feed", audience="operator", module="feed", writes=True)
 def like(caller, txid: str) -> dict:
     """Like a post or a reply."""
     return _act(caller, "like", txid)
 
 
-@command("feed", audience="operator", module="feed")
+@command("feed", audience="operator", module="feed", writes=True)
 def unlike(caller, txid: str) -> dict:
     """Take a like back."""
     return _act(caller, "unlike", txid)
 
 
-@command("feed", audience="operator", module="feed")
+@command("feed", audience="operator", module="feed", writes=True)
 def share(caller, txid: str) -> dict:
     """Share a post onto the node's own feed."""
     return _act(caller, "share", txid)
 
 
-@command("feed", audience="operator", module="feed")
+@command("feed", audience="operator", module="feed", writes=True)
 def deletepost(caller, txid: str) -> dict:
     """Delete one of the node's own posts or replies. The chain keeps it; every arcade stops showing it."""
     return _act(caller, "delete", txid)
@@ -566,7 +595,7 @@ def _switched(caller, before: frozenset) -> str:
     return "; ".join(said) or "nothing changed"
 
 
-@command("modules", audience="operator")
+@command("modules", audience="operator", writes=True)
 def install(caller, module: str) -> str:
     """Switch a module on, and the modules it needs.
 
@@ -583,7 +612,7 @@ def install(caller, module: str) -> str:
     return _switched(caller, before)
 
 
-@command("modules", audience="operator")
+@command("modules", audience="operator", writes=True)
 def remove(caller, module: str, confirm: str = "") -> str:
     """Switch a module off. Its data stays where it is, for when it is installed again.
 
@@ -602,7 +631,7 @@ def remove(caller, module: str, confirm: str = "") -> str:
     return _switched(caller, before)
 
 
-@command("modules", audience="operator")
+@command("modules", audience="operator", writes=True)
 def edition(caller, name: str = "", confirm: str = "") -> str:
     """Say this arcade's edition, or change it.
 
@@ -626,7 +655,7 @@ def edition(caller, name: str = "", confirm: str = "") -> str:
     return f"edition {name}; " + _switched(caller, before)
 
 
-@command("modules", audience="operator")
+@command("modules", audience="operator", writes=True)
 def look(caller, name: str = "") -> str:
     """Say the look this arcade opens in, or change it.
 
@@ -663,7 +692,7 @@ def listchains(caller) -> list[dict]:
     return out
 
 
-@command("mining", audience="operator", module="mining")
+@command("mining", audience="operator", module="mining", writes=True)
 def mine(caller, chain: str, blocks: int = 0, to: str = "") -> dict:
     """Mine a test chain's blocks to your own account, on this machine's CPU, until `mine stop`.
 
@@ -709,7 +738,7 @@ def listmining(caller) -> list[dict]:
     return mininglib.table(caller.state)
 
 
-@command("mining", audience="operator", module="mining")
+@command("mining", audience="operator", module="mining", writes=True)
 def stratum(caller, action: str = "", chain: str = "", algo: str = "", address: str = "", port: int = 0) -> dict:
     """The stratum server for ASICs on this network: its state, or start and stop it.
 
@@ -836,7 +865,7 @@ def listthemes(caller) -> dict:
     return out
 
 
-@command("themes", audience="user")
+@command("themes", audience="user", writes=True)
 def usetheme(caller, theme: str = "none") -> str:
     """Pick your own theme from the ones this arcade lets people pick, or `none` for the arcade's.
 
@@ -864,7 +893,7 @@ def checktheme(caller, folder: str) -> dict:
             "files": sorted(files)}
 
 
-@command("themes", audience="operator")
+@command("themes", audience="operator", writes=True)
 def trytheme(caller, folder: str) -> str:
     """Show a theme's folder in this machine's browser only, as it is now, until `trytheme off`.
 
@@ -878,7 +907,7 @@ def trytheme(caller, folder: str) -> str:
     return "reload the page on this machine to see it; nobody else does"
 
 
-@command("themes", audience="operator")
+@command("themes", audience="operator", writes=True)
 def installtheme(caller, folder: str) -> dict:
     """Keep a theme from a folder on this machine, under its id. It shows nowhere until it is chosen.
 
@@ -894,7 +923,7 @@ def installtheme(caller, folder: str) -> dict:
     return {"id": pid, "name": row["name"], "version": row["version"]}
 
 
-@command("themes", audience="operator")
+@command("themes", audience="operator", writes=True)
 def settheme(caller, theme: str = "none") -> str:
     """Make an installed theme this arcade's own look, for everyone who has not picked one, or `none`.
 
@@ -905,7 +934,7 @@ def settheme(caller, theme: str = "none") -> str:
     return f"this arcade wears {theme}" if pid else "this arcade wears ArcadeCore's own look"
 
 
-@command("themes", audience="operator")
+@command("themes", audience="operator", writes=True)
 def allowtheme(caller, theme: str, on: str = "on") -> str:
     """Let people pick an installed theme for themselves, or stop them (`off`; who had it goes back to the arcade's).
 
@@ -918,7 +947,7 @@ def allowtheme(caller, theme: str, on: str = "on") -> str:
     return f"people {'may' if on == 'on' else 'may not'} pick {theme}"
 
 
-@command("themes", audience="operator")
+@command("themes", audience="operator", writes=True)
 def removetheme(caller, theme: str) -> str:
     """Remove an installed theme. Whoever wore it sees the arcade's theme again."""
     pid = _theme(caller, theme)
@@ -943,7 +972,7 @@ def _themeshare(caller):
     return share
 
 
-@command("themes", audience="operator")
+@command("themes", audience="operator", writes=True)
 def sharetheme(caller, theme: str, on: str = "on") -> str:
     """Offer an installed theme to the arcades this one links with, or stop (`off`). Each of their operators sees it
     under Window -> Build -> Shared by others and chooses whether to install it; nothing installs by itself.
@@ -973,7 +1002,7 @@ def sharedthemes(caller) -> dict:
     return {"mine": mine, "offered": offered, "mesh": share is not None}
 
 
-@command("themes", audience="operator")
+@command("themes", audience="operator", writes=True)
 def taketheme(caller, theme_id: str) -> dict:
     """Install a theme a linked arcade offers, by its id (`sharedthemes` lists them). It is checked against its id and
     as a theme from a folder is, then kept like one: it shows nowhere until you settheme or allowtheme it.
@@ -1013,7 +1042,7 @@ def _module_commands(caller: Caller) -> dict[str, Command]:
         for n, (name, said) in enumerate((manifest.get("commands") or {}).items()):
             if name not in COMMANDS and name not in out:
                 out[name] = Command(name, module, said.get("audience", "anyone"), _forward(module, name, said), module,
-                                    said.get("form"), n)
+                                    said.get("form"), n, writes=True)
     return out
 
 
@@ -1100,7 +1129,7 @@ def checkmodule(caller, folder: str) -> dict:
             "max_fee": manifest.get("needs", {}).get("max_fee", packagelib.MOST_FEE), "files": sorted(files)}
 
 
-@command("modules", audience="operator")
+@command("modules", audience="operator", writes=True)
 def installmodule(caller, folder: str) -> dict:
     """Keep a node module from a folder on this machine, under its id. It runs only once `install <name>` switches it
     on; a new version of one that is installed replaces it and is off until switched on again.
@@ -1137,7 +1166,7 @@ def keep_module(state, folder, manifest: dict) -> dict:
             "next": f"cannot run on this machine: {why}" if why else f"`install {name}` switches it on"}
 
 
-@command("modules", audience="operator")
+@command("modules", audience="operator", writes=True)
 def removemodule(caller, module: str) -> str:
     """Remove an installed node module and stop it. Its data folder stays, for when it is installed again."""
     pid, row = _module_named(caller, module)
