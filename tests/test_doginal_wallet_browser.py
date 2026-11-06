@@ -186,6 +186,13 @@ def test_a_chain_that_cannot_be_read_is_said_plainly(browser, served, signed_in)
         raise OSError("the node is not answering")
     # A node that has kept no answers yet, and cannot read its chain just now.
     funding.GUARD = doginals.Doginals(served[1].home / "dg-empty.sqlite", fetch=down)
+    # A coin arrives meanwhile, so the arcade builds the list again (2026-11-06: it is built from the guard, once per
+    # change of the address's coins).
+    fresh_coin = "ee" * 32
+    with served[1].token_index(served[1].doge).open() as db:
+        db.conn.execute("INSERT OR REPLACE INTO utxo(txid,vout,address,value,height) VALUES (?,?,?,?,?)",
+                        (fresh_coin, 0, signed_in, 100_000, 2))
+        db.conn.commit()
     try:
         _open_doginals(browser, base)
         _wait(browser, 'return document.getElementById("doginals").textContent'
@@ -193,6 +200,9 @@ def test_a_chain_that_cannot_be_read_is_said_plainly(browser, served, signed_in)
         assert not browser.find_elements(By.CSS_SELECTOR, "#doginals [data-doginal]"), "nothing guessed"
     finally:
         funding.GUARD = real_guard
+        with served[1].token_index(served[1].doge).open() as db:
+            db.conn.execute("DELETE FROM utxo WHERE txid=?", (fresh_coin,))
+            db.conn.commit()
 
 
 def test_many_doginals_come_a_page_at_a_time(browser, served, signed_in, reads):

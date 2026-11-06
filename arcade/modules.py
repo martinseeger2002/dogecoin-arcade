@@ -146,7 +146,7 @@ _MODULES = (
                    "/node/wallet/nfts", "/node/wallet/nft", "/moderation", "/site", "/browser", "/r/inscription",
                    "/r/inscriptions", "/r/doginals", "/r/metadata", "/r/holders", "/r/search", "/r/site", "/r/sites",
                    "/account/doginal", "/account/doginal-index", "/account/doginals", "/account/doginal-tx",
-                   "/account/doginal-txs", "/account/doginal-meta", "/account/doginal-card", "/account/ord", "/account/inscribe", "/account/nft", "/account/nfts",
+                   "/account/doginal-txs", "/account/doginal-meta", "/account/doginal-card", "/account/doginals/page", "/account/ord", "/account/inscribe", "/account/nft", "/account/nfts",
                    "/admin/api/ords", "/admin/api/sites", "/admin/api/moderation"),
            jobs=("ord-index", "sites-search", "inscription-history")),
     Module("collections", "app", "Collections and Creator", "Collections, mintpads, the launchpad and the Creator "

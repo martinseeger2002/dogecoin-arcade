@@ -15764,6 +15764,38 @@ def create_app(state: AppState) -> FastAPI:
                 found["created"] = k.get("created")
         return found
 
+    def _wallet_collections(net: str, ids: list[str]) -> dict[str, dict]:
+        """`_wallet_collection` for many at once, one query per 500 ids in each store (#91 item 4): {id: {name, item,
+        position, slug | root, source}}. The chain's own collections first, as there."""
+        out: dict[str, dict] = {}
+        try:
+            reg = state.collection_registry()
+            if hasattr(reg, "items_of"):
+                onchain = reg.items_of(net, ids)
+            else:
+                onchain = {i: g for i in ids for g in [reg.item(net, i)] if g is not None}
+        except Exception:                                          # noqa: BLE001
+            onchain = {}
+        for iid, got in onchain.items():
+            out[iid] = {"name": got.get("name") or "", "item": f"{got.get('name') or ''} #{got['number']}".strip(),
+                        "position": got["number"], "root": got["root"], "source": "chain"}
+        store = state.known_collections() if hasattr(state, "known_collections") else None
+        known = {}
+        if store is not None:
+            try:
+                known = store.in_collections(net, ids) if hasattr(store, "in_collections") else {
+                    i: k for i in ids for k in [store.in_collection(net, i)] if k is not None}
+            except Exception:                                      # noqa: BLE001
+                known = {}
+        for iid, k in known.items():
+            if iid in out:
+                out[iid].setdefault("slug", k["slug"])
+                continue
+            out[iid] = {"name": k["collection"],
+                        "item": k["name"] or (k["collection"] + (f" #{k['position']}" if k["position"] else "")),
+                        "position": k["position"], "slug": k["slug"], "source": k["source"]}
+        return out
+
     def _traits_with_rarity(reg, root: str, traits: dict) -> list[dict]:
         """[{trait, value, share}]: `share` the fraction of the collection's pieces with that value (kept 10 minutes)."""
         now = time.time()
@@ -15810,6 +15842,7 @@ def create_app(state: AppState) -> FastAPI:
         numbers = got.get("numbers") if isinstance(got.get("numbers"), dict) else {}
         token_p = ord_rules.token_protocol(net)
         out = {}
+        colls = _wallet_collections(net, ids)
         for iid in ids:
             row = dict(numbers.get(iid) or {})
             # A DRC-20 / PRC-20 operation (mint, transfer, deploy) is not an NFT: the Wallet's grid leaves it out (the operator
@@ -15817,12 +15850,73 @@ def create_app(state: AppState) -> FastAPI:
             # gives `protocol` (an older walker gives none: shown as text, as before).
             if row.get("protocol"):
                 row["token"] = str(row["protocol"]).lower() == token_p
-            coll = _wallet_collection(net, iid)
+            coll = colls.get(iid)
             if coll:
                 row["collection"] = coll
             if row:
                 out[iid] = row
         return JSONResponse({"chain": net, "meta": out, "walked_to": got.get("walked_to")},
+                            headers={"Cache-Control": "no-store"})
+
+    _dg_pages: dict = {}
+
+    def _doginal_pages():
+        """The Wallet's Doginal lists (arcade/doginal_pages.py), made once; their numbers kept in doginal-numbers.sqlite."""
+        from .. import doginal_pages as pageslib
+        from .. import doginals as doginalslib
+        if "pages" not in _dg_pages:
+            home = getattr(state, "home", None)
+            if home is None:
+                import tempfile
+                home = tempfile.mkdtemp(prefix="arcade-dgpages-")
+            _dg_pages["pages"] = pageslib.Pages(pageslib.Numbers(Path(home) / "doginal-numbers.sqlite"),
+                                                unknown=doginalslib.Unknown)
+        return _dg_pages["pages"]
+
+    @app.get("/account/doginals/page")
+    def account_doginals_page(request: Request, chain: str = "doge", address: str = "", page: int = 0, size: int = 30,
+                              kind: str = "all", coll: str = "", order: str = "old", go: str = "", fresh: int = 0):
+        """One page of the Wallet's Doginals (2026-11-06, the operator: "build it", #91's "load a big wallet's Doginals one page
+        at a time"): the page's items in inscription number order with their collections, the counts the bar shows, and
+        how far this arcade has got building the address's list (`done`; the Wallet asks again until it is). `fresh`:
+        built again now (the Wallet has just sent one). `go`: the page holding #number or id."""
+        from .. import doginal_pages as pageslib
+        from .. import ord_rules
+        account = _signed_in_account(request)
+        one = next((c for c in state.token_chains if c.network == str(chain or "doge")), None)
+        if one is None:
+            return JSONResponse({"detail": "no such chain here"}, status_code=404)
+        address = _own_address_asked(account, one, address)
+        guard = fundinglib.guard_for(address) if address else None
+        if guard is None:
+            return JSONResponse({"detail": "this node does not check inscriptions on that chain"}, status_code=404)
+        net = one.network
+
+        def numbers(ids: list[str]) -> dict:
+            # On the build's own thread, so it may wait for the chain's reader to open. An arcade that keeps no index
+            # of its own reads the linked arcades' copies through it; one that walks reads a longer copy first
+            # (DoginalIndex.lookup; 2026-11-06: "We should be able to read the shared index from any arcade, even
+            # if we don't have the index on our own arcade", "always be able to read from the longest copy").
+            index = state.ord_index(net, wait=60)
+            if index is None:
+                raise ValueError("this arcade does not read that chain's inscriptions")
+            got = index.lookup({"what": "numbers", "ids": ids})
+            return got.get("numbers") if isinstance(got.get("numbers"), dict) else {}
+
+        def reach():
+            try:
+                return guard.index_reach() if hasattr(guard, "index_reach") else None
+            except Exception:                                      # noqa: BLE001
+                return None
+        source = pageslib.Source(coins=lambda: _own_coins(account, one, address), guard=guard, numbers=numbers,
+                                 collections=lambda ids: _wallet_collections(net, ids),
+                                 token_protocol=ord_rules.token_protocol(net), reach=reach)
+        try:
+            doc = _doginal_pages().get((net, address, account.pubkey), source, fresh=bool(fresh))
+        except Exception as exc:                                   # noqa: BLE001 -- a node still catching up
+            return JSONResponse({"detail": f"this node cannot read your coins yet: {exc}"}, status_code=503)
+        return JSONResponse({"chain": net, "address": address,
+                             **pageslib.view(doc, kind=kind, coll=coll, order=order, page=page, size=size, go=go)},
                             headers={"Cache-Control": "no-store"})
 
     @app.get("/account/doginal-card")
@@ -30262,12 +30356,27 @@ def create_app(state: AppState) -> FastAPI:
     def _known_piece(net: str, answer: dict) -> dict:
         """The viewer's "In collection: Name #k" (2026-10-26): the known collection holding the inscription shown."""
         x = (answer.get("number") or {}).get("inscription") if isinstance(answer.get("number"), dict) else None
+        if not isinstance(x, dict) or not x.get("id"):
+            return {}
         store = state.known_collections() if hasattr(state, "known_collections") else None
-        if not isinstance(x, dict) or not x.get("id") or store is None:
-            return {}
-        found = store.in_collection(net, str(x["id"]))
+        found = None
+        if store is not None:
+            try:
+                found = store.in_collection(net, str(x["id"]))
+            except Exception:                                      # noqa: BLE001
+                found = None
         if found is None:
-            return {}
+            # A collection that describes itself on the chain (collection_registry), as the Wallet reads it too
+            # (2026-11-06, #91 item 1: Anti Doginal Dogs had a name in the Wallet and none here).
+            try:
+                got = state.collection_registry().item(net, str(x["id"]))
+            except Exception:                                      # noqa: BLE001
+                got = None
+            if got is None:
+                return {}
+            return {"collection": {"kind": "registry", "txid": got["root"], "root": got["root"],
+                                   "collection": got.get("name") or "", "position": got["number"],
+                                   "name": f"{got.get('name') or ''} #{got['number']}".strip(), "source": "chain"}}
         return {"collection": {"slug": found["slug"], "collection": found["collection"], "position": found["position"],
                                "name": found["name"] or (found["collection"] + (f" #{found['position']}"
                                                                                 if found["position"] else "")),

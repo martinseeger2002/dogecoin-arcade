@@ -66,10 +66,11 @@ def test_the_wallet_page_has_the_doginals_section_and_the_configured_base(client
     page = app.get("/me/wallet").text
     # Read from the chain by this node; nothing outside the arcade is asked (2026-10-15: the outside Doginals API removed).
     assert 'id="doginals"' in page and "dogesoft" not in page.lower()
-    # Through this node (2026-10-15): the browser asks nothing outside this arcade.
-    assert '"/account/doginal-txs"' in page and "localStorage.setItem(DG_TX + net" in page
+    # Through this node (2026-10-15): the browser asks nothing outside this arcade; since 2026-11-06 one page at a time,
+    # built by the arcade (/account/doginals/page), not every coin and transaction from the browser.
+    assert "/account/doginals/page?" in page and '"/account/doginal-txs"' not in page
     assert "Inscriptions can't be checked right now" in page and "/content/${encodeURIComponent(g.id)}" in page
-    assert '"/account/doginal/send"' in page and "/account/coins?chain=" in page
+    assert '"/account/doginal/send"' in page
 
 
 def _spy(monkeypatch):
@@ -280,7 +281,9 @@ def test_the_wallet_asks_how_far_the_ord_index_has_walked(client, monkeypatch, t
     assert got.json() == {"chain": "doge", "reach": 4_700_000, "tip": 6_426_000}
     assert "/account/doginal-index" in door.PUBLIC_PAGES
     page = app.get("/me/wallet").text
-    assert "/account/doginal-index?chain=" in page and "shown here as the index gets to each" in page
+    # Since 2026-11-06 the arcade says how far the index has got with each page (`reach`), and the page asks again in a
+    # minute while coins wait for it (DG_LIVE_MS), when the arcade has built the list again.
+    assert "d.reach" in page and "DG_LIVE_MS" in page and "shown here as the index gets to each" in page
 
 
 def test_the_tokens_tab_reads_drc20_balances_from_the_most_complete_index(client, monkeypatch, tmp_path):

@@ -439,7 +439,9 @@
         ['Parent', x.parent ? link(x.parent, function () { showId(x.parent); }) : null],
         // 2026-10-26: the known collection it is a piece of, opened below with a click.
         ['In collection', j.collection ? link(j.collection.name, function () {
-          openCollection({kind: 'known', slug: j.collection.slug, name: j.collection.collection, source: j.collection.source}, 0);
+          openCollection(j.collection.kind === 'registry'
+            ? {kind: 'registry', txid: j.collection.txid, name: j.collection.collection}
+            : {kind: 'known', slug: j.collection.slug, name: j.collection.collection, source: j.collection.source}, 0);
           $('xpcollgrid').scrollIntoView({block: 'start', behavior: 'smooth'}); }) : null],
         ['Reinscription', x.reinscription ? 'yes' : null],
         // ord's charms on a chain read as ord itself (Litecoin): cursed, vindicated, unbound, lost ...

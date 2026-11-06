@@ -406,6 +406,18 @@ def test_explore_lists_a_known_collection_pages_it_and_names_a_piece(walking):
     assert "collection" not in app.get("/explore/api/inscription?net=main&number=1", headers=EDGE).json()
     text = app.get("/explore", headers=EDGE).text
     assert "agreed by" in text and "In collection" in text
+    # A collection that describes itself on the chain names its piece here too, as in the Wallet (2026-11-06, #91 item
+    # 1: Anti Doginal Dogs had a name in the Wallet and none in Explore).
+    import sqlite3
+    reg = state.collection_registry()
+    with sqlite3.connect(reg.path) as db:
+        db.execute("INSERT INTO ext_root (txid, number, publisher, network, status, name, chain, supply) "
+                   "VALUES ('rootadd', 5, 'D', 'main', 'active', 'Anti Pepe Frogs', 'main', 3)")
+        db.execute("INSERT INTO ext_item (chain, id, root, number) VALUES ('main', ?, 'rootadd', 2)", (ids[1],))
+    onchain = app.get("/explore/api/inscription?net=main&number=1", headers=EDGE).json()["collection"]
+    assert onchain == {"kind": "registry", "txid": "rootadd", "root": "rootadd", "collection": "Anti Pepe Frogs",
+                       "position": 2, "name": "Anti Pepe Frogs #2", "source": "chain"}
+    assert "kind === 'registry'" in text
 
 
 def test_admin_switches_the_import_on_and_off(client):

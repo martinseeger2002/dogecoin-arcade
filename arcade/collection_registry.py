@@ -179,6 +179,19 @@ class Registry:
                              "WHERE i.chain=? AND i.id=?", (chain, item_id)).fetchone()
         return {**dict(r), "traits": json.loads(r["traits"])} if r else None
 
+    def items_of(self, chain: str, item_ids: list[str]) -> dict[str, dict]:
+        """`item` for many at once (the Wallet's Doginals, 2026-11-06): {id: {root, number, name}}, one query per 500
+        ids, traits left out."""
+        out: dict[str, dict] = {}
+        with self._open() as conn:
+            for at in range(0, len(item_ids), 500):
+                part = list(item_ids[at:at + 500])
+                for r in conn.execute("SELECT i.id, i.root, i.number, r.name FROM ext_item i JOIN ext_root r ON "
+                                      f"r.txid=i.root WHERE i.chain=? AND i.id IN ({','.join('?' * len(part))})",
+                                      (chain, *part)):
+                    out[r["id"]] = {"root": r["root"], "number": r["number"], "name": r["name"]}
+        return out
+
     def all_roots(self) -> list[dict]:
         with self._open() as conn:
             return [dict(r) for r in conn.execute("SELECT txid, number, publisher, status, reason, name, chain "

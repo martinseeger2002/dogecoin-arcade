@@ -2283,35 +2283,13 @@ async function drawCollection() {
 /* --- inscriptions on the account's own coins -------------------------------
  *
  * [Claude 2026-10-15] Which of this account's coins carry an inscription: Doginals on Dogecoin, ord inscriptions on
- * Pepecoin mainnet. The node lists the account's own coins (/account/coins) and reads each transaction from its own chain
- * (/account/doginal-tx/<txid>, doginals.trace: the coin's koinu followed back to the envelope that inscribed them), once
- * per transaction for good; this browser keeps the answers too. Nothing outside this arcade is asked (2026-10-15:
- * the outside Doginals API removed). A small coin the node could not read is said so and never shown as a plain coin.
+ * Pepecoin mainnet and the other ord chains. Nothing outside this arcade is asked (2026-10-15: the outside
+ * Doginals API removed). Since 2026-11-06 the arcade builds the list itself and this page asks one page of it at a time
+ * (/account/doginals/page, below). A small coin the node could not read is said so and never shown as a plain coin.
  */
 
-const DG_TX = "arcade.inscriptions.v3.";         // + network + "." + txid: the chain's answer (v1 held an outside index's; v3 has each content type)
-let dg = {net: null, addr: "", coins: null, answers: {}, failed: 0, asking: false, page: 0};
+let dg = {net: null, addr: "", data: null, page: 0};
 
-function dgKept(net, txid) {
-  try { return JSON.parse(localStorage.getItem(DG_TX + net + "." + txid) || "null"); } catch (e) { return null; }
-}
-/** The chain's answer for one transaction: [{vout, id, offset, unknown}], read once by the node, kept here. */
-async function dgAsk(net, txid) {
-  const kept = dgKept(net, txid);
-  if (kept) return kept;
-  const r = await fetch(`/account/doginal-tx/${txid}?chain=${encodeURIComponent(net)}`,
-                        {headers: {Accept: "application/json"}, cache: "no-store"});
-  if (!r.ok) throw new Error(`the node could not read it (${r.status})`);
-  const said = await r.json();
-  if (said.txid && said.txid !== txid) throw new Error("the node answered about another transaction");
-  const held = (said.inscriptions || []).filter((i) => i && i.vout != null)
-    .map((i) => ({vout: Number(i.vout), id: i.inscription_id == null ? null : String(i.inscription_id),
-                  offset: i.sat_offset ?? null, unknown: !!i.unknown, wait: !!i.wait, ctype: i.ctype ?? null}));
-  if (!held.some((i) => i.unknown || (i.id && !i.ctype))) {
-    try { localStorage.setItem(DG_TX + net + "." + txid, JSON.stringify(held)); } catch (e) { /* read again next time */ }
-  }
-  return held;
-}
 /** An inscription's content, from this arcade's own /content/<id> (read off the chain by the node), in a sandboxed
  *  frame: a picture shows as itself, and a recursive page (HTML that loads other inscriptions) draws itself. */
 function doginalPic(g) {
@@ -2397,43 +2375,18 @@ async function strayDoginals(box) {
 
 /* 2026-10-21: "I have like over 1500 doginals in that wallet. Make sure they have good pagination. And lazy
  * loading and caching ... whatever is lightest weight for the server ... right now it looks like the doginals in my
- * Wallet load like three times when I'm looking at them". So: only small coins (Doginal postage) are asked about, a
- * hundred transactions a call, one call at a time (/account/doginal-txs), every answer kept in this browser for good;
- * DG_PAGE cards a page, and a page's cards (each a picture frame) are built only when what is on it changes -- an
- * answer coming in, a block, or a redraw no longer rebuilds them, which reloaded every picture each time. */
-const DG_PAGE = 30, DG_BATCH = 100, DG_POSTAGE = 1000000;   // doginals.POSTAGE_MAX
-// 2026-10-22: "filter out txt json and js meme types" -- the NFTs are pictures and pages; plain text (token
-// transfers, names), JSON and scripts are held all the same (never spent by an ordinary send), just not shown here.
-const DG_NOT_ART = /^\s*(text\/plain|application\/json|text\/javascript|application\/(x-)?javascript)\b/i;
+ * Wallet load like three times when I'm looking at them". So: DG_PAGE cards a page, asked of the arcade one page at a
+ * time (arcade/doginal_pages.py, only small coins looked at, every answer kept by the arcade), and a page's cards (each a
+ * picture frame) are built only when what is on it changes -- a poll, a block, or a redraw no longer rebuilds them,
+ * which reloaded every picture each time. */
+const DG_PAGE = 30;
 const DG_PAGEKEY = "arcade.wallet.dgpage:";
 let dgUi = null;                      // {head, status, notes, stray, grid, pager, shown, paged}
 
-async function dgAskMany(net, address, txids) {
-  const r = await fetch("/account/doginal-txs", {method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({chain: net, address, txids})});
-  const said = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(said.detail || `the node could not read them (${r.status})`);
-  const out = {};
-  for (const t of txids) {
-    const one = (said.txs || {})[t];
-    if (one === undefined) { out[t] = []; continue; }           // not this wallet's any more: nothing to show
-    if (one === null) { out[t] = null; continue; }               // unreadable just now
-    const held = one.filter((i) => i && i.vout != null)
-      .map((i) => ({vout: Number(i.vout), id: i.inscription_id == null ? null : String(i.inscription_id),
-                    offset: i.sat_offset ?? null, unknown: !!i.unknown, wait: !!i.wait, h: i.h ?? null,
-                    ctype: i.ctype ?? null}));
-    if (!held.some((i) => i.unknown || (i.id && !i.ctype))) {
-      try { localStorage.setItem(DG_TX + net + "." + t, JSON.stringify(held)); } catch (e) { /* asked again later */ }
-    }
-    out[t] = held;
-  }
-  return out;
-}
-
 function dgPageGo(n) {
-  dg.page = n;
+  dg.page = n; dg.focus = null;
   try { sessionStorage.setItem(DG_PAGEKEY + dg.net + ":" + (dg.addr || ""), String(n)); } catch (e) {}
-  drawDoginals().catch(() => {});
+  dgFetch();
   if (dgUi) dgUi.head.scrollIntoView({block: "start", behavior: "smooth"});
 }
 
@@ -2446,13 +2399,7 @@ const ORD_WORDS = Object.fromEntries(Object.entries(ORD).map(([net, o]) => [net,
 // number earliest first", "sent and listed on the marketplace right from my wallet", "if they are a part of a
 // collection, they should have the collection metadata with them", "Each one should be able to be clicked, and their
 // card should open with all of the information and a content link") ---------------------------------------------------
-const DG_META = "arcade.wallet.dgmeta2:", DG_VIEW = "arcade.wallet.dgview:", DG_META_MAX = 500, DG_META_RETRY_MS = 60000;
-function dgMetaLoad(net) {
-  try { return JSON.parse(localStorage.getItem(DG_META + net) || "{}") || {}; } catch (e) { return {}; }
-}
-function dgMetaSave(net, meta) {
-  try { localStorage.setItem(DG_META + net, JSON.stringify(meta)); } catch (e) { /* asked again next time */ }
-}
+const DG_VIEW = "arcade.wallet.dgview:", DG_POLL_MS = 1500, DG_LIVE_MS = 60000;
 function dgViewLoad(net) {
   let v = {};
   try { v = JSON.parse(localStorage.getItem(DG_VIEW + net) || "{}") || {}; } catch (e) {}
@@ -2462,51 +2409,70 @@ function dgViewLoad(net) {
 function dgViewSet(change) {
   dg.view = {...dg.view, ...change};
   try { localStorage.setItem(DG_VIEW + dg.net, JSON.stringify(dg.view)); } catch (e) {}
-  dg.page = 0; dg.focus = null;
+  dg.page = 0; dg.focus = null; dg.go = "";
+  dgFetch();
+}
+/* One page at a time (2026-11-06, the operator: "build it", #91): the arcade builds this address's list itself -- its coins
+ * read once, each small coin's inscriptions as the inscription guard says (the same answer that keeps them out of an
+ * ordinary send), their numbers kept for good, their collections looked up in one go -- and this page asks only for the
+ * DG_PAGE shown (/account/doginals/page). Where it was some 85 calls for a wallet of 7,000 coins before page 1, it is
+ * one; while the arcade is still building it, the page asks again every DG_POLL_MS and shows how far it has got. */
+async function dgFetch(fresh = false) {
+  const mine = dg;
+  if (!mine.net) return;
+  clearTimeout(mine.poll); mine.poll = null;
+  const q = new URLSearchParams({chain: mine.net, page: String(mine.page | 0), size: String(DG_PAGE), kind: mine.view.kind,
+                                 coll: mine.view.coll, order: mine.view.order});
+  if (mine.addr) q.set("address", mine.addr);
+  if (mine.go) q.set("go", mine.go);
+  if (fresh) q.set("fresh", "1");
+  const seq = mine.seq = (mine.seq || 0) + 1;
+  mine.inflight = true;
+  let got = null;
+  try {
+    const r = await fetch(`/account/doginals/page?${q}`, {cache: "no-store"});
+    got = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(got.detail || `the node could not say (${r.status})`);
+    mine.err = "";
+  } catch (e) {
+    mine.err = String(e.message || e);
+  }
+  if (dg !== mine || seq !== mine.seq) return;            // the wallet, or the page asked for, changed meanwhile
+  mine.inflight = false;
+  mine.fetchedAt = Date.now();
+  if (got && !mine.err) {
+    mine.data = got;
+    mine.page = got.page;
+    if (mine.go) {
+      if (got.missed) toast("That one is not among those shown here.");
+      else if (got.focus) {
+        mine.focus = got.focus;
+        const g = (got.items || []).find((x) => x.id === got.focus);
+        if (g) openDgCard(g);
+      }
+      mine.go = "";
+    }
+    try { sessionStorage.setItem(DG_PAGEKEY + mine.net + ":" + (mine.addr || ""), String(got.page)); } catch (e) {}
+  }
+  // Still being built: asked again shortly. Coins waiting for the index (or not numbered yet): asked again in a minute,
+  // when the arcade has built the list again with what the index has reached since.
+  const d = mine.data;
+  const again = mine.err ? DG_LIVE_MS : !d || !d.done || d.building ? DG_POLL_MS
+    : (d.waiting || d.unnumbered || d.failed) ? DG_LIVE_MS : 0;
+  if (again) {
+    mine.poll = setTimeout(() => {
+      mine.poll = null;
+      if (dg === mine && tab === "nfts" && !document.hidden) dgFetch();   // else asked when the tab is drawn again
+    }, again);
+  }
   drawDoginals().catch(() => {});
 }
-// The numbers and collections of those not known here yet, DG_META_MAX at a time, one call after the other.
-function dgMetaAsk(net, found) {
-  const mine = dg;
-  if (mine.metaAsking) return;                 // the ones missed wait for the retry below; new ones are asked now
-  const want = found.map((g) => g.id).filter((id) => !mine.meta[id] && !mine.metaMiss.has(id));
-  if (!want.length) return;
-  mine.metaAsking = true;
-  (async () => {
-    while (want.length && dg === mine) {
-      const ids = want.splice(0, DG_META_MAX);
-      const r = await fetch("/account/doginal-meta", {method: "POST", headers: {"Content-Type": "application/json"},
-                                                      body: JSON.stringify({chain: net, ids})});
-      const got = await r.json().catch(() => ({}));
-      if (!r.ok) { mine.metaErr = got.detail || "the index did not answer"; for (const id of ids) mine.metaMiss.add(id); break; }
-      mine.metaErr = "";
-      for (const id of ids) {
-        const m = (got.meta || {})[id];
-        if (m && m.number != null) mine.meta[id] = m; else mine.metaMiss.add(id);
-      }
-      dgMetaSave(net, mine.meta);
-      if (dg === mine) drawDoginals().catch(() => {});
-    }
-  })().catch((e) => { mine.metaErr = String(e.message || e); }).finally(() => {
-    mine.metaAsking = false;
-    // Those not answered yet (the index not there, or a call that failed) are asked again in a minute.
-    if (dg === mine && !mine.metaWait && (mine.metaErr || mine.metaMiss.size)) {
-      mine.metaWait = setTimeout(() => { mine.metaWait = null; mine.metaMiss.clear(); drawDoginals().catch(() => {}); },
-                                 DG_META_RETRY_MS);
-    }
-    if (dg === mine) drawDoginals().catch(() => {});
-  });
-}
-// "Go to #number or id": the page holding it, marked, and its card opened.
+// "Go to #number or id": the arcade finds the page holding it; it is marked, and its card opened.
 function dgGoTo(said) {
-  const q = String(said || "").trim().toLowerCase().replace(/^#/, "").replace(/,/g, "");
+  const q = String(said || "").trim();
   if (!q) return;
-  const list = dg.list || [];
-  const at = list.findIndex((g) => g.id === q || (/^-?\d+$/.test(q) && dg.meta[g.id] && String(dg.meta[g.id].number) === q));
-  if (at < 0) { toast(`That one is not among those shown here.`); return; }
-  dg.focus = list[at].id;
-  dgPageGo(Math.floor(at / DG_PAGE));
-  openDgCard(list[at]);
+  dg.go = q;
+  dgFetch();
 }
 // A text inscription's first words in place of a picture.
 function dgTextPic(g) {
@@ -2584,10 +2550,9 @@ async function openDgCard(g, wantPrice = false) {
     left.append(frame);
   }
   const side = el("div", "dg-side");
-  const m0 = dg.meta[g.id];
-  const title = el("h3", "", m0 && m0.number != null ? `#${Number(m0.number).toLocaleString()}` : W); title.id = "dg-card-title";
+  const title = el("h3", "", g.number != null ? `#${Number(g.number).toLocaleString()}` : W); title.id = "dg-card-title";
   modal.setAttribute("aria-labelledby", title.id);
-  const coll = el("div", "dg-cn", m0 && m0.collection ? (m0.collection.item || m0.collection.name) : "");
+  const coll = el("div", "dg-cn", g.collection ? (g.collection.item || g.collection.name) : "");
   const body = el("div", "", "Reading its details…");
   side.append(title, coll, body);
   modal.append(x, left, side);
@@ -2707,15 +2672,15 @@ async function drawDoginals() {
   if (dg.net !== c.network || (dg.addr || "") !== addr) {
     let page = 0;
     try { page = Number(sessionStorage.getItem(DG_PAGEKEY + c.network + ":" + addr) || 0) || 0; } catch (e) {}
-    // `meta`: each inscription's number and collection (/account/doginal-meta), kept in this browser: a number never
-    // changes. `view`: which kind, collection and order the grid shows (2026-11-05: earliest number first).
-    dg = {net: c.network, addr, coins: null, answers: {}, failed: 0, asking: false, page,
-          meta: dgMetaLoad(c.network), metaMiss: new Set(), metaAsking: false, metaErr: "", texts: {},
+    if (dg.poll) clearTimeout(dg.poll);
+    // `data`: the page the arcade last sent (/account/doginals/page). `view`: which kind, collection and order the
+    // grid shows (2026-11-05: earliest number first), kept in this browser.
+    dg = {net: c.network, addr, data: null, err: "", page, poll: null, go: "", focus: null, texts: {},
           view: dgViewLoad(c.network)};
     dgUi = null;
   }
   // Pepinals (2026-10-17: "Add pepinals support"): the same ord inscriptions on Pepecoin mainnet. Bellinals and
-  // Luckinals (2026-10-22) the same way, read through each chain's own guard (/account/doginal-txs).
+  // Luckinals (2026-10-22) the same way, read through each chain's own guard.
   const [W, C, coinWord] = ORD_WORDS[c.network];
   if (!dgUi || !box.contains(dgUi.head)) {
     const head = el("h2", "", `${W}s`); head.id = "dg-title";
@@ -2726,100 +2691,78 @@ async function drawDoginals() {
     if (doge && !w) strayDoginals(dgUi.stray).catch(() => {});
   }
   const ui = dgUi;
-  if (!dg.coins) {
-    ui.status.replaceChildren(el("div", "wl-empty", `Reading your ${coinWord} coins…`));
-    const only = addr ? `&address=${encodeURIComponent(addr)}` : "";
-    const r = await fetch(`/account/coins?chain=${encodeURIComponent(c.network)}${only}`, {cache: "no-store"});
-    const got = await r.json();
-    if (!r.ok) throw new Error(got.detail || "the node would not say");
-    if (dgUi !== ui) return;                                     // the wallet changed meanwhile
-    // Only coins small enough to be Doginal postage can carry one: the rest are never asked about.
-    dg.coins = (got.coins || []).filter((x) => Number(x.value) <= DG_POSTAGE);
-    dg.answers = {}; dg.failed = 0;
+  // Asked when there is nothing yet, when a send has just gone (dg.coins set to null there: built again now), and when
+  // the tab is drawn again after a minute or after a poll that found the tab hidden.
+  if (dg.coins === null) { dg.coins = undefined; dgFetch(true); }
+  else if (!dg.inflight && !dg.poll && (!dg.fetchedAt || Date.now() - dg.fetchedAt > DG_LIVE_MS
+                                        || (dg.data && (!dg.data.done || dg.data.building)))) dgFetch();
+  const d = dg.data;
+  if (!d) {
+    ui.status.replaceChildren(dg.err ? el("div", "msg err", `Your ${W}s can't be read just now: ${dg.err}`)
+                                     : el("div", "wl-empty", `Reading your ${coinWord} coins…`));
+    return;
   }
-  const txids = [...new Set(dg.coins.map((x) => x.txid))];
-  for (const t of txids) {
-    if (!dg.answers[t]) { const kept = dgKept(c.network, t); if (kept) dg.answers[t] = kept; }
-  }
-  const left = txids.filter((t) => !dg.answers[t]);
-  let found = [];
-  const unread = [];
-  for (const coin of dg.coins) {
-    for (const i of dg.answers[coin.txid] || []) {
-      if (i.vout !== coin.vout) continue;
-      if (i.unknown || !i.id) unread.push(coin);
-      // Text, JSON and scripts too (2026-11-05, the operator: "I have over 7000 of them, but I'm only seeing ... 10 pages"):
-      // counted and shown, with a filter to leave them out.
-      else found.push({...i, txid: coin.txid, vout: coin.vout, value: coin.value, doginal: true,
-                       text: !!(i.ctype && DG_NOT_ART.test(i.ctype))});
-    }
-  }
-  // Each one's number and collection, asked in the background a few hundred at a time; the grid redraws as they come.
-  dgMetaAsk(c.network, found);
-  // DRC-20 / PRC-20 mints, transfers and deploys are not NFTs (2026-11-05): left out of the grid once the index
-  // says so (meta.token). Their balances are the token index's, on the Tokens tab; these coins stay held all the same.
-  const tokenOps = found.filter((g) => dg.meta[g.id] && dg.meta[g.id].token).length;
-  if (tokenOps) found = found.filter((g) => !(dg.meta[g.id] && dg.meta[g.id].token));
+  const counts = d.counts || {all: 0, art: 0, text: 0, tokens: 0};
   // The few lines above the cards: redrawn freely, they hold no pictures.
   const status = [];
-  if (dg.failed) {
+  if (dg.err) status.push(el("p", "msg err", `Not updated just now (${dg.err}); asked again in a minute.`));
+  if (d.failed) {
     status.push(el("div", "msg err", `Inscriptions can't be checked right now: the node could not read `
-      + `${dg.failed} transaction${dg.failed === 1 ? "" : "s"}. Those coins are not shown, and not spent, until it can.`));
+      + `${d.failed} transaction${d.failed === 1 ? "" : "s"}. Those coins are not shown, and not spent, until it can.`));
     const again = el("button", "ghost wl-more", "Try again"); again.type = "button";
-    again.onclick = () => { dg.failed = 0; drawDoginals().catch(() => {}); };
+    again.onclick = () => dgFetch(true);
     status.push(again);
-  } else if (left.length) {
-    status.push(el("p", "wl-note", `Checking ${(txids.length - left.length).toLocaleString()} of `
-      + `${txids.length.toLocaleString()} small coins' transactions… (each is checked once, then remembered)`));
+  }
+  if (!d.done && d.phase === "checking") {
+    status.push(el("p", "wl-note", `Checking ${Number(d.checked || 0).toLocaleString()} of `
+      + `${Number(d.of || 0).toLocaleString()} small coins' transactions… (each is checked once, then remembered)`));
+  } else if (!d.done) {
+    status.push(el("p", "wl-note", d.phase === "collections" ? "Looking up their collections…"
+      : `Reading their numbers… (${Number(counts.all + counts.tokens - (d.unnumbered || 0)).toLocaleString()} of `
+        + `${Number(counts.all + counts.tokens).toLocaleString()})`));
   }
   // Waiting for the arcades' ord index (2026-10-22): protected, never traced back one by one any more.
-  const waiting = unread.filter((coin) => (dg.answers[coin.txid] || []).some((i) => i.vout === coin.vout && i.wait));
-  if (waiting.length) {
-    const at = dg.reach ? ` (at block ${Number(dg.reach).toLocaleString()}`
-      + (dg.tip ? ` of ${Number(dg.tip).toLocaleString()})` : ")") : "";
-    status.push(el("p", "wl-note", `${waiting.length.toLocaleString()} small coin${waiting.length === 1 ? " is" : "s are"} `
-      + `protected until the arcades' ${W} index${at} reaches ${waiting.length === 1 ? "its block" : "their blocks"}: `
+  if (d.waiting) {
+    const at = d.reach ? ` (at block ${Number(d.reach).toLocaleString()})` : "";
+    status.push(el("p", "wl-note", `${d.waiting.toLocaleString()} small coin${d.waiting === 1 ? " is" : "s are"} `
+      + `protected until the arcades' ${W} index${at} reaches ${d.waiting === 1 ? "its block" : "their blocks"}: `
       + `kept out of ordinary sends meanwhile, and shown here as the index gets to each.`));
   }
-  if (unread.length > waiting.length) {
-    const n = unread.length - waiting.length;
+  if (d.unread > d.waiting) {
+    const n = d.unread - d.waiting;
     status.push(el("p", "wl-note", `${n} small coin${n === 1 ? "" : "s"} could not be traced all `
       + "the way back, so they are kept out of ordinary sends in case they carry one."));
   }
-  const numbered = found.filter((g) => dg.meta[g.id]).length;
-  const pending = found.filter((g) => !dg.meta[g.id] && !dg.metaMiss.has(g.id)).length;
-  if (found.length && numbered < found.length) {
-    status.push(el("p", "wl-note", dg.metaErr
-      ? `Numbers for ${(found.length - numbered).toLocaleString()} of them can't be read just now (${dg.metaErr}); `
+  if (d.done && d.unnumbered) {
+    status.push(el("p", "wl-note", d.error
+      ? `Numbers for ${d.unnumbered.toLocaleString()} of them can't be read just now (${d.error}); `
         + "they are shown last and asked again in a minute."
-      : pending
-        ? `Reading numbers and collections: ${numbered.toLocaleString()} of ${found.length.toLocaleString()}…`
-        : `${(found.length - numbered).toLocaleString()} of them ${found.length - numbered === 1 ? "is" : "are"} not in `
-          + `the ${W} index yet: shown last, and asked again in a minute.`));
+      : `${d.unnumbered.toLocaleString()} of them ${d.unnumbered === 1 ? "is" : "are"} not in `
+        + `the ${W} index yet: shown last, and asked again in a minute.`));
   }
-  if (tokenOps) {
-    status.push(el("p", "wl-note", `${tokenOps.toLocaleString()} token inscription${tokenOps === 1 ? " is" : "s are"} `
+  if (counts.tokens) {
+    status.push(el("p", "wl-note", `${counts.tokens.toLocaleString()} token inscription${counts.tokens === 1 ? " is" : "s are"} `
       + "not shown here: your token balances are on the Tokens tab."));
   }
-  if (!left.length && !dg.failed && !found.length && !tokenOps) {
+  if (d.done && !d.failed && !counts.all && !counts.tokens) {
     status.push(el("div", "wl-empty", `No ${W}s on ${w ? w.name + "'s" : "your"} ${coinWord} coins.`));
   }
   ui.status.replaceChildren(...status);
-  ui.credit.textContent = "Read from the chain by this arcade's node." + (found.length
-    ? ` ${found.length.toLocaleString()} on ${w ? w.name + "'s" : "your"} coins, in inscription order, `
+  ui.credit.textContent = "Read from the chain by this arcade's node." + (counts.all
+    ? ` ${counts.all.toLocaleString()} on ${w ? w.name + "'s" : "your"} coins, in inscription order, `
       + `${dg.view.order === "new" ? "newest" : "earliest"} first.` : "");
   // Moving a Doginal costs Dogecoin on top of it (2026-10-15: "grayed out unless they have a balance of Dogecoin on
   // top of their asset"): the send's fee. `spendable` already leaves the Doginals out. A listing costs the seller nothing.
   const free = Number(c.spendable || 0);
   const sendShort = !w && free < Number(c.doginal_send_need || 0);
   const notes = [];
-  if (viewOnly && found.length) {
+  if (viewOnly && counts.all) {
     notes.push(el("p", "wl-note", `Your ${W}s, read from the chain. Sending and listing a ${W} from the `
       + "arcade is not ready yet: they stay safe here, and an ordinary send never spends one."));
-  } else if (w && found.length) {
+  } else if (w && counts.all) {
     notes.push(el("p", "wl-note", `These are ${w.name}'s. Sending or listing a ${W} from an imported wallet is not `
       + "ready yet: choose your arcade wallet above to send one of its own."));
-  } else if (found.length && sendShort) {
+  } else if (counts.all && sendShort) {
     notes.push(el("p", "wl-note dg-need", `To send a ${W} you need some ${C} besides it for the network fee: about `
       + `${coinsOf(c.doginal_send_need)} ${C}. This wallet has ${coinsOf(free)} ${C} to spend.`));
   }
@@ -2835,19 +2778,8 @@ async function drawDoginals() {
   const isListed = (g) => !!(dg.listed && dg.listed.has(g.id));
   // The bar: which kind, which collection, which order, and a box to go to one (2026-11-05 mockup).
   const view = dg.view;
-  const metaOf = (g) => dg.meta[g.id] || null;
-  const collOf = (g) => { const m = metaOf(g); return m && m.collection ? m.collection : null; };
-  const collKey = (k) => k ? (k.slug || k.root || k.name) : "";
-  const arts = found.filter((g) => !g.text).length;
-  const colls = new Map();
-  let loose = 0;
-  for (const g of found) {
-    const k = collOf(g);
-    if (!k) { if (metaOf(g)) loose++; continue; }
-    const key = collKey(k), had = colls.get(key);
-    colls.set(key, {name: k.name || key, n: (had ? had.n : 0) + 1});
-  }
-  const barKey = JSON.stringify([found.length, arts, [...colls].map(([k, v]) => k + ":" + v.n), loose, view]);
+  const colls = d.collections || [];
+  const barKey = JSON.stringify([counts, colls.map((k) => k.key + ":" + k.n), d.loose, view, !!d.done]);
   if (ui.barKey !== barKey) {
     ui.barKey = barKey;
     const chip = (kind, label, n) => {
@@ -2858,8 +2790,8 @@ async function drawDoginals() {
       return b;
     };
     const pickColl = el("select", "dg-pick"); pickColl.setAttribute("aria-label", "Collection");
-    const opts = [["", "Every collection"], ...[...colls].sort((a, b) => a[1].name.localeCompare(b[1].name))
-      .map(([k, v]) => [k, `${v.name} (${v.n.toLocaleString()})`]), ["-", `Not in a collection (${loose.toLocaleString()})`]];
+    const opts = [["", "Every collection"], ...colls.map((k) => [k.key, `${k.name} (${k.n.toLocaleString()})`]),
+                  ["-", `Not in a collection (${Number(d.loose || 0).toLocaleString()})`]];
     for (const [v, t] of opts) { const o = el("option", "", t); o.value = v; o.selected = v === (view.coll || ""); pickColl.append(o); }
     pickColl.onchange = () => dgViewSet({coll: pickColl.value});
     const pickOrder = el("select", "dg-pick"); pickOrder.setAttribute("aria-label", "Order");
@@ -2870,40 +2802,33 @@ async function drawDoginals() {
     const go = el("input", "dg-go"); go.type = "search"; go.placeholder = "Go to #number or id";
     go.setAttribute("aria-label", `Go to a ${W} by number or id`);
     go.onkeydown = (e) => { if (e.key === "Enter") dgGoTo(go.value); };
-    ui.bar.replaceChildren(chip("all", "All", found.length), chip("art", "Pictures & pages", arts),
-                           chip("text", "Text", found.length - arts), el("span", "dg-sp"), pickColl, pickOrder, go);
-    ui.bar.style.display = found.length ? "" : "none";
+    ui.bar.replaceChildren(chip("all", "All", counts.all), chip("art", "Pictures & pages", counts.art),
+                           chip("text", "Text", counts.text), el("span", "dg-sp"), pickColl, pickOrder, go);
+    ui.bar.style.display = counts.all ? "" : "none";
   }
-  // What the grid shows, in number order (an inscription whose number is not known yet comes last).
-  let shownList = found.filter((g) => view.kind === "all" || (view.kind === "text") === g.text);
-  if (view.coll === "-") shownList = shownList.filter((g) => metaOf(g) && !collOf(g));
-  else if (view.coll) shownList = shownList.filter((g) => collKey(collOf(g)) === view.coll);
-  const num = (g) => { const m = metaOf(g); return m && m.number != null ? Number(m.number) : null; };
-  shownList.sort((a, b) => {
-    const x = num(a), y = num(b);
-    if (x === null || y === null) return x === null ? (y === null ? a.id.localeCompare(b.id) : 1) : -1;
-    return view.order === "new" ? y - x : x - y;
-  });
-  dg.list = shownList;
-  const pages = Math.max(1, Math.ceil(shownList.length / DG_PAGE));
-  const page = Math.min(Math.max(0, dg.page | 0), pages - 1);
-  const here = shownList.slice(page * DG_PAGE, (page + 1) * DG_PAGE);
+  // The page the arcade sent, in number order (one whose number is not known yet comes last).
+  const here = d.items || [];
+  const num = (g) => g.number != null ? Number(g.number) : null;
+  const pages = d.pages || 1, page = d.page || 0;
   const shown = JSON.stringify([here.map((g) => g.id + ":" + g.txid + ":" + g.vout + (isListed(g) ? ":L" : "")
-                                          + ":" + (num(g) ?? "") + ":" + collKey(collOf(g))), sendShort, !!w, dg.focus]);
+                                          + ":" + (num(g) ?? "") + ":" + dgCollKey(g.collection)), sendShort, !!w,
+                                dg.focus, !!d.done]);
   if (ui.shown !== shown) {
     ui.shown = shown;
     const cards = [];
-    for (const g of here) {
+    for (const g0 of here) {
+      const g = {...g0, doginal: true};
       const card = el("div", "wl-piececard dg-tile" + (dg.focus === g.id ? " dg-focus" : ""));
       card.dataset.doginal = g.id;
       card.tabIndex = 0; card.setAttribute("role", "button");
-      const n = num(g), k = collOf(g);
+      const n = num(g), k = g.collection;
       card.setAttribute("aria-label", `${W} ${n !== null ? "#" + n.toLocaleString() : g.id}: open its card`);
       card.onclick = (e) => { if (!e.target.closest("button,a,input")) openDgCard(g); };
       card.onkeydown = (e) => { if (e.key === "Enter" && e.target === card) openDgCard(g); };
       card.append(g.text ? dgTextPic(g) : doginalPic(g));
       card.append(el("div", "dg-num", n !== null ? `#${n.toLocaleString()}` : "#…"));
-      card.append(el("div", "dg-coll" + (k ? "" : " none"), k ? (k.item || k.name) : (metaOf(g) ? "No collection" : "")));
+      card.append(el("div", "dg-coll" + (k ? "" : " none"),
+                     k ? (k.item || k.name) : (n !== null && d.done ? "No collection" : "")));
       if (viewOnly || w) {
         // shown only (above)
       } else if (isListed(g)) {
@@ -2931,7 +2856,7 @@ async function drawDoginals() {
     ui.grid.replaceChildren(...cards);
     ui.grid.style.display = cards.length ? "" : "none";
   }
-  const paged = `${page}/${pages}/${shownList.length}/${here.length ? num(here[0]) + "-" + num(here[here.length - 1]) : ""}`;
+  const paged = `${page}/${pages}/${d.total}/${here.length ? num(here[0]) + "-" + num(here[here.length - 1]) : ""}`;
   if (ui.paged !== paged) {
     ui.paged = paged;
     ui.pager.replaceChildren();
@@ -2948,54 +2873,12 @@ async function drawDoginals() {
       pick.onchange = () => dgPageGo(Number(pick.value));
       const a = here.length ? num(here[0]) : null, b = here.length ? num(here[here.length - 1]) : null;
       ui.pager.append(prev, pick, next, el("span", "wl-note", a !== null && b !== null
-        ? `#${a.toLocaleString()} – #${b.toLocaleString()} on this page · ${shownList.length.toLocaleString()} ${W}s`
-        : `${shownList.length.toLocaleString()} ${W}s`));
+        ? `#${a.toLocaleString()} – #${b.toLocaleString()} on this page · ${Number(d.total).toLocaleString()} ${W}s`
+        : `${Number(d.total).toLocaleString()} ${W}s`));
     }
   }
-  if (left.length && !dg.asking && !dg.failed) {
-    // One call at a time, a hundred transactions each: the lightest the node can be asked.
-    dg.asking = true;
-    const mine = dg, queue = left.slice();
-    (async () => {
-      while (queue.length && dg === mine && !mine.failed) {
-        const batch = queue.splice(0, DG_BATCH);
-        try {
-          const got = await dgAskMany(mine.net, mine.addr, batch);
-          for (const [t, held] of Object.entries(got)) {
-            if (held === null) mine.failed += 1; else mine.answers[t] = held;
-          }
-        } catch (e) { mine.failed += batch.length; }
-        if (dg === mine) drawDoginals().catch(() => {});
-      }
-    })().finally(() => { mine.asking = false; });
-  }
-  // Filled in as the index walks (2026-10-22: "can the Wallet view be updated in real time as the index is
-  // built?"): every DG_LIVE_MS, how far the index has got, then only the coins it has just walked past are asked again.
-  if (!left.length && !dg.asking && waiting.length && !dg.live) {
-    const mine = dg;
-    mine.live = setTimeout(() => { mine.live = null; dgLive(mine).catch(() => {}); }, dg.reach ? DG_LIVE_MS : 1000);
-  }
 }
-
-const DG_LIVE_MS = 60000;
-async function dgLive(mine) {
-  if (dg !== mine || tab !== "nfts") return;
-  if (!document.hidden) {
-    const r = await fetch(`/account/doginal-index?chain=${encodeURIComponent(mine.net)}`, {cache: "no-store"});
-    const got = await r.json().catch(() => ({}));
-    if (r.ok) { mine.reach = got.reach || 0; mine.tip = got.tip || 0; }
-    const ready = Object.keys(mine.answers).filter((t) => (mine.answers[t] || []).some((i) => i.wait
-      && (i.h == null || (mine.reach && Number(i.h) < mine.reach))));
-    for (let k = 0; k < ready.length && dg === mine; k += DG_BATCH) {
-      try {
-        const answers = await dgAskMany(mine.net, mine.addr, ready.slice(k, k + DG_BATCH));
-        for (const [t, held] of Object.entries(answers)) if (held !== null) mine.answers[t] = held;
-      } catch (e) { break; }                                     // asked again next time
-      drawDoginals().catch(() => {});
-    }
-  }
-  if (dg === mine) drawDoginals().catch(() => {});
-}
+function dgCollKey(k) { return k ? String(k.slug || k.root || k.name || "") : ""; }
 
 /* --- drawing it all ----------------------------------------------------- */
 

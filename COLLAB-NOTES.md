@@ -88,7 +88,35 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
-### 2026-11-06 DigiDollar: a module in Lite, built in to the full arcade (Claude; the operator: "In light, it should be a module like sad frog say in arcade full it should be included")
+### 2026-11-06 The Wallet's Doginals one page at a time, built by the arcade; #96 merged (Claude; the operator: "build it and merge the current PR at the same time", "Check it against apples big wallet", "We should be able to read the shared index from any arcade, even if we don't have the index on our own arcade", "always be able to read from the longest copy")
+
+- **Taken back from #91** (it was handed to blockchaindad; no reply yet). `arcade/doginal_pages.py`: the arcade builds an
+  address's list on a thread of its own -- its coins read once, only small coins looked at, what is on each the
+  inscription guard's own answer (`held`, the answer that protects sends), the numbers asked of the most complete index
+  copy 500 at a time (`DoginalIndex.lookup` "numbers") and kept for good (`doginal-numbers.sqlite`), the collections
+  looked up for all at once. It is built again when the address's coins change (read on every page ask: one indexed
+  read), after 60 s, or on `fresh`; the old list is served while a new one is built.
+- **`GET /account/doginals/page?chain&address&page&size&kind&coll&order&go&fresh`** (door: `PUBLIC_PAGES`; the wallet
+  module). One page, the bar's counts and collections, and `done` / how far a first build has got. my_wallet.html asks it
+  and nothing else for the grid (it was ~85 calls for a 7,000-coin wallet: `/account/doginal-txs` re-read every coin on
+  each). `/account/doginal-txs` and `/account/doginal-meta` stay for other callers.
+- **Collections in one query per 500 ids:** `KnownCollections.in_collections`, `Registry.items_of`, app
+  `_wallet_collections` (also used by `/account/doginal-meta` now). **Explore** (`_known_piece`) falls back to the
+  on-chain registry, so Anti Doginal Dogs is named there too (#91 item 1); explore.html opens it as a `registry`
+  collection.
+- **The index read** is unchanged: an arcade with no index of its own reads the linked copies; one that walks reads a
+  longer copy first. The build waits up to 60 s for the chain's reader to open.
+- **Checked on @apple's real wallet** (copies of .25's coins, guard answers and both collection stores; numbers from
+  Strawberry's whole index): 7,139 coins, 2,639 Doginals shown, 4,398 DRC-20 operations left out, all in number order
+  (#31,278 first), 2,237 with a collection (Anti Doginal Dogs 264), none failed or unnumbered. First build 9.2 s (5,456
+  transactions .25's guard had no answer for), again 1.4 s, a page 3 ms.
+- **#96 merged** (blockchaindad): the bare-address door reads the address's own chain, DogeFeedX finds Dogecoin on the
+  running AppState, Windows starts without `resource`/`fcntl`, and an operator API key needs the machine or the admin
+  password before a node-wallet secret or spend. Its entry is below.
+- Tests: `tests/test_doginal_pages.py` (6, one a 7,000-coin wallet), test_known_collections (+registry name in
+  Explore), test_doginal_wallet (2 changed to the new flow), test_doginal_wallet_browser (the unreadable-chain test
+  adds a coin so the list is built again).
+
 ### 2026-11-06 DogecoinArcade: an operator API key cannot print keys or spend the node wallet (draft, no pull request)
 
 - **Branch.** `cursor/wallet-routes-require-local-or-admin-113a` on blockchaindad/Dogecoin-Arcade, off `97e1b74b`. The change is `2648d0d3`. Draft for the operator (`PR_DESCRIPTION.md` on the branch). No pull request opened on this fork or upstream, and nothing deployed. Billy reviews the diff first.

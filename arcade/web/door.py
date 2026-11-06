@@ -83,6 +83,7 @@ PUBLIC_PAGES = frozenset({
     "/account/escrows",       # an account's own escrows (needs a session)
     "/account/doginals",      # this account's own Doginals on Dogecoin, to list (needs a session)
     "/account/doginal-card",  # one of them in full, for the Wallet's card (needs a session)
+    "/account/doginals/page", # one page of them, built by this arcade (2026-11-06, needs a session)
     "/account/segwit/balance",  # the account's registered segwit address (native or P2SH), test chains (needs a session)
     "/account/imported",      # the account's own sealed record of imported wallets, and their addresses (needs a session)
     "/account/imported/busy", # whether an import on a chain must wait for a rescan (needs a session)

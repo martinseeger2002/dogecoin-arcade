@@ -367,6 +367,23 @@ class KnownCollections:
                                "ORDER BY k.count LIMIT 1", (chain, iid)).fetchone()
         return dict(row) if row else None
 
+    def in_collections(self, chain: str, ids: list[str]) -> dict[str, dict]:
+        """`in_collection` for many at once (the Wallet's Doginals, 2026-11-06): {id: {slug, collection, name, position,
+        source}}, one query per 500 ids; an id in two collections gets the smaller one, as `in_collection` does."""
+        best: dict[str, tuple[int, dict]] = {}
+        with self._db() as conn:
+            for at in range(0, len(ids), 500):
+                part = list(ids[at:at + 500])
+                for row in conn.execute(
+                        "SELECT i.id, i.slug, i.name, i.position, k.name AS collection, k.source, k.count FROM kc_item i "
+                        f"JOIN kc k ON k.chain=i.chain AND k.slug=i.slug WHERE i.chain=? AND i.id IN "
+                        f"({','.join('?' * len(part))})", (chain, *part)):
+                    if row["id"] not in best or row["count"] < best[row["id"]][0]:
+                        best[row["id"]] = (row["count"], {"slug": row["slug"], "name": row["name"],
+                                                          "position": row["position"], "collection": row["collection"],
+                                                          "source": row["source"]})
+        return {iid: got for iid, (_, got) in best.items()}
+
     def index(self, chain: str) -> list[dict]:
         """A chain's collections as linked arcades are told them: slug, fp, name, supply, count, sig."""
         with self._db() as conn:
