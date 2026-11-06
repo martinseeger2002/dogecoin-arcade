@@ -90,7 +90,7 @@ coding agent, so it is written for agents first and people second.
 
 ### 2026-11-06 DogecoinArcade: an operator API key cannot print keys or spend the node wallet (draft, no pull request)
 
-- **Branch.** `cursor/wallet-routes-require-local-or-admin-113a` on blockchaindad/Dogecoin-Arcade, off `97e1b74b`. Draft for Martin (`PR_DESCRIPTION.md` on the branch). No pull request opened on this fork or upstream, and nothing deployed. Billy reviews the diff first.
+- **Branch.** `cursor/wallet-routes-require-local-or-admin-113a` on blockchaindad/Dogecoin-Arcade, off `97e1b74b`. The change is `2648d0d3`. Draft for Martin (`PR_DESCRIPTION.md` on the branch). No pull request opened on this fork or upstream, and nothing deployed. Billy reviews the diff first.
 - **What.** A leaked operator bearer key (`Authorization: Bearer ak_...`, owner `node`) was treated as the operator at the machine: the door returned early, `_request_outside` said the request was local, CSRF was skipped, and a new key defaults to `where=anywhere`. From anywhere, that key could `dumpprivkey` (`POST /backup/{which}/print`), `importprivkey` (`POST /backup/{which}/import-key`), and fund, sign and broadcast (`POST /wallet/send`). `POST /admin/api/send/confirm` already required the admin password from a remote caller. The routes that reveal the node wallet's keys or sign or broadcast a spend now use that same check. A person at the machine is unchanged and does not hash a password. Read-only use of a key is unchanged. Lite `confirm` stays machine-only.
 - **Safety page.** `arcade/web/docs/exchange-safety.md` is unchanged. This does not change how a transaction is built or signed, only who may ask the node wallet to do it.
 - **From SadFrog's side.** Nothing, until Martin has reviewed.
