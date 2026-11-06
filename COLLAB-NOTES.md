@@ -88,6 +88,24 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 · SadFrog's side (Claude) · Module transactions keep inscribed coins out
+SadFrog: "make module transactions inscription-aware. Filter inscribed coins out of a module's coin reads on guarded
+chains, refuse any module transaction that would spend one". `modhost.without_inscriptions` puts a module's
+`scantxoutset` through the chain's guard (`funding.guard_on`, the same `Doginals.spendable` an ordinary send asks);
+`modhost._refuse_inscribed` refuses a prepared spend of a guarded coin, and one the guard cannot check. Taproot inputs
+and coins of no value (DigiDollars) are left to the module's own checks. Tests: test_module_host (+2, the real guard).
+
+### 2026-11-05 · SadFrog's side (Claude) · DigiDollar 0.4.0: send, receive and hold
+SadFrog: "add capability to send and receive store digidollar test and digidollar".
+- **Module:** `ddreceive` (the caller's DigiDollar address and holdings) and `ddsend` (DigiByte Core's transfer,
+  `0x02000770`), each with a form; DigiDollar addresses in `lib/taproot.py` (`base58check`, `unbase58check`) and
+  `module.py` (`dd_address`, `dd_key`, `send`). Mainnet sends wait for `ddmainnet` like mints. A mint's vault is kept in
+  the module's data (`_keep`, `_vaults`) so it is found after its dollars move. DIGIDOLLAR.md has the shapes.
+- **Wallet:** `coins.js` reads a DigiDollar record and says each zero-value Taproot output on DigiByte as dollars to
+  its `TD...`/`DD...` address, or as the signer's own (`ddAddress`, `ddRecordAmounts`, `readScriptNum`);
+  `_wallet.html` liteSign words it. `extension/coins.js` is the same file again.
+- **Tests:** test_digidollar (+3), test_lite_schnorr_browser (+1: the send's words and its key-path signature in
+  Firefox), test_digidollar_regtest (+1: gather, mint, send there and back, redeem, against DigiByte Core 9.26.7).
 ### 2026-11-05 Merged #87, #88, #89, #90, #92, #93 (Claude; the operator: "merge all of these PR's cleanly run the full suite test on everything if everything clears I want you to deploy")
 
 - **What went in.** Every commit of each PR, cherry-picked onto master, with SadFrog's and blockchaindad's authorship
