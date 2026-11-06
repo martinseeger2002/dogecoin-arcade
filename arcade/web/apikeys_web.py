@@ -81,7 +81,8 @@ def guard(app, state) -> None:
 
 
 def register(app, state, admin_check, signed_in, run_line) -> None:
-    """The key routes. `run_line(request, line)` runs a console line as the request's caller (arcade/lite/web.py)."""
+    """The key routes. `run_line(request, line, password="")` runs a console line as the request's caller
+    (arcade/lite/web.py). `password` is the admin password a node-wallet send asks of an operator key."""
     store_box: dict[str, Any] = {}
 
     def store() -> keylib.KeyStore:
@@ -240,4 +241,5 @@ def register(app, state, admin_check, signed_in, run_line) -> None:
         line = str((body or {}).get("line") or "") if isinstance(body, dict) else ""
         if not line.strip():
             raise HTTPException(400, "say a line to run, such as help")
-        return run_line(request, line)
+        password = str((body or {}).get("password") or "") if isinstance(body, dict) else ""
+        return run_line(request, line, password)
