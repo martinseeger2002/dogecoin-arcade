@@ -188,8 +188,17 @@ def test_a_wallet_imported_on_one_arcade_shows_on_another_with_its_balance(brows
         rows = [o.text for o in browser.find_elements(By.CSS_SELECTOR, "#wmenu .wl-opt")]
         browser.find_element(By.ID, "wpick").click()
         return rows
-    _until(lambda: any(r.startswith("Wallet 1") and "5" in r for r in shown()),
-           "the imported wallet shows on B by name, with its balance", seconds=60)
+    _until(lambda: any(r.startswith("Wallet 1") for r in shown()), "the imported wallet shows on B by name", seconds=60)
+
+    # Lazy wallets (2026-11-05: "only when each wallet is open"): its balance is read when it is picked.
+    def opened():
+        browser.find_element(By.ID, "wpick").click()
+        for o in browser.find_elements(By.CSS_SELECTOR, "#wmenu .wl-opt"):
+            if o.text.startswith("Wallet 1"):
+                o.click()
+                break
+        return any(r.startswith("Wallet 1") and "5" in r for r in shown())
+    _until(opened, "the imported wallet, once opened, shows its balance", seconds=60)
     # The account's public coin list carries its imported wallets too (2026-10-25: "Wallet information is already
     # public. There's no reason to hide it."); the older `chains` answer stays the main address only.
     import requests

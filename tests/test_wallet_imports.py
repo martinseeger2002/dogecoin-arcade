@@ -559,7 +559,7 @@ def test_an_import_is_found_by_the_shared_walk_and_is_ready(client, monkeypatch)
     said = app.post("/account/imported/address", json=first)
     assert said.status_code == 200, said.text
     assert _wait_ready(app, first["address"])["state"] == "ready"
-    assert walked and walked[0][1] == 0, "walked from block 0"
+    assert walked and min(b for _, b in walked) == 0, "walked from block 0 (in chunks since 2026-11-05)"
     with state.token_index(chain).open() as db:
         assert coinlist.covers(coinlist.coverage(db, first["address"], P.messaging_start_height + 40), 0,
                                P.messaging_start_height + 40)
@@ -583,4 +583,59 @@ def test_an_import_before_the_chain_s_index_started_waits_for_it_then_walks_from
     assert again["state"] != "ready"
     _tip(state, chain, P.messaging_start_height + 40)
     assert _wait_ready(app, asked["address"])["state"] == "ready"
-    assert walked and walked[0][1] == 0 and walked[0][0] == P.messaging_start_height + 40, walked
+    assert walked and min(b for _, b in walked) == 0 and max(t for t, _ in walked) == P.messaging_start_height + 40, \
+        walked
+
+
+# --- a sign-in reads only what it needs (2026-11-05: @apple's unlock, 7,000 coins, took 12-18 s) --------------
+
+def test_a_sign_in_reads_the_record_without_reading_any_coins(client, monkeypatch):
+    app, state, chain, account = _ready(client, monkeypatch)
+    asked = _proof(account, 0x1111)
+    assert app.post("/account/imported/address", json=asked).status_code == 200
+    full = app.get("/account/imported").json()
+    assert [w["address"] for w in full["chains"]["ltctest"]] == [asked["address"]]
+    import arcade.utxos as U
+    read = []
+    monkeypatch.setattr(U, "unspent", lambda *a, **k: read.append(a) or [])
+    light = app.get("/account/imported?record=1").json()
+    assert read == [], "opening the record reads no imported address's coins"
+    assert light["record_only"] is True and "chains" not in light and "busy" not in light
+    for key in ("blob", "updated", "version", "signed", "siblings", "vault", "tag", "host"):
+        assert light[key] == full[key], key
+
+
+def test_the_addresses_a_sign_in_checks_come_without_balances(client, monkeypatch):
+    app, state = client
+    account = _seat(app)
+    full = app.get("/account").json()
+    import arcade.utxos as U
+    monkeypatch.setattr(U, "balance", lambda *a, **k: (_ for _ in ()).throw(AssertionError("a balance was read")))
+    light = app.get("/account?only=addresses")
+    assert light.status_code == 200, light.text
+    said = light.json()
+    assert said["pubkey"] == account
+    assert {c["network"]: c["address"] for c in said["chains"]} == {c["network"]: c["address"] for c in full["chains"]}
+    assert all("balance" not in c for c in said["chains"])
+
+
+def test_lazy_wallets_read_coins_only_for_the_wallet_open(client, monkeypatch):
+    app, state, chain, account = _ready(client, monkeypatch)
+    one, two = _proof(account, 0x1111), _proof(account, 0x2222)
+    for asked in (one, two):
+        assert app.post("/account/imported/address", json=asked).status_code == 200
+    import arcade.utxos as U
+    real, read = U.unspent, []
+    monkeypatch.setattr(U, "unspent", lambda db, address, *a, **k: read.append(address) or real(db, address, *a, **k))
+    said = app.get(f"/account/imported?lazy=1&chain=ltctest&address={one['address']}").json()
+    rows = {r["address"]: r for r in said["chains"]["ltctest"]}
+    assert read == [one["address"]], "only the open wallet's coins are read"
+    assert rows[one["address"]].get("lazy") is None and rows[one["address"]]["spendable"] == 0
+    assert rows[two["address"]]["lazy"] is True and rows[two["address"]]["spendable"] is None
+    assert "state" in rows[two["address"]], "its read-back state is still said"
+    read.clear()
+    none_open = app.get("/account/imported?lazy=1").json()
+    assert read == [] and all(r["lazy"] for r in none_open["chains"]["ltctest"])
+    read.clear()
+    app.get("/account/imported")
+    assert sorted(read) == sorted([one["address"], two["address"]]), "without lazy, every one as before"

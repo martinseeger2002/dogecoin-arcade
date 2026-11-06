@@ -104,6 +104,7 @@ from .. import listings as listingslib
 from .. import utxos as utxoslib
 from .. import coinlist as coinlistlib
 from .. import coinwalk as coinwalklib
+from .. import walkstore as walkstorelib
 from .. import blkscan
 from .. import doginals as doginalslib
 from .. import update as updatelib
@@ -13652,7 +13653,7 @@ def create_app(state: AppState) -> FastAPI:
         if account is None:
             return _account_state(request)
         # One answer per account AND per set of chains asked for (lazy wallets, 2026-10-27).
-        fkey = (account.pubkey, request.query_params.get("chains", ""))
+        fkey = (account.pubkey, request.query_params.get("chains", ""), request.query_params.get("only", ""))
         with _account_flight_lock:
             flight = _account_flight.get(fkey)
             first = flight is None
@@ -13695,6 +13696,14 @@ def create_app(state: AppState) -> FastAPI:
             # BEFORE anybody signs up: the browser derives a key on each
             # from the same words and hands over both addresses at once.
             return JSONResponse({"pubkey": None, "chains": chains})
+        if request.query_params.get("only") == "addresses":
+            # The address this node has on file for each chain, and nothing read from an index: what a sign-in checks
+            # before it registers an address the node does not know (wallet.js tellTheNode). 2026-11-05: an
+            # unlock of an account holding 7,000 coins took 12-18 s, ~4 s of it this page reading balances it never
+            # showed.
+            return JSONResponse({"pubkey": account.pubkey,
+                                 "chains": [{**row, "address": _account_address(account.pubkey, one)}
+                                            for row, one in zip(chains, _account_chains())]})
         chain = _account_chain()
         said: dict[str, Any] = {
             # This node on the mesh: a swap a tab lists names it, and shows on other
@@ -27345,10 +27354,13 @@ def create_app(state: AppState) -> FastAPI:
             if run.get("walk"):
                 p = run.get("progress") or {}
                 n = len(p.get("readers") or [])
-                return {"state": "rescan", "eta": None, "walk": True, "jobs": p.get("jobs"), "done": p.get("done", 0),
-                        "says": (f"{n} arcades are walking the chain for this wallet's coins, every block read twice "
-                                 f"({p.get('done', 0)} of {p.get('jobs')} parts done); its balance shows when they "
-                                 "finish. You can close this page." if n else
+                left = p.get("eta")
+                when = f", about {importslib.say_wait(left).removeprefix('about ')} left" if left else ""
+                twice = "every block read twice" if p.get("need", 2) > 1 else "every block read once"
+                return {"state": "rescan", "eta": left, "walk": True, "jobs": p.get("jobs"), "done": p.get("done", 0),
+                        "says": (f"{n} readers are walking the chain for this wallet's coins, {twice} "
+                                 f"({p.get('done', 0)} of {p.get('jobs')} parts done{when}); its balance shows when "
+                                 "they finish. You can close this page." if n else
                                  "The arcades are getting ready to walk the chain for this wallet's coins; its balance "
                                  "shows when they finish. You can close this page.")}
             return {"state": "rescan", "eta": int(eta),
@@ -27366,10 +27378,16 @@ def create_app(state: AppState) -> FastAPI:
                                  "by itself, and no other arcade is sharing it. The read-back of this wallet's "
                                  "coins is queued and starts by itself as soon as one is available; its balance "
                                  "shows then. You can close this page.")}
-            running = _chain_rescan(chain.network)
-            eta = (_wait_for(running["address"]) if running else 0.0) + _run_left(
-                {"network": chain.network, "start": _rescan_floor(chain),
-                 "end": state.token_index(chain).indexed_height() or 0})
+            # Every import is found by the shared walk: its time is the walk's, at the pace the last walks of this
+            # chain read (2026-11-05: the old per-block Core pace said "21 days" for a Flopcoin walk of ~15 minutes).
+            running = _walk_running.get(chain.network)
+            ahead = (running.get("progress") or {}).get("eta") if running else None
+            own = _walk_eta(chain)
+            if own is None:
+                return {"state": "rescan", "eta": None,
+                        "says": "This wallet's coins are read by the next walk of the chain, right after the one "
+                                "running now; its balance shows when it is done. You can close this page."}
+            eta = own + float(ahead or 0)
             return {"state": "rescan", "eta": int(eta),
                     "says": f"The arcade is reading back this wallet's coins; check back in "
                             f"{importslib.say_wait(eta)}."}
@@ -27401,8 +27419,11 @@ def create_app(state: AppState) -> FastAPI:
         picked = _walk_chain_by(chain)
         if picked is None or not _readable(picked) or picked.borrowed or state.setting("walk_lend", True) is False:
             return JSONResponse({"chain": chain, "files": False, "rpc": False})
+        mesh = getattr(state, "mesh", None)
+        # `node`: this arcade's mesh id, so a walker that also borrows its Core over the mesh counts it once (2026-11-05).
         return JSONResponse({"chain": chain, **_walk_reader.can(picked),
-                             "tip": state.token_index(picked).indexed_height() or 0})
+                             "tip": state.token_index(picked).indexed_height() or 0,
+                             "node": getattr(mesh, "node_id", "") if mesh is not None else ""})
 
     @app.post("/coins/walk/job")
     def coins_walk_job(request: Request, payload: Any = Body(None)):
@@ -27432,15 +27453,38 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"detail": "no such job here"}, status_code=404)
         return JSONResponse(got)
 
+    _walk_store = walkstorelib.WalkStore(Path(state.home) / "walks.sqlite")
+
+    def _mesh_node_of_hosts() -> dict[str, str]:
+        """{host: mesh node id} from the meshes' own announcements (wss://host -> its key), so an arcade read through
+        its web address is not read a second time through its shared Core."""
+        out: dict[str, str] = {}
+        try:
+            with state.store() as store:
+                for row in store.mesh_peers(state.messaging.network, since=int(time.time()) - 3 * 86400):
+                    host = str(row["host"] or "")
+                    if host.startswith("wss://") and row["mesh_key"]:
+                        out.setdefault(host[len("wss://"):].split("/", 1)[0].split(":", 1)[0].lower(),
+                                       str(row["mesh_key"]).lower())
+        except Exception:                                   # noqa: BLE001
+            pass
+        return out
+
     def _walk_readers(chain) -> list[str]:
-        """Who reads a walk on `chain`: this arcade (when it can) and the arcades that read their node's files for
-        others; arcades reading over RPC only when fewer than two read files. Arcades caught wrong rest an hour."""
-        files, rpc_only, borrowed = [], [], []
+        """Who reads a walk on `chain`: this arcade (when it can), the arcades that read for others at their web address
+        (their node's files, else RPC), and every Core another arcade shares over the mesh ("core:<node id>", read here
+        a batch of raw blocks at a time, each proved; 2026-11-05: "Use cores shared over the mesh as extra
+        readers" -- the walk was meant to use every arcade with a node). One arcade is one reader, however it is reached.
+        Arcades caught wrong rest an hour. At most `walk_readers_max`: file readers first."""
+        files, rpc_only, mesh, borrowed = [], [], [], []
         if _readable(chain):
-            if chain.borrowed:                              # every block over the mesh: only when nobody else can
+            if chain.borrowed:                              # every block over the mesh: the mesh's Cores read instead
                 borrowed.append("self")
             else:
                 (files if _walk_reader.can(chain)["files"] else rpc_only).append("self")
+        node = getattr(getattr(state, "mesh", None), "node_id", "") or ""
+        reading = {node.lower()} if node else set()
+        by_host = _mesh_node_of_hosts()
         for host in _arcade_hosts():
             if time.time() - _walk_resting.get(host, 0.0) < WALK_REST:
                 continue
@@ -27454,10 +27498,25 @@ def create_app(state: AppState) -> FastAPI:
                 files.append(host)
             elif said.get("rpc"):
                 rpc_only.append(host)
-        most = int(state.setting("walk_readers_max", WALK_READERS_MAX) or WALK_READERS_MAX)
-        readers = files[:most]
-        if len(readers) < 2:
-            readers += rpc_only[:2 - len(readers)]
+            else:
+                continue
+            who = str(said.get("node") or by_host.get(host) or "").lower()
+            if who:
+                reading.add(who)
+        if coinwalklib.files_ok(chain.params):
+            try:
+                from ..mesh import coreshare as _cs
+                lent = _cs.lenders(chain.network)
+            except Exception:                               # noqa: BLE001 -- no mesh
+                lent = []
+            for peer, _lanes in lent:
+                name = "core:" + str(peer).lower()
+                if str(peer).lower() in reading or time.time() - _walk_resting.get(name, 0.0) < WALK_REST:
+                    continue
+                reading.add(str(peer).lower())
+                mesh.append(name)
+        most = max(1, int(state.setting("walk_readers_max", WALK_READERS_MAX) or WALK_READERS_MAX))
+        readers = (files + rpc_only + mesh)[:most]
         if not readers:
             readers = borrowed
         return readers
@@ -27485,6 +27544,10 @@ def create_app(state: AppState) -> FastAPI:
     def _walk_job(chain, reader: str, top: int, bottom: int, addresses: list[str], progress: dict) -> list[list]:
         if reader == "self":
             return _walk_reader.read(chain, top, bottom, addresses, progress)
+        if reader.startswith("core:"):                      # a Core shared over the mesh, read from here
+            from ..mesh import coreshare as _cs
+            return _walk_reader.read_over(_cs.lent_rpc(reader[len("core:"):], chain.params), chain.params, top, bottom,
+                                          addresses, progress)
         r = _post_arcade(f"https://{reader}/coins/walk/job", timeout=20, headers={"User-Agent": "arcade-node"},
                          json={"chain": chain.network, "top": top, "bottom": bottom, "addresses": addresses})
         said = r.json() if r.status_code == 200 else {}
@@ -27503,116 +27566,279 @@ def create_app(state: AppState) -> FastAPI:
                 raise RuntimeError(f"{reader}: {got.get('error') or 'the job is gone'}")
         raise TimeoutError(f"{reader} took longer than {WALK_JOB_SECONDS:.0f} s")
 
-    def _shared_walk(chain, addresses: list[str], lo: int, hi: int, progress: dict | None = None) -> dict:
+    def _shared_walk(chain, addresses: list[str], lo: int, hi: int, progress: dict | None = None,
+                     walk: dict | None = None) -> dict:
         """Walk `lo`..`hi` for `addresses`, shared and double-read; file what the chain says is real and mark what
-        was verified as covered. {"readers", "filed", "verified": [[lo, hi]], "redone": [...], "failed": [...]}."""
+        was verified as covered. {"readers", "filed", "verified": [[lo, hi]], "redone": [...], "failed": [...]}.
+
+        Kept on disk (arcade/walkstore.py, 2026-11-05): the range is cut into fixed chunks, each read by two different
+        readers (one when only one can read), and every read is written down as it comes back. `walk` (a record from
+        WalkStore.unfinished) picks a walk cut short up where it was: only the reads it still needs are asked for. A
+        reader takes the next chunk nobody has, so a fast one reads more; when none is left it reads a second copy of
+        one still waiting on a slow reader."""
         progress = progress if progress is not None else {}
-        addresses = list(dict.fromkeys(addresses))
         readers = _walk_readers(chain) or (["self"] if _readable(chain) else [])
         if not readers:
             raise RuntimeError(f"nobody can read {chain.title} right now")
-        jobs = coinlistlib.segments(lo, hi, readers)
-        parts = [{"segment": j["segment"], "reader": j["reader"], "top": j["top"], "bottom": j["bottom"],
-                  "state": "reading", "progress": {}} for j in jobs]
-        progress.update({"readers": readers, "jobs": len(jobs), "done": 0, "parts": parts, "lo": lo, "hi": hi,
-                         "wallets": len(addresses), "began": time.time()})
-        results: dict[int, dict] = {}
-        lock = threading.Lock()
-
-        def run(i: int, job: dict) -> None:
-            canaries = _walk_canaries(chain, job["top"], job["bottom"], set(addresses))
-            asked = addresses + [c[2] for c in canaries]
-            mine = parts[i]["progress"]
-            parts[i]["canaries"] = len(canaries)
-            took = time.time()
-            try:
-                found = _walk_job(chain, job["reader"], job["top"], job["bottom"], asked, mine)
-                missing = coinlistlib.canaries_missing(found, canaries)
-                out = {"ok": not missing, "found": found, "missing": missing}
-            except Exception as exc:                        # noqa: BLE001 -- the segment goes to somebody else
-                out = {"ok": False, "error": str(exc)[:200], "found": []}
-            took = max(0.001, time.time() - took)
-            with lock:
-                results[i] = {**job, **out, "canaries": len(canaries)}
-                progress["done"] = progress.get("done", 0) + 1
-                parts[i].update({"state": "done" if out["ok"] else "failed", "missed": len(out.get("missing") or []),
-                                 "error": out.get("error", ""), "seconds": round(took, 1),
-                                 "matches": len([m for m in out["found"] if m[4] in set(addresses)])})
-                seen = _walk_seen.setdefault(job["reader"], {})
-                seen.update({"at": time.time(), "how": mine.get("how") or seen.get("how", ""),
-                             "blocks_per_s": round((job["top"] - job["bottom"] + 1) / took, 1)})
-
-        threads = [threading.Thread(target=run, args=(i, j), daemon=True, name=f"walk {chain.network} {j['reader']}")
-                   for i, j in enumerate(jobs)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        if walk is None:
+            walk = _walk_store.start(chain.network, lo, hi, list(addresses))
+        wid, lo, hi = int(walk["id"]), int(walk["lo"]), int(walk["hi"])
+        addresses = list(walk["addresses"])
         wanted = set(addresses)
+        need = 2 if len(readers) > 1 else 1
+        pieces = walkstorelib.chunks(lo, hi, int(walk["chunk"]))
+        index_of = {top: i for i, (top, _) in enumerate(pieces)}
+        reads: dict[int, dict[str, dict]] = {top: {} for top, _ in pieces}
+        parts: list[dict] = []
+        for r in _walk_store.reads(wid):
+            if r["top"] in reads:
+                reads[r["top"]][r["reader"]] = r
+                parts.append({"segment": index_of[r["top"]], "reader": r["reader"], "top": r["top"],
+                              "bottom": r["bottom"], "state": "done" if r["ok"] else "failed", "progress": {},
+                              "seconds": round(r["seconds"], 1), "error": r["error"], "earlier": True})
+        inflight: dict[int, set] = {top: set() for top, _ in pieces}
+        lock = threading.Lock()
+        finished = threading.Event()
+        verdict: dict[int, list] = {}                       # chunk -> the coins it was settled on
+        judging, late = [False], []                          # reads that came back while (or after) chunks were judged
+
+        def judge_late(reader: str, top: int, found: list) -> None:
+            if reader != "self" and top in verdict and coinlistlib.agree(found, verdict[top]) != (set(), set()):
+                _walk_resting[reader] = time.time()
+
+        def good(top: int) -> set:
+            return {k for k, v in reads[top].items() if v["ok"]}
+
+        def settled(top: int) -> bool:
+            return len(good(top)) >= need
+
+        def done_reads() -> int:
+            return sum(min(need, len(good(top))) for top, _ in pieces)
+
+        size = {top: top - bottom + 1 for top, bottom in pieces}
+
+        def blocks_read() -> int:
+            return sum(size[top] * min(need, len(good(top))) for top, _ in pieces)
+
+        started_with, began = blocks_read(), time.time()
+
+        def pick(reader: str) -> tuple[int, int] | None:
+            with lock:
+                best = None
+                for top, bottom in pieces:
+                    if settled(top) or reader in reads[top] or reader in inflight[top]:
+                        continue
+                    load = len(good(top)) + len(inflight[top])
+                    key = (load >= need, load, -top)        # nobody on it first, then highest first
+                    if best is None or key < best[0]:
+                        best = (key, top, bottom)
+                if best is None:
+                    return None
+                inflight[best[1]].add(reader)
+                return best[1], best[2]
+
+        def say() -> None:
+            """Reads done, and the time left at the pace this run has read so far (all readers together)."""
+            left = sum(size[top] for top, _ in pieces) * need - blocks_read()
+            pace = (blocks_read() - started_with) / max(1.0, time.time() - began)
+            progress.update({"done": done_reads(), "blocks_left": left, "eta": int(left / pace) if pace > 0 else None})
+
+        def work(reader: str) -> None:
+            fails = 0
+            while not finished.is_set():
+                got = pick(reader)
+                if got is None:
+                    return
+                top, bottom = got
+                try:
+                    canaries = _walk_canaries(chain, top, bottom, wanted)
+                except Exception as exc:                    # noqa: BLE001 -- the index busy: this chunk, later
+                    with lock:
+                        inflight[top].discard(reader)
+                    log.info("shared walk %s: no canaries for %d..%d just now: %s", chain.network, bottom, top, exc)
+                    finished.wait(2.0)
+                    continue
+                asked = addresses + [c[2] for c in canaries]
+                mine: dict = {}
+                part = {"segment": index_of[top], "reader": reader, "top": top, "bottom": bottom, "state": "reading",
+                        "progress": mine, "canaries": len(canaries)}
+                with lock:
+                    parts.append(part)
+                took = time.time()
+                try:
+                    found = _walk_job(chain, reader, top, bottom, asked, mine)
+                    missing = coinlistlib.canaries_missing(found, canaries)
+                    ok, error = not missing, ("canary missing" if missing else "")
+                except Exception as exc:                    # noqa: BLE001 -- the chunk goes to somebody else
+                    found, missing, ok, error = [], [], False, str(exc)[:200]
+                took = max(0.001, time.time() - took)
+                ours = [m for m in found if m[4] in wanted]
+                try:
+                    _walk_store.put_read(wid, top, bottom, reader, ok, ours, len(missing), error, took)
+                except Exception as exc:                    # noqa: BLE001 -- kept in memory all the same
+                    log.warning("shared walk %s: a read could not be kept: %s", chain.network, exc)
+                with lock:
+                    inflight[top].discard(reader)
+                    reads[top][reader] = {"ok": ok, "found": ours, "missing": len(missing), "error": error,
+                                          "reader": reader, "top": top, "bottom": bottom, "seconds": took}
+                    part.update({"state": "done" if ok else "failed", "seconds": round(took, 1), "error": error,
+                                 "missed": len(missing), "matches": len(ours)})
+                    if missing and reader != "self":        # shown wrong: rests at once
+                        _walk_resting[reader] = time.time()
+                    if ok and judging[0]:
+                        if top in verdict:
+                            judge_late(reader, top, ours)
+                        else:
+                            late.append((reader, top, ours))
+                    seen = _walk_seen.setdefault(reader, {})
+                    seen.update({"at": time.time(), "how": mine.get("how") or seen.get("how", ""),
+                                 "blocks_per_s": round((top - bottom + 1) / took, 1)})
+                    say()
+                    if all(settled(t) for t, _ in pieces):
+                        finished.set()
+                if not ok:
+                    fails += 1
+                    if fails >= WALK_FAILS_MAX:             # this walk goes on without it
+                        return
+
+        progress.update({"readers": readers, "jobs": len(pieces) * need, "done": done_reads(), "parts": parts,
+                         "lo": lo, "hi": hi, "wallets": len(addresses), "began": float(walk["began"]), "walk": wid,
+                         "chunks": len(pieces), "need": need})
+        if not all(settled(t) for t, _ in pieces):
+            threads: list[threading.Thread] = []
+
+            def begin(r: str) -> None:
+                t = threading.Thread(target=work, args=(r,), daemon=True, name=f"walk {chain.network} {r[:20]}")
+                threads.append(t)
+                t.start()
+            for r in readers:
+                begin(r)
+            looked = time.time()
+            while not finished.is_set() and any(t.is_alive() for t in threads):
+                finished.wait(1.0)
+                # Readers that came since it began (2026-11-05: a walk resumed right after a restart, before the
+                # mesh's links were up, had two readers and never the three Flopcoin Cores that joined a minute later).
+                if time.time() - looked >= WALK_READERS_EVERY and not finished.is_set():
+                    looked = time.time()
+                    try:
+                        more = [r for r in _walk_readers(chain) if r not in readers]
+                    except Exception:                       # noqa: BLE001
+                        more = []
+                    for r in more:
+                        readers.append(r)
+                        begin(r)
+                with lock:
+                    if len(readers) > 1:
+                        need = 2                            # two readers now: every chunk is read twice
+                    progress.update({"readers": list(readers), "need": need,
+                                     "jobs": len(pieces) * need})
+                    say()
         verified, redone, failed, keep = [], [], [], []
-        by_segment: dict[int, list] = {}
-        for r in results.values():
-            by_segment.setdefault(r["segment"], []).append(r)
-        for seg, rs in sorted(by_segment.items()):
-            good = [r for r in rs if r["ok"]]
-            top, bottom = rs[0]["top"], rs[0]["bottom"]
-            ours = lambda r: [m for m in r["found"] if m[4] in wanted]   # noqa: E731
-            if len(good) >= 2 and good[0]["reader"] != good[1]["reader"] and \
-                    coinlistlib.agree(ours(good[0]), ours(good[1])) == (set(), set()):
-                keep += ours(good[0])
+        # A reader that missed a canary was shown wrong, whoever else read that chunk: it rests (WALK_REST).
+        for top, _ in pieces:
+            for r in reads[top].values():
+                if r["reader"] != "self" and r.get("missing"):
+                    _walk_resting[r["reader"]] = time.time()
+        with lock:
+            judging[0] = True
+            snapshot = {top: list(reads[top].values()) for top, _ in pieces}
+        for top, bottom in pieces:
+            rs = snapshot[top]
+            ok_rs = [r for r in rs if r["ok"]]
+            # Two different readers agreeing settle it; every other good read is held to them too, so a third that
+            # disagrees sends the chunk to be read again here (and whoever was wrong rests).
+            if len(ok_rs) >= 2 and all(coinlistlib.agree(ok_rs[0]["found"], r["found"]) == (set(), set())
+                                       for r in ok_rs[1:]):
+                keep += ok_rs[0]["found"]
                 verified.append((bottom, top))
+                verdict[top] = ok_rs[0]["found"]
                 continue
-            if len(rs) == 1 and good:                       # a walk with one reader: read once, canaries passed
-                keep += ours(good[0])
+            if need == 1 and ok_rs:                         # a walk with one reader: read once, canaries passed
+                keep += ok_rs[0]["found"]
                 verified.append((bottom, top))
+                verdict[top] = ok_rs[0]["found"]
                 continue
-            try:                                            # this arcade reads the segment itself, then knows who was wrong
+            try:                                            # this arcade reads the chunk itself, then knows who was wrong
                 canaries = _walk_canaries(chain, top, bottom, wanted)
                 again = _walk_reader.read(chain, top, bottom, addresses + [c[2] for c in canaries], {})
                 if coinlistlib.canaries_missing(again, canaries):
                     raise RuntimeError("this arcade's own re-read missed a canary")
                 right = [m for m in again if m[4] in wanted]
                 for r in rs:                                # whoever failed, or found other coins than this read, rests
-                    if r["reader"] != "self" and (not r["ok"] or coinlistlib.agree(ours(r), right) != (set(), set())):
+                    if r["reader"] != "self" and (not r["ok"] or coinlistlib.agree(r["found"], right) != (set(), set())):
                         _walk_resting[r["reader"]] = time.time()
                 keep += right
                 verified.append((bottom, top))
-                redone.append({"segment": seg, "readers": [r["reader"] for r in rs],
+                verdict[top] = right
+                redone.append({"segment": index_of[top], "readers": [r["reader"] for r in rs],
                                "why": [r.get("error") or ("canary missing" if r.get("missing") else "disagreed")
-                                       for r in rs]})
-            except Exception as exc:                        # noqa: BLE001 -- that segment stays a gap
+                                       for r in rs] or ["nobody read it"]})
+            except Exception as exc:                        # noqa: BLE001 -- that chunk stays a gap
                 for r in rs:
                     if r["reader"] != "self" and not r["ok"]:
                         _walk_resting[r["reader"]] = time.time()
-                failed.append({"segment": seg, "top": top, "bottom": bottom, "error": str(exc)[:200]})
+                failed.append({"segment": index_of[top], "top": top, "bottom": bottom, "error": str(exc)[:200]})
+        with lock:
+            for reader, top, found in late:
+                judge_late(reader, top, found)
+            late.clear()
+        seen_coin, kept = set(), []
+        for m in keep:
+            if (m[0], int(m[1])) not in seen_coin:
+                seen_coin.add((m[0], int(m[1])))
+                kept.append(m)
         filed = 0
         by_address: dict[str, list] = {}
-        for m in keep:
+        for m in kept:
             by_address.setdefault(m[4], []).append({"txid": m[0], "vout": m[1]})
         for address, coins in by_address.items():
             filed += _file_checked_coins(state, chain, address, coins)
         index = state.token_index(chain)
+        whole = coinlistlib.covers(verified, lo, hi)
         if verified:
             with contextlib.closing(index.open()) as db:
+                now_tip = int(index.indexed_height() or 0)
                 for address in addresses:
                     coinlistlib.mark_covered(db, address, verified, "shared walk: " + ",".join(readers)[:200])
-        log.info("shared walk %s %d..%d for %d addresses: readers %s, %d coins filed, %d segments re-read, %d failed",
+                    # Watched since it was imported, before the walk began: the blocks the index took in since `hi`
+                    # are known for it too (a watch begun on an empty index says 0, which covers nothing by itself).
+                    row = db.conn.execute("SELECT since FROM watched WHERE address = ?", (address,)).fetchone()
+                    if whole and row is not None and now_tip > hi:
+                        coinlistlib.mark_covered(db, address, [(hi + 1, now_tip)], "watched through the walk")
+        log.info("shared walk %s %d..%d for %d addresses: readers %s, %d coins filed, %d chunks re-read, %d failed",
                  chain.network, lo, hi, len(addresses), ",".join(readers), filed, len(redone), len(failed))
         got = {"readers": readers, "filed": filed, "verified": [list(v) for v in coinlistlib.union(verified)],
-               "redone": redone, "failed": failed}
+               "redone": redone, "failed": failed, "walk": wid}
+        if whole:
+            _walk_store.finish(wid, "whole")
+        # else: left unfinished, its good reads kept: the next start asks only for the chunks still missing
+        try:
+            _walk_store.forget_old()
+        except Exception:                                   # noqa: BLE001
+            pass
         _walk_history.insert(0, {"chain": chain.network, "began": progress.get("began"), "ended": time.time(),
                                  "wallets": len(addresses), "lo": lo, "hi": hi, "readers": len(readers),
-                                 "found": len(keep), "filed": filed, "redone": len(redone), "failed": len(failed),
+                                 "found": len(kept), "filed": filed, "redone": len(redone), "failed": len(failed),
                                  "whole": coinlistlib.covers(got["verified"], lo, hi)})
         del _walk_history[WALK_HISTORY:]
         return got
 
     state.shared_walk = _shared_walk
     state.walk_resting = _walk_resting
+    state.walk_store = _walk_store
+
+    def _walk_eta(chain) -> float | None:
+        """Seconds a whole walk of `chain` takes at the pace the last ones read, or None when none has finished yet."""
+        pace = _walk_store.pace(chain.network)
+        if not pace:
+            return None
+        tip = int(state.token_index(chain).indexed_height() or 0)
+        return (tip + 1) * 2 / pace
 
     def _walk_start(chain, address: str) -> None:
         """Queue `address` for its chain's next shared walk (several imports share one), shown like a read-back. Never
-        while the chain's index holds no block: the walk's top would be 0 (queued instead, _rescan_queue_runner)."""
+        while the chain's index holds no block: the walk's top would be 0 (queued instead, _rescan_queue_runner). A
+        walk cut short (a restart) is finished first, from where it was."""
         if not _index_started(chain):
             _rescan_queue.setdefault((chain.network, address), time.time())
             _rescan_queue_wake()
@@ -27620,7 +27846,7 @@ def create_app(state: AppState) -> FastAPI:
         run = {"network": chain.network, "start": 0, "end": state.token_index(chain).indexed_height() or 0,
                "progress": {}, "began": time.time(), "imported": True, "walk": True}
         _backfilling.add(address)
-        _backfill_runs[address] = run
+        _backfill_runs.setdefault(address, run)
         _walk_pending.setdefault(chain.network, set()).add(address)
         if chain.network in _walk_running:
             return
@@ -27628,36 +27854,67 @@ def create_app(state: AppState) -> FastAPI:
 
         def go() -> None:
             try:
-                while _walk_pending.get(chain.network):
-                    batch = sorted(_walk_pending.pop(chain.network))
-                    tip = state.token_index(chain).indexed_height() or 0
-                    shared = {"network": chain.network, "start": 0, "end": tip, "progress": {},
+                while True:
+                    cut_short = next(iter(_walk_store.unfinished(chain.network)), None)
+                    if cut_short is not None:
+                        batch = list(cut_short["addresses"])
+                        pending = _walk_pending.get(chain.network) or set()
+                        pending.difference_update(batch)
+                        lo, tip = int(cut_short["lo"]), int(cut_short["hi"])
+                    elif _walk_pending.get(chain.network):
+                        batch = sorted(_walk_pending.pop(chain.network))
+                        lo, tip = 0, int(state.token_index(chain).indexed_height() or 0)
+                    else:
+                        break
+                    shared = {"network": chain.network, "start": lo, "end": tip, "progress": {},
                               "began": time.time(), "imported": True, "walk": True}
+                    _walk_running[chain.network] = shared
                     for a in batch:
+                        _backfilling.add(a)
                         _backfill_runs[a] = shared
+                    stop = False
                     try:
-                        got = _shared_walk(chain, batch, 0, tip, shared["progress"])
-                        whole = coinlistlib.covers(got["verified"], 0, tip)
+                        got = _shared_walk(chain, batch, lo, tip, shared["progress"], walk=cut_short)
+                        whole = coinlistlib.covers(got["verified"], lo, tip)
                         for a in batch:
                             if whole:
                                 state.set_setting(f"backfilled:{chain.network}:{a}", got["filed"])
                                 state.set_setting(f"core_rescanned:{chain.network}:{a}", 0)
                             else:
                                 _rescan_queue[(chain.network, a)] = time.time()
-                    except Exception as exc:                # noqa: BLE001 -- queued again
+                        stop = not whole                    # chunks nobody could read: tried again later, not now
+                    except Exception as exc:                # noqa: BLE001 -- kept on disk; tried again later
                         log.warning("shared walk on %s stopped: %s; queued", chain.network, exc)
                         for a in batch:
                             _rescan_queue[(chain.network, a)] = time.time()
+                        stop = True                         # a walk left unfinished is picked up next time
                     finally:
                         for a in batch:
                             _backfilling.discard(a)
                             _backfill_runs.pop(a, None)
                     state.bump_generation()
+                    if stop:
+                        break
             finally:
                 _walk_running.pop(chain.network, None)
                 _rescan_queue_wake()
 
         threading.Thread(target=go, daemon=True, name=f"shared walk {chain.network}").start()
+
+    def _walks_resume() -> None:
+        """After a restart: every walk cut short goes on from where it was, without waiting for a Wallet page."""
+        for cut in _walk_store.unfinished():
+            chain = _walk_chain_by(cut["network"])
+            if chain is None or not cut["addresses"]:
+                continue
+            try:
+                _walk_start(chain, cut["addresses"][0])
+            except Exception as exc:                        # noqa: BLE001 -- the next page asks again
+                log.warning("shared walk on %s not resumed: %s", cut["network"], exc)
+
+    _resume = threading.Timer(WALK_RESUME_AFTER, _walks_resume)
+    _resume.daemon = True
+    _resume.start()
 
     # --- Admin -> Wallet imports (2026-10-25: "add another admin panel specifically just for Wallet imports") --
     def _imports_of(network: str) -> list[dict]:
@@ -27698,7 +27955,8 @@ def create_app(state: AppState) -> FastAPI:
         if run is not None:
             p = (next((r for r in _backfill_runs.values() if r.get("walk") and r.get("network") == net), run)
                  .get("progress") or {})
-            live = {k: p.get(k) for k in ("readers", "jobs", "done", "parts", "lo", "hi", "wallets", "began")}
+            live = {k: p.get(k) for k in ("readers", "jobs", "done", "parts", "lo", "hi", "wallets", "began",
+                                          "eta", "need", "chunks", "blocks_left", "walk")}
         waiting = sorted(_walk_pending.get(net) or ()) + sorted(a for (n, a) in _rescan_queue if n == net)
         tags = {w["address"]: w["tag"] for w in wallets}
         readers = []
@@ -27864,13 +28122,23 @@ def create_app(state: AppState) -> FastAPI:
                     _rescan_queue_wake()
         return _rescan_says(chain, address)
 
-    def _imported_view(account, chain) -> list[dict]:
-        """This account's imported addresses on one chain, each with its balance and where its read-back stands."""
+    def _imported_view(account, chain, balances_for: set | None = None) -> list[dict]:
+        """This account's imported addresses on one chain, each with its balance and where its read-back stands.
+
+        `balances_for` (lazy wallets, 2026-11-05: "we shouldn't be downloading all of the wallet balances all at
+        once only when each wallet is open"): the (network, address) pairs whose coins are read; any other comes back
+        with its read-back state and `"lazy": true`, balances None. None reads every one, as before."""
         out = []
         gone = _flights.spent_by(account.pubkey, chain.network)
         index = state.token_index(chain)
         for entry in _imported(account, chain):
             address = entry["a"]
+            if balances_for is not None and (chain.network, address) not in balances_for:
+                out.append({"address": address, "kind": entry["k"], "since": None, "lazy": True,
+                            "spendable": None, "inscribed": None, "inscribed_n": None,
+                            "unchecked": None, "unchecked_n": None,
+                            "registered": entry["t"], **_rescan_says(chain, address)})
+                continue
             with contextlib.closing(index.open()) as db:
                 coins = utxoslib.unspent(db, address)
                 since = utxoslib.since(db, address)
@@ -27896,8 +28164,11 @@ def create_app(state: AppState) -> FastAPI:
         return out
 
     @app.get("/account/imported")
-    def account_imported(request: Request):
-        return _account_imported(request)
+    def account_imported(request: Request, record: int = 0, lazy: int = 0, chain: str = "", address: str = ""):
+        """`?lazy=1`: coins read only for the wallet open on the page (`chain` + `address`, or none); `?record=1`: no
+        wallets at all (a sign-in)."""
+        opened = {(chain, address.strip())} if lazy and chain and address.strip() else set()
+        return _account_imported(request, record_only=bool(record), balances_for=opened if lazy else None)
 
     @app.get("/account/imported/busy")
     def account_imported_busy(request: Request, chain: str = ""):
@@ -27911,20 +28182,32 @@ def create_app(state: AppState) -> FastAPI:
         return JSONResponse({"chain": picked.network, "busy": said is not None, **(said or {})},
                             headers={"Cache-Control": "no-store"})
 
-    def _account_imported(request: Request):
+    def _account_imported(request: Request, record_only: bool = False, balances_for: set | None = None):
         """This account's sealed record of imported wallets, for its browser to open; the main wallet's sealed
         blob beside it (the same one /signin hands anybody), so the browser can check a password against it before
-        it seals anything; each chain's imported addresses and where they stand; the main wallet's names."""
+        it seals anything; each chain's imported addresses and where they stand; the main wallet's names.
+
+        `record_only` (`?record=1`, what a sign-in asks): the record and the vault without each chain's addresses,
+        balances and rescans. Those read every coin of every imported address (2026-11-05: ~4 s a time for an
+        account holding 7,000 coins, asked twice per unlock) and opening the record needs none of them."""
         account = _signed_in_account(request)
         record = state.imported_wallets()
         have = record.get(account.pubkey) or {"blob": "", "updated": 0, "version": 0, "signed": False}
         vault = state.vault().by_pubkey(account.pubkey)
+        if record_only:
+            return JSONResponse({"blob": have["blob"], "updated": have["updated"], "record_only": True,
+                                 "version": int(have.get("version") or 0), "signed": bool(have.get("signed")),
+                                 "siblings": [{"digest": one["digest"], "version": one["version"], "blob": one["blob"]}
+                                              for one in record.siblings(account.pubkey)],
+                                 "tag": str((vault or {}).get("tag") or ""), "host": _proof_host(),
+                                 "vault": json.loads(vault["blob"]) if vault else None},
+                                headers={"Cache-Control": "no-store"})
         chains: dict[str, Any] = {}
         names: dict[str, str] = {}
         for chain in _account_chains():
             names[chain.network] = str(state.setting(importslib.name_key(chain.network, account.pubkey), "") or "")
             try:
-                chains[chain.network] = _imported_view(account, chain)
+                chains[chain.network] = _imported_view(account, chain, balances_for)
             except Exception:                              # noqa: BLE001 -- a chain with no index yet
                 chains[chain.network] = []
         busy = {}
@@ -37295,6 +37578,12 @@ RECONCILE_PACE = 2.0
 WALK_READERS_MAX = 8
 WALK_JOB_SECONDS = 4 * 3600.0
 WALK_POLL = 5.0
+#: Failed reads in one walk before a reader is left out of the rest of it.
+WALK_FAILS_MAX = 3
+#: Seconds after start before walks cut short by the restart go on.
+WALK_RESUME_AFTER = 180.0
+#: How often a running walk looks for readers that came since it began.
+WALK_READERS_EVERY = 60.0
 WALK_REST = 3600.0
 #: Walks the admin's Wallet imports tab lists.
 WALK_HISTORY = 30

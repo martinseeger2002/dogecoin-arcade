@@ -26,6 +26,8 @@ QUEUE_MAX = 8
 #: Over RPC a walk rests this share of each block's read time, so the node keeps answering its other work (2026-10-04
 #: and 10-18: Dogecoin's RPC work queue filled under a flood of reads). Block files need no rest.
 RPC_REST = 1.0
+#: Blocks asked of a mesh-shared Core in one round trip (Reader.read_over).
+OVER_BATCH = 50
 
 
 def files_ok(params) -> bool:
@@ -93,14 +95,22 @@ class Reader:
         except Exception:                                   # noqa: BLE001 -- unreadable: RPC
             bf = None
         if bf is not None:
-            with self._lock:                                # one refresh at a time; it is incremental
-                bf.refresh()
-                with chain.rpc() as rpc:
-                    tip = int(rpc.get_block_count())
-                    bf.chain(rpc.get_block_hash(tip), tip)
-            progress["how"] = "files"
-            return blkscan.scan_parallel(bf, str(self.home / f"blkindex-{chain.network}.sqlite"), top, bottom,
-                                         addresses, chain.params)
+            try:
+                with self._lock:                            # one refresh at a time; it is incremental
+                    bf.refresh()
+                    with chain.rpc() as rpc:
+                        tip = int(rpc.get_block_count())
+                        bf.chain(rpc.get_block_hash(tip), tip)
+                progress["how"] = "files"
+                return blkscan.scan_parallel(bf, str(self.home / f"blkindex-{chain.network}.sqlite"), top, bottom,
+                                             addresses, chain.params)
+            except Exception as exc:                        # noqa: BLE001 -- a block the files lack: the node's RPC
+                # 2026-11-05: pepecoinarcade.com's Flopcoin files lacked block 80,597 ("is not in the block files"),
+                # and both its halves of a walk failed after half an hour; .25's lacked its newest block, just mined.
+                # The same range is read over RPC instead.
+                if "not in the block files" not in str(exc):
+                    raise
+                progress["fell_back"] = str(exc)[:160]
         progress["how"] = "rpc"
         return self._read_rpc(chain, top, bottom, addresses, progress)
 
@@ -130,6 +140,34 @@ class Reader:
                 progress["height"] = h
                 if RPC_REST:
                     time.sleep(min(0.5, (time.perf_counter() - took) * RPC_REST))
+        return out
+
+
+    def read_over(self, rpc, params, top: int, bottom: int, addresses: Iterable[str],
+                  progress: dict[str, Any] | None = None, batch: int = OVER_BATCH) -> list[list]:
+        """[[txid, vout, sats, height, address]] paying `addresses` in `top`..`bottom`, read through `rpc` -- a Core
+        another arcade shares over the mesh (mesh/coreshare.lent_rpc: every raw block proved by arcade/rawchain.py) --
+        `batch` blocks a round trip (2026-11-05, the operator: "Use cores shared over the mesh as extra readers"). Only a
+        chain the lean block reader knows (files_ok): its raw blocks are matched here."""
+        addresses = list(dict.fromkeys(addresses))[:ADDRESSES_MAX]
+        progress = progress if progress is not None else {}
+        progress["how"] = "mesh"
+        want = blkscan.targets(addresses, params)
+        out: list[list] = []
+        if not want:
+            return out
+        if not files_ok(params):
+            raise RuntimeError(f"{getattr(params, 'name', 'this chain')}'s blocks are not read here a block at a time")
+        auxpow = not getattr(params, "block_sig", False)
+        top, bottom = int(top), int(bottom)
+        for hi in range(top, bottom - 1, -batch):
+            lo = max(bottom, hi - batch + 1)
+            heights = list(range(hi, lo - 1, -1))
+            hashes = rpc.batch([("getblockhash", [h]) for h in heights])
+            raws = rpc.batch([("getblock", [bh, False]) for bh in hashes])
+            for h, raw in zip(heights, raws):
+                out.extend(blkscan.block_matches(bytes.fromhex(raw), want, h, auxpow=auxpow))
+            progress["height"] = lo
         return out
 
 

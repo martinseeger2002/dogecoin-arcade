@@ -78,6 +78,7 @@
 <div class="hs-bar" id="hs-bar" hidden>
   <button type="button" id="hs-bar-min"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Minimize</button>
   <span id="hs-bar-name"></span>
+  <button type="button" id="hs-bar-reload" aria-label="Reload this app"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Reload</button>
   <button type="button" id="hs-bar-close"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>Close</button>
 </div>
 <button type="button" class="hs-sr" id="hs-reveal">Show Minimize and Close</button>
@@ -878,16 +879,24 @@ body.fullscreen #arc-bot { display: none !important; }
   }
   function openWin(o) {
     var w = wins.filter(function (x) { return x.key === o.key; })[0];
+    if (w && stuck(w)) {
+      // Tapped again while its window has not finished loading for a long while (2026-11-05, ASHVALE on an
+      // iPhone stuck on "Loading Ashvale…" until he removed it and added it again: "People should not have to do
+      // that"): a fresh load, not the stuck one.
+      reloadWin(w);
+    }
     if (!w) {
       var f = document.createElement('iframe');
-      f.className = 'hs-win'; f.src = o.url; f.title = o.name;
+      f.className = 'hs-win'; f.title = o.name;
       f.setAttribute('allow', 'camera; microphone; display-capture; autoplay; fullscreen; clipboard-write; screen-wake-lock');
-      $('hs-wins').appendChild(f);
       var it = o.item || {name: o.name};
       // The card's "minimized" timeout (games.py; 2026-10-24): seconds it keeps running minimized (15 minutes
       // when the card does not say), null for no limit.
-      w = {key: o.key, frame: f, name: o.name, item: it,
+      w = {key: o.key, frame: f, name: o.name, item: it, url: o.url, loaded: false, tries: 0,
            timeout: it.app && typeof it.app.timeout === 'number' ? it.app.timeout : null};
+      watchLoad(w);
+      f.src = o.url;
+      $('hs-wins').appendChild(f);
       wins.push(w);
       if (wins.length > MOST) {
         var old = wins.filter(function (x) { return x !== w; })[0];
@@ -898,6 +907,52 @@ body.fullscreen #arc-bot { display: none !important; }
     wins = wins.filter(function (x) { return x !== w; }).concat([w]);
     show(w);
   }
+  // ---------- a window that never finishes loading is started again (2026-11-05) ----------
+  // An app's frame fires `load` only when everything in it has loaded, the game's own launcher frame and the scripts it
+  // starts with included, so a window whose `load` never comes is one stuck before the app ran (a phone that slept or
+  // dropped its connections mid-load leaves requests that never answer). Such a window is loaded afresh: by itself once
+  // when it is on screen and still loading after STUCK_AFTER, when the phone comes back after AWAY_LONG with it still
+  // loading, or when its icon is tapped again; and always by Reload in the pull-down bar.
+  var STUCK_AFTER = 45000, AWAY_LONG = 60000, hiddenAt = 0;
+  function stuck(w) { return !w.loaded && Date.now() - (w.startedAt || 0) > STUCK_AFTER; }
+  function watchLoad(w) {
+    w.startedAt = Date.now(); w.loaded = false;
+    w.frame.onload = function () {
+      var href = '';
+      try { href = w.frame.contentWindow.location.href; } catch (e) { href = '?'; }
+      if (href === 'about:blank') return;                                    // reloadWin's step in between
+      w.loaded = true; clearTimeout(w.loadTimer);
+    };
+    clearTimeout(w.loadTimer);
+    w.loadTimer = setTimeout(function () { stalled(w); }, STUCK_AFTER);
+  }
+  function stalled(w) {
+    if (wins.indexOf(w) < 0 || w.loaded) return;
+    if (front !== w || document.visibilityState !== 'visible') return;     // looked at again when it is seen
+    if (w.tries < 1) { w.tries++; say(w.name + ' was stuck loading, so it was started again.'); reloadWin(w); }
+    else say(w.name + ' is still loading. Pull down from the top and tap Reload to start it again.');
+  }
+  function reloadWin(w) {
+    if (!w || wins.indexOf(w) < 0) return;
+    watchLoad(w);
+    // A new src, not location.reload(): a frame stuck mid-load may never get to run a reload of its own.
+    w.frame.src = 'about:blank';
+    setTimeout(function () { w.frame.src = w.url; }, 30);
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible') { hiddenAt = Date.now(); return; }
+    var away = hiddenAt ? Date.now() - hiddenAt : 0;
+    hiddenAt = 0;
+    wins.forEach(function (w) {
+      if (w.loaded) return;
+      if (away > AWAY_LONG || stuck(w)) { if (w === front) say(w.name + ' is being started again.'); reloadWin(w); }
+    });
+  });
+  // Back from the page cache (iOS restores a home-screen app this way): nothing in it is known to be alive.
+  window.addEventListener('pageshow', function (e) {
+    if (e.persisted) wins.forEach(function (w) { if (!w.loaded) reloadWin(w); });
+  });
+
   // Told to the app inside (arcade.app, /r/app.js, through its viewer's 'app' door).
   function tell(w, state) {
     try {
@@ -1046,6 +1101,10 @@ body.fullscreen #arc-bot { display: none !important; }
   $('hs-reveal').addEventListener('click', revealBar);
   $('hs-bar-min').addEventListener('click', function () { minimize(true); });
   $('hs-bar-close').addEventListener('click', function () { if (front) forget('win', front.hlen); closeWin(front); });
+  $('hs-bar-reload').addEventListener('click', function () {
+    if (!front) return;
+    var w = front; hideBar(); w.tries = 0; say(w.name + ' is being started again.'); reloadWin(w);
+  });
 
   // ---------- the App Store ----------
   var store = $('hs-store'), q = $('hs-q'), type = 'all';
