@@ -65,28 +65,39 @@ import * as wallet from "{{ '/node-wallet.js' if wallet == 'node' else '/wallet.
 const NODE = {{ 'true' if wallet == 'node' else 'false' }};
 const API = NODE ? "/node/wallet" : "/account";
 const ME = {{ me|tojson }}, TAGCHAIN = {{ tagchain|tojson }};
+// DigiDollars, a wallet of their own beside DigiByte's while the DigiDollar module is on (2026-11-06): paid at a
+// DigiDollar address (TD... on the test chain), sent by the module's ddsend and signed here like any of its offers.
+const DIGIDOLLAR = {{ 'true' if digidollar and wallet != 'node' else 'false' }};
+const DD_ON = ["dgbtest", "dgb"], DD = "dd:";
 const ADDRESSY = /^(?:[1-9A-HJ-NP-Za-km-z]{26,35}|[a-z]{1,4}1[02-9ac-hj-np-z]{38,58}|[A-Z]{1,4}1[02-9AC-HJ-NP-Z]{38,58})$/;
 const $ = (id) => document.getElementById(id);
 const coinsOf = (n) => (Number(n || 0) / 1e8).toLocaleString(undefined, {maximumFractionDigits: 8});
-let said = {chains: []}, net = "", offer = null, keys = null;
+let said = {chains: [], dds: []}, net = "", offer = null, keys = null, ddHeld = {};
 
 function satsOf(text) {
   const m = /^(\d*)(?:\.(\d{0,8}))?$/.exec(String(text).trim());
   if (!m || (!m[1] && !m[2])) return null;
   return Number(m[1] || "0") * 1e8 + Number((m[2] || "").padEnd(8, "0"));
 }
-const chain = () => said.chains.find((c) => c.network === net) || said.chains[0] || {};
-const unit = (c) => (c.coin || c.label || "") + (c.mainnet === false && !/test/i.test(c.coin || "") ? " test" : "");
+const wallets = () => said.chains.concat(said.dds);
+const chain = () => wallets().find((c) => c.network === net) || said.chains[0] || {};
+const unit = (c) => c.dd ? "DigiDollar" + (c.mainnet ? "" : " test")
+  : (c.coin || c.label || "") + (c.mainnet === false && !/test/i.test(c.coin || "") ? " test" : "");
+const dollars = (n) => "$" + Number(n || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const ddWord = (c) => c.mainnet ? "main" : "test";
 function tell(text, cls) { const p = $("w-said"); p.textContent = text; p.className = cls || ""; p.hidden = !text; }
 function cell(tr, text, cls) { const td = tr.insertCell(); td.textContent = text; if (cls) td.className = cls; return td; }
 
 async function load() {
-  try { said = await wallet.state(NODE ? undefined : net); } catch (e) { said = {chains: []}; }
+  const base = net.startsWith(DD) ? net.slice(DD.length) : net;           // a DigiDollar wallet reads its DigiByte's
+  try { said = await wallet.state(NODE ? undefined : base); } catch (e) { said = {chains: []}; }
   said.chains = said.chains || [];
+  said.dds = !DIGIDOLLAR ? [] : said.chains.filter((c) => DD_ON.includes(c.network))
+    .map((c) => ({network: DD + c.network, base: c.network, label: "DigiDollar", mainnet: c.mainnet, dd: true}));
   if (!net && said.chains.length) net = said.chains[0].network;
   document.querySelectorAll("[data-chain]").forEach((box) => {
     box.textContent = "";
-    for (const c of said.chains) box.add(new Option(c.label + (c.mainnet ? "" : " (test)"), c.network));
+    for (const c of wallets()) box.add(new Option(c.label + (c.mainnet ? "" : " (test)"), c.network));
     box.value = net;
   });
   const tb = $("w-balances"); tb.textContent = "";
@@ -97,14 +108,50 @@ async function load() {
     cell(tr, c.arriving ? coinsOf(c.arriving) : "", "num");
   }
   if (!said.chains.length) cell(tb.insertRow(), "No wallet is ready yet: the chains are still syncing.", "muted");
+  for (const c of said.dds) {
+    const tr = tb.insertRow();
+    cell(tr, c.label + (c.mainnet ? "" : " (test)"));
+    cell(tr, "…", "num"); cell(tr, "", "num");
+    ddHoldings(c).then((h) => { tr.cells[1].textContent = h ? dollars(h.digidollars) + " " + unit(c) : "open your wallet"; })
+      .catch((x) => { tr.cells[1].textContent = "—"; tr.title = String(x.message || x); });
+  }
   draw();
 }
-function draw() {
+/** A console line's answer (lite.html runs the same /lite/api/console), with this wallet's public keys when open. */
+async function console_(line) {
+  const pubkeys = window.litePubkeys ? await window.litePubkeys().catch(() => ({})) : {};
+  const r = await fetch("/lite/api/console", {method: "POST", credentials: "same-origin",
+    headers: {"Content-Type": "application/json", "X-Arcade-Lite": "1", "X-Arcade-Admin": "1"},
+    body: JSON.stringify({line, pubkeys})});
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || j.detail || "refused");
+  return j.result || {};
+}
+/** What the DigiDollar module says this wallet holds on `c`'s chain (ddreceive), or null while the wallet is shut. */
+async function ddHoldings(c) {
+  if (!(await wallet.opened(TAGCHAIN))) return null;
+  return (ddHeld[c.network] = await console_(`ddreceive ${ddWord(c)}`));
+}
+async function ddAddressOf(to, c) {
+  const r = await fetch(`/lite/api/ddaddress?to=${encodeURIComponent(to)}&chain=${encodeURIComponent(c.base)}`,
+                        {cache: "no-store"});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.detail || "no DigiDollar address");
+  return j;
+}
+async function draw() {
   const c = chain();
-  document.querySelectorAll("[data-unit]").forEach((s) => { s.textContent = unit(c); });
+  document.querySelectorAll("[data-unit]").forEach((s) => { s.textContent = c.dd ? "dollars, " + unit(c) : unit(c); });
+  $("w-amount").placeholder = c.dd ? "100.00" : "";
+  if (c.dd && !c.address) {
+    $("w-address").textContent = "…";
+    try { c.address = (await ddAddressOf("me", c)).address; } catch (x) { c.address = ""; $("w-only").textContent = String(x.message || x); }
+  }
+  if (chain() !== c) return;                                  // another wallet was picked meanwhile
   $("w-address").textContent = c.address || "—";
-  $("w-only").textContent = !c.address ? "" : c.mainnet ? `Send only ${unit(c)} here: real coins.`
-    : `Send only ${unit(c)} here. Test coins have no value.`;
+  if (c.address || !c.dd) $("w-only").textContent = !c.address ? "" : c.dd
+    ? `Send only ${unit(c)} here, from a DigiDollar wallet. ${c.mainnet ? "Real dollars." : "Test dollars have no value."}`
+    : c.mainnet ? `Send only ${unit(c)} here: real coins.` : `Send only ${unit(c)} here. Test coins have no value.`;
   $("w-qr").textContent = "";
   if (c.address && typeof qrcode === "function") {
     const qr = qrcode(0, "M"); qr.addData(c.address); qr.make();
@@ -115,6 +162,22 @@ function draw() {
 async function history() {
   const tb = $("w-history"); tb.textContent = ""; $("w-since").textContent = "";
   if (!net) return;
+  const c = chain();
+  if (c.dd) {
+    // The DigiDollars this wallet holds now, coin by coin, as the module reads them (ddreceive).
+    let h = null;
+    try { h = await ddHoldings(c); } catch (x) { cell(tb.insertRow(), String(x.message || x), "bad"); return; }
+    if (!h) { cell(tb.insertRow(), "Open your wallet (Send asks for its password) to read your DigiDollars.", "muted"); return; }
+    for (const coin of h.coins || []) {
+      const tr = tb.insertRow();
+      cell(tr, ""); cell(tr, "Held"); cell(tr, coin.from || "");
+      cell(tr, dollars(coin.dollars), "num ok"); cell(tr, "", "num");
+      cell(tr, String(coin.txid).slice(0, 16) + "…").title = coin.txid;
+    }
+    if (!tb.rows.length) cell(tb.insertRow(), "No DigiDollars here yet.", "muted");
+    $("w-since").textContent = `${dollars(h.digidollars)} in all, at ${h.address || "your DigiDollar address"}.`;
+    return;
+  }
   let got;
   try { got = await (await fetch(`${API}/activity?chain=${encodeURIComponent(net)}&limit=50`, {cache: "no-store"})).json(); }
   catch (e) { cell(tb.insertRow(), "The node did not answer.", "bad"); return; }
@@ -159,6 +222,7 @@ $("w-form").onsubmit = async (e) => {
   e.preventDefault();
   tell(""); $("w-review").hidden = true; offer = null;
   const c = chain(), to = $("w-to").value.trim(), amount = $("w-amount").value.trim();
+  if (c.dd) return ddReview(c, to, amount);
   if (!satsOf(amount)) { tell("Type the amount in coins, like 1.5.", "bad"); return; }
   keys = await wallet.opened(TAGCHAIN);
   if (!keys) { $("w-unlock").hidden = false; $("w-password").focus(); return; }
@@ -183,6 +247,34 @@ $("w-form").onsubmit = async (e) => {
     $("w-review").hidden = false; offer = o; $("w-go").focus();
   } catch (x) { tell(String(x.message || x), "bad"); }
 };
+/** A DigiDollar send: the payee's DigiDollar address (an @name's from its key on the chain), the module's ddsend,
+ * and this wallet's own read of the transaction before anything is signed: it must pay that address those dollars. */
+async function ddReview(c, to, amount) {
+  if (!/^\$?\d+(\.\d{1,2})?$/.test(amount)) { tell("Type the amount in dollars, like 25 or 12.50.", "bad"); return; }
+  const cents = Math.round(Number(amount.replace("$", "")) * 100);
+  keys = await wallet.opened(TAGCHAIN);
+  if (!keys) { $("w-unlock").hidden = false; $("w-password").focus(); return; }
+  try {
+    const payee = await ddAddressOf(to, c);
+    const got = await console_(`ddsend ${payee.address} ${(cents / 100).toFixed(2)} ${ddWord(c)}`);
+    const o = got.sign;
+    if (!o) throw new Error(got.how || "the DigiDollar module prepared nothing to sign");
+    const read = await wallet.checked(o, keys);
+    if (!(read.pays || []).some((p) => !p.mine && p.dd === cents && p.to === payee.address)) {
+      tell(`The transaction's own bytes do not pay ${dollars(cents / 100)} to ${payee.address}. Nothing was signed.`, "bad");
+      return;
+    }
+    const back = (read.pays || []).filter((p) => p.mine && p.dd !== undefined).reduce((n, p) => n + p.dd, 0);
+    const list = [["To", (payee.tag ? "@" + payee.tag + "  " : "") + payee.address],
+                  ["Amount", `${dollars(cents / 100)} ${unit(c)}`],
+                  ["Network fee", `${coinsOf(read.fee)} DGB${c.mainnet ? "" : " test"}`]];
+    if (back) list.push(["DigiDollars back to you", dollars(back / 100)]);
+    terms(list);
+    $("w-warn").hidden = !c.mainnet;
+    $("w-go").disabled = false; $("w-go").textContent = `Send ${dollars(cents / 100)} ${unit(c)}`;
+    $("w-review").hidden = false; offer = o; $("w-go").focus();
+  } catch (x) { tell(String(x.message || x), "bad"); }
+}
 $("w-unlock-form").onsubmit = async (e) => {
   e.preventDefault();
   if (!ME) { tell("This account's wallet is not kept on this arcade: sign in again to open it here.", "bad"); return; }
@@ -198,6 +290,7 @@ $("w-go").onclick = async () => {
   try {
     // The review above listed every cost from `checked`, so a mainnet send is not asked about twice.
     const out = await wallet.confirm(keys, o, {reviewed: true});
+    ddHeld = {};
     $("w-review").hidden = true; $("w-to").value = ""; $("w-amount").value = "";
     tell(`Sent. Transaction ${out.txid}`, "ok");
     load();

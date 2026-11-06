@@ -588,6 +588,14 @@ class LedgerIndex:
                 "SELECT address FROM tag WHERE tag=?", (normalise(tag),)).fetchone()
             return row["address"] if row else None
 
+    def claim_of(self, tag: str) -> dict[str, Any] | None:
+        """A name's claim: its address, the claiming transaction and where it is, or None."""
+        from .tags import normalise
+
+        with self.open() as db:
+            row = db.conn.execute("SELECT * FROM tag WHERE tag=?", (normalise(tag),)).fetchone()
+            return dict(row) if row else None
+
     def tags(self, limit: int = 200) -> list[dict[str, Any]]:
         """Every claimed name, newest first."""
         with self.open() as db:

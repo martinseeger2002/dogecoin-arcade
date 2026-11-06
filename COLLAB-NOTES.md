@@ -88,6 +88,20 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-06 Lite wallet: DigiDollars beside DigiByte in Send, Receive and the balances, and an @name's DigiDollar address (SadFrog's side, Claude; SadFrog: "make it so that everyone can have a digidollar test and digidollar address along side their wallet receives. and add them to send. I should, now that i have 100 digidollar test be able to send it to @apple")
+
+- **Wallet** (`arcade/lite/templates/_wallet.html`): while the DigiDollar module is on and the caller may use it, each
+  DigiByte chain gets a "DigiDollar" wallet in the window's Send, Receive, Transactions and Balances. Receive shows the
+  account's TD... / DD... address and its QR; Balances and Transactions read `ddreceive`; Send pays an @name or a
+  DigiDollar address through the module's `ddsend`, and the wallet reads the transaction's own bytes before signing:
+  it must pay that address those dollars, or nothing is signed.
+- **An @name's DigiDollar address** (`arcade/ddaddress.py`, `GET /lite/api/ddaddress?to=&chain=`): a DigiDollar
+  address needs the payee's public key, and a name gives only its address hash. The key is read from a transaction the
+  name's address signed (its claim, then its key announcement), and kept only when its hash160 IS the name's address.
+  Test chains share the coin key (m/44'/1'/0'/0/0), so this works on dgbtest; on mainnet a DD... address is typed.
+  `LedgerIndex.claim_of(tag)` is new.
+- **Tests:** `tests/test_ddaddress.py` (the module's own `dd_address` agrees; a key that is not the name's is refused).
+
 ### 2026-11-05 · SadFrog's side (Claude) · A mint's record read right; Gather pressed again at once
 - **coins.js `ddRecordAmounts`** read every item of a "DD" record as a number, and a mint's ends in its owner's 32-byte
   key: the wallet refused every mint ("a DigiDollar record's number is too long", seen on the test node). Only the
