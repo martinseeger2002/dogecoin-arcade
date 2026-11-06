@@ -8,7 +8,10 @@ Python, writes its own data folder, and has no network. It never holds a key. Wh
 - **spending:** a module never spends. It hands back a prepared transaction, `{"prepared": {...}}`. `prepare` checks
   that every coin it spends is the caller's own (read from the chain, not taken from the module) and that it leaves at
   most the manifest's `max_fee` to fees, then makes it an unsigned offer that the caller's own wallet reviews and signs,
-  as every account send is.
+  as every account send is;
+- **inscriptions stay put:** on a chain with an inscription guard (funding.guard_on: the chains with an ord index), a
+  module's coin reads (`scantxoutset`) leave out coins carrying an inscription, and `prepare` refuses to spend one, as an
+  ordinary send never does (2026-11-05).
 
 Linux only: a machine that cannot confine a module runs none, and `why_not` says why."""
 from __future__ import annotations
@@ -99,6 +102,46 @@ class _Process:
         self.proc.wait(5)
         for pipe in (self.proc.stdin, self.proc.stdout):
             pipe.close()
+
+
+def _plain(unspent: dict) -> dict:
+    return {"txid": str(unspent.get("txid")), "vout": int(unspent.get("vout", -1)),
+            "value": round(float(unspent.get("amount", unspent.get("value", 0)) or 0) * 100_000_000)
+            if "amount" in unspent else int(unspent.get("value", 0))}
+
+
+def without_inscriptions(chain: str, method: str, said):
+    """A module's chain read, with what an ordinary send would not spend left out (SadFrog, 2026-11-05: "make module
+    transactions inscription-aware"). On a chain with an inscription guard, `scantxoutset`'s coins are put through it:
+    a coin carrying an inscription, or a small one the guard cannot read yet, is not listed, so a module building a
+    spend never picks it. A coin of no value (a DigiDollar's Taproot output) is not ordinals' and stays."""
+    guard = funding.guard_on(chain)
+    if guard is None or method != "scantxoutset" or not isinstance(said, dict) \
+            or not isinstance(said.get("unspents"), list):
+        return said
+    valued = [_plain(u) for u in said["unspents"] if float(u.get("amount") or 0) > 0]
+    ok = {(c["txid"], c["vout"]) for c in guard.spendable(valued)}
+    kept = [u for u in said["unspents"] if not float(u.get("amount") or 0) > 0
+            or (str(u.get("txid")), int(u.get("vout", -1))) in ok]
+    return {**said, "unspents": kept, "total_amount": round(sum(float(u.get("amount") or 0) for u in kept), 8)}
+
+
+def _refuse_inscribed(name: str, chain: str, inputs: list[dict]) -> None:
+    """Refuse a prepared spend of a coin carrying an inscription on a chain with a guard, whatever the module read:
+    the guard's own answer, as `funding.choose` asks it. Taproot inputs (a vault, a DigiDollar) are the module's own
+    kind and are checked by their script instead (`_taproot`)."""
+    guard = funding.guard_on(chain)
+    plain = [c for c in inputs if not c.get("taproot")]
+    if guard is None or not plain:
+        return
+    try:
+        ok = {(c["txid"], c["vout"]) for c in guard.spendable([_plain(c) for c in plain])}
+    except Exception as exc:                               # noqa: BLE001 -- unread is not clean
+        raise ModuleFailed(f"{name}'s spend could not be checked for inscriptions: {exc}") from None
+    for c in plain:
+        if (c["txid"], c["vout"]) not in ok:
+            raise ModuleFailed(f"{name} asked to spend {c['txid'][:16]}:{c['vout']}, which carries an inscription or "
+                               f"can't be read for one yet: it stays where it is")
 
 
 class Host:
@@ -195,7 +238,8 @@ class Host:
                                                   "does not name it"})
                 continue
             try:
-                proc.write({"id": 1, "rpc_result": self.chain_for(chain)[1](method, list(params or []))})
+                said_back = self.chain_for(chain)[1](method, list(params or []))
+                proc.write({"id": 1, "rpc_result": without_inscriptions(chain, method, said_back)})
             except Exception as exc:                   # noqa: BLE001 -- the Core's refusal, for the module
                 proc.write({"id": 1, "rpc_error": str(exc)})
         if "error" in said:
@@ -286,6 +330,7 @@ def build_offer(name: str, prepared: dict, params, call: Callable, address: str,
         raise ModuleFailed(f"{name} prepared a transaction of version {version}")
     if not 0 <= locktime < 500_000_000:
         raise ModuleFailed(f"{name} prepared a lock time of {locktime}, which is not a block height")
+    _refuse_inscribed(name, getattr(params, "name", ""), inputs)
     tapped = any(c.get("taproot") for c in inputs)
     if tapped and spend["kind"] != "p2pkh":
         raise ModuleFailed("a Taproot spend here pays its fee from an ordinary (P2PKH) address only")
