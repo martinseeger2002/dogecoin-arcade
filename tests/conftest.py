@@ -118,6 +118,17 @@ QUIESCE = 5.0
 
 
 @pytest.fixture(autouse=True)
+def wallet_assets_state_as_it_was():
+    """create_app hands its AppState to DogeFeedX's wallet reads (wallet_assets.STATE, 2026-11-06); a test that built an
+    app must not leave the next test reading that app's chains instead of what it patched."""
+    yield
+    import sys
+    wa = sys.modules.get("arcade.web.dogefeedx.wallet_assets")
+    if wa is not None:
+        wa.STATE = None
+
+
+@pytest.fixture(autouse=True)
 def sys_path_as_it_was():
     """A test that adds to sys.path takes it out again: test_lora_keys and test_lora_txcheck once put an old checkout
     of arcade first and left it, and every worker process spawned later on that xdist worker imported that arcade

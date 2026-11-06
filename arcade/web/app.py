@@ -13024,7 +13024,11 @@ def create_app(state: AppState) -> FastAPI:
         why = peeraddr.check_ask(request.headers, address, known)
         if why:
             return JSONResponse({"detail": why}, status_code=403)
-        chain = next((c for c in _account_chains() if c.network == state.messaging.network), None)
+        # The chain the ADDRESS is on (2026-11-06), not the one messaging runs on: a "D" address reads Dogecoin even
+        # where messaging is Pepecoin testnet (peer_address.chain_for). Every chain this node has, synced or not, so
+        # one still catching up is refused below as "not at the tip" rather than read from another chain.
+        chain = peeraddr.chain_for(address, state.all_chains, fallback=state.messaging,
+                                   wanted=str(request.query_params.get("chain") or "")[:20])
         if chain is None or chain.borrowed:
             return JSONResponse({"detail": "no Core of its own for that chain here"}, status_code=503)
         try:
@@ -13045,7 +13049,7 @@ def create_app(state: AppState) -> FastAPI:
                     marks = {}
         except Exception:                                   # noqa: BLE001
             return JSONResponse({"detail": "no index for that chain here"}, status_code=503)
-        return JSONResponse(peeraddr.answer(address, int(info.get("blocks", 0)), coins, marks))
+        return JSONResponse(peeraddr.answer(address, int(info.get("blocks", 0)), coins, marks, network=chain.network))
 
     def _peer_address_peers():
         """(hosts, mesh key, ask) for wallet_assets' bare-address borrowing (peer_address.PEERS)."""
@@ -13054,6 +13058,9 @@ def create_app(state: AppState) -> FastAPI:
 
     import arcade.peer_address as _peeraddr_hook
     _peeraddr_hook.PEERS = _peer_address_peers
+    # DogeFeedX's wallet reads (wallet_assets) find the Dogecoin chain through this AppState (2026-11-06).
+    import arcade.web.dogefeedx.wallet_assets as _wa_hook
+    _wa_hook.STATE = state
 
     def _coin_marks(db, address: str) -> dict[tuple[str, int], str]:
         """(txid, vout) -> "ins" (an inscription sits on it) or "ins:?" (a small coin not checked yet, held meanwhile)
