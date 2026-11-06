@@ -40,8 +40,10 @@ PAGE_DEFAULT = 30
 FRESH_FOR = 60.0
 #: Addresses kept at once (the least recently asked is dropped first).
 KEEP = 64
-#: Ids asked of the index at once (doginal_index.NUMBERS_MAX).
-NUMBERS_AT_ONCE = 500
+#: Ids asked of the index at once (at most doginal_index.NUMBERS_MAX). The answer comes back over a mesh link, one frame of
+#: at most 64 KB (mesh/link.MAX_FRAME), about 190 bytes an id: 500 was 94 KB, never delivered, so .25 waited 15 s a
+#: question and then read its own quarter-walked copy off a busy disk (2026-11-06). 200 is about 38 KB.
+NUMBERS_AT_ONCE = 200
 #: Transactions the guard reads side by side while a list is built for the first time.
 GUARD_THREADS = 4
 #: How often a build in progress is published to the pages (transactions checked).

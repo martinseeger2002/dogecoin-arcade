@@ -75,7 +75,7 @@ def test_a_big_wallet_is_built_once_in_number_order_without_its_token_operations
     took = time.time() - started
     assert doc["done"] and doc["of"] == 7090, "only the small coins' transactions are looked at"
     assert sorted(guard.asked) == sorted({c["txid"] for c in coins if c["value"] <= P.POSTAGE})
-    assert sum(asked) == 7000 and max(asked) == 500, "numbers 500 at a time"
+    assert sum(asked) == 7000 and max(asked) == P.NUMBERS_AT_ONCE, "numbers a question's worth at a time"
     page = P.view(doc, size=30)
     assert page["counts"] == {"all": 2600, "art": 2600 - sum(1 for k in range(4400, 7000) if k % 7 == 0),
                               "text": sum(1 for k in range(4400, 7000) if k % 7 == 0), "tokens": 4400}
@@ -182,8 +182,8 @@ def test_the_page_route_answers_one_page_of_the_accounts_own_doginals(client, mo
     class Index:
         def lookup(self, q):
             asked.append(len(q["ids"]))
-            return {"numbers": {i: {"number": 10_000 - k, "content_type": "image/png"}
-                                for k, i in enumerate(sorted(q["ids"]))}}
+            return {"numbers": {i: {"number": 10_000 - (int(i[:64], 16) - 0x900), "content_type": "image/png"}
+                                for i in q["ids"]}}
     monkeypatch.setattr(type(state), "ord_indexes", lambda self: {"doge": Index()})
     got = None
     for _ in range(200):
@@ -263,7 +263,7 @@ def test_a_list_still_being_read_is_already_in_number_order_and_known_answers_ar
     assert steps and steps[0]["checked"] == 2000, "the saved answers shown at once"
     for d in steps:
         got = [g["number"] for g in d["items"] if g["number"] is not None]
-        assert got == sorted(got) and len(got) >= len(d["items"]) - P.NUMBERS_AT_ONCE - 500, \
+        assert got == sorted(got) and len(got) >= len(d["items"]) - 2 * P.NUMBERS_AT_ONCE - 500, \
             "a list still being read is in number order, at most the last question's worth without a number"
     assert all(n <= P.NUMBERS_AT_ONCE for n in asked) and all(n == P.NUMBERS_AT_ONCE for n in asked[:-1])
     assert guard.reads and not any(guard.reads), "a type is never read from the chain while a list is built"
@@ -271,3 +271,16 @@ def test_a_list_still_being_read_is_already_in_number_order_and_known_answers_ar
     assert doc["done"] and doc["unnumbered"] == 500
     nums = [g["number"] for g in doc["items"]][:2500]
     assert nums == sorted(nums)
+
+
+def test_a_numbers_answer_fits_in_one_mesh_frame():
+    """A question's answer comes back over a mesh link in one frame (64 KB). 500 ids made 94 KB: never delivered, the
+    Wallet on .25 waited out every question and read its own short copy instead (2026-11-06)."""
+    import json
+    from arcade.mesh.link import MAX_FRAME
+    worst = {f"{k:064x}i{k % 1000}": {"number": 180_000_000 + k, "height": 6_445_529, "size": 3_999_999,
+                                      "content_type": "application/vnd.something-long+json;charset=utf-8",
+                                      "protocol": "drc-20"} for k in range(P.NUMBERS_AT_ONCE)}
+    frame = json.dumps({"t": "dx", "op": "a", "id": 10**9, "numbers": worst, "walked_to": 6_445_529,
+                        "from": "arcade 8c95b1358339"})
+    assert len(frame.encode()) < MAX_FRAME * 0.9

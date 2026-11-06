@@ -99,6 +99,11 @@ coding agent, so it is written for agents first and people second.
 - `_items` no longer reads an un-numbered inscription's content from the chain for its type (the stall watch caught
   the build in `rpc._post` there, every step): `ctype_of(id, read=False)`, once a build. The index's number brings the type.
 - Test: `test_a_list_still_being_read_is_already_in_number_order_and_known_answers_are_read_in_one_go`.
+- **Numbers asked 200 at a time, not 500** (the operator: "I don't see my doginals or DRC-20s in my Apple wallet", "optimize
+  the look up so that it works even with a busy disk"): a 500-id answer is about 94 KB and a mesh link carries one
+  frame of at most 64 KB, so Strawberry's answer (the whole chain) never reached .25. Each question waited out its
+  15 s and then fell to .25's own copy, walked only to block 4,737,548, read off a disk 72% busy. 200 is about 38 KB.
+  Test: `test_a_numbers_answer_fits_in_one_mesh_frame`.
 
 ### 2026-11-06 The Wallet's Doginals one page at a time, built by the arcade; #96 merged (Claude; the operator: "build it and merge the current PR at the same time", "Check it against apples big wallet", "We should be able to read the shared index from any arcade, even if we don't have the index on our own arcade", "always be able to read from the longest copy")
 
