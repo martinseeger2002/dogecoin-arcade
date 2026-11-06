@@ -228,15 +228,34 @@ def test_an_unlocked_vault_carries_its_redeem_button(tmp_path, monkeypatch):
     monkeypatch.setattr(pilot, "_holdings", lambda ctx, net, owner: [{"txid": "aa" * 32, "vout": 1, "cents": 20000}])
     monkeypatch.setattr(pilot, "_vaults", lambda ctx, net, owner, held: vaults)
     said = pilot.command_ddvaults(_ctx(pub, tmp_path), "test")
+    assert said["you_hold"] == "$200.00 in DigiDollars" and said["chain"] == "DigiByte testnet"
     (now, later) = said["vaults"]
-    assert now["redeem"] == "now" and now["actions"] == [{"label": "Redeem", "line": f"ddredeem {'aa' * 32} test"}]
-    assert later["redeem"] == "in 100 blocks (about 25 minutes)" and "actions" not in later
+    assert now == {"vault": "aa" * 6, "dollars": "$100.00", "locked": "1,000.00 DGB", "lock": "1 hour",
+                   "unlocks": "block 1,990", "status": "unlocked: ready to redeem",
+                   "actions": [{"label": "Redeem", "line": f"ddredeem {'aa' * 6} test"}]}
+    assert later["status"] == "locked: 100 blocks to go, about 25 minutes" and "actions" not in later
+    # Unlocked, but the dollars its redeem burns have been sent on: said, and no Redeem to press.
+    monkeypatch.setattr(pilot, "_holdings", lambda ctx, net, owner: [{"txid": "aa" * 32, "vout": 1, "cents": 4000}])
+    short = pilot.command_ddvaults(_ctx(pub, tmp_path), "test")["vaults"][0]
+    assert "you hold $40.00: get the rest back first" in short["status"] and "actions" not in short
+
+
+def test_a_mint_and_a_redeem_offer_my_vaults_next_and_a_gather_with_more_left_offers_itself(tmp_path):
+    _, pilot = _pilot()
+    pub, _ = _key()
+    coins = [{"txid": f"{n:064x}", "vout": 0, "amount": 1043, "coinbase": False, "height": 10, "scriptPubKey": "76a9"}
+             for n in range(80)]
+    said = pilot.command_ddgather(_ctx(pub, tmp_path, coins=coins))
+    assert said["actions"] == [{"label": "Gather again", "line": "ddgather test"}]
+    big = [{"txid": "ee" * 32, "vout": 0, "amount": 400_000, "coinbase": False, "height": 10, "scriptPubKey": "76a9"}]
+    said = pilot.command_ddmint(_ctx(pub, tmp_path, coins=big), 100, 0)
+    assert said["actions"] == [{"label": "My vaults", "line": "ddvaults test"}] and "prepared" in said
 
 
 def test_minting_says_open_when_core_says_none():
     _, pilot = _pilot()
     assert pilot._minting("none") == pilot._minting(None) == pilot._minting("") == "open"
-    assert pilot._minting("health_state_not_ready") == "health_state_not_ready"
+    assert pilot._minting("health_state_not_ready") == "held back: health state not ready"
 
 
 def test_a_digidollar_address_is_the_owners_taproot_key_in_digibyte_cores_versions():
