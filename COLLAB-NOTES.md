@@ -88,6 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 Merged #87, #88, #89, #90, #92, #93 (Claude; the operator: "merge all of these PR's cleanly run the full suite test on everything if everything clears I want you to deploy")
+
+- **What went in.** Every commit of each PR, cherry-picked onto master, with SadFrog's and blockchaindad's authorship
+  kept (`-x` names each GitHub commit):
+  - #87, #88 and #89 stack (DigiByte testnet, mining as a module, DigiDollar's controls): #89's 21 commits carry all three.
+  - #90 (ord index copies beside the index's real file), #93 (who runs this node: follow-ups), #92 (bare-address coins
+    from a synced mesh arcade, mesh-signed asks only).
+  - #16 is left alone, as asked.
+- **Conflicts.** Two, both a filtered word: our "the operator's" against the public copy's "the operator's" (config.py's
+  Flopcoin comment, docs/arcade-lite/DIGIDOLLAR.md). Ours kept in code; the doc took the PR's line. The cherry-picks
+  also repeated two of our own entry headings here in the public copy's words; the copies are removed.
+- **One fix on top.** #92's `/peer/address/{address}/coins` belonged to no module, so test_modules failed (every
+  route needs a claim, and a Lite node serves only the core's): claimed by the Wallet module (core) in modules.py.
+- **Tests.** The whole suite on a test machine (`pytest -n 8 tests`): 5,027 passed, then the fix above; 6 more failures under
+  -n 8 load (module sandbox timeouts, two browser tests) passed run alone, and on master before the merge.
+
 ### 2026-11-05 The shared walk survives restarts, reads in chunks, and uses the mesh's shared Cores (Claude; the operator: "it says it's going to take 21 days for my wallet balances", "Use cores shared over the mesh as extra readers right away. 1-4. I thought that was how we designed the walk")
 
 - **What was wrong.**
@@ -184,7 +200,6 @@ coding agent, so it is written for agents first and people second.
   test_web suites pass (337).
 - **Collections work handed off** to blockchaindad at GitHub issue #91 (2026-11-05).
 
-### 2026-11-05 A peer that stops reading no longer freezes the mesh; DRC-20 mints out of the Wallet's grid (Claude; the operator: "a lot of my ords are not displaying", "The DRC 20 mints should be [out] from the ORD grid but we shouldn't count them towards tokens")
 ### 2026-11-05 · SadFrog's side (Claude) · DigiDollar 0.4.0: send, receive and hold
 SadFrog: "add capability to send and receive store digidollar test and digidollar".
 - **Module:** `ddreceive` (the caller's DigiDollar address and holdings) and `ddsend` (DigiByte Core's transfer,
@@ -462,7 +477,6 @@ Branch `claude/core-bootstrap`. New: `arcade/core_copy.py` (making, the pieces, 
 For your side: nothing needed. If your arcades install Cores through Coins & chains they make and take copies too; the setting `core_copy_auto: false` turns fetching off.
 
 
-### 2026-11-04 The web worker runs the installed arcade, never an `arcade/` in the directory it starts in (Claude; found on the operator's ThinkPad by its session)
 ### 2026-11-04 The web worker runs the installed arcade, never an `arcade/` in the directory it starts in (Claude; found on the operator's ThinkPad by its session)
 ### 2026-11-04 · SadFrog's side (Claude) · branch `team/lite-digidollar` · DigiDollar redeem: Schnorr in the wallet, DigiByte testnet
 SadFrog asked for a DigiByte test chain and a test DigiDollar mint and redeem tonight, through the arcade, on

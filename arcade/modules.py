@@ -104,7 +104,9 @@ _MODULES = (
                    "/account/chain-stats", "/account/coins", "/account/doge-stray", "/account/dust",
                    "/account/imported", "/account/mainnet", "/account/segwit", "/account/send", "/account/sign",
                    "/account/split", "/account/vault", "/account/wallets", "/admin/api/imports",
-                   "/admin/api/utxoset", "/admin/api/receive", "/admin/api/send"),
+                   "/admin/api/utxoset", "/admin/api/receive", "/admin/api/send",
+                   # one bare address's coins for a signed mesh arcade (peer_address.py, PR #92)
+                   "/peer/address"),
            jobs=("watch-accounts", "utxo-sets", "walk-home")),
     Module("addressbook", "core", "Address book", "Contacts by @name and address, read from the names on the "
            "messaging chain.",
