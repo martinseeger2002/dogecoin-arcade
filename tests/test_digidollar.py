@@ -159,8 +159,9 @@ def test_a_gather_puts_up_to_fifty_of_the_smallest_coins_into_one_at_the_relay_f
 
 class _Chain:
     """A DigiByte Core for the module's commands: `chain` says which network it answers as."""
-    def __init__(self, pub, chain="test", height=2000, coins=(), outs=()):
+    def __init__(self, pub, chain="test", height=2000, coins=(), outs=(), spent=()):
         self.pub, self.chain, self.height, self.coins, self.outs = pub, chain, height, list(coins), dict(outs)
+        self.spent = set(spent)                            # spent by a transaction waiting for a block
 
     def rpc(self, net, method, *params):
         if method == "getdigidollardeploymentinfo":
@@ -174,7 +175,9 @@ class _Chain:
         if method == "scantxoutset":
             return {"height": self.height, "unspents": self.coins}
         if method == "gettxout":
-            return self.outs.get((params[0], params[1]))
+            if (params[0], params[1]) in self.spent:
+                return None
+            return self.outs.get((params[0], params[1]), {"value": 1} if params[2:] == (True,) else None)
         raise AssertionError(method)
 
 
@@ -285,3 +288,24 @@ def test_mainnet_sends_wait_for_the_operator_too(tmp_path):
     main = _ctx(pub, tmp_path, chain="main")
     with pytest.raises(ValueError, match="mainnet DigiDollar sends are off"):
         pilot.command_ddsend(main, pilot.dd_address("dgb", pub[1:]), 5, "main")
+
+
+def test_gather_and_mint_pass_over_coins_a_waiting_gather_spent(tmp_path):
+    """SadFrog, 2026-11-05: "can multiple presses select new utxos different from the previous presses? so we can
+    gather all in one go?" Coins spent by a transaction still waiting for its block (gettxout with the mempool) are
+    passed over, so Gather can be pressed again at once, and a Mint does not pick a coin a Gather just spent."""
+    _, pilot = _pilot()
+    pub, _ = _key()
+    coins = [{"txid": f"{n:064x}", "vout": 0, "amount": 1043, "coinbase": False, "height": 10, "scriptPubKey": "76a9"}
+             for n in range(120)]
+    first = {(f"{n:064x}", 0) for n in range(50)}
+    ctx = _ctx(pub, tmp_path, coins=coins, spent=first)
+    made = pilot.command_ddgather(ctx)["prepared"]
+    assert {(i["txid"], i["vout"]) for i in made["inputs"]} == {(f"{n:064x}", 0) for n in range(50, 100)}
+    assert "about 20 more after this: press Gather again, no need to wait" in made["what"]
+    ctx = _ctx(pub, tmp_path, coins=coins, spent={(f"{n:064x}", 0) for n in range(119)})
+    with pytest.raises(ValueError, match="in gathers waiting for a block"):
+        pilot.command_ddgather(ctx)
+    big = [{"txid": "ee" * 32, "vout": 0, "value": 10 ** 13}, {"txid": "ff" * 32, "vout": 0, "value": 10 ** 13}]
+    made = pilot.mint(pub[1:], 10000, 0, 1000, 0, 10 ** 12, big, b"\x76", fresh=lambda c: c["txid"] != "ee" * 32)
+    assert [i["txid"] for i in made["inputs"]] == ["ff" * 32], "the coin a waiting transaction spent is passed over"

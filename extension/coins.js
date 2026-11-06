@@ -1378,8 +1378,10 @@ function ddRecordAmounts(outputs) {
     if (!out.script.length || out.script[0] !== 0x6a) continue;
     const items = scriptPushes(out.script.slice(1));
     if (!items || items.length < 2 || items[0].length !== 2 || items[0][0] !== 0x44 || items[0][1] !== 0x44) continue;
-    const kind = Number(readScriptNum(items[1])), rest = items.slice(2).map((b) => Number(readScriptNum(b)));
-    return kind === 2 ? rest : (kind === 1 || kind === 3) && rest.length ? [rest[0]] : [];
+    // Only the numbers are read: a mint's record ends in its owner's 32-byte key, which is not one.
+    const kind = Number(readScriptNum(items[1])), rest = items.slice(2);
+    if (kind === 2) return rest.map((b) => Number(readScriptNum(b)));
+    return (kind === 1 || kind === 3) && rest.length ? [Number(readScriptNum(rest[0]))] : [];
   }
   return null;
 }

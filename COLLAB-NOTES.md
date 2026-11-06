@@ -88,6 +88,14 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 · SadFrog's side (Claude) · A mint's record read right; Gather pressed again at once
+- **coins.js `ddRecordAmounts`** read every item of a "DD" record as a number, and a mint's ends in its owner's 32-byte
+  key: the wallet refused every mint ("a DigiDollar record's number is too long", seen on the test node). Only the
+  numbers are read now. Test: test_lite_schnorr_browser (+1, a mint's offer in Firefox).
+- **DigiDollar 0.4.1:** each coin is checked with `gettxout` counting the mempool (`_fresh`), so Gather passes over
+  coins a gather still waiting for its block spent and can be pressed again at once (SadFrog: "can multiple presses
+  select new utxos ... gather all in one go?"); Mint, Send and Redeem pass over them too. Test: test_digidollar (+1).
+
 ### 2026-11-05 · SadFrog's side (Claude) · Module transactions keep inscribed coins out
 SadFrog: "make module transactions inscription-aware. Filter inscribed coins out of a module's coin reads on guarded
 chains, refuse any module transaction that would spend one". `modhost.without_inscriptions` puts a module's

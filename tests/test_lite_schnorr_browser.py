@@ -137,3 +137,47 @@ def test_the_wallet_says_a_digidollar_send_as_dollars_to_their_address_and_signs
     assert said["own"] == pilot.dd_address("dgbtest", pub[1:]), "the browser's address is the module's"
     assert said["signers"] == ["key", None]
     assert taproot.verify(tr.tweak(pub[1:]), bytes.fromhex(unsigned.sighashes[0]), bytes.fromhex(said["sig"]))
+
+
+def test_the_wallet_reads_a_mints_record_whose_last_item_is_its_owners_key(loaded, tmp_path):
+    """2026-11-05, on the test node: a mint was refused with "a DigiDollar record's number is too long". A mint's record
+    ends in the owner's 32-byte key, and the wallet read every item as a number. It reads the dollars, says the
+    DigiDollar output as the signer's own, and the vault as a payment."""
+    import importlib
+    from test_taproot import keypair
+    from test_module_host import p2pkh_script
+    from arcade.script import b58check_encode, hash160
+    driver, _, _ = loaded
+    pilot_dir = str(Path(__file__).parent.parent / "examples" / "packages" / "digidollar")
+    sys.path.insert(0, pilot_dir)
+    try:
+        importlib.import_module("lib.taproot")
+        pilot = importlib.import_module("module")
+    finally:
+        sys.path.remove(pilot_dir)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "settings.json").write_text("{}")
+    pid, row = packages.install(home, _module(tmp_path))
+    chain = Chain()
+    host = modhost.Host(home, chain)
+    found = host.installed
+    host.installed = lambda s: {k: (v[0], {**v[1], "needs": {**v[1]["needs"], "max_fee": 50_000_000}})
+                                for k, v in found(s).items()}
+    pub, secret = keypair()
+    chain.address = b58check_encode(NETWORKS["main"].pubkeyhash_version, hash160(pub))
+    prepared = {**pilot.mint(pub[1:], 10000, 0, 598_633, 0, 10 ** 8, [{"txid": "aa" * 32, "vout": 0,
+                                                                       "value": 150_000_000}],
+                             p2pkh_script(chain.address)), "chain": "main"}
+    _, unsigned = host.prepare({"packages": {pid: row}}, "hello", prepared, chain.address, pub)
+    offer = {**unsigned.as_json(), "chain": "dgbtest"}
+    keys = {"key": secret.to_bytes(32, "big").hex(), "pubkey": pub.hex(), "address": chain.address,
+            "version": NETWORKS["main"].pubkeyhash_version, "network": "dgbtest"}
+    pays = _run(driver, """
+        const offer = arguments[0], k = arguments[1];
+        return (await c.verifyOffer(offer, {...k, key: c.unhex(k.key), pubkey: c.unhex(k.pubkey)})).pays;""",
+                offer, keys)
+    vault, dd, record = pays[0], pays[1], pays[2]
+    assert vault["value"] == 10 ** 8 and "Taproot output" in vault["to"] and not vault["mine"]
+    assert dd == {"to": pilot.dd_address("dgbtest", pub[1:]), "dd": 10000, "value": 0, "mine": True}
+    assert record["bytes"] > 32 and record["value"] == 0
