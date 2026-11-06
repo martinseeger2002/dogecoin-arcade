@@ -419,13 +419,22 @@ class Book:
         then `broadcast(payout)` sends those saved bytes, as often as it takes. A
         crash between the two leaves BUILT, and the next pass sends the same
         bytes again: there is never a second transaction for one payout."""
-        import fcntl
-        lock = open(self.path.with_suffix(".paylock"), "w")
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)   # one payer at a time, across processes
-        except OSError:
-            lock.close()
-            return []
+            import fcntl
+        except ImportError:                                  # Windows (arcade/winlock.py)
+            fcntl = None
+        lock = open(self.path.with_suffix(".paylock"), "w")
+        if fcntl is None:
+            from arcade import winlock
+            if not winlock.lock(lock, wait=False):
+                lock.close()
+                return []
+        else:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)   # one payer at a time, across processes
+            except OSError:
+                lock.close()
+                return []
         try:
             return self._pay(build, broadcast, limit)
         finally:

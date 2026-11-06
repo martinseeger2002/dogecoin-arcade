@@ -34,7 +34,10 @@ How it goes:
 from __future__ import annotations
 
 import contextlib
-import fcntl
+try:
+    import fcntl
+except ImportError:      # Windows (2026-11-06): arcade/winlock.py instead; Linux and macOS unchanged
+    fcntl = None
 import hashlib
 import json
 import logging
@@ -689,6 +692,18 @@ def held(path: Path):
     """One process at a time (two workers overlap for a moment in a zero-downtime reload)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fh = open(path, "a")
+    if fcntl is None:                                   # Windows (arcade/winlock.py)
+        from arcade import winlock
+        if not winlock.lock(fh, wait=False):
+            fh.close()
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            winlock.unlock(fh)
+            fh.close()
+        return
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:

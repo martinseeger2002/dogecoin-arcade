@@ -22,7 +22,10 @@ the same port, the old worker still its child).
 """
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:      # Windows (2026-11-06): arcade/winlock.py instead; Linux and macOS unchanged
+    fcntl = None
 import hashlib
 import os
 import signal
@@ -84,6 +87,9 @@ class RunLock:
         self._f.close()
 
     def take(self, wait: bool = True) -> bool:
+        if fcntl is None:
+            from arcade import winlock
+            return winlock.lock(self._f, wait)
         try:
             fcntl.flock(self._f, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
             return True
