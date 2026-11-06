@@ -88,6 +88,18 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-06 · SadFrog's side (Claude) · DigiDollar: the core-wallet version taken back out, the module work in whole
+SadFrog: "anything martin did with digidollar revert and take our updates - he can add his customizations after - he
+thought we were done". #87-#89 were merged up to the hidden-panel test (dd229d5b); three DigiDollar commits followed on
+main (4cbdfd39 the Wallet tile, fcc4e4bb DigiDollar in the core wallet with no module, b5ec9dcd its routes). Those three
+are reverted here, nothing else: the tree is main's as of af2da6ca again. Then the rest of PR #89 goes in:
+- the module inscription guard (a62228ef),
+- the mint-record fix in coins.js (main still had it: every mint signed in a browser failed with "a DigiDollar record's
+  number is too long") and back-to-back Gather (44535df4),
+- the DigiDollar tab's vault and stats views (1afc5b3f).
+The core-wallet version can come back on top of this as its owner's customization; the module's commands and the
+`modhost` checks are what it would build on.
+
 ### 2026-11-06 · SadFrog's side (Claude) · DigiDollar tab: the vaults and the numbers read as one
 SadFrog: "make the vault ui more cohesive", "make the digi dollar stats portion cohesive with the rest of the content
 on the digi dollar tab". DigiDollar 0.4.2:
