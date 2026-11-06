@@ -102,40 +102,69 @@ async function load() {
     for (const c of wallets()) box.add(new Option(c.label + (c.mainnet ? "" : " (test)"), c.network));
     box.value = net;
   });
-  const tb = $("w-balances"); tb.textContent = "";
-  const lazy = [], mine = ++drawn;
-  for (const c of said.chains) {
-    const tr = tb.insertRow();
-    cell(tr, c.label); if (c.error) tr.title = c.error;
-    cell(tr, c.lazy ? "…" : c.balance == null ? "—" : coinsOf(c.spendable ?? c.balance) + " " + unit(c), "num");
-    cell(tr, c.arriving ? coinsOf(c.arriving) : "", "num");
-    if (c.lazy) lazy.push([c, tr]);
-  }
-  fillIn(lazy, mine);
-  if (!said.chains.length) cell(tb.insertRow(), "No wallet is ready yet: the chains are still syncing.", "muted");
-  for (const c of said.dds) {
-    const tr = tb.insertRow();
-    cell(tr, c.label + (c.mainnet ? "" : " (test)"));
-    cell(tr, "…", "num"); cell(tr, "", "num");
-    ddHoldings(c).then((h) => { tr.cells[1].textContent = h ? dollars(h.digidollars) + " " + unit(c) : "open your wallet"; })
-      .catch((x) => { tr.cells[1].textContent = String(x.message || x); tr.cells[1].className = "num bad"; });
-  }
+  balances(false);
   draw();
 }
+/* The Balances list, kept in this browser so a reload shows the last one at once (2026-11-06, SadFrog: "can it be
+ * stored in cache or something similar so if its loaded and then refreshed it remains and then updates everyonce in
+ * awhile"). A balance older than FRESH is read again, one chain at a time; the whole list again every EVERY while the
+ * window is in view. Only what this browser already showed is kept, and a read always replaces it. */
+const FRESH = 2 * 60 * 1000, EVERY = 5 * 60 * 1000, KEPT = "lite_balances_" + (NODE ? "node" : ME || "visitor");
+function kept() { try { return JSON.parse(localStorage.getItem(KEPT) || "{}") || {}; } catch (e) { return {}; } }
+function keep(network, row) {
+  try { const all = kept(); all[network] = {...row, at: Date.now()}; localStorage.setItem(KEPT, JSON.stringify(all)); }
+  catch (e) {}
+}
+const shown = (c, r) => c.dd ? dollars(r.dollars) + " " + unit(c) : r.balance == null ? "—" : coinsOf(r.balance) + " " + unit(c);
+function show(tr, c, r, old) {
+  tr.cells[1].textContent = shown(c, r); tr.cells[1].className = "num" + (old ? " muted" : "");
+  tr.cells[2].textContent = r.arriving ? coinsOf(r.arriving) : "";
+  tr.cells[1].title = old ? `as read ${new Date(r.at).toLocaleTimeString()}; reading again…` : "";
+}
+function balances(force) {
+  const tb = $("w-balances"); tb.textContent = "";
+  const stale = [], mine = ++drawn, was = kept(), now = Date.now();
+  for (const c of wallets()) {
+    const tr = tb.insertRow();
+    cell(tr, c.label + (c.dd && !c.mainnet ? " (test)" : "")); if (c.error) tr.title = c.error;
+    cell(tr, "…", "num"); cell(tr, "", "num");
+    if (!c.dd && !c.lazy && !force) {                                     // read with the page just now
+      const r = {balance: c.balance == null ? null : (c.spendable ?? c.balance), arriving: c.arriving || 0};
+      show(tr, c, r, false); keep(c.network, r);
+      continue;
+    }
+    const before = was[c.network];
+    if (before) show(tr, c, before, true);
+    if (force || !before || now - before.at > FRESH) stale.push([c, tr]);
+    else show(tr, c, before, false);
+  }
+  if (!said.chains.length) cell(tb.insertRow(), "No wallet is ready yet: the chains are still syncing.", "muted");
+  fillIn(stale, mine);
+}
+setInterval(() => { if (document.visibilityState === "visible" && said.chains.length) balances(true); }, EVERY);
 /** The balances the node left out (lazy wallets: only the wallet picked is read with the page), read afterwards one
  * chain at a time, so the page opens at once and no two borrowed chains are asked together (2026-11-06, SadFrog: "its
  * not showing most of my other balances either from the borrowed nodes ... until i switch"). */
 async function fillIn(rows, mine) {
   for (const [c, tr] of rows) {
     if (mine !== drawn) return;                                          // the page was drawn again meanwhile
+    if (c.dd) {
+      try {
+        const h = await ddHoldings(c);
+        if (mine !== drawn) return;
+        if (h) { const r = {dollars: h.digidollars}; keep(c.network, r); show(tr, c, {...r, at: Date.now()}, false); }
+        else if (!kept()[c.network]) tr.cells[1].textContent = "open your wallet";
+      } catch (x) { if (mine === drawn) { tr.cells[1].textContent = String(x.message || x); tr.cells[1].className = "num bad"; } }
+      continue;
+    }
     let full = null;
     try { full = ((await wallet.state(c.network)).chains || []).find((x) => x.network === c.network); } catch (e) {}
     if (mine !== drawn) return;
-    if (!full || full.lazy) { tr.cells[1].textContent = "—"; continue; }
+    if (!full || full.lazy) { if (!kept()[c.network]) tr.cells[1].textContent = "—"; continue; }
     Object.assign(c, full);
     if (full.error) tr.title = full.error;
-    tr.cells[1].textContent = full.balance == null ? "—" : coinsOf(full.spendable ?? full.balance) + " " + unit(full);
-    tr.cells[2].textContent = full.arriving ? coinsOf(full.arriving) : "";
+    const r = {balance: full.balance == null ? null : (full.spendable ?? full.balance), arriving: full.arriving || 0};
+    keep(c.network, r); show(tr, c, {...r, at: Date.now()}, false);
   }
 }
 /** A console line's answer (lite.html runs the same /lite/api/console), with this wallet's public keys when open. */
@@ -325,6 +354,7 @@ $("w-go").onclick = async () => {
     // The review above listed every cost from `checked`, so a mainnet send is not asked about twice.
     const out = await wallet.confirm(keys, o, {reviewed: true});
     ddHeld = {};
+    try { localStorage.removeItem(KEPT); } catch (e) {}                 // a send changes balances: read them afresh
     $("w-review").hidden = true; $("w-to").value = ""; $("w-amount").value = "";
     tell(`Sent. Transaction ${out.txid}`, "ok");
     load();
