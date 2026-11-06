@@ -72,7 +72,7 @@ const DD_ON = ["dgbtest", "dgb"], DD = "dd:";
 const ADDRESSY = /^(?:[1-9A-HJ-NP-Za-km-z]{26,35}|[a-z]{1,4}1[02-9ac-hj-np-z]{38,58}|[A-Z]{1,4}1[02-9AC-HJ-NP-Z]{38,58})$/;
 const $ = (id) => document.getElementById(id);
 const coinsOf = (n) => (Number(n || 0) / 1e8).toLocaleString(undefined, {maximumFractionDigits: 8});
-let said = {chains: [], dds: []}, net = "", offer = null, keys = null, ddHeld = {};
+let said = {chains: [], dds: []}, net = "", offer = null, keys = null, ddHeld = {}, ddQueue = Promise.resolve();
 
 function satsOf(text) {
   const m = /^(\d*)(?:\.(\d{0,8}))?$/.exec(String(text).trim());
@@ -93,7 +93,8 @@ async function load() {
   try { said = await wallet.state(NODE ? undefined : base); } catch (e) { said = {chains: []}; }
   said.chains = said.chains || [];
   said.dds = !DIGIDOLLAR ? [] : said.chains.filter((c) => DD_ON.includes(c.network))
-    .map((c) => ({network: DD + c.network, base: c.network, label: "DigiDollar", mainnet: c.mainnet, dd: true}));
+    .map((c) => ({network: DD + c.network, base: c.network, label: "DigiDollar", mainnet: c.mainnet, dd: true}))
+    .sort((a, b) => Number(a.mainnet) - Number(b.mainnet));                // the test chain's first: it is the one in use
   if (!net && said.chains.length) net = said.chains[0].network;
   document.querySelectorAll("[data-chain]").forEach((box) => {
     box.textContent = "";
@@ -113,7 +114,7 @@ async function load() {
     cell(tr, c.label + (c.mainnet ? "" : " (test)"));
     cell(tr, "…", "num"); cell(tr, "", "num");
     ddHoldings(c).then((h) => { tr.cells[1].textContent = h ? dollars(h.digidollars) + " " + unit(c) : "open your wallet"; })
-      .catch((x) => { tr.cells[1].textContent = "—"; tr.title = String(x.message || x); });
+      .catch((x) => { tr.cells[1].textContent = String(x.message || x); tr.cells[1].className = "num bad"; });
   }
   draw();
 }
@@ -127,10 +128,23 @@ async function console_(line) {
   if (!j.ok) throw new Error(j.error || j.detail || "refused");
   return j.result || {};
 }
-/** What the DigiDollar module says this wallet holds on `c`'s chain (ddreceive), or null while the wallet is shut. */
-async function ddHoldings(c) {
-  if (!(await wallet.opened(TAGCHAIN))) return null;
-  return (ddHeld[c.network] = await console_(`ddreceive ${ddWord(c)}`));
+/** What the DigiDollar module says this wallet holds on `c`'s chain (ddreceive), or null while the wallet is shut.
+ * One ask at a time: a module answers one request at a time and tells a second that waits "busy" (modhost.py), so the
+ * Balances rows and Transactions queue here, and an answer under 30 seconds old is used again. */
+function ddAsk(work) {
+  const asked = ddQueue.then(work);
+  ddQueue = asked.catch(() => null);
+  return asked;
+}
+function ddHoldings(c) {
+  const kept = ddHeld[c.network];
+  if (kept && Date.now() - kept.at < 30000) return Promise.resolve(kept.said);
+  return ddAsk(async () => {
+    if (!(await wallet.opened(TAGCHAIN))) return null;
+    const said = await console_(`ddreceive ${ddWord(c)}`);
+    ddHeld[c.network] = {at: Date.now(), said};
+    return said;
+  });
 }
 async function ddAddressOf(to, c) {
   const r = await fetch(`/lite/api/ddaddress?to=${encodeURIComponent(to)}&chain=${encodeURIComponent(c.base)}`,
@@ -256,7 +270,7 @@ async function ddReview(c, to, amount) {
   if (!keys) { $("w-unlock").hidden = false; $("w-password").focus(); return; }
   try {
     const payee = await ddAddressOf(to, c);
-    const got = await console_(`ddsend ${payee.address} ${(cents / 100).toFixed(2)} ${ddWord(c)}`);
+    const got = await ddAsk(() => console_(`ddsend ${payee.address} ${(cents / 100).toFixed(2)} ${ddWord(c)}`));
     const o = got.sign;
     if (!o) throw new Error(got.how || "the DigiDollar module prepared nothing to sign");
     const read = await wallet.checked(o, keys);
