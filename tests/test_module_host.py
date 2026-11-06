@@ -188,3 +188,48 @@ def test_a_prepared_transaction_spends_the_callers_taproot_coins_by_their_key_or
     keyless = {**prepared, "inputs": [{**prepared["inputs"][0], "taproot": {"key": True}}] + prepared["inputs"][1:]}
     with pytest.raises(modhost.ModuleFailed, match="not a Taproot coin of your key"):
         host.prepare(settings, "hello", keyless, chain.address, pub)
+
+
+def _guard(tmp_path, inscribed: set):
+    """The arcade's real inscription guard (arcade/doginals.Doginals), its source answering which transactions carry
+    an inscription on output 0."""
+    from arcade import doginals
+
+    def fetch(txid):
+        return {"txid": txid, "inscriptions": [{"vout": 0, "inscription_id": txid + "i0", "sat_offset": 0}]
+                if txid in inscribed else []}
+    return doginals.Doginals(tmp_path / "guard.sqlite", fetch=fetch)
+
+
+def test_a_modules_coin_reads_leave_out_coins_carrying_an_inscription(tmp_path, monkeypatch):
+    """SadFrog, 2026-11-05: "make module transactions inscription-aware". On a chain with an inscription guard, a
+    module's scantxoutset lists only what an ordinary send would spend; a DigiDollar (no value) is not ordinals'."""
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {"main": _guard(tmp_path, {"aa" * 32})})
+    said = {"success": True, "height": 900, "total_amount": 3.0, "unspents": [
+        {"txid": "aa" * 32, "vout": 0, "amount": 1.0, "scriptPubKey": "76a9"},       # an inscription on it
+        {"txid": "bb" * 32, "vout": 0, "amount": 2.0, "scriptPubKey": "76a9"},       # clean
+        {"txid": "cc" * 32, "vout": 1, "amount": 0, "scriptPubKey": "5120" + "11" * 32}]}  # a DigiDollar
+    kept = modhost.without_inscriptions("main", "scantxoutset", said)
+    assert [u["txid"] for u in kept["unspents"]] == ["bb" * 32, "cc" * 32] and kept["total_amount"] == 2.0
+    assert modhost.without_inscriptions("dgbtest", "scantxoutset", said) is said, "no guard there: as read"
+    assert modhost.without_inscriptions("main", "getblockcount", 812) == 812
+
+
+def test_a_prepared_spend_of_a_coin_carrying_an_inscription_is_refused(installed, tmp_path, monkeypatch):
+    host, settings, chain = installed
+    pub, chain.address = _key()
+    out = [[150_000_000 - 1000, "6a0474657374"]]
+    prepared = {"chain": "main", "inputs": [{"txid": "aa" * 32, "vout": 0}], "outputs": out, "what": "a test"}
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {"main": _guard(tmp_path, {"aa" * 32})})
+    with pytest.raises(modhost.ModuleFailed, match="carries an inscription"):
+        host.prepare(settings, "hello", prepared, chain.address)
+    (tmp_path / "x").mkdir()
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {"main": _guard(tmp_path / "x", set())})
+    assert host.prepare(settings, "hello", prepared, chain.address)[1].fee == 1000, "a clean coin goes"
+
+    class Down:
+        def spendable(self, coins):
+            raise OSError("the index is not answering")
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {"main": Down()})
+    with pytest.raises(modhost.ModuleFailed, match="could not be checked for inscriptions"):
+        host.prepare(settings, "hello", prepared, chain.address)

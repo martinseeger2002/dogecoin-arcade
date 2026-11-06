@@ -134,7 +134,9 @@ SadFrog: "add capability to send and receive store digidollar test and digidolla
 2. **Prepared transactions from modules.** The arcade checks that every coin is the caller's and caps the fee, but a
    module chooses the outputs. The wallet shows the module's summary, the fee and the change. Is that enough, or
    should a module's transaction also list every output in plain words before signing?
-3. **Coins that carry an inscription.** The module picks coins from the user's address. The arcade's own sends avoid
-   coins with inscriptions on them, but `modhost.prepare` does not check that yet.
+3. **Coins that carry an inscription** (done, 2026-11-05). On a chain with an inscription guard (DigiByte mainnet has
+   one; testnet26 has no ord index), the arcade leaves inscribed coins out of a module's `scantxoutset` and refuses a
+   prepared spend of one (`modhost.without_inscriptions`, `_refuse_inscribed`), as an ordinary send never spends one.
+   DigiAssets are not read by the arcade at all: a coin carrying one is spent as plain DGB by any send.
 4. **Testnet26** is the arcade's DigiByte test chain (SadFrog, 2026-11-04). Its oracle is the real 7-of-35, so a mint or
    redeem waits for a signed price as on mainnet. Test DGB comes from DigiByte's community.

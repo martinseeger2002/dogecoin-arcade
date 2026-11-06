@@ -88,6 +88,13 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 · SadFrog's side (Claude) · Module transactions keep inscribed coins out
+SadFrog: "make module transactions inscription-aware. Filter inscribed coins out of a module's coin reads on guarded
+chains, refuse any module transaction that would spend one". `modhost.without_inscriptions` puts a module's
+`scantxoutset` through the chain's guard (`funding.guard_on`, the same `Doginals.spendable` an ordinary send asks);
+`modhost._refuse_inscribed` refuses a prepared spend of a guarded coin, and one the guard cannot check. Taproot inputs
+and coins of no value (DigiDollars) are left to the module's own checks. Tests: test_module_host (+2, the real guard).
+
 ### 2026-11-05 · SadFrog's side (Claude) · DigiDollar 0.4.0: send, receive and hold
 SadFrog: "add capability to send and receive store digidollar test and digidollar".
 - **Module:** `ddreceive` (the caller's DigiDollar address and holdings) and `ddsend` (DigiByte Core's transfer,

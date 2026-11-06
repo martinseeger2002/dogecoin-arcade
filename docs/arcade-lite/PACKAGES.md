@@ -104,6 +104,9 @@ A node module is Python the arcade runs for its people, Linux only (SadFrog's de
 - **Spending:** a module never signs. It answers with `{"prepared": {chain, version, inputs, outputs, what}}`:
   - The arcade reads every input from the chain and refuses any that is not the caller's own coin, and refuses a fee
     above `max_fee`.
+  - Inscriptions stay put (2026-11-05): on a chain with an inscription guard, a module's `scantxoutset` lists no coin
+    carrying an inscription (nor a small one the guard can't read yet), and a prepared spend of one is refused, as an
+    ordinary send never spends one. A coin of no value (a DigiDollar) is not ordinals' and is listed.
   - It then makes the transaction an offer (`/account/sign`), which the caller's wallet reviews and signs in the window.
   - A command run from `arcade-cli` gets the prepared transaction back, but cannot sign it.
 - **The caller's keys:** the window sends the public keys its wallet holds with a module's command. The arcade passes
