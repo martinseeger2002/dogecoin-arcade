@@ -31,7 +31,7 @@ class Guard:
             return {0: [{"id": None, "unknown": True, "wait": True, "h": 6_000_000}]}
         return {0: [{"id": txid + "i0", "offset": 0, "ctype": self.inscribed[txid]}]} if txid in self.inscribed else {}
 
-    def ctype_of(self, iid):
+    def ctype_of(self, iid, read=True):
         return None
 
 
@@ -226,3 +226,48 @@ def test_both_collection_stores_answer_many_ids_in_one_go(tmp_path):
     got = reg.items_of("doge", ids)
     assert got == {ids[0]: {"root": "root1", "number": 1, "name": "Anti Doginal Dogs"},
                    ids[700]: {"root": "root1", "number": 2, "name": "Anti Doginal Dogs"}}
+
+
+def test_a_list_still_being_read_is_already_in_number_order_and_known_answers_are_read_in_one_go(tmp_path):
+    """2026-11-06: "My wallet is still not showing my lowest number inscriptions first" and "the wallet takes
+    too long to load the initial load". On .25's slow node a big wallet's first list was shown for minutes in id
+    order, the numbers coming only at the end; every saved guard answer was read one connection at a time; and an
+    inscription the index had not numbered had its whole content fetched from the chain at every step."""
+    coins, inscribed, numbers = _wallet(n_ins=3000, n_tokens=0)
+
+    class Kept(Guard):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.many, self.reads = 0, []
+
+        def kept_many(self, txids):
+            self.many += 1
+            return {t: {0: [{"id": t + "i0", "offset": 0, "ctype": self.inscribed[t]}]}
+                    for t in list(txids)[:2000] if t in self.inscribed}
+
+        def ctype_of(self, iid, read=True):
+            self.reads.append(read)
+            return None
+    guard = Kept(inscribed)
+    for t in list(inscribed)[2500:]:                               # no type anywhere: the index has none either
+        inscribed[t] = None
+    for t in list(inscribed)[2500:]:
+        numbers.pop(t + "i0")
+    source, asked = _source(coins, guard, numbers)
+    pages = P.Pages(P.Numbers(tmp_path / "n.sqlite"), unknown=doginals.Unknown)
+    seen = []
+    doc = pages.build("doge", source, publish=lambda d: seen.append(d))
+    assert guard.many == 1 and len(guard.asked) == len({c["txid"] for c in coins if c["value"] <= P.POSTAGE}) - 2000, \
+        "the saved answers in one read, only the rest asked one by one"
+    steps = [d for d in seen if d["items"]]
+    assert steps and steps[0]["checked"] == 2000, "the saved answers shown at once"
+    for d in steps:
+        got = [g["number"] for g in d["items"] if g["number"] is not None]
+        assert got == sorted(got) and len(got) >= len(d["items"]) - P.NUMBERS_AT_ONCE - 500, \
+            "a list still being read is in number order, at most the last question's worth without a number"
+    assert all(n <= P.NUMBERS_AT_ONCE for n in asked) and all(n == P.NUMBERS_AT_ONCE for n in asked[:-1])
+    assert guard.reads and not any(guard.reads), "a type is never read from the chain while a list is built"
+    assert len(guard.reads) == 500, "and each one looked for once"
+    assert doc["done"] and doc["unnumbered"] == 500
+    nums = [g["number"] for g in doc["items"]][:2500]
+    assert nums == sorted(nums)

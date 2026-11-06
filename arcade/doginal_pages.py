@@ -105,6 +105,7 @@ class Source:
         self.collections = collections      # (ids) -> {id: {name, item, position, slug | root, source}}
         self.token_protocol = token_protocol
         self.reach = reach or (lambda: None)
+        self.ctypes: dict[str, str | None] = {}     # kept types read this build (`_items`)
 
 
 class Pages:
@@ -190,38 +191,70 @@ class Pages:
         for c in coins:
             by_tx.setdefault(c["txid"], []).append(c)
         held: dict[str, dict | None] = {}
+        nums: dict[str, dict] = {}
+        asked: set[str] = set()
+        waiting_for: list[str] = []
 
         def one(txid: str):
             try:
                 return txid, source.guard.held(txid)
             except self.unknown:
                 return txid, None
+
+        def number(items: list[dict], last: bool = False) -> None:
+            # Numbers as the check goes, not only at the end, so even a list still being read on a slow node is in
+            # number order (2026-11-06: "still not showing my lowest number inscriptions first"): the cache
+            # at once, the index for the rest in full questions of 500, what is left over at the end.
+            ids = [g["id"] for g in items if g["id"] not in asked]
+            asked.update(ids)
+            nums.update(self.numbers.get(net, ids))
+            waiting_for.extend(i for i in ids if i not in nums)
+            while waiting_for and (last or len(waiting_for) >= NUMBERS_AT_ONCE) and not doc["error"]:
+                part = waiting_for[:NUMBERS_AT_ONCE]
+                del waiting_for[:NUMBERS_AT_ONCE]
+                try:
+                    got = source.numbers(part) or {}
+                except Exception as exc:                  # noqa: BLE001 -- no copy could say just now: asked next time
+                    doc["error"] = f"the index could not say just now: {exc}"[:200]
+                    return
+                got = {str(k).strip().lower(): v for k, v in got.items()
+                       if isinstance(v, dict) and v.get("number") is not None}
+                self.numbers.put(net, got)
+                nums.update(got)
+
         doc = {"done": False, "phase": "checking", "sig": coins_sig(coins), "items": [], "checked": 0, "of": len(txids), "failed": 0,
                "unread": 0, "waiting": 0, "unnumbered": 0, "at": now(), "error": "", "reach": source.reach()}
         publish(dict(doc))
+        # What the guard already knows, read in one go (2026-11-06: "the wallet takes too long to load the
+        # initial load"): one connection a transaction under the guard's lock was minutes on .25's disk for a big
+        # wallet. Only the never-asked, and those still waiting to be read, go to the guard one by one.
+        try:
+            kept = source.guard.kept_many(txids) if hasattr(source.guard, "kept_many") else {}
+        except Exception:                                 # noqa: BLE001 -- asked one by one instead
+            kept = {}
+        for txid, said in (kept or {}).items():
+            if not any(i.get("unknown") for on in said.values() for i in on):
+                held[txid] = said
+        rest = [t for t in txids if t not in held]
+        if held:
+            so_far = self._items(net, coins, held, {}, {}, source)[0]
+            number(so_far)
+            publish({**doc, "checked": len(held), "items": self._items(net, coins, held, nums, {}, source)[0]})
         with ThreadPoolExecutor(GUARD_THREADS) as pool:
-            for n, (txid, said) in enumerate(pool.map(one, txids), 1):
+            for n, (txid, said) in enumerate(pool.map(one, rest), len(held) + 1):
                 held[txid] = said
                 if n % PUBLISH_EVERY == 0:
-                    publish({**doc, "checked": n, "items": self._items(net, coins, held, {}, {}, source)[0]})
+                    so_far = self._items(net, coins, held, {}, {}, source)[0]
+                    number(so_far)
+                    publish({**doc, "checked": n, "items": self._items(net, coins, held, nums, {}, source)[0]})
         doc["checked"] = len(txids)
-        items, unread, waiting, failed = self._items(net, coins, held, {}, {}, source)
+        items, unread, waiting, failed = self._items(net, coins, held, nums, {}, source)
         doc.update(items=items, unread=unread, waiting=waiting, failed=failed, phase="numbers")
+        number(items, last=True)
+        items = self._items(net, coins, held, nums, {}, source)[0]
+        doc["items"] = items
         publish(dict(doc))
         ids = [g["id"] for g in items]
-        nums = self.numbers.get(net, ids)
-        missing = [i for i in ids if i not in nums]
-        for at in range(0, len(missing), NUMBERS_AT_ONCE):
-            part = missing[at:at + NUMBERS_AT_ONCE]
-            try:
-                got = source.numbers(part) or {}
-            except Exception as exc:                      # noqa: BLE001 -- no copy could say just now: asked next time
-                doc["error"] = f"the index could not say just now: {exc}"[:200]
-                break
-            got = {str(k).strip().lower(): v for k, v in got.items() if isinstance(v, dict) and v.get("number") is not None}
-            self.numbers.put(net, got)
-            nums.update(got)
-            publish({**doc, "items": self._items(net, coins, held, nums, {}, source)[0]})
         doc["phase"] = "collections"
         try:
             colls = source.collections(ids) or {}
@@ -253,10 +286,17 @@ class Pages:
                 m = nums.get(iid) or {}
                 ctype = m.get("content_type") or i.get("ctype")
                 if not ctype:
-                    try:
-                        ctype = source.guard.ctype_of(iid)
-                    except Exception:                     # noqa: BLE001
-                        ctype = None
+                    # Only what is kept on disk, once a build: reading the content from the chain here was a whole
+                    # inscription fetched for every coin the index had not numbered yet, again at every step (the
+                    # stall watch caught the build in it on .25, 2026-11-06). The index's number brings the type.
+                    if iid not in source.ctypes:
+                        try:
+                            source.ctypes[iid] = source.guard.ctype_of(iid, read=False)
+                        except TypeError:                 # a guard without `read`
+                            source.ctypes[iid] = None
+                        except Exception:                 # noqa: BLE001
+                            source.ctypes[iid] = None
+                    ctype = source.ctypes[iid]
                 proto = m.get("protocol")
                 items.append({"id": iid, "txid": c["txid"], "vout": int(c["vout"]), "value": int(c.get("value") or 0),
                               "offset": i.get("offset"), "number": m.get("number"), "height": m.get("height"),

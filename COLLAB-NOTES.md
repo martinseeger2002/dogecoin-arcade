@@ -88,6 +88,18 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-06 The Wallet's Doginals: in number order while still being read, and a faster first load (Claude; the operator: "My wallet is still not showing my lowest number inscriptions first", "the wallet takes too long to load the initial load")
+
+- On .25 a big wallet's first list took minutes, and the steps shown meanwhile had no numbers (asked only at the end),
+  so they were in id order. `doginal_pages.build` now numbers as it checks: the kept numbers at once, the index in full
+  questions of 500 as they fill, what is left at the end. Steps are in number order, at most one question's worth
+  without a number yet.
+- The guard's saved answers are read in one go (`Doginals.kept_many`, as the balance line already does); only the
+  never-asked and those still waiting go to `held` one by one. @apple's copy: a rebuild 1.4 s -> 0.2 s.
+- `_items` no longer reads an un-numbered inscription's content from the chain for its type (the stall watch caught
+  the build in `rpc._post` there, every step): `ctype_of(id, read=False)`, once a build. The index's number brings the type.
+- Test: `test_a_list_still_being_read_is_already_in_number_order_and_known_answers_are_read_in_one_go`.
+
 ### 2026-11-06 The Wallet's Doginals one page at a time, built by the arcade; #96 merged (Claude; the operator: "build it and merge the current PR at the same time", "Check it against apples big wallet", "We should be able to read the shared index from any arcade, even if we don't have the index on our own arcade", "always be able to read from the longest copy")
 
 - **Taken back from #91** (it was handed to blockchaindad; no reply yet). `arcade/doginal_pages.py`: the arcade builds an
