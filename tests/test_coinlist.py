@@ -38,12 +38,12 @@ def test_coverage_is_watching_plus_covered():
 
 def test_listing_shape_and_marks():
     db = _Db()
-    utxos.watch(db, "A", 0)
+    utxos.watch(db, "A", 1)                    # 0 would be a watch begun on an empty index: covering nothing
     db.conn.execute("INSERT INTO utxo VALUES (?,?,?,?,?)", (T1, 0, "A", 5000, 7))
     db.conn.execute("INSERT INTO utxo VALUES (?,?,?,?,?)", (T2, 1, "A", 100000, 3))
     got = cl.listing(db, ["A"], 10, marks={(T1, 0): "ins:" + T1 + "i0"})
     assert got["A"]["coins"] == [[T2, 1, 100000, 3, ""], [T1, 0, 5000, 7, "ins:" + T1 + "i0"]]
-    assert got["A"]["covered"] == [[0, 10]]
+    assert got["A"]["covered"] == [[1, 10]]
 
 
 def test_merge_unions_coins_marks_and_coverage():
@@ -84,3 +84,17 @@ def test_segments_edge_cases():
 def test_agree_and_canaries():
     assert cl.agree([[T1, 0], [T2, 1]], [[T1.upper(), 0]]) == ({(T2, 1)}, set())
     assert cl.canaries_missing([[T1, 0]], [[T1, 0], [T3, 2]]) == [(T3, 2)]
+
+
+def test_a_watch_begun_on_an_empty_index_covers_nothing(tmp_path):
+    """2026-11-05: two Flopcoin imports watched while that index held no block said "covered 0..tip", no coins,
+    and Admin called them whole; another arcade would have taken "nothing there, all of it known" from the list."""
+    import sqlite3
+    from arcade import coinlist as L
+
+    class Db:
+        conn = sqlite3.connect(":memory:")
+    Db.conn.execute("CREATE TABLE watched (address TEXT PRIMARY KEY, since INTEGER)")
+    Db.conn.execute("INSERT INTO watched VALUES ('Fempty', 0), ('Ffloor', 500)")
+    assert L.coverage(Db, "Fempty", 900) == []
+    assert L.coverage(Db, "Ffloor", 900) == [(500, 900)]

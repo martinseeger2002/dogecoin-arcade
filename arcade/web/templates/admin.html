@@ -857,6 +857,8 @@
     $('wim-coins').innerHTML = (d.chains || []).map(function (c) {
       return '<button type="button" data-net="' + esc(c.network) + '"' + (c.network === d.chain ? ' class="on"' : '') + '>' + esc(c.title) + '</button>'; }).join('');
     var s = d.stats || {}, w = d.walk;
+    // A walk's readers (2026-11-05): this arcade, another at its web address, or a Core shared over the mesh.
+    function readerName(r) { return r === 'self' ? 'this arcade' : r.indexOf('core:') === 0 ? 'Core shared over the mesh by ' + r.slice(5, 17) + '…' : r; }
     $('wim-stats').innerHTML = '<div class="stat"><span>Imported wallets here</span><b>' + n(s.wallets) + '</b><span>across ' + n(s.accounts) + ' accounts</span></div>'
       + '<div class="stat"><span>Known for certain</span><b>' + n(s.certain) + '</b><span>whole past covered</span></div>'
       + '<div class="stat"><span>Waiting for a walk</span><b>' + n(s.waiting) + '</b><span>join the next walk</span></div>'
@@ -866,7 +868,10 @@
       var segs = {};
       (w.parts || []).forEach(function (p) { (segs[p.segment] = segs[p.segment] || []).push(p); });
       $('wim-walk').innerHTML = '<p class="muted" style="margin-top:-6px;font-size:.86rem">Blocks ' + n(w.hi) + ' down to ' + n(w.lo) + ' for ' + n(w.wallets)
-        + ' wallet' + (w.wallets === 1 ? '' : 's') + ' · started ' + when(w.began) + ' · ' + (w.readers || []).length + ' arcade' + ((w.readers || []).length === 1 ? '' : 's') + ', each block read by two</p>'
+        + ' wallet' + (w.wallets === 1 ? '' : 's') + ' · started ' + when(w.began) + ' · ' + (w.readers || []).length + ' reader' + ((w.readers || []).length === 1 ? '' : 's')
+        + (w.need === 1 ? ', each block read once' : ', each block read by two') + (w.chunks ? ' · ' + n(w.chunks) + ' chunks' : '')
+        + (w.eta ? ' · about ' + (w.eta >= 5400 ? Math.round(w.eta / 3600) + ' h' : Math.max(1, Math.round(w.eta / 60)) + ' min') + ' left' : '') + '</p>'
+        + '<p class="muted" style="font-size:.84rem">' + (w.readers || []).map(function (r) { return esc(readerName(r)); }).join(' · ') + '</p>'
         + Object.keys(segs).map(function (k) {
           var ps = segs[k], top = ps[0].top, bottom = ps[0].bottom;
           var cells = ps.map(function (p) {
@@ -874,7 +879,7 @@
             var pct = p.state === 'reading' ? at : 100, cls = p.state === 'done' ? 'ok' : p.state === 'failed' ? 'bad' : '';
             var tagp = p.state === 'done' ? '<span class="pill ok">✓ ' + (p.canaries || 0) + ' canar' + (p.canaries === 1 ? 'y' : 'ies') + '</span>'
               : p.state === 'failed' ? '<span class="pill bad">✗ ' + esc(p.missed ? 'missed a canary' : (p.error || 'failed')) + '</span>' : '';
-            return '<div class="reader"><span>' + esc(p.reader === 'self' ? 'this arcade' : p.reader) + (p.progress && p.progress.how ? ' · ' + esc(p.progress.how) : '') + ' ' + tagp + '</span>'
+            return '<div class="reader"><span>' + esc(readerName(p.reader)) + (p.progress && p.progress.how ? ' · ' + esc(p.progress.how) : '') + ' ' + tagp + '</span>'
               + '<div class="wbar"><i class="' + cls + '" style="width:' + pct.toFixed(0) + '%"></i></div></div>';
           }).join('');
           var done = ps.every(function (p) { return p.state !== 'reading'; });

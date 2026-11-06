@@ -115,6 +115,101 @@ mining on each chain where possible on cpu as well as a section to hookup local 
 - **Not here: merge-mined chains for ASICs.** That needs an AuxPoW parent with the aux chains' commitment, and is its
   own piece of work.
 
+### 2026-11-05 The shared walk survives restarts, reads in chunks, and uses the mesh's shared Cores (Claude; the operator: "it says it's going to take 21 days for my wallet balances", "Use cores shared over the mesh as extra readers right away. 1-4. I thought that was how we designed the walk")
+
+- **What was wrong.**
+  - No shared walk had finished on .25 in three days. A walk lived only in the arcade process, so each reload (four
+    deploys on 2026-11-05) started it again from block 0.
+  - Readers were only arcades with a public web address. The Cores other arcades share over the mesh (three of the
+    four Flopcoin nodes) were never asked, though the 2026-10-25 design cut the chain per arcade with a node.
+  - The wallet's wait was the per-block Core pace: "21 days" for a walk of ~15 minutes from block files.
+  - pepecoinarcade.com's Flopcoin block files lack block 80,597, so both its halves failed after half an hour.
+  - `coinlist.coverage` counted a watch begun on an empty index (`since` 0) as covering 0..tip: Admin called the
+    Flopcoin imports "whole", and the coin lists arcades swap said "no coins, all of it known" (commit 46feb509).
+- **Now.**
+  - `arcade/walkstore.py` (`walks.sqlite`): a walk is fixed `chunks` (≥ 20,000 blocks, about 48 a walk). Each chunk is
+    read by two different readers (one with one reader), and every read is written down as it comes back
+    (`walk_read`).
+  - A reader takes the next chunk nobody has, then second copies; a fast reader reads more. A reader that fails 3
+    times leaves that walk.
+  - A walk with chunks nobody could read stays unfinished with its good reads. `go()` finishes it first, and
+    `_walks_resume` (60 s after start, `WALK_RESUME_AFTER`) picks every unfinished walk up after a restart.
+  - Readers are this arcade, public arcades (files, else RPC), and every `coreshare.lenders` Core as `core:<node>`.
+    Those are read here with `Reader.read_over`: getblockhash then raw getblock, 50 a round trip, each block proved
+    by BorrowedRpc. One arcade is one reader: `/coins/walk/can` now says `node`, and mesh announcements map
+    wss:// hosts to keys. `walk_readers_max` still caps it (files first).
+  - Verification: every good read of a chunk must agree, or the chunk is read again here. A canary miss rests the
+    reader at once, and a late read is still judged against the chunk's verdict.
+  - After a whole walk, blocks after `hi` are marked covered for watched addresses ("watched through the walk").
+  - `Reader.read`: "not in the block files" falls back to the node's RPC for that range, for the scan and for lining
+    the files up with the tip (.25's newest Flopcoin block, just mined, was not in its files yet).
+  - A running walk looks for readers again every `WALK_READERS_EVERY` (60 s) and starts the new ones. After .25's
+    reload its walk began before the mesh's offers came, so it had two readers, not the three Flopcoin Cores that
+    came a minute later. Two readers make it two reads a chunk. Walks resume 180 s after start (`WALK_RESUME_AFTER`).
+  - Canaries that cannot be read just then (the index locked) put the chunk back, rather than ending the reader.
+  - The wallet says "N readers … (x of y parts done, about T left)", and queued imports use `WalkStore.pace` (the last
+    walks' measured pace). Admin → Wallet imports shows the readers, the chunks and the time left.
+- **Live check.** `read_over` against a test machine's Pepecoin main Core: 2,000 blocks, 1,013 matches, identical to the
+  block-file reader, ~3,000 blocks/s on localhost.
+- **Tests.** `tests/test_shared_walk.py` (rewritten for chunks, plus cut-short-and-resume, mesh Cores counted once,
+  batched mesh read, file-to-RPC fallback). test_wallet_imports' two walk tests now check chunks from 0 to the top.
+  446 pass across walk, import, coin-list, web, mesh, coreshare and admin.
+
+### 2026-11-05 A home-screen app window stuck loading is started again; Reload in the pull-down bar (Claude, from the Ashvale golf sim session's report; the operator: "People should not have to do that")
+
+- **What happened.** On the operator's iPhone (installed PWA, /home), ASHVALE sat on the launcher's "Loading Ashvale…" and
+  only loaded after Remove from arcade and adding it again. Not reproduced. `openWin` showed the window it already had
+  for an app without ever reloading it, and nothing noticed a frame that never finished loading. (Remove from Home Screen
+  does not close a running window, so the stuck frame was most likely a fresh load left hanging: a phone that sleeps
+  mid-load leaves requests that never answer.)
+- **Now (home.html).**
+  - Each window records its frame's `load`, which comes only once everything inside has loaded, the game's launcher
+    frame and its first scripts included. `about:blank`, `reloadWin`'s step in between, does not count.
+  - A window still loading on screen after `STUCK_AFTER` (45 s) is loaded afresh once by itself, with a toast. A second
+    stall says "tap Reload" instead of reloading again.
+  - Coming back to the home screen after more than `AWAY_LONG` (60 s) away, or from the page cache (`pageshow`
+    persisted), reloads every window that never finished loading. Tapping the icon of one that has been loading for
+    over 45 s does too.
+  - **Reload** in the pull-down bar, between the name and Close, loads the app in front afresh (a new `src`).
+  - A window that loaded is never reloaded by any of this.
+- **Tests.** `tests/test_home_stuck_window_browser.py`, a real browser: Reload, the reload by itself once, the second
+  stall's message, and an app that loaded left alone. test_home_screen passes. Screenshot ~/ordmock/stuck-reload-bar.png.
+
+### 2026-11-05 Lazy wallets: an imported wallet's coins are read when it is opened (Claude; the operator: "we shouldn't be downloading all of the wallet balances all at once only when each wallet is open")
+
+- **Before.** Every Wallet page load (`loadImports`) asked `/account/imported`, which read and sorted the coins of every
+  imported address on every chain. @apple has four (one DOGE import with 7,139 coins: 5.9 s cold on .25's disk).
+- **Now.** `GET /account/imported?lazy=1&chain=&address=`: coins read only for that wallet; every other row comes back
+  `lazy: true` with balances None and its read-back state (`_rescan_says`, in memory). `?lazy=1` alone reads none. Without
+  `lazy` it is the full answer, as before. `_imported_view(account, chain, balances_for)`.
+- **The page.** `loadImports` asks for the imported wallet picked on this chain; `pickWallet` reloads when the picked
+  one is lazy. Balances already seen are kept in `imp.seen`, so the drop-down shows the last one and "—" before a first
+  open. `openImports`, `openStaleImports` and `importWallet` now read the record only (`?record=1`).
+- **Tests.** `test_lazy_wallets_read_coins_only_for_the_wallet_open` (test_wallet_imports.py).
+  `test_imports_everywhere_browser.py` now opens the imported wallet before it expects its balance. The import, sign-in
+  and Doginal wallet suites pass (93).
+- **Handed to blockchaindad** in issue #91: a paged Doginals tab for wallets with thousands of inscriptions.
+
+### 2026-11-05 Unlock no longer reads balances it never shows (Claude; the operator: "take a look at why it takes so long to unlock the Apple account")
+
+- **What happened.** Unlocking @apple (an imported DOGE address with ~7,100 coins) took about 12-18 s. The per-minute
+  request log on .25 for that sign-in showed `/account` 6x 25.7 s and `/account/imported` 2x 8.6 s: about 4.3 s each.
+  After `seatWith`, the sign-in waited on `tellTheNode` (a full `/account`: balances of the tag chain and the first
+  chain) and `openImportsWith`, which fetched `/account/imported` (every imported address's coins read and sorted,
+  `_imported_view`), stretched the password again for the record, then `tidyImports` fetched `/account/imported` a
+  second time (a third time inside `changeImports`). A cold read of the 7,139 coins took 5.9 s on .25's busy disk.
+- **Now.**
+  - `GET /account?only=addresses`: each chain's row with the address this node has on file, no index read.
+    `tellTheNode` uses it.
+  - `GET /account/imported?record=1`: the record, version, signed, siblings, vault, tag and host, without `chains`,
+    `busy`, `names` or `import_closed`. `openImportsWith`, `tidyImports` and `changeImports` use it.
+    `importedOnNode({recordOnly})` picks it. The Wallet page's own read of imports is unchanged (full).
+  - `tidyImports` is handed the answer the record was just opened from; `changeImports({read})` starts from it on its
+    first try (a 409 retry reads again).
+- **Tests.** `tests/test_wallet_imports.py`: `test_a_sign_in_reads_the_record_without_reading_any_coins`,
+  `test_the_addresses_a_sign_in_checks_come_without_balances`. The sign-in, sign-up, password-floor, import and
+  test_web suites pass (337).
+- **Collections work handed off** to blockchaindad at GitHub issue #91 (2026-11-05).
 
 ### 2026-11-05 A peer that stops reading no longer freezes the mesh; DRC-20 mints out of the Wallet's grid (Claude; the operator: "a lot of my ords are not displaying", "The DRC 20 mints should be [out] from the ORD grid but we shouldn't count them towards tokens")
 

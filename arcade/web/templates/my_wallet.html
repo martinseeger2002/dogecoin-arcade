@@ -496,6 +496,9 @@ function pickWallet(id) {
   all[c.network] = id;
   keep(PICK, all);
   asset = null;
+  // Its coins are read now, when it is opened (lazy wallets, 2026-11-05).
+  const w = id && id !== "main" ? importedHere(c).find((one) => one.id === id) : null;
+  if (w && (!w.status || w.status.lazy)) loadImports(true).then(() => drawAll()).catch(() => {});
 }
 /** Every name on this chain but `except`'s: for the lowest free "Wallet N". */
 function namesOn(c, except = null) {
@@ -508,7 +511,25 @@ async function loadImports(force = false) {
   if (NODE_SIDE || !$("wpicker")) return;
   if (!force && imp.node && Date.now() - imp.at < 15000) return;
   imp.at = Date.now();
-  try { imp.node = await wallet.importedOnNode(); } catch (e) { return; }
+  // Lazy wallets (2026-11-05: "only when each wallet is open"): coins are read for the imported wallet picked
+  // on this chain, if one is; the others keep the balance this page last saw for them (imp.seen) or show "—".
+  const c0 = chainNow();
+  const pickId = c0 ? (kept(PICK, {}) || {})[c0.network] : null;
+  const openRec = wallet.importsOpen(acct());
+  const pickW = pickId && pickId !== "main" ? ((openRec && openRec.wallets) || []).find((w) => w.id === pickId) : null;
+  try {
+    imp.node = await wallet.importedOnNode({open: pickW ? {chain: c0.network, address: pickW.address} : {}});
+  } catch (e) { return; }
+  imp.seen = imp.seen || {};
+  for (const [net, rows] of Object.entries(imp.node.chains || {})) {
+    for (const row of rows) {
+      const k = `${net}:${row.address}`;
+      if (!row.lazy) imp.seen[k] = row;
+      else if (imp.seen[k]) Object.assign(row, {...imp.seen[k], ...row, lazy: true,
+        spendable: imp.seen[k].spendable, inscribed: imp.seen[k].inscribed, inscribed_n: imp.seen[k].inscribed_n,
+        unchecked: imp.seen[k].unchecked, unchecked_n: imp.seen[k].unchecked_n, since: imp.seen[k].since});
+    }
+  }
   const c = chainNow();
   // The account's own wallet, unnamed, takes the lowest free "Wallet N" and keeps it until it is renamed.
   if (c && !mainName(c)) {
@@ -622,7 +643,8 @@ function drawMenu() {
     const who = walletLabel(one.name, protoLabel(c, one.addr_kind));
     const tag = stateTag(one);
     if (tag) who.append(el("span", "wl-tag", tag));
-    option(who, one.status && one.status.state === "ready" ? `${coinsOf(one.status.spendable)} ${COIN()}` : "—",
+    option(who, one.status && one.status.state === "ready" && one.status.spendable != null
+             ? `${coinsOf(one.status.spendable)} ${COIN()}` : "—",
            w && w.id === one.id, () => { pickWallet(one.id); drawAll(); });
   }
   const open = wallet.importsOpen(acct());
