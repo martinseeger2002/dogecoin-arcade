@@ -29381,6 +29381,7 @@ def create_app(state: AppState) -> FastAPI:
             return render(request, "admin_login.html", reason=str(exc.detail),
                           signed_in=signed_in(request) is not None, need_account=True)
         return render(request, "admin.html", local=who["local"], update_status=state.update_status, when=_when,
+                      window_tab="admin",
                       update_every=watcherlib.BlockWatcher.UPDATE_EVERY, release_key=releaselib.PUBLIC_KEY,
                       trade_cut=swaplib.cut_bps(state.setting("trade_cut", TRADE_CUT)) / 100, names=_arcade_names())
 

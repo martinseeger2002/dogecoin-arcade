@@ -125,6 +125,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     <li><button type="button" data-options="themes">Themes…</button></li>
     <li><hr></li><li><button type="button" data-open-tab="admin">Admin: every control…</button></li>
     {% elif audience == 'user' %}<li><button type="button" data-go="/me">Your account…</button></li>
+    {% if admin_tab %}<li><hr></li><li><button type="button" data-open-tab="admin">Admin: every control…</button></li>{% endif %}
     {% else %}<li><button type="button" disabled>Options…</button></li>{% endif %}
     <li><button type="button" data-yourtabs>Your tabs…</button></li>
     <li><button type="button" data-theme-open>Theme…</button></li>
@@ -163,7 +164,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     {{ icons.get(t.id, icons['module'])|safe }}<span>{{ t.title }}</span></button>
   {% endfor %}
   <button type="button" id="tab-more" aria-haspopup="true" hidden><span>More ▾</span></button>
-  {% if audience == 'operator' %}<button type="button" role="tab" class="end" data-tab="admin" data-src="/admin">
+  {% if admin_tab %}<button type="button" role="tab" class="end" data-tab="admin" data-src="/admin">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/></svg><span>Admin</span></button>{% endif %}
 </div>
 
@@ -196,7 +197,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   {% include "_apps.html" %}
   {% for t in tabs if t.id != 'apps' %}<section data-panel="m-{{ t.id }}" class="frame{{ ' modframe' if t.package }}" hidden>{% if t.package %}<div class="modpanel" data-modpanel="{{ t.id }}" hidden></div>{% endif %}<iframe title="{{ t.title }}" data-src="{{ t.page }}"></iframe></section>
   {% endfor %}
-  {% if audience == 'operator' %}<section data-panel="admin" class="frame" hidden><iframe title="Admin" data-src="/admin"></iframe></section>{% endif %}
+  {% if admin_tab %}<section data-panel="admin" class="frame" hidden><iframe title="Admin" data-src="/admin"></iframe></section>{% endif %}
 </main>
 
 <footer class="statusbar"><span id="sync">Connecting…</span><span id="links"></span></footer>
