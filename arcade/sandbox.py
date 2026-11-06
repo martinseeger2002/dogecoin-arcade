@@ -14,8 +14,12 @@ from __future__ import annotations
 import ctypes
 import os
 import platform
-import resource
 import struct
+
+try:
+    import resource
+except ImportError:      # Windows (2026-11-06): no `resource`; Linux and macOS import it exactly as before
+    resource = None
 import sys
 
 #: The generic syscall numbers of Landlock, the same on x86_64 and aarch64.
