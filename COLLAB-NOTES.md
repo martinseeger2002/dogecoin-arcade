@@ -99,7 +99,11 @@ coding agent, so it is written for agents first and people second.
     mint record).
   - The full Wallet keeps `arcade/digidollar.py` (its own index and send, no module), `/account/digidollar`, and the
     @name lookup through #95's `/lite/api/ddaddress`.
-- **Closed** #87, #88, #90, #92, #93 (all in main). #89 and #95 stay open until this ships; #94 is new.
+- **Closed** #87, #88, #90, #92, #93 (all in main). #89 and #95 close when this ships.
+- **#94 merged** (Admin as a tab for the operator from elsewhere, opened inside the window). One conflict, beside #95's
+  `digidollar` flag in lite/web.py: both kept. `test_admin_wears_the_lite_look_in_lite_and_its_own_in_full` loaded
+  `/admin` on its own, which now goes to `/#admin`: it checks Admin's look inside the window's Admin tab, and the bar on
+  `/wallet`.
 
 ### 2026-11-06 #89's two follow-ups and #95 merged; DigiDollar in Lite's wallet without the module, and @names in both wallets (Claude; the operator: "Pr 95" ... "Yep", "Apply it to the full version of arcade as well as the light")
 ### 2026-11-06 · SadFrog's side (Claude) · DigiDollar tab: the vaults and the numbers read as one
