@@ -73,6 +73,7 @@ const ADDRESSY = /^(?:[1-9A-HJ-NP-Za-km-z]{26,35}|[a-z]{1,4}1[02-9ac-hj-np-z]{38
 const $ = (id) => document.getElementById(id);
 const coinsOf = (n) => (Number(n || 0) / 1e8).toLocaleString(undefined, {maximumFractionDigits: 8});
 let said = {chains: [], dds: []}, net = "", offer = null, keys = null, ddHeld = {}, ddQueue = Promise.resolve();
+let drawn = 0;                                                          // which load() the Balances rows belong to
 
 function satsOf(text) {
   const m = /^(\d*)(?:\.(\d{0,8}))?$/.exec(String(text).trim());
@@ -102,12 +103,15 @@ async function load() {
     box.value = net;
   });
   const tb = $("w-balances"); tb.textContent = "";
+  const lazy = [], mine = ++drawn;
   for (const c of said.chains) {
     const tr = tb.insertRow();
     cell(tr, c.label); if (c.error) tr.title = c.error;
-    cell(tr, c.balance == null ? "—" : coinsOf(c.spendable ?? c.balance) + " " + unit(c), "num");
+    cell(tr, c.lazy ? "…" : c.balance == null ? "—" : coinsOf(c.spendable ?? c.balance) + " " + unit(c), "num");
     cell(tr, c.arriving ? coinsOf(c.arriving) : "", "num");
+    if (c.lazy) lazy.push([c, tr]);
   }
+  fillIn(lazy, mine);
   if (!said.chains.length) cell(tb.insertRow(), "No wallet is ready yet: the chains are still syncing.", "muted");
   for (const c of said.dds) {
     const tr = tb.insertRow();
@@ -117,6 +121,22 @@ async function load() {
       .catch((x) => { tr.cells[1].textContent = String(x.message || x); tr.cells[1].className = "num bad"; });
   }
   draw();
+}
+/** The balances the node left out (lazy wallets: only the wallet picked is read with the page), read afterwards one
+ * chain at a time, so the page opens at once and no two borrowed chains are asked together (2026-11-06, SadFrog: "its
+ * not showing most of my other balances either from the borrowed nodes ... until i switch"). */
+async function fillIn(rows, mine) {
+  for (const [c, tr] of rows) {
+    if (mine !== drawn) return;                                          // the page was drawn again meanwhile
+    let full = null;
+    try { full = ((await wallet.state(c.network)).chains || []).find((x) => x.network === c.network); } catch (e) {}
+    if (mine !== drawn) return;
+    if (!full || full.lazy) { tr.cells[1].textContent = "—"; continue; }
+    Object.assign(c, full);
+    if (full.error) tr.title = full.error;
+    tr.cells[1].textContent = full.balance == null ? "—" : coinsOf(full.spendable ?? full.balance) + " " + unit(full);
+    tr.cells[2].textContent = full.arriving ? coinsOf(full.arriving) : "";
+  }
 }
 /** A console line's answer (lite.html runs the same /lite/api/console), with this wallet's public keys when open. */
 async function console_(line) {
