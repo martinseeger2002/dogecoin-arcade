@@ -93,3 +93,7 @@ def test_a_modules_form_runs_the_console_line_and_its_own_actions_only(browser, 
     wait.until(lambda d: "Console: hello again 2" in panel.text)
     frame = browser.find_element(By.CSS_SELECTOR, 'section[data-panel="m-hello"] iframe')
     assert frame.get_attribute("src").endswith("/m/hello/"), "the module's own page stays below its controls"
+    # Another tab: the module's panel (a flex column) is hidden, not left on screen pushing the rest away.
+    browser.find_element(By.CSS_SELECTOR, '.toolbar [data-tab="overview"]').click()
+    wait.until(lambda d: not d.find_element(By.CSS_SELECTOR, 'section[data-panel="m-hello"]').is_displayed())
+    assert browser.find_element(By.CSS_SELECTOR, 'section[data-panel="overview"]').is_displayed()
