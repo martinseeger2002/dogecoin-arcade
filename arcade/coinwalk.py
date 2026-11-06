@@ -95,18 +95,19 @@ class Reader:
         except Exception:                                   # noqa: BLE001 -- unreadable: RPC
             bf = None
         if bf is not None:
-            with self._lock:                                # one refresh at a time; it is incremental
-                bf.refresh()
-                with chain.rpc() as rpc:
-                    tip = int(rpc.get_block_count())
-                    bf.chain(rpc.get_block_hash(tip), tip)
-            progress["how"] = "files"
             try:
+                with self._lock:                            # one refresh at a time; it is incremental
+                    bf.refresh()
+                    with chain.rpc() as rpc:
+                        tip = int(rpc.get_block_count())
+                        bf.chain(rpc.get_block_hash(tip), tip)
+                progress["how"] = "files"
                 return blkscan.scan_parallel(bf, str(self.home / f"blkindex-{chain.network}.sqlite"), top, bottom,
                                              addresses, chain.params)
             except Exception as exc:                        # noqa: BLE001 -- a block the files lack: the node's RPC
                 # 2026-11-05: pepecoinarcade.com's Flopcoin files lacked block 80,597 ("is not in the block files"),
-                # and both its halves of a walk failed after half an hour; the same range is read over RPC instead.
+                # and both its halves of a walk failed after half an hour; .25's lacked its newest block, just mined.
+                # The same range is read over RPC instead.
                 if "not in the block files" not in str(exc):
                     raise
                 progress["fell_back"] = str(exc)[:160]

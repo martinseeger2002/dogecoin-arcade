@@ -114,7 +114,12 @@ coding agent, so it is written for agents first and people second.
   - Verification: every good read of a chunk must agree, or the chunk is read again here. A canary miss rests the
     reader at once, and a late read is still judged against the chunk's verdict.
   - After a whole walk, blocks after `hi` are marked covered for watched addresses ("watched through the walk").
-  - `Reader.read`: "not in the block files" falls back to the node's RPC for that range.
+  - `Reader.read`: "not in the block files" falls back to the node's RPC for that range, for the scan and for lining
+    the files up with the tip (.25's newest Flopcoin block, just mined, was not in its files yet).
+  - A running walk looks for readers again every `WALK_READERS_EVERY` (60 s) and starts the new ones. After .25's
+    reload its walk began before the mesh's offers came, so it had two readers, not the three Flopcoin Cores that
+    came a minute later. Two readers make it two reads a chunk. Walks resume 180 s after start (`WALK_RESUME_AFTER`).
+  - Canaries that cannot be read just then (the index locked) put the chunk back, rather than ending the reader.
   - The wallet says "N readers … (x of y parts done, about T left)", and queued imports use `WalkStore.pace` (the last
     walks' measured pace). Admin → Wallet imports shows the readers, the chunks and the time left.
 - **Live check.** `read_over` against a test machine's Pepecoin main Core: 2,000 blocks, 1,013 matches, identical to the

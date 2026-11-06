@@ -27648,7 +27648,14 @@ def create_app(state: AppState) -> FastAPI:
                 if got is None:
                     return
                 top, bottom = got
-                canaries = _walk_canaries(chain, top, bottom, wanted)
+                try:
+                    canaries = _walk_canaries(chain, top, bottom, wanted)
+                except Exception as exc:                    # noqa: BLE001 -- the index busy: this chunk, later
+                    with lock:
+                        inflight[top].discard(reader)
+                    log.info("shared walk %s: no canaries for %d..%d just now: %s", chain.network, bottom, top, exc)
+                    finished.wait(2.0)
+                    continue
                 asked = addresses + [c[2] for c in canaries]
                 mine: dict = {}
                 part = {"segment": index_of[top], "reader": reader, "top": top, "bottom": bottom, "state": "reading",
@@ -27696,13 +27703,33 @@ def create_app(state: AppState) -> FastAPI:
                          "lo": lo, "hi": hi, "wallets": len(addresses), "began": float(walk["began"]), "walk": wid,
                          "chunks": len(pieces), "need": need})
         if not all(settled(t) for t, _ in pieces):
-            threads = [threading.Thread(target=work, args=(r,), daemon=True, name=f"walk {chain.network} {r[:20]}")
-                       for r in readers]
-            for t in threads:
+            threads: list[threading.Thread] = []
+
+            def begin(r: str) -> None:
+                t = threading.Thread(target=work, args=(r,), daemon=True, name=f"walk {chain.network} {r[:20]}")
+                threads.append(t)
                 t.start()
+            for r in readers:
+                begin(r)
+            looked = time.time()
             while not finished.is_set() and any(t.is_alive() for t in threads):
-                finished.wait(5.0)
+                finished.wait(1.0)
+                # Readers that came since it began (2026-11-05: a walk resumed right after a restart, before the
+                # mesh's links were up, had two readers and never the three Flopcoin Cores that joined a minute later).
+                if time.time() - looked >= WALK_READERS_EVERY and not finished.is_set():
+                    looked = time.time()
+                    try:
+                        more = [r for r in _walk_readers(chain) if r not in readers]
+                    except Exception:                       # noqa: BLE001
+                        more = []
+                    for r in more:
+                        readers.append(r)
+                        begin(r)
                 with lock:
+                    if len(readers) > 1:
+                        need = 2                            # two readers now: every chunk is read twice
+                    progress.update({"readers": list(readers), "need": need,
+                                     "jobs": len(pieces) * need})
                     say()
         verified, redone, failed, keep = [], [], [], []
         # A reader that missed a canary was shown wrong, whoever else read that chunk: it rests (WALK_REST).
@@ -37490,7 +37517,9 @@ WALK_POLL = 5.0
 #: Failed reads in one walk before a reader is left out of the rest of it.
 WALK_FAILS_MAX = 3
 #: Seconds after start before walks cut short by the restart go on.
-WALK_RESUME_AFTER = 60.0
+WALK_RESUME_AFTER = 180.0
+#: How often a running walk looks for readers that came since it began.
+WALK_READERS_EVERY = 60.0
 WALK_REST = 3600.0
 #: Walks the admin's Wallet imports tab lists.
 WALK_HISTORY = 30

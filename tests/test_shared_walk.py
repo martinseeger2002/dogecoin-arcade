@@ -308,3 +308,41 @@ def test_a_block_the_files_lack_is_read_over_rpc(tmp_path, monkeypatch):
     progress = {}
     assert r.read(Chain(), 10, 0, ["F"], progress) == [["t", 0, 1, 10, "F"]]
     assert progress["how"] == "rpc" and "not in the block files" in progress["fell_back"]
+
+
+def test_a_reader_that_comes_after_the_walk_began_joins_it(tmp_path, no_nodes, monkeypatch):
+    """2026-11-05: a walk resumed right after a restart began before the mesh's links were up -- two readers, never
+    the three Flopcoin Cores that came a minute later. A running walk looks for readers again and they join."""
+    import time as _time
+    _small_chunks(monkeypatch)
+    here = _arcade(tmp_path)
+    chain = here.messaging
+    W = _addr(chain.params, "late reader")
+    coins = [[_tx(f"l{h}"), 0, 321, h, W] for h in (990, 15)]
+    monkeypatch.setattr(type(chain), "status", lambda self: {"online": True})
+    from arcade import coinwalk
+    from arcade.mesh import coreshare
+    LATE = "ef" * 32
+    asked = {"n": 0}
+
+    def lenders(net):
+        asked["n"] += 1
+        return [] if asked["n"] == 1 else [(LATE, 1)]
+    monkeypatch.setattr(coreshare, "lenders", lenders)
+    monkeypatch.setattr(coreshare, "lent_rpc", lambda peer, params: ("rpc-of", peer))
+    monkeypatch.setattr(coinwalk.Reader, "can", lambda self, c: {"files": True, "rpc": True})
+
+    def slow(self, c, top, bottom, addresses, progress=None):
+        _time.sleep(0.4)
+        return [m for m in coins if bottom <= m[3] <= top and m[4] in addresses]
+    monkeypatch.setattr(coinwalk.Reader, "read", slow)
+    late = []
+    monkeypatch.setattr(coinwalk.Reader, "read_over", lambda self, rpc, params, top, bottom, addresses, progress=None,
+                        batch=50: late.append(top) or [m for m in coins if bottom <= m[3] <= top and m[4] in addresses])
+    monkeypatch.setattr(appmod, "_ask_arcade", lambda url, **kw: (_ for _ in ()).throw(OSError("away")))
+    monkeypatch.setattr(appmod, "WALK_READERS_EVERY", 0)
+    monkeypatch.setattr(appmod, "_file_checked_coins", lambda st, ch, a, cs: len(cs))
+    got = here.shared_walk(chain, [W], 0, 999)
+    assert "core:" + LATE in got["readers"], "the Core that came later joined"
+    assert late, "and read chunks"
+    assert got["verified"] == [[0, 999]] and got["filed"] == 2
