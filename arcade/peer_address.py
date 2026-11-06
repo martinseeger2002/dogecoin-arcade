@@ -74,11 +74,48 @@ def synced(info: dict | None) -> bool:
     return headers > 0 and headers - blocks <= SYNC_SLACK and not info.get("initialblockdownload")
 
 
+def address_version(address: str) -> int | None:
+    """The base58check version byte of `address`, or None when it is not a valid base58check address."""
+    from arcade.script import ScriptError, b58check_decode
+    try:
+        version, payload = b58check_decode(str(address or ""))
+    except (ScriptError, ValueError, UnicodeError):
+        return None
+    return version if len(payload) == 20 else None
+
+
+def chain_for(address: str, chains: Iterable[Any], fallback: Any = None, wanted: str = "") -> Any:
+    """The chain `address` belongs to, among this node's `chains` (2026-11-06).
+
+    Why: Node 1's messaging chain is Pepecoin testnet, and the door used to read whatever chain messaging was on, so
+    a Dogecoin "D" address came back empty (height 1,560,011, 0 coins) although that node's Dogecoin index held 7,139
+    coins for it. The address's own version byte says which chain it is for (Params.pubkeyhash_version /
+    scripthash_version); `wanted` (the asker's ?chain=) settles it when the byte alone is shared by two chains
+    (Dogecoin's and Pepecoin's testnets both use 113). Only when neither settles it is `fallback` (messaging) used.
+    A `wanted` chain the address cannot belong to is None: refused, never answered from the wrong chain."""
+    version = address_version(address)
+    chains = [c for c in chains if c is not None]
+
+    def fits(c) -> bool:
+        p = getattr(c, "params", None)
+        return version is not None and version in (getattr(p, "pubkeyhash_version", None),
+                                                   getattr(p, "scripthash_version", None))
+    if wanted:
+        named = next((c for c in chains if getattr(c, "network", None) == wanted), None)
+        return named if named is not None and (version is None or fits(named)) else None
+    matching = [c for c in chains if fits(c)]
+    if len(matching) == 1:
+        return matching[0]
+    if fallback is not None and (not matching or fallback in matching):
+        return fallback
+    return matching[0] if matching else fallback
+
+
 def answer(address: str, height: int, coins: list[dict], marks: dict | None = None,
-           now: float | None = None) -> dict:
+           now: float | None = None, network: str = "") -> dict:
     """What a synced arcade says about one address: coins (txid, vout, value, height), the total, and which coins
     carry an inscription as far as this arcade already knows (nothing new is read for it)."""
-    key = f"{address}@{int(height)}"
+    key = f"{network}:{address}@{int(height)}"
     t = now if now is not None else time.time()
     kept = _served.get(key)
     if kept and t - kept[0] < SERVE_KEEP:
@@ -90,7 +127,7 @@ def answer(address: str, height: int, coins: list[dict], marks: dict | None = No
         if mark:
             row["ins"] = mark
         rows.append(row)
-    said = {"address": address, "height": int(height), "synced": True,
+    said = {"address": address, "height": int(height), "synced": True, **({"chain": network} if network else {}),
             "balance_koinu": sum(int(c.get("value") or 0) for c in coins),
             "coins": rows, "complete": len(coins) <= MAX_COINS}
     _served[key] = (t, said)
@@ -98,16 +135,19 @@ def answer(address: str, height: int, coins: list[dict], marks: dict | None = No
 
 
 def ask_peers(address: str, hosts: list[str], ask: Callable[..., Any], key: nacl.signing.SigningKey,
-              now: float | None = None) -> dict | None:
+              now: float | None = None, chain: str = "") -> dict | None:
     """The first synced arcade's answer for `address`, with `from` set to its host; None when none could say.
     `ask` is app._ask_arcade (public addresses only, no redirects)."""
     t = now if now is not None else time.time()
-    kept = _asked.get(address)
+    kept = _asked.get(f"{chain}:{address}")
     if kept and t - kept[0] < ASK_KEEP:
         return kept[1]
     for host in hosts[:6]:
         try:
-            r = ask(f"https://{host}/peer/address/{urllib.parse.quote(address)}/coins", timeout=10,
+            url = f"https://{host}/peer/address/{urllib.parse.quote(address)}/coins"
+            if chain:                     # which chain to read; an arcade on older code ignores it
+                url += "?chain=" + urllib.parse.quote(chain)
+            r = ask(url, timeout=10,
                     headers=dict(sign_ask(key, address, t), **{"User-Agent": "arcade-node"}))
             if r.status_code != 200:
                 continue
@@ -118,7 +158,7 @@ def ask_peers(address: str, hosts: list[str], ask: Callable[..., Any], key: nacl
                 and isinstance(said.get("coins"), list)):
             continue
         said = dict(said, **{"from": host})
-        _asked[address] = (t, said)
+        _asked[f"{chain}:{address}"] = (t, said)
         return said
     return None
 

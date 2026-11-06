@@ -134,9 +134,22 @@ def _as_slug(name: str) -> str:
     return slug if _SLUG.fullmatch(slug) else ""
 
 
-def _doge_chain():
-    """The Dogecoin chain this process already runs, or None."""
+#: The running arcade's AppState, set by app.py at start. Why (2026-11-06): `arcade.web.state` is the MODULE, which
+#: has no ledger, messaging or addons, so _doge_chain() always found nothing and every balance came back "local / 0"
+#: -- even while Dogecoin was still syncing and a synced mesh arcade could have lent it.
+STATE = None
+
+
+def _state():
+    if STATE is not None:
+        return STATE
     from arcade.web import state
+    return state
+
+
+def _doge_chain():
+    """The Dogecoin chain this process has, synced or not (a syncing one still borrows from the mesh), or None."""
+    state = _state()
 
     chains = []
     for attr in ("ledger", "messaging"):
@@ -463,7 +476,7 @@ def _coins_from_mesh(address: str) -> tuple[list[dict] | None, str]:
         return None, ""
     try:
         hosts, key, ask = hook()
-        said = peer_address.ask_peers(address, list(hosts), ask, key)
+        said = peer_address.ask_peers(address, list(hosts), ask, key, chain="doge")
     except Exception:
         return None, ""
     if not said:
@@ -574,7 +587,7 @@ def index_owned(address: str) -> dict:
         peer_rows, mesh_host = _coins_from_mesh(address)
         wanted_peer = wanted_peer or peer_rows is not None
     coins_from_peer = peer_rows is not None
-    from arcade.web import state
+    state = _state()
     from arcade import utxos as utxoslib
     import contextlib
 
@@ -684,7 +697,7 @@ def local_name(name: str) -> dict | None:
     chain = _doge_chain()
     if chain is None:
         return None
-    from arcade.web import state
+    state = _state()
 
     try:
         ordix = state.ord_index(getattr(chain, "network", "") or "doge", wait=0.8)
@@ -845,7 +858,7 @@ def empty_holdings() -> dict:
 
 def _node_watch_addresses() -> list[str]:
     """Address strings the Dogecoin wallet already watches. No coins, no scripts."""
-    from arcade.web import state
+    state = _state()
 
     found: list[str] = []
     contexts = [getattr(state, "messaging", None), getattr(state, "ledger", None)]
