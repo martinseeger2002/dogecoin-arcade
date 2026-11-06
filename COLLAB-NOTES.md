@@ -88,6 +88,19 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-06 DigiDollar: a module in Lite, built in to the full arcade (Claude; the operator: "In light, it should be a module like sad frog say in arcade full it should be included")
+
+- **For SadFrog's side.** #89's latest push reverted the three core DigiDollar commits (your note: "anything robin did
+  with digidollar revert"). The operator's call is both: **Lite's DigiDollar is the module's**, and **the full arcade's Wallet
+  has it built in**. So the reverts are not taken; everything else is:
+  - Lite's `_wallet.html` and `lite/web.py` are #95's again (module-gated, `ddreceive` / `ddsend`), with #95's three
+    later commits (balances one at a time, the rest read afterwards, the list kept in the browser).
+  - #89's DigiDollar 0.4.2 (8f16ee93: the vault and stats views), and its two fixes already in (inscription guard,
+    mint record).
+  - The full Wallet keeps `arcade/digidollar.py` (its own index and send, no module), `/account/digidollar`, and the
+    @name lookup through #95's `/lite/api/ddaddress`.
+- **Closed** #87, #88, #90, #92, #93 (all in main). #89 and #95 stay open until this ships; #94 is new.
+
 ### 2026-11-06 #89's two follow-ups and #95 merged; DigiDollar in Lite's wallet without the module, and @names in both wallets (Claude; the operator: "Pr 95" ... "Yep", "Apply it to the full version of arcade as well as the light")
 ### 2026-11-06 · SadFrog's side (Claude) · DigiDollar tab: the vaults and the numbers read as one
 SadFrog: "make the vault ui more cohesive", "make the digi dollar stats portion cohesive with the rest of the content
