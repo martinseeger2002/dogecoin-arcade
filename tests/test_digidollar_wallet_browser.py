@@ -212,6 +212,28 @@ def test_digidollar_is_a_coin_of_its_own_with_balance_receive_and_a_checked_send
     err = _wait(browser, "return [...document.querySelectorAll('.wl-sheet .msg.err')].find(e => !e.hidden)")
     assert "under DigiDollar's $1 least" in err.text, err.text
 
+    # An @name on the test chain: its DigiDollar address is looked up (/lite/api/ddaddress, arcade/ddaddress.py: the key
+    # its own claim was signed with), stood in for here, and the review names them and that address.
+    browser.execute_script("""
+        const real = window.fetch;
+        window.fetch = (url, opts) => String(url).startsWith("/lite/api/ddaddress")
+          ? Promise.resolve(new Response(JSON.stringify({address: arguments[0], tag: "apple"}),
+                                         {headers: {"Content-Type": "application/json"}}))
+          : real(url, opts);""", payee)
+    to = browser.find_element(By.ID, "send-to")
+    to.clear()
+    to.send_keys("@apple")
+    amount = browser.find_element(By.ID, "send-amount")
+    amount.clear()
+    amount.send_keys("40")
+    assert "looked up when you review" in browser.execute_script(
+        "return document.querySelector('#send-to').closest('.wl-sheet').textContent")
+    [b for b in browser.find_elements(By.CSS_SELECTOR, ".wl-sheet button.wl-go") if b.text == "Review"][0].click()
+    big = _wait(browser, "return document.querySelector('.wl-review .big')")
+    sheet = browser.find_element(By.CSS_SELECTOR, ".wl-sheet").text
+    assert big.text == "$40.00 in DigiDollars" and "@apple" in sheet and payee in sheet, sheet
+    _shot(browser, "dd-6-review-name.png")
+
 def test_no_digidollar_tile_on_an_arcade_without_digibyte(browser, tmp_path):
     (tmp_path / "off").mkdir()
     base, state, server, thread = _serve(tmp_path / "off", False)
@@ -225,3 +247,24 @@ def test_no_digidollar_tile_on_an_arcade_without_digibyte(browser, tmp_path):
     finally:
         server.should_exit = True
         thread.join(timeout=5)
+
+
+def test_lites_wallet_has_digidollar_too_without_a_module(browser, served):
+    """2026-11-06: "Apply it to the full version of arcade as well as the light": the Lite window's wallet has a
+    DigiDollar wallet beside DigiByte's from the same index and routes (_wallet.html), no module installed."""
+    base, state = served
+    me = _sign_up(browser, base, "ddlitetester")
+    _, pilot = _pilot()
+    own = pilot.dd_address("dgbtest", bytes.fromhex(me["pubkey"])[1:])
+    with state.token_index(state.more["dgbtest"]).open() as db:
+        db.conn.execute("INSERT INTO dd_watched (address, since, seeded) VALUES (?, 1, 1)", (own,))
+        db.conn.execute("INSERT INTO dd_coin VALUES (?,?,?,?,?)", ("de" * 32, 1, own, 2500, 6))
+        db.conn.commit()
+    browser.get(f"{base}/lite")
+    _wait(browser, "return [...document.querySelectorAll('#w-balances td')].some(td => td.textContent.includes('$25.00'))")
+    browser.find_element(By.CSS_SELECTOR, '.toolbar [data-tab="receive"]').click()
+    browser.execute_script("const b = document.getElementById('w-chain-receive'); b.value = 'dd:dgbtest';"
+                           "b.dispatchEvent(new Event('change'))")
+    _wait(browser, f"return document.getElementById('w-address').textContent === {own!r}")
+    assert own.startswith("TD")
+    _shot(browser, "dd-7-lite-receive.png")

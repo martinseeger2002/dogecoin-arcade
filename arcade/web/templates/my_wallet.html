@@ -1630,7 +1630,7 @@ async function step1(s, d) {
 
   // A DRC-20 / PRC-20 amount is counted in BigInt units (18 decimal places pass a Number's 2^53).
   const t20 = what.kind === "token20", dd = what.kind === "dd";
-  if (dd) { to.placeholder = c.mainnet ? "a DigiDollar address, DD…" : "a DigiDollar address, TD…"; scan.hidden = true; }
+  if (dd) { to.placeholder = c.mainnet ? "a DigiDollar address, DD…" : "@name or a DigiDollar address, TD…"; scan.hidden = true; }
   const spendable = t20 ? BigInt(String(what.balance || "0")) : dd ? Number(what.balance || 0)
     : what.kind === "token" || what.from ? Number(what.balance || 0) : Number(c.spendable ?? c.balance ?? 0);
   const unitNow = dd ? "in DigiDollars" : what.kind === "token" || t20 ? what.name : COIN();
@@ -1640,10 +1640,14 @@ async function step1(s, d) {
     d.to = to.value.trim(); d.amount = amount.value.trim();
     toNote.className = "wl-note";
     if (!d.to) toNote.textContent = "";
-    else if (dd) {
+    else if (dd && !c.mainnet && !DD_ADDRESSY.test(d.to) && TAGGY.test(d.to)) {
+      // An @name's DigiDollar address, from the key its own claim was signed with (arcade/ddaddress.py, PR #95).
+      toNote.textContent = `@${d.to.replace(/^@/, "")} · their DigiDollar address is looked up when you review`;
+    } else if (dd) {
       const want = c.mainnet ? "DD" : "TD";
       toNote.className = "wl-note" + (DD_ADDRESSY.test(d.to) && d.to.startsWith(want) ? "" : " bad");
-      toNote.textContent = !DD_ADDRESSY.test(d.to) ? `Paste a DigiDollar address: it starts ${want}.`
+      toNote.textContent = !DD_ADDRESSY.test(d.to) ? (c.mainnet ? "Paste a DigiDollar address: it starts DD."
+                                                                : "Type an @name or paste a DigiDollar address: it starts TD.")
         : !d.to.startsWith(want) ? `That's a DigiDollar address on the other chain: this one's start ${want}.`
         : d.to === what.address ? "That's your own DigiDollar address." : "A DigiDollar address · checked when you review";
     } else if (ADDRESSY.test(d.to)) {
@@ -1675,7 +1679,7 @@ async function step1(s, d) {
     avail.className = "wl-note" + (bad ? " bad" : "");
     avail.textContent = bad || `Available: ${fmt(spendable)} ${unitNow}`
       + (what.kind === "token" || t20 || dd ? `. The fee is paid in ${COIN()}.` : "");
-    go.disabled = !(d.to && (dd ? DD_ADDRESSY.test(d.to) : ADDRESSY.test(d.to) || TAGGY.test(d.to)) && n > 0 && !bad
+    go.disabled = !(d.to && (dd ? DD_ADDRESSY.test(d.to) || (!c.mainnet && TAGGY.test(d.to)) : ADDRESSY.test(d.to) || TAGGY.test(d.to)) && n > 0 && !bad
                     && !toNote.classList.contains("bad"));
   }
   function suggest() {
@@ -1736,7 +1740,13 @@ async function step1(s, d) {
       // that address type's key signs (the same words, another path)
       d.keys = what.fromKind ? await wallet.asKind(keys, c.network, what.fromKind)
         : what.imported ? await wallet.importedKeys(what.imported, c) : null;
-      const offer = await offerFor(what, typedTo, typedAmount, c.network);
+      let payTo = typedTo, payTag = "";
+      if (what.kind === "dd" && !DD_ADDRESSY.test(typedTo)) {
+        const named = await ddAsk(`/lite/api/ddaddress?to=${encodeURIComponent("@" + typedTo.replace(/^@/, ""))}`
+                                  + `&chain=${encodeURIComponent(c.network)}`);
+        payTo = named.address; payTag = named.tag || typedTo.replace(/^@/, "").toLowerCase();
+      }
+      const offer = await offerFor(what, payTo, typedAmount, c.network);
       if (what.kind === "dd") {
         // What it pays, from the transaction's own bytes: one DigiDollar output of exactly the dollars typed to exactly
         // the address typed, and nothing else to anybody but this wallet (the record of the dollars is 0 DGB).
@@ -1744,11 +1754,11 @@ async function step1(s, d) {
         const theirs = (read.pays || []).filter((x) => !x.mine);
         const ddPaid = theirs.filter((x) => x.dd !== undefined);
         const other = theirs.filter((x) => x.dd === undefined && Number(x.value || 0) > 0);
-        if (ddPaid.length !== 1 || ddPaid[0].to !== typedTo || Number(ddPaid[0].dd) !== centsOf(typedAmount) || other.length) {
-          throw new Error("The transaction the module prepared is not the send you typed. Nothing was signed.");
+        if (ddPaid.length !== 1 || ddPaid[0].to !== payTo || Number(ddPaid[0].dd) !== centsOf(typedAmount) || other.length) {
+          throw new Error("The transaction the arcade prepared is not the send you typed. Nothing was signed.");
         }
-        Object.assign(offer, {to: typedTo, amount: Number(ddPaid[0].dd)});
-        step2(s, d, offer, read, {to: typedTo, amount: typedAmount});
+        Object.assign(offer, {to: payTo, to_tag: payTag, amount: Number(ddPaid[0].dd)});
+        step2(s, d, offer, read, {to: payTo, amount: typedAmount});
         return;
       }
       const wrong = mismatch(offer, typedTo, typedAmount, what);

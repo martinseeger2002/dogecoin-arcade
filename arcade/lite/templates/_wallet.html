@@ -65,9 +65,11 @@ import * as wallet from "{{ '/node-wallet.js' if wallet == 'node' else '/wallet.
 const NODE = {{ 'true' if wallet == 'node' else 'false' }};
 const API = NODE ? "/node/wallet" : "/account";
 const ME = {{ me|tojson }}, TAGCHAIN = {{ tagchain|tojson }};
-// DigiDollars, a wallet of their own beside DigiByte's while the DigiDollar module is on (2026-11-06): paid at a
-// DigiDollar address (TD... on the test chain), sent by the module's ddsend and signed here like any of its offers.
-const DIGIDOLLAR = {{ 'true' if digidollar and wallet != 'node' else 'false' }};
+// DigiDollars, a wallet of their own beside each DigiByte one (2026-11-06; the operator: "Apply it to the full version of
+// arcade as well as the light"): the arcade's own, no module (arcade/digidollar.py, as the full Wallet's): the coins
+// from its index (/account/digidollar), a send it builds (/account/digidollar/send), signed here after this wallet
+// reads the transaction's own bytes.
+const DIGIDOLLAR = {{ 'false' if wallet == 'node' else 'true' }};
 const DD_ON = ["dgbtest", "dgb"], DD = "dd:";
 const ADDRESSY = /^(?:[1-9A-HJ-NP-Za-km-z]{26,35}|[a-z]{1,4}1[02-9ac-hj-np-z]{38,58}|[A-Z]{1,4}1[02-9AC-HJ-NP-Z]{38,58})$/;
 const $ = (id) => document.getElementById(id);
@@ -84,7 +86,6 @@ const chain = () => wallets().find((c) => c.network === net) || said.chains[0] |
 const unit = (c) => c.dd ? "DigiDollar" + (c.mainnet ? "" : " test")
   : (c.coin || c.label || "") + (c.mainnet === false && !/test/i.test(c.coin || "") ? " test" : "");
 const dollars = (n) => "$" + Number(n || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-const ddWord = (c) => c.mainnet ? "main" : "test";
 function tell(text, cls) { const p = $("w-said"); p.textContent = text; p.className = cls || ""; p.hidden = !text; }
 function cell(tr, text, cls) { const td = tr.insertCell(); td.textContent = text; if (cls) td.className = cls; return td; }
 
@@ -117,20 +118,27 @@ async function load() {
   }
   draw();
 }
-/** A console line's answer (lite.html runs the same /lite/api/console), with this wallet's public keys when open. */
-async function console_(line) {
-  const pubkeys = window.litePubkeys ? await window.litePubkeys().catch(() => ({})) : {};
-  const r = await fetch("/lite/api/console", {method: "POST", credentials: "same-origin",
-    headers: {"Content-Type": "application/json", "X-Arcade-Lite": "1", "X-Arcade-Admin": "1"},
-    body: JSON.stringify({line, pubkeys})});
-  const j = await r.json();
-  if (!j.ok) throw new Error(j.error || j.detail || "refused");
-  return j.result || {};
+/** This wallet's public key on a DigiByte chain, as hex (the arcade checks it is the account's), or null while shut. */
+async function ddKey(base) {
+  const k = await wallet.opened(TAGCHAIN);
+  return k ? Array.from(wallet.keysOn(k, base).pubkey, (b) => b.toString(16).padStart(2, "0")).join("") : null;
 }
-/** What the DigiDollar module says this wallet holds on `c`'s chain (ddreceive), or null while the wallet is shut. */
+async function ddAsk(url, body) {
+  const r = await fetch(url, body ? {method: "POST", credentials: "same-origin",
+                                     headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}
+                                  : {cache: "no-store", credentials: "same-origin"});
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* said below */ }
+  if (!r.ok) throw new Error(j.detail || "the arcade did not answer");
+  return j;
+}
+/** What this wallet holds on `c`'s chain, from the arcade's own index (/account/digidollar), or null while shut. */
 async function ddHoldings(c) {
-  if (!(await wallet.opened(TAGCHAIN))) return null;
-  return (ddHeld[c.network] = await console_(`ddreceive ${ddWord(c)}`));
+  const key = await ddKey(c.base);
+  if (!key) return null;
+  const got = await ddAsk(`/account/digidollar?chain=${encodeURIComponent(c.base)}&pubkey=${key}`);
+  return (ddHeld[c.network] = {address: got.address, digidollars: Number(got.cents || 0) / 100,
+                               coins: (got.coins || []).map((x) => ({txid: x.txid, dollars: x.cents / 100, from: ""}))});
 }
 async function ddAddressOf(to, c) {
   const r = await fetch(`/lite/api/ddaddress?to=${encodeURIComponent(to)}&chain=${encodeURIComponent(c.base)}`,
@@ -145,7 +153,8 @@ async function draw() {
   $("w-amount").placeholder = c.dd ? "100.00" : "";
   if (c.dd && !c.address) {
     $("w-address").textContent = "…";
-    try { c.address = (await ddAddressOf("me", c)).address; } catch (x) { c.address = ""; $("w-only").textContent = String(x.message || x); }
+    try { const h = await ddHoldings(c); c.address = h ? h.address : ""; if (!h) $("w-only").textContent = "Open your wallet (Send asks for its password) to see your DigiDollar address."; }
+    catch (x) { c.address = ""; $("w-only").textContent = String(x.message || x); }
   }
   if (chain() !== c) return;                                  // another wallet was picked meanwhile
   $("w-address").textContent = c.address || "—";
@@ -256,9 +265,8 @@ async function ddReview(c, to, amount) {
   if (!keys) { $("w-unlock").hidden = false; $("w-password").focus(); return; }
   try {
     const payee = await ddAddressOf(to, c);
-    const got = await console_(`ddsend ${payee.address} ${(cents / 100).toFixed(2)} ${ddWord(c)}`);
-    const o = got.sign;
-    if (!o) throw new Error(got.how || "the DigiDollar module prepared nothing to sign");
+    const o = await ddAsk("/account/digidollar/send", {chain: c.base, pubkey: await ddKey(c.base), to: payee.address,
+                                                      amount: (cents / 100).toFixed(2)});
     const read = await wallet.checked(o, keys);
     if (!(read.pays || []).some((p) => !p.mine && p.dd === cents && p.to === payee.address)) {
       tell(`The transaction's own bytes do not pay ${dollars(cents / 100)} to ${payee.address}. Nothing was signed.`, "bad");

@@ -108,9 +108,6 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             # them, opened inside the window (2026-11-04, SadFrog: "when enabled should be a part of the ui").
             "tabs": [t for t in module_tabs(caller, request) if not t["hidden"]],
             "tab_owner": bool(tab_owner(caller, request)), "icons": ICONS,
-            # DigiDollars in the wallet's own Send, Receive and balances, while the DigiDollar module is on and this
-            # caller may use it (2026-11-06, SadFrog: "along side their wallet receives. and add them to send").
-            "digidollar": any(t["id"] == "digidollar" for t in module_tabs(caller, request)),
             # Window -> Build's guide (_build.html) names a theme's limits as packages.py holds them
             "fonts": list(packagelib.FONTS), "most_files": packagelib.MOST_FILES,
             "most_kb": packagelib.MOST_BYTES // 1000,

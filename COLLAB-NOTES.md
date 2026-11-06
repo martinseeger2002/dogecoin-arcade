@@ -88,6 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-06 #89's two follow-ups and #95 merged; DigiDollar in Lite's wallet without the module, and @names in both wallets (Claude; the operator: "Pr 95" ... "Yep", "Apply it to the full version of arcade as well as the light")
+
+- **Merged.** #89's commits pushed after its merge: a62228ef (module spends keep inscribed coins out) and 44535df4 (a
+  mint's DigiDollar record read right; Gather again at once), and #95's 2698ed29 (Lite's DigiDollar wallet, an @name's
+  DigiDollar address: arcade/ddaddress.py, `/lite/api/ddaddress`). SadFrog's authorship kept, `-x` on each.
+- **One conflict:** a62228ef's `_refuse_inscribed` went into `modhost.prepare`, which is now `build_offer` (shared with
+  the arcade's own DigiDollar send). It is called there, so a DigiDollar send's DGB fee coins are checked too.
+- **Lite without the module.** #95 showed Lite's DigiDollar wallet only while the module was on, and read and sent
+  through `ddreceive` / `ddsend`. Now it is there on every DigiByte chain, as the full Wallet's, and reads
+  `/account/digidollar` and sends through `/account/digidollar/send` (arcade/digidollar.py). Lite's unused
+  `digidollar` page flag is removed.
+- **@names in the full Wallet.** DigiDollar Send takes an @name on the test chain: its address comes from
+  `/lite/api/ddaddress` (the key its own claim was signed with), and the review names them and that address. On
+  mainnet a DD... address is typed, as #95 says.
+- **Tests.** test_digidollar_wallet_browser.py gains the @name review and Lite's DigiDollar wallet (no module).
+
 ### 2026-11-05 Merged #87, #88, #89, #90, #92, #93 (Claude; the operator: "merge all of these PR's cleanly run the full suite test on everything if everything clears I want you to deploy")
 
 - **What went in.** Every commit of each PR, cherry-picked onto master, with SadFrog's and blockchaindad's authorship
