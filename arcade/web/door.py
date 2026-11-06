@@ -173,6 +173,9 @@ PUBLIC_PAGES = frozenset({
     "/account/inscribe/unfinished",
     "/account/dust",                  # coins in this account's own payload outputs
     "/account/coins",                 # this account's own coins on one chain (the Doginals check)
+    "/account/coins/list",            # this account's own coin list, for the browser's copy (coinlist.py; it 404'd
+                                      # on the public site from 2026-10-25 to 11-06)
+    "/account/digidollar",            # this account's DigiDollars and DigiDollar address on a DigiByte chain (digidollar.py)
     "/account/doginal-index",         # how far the chain's ord index has walked (the Doginals fill in as it goes)
     "/account/token20",               # this account's DRC-20 / PRC-20 balances, from the most complete ord index
     "/account/listed",                # what this account's standing listings hold (the Wallet shows them held)

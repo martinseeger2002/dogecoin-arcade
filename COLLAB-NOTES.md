@@ -103,6 +103,11 @@ coding agent, so it is written for agents first and people second.
   `/lite/api/ddaddress` (the key its own claim was signed with), and the review names them and that address. On
   mainnet a DD... address is typed, as #95 says.
 - **Tests.** test_digidollar_wallet_browser.py gains the @name review and Lite's DigiDollar wallet (no module).
+- **Fixed after it went out (the operator: "figure out why no digi dollar ... address is being created on
+  app.dogecoinarcade.com").** `GET /account/digidollar` was not in door.py's account reads, so the public site answered
+  404 and the tile said "The arcade did not answer"; only the POST had been listed. `/account/coins/list` had the same
+  404 since 2026-10-25 (the browser's copy of its coin list never refreshed there). Both listed now, and
+  `test_every_account_read_is_one_a_public_node_will_reach` checks every `/account` GET as the POST test does.
 
 ### 2026-11-05 Merged #87, #88, #89, #90, #92, #93 (Claude; the operator: "merge all of these PR's cleanly run the full suite test on everything if everything clears I want you to deploy")
 
