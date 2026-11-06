@@ -137,12 +137,21 @@ def _leaves(owner: bytes, cents: int, lock: int) -> tuple[bytes, bytes]:
     return normal, emergency
 
 
-def _pay(coins: list[dict], outputs: list, need: int, spend_size: int, change_script: bytes, extra: int = 0):
+def _fresh(ctx, net: str):
+    """Whether a coin is still unspent counting transactions waiting for a block (gettxout with the mempool): a coin
+    the last Gather spent is passed over, so Gather, Mint and the rest can be pressed again without waiting."""
+    return lambda coin: ctx.rpc(net, "gettxout", coin["txid"], coin["vout"], True) is not None
+
+
+def _pay(coins: list[dict], outputs: list, need: int, spend_size: int, change_script: bytes, extra: int = 0,
+         fresh=None):
     """(the coins chosen, the fee, the change) to pay `need` plus the fee from `coins`, largest first. `spend_size`
     is what each coin adds to the transaction, `extra` the bytes of anything else it carries (a witness). Each coin
     adds to the fee, and the fee may not pass MAX_FEE: a wallet of many small coins is gathered first (`ddgather`)."""
     chosen, total = [], 0
     for coin in sorted(coins, key=lambda c: -c["value"]):
+        if fresh is not None and not fresh(coin):
+            continue
         chosen.append(coin)
         total += coin["value"]
         size = 10 + extra + spend_size * len(chosen) + sum(9 + len(s) for _, s in outputs) + 9 + len(change_script)
@@ -164,7 +173,7 @@ def _lock(height: int, lock_days: int) -> int:
 
 
 def mint(owner: bytes, cents: int, tier: int, height: int, lock_days: int, collateral: int,
-         coins: list[dict], change_script: bytes, chain: str = TEST) -> dict:
+         coins: list[dict], change_script: bytes, chain: str = TEST, fresh=None) -> dict:
     """The prepared mint: the vault, the DigiDollar output, the "DD" record and the change, paid from `coins`.
 
     `owner` is the caller's x-only key: it alone can redeem the vault and spend the DigiDollars."""
@@ -174,7 +183,7 @@ def mint(owner: bytes, cents: int, tier: int, height: int, lock_days: int, colla
     record = bytes([tr.OP_RETURN]) + tr.push(b"DD") + tr.push(tr.num(1)) + tr.push(tr.num(cents)) \
         + tr.push(tr.num(lock)) + tr.push(tr.num(tier)) + tr.push(owner)
     outputs = [(collateral, vault), (0, tr.p2tr(tr.tweak(owner))), (0, record)]
-    chosen, fee, change = _pay(coins, outputs, collateral, 148, change_script)
+    chosen, fee, change = _pay(coins, outputs, collateral, 148, change_script, fresh=fresh)
     if change:
         outputs.append((change, change_script))
     return {"chain": chain, "version": MINT_VERSION, "inputs": [{"txid": c["txid"], "vout": c["vout"]} for c in chosen],
@@ -333,27 +342,36 @@ def command_ddmint(ctx, amount, tier=None, chain="test"):
     coins, script = _coins(ctx, net, address)
     height = ctx.rpc(net, "getblockcount")
     made = mint(owner, cents, tier, height, int(said["lock_days"]), _sats(said["wallet_collateral_dgb"]), coins,
-                script, net)
+                script, net, _fresh(ctx, net))
     _keep(ctx, net, owner, {"script": made["outputs"][0][1], "cents": cents, "tier": tier,
                             "lock": _lock(height, int(said["lock_days"]))})
     return {"prepared": made}
 
 
-def gather(coins: list[dict], script: bytes, chain: str = TEST) -> dict:
-    """The prepared gather: up to GATHER_MOST of the caller's smallest coins into one, back to their own address."""
-    if len(coins) < 2:
-        raise ValueError("your DGB is in one coin already: nothing to gather")
-    chosen = sorted(coins, key=lambda c: c["value"])[:GATHER_MOST]
+def gather(coins: list[dict], script: bytes, chain: str = TEST, fresh=None) -> dict:
+    """The prepared gather: up to GATHER_MOST of the caller's smallest coins into one, back to their own address. With
+    `fresh`, coins a gather still waiting for its block has spent are passed over, so it can be pressed again at once."""
+    chosen, waiting = [], 0
+    for coin in sorted(coins, key=lambda c: c["value"]):
+        if len(chosen) == GATHER_MOST:
+            break
+        if fresh is not None and not fresh(coin):
+            waiting += 1
+            continue
+        chosen.append(coin)
+    if len(chosen) < 2:
+        raise ValueError("your DGB is in one coin already: nothing to gather" if not waiting else
+                         "the rest of your coins are in gathers waiting for a block: once it comes, they are one each")
     total = sum(c["value"] for c in chosen)
     fee = (10 + 148 * len(chosen) + 9 + len(script)) * GATHER_FEE_PER_BYTE
     if total - fee < DUST:
         raise ValueError("those coins are worth less than gathering them costs")
-    left = len(coins) - len(chosen)
+    left = len(coins) - len(chosen) - waiting
     return {"chain": chain, "version": 2, "inputs": [{"txid": c["txid"], "vout": c["vout"]} for c in chosen],
             "outputs": [(total - fee, script.hex())],
-            "what": f"gather {len(chosen)} of your {len(coins)} coins into one ({(total - fee) / COIN:,.8f} DGB) "
-                    f"at your own address" + (f"; {left} more after this, gather again once it is in a block"
-                                              if left else "")}
+            "what": f"gather {len(chosen)} of your coins into one ({(total - fee) / COIN:,.8f} DGB) at your own "
+                    f"address" + (f"; about {left} more after this: press Gather again, no need to wait" if left > 0
+                                  else "")}
 
 
 def command_ddgather(ctx, chain="test"):
@@ -364,7 +382,7 @@ def command_ddgather(ctx, chain="test"):
     _ready(ctx, net)
     address, _ = _owner(ctx, net)
     coins, script = _coins(ctx, net, address)
-    return {"prepared": gather(coins, script, net)}
+    return {"prepared": gather(coins, script, net, _fresh(ctx, net))}
 
 
 def command_ddvaults(ctx, chain="test"):
@@ -396,7 +414,7 @@ def _about(blocks: int) -> str:
 
 
 def redeem(vault: dict, owner: bytes, held: list[dict], coins: list[dict], pay_script: bytes,
-           chain: str = TEST) -> dict:
+           chain: str = TEST, fresh=None) -> dict:
     """The prepared redeem of `vault`: the vault by its normal path, DigiDollars of the owner's to burn at least what
     it minted, and a coin of theirs for the fee. Every DGB in the vault comes back to `pay_script`, and DigiDollars
     over the vault's amount come back as DigiDollars (validation.cpp ValidateRedemptionTransaction)."""
@@ -418,7 +436,7 @@ def redeem(vault: dict, owner: bytes, held: list[dict], coins: list[dict], pay_s
                     (0, bytes([tr.OP_RETURN]) + tr.push(b"DD") + tr.push(tr.num(3))
                      + tr.push(tr.num(burned - vault["cents"])))]
     witness = (1 + 65 + 1 + len(normal) + 1 + len(control)) + (1 + 65) * len(burn)
-    chosen, fee, change = _pay(coins, outputs, 0, 148, pay_script, extra=41 * (1 + len(burn)) + witness)
+    chosen, fee, change = _pay(coins, outputs, 0, 148, pay_script, extra=41 * (1 + len(burn)) + witness, fresh=fresh)
     if change:
         outputs.append((change, pay_script))
     inputs = [{"txid": vault["txid"], "vout": 0, "sequence": WAITS,
@@ -451,7 +469,7 @@ def command_ddredeem(ctx, vault, chain="test"):
     coins, script = _coins(ctx, net, address)
     if not coins:
         raise ValueError("a redeem pays its fee (about 0.15 DGB) from your own DGB, and your wallet has none here")
-    return {"prepared": redeem(found[0], owner, held, coins, script, net)}
+    return {"prepared": redeem(found[0], owner, held, coins, script, net, _fresh(ctx, net))}
 
 
 def dd_address(net: str, owner: bytes) -> str:
@@ -475,7 +493,7 @@ def dd_key(net: str, address: str) -> bytes:
 
 
 def send(owner: bytes, held: list[dict], coins: list[dict], pay_script: bytes, to_key: bytes, cents: int,
-         chain: str = TEST, to_address: str = "") -> dict:
+         chain: str = TEST, to_address: str = "", fresh=None) -> dict:
     """The prepared send of `cents` DigiDollars to the Taproot output key `to_key`, as DigiByte Core builds one
     (txbuilder.cpp BuildTransferTransaction): the caller's DigiDollar coins by their key path, then DGB coins for the
     fee; the payee's output, the caller's DigiDollar change, the DGB change, and the record of each output's dollars."""
@@ -485,6 +503,8 @@ def send(owner: bytes, held: list[dict], coins: list[dict], pay_script: bytes, t
     for coin in sorted(held, key=lambda c: -c["cents"]):
         if have >= cents:
             break
+        if fresh is not None and not fresh(coin):
+            continue
         spend.append(coin)
         have += coin["cents"]
     if have < cents:
@@ -497,7 +517,7 @@ def send(owner: bytes, held: list[dict], coins: list[dict], pay_script: bytes, t
     record = bytes([tr.OP_RETURN]) + tr.push(b"DD") + tr.push(tr.num(2)) + tr.push(tr.num(cents)) \
         + (tr.push(tr.num(back)) if back else b"")
     witness = 2 + (41 + 1 + 65) * len(spend)
-    chosen, fee, change = _pay(coins, outputs + [(0, record)], 0, 148, pay_script, extra=witness)
+    chosen, fee, change = _pay(coins, outputs + [(0, record)], 0, 148, pay_script, extra=witness, fresh=fresh)
     outputs += ([(change, pay_script)] if change else []) + [(0, record)]
     inputs = [{"txid": c["txid"], "vout": c["vout"], "taproot": {"key": True}} for c in spend]
     inputs += [{"txid": c["txid"], "vout": c["vout"]} for c in chosen]
@@ -535,7 +555,7 @@ def command_ddsend(ctx, address, amount, chain="test"):
     coins, script = _coins(ctx, net, pay_address)
     if not coins:
         raise ValueError("a DigiDollar send pays its fee (about 0.15 DGB) from your own DGB, and your wallet has none here")
-    return {"prepared": send(owner, held, coins, script, key, cents, net, str(address).strip())}
+    return {"prepared": send(owner, held, coins, script, key, cents, net, str(address).strip(), _fresh(ctx, net))}
 
 
 def command_ddmainnet(ctx, state="status", confirm=""):
