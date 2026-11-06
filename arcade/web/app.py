@@ -25286,7 +25286,22 @@ def create_app(state: AppState) -> FastAPI:
         account = signed_in(request)
         if account is None:
             return _to_join(request)
-        return render(request, "my_wallet.html", chain=_account_chain(), hidden=_wallets_hidden(account.pubkey))
+        return render(request, "my_wallet.html", chain=_account_chain(), hidden=_wallets_hidden(account.pubkey),
+                      dd_nets=_digidollar_nets())
+
+    def _digidollar_nets() -> list[str]:
+        """The DigiByte chains whose wallet shows DigiDollar as a coin of its own (2026-11-05: "add the digi dollar
+        to the main app ... it should be its own wallet coin option"): those this arcade runs, while the DigiDollar node
+        module is installed, on, and open to signed-in people. Its balance, address and sends are the module's
+        (ddreceive, ddsend through /lite/api/console); the wallet signs what it prepares, as any send."""
+        from .. import modules as modulelib
+        try:
+            settings = state.settings()
+            if "digidollar" not in modulelib.enabled(settings) or not modulelib.may_use(settings, "digidollar", "user"):
+                return []
+        except Exception:                                   # noqa: BLE001 -- no module host: no DigiDollar
+            return []
+        return [one.network for one in _account_chains() if one.network in ("dgb", "dgbtest")]
 
     def _wallets_hidden(pubkey: str) -> list[str]:
         """The chains an account keeps out of its Wallet tab (2026-10-18: "enable or disable any of the chain
