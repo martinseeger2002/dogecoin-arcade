@@ -213,6 +213,7 @@ PUBLIC_TREES = (
     "/v1/models",             # the LLM API's model list, for an API key
     "/signup/",               # is this name free
     "/signin/",               # somebody's encrypted wallet, by name
+    "/peer/address/",         # one bare address's coins, for a signed mesh arcade only (peer_address.py)
     "/coins/walk/",           # the shared walk: whether this arcade reads a chain for others, a job's state (2026-10-25)
     "/vendor/",               # the two vendored crypto libraries
     "/docs/",                 # the whole written record, as shipped

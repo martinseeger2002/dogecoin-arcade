@@ -10,7 +10,8 @@
 <p class="msg" id="said" hidden></p>
 
 <nav class="admintabs" role="tablist">
-  <button type="button" role="tab" data-tab="overview">Overview</button>
+  {#- "Status", not "Overview": in Lite, Admin is a tab of a window that has an Overview of its own (2026-11-04). #}
+  <button type="button" role="tab" data-tab="overview">Status</button>
   <button type="button" role="tab" data-tab="coins">Coins &amp; chains</button>
   {%- if modules_on is not defined or 'exchange' in modules_on %}
   <button type="button" role="tab" data-tab="trading">Trading</button>{% endif %}
@@ -36,7 +37,7 @@
 {% include "_modules_panel.html" %}
 </div>
 
-<div class="admintab" data-tab="overview" aria-label="Overview">
+<div class="admintab" data-tab="overview" aria-label="Status">
 <div class="cards" id="cards"></div>
 <section class="panel" id="needs">
   <h2>Needs you</h2>
@@ -52,7 +53,9 @@
   <p style="margin:0 0 6px" id="arcadenames">This arcade is
     <strong>{{ "@" ~ names.node if names.node else "not named yet" }}</strong>
     {%- if names.owner_kind == "account" %}, owned by <strong>{{ "@" ~ names.owner if names.owner else "an account with no name yet" }}</strong>
-    {%- elif names.owner_kind == "password" %}, run with this machine's password{% endif %}.</p>
+    {%- elif names.owner_kind == "password" %}, run with this machine's password{% endif %}.
+    {%- if not names.owner_kind %} Nobody owns it yet: <a href="/join" target="_top">sign in or make an account</a> at
+    this machine, then make that account its owner.{% endif %}</p>
   {% if names.owner_kind == "account" and names.owner %}
   <div class="row" style="gap:14px;flex-wrap:wrap;margin:0 0 4px" role="radiogroup" aria-label="The arcade answers to">
     <span class="muted">It answers to</span>
@@ -4069,12 +4072,14 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
       if (mesh.ok && !mesh.linked) lines.push(['mesh', 'This node is not linked to any other arcade']);
       // The owner's one-time asks (2026-11-04, "Who runs this node"): sign for this node, or give it an owner account.
       {% if names.owner_kind == "account" and names.statement.due and names.statement.node %}lines.push(['overview', 'Sign that you own this node, so your other nodes list it (This node)']);
-      {% elif names.owner_kind == "password" %}lines.push(['overview', 'This node runs with a machine password. Make your account its owner at /join/keys on this machine, to see it with your other nodes']);{% endif %}
+      {% elif names.owner_kind == "password" %}lines.push(['/join/keys', 'This node runs with a machine password: make your account its owner, to see it with your other nodes']);
+      {% elif not names.owner_kind %}lines.push(['/join', 'Nobody owns this node yet: sign in or make an account, then make it the owner']);{% endif %}
       (mesh.chains || []).forEach(function (c) { if (c.syncing) lines.push(['coins', c.label + ' is still syncing (' + c.progress + '%)']); });
       drawMesh(mesh);
       box.replaceChildren();
       if (!lines.length) { box.textContent = 'Nothing. Everything here is running.'; return; }
-      lines.forEach(function (l) { var d = document.createElement('div'), a = document.createElement('a'); a.href = '#' + l[0]; a.textContent = l[1]; d.append('\u2022 ', a); box.append(d); });
+      // A line whose target is a page ("/join"), not an Admin tab, opens it in the whole window: in Lite, Admin is a tab.
+      lines.forEach(function (l) { var d = document.createElement('div'), a = document.createElement('a'); a.href = l[0].charAt(0) === '/' ? l[0] : '#' + l[0]; if (l[0].charAt(0) === '/') a.target = '_top'; a.textContent = l[1]; d.append('\u2022 ', a); box.append(d); });
     });
   }
   // --- Overview -> Arcades (2026-10-21, approving the mockup): /admin/api/arcades, this arcade first.

@@ -88,6 +88,18 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-06 · SadFrog's side (Claude) · DigiDollar: the core-wallet version taken back out, the module work in whole
+SadFrog: "anything martin did with digidollar revert and take our updates - he can add his customizations after - he
+thought we were done". #87-#89 were merged up to the hidden-panel test (dd229d5b); three DigiDollar commits followed on
+main (4cbdfd39 the Wallet tile, fcc4e4bb DigiDollar in the core wallet with no module, b5ec9dcd its routes). Those three
+are reverted here, nothing else: the tree is main's as of af2da6ca again. Then the rest of PR #89 goes in:
+- the module inscription guard (a62228ef),
+- the mint-record fix in coins.js (main still had it: every mint signed in a browser failed with "a DigiDollar record's
+  number is too long") and back-to-back Gather (44535df4),
+- the DigiDollar tab's vault and stats views (1afc5b3f).
+The core-wallet version can come back on top of this as its owner's customization; the module's commands and the
+`modhost` checks are what it would build on.
+
 ### 2026-11-06 · SadFrog's side (Claude) · DigiDollar tab: the vaults and the numbers read as one
 SadFrog: "make the vault ui more cohesive", "make the digi dollar stats portion cohesive with the rest of the content
 on the digi dollar tab". DigiDollar 0.4.2:
@@ -127,48 +139,21 @@ SadFrog: "add capability to send and receive store digidollar test and digidolla
   `_wallet.html` liteSign words it. `extension/coins.js` is the same file again.
 - **Tests:** test_digidollar (+3), test_lite_schnorr_browser (+1: the send's words and its key-path signature in
   Firefox), test_digidollar_regtest (+1: gather, mint, send there and back, redeem, against DigiByte Core 9.26.7).
+### 2026-11-05 Merged #87, #88, #89, #90, #92, #93 (Claude; the operator: "merge all of these PR's cleanly run the full suite test on everything if everything clears I want you to deploy")
 
-### 2026-11-05 · SadFrog's side (Claude) · DigiDollar: a control for every step, and mainnet's groundwork
-SadFrog: "Make sure every aspect of the Digibyte digidollar has ui for the whole process with the ability to also do it
-in the console", and "lay the ground work for making this process work for digidollar on mainnet".
-- **Module forms** (`packages._check_form`, `commands.Command.form`, `/lite/api/commands` gives `form`, `args`,
-  `module`; `modules.tabs` gives `package`): a node module's tab in the Lite window draws each command's form above its
-  page (`lite.html` drawModule) and runs the console's line through the same path (`runLine`, which `send` now uses
-  too): a spend still goes to `liteSign`. Answers are drawn as a list and tables; `actions` become buttons for the
-  module's own commands only. PACKAGES.md has the fields. Tests: test_module_sandbox (+6 refusals),
-  test_module_packages (+1), test_lite_module_panel_browser (new).
-- **DigiDollar 0.3.0**: `ddgather`, `ddmainnet` (operator; off until `on yes`), a chain on every command, mainnet's
-  rules, Redeem as an action on an unlocked vault, a form for each step. A mint's coins are chosen to stay under the
-  module's 0.5 DGB fee cap (about eight coins): before, 9 to 50 coins made a mint the arcade refused for its fee.
-  Tests: test_digidollar (+3, two changed).
-- **`liteSign`** says "Real DGB" for a module's spend on a chain of real coins.
-
-### 2026-11-05 · SadFrog's side (Claude) · Mining as a module: CPU per chain, and local ASICs over stratum
-SadFrog: "making mining on the node a module that can be enabled per node", with "the abilities and tests to run
-mining on each chain where possible on cpu as well as a section to hookup local asics".
-- **The Mining module** (`modules.py`): `/fund`, `/wallet/mining`, `/admin/api/mine`, `/admin/api/mining`,
-  `/admin/api/stratum` and `/rpc/work` (other arcades' miners) move out of node and wallet into it. It is on in the full
-  edition and off in Lite until switched on. Switched off, it stops a mining run and the stratum server at once
-  (`modules_web._mining`). The first-run "Mine a block" says to switch it on when it is off.
-- **Admin → Mining**, a tab of its own:
-  - every chain and how it is mined here (`arcade/mining.py`);
-  - **Mine on this machine**, moved from Coins & chains. A chain with `Params.mine_algos` (DigiByte testnet) is mined
-    by its own node, by algorithm (`arcade/testmine.py`), not by the panel's scrypt in Python;
-  - **ASICs on your network**.
-- **Stratum** (`arcade/stratum.py`): stratum v1 solo mining with work from a chain's node here, for chains that are not
-  merge-mined, in scrypt or sha256d (`Params.algos` names DigiByte's five, and its template is asked by algorithm).
-  - Coinbase split around an 8-byte extranonce, the merkle branch, vardiff, BIP 310 version rolling, and BIP34 heights
-    under 17 written as OP_N.
-  - LAN-only unless the operator says otherwise. The server comes back with the arcade.
-- **A mining run survives a restart** (`testmine.resume`, setting `mining_run`), so an update no longer stops it.
-- **Console:** `mine <chain> [blocks] [address]`, `mining`, `listmining`, `stratum [start|stop]`.
-- **tests/conformance/vectors.json regenerated:** `dgbtest` (a new chain), and the new `Params.mine_algos` and
-  `Params.algos` on every chain (empty but on DigiByte, mainnet and testnet). Nothing recorded before changed. The
-  browser's TESTNETS, CLAIM_FEE and FEE_FLOOR gain `dgbtest`, as config's.
-- **Tests:** test_stratum (a simulated ASIC against a node that checks every block), test_stratum_regtest (a real
-  DigiByte Core 9.26.7 regtest took a scrypt block and a SHA-256 block mined over stratum: **passed**), test_testmine.
-- **Not here: merge-mined chains for ASICs.** That needs an AuxPoW parent with the aux chains' commitment, and is its
-  own piece of work.
+- **What went in.** Every commit of each PR, cherry-picked onto master, with SadFrog's and blockchaindad's authorship
+  kept (`-x` names each GitHub commit):
+  - #87, #88 and #89 stack (DigiByte testnet, mining as a module, DigiDollar's controls): #89's 21 commits carry all three.
+  - #90 (ord index copies beside the index's real file), #93 (who runs this node: follow-ups), #92 (bare-address coins
+    from a synced mesh arcade, mesh-signed asks only).
+  - #16 is left alone, as asked.
+- **Conflicts.** Two, both a filtered word: our "the operator's" against the public copy's "the operator's" (config.py's
+  Flopcoin comment, docs/arcade-lite/DIGIDOLLAR.md). Ours kept in code; the doc took the PR's line. The cherry-picks
+  also repeated two of our own entry headings here in the public copy's words; the copies are removed.
+- **One fix on top.** #92's `/peer/address/{address}/coins` belonged to no module, so test_modules failed (every
+  route needs a claim, and a Lite node serves only the core's): claimed by the Wallet module (core) in modules.py.
+- **Tests.** The whole suite on a test machine (`pytest -n 8 tests`): 5,027 passed, then the fix above; 6 more failures under
+  -n 8 load (module sandbox timeouts, two browser tests) passed run alone, and on master before the merge.
 
 ### 2026-11-05 The shared walk survives restarts, reads in chunks, and uses the mesh's shared Cores (Claude; the operator: "it says it's going to take 21 days for my wallet balances", "Use cores shared over the mesh as extra readers right away. 1-4. I thought that was how we designed the walk")
 
@@ -265,6 +250,76 @@ mining on each chain where possible on cpu as well as a section to hookup local 
   `test_the_addresses_a_sign_in_checks_come_without_balances`. The sign-in, sign-up, password-floor, import and
   test_web suites pass (337).
 - **Collections work handed off** to blockchaindad at GitHub issue #91 (2026-11-05).
+
+### 2026-11-05 · SadFrog's side (Claude) · DigiDollar 0.4.0: send, receive and hold
+SadFrog: "add capability to send and receive store digidollar test and digidollar".
+- **Module:** `ddreceive` (the caller's DigiDollar address and holdings) and `ddsend` (DigiByte Core's transfer,
+  `0x02000770`), each with a form; DigiDollar addresses in `lib/taproot.py` (`base58check`, `unbase58check`) and
+  `module.py` (`dd_address`, `dd_key`, `send`). Mainnet sends wait for `ddmainnet` like mints. A mint's vault is kept in
+  the module's data (`_keep`, `_vaults`) so it is found after its dollars move. DIGIDOLLAR.md has the shapes.
+- **Wallet:** `coins.js` reads a DigiDollar record and says each zero-value Taproot output on DigiByte as dollars to
+  its `TD...`/`DD...` address, or as the signer's own (`ddAddress`, `ddRecordAmounts`, `readScriptNum`);
+  `_wallet.html` liteSign words it. `extension/coins.js` is the same file again.
+- **Tests:** test_digidollar (+3), test_lite_schnorr_browser (+1: the send's words and its key-path signature in
+  Firefox), test_digidollar_regtest (+1: gather, mint, send there and back, redeem, against DigiByte Core 9.26.7).
+
+### 2026-11-05 · SadFrog's side (Claude) · DigiDollar: a control for every step, and mainnet's groundwork
+SadFrog: "Make sure every aspect of the Digibyte digidollar has ui for the whole process with the ability to also do it
+in the console", and "lay the ground work for making this process work for digidollar on mainnet".
+- **Module forms** (`packages._check_form`, `commands.Command.form`, `/lite/api/commands` gives `form`, `args`,
+  `module`; `modules.tabs` gives `package`): a node module's tab in the Lite window draws each command's form above its
+  page (`lite.html` drawModule) and runs the console's line through the same path (`runLine`, which `send` now uses
+  too): a spend still goes to `liteSign`. Answers are drawn as a list and tables; `actions` become buttons for the
+  module's own commands only. PACKAGES.md has the fields. Tests: test_module_sandbox (+6 refusals),
+  test_module_packages (+1), test_lite_module_panel_browser (new).
+- **DigiDollar 0.3.0**: `ddgather`, `ddmainnet` (operator; off until `on yes`), a chain on every command, mainnet's
+  rules, Redeem as an action on an unlocked vault, a form for each step. A mint's coins are chosen to stay under the
+  module's 0.5 DGB fee cap (about eight coins): before, 9 to 50 coins made a mint the arcade refused for its fee.
+  Tests: test_digidollar (+3, two changed).
+- **`liteSign`** says "Real DGB" for a module's spend on a chain of real coins.
+
+### 2026-11-05 · SadFrog's side (Claude) · Mining as a module: CPU per chain, and local ASICs over stratum
+SadFrog: "making mining on the node a module that can be enabled per node", with "the abilities and tests to run
+mining on each chain where possible on cpu as well as a section to hookup local asics".
+- **The Mining module** (`modules.py`): `/fund`, `/wallet/mining`, `/admin/api/mine`, `/admin/api/mining`,
+  `/admin/api/stratum` and `/rpc/work` (other arcades' miners) move out of node and wallet into it. It is on in the full
+  edition and off in Lite until switched on. Switched off, it stops a mining run and the stratum server at once
+  (`modules_web._mining`). The first-run "Mine a block" says to switch it on when it is off.
+- **Admin → Mining**, a tab of its own:
+  - every chain and how it is mined here (`arcade/mining.py`);
+  - **Mine on this machine**, moved from Coins & chains. A chain with `Params.mine_algos` (DigiByte testnet) is mined
+    by its own node, by algorithm (`arcade/testmine.py`), not by the panel's scrypt in Python;
+  - **ASICs on your network**.
+- **Stratum** (`arcade/stratum.py`): stratum v1 solo mining with work from a chain's node here, for chains that are not
+  merge-mined, in scrypt or sha256d (`Params.algos` names DigiByte's five, and its template is asked by algorithm).
+  - Coinbase split around an 8-byte extranonce, the merkle branch, vardiff, BIP 310 version rolling, and BIP34 heights
+    under 17 written as OP_N.
+  - LAN-only unless the operator says otherwise. The server comes back with the arcade.
+- **A mining run survives a restart** (`testmine.resume`, setting `mining_run`), so an update no longer stops it.
+- **Console:** `mine <chain> [blocks] [address]`, `mining`, `listmining`, `stratum [start|stop]`.
+- **tests/conformance/vectors.json regenerated:** `dgbtest` (a new chain), and the new `Params.mine_algos` and
+  `Params.algos` on every chain (empty but on DigiByte, mainnet and testnet). Nothing recorded before changed. The
+  browser's TESTNETS, CLAIM_FEE and FEE_FLOOR gain `dgbtest`, as config's.
+- **Tests:** test_stratum (a simulated ASIC against a node that checks every block), test_stratum_regtest (a real
+  DigiByte Core 9.26.7 regtest took a scrypt block and a SHA-256 block mined over stratum: **passed**), test_testmine.
+- **Not here: merge-mined chains for ASICs.** That needs an AuxPoW parent with the aux chains' commitment, and is its
+  own piece of work.
+
+### 2026-11-05 Ord index: copies made and swapped in beside the index's real file (SadFrog's side, Claude)
+Branch `team/index-real-path`, one commit on the newest main. Node 2 keeps its Bells index (46 GB) on a hard disk,
+linked from the arcade's folder on an SSD (92 GB free). Found while making node 2 a Bells source for other arcades:
+- **A snapshot went onto the SSD.** `Snapshots` put `.snap`, `.part`, `.snap.json` beside `store.path`, the link.
+- **A fetched copy replaced the link.** `Store.swap` did `os.replace(other, self.path)`: the link became a file on the
+  SSD, the old index stayed on the hard disk, and `-wal`/`-shm` were removed beside the link, where SQLite never keeps
+  them (it resolves the link). With `.part` beside the real file, the rename would cross disks and fail.
+- **Now.** `Store.real` (realpath of the index file). Snapshots, fetched copies, `upgrade`'s `.upgrade` file and the
+  `-wal`/`-shm` cleanup use it. An index that is not linked behaves as before.
+- **Tests.** New `test_an_index_linked_from_another_disk_is_copied_and_swapped_beside_its_real_file` (fails on main).
+  286 index/ord/core-copy tests pass; `test_an_index_of_layout_1_is_converted_in_place...` fails on node 2 with or
+  without this (SQLite 3.37 has no `unhex`).
+- **Note.** `make()`'s second `VACUUM` still writes a temporary copy into SQLite's temp folder (often the system disk).
+  Not changed here.
+- Node 2 runs this; its Bells Core is also registered for chain-data copies (`core_installed:bel` with its user unit).
 
 ### 2026-11-05 A peer that stops reading no longer freezes the mesh; DRC-20 mints out of the Wallet's grid (Claude; the operator: "a lot of my ords are not displaying", "The DRC 20 mints should be [out] from the ORD grid but we shouldn't count them towards tokens")
 
