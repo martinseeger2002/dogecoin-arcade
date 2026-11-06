@@ -67,8 +67,8 @@ def _word(net: str) -> str:
 
 
 def _minting(reason) -> str:
-    """Core's reason minting is held back, or "open": it says "none" when nothing holds it back."""
-    return "open" if str(reason or "none").lower() == "none" else str(reason)
+    """Core's reason minting is held back, in words, or "open": it says "none" when nothing holds it back."""
+    return "open" if str(reason or "none").lower() == "none" else "held back: " + str(reason).replace("_", " ")
 
 
 def _cents(amount) -> int:
@@ -108,11 +108,16 @@ def command_ddstats(ctx, chain="test"):
     info = _active(ctx, net)
     price = ctx.rpc(net, "getoracleprice")
     stats = ctx.rpc(net, "getdigidollarstats")
-    return {"chain": info["chain"], "height": info.get("blocks"),
-            "dgb_usd": price.get("price_usd"), "oracle": price.get("status"), "stale": price.get("is_stale"),
-            "supply_usd": (stats.get("total_dd_supply") or 0) / 100, "collateral_dgb": stats.get("total_collateral_dgb"),
-            "health_percent": stats.get("health_percentage"), "health": stats.get("health_status"),
-            "positions": stats.get("active_positions"), "minting": _minting(stats.get("minting_restricted_reason"))}
+    usd = price.get("price_usd")
+    return {"chain": "DigiByte mainnet" if net == MAIN else "DigiByte testnet",
+            "block": f"{int(info.get('blocks') or 0):,}",
+            "price": f"${float(usd):,.6f} a DGB" if usd is not None else "no price yet",
+            "oracle": str(price.get("status") or "unknown") + (", stale" if price.get("is_stale") else ""),
+            "supply": f"${(stats.get('total_dd_supply') or 0) / 100:,.2f} in DigiDollars",
+            "locked": f"{float(stats.get('total_collateral_dgb') or 0):,.2f} DGB in vaults",
+            "health": f"{stats.get('health_percentage')}%, {stats.get('health_status')}",
+            "vaults_open": f"{int(stats.get('active_positions') or 0):,}",
+            "minting": _minting(stats.get("minting_restricted_reason"))}
 
 
 def command_ddcollateral(ctx, amount, tier=0, chain="test"):
@@ -345,7 +350,7 @@ def command_ddmint(ctx, amount, tier=None, chain="test"):
                 script, net, _fresh(ctx, net))
     _keep(ctx, net, owner, {"script": made["outputs"][0][1], "cents": cents, "tier": tier,
                             "lock": _lock(height, int(said["lock_days"]))})
-    return {"prepared": made}
+    return {"prepared": made, "actions": [{"label": "My vaults", "line": f"ddvaults {_word(net)}"}]}
 
 
 def gather(coins: list[dict], script: bytes, chain: str = TEST, fresh=None) -> dict:
@@ -382,29 +387,46 @@ def command_ddgather(ctx, chain="test"):
     _ready(ctx, net)
     address, _ = _owner(ctx, net)
     coins, script = _coins(ctx, net, address)
-    return {"prepared": gather(coins, script, net, _fresh(ctx, net))}
+    made = gather(coins, script, net, _fresh(ctx, net))
+    more = "press Gather again" in made["what"]
+    return {"prepared": made, **({"actions": [{"label": "Gather again", "line": f"ddgather {_word(net)}"}]}
+                                 if more else {})}
+
+
+#: Each tier's lock, as the Mint form names it.
+TIERS = {0: "1 hour", 1: "30 days", 2: "90 days", 3: "180 days", 4: "1 year", 5: "2 years", 6: "3 years",
+         7: "5 years", 8: "7 years", 9: "10 years"}
 
 
 def command_ddvaults(ctx, chain="test"):
-    """Your DigiDollars and your vaults: what each vault holds, and when it unlocks.
+    """Your vaults and what you hold: each vault's dollars, the DGB it locks, when it unlocks, and Redeem once it has.
 
-    ddvaults [main|test]"""
+    ddvaults [main|test]   a vault's id (its first 12 characters) is what ddredeem takes"""
     net = _chain(chain)
     _ready(ctx, net)
     _, owner = _owner(ctx, net)
     height = ctx.rpc(net, "getblockcount")
     held = _holdings(ctx, net, owner)
+    have = sum(c["cents"] for c in held)
     vaults = []
-    for v in _vaults(ctx, net, owner, held):
+    for v in sorted(_vaults(ctx, net, owner, held), key=lambda v: v["lock"]):
         left = v["lock"] - height
-        vaults.append({"vault": v["txid"], "dollars": v["cents"] / 100, "locks_dgb": v["collateral"] / COIN,
-                       "unlocks_at": v["lock"], "tier": v["tier"],
-                       "redeem": "now" if left <= 0 else f"in {left} blocks ({_about(left)})",
-                       **({"actions": [{"label": "Redeem", "line": f"ddredeem {v['txid']} {_word(net)}"}]}
-                          if left <= 0 else {})})
-    return {"chain": _word(net), "height": height, "digidollars": sum(c["cents"] for c in held) / 100,
-            "coins": [{"txid": c["txid"], "vout": c["vout"], "dollars": c["cents"] / 100} for c in held],
-            "vaults": vaults}
+        short = v["txid"][:12]
+        if left > 0:
+            status = f"locked: {left} blocks to go, {_about(left)}"
+        elif have < v["cents"]:
+            status = (f"unlocked, but its redeem burns ${v['cents'] / 100:,.2f} of DigiDollars and you hold "
+                      f"${have / 100:,.2f}: get the rest back first")
+        else:
+            status = "unlocked: ready to redeem"
+        vaults.append({"vault": short, "dollars": f"${v['cents'] / 100:,.2f}",
+                       "locked": f"{v['collateral'] / COIN:,.2f} DGB", "lock": TIERS.get(v["tier"], f"tier {v['tier']}"),
+                       "unlocks": f"block {v['lock']:,}", "status": status,
+                       **({"actions": [{"label": "Redeem", "line": f"ddredeem {short} {_word(net)}"}]}
+                          if left <= 0 and have >= v["cents"] else {})})
+    return {"you_hold": f"${have / 100:,.2f} in DigiDollars", "chain": "DigiByte mainnet" if net == MAIN else
+            "DigiByte testnet", "block": f"{height:,}",
+            **({"vaults": vaults} if vaults else {"vaults": "none yet: Mint makes one"})}
 
 
 def _about(blocks: int) -> str:
@@ -469,7 +491,8 @@ def command_ddredeem(ctx, vault, chain="test"):
     coins, script = _coins(ctx, net, address)
     if not coins:
         raise ValueError("a redeem pays its fee (about 0.15 DGB) from your own DGB, and your wallet has none here")
-    return {"prepared": redeem(found[0], owner, held, coins, script, net, _fresh(ctx, net))}
+    return {"prepared": redeem(found[0], owner, held, coins, script, net, _fresh(ctx, net)),
+            "actions": [{"label": "My vaults", "line": f"ddvaults {_word(net)}"}]}
 
 
 def dd_address(net: str, owner: bytes) -> str:
@@ -582,33 +605,38 @@ def command_ddmainnet(ctx, state="status", confirm=""):
 
 
 def page(ctx, method, path, query, body):
-    """/m/digidollar/: the numbers on both chains, and how to use the forms above it or the console."""
-    rows = ""
-    for chain, title in (("test", "DigiByte testnet"), ("main", "DigiByte mainnet")):
-        rows += f"<tr><th colspan=2>{title}</th></tr>"
+    """/m/digidollar/: both chains' numbers, side by side, in the window's own look (its theme too: /lite/theme.css),
+    and how the controls above it go."""
+    cards = ""
+    for chain in ("test", "main"):
         try:
             stats = command_ddstats(ctx, chain)
-            rows += "".join(f"<tr><th>{html.escape(k)}</th><td>{html.escape(str(v))}</td></tr>"
-                            for k, v in stats.items())
+            rows = "".join(f"<dt>{html.escape(k.replace('_', ' ').capitalize())}</dt><dd>{html.escape(str(v))}</dd>"
+                           for k, v in stats.items() if k != "chain")
+            title = stats["chain"]
         except Exception as exc:                           # noqa: BLE001 -- the page says what the Core said
-            rows += f"<tr><td colspan=2>Its Core did not answer: {html.escape(str(exc))}</td></tr>"
+            title = "DigiByte mainnet" if chain == "main" else "DigiByte testnet"
+            rows = f"<dt>Its Core</dt><dd>did not answer: {html.escape(str(exc))}</dd>"
+        cards += f"<fieldset><legend>{html.escape(title)}</legend><dl>{rows}</dl></fieldset>"
     mainnet = "open on this arcade" if _mainnet_on(ctx) else "off on this arcade until its operator turns them on"
-    return {"type": "text/html", "body": PAGE.format(rows=rows, mainnet=mainnet)}
+    return {"type": "text/html", "body": PAGE.format(cards=cards, mainnet=mainnet)}
 
 
 PAGE = """<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>DigiDollar</title><link rel="stylesheet" href="/m/digidollar/files/page.css">
-<h1>DigiDollar</h1><p>DigiByte's stablecoin, read from this arcade's DigiByte Cores. Lock DGB in a vault, get dollars
-for it, and burn them later to take every DGB back.</p>
-<table>{rows}</table>
-<h2>How</h2>
+<link rel="stylesheet" href="/lite/theme.css">
+<body data-lite>
+<div class="cards">{cards}</div>
+<fieldset><legend>How it goes</legend>
+<p class="lead">Lock DGB in a vault and get DigiDollars for it; burn them later to take every DGB back.</p>
 <ol><li><b>Cost:</b> what a mint locks, for each lock time.</li>
-<li><b>Gather:</b> many small coins into one; a mint spends only a few.</li>
+<li><b>Gather:</b> many small coins into one; a mint spends only a few. Press it again at once for the rest.</li>
 <li><b>Mint:</b> your wallet shows the transaction and signs it.</li>
 <li><b>My vaults:</b> each vault, and when it unlocks; Redeem appears once it has.</li>
-<li><b>Receive:</b> your DigiDollar address (TD... on the test chain, DD... on mainnet) and what you hold.</li>
-<li><b>Send:</b> DigiDollars to anyone's DigiDollar address.</li></ol>
-<p>Use the forms above this page in the arcade's window, or type the same in its console: <code>ddcollateral 100 0</code>,
-<code>ddgather</code>, <code>ddmint 100 0</code>, <code>ddvaults</code>, <code>ddredeem &lt;vault&gt;</code>,
-<code>ddreceive</code>, <code>ddsend &lt;address&gt; &lt;dollars&gt;</code>. Each takes
-<code>main</code> or <code>test</code> last. Mainnet mints and sends are {mainnet}.</p>"""
+<li><b>Receive</b> and <b>Send:</b> your DigiDollar address (TD... on the test chain, DD... on mainnet), and paying
+someone's.</li></ol>
+<p class="muted">The same in the console: <code>ddcollateral 100 0</code>, <code>ddgather</code>,
+<code>ddmint 100 0</code>, <code>ddvaults</code>, <code>ddredeem &lt;vault&gt;</code>, <code>ddreceive</code>,
+<code>ddsend &lt;address&gt; &lt;dollars&gt;</code>. Each takes <code>main</code> or <code>test</code> last. Mainnet mints and
+sends are {mainnet}.</p></fieldset>
+</body>"""

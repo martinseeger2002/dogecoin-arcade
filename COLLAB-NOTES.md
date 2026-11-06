@@ -88,6 +88,19 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-06 · SadFrog's side (Claude) · DigiDollar tab: the vaults and the numbers read as one
+SadFrog: "make the vault ui more cohesive", "make the digi dollar stats portion cohesive with the rest of the content
+on the digi dollar tab". DigiDollar 0.4.2:
+- `ddvaults` answers in words: what you hold, then one row per vault (its 12-character id, dollars, DGB locked, lock,
+  unlock block, status: locked with blocks to go, ready, or short of the dollars its redeem burns), Redeem only when it
+  can go through; no coins table (Receive has it). `ddmint` and `ddredeem` offer My vaults next; a Gather with coins
+  left offers Gather again.
+- `ddstats` answers in words too (price a DGB, supply, DGB in vaults, health, vaults open, minting open or held back
+  and why). The module's page draws both chains as two boxes in the window's own look (`files/page.css`, the Lite
+  palette, and `/lite/theme.css` so a theme reaches it), with the steps below.
+- The window says an answer's field names as words (`you_hold` as "You hold"). `ddreceive` is unchanged: the wallet
+  reads it.
+
 ### 2026-11-05 · SadFrog's side (Claude) · A mint's record read right; Gather pressed again at once
 - **coins.js `ddRecordAmounts`** read every item of a "DD" record as a number, and a mint's ends in its owner's 32-byte
   key: the wallet refused every mint ("a DigiDollar record's number is too long", seen on the test node). Only the

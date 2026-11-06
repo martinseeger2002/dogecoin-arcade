@@ -1,6 +1,20 @@
-body { font: 15px/1.45 system-ui, sans-serif; max-width: 40rem; margin: 1.5rem auto; padding: 0 1rem; }
-table { border-collapse: collapse; width: 100%; }
-th, td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid #ccc; }
-th { font-weight: 600; width: 40%; }
-code { background: #eee; padding: 0 .25rem; }
-@media (prefers-color-scheme: dark) { body { background: #1f1f1f; color: #e6e6e6; } code { background: #333; } }
+:root{
+  --win:#efefef; --panel:#fff; --ink:#1d1d1d; --muted:#666; --line:#c4c4c4; --sel:#3874d8;
+  --mono:ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --win:#2b2b2b; --panel:#1f1f1f; --ink:#e6e6e6; --muted:#a0a0a0; --line:#4a4a4a; --sel:#3d7be0;
+}}
+/* The Lite window's own look (lite.html), so this page reads as part of the DigiDollar tab above it; an operator's or a
+   person's theme comes after, from /lite/theme.css, over the same names. */
+*{box-sizing:border-box}
+body{margin:0;padding:12px;background:var(--win);color:var(--ink);font:13px/1.4 system-ui,-apple-system,"Segoe UI",Ubuntu,sans-serif}
+.cards{display:flex;flex-wrap:wrap;gap:0 10px}
+.cards fieldset{flex:1 1 260px}
+fieldset{border:1px solid var(--line);border-radius:var(--radius,3px);margin:0 0 12px;padding:8px 10px 10px;background:var(--panel)}
+legend{padding:0 4px;font-weight:600}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:0}
+dt{color:var(--muted)} dd{margin:0;overflow-wrap:anywhere}
+ol{margin:6px 0;padding-left:1.3em} li{margin:2px 0}
+p{margin:6px 0} .lead{margin-top:0} .muted{color:var(--muted)}
+code{font-family:var(--mono);font-size:12px;background:var(--win);border:1px solid var(--line);border-radius:2px;padding:0 3px}

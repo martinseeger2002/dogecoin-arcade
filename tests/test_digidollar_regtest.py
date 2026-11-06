@@ -57,13 +57,14 @@ def test_a_user_mints_digidollars_through_the_module_and_signs_with_their_own_ke
     cmdlib.run_line(op, "install digidollar")
     try:
         before = cmdlib.run_line(cmdlib.Caller(app_state), "ddstats")
-        assert before["chain"] == "regtest" and before["supply_usd"] == 0
+        assert before["chain"] == "DigiByte testnet" and before["supply"] == "$0.00 in DigiDollars"
 
         offered = []
         user = cmdlib.Caller(app_state, "user", "ab" * 32, address=lambda chain: address,
                              pubkeys={"dgbtest": pub.hex()},
                              offer=lambda net, unsigned: offered.append(unsigned) or {"offer": "o1"})
-        assert cmdlib.run_line(user, "ddmint 100 0") == {"sign": {"offer": "o1"}}
+        assert cmdlib.run_line(user, "ddmint 100 0") == {"sign": {"offer": "o1"},
+                                                          "actions": [{"label": "My vaults", "line": "ddvaults test"}]}
         unsigned = offered[0]
         assert unsigned.version == 0x01000770 and unsigned.what.startswith("DigiDollar: mint $100.00 DigiDollar")
 
@@ -74,20 +75,21 @@ def test_a_user_mints_digidollars_through_the_module_and_signs_with_their_own_ke
         assert rpc.call("getrawtransaction", txid, True)["confirmations"] == 1
 
         after = cmdlib.run_line(cmdlib.Caller(app_state), "ddstats")
-        assert after["supply_usd"] == 100 and after["positions"] == 1
+        assert after["supply"] == "$100.00 in DigiDollars" and after["vaults_open"] == "1"
         held = cmdlib.run_line(user, "ddvaults")
         (vault,) = held["vaults"]
-        assert held["digidollars"] == 100 and vault["vault"] == txid and vault["dollars"] == 100
+        assert held["you_hold"] == "$100.00 in DigiDollars" and txid.startswith(vault["vault"])
+        assert vault["dollars"] == "$100.00" and vault["status"].startswith("locked: ") and "actions" not in vault
         with pytest.raises(cmdlib.CommandError, match="that vault unlocks at block"):
             cmdlib.run_line(user, f"ddredeem {txid[:12]}")
 
         # The lock: tier 0 is 240 blocks, and the mint's buffer 100 more.
-        rpc.call("generatetoaddress", vault["unlocks_at"] - rpc.call("getblockcount"), address)
+        rpc.call("generatetoaddress", _unlocks(vault) - rpc.call("getblockcount"), address)
         rpc.call("setmockoracleprice", 6500)
         rpc.call("generatetoaddress", 1, address)
-        assert cmdlib.run_line(user, f"ddredeem {txid[:12]}") == {"sign": {"offer": "o1"}}
+        assert cmdlib.run_line(user, f"ddredeem {txid[:12]}")["sign"] == {"offer": "o1"}
         unsigned = offered[1]
-        assert unsigned.version == 0x03000770 and unsigned.locktime == vault["unlocks_at"]
+        assert unsigned.version == 0x03000770 and unsigned.locktime == _unlocks(vault)
         kinds = [c.get("taproot") and ("leaf" if c["taproot"].get("leaf") else "key") for c in unsigned.inputs]
         assert kinds[:2] == ["leaf", "key"] and not any(kinds[2:])
         tweaked = tweaked_secret(secret)
@@ -100,10 +102,10 @@ def test_a_user_mints_digidollars_through_the_module_and_signs_with_their_own_ke
         assert rpc.call("getrawtransaction", redeemed, True)["confirmations"] == 1
 
         gone = cmdlib.run_line(cmdlib.Caller(app_state), "ddstats")
-        assert gone["supply_usd"] == 0 and gone["positions"] == 0
-        assert cmdlib.run_line(user, "ddvaults")["vaults"] == []
+        assert gone["supply"] == "$0.00 in DigiDollars" and gone["vaults_open"] == "0"
+        assert cmdlib.run_line(user, "ddvaults")["vaults"] == "none yet: Mint makes one"
         out = rpc.call("getrawtransaction", redeemed, True)["vout"][0]
-        assert round(out["value"] * 10 ** 8) == round(vault["locks_dgb"] * 10 ** 8), "every DGB the vault locked"
+        assert f"{out['value']:,.2f} DGB" == vault["locked"], "every DGB the vault locked"
         assert out["scriptPubKey"]["address"] == address, "back to the user's own address"
     finally:
         app_state.module_host.stop()
@@ -163,7 +165,7 @@ def _round_trip(app_state, rpc, secrets):
 
     a, b = caller(aa, pa), caller(ab, pb)
     try:
-        start = cmdlib.run_line(op, "ddstats")["supply_usd"]
+        start = cmdlib.run_line(op, "ddstats")["supply"]
         # A miner's wallet: many coins, more than one DigiDollar transaction may spend. Gather until it is one.
         gathered = run(a, "ddgather", sa, pa)
         assert offered[-1].version == 2 and len(offered[-1].inputs) > 8
@@ -180,7 +182,7 @@ def _round_trip(app_state, rpc, secrets):
         assert offered[-1].version == 0x02000770
         assert cmdlib.run_line(b, "ddreceive")["digidollars"] == 40
         assert cmdlib.run_line(a, "ddreceive")["digidollars"] == 60
-        assert cmdlib.run_line(op, "ddstats")["supply_usd"] == start + 100, "a send moves dollars, it makes none"
+        assert _dollars(cmdlib.run_line(op, "ddstats")["supply"]) == _dollars(start) + 100, "a send makes no dollars"
 
         back = run(b, f"ddsend {cmdlib.run_line(a, 'ddreceive')['address']} 40", sb, pb)
         assert cmdlib.run_line(b, "ddreceive")["digidollars"] == 0
@@ -189,17 +191,19 @@ def _round_trip(app_state, rpc, secrets):
         assert {sent, back} <= {c["txid"] for c in held["coins"]} | {sent}
 
         (vault,) = cmdlib.run_line(a, "ddvaults")["vaults"]
-        assert vault["vault"] == minted, "found by the script kept at its mint, though its own dollars moved"
-        rpc.call("generatetoaddress", vault["unlocks_at"] - rpc.call("getblockcount"), aa)
+        assert minted.startswith(vault["vault"]), "found by the script kept at its mint, though its own dollars moved"
+        rpc.call("generatetoaddress", _unlocks(vault) - rpc.call("getblockcount"), aa)
         rpc.call("setmockoracleprice", 6500)
         rpc.call("generatetoaddress", 1, aa)
         (vault,) = cmdlib.run_line(a, "ddvaults")["vaults"]
-        assert vault["actions"] == [{"label": "Redeem", "line": f"ddredeem {minted} test"}]
-        redeemed = run(a, f"ddredeem {minted}", sa, pa)
+        assert vault["actions"] == [{"label": "Redeem", "line": f"ddredeem {minted[:12]} test"}]
+        assert vault["status"] == "unlocked: ready to redeem"
+        redeemed = run(a, vault["actions"][0]["line"], sa, pa)
         burned = [c for c in offered[-1].inputs if (c.get("taproot") or {}).get("key")]
         assert len(burned) == 2, "the two coins that came back by sends, burned for the vault"
-        assert cmdlib.run_line(a, "ddreceive")["digidollars"] == 0 and cmdlib.run_line(a, "ddvaults")["vaults"] == []
-        assert cmdlib.run_line(op, "ddstats")["supply_usd"] == start
+        assert cmdlib.run_line(a, "ddreceive")["digidollars"] == 0
+        assert cmdlib.run_line(a, "ddvaults")["vaults"] == "none yet: Mint makes one"
+        assert cmdlib.run_line(op, "ddstats")["supply"] == start
         assert rpc.call("getrawtransaction", redeemed, True)["confirmations"] == 1
     finally:
         app_state.module_host.stop()
@@ -222,3 +226,12 @@ def pilot_key(address):
         return importlib.import_module("module").dd_key("dgbtest", address)
     finally:
         sys.path.remove(str(PILOT))
+
+
+def _unlocks(vault: dict) -> int:
+    """The block a vault unlocks at, from ddvaults' words ("block 602,001")."""
+    return int(vault["unlocks"].split()[-1].replace(",", ""))
+
+
+def _dollars(said: str) -> float:
+    return float(said.split()[0].lstrip("$").replace(",", ""))

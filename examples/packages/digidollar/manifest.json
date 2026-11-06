@@ -2,7 +2,7 @@
   "kind": "module",
   "api": 1,
   "name": "digidollar",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "title": "DigiDollar",
   "summary": "DigiByte's stablecoin from your own wallet: mint, hold, send, receive and redeem DigiDollars, a form for each step, with its price and health.",
   "pages": "anyone",
@@ -256,7 +256,7 @@
       "args": [
         "[chain]"
       ],
-      "help": "Your DigiDollars and your vaults: what each vault holds, and when it unlocks.\n\nddvaults [main|test]",
+      "help": "Your vaults and what you hold: each vault's dollars, the DGB it locks, when it unlocks, and Redeem once it has.\n\nddvaults [main|test]   a vault's id (its first 12 characters) is what ddredeem takes",
       "form": {
         "title": "My vaults",
         "button": "Show my vaults",
