@@ -88,6 +88,22 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-05 Lite: Admin is a tab for the operator signed in from elsewhere, and opens inside the window (SadFrog's side, Claude; SadFrog: "admin doesnt load for localhost:8431/#admin", "add the file settings window help tab above admin - just like the user view - it should be cohesive as the admin operator")
+
+- **What was wrong.** From outside, the admin password's session cookie has `path=/admin`, so the window at `/` never
+  saw it: the signed-in operator got the window as a plain user, with no Admin tab, and `/#admin` stayed on Overview.
+  `/admin` opened on its own showed the full arcade's bar instead of the window's File / Settings / Window / Help.
+- **Now** (branch `team/lite-admin-window`, one commit on 0c757369):
+  - `arcade/lite/web.py`: `admin_tab` is the operator, or the operator's own account signed in; `lite.html` draws the
+    Admin tab, its panel and Settings -> Admin from it. Admin itself still asks for the password (`_admin_check`); the
+    cookie keeps its path.
+  - `admin_page` passes `window_tab="admin"`; in the Lite edition `base.html` sends that page, opened outside a
+    window, to `/#admin`, so Admin is always under the window's menus. Full is unchanged.
+  - `lite.html` gets `[hidden]{display:none !important}`, as base.html has: a panel with a display of its own (a node
+    module's flex column on the DigiDollar branch) stayed on screen while hidden and pushed Admin out of view.
+  - `tests/test_lite.py::test_the_operator_from_outside_has_admin_as_a_tab_and_admin_opens_inside_the_window`.
+- **Needs nothing** from your side beyond review.
+
 ### 2026-11-05 The shared walk survives restarts, reads in chunks, and uses the mesh's shared Cores (Claude; the operator: "it says it's going to take 21 days for my wallet balances", "Use cores shared over the mesh as extra readers right away. 1-4. I thought that was how we designed the walk")
 
 - **What was wrong.**

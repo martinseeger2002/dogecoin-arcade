@@ -108,6 +108,11 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             # them, opened inside the window (2026-11-04, SadFrog: "when enabled should be a part of the ui").
             "tabs": [t for t in module_tabs(caller, request) if not t["hidden"]],
             "tab_owner": bool(tab_owner(caller, request)), "icons": ICONS,
+            # Admin is a tab for the operator, at the machine or signed in from elsewhere. From elsewhere the admin
+            # password's session is kept for /admin alone (its cookie's path), so this page never sees it: the
+            # operator's account is enough to show the tab, and Admin itself asks for the password (2026-11-05).
+            "admin_tab": caller.audience == "operator" or bool(
+                caller.account and state.operator and caller.account.lower() == state.operator.lower()),
             # Window -> Build's guide (_build.html) names a theme's limits as packages.py holds them
             "fonts": list(packagelib.FONTS), "most_files": packagelib.MOST_FILES,
             "most_kb": packagelib.MOST_BYTES // 1000,

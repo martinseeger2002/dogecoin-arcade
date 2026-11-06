@@ -12,6 +12,11 @@
 (function () {
   var win = null;
   try { if (window.parent !== window && window.parent.liteWindow) win = window.parent.liteWindow; } catch (e) {}
+  {%- if window_tab %}
+  // A page that is one of the window's tabs (Admin), opened on its own: open it in the window instead, under the
+  // window's menus (2026-11-05, SadFrog: "it should be cohesive as the admin operator").
+  if (!win && window.parent === window) { location.replace('/#{{ window_tab }}'); return; }
+  {%- endif %}
   if (!win) return;
   document.documentElement.classList.add('in-window');
   document.addEventListener('click', function (e) {

@@ -341,3 +341,33 @@ def test_window_build_guides_everyone_and_lets_the_operator_share_themes(app):
     # API keys: the operator's own and the say over users'; a visitor is told how to get one
     assert 'data-btab="keys"' in operator and 'id="k-users"' in operator and 'data-btab="apiref"' in operator
     assert 'data-btab="keys"' in visitor and 'id="k-make"' not in visitor and "Run an arcade of your own" in visitor
+
+
+def test_the_operator_from_outside_has_admin_as_a_tab_and_admin_opens_inside_the_window(app, app_state):
+    """From outside, the admin password's session is kept for /admin alone, so the window at / never sees it: the
+    operator's account shows the Admin tab, and Admin opened on its own goes into the window, under its menus."""
+    key = SigningKey.generate()
+    assert _sign_in(app, key, headers=OUTSIDE).status_code == 200
+    assert app.post("/admin/api/operator", headers={**LOCAL, "x-arcade-admin": "1"},
+                    json={"pubkey": key.verify_key.encode().hex()}).status_code == 200
+    assert app.post("/admin/api/password", headers={**LOCAL, "x-arcade-admin": "1"},
+                    json={"password": "correct horse battery"}).status_code == 200
+    assert app.post("/admin/login", headers=OUTSIDE, json={"password": "correct horse battery"}).status_code == 200
+    app_state.set_setting("edition", "lite")
+    try:
+        window = app.get("/lite", headers=OUTSIDE).text
+        bar = window.split('<div class="toolbar"', 1)[1].split("</div>", 1)[0]
+        assert 'data-tab="admin"' in bar and 'data-src="/admin"' in _panel(window, "admin")
+        assert 'data-open-tab="admin"' in window, "Settings -> Admin, as at the machine"
+        assert "[hidden]{display:none !important}" in window, "a hidden panel takes no room from the one shown"
+        admin = app.get("/admin", headers=OUTSIDE)
+        assert admin.status_code == 200 and "location.replace('/#admin')" in admin.text
+        assert "location.replace('/#admin')" not in app.get("/feed", headers=OUTSIDE).text, "only a tab's own page"
+        app.cookies.clear()
+        assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
+        someone = app.get("/lite", headers=OUTSIDE).text
+        assert 'data-tab="admin"' not in someone and 'data-open-tab="admin"' not in someone, "nobody else's"
+    finally:
+        app_state.set_setting("edition", None)
+        app_state.set_setting("operator", None)
+    assert "location.replace('/#admin')" not in app.get("/admin", headers=LOCAL).text, "Full has no window to open"
