@@ -567,6 +567,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
         });
         return span;
       }
+      // An answer's field names, as words: "you_hold" says "You hold".
+      function said(k) { k = String(k).replace(/_/g, ' '); return k.charAt(0).toUpperCase() + k.slice(1); }
       function cell(v) {
         return v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
       }
@@ -579,9 +581,9 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
           if (Array.isArray(v) && v.length && v.every(function (x) { return x && typeof x === 'object' && !Array.isArray(x); })) {
             var cols = []; v.forEach(function (x) { Object.keys(x).forEach(function (c) { if (c !== 'actions' && cols.indexOf(c) < 0) cols.push(c); }); });
             var t = document.createElement('table'), head = t.createTHead().insertRow(), body = t.createTBody();
-            var cap = t.createCaption(); cap.textContent = k; cap.style.textAlign = 'left';
+            var cap = t.createCaption(); cap.textContent = said(k); cap.style.textAlign = 'left';
             cols.concat(v.some(function (x) { return x.actions; }) ? [''] : []).forEach(function (c) {
-              var th = document.createElement('th'); th.textContent = c; head.appendChild(th);
+              var th = document.createElement('th'); th.textContent = c && said(c); head.appendChild(th);
             });
             v.forEach(function (x) {
               var tr = body.insertRow();
@@ -591,7 +593,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
             wrap.appendChild(t); return;
           }
           var dt = document.createElement('dt'), dd = document.createElement('dd');
-          dt.textContent = k; dd.textContent = Array.isArray(v) && !v.length ? 'none' : cell(v);
+          dt.textContent = said(k); dd.textContent = Array.isArray(v) && !v.length ? 'none' : cell(v);
           dl.append(dt, dd);
         });
         if (dl.children.length) wrap.insertBefore(dl, wrap.firstChild);
