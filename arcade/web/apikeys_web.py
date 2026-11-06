@@ -71,7 +71,9 @@ def guard(app, state) -> None:
         if key.modules is not None and not path.startswith("/api/v1/") \
                 and modulelib.module_of(path) not in key.modules:
             return _refuse(403, f"this API key does not open the {modulelib.module_of(path) or 'core'} module")
-        if not key.write and method not in SAFE:
+        # A key that reads only may still post a console line: /api/v1/run runs only the lines that read for it
+        # (arcade/lite/commands.py, `writes`) and refuses the rest itself.
+        if not key.write and method not in SAFE and not (path == "/api/v1/run" and method == "POST"):
             return _refuse(403, "this API key reads only")
         if store.too_many(key.id, 0 if key.operator else rules["per_minute"]):
             return _refuse(429, f"at most {rules['per_minute']} calls a minute with a user's key; wait a little")
@@ -81,8 +83,9 @@ def guard(app, state) -> None:
 
 
 def register(app, state, admin_check, signed_in, run_line) -> None:
-    """The key routes. `run_line(request, line, password="")` runs a console line as the request's caller
-    (arcade/lite/web.py). `password` is the admin password a node-wallet send asks of an operator key."""
+    """The key routes. `run_line(request, line, password="", modules=None, reads_only=False)` runs a console line as
+    the request's caller (arcade/lite/web.py). `password` is the admin password a node-wallet send asks of an operator
+    key; `modules` and `reads_only` are the key's limits, which the line is held to."""
     store_box: dict[str, Any] = {}
 
     def store() -> keylib.KeyStore:
@@ -230,16 +233,14 @@ def register(app, state, admin_check, signed_in, run_line) -> None:
     @app.post("/api/v1/run")
     def api_run(request: Request, body: Any = Body(None)):
         """{line}: one console line (`help` lists them), run as this key's caller: the operator, or the account."""
-        # A key's own (2026-11-05 review: with none it was the public console with none of its limits), and one that
-        # opens every module: a console line reaches any of them, so a key limited to some runs none.
+        # A key's own (2026-11-05 review: with none it was the public console with none of its limits). The line is
+        # held to the key's limits (2026-11-06): a key limited to some modules runs their commands and the core's
+        # public reads, and a key that reads only runs no command that changes anything. Anything else is 403.
         key = keylib.CURRENT.get()
         if key is None:
             raise HTTPException(401, "an API key: Authorization: Bearer ak_...")
-        if key.modules is not None:
-            raise HTTPException(403, "this API key opens some modules only, and a console line can reach any: use those "
-                                     "modules' own routes, or a key for every module")
         line = str((body or {}).get("line") or "") if isinstance(body, dict) else ""
         if not line.strip():
             raise HTTPException(400, "say a line to run, such as help")
         password = str((body or {}).get("password") or "") if isinstance(body, dict) else ""
-        return run_line(request, line, password)
+        return run_line(request, line, password, modules=key.modules, reads_only=not key.write)

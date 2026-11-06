@@ -356,15 +356,22 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
                                 status_code=429, headers=NO_STORE)
         return answer_line(caller, str(payload.get("line") or ""))
 
-    def run_for(request: Request, line: str, password: str = ""):
+    def run_for(request: Request, line: str, password: str = "", modules=None, reads_only: bool = False):
         """One console line for an API key's caller (/api/v1/run, web/apikeys_web.py): the key was checked on the
         way in, and its calls a minute are the key's own limit. `password` is the admin password, asked only when
-        the line would sign the node wallet and the caller is an operator key."""
-        return answer_line(caller_for(request, write=True, password=password), line)
+        the line would sign the node wallet and the caller is an operator key. `modules` and `reads_only` are the
+        key's own limits: the command's module must be one it opens, and a key that reads only runs no change."""
+        import dataclasses
+        caller = caller_for(request, write=True, password=password)
+        caller = dataclasses.replace(caller, modules=frozenset(modules) if modules is not None else None,
+                                     reads_only=reads_only)
+        return answer_line(caller, line)
 
     def answer_line(caller, line: str):
         try:
             return JSONResponse({"ok": True, "result": cmdlib.run_line(caller, line)}, headers=NO_STORE)
+        except cmdlib.CommandRefused as exc:
+            raise HTTPException(403, str(exc)) from None
         except cmdlib.CommandError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, headers=NO_STORE)
         except Exception as exc:                           # noqa: BLE001 -- the console says what went wrong
