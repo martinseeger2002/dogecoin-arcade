@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import digidollar, utxos
+from . import utxos
 from .config import Params
 from .db import StateDB
 from .rpc import RpcClient
@@ -128,12 +128,6 @@ class ArcadeHandler:
             moved = utxos.on_block(state, height, block, self.params, watched)
             self.stats["coins_in"] = self.stats.get("coins_in", 0) + moved["added"]
             self.stats["coins_out"] = self.stats.get("coins_out", 0) + moved["spent"]
-        # DigiDollar on DigiByte (arcade/digidollar.py): the watched accounts' DigiDollar coins, from the same blocks, on
-        # this arcade's own DigiByte Core or a borrowed one alike.
-        if self.params.name in digidollar.NETS:
-            dd_watched = digidollar.watching(state.db)
-            if dd_watched:
-                digidollar.on_block(state, height, block, self.params.name, dd_watched)
 
         # No arcade transactions on this chain (Params.class_b, 2026-11-05: Litecoin, Litecoin testnet, Kotia): its
         # coins only. Whatever someone writes there with the arcade's marker does nothing here.

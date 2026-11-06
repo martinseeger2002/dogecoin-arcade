@@ -18,7 +18,6 @@ import json
 import logging
 import math
 import re
-import decimal
 import threading
 import time
 import html
@@ -100,7 +99,6 @@ from .. import seed as seedlib
 from .. import accounts as accountslib
 from .. import faucet as faucetlib
 from .. import admin as adminlib
-from .. import digidollar as digidollib
 from .. import funding as fundinglib
 from .. import listings as listingslib
 from .. import utxos as utxoslib
@@ -25292,105 +25290,18 @@ def create_app(state: AppState) -> FastAPI:
                       dd_nets=_digidollar_nets())
 
     def _digidollar_nets() -> list[str]:
-        """The DigiByte chains whose Wallet shows DigiDollar as a coin of its own (2026-11-05: "add the digi
-        dollar to the main app ... it should be its own wallet coin option", "just like any other coin or chain is added
-        or borrowed ... not dependent on the installation of a module"): every DigiByte chain this arcade gives its
-        accounts, run here or borrowed (arcade/digidollar.py)."""
-        return [one.network for one in _account_chains() if one.network in digidollib.NETS]
-
-    def _dd_chain(network: str):
-        chain = next((c for c in _account_chains() if c.network == network and c.network in digidollib.NETS), None)
-        if chain is None:
-            raise HTTPException(400, "DigiDollar is on DigiByte, and this arcade has no DigiByte wallet for you")
-        return chain
-
-    def _dd_owner(account, chain, pubkey_hex: str) -> tuple[str, bytes]:
-        """(the account's DigiByte address, its key): the key the browser gave, checked to be that address's."""
-        address = _account_address(account.pubkey, chain)
-        if not address:
-            raise HTTPException(400, f"this account has no {chain.label} address yet: open the Wallet once")
+        """The DigiByte chains whose wallet shows DigiDollar as a coin of its own (2026-11-05: "add the digi dollar
+        to the main app ... it should be its own wallet coin option"): those this arcade runs, while the DigiDollar node
+        module is installed, on, and open to signed-in people. Its balance, address and sends are the module's
+        (ddreceive, ddsend through /lite/api/console); the wallet signs what it prepares, as any send."""
+        from .. import modules as modulelib
         try:
-            pub = bytes.fromhex(str(pubkey_hex or ""))
-            ok = len(pub) == 33 and hash160(pub) == b58check_decode(address)[1]
-        except Exception:                                   # noqa: BLE001
-            ok = False
-        if not ok:
-            raise HTTPException(400, f"that is not this account's {chain.label} key")
-        return address, pub
-
-    _dd_seeding: set[str] = set()
-
-    def _dd_seed(chain, dd_address: str, upto: int) -> None:
-        """The DigiDollar coins an address got before it was watched, read once from this arcade's own Core's coin set
-        (minutes on a big chain), in the background. A borrowed Core has none to read: watched from then on only."""
-        if getattr(chain, "borrowed", False) or dd_address in _dd_seeding:
-            return
-        _dd_seeding.add(dd_address)
-
-        def run():
-            try:
-                digidollib.seed_from_core(state.token_index(chain), chain.rpc(), chain.network, dd_address, upto)
-            except Exception as exc:                        # noqa: BLE001 -- asked again on the next visit
-                log.info("digidollar %s: could not read the coin set: %s", chain.network, exc)
-            finally:
-                _dd_seeding.discard(dd_address)
-        threading.Thread(target=run, daemon=True, name="digidollar seed").start()
-
-    @app.get("/account/digidollar")
-    def account_digidollar(request: Request, chain: str = "", pubkey: str = ""):
-        """This account's DigiDollars on a DigiByte chain: its DigiDollar address, what it holds, and since when the
-        index has followed it (arcade/digidollar.py). The first ask starts following it."""
-        account = _signed_in_account(request)
-        ch = _dd_chain(chain)
-        _, pub = _dd_owner(account, ch, pubkey)
-        dd = digidollib.address(ch.network, pub)
-        index = state.token_index(ch)
-        tip = int(index.indexed_height() or 0)
-        with contextlib.closing(index.open()) as db:
-            digidollib.watch(db, dd, tip)
-            row = digidollib.watched_row(db, dd) or {"since": tip, "seeded": False}
-            held = digidollib.coins(db, dd)
-        if not row["seeded"]:
-            _dd_seed(ch, dd, row["since"])
-        return JSONResponse({"chain": ch.network, "address": dd, "cents": sum(c["cents"] for c in held),
-                             "coins": held, "since": row["since"],
-                             "whole": bool(row["seeded"]),
-                             "borrowed": bool(getattr(ch, "borrowed", False))}, headers={"Cache-Control": "no-store"})
-
-    @app.post("/account/digidollar/send")
-    def account_digidollar_send(request: Request, payload: Any = Body(None)):
-        """Offer a DigiDollar send (arcade/digidollar.py prepare_send): nothing is broadcast here. The browser reads it
-        from its own bytes and signs it, and /account/sign broadcasts it, as any send."""
-        account = _signed_in_account(request)
-        said = payload if isinstance(payload, dict) else {}
-        ch = _dd_chain(str(said.get("chain") or ""))
-        address, pub = _dd_owner(account, ch, str(said.get("pubkey") or ""))
-        dd = digidollib.address(ch.network, pub)
-        try:
-            text = str(said.get("amount") or "").strip().lstrip("$")
-            dollars = decimal.Decimal(text)
-            if dollars <= 0 or dollars != dollars.quantize(decimal.Decimal("0.01")):
-                raise ValueError("an amount of dollars and cents, more than zero")
-            cents = int(dollars * 100)
-            index = state.token_index(ch)
-            with contextlib.closing(index.open()) as db:
-                held = digidollib.coins(db, dd)
-                listed = utxoslib.unspent(db, address)
-            guard = fundinglib.guard_for(address)           # coins carrying an inscription stay put
-            if guard is not None:
-                listed = guard.spendable(listed)
-            spend = fundinglib.spend_for(address, ch.params)
-            prepared = digidollib.prepare_send(ch.network, pub, held, listed, spend["change_script"],
-                                               str(said.get("to") or ""), cents)
-            rpc = ch.rpc()
-            unsigned = digidollib.offer(prepared, ch.params, lambda m, p: rpc.call(m, *p), address, pub)
-        except (ValueError, decimal.InvalidOperation, ArithmeticError) as exc:
-            msg = str(exc) if not isinstance(exc, decimal.InvalidOperation) else "type an amount of dollars, like 12.50"
-            return JSONResponse({"detail": msg}, status_code=400)
-        except Exception as exc:                            # noqa: BLE001 -- a module-style refusal, said
-            return JSONResponse({"detail": str(exc)}, status_code=400)
-        offer = _offers.add(account.pubkey, ch.network, unsigned, unsigned.what)
-        return {"offer": offer.id, "chain": ch.network, **unsigned.as_json()}
+            settings = state.settings()
+            if "digidollar" not in modulelib.enabled(settings) or not modulelib.may_use(settings, "digidollar", "user"):
+                return []
+        except Exception:                                   # noqa: BLE001 -- no module host: no DigiDollar
+            return []
+        return [one.network for one in _account_chains() if one.network in ("dgb", "dgbtest")]
 
     def _wallets_hidden(pubkey: str) -> list[str]:
         """The chains an account keeps out of its Wallet tab (2026-10-18: "enable or disable any of the chain
