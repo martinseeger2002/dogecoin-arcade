@@ -198,8 +198,9 @@ export const WIF = {main: 0x9e, doge: 0x9e, ltc: LTC_WIF, test: 0xf1, regtest: 0
                     bel: 0x99, lky: 0xaf, kot: 0xad, wjk: 0xc9, dgb: 0x80, dgbtest: 0xfe, flop: 0x9e};
 
 //: Litecoin's other address kinds, for saying who a send pays (2026-10-20, tbuuol: L test pays P2SH and
-//: native SegWit). The script-hash version (config.py `scripthash_version`) and the bech32 prefix.
-export const LTC_KINDS = {ltc: {scripthash: 50, hrp: "ltc"}, ltctest: {scripthash: 58, hrp: "tltc"}};
+//: native SegWit). The script-hash version (config.py `scripthash_version`) and the bech32 prefix; on Litecoin also the
+//: old P2SH "3" version (`legacy`, 2026-11-07), the same script as an M... address.
+export const LTC_KINDS = {ltc: {scripthash: 50, hrp: "ltc", legacy: 5}, ltctest: {scripthash: 58, hrp: "tltc"}};
 
 //: The script-hash (P2SH) version of each chain whose wallets pay P2SH addresses (config.py `scripthash_version`):
 //: Litecoin's M.../Q... and DigiByte's S... (2026-11-08, security review: a payment to a DigiByte S... address, the
@@ -911,10 +912,16 @@ export async function verifyOffer(offer, keys) {
   const mineSegwit = p2wpkhScript(await hash160(keys.pubkey));
   // P2SH-nested segwit (BIP49): OP_HASH160 <hash160 of the P2WPKH program> OP_EQUAL
   const mineNested = new Uint8Array([0xa9, 0x14, ...await hash160(mineSegwit), 0x87]);
+  // This key's own BIP-86 output, OP_1 <TapTweak(P)> (2026-11-07, the Wallet's Taproot address type): a send from it
+  // spends coins of this script and its change comes back to it.
+  const mineTaproot = keys.pubkey.length === 33 ? taprootScript((await tweaked(keys.pubkey.slice(1))).key) : null;
   const own = keys.address || await address(keys.pubkey, keys.version);
   const hashes = [], signers = [];
   // A Taproot input commits to every input's value and script (BIP-341), so each one is known or nothing is signed:
-  // a Taproot coin's comes with it, and an ordinary coin of this address is this key's P2PKH.
+  // a Taproot coin's comes with it, and an ordinary coin of this address is this key's P2PKH. The digest is worked
+  // out HERE from the transaction's own bytes and those values and scripts, and the node's is only compared with it.
+  // Every Taproot script is checked to be this key's (taprootMine). A value the node lied about is in the digest, so
+  // the signature it makes is one no node accepts (BIP-341 commits to every amount): coins cannot be moved that way.
   const tapped = named.some((coin) => coin.taproot);
   const spentAll = tapped ? named.map((coin) => ({value: BigInt(String(coin.value || 0)),
     script: coin.taproot ? unhex(String(coin.spent || "")) : mine})) : null;
@@ -1009,7 +1016,9 @@ export async function verifyOffer(offer, keys) {
   for (const out of tx.outputs) {
     paid += out.value;
     const script = out.script;
-    if (SAME(script, mine) || SAME(script, mineSegwit) || SAME(script, mineNested)) {
+    // This key's Taproot output is change too (2026-11-07), but not a DigiDollar's zero-value one, said below as dollars.
+    if (SAME(script, mine) || SAME(script, mineSegwit) || SAME(script, mineNested)
+        || (mineTaproot && SAME(script, mineTaproot) && !(ddAmounts && out.value === 0n))) {
       change += out.value;
       pays.push({to: own, value: Number(out.value), mine: true});
     } else if (script.length === 25 && script[0] === 0x76 && script[1] === 0xa9
@@ -1049,7 +1058,11 @@ export async function verifyOffer(offer, keys) {
                && script[22] === 0x87) {
       // Somebody's P2SH address (Q... on L test, M... on Litecoin, S... on DigiByte): a payment, said as one. Only
       // there: on the other chains a P2SH output is a pool's or a swap's, and those keep their words.
-      pays.push({to: await base58check(p2sh, script.slice(2, 22)),
+      // Litecoin's old "3..." (version 5, 2026-11-07) is the very same script as its M...: said as "3..." when that
+      // is the payee the send names, the hash read from these bytes either way.
+      const hash = script.slice(2, 22), legacy = (LTC_KINDS[keys.network || offer.chain] || {}).legacy;
+      const three = legacy ? await base58check(legacy, hash) : "";
+      pays.push({to: three && String(offer.to || "") === three ? three : await base58check(p2sh, hash),
                  value: Number(out.value), mine: false});
     } else {
       pays.push({bytes: payloadBytes(script), value: Number(out.value),
@@ -1469,6 +1482,9 @@ async function tweaked(internal, root = new Uint8Array(0)) {
   return {key: bytes32(q.x), parity: Number(q.y & 1n)};
 }
 
+/** `tweaked`, for the BIP-341 wallet vectors (tests/test_taproot_wallet.py). */
+export const taprootTweak = (internal, root = new Uint8Array(0)) => tweaked(internal, root);
+
 const leafHash = (script) => tagged("TapLeaf", join([new Uint8Array([0xc0]), sizeOf(script.length), script]));
 
 function lessThan(a, b) {
@@ -1818,7 +1834,7 @@ export async function verifyDoginalBuy(buy, keys) {
  * to the BIP173/BIP350 vectors.
  */
 
-const PURPOSE = {legacy: 44, p2shSegwit: 49, nativeSegwit: 84};
+const PURPOSE = {legacy: 44, p2shSegwit: 49, nativeSegwit: 84, taproot: 86};
 
 export function purposePath(purpose, network, index = 0) {
   const coin = COIN_TYPE[network] ?? 1;
@@ -1837,6 +1853,13 @@ export async function p2shSegwitKey(seed, network, index = 0) {
 
 export async function nativeSegwitKey(seed, network, index = 0) {
   const node = await derive(seed, purposePath(PURPOSE.nativeSegwit, network, index));
+  return {key: node.key, pubkey: publicKey(node.key)};
+}
+
+/** The Taproot key (BIP-86, m/86'/<coin>'/0'/0/<index>, 2026-11-07). Its address is its key-path output, and it
+ *  signs with Schnorr by its tweaked key (signSchnorr's keyPath), as a DigiDollar's key does. */
+export async function taprootKey(seed, network, index = 0) {
+  const node = await derive(seed, purposePath(PURPOSE.taproot, network, index));
   return {key: node.key, pubkey: publicKey(node.key)};
 }
 
@@ -1911,6 +1934,19 @@ export function p2wpkhScript(keyhash) {
 /** The native-segwit (bech32) address for a public key: ltc1q... / tltc1q.... */
 export async function p2wpkhAddress(pubkey, hrp) {
   return segwitEncode(hrp, 0, await hash160(pubkey));
+}
+
+/** OP_1 <32-byte output key>: a Taproot (witness v1) output. */
+export function taprootScript(outputKey) {
+  if (outputKey.length !== 32) throw new Error("a Taproot output key is 32 bytes");
+  return new Uint8Array([0x51, 0x20, ...outputKey]);
+}
+
+/** The Taproot (bech32m) address of a compressed public key with no script tree (BIP-86): ltc1p... / dgb1p...
+ *  The output key is the BIP-341 tweak, `tweaked` below, the same one arcade/taproot.py `tweak` makes. */
+export async function taprootAddress(pubkey, hrp) {
+  if (pubkey.length !== 33) throw new Error("a Taproot address is made from a compressed public key");
+  return segwitEncode(hrp, 1, (await tweaked(pubkey.slice(1))).key);
 }
 
 /** The P2SH-nested-segwit address for a public key: base58check of the
@@ -2070,12 +2106,16 @@ export async function extendedKey(node, isPrivate, versions = XKEY.main) {
 
 //: Each kind of address a restore imports: the descriptor around a key, its BIP purpose, and Core's name for the kind.
 //: SegWit kinds only where the chain has a bech32 prefix (config.py bech32_hrp); Taproot only on DigiByte, for its
-//: DigiDollars (key path, no script: the output arcade/taproot.py makes).
+//: DigiDollars (key path, no script: the output arcade/taproot.py makes). The Wallet's Taproot address type (BIP-86,
+//: m/86', 2026-11-07) where a chain has it here (`bip86`) and its Core reads tr() (`taproot`): DigiByte 9.26.7 does;
+//: Litecoin Core 0.21.5.8 refuses tr() ("not a valid descriptor function", checked 2026-11-07), so on Litecoin the
+//: kit names the address and path and says so.
 const RESTORE_KINDS = [
   [(k) => `pkh(${k})`, 44, "legacy"],
   [(k) => `sh(wpkh(${k}))`, 49, "p2sh-segwit"],
   [(k) => `wpkh(${k})`, 84, "bech32"],
   [(k) => `tr(${k})`, 44, "bech32m"],
+  [(k) => `tr(${k})`, 86, "bip86"],
 ];
 
 /** Everything needed to open one chain's coins of these words in that chain's own Core, with no arcade: {path,
@@ -2098,6 +2138,11 @@ export async function restoreKit(seed, chain, since = 0) {
     nested = await p2shSegwitKey(seed, network); native = await nativeSegwitKey(seed, network);
     kit.segwit = [{path: `m/49'/${coin}'/0'/0/0`, address: await p2shSegwitAddress(nested.pubkey, chain.scripthash)},
                   {path: `m/84'/${coin}'/0'/0/0`, address: await p2wpkhAddress(native.pubkey, chain.hrp)}];
+    if (chain.bip86) {
+      const tap = await taprootKey(seed, network);
+      kit.segwit.push({path: `m/86'/${coin}'/0'/0/0`, address: await taprootAddress(tap.pubkey, chain.hrp),
+                       kind: "taproot", imported: Boolean(chain.taproot)});
+    }
   }
   if (chain.taproot && chain.hrp) {
     const out = await tweaked(mine.pubkey.slice(1));
@@ -2111,6 +2156,7 @@ export async function restoreKit(seed, chain, since = 0) {
     for (const [wrap, purpose, kind] of RESTORE_KINDS) {
       if (kind !== "legacy" && !chain.hrp) continue;
       if (kind === "bech32m" && !chain.taproot) continue;
+      if (kind === "bip86" && !(chain.taproot && chain.bip86)) continue;
       for (const branch of [0, 1]) {               // 1: change, so the restored wallet can send as well
         const desc = withChecksum(wrap(`${root}/${purpose}h/${coin}h/0h/${branch}/*`));
         kit.descriptors.push({kind, branch, desc});

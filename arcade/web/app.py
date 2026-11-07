@@ -28201,16 +28201,20 @@ def create_app(state: AppState) -> FastAPI:
                       signed_in=signed_in(request) is not None)
 
     def _segwit_kind(chain, addr: str) -> str | None:
-        """"p2wpkh" (native, m/84') or "p2sh-p2wpkh" (nested, m/49') for an
-        address of that shape on this chain, else None. Nested segwit is only
-        offered where native segwit is (a chain with a bech32 prefix)."""
+        """"p2wpkh" (native, m/84'), "p2sh-p2wpkh" (nested, m/49') or "p2tr"
+        (Taproot, m/86', 2026-11-07: a v1 32-byte program, on a chain with Taproot
+        here) for an address of that shape on this chain, else None. Nested segwit
+        is only offered where native segwit is (a chain with a bech32 prefix)."""
         from ..script import segwit_decode
+        from .. import taproot as taprootlib
         hrp = getattr(chain.params, "bech32_hrp", "")
         if not hrp or not addr:
             return None
         ver, prog = segwit_decode(hrp, addr)
         if ver == 0 and prog is not None and len(prog) == 20:
             return "p2wpkh"
+        if ver == 1 and prog is not None and taprootlib.on(chain.params) and taprootlib.payable(prog):
+            return "p2tr"
         try:
             version, payload = b58check_decode(addr)
         except Exception:
@@ -28251,7 +28255,9 @@ def create_app(state: AppState) -> FastAPI:
         key's `address_signature` (wallet_imports.check_proof, 2026-11-09): the
         node checks the address is that key's and the key signed it over to this
         account. A nested address hides its key hash, which is kept from it to
-        build sends."""
+        build sends. A Taproot one (2026-11-07) must be that key's BIP-86 output
+        (taproot.address), so an account never registers a stranger's
+        ltc1p.../dgb1p... by its address alone."""
         account = _signed_in_account(request)
         said = payload if isinstance(payload, dict) else {}
         try:
@@ -28286,8 +28292,8 @@ def create_app(state: AppState) -> FastAPI:
                 state.set_setting(f"segwit_keyhash:{account.pubkey}:{chain.network}",
                                   hash160(bytes.fromhex(str(said.get("pubkey")).strip())).hex())
         state.set_setting(key, addr)
-        _watch(addr, "account segwit (m/84')" if kind == "p2wpkh"
-               else "account segwit (m/49')", chain)
+        _watch(addr, {"p2wpkh": "account segwit (m/84')", "p2tr": "account taproot (m/86')"}.get(
+            kind, "account segwit (m/49')"), chain)
         return JSONResponse({"ok": True, "watching": addr, "kind": kind,
                              "chain": chain.network})
 
@@ -28394,7 +28400,7 @@ def create_app(state: AppState) -> FastAPI:
         main = _account_address(account.pubkey, chain)
         if main:
             out[main] = "main"
-        for kind in ("p2wpkh", "p2sh-p2wpkh"):
+        for kind in ("p2wpkh", "p2sh-p2wpkh", "p2tr"):
             seg = str(state.setting(_segwit_setting(account, chain, kind), "") or "")
             if seg:
                 out.setdefault(seg, "segwit")
@@ -29967,12 +29973,16 @@ def create_app(state: AppState) -> FastAPI:
     def _pay_script(to: str, chain) -> bytes:
         """The output that pays `to` on this chain: native segwit v0 for a bech32
         address (2026-10-20; `_check_address(..., segwit_ok=True)` let it through),
+        OP_1 <32-byte key> for a Taproot one where the chain has it (2026-11-07),
         else P2PKH or P2SH by its version byte (txbuild)."""
+        from .. import taproot as taprootlib
         hrp = getattr(chain.params, "bech32_hrp", "")
         if hrp and to.lower().startswith(hrp + "1"):
             version, program = segwit_decode(hrp, to.lower())
+            if version == 1 and taprootlib.on(chain.params) and taprootlib.payable(program or b""):
+                return taprootlib.p2tr(program)
             if version != 0:
-                raise ValueError("that is not a native SegWit address for this chain")
+                raise ValueError("that is not a SegWit or Taproot address this arcade pays on this chain")
             return bytes([0x00, len(program)]) + program
         return txbuild.p2pkh_script(to)
 
@@ -38707,16 +38717,28 @@ def _check_address(address: str, *, mainnet: bool, segwit_ok: bool = False) -> s
             # A coin send pays native segwit v0 (2026-10-20, tbuuol): `segwit_ok` is that caller saying it
             # builds the output (`_pay_script`). Test chains first; real coins too since 2026-11-07 (SadFrog: a
             # DigiByte Core or exchange address is dgb1q... by default, and a send refused to pay it). Paying one is
-            # only an output script, OP_0 <program>, checked by segwit_decode; RECEIVING on SegWit stays test-only
-            # (wallet_js ADDRESS_KINDS). Taproot is not paid yet.
+            # only an output script, OP_0 <program>, checked by segwit_decode.
+            # Taproot too since 2026-11-07 (SadFrog: "all litecoin addresses send and receive like we just did with
+            # digibyte", Taproot on both): a v1, 32-byte program, OP_1 <key>, where the chain has Taproot
+            # (taproot.CHAINS) and the key is a point a coin could ever be spent from. Any other witness version is
+            # a soft fork nobody here has read: refused, as Taproot on a chain without it.
             if segwit_ok and params.name in {p.name for p in wanted}:
+                from .. import taproot as taprootlib
                 version, program = segwit_decode(hrp, lowered)
                 if version == 0:
                     return None
                 if version is None:
                     return "that does not look like an address (the checksum does not match)."
-                return (f"that is a {params.label} Taproot address ({hrp}1p…). This arcade pays legacy, "
-                        "P2SH and native SegWit addresses for now; ask for one of those.")
+                if version == 1 and len(program) == 32 and taprootlib.on(params):
+                    if taprootlib.payable(program):
+                        return None
+                    return (f"that {params.label} Taproot address names no key anybody can hold, so coins sent "
+                            "there could never be spent. Check it and ask again.")
+                if version == 1 and len(program) == 32:
+                    return (f"that is a {params.label} Taproot address ({hrp}1p…). This arcade pays legacy, "
+                            "P2SH and native SegWit addresses on this chain; ask for one of those.")
+                return (f"that is a {params.label} SegWit address of a kind this arcade does not pay (witness "
+                        f"version {version}); ask for a legacy, SegWit or Taproot one.")
             return (f"that is a {params.label} SegWit or Taproot address ({hrp}1…). This arcade pays "
                     f"{params.label}'s legacy addresses for now; ask for one of those.")
     try:
@@ -38735,6 +38757,11 @@ def _check_address(address: str, *, mainnet: bool, segwit_ok: bool = False) -> s
                     f"version with another chain's ordinary addresses. This arcade cannot tell them apart "
                     f"safely, so it pays {p.label}'s ordinary addresses only; ask for one of those.")
     if any(version in (p.pubkeyhash_version, p.scripthash_version) for p in wanted):
+        return None
+    # Litecoin's old P2SH "3..." (version 5, Litecoin Core 0.21's SCRIPT_ADDRESS2, 2026-11-07): still what some exchanges
+    # and old wallets hand out, and a Litecoin Core takes one (validateaddress: isscript). txbuild reads 5 as P2SH. Real
+    # Litecoin only: DigiByte Core 9.26.7 refuses a 3 address, and on Luckycoin and Wojakcoin 5 is the chain's own.
+    if version == 5 and any(p.name == "ltc" for p in wanted):
         return None
     other = [p.name for p in NETWORKS.values()
              if version in (p.pubkeyhash_version, p.scripthash_version)]

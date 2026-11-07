@@ -104,8 +104,11 @@ def watch(db, address: str, height: int, why: str = "") -> None:
         "ON CONFLICT(address) DO NOTHING", (address, int(height), why))
 
 
+#: What a watched address's coin may be. Taproot since 2026-11-07 (the Wallet's ltc1p.../dgb1p... address type, its
+#: key path signed by the browser): an output of witness version 1 is filed only when it pays an address somebody
+#: registered, as every kind here is, and a zero-value one (a DigiDollar's) never is.
 SPENDABLE = (OutputType.PUBKEYHASH, OutputType.SCRIPTHASH,
-             OutputType.WITNESS_V0_KEYHASH)
+             OutputType.WITNESS_V0_KEYHASH, OutputType.WITNESS_V1_TAPROOT)
 
 
 def backfill(index, rpc, params, address: str, start: int, end: int, progress: dict | None = None) -> int:

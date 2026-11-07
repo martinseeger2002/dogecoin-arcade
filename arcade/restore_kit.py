@@ -34,7 +34,7 @@ import posixpath
 import re
 from pathlib import Path
 
-from . import config, core_install
+from . import config, core_install, taproot
 
 WEB = Path(__file__).resolve().parent / "web"
 TEMPLATES = WEB / "templates"
@@ -97,6 +97,8 @@ def chains(known_since: int | None = None) -> list[dict]:
                     "pubkeyhash": p.pubkeyhash_version, "scripthash": p.scripthash_version, "hrp": p.bech32_hrp,
                     "recipe": how["recipe"], "cli": cli, "flags": how.get("flags", ""), "core": core,
                     "since": since, "taproot": bool(how.get("taproot")), "xkey": how.get("xkey"),
+                    # the Wallet's Taproot address type (BIP-86, 2026-11-07); imported where the Core reads tr()
+                    "bip86": network in taproot.CHAINS,
                     "height": height})
     return out
 

@@ -356,7 +356,8 @@ async function ddAddressOf(to, c) {
 }
 /* The address type (2026-11-07, SadFrog: "users should also be able to have the most updated or choice of address
  * type as opposed to only legacy"): wallet.js ADDRESS_KINDS lists a chain's kinds, Legacy first and the default. Another
- * kind is that kind's own key from the same words (m/49' nested, m/84' native SegWit), as the full arcade's Wallet card
+ * kind is that kind's own key from the same words (m/49' nested, m/84' native SegWit, m/86' Taproot since 2026-11-07,
+ * registered with its key), as the full arcade's Wallet card
  * makes it: Receive shows its address, Send spends from it (`from`), and the node watches it once told (one address of
  * each kind per account and chain, /account/segwit/register). Its coins are its own, and Balances counts them with the Legacy address's (/account `kinds`). The pick is
  * kept in this browser under one name, which the website's Wallet reads too (my_wallet.html). */

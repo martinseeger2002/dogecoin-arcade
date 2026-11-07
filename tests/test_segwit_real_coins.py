@@ -37,9 +37,9 @@ def test_each_kind_matches_its_chain():
         params = NETWORKS[network]
         coin = 1 if not params.real_coins else 3
         for k in rows:
-            purpose = {"legacy": 44, "p2sh-p2wpkh": 49, "p2wpkh": 84}[k["id"]]
+            purpose = {"legacy": 44, "p2sh-p2wpkh": 49, "p2wpkh": 84, "p2tr": 86}[k["id"]]
             assert k["path"] == f"m/{purpose}'/{coin}'/0'/0/0", (network, k)
-            if k["id"] == "p2wpkh":
+            if k["id"] in ("p2wpkh", "p2tr"):
                 assert k["hrp"] == params.bech32_hrp, network
             if k["id"] == "p2sh-p2wpkh":
                 assert k["scripthash"] == params.scripthash_version, network

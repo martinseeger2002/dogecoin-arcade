@@ -39,6 +39,10 @@ CORE_SAID = {
             "wpkh": "dgb1q78ehfacf2d0s7nylpxd5a5wl0lf26nm694rtak",
             "tr": "dgb1pf77txrpzt8vrjylmgf4aaxheuvxmwr07vgx6sehgfzm3l5sh6vnspzuv93"},
     "ltc": {"pkh": "LRzimYwxBz25C8gsL6XYyF7fjWaDnSRa4k", "wpkh": "ltc1q78ehfacf2d0s7nylpxd5a5wl0lf26nm6kjahag"},
+    # The Wallet's Taproot address type (BIP-86), 2026-11-07: DigiByte Core 9.26.7 (testnet26) derived it from
+    # tr(tprv.../86h/1h/0h/0/0); Litecoin Core 0.21.5.8 has no tr() ("not a valid descriptor function") but its
+    # validateaddress takes the ltc1p one as witness_version 1 with this program.
+    "dgbtest": {"tr86": "dgbt1p8wpt9v4frpf3tkn0srd97pksgsxc5hs52lafxwru9kgeephvs7rq7658xf"},
     "ltctest": {"pkh": "mkpZhYtJu2r87Js3pDiWJDmPte2NRZ8bJV", "sh": "QRHtkDQdVvNNwrVjEdeCGviCw7Ny3SNNiA",
                 "wpkh": "tltc1q6rz28mcfaxtmd6v789l9rrlrusdprr9pesrjxk"},
     "bel": {"pkh": "BBDr846KrqMvPAUsmSsDpMraFueXWBWgih", "sh": "DBhA7StuPVMWXu7cHuHpVXmpSPMXNffVnm",
@@ -152,6 +156,7 @@ def test_every_chain_has_a_recipe_its_core_can_run():
         assert row["hrp"] == config.NETWORKS[name].bech32_hrp
     assert rows["bel"]["xkey"] == {"prv": 0x02FAC398, "pub": 0x02FACAFD}, "Bells 3 reads dgpv/dgub, not xprv/xpub"
     assert rows["dgb"]["taproot"] and rows["dgbtest"]["taproot"] and not rows["ltc"]["taproot"]
+    assert {n for n, r in rows.items() if r["bip86"]} == {"ltc", "ltctest", "dgb", "dgbtest"} == taproot.CHAINS
     # An account this arcade knew before the floor's week rescans from a week before it knew the account.
     early = restore_kit._day("2026-09-01")
     assert {r["network"]: r for r in restore_kit.chains(early)}["dgb"]["since"] == early - restore_kit.WEEK
@@ -192,13 +197,15 @@ def test_every_chains_kit_is_the_arcades_own_keys(made):
                 want |= {(k, b) for k in ("p2sh-segwit", "bech32") for b in (0, 1)}
             if row["taproot"]:
                 want |= {("bech32m", 0), ("bech32m", 1)}
+            if row["taproot"] and row["bip86"]:
+                want |= {("bip86", 0), ("bip86", 1)}
             assert kinds == want, name
             for d in kit["descriptors"]:
                 body, _, check = d["desc"].partition("#")
                 assert check == descsum(body), d["desc"]
                 xprv = re.search(r"\(([1-9A-HJ-NP-Za-km-z]{100,})/", body).group(1)
                 assert _xprv_master(xprv) == (versions["prv"], master[32:], master[:32]), name
-                purpose = {"legacy": 44, "p2sh-segwit": 49, "bech32": 84, "bech32m": 44}[d["kind"]]
+                purpose = {"legacy": 44, "p2sh-segwit": 49, "bech32": 84, "bech32m": 44, "bip86": 86}[d["kind"]]
                 assert body.endswith(f"/{purpose}h/{coin}h/0h/{d['branch']}/*)" + (")" if "sh(" in body else ""))
             asks = json.loads(kit["commands"][1].split(" importdescriptors '", 1)[1][:-1])
             assert [a["desc"] for a in asks] == [d["desc"] for d in kit["descriptors"]]
@@ -221,6 +228,12 @@ def test_every_chains_kit_is_the_arcades_own_keys(made):
         else:
             assert kit["commands"][-1].endswith(f'importprivkey "{kit["wif"]}" "arcade" true')
             assert not kit["descriptors"]
+        if row["bip86"]:
+            tap = _pubkey(_bip32(s, (86 | H, coin | H, H, 0, 0)))
+            assert kit["segwit"][2] == {"path": f"m/86'/{coin}'/0'/0/0", "address": taproot.address(p, tap),
+                                        "kind": "taproot", "imported": row["taproot"]}, name
+        else:
+            assert len(kit["segwit"]) == (2 if p.bech32_hrp else 0), name
         if row["taproot"]:
             out_key = taproot.tweak(taproot.xonly(pub))[0]
             assert kit["taproot"]["address"] == segwit_encode(p.bech32_hrp, 1, out_key)
@@ -228,6 +241,10 @@ def test_every_chains_kit_is_the_arcades_own_keys(made):
     by = {row["network"]: kit for row, kit in zip(chains, got["kits"])}
     for name, said in CORE_SAID.items():
         kit = by[name]
+        if "tr86" in said:
+            assert kit["segwit"][2]["address"] == said["tr86"], name
+        if "pkh" not in said:
+            continue
         assert kit["address"] == said["pkh"], name
         assert kit["segwit"][1]["address"] == said["wpkh"], name
         if "sh" in said:

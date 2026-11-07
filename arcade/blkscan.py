@@ -11,8 +11,8 @@ file is zeros the node has set aside. So:
 2. `BlockFiles.chain(tip_hash)` follows `prev` back from the node's best block, so each height maps to the block on
    the main chain (orphans are never on that path), kept as a height table and extended from the last tip.
 3. `scan(...)` reads a range of heights and returns the outputs paying any of a set of addresses: the same output
-   types the coin index keeps (utxos.SPENDABLE: pay-to-address, pay-to-script-hash, segwit pay-to-key), so a walk and
-   the index never disagree about what a coin is.
+   types the coin index keeps (utxos.SPENDABLE: pay-to-address, pay-to-script-hash, segwit pay-to-key, and Taproot
+   since 2026-11-07), so a walk and the index never disagree about what a coin is.
 
 Nothing here is trusted further than it has to be: what a walk finds is checked against a node (gettxout: unspent,
 paying that address) before it counts, and its blocks are read again by a second arcade (coinlist.segments).
@@ -38,7 +38,8 @@ def _sha256d(b: bytes) -> bytes:
 
 # --- addresses -> what an output script carries -----------------------------------------------------------------------
 def targets(addresses: Iterable[str], params) -> dict[tuple[str, bytes], str]:
-    """{(kind, 20-byte hash): address} for the addresses this chain can pay (kind "pkh", "sh" or "wpkh")."""
+    """{(kind, hash): address} for the addresses this chain can pay (kind "pkh", "sh" or "wpkh" and a 20-byte hash, or
+    "tr" and a Taproot output's 32-byte key, 2026-11-07)."""
     out: dict[tuple[str, bytes], str] = {}
     hrp = getattr(params, "bech32_hrp", "") or ""
     for a in addresses:
@@ -49,6 +50,8 @@ def targets(addresses: Iterable[str], params) -> dict[tuple[str, bytes], str]:
             ver, prog = segwit_decode(hrp, a.lower())
             if ver == 0 and prog is not None and len(prog) == 20:
                 out[("wpkh", bytes(prog))] = a
+            elif ver == 1 and prog is not None and len(prog) == 32:
+                out[("tr", bytes(prog))] = a
             continue
         try:
             version, payload = b58check_decode(a)
@@ -72,6 +75,8 @@ def _kind(script: bytes) -> tuple[str, bytes] | None:
         return "sh", script[2:22]
     if n == 22 and script[0] == 0x00 and script[1] == 20:
         return "wpkh", script[2:22]
+    if n == 34 and script[0] == 0x51 and script[1] == 32:
+        return "tr", script[2:34]
     return None
 
 
@@ -109,7 +114,7 @@ def block_matches(raw: bytes, want: dict[tuple[str, bytes], str], height: int, a
         for n in range(nout):
             sats = int.from_bytes(raw[i:i + 8], "little")
             ln, i = _varint(raw, i + 8)
-            k = _kind(raw[i:i + ln]) if ln in (22, 23, 25) else None
+            k = _kind(raw[i:i + ln]) if ln in (22, 23, 25, 34) else None
             if k is not None and k in want and sats > 0:
                 hits.append((n, sats, want[k]))
             i += ln

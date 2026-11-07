@@ -404,6 +404,28 @@ Found while checking #121's fixes on the live arcades: pages drawn outside `rend
 - **Test (`tests/test_safe_headers.py`):** walks every GET route without a path parameter and fails on any HTML page with no `frame-ancestors`. On `main` it names ten: `/lite`, `/globe`, `/browser`, `/meshweb`, `/offline`, `/terms`, `/terms/left`, `/admin/terms/preview`, `/tokens/launchpad/preview` and `/dogefeedx/network`. A second test checks `/recover` keeps its single `frame-ancestors 'none'` policy.
 - Nothing frames these pages from another origin today (the launchpad preview is framed by the arcade's own token page), so `'self'` changes nothing a visitor sees.
 
+### 2026-11-07 · SadFrog's side (Claude) · Taproot on Litecoin and DigiByte: pay, receive and spend
+SadFrog: "all litecoin addresses send and receive like we just did with digibyte", Taproot on both. Branch
+`team/taproot-wallet` on `team/pay-segwit-restore` (PR #100).
+- **Pay:** a coin send pays a v1, 32-byte bech32m address (ltc1p, tltc1p, dgb1p, dgbt1p; `taproot.CHAINS`) as `OP_1 <key>`
+  when the key is on secp256k1 (`taproot.payable`); v2+ and bel1p stay refused. Real Litecoin also pays the old P2SH "3"
+  (version 5; Litecoin Core 0.21.5.8's validateaddress takes one as isscript). DigiByte still refuses "3".
+- **Receive and spend:** Wallet and Lite address type "Taproot" (BIP-86, m/86'/<coin>'/0'/0/0) after Native SegWit on
+  ltc, ltctest, dgb, dgbtest. `/account/segwit/register` takes a p2tr address only with the key it was made from.
+  `funding.build` from one: BIP-341 SIGHASH_DEFAULT over every input, a 64-byte Schnorr witness, change back to it,
+  priced at 57.5 vB an input. coins.js verifyOffer works the digest out itself (the DigiDollar Taproot code) and says
+  the change as change. `utxos.SPENDABLE` and `blkscan` file v1 outputs of watched addresses. Imports take `p2tr`.
+- **Inscriptions:** `funding.guard_for(address, params)` gives a SegWit or Taproot address its chain's guard
+  (`GUARD_BY_NET`), keyed by outpoint as before; `choose` passes the chain. Litecoin's guard, once re-enabled, covers
+  ltc1p with no more code.
+- **Restore kit:** tr(86h) on DigiByte. **Litecoin Core 0.21.5.8 has no tr() descriptors**, so Core cannot bring back
+  ltc1p coins; the Backup page says so and names the address and path.
+- **Checked:** BIP-341 wallet vectors and BIP-86's in Python and coins.js; the browser's digests equal the arcade's; a
+  litecoind regtest took a p2tr spend into a block (and refused an untweaked signature); node 2's Litecoin Core and a
+  DigiByte testnet Core take the test phrase's ltc1p/dgbt1p, and DigiByte Core derived the same dgbt1p from tr(86h).
+- **Needs:** Taproot RECEIVE on real coins needs the same real-money review the 2026-10-20 note asked for SegWit
+  ("Test-chains only (real-money) ... until its own review"). Please review before this reaches a real-coin arcade.
+
 ### 2026-11-07 · SadFrog's side (Claude) · Litecoin's known collections from chikun.market, liteverse.io and LiteOrd
 
 SadFrog: "we want to make sure the explore for ordinals collections on litecoin picks up chikun.market and liteverse.io's

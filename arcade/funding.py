@@ -35,7 +35,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import fees, utxos
+from . import fees, taproot, utxos
 from .config import Params
 from .script import (b58check_decode, hash160, p2sh_p2wpkh_address,
                      p2sh_p2wpkh_redeem, p2wpkh_script as _p2wpkh_script,
@@ -258,7 +258,7 @@ def choose(db, address: str, target: int, exclude=frozenset(),
         f"{target / 100_000_000:.8f} needed, at this address.")
 
 
-def price(inputs: int, outputs: list, rate: int, change: bool = False, params=None) -> int:
+def price(inputs: int, outputs: list, rate: int, change: bool = False, params=None, kind: str = "p2pkh") -> int:
     """Satoshis that get a transaction with these outputs into a block.
 
     Priced on the mempool's *virtual* size, because that is the number a
@@ -278,7 +278,12 @@ def price(inputs: int, outputs: list, rate: int, change: bool = False, params=No
     here would mean decoding that address before anybody had said whether
     there are coins to spend at all.
     """
-    raw = BYTES_OVERHEAD + inputs * BYTES_PER_INPUT
+    if kind == "p2tr":
+        # Taproot key-path inputs (2026-11-07) at their real virtual size, 57.5 bytes each, and the witness marker and
+        # flag (2 weight units): a 148-byte guess would charge two and a half times the fee.
+        raw = BYTES_OVERHEAD + -(-(inputs * taproot.INPUT_WEIGHT + 2) // 4)
+    else:
+        raw = BYTES_OVERHEAD + inputs * BYTES_PER_INPUT
     if getattr(params, "tx_time", False):
         raw += 4                                    # a Peercoin-style chain's nTime (Kotia)
     sigops = 0
@@ -286,8 +291,8 @@ def price(inputs: int, outputs: list, rate: int, change: bool = False, params=No
         raw += 8 + len(varint(len(script))) + len(script)
         sigops += fees.legacy_sigops(script)
     if change:
-        raw += BYTES_PER_CHANGE
-        sigops += 1
+        raw += taproot.CHANGE_BYTES if kind == "p2tr" else BYTES_PER_CHANGE
+        sigops += 0 if kind == "p2tr" else 1
     # The soft-dust fee is the Dogecoin family's; a chain without it (Litecoin) adds nothing.
     soft = fees.soft_dust_fee(outputs) if getattr(params, "soft_dust", True) else 0
     return fees.fee_for(raw, sigops, rate) + soft
@@ -405,16 +410,20 @@ def build(db, params: Params, address: str, payload_outputs: list,
     """
     spend = sum(value for value, _ in payload_outputs)
     rate = fees.rate_for(params, rate)              # this chain's own minimum (2026-10-18)
+    # A Taproot sender's inputs are priced at their own size (2026-11-07); `spend_for` reads the address after the
+    # coins are chosen, as before, so an address with no coins is refused as having none.
+    hrp = getattr(params, "bech32_hrp", "") or ""
+    kind = "p2tr" if hrp and segwit_decode(hrp, str(address).lower())[0] == 1 else "p2pkh"
     # Priced as though there will be a payment back to the sender, since
     # that is what the finished transaction carries whenever anything is left
     # over. The guess picks the coins; the fee is recomputed once their count
     # is known. Told to the caller as the number it actually is.
-    guess = price(1, payload_outputs, rate, change=True, params=params)
+    guess = price(1, payload_outputs, rate, change=True, params=params, kind=kind)
     chosen = choose(db, address, spend + guess, exclude=exclude, extra=extra, network=getattr(params, "name", None))
-    fee = price(len(chosen), payload_outputs, rate, change=True, params=params)
+    fee = price(len(chosen), payload_outputs, rate, change=True, params=params, kind=kind)
     if sum(c["value"] for c in chosen) < spend + fee:
         chosen = choose(db, address, spend + fee, exclude=exclude, extra=extra, network=getattr(params, "name", None))
-        fee = price(len(chosen), payload_outputs, rate, change=True, params=params)
+        fee = price(len(chosen), payload_outputs, rate, change=True, params=params, kind=kind)
 
     total = sum(c["value"] for c in chosen)
     change = total - spend - fee
@@ -433,6 +442,16 @@ def build(db, params: Params, address: str, payload_outputs: list,
     ntime = tx_time(params)
     raw = build_raw_tx([(c["txid"], c["vout"]) for c in chosen], outputs, ntime=ntime)
     hashes = []
+    if rule["kind"] == "p2tr":
+        # A Taproot address's coins (2026-11-07), every one this key's key path: each signs the BIP-341 digest over
+        # every input's amount and script (`spent`, which the browser checks is its own key's output before it works
+        # the digest out itself: coins.js verifyOffer), and is signed with Schnorr by the tweaked key.
+        for coin in chosen:
+            coin["taproot"], coin["spent"] = {"key": True}, rule["change_script"].hex()
+        rows = [{**coin, "spent": rule["change_script"]} for coin in chosen]
+        hashes = [taproot.sighash(rows, outputs, n, version=1, locktime=0).hex() for n in range(len(chosen))]
+        return Unsigned(raw=raw, inputs=chosen, outputs=outputs, sighashes=hashes,
+                        fee=fee, change=change, what=what, ntime=ntime)
     for n, coin in enumerate(chosen):
         if rule["kind"] in ("p2wpkh", "p2sh-p2wpkh"):
             coin["segwit"] = rule["kind"]
@@ -1334,6 +1353,11 @@ def spend_for(address: str, params: Params, keyhash: bytes | None = None) -> dic
             return {"kind": "p2wpkh",
                     "script_code": witness_scriptcode(program),
                     "change_script": _p2wpkh_script(program)}
+        # A Taproot address (2026-11-07): its key path, BIP-341's digest (no scriptCode), change back to it.
+        if version == 1 and program is not None and taproot.payable(program):
+            return {"kind": "p2tr", "script_code": b"", "change_script": taproot.p2tr(program)}
+        if version is not None:
+            raise FundingError("this arcade spends from legacy, SegWit v0 and Taproot key-path addresses only")
     return {"kind": "p2pkh", "script_code": p2pkh_script(address),
             "change_script": p2pkh_script(address)}
 
