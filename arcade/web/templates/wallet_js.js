@@ -594,8 +594,7 @@ async function _restore(phrase, password, {network, version}) {
   const wallet = await walletFrom(signer.normalise(phrase), network, version);
   const running = await chains();
   await everyChain(wallet, running);
-  await refuseLeaked(password);
-  let result;
+  let result = null, named = "";
   try {
     result = await seatWith(wallet, {join: false});
   } catch (e) {
@@ -608,7 +607,6 @@ async function _restore(phrase, password, {network, version}) {
     // tag-chain address, which this node reads as well as the one it signed up on. So words whose address holds a
     // name ARE an account, wherever it was made, and take a seat here as a sign-up does. Words with no name still
     // make nothing: a mistyped phrase must not become a new, empty account.
-    let named = "";
     try {
       named = (await (await fetch(`/r/address/${encodeURIComponent(wallet.address)}`, {cache: "no-store"})).json()).tag || "";
     } catch (x) { /* unread: refused below as before */ }
@@ -616,7 +614,11 @@ async function _restore(phrase, password, {network, version}) {
       throw new Error("those words are not an account on this node, and no @name on the chain belongs to them. "
         + "Check each word; a name claimed in the last few minutes may not be read here yet. Nothing was changed.");
     }
-    const filed = await fileHere(wallet, named, await seal(wallet.phrase, password), running, network);
+  }
+  await refuseLeaked(password);
+  const blob = await seal(wallet.phrase, password);
+  if (!result) {
+    const filed = await fileHere(wallet, named, blob, running, network);
     const answer = await filed.json().catch(() => ({}));
     if (!filed.ok) throw new Error(answer.detail || "this node would not take the account. Nothing was changed.");
     remember(wallet.phrase);
@@ -626,7 +628,6 @@ async function _restore(phrase, password, {network, version}) {
     noteShort(password);
     return {...answer, tag: named, wallet, brought: true};
   }
-  const blob = await seal(wallet.phrase, password);
   const stored = await fetch("/account/vault", {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({blob}),
