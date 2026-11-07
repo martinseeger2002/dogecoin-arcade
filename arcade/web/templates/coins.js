@@ -1937,3 +1937,141 @@ export async function sighashWitness(tx, index, scriptCode, amount, sighashType 
   ]);
   return hash256(preimage);
 }
+
+/* --- restoring without an arcade (2026-11-07, SadFrog's side) --------------
+ *
+ * SadFrog: "we want it to be easy for someone to be able to spin back up their wallets from any core if arcade goes
+ * down as well as any arcade." The twelve words are BIP39 and the keys BIP32/BIP44 on m/44'/<coin>'/0'/0/i, but <coin>
+ * is 3 on every mainnet (COIN_TYPE above), so a wallet that looks on a chain's own registered type (DigiByte 20,
+ * Litecoin 2) finds nothing from the words alone. What is here says the keys the way each Core reads them:
+ *
+ *   descriptorChecksum   BIP380's eight characters after '#', which importdescriptors insists on
+ *   extendedKey          BIP32 serialization (xprv/xpub; tprv/tpub on the test chains)
+ *   restoreKit           one chain's path, address, WIF and the exact Core commands: a blank descriptor wallet and
+ *                        importdescriptors on the Cores that have them (Litecoin 0.21, Bells 3, DigiByte 9),
+ *                        importprivkey on the ones that do not (Dogecoin 1.14 and its forks, Kotia, Wojakcoin)
+ *
+ * `chain` is a row of arcade/restore_kit.py's table (which Core, which recipe, its address bytes), handed to the
+ * backup page and baked into the offline /recover page; tests/test_restore_kit.py holds this to the Python side, to
+ * the BIP380/BIP32 vectors and to a real DigiByte Core. Nothing here is sent anywhere.
+ */
+
+const DESC_INPUT = "0123456789()[],'/*abcdefgh@:$%{}IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~ijklmnopqrstuvwxyzABCDEFGH`#\"\\ ";
+const DESC_GEN = [0xf5dee51989n, 0xa9fdca3312n, 0x1bab10e32dn, 0x3706b1677an, 0x644d626ffdn];
+
+function descPolymod(c, value) {
+  const top = c >> 35n;
+  c = ((c & 0x7ffffffffn) << 5n) ^ BigInt(value);
+  for (let i = 0; i < 5; i++) if ((top >> BigInt(i)) & 1n) c ^= DESC_GEN[i];
+  return c;
+}
+
+/** BIP380: a descriptor's checksum (the eight characters after its '#'). */
+export function descriptorChecksum(desc) {
+  let c = 1n, cls = 0, count = 0;
+  for (const ch of desc) {
+    const pos = DESC_INPUT.indexOf(ch);
+    if (pos < 0) throw new Error(`a descriptor cannot hold ${JSON.stringify(ch)}`);
+    c = descPolymod(c, pos & 31);
+    cls = cls * 3 + (pos >> 5);
+    if (++count === 3) { c = descPolymod(c, cls); cls = 0; count = 0; }
+  }
+  if (count > 0) c = descPolymod(c, cls);
+  for (let i = 0; i < 8; i++) c = descPolymod(c, 0);
+  c ^= 1n;
+  let out = "";
+  for (let i = 0; i < 8; i++) out += BECH32_CHARSET[Number((c >> (5n * BigInt(7 - i))) & 31n)];
+  return out;
+}
+
+/** A descriptor with its checksum on: "pkh(...)#abcdefgh". */
+export const withChecksum = (desc) => `${desc}#${descriptorChecksum(desc)}`;
+
+//: BIP32's version bytes: xprv/xpub on a mainnet, tprv/tpub on a test chain (COIN_TYPE 1), as DigiByte and Litecoin
+//: Core read them. A chain whose Core reads others says so in its row (`xkey`): Bells 3 reads Dogecoin's dgpv/dgub and
+//: refuses an xpub (checked with its Core's getdescriptorinfo, 2026-11-07).
+export const XKEY = {main: {prv: 0x0488ade4, pub: 0x0488b21e}, test: {prv: 0x04358394, pub: 0x043587cf}};
+
+/** The BIP32 node at `path` (indexes, as `derive` takes them), with what its serialization needs: depth, the parent's
+ *  fingerprint and its own index. */
+export async function xnode(seed, path) {
+  let node = await master(seed), parent = new Uint8Array(4), number = 0;
+  for (const index of path) {
+    parent = (await hash160(publicKey(node.key))).slice(0, 4);
+    node = await child(node, index);
+    number = index;
+  }
+  return {key: node.key, chain: node.chain, depth: path.length, parent, number};
+}
+
+/** BIP32 serialization: base58check of version, depth, parent fingerprint, index, chain code and key. */
+export async function extendedKey(node, isPrivate, versions = XKEY.main) {
+  const body = new Uint8Array(78);
+  const view = new DataView(body.buffer);
+  view.setUint32(0, isPrivate ? versions.prv : versions.pub);
+  body[4] = node.depth;
+  body.set(node.parent, 5);
+  view.setUint32(9, node.number >>> 0);
+  body.set(node.chain, 13);
+  if (isPrivate) body.set(node.key, 46);             // 0x00, then the 32-byte key
+  else body.set(publicKey(node.key), 45);
+  return base58(join([body, (await hash256(body)).slice(0, 4)]));
+}
+
+//: Each kind of address a restore imports: the descriptor around a key, its BIP purpose, and Core's name for the kind.
+//: SegWit kinds only where the chain has a bech32 prefix (config.py bech32_hrp); Taproot only on DigiByte, for its
+//: DigiDollars (key path, no script: the output arcade/taproot.py makes).
+const RESTORE_KINDS = [
+  [(k) => `pkh(${k})`, 44, "legacy"],
+  [(k) => `sh(wpkh(${k}))`, 49, "p2sh-segwit"],
+  [(k) => `wpkh(${k})`, 84, "bech32"],
+  [(k) => `tr(${k})`, 44, "bech32m"],
+];
+
+/** Everything needed to open one chain's coins of these words in that chain's own Core, with no arcade: {path,
+ *  address, wif, xpub (the account's, m/44'/<coin>'/0', to watch with), segwit, taproot, descriptors, commands}.
+ *  `since` is importdescriptors' timestamp (0 rescans the whole chain). The commands are lines for a terminal; a Core's
+ *  own console (Window -> Console) takes the same line without the `<chain>-cli` in front. */
+export async function restoreKit(seed, chain, since = 0) {
+  const network = chain.network;
+  const coin = COIN_TYPE[network] ?? 1;
+  const versions = chain.xkey || (coin === 1 ? XKEY.test : XKEY.main);
+  const mine = await coinKey(seed, network);
+  const kit = {network, label: chain.label, recipe: chain.recipe, coin, since,
+               path: `m/44'/${coin}'/0'/0/0`, account: `m/44'/${coin}'/0'`,
+               address: await address(mine.pubkey, chain.pubkeyhash),
+               wif: await wif(mine.key, WIF[network]),
+               xpub: await extendedKey(await xnode(seed, [44 + HARDENED, coin + HARDENED, HARDENED]), false, versions),
+               segwit: [], taproot: null, descriptors: [], commands: []};
+  if (chain.hrp) {
+    const nested = await p2shSegwitKey(seed, network), native = await nativeSegwitKey(seed, network);
+    kit.segwit = [{path: `m/49'/${coin}'/0'/0/0`, address: await p2shSegwitAddress(nested.pubkey, chain.scripthash)},
+                  {path: `m/84'/${coin}'/0'/0/0`, address: await p2wpkhAddress(native.pubkey, chain.hrp)}];
+  }
+  if (chain.taproot && chain.hrp) {
+    const out = await tweaked(mine.pubkey.slice(1));
+    kit.taproot = {address: segwitEncode(chain.hrp, 1, out.key),
+                   digidollar: DD_VERSIONS[network] ? await ddAddress(network, out.key) : ""};
+  }
+  const cli = `${chain.cli}${chain.flags ? " " + chain.flags : ""}`;
+  if (chain.recipe === "descriptors") {
+    const root = await extendedKey(await xnode(seed, []), true, versions);
+    const asks = [];
+    for (const [wrap, purpose, kind] of RESTORE_KINDS) {
+      if (kind !== "legacy" && !chain.hrp) continue;
+      if (kind === "bech32m" && !chain.taproot) continue;
+      for (const branch of [0, 1]) {               // 1: change, so the restored wallet can send as well
+        const desc = withChecksum(wrap(`${root}/${purpose}h/${coin}h/0h/${branch}/*`));
+        kit.descriptors.push({kind, branch, desc});
+        asks.push({desc, timestamp: since, range: [0, 20], active: true, internal: branch === 1});
+      }
+    }
+    kit.commands.push(`${cli} createwallet "arcade" false true "" false true`);
+    kit.commands.push(`${cli} -rpcwallet=arcade importdescriptors '${JSON.stringify(asks)}'`);
+  } else {
+    const wallet = chain.recipe === "privkey-wallet";       // a 0.21-style Core: no wallet until one is made
+    if (wallet) kit.commands.push(`${cli} createwallet "arcade"`);
+    kit.commands.push(`${cli}${wallet ? " -rpcwallet=arcade" : ""} importprivkey "${kit.wif}" "arcade" true`);
+  }
+  return kit;
+}

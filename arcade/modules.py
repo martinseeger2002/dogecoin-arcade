@@ -113,7 +113,8 @@ _MODULES = (
                  "faucets")),
     Module("wallet", "core", "Wallet", "Every chain's wallet for the operator and for users: Send, Receive, "
            "Transactions, imported wallets, backup and restore.",
-           routes=("/wallet", "/wallet.js", "/node-wallet.js", "/send", "/backup", "/restore", "/coins", "/node/wallet",
+           routes=("/wallet", "/wallet.js", "/node-wallet.js", "/send", "/backup", "/restore", "/recover",
+                   "/restore-kit.js", "/coins", "/node/wallet",
                    "/me/wallet", "/me/backup", "/r/balances", "/r/address", "/r/tx", "/r/blockheight", "/r/blocktime",
                    "/r/pending", "/account/address", "/account/activity", "/account/broadcast",
                    "/account/chain-stats", "/account/coins", "/account/doge-stray", "/account/dust",

@@ -94,6 +94,8 @@ PUBLIC_PAGES = frozenset({
     "/launches",
     "/mintpad/new",
     "/restore",
+    "/recover",               # the offline recovery page: one file, nothing of anybody's in it (2026-11-07)
+    "/restore-kit.js",        # ...and the backup page's renderer of each chain's Core commands
     "/listings",              # legs this node holds signatures for. It can
                               # spend none of them: the key is not here.
     "/events",                # what an open page polls to know to refresh

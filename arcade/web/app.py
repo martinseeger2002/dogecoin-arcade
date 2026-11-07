@@ -25436,6 +25436,7 @@ def create_app(state: AppState) -> FastAPI:
         if modulelib.edition(state.settings()) == "lite":
             return _lite_home(request)                     # ARCADE Lite draws it in its own window
         mine = state.vault().by_pubkey(account.pubkey) or {}
+        from .. import restore_kit as _restore_kit
         return render(request, "my_backup.html", chain=_account_chain(),
                       my_name=mine.get("tag", ""),
                       # The chains where the coins are money, and the address
@@ -25448,7 +25449,12 @@ def create_app(state: AppState) -> FastAPI:
                                         account.pubkey, one)}
                                    for one in _account_chains()
                                    if one.is_mainnet],
-                      real_on=_words_backed_up(account))
+                      real_on=_words_backed_up(account),
+                      # Restoring in each chain's own Core with no arcade (restore_kit.py, 2026-11-07): the table the
+                      # browser builds the commands from, rescans starting a week before this arcade first knew the
+                      # account or the chain's floor, whichever is earlier.
+                      restore_chains=_restore_kit.chains(min(
+                          [t for t in (account.created, mine.get("made")) if t] or [0]) or None))
 
     @app.get("/me/wallet", response_class=HTMLResponse)
     def my_wallet(request: Request):
@@ -37162,6 +37168,9 @@ def create_app(state: AppState) -> FastAPI:
     # API keys (arcade/apikeys.py): their routes, kept by the gate below like every other.
     from . import apikeys_web
     apikeys_web.register(app, state, admin_check=_admin_check, signed_in=signed_in, run_line=_lite_home.run_line)
+    # Restoring without an arcade (recover_web.py, 2026-11-07): the offline /recover page and the backup page's renderer.
+    from . import recover_web
+    recover_web.register(app, state, versioned=_versioned)
     # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
     from . import modules_web
     modules_web.register(app, state, admin_check=_admin_check, signed_in=signed_in)
