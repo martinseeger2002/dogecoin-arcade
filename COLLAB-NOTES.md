@@ -88,6 +88,19 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-06 The public arcade, the Bank, publishing and the code's origin moved from .25 to Strawberry on .55 (Claude; the operator: "serve strawberries arcade on app.dogecoinarcade.com", "migrate everything that is use on .25 including the ashvale bank and referee key. keep .25 on its mesh identity. keep .55 on its identity", "move the git origin repo to .55 too")
+
+- **app., node., test. and pages.dogecoinarcade.com** are served by Strawberry (.55) through a new tunnel. Strawberry
+  holds every account of .25 (sessions too: people stayed signed in), listings, orders, standing lots, delegated
+  trades, watches, push devices, and .25's referee, push and release-signing keys and public settings. Dogecoin is
+  borrowed over the mesh. Each machine kept its own mesh identity; .25 runs on as a plain mesh arcade, what acted for
+  users moved aside there (not deleted).
+- **The ASHVALE Bank** runs on .55 (its own copy of the bank-rpc tree, the Pepecoin testnet node on .55).
+- **dogecoinarcade.com** is published from .55 (`publish-local.sh` beside `publish.sh` in the site folder).
+- **The code's origin** is now a bare repo on .55 (`dogecoin-arcade.git` in the home folder there). .25's checkout
+  refuses pushes and pulls from it; merging to master no longer restarts the public arcade. Deploying to the public
+  arcade = publish, then update Strawberry.
+
 ### 2026-11-06 The Wallet's Doginals: in number order while still being read, and a faster first load (Claude; the operator: "My wallet is still not showing my lowest number inscriptions first", "the wallet takes too long to load the initial load")
 
 - On .25 a big wallet's first list took minutes, and the steps shown meanwhile had no numbers (asked only at the end),
