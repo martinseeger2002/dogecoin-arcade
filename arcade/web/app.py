@@ -37652,10 +37652,12 @@ def _check_address(address: str, *, mainnet: bool, segwit_ok: bool = False) -> s
     for params in NETWORKS.values():
         hrp = getattr(params, "bech32_hrp", None)
         if hrp and lowered.startswith(hrp + "1"):
-            # A coin send on a test chain pays native segwit v0 (2026-10-20, tbuuol): `segwit_ok`
-            # is that caller saying it builds the output (`_pay_script`). Taproot is not paid yet.
-            if (segwit_ok and not getattr(params, "real_coins", False)
-                    and params.name in {p.name for p in wanted}):
+            # A coin send pays native segwit v0 (2026-10-20, tbuuol): `segwit_ok` is that caller saying it
+            # builds the output (`_pay_script`). Test chains first; real coins too since 2026-11-07 (SadFrog: a
+            # DigiByte Core or exchange address is dgb1q... by default, and a send refused to pay it). Paying one is
+            # only an output script, OP_0 <program>, checked by segwit_decode; RECEIVING on SegWit stays test-only
+            # (wallet_js ADDRESS_KINDS). Taproot is not paid yet.
+            if segwit_ok and params.name in {p.name for p in wanted}:
                 version, program = segwit_decode(hrp, lowered)
                 if version == 0:
                     return None

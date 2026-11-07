@@ -201,6 +201,11 @@ export const WIF = {main: 0x9e, doge: 0x9e, ltc: LTC_WIF, test: 0xf1, regtest: 0
 //: native SegWit). The script-hash version (config.py `scripthash_version`) and the bech32 prefix.
 export const LTC_KINDS = {ltc: {scripthash: 50, hrp: "ltc"}, ltctest: {scripthash: 58, hrp: "tltc"}};
 
+//: Every SegWit chain's bech32 prefix (config.py `bech32_hrp`), for saying which address a SegWit output pays
+//: (2026-11-07: a send on real DigiByte or Litecoin may pay dgb1q.../ltc1q..., and a D... signer's own address
+//: cannot say the prefix).
+export const SEGWIT_HRP = {ltc: "ltc", ltctest: "tltc", dgb: "dgb", dgbtest: "dgbt", bel: "bel"};
+
 /** A private key as Wallet Import Format text, for a compressed public key. */
 export async function wif(key, version) {
   const body = new Uint8Array(key.length + 1);
@@ -1005,11 +1010,13 @@ export async function verifyOffer(offer, keys) {
                && script[23] === 0x88 && script[24] === 0xac) {
       pays.push({to: await base58check(version, script.slice(3, 23)),
                  value: Number(out.value), mine: false});
-    } else if (script.length === 22 && script[0] === 0x00 && script[1] === 0x14) {
-      // A native-segwit (P2WPKH) output: show the bech32 address when the hrp
-      // can be read off this key's own address, else say it is a segwit output.
-      const hrp = ltc ? ltc.hrp : /^[a-z]+1/.test(own) ? own.slice(0, own.lastIndexOf("1")) : "";
-      pays.push({to: hrp ? segwitEncode(hrp, 0, script.slice(2, 22)) : "a segwit address",
+    } else if ((script.length === 22 && script[0] === 0x00 && script[1] === 0x14)
+               || (script.length === 34 && script[0] === 0x00 && script[1] === 0x20)) {
+      // A native-segwit output, P2WPKH or P2WSH (2026-11-07: an exchange's dgb1q.../ltc1q... may be either):
+      // show the bech32 address when the chain's hrp is known, else say it is a segwit output.
+      const hrp = SEGWIT_HRP[keys.network || offer.chain]
+        || (/^[a-z]+1/.test(own) ? own.slice(0, own.lastIndexOf("1")) : "");
+      pays.push({to: hrp ? segwitEncode(hrp, 0, script.slice(2)) : "a segwit address",
                  value: Number(out.value), mine: false});
     } else if (ddAmounts && out.value === 0n && script.length === 34 && script[0] === 0x51 && script[1] === 0x20
                && ddAt < ddAmounts.length) {
@@ -1019,7 +1026,8 @@ export async function verifyOffer(offer, keys) {
     } else if (script.length === 34 && script[0] === 0x51 && script[1] === 0x20) {
       // A Taproot (v1) output (2026-11-05 review: a DigiDollar vault read as "34 bytes written to the chain"): said as
       // a payment, with its address where this key's hrp is known, else its key's first characters.
-      const hrp = ltc ? ltc.hrp : /^[a-z]+1/.test(own) ? own.slice(0, own.lastIndexOf("1")) : "";
+      const hrp = SEGWIT_HRP[keys.network || offer.chain]
+        || (/^[a-z]+1/.test(own) ? own.slice(0, own.lastIndexOf("1")) : "");
       pays.push({to: hrp ? segwitEncode(hrp, 1, script.slice(2, 34))
                          : `a Taproot output (a vault or someone's Taproot address, key ${hex(script.slice(2, 10))}…)`,
                  value: Number(out.value), mine: false});
