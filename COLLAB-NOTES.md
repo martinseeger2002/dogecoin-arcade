@@ -404,6 +404,38 @@ Found while checking #121's fixes on the live arcades: pages drawn outside `rend
 - **Test (`tests/test_safe_headers.py`):** walks every GET route without a path parameter and fails on any HTML page with no `frame-ancestors`. On `main` it names ten: `/lite`, `/globe`, `/browser`, `/meshweb`, `/offline`, `/terms`, `/terms/left`, `/admin/terms/preview`, `/tokens/launchpad/preview` and `/dogefeedx/network`. A second test checks `/recover` keeps its single `frame-ancestors 'none'` policy.
 - Nothing frames these pages from another origin today (the launchpad preview is framed by the arcade's own token page), so `'self'` changes nothing a visitor sees.
 
+### 2026-11-07 · SadFrog's side (Claude) · Litecoin's known collections from chikun.market, liteverse.io and LiteOrd
+
+SadFrog: "we want to make sure the explore for ordinals collections on litecoin picks up chikun.market and liteverse.io's
+index as well as the new https://liteord.doginals.store/inscriptions". Branch `team/ltc-collections` (on `team/ltc-ords`,
+a5653e9f).
+
+- **What each site offers** (read 2026-11-07, all public, no key):
+  - chikun.market: `api.chikun.market/v1/collections`, all 47 in one answer (name, supply, cover). It publishes no
+    collection's pieces (only the ones for sale), so its collections are listed only, and Explore says so.
+  - liteverse.io: `/collections` (39, one answer) and `/collections/<id>/inscriptions` (a whole list, ids, numbers,
+    names). Its terms (section 6) bar automated access without its leave: **its tick is off by default**; ask them
+    before ticking it on a public arcade.
+  - LiteOrd: a documented read-only API (5 requests a second without a key), **no collection list**, and its ord index
+    is still syncing (0 inscriptions today). It is read the ord way, a parent's children
+    (`/r/children/<id>/inscriptions/<page>`): search a parent's id on Explore's Litecoin tab to open one.
+- **Design** (`arcade/known_collections.py`): `MULTI_SOURCES["ltc"]`, an adapter per site (listing -> lines, collection
+  -> pieces, shapes checked), and each site's lists under the slug `<source>:<key>` (`chikun:punks`, `liteverse:12`,
+  `liteord:<parent id>`). The slug is already the key of every table, of the mesh's rows and of the fingerprint, so two
+  sites never collide or flap, arcades agree per site, and the formula, the wire and the files are unchanged.
+  `slug_ok` checks a slug per chain (mesh `_row` too: an unknown site's rows are left out). Same-named collections
+  from two sites are shown side by side with "also listed by", never merged. A list read from its Litecoin site today
+  stands against linked arcades for a day, as Nintondo's does (`collectionshare.wanted`).
+- **Importer:** one feed per source, each with its own progress row (`ltc:chikun` ...), pace, backoff and caps as
+  before; a 404 or "no pieces" is kept as the line's reason, not a backoff. One switch (`known_collections_import`) as
+  before, plus a tick per Litecoin site (`known_collections_ltc_sources`, Admin -> Ords; default chikun.market, LiteOrd).
+- **Explore:** Litecoin collections on the Litecoin ords tab, each card "listed by" its site, "agreed by N".
+- **Tests:** `tests/test_known_collections_ltc.py` (16, on the sites' recorded answers in
+  `tests/fixtures/ltc_collections/`), test_known_collections (Admin lists one line per Litecoin site). Full suite:
+  4,648 passed, 3 failed (the known test_docs x2 and test_update).
+- **Live check** (temp file only): chikun 47 lines; liteverse 39 lines and Litecoin Lizards' 11 ids, all `<txid>i<n>`;
+  LiteOrd answered 404 (index not there yet); the same ord children endpoint on ord.chikun.market parsed.
+
 ### 2026-11-07 · SadFrog's side (Claude) · Litecoin ordinals back on Litecoin mainnet (only the ords; testnet, Omni and Class B stay off)
 
 SadFrog: "please setup litecoin ordinals". This undoes the ords part of 2026-11-05's "no token protocols on LTC, tLTC and

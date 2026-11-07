@@ -71,13 +71,15 @@ def unpack(data: bytes) -> list | None:
     return got if isinstance(got, list) else None
 
 
-def _row(r: Any) -> dict | None:
-    """One "il" row, checked: [slug, fp, name, supply, count, sig]."""
+def _row(r: Any, net: str) -> dict | None:
+    """One "il" row of a chain, checked: [slug, fp, name, supply, count, sig]. On Litecoin the slug is
+    "<source>:<key>" of a source this arcade knows (2026-11-07, known_collections.MULTI_SOURCES); a newer arcade's
+    other sources are left out."""
     if not isinstance(r, list) or len(r) < 5:
         return None
     slug, fp, name, supply, count = r[:5]
     sig = r[5] if len(r) > 5 else ""
-    if not isinstance(slug, str) or not kclib.SLUG.match(slug) or not isinstance(fp, str) or len(fp) != 64:
+    if not kclib.slug_ok(net, slug) or not isinstance(fp, str) or len(fp) != 64:
         return None
     try:
         int(fp, 16)
@@ -235,8 +237,9 @@ class CollectionShare:
                         continue
                     if agree[best] <= agree.get(have["fp"], 1):
                         continue                               # no more arcades agree on the other: keep ours
-                    if have["source"] == "nintondo" and time.time() - have["fetched_at"] < kclib.REFRESH:
-                        continue                               # read from the source today: its own word stands
+                    if not str(have["source"]).startswith("mesh:") and time.time() - have["fetched_at"] < kclib.REFRESH:
+                        continue                               # read from its site today (Nintondo, or a Litecoin
+                                                               # site, 2026-11-07): its own word stands
                 peers = [p for p in by_fp[best] if self._bad.get((p, net, slug, best), 0) <= now]
                 if peers:
                     out.append({"net": net, "slug": slug, "fp": best, "peers": peers, "row": rows[(slug, best)],
@@ -321,7 +324,7 @@ class CollectionShare:
                 held["at"] = now                               # nothing new: what it said stands
                 continue
             if digest == mine.get(net) and store is not None:  # the same as ours: its index is ours, nothing to ask
-                rows = {r["slug"]: _row([r["slug"], r["fp"], r["name"], r["supply"], r["count"], r["sig"]])
+                rows = {r["slug"]: _row([r["slug"], r["fp"], r["name"], r["supply"], r["count"], r["sig"]], net)
                         for r in await asyncio.to_thread(store.index, net)}
                 nets[net] = {"digest": digest, "at": now, "rows": rows}
                 continue
@@ -349,7 +352,7 @@ class CollectionShare:
         got = self._incoming.get(key)
         if got is None:
             return
-        got.extend(r for r in (_row(x) for x in header["rows"][:ROWS_PER_FRAME]) if r is not None)
+        got.extend(r for r in (_row(x, net) for x in header["rows"][:ROWS_PER_FRAME]) if r is not None)
         if len(got) > kclib.MAX_COLLECTIONS:
             self._incoming.pop(key, None)
             return

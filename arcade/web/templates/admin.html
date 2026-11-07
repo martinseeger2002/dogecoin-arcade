@@ -687,13 +687,23 @@
      mesh/collectionshare.py). #}
   <div class="ordcard" id="kccard">
     <h3>Known collections</h3>
-    <p class="muted" style="margin-top:0;font-size:.84rem">The collections of Doginals, Pepinals and Bellinals, shown
-      and searchable on Explore. Linked arcades share the lists they hold, each checked against its fingerprint. Switched
-      on, this arcade also reads them from Nintondo&rsquo;s public search: one request a second at most. On demand (the
+    <p class="muted" style="margin-top:0;font-size:.84rem">The collections of Doginals, Pepinals, Bellinals and
+      Litecoin ordinals, shown and searchable on Explore. Linked arcades share the lists they hold, each checked against
+      its fingerprint. Switched on, this arcade also reads them from Nintondo&rsquo;s public search and the Litecoin
+      sites ticked below: one request a second to each at most. On demand (the
       default) it reads each chain&rsquo;s listing once a day and a collection&rsquo;s pieces when somebody opens it
       (from a linked arcade first, when one holds it); every collection takes Dogecoin&rsquo;s lists in a few hours,
       then once a day only the collections that changed.</p>
-    <label class="switch"><input type="checkbox" id="kcimport"> Import known collections from Nintondo</label>
+    <label class="switch"><input type="checkbox" id="kcimport"> Import known collections from their sites</label>
+    {# 2026-11-07, SadFrog: "we want to make sure the explore for ordinals collections on litecoin picks up
+       chikun.market and liteverse.io's index as well as the new https://liteord.doginals.store/inscriptions". One
+       tick each, under the switch above: liteverse.io's terms (section 6) bar automated reading without its leave. #}
+    <div style="margin-top:8px;font-size:.84rem">Litecoin from:
+      <span id="kcltc"></span>
+      <div class="muted">chikun.market lists its collections but publishes no pieces; liteverse.io publishes both, but
+        its terms ask for its permission before automated reading; LiteOrd reads a parent inscription&rsquo;s children
+        when a visitor searches its id on Explore.</div>
+    </div>
     {# 2026-10-26, SadFrog: "can you make the collection search more in depth with sorting and filters and lazy loading
        one at a time on demand" -- every list of Nintondo's is about 885,000 pieces (some 310 MB), so by default a
        collection's pieces come when somebody opens it on Explore. #}
@@ -3462,18 +3472,39 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
     box.appendChild(more);
   }
   // Known collections (2026-10-26): the import switch and how far each chain is.
-  var KC_NAMES = {doge: 'Dogecoin', main: 'Pepecoin', bel: 'Bellscoin'};
+  var KC_NAMES = {doge: 'Dogecoin', main: 'Pepecoin', bel: 'Bellscoin', ltc: 'Litecoin'};
+  function kcSites(d) {                              // 2026-11-07: one tick per Litecoin site
+    var box = $('kcltc'); if (!box || box.contains(document.activeElement)) return;
+    box.textContent = '';
+    (d.ltc_choices || []).forEach(function (s) {
+      var l = document.createElement('label'), i = document.createElement('input');
+      i.type = 'checkbox'; i.value = s.source; i.checked = (d.ltc_sources || []).indexOf(s.source) >= 0;
+      i.onchange = function () {
+        var on = Array.prototype.filter.call(box.querySelectorAll('input'), function (x) { return x.checked; })
+          .map(function (x) { return x.value; });
+        call('/admin/api/known-collections', {ltc_sources: on})
+          .then(function () { $('kcsaid').textContent = 'Litecoin sites: ' + (on.join(', ') || 'none'); loadKnown(); })
+          .catch(function (e) { $('kcsaid').textContent = e.message; });
+      };
+      l.style.marginRight = '10px'; l.appendChild(i); l.appendChild(document.createTextNode(' ' + s.label)); box.appendChild(l);
+    });
+  }
   function loadKnown() {
     fetch('/admin/api/known-collections', {headers: {'Accept': 'application/json'}, cache: 'no-store'})
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (document.activeElement !== $('kcimport')) $('kcimport').checked = !!d.on;
         if (d.mode && document.activeElement !== $('kcmode')) $('kcmode').value = d.mode;
+        kcSites(d);
         var out = $('kcsaid'); out.textContent = '';
         (d.chains || []).forEach(function (c) {
-          var line = (KC_NAMES[c.net] || c.net) + ': ' + Number(c.collections || 0).toLocaleString() + ' collections, '
+          var line = (KC_NAMES[c.net] || c.net) + (c.label ? ' \u00b7 ' + c.label : '') + ': '
+            + Number(c.collections || 0).toLocaleString() + ' collections, '
             + Number(c.pieces || 0).toLocaleString() + ' pieces held';
-          if (d.on) {
+          if (c.source && c.pieces_published === false)
+            line += ' (' + Number(c.listed || 0).toLocaleString() + ' listed; it publishes no pieces)';
+          if (c.source && !c.switched) line += ' \u2014 not ticked';
+          else if (d.on) {
             line += c.phase === 'list' ? ' \u2014 reading the list, page ' + c.page
               : c.phase === 'want' ? ' \u2014 fetching what visitors opened' + (c.slug ? ', now ' + c.slug + ' page '
                 + c.page + (c.pages ? ' of ' + c.pages : '') : '')
@@ -3495,7 +3526,7 @@ td.nodecell > .npill.work,td.nodecell > .npill.bad{margin-left:8px}
   }
   $('kcimport').onchange = function () {
     call('/admin/api/known-collections', {'import': $('kcimport').checked})
-      .then(function (j) { $('kcsaid').textContent = j['import'] ? 'Importing from Nintondo.' : 'Import switched off.'; loadKnown(); })
+      .then(function (j) { $('kcsaid').textContent = j['import'] ? 'Importing from their sites.' : 'Import switched off.'; loadKnown(); })
       .catch(function (e) { $('kcsaid').textContent = e.message; });
   };
   $('kcmode').onchange = function () {

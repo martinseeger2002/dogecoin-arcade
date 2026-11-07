@@ -180,7 +180,7 @@
         </select></label>
         <label>Source <select id="xpcollsrc">
           <option value="all">All</option>
-          <option value="known">Known (Nintondo, arcades)</option>
+          <option value="known">Known (Nintondo, Litecoin sites, arcades)</option>
           <option value="registry">Collection registry</option>
           <option value="builtin">Built in (Sub 1K)</option>
         </select></label>
@@ -200,8 +200,9 @@
         <label class="xpcheck"><input type="checkbox" id="xpcollcomplete"> Complete only</label>
       </div>
       <p class="muted xpnote">Collections published to the arcades&rsquo; collection registry, and the known
-        collections of Doginals, Pepinals and Bellinals, with where the list came from and how many arcades hold the
-        very same list. One marked &ldquo;not fetched yet&rdquo; is fetched when you open it.</p>
+        collections of Doginals, Pepinals, Bellinals and Litecoin ordinals, with the site that lists each, where the
+        list came from and how many arcades hold the very same list. One marked &ldquo;not fetched yet&rdquo; is
+        fetched when you open it. On Litecoin, search a parent inscription&rsquo;s id to open its children.</p>
       <div id="xpcollsaid" class="xpsaid" aria-live="polite"></div>
       <div class="xpcolls" id="xpcolls"></div>
       <div class="xpend" id="xpcollsend" aria-hidden="true"></div>
@@ -636,6 +637,8 @@
     if (c.imported && c.supply && c.count !== c.supply) pieces = num(c.count) + ' of ' + num(c.supply) + ' pieces';
     cap.appendChild(el('span', 'muted xpline', pieces));
     if (c.owners != null) cap.appendChild(el('span', 'muted xpline', num(c.owners) + ' holder' + (c.owners === 1 ? '' : 's')));
+    // 2026-11-07: Litecoin's collections come from several sites, each card saying which one lists it.
+    if (c.kind === 'known' && c.lister && c.lister !== 'nintondo') cap.appendChild(el('span', 'muted xpline', 'listed by ' + c.listed_by));
     if (c.kind === 'known' && c.agreed) cap.appendChild(el('span', 'muted xpline', 'agreed by ' + num(c.agreed)));
     if (c.kind === 'known' && !c.imported) cap.appendChild(el('span', 'xpmark', 'not fetched yet'));
     b.appendChild(cap);
@@ -668,10 +671,16 @@
     COLL_WAIT = setTimeout(collections, 250);
   };
   // A known collection (2026-10-26): where its list came from, and how many arcades hold the very same list.
+  // 2026-11-07: and which site lists it (Litecoin: chikun.market, liteverse.io, LiteOrd), and which other site lists
+  // one by the same name -- shown beside it, never merged.
   function knownSaid(c) {
     var src = c.imported === false ? 'not fetched yet' : c.source === 'nintondo' ? 'from Nintondo'
-      : String(c.source || '').indexOf('mesh:') === 0 ? 'from arcade ' + c.source.slice(5) : (c.source || '');
-    var bits = [src];
+      : String(c.source || '').indexOf('mesh:') === 0 ? 'from arcade ' + c.source.slice(5)
+      : c.source === c.lister ? 'from ' + c.listed_by : (c.source || '');
+    var bits = [];
+    if (c.lister && c.lister !== 'nintondo') bits.push('listed by ' + c.listed_by);
+    bits.push(src);
+    (c.also || []).forEach(function (o) { if (o.listed_by) bits.push('also listed by ' + o.listed_by); });
     if (c.agreed) bits.push('agreed by ' + num(c.agreed) + ' arcade' + (c.agreed === 1 ? '' : 's'));
     if (c.owners != null) bits.push(num(c.owners) + ' holders');
     if (c.first != null && c.last != null) bits.push('inscriptions #' + num(c.first) + ' to #' + num(c.last));
@@ -705,7 +714,8 @@
       if (c.kind === 'known' && j.collection) { c = X.coll = j.collection; $('xpcolldesc').textContent = knownSaid(c); }
       if (c.kind === 'builtin' && j.collection) { c = X.coll = j.collection; $('xpcolldesc').textContent = c.description || ''; }
       if (j.loading) {                                   // not held yet: being fetched, looked at again in 3 s
-        $('xpcollwait').textContent = (j.importing === false ? 'Asking linked arcades for it' : 'Fetching from Nintondo')
+        $('xpcollwait').textContent = (j.importing === false ? 'Asking linked arcades for it'
+          : c.lister && c.lister !== 'nintondo' ? 'Fetching from ' + c.listed_by : 'Fetching from Nintondo')
           + ': ' + num(j.have || 0) + (j.of ? ' of ' + num(j.of) : '') + ' pieces';
         OPEN.waiting = true;
         OPEN.poll = setTimeout(function () { if (mine === OPEN.gen) morePieces(true); }, 3000);

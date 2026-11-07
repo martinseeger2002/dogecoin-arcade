@@ -1,0 +1,142 @@
+[
+ {
+  "id": 1,
+  "name": "Ah sh*t, here we ordinal again",
+  "description": "Ah sh*t, here we ordinal again collection that contains 84 Inscriptions on Litecoin Ordinals, ranging from #928 to #1014.",
+  "inscription_icon": "cb0e438418ce4e6e0a58ed939844fdb09ddd09beafdd2d30015887d96aefbb02i0",
+  "supply": 84,
+  "slug": "ah-sh*t-here-we-ordinal-again",
+  "meta": "{}",
+  "display_name": "Ah sh*t, here we ordinal again",
+  "image_url": "https://ordliteverse.com/content/cb0e438418ce4e6e0a58ed939844fdb09ddd09beafdd2d30015887d96aefbb02i0",
+  "banner_url": null,
+  "ordinal_count": 83,
+  "creator": {
+   "handle": null,
+   "website": null,
+   "x_handle": null,
+   "ltc_address": null
+  },
+  "content_type": "image/png",
+  "stats": {
+   "ordinal_count": 83,
+   "volume": {
+    "all": 0,
+    "daily": 0
+   },
+   "price": null
+  }
+ },
+ {
+  "id": 12,
+  "name": "Litecoin Punks",
+  "description": "Litecoin Punks are a collection of 100 early Litecoin Ordinals with inscriptions #642 to #834.",
+  "inscription_icon": "f2b6adf7b2d0f128fb14817ff37f5f36e9176b17571e20c49871875553f937b4i0",
+  "supply": 100,
+  "slug": "litecoin-punks",
+  "meta": "{}",
+  "display_name": "Litecoin Punks",
+  "image_url": "https://ordliteverse.com/content/f2b6adf7b2d0f128fb14817ff37f5f36e9176b17571e20c49871875553f937b4i0",
+  "banner_url": null,
+  "ordinal_count": 100,
+  "creator": {
+   "handle": null,
+   "website": null,
+   "x_handle": null,
+   "ltc_address": null
+  },
+  "content_type": "image/png",
+  "stats": {
+   "ordinal_count": 100,
+   "volume": {
+    "all": 0,
+    "daily": 0
+   },
+   "price": null
+  }
+ },
+ {
+  "id": 27,
+  "name": "Sad Frog",
+  "description": "SadFrogLTC is a small but patient project with sharing in mind.",
+  "inscription_icon": "879335913e2ede9d1f972f3deb579b3bec88ce7055d3e0015ee900fa49869ac3i0",
+  "supply": 84,
+  "slug": "sad-frog",
+  "meta": "{}",
+  "display_name": "Sad Frog",
+  "image_url": "https://ordliteverse.com/content/879335913e2ede9d1f972f3deb579b3bec88ce7055d3e0015ee900fa49869ac3i0",
+  "banner_url": "/uploads/image_upload/image/25/Picture4.jpg",
+  "ordinal_count": 84,
+  "creator": {
+   "handle": null,
+   "website": null,
+   "x_handle": null,
+   "ltc_address": null
+  },
+  "content_type": "image/png",
+  "stats": {
+   "ordinal_count": 84,
+   "volume": {
+    "all": 0,
+    "daily": 0
+   },
+   "price": 3000000000
+  }
+ },
+ {
+  "id": 44,
+  "name": "HISTORICAL GENESIS",
+  "description": "Historical Genesis is the first chapter of Arctavis.\n\nA limited series of foundational works inscribed on the Litecoin blockchain .\nEach piece represents a symbolic moment in technological evolution and decentralized history. \n\nOnly 15 genesis inscriptions. \nPermanent. On chain. Immutable.",
+  "inscription_icon": null,
+  "supply": 1,
+  "slug": "historical-genesis",
+  "meta": "{}",
+  "display_name": "HISTORICAL GENESIS",
+  "image_url": "/uploads/image_upload/image/144/F2D318D0-1527-4B26-B369-E0007A493613.jpg",
+  "banner_url": "/uploads/image_upload/image/145/FDD0602E-3B71-428A-A8BC-C1B6EE5E40DC.jpg",
+  "ordinal_count": 1,
+  "creator": {
+   "handle": null,
+   "website": null,
+   "x_handle": null,
+   "ltc_address": null
+  },
+  "content_type": "image/png",
+  "stats": {
+   "ordinal_count": 1,
+   "volume": {
+    "all": 0,
+    "daily": 0
+   },
+   "price": null
+  }
+ },
+ {
+  "id": 45,
+  "name": "HISTORICAL GENESIS",
+  "description": "HISTORICAL GENESIS is a monumental digital chronicle inscribed directly on the Litecoin blockchain.\n\nThis collection explores the birth and evolution of a cryptographic republic from the Genesis Spark of 2011 to the institutional era, privacy amendments, scalability revolutions, and the rise of digital culture. \n\nEach piece is permanently inscribed onchain as an immutable artifact, forming a historical layer within Litecoin itself. \n\nCreated in a hybrid visual language that merges American monumentalism, sci-fi minimalism, amd mid poly geometry, the collection presents blockchain not merely as technology - but as architecture, law, labor, and energy. \n42 inscriptions. \nOne narrative. \nA republic of code. \n\nAuthored by Arctavis.",
+  "inscription_icon": null,
+  "supply": 1,
+  "slug": "historical-genesis",
+  "meta": "{}",
+  "display_name": "HISTORICAL GENESIS",
+  "image_url": "/uploads/image_upload/image/146/F2D318D0-1527-4B26-B369-E0007A493613.jpg",
+  "banner_url": "/uploads/image_upload/image/147/FDD0602E-3B71-428A-A8BC-C1B6EE5E40DC.jpg",
+  "ordinal_count": 1,
+  "creator": {
+   "handle": null,
+   "website": null,
+   "x_handle": null,
+   "ltc_address": null
+  },
+  "content_type": "image/png",
+  "stats": {
+   "ordinal_count": 1,
+   "volume": {
+    "all": 0,
+    "daily": 0
+   },
+   "price": null
+  }
+ }
+]

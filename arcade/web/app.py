@@ -31334,11 +31334,15 @@ def create_app(state: AppState) -> FastAPI:
 
     def _known_row(r: dict, agreed: int | None) -> dict:
         """A known collection as Explore shows it (2026-10-26): held or not ("imported"), with Nintondo's listing
-        details when the arcade read them."""
+        details when the arcade read them. `lister` the site that lists it and `link` its page there (2026-11-07:
+        Litecoin's come from chikun.market, liteverse.io and LiteOrd; `source` stays where this list came from)."""
+        lister = knownlib.source_of(r["chain"], r["slug"])
         return {"kind": "known", "slug": r["slug"], "name": r["name"], "chain": r["chain"], "supply": r["supply"],
                 "count": r.get("count") or 0, "imported": bool(r.get("imported", True)), "cover": r.get("cover") or "",
                 "source": r.get("source") or "", "fp": r.get("fp") or "", "fetched_at": r.get("fetched_at"),
-                "agreed": agreed, **{k: r.get(k) for k in _KNOWN_FACTS}}
+                "agreed": agreed, "lister": lister, "listed_by": knownlib.SOURCE_LABELS.get(lister, lister),
+                "link": knownlib.source_link(r["chain"], r["slug"]), "also": r.get("also") or [],
+                **{k: r.get(k) for k in _KNOWN_FACTS}}
 
     def _known_share():
         return getattr(getattr(state, "mesh", None), "collectionshare", None)
@@ -31370,8 +31374,27 @@ def create_app(state: AppState) -> FastAPI:
                              "imported": False, "count": 0, "cover": "", "fp": "", "source": "mesh",
                              "fetched_at": None, "owners": None, "height": None, "created": None,
                              **knownlib.sig_details(row.get("sig") or "")})
+        if net in knownlib.MULTI_SOURCES:
+            # Two sites with a collection of the same name (2026-11-07): both shown, never merged -- their lists may
+            # differ -- each saying which other site lists one by that name.
+            by_name: dict[str, list[dict]] = {}
+            for r in rows:
+                by_name.setdefault(str(r["name"] or "").casefold().strip(), []).append(r)
+            for same in by_name.values():
+                for r in same:
+                    r["also"] = [{"slug": o["slug"], "listed_by": knownlib.SOURCE_LABELS.get(
+                        knownlib.source_of(net, o["slug"]), "")} for o in same if o is not r]
         return [_known_row(r, agreed.get(r["slug"], 1) if r["imported"]
                            else (offers.get(r["slug"]) or {}).get("agree", 0)) for r in rows]
+
+    def _liteord_row(net: str, iid: str) -> dict:
+        """A parent inscription searched on Litecoin, as a collection of its children read from LiteOrd (2026-11-07):
+        LiteOrd has no list of collections, so a visitor opens one by its parent's id."""
+        return _known_row({"chain": net, "slug": f"liteord:{iid}", "name": _liteord_name(iid), "supply": None,
+                           "imported": False, "count": 0, "source": "liteord"}, 0)
+
+    def _liteord_name(iid: str) -> str:
+        return f"Children of {iid[:8]}…{iid[-6:]}"
 
     #: The collection search's choices (2026-10-26, SadFrog: "more in depth with sorting and filters and lazy loading
     #: one at a time on demand").
@@ -31495,6 +31518,9 @@ def create_app(state: AppState) -> FastAPI:
         if source in ("all", "known") and store is not None and net in knownlib.CHAINS:
             found += [r for r in _known_catalog(store, net)
                       if not low or low in str(r["name"] or "").lower() or low in r["slug"].lower()]
+            if "liteord" in knownlib.MULTI_SOURCES.get(net, {}) and knownlib.ID.match(low) \
+                    and not any(r["slug"] == f"liteord:{low}" for r in found):
+                found.append(_liteord_row(net, low))         # its children, read from LiteOrd when opened
         lo, hi = bounds["min"], bounds["max"]
         found = [c for c in found
                  if (complete != "1" or (c.get("supply") and (c.get("count") or 0) == c["supply"]))
@@ -31543,11 +31569,14 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse(said, headers={"Cache-Control": "no-store"})
         if slug:
             store = state.known_collections() if hasattr(state, "known_collections") else None
-            if net not in knownlib.CHAINS or not knownlib.SLUG.match(slug) \
+            if net not in knownlib.CHAINS or not knownlib.slug_ok(net, slug) \
                     or not re.match(r"^[0-9]{1,7}$", (offset or "0").strip()):
                 return JSONResponse({"detail": "a chain, a collection's slug and an offset"}, status_code=400)
             if store is None:
                 return JSONResponse({"detail": "no such collection"}, status_code=404)
+            if knownlib.source_of(net, slug) == "liteord" and knownlib.ID.match(slug.split(":", 1)[1]) \
+                    and store.listed(net, slug) is None and store.collection(net, slug) is None:
+                store.open_line(net, slug, _liteord_name(slug.split(":", 1)[1]))   # a parent opened: read when asked
             row = next((r for r in _known_catalog(store, net) if r["slug"] == slug), None)
             if row is None:
                 return JSONResponse({"detail": "no such collection"}, status_code=404)
@@ -31560,9 +31589,12 @@ def create_app(state: AppState) -> FastAPI:
                     return JSONResponse({"collection": row, "items": [], "loading": False, "skipped": skipped},
                                         headers={"Cache-Control": "no-store"})
                 _known_wanted(store, net, slug)
+                lister = knownlib.source_of(net, slug)
+                importing = bool(state.setting(knownlib.SETTING)) and (
+                    lister == "nintondo" or lister in knownlib.ltc_sources(state.setting(knownlib.LTC_SETTING)))
                 return JSONResponse({"collection": row, "items": [], "loading": True,
                                      "have": store.fetching(net, slug), "of": row["supply"],
-                                     "importing": bool(state.setting(knownlib.SETTING))},
+                                     "importing": importing},
                                     headers={"Cache-Control": "no-store"})
             items = store.items(net, slug, offset=int(offset), limit=48)
             return JSONResponse({"collection": row, "loading": False,
@@ -31610,18 +31642,27 @@ def create_app(state: AppState) -> FastAPI:
             return JSONResponse({"on": False, "chains": [], "detail": "this arcade keeps no files"})
         share = _known_share()
         return JSONResponse({**importer.status(), "mesh": share is not None,
+                             "ltc_choices": [{"source": s, "label": knownlib.SOURCE_LABELS.get(s, s)}
+                                             for s in knownlib.MULTI_SOURCES["ltc"]],
                              "fetched": [{"net": n, "slug": s, "from": p[:12], "ok": ok}
                                          for n, s, p, ok in (share.fetched if share is not None else [])][-10:]},
                             headers={"Cache-Control": "no-store"})
 
     @app.post("/admin/api/known-collections")
     def admin_known_collections_set(request: Request, payload: Any = Body(None)):
-        """The import switch ({"import": true|false}) and what it fetches ({"mode": "demand"|"all"}, 2026-10-26: "lazy
-        loading one at a time on demand": a collection's pieces when somebody opens it, or every collection)."""
+        """The import switch ({"import": true|false}), what it fetches ({"mode": "demand"|"all"}, 2026-10-26: "lazy
+        loading one at a time on demand": a collection's pieces when somebody opens it, or every collection), and which
+        Litecoin sites it reads ({"ltc_sources": ["chikun", "liteverse", "liteord"]}, 2026-11-07; liteverse.io's
+        terms ask for its leave before automated reading, so it is not ticked until the operator does)."""
         _admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
-        if "import" not in said and "mode" not in said:
-            return JSONResponse({"detail": "import: true or false; mode: demand or all"}, status_code=400)
+        if "import" not in said and "mode" not in said and "ltc_sources" not in said:
+            return JSONResponse({"detail": "import: true or false; mode: demand or all; ltc_sources: a list"},
+                                status_code=400)
+        sites = knownlib.MULTI_SOURCES["ltc"]
+        if "ltc_sources" in said and (not isinstance(said["ltc_sources"], list)
+                                      or not all(isinstance(s, str) and s in sites for s in said["ltc_sources"])):
+            return JSONResponse({"detail": "ltc_sources: a list of " + ", ".join(sites)}, status_code=400)
         if "import" in said and not isinstance(said["import"], bool):
             return JSONResponse({"detail": "import: true or false"}, status_code=400)
         if "mode" in said and said["mode"] not in knownlib.MODES:
@@ -31630,6 +31671,12 @@ def create_app(state: AppState) -> FastAPI:
         if "mode" in said:
             state.set_setting(knownlib.MODE_SETTING, said["mode"])
             out["mode"] = said["mode"]
+            importer = state.known_importer() if hasattr(state, "known_importer") else None
+            if importer is not None:
+                importer.wake.set()
+        if "ltc_sources" in said:
+            out["ltc_sources"] = [s for s in sites if s in said["ltc_sources"]]
+            state.set_setting(knownlib.LTC_SETTING, out["ltc_sources"])
             importer = state.known_importer() if hasattr(state, "known_importer") else None
             if importer is not None:
                 importer.wake.set()

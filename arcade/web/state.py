@@ -804,8 +804,8 @@ class AppState:
         return held
 
     def known_collections(self):
-        """Known collections of Doginals, Pepinals and Bellinals (arcade/known_collections.py), made once; None with no
-        home."""
+        """Known collections of Doginals, Pepinals, Bellinals and Litecoin ordinals (arcade/known_collections.py), made
+        once; None with no home."""
         if getattr(self, "home", None) is None:
             return None
         held = getattr(self, "_known_collections", None)
@@ -815,17 +815,19 @@ class AppState:
         return held
 
     def known_importer(self):
-        """The importer from Nintondo's public search, made once; it asks nothing while the operator's switch
-        (`known_collections_import`, Admin -> Ords) is off."""
+        """The importer from Nintondo's public search and the Litecoin sites (2026-11-07), made once; it asks nothing
+        while the operator's switch (`known_collections_import`, Admin -> Ords) is off, and of the Litecoin sites only
+        the ones ticked there (`known_collections_ltc_sources`)."""
         held = getattr(self, "_known_importer", None)
         if held is None and self.known_collections() is not None:
-            from ..known_collections import MODE_SETTING, SETTING, Importer, mode_of
+            from ..known_collections import LTC_SETTING, MODE_SETTING, SETTING, Importer, ltc_sources, mode_of
 
             def offered(net: str, slug: str) -> bool:   # a want a linked arcade can meet goes to the mesh first
                 share = getattr(getattr(self, "mesh", None), "collectionshare", None)
                 return bool(share is not None and share.offered(net, slug))
             held = self._known_importer = Importer(self.known_collections(), lambda: bool(self.setting(SETTING)),
-                                                   mode=lambda: mode_of(self.setting(MODE_SETTING)), offered=offered)
+                                                   mode=lambda: mode_of(self.setting(MODE_SETTING)), offered=offered,
+                                                   switched=lambda: ltc_sources(self.setting(LTC_SETTING)))
         return held
 
     def talk_relay(self):
