@@ -298,3 +298,73 @@ def test_a_poll_after_a_restart_still_gets_the_last_answer(public):
     assert again.status_code == 200 and again.json()["id"] == rid
     assert again.json()["status"] == "denied" and again.json()["repeat"] is True
     assert app.get("/r/send/nope", headers=head).status_code == 404
+
+
+# --- coins on another chain the reader holds (2026-11-07, LiteWorldsQuest's plots in Litecoin testnet) ----------
+
+def _ltc_test_ready(state, monkeypatch):
+    from arcade.web.state import ChainContext
+    t = ChainContext(network="ltctest", role="ledger", label="Litecoin testnet",
+                     conf=pathlib.Path("/nonexistent/litecoin.conf"))
+    monkeypatch.setattr(state, "ltc_test", t, raising=False)
+    monkeypatch.setattr(type(state), "chain_ready", lambda self, chain: True)
+    return t
+
+
+def test_a_page_asks_for_coins_on_l_test_and_the_reader_is_shown_that_chain(public, monkeypatch):
+    app, state = public
+    t = _ltc_test_ready(state, monkeypatch)
+    head = _reader(app, state, "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg")
+    to = b58check_encode(111, bytes([5]) * 20)                       # an L test address
+    ask = {"kind": "coins", "to": to, "amount": "0.05", "chain": "ltctest", "ref": "plot-W12"}
+    filed = app.post("/r/send", json=ask, headers=head)
+    assert filed.status_code == 202, filed.text
+    assert filed.json()["chain"] == "ltctest"
+    row = app.get("/account/pagesends").json()["requests"][0]
+    assert (row["chain"], row["coin"], row["to"], row["amount"]) == ("ltctest", "LTC TEST", to, "0.05")
+    # the ref is the chain's: the same ref on the arcade's own chain is another request
+    other = app.post("/r/send", json={**ask, "chain": "", "to": "@vex"}, headers=head)
+    assert other.status_code == 202 and other.json()["id"] != filed.json()["id"]
+    assert app.post("/r/send", json=ask, headers=head).json()["repeat"] is True
+    # the answer is checked on L test's node, not the arcade's
+    asked = []
+
+    class Rpc:
+        def __init__(self, who):
+            self.who = who
+
+        def call(self, method, *args):
+            asked.append(self.who)
+            if method == "gettransaction":
+                return {"confirmations": 1, "blockhash": "bb" * 32}
+            return {"height": 9}
+
+    monkeypatch.setattr(ChainContext, "rpc", lambda self: contextlib.nullcontext(Rpc(self.network)))
+    assert app.post("/account/pagesends/answer",
+                    json={"id": filed.json()["id"], "status": "sent", "txid": "ce" * 32}).status_code == 200
+    assert asked and set(asked) == {"ltctest"}
+    polled = app.get(f"/r/send/{filed.json()['id']}", headers=head).json()
+    assert polled["status"] == "sent" and polled["chain"] == "ltctest" and polled["confirmations"] == 1
+
+
+def test_only_coins_go_to_another_chain_and_only_one_this_arcade_runs(public, monkeypatch):
+    app, state = public
+    _ltc_test_ready(state, monkeypatch)
+    head = _reader(app, state, "mqxyzWHvgSMmDYPg9aWpcmXWnkouLUDbWg")
+    token = app.post("/r/send", json={"kind": "token", "to": "@vex", "propertyid": 3, "amount": "1",
+                                      "chain": "ltctest"}, headers=head)
+    assert token.status_code == 400 and "only coins" in token.json()["error"]
+    nowhere = app.post("/r/send", json={"kind": "coins", "to": "@vex", "amount": "1", "chain": "nowhere"},
+                       headers=head)
+    assert nowhere.status_code == 400 and "does not run nowhere" in nowhere.json()["error"]
+
+
+def test_the_nodes_own_wallet_is_asked_on_its_own_chain_only(client, monkeypatch):
+    app, state = client
+    _ltc_test_ready(state, monkeypatch)
+    said = app.post("/r/send", json={"kind": "coins", "to": b58check_encode(111, bytes([5]) * 20),
+                                     "amount": "1", "chain": "ltctest"})
+    assert said.status_code == 400 and "arcade's chain only" in said.json()["error"]
+    same = app.post("/r/send", json={"kind": "coins", "to": _addr(7, state.token_chain), "amount": "1",
+                                     "chain": state.token_chain.network})
+    assert same.status_code == 202, same.text

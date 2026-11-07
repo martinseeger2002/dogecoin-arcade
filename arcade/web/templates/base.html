@@ -610,7 +610,9 @@ async function pageSends() {
       return;
     }
     const wallet = await import("/wallet.js");
-    const held = (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);
+    // Coins may be asked for on another chain the account holds (2026-11-07, ask.chain): built, shown and signed there.
+    const payChain = (ask.kind === "coins" && ask.chain) || said.chain;
+    const held = (await wallet.opened(ARCADE_CHAIN)) || await arcadeKeys(ARCADE_CHAIN);   // a key on every chain
     let offer;
     if (ask.kind === "token") {
       const r = await fetch("/account/token/send", {method: "POST",
@@ -626,11 +628,11 @@ async function pageSends() {
       offer = await r.json();
       if (!r.ok) throw new Error(offer.detail || "that cannot be sent");
     } else {
-      offer = await wallet.offerSend(ask.to, ask.amount, said.chain);
+      offer = await wallet.offerSend(ask.to, ask.amount, payChain);
     }
     const shown = await wallet.checked(offer, held);
     const what = ask.kind === "token" ? `${ask.amount} ${ask.name}`
-      : ask.kind === "inscription" ? (ask.name || "an inscription") : `${ask.amount} coins`;
+      : ask.kind === "inscription" ? (ask.name || "an inscription") : `${ask.amount} ${ask.coin || "coins"}`;
     const who = await arcadeRequester(ask.page);   // from the chain, never the page's own label (issue #7)
     // The creator allowance (2026-10-04): a game's own asset going back to the
     // game -- a token the page's creator issued, or a piece it inscribed, sent
