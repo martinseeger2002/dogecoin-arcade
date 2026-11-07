@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DogecoinArcade installer.
+"""ARCADE installer.
 
 Single file, standard library only, so it runs on a machine that has nothing but
 Python. It does what we did by hand over the course of this project:
@@ -1968,7 +1968,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.update:
-        print("DogecoinArcade updater")
+        print("ARCADE updater")
         print("=" * 58)
         try:
             return do_update(args.dry_run)
@@ -1976,7 +1976,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\nERROR: {exc}\n", file=sys.stderr)
             return 1
 
-    print("DogecoinArcade installer")
+    print("ARCADE installer")
     print("=" * 58)
 
     # The one question, first (2026-11-03: "at the beginning of the installation of the arcade it asks if the
