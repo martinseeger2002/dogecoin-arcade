@@ -88,6 +88,15 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-07 · SadFrog's side (Claude) · branch `team/lite-dd-read` (on `main` c69f944e) · Lite wallet: DigiDollars read where the full Wallet reads them
+
+Running on node 9 (Lite) since 2026-11-07. The Lite window's DigiDollar wallet read its balance, coins and address
+from the module's `ddreceive`, so it and the full Wallet could show different DigiDollars.
+- **Now:** `arcade/lite/templates/_wallet.html` reads `/account/digidollar`, the full Wallet's own read of the arcade's
+  index, for DigiDollar and DigiDollar test. Send still goes through the module's `ddsend` (one send, "two front doors").
+- **Tests:** `tests/test_digidollar_wallet_browser.py` (+1, Firefox), test_digidollar*, test_lite*: 142 + 3 passed.
+- **For the operator:** please merge into `main`. Nothing to set on a node.
+
 ### 2026-11-07 A player's borrowed relay list is asked again after 2 minutes, not 3 hours (Claude; found with the GBC session)
 
 - **What happened:** `arcade_relays` (`arcade/web/realtime.py`) kept each player's borrowed relays for LOGIN_TTL/2
