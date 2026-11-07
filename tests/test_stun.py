@@ -284,3 +284,21 @@ def test_the_operator_chooses_which_apps_get_the_relay(tmp_path, monkeypatch):
     assert client.get(f"/realtime/ice?app={call}").json()["relay"] is True
     assert client.get(f"/realtime/ice?app={chess}").json()["relay"] is False, "not chosen: direct links only"
     assert client.get("/realtime/ice").json()["relay"] is False, "an asker that names no app gets none"
+
+
+def test_a_spare_link_closing_keeps_the_offer_the_kept_link_brought():
+    """2026-11-07: two arcades that dialed each other at once kept one link; the spare one closing after the kept
+    one came up dropped the kept one's STUN offer, so its relay was never borrowed."""
+    import asyncio
+    from arcade.mesh.stun import StunShare
+
+    class _N: pass
+    share = StunShare(None)
+    share.node = _N()
+    share.node.links = {"bb": object()}
+    share.offers["bb"] = [("198.51.100.2", 3478)]
+    asyncio.run(share.link_down("bb"))
+    assert share.offers["bb"] == [("198.51.100.2", 3478)]
+    del share.node.links["bb"]
+    asyncio.run(share.link_down("bb"))
+    assert "bb" not in share.offers

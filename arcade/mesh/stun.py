@@ -217,6 +217,11 @@ class StunShare:
             await link.send({"t": "st", "op": "have", "s": [list(a) for a in self.mine()]})
 
     async def link_down(self, peer_id: str) -> None:
+        # Only when no link to that node is left (2026-11-07: the Ashburn relay was never borrowed after both arcades
+        # restarted -- they had dialed each other at once, and the spare link closing after the kept one came up
+        # took the kept one's offer with it).
+        if self.node is not None and peer_id in getattr(self.node, "links", {}):
+            return
         self.offers.pop(peer_id, None)
 
     async def rebalance(self) -> None:

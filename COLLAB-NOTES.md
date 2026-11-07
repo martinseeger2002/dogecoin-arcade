@@ -88,6 +88,15 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-07 A spare mesh link closing no longer forgets the STUN offer the kept link brought (Claude; found checking why the Ashburn relay was never borrowed)
+
+- **What happened:** after Strawberry and the Ashburn arcade restarted together they linked to each other more than
+  once (Strawberry's log: "linked to", then "linked from" twice). The node calls every extension's `link_down` when
+  any one link closes, and `StunShare.link_down` dropped the peer's offer though another link to it was still up.
+  The offer is re-sent only on a new proof (every 6 h), so the relay stayed unborrowable.
+- **Now** (`arcade/mesh/stun.py`): the offer is dropped only when no link to that node is left.
+- **Test:** `tests/test_stun.py`.
+
 ### 2026-11-07 Borrowed relays come fastest first (Claude; the operator: "it should automaticly choose the fastest relay")
 
 - **Why:** a browser tries the relays it is given roughly in order. Strawberry listed whichever arcades answered
