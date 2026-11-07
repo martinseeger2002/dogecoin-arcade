@@ -229,3 +229,20 @@ def test_digibyte_testnet26_is_a_test_chain_of_its_own_with_its_rpc_address_in_a
     lines = core_install._conf_lines(test, core_install.RELEASES["dgbtest"])
     assert "testnet=1" in lines and lines.index("[test]") < lines.index("rpcbind=127.0.0.1")
     assert all(lines.index(l) < lines.index("[test]") for l in lines if l.startswith(("rpcuser=", "rpcpassword=")))
+
+
+def test_a_digibyte_send_pays_native_segwit_but_not_taproot():
+    """2026-11-07 (SadFrog): DigiByte Core and exchanges hand out dgb1q... addresses, so a coin send pays native SegWit
+    v0 on real DigiByte and Litecoin, P2WPKH or P2WSH. Taproot (dgb1p...) is still refused, and so is a wrong chain's."""
+    from arcade.script import segwit_encode
+    from arcade.web.app import _check_address
+
+    class Chain:
+        network, params, label = "dgb", DGB, "DigiByte"
+    wpkh, wsh = segwit_encode("dgb", 0, bytes(range(20))), segwit_encode("dgb", 0, bytes(range(32)))
+    assert _check_address(wpkh, mainnet=Chain(), segwit_ok=True) is None
+    assert _check_address(wsh, mainnet=Chain(), segwit_ok=True) is None
+    assert "Taproot" in _check_address(segwit_encode("dgb", 1, bytes(range(32))), mainnet=Chain(), segwit_ok=True)
+    assert _check_address(segwit_encode("ltc", 0, bytes(range(20))), mainnet=Chain(), segwit_ok=True)
+    assert _check_address(wpkh[:-1] + ("q" if wpkh[-1] != "q" else "p"), mainnet=Chain(), segwit_ok=True)
+    assert _check_address(wpkh, mainnet=Chain()), "a caller that cannot build the output still refuses it"
