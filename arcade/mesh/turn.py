@@ -530,6 +530,10 @@ class TurnShare:
     async def borrow(self, tag: str, count: int = 2) -> list[dict]:
         """ICE servers on up to `count` other arcades, for the player `tag`."""
         offers = [(p, h) for p, h in dict(self.reachable()).items() if p in self.node.links and h]
+        # Fastest first (2026-11-07, the operator: "it should automaticly choose the fastest relay"): a browser tries the
+        # relays it is given in order, and the link's delay counts both the distance and how busy that arcade is
+        # (@banana answered in over a second while the Ashburn relay answered in 83 ms).
+        offers.sort(key=lambda o: _delay(self.node.links.get(o[0])))
         got = await asyncio.gather(*(self._one(p, f"{self.node.node_id[:16]}:{tag}", h) for p, h in offers))
         return with_v4([g for g in got if g], count)
 
@@ -545,6 +549,12 @@ class TurnShare:
             fut = self.waiting.get(nonce)
             if fut is not None and not fut.done():
                 fut.set_result(header)
+
+
+def _delay(link) -> float:
+    """A link's smoothed round trip, unmeasured ones last."""
+    rtt = getattr(link, "rtt", None)
+    return rtt if isinstance(rtt, (int, float)) else float("inf")
 
 
 def has_v4(server: dict) -> bool:

@@ -224,6 +224,31 @@ def test_a_player_without_ipv6_always_gets_an_ipv4_relay_when_one_is_borrowable(
     assert len(got) == 1
 
 
+def test_borrowed_relays_come_fastest_first():
+    """2026-11-07: "it should automaticly choose the fastest relay"."""
+    class _Link:
+        def __init__(self, peer, rtt): self.peer_id, self.rtt = peer, rtt
+        async def send(self, header): pass
+
+    async def run():
+        share = turn.TurnShare(None, lambda: {"slow": [("198.51.100.1", 3478)], "fast": [("198.51.100.2", 3478)],
+                                              "new": [("198.51.100.3", 3478)]})
+        class _N: pass
+        share.node = _N()
+        share.node.node_id = "aa" * 32
+        share.node.links = {"slow": _Link("slow", 1.05), "fast": _Link("fast", 0.083), "new": _Link("new", None)}
+        asked = []
+        async def one(peer, tag, hosts):
+            asked.append(peer)
+            return {"urls": [f"turn:{hosts[0][0]}:3478?transport=udp"], "username": peer, "credential": "c"}
+        share._one = one
+        got = await share.borrow("player", count=3)
+        assert [g["username"] for g in got] == ["fast", "slow", "new"]
+        got = await share.borrow("player")
+        assert [g["username"] for g in got] == ["fast", "slow"]
+    asyncio.run(run())
+
+
 def test_relayed_packets_keep_their_pace_while_the_mesh_loop_is_busy():
     """2026-11-02: calls on an "Arcade relay" were "very lossy". The relay ran on the mesh loop, so every relayed
     packet waited behind whatever the mesh was doing: none lost, but delivered in clumps. It has a loop of its own now;

@@ -88,6 +88,15 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-07 Borrowed relays come fastest first (Claude; the operator: "it should automaticly choose the fastest relay")
+
+- **Why:** a browser tries the relays it is given roughly in order. Strawberry listed whichever arcades answered
+  first; @banana's link answered in over a second while the new Ashburn VPS arcade (147.124.204.26, the operator's, its
+  own mesh identity, no @name) answered in 83 ms.
+- **Now** (`arcade/mesh/turn.py` `TurnShare.borrow`): offers are sorted by the mesh link's smoothed round trip,
+  unmeasured last, before the first `count` are taken; one IPv4 relay is still kept among them (`with_v4`).
+- **Test:** `tests/test_mesh_turn.py`.
+
 ### 2026-11-07 A player with no IPv6 always gets an IPv4 relay when any arcade has one (Claude; found by the GBC session in Pocket Tide Super)
 
 - **What happened:** with .25 off, Strawberry (on Starlink: no IPv4 of its own, inbound IPv4 impossible) had no proved
