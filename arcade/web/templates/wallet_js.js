@@ -209,7 +209,10 @@ export async function everyChain(wallet, chains) {
  * to change: the card lists them, Receive shows that kind's address, and a coin
  * send is built from it and signed with its key. The first row is the chain's
  * ordinary address. A chain with one kind shows no drop-down.
- * Segwit is test chains only until it has had a real-money review.
+ * Segwit was test chains only until it had a real-money review; since 2026-11-07 (SadFrog: "users should also be
+ * able to have the most updated or choice of address type as opposed to only legacy") real DigiByte, Litecoin and
+ * Bellscoin offer it too. Legacy stays first, so it stays the default and the address tokens, names and every
+ * other page use. Bellscoin has no nested kind: its P2SH byte is Dogecoin's "D" (config.unpayable_versions).
  * The order is the menu's (2026-10-20, tbuuol): Legacy, P2SH, Native SegWit.
  */
 export const ADDRESS_KINDS = {
@@ -217,6 +220,25 @@ export const ADDRESS_KINDS = {
     {id: "legacy", label: "Legacy", path: "m/44'/1'/0'/0/0"},
     {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 58, path: "m/49'/1'/0'/0/0"},
     {id: "p2wpkh", label: "Native SegWit", hrp: "tltc", path: "m/84'/1'/0'/0/0"},
+  ],
+  ltc: [
+    {id: "legacy", label: "Legacy", path: "m/44'/3'/0'/0/0"},
+    {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 50, path: "m/49'/3'/0'/0/0"},
+    {id: "p2wpkh", label: "Native SegWit", hrp: "ltc", path: "m/84'/3'/0'/0/0"},
+  ],
+  dgb: [
+    {id: "legacy", label: "Legacy", path: "m/44'/3'/0'/0/0"},
+    {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 63, path: "m/49'/3'/0'/0/0"},
+    {id: "p2wpkh", label: "Native SegWit", hrp: "dgb", path: "m/84'/3'/0'/0/0"},
+  ],
+  dgbtest: [
+    {id: "legacy", label: "Legacy", path: "m/44'/1'/0'/0/0"},
+    {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 140, path: "m/49'/1'/0'/0/0"},
+    {id: "p2wpkh", label: "Native SegWit", hrp: "dgbt", path: "m/84'/1'/0'/0/0"},
+  ],
+  bel: [
+    {id: "legacy", label: "Legacy", path: "m/44'/3'/0'/0/0"},
+    {id: "p2wpkh", label: "Native SegWit", hrp: "bel", path: "m/84'/3'/0'/0/0"},
   ],
 };
 export const addressKinds = (network) => ADDRESS_KINDS[network] || [];
@@ -394,6 +416,24 @@ async function _signIn(tag, password, {network, version}) {
   return {...result, tag: said.tag, address: said.address, wallet};
 }
 
+/** File an account this node has never held: its name, every chain's address and key, and its sealed wallet, as a
+ *  sign-up does. The answer is /signup's own; a name it cannot take (held by another key) is refused there. */
+async function fileHere(wallet, tag, blob, running, network) {
+  const alsoOn = {};
+  for (const chain of running) {
+    if (chain.network === network) continue;
+    const keys = wallet.on[chain.network];
+    if (!keys) continue;
+    alsoOn[`address_${chain.network}`] = keys.address;
+    alsoOn[`coin_pubkey_${chain.network}`] = coinsHex(keys.pubkey);
+  }
+  return fetch("/signup", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({tag, pubkey: wallet.pubkey, address: wallet.address,
+                          coin_pubkey: coinsHex(wallet.coinPubkey), ...alsoOn, blob}),
+  });
+}
+
 /** Before a wallet made on another arcade is opened and filed here (2026-10-23, SadFrog: a game that switches node
  *  should "sign into that node if needed again with the warning"): say what that means, and stop on a no. This
  *  node then keeps its own copy of the sealed wallet, and its page is the one the password is typed into -- a
@@ -438,20 +478,7 @@ async function bringHere(said, password, {network, version}) {
   if (said.pubkey && wallet.pubkey !== String(said.pubkey).toLowerCase()) {
     throw new Error("that wallet does not match its name. Nothing was opened.");
   }
-  const alsoOn = {};
-  for (const chain of running) {
-    if (chain.network === network) continue;
-    const keys = wallet.on[chain.network];
-    if (!keys) continue;
-    alsoOn[`address_${chain.network}`] = keys.address;
-    alsoOn[`coin_pubkey_${chain.network}`] = coinsHex(keys.pubkey);
-  }
-  const filed = await fetch("/signup", {
-    method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({tag: said.tag, pubkey: wallet.pubkey, address: wallet.address,
-                          coin_pubkey: coinsHex(wallet.coinPubkey), ...alsoOn,
-                          blob: said.blob}),
-  });
+  const filed = await fileHere(wallet, said.tag, said.blob, running, network);
   let result;
   if (filed.ok) {
     result = await filed.json();
@@ -549,6 +576,10 @@ export function dismissShort({changed = false} = {}) {
  *  empty one); the wallet is sealed with the new password here; the node is
  *  handed only the new encrypted blob, in place of the old one, and the
  *  account's @tag opens with the new password from then on, anywhere.
+ *
+ *  Words this node has never seated, whose own address holds an @name on the
+ *  chain, are an account made elsewhere (2026-11-07): filed here as a sign-up
+ *  files one, so the account outlives the arcade it was made on.
  */
 export async function restore(phrase, password, options) {
   return working(() => _restore(phrase, password, options));
@@ -561,16 +592,42 @@ async function _restore(phrase, password, {network, version}) {
   const short = tooShort(password);
   if (short) throw new Error("the new password: " + short);
   const wallet = await walletFrom(signer.normalise(phrase), network, version);
-  await everyChain(wallet, await chains());
-  let result;
+  const running = await chains();
+  await everyChain(wallet, running);
+  let result = null, named = "";
   try {
     result = await seatWith(wallet, {join: false});
   } catch (e) {
-    throw new Error("those words are not an account on this node. Check each word; "
-      + "if you signed up on another node, restore there. Nothing was changed.");
+    // Only the one refusal that says "no seat here" (accounts.py login), which comes after the signature and the
+    // arcade's address have both checked out: any other (a sign-in signed for another address, too many tries, a
+    // stale challenge) is said as it is, and nothing is filed.
+    if (!/does not hold a seat/.test(String(e.message || e))) throw e;
+    // Not an account HERE (2026-11-07, SadFrog: restore "from any core if arcade goes down as well as any arcade").
+    // An account is its key and its @name, and the name is chain state (D-147): the claim from this wallet's own
+    // tag-chain address, which this node reads as well as the one it signed up on. So words whose address holds a
+    // name ARE an account, wherever it was made, and take a seat here as a sign-up does. Words with no name still
+    // make nothing: a mistyped phrase must not become a new, empty account.
+    try {
+      named = (await (await fetch(`/r/address/${encodeURIComponent(wallet.address)}`, {cache: "no-store"})).json()).tag || "";
+    } catch (x) { /* unread: refused below as before */ }
+    if (!named) {
+      throw new Error("those words are not an account on this node, and no @name on the chain belongs to them. "
+        + "Check each word; a name claimed in the last few minutes may not be read here yet. Nothing was changed.");
+    }
   }
   await refuseLeaked(password);
   const blob = await seal(wallet.phrase, password);
+  if (!result) {
+    const filed = await fileHere(wallet, named, blob, running, network);
+    const answer = await filed.json().catch(() => ({}));
+    if (!filed.ok) throw new Error(answer.detail || "this node would not take the account. Nothing was changed.");
+    remember(wallet.phrase);
+    // Its coins arrived while this node was not watching it: read back from the blocks (utxos.backfill).
+    fetch("/account/coins/backfill", {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"})
+      .catch(() => {});
+    noteShort(password);
+    return {...answer, tag: named, wallet, brought: true};
+  }
   const stored = await fetch("/account/vault", {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({blob}),

@@ -127,3 +127,13 @@ def test_the_node_waits_for_a_confirmation_before_paying_real_coins_of_its_own()
         assert trader.need(small(net), small("test")) == 1, f"the node's own {net}: one confirmation"
     assert trader.need(small("test"), small("ltctest")) == 0, "test coins: as before"
     assert trader.need(small("test"), small("ltc")) == 0, "the node GETS real coins: its own risk is test coins"
+
+
+def test_a_litecoin_send_pays_ltc1q(app_state):
+    """2026-11-07: real Litecoin pays native SegWit v0 when the caller builds the output (`segwit_ok`)."""
+    from arcade.web.app import _check_address
+    from arcade.web.state import ChainContext
+    ltc = ChainContext(network="ltc", role="ledger", label="Litecoin")
+    from arcade.script import segwit_encode
+    assert _check_address(segwit_encode("ltc", 0, HASH), mainnet=ltc, segwit_ok=True) is None
+    assert _check_address(segwit_encode("tltc", 0, HASH), mainnet=ltc, segwit_ok=True), "a testnet address"

@@ -73,7 +73,19 @@
         chains are coin type 1. In that chain's Core: <code>importprivkey "KEY" "arcade" true</code> (Litecoin Core
         0.21 needs a legacy wallet: <code>createwallet arcade false false "" false false</code>; add
         <code>-testnet</code> for a test chain). Anyone with a mainnet key can spend those coins: never paste one
-        into a website.</p>
+        into a website. Bells 3 and DigiByte 9 make descriptor wallets, which take the commands below instead.</p>
+    </div>
+    {# 2026-11-07 (SadFrog's side): "easy for someone to be able to spin back up their wallets from any core if arcade
+       goes down". Each chain's path and its Core's exact commands, built here from the words (coins.js restoreKit,
+       drawn by /restore-kit.js; the table from arcade/restore_kit.py). #}
+    <div id="restore-box" style="margin-top:14px">
+      <p style="margin:0 0 4px"><b>Restore without an arcade</b></p>
+      <p class="muted" style="margin:0 0 6px;font-size:.86rem">Each chain below: the derivation path that any BIP39
+        wallet finds these coins on if it lets you set one, and the exact commands that open them in that chain's own
+        Core. Open one to see it.</p>
+      <label style="font-size:.86rem"><input type="checkbox" id="restore-whole">
+        Rescan each chain from its first block (finds coins of any age; slower)</label>
+      <div id="restore-kits"></div>
     </div>
     <p style="margin:10px 0 0">
       <button type="button" class="btn ghost small" id="hide-words">Hide them</button></p>
@@ -115,6 +127,20 @@
   <p class="muted" style="font-size:.88rem;margin:10px 0 0">
     All of it, because all of it is derived from the same twelve words. There
     is nothing else to keep for any of this.</p>
+</div>
+
+{# 2026-11-07 (SadFrog's side): the coins without any arcade at all. The page is one file with everything it runs
+   inside it (arcade/restore_kit.py), so it works from a USB stick on a computer that is not online. #}
+<div class="panel" style="margin-bottom:18px">
+  <h2 style="margin-top:0">If every arcade is gone</h2>
+  <p>The coins are on their chains, not in any arcade. Each chain's own Core wallet opens them from your twelve
+     words: show your words above and every chain lists its path and the exact commands to paste.</p>
+  <p>Keep a copy of the recovery page as well. It is one file that turns the twelve words into each chain's
+     addresses, private keys and Core commands with no arcade and no internet.</p>
+  <p style="margin:10px 0 0"><a class="btn" id="recover-save" href="/recover"
+     download="recover-coins.html">Save this page and open it offline</a></p>
+  <p class="muted" style="font-size:.84rem;margin:8px 0 0">Open the saved file, not a link: never type your words
+     into a website you reached by a link, whoever sent it.</p>
 </div>
 
 <div class="panel" style="margin-bottom:18px;border-color:var(--warn)">
@@ -217,8 +243,17 @@ if (turn) turn.onclick = async () => {
  * to enter the password a second time to view the 12 words"). The words are
  * never sent anywhere; they go into the page and out again with Hide. */
 const shown = $("words-shown"), list = $("words-list");
+const RESTORE = {{ restore_chains|tojson }};
+let restoreSeed = null;                        // only while the words are shown, for the rescan switch
+const drawRestore = async () => {
+  if (!restoreSeed) return;
+  const kit = await import("/restore-kit.js");
+  kit.drawKits($("restore-kits"), await kit.kitsFor(restoreSeed, RESTORE, $("restore-whole").checked));
+};
+$("restore-whole").onchange = drawRestore;
 const hideWords = () => { list.replaceChildren(); $("ltc-key").textContent = "";
-                          $("chain-keys").replaceChildren(); shown.hidden = true; };
+                          $("chain-keys").replaceChildren(); $("restore-kits").replaceChildren();
+                          restoreSeed = null; shown.hidden = true; };
 $("hide-words").onclick = hideWords;
 addEventListener("pagehide", hideWords);
 $("show-words").onclick = async () => {
@@ -278,6 +313,9 @@ $("show-words").onclick = async () => {
         dd.append(code);
         $("chain-keys").append(dt, dd);
       }
+      // Restore without an arcade (2026-11-07): every chain's path and its Core's own commands.
+      restoreSeed = seed;
+      await drawRestore();
     }
     for (const word of phrase.trim().split(/\s+/)) {
       const li = document.createElement("li");
@@ -317,4 +355,16 @@ $("download").onclick = async () => {
 };
 document.body.dataset.backupReady = "yes";
 </script>
+<style>
+/* Restore without an arcade (restore_kit.js draws these; /recover has its own copy of the look) */
+.rk-chain{border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin:8px 0}
+.rk-summary{cursor:pointer}
+.rk-addr{color:var(--muted);font-family:ui-monospace,monospace;font-size:.82rem;word-break:break-all}
+.rk-note{font-size:.86rem;margin:6px 0}
+.rk-warn{color:var(--warn)}
+.rk-note code{word-break:break-all}
+.rk-cmd{display:flex;gap:8px;align-items:flex-start;margin:6px 0}
+.rk-pre{flex:1;margin:0;padding:8px 10px;border-radius:6px;white-space:pre-wrap;word-break:break-all;font-size:.78rem;
+        background:color-mix(in srgb,var(--muted) 12%,transparent)}
+</style>
 {% endblock %}

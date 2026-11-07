@@ -41,7 +41,7 @@ PAGES = [
     "/join", "/join/keys", "/launch", "/launches", "/listings", "/me", "/me/accounts",
     "/me/backup", "/me/contacts", "/me/messages", "/me/nfts", "/me/notifications",
     "/me/runs", "/me/wallet", "/me/wallet/tokens", "/messages", "/mintpad/new",
-    "/nfts", "/restore", "/tokens", "/tokens/launchpad/preview", "/wallet",
+    "/nfts", "/recover", "/restore", "/tokens", "/tokens/launchpad/preview", "/wallet",
     "/wallet/nfts", "/wallet/tokens",
 ]
 
@@ -53,7 +53,7 @@ PAGES = [
 #: wrapped ones, and the thing that has to parse is the response.
 SCRIPTS = [
     "/coins.js", "/messaging.js", "/r/escrow.js", "/r/node.js", "/r/owner.js",
-    "/r/state.js", "/r/storage.js", "/r/swap.js", "/signin.js", "/sw.js",
+    "/r/state.js", "/r/storage.js", "/r/swap.js", "/restore-kit.js", "/signin.js", "/sw.js",
     "/wallet.js",
 ]
 

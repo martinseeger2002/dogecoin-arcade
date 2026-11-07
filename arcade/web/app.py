@@ -25379,6 +25379,7 @@ def create_app(state: AppState) -> FastAPI:
         if modulelib.edition(state.settings()) == "lite":
             return _lite_home(request)                     # ARCADE Lite draws it in its own window
         mine = state.vault().by_pubkey(account.pubkey) or {}
+        from .. import restore_kit as _restore_kit
         return render(request, "my_backup.html", chain=_account_chain(),
                       my_name=mine.get("tag", ""),
                       # The chains where the coins are money, and the address
@@ -25391,7 +25392,12 @@ def create_app(state: AppState) -> FastAPI:
                                         account.pubkey, one)}
                                    for one in _account_chains()
                                    if one.is_mainnet],
-                      real_on=_words_backed_up(account))
+                      real_on=_words_backed_up(account),
+                      # Restoring in each chain's own Core with no arcade (restore_kit.py, 2026-11-07): the table the
+                      # browser builds the commands from, rescans starting a week before this arcade first knew the
+                      # account or the chain's floor, whichever is earlier.
+                      restore_chains=_restore_kit.chains(min(
+                          [t for t in (account.created, mine.get("made")) if t] or [0]) or None))
 
     @app.get("/me/wallet", response_class=HTMLResponse)
     def my_wallet(request: Request):
@@ -27368,7 +27374,10 @@ def create_app(state: AppState) -> FastAPI:
             version, payload = b58check_decode(addr)
         except Exception:
             return None
-        if version == chain.params.scripthash_version and len(payload) == 20:
+        # Not where the P2SH byte is another chain's key hash (Bellscoin's 30 is Dogecoin's "D", 2026-11-07): that
+        # string cannot say which script it is, and nothing here pays one (config.unpayable_versions).
+        if (version == chain.params.scripthash_version and len(payload) == 20
+                and version not in unpayable_versions(chain.params)):
             return "p2sh-p2wpkh"
         return None
 
@@ -27397,10 +27406,6 @@ def create_app(state: AppState) -> FastAPI:
             chain = _chain_asked(said)
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        if getattr(chain.params, "real_coins", False):
-            return JSONResponse(
-                {"detail": "segwit is on test chains only for now"},
-                status_code=400)
         addr = str(said.get("address") or "").strip()
         kind = _segwit_kind(chain, addr)
         if kind is None:
@@ -27445,10 +27450,6 @@ def create_app(state: AppState) -> FastAPI:
             chain = _chain_asked({"chain": network} if network else {})
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        if getattr(chain.params, "real_coins", False):
-            return JSONResponse(
-                {"detail": "segwit is on test chains only for now"},
-                status_code=400)
         addr = (address or "").strip()
         if _segwit_kind(chain, addr) is None:
             return JSONResponse(
@@ -28940,8 +28941,6 @@ def create_app(state: AppState) -> FastAPI:
         # Its coins only, its change back to it; the browser signs with that wallet's key.
         imported = _imported_entry(account, chain, want_from) if want_from else None
         if imported is not None:
-            if imported["k"] != "p2pkh" and getattr(chain.params, "real_coins", False):
-                return JSONResponse({"detail": "segwit is on test chains only for now"}, status_code=400)
             if imported["k"] == "p2sh-p2wpkh":
                 try:
                     keyhash = hash160(bytes.fromhex(imported["p"]))
@@ -28954,10 +28953,6 @@ def create_app(state: AppState) -> FastAPI:
             if kind is None:
                 return JSONResponse(
                     {"detail": "that is not a segwit address for this chain"},
-                    status_code=400)
-            if getattr(chain.params, "real_coins", False):
-                return JSONResponse(
-                    {"detail": "segwit is on test chains only for now"},
                     status_code=400)
             # Only the address this account registered, never somebody else's.
             if state.setting(_segwit_setting(account, chain, kind)) != want_from:
@@ -37116,6 +37111,9 @@ def create_app(state: AppState) -> FastAPI:
     # API keys (arcade/apikeys.py): their routes, kept by the gate below like every other.
     from . import apikeys_web
     apikeys_web.register(app, state, admin_check=_admin_check, signed_in=signed_in, run_line=_lite_home.run_line)
+    # Restoring without an arcade (recover_web.py, 2026-11-07): the offline /recover page and the backup page's renderer.
+    from . import recover_web
+    recover_web.register(app, state, versioned=_versioned)
     # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
     from . import modules_web
     modules_web.register(app, state, admin_check=_admin_check, signed_in=signed_in)
@@ -37595,10 +37593,12 @@ def _check_address(address: str, *, mainnet: bool, segwit_ok: bool = False) -> s
     for params in NETWORKS.values():
         hrp = getattr(params, "bech32_hrp", None)
         if hrp and lowered.startswith(hrp + "1"):
-            # A coin send on a test chain pays native segwit v0 (2026-10-20, tbuuol): `segwit_ok`
-            # is that caller saying it builds the output (`_pay_script`). Taproot is not paid yet.
-            if (segwit_ok and not getattr(params, "real_coins", False)
-                    and params.name in {p.name for p in wanted}):
+            # A coin send pays native segwit v0 (2026-10-20, tbuuol): `segwit_ok` is that caller saying it
+            # builds the output (`_pay_script`). Test chains first; real coins too since 2026-11-07 (SadFrog: a
+            # DigiByte Core or exchange address is dgb1q... by default, and a send refused to pay it). Paying one is
+            # only an output script, OP_0 <program>, checked by segwit_decode; RECEIVING on SegWit stays test-only
+            # (wallet_js ADDRESS_KINDS). Taproot is not paid yet.
+            if segwit_ok and params.name in {p.name for p in wanted}:
                 version, program = segwit_decode(hrp, lowered)
                 if version == 0:
                     return None

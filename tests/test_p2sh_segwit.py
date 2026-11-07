@@ -207,7 +207,7 @@ def test_a_broken_bech32_is_an_address_with_a_bad_checksum_not_a_long_tag(client
     assert r.status_code == 400 and "checksum" in r.json()["detail"], r.text
 
 
-def test_only_the_coin_send_pays_segwit_and_never_on_real_coins():
+def test_only_the_coin_send_pays_segwit_on_test_and_real_coins():
     from types import SimpleNamespace
     from arcade.web.app import _check_address
     ltctest = SimpleNamespace(network="ltctest", params=P, label="Litecoin testnet")
@@ -215,5 +215,6 @@ def test_only_the_coin_send_pays_segwit_and_never_on_real_coins():
     assert _check_address(TO_NATIVE, mainnet=ltctest, segwit_ok=True) is None
     assert _check_address(TO_NATIVE, mainnet=ltctest) is not None        # other sends: unchanged
     real = script.p2wpkh_address(NETWORKS["ltc"], bytes(range(20)))
-    assert _check_address(real, mainnet=ltc, segwit_ok=True) is not None
+    assert _check_address(real, mainnet=ltc, segwit_ok=True) is None    # real coins too since 2026-11-07
+    assert _check_address(real, mainnet=ltc) is not None
     assert _check_address(TO_NATIVE, mainnet=ltc, segwit_ok=True) is not None  # wrong chain
