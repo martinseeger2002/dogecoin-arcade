@@ -217,16 +217,22 @@
       if (hub.es) { try { hub.es.close(); } catch (err) {} }
       var es = hub.es = new EventSource(base + '/realtime/hub?id=' + encodeURIComponent(hub.id));
       es.onopen = function(){ for (var t in hub.rooms) { hub.rooms[t].readyState = 1; hub.rooms[t]._fire('open', {}); } };
+      // Anything on the hub shows the line is alive for every room on it (2026-11-07, found by the GBC session in Pocket
+      // Tide Super): the node pings only after 4 s with nothing at all on the hub, so a silent room beside a busy one
+      // heard nothing, was taken for dead every ~20 s, and every fast-lane link was rebuilt.
+      function alive(but){ for (var t in hub.rooms) if (hub.rooms[t] !== but) hub.rooms[t]._fire('ping', {}); }
       es.onmessage = function(ev){
         var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
         var room = hub.rooms[d.k];
         if (room) room._fire('message', {data: JSON.stringify(d.ev)});
+        alive(room);
       };
       es.addEventListener('ping', function(ev){ for (var t in hub.rooms) hub.rooms[t]._fire('ping', ev); });
       es.addEventListener('closed', function(ev){
         var d; try { d = JSON.parse(ev.data); } catch (err) { return; }
         var room = hub.rooms[d.k];
         if (room) { delete hub.rooms[d.k]; room._fire('closed', ev); }
+        alive(null);
       });
       es.onerror = function(){
         if (es.readyState !== 2 || hub.es !== es) return;    // reconnecting by itself: the node keeps the hub a minute

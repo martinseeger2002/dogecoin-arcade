@@ -71,3 +71,52 @@ def test_a_page_in_eight_rooms_on_a_plain_http_arcade_sends_and_hears_in_every_o
                 d.quit()
         server.stop()
         state.mesh.stop()
+
+
+QUIET = b"""<!doctype html><meta charset="utf-8"><body>
+<script src="/r/realtime.js"></script>
+<script>
+window.log = [];
+Promise.all([arcade.realtime.join('busy', {game: 'quiet-room-test'}),
+             arcade.realtime.join('quiet', {game: 'quiet-room-test'})]).then(function (rs) {
+  window.busy = rs[0];
+  rs[1].on('reconnecting', function () { window.log.push('reconnecting'); });
+  window.ready = true;
+}).catch(function (e) { window.failed = String(e && e.message || e); });
+</script>"""
+
+
+def test_a_quiet_room_on_a_hub_shared_with_a_busy_room_is_not_taken_for_dead(tmp_path, no_nodes):
+    """2026-11-07, found by the GBC session in Pocket Tide Super: the hub says "ping" only when nothing at all came for
+    4 s, and a hub message reaches only its own room. A page in a busy room (an ad every 2 s) and a silent one (its
+    traffic all on the fast lane) never heard anything in the silent one, so every ~20 s it rejoined and every
+    fast-lane link was rebuilt. Any hub traffic now shows the line is alive for every room on it."""
+    from arcade.web.app import create_app
+
+    state = make_state(tmp_path, "node")
+    state.mesh = _mesh()
+    _inscribe(state, GAME, 1, "n" + "G" * 33, "text/html", QUIET)
+    port = _free_port()
+    base = f"http://127.0.0.1:{port}"
+    server = Server(create_app(state), port)
+    a = b = None
+    try:
+        a, b = browsers.launch(), browsers.launch()
+        for d in (a, b):
+            d.get(f"{base}/inscriptions/{GAME}/full")
+            d.switch_to.frame(d.find_element(By.CSS_SELECTOR, ".inscription-frame"))
+        for d in (a, b):
+            end = time.time() + 60
+            while time.time() < end and not d.execute_script("return window.ready || window.failed"):
+                time.sleep(0.3)
+            assert d.execute_script("return window.ready"), d.execute_script("return window.failed")
+        # b talks in the busy room every second, so a's hub is never quiet for 4 s and never pings.
+        b.execute_script("setInterval(function () { window.busy.send({t: Date.now()}); }, 1000);")
+        time.sleep(30)                      # REALTIME_DEAD is 15 s, checked every 5 s: two rejoins before the fix
+        assert a.execute_script("return window.log") == []
+    finally:
+        for d in (a, b):
+            if d is not None:
+                d.quit()
+        server.stop()
+        state.mesh.stop()

@@ -88,6 +88,18 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-07 A quiet room beside a busy one on the same hub is no longer taken for dead (Claude; found by the GBC session in Pocket Tide Super; the operator: "Yes, and deploy it")
+
+- **What happened:** a page in a busy room (a board with an ad every 2 s) and a silent one (all its traffic on the fast
+  lane) rejoined the silent room every ~20 s, and each rejoin rebuilt every fast-lane link (about 4 s of frozen video).
+  The hub says "ping" only after 4 s with nothing at all on it, and a hub message reaches only its own room, so the
+  silent room heard nothing for REALTIME_DEAD (15 s).
+- **Now:** in `hubOpen` (`_page_doors.js.html`), any hub message or `closed` fires `ping` on every other room on the
+  hub. Page only; the node is unchanged.
+- **Not done:** keeping still-connected fast-lane peers across a rejoin (the reporter's optional second idea).
+- **Test:** `tests/test_realtime_one_stream_browser.py` (a quiet room beside a room busy every second, 30 s): it saw
+  `reconnecting` before the fix.
+
 ### 2026-11-06 The public arcade, the Bank, publishing and the code's origin moved from .25 to Strawberry on .55 (Claude; the operator: "serve strawberries arcade on app.dogecoinarcade.com", "migrate everything that is use on .25 including the ashvale bank and referee key. keep .25 on its mesh identity. keep .55 on its identity", "move the git origin repo to .55 too")
 
 - **app., node., test. and pages.dogecoinarcade.com** are served by Strawberry (.55) through a new tunnel. Strawberry
