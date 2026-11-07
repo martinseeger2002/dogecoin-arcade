@@ -57,8 +57,8 @@ def test_admin_wears_the_lite_look_in_lite_and_its_own_in_full(browser, served):
             if page == "/wallet":           # a page on its own wears Lite's bar (Admin, PR #94, lives in the window)
                 assert browser.find_element(By.CSS_SELECTOR, ".brand a").text.endswith(" Lite")
                 bar = [a.text for a in browser.find_elements(By.CSS_SELECTOR, "header nav a")]
-                assert bar == ["Overview", "Send", "Receive", "Transactions", "Address book", "Messages", "Help",
-                               "Admin"], "Lite's own modules only: Messages is the core's; Apps joins when switched on"
+                assert bar == ["Overview", "Send", "Receive", "Transactions", "Address book", "Messages", "Apps",
+                               "Help", "Admin"], "Lite's own tabs only: Messages and Apps are the core's (2026-11-07)"
         # Admin opened on its own lands in the window's Admin tab (PR #94, 2026-11-05), and wears the Lite look there.
         browser.get(base + "/admin")
         WebDriverWait(browser, 30).until(lambda d: d.current_url.endswith("/#admin"))

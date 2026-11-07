@@ -385,7 +385,6 @@ def test_a_card_that_draws_pictures_itself_says_so_and_gets_its_own_switch(clien
 def test_listapps_is_the_app_store_for_the_console_and_lites_apps_tab(client):
     """The Lite window's Apps tab, arcade-cli and the console read the same list the App Store shows: the newest card
     of each app, and the inscription Play opens."""
-    from arcade.lite import commands as cmdlib
     app, state = client
     real, card, old = "f1" * 32, "f2" * 32, "f3" * 32
     _inscribe(state, real, 60, MAKER, {}, height=10)
@@ -401,7 +400,8 @@ def test_listapps_is_the_app_store_for_the_console_and_lites_apps_tab(client):
                                   json={"line": "help"}).json()["result"]
     state.set_setting("edition", "lite")
     try:
-        with __import__("pytest").raises(cmdlib.CommandError, match="Apps and games module is off"):
-            cmdlib.run_line(cmdlib.Caller(state, "anyone"), "listapps")
+        # Apps and games is part of the core (2026-11-07): the App Store answers in Lite too
+        said = app.post("/lite/api/console", headers={"x-arcade-lite": "1"}, json={"line": "listapps new 10"}).json()
+        assert said["ok"] and any(a["name"] == "Ghost Fleet" for a in said["result"]), said
     finally:
         state.set_setting("edition", None)

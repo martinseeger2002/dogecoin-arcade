@@ -5,9 +5,13 @@
  * The modules come in categories, one tab each, from the server (modules.describe: a module's `kind`, titled by
  * KIND_TITLES), so a new kind -- chains, or modules brought from the mesh -- is a new tab with nothing changed here.
  * "All" lists every one; the filter box narrows whichever tab is open, by name, id or what it does. Each tab says how
- * many of its modules are on. A switch asks first when the module carries a caution, or when it turns others on or
- * off with it. The tab picked last is kept in this browser. "Who may use it" says who gets a module's tab and pages:
- * only the operator, signed-in users too, or everyone (modules.access; 2026-11-04). */
+ * many of its modules are on. A category with groups (the Apps: social, inscriptions and tokens, markets, node
+ * modules; modules.APP_GROUPS) draws each group under a heading of its own, and All heads each category too. A switch
+ * asks first when the module carries a caution, or when it turns others on or off with it. The tab picked last is kept in this browser. "Who may use it" says who gets a module's tab and pages:
+ * only the operator, signed-in users too, or everyone (modules.access; 2026-11-04). "Add a node module" lists the
+ * node modules that come with the arcade's source, each with Add, or Update when a newer one came with an update; an
+ * added one shows up under Apps -> Node modules, off, to be ticked on (2026-11-06: step 4 of the DigiDollar guide "in
+ * the ui"). It is shown with the Apps and All tabs, where node modules are. */
 (function () {
   var KEPT = 'arcade.modules.tab';
   var CSS = '.mui-tabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--line);margin:8px 0 6px}'
@@ -18,7 +22,9 @@
     + '.mui-tools{display:flex;gap:8px;align-items:center;margin:0 0 6px}.mui-tools input{flex:1;min-width:0}'
     + '.mui table{width:100%;border-collapse:collapse}.mui td,.mui th{text-align:left;vertical-align:top;'
     + 'padding:3px 6px;border-bottom:1px solid var(--line)}.mui td.c{text-align:center;width:3em}'
-    + '.mui .why{color:var(--muted)}.mui select{font:inherit}';
+    + '.mui tr.mui-head th{padding-top:12px;font-weight:600;border-bottom:1px solid var(--line)}'
+    + '.mui tr.mui-head small{font-weight:400;color:var(--muted);margin-left:8px}'
+    + '.mui .why{color:var(--muted)}.mui .ok{font-weight:600}.mui .mui-add{margin-top:18px}.mui select{font:inherit}';
   var WHO = [['operator', 'Only me'], ['user', 'Signed-in'], ['anyone', 'Everyone']];
 
   function call(body) {
@@ -59,7 +65,14 @@
     var blurb = el('p', '', 'why'), table = el('table'), body = el('tbody');
     table.innerHTML = '<thead><tr><th class="c">On</th><th>Module</th><th>What it does</th><th>Who may use it</th><th class="c">In Lite</th></tr></thead>';
     table.append(body);
-    root.append(el('h2', 'Edition'), edition, acts, restart, el('h2', 'Modules'), tabs, tools, blurb, table);
+    var addHead = el('h2', 'Add a node module', 'mui-add'), addWhy = el('p', 'These come with this arcade. Adding one puts'
+      + ' it under Apps \u2192 Node modules above, switched off; then tick it on there and say who may use it.', 'why');
+    var addSaid = el('p', '', 'ok'), addTable = el('table'), addBody = el('tbody');
+    addTable.innerHTML = '<thead><tr><th>Module</th><th>What it does</th><th></th></tr></thead>';
+    addTable.append(addBody);
+    addSaid.hidden = true;
+    root.append(el('h2', 'Edition'), edition, acts, restart, el('h2', 'Modules'), tabs, tools, blurb, table,
+                addHead, addWhy, addSaid, addTable);
     filter.oninput = rows;
 
     function draw(d) {
@@ -84,40 +97,86 @@
       });
       blurb.textContent = (cats.filter(function (c) { return c.id === tab; })[0] || {}).summary || '';
       rows();
+      shipped(d.shipped || []);
+    }
+    function shipped(list) {
+      addHead.hidden = addWhy.hidden = addTable.hidden = !list.length || (tab !== 'all' && tab !== 'app');
+      addBody.textContent = '';
+      list.forEach(function (p) {
+        var tr = addBody.insertRow();
+        tr.insertCell().textContent = p.title + ' ' + p.version;
+        tr.insertCell().textContent = p.summary;
+        var act = tr.insertCell(), b = el('button', p.same ? 'Added' : p.added ? 'Update from ' + p.added : 'Add');
+        b.type = 'button'; b.disabled = p.same; b.setAttribute('aria-label', b.textContent + ' ' + p.title);
+        b.onclick = function () {
+          b.disabled = true;
+          call({add: p.name}).then(function (d) {
+            tab = 'app'; keep(tab); filter.value = '';
+            addSaid.hidden = false;
+            addSaid.textContent = 'Added ' + p.title + ' ' + p.version + '. Tick it on under Apps \u2192 Node modules above.';
+            draw(d);
+          }).catch(function (e) { alert(e.message); b.disabled = false; });
+        };
+        act.append(b);
+      });
+    }
+    // A heading row over each category (in All) and each group (in a category that has groups).
+    function head(title, summary) {
+      var tr = body.insertRow(), th = el('th', title); tr.className = 'mui-head'; th.colSpan = 5;
+      if (summary) th.append(el('small', summary));
+      tr.append(th);
     }
     function rows() {
       if (!data) return;
       var words = filter.value.trim().toLowerCase();
       body.textContent = '';
-      data.modules.filter(function (m) {
-        return (tab === 'all' || m.kind === tab)
-          && (!words || (m.title + ' ' + m.id + ' ' + m.summary).toLowerCase().indexOf(words) >= 0);
-      }).forEach(function (m) {
-        var tr = body.insertRow(), on = tr.insertCell();
-        on.className = 'c';
-        if (m.core) on.append(el('span', 'core', 'why'));
-        else {
-          var box = el('input'); box.type = 'checkbox'; box.checked = m.on; box.setAttribute('aria-label', m.title);
-          box.onchange = function () { flip(m, box); };
-          on.append(box);
-        }
-        tr.insertCell().textContent = m.title;
-        var what = tr.insertCell(); what.textContent = m.summary;
-        if (m.needs.length) what.append(el('div', 'Needs: ' + names(m.needs), 'why'));
-        var who = tr.insertCell();
-        if (m.core) who.append(el('span', 'everyone', 'why'));
-        else {
-          var pick = el('select'); pick.setAttribute('aria-label', 'Who may use ' + m.title);
-          WHO.forEach(function (w) { var o = el('option', w[1]); o.value = w[0]; pick.append(o); });
-          pick.value = m.access || 'anyone';
-          pick.onchange = function () {
-            call({module: m.id, access: pick.value}).then(draw).catch(function (e) { alert(e.message); pick.value = m.access; });
-          };
-          who.append(pick);
-        }
-        var lite = tr.insertCell(); lite.className = 'c why'; lite.textContent = m.lite ? 'on' : 'off';
+      (data.categories || []).filter(function (c) { return tab === 'all' || c.id === tab; }).forEach(function (c) {
+        var mine = data.modules.filter(function (m) {
+          return m.kind === c.id
+            && (!words || (m.title + ' ' + m.id + ' ' + m.summary).toLowerCase().indexOf(words) >= 0);
+        });
+        var groups = c.groups || [];
+        if (tab === 'all' && mine.length) head(c.title, groups.length ? '' : c.summary);
+        if (!groups.length) { mine.forEach(row); return; }
+        var ids = groups.map(function (g) { return g.id; });
+        groups.concat([{id: null, title: 'Other', summary: ''}]).forEach(function (g) {
+          var these = mine.filter(function (m) { return g.id === null ? ids.indexOf(m.group) < 0 : m.group === g.id; });
+          if (!these.length && (words || g.id === null || tab === 'all')) return;
+          head(g.title, g.summary);
+          these.forEach(row);
+          if (!these.length) note('None yet.' + (g.id === 'node-modules' && (data.shipped || []).length
+            ? ' Add one under Add a node module below.' : ''));
+        });
       });
-      if (!body.rows.length) body.insertRow().insertCell().textContent = 'No module matches.';
+      if (!body.querySelector('tr:not(.mui-head)')) note('No module matches.');
+    }
+    function note(text) {
+      var td = body.insertRow().insertCell(); td.colSpan = 5; td.append(el('span', text, 'why'));
+    }
+    function row(m) {
+      var tr = body.insertRow(), on = tr.insertCell();
+      on.className = 'c';
+      if (m.core) on.append(el('span', 'core', 'why'));
+      else {
+        var box = el('input'); box.type = 'checkbox'; box.checked = m.on; box.setAttribute('aria-label', m.title);
+        box.onchange = function () { flip(m, box); };
+        on.append(box);
+      }
+      tr.insertCell().textContent = m.title;
+      var what = tr.insertCell(); what.textContent = m.summary;
+      if (m.needs.length) what.append(el('div', 'Needs: ' + names(m.needs), 'why'));
+      var who = tr.insertCell();
+      if (m.core) who.append(el('span', 'everyone', 'why'));
+      else {
+        var pick = el('select'); pick.setAttribute('aria-label', 'Who may use ' + m.title);
+        WHO.forEach(function (w) { var o = el('option', w[1]); o.value = w[0]; pick.append(o); });
+        pick.value = m.access || 'anyone';
+        pick.onchange = function () {
+          call({module: m.id, access: pick.value}).then(draw).catch(function (e) { alert(e.message); pick.value = m.access; });
+        };
+        who.append(pick);
+      }
+      var lite = tr.insertCell(); lite.className = 'c why'; lite.textContent = m.lite ? 'on' : 'off';
     }
     function names(ids) {
       return ids.map(function (id) {

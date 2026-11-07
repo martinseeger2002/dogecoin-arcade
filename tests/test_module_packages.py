@@ -89,7 +89,7 @@ def test_the_console_lists_a_modules_commands_and_the_operator_alone_keeps_one(a
     assert "pay" not in cmdlib.run_line(cmdlib.Caller(app_state), "help"), "a user's command, for users"
     assert cmdlib.run_line(cmdlib.Caller(app_state), "help hello") == "hello [who]\n\nSay hello."
     row = next(m for m in modulelib.describe(app_state.settings())["modules"] if m["id"] == "hello")
-    assert row["on"] and row["kind"] == "node" and row["package"] == pid and row["page"] == ["/m/hello/", "/m/hello/"]
+    assert row["on"] and row["kind"] == "app" and row["group"] == "node-modules" and row["package"] == pid and row["page"] == ["/m/hello/", "/m/hello/"]
 
     clash = _module(tmp_path / "x", change=lambda m: m["commands"].update(send={}))
     with pytest.raises(cmdlib.CommandError, match="takes a name the arcade's own"):
