@@ -599,6 +599,10 @@ async function _restore(phrase, password, {network, version}) {
   try {
     result = await seatWith(wallet, {join: false});
   } catch (e) {
+    // Only the one refusal that says "no seat here" (accounts.py login), which comes after the signature and the
+    // arcade's address have both checked out: any other (a sign-in signed for another address, too many tries, a
+    // stale challenge) is said as it is, and nothing is filed.
+    if (!/does not hold a seat/.test(String(e.message || e))) throw e;
     // Not an account HERE (2026-11-07, SadFrog: restore "from any core if arcade goes down as well as any arcade").
     // An account is its key and its @name, and the name is chain state (D-147): the claim from this wallet's own
     // tag-chain address, which this node reads as well as the one it signed up on. So words whose address holds a
