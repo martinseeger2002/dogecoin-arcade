@@ -8303,11 +8303,26 @@ def create_app(state: AppState) -> FastAPI:
         except ValueError as exc:
             return contentlib._json({"error": str(exc)}, status=400)
         chain, _ = _token_chain()
+        # COINS ON ANOTHER CHAIN (2026-11-07, LiteWorldsQuest: plots paid in Litecoin testnet): "chain" names, by
+        # network, another chain this arcade runs and the reader holds coins on (an account has a key on each).
+        # Only coins: tokens and inscriptions stay on the arcade's own chain. Who asks is still the reader as the
+        # arcade's chain knows them; only the payment is built on the chain named.
+        pay_chain = chain
+        if str(body.get("chain") or "").strip():
+            if str(body.get("kind") or "") != "coins":
+                return contentlib._json({"error": "only coins can be asked for on another chain"}, status=400)
+            try:
+                pay_chain = _chain_asked(body)
+            except ValueError as exc:
+                return contentlib._json({"error": str(exc)}, status=400)
+            if pay_chain.network != chain.network and not (state.public or _request_outside(state, request)):
+                return contentlib._json({"error": "the node's own wallet is asked on the arcade's chain only"},
+                                        status=400)
         if state.public or _request_outside(state, request):
             # The reader's own wallet is the scope; nobody signed in has none, and is
             # told so by _ask_the_reader as before.
             scope, source = _viewer_of(request, chain), "reader"
-            ask = lambda: _ask_the_reader(request, chain, body)   # noqa: E731
+            ask = lambda: _ask_the_reader(request, chain, body, pay_chain)   # noqa: E731
         else:
             scope, source = sendrefs.NODE, "node"
             ask = ((lambda: _node_silent_send(request, chain, body)) if body.get("silent") is True
@@ -8317,7 +8332,7 @@ def create_app(state: AppState) -> FastAPI:
         # A page's retry of a send it named (2026-10-21): the same (wallet, chain, ref)
         # answers with the first request as it stands now. The lock is this ref's
         # alone, so a second POST waits for the first and nothing else does.
-        key = (scope, chain.network, ref)
+        key = (scope, pay_chain.network, ref)
         refs = state.send_refs
         with refs.held(key):
             first = refs.find(*key)
@@ -8355,7 +8370,7 @@ def create_app(state: AppState) -> FastAPI:
                 and time.time() - kept["created"] > PAGE_SEND_FOR:
             told["status"] = "expired"            # as the question in memory would have
         if told.get("status") == "sent" and told.get("txid"):
-            status = _tx_status(state.chain_named(kept["network"]), told["txid"])
+            status = _tx_status(_send_chain(kept["network"]), told["txid"])
             if status is not None:
                 told["confirmations"] = status["confirmations"]
                 told["confirmed"] = status["confirmed"]
@@ -8428,7 +8443,15 @@ def create_app(state: AppState) -> FastAPI:
     _page_sends: dict[str, dict] = {}
     PAGE_SEND_FOR = 3600                     # an unanswered question expires
 
-    def _ask_the_reader(request: Request, chain, body: dict):
+    def _send_chain(network: str):
+        """The chain a page's send was made on: an indexed one, or another the accounts hold coins on (L test)."""
+        for c in _account_chains():
+            if c.network == network:
+                return c
+        return state.chain_named(network)
+
+    def _ask_the_reader(request: Request, chain, body: dict, pay_chain=None):
+        pay_chain = pay_chain or chain
         address = _viewer_of(request, chain)
         if not address:
             return contentlib._json({"error": f"sign in to {brandlib.current().name} and open this "
@@ -8456,7 +8479,7 @@ def create_app(state: AppState) -> FastAPI:
                 return contentlib._json({"error": "that inscription is not yours to send"},
                                         status=400)
         try:
-            to_address = _tag_address(state, to, mainnet=chain)
+            to_address = _tag_address(state, to, mainnet=pay_chain)
         except ValueError:
             to_address = ""
         now = time.time()
@@ -8485,7 +8508,8 @@ def create_app(state: AppState) -> FastAPI:
                                             and piece["json"].get("name") else "")
         rid = secrets.token_urlsafe(12)
         _page_sends[rid] = {
-            "id": rid, "address": address, "network": chain.network, "kind": kind,
+            "id": rid, "address": address, "network": pay_chain.network, "kind": kind,
+            "coin": str(getattr(pay_chain.params, "coin", "") or ""),
             "to": to[:120], "amount": amount[:40],
             "propertyid": int(body.get("propertyid") or 0) if kind == "token" else None,
             "name": name, "label": str(body.get("label") or "")[:60],
@@ -8503,10 +8527,11 @@ def create_app(state: AppState) -> FastAPI:
         told = {k: row[k] for k in ("id", "kind", "to", "amount", "propertyid",
                                     "status", "txid", "error")}
         if row["status"] == "sent" and row["txid"]:
-            status = _tx_status(state.chain_named(row["network"]), row["txid"])
+            status = _tx_status(_send_chain(row["network"]), row["txid"])
             if status is not None:
                 told["confirmations"] = status["confirmations"]
                 told["confirmed"] = status["confirmed"]
+        told["chain"] = row["network"]
         return told
 
     @app.get("/account/pagesends")
@@ -8520,9 +8545,10 @@ def create_app(state: AppState) -> FastAPI:
                 if r["address"] == address and r["status"] == "pending"
                 and now - r["created"] <= PAGE_SEND_FOR]
         return JSONResponse({"chain": chain.network, "requests": [
-            {k: r.get(k, "") for k in ("id", "kind", "to", "amount", "propertyid", "name",
-                                       "label", "note", "page", "creator", "to_address",
-                                       "issuer", "inscription", "made_by", "silent")}
+            {**{k: r.get(k, "") for k in ("id", "kind", "to", "amount", "propertyid", "name",
+                                          "label", "note", "page", "creator", "to_address",
+                                          "issuer", "inscription", "made_by", "silent", "coin")},
+             "chain": r.get("network", "")}   # where the coins go out: the account's chain or another
             for r in rows]},
             headers={"Cache-Control": "no-store"})
 
@@ -8540,7 +8566,7 @@ def create_app(state: AppState) -> FastAPI:
         status = str(said.get("status") or "")
         if status == "sent":
             txid = str(said.get("txid") or "").strip().lower()
-            if not re.fullmatch(r"[0-9a-f]{64}", txid) or _tx_status(chain, txid) is None:
+            if not re.fullmatch(r"[0-9a-f]{64}", txid) or _tx_status(_send_chain(row["network"]), txid) is None:
                 return JSONResponse({"detail": "this node has not seen that transaction"},
                                     status_code=400)
             row.update(status="sent", txid=txid)

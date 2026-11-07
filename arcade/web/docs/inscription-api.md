@@ -403,7 +403,8 @@ preflight is answered):
 | field | |
 |---|---|
 | `kind` | `coins`, `token` or `inscription` |
-| `to` | an address on this chain, or a `@tag` |
+| `chain` | optional, for `coins` only: another chain this arcade runs and the reader holds coins on, by its network (`ltctest` for Litecoin testnet, say). Left out, the arcade's own chain. See *Coins on another chain* below |
+| `to` | an address on this chain (or on `chain`), or a `@tag` |
 | `amount` | for `coins` and `token`: what to send, as a decimal string |
 | `propertyid` | for `token` |
 | `inscription` | for `inscription`: its number or id. It must be this wallet's |
@@ -430,6 +431,15 @@ waiting. Then poll:
 const answer = await (await fetch('/r/send/' + asked.id)).json();
 // status: 'pending' | 'sent' (with txid) | 'denied' | 'failed' (with error) | 'expired'
 ```
+
+**Coins on another chain (`chain`).** An account holds a key on every chain its arcade runs, so a page can
+ask for coins on one of them: a shop that sells for Litecoin testnet sends `{kind: 'coins', chain: 'ltctest',
+to: <an L test address>, amount: '0.05'}`. The reader's card says the chain's coin (`0.05 LTC TEST`), the
+browser builds and signs the payment on that chain, and `/r/send/<id>` reports it from that chain's node, with
+`chain` in the answer. Tokens and inscriptions stay on the arcade's own chain (`400` otherwise), a chain this
+arcade does not run, or has not synced yet, is a `400` that says so, and the node's own wallet (a page open on
+The operator's machine) is asked on the arcade's chain only. A `ref` belongs to the chain too: the same `ref` on
+two chains is two requests.
 
 **Asking again safely (`ref`).** A browser can lose the reply to a POST that
 reached the node ("Load failed" in Safari), and a page that simply asks again
