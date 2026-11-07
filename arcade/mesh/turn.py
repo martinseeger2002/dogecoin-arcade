@@ -531,7 +531,7 @@ class TurnShare:
         """ICE servers on up to `count` other arcades, for the player `tag`."""
         offers = [(p, h) for p, h in dict(self.reachable()).items() if p in self.node.links and h]
         got = await asyncio.gather(*(self._one(p, f"{self.node.node_id[:16]}:{tag}", h) for p, h in offers))
-        return [g for g in got if g][:count]
+        return with_v4([g for g in got if g], count)
 
     async def on_frame(self, link, header: dict, blob: bytes) -> None:
         op, nonce = header.get("op"), str(header.get("n", ""))[:12]
@@ -545,6 +545,23 @@ class TurnShare:
             fut = self.waiting.get(nonce)
             if fut is not None and not fut.done():
                 fut.set_result(header)
+
+
+def has_v4(server: dict) -> bool:
+    """A relay a browser on an IPv4-only network can reach."""
+    return any(not str(u).startswith(("turn:[", "turns:[")) for u in server.get("urls") or [])
+
+
+def with_v4(servers: list[dict], count: int) -> list[dict]:
+    """The first `count` relays, one of them reachable over IPv4 whenever any is (2026-11-07, found by the GBC session:
+    Strawberry on Starlink borrowed two IPv6-only relays at the same house, and a player in New York with no IPv6 got
+    no video; the IPv4 ones are on rented servers and answered later)."""
+    pick = servers[:count]
+    if count > 0 and not any(has_v4(s) for s in pick):
+        v4 = [s for s in servers if has_v4(s)]
+        if v4:
+            pick = pick[:count - 1] + v4[:1]
+    return pick
 
 
 def ice_server(hosts: list, username: str, credential: str) -> dict:
@@ -572,4 +589,7 @@ def player_relays(server: TurnServer | None, stun_share, port: int | None, lan: 
         return borrowed
     username, password = login(server.secret, address)
     own = [ice_server(hosts[:4], username, password)]
-    return own if proved else own + borrowed
+    # Proved only over IPv6 (a home on Starlink, which gives no IPv4 of its own): a borrowed IPv4 relay beside it.
+    if proved and any(":" not in h for h, _ in proved):
+        return own
+    return own + (borrowed if not proved else [b for b in borrowed if has_v4(b)][:1])

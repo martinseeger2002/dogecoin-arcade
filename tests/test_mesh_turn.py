@@ -196,6 +196,34 @@ def test_who_gets_which_relay():
     assert turn.player_relays(srv, _Stun([("198.51.100.1", 3478)]), 3478, None, "8.8.8.8", "addr", far) == far
 
 
+def test_a_player_without_ipv6_always_gets_an_ipv4_relay_when_one_is_borrowable():
+    """2026-11-07, found by the GBC session: Strawberry (Starlink, no IPv4 of its own) borrowed the first two relays
+    that answered, both IPv6 at the same house, and a player in New York with no IPv6 got no video."""
+    home1 = {"urls": ["turn:[2001:db8::1]:3478?transport=udp"], "username": "a", "credential": "c"}
+    home2 = {"urls": ["turn:[2001:db8::2]:3478?transport=udp"], "username": "b", "credential": "c"}
+    vps = {"urls": ["turn:203.0.113.9:3478?transport=udp", "turn:[2001:db8:9::1]:3478?transport=udp"],
+           "username": "v", "credential": "c"}
+    assert turn.with_v4([home1, home2, vps], 2) == [home1, vps]
+    assert turn.with_v4([vps, home1, home2], 2) == [vps, home1]
+    assert turn.with_v4([home1, home2], 2) == [home1, home2], "no IPv4 one anywhere: the same as before"
+    assert turn.with_v4([], 2) == []
+
+    class _Stun:
+        def __init__(self, hosts): self.hosts = hosts
+        def mine(self): return self.hosts
+
+    srv = turn.TurnServer(SECRET)
+    srv.transport = object()
+    # Proved only over IPv6: its own relay, and one borrowed IPv4 relay beside it.
+    got = turn.player_relays(srv, _Stun([("2001:db8::55", 3478)]), 3478, "192.168.1.20", "8.8.8.8", "addr",
+                             [home1, vps])
+    assert [g["urls"] for g in got] == [["turn:[2001:db8::55]:3478?transport=udp"], vps["urls"]]
+    # Proved over IPv4 too: its own relay alone, as before.
+    got = turn.player_relays(srv, _Stun([("198.51.100.1", 3478), ("2001:db8::55", 3478)]), 3478, None, "8.8.8.8",
+                             "addr", [home1, vps])
+    assert len(got) == 1
+
+
 def test_relayed_packets_keep_their_pace_while_the_mesh_loop_is_busy():
     """2026-11-02: calls on an "Arcade relay" were "very lossy". The relay ran on the mesh loop, so every relayed
     packet waited behind whatever the mesh was doing: none lost, but delivered in clumps. It has a loop of its own now;

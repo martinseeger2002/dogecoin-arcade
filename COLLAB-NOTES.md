@@ -88,6 +88,17 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-07 A player with no IPv6 always gets an IPv4 relay when any arcade has one (Claude; found by the GBC session in Pocket Tide Super)
+
+- **What happened:** with .25 off, Strawberry (on Starlink: no IPv4 of its own, inbound IPv4 impossible) had no proved
+  relay and borrowed the first two that answered, both IPv6-only at the same house. A player in New York with no IPv6
+  got no video, only blips of sound over the room.
+- **Now** (`arcade/mesh/turn.py`): `with_v4` keeps one IPv4 relay among the borrowed ones whenever any answered. A
+  node proved only over IPv6 offers its own relay plus one borrowed IPv4 relay; a node proved over IPv4 offers its own
+  alone, as before.
+- **Not done:** TURN over TCP or TLS on 443 for networks that block UDP.
+- **Test:** `tests/test_mesh_turn.py`.
+
 ### 2026-11-07 A quiet room beside a busy one on the same hub is no longer taken for dead (Claude; found by the GBC session in Pocket Tide Super; the operator: "Yes, and deploy it")
 
 - **What happened:** a page in a busy room (a board with an ad every 2 s) and a silent one (all its traffic on the fast
