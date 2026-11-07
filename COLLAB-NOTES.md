@@ -146,6 +146,30 @@ full Wallet), and ends the two copies of DigiDollar's send.
   DigiByte Core 9.26.7.
 - **For the operator:** please merge into `main`. Any later change to DigiDollar's send goes in the module's file and is
   copied to `arcade/ddlib/`.
+### 2026-11-07 · SadFrog's side (Claude) · branch `team/modules-apps-category` (on `main` ed52b15e) · Apps and games in the core, the Apps grouped, node modules under Apps, and the Add button for them
+
+SadFrog: "in edition and modules the apps and games should be a core module ... in that tab everything should be
+properly categorized apps and would have everything including digidollar as a node module subcategory in the apps
+category section". Found because a server arcade's Admin had no way to add DigiDollar at all.
+
+- **Add a node module with a button** (first commit): Admin -> Edition & modules lists the node modules that come with
+  the arcade's source (`examples/packages`, DigiDollar today), each with Add, or Update when a newer one came with an
+  update. Added, it is kept off until ticked. Before, only `installmodule <folder>` typed at the machine could add one,
+  so an operator reaching a server from elsewhere could not. Only modules that come with the arcade: no folder is named
+  from outside. `installmodule` and the button share `packages.keep_module`. Test: `tests/test_module_add.py`.
+- **Apps and games is core** (`arcade/modules.py`): always on, in every edition; its routes and `card-watch` run in
+  Lite. The Lite window's Apps tab is the window's own (after Messages), as the charter's tab list has it. A saved
+  `modules: {apps: false}` is ignored, as it is for any core module. Rooms and calls no longer `needs` it.
+- **The Apps are grouped** (`APP_GROUPS`): Social (Feed, Rooms and calls, Affiliates), Inscriptions and tokens
+  (Collections and Creator, Tokens), Markets (Exchange, LLM market) and **Node modules**. `describe` gives the Apps
+  category its `groups` and each module its `group`; `modules_js.js` draws a heading per group (All heads each
+  category too).
+- **A node module from a package is an app** (kind `app`, group `node-modules`), no longer a node service. It shows
+  under Apps -> Node modules, and Add a node module sits under the Apps and All tabs.
+- **Tests:** test_modules (+1, and Lite serves /apps), test_lite, test_games (listapps answers in Lite),
+  test_module_packages, test_module_add, and the browser tests test_lite_pages_browser and test_lite_look_browser.
+- **For the operator:** please merge this into `main`. Nothing to set on a node: the next update shows the Apps tab and
+  the groups by itself.
 
 ### 2026-11-07 A player with no IPv6 always gets an IPv4 relay when any arcade has one (Claude; found by the GBC session in Pocket Tide Super)
 

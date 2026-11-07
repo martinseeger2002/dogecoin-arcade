@@ -157,10 +157,12 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="3" width="14" height="18" rx="1"/><circle cx="12" cy="10" r="3"/><path d="M8 17c1-2 7-2 8 0"/></svg><span>Address book</span></button>
   <button type="button" role="tab" data-tab="messages">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Messages</span></button>
-  {#- The modules' tabs (modules.tabs): each that is on, open to this caller and not hidden by them. Apps keeps the
-      window's own panel (_apps.html); every other one opens its page inside the window. #}
+  {#- Apps and games is part of the core (2026-11-07): its tab is the window's own, with its own panel (_apps.html). #}
+  <button type="button" role="tab" data-tab="apps">{{ icons['apps']|safe }}<span>Apps</span></button>
+  {#- The modules' tabs (modules.tabs): each that is on, open to this caller and not hidden by them, opening its page
+      inside the window. #}
   {% if tabs %}<span class="sep" aria-hidden="true"></span>{% endif %}
-  {% for t in tabs %}<button type="button" role="tab" data-tab="{{ 'apps' if t.id == 'apps' else 'm-' ~ t.id }}" data-module="{{ t.id }}"{% if t.id != 'apps' %} data-src="{{ t.page }}"{% endif %}>
+  {% for t in tabs %}<button type="button" role="tab" data-tab="m-{{ t.id }}" data-module="{{ t.id }}" data-src="{{ t.page }}">
     {{ icons.get(t.id, icons['module'])|safe }}<span>{{ t.title }}</span></button>
   {% endfor %}
   <button type="button" id="tab-more" aria-haspopup="true" hidden><span>More ▾</span></button>
@@ -195,7 +197,7 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   {% include "_backup.html" %}
   {% include "_messages.html" %}
   {% include "_apps.html" %}
-  {% for t in tabs if t.id != 'apps' %}<section data-panel="m-{{ t.id }}" class="frame{{ ' modframe' if t.package }}" hidden>{% if t.package %}<div class="modpanel" data-modpanel="{{ t.id }}" hidden></div>{% endif %}<iframe title="{{ t.title }}" data-src="{{ t.page }}"></iframe></section>
+  {% for t in tabs %}<section data-panel="m-{{ t.id }}" class="frame{{ ' modframe' if t.package }}" hidden>{% if t.package %}<div class="modpanel" data-modpanel="{{ t.id }}" hidden></div>{% endif %}<iframe title="{{ t.title }}" data-src="{{ t.page }}"></iframe></section>
   {% endfor %}
   {% if admin_tab %}<section data-panel="admin" class="frame" hidden><iframe title="Admin" data-src="/admin"></iframe></section>{% endif %}
 </main>

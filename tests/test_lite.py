@@ -232,7 +232,8 @@ def test_each_module_on_is_a_tab_that_opens_its_page_inside_the_window(app, app_
     app_state.set_setting("edition", "lite")
     try:
         lite = app.get("/lite", headers=LOCAL).text
-        assert 'data-tab="m-' not in lite and 'data-tab="apps"' not in lite, "Lite: no module is on yet"
+        assert 'data-tab="m-' not in lite, "Lite: no module is on yet"
+        assert 'data-tab="apps"' in lite, "Apps and games is part of the core (2026-11-07)"
         app_state.set_setting("modules", {"ords": True})
         assert 'data-tab="m-ords"' in app.get("/lite", headers=LOCAL).text
     finally:
@@ -298,14 +299,15 @@ def test_the_apps_tab_is_the_apps_module_and_holds_the_app_store(app, app_state)
     assert said["ok"] and isinstance(said["result"], list), said
     app_state.set_setting("edition", "lite")
     try:
-        lite = app.get("/lite", headers=LOCAL).text
-        assert 'data-tab="apps"' not in lite and '<section data-panel="apps"' not in lite, "off: the tab is gone"
-        app_state.set_setting("modules", {"apps": True})
+        # Apps and games is part of the core (2026-11-07, SadFrog): in every Lite window, and it cannot be switched off
+        app_state.set_setting("modules", {"apps": False})
         lite = app.get("/lite", headers=LOCAL).text
         assert 'data-tab="apps"' in lite and "Playing an app needs the Ord indexes module" in _panel(lite, "apps")
+        assert 'data-module="apps"' not in lite, "a tab of the window's own, not a module's to hide"
         assert 'href="/#apps"' in app.get("/wallet", headers=LOCAL).text, "and the bar on every page shows it"
-        app_state.set_setting("modules", None)
-        assert 'href="/#apps"' not in app.get("/wallet", headers=LOCAL).text
+        refused = app.post("/admin/api/modules", headers={**LOCAL, "x-arcade-admin": "1"},
+                           json={"module": "apps", "on": False})
+        assert refused.status_code == 400 and "always on" in refused.json()["detail"]
     finally:
         app_state.set_setting("edition", None)
         app_state.set_setting("modules", None)
