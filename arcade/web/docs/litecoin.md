@@ -5,9 +5,9 @@ Litecoin is an **add-on chain**, and so is Litecoin testnet. An operator turns e
 shares its Litecoin Core over the mesh (see *Shared Cores*), with no Litecoin node at all. This page
 says what works, and what to know before you trade on Litecoin.
 
-**Status:** Litecoin carries coins only: no tokens, NFTs, inscriptions or other arcade transactions
-(see below). Lock-script coin swaps work. Litecoin is in the wallet (one key for PEP,
-DOGE and LTC) and on the Exchange (PEP/LTC and DOGE/LTC).
+**Status:** Litecoin carries coins and Litecoin ordinals (see below). It carries none of this arcade's own
+transactions: no arcade tokens, NFTs, names or posts. Lock-script coin swaps work. Litecoin is in the wallet (one
+key for PEP, DOGE and LTC) and on the Exchange (PEP/LTC and DOGE/LTC). Litecoin testnet carries coins only.
 
 ## What works the same as on Pepecoin
 
@@ -18,20 +18,39 @@ DOGE and LTC) and on the Exchange (PEP/LTC and DOGE/LTC).
 
 ## Address types
 
-On **Litecoin testnet** the Wallet's drop-down also offers a native SegWit (`tltc1…`) and a nested
-SegWit (P2SH) wallet beside the legacy one, each its own entry, and every kind can pay every other. On
-Litecoin mainnet SegWit wallets are not offered yet: the node refuses to register one on a real-coin
-chain.
+The Wallet's address type offers **Legacy** (`L…`, the default), **P2SH (Nested SegWit)** (`M…`) and
+**Native SegWit** (`ltc1q…`) on Litecoin and Litecoin testnet (2026-11-07). Each is its own address from the
+same twelve words (paths m/44', m/49' and m/84'), and every kind can pay every other. A send pays any of
+them, and an old `3…` script address too. MWEB (`ltcmweb1…`) is a separate, private layer this arcade does
+not pay.
 
-## No inscriptions or tokens on Litecoin
+## Litecoin ordinals
 
-This arcade keeps no ord index on Litecoin or Litecoin testnet, as on Kotia (2026-11-05). It reads no
-inscriptions, LTC-20 tokens or Omni there, and none of its own transactions either: no arcade tokens,
-NFTs, names or posts (`Params.class_b`), and the Create, Tokens and Exchange pages do not switch to
-Litecoin. Nothing is checked when you send: coins go back and forth as in any plain wallet. It holds no Litecoin coin
-back as "held in inscriptions":
-every coin in a Litecoin wallet is spendable. An inscription someone made elsewhere on a coin you hold
-is not seen here, so keep such coins in a wallet that knows them.
+Litecoin ordinals are back on Litecoin mainnet (2026-11-07). They had been switched off on 2026-11-05, with
+LTC-20, Omni and this arcade's own transactions; only the ordinals came back. Litecoin testnet has none.
+
+Litecoin has two kinds of inscription, and they are not interchangeable.
+
+- **Made elsewhere: Taproot ordinals.** Most Litecoin ordinals tools write the data into a Taproot
+  witness and keep the coin on a Taproot address (`ltc1p…`).
+- **Made here: the Doginals format.** The inscription's data rides in an ordinary (legacy) input, the
+  same way Doginals work on Dogecoin. Its coin is an ordinary address, so the wallet can hold, send and
+  trade it.
+
+What that means for you:
+
+- **The arcade's ord index for Litecoin reads both kinds.** It starts at block 2,424,429, as
+  ord-litecoin does, and reads Taproot envelopes as well as the Doginals kind. Pick how this arcade
+  gets it in **Admin → Ords**: walk it here, or read it from an arcade that shares one.
+- **Coins carrying an inscription are held,** as on every chain with ords: the Wallet says so beside
+  the balance and never spends one by accident. Until an arcade has the index up to date, a small
+  coin waits as "unknown" rather than risk spending an inscription.
+- **Litecoin's Taproot ordinals indexers and marketplaces do not show Doginals-format
+  inscriptions.** An inscription made here is seen by this arcade and by Doginals-style indexers
+  pointed at Litecoin, but not by Taproot-only sites.
+- **Taproot inscriptions show here.** `/content/<id>` reads a Taproot inscription's content from the
+  reveal transaction's witness.
+- **Nothing is converted.** Content already on the chain never changes.
 
 ## Exchanging across chains
 

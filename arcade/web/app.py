@@ -1361,10 +1361,10 @@ def create_app(state: AppState) -> FastAPI:
         _others.setdefault(5, set()).add("ltc")            # Litecoin's legacy "3" P2SH
         for _lchain in state.addons:
             # Kotia (2026-10-23) has no ord envelopes on its coins, and the guard's reader does not know its
-            # timed transactions (Params.tx_time): no guard there, as on any chain without ords. Litecoin and
-            # Litecoin testnet neither (2026-11-05, tbuuol: no token protocols on LTC, tLTC and KOT): with no ord
-            # index every small coin there waited "unknown" and the Wallet called it "held in Litecoin
-            # inscriptions". A chain without an ord index (doginal_index.STARTS) has no guard.
+            # timed transactions (Params.tx_time): no guard there, as on any chain without ords. Litecoin testnet
+            # neither (2026-11-05: with no ord index every small coin there waited "unknown" and the Wallet called it
+            # "held in Litecoin inscriptions"); Litecoin mainnet has its ords and its guard again (2026-11-07). A chain
+            # without an ord index (doginal_index.STARTS) has no guard.
             # DigiByte and its testnet read DigiAssets too (2026-11-09, security review, arcade/digiassets.py): the
             # testnet, with no ord index, gets a guard that reads DigiAssets alone.
             _da = _lchain.network in _digiassets.CHAINS

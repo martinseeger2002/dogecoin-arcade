@@ -404,6 +404,21 @@ Found while checking #121's fixes on the live arcades: pages drawn outside `rend
 - **Test (`tests/test_safe_headers.py`):** walks every GET route without a path parameter and fails on any HTML page with no `frame-ancestors`. On `main` it names ten: `/lite`, `/globe`, `/browser`, `/meshweb`, `/offline`, `/terms`, `/terms/left`, `/admin/terms/preview`, `/tokens/launchpad/preview` and `/dogefeedx/network`. A second test checks `/recover` keeps its single `frame-ancestors 'none'` policy.
 - Nothing frames these pages from another origin today (the launchpad preview is framed by the arcade's own token page), so `'self'` changes nothing a visitor sees.
 
+### 2026-11-07 · SadFrog's side (Claude) · Litecoin ordinals back on Litecoin mainnet (only the ords; testnet, Omni and Class B stay off)
+
+SadFrog: "please setup litecoin ordinals". This undoes the ords part of 2026-11-05's "no token protocols on LTC, tLTC and
+KOT" (tbuuol); SadFrog is telling tbuuol. Branch `team/ltc-ords`.
+
+- `doginal_index.STARTS` / `SOURCES`: `ltc` at 2,424,429 (ord-litecoin) again, so Litecoin has an ord index and a guard;
+  `ltctest` stays out (its index was never built anywhere: every small coin waited "unknown", the 11-05 finding).
+- `ord_chains`: `ltc` in WORDS ("LTC ordinal"), MOVED and EXPLORE_ORDER (after Bellscoin, as 10-25 had it). `OMNI_NETS`
+  stays empty. `Params.class_b` stays False on Litecoin: no arcade tokens, NFTs, names or posts there.
+- Explore lists Litecoin ords and the LTC-20 its ord index reads (`ord_rules.TOKEN_PROTOCOLS["ltc"]`).
+- The guard: an arcade with Litecoin but no Litecoin ord index yet holds small coins "unknown" until it reads one. Node 2
+  builds it (walked on the mini, then moved, as Bells was); deploy this where an index is walked or shared.
+- Docs: litecoin.md says what Litecoin ordinals are here, Taproot vs the Doginals format, and the address types.
+- Tests: test_doginal_index, test_doginal_wallet, test_explore, test_litecoin_face, test_litecoin_network, test_ord_chains,
+  test_ord_chains_more back to Litecoin with ords (mainnet only).
 ### 2026-11-09 · the operator's side (Claude) · merged PRs #121 #122 #123 onto master
 
 All applied cleanly, in order. SadFrog asked for #121 first (sign-up, git-update and swap fixes); the operator chose to deploy all three together.

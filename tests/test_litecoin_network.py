@@ -91,9 +91,9 @@ def test_litecoin_runs_here_when_its_node_is_there_or_borrowed_or_off_as_chosen(
     assert got is not None and got.borrowed, "no node, no choice: borrowed"
 
 
-def test_litecoin_coins_are_never_held_for_ords(app_state, monkeypatch):
-    # 2026-11-05 (tbuuol: "Die 3 Chains LTC tLTC und KOT sollten keinerlei Token Protokolle benutzen"): no ord
-    # index and no guard on Litecoin, so no small coin waits "unknown" and none is "held in Litecoin inscriptions".
+def test_litecoin_coins_are_guarded_like_the_others(app_state, monkeypatch):
+    # Litecoin ordinals again (2026-11-07, SadFrog), after none from 2026-11-05: a coin carrying one is held, as on
+    # every chain with ords, by Litecoin's own guard.
     # Guards are module state: an earlier test's Dogecoin guard must not answer for this app (it lingered
     # in combined runs and this failed only there).
     monkeypatch.setattr(funding, "GUARD", None)
@@ -102,9 +102,11 @@ def test_litecoin_coins_are_never_held_for_ords(app_state, monkeypatch):
     _with_ltc(app_state, monkeypatch, ready=True)
     TestClient(__import__("arcade.web.app", fromlist=["create_app"]).create_app(app_state))
     for address in (LTC_L, LTC_M):
-        assert funding.guard_for(address) is None, f"{address} carries no ords here"
-    assert funding.guard_on("ltc") is None
-    assert funding.guard_for(PEP_MAIN) is not None, "Pepecoin keeps its own guard"
+        assert funding.guard_for(address) is not None, f"{address} is watched"
+    ltc_guard = funding.guard_on("ltc")
+    assert ltc_guard is not None and funding.guard_for(LTC_L) is ltc_guard
+    assert funding.guard_for(PEP_MAIN) is not None and funding.guard_for(PEP_MAIN) is not ltc_guard, \
+        "Pepecoin keeps its own guard"
     assert funding.guard_for(DOGE) is None, "no Dogecoin node here, so no Dogecoin guard"
 
 

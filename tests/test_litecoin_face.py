@@ -100,8 +100,8 @@ def test_the_litecoin_page_says_what_to_know_about_taproot_and_cross_chain(app_s
     app = TestClient(create_app(app_state))
     page = app.get("/docs/litecoin.md")
     assert page.status_code == 200
-    # No inscriptions or tokens on Litecoin since 2026-11-05 (tbuuol): the page says so instead of Taproot vs Doginals.
-    for said in ("No inscriptions or tokens on Litecoin", "every coin in a Litecoin wallet is spendable",
+    # Litecoin ordinals again since 2026-11-07: Taproot vs Doginals, and coins carrying one are held.
+    for said in ("Litecoin ordinals", "Taproot", "ltc1p", "Doginals format", "Coins carrying an inscription are held",
                  "refunds its owner", "ltcmweb1", "a network fee on each chain"):
         assert said in page.text, said
     assert "/docs/litecoin.md" in app.get("/docs").text, "offered on the Docs tab"
