@@ -247,3 +247,44 @@ def test_no_digidollar_tile_on_an_arcade_without_digibyte(browser, tmp_path):
     finally:
         server.should_exit = True
         thread.join(timeout=5)
+
+
+def test_the_lite_wallet_reads_the_same_digidollars_as_the_full_wallet(browser, served):
+    """2026-11-07, SadFrog: "make sure full wallet and lite wallet read the same digi dollar and digidollar test". The
+    Lite window's DigiDollar wallet (while the module is on) reads /account/digidollar, the full Wallet's own read: the
+    same balance, the same coins and the same address, from the arcade's index."""
+    from arcade.lite import commands as cmdlib
+    base, state = served
+    op = cmdlib.Caller(state, "operator", local=True)
+    cmdlib.run_line(op, f"installmodule {PILOT}")
+    cmdlib.run_line(op, "install digidollar")
+    me = _sign_up(browser, base, "ddlitetester")
+    _, pilot = _pilot()
+    pub = bytes.fromhex(me["pubkey"])
+    own = pilot.dd_address("dgbtest", pub[1:])
+    with state.token_index(state.more["dgbtest"]).open() as db:
+        db.conn.execute("INSERT INTO dd_watched (address, since, seeded) VALUES (?, 1, 1)", (own,))
+        db.conn.execute("INSERT INTO dd_coin VALUES (?,?,?,?,?)", ("d1" * 32, 0, own, 2500, 7))
+        db.conn.execute("INSERT INTO dd_coin VALUES (?,?,?,?,?)", ("d2" * 32, 1, own, 1075, 9))
+        db.conn.commit()
+
+    browser.execute_script("localStorage.clear()")
+    browser.get(f"{base}/me/wallet?coin=dgbtest")
+    _wait(browser, "return document.body.dataset.walletReady === 'yes'")
+    browser.find_element(By.ID, "coinpick").click()
+    browser.find_element(By.CSS_SELECTOR, '#nets button[data-dd="1"]').click()
+    _wait(browser, "return document.getElementById('bal').textContent.includes('$35.75')")
+
+    browser.get(f"{base}/lite#send")
+    row = _wait(browser, """return [...document.querySelectorAll('#w-balances tr')]
+        .find(r => r.cells[0] && r.cells[0].textContent === 'DigiDollar (test)' && r.cells[1].textContent.includes('$'))""")
+    assert row.text.split("\n")[0].startswith("DigiDollar (test)") and "$35.75" in row.text, row.text
+    browser.execute_script("const b = document.querySelector('[data-chain]'); b.value = 'dd:dgbtest';"
+                           "b.dispatchEvent(new Event('change'));")
+    _wait(browser, "return document.getElementById('w-address').textContent.startsWith('TD')")
+    assert browser.execute_script("return document.getElementById('w-address').textContent") == own, \
+        "the same DigiDollar address"
+    browser.execute_script("document.querySelector('[data-tab=\"transactions\"]').click()")
+    held = _wait(browser, "const t = document.getElementById('w-history').textContent; return t.includes('$10.75') && t")
+    assert "$25.00" in held and "block 9" in held, held
+    assert "$35.75 in all" in browser.execute_script("return document.getElementById('w-since').textContent")
