@@ -88,6 +88,14 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-07 A player's borrowed relay list is asked again after 2 minutes, not 3 hours (Claude; found with the GBC session)
+
+- **What happened:** `arcade_relays` (`arcade/web/realtime.py`) kept each player's borrowed relays for LOGIN_TTL/2
+  (3 h). A player whose first ask came right after a restart, before the Ashburn relay's arcade linked again, kept
+  @banana's slower list for 3 hours.
+- **Now:** `RELAY_KEEP` = 120 s (an empty answer is still asked again after 60 s). A borrowed login lasts LOGIN_TTL
+  either way.
+
 ### 2026-11-07 A spare mesh link closing no longer forgets the STUN offer the kept link brought (Claude; found checking why the Ashburn relay was never borrowed)
 
 - **What happened:** after Strawberry and the Ashburn arcade restarted together they linked to each other more than

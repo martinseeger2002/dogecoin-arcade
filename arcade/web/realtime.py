@@ -543,6 +543,7 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
         return servers
 
     media_kept: dict[str, tuple] = {}
+    RELAY_KEEP = 120.0
 
     def arcade_relays(request: Request) -> list[dict]:
         """The arcade network's media servers for a signed-in player (mesh/turn.py): this node's where the player can
@@ -556,7 +557,10 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
         if kind == "guest" or not address:
             return []
         kept = media_kept.get(address)
-        if kept and time.time() - kept[0] < (turnlib.LOGIN_TTL / 2 if kept[1] else 60):
+        # Two minutes, not the login's three hours (2026-11-07, the GBC session: a player whose first ask came before
+        # the Ashburn relay's arcade linked again kept @banana's slower list for 3 h). A borrowed login lasts
+        # LOGIN_TTL, so asking again sooner costs one mesh round trip and no new relay.
+        if kept and time.time() - kept[0] < (RELAY_KEEP if kept[1] else 60):
             found = list(kept[1])
         else:
             found = []
