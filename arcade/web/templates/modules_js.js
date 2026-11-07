@@ -7,7 +7,9 @@
  * "All" lists every one; the filter box narrows whichever tab is open, by name, id or what it does. Each tab says how
  * many of its modules are on. A switch asks first when the module carries a caution, or when it turns others on or
  * off with it. The tab picked last is kept in this browser. "Who may use it" says who gets a module's tab and pages:
- * only the operator, signed-in users too, or everyone (modules.access; 2026-11-04). */
+ * only the operator, signed-in users too, or everyone (modules.access; 2026-11-04). "Add a node module" lists the
+ * node modules that come with the arcade's source, each with Add, or Update when a newer one came with an update; an
+ * added one shows up in the list above, off, to be ticked on (2026-11-06: step 4 of the DigiDollar guide "in the ui"). */
 (function () {
   var KEPT = 'arcade.modules.tab';
   var CSS = '.mui-tabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--line);margin:8px 0 6px}'
@@ -18,7 +20,7 @@
     + '.mui-tools{display:flex;gap:8px;align-items:center;margin:0 0 6px}.mui-tools input{flex:1;min-width:0}'
     + '.mui table{width:100%;border-collapse:collapse}.mui td,.mui th{text-align:left;vertical-align:top;'
     + 'padding:3px 6px;border-bottom:1px solid var(--line)}.mui td.c{text-align:center;width:3em}'
-    + '.mui .why{color:var(--muted)}.mui select{font:inherit}';
+    + '.mui .why{color:var(--muted)}.mui .ok{font-weight:600}.mui .mui-add{margin-top:18px}.mui select{font:inherit}';
   var WHO = [['operator', 'Only me'], ['user', 'Signed-in'], ['anyone', 'Everyone']];
 
   function call(body) {
@@ -59,7 +61,14 @@
     var blurb = el('p', '', 'why'), table = el('table'), body = el('tbody');
     table.innerHTML = '<thead><tr><th class="c">On</th><th>Module</th><th>What it does</th><th>Who may use it</th><th class="c">In Lite</th></tr></thead>';
     table.append(body);
-    root.append(el('h2', 'Edition'), edition, acts, restart, el('h2', 'Modules'), tabs, tools, blurb, table);
+    var addHead = el('h2', 'Add a node module', 'mui-add'), addWhy = el('p', 'These come with this arcade. Adding one keeps it'
+      + ' here, switched off; then tick it on in the list above and say who may use it.', 'why');
+    var addSaid = el('p', '', 'ok'), addTable = el('table'), addBody = el('tbody');
+    addTable.innerHTML = '<thead><tr><th>Module</th><th>What it does</th><th></th></tr></thead>';
+    addTable.append(addBody);
+    addSaid.hidden = true;
+    root.append(el('h2', 'Edition'), edition, acts, restart, el('h2', 'Modules'), tabs, tools, blurb, table,
+                addHead, addWhy, addSaid, addTable);
     filter.oninput = rows;
 
     function draw(d) {
@@ -84,6 +93,28 @@
       });
       blurb.textContent = (cats.filter(function (c) { return c.id === tab; })[0] || {}).summary || '';
       rows();
+      shipped(d.shipped || []);
+    }
+    function shipped(list) {
+      addHead.hidden = addWhy.hidden = addTable.hidden = !list.length;
+      addBody.textContent = '';
+      list.forEach(function (p) {
+        var tr = addBody.insertRow();
+        tr.insertCell().textContent = p.title + ' ' + p.version;
+        tr.insertCell().textContent = p.summary;
+        var act = tr.insertCell(), b = el('button', p.same ? 'Added' : p.added ? 'Update from ' + p.added : 'Add');
+        b.type = 'button'; b.disabled = p.same; b.setAttribute('aria-label', b.textContent + ' ' + p.title);
+        b.onclick = function () {
+          b.disabled = true;
+          call({add: p.name}).then(function (d) {
+            tab = 'node'; keep(tab); filter.value = '';
+            addSaid.hidden = false;
+            addSaid.textContent = 'Added ' + p.title + ' ' + p.version + '. Tick it on in the list above.';
+            draw(d);
+          }).catch(function (e) { alert(e.message); b.disabled = false; });
+        };
+        act.append(b);
+      });
     }
     function rows() {
       if (!data) return;

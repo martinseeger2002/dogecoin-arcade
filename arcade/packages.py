@@ -306,6 +306,28 @@ def install(home: Path, folder: Path, source: str = "local") -> tuple[str, dict]
                  "from": source, "added": int(time.time())}
 
 
+#: Where the node modules that come with the arcade's own source are (examples/packages), so Admin can add one with a
+#: button rather than only a console line at the machine (2026-11-06, the operator: step 4 "in the ui").
+SHIPPED = Path("examples") / "packages"
+
+
+def shipped(roots) -> list[tuple[Path, dict, str]]:
+    """(folder, manifest, id) of each node module under SHIPPED in these source trees, by name; the first tree that
+    has a name wins, and a folder that does not read as a module is left out."""
+    found: dict[str, tuple[Path, dict, str]] = {}
+    for root in roots:
+        base = Path(root) / SHIPPED
+        for folder in sorted(base.iterdir()) if base.is_dir() else ():
+            if not folder.is_dir() or _kind_of(folder) != "module":
+                continue
+            try:
+                manifest, files = read(folder)
+            except (PackageError, OSError):
+                continue
+            found.setdefault(manifest["name"], (folder, manifest, package_id(files)))
+    return [found[name] for name in sorted(found)]
+
+
 def chosen(settings: dict, owner: str | None) -> str:
     """The theme someone sees: their own pick while it is installed and theirs to pick (the node's own view may wear
     any installed one), else the arcade's, else "" for ARCADE Lite's own look."""
