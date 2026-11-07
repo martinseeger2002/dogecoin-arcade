@@ -2,7 +2,7 @@
   "kind": "module",
   "api": 1,
   "name": "digidollar",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "title": "DigiDollar",
   "summary": "DigiByte's stablecoin from your own wallet: mint, hold, send, receive and redeem DigiDollars, a form for each step, with its price and health.",
   "pages": "anyone",
