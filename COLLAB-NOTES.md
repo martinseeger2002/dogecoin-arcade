@@ -104,6 +104,12 @@ full Wallet), and ends the two copies of DigiDollar's send.
 - **Why a copy and not the module itself:** the full Wallet must work with no module installed (your rule), on Windows
   (no sandbox there), and with a borrowed DigiByte (no `scantxoutset`), so it cannot ask the confined module. A copy
   in the wheel, kept identical by a test, is the extension's `coins.js` pattern.
+- **One read too** (SadFrog: "make sure full wallet and lite wallet read the same digi dollar and digidollar test"):
+  the Lite window's DigiDollar wallet (still shown only while the module is on, as you decided) reads its balance,
+  coins and address from `/account/digidollar`, the full Wallet's own read of the arcade's index, instead of the
+  module's `ddreceive`. Both wallets now show the same DigiDollars on both chains. Lite's Send still goes through the
+  module's `ddsend` (its mainnet switch), which builds with the same `ddtx.send`. Test:
+  `test_the_lite_wallet_reads_the_same_digidollars_as_the_full_wallet` (test_digidollar_wallet_browser).
 - **Changed for people:** the full Wallet's send now says "send $X DigiDollar to ..." (the module's words), and a
   wallet of many small DGB coins is told to send its DGB to itself in one coin first.
 - **Tests:** test_digidollar_core (+1: the copies are one file), test_digidollar, test_ddaddress, test_module_host,

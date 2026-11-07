@@ -67,6 +67,9 @@ const API = NODE ? "/node/wallet" : "/account";
 const ME = {{ me|tojson }}, TAGCHAIN = {{ tagchain|tojson }};
 // DigiDollars, a wallet of their own beside DigiByte's while the DigiDollar module is on (2026-11-06): paid at a
 // DigiDollar address (TD... on the test chain), sent by the module's ddsend and signed here like any of its offers.
+// What it holds is read where the full Wallet reads it, /account/digidollar (the arcade's own index), so both wallets
+// show the same DigiDollars and DigiDollar test (2026-11-07, SadFrog: "make sure full wallet and lite wallet read the
+// same digi dollar and digidollar test").
 const DIGIDOLLAR = {{ 'true' if digidollar and wallet != 'node' else 'false' }};
 const DD_ON = ["dgbtest", "dgb"], DD = "dd:";
 const ADDRESSY = /^(?:[1-9A-HJ-NP-Za-km-z]{26,35}|[a-z]{1,4}1[02-9ac-hj-np-z]{38,58}|[A-Z]{1,4}1[02-9AC-HJ-NP-Z]{38,58})$/;
@@ -177,9 +180,10 @@ async function console_(line) {
   if (!j.ok) throw new Error(j.error || j.detail || "refused");
   return j.result || {};
 }
-/** What the DigiDollar module says this wallet holds on `c`'s chain (ddreceive), or null while the wallet is shut.
- * One ask at a time: a module answers one request at a time and tells a second that waits "busy" (modhost.py), so the
- * Balances rows and Transactions queue here, and an answer under 30 seconds old is used again. */
+/** What this wallet holds in DigiDollars on `c`'s chain, or null while the wallet is shut: the full Wallet's own read,
+ * /account/digidollar (arcade/digidollar.py, the arcade's index of the account's DigiDollar coins), given this wallet's
+ * key on that chain. One ask at a time: the Balances rows and Transactions queue here with the module's ddsend (a
+ * module answers one request at a time, modhost.py), and an answer under 30 seconds old is used again. */
 function ddAsk(work) {
   const asked = ddQueue.then(work);
   ddQueue = asked.catch(() => null);
@@ -189,8 +193,17 @@ function ddHoldings(c) {
   const kept = ddHeld[c.network];
   if (kept && Date.now() - kept.at < 30000) return Promise.resolve(kept.said);
   return ddAsk(async () => {
-    if (!(await wallet.opened(TAGCHAIN))) return null;
-    const said = await console_(`ddreceive ${ddWord(c)}`);
+    const mine = await wallet.opened(TAGCHAIN);
+    if (!mine) return null;
+    const key = Array.from(wallet.keysOn(mine, c.base).pubkey, (b) => b.toString(16).padStart(2, "0")).join("");
+    const r = await fetch(`/account/digidollar?chain=${encodeURIComponent(c.base)}&pubkey=${key}`,
+                          {credentials: "same-origin", cache: "no-store"});
+    let j = {};
+    try { j = await r.json(); } catch (e) { /* said below */ }
+    if (!r.ok) throw new Error(j.detail || "The arcade did not answer.");
+    const said = {digidollars: Number(j.cents || 0) / 100, address: j.address || "", since: j.since, whole: j.whole,
+                  coins: (j.coins || []).map((x) => ({txid: x.txid, vout: x.vout, dollars: Number(x.cents) / 100,
+                                                      height: x.height}))};
     ddHeld[c.network] = {at: Date.now(), said};
     return said;
   });
@@ -227,18 +240,19 @@ async function history() {
   if (!net) return;
   const c = chain();
   if (c.dd) {
-    // The DigiDollars this wallet holds now, coin by coin, as the module reads them (ddreceive).
+    // The DigiDollars this wallet holds now, coin by coin, as the full Wallet reads them (/account/digidollar).
     let h = null;
     try { h = await ddHoldings(c); } catch (x) { cell(tb.insertRow(), String(x.message || x), "bad"); return; }
     if (!h) { cell(tb.insertRow(), "Open your wallet (Send asks for its password) to read your DigiDollars.", "muted"); return; }
     for (const coin of h.coins || []) {
       const tr = tb.insertRow();
-      cell(tr, ""); cell(tr, "Held"); cell(tr, coin.from || "");
+      cell(tr, ""); cell(tr, "Held"); cell(tr, coin.height ? `block ${Number(coin.height).toLocaleString()}` : "");
       cell(tr, dollars(coin.dollars), "num ok"); cell(tr, "", "num");
       cell(tr, String(coin.txid).slice(0, 16) + "…").title = coin.txid;
     }
     if (!tb.rows.length) cell(tb.insertRow(), "No DigiDollars here yet.", "muted");
-    $("w-since").textContent = `${dollars(h.digidollars)} in all, at ${h.address || "your DigiDollar address"}.`;
+    $("w-since").textContent = `${dollars(h.digidollars)} in all, at ${h.address || "your DigiDollar address"}.`
+      + (h.whole === false ? ` Still reading what came before block ${Number(h.since || 0).toLocaleString()}.` : "");
     return;
   }
   let got;
