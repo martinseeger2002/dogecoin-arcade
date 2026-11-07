@@ -526,6 +526,32 @@ then "100 babys that can eventually become bigger ... every 30 days gain the abi
 - **For the operator:** please merge. SadFrog's side will run the pad on node 3 once it is
   published there (node 3 runs only published code); the 100 are inscribed meanwhile from a test node with the pad's
   key, which then moves to node 3 with its book.
+### 2026-11-07 Nodes globe rebased onto current main (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+Rebased onto main `c69f944e`. The only overlap was this log. `docs/nodes-globe.html` is unchanged. `/globe` still serves that file, and Admin → Overview → Nodes globe still chooses the list. Places stay city or country. Tiers stay copper, bronze, silver, gold, and diamond. Please merge when PR #97 is clean. Nothing here signs or spends.
+
+### 2026-11-07 Darrell's globe file, copied as-is (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+`docs/nodes-globe.html` is Darrell's local page, byte for byte: chain-count tiers, 8K earth, catalog stars dated 2026-04-20, cabinets at least 56px plus 10%. `/globe` still serves that file. City or country only.
+
+### 2026-11-07 Globe cabinets stay at least 56px (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+Arcade and “you” markers no longer use the 0.25 shrink. `iconPixelHeight` uses `h = Math.max(h, 56)`, so they stay readable zoomed in and still grow toward the old 74–80px lerp when zoomed out.
+
+### 2026-11-07 Globe starts when the page is already loaded (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+`NODES` is declared before the globe boots. If `document.readyState` is already `complete`, the earth starts immediately instead of waiting for a `load` event that has already fired.
+
+### 2026-11-07 Globe legend cabinets show without JavaScript (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+The Copper through Diamond and Inactive nodes pictures in `docs/nodes-globe.html` are small data URIs in the HTML, so a file preview can draw them. When the page runs, the metal icons still switch to the full cabinet pictures. "Any tier can be shared" stays out.
+
+### 2026-11-07 Globe legend drops "Any tier can be shared" (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+That sentence is gone from `docs/nodes-globe.html` and the admin globe panel. The cabinet icons, grey Inactive nodes marker, names-only list, and the rest of the page stay.
+
+### 2026-11-07 Globe markers are the metal cabinet pictures (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+`docs/nodes-globe.html` uses the copper, bronze, silver, gold, and diamond cabinet PNGs as the sprites. Inactive nodes keep the grey factory cabinet. Diamond hue-rotates as the view turns; the metals get a light moving shine. Sprite size stays at 25%. No purple active cabinet and no subtitle under the title.
+
+### 2026-11-07 Globe labels: shared tiers, names only, no subtitle (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+Any number of members can share copper, bronze, silver, gold, or diamond. Diamond stays everyone tied for the most linked nodes. The top-left list is names only. The title has no subtitle under it. The bottom legend is Copper, Bronze, Silver, Gold, Diamond, and the grey Inactive nodes marker. City or country stays on the globe markers.
+
+### 2026-11-07 Nodes globe list and tiers (fioridarrell fork, branch `cursor/add-nodes-globe-d28a`)
+A proposal for the operator, not a mesh change. Admin → Overview → Nodes globe chooses mesh, linked, or a ticked list, and a coarse place from the known cities. `/globe` polls `/globe.json` and redraws when that choice or its membership changes. The feed is tags, city-or-country labels, active counts and tiers only: no host, IP or mesh id. Copper through gold widen with how many chains the active arcades run; diamond is whoever has the most linked nodes, and a tie shares it. The page still opens from the snapshot in `docs/nodes-globe.html` when the feed is down. Nothing here signs or spends.
 
 ### 2026-11-07 A player's borrowed relay list is asked again after 2 minutes, not 3 hours (Claude; found with the GBC session)
 
