@@ -17,6 +17,7 @@ import hashlib
 import json
 import time
 
+from .config import unpayable_versions
 from .script import b58check_encode, hash160, p2sh_p2wpkh_address, p2wpkh_address
 
 #: How many imported addresses one account may have on one chain (the operator's design, 2026-10-21).
@@ -83,8 +84,12 @@ def address_of(params, pubkey: bytes, kind: str) -> str:
         return b58check_encode(params.pubkeyhash_version, hash160(pubkey))
     if kind not in KINDS:
         raise ImportRefused("that is not an address kind this arcade knows")
-    if getattr(params, "real_coins", False) or not getattr(params, "bech32_hrp", ""):
-        raise ImportRefused("SegWit wallets are on test chains with SegWit only, for now")
+    # Real coins too since 2026-11-07 (SadFrog: a choice of address type, not only legacy); a chain needs SegWit.
+    if not getattr(params, "bech32_hrp", ""):
+        raise ImportRefused("SegWit wallets are on chains with SegWit only")
+    if kind == "p2sh-p2wpkh" and params.scripthash_version in unpayable_versions(params):
+        raise ImportRefused(f"{getattr(params, 'label', 'this chain')}'s P2SH addresses read as another chain's; "
+                            "import it as Native SegWit")
     if len(pubkey) != 33:
         raise ImportRefused("a SegWit address is made from a compressed public key")
     if kind == "p2wpkh":
