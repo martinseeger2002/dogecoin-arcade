@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="@CSP@">
+<meta name="referrer" content="no-referrer">
+<title>Recover your coins</title>
+<!-- The offline recovery page (2026-11-07, SadFrog's side; arcade/restore_kit.py builds it). One file: every line of
+     code it runs is inside it, and its Content-Security-Policy lets it fetch nothing at all. -->
+<style>
+:root{--bg:#f6f4ee;--panel:#fff;--ink:#1d1d1b;--muted:#5d5d57;--line:#d9d5c8;--accent:#2f6f3a;--warn:#a35a00;--bad:#a32020;--code:#f0ede4}
+@media (prefers-color-scheme:dark){:root{--bg:#151614;--panel:#1f211e;--ink:#ecebe6;--muted:#a9a89f;--line:#3a3c36;--accent:#7cc58a;--warn:#e0a24a;--bad:#ef7b7b;--code:#272a25}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:860px;margin:0 auto;padding:24px 16px 60px}
+h1{margin:0 0 4px;font-size:1.6rem}
+.sub{color:var(--muted);margin:0 0 18px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.warn{border-color:var(--warn)}
+textarea,input[type=password],input[type=text]{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+label{display:block;margin:10px 0 4px}
+.check{display:flex;gap:8px;align-items:center;margin-top:10px}
+.btn{font:inherit;padding:8px 16px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:var(--panel);cursor:pointer}
+.btn.ghost{background:transparent;color:var(--accent)}
+.btn.small{padding:3px 10px;font-size:.85rem}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.err{color:var(--bad);margin-top:10px}
+code{background:var(--code);padding:1px 4px;border-radius:4px;word-break:break-all;font-size:.88em}
+.rk-chain{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:10px 0;background:var(--panel)}
+.rk-summary{cursor:pointer}
+.rk-addr{color:var(--muted);font-family:ui-monospace,monospace;font-size:.85rem;word-break:break-all}
+.rk-note{font-size:.9rem;margin:8px 0}
+.rk-warn{color:var(--warn)}
+.rk-cmd{display:flex;gap:8px;align-items:flex-start;margin:6px 0}
+.rk-pre{flex:1;margin:0;padding:8px 10px;background:var(--code);border-radius:6px;white-space:pre-wrap;word-break:break-all;font-size:.8rem}
+</style>
+</head>
+<body>
+<main>
+<h1>Recover your coins</h1>
+<p class="sub">Your twelve words, turned into each chain's address, private key and the exact commands for that chain's
+  own Core wallet. No arcade needed.</p>
+
+<div class="panel warn">
+  <p><b>Open this page offline.</b> Save it (it is one file), disconnect from the internet if you can, and open the
+    saved file. It fetches nothing: its own rules forbid it, and everything it runs is inside it.</p>
+  <p><b>Never type your words into a website you reached by a link</b>, whoever sent it, and however much it looks like
+    this page. Anyone with your words owns every coin in the account.</p>
+</div>
+
+<div class="panel">
+  <label for="words">Your twelve words, in order</label>
+  <textarea id="words" rows="3" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"></textarea>
+  <label for="passphrase">Passphrase (only if you added one; an arcade account has none)</label>
+  <input type="password" id="passphrase" autocomplete="off">
+  <div class="check"><input type="checkbox" id="whole"><label for="whole">Rescan each chain from its first block (finds
+    coins of any age; slower)</label></div>
+  <div class="row">
+    <button type="button" class="btn" id="go">Show my keys and commands</button>
+    <button type="button" class="btn ghost" id="clear">Clear everything</button>
+  </div>
+  <div class="err" id="trouble" hidden></div>
+</div>
+
+<div id="kits"></div>
+</main>
+<script>
+(async () => {
+  "use strict";
+  const M = {};
+  /*@BUNDLE@*/
+  const CHAINS = /*@CHAINS@*/null;
+  const WORDS = /*@WORDS@*/null;
+  const kit = M["/restore-kit.js"];
+  const $ = (id) => document.getElementById(id);
+  const say = (text) => { $("trouble").textContent = text; $("trouble").hidden = !text; };
+  if (typeof crypto === "undefined" || !crypto.subtle)
+    say("This browser will not do the arithmetic here. Open the saved file directly (file://), not from a plain-http address.");
+  $("go").onclick = async () => {
+    say("");
+    $("kits").replaceChildren();
+    try {
+      const seed = await kit.seedOf($("words").value, $("passphrase").value, WORDS);
+      kit.drawKits($("kits"), await kit.kitsFor(seed, CHAINS, $("whole").checked));
+    } catch (e) {
+      say(String(e.message || e));
+    }
+  };
+  $("clear").onclick = () => {
+    $("words").value = ""; $("passphrase").value = ""; $("kits").replaceChildren(); say("");
+  };
+  document.body.dataset.recoverReady = "yes";
+})();
+</script>
+</body>
+</html>

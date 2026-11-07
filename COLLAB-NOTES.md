@@ -108,6 +108,30 @@ coding agent, so it is written for agents first and people second.
 - **Not done:** TURN over TCP or TLS on 443 for networks that block UDP.
 - **Test:** `tests/test_mesh_turn.py`.
 
+### 2026-11-07 · SadFrog's side (Claude) · Restoring without an arcade: each chain's Core commands, and an offline /recover page
+SadFrog: "we want it to be easy for someone to be able to spin back up their wallets from any core if arcade goes down as
+well as any arcade". Branch `team/pay-segwit-restore`.
+- **Backup page** (`my_backup.html`): after the same unlock that shows the words, "Restore without an arcade" lists every
+  chain: the path (m/44'/3'/0' on every mainnet, so a wallet on the chain's registered type finds nothing), address, WIF,
+  and copy-paste commands. Descriptor Cores (Litecoin 0.21, Bells 3, DigiByte 9): `createwallet "arcade" false true ""
+  false true`, then `importdescriptors` with pkh(), sh(wpkh())/wpkh() where `bech32_hrp` is set, tr() on DigiByte for
+  DigiDollars, receive and change, range [0,20], BIP380 checksums, timestamp a week before the floor (or before this
+  arcade first knew the account), or 0 by a switch. Old Cores (Dogecoin 1.14 and forks, Kotia): `importprivkey`;
+  Wojakcoin: `createwallet` then `importprivkey`. Plus "Save this page and open it offline".
+- **New:** `coins.js` (appended only; `extension/coins.js` the same bytes): `descriptorChecksum`, `xnode`/`extendedKey`,
+  `restoreKit`. `templates/restore_kit.js` draws it (served `/restore-kit.js`). `arcade/restore_kit.py`: the per-chain
+  table and the offline page, built per request from the real modules (coins.js, restore_kit.js, noble-secp256k1,
+  RIPEMD-160) into one file with a hash-only CSP (`connect-src 'none'`). `web/recover_web.py`: `/recover`. door.py and
+  modules.py ("wallet") claim both.
+- **Checked against real Cores (2026-11-07):** DigiByte 9.26.7 (pkh/sh-wpkh/wpkh/tr), Litecoin 0.21.5.8 main and
+  testnet4, Bells 3.0.0-rc2 all accept the exact private descriptors and give the arcade's addresses at index 0. Bells
+  reads Dogecoin's dgpv/dgub and refuses xprv/xpub, so its row says so. **Not checked:** DigiByte testnet (tprv assumed,
+  no node), Kotia/Wojakcoin/Luckycoin/Flopcoin `importprivkey` (no node here), and whether DigiByte Core's DigiDollar
+  balance lists DigiDollars after a tr() import (the page says so).
+- **Tests:** `tests/test_restore_kit.py` (BIP380 and Core checksums, BIP32 vector 1, every chain against arcade/seed.py
+  and the Cores' answers, the inlined bundle against coins.js, /recover's CSP); `/recover` and `/restore-kit.js` in
+  `test_page_scripts.py`.
+
 ### 2026-11-07 A quiet room beside a busy one on the same hub is no longer taken for dead (Claude; found by the GBC session in Pocket Tide Super; the operator: "Yes, and deploy it")
 
 - **What happened:** a page in a busy room (a board with an ad every 2 s) and a silent one (all its traffic on the fast
