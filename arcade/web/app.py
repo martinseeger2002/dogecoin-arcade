@@ -27368,7 +27368,10 @@ def create_app(state: AppState) -> FastAPI:
             version, payload = b58check_decode(addr)
         except Exception:
             return None
-        if version == chain.params.scripthash_version and len(payload) == 20:
+        # Not where the P2SH byte is another chain's key hash (Bellscoin's 30 is Dogecoin's "D", 2026-11-07): that
+        # string cannot say which script it is, and nothing here pays one (config.unpayable_versions).
+        if (version == chain.params.scripthash_version and len(payload) == 20
+                and version not in unpayable_versions(chain.params)):
             return "p2sh-p2wpkh"
         return None
 
@@ -27397,10 +27400,6 @@ def create_app(state: AppState) -> FastAPI:
             chain = _chain_asked(said)
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        if getattr(chain.params, "real_coins", False):
-            return JSONResponse(
-                {"detail": "segwit is on test chains only for now"},
-                status_code=400)
         addr = str(said.get("address") or "").strip()
         kind = _segwit_kind(chain, addr)
         if kind is None:
@@ -27445,10 +27444,6 @@ def create_app(state: AppState) -> FastAPI:
             chain = _chain_asked({"chain": network} if network else {})
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400)
-        if getattr(chain.params, "real_coins", False):
-            return JSONResponse(
-                {"detail": "segwit is on test chains only for now"},
-                status_code=400)
         addr = (address or "").strip()
         if _segwit_kind(chain, addr) is None:
             return JSONResponse(
@@ -28940,8 +28935,6 @@ def create_app(state: AppState) -> FastAPI:
         # Its coins only, its change back to it; the browser signs with that wallet's key.
         imported = _imported_entry(account, chain, want_from) if want_from else None
         if imported is not None:
-            if imported["k"] != "p2pkh" and getattr(chain.params, "real_coins", False):
-                return JSONResponse({"detail": "segwit is on test chains only for now"}, status_code=400)
             if imported["k"] == "p2sh-p2wpkh":
                 try:
                     keyhash = hash160(bytes.fromhex(imported["p"]))
@@ -28954,10 +28947,6 @@ def create_app(state: AppState) -> FastAPI:
             if kind is None:
                 return JSONResponse(
                     {"detail": "that is not a segwit address for this chain"},
-                    status_code=400)
-            if getattr(chain.params, "real_coins", False):
-                return JSONResponse(
-                    {"detail": "segwit is on test chains only for now"},
                     status_code=400)
             # Only the address this account registered, never somebody else's.
             if state.setting(_segwit_setting(account, chain, kind)) != want_from:

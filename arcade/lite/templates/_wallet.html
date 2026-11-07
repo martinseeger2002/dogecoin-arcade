@@ -14,6 +14,8 @@
     <fieldset><legend>Send coins</legend>
       <form id="w-form" class="grid">
         <label for="w-chain-send">Wallet</label><select id="w-chain-send" data-chain></select>
+        <label for="w-kind-send" data-kindrow hidden>Address type</label><select id="w-kind-send" data-kind data-kindrow
+          hidden></select>
         <label for="w-to">Pay to</label><input id="w-to" placeholder="@name or address" autocomplete="off"
           spellcheck="false" required>
         <label for="w-amount">Amount</label><span><input id="w-amount" inputmode="decimal" autocomplete="off"
@@ -35,6 +37,7 @@
         == 'node' else "Read in this browser from the transaction's own bytes; signed here when you press Send." }}</p>
       <button type="button" id="w-go">Send</button> <button type="button" id="w-cancel">Cancel</button>
     </fieldset>
+    <p class="muted" data-kindsaid hidden></p>
     <p id="w-said" hidden></p>
   </div><div>
     <fieldset><legend>Balances</legend>
@@ -45,10 +48,17 @@
 <section data-panel="receive" hidden>
   <fieldset><legend>Receive coins</legend>
     <div class="grid"><label for="w-chain-receive">Wallet</label><select id="w-chain-receive" data-chain></select>
+      <label for="w-kind-receive" data-kindrow hidden>Address type</label><select id="w-kind-receive" data-kind
+        data-kindrow hidden></select>
       <span>Address</span><code id="w-address"></code>
       <span></span><span><button type="button" id="w-copy">Copy address</button></span></div>
+    <form id="w-runlock" class="grid" hidden>
+      <label for="w-rpassword">Password</label><input id="w-rpassword" type="password" autocomplete="current-password">
+      <span></span><span><button type="submit">Unlock to show it</button></span>
+    </form>
     <div id="w-qr"></div>
     <p class="muted" id="w-only"></p>
+    <p class="muted" data-kindsaid hidden></p>
   </fieldset>
 </section>
 <section data-panel="transactions" hidden>
@@ -74,6 +84,7 @@ const $ = (id) => document.getElementById(id);
 const coinsOf = (n) => (Number(n || 0) / 1e8).toLocaleString(undefined, {maximumFractionDigits: 8});
 let said = {chains: [], dds: []}, net = "", offer = null, keys = null, ddHeld = {}, ddQueue = Promise.resolve();
 let drawn = 0;                                                          // which load() the Balances rows belong to
+let showing = "";                                                       // the address Receive shows and Copy copies
 
 function satsOf(text) {
   const m = /^(\d*)(?:\.(\d{0,8}))?$/.exec(String(text).trim());
@@ -202,22 +213,87 @@ async function ddAddressOf(to, c) {
   if (!r.ok) throw new Error(j.detail || "no DigiDollar address");
   return j;
 }
+/* The address type (2026-11-07, SadFrog: "users should also be able to have the most updated or choice of address
+ * type as opposed to only legacy"): wallet.js ADDRESS_KINDS lists a chain's kinds, Legacy first and the default. Another
+ * kind is that kind's own key from the same words (m/49' nested, m/84' native SegWit), as the full arcade's Wallet card
+ * makes it: Receive shows its address, Send spends from it (`from`), and the node watches it once told (one address of
+ * each kind per account and chain, /account/segwit/register). Its coins are its own: Balances counts the Legacy address. */
+const kindsOf = (c) => (NODE || !c || c.dd ? [] : wallet.addressKinds(c.network));
+const kindSpot = (c) => `lite_kind_${ME || "visitor"}_${c.network}`;
+function kindOf(c) {
+  const ks = kindsOf(c);
+  let id = "";
+  try { id = localStorage.getItem(kindSpot(c)) || ""; } catch (e) {}
+  const k = ks.find((x) => x.id === id);
+  return k && k !== ks[0] ? k : null;
+}
+/** That kind's address and keys, from the open wallet; the address as last seen here while the wallet is shut. */
+async function kindKeys(c, k) {
+  const spot = `${kindSpot(c)}_${k.id}`, open = await wallet.opened(TAGCHAIN).catch(() => null);
+  if (!open || !open.seed) { let a = ""; try { a = localStorage.getItem(spot) || ""; } catch (e) {} return {address: a, keys: null}; }
+  const kinded = await wallet.asKind(open, c.network, k.id), mine = wallet.keysOn(kinded, c.network);
+  try { localStorage.setItem(spot, mine.address); } catch (e) {}
+  const r = await fetch("/account/segwit/register", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({address: mine.address, chain: c.network,
+                          pubkey: Array.from(mine.pubkey, (b) => b.toString(16).padStart(2, "0")).join("")})});
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "the node would not watch that address");
+  return {address: mine.address, keys: kinded};
+}
+async function kindSaid(c, k, address) {
+  const lines = document.querySelectorAll("[data-kindsaid]");
+  lines.forEach((p) => { p.hidden = !k; p.textContent = k ? `${k.label} (${k.path}): its coins are its own.` : ""; });
+  if (!k || !address) return;
+  try {
+    const r = await fetch(`/account/segwit/balance?network=${encodeURIComponent(c.network)}&address=${encodeURIComponent(address)}`,
+                          {cache: "no-store"});
+    const b = await r.json();
+    if (r.ok && chain() === c) lines.forEach((p) => {
+      p.textContent = `${k.label} (${k.path}): ${coinsOf(b.balance)} ${unit(c)} at ${address}.`;
+    });
+  } catch (e) {}
+}
+function drawKinds(c) {
+  const ks = kindsOf(c), k = kindOf(c);
+  document.querySelectorAll("[data-kindrow]").forEach((el) => { el.hidden = ks.length < 2; });
+  document.querySelectorAll("[data-kind]").forEach((box) => {
+    box.textContent = "";
+    for (const x of ks) box.add(new Option(x.label, x.id));
+    box.value = (k || ks[0] || {}).id || "";
+  });
+  return k;
+}
+document.querySelectorAll("[data-kind]").forEach((box) => {
+  box.onchange = () => {
+    try { localStorage.setItem(kindSpot(chain()), box.value); } catch (e) {}
+    $("w-review").hidden = true; offer = null;
+    draw();
+  };
+});
 async function draw() {
   const c = chain();
+  const k = drawKinds(c);
   document.querySelectorAll("[data-unit]").forEach((s) => { s.textContent = c.dd ? "dollars, " + unit(c) : unit(c); });
   $("w-amount").placeholder = c.dd ? "100.00" : "";
   if (c.dd && !c.address) {
     $("w-address").textContent = "…";
     try { c.address = (await ddAddressOf("me", c)).address; } catch (x) { c.address = ""; $("w-only").textContent = String(x.message || x); }
   }
+  let address = c.address || "", problem = "";
+  $("w-runlock").hidden = true;
+  if (k) {
+    try { address = (await kindKeys(c, k)).address; } catch (x) { address = ""; problem = String(x.message || x); }
+    if (!address) $("w-runlock").hidden = false;
+  }
   if (chain() !== c) return;                                  // another wallet was picked meanwhile
-  $("w-address").textContent = c.address || "—";
-  if (c.address || !c.dd) $("w-only").textContent = !c.address ? "" : c.dd
+  showing = address;
+  $("w-address").textContent = address || (k ? "unlock your wallet to make it" : "—");
+  kindSaid(c, k, address);
+  if (address || !c.dd) $("w-only").textContent = !address ? problem : c.dd
     ? `Send only ${unit(c)} here, from a DigiDollar wallet. ${c.mainnet ? "Real dollars." : "Test dollars have no value."}`
     : c.mainnet ? `Send only ${unit(c)} here: real coins.` : `Send only ${unit(c)} here. Test coins have no value.`;
   $("w-qr").textContent = "";
-  if (c.address && typeof qrcode === "function") {
-    const qr = qrcode(0, "M"); qr.addData(c.address); qr.make();
+  if (address && typeof qrcode === "function") {
+    const qr = qrcode(0, "M"); qr.addData(address); qr.make();
     $("w-qr").innerHTML = qr.createSvgTag({cellSize: 4, margin: 2});
   }
   history();
@@ -260,7 +336,14 @@ document.querySelectorAll("[data-chain]").forEach((box) => {
   box.onchange = () => { net = box.value; if (NODE) draw(); else load(); };
 });
 document.querySelector('[data-tab="transactions"]').addEventListener("click", history);   // read afresh when opened
-$("w-copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(chain().address || "");
+$("w-copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(showing || "");
+$("w-runlock").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await wallet.unlockHere(ME, $("w-rpassword").value, TAGCHAIN);
+    $("w-rpassword").value = ""; draw();
+  } catch (x) { $("w-only").textContent = String(x.message || x); }
+};
 
 /** Why the offer is not the send that was typed, or "". */
 function mismatch(o, to, amount, read) {
@@ -290,11 +373,15 @@ $("w-form").onsubmit = async (e) => {
   keys = await wallet.opened(TAGCHAIN);
   if (!keys) { $("w-unlock").hidden = false; $("w-password").focus(); return; }
   try {
-    const o = await wallet.offerSend(to, amount, c.network);
+    // Another address type spends that address's own coins, signed with its own key (kindKeys).
+    const k = kindOf(c), from = k ? await kindKeys(c, k) : null;
+    if (from) keys = from.keys;
+    const o = await wallet.offerSend(to, amount, c.network, from ? from.address : "");
     const read = await wallet.checked(o, keys);
     const wrong = mismatch(o, to, amount, read);
     if (wrong) { tell(wrong + " Nothing was signed.", "bad"); return; }
-    const u = unit(c), list = [["To", (o.to_tag ? "@" + o.to_tag + "  " : "") + o.to], ["Amount", `${coinsOf(o.amount)} ${u}`],
+    const u = unit(c), list = [...(from ? [["From", `${from.address} (${k.label})`]] : []),
+                               ["To", (o.to_tag ? "@" + o.to_tag + "  " : "") + o.to], ["Amount", `${coinsOf(o.amount)} ${u}`],
                                ["Network fee", `${coinsOf(read.fee)} ${u}`]];
     if (NODE) list.push(["Leaves the wallet", `${coinsOf(Number(o.amount) + Number(read.fee || 0))} ${u}`]);
     else {

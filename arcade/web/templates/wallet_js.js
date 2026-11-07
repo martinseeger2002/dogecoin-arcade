@@ -209,7 +209,10 @@ export async function everyChain(wallet, chains) {
  * to change: the card lists them, Receive shows that kind's address, and a coin
  * send is built from it and signed with its key. The first row is the chain's
  * ordinary address. A chain with one kind shows no drop-down.
- * Segwit is test chains only until it has had a real-money review.
+ * Segwit was test chains only until it had a real-money review; since 2026-11-07 (SadFrog: "users should also be
+ * able to have the most updated or choice of address type as opposed to only legacy") real DigiByte, Litecoin and
+ * Bellscoin offer it too. Legacy stays first, so it stays the default and the address tokens, names and every
+ * other page use. Bellscoin has no nested kind: its P2SH byte is Dogecoin's "D" (config.unpayable_versions).
  * The order is the menu's (2026-10-20, tbuuol): Legacy, P2SH, Native SegWit.
  */
 export const ADDRESS_KINDS = {
@@ -217,6 +220,25 @@ export const ADDRESS_KINDS = {
     {id: "legacy", label: "Legacy", path: "m/44'/1'/0'/0/0"},
     {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 58, path: "m/49'/1'/0'/0/0"},
     {id: "p2wpkh", label: "Native SegWit", hrp: "tltc", path: "m/84'/1'/0'/0/0"},
+  ],
+  ltc: [
+    {id: "legacy", label: "Legacy", path: "m/44'/3'/0'/0/0"},
+    {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 50, path: "m/49'/3'/0'/0/0"},
+    {id: "p2wpkh", label: "Native SegWit", hrp: "ltc", path: "m/84'/3'/0'/0/0"},
+  ],
+  dgb: [
+    {id: "legacy", label: "Legacy", path: "m/44'/3'/0'/0/0"},
+    {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 63, path: "m/49'/3'/0'/0/0"},
+    {id: "p2wpkh", label: "Native SegWit", hrp: "dgb", path: "m/84'/3'/0'/0/0"},
+  ],
+  dgbtest: [
+    {id: "legacy", label: "Legacy", path: "m/44'/1'/0'/0/0"},
+    {id: "p2sh-p2wpkh", label: "P2SH (Nested SegWit)", scripthash: 140, path: "m/49'/1'/0'/0/0"},
+    {id: "p2wpkh", label: "Native SegWit", hrp: "dgbt", path: "m/84'/1'/0'/0/0"},
+  ],
+  bel: [
+    {id: "legacy", label: "Legacy", path: "m/44'/3'/0'/0/0"},
+    {id: "p2wpkh", label: "Native SegWit", hrp: "bel", path: "m/84'/3'/0'/0/0"},
   ],
 };
 export const addressKinds = (network) => ADDRESS_KINDS[network] || [];
