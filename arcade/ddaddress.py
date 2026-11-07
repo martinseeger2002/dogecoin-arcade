@@ -16,9 +16,11 @@ Mainnet keys (coin type 3) are not read this way: a mainnet DigiDollar is paid t
 from __future__ import annotations
 
 from . import taproot
-from .script import b58decode, b58encode, hash160
+from .ddlib import ddtx
+from .script import b58decode, hash160
 
-VERSIONS = {"dgb": b"\x52\x85", "dgbtest": b"\xb1\x29"}
+#: The address versions are the DigiDollar module's (ddlib.ddtx, the module's own file).
+VERSIONS = ddtx.DD_VERSIONS
 #: The chains whose coin key is the name chain's own (coin type 1): an @name resolves to an address only on these.
 BY_NAME = ("dgbtest",)
 
@@ -27,8 +29,7 @@ def address(network: str, pubkey: bytes) -> str:
     """The DigiDollar address of a compressed coin key on `network`."""
     if network not in VERSIONS:
         raise ValueError(f"{network} has no DigiDollar addresses")
-    body = VERSIONS[network] + taproot.tweak(taproot.xonly(pubkey))[0]
-    return b58encode(body + _check(body))
+    return ddtx.dd_address(network, taproot.xonly(pubkey))
 
 
 def _check(body: bytes) -> bytes:

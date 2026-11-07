@@ -33,6 +33,16 @@ ME, THEM = _key(7), _key(11)
 P2PKH = bytes.fromhex("76a914" + "11" * 20 + "88ac")
 
 
+def test_the_full_wallets_digidollar_code_is_the_modules_own_file():
+    """One implementation, two front doors (2026-11-07, SadFrog): the full Wallet builds a DigiDollar send with the
+    module's own lib/ddtx.py, copied byte for byte into arcade/ddlib. Edit the module's file, then copy it there."""
+    ours = Path(dd.__file__).resolve().parent / "ddlib"
+    for name in ("ddtx.py", "taproot.py"):
+        assert (ours / name).read_bytes() == (PILOT / "lib" / name).read_bytes(), \
+            f"arcade/ddlib/{name} is not the module's: cp examples/packages/digidollar/lib/{name} arcade/ddlib/"
+    assert dd.prepare_send.__module__ == "arcade.digidollar" and dd.dollars_out is dd.ddtx.dollars_out
+
+
 def test_addresses_are_the_pilots_and_digibyte_cores():
     _, pilot = _pilot()
     for net in dd.NETS:

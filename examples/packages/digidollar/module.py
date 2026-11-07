@@ -10,7 +10,7 @@ the DigiDollars by their key path, both Taproot: the wallet signs those with Sch
 is its own key's. `ddgather` puts many small coins into one first, as a mint may spend only a few.
 
 Every command takes the chain, test (testnet26) unless main is said. Mainnet mints wait for the arcade's operator:
-`ddmainnet on yes` (the README says what to check first). A DigiDollar send is not here yet.
+`ddmainnet on yes` (the README says what to check first).
 """
 from __future__ import annotations
 
@@ -20,34 +20,22 @@ import time
 from decimal import Decimal, InvalidOperation
 
 from lib import taproot as tr
+# DigiDollar's addresses, its record, the fee and a send: one file, the full Wallet's too (lib/ddtx.py).
+from lib import ddtx
+from lib.ddtx import COIN, DUST, MAIN, TEST, dd_address, dd_key, send
 
-#: DigiByte mainnet and its test chain, testnet26, as this arcade names them. Mints and redeems happen on the test
-#: chain only: see the module's README.
-MAIN, TEST = "dgb", "dgbtest"
+#: DigiByte mainnet and its test chain, testnet26, as this arcade names them (ddtx.MAIN, ddtx.TEST).
 CHAINS = {"main": MAIN, "dgb": MAIN, "mainnet": MAIN, "test": TEST, "dgbtest": TEST, "testnet": TEST}
 #: A DigiDollar transaction's version: the "DD" marker 0x0770 with its type in the top byte (primitives/transaction.h):
 #: 1 a mint, 2 a send, 3 a redeem.
 MINT_VERSION = (1 << 24) | 0x0770
-SEND_VERSION = (2 << 24) | 0x0770
 REDEEM_VERSION = (3 << 24) | 0x0770
-#: A DigiDollar address (DigiByte Core base58.cpp CDigiDollarAddress): base58check of this two-byte version and a
-#: Taproot output key. "DD..." on mainnet, "TD..." on the test chain.
-DD_VERSIONS = {MAIN: bytes([0x52, 0x85]), TEST: bytes([0xb1, 0x29])}
-#: What one DigiDollar output of a send may hold (consensus: $1 to $100,000), in cents.
-LEAST_OUTPUT, MOST_OUTPUT = 100, 10_000_000
 #: Blocks between building a mint and its lock (consensus/digidollar.h MINT_LOCK_CONFIRMATION_BUFFER_BLOCKS): a mint
 #: must be in a block within this many blocks of being built.
 BUFFER = 100
 BLOCKS_PER_DAY = 5760
-#: What DigiByte Core's own mint and redeem pay (txbuilder.cpp): 0.35 DGB a kB, and never less than 0.1 DGB.
-FEE_PER_BYTE, LEAST_FEE = 35_000, 10_000_000
-COIN = 100_000_000
 #: The sequence of an input that waits for the transaction's lock time (a vault's CHECKLOCKTIMEVERIFY).
 WAITS = 0xFFFFFFFE
-DUST = 10_000
-#: The most a transaction this module prepares leaves to fees: the manifest's needs.max_fee, which the arcade enforces.
-#: At DigiDollar's rate each coin spent adds about 0.05 DGB, so a mint or a redeem spends at most about eight.
-MAX_FEE = 50_000_000
 #: A gather is an ordinary send to yourself: twice DigiByte Core's relay fee (0.001 DGB a kB), and at most this many
 #: coins (the arcade's own limit on a module's spend).
 GATHER_FEE_PER_BYTE, GATHER_MOST = 200, 50
@@ -148,30 +136,6 @@ def _fresh(ctx, net: str):
     return lambda coin: ctx.rpc(net, "gettxout", coin["txid"], coin["vout"], True) is not None
 
 
-def _pay(coins: list[dict], outputs: list, need: int, spend_size: int, change_script: bytes, extra: int = 0,
-         fresh=None):
-    """(the coins chosen, the fee, the change) to pay `need` plus the fee from `coins`, largest first. `spend_size`
-    is what each coin adds to the transaction, `extra` the bytes of anything else it carries (a witness). Each coin
-    adds to the fee, and the fee may not pass MAX_FEE: a wallet of many small coins is gathered first (`ddgather`)."""
-    chosen, total = [], 0
-    for coin in sorted(coins, key=lambda c: -c["value"]):
-        if fresh is not None and not fresh(coin):
-            continue
-        chosen.append(coin)
-        total += coin["value"]
-        size = 10 + extra + spend_size * len(chosen) + sum(9 + len(s) for _, s in outputs) + 9 + len(change_script)
-        fee = max(size * FEE_PER_BYTE, LEAST_FEE)
-        if fee > MAX_FEE:
-            raise ValueError(f"your DGB is in {len(coins)} coins, and this would need more than {len(chosen) - 1} of "
-                             f"them, too many for one DigiDollar transaction's fee: gather them first (Gather, or "
-                             f"ddgather), then try again")
-        if total >= need + fee:
-            change = total - need - fee
-            return chosen, (fee + change if change < DUST else fee), (change if change >= DUST else 0)
-    raise ValueError(f"your wallet has {total / COIN:,.8f} DGB in confirmed coins and this needs "
-                     f"{(need + LEAST_FEE) / COIN:,.8f} DGB or more")
-
-
 def _lock(height: int, lock_days: int) -> int:
     """A vault's lock height: tier 0's 240 blocks on the test chain, or the days, and the mint's buffer."""
     return height + (240 if lock_days == 0 else lock_days * BLOCKS_PER_DAY) + BUFFER
@@ -188,33 +152,12 @@ def mint(owner: bytes, cents: int, tier: int, height: int, lock_days: int, colla
     record = bytes([tr.OP_RETURN]) + tr.push(b"DD") + tr.push(tr.num(1)) + tr.push(tr.num(cents)) \
         + tr.push(tr.num(lock)) + tr.push(tr.num(tier)) + tr.push(owner)
     outputs = [(collateral, vault), (0, tr.p2tr(tr.tweak(owner))), (0, record)]
-    chosen, fee, change = _pay(coins, outputs, collateral, 148, change_script, fresh=fresh)
+    chosen, fee, change = ddtx.pay(coins, outputs, collateral, 148, change_script, fresh=fresh)
     if change:
         outputs.append((change, change_script))
     return {"chain": chain, "version": MINT_VERSION, "inputs": [{"txid": c["txid"], "vout": c["vout"]} for c in chosen],
             "outputs": [(v, s.hex()) for v, s in outputs],
             "what": f"mint ${cents / 100:,.2f} DigiDollar, locking {collateral / COIN:,.8f} DGB until block {lock:,}"}
-
-
-def _record(tx: dict):
-    """(type, its numbers, the outputs its amounts belong to) from a transaction's "DD" OP_RETURN, or None.
-    A mint's record is 1 <cents> <lock> <tier> <owner>; a send's 2 <cents>...; a redeem's 3 <change cents>. The amounts
-    of a send or a redeem belong to its zero-value Taproot outputs, in order; a mint's to its one."""
-    for out in tx.get("vout", []):
-        script = bytes.fromhex(out["scriptPubKey"]["hex"])
-        if script[:1] != bytes([tr.OP_RETURN]):
-            continue
-        try:
-            items = tr.pushes(script[1:])
-        except ValueError:
-            continue
-        if len(items) < 2 or items[0] != b"DD":
-            continue
-        kind = tr.read_num(items[1])
-        dd = [o["n"] for o in tx["vout"] if round(float(o["value"]) * COIN) == 0
-              and o["scriptPubKey"]["hex"].startswith("5120") and len(o["scriptPubKey"]["hex"]) == 68]
-        return kind, items[2:], dd
-    return None
 
 
 def _holdings(ctx, net: str, owner: bytes) -> list[dict]:
@@ -225,11 +168,11 @@ def _holdings(ctx, net: str, owner: bytes) -> list[dict]:
     out = []
     for u in found.get("unspents", []):
         tx = ctx.rpc(net, "getrawtransaction", u["txid"], True)
-        rec = _record(tx)
+        rec = ddtx.record(tx)
         if rec is None or u["vout"] not in rec[2]:
             continue
         kind, items, dd = rec
-        amounts = [tr.read_num(items[0])] if kind in (1, 3) else [tr.read_num(i) for i in items]
+        amounts = ddtx.amounts(kind, items)
         at = dd.index(u["vout"])
         if at < len(amounts):
             out.append({"txid": u["txid"], "vout": u["vout"], "cents": amounts[at], "kind": kind,
@@ -458,7 +401,8 @@ def redeem(vault: dict, owner: bytes, held: list[dict], coins: list[dict], pay_s
                     (0, bytes([tr.OP_RETURN]) + tr.push(b"DD") + tr.push(tr.num(3))
                      + tr.push(tr.num(burned - vault["cents"])))]
     witness = (1 + 65 + 1 + len(normal) + 1 + len(control)) + (1 + 65) * len(burn)
-    chosen, fee, change = _pay(coins, outputs, 0, 148, pay_script, extra=41 * (1 + len(burn)) + witness, fresh=fresh)
+    chosen, fee, change = ddtx.pay(coins, outputs, 0, 148, pay_script, extra=41 * (1 + len(burn)) + witness,
+                                   fresh=fresh)
     if change:
         outputs.append((change, pay_script))
     inputs = [{"txid": vault["txid"], "vout": 0, "sequence": WAITS,
@@ -493,60 +437,6 @@ def command_ddredeem(ctx, vault, chain="test"):
         raise ValueError("a redeem pays its fee (about 0.15 DGB) from your own DGB, and your wallet has none here")
     return {"prepared": redeem(found[0], owner, held, coins, script, net, _fresh(ctx, net)),
             "actions": [{"label": "My vaults", "line": f"ddvaults {_word(net)}"}]}
-
-
-def dd_address(net: str, owner: bytes) -> str:
-    """The DigiDollar address of the caller's key on `net`: their key's Taproot output, the one a mint pays them."""
-    return tr.base58check(DD_VERSIONS[net] + tr.tweak(owner))
-
-
-def dd_key(net: str, address: str) -> bytes:
-    """The Taproot output key a DigiDollar address on `net` names, or ValueError in plain words."""
-    try:
-        body = tr.unbase58check(str(address).strip())
-    except ValueError:
-        body = b""
-    if len(body) != 34 or body[:2] not in DD_VERSIONS.values():
-        raise ValueError(f"{address} is not a DigiDollar address: one starts DD (mainnet) or TD (test chain)")
-    if body[:2] != DD_VERSIONS[net]:
-        raise ValueError(f"{address} is a DigiDollar address on the other chain: this sends on "
-                         f"{'mainnet (DD...)' if net == MAIN else 'the test chain (TD...)'}")
-    tr.lift_x(body[2:])                                    # a point on the curve, or ValueError
-    return body[2:]
-
-
-def send(owner: bytes, held: list[dict], coins: list[dict], pay_script: bytes, to_key: bytes, cents: int,
-         chain: str = TEST, to_address: str = "", fresh=None) -> dict:
-    """The prepared send of `cents` DigiDollars to the Taproot output key `to_key`, as DigiByte Core builds one
-    (txbuilder.cpp BuildTransferTransaction): the caller's DigiDollar coins by their key path, then DGB coins for the
-    fee; the payee's output, the caller's DigiDollar change, the DGB change, and the record of each output's dollars."""
-    if not LEAST_OUTPUT <= cents <= MOST_OUTPUT:
-        raise ValueError("a DigiDollar send is $1 to $100,000")
-    spend, have = [], 0
-    for coin in sorted(held, key=lambda c: -c["cents"]):
-        if have >= cents:
-            break
-        if fresh is not None and not fresh(coin):
-            continue
-        spend.append(coin)
-        have += coin["cents"]
-    if have < cents:
-        raise ValueError(f"you hold ${have / 100:,.2f} in DigiDollars here and this sends ${cents / 100:,.2f}")
-    back = have - cents
-    if 0 < back < LEAST_OUTPUT:
-        raise ValueError(f"that would leave ${back / 100:,.2f} in DigiDollars as change, under DigiDollar's $1 "
-                         f"least: send ${have / 100:,.2f}, or at most ${(have - LEAST_OUTPUT) / 100:,.2f}")
-    outputs = [(0, tr.p2tr(to_key))] + ([(0, tr.p2tr(tr.tweak(owner)))] if back else [])
-    record = bytes([tr.OP_RETURN]) + tr.push(b"DD") + tr.push(tr.num(2)) + tr.push(tr.num(cents)) \
-        + (tr.push(tr.num(back)) if back else b"")
-    witness = 2 + (41 + 1 + 65) * len(spend)
-    chosen, fee, change = _pay(coins, outputs + [(0, record)], 0, 148, pay_script, extra=witness, fresh=fresh)
-    outputs += ([(change, pay_script)] if change else []) + [(0, record)]
-    inputs = [{"txid": c["txid"], "vout": c["vout"], "taproot": {"key": True}} for c in spend]
-    inputs += [{"txid": c["txid"], "vout": c["vout"]} for c in chosen]
-    return {"chain": chain, "version": SEND_VERSION, "inputs": inputs, "outputs": [(v, s.hex()) for v, s in outputs],
-            "what": f"send ${cents / 100:,.2f} DigiDollar to {to_address or to_key.hex()}"
-                    + (f", ${back / 100:,.2f} back to you" if back else "")}
 
 
 def command_ddreceive(ctx, chain="test"):

@@ -88,6 +88,30 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-07 · SadFrog's side (Claude) · branch `team/dd-one-send` (on `main` ed52b15e) · DigiDollar: one implementation, two front doors
+
+SadFrog: "One implementation, two front doors. ... keeps the full Wallet's DigiDollar tile but has it call the module's
+code, so there's only one send to maintain." This keeps your call from 2026-11-06 (the module in Lite, built in to the
+full Wallet), and ends the two copies of DigiDollar's send.
+
+- **One file:** `examples/packages/digidollar/lib/ddtx.py` holds DigiDollar's addresses (`dd_address`, `dd_key`), the
+  "DD" record (`record`, `amounts`, `dollars_out`), the fee coins (`pay`) and the send (`send`). The module uses it
+  for every command (DigiDollar 0.4.3; its mint and redeem pay with `ddtx.pay` too).
+- **The full Wallet runs the same bytes:** `arcade/ddlib/` is the module's `lib/ddtx.py` and `lib/taproot.py`, copied
+  byte for byte. `tests/test_digidollar_core.py` fails if the copies differ. `arcade/digidollar.py` keeps what is the
+  Wallet's own (the index of an account's DigiDollar coins, `on_block`, `seed_from_core`, `/account/digidollar`), and
+  its `prepare_send`, `address`, `key_of` and `dollars_out` are now the module's. `ddaddress.address` too.
+- **Why a copy and not the module itself:** the full Wallet must work with no module installed (your rule), on Windows
+  (no sandbox there), and with a borrowed DigiByte (no `scantxoutset`), so it cannot ask the confined module. A copy
+  in the wheel, kept identical by a test, is the extension's `coins.js` pattern.
+- **Changed for people:** the full Wallet's send now says "send $X DigiDollar to ..." (the module's words), and a
+  wallet of many small DGB coins is told to send its DGB to itself in one coin first.
+- **Tests:** test_digidollar_core (+1: the copies are one file), test_digidollar, test_ddaddress, test_module_host,
+  test_module_packages, test_digidollar_wallet_browser, test_lite_schnorr_browser, and test_digidollar_regtest against
+  DigiByte Core 9.26.7.
+- **For the operator:** please merge into `main`. Any later change to DigiDollar's send goes in the module's file and is
+  copied to `arcade/ddlib/`.
+
 ### 2026-11-07 A player with no IPv6 always gets an IPv4 relay when any arcade has one (Claude; found by the GBC session in Pocket Tide Super)
 
 - **What happened:** with .25 off, Strawberry (on Starlink: no IPv4 of its own, inbound IPv4 impossible) had no proved
