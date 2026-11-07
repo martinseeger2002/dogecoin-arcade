@@ -1,0 +1,124 @@
+{#- Admin -> Overview -> Nodes globe. The operator chooses the list /globe polls. -#}
+<section class="panel" id="globe-list">
+  <h2>Nodes globe</h2>
+  <p class="muted" style="margin:0 0 8px;font-size:.86rem">
+    <a href="/globe">The globe</a> reads the list chosen here and redraws on its own when a member
+    joins, leaves, or this choice changes. A place is a city or a country from the list below.
+    Addresses, hosts and node ids are not sent to the map.
+  </p>
+  <p style="margin:0 0 8px">
+    <label><input type="radio" name="globe-source" value="mesh"> Every arcade on the mesh</label><br>
+    <label><input type="radio" name="globe-source" value="linked"> Only arcades linked to this one</label><br>
+    <label><input type="radio" name="globe-source" value="picked"> Only the names I tick</label>
+  </p>
+  <div id="globe-rows" class="muted">Looking&hellip;</div>
+  <p style="margin:10px 0 0"><button type="button" id="globe-save">Save the globe list</button>
+    <span class="muted" id="globe-said" style="margin-left:8px"></span></p>
+  <p class="muted" id="globe-bands" style="margin:8px 0 0;font-size:.84rem"></p>
+</section>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var view = null, dirty = false;
+  function el(tag, text) {
+    var node = document.createElement(tag);
+    if (text != null) node.textContent = text;
+    return node;
+  }
+  function source() {
+    var picked = document.querySelector('input[name="globe-source"]:checked');
+    return picked ? picked.value : "mesh";
+  }
+  function paint() {
+    if (!view) return;
+    document.querySelectorAll('input[name="globe-source"]').forEach(function (input) {
+      input.checked = input.value === view.choice.source;
+    });
+    var box = $("globe-rows");
+    box.replaceChildren();
+    box.classList.remove("muted");
+    var ticking = view.choice.source === "picked";
+    if (!view.candidates.length) {
+      box.classList.add("muted");
+      box.textContent = "No named arcades yet. This one, and anyone it links, will show up here.";
+    }
+    view.candidates.forEach(function (row) {
+      var line = el("div");
+      line.style.cssText = "display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)";
+      var tick = document.createElement("input");
+      tick.type = "checkbox";
+      tick.checked = view.choice.picked.indexOf(row.tag) !== -1;
+      tick.disabled = !ticking;
+      tick.addEventListener("change", function () { dirty = true; });
+      var name = el("b", row.tag);
+      var count = el("span", row.nodes + " linked" + (row.active ? "" : " · inactive"));
+      count.className = "muted";
+      var place = document.createElement("select");
+      var blank = el("option", "Known place, or unplaced");
+      blank.value = "";
+      place.appendChild(blank);
+      (view.places || []).forEach(function (item) {
+        var option = el("option", item.place);
+        option.value = item.place;
+        place.appendChild(option);
+      });
+      place.value = row.place || "";
+      place.addEventListener("change", function () { dirty = true; });
+      line._tag = row.tag;
+      line._tick = tick;
+      line._place = place;
+      line.append(tick, name, count, place);
+      box.appendChild(line);
+    });
+    var bands = view.bands || {};
+    var copper = bands.copper || [1, 1];
+    $("globe-bands").textContent = "Copper " + copper[0] + "–" + copper[1]
+      + ", bronze " + bands.bronze[0] + "–" + bands.bronze[1]
+      + ", silver " + bands.silver[0] + "–" + bands.silver[1]
+      + ", gold " + bands.gold[0] + "+. Diamond is everyone tied for the most linked nodes ("
+      + view.chains + " chain" + (view.chains === 1 ? "" : "s") + " on this list). "
+      + view.members.length + " name" + (view.members.length === 1 ? "" : "s") + " on the globe.";
+  }
+  function load() {
+    if (dirty) return;
+    fetch("/admin/api/globe", {credentials: "same-origin", cache: "no-store"})
+      .then(function (r) { return r.json(); })
+      .then(function (got) { view = got; paint(); })
+      .catch(function () { if (!view) $("globe-rows").textContent = "The globe list could not be read."; });
+  }
+  document.querySelectorAll('input[name="globe-source"]').forEach(function (input) {
+    input.addEventListener("change", function () {
+      dirty = true;
+      if (view) { view.choice.source = source(); paint(); dirty = true; }
+    });
+  });
+  $("globe-save").addEventListener("click", function () {
+    var picked = [], places = {};
+    document.querySelectorAll("#globe-rows > div").forEach(function (line) {
+      if (!line._tag) return;
+      if (line._tick.checked) picked.push(line._tag);
+      if (line._place.value) places[line._tag] = line._place.value;
+    });
+    $("globe-save").disabled = true;
+    fetch("/admin/api/globe", {
+      method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json", "X-Arcade-Admin": "1"},
+      body: JSON.stringify({source: source(), picked: picked, places: places})
+    }).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok) throw new Error(j.detail || "not saved");
+        return j;
+      });
+    }).then(function (j) {
+      dirty = false;
+      view = j;
+      paint();
+      $("globe-said").textContent = "Saved. The globe picks this up on its next read.";
+    }).catch(function (e) {
+      $("globe-said").textContent = e.message;
+    }).then(function () { $("globe-save").disabled = false; });
+  });
+  load();
+  setInterval(load, 8000);
+})();
+</script>
