@@ -1086,24 +1086,32 @@ def installmodule(caller, folder: str) -> dict:
 
     installmodule ~/my-module"""
     manifest, files = _folder(caller, folder, "module")
+    return keep_module(caller.state, folder, manifest)
+
+
+def keep_module(state, folder, manifest: dict) -> dict:
+    """installmodule's work, also Admin -> Edition & modules' Add for a module that comes with the arcade
+    (web/modules_web.py): kept under its id and off; a new version replaces the old one and is off again."""
     name = manifest["name"]
     if name in modulelib.MODULES or any(c in COMMANDS for c in manifest.get("commands") or {}):
         raise CommandError(f"{name} takes a name the arcade's own modules or commands use")
-    why = getattr(caller.state, "module_host", None) and caller.state.module_host.why_not()
+    host = getattr(state, "module_host", None)
+    why = host and host.why_not()
     try:
-        pid, row = packagelib.install(caller.state.home, folder)
+        pid, row = packagelib.install(state.home, folder)
     except (packagelib.PackageError, OSError) as exc:
         raise CommandError(str(exc)) from None
-    have = dict(caller.state.setting(packagelib.SETTING) or {})
+    have = dict(state.setting(packagelib.SETTING) or {})
     for old in [p for p, r in have.items() if r.get("kind") == "module" and r.get("name") == name and p != pid]:
         have.pop(old)
-        shutil.rmtree(packagelib.home_of(caller.state.home, old), ignore_errors=True)
-        caller.state.module_host.stop(name)
-        switches = dict(caller.state.setting(modulelib.SWITCH_SETTING) or {})
+        shutil.rmtree(packagelib.home_of(state.home, old), ignore_errors=True)
+        if host is not None:
+            host.stop(name)
+        switches = dict(state.setting(modulelib.SWITCH_SETTING) or {})
         switches.pop(name, None)
-        caller.state.set_setting(modulelib.SWITCH_SETTING, switches)
+        state.set_setting(modulelib.SWITCH_SETTING, switches)
     have[pid] = row
-    caller.state.set_setting(packagelib.SETTING, have)
+    state.set_setting(packagelib.SETTING, have)
     return {"id": pid, "name": name, "version": row["version"],
             "next": f"cannot run on this machine: {why}" if why else f"`install {name}` switches it on"}
 

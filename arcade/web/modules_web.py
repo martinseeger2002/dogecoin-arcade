@@ -12,6 +12,7 @@ from fastapi import Body, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from .. import modules as modulelib
+from .. import packages as packagelib
 
 NO_STORE = {"Cache-Control": "no-store"}
 
@@ -76,11 +77,21 @@ def register(app, state, admin_check, signed_in=None) -> None:
     #: What ran when this arcade started: a module whose switch moved since then has jobs waiting for a restart.
     started = modulelib.enabled(state.settings())
 
+    def shipped() -> list:
+        """The node modules that come with this arcade's source: the tree it runs from, else the installer's checkout
+        (an installed arcade runs from site-packages, which has no examples/)."""
+        return packagelib.shipped(dict.fromkeys([state.checkout, Path.home() / ".dogecoinarcade" / "src"]))
+
     def answer() -> JSONResponse:
         settings = state.settings()
         out = modulelib.describe(settings)
         moved = started ^ modulelib.enabled(settings)
         out["restart_for"] = [m["title"] for m in out["modules"] if m["id"] in moved and getattr(modulelib.MODULES.get(m["id"]), "jobs", ())]
+        have = {r.get("name"): (pid, r) for pid, r in (settings.get(packagelib.SETTING) or {}).items()
+                if isinstance(r, dict) and r.get("kind") == "module"}
+        out["shipped"] = [{"name": m["name"], "title": m.get("title") or m["name"], "version": m["version"],
+                           "summary": m.get("summary", ""), "added": have.get(m["name"], ("", {}))[1].get("version"),
+                           "same": have.get(m["name"], ("",))[0] == pid} for _, m, pid in shipped()]
         return JSONResponse(out, headers=NO_STORE)
 
     @app.get("/admin/modules.js")
@@ -96,13 +107,23 @@ def register(app, state, admin_check, signed_in=None) -> None:
 
     @app.post("/admin/api/modules")
     def admin_modules_set(request: Request, payload: Any = Body(None)):
-        """{edition: "full" | "lite"}, {module: id, on: true | false}, or {module: id, access: "operator" | "user" |
-        "anyone"}. A change of edition sets every module to that edition's default: Lite to Full turns everything on,
-        Full to Lite switches off all but the core. Nothing is deleted either way, and who may use each module stays
-        as the operator said."""
+        """{edition: "full" | "lite"}, {module: id, on: true | false}, {module: id, access: "operator" | "user" |
+        "anyone"}, or {add: name}. A change of edition sets every module to that edition's default: Lite to Full turns
+        everything on, Full to Lite switches off all but the core. Nothing is deleted either way, and who may use each
+        module stays as the operator said. `add` keeps a node module that comes with this arcade (`shipped`), off until
+        switched on: only those, so an operator signed in from elsewhere names no folder on this machine."""
         admin_check(request, write=True)
         said = payload if isinstance(payload, dict) else {}
-        if "edition" in said:
+        if "add" in said:
+            from ..lite import commands as cmdlib
+            found = [(folder, m) for folder, m, _ in shipped() if m["name"] == str(said["add"])]
+            if not found:
+                raise HTTPException(400, "no node module of that name comes with this arcade")
+            try:
+                cmdlib.keep_module(state, *found[0])
+            except cmdlib.CommandError as exc:
+                raise HTTPException(400, str(exc)) from None
+        elif "edition" in said:
             if said["edition"] not in modulelib.EDITIONS:
                 raise HTTPException(400, "the edition is full or lite")
             state.set_setting(modulelib.EDITION_SETTING, said["edition"])
