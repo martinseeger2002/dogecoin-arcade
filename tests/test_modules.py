@@ -63,6 +63,21 @@ def test_every_claim_names_a_route_and_every_module_is_well_formed(full):
             assert any(p == prefix or p.startswith(prefix + "/") for p in paths), f"{m.id} claims {prefix}: no route"
 
 
+def test_apps_and_games_is_core_and_every_app_is_in_a_group():
+    """2026-11-07, SadFrog: Apps and games is a core module, and Edition & modules' Apps tab shows every app in a group,
+    with a node module from a package (DigiDollar) under Node modules."""
+    assert modulelib.MODULES["apps"].core and "apps" in modulelib.enabled({"edition": "lite", "modules": {"apps": False}})
+    for m in modulelib.MODULES.values():
+        assert (m.group in modulelib.APP_GROUPS) == (m.kind == "app"), m.id
+    settings = {"packages": {"ab" * 32: {"kind": "module", "name": "digidollar", "title": "DigiDollar"}}}
+    said = modulelib.describe(settings)
+    apps = next(c for c in said["categories"] if c["id"] == "app")
+    assert [g["title"] for g in apps["groups"]] == ["Social", "Inscriptions and tokens", "Markets", "Node modules"]
+    dd = next(m for m in said["modules"] if m["id"] == "digidollar")
+    assert dd["kind"] == "app" and dd["group"] == "node-modules" and not dd["on"], "added, and off until ticked"
+    assert not any(c["groups"] for c in said["categories"] if c["id"] != "app")
+
+
 def test_a_node_that_never_chose_is_full_and_a_fresh_one_asks_once():
     assert modulelib.edition({}) == "full" and modulelib.enabled({}) == frozenset(modulelib.MODULES)
     assert modulelib.edition({"edition": "ask"}) == "full" and modulelib.asking({"edition": "ask"})
@@ -81,9 +96,9 @@ def test_a_lite_node_serves_only_the_crypto_cores(lite):
         assert modulelib.MODULES[modulelib.module_of(path)].core, f"{path} runs in Lite"
     client = TestClient(lite)
     # Messages is part of the core (2026-11-04): its pages run in Lite as the wallet's do
-    for path in ("/wallet", "/wallet/tools", "/contacts", "/backup", "/admin", "/docs", "/lite", "/inbox"):
+    for path in ("/wallet", "/wallet/tools", "/contacts", "/backup", "/admin", "/docs", "/lite", "/inbox", "/apps"):
         assert client.get(path).status_code == 200, path
-    for path in ("/feed", "/exchange", "/explore", "/apps", "/desktop", "/home", "/dogefeedx/feed",
+    for path in ("/feed", "/exchange", "/explore", "/desktop", "/home", "/dogefeedx/feed",
                  "/v1/models", "/affiliates"):
         assert client.get(path).status_code == 404, path
     home = client.get("/")
@@ -149,9 +164,10 @@ def test_lite_runs_only_the_cores_jobs_and_every_settlement_job(app_state):
     assert not (set(PHASE_JOBS) - {"_confirm_sent"}) & set(lite.ran) and "_confirm_sent" in lite.ran
     # what was agreed finishes whatever the switches say (arcade/web/docs/exchange-safety.md)
     assert {"_run_watch", "_run_trader", "_run_xchain", "_keep_shop", "_sync_ledgers", "_walk_home"} <= set(lite.ran)
-    for job in ("ord-index", "sites-search", "lora", "known-collections", "book-relay", "card-watch"):
+    for job in ("ord-index", "sites-search", "lora", "known-collections", "book-relay"):
         assert not modulelib.job_on(app_state.settings(), job) and modulelib.job_on({}, job), job
     assert modulelib.job_on(app_state.settings(), "push-mail"), "Messages runs in every edition"
+    assert modulelib.job_on(app_state.settings(), "card-watch"), "and Apps and games (2026-11-07)"
     assert modulelib.job_on(app_state.settings(), "mesh") and modulelib.job_on(app_state.settings(), "chain-scan")
 
 

@@ -1,8 +1,6 @@
-{#- The Apps tab IS the Apps and games module: it is in the window only while the operator has that module on and
-    open to this caller. It holds the App Store's apps and games, read with the console's own listapps; every other
-    module that is on has a tab of its own (modules.tabs, 2026-11-04). Switched off, the tab and all it holds are
-    gone. A card plays at /inscriptions/<opens>/full, which the Ord indexes module serves. -#}
-{% if apps_on %}
+{#- The Apps tab IS the Apps and games module, part of the core since 2026-11-07 (SadFrog: "the apps and games should
+    be a core module"), so it is in every window. It holds the App Store's apps and games, read with the console's
+    own listapps; every other module that is on has a tab of its own (modules.tabs, 2026-11-04). A card plays at /inscriptions/<opens>/full, which the Ord indexes module serves. -#}
 <section data-panel="apps" hidden>
   <div>
     <fieldset><legend>Apps and games</legend>
@@ -51,4 +49,3 @@
   if (location.hash === '#apps') load();
 })();
 </script>
-{% endif %}

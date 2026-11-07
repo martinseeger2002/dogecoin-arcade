@@ -43,10 +43,13 @@ belongs to one module in a registry (`arcade/modules.py`).
 - Address book.
 - Accounts: users and the operator, @names and keys.
 - The mesh link.
+- Messages (2026-11-04), and Apps and games: the App Store and the page API every app uses (2026-11-07).
 
-**Everything else is a module**, present in the code and off in Lite until switched on: Messages, Feed, Ord
-indexes and Explore, Collections and Creator, Tokens, Exchange, Apps and games, Rooms and calls, the LLM market,
-Affiliates, Meshtastic, and the Desktop View and DogeFeedX looks.
+**Everything else is a module**, present in the code and off in Lite until switched on: Feed, Ord indexes and
+Explore, Collections and Creator, Tokens, Exchange, Rooms and calls, the LLM market, Affiliates, Mining, Meshtastic,
+and the Desktop View and DogeFeedX looks. Admin -> Edition & modules shows them by category (Core, Apps, Node
+services, Themes). The Apps come in groups: Social, Inscriptions and tokens, Markets, and Node modules, where a node
+module added from a package (DigiDollar) is listed with the Add button for those that come with the arcade.
 
 **Choosing and changing the edition:**
 - The installer asks on a fresh install at a terminal (Full by default). `--edition full|lite` answers it for

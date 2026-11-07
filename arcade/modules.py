@@ -1,8 +1,10 @@
 """The arcade's modules: one registry, so an edition is a set of switches and not a fork of the code.
 
-Every route and every background job belongs to one module. Core modules are always on. Every other module is an
-app, a theme or a node module: on in the full edition, off in ARCADE Lite until the operator switches it on in
-Admin -> Edition & modules. Switching a module off only stops its routes and jobs; its data stays where it is.
+Every route and every background job belongs to one module. Core modules are always on: the crypto cores, Messages,
+and Apps and games, which hosts the apps. Every other module is an app, a node service or a theme: on in the full
+edition, off in ARCADE Lite until the operator switches it on in Admin -> Edition & modules. The apps come in groups
+(APP_GROUPS), and a node module added from a package is an app of the group "Node modules".
+Switching a module off only stops its routes and jobs; its data stays where it is.
 
 This first registry is coarse on purpose (docs/arcade-lite/CHARTER.md, "Editions and modules"): it names the route
 groups and jobs that already exist, by path and by name, and gates them where they are registered. Features move out
@@ -39,10 +41,21 @@ ASK = "ask"
 KINDS = ("core", "app", "theme", "node")
 #: How Edition & modules names each kind, in this order: its tab, and a line under it. A kind not named here (one a
 #: module brought from the mesh, say) gets a tab of its own all the same, after these (describe).
-KIND_TITLES = {"core": ("Core", "The crypto cores: always on, in every edition."),
-               "app": ("Apps", "What people use: messages, the feed, the market, games and the rest."),
+KIND_TITLES = {"core": ("Core", "The crypto cores, Messages, and Apps and games: always on, in every edition."),
+               "app": ("Apps", "What people use, by kind: social, inscriptions and tokens, markets, and the node "
+                               "modules added from packages, such as DigiDollar."),
                "node": ("Node services", "What this arcade runs for the mesh and its own indexes."),
                "theme": ("Themes", "How the arcade looks and opens.")}
+#: The groups the apps come in, in this order: Edition & modules draws each under a heading of its own in the Apps tab
+#: (2026-11-07, SadFrog: "everything should be properly categorized apps ... digidollar as a node module subcategory
+#: in the apps category"). Every app names one; a node module from a package is always in "node-modules".
+APP_GROUPS = {"social": ("Social", "Posts and replies, rooms and calls, and who this arcade works with."),
+              "creating": ("Inscriptions and tokens", "Collections, the Creator and launchpad, and tokens."),
+              "markets": ("Markets", "Trading coins, inscriptions and tokens, and language models."),
+              "node-modules": ("Node modules", "Added from a package, each runs in a confined process of its own, "
+                                               "reads the chains through this arcade's Cores, and spends only "
+                                               "through the user's own wallet.")}
+PACKAGE_GROUP = "node-modules"
 #: Where each module that has one opens, for people and for the operator: the Lite window's Apps tab offers it once the
 #: module is on (Messages is a tab of the window itself). A module with no page of its own (rooms, which apps use)
 #: is not listed.
@@ -74,6 +87,8 @@ class Module:
     caution: str = ""
     #: A node module installed from a package (arcade/packages.py, arcade/modhost.py): that package's id.
     package: str = ""
+    #: Which of APP_GROUPS an app is in.
+    group: str = ""
 
     @property
     def core(self) -> bool:
@@ -139,7 +154,7 @@ _MODULES = (
     Module("feed", "app", "Feed", "Posts, replies, likes and tips on the chain, @name pages and notifications.",
            routes=("/feed", "/u", "/notifications", "/me/notifications", "/account/feed", "/account/post",
                    "/account/react", "/r/replies", "/r/written", "/admin/api/unflag"),
-           jobs=("confirm-posts", "pending-feed")),
+           jobs=("confirm-posts", "pending-feed"), group="social"),
     Module("ords", "node", "Ord indexes and Explore", "This arcade's own index of each chain's inscriptions, "
            "Explore, inscribing, the sites search and the content of inscriptions.",
            routes=("/inscriptions", "/explore", "/content", "/nfts", "/wallet/nfts", "/me/nfts", "/node/me/nfts",
@@ -154,11 +169,11 @@ _MODULES = (
            routes=("/collections", "/mintpad", "/launch", "/launches", "/create", "/inscriptions/collection",
                    "/account/mintpad", "/r/collection", "/r/collection-item", "/r/collections", "/r/mintpad",
                    "/admin/api/known-collections"),
-           jobs=("known-collections", "scan-collections"), needs=("ords",)),
+           jobs=("known-collections", "scan-collections"), needs=("ords",), group="creating"),
     Module("tokens", "app", "Tokens", "The arcade's own tokens, and DRC-20 / PRC-20 balances.",
            routes=("/tokens", "/wallet/tokens", "/me/wallet/tokens", "/node/wallet/tokens", "/node/wallet/token",
                    "/account/token", "/account/token20", "/account/tokens", "/account/tokenpad", "/r/token",
-                   "/r/tokens")),
+                   "/r/tokens"), group="creating"),
     Module("exchange", "app", "Exchange", "The market: listings, swaps, buy orders, escrow, cross-chain orders and "
            "this node's trades.",
            routes=("/exchange", "/listings", "/swap", "/doginals", "/settings/cut", "/settings/filling",
@@ -169,8 +184,11 @@ _MODULES = (
                    "/account/token-bid", "/account/trade", "/account/x", "/admin/api/swaps"),
            jobs=("import-listings", "import-orders", "pending-offers", "listers", "book-relay"),
            caution="Open orders, swaps and escrows keep settling while the Exchange is off, but its pages, Cancel "
-                   "among them, are off too until it is on again. Switch it off when nothing is open."),
-    Module("apps", "app", "Apps and games", "The App Store, inscribed apps and games, the page API they use, "
+                   "among them, are off too until it is on again. Switch it off when nothing is open.",
+           group="markets"),
+    # Apps and games is part of the core too (2026-11-07, SadFrog: "the apps and games should be a core module"): the
+    # App Store and the page API every app uses are always there, and the Lite window's Apps tab is its own.
+    Module("apps", "core", "Apps and games", "The App Store, inscribed apps and games, the page API they use, "
            "approvals, prize pools and referees.",
            routes=("/apps", "/games", "/play", "/storage", "/owner", "/node/{txid}", "/approvals", "/r/app.js",
                    "/r/node.js", "/r/owner.js", "/r/storage.js", "/r/state", "/r/state.js", "/r/ask", "/r/send",
@@ -180,11 +198,12 @@ _MODULES = (
                    "/account/claimlots", "/account/referee", "/admin/api/cards"),
            jobs=("card-watch",)),
     Module("rooms", "app", "Rooms and calls", "Realtime rooms for apps, and the call relay.",
-           routes=("/realtime", "/r/realtime.js", "/admin/api/relay-apps"), needs=("apps",)),
+           routes=("/realtime", "/r/realtime.js", "/admin/api/relay-apps"), group="social"),
     Module("llm", "app", "LLM market", "Language models and image generation, sold and bought between arcades.",
-           routes=("/v1", "/admin/llm", "/admin/api/llm", "/account/llm", "/r/llm.js", "/exchange/llm")),
+           routes=("/v1", "/admin/llm", "/admin/api/llm", "/account/llm", "/r/llm.js", "/exchange/llm"),
+           group="markets"),
     Module("affiliates", "app", "Affiliates", "Who this arcade works with.",
-           routes=("/affiliates", "/affiliates.json", "/admin/api/affiliates")),
+           routes=("/affiliates", "/affiliates.json", "/admin/api/affiliates"), group="social"),
     # Mining (2026-11-04, SadFrog: "making mining on the node a module that can be enabled per node"): the CPU mining
     # of every chain it can be done on, local ASICs over stratum (arcade/stratum.py), and the work this node's Cores
     # give other arcades' miners. Off in Lite until switched on, as every module that is not the core.
@@ -256,8 +275,8 @@ def packaged(settings: dict) -> list[Module]:
     """The node modules installed from packages (settings `packages`, kind "module"), by name. A name the arcade's
     own modules use is not one (packages refuses it when installing)."""
     rows = settings.get("packages")
-    return [Module(row["name"], "node", str(row.get("title") or row["name"]), str(row.get("summary") or ""),
-                   routes=(f"/m/{row['name']}",), package=pid)
+    return [Module(row["name"], "app", str(row.get("title") or row["name"]), str(row.get("summary") or ""),
+                   routes=(f"/m/{row['name']}",), package=pid, group=PACKAGE_GROUP)
             for pid, row in sorted((rows if isinstance(rows, dict) else {}).items())
             if isinstance(row, dict) and row.get("kind") == "module" and row.get("name") not in MODULES]
 
@@ -376,8 +395,8 @@ def set_hidden_tabs(settings: dict, owner: str, hidden: list) -> dict:
 
 def tabs(settings: dict, audience: str, hidden: list[str] = ()) -> list[dict]:
     """The module tabs of the Lite window for a caller of `audience`: every module that is on, has a page of its own,
-    that this caller may use, and that they have not hidden. The core's tabs (Overview to Messages) are the window's
-    own, and a look (a theme module, such as the desktops) is worn, not opened, so neither is listed here."""
+    that this caller may use, and that they have not hidden. The core's tabs (Overview to Messages, and Apps) are the
+    window's own, and a look (a theme module, such as the desktops) is worn, not opened, so neither is listed here."""
     on, out = enabled(settings), []
     for m in (*_MODULES, *packaged(settings)):
         if m.core or m.kind == "theme" or m.id not in on or not may_use(settings, m.id, audience):
@@ -399,10 +418,12 @@ def describe(settings: dict) -> dict:
     kinds += sorted({m.kind for m in every} - set(kinds))
     return {"edition": edition(settings), "asking": asking(settings),
             "categories": [{"id": k, "title": KIND_TITLES.get(k, (k.replace("_", " ").capitalize(), ""))[0],
-                            "summary": KIND_TITLES.get(k, ("", ""))[1]} for k in kinds],
+                            "summary": KIND_TITLES.get(k, ("", ""))[1],
+                            "groups": [{"id": g, "title": t, "summary": why} for g, (t, why) in APP_GROUPS.items()]
+                            if k == "app" else []} for k in kinds],
             "modules": [{"id": m.id, "kind": m.kind, "title": m.title, "summary": m.summary, "core": m.core,
                          "on": m.id in on, "lite": m.lite or m.core, "needs": list(m.needs),
                          "needed_by": needed_by(m.id), "caution": m.caution, "package": m.package,
-                         "access": access(settings, m.id),
+                         "access": access(settings, m.id), "group": m.group,
                          "page": list(PAGES.get(m.id, (f"/m/{m.id}/", f"/m/{m.id}/") if m.package else ("", "")))}
                         for m in every]}

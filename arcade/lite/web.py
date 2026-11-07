@@ -130,7 +130,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             # Window -> Build's guide (_build.html) names a theme's limits as packages.py holds them
             "fonts": list(packagelib.FONTS), "most_files": packagelib.MOST_FILES,
             "most_kb": packagelib.MOST_BYTES // 1000,
-            "messages_on": "messages" in modulelib.enabled(settings), "apps_on": "apps" in modulelib.enabled(settings),
+            "messages_on": "messages" in modulelib.enabled(settings),
             "ords_on": "ords" in modulelib.enabled(settings), "csrf": state.csrf_token,
             "join": (join_facts or (lambda request: {"seats": 0, "free": 0, "secure": True}))(request),
             "tagchain": {"network": state.messaging.network, "version": state.messaging.params.pubkeyhash_version}},

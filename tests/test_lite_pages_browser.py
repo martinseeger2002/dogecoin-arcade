@@ -180,6 +180,13 @@ def test_the_operator_changes_seats_and_sees_the_modules_in_options(browser, ser
         browser.find_element(By.CSS_SELECTOR, '#o-mui [data-cat="app"]').click()
         listed = browser.find_element(By.CSS_SELECTOR, "#o-mui tbody").text
         assert "Feed" in listed and "Address book" not in listed, "Apps lists the apps only"
+        heads = [h.text for h in browser.find_elements(By.CSS_SELECTOR, "#o-mui tr.mui-head th")]
+        groups = ["Social", "Inscriptions and tokens", "Markets", "Node modules"]
+        assert len(heads) == 4 and all(h.startswith(g) for h, g in zip(heads, groups)), heads
+        titles = [r.find_elements(By.TAG_NAME, "td")[1].text
+                  for r in browser.find_elements(By.CSS_SELECTOR, "#o-mui tbody tr:not(.mui-head)")
+                  if len(r.find_elements(By.TAG_NAME, "td")) > 1]
+        assert "Feed" in titles and "Apps and games" not in titles, "Apps and games is part of the core"
         box = browser.find_element(By.CSS_SELECTOR, "#o-mui input[type=search]")
         box.send_keys("feed")
         assert [r.text.split("\n")[0] for r in browser.find_elements(By.CSS_SELECTOR, "#o-mui tbody tr")] \

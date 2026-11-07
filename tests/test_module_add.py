@@ -57,4 +57,4 @@ def test_the_operator_from_elsewhere_adds_one_a_stranger_cannot(public):
 
 def test_the_panel_draws_the_add_list():
     js = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/modules_js.js").read_text()
-    assert "Add a node module" in js and "call({add: p.name})" in js and "Tick it on in the list above" in js
+    assert "Add a node module" in js and "call({add: p.name})" in js and "Tick it on under Apps" in js
