@@ -533,6 +533,7 @@ NAV = [
     # Who the arcade works with (2026-10-15: "Between the exchange and the Docs tab,
     # add an affiliate tab").
     ("/affiliates",   "Affiliates",   None,        True),
+    ("/globe",        "Globe",        None,        True),
     ("/approvals",    "Approvals",    None,        True),
     ("/docs",         "Docs",         None,        True),
 ]
@@ -564,6 +565,7 @@ ACCOUNT_NAV = [
     ("/exchange",        "Exchange",     "mainnet",   True),
     ("/explore",         "Explore",      None,        True),
     ("/affiliates",      "Affiliates",   None,        True),
+    ("/globe",           "Globe",        None,        True),
     ("/docs",            "Docs",         None,        True),
 ]
 
@@ -9037,6 +9039,24 @@ def create_app(state: AppState) -> FastAPI:
         sites = [{"url": s["url"], "name": s["name"], "by": "this arcade"} for s in tab["own"]]
         sites += [{"url": s["url"], "name": s["name"], "by": g["by"]} for g in tab["groups"] for s in g["sites"]]
         return JSONResponse({"ok": True, "sites": sites}, headers={"Cache-Control": "no-store"})
+
+    @app.get("/globe", response_class=HTMLResponse)
+    def globe_page():
+        """The nodes globe. The same file GitHub Pages serves from docs/."""
+        from .. import globe as globelib
+        path = globelib.page_path()
+        if path is None:
+            return HTMLResponse("the nodes globe is not in this copy", status_code=404)
+        return HTMLResponse(path.read_text(encoding="utf-8"),
+                            headers={"Cache-Control": "no-store"})
+
+    @app.get("/globe.json")
+    def globe_json():
+        """The list the globe polls. City or country, never a host or a mesh id."""
+        from .. import globe as globelib
+        choice = globelib.parse_choice(state.setting(globelib.SETTING))
+        return JSONResponse(globelib.feed_from(_globe_rows(), choice),
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/docs", response_class=HTMLResponse)
     def docs_index(request: Request):
@@ -31974,6 +31994,82 @@ def create_app(state: AppState) -> FastAPI:
                                    r["tag"] or "~" + r["node"]))
         return {"ok": up, "running": running["running"], "linked": running["linked"],
                 "total": 1 + running["running"], "rows": rows + others}
+
+    def _globe_rows() -> list[dict]:
+        """Arcades the globe may count. Tags and chain codes only: a peer id or a
+        host is never put on the row, so the public feed cannot repeat one."""
+        rows = []
+        chains = []
+        try:
+            for chain in state.all_chains:
+                if getattr(chain, "borrowed", False):
+                    continue
+                net = str(getattr(chain, "network", "") or "")
+                if net:
+                    chains.append(net)
+        except Exception:                              # noqa: BLE001 -- the globe still answers
+            chains = []
+        try:
+            mine = state.operator_tag()
+        except Exception:                              # noqa: BLE001
+            mine = ""
+        rows.append({"tag": mine, "linked": True, "self": True, "chains": chains})
+        mesh = getattr(state, "mesh", None)
+        up = mesh is not None and getattr(mesh, "loop", None) is not None
+        links: set[str] = set()
+        said: dict = {}
+        offers: dict = {}
+        me = ""
+        if up:
+            me = str(getattr(mesh, "node_id", "") or "")
+            node = getattr(mesh, "node", None)
+            raw_links = getattr(node, "links", None) if node is not None else None
+            if isinstance(raw_links, dict):
+                links = set(raw_links)
+            operators = getattr(mesh, "operators", None)
+            heard = getattr(operators, "peers", None) if operators is not None else None
+            if isinstance(heard, dict):
+                said = heard
+            coreshare = getattr(mesh, "coreshare", None)
+            raw_offers = getattr(coreshare, "offers", None) if coreshare is not None else None
+            if isinstance(raw_offers, dict):
+                offers = raw_offers
+        ids = set(said) | links
+        try:
+            ids |= set(_arcades_running(with_ids=True).get("ids") or [])
+        except Exception:                              # noqa: BLE001 -- linked and heard still count
+            pass
+        ids.discard(me)
+        ids.discard("")
+        ids.discard(None)
+        for peer in ids:
+            if not isinstance(peer, str):
+                continue
+            heard = said.get(peer) if isinstance(said.get(peer), dict) else {}
+            offer = offers.get(peer)
+            peer_chains = list(offer) if isinstance(offer, dict) else []
+            rows.append({"tag": heard.get("tag") or "",
+                         "linked": peer in links, "self": False,
+                         "chains": peer_chains if peer in links else []})
+        return rows
+
+    @app.get("/admin/api/globe")
+    def admin_globe(request: Request):
+        """Overview → Nodes globe: the choice, who can be ticked, and the feed."""
+        _admin_check(request)
+        from .. import globe as globelib
+        choice = globelib.parse_choice(state.setting(globelib.SETTING))
+        return JSONResponse(globelib.admin_view(_globe_rows(), choice),
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/admin/api/globe")
+    def admin_globe_save(request: Request, payload: Any = Body(None)):
+        """Save which list the globe reads. The page polls, so it updates itself."""
+        _admin_check(request, write=True)
+        from .. import globe as globelib
+        choice = globelib.parse_choice(payload if isinstance(payload, dict) else {})
+        state.set_setting(globelib.SETTING, choice)
+        return JSONResponse({"ok": True, **globelib.admin_view(_globe_rows(), choice)})
 
     @app.get("/admin/api/cards")
     def admin_cards(request: Request):

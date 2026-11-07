@@ -37,7 +37,7 @@ NODE = shutil.which("node")
 PAGES = [
     "/", "/admin", "/admin/login", "/approvals", "/backup", "/clone", "/collections",
     "/compose", "/contacts", "/create", "/create/ord", "/docs", "/exchange", "/feed", "/games",
-    "/guide", "/inbox", "/inscriptions", "/inscriptions/collection", "/instances",
+    "/globe", "/guide", "/inbox", "/inscriptions", "/inscriptions/collection", "/instances",
     "/join", "/join/keys", "/launch", "/launches", "/listings", "/me", "/me/accounts",
     "/me/backup", "/me/contacts", "/me/messages", "/me/nfts", "/me/notifications",
     "/me/runs", "/me/wallet", "/me/wallet/tokens", "/messages", "/mintpad/new",
