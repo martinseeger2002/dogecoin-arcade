@@ -107,6 +107,11 @@ def test_litecoin_coins_are_guarded_like_the_others(app_state, monkeypatch):
     assert ltc_guard is not None and funding.guard_for(LTC_L) is ltc_guard
     assert funding.guard_for(PEP_MAIN) is not None and funding.guard_for(PEP_MAIN) is not ltc_guard, \
         "Pepecoin keeps its own guard"
+    # Litecoin's ords live on ltc1p (2026-11-07): a SegWit or Taproot wallet's coins are kept out of a send by the same
+    # guard, named by its chain (funding.guard_for with params).
+    from arcade.script import segwit_encode
+    for program, version in ((bytes(range(20)), 0), (bytes(range(32)), 1)):
+        assert funding.guard_for(segwit_encode("ltc", version, program), NETWORKS["ltc"]) is ltc_guard
     assert funding.guard_for(DOGE) is None, "no Dogecoin node here, so no Dogecoin guard"
 
 
