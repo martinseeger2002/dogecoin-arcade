@@ -1,4 +1,4 @@
-{#- Window -> Build (2026-11-04, SadFrog: "a guide and how to for people making new themes, how to make them and how to
+{#- Window -> Build, and the website's /build and /me/keys, which draw the same (`page`; 2026-11-08) (2026-11-04, SadFrog: "a guide and how to for people making new themes, how to make them and how to
     add them to the shared themes other operators can enable"). The guide is for everyone; offering a theme and taking
     one from linked arcades are the operator's, through the console's own sharetheme, sharedthemes and taketheme. -#}
 <div class="dialog" id="build" role="dialog" aria-label="Build">
@@ -303,11 +303,19 @@ allowtheme my-theme      people may pick it in Settings → Theme…</pre>
   document.querySelectorAll('#build [data-btab]').forEach(function (b) { b.onclick = function () { tab(b.dataset.btab); }; });
   document.querySelectorAll('#build [data-type]').forEach(function (b) {
     b.onclick = function () {
+      // The window's console; on the website, its /console with the line typed in (2026-11-08)
+      var win = document.querySelector('[data-win="console"]');
+      if (!win) { location.href = '/console#' + encodeURIComponent(b.dataset.type); return; }
       $('build').classList.remove('open');
-      document.querySelector('[data-win="console"]').click();
+      win.click();
       $('line').value = b.dataset.type; $('line').focus();
     };
   });
+  {#- On the website (/build, and /me/keys for API keys) the window is the page, opened on the tab its address names. #}
+  {% if page %}(function () {
+    var h = location.hash.slice(1) || {{ (start or '')|tojson }};
+    if (h && document.querySelector('#build [data-btab="' + h + '"]')) tab(h);
+  })();{% endif %}
   {% if audience == 'operator' %}
   function run(line) {
     return fetch('/lite/api/console', {method: 'POST', credentials: 'same-origin',

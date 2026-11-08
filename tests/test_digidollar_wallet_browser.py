@@ -392,8 +392,10 @@ def test_a_page_framed_in_arcadecore_wears_its_look_on_an_arcade_that_opens_in_a
         framed = browser.execute_script("""const d = document.querySelector('[data-panel="m-ords"] iframe').contentDocument;
             return {inWindow: d.documentElement.classList.contains('in-window'),
                     sheets: [...d.querySelectorAll('link[rel=stylesheet]')].map(l => l.getAttribute('href')),
+                    theme: !!d.getElementById('arcade-theme'),
                     header: d.querySelector('body > header') ? getComputedStyle(d.querySelector('body > header')).display : 'none'}""")
-        assert framed["inWindow"] and "/lite/pages.css" in framed["sheets"] and "/lite/theme.css" in framed["sheets"], framed
+        # the caller's theme is carried in every page's own <style> (base.html, 2026-11-08)
+        assert framed["inWindow"] and "/lite/pages.css" in framed["sheets"] and framed["theme"], framed
         assert framed["header"] == "none", framed
         browser.get(f"{base}/explore")                                   # on its own: the website's page, as it was
         assert not browser.execute_script("return document.body.hasAttribute('data-lite')")

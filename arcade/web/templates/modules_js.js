@@ -186,7 +186,10 @@
         go.onclick = function (e) {
           var w = null;
           try { w = window.liteWindow || (window.parent !== window && window.parent.liteWindow) || null; } catch (x) {}
-          if (w && document.querySelector && w.open) { e.preventDefault(); w.open('m-' + m.id); }
+          // Its tab, when the window has one; else the page itself, framed where it was clicked (a tab hidden under
+          // Your tabs, or a module switched on since the window opened: 2026-11-08, it was a click that did nothing).
+          var tab = w && w.route ? w.route('/module/' + m.id) : null;
+          if (tab && w.open) { e.preventDefault(); w.open(tab); }
         };
         what.append(go);
       }

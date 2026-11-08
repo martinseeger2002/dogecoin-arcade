@@ -79,6 +79,10 @@ PUBLIC_PAGES = frozenset({
     "/lite/pages.css",        # ...and the look it gives the full arcade's pages in the Lite edition
     "/lite/theme.css",        # ...and the theme the asker sees over it (arcade/packages.py)
     "/lite/modforms.js",      # ...and a node module's forms, the window's and the website's (2026-11-08)
+    "/console",               # the window's dialogs as website pages (2026-11-08): the console, whose lines keep
+    "/build",                 # /lite/api/console's own rules; Build's guide and API keys (each key route its own
+    "/look",                  # checks); the theme and the tabs (the same commands and /lite/api/tabs)
+    "/me/keys",               # ...and an account's API keys, signed in from anywhere
     "/desktop",               # the Desktop View: the tabs and apps as icons and windows (desktop.html, 2026-10-28)
     "/apps/store-icon.png",   # the App Store's icon on it
     "/games",                 # the old name: redirects to /apps

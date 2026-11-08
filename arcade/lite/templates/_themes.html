@@ -1,4 +1,5 @@
-{#- Themes (arcade/packages.py), through the console's own commands. Settings -> Theme… is everyone's: the arcade's
+{#- Themes (arcade/packages.py), through the console's own commands, in every look: the ArcadeCore window's dialogs, and
+    the website's /look, which draws the same (`page`; 2026-11-08). Settings -> Theme… is everyone's: the arcade's
     theme, and a signed-in person's own pick from the ones the operator allows (listthemes, usetheme). Options ->
     Themes is the operator's: the installed ones, the arcade's own, who may pick which, and a folder on this machine
     to check, try and install (checktheme, trytheme, installtheme). -#}
@@ -29,6 +30,10 @@
   function restyle() {
     var link = document.querySelector('link[href^="/lite/theme.css"]');
     if (link) link.href = '/lite/theme.css?' + Date.now();
+    // a website page carries it in its own <style> (base.html)
+    var own = document.getElementById('arcade-theme');
+    if (own) fetch('/lite/theme.css', {credentials: 'same-origin', cache: 'no-store'})
+      .then(function (r) { return r.text(); }).then(function (css) { own.textContent = css; });
   }
   function titleOf(t, id) {
     var all = (t.installed || []).concat(t.pick || []);
@@ -108,6 +113,9 @@
   document.querySelectorAll('[data-otab="themes"], [data-options="themes"]').forEach(function (b) {
     b.addEventListener('click', installed);
   });
+  {% if page %}installed();{% endif %}
   {% endif %}
+  {#- On the website's /look the window is the page: drawn at once (2026-11-08). #}
+  {% if page %}pick();{% endif %}
 })();
 </script>

@@ -1,0 +1,59 @@
+{#- Settings -> Your tabs: which of the arcade's modules this person sees. One choice for every look (2026-11-08): the
+    ArcadeCore window leaves a hidden module's tab out, and the website leaves it out of its bar (app.py _nav_for). An
+    account's choice is kept with it (and the operator's for the node's view); a visitor's stays in this browser
+    (lite_tabs_hidden), and each look hides it there. Drawn in the window as a dialog, and on the website's /look as
+    a page (`page`). -#}
+<div class="dialog" id="yourtabs" role="dialog" aria-label="Your tabs">
+  <div class="window" style="width:min(520px,96vw)">
+    <header><span>Your tabs</span><button type="button" data-close aria-label="Close">×</button></header>
+    <div class="wbody">
+      <p class="muted" style="margin:0 0 8px">The core is always there. Pick which of this arcade's modules you see, in
+        every look: ArcadeCore's tabs and the website's bar{% if not tab_owner %} (kept in this browser; sign in to keep
+        them with your account){% endif %}.</p>
+      <table><thead><tr><th>Tab</th><th>What it is</th></tr></thead><tbody id="yourtabs-list"></tbody></table>
+      <p class="muted" id="yourtabs-none" hidden>This arcade has no modules open to you yet.</p>
+      <p style="margin:10px 0 0;text-align:right"><button type="button" data-close>Cancel</button>
+        <button type="button" id="yourtabs-save">Save</button></p>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var KEPT = {{ 'true' if tab_owner else 'false' }}, LOCAL = 'lite_tabs_hidden';
+  function localHidden() { try { return JSON.parse(localStorage.getItem(LOCAL) || '[]'); } catch (e) { return []; } }
+  window.liteHiddenTabs = localHidden;
+  function draw() {
+    return fetch('/lite/api/tabs', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (j) {
+      var tabs = j.tabs || [];
+      var hidden = KEPT ? tabs.filter(function (t) { return t.hidden; }).map(function (t) { return t.id; }) : localHidden();
+      var list = $('yourtabs-list'); list.textContent = '';
+      tabs.forEach(function (t) {
+        var tr = document.createElement('tr'), a = document.createElement('td'), b = document.createElement('td');
+        var label = document.createElement('label'), box = document.createElement('input');
+        box.type = 'checkbox'; box.value = t.id; box.checked = hidden.indexOf(t.id) < 0;
+        label.appendChild(box); label.appendChild(document.createTextNode(' ' + t.title));
+        a.appendChild(label); b.textContent = t.summary; b.className = 'muted';
+        tr.appendChild(a); tr.appendChild(b); list.appendChild(tr);
+      });
+      $('yourtabs-none').hidden = tabs.length > 0;
+    });
+  }
+  document.querySelectorAll('[data-yourtabs]').forEach(function (b) {
+    b.addEventListener('click', function () { draw().then(function () { $('yourtabs').classList.add('open'); }); });
+  });
+  $('yourtabs-save').onclick = function () {
+    var hidden = [];
+    document.querySelectorAll('#yourtabs-list input').forEach(function (x) { if (!x.checked) hidden.push(x.value); });
+    var done = KEPT
+      ? fetch('/lite/api/tabs', {method: 'POST', credentials: 'same-origin',
+          // X-Arcade-Admin: the operator's choice is an admin write (_admin_check), refused without it (2026-11-08)
+          headers: {'Content-Type': 'application/json', 'X-Arcade-Lite': '1', 'X-Arcade-Admin': '1'},
+          body: JSON.stringify({hidden: hidden})})
+          .then(function (r) { if (!r.ok) throw new Error('not kept'); })
+      : Promise.resolve().then(function () { try { localStorage.setItem(LOCAL, JSON.stringify(hidden)); } catch (e) {} });
+    done.then(function () { location.reload(); }, function () { alert('Your tabs were not kept. Try again.'); });
+  };
+  {% if page %}draw();{% endif %}
+})();
+</script>

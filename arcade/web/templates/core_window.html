@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · {{ brand.name }}{% endblock %}
+{% block body %}
+{#- What the ArcadeCore window does in its dialogs, as a page of the website's look (app.py: /console, /build, /me/keys,
+    /look; 2026-11-08, SadFrog: "when you change the theme, thats it everything is styled differently but the
+    availability and capability doesnt change"). The markup and code are the window's own (arcade/lite/templates,
+    drawn here by liteweb.parts), opened as the page; only how it looks is the website's. Inside the window a link to
+    one of these opens the window's own dialog instead (base.html, lite.html liteWindow.dialog). #}
+<style>
+.core-page{--win:var(--bg);--ink:var(--fg);--sel:var(--accent);--sel-ink:var(--accent-fg);
+  --mono:ui-monospace,Menlo,Consolas,monospace}
+.core-page .dialog{display:block;position:static;inset:auto;background:none;z-index:auto}
+.core-page .window{background:none;border:0;box-shadow:none;width:auto !important;max-height:none;display:block}
+.core-page .window>header{display:block;background:none;border:0;padding:0;margin:18px 0 8px;font-size:1.15rem;font-weight:600}
+.core-page .dialog:first-child .window>header,.core-page .core-look>.dialog:first-of-type .window>header{margin-top:0}
+.core-page [data-close]{display:none}
+.core-page .wtabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--line);margin:0 0 12px;padding:0}
+.core-page .wtabs button{background:none;border:1px solid transparent;border-bottom:0;padding:6px 12px;cursor:pointer;
+  color:var(--fg);border-radius:var(--radius,6px) var(--radius,6px) 0 0}
+.core-page .wtabs button[aria-selected=true]{background:var(--panel);border-color:var(--line);font-weight:600}
+.core-page .wbody{padding:0}
+.core-page fieldset{border:1px solid var(--line);border-radius:var(--radius,6px);margin:0 0 12px;padding:8px 12px 12px;
+  background:var(--panel)}
+.core-page legend{padding:0 4px;font-weight:600}
+.core-page table{width:100%;border-collapse:collapse}
+.core-page th,.core-page td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+.core-page th{color:var(--muted);font-weight:600}
+.core-page .grid{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 10px;align-items:center}
+.core-page .ok{color:var(--ok)} .core-page .bad{color:var(--bad)} .core-page .muted{color:var(--muted)}
+.core-page code{font:.85em var(--mono);overflow-wrap:anywhere}
+.core-look{display:flex;flex-direction:column}
+.core-look-manage{order:2;margin-top:18px}
+.core-look-manage h2{font-size:1.15rem;margin:0 0 8px}
+#out{height:min(60vh,520px);overflow:auto;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--radius,6px);padding:8px;font:12px/1.45 var(--mono);white-space:pre-wrap}
+#out .in{color:var(--accent)} #out .err{color:var(--bad)}
+#line{width:100%;margin-top:6px;padding:7px 8px;font:13px var(--mono)}
+</style>
+<div class="core-page" data-core-page="{{ which }}">
+{% if which == 'console' %}
+  <h1>Console</h1>
+  <p class="sub muted">The commands of ArcadeCore's console and of arcade-cli, run as you{% if operator_here %}: the
+    operator's too{% endif %}. A module's spend comes back to your wallet, which shows what it pays and signs only on a
+    yes.</p>
+  <div id="out" aria-live="polite"></div>
+  <input id="line" autocomplete="off" spellcheck="false" placeholder="Type a command, or help" aria-label="Command">
+{% else %}
+  {{ parts }}
+{% endif %}
+</div>
+{% if which == 'console' %}
+<script type="module">
+import * as wallet from "/wallet.js";
+import * as modforms from "/lite/modforms.js";
+const TAGCHAIN = {{ tagchain|tojson }};
+let chains = [];
+try { chains = (await wallet.state()).chains || []; } catch (e) { /* signed out: the console still runs */ }
+const line = document.getElementById("line");
+modforms.startConsole(document.getElementById("out"), line,
+  {pubkeys: () => modforms.pubkeys(wallet, TAGCHAIN, chains), sign: (o) => modforms.signOffer(wallet, TAGCHAIN, chains, o)});
+// A guide's "Type it in the console" (_build.html) comes here with the line after the #
+try { if (location.hash.length > 1) line.value = decodeURIComponent(location.hash.slice(1)); } catch (e) {}
+line.focus();
+document.body.dataset.consoleReady = "yes";
+</script>
+{% endif %}
+{% endblock %}

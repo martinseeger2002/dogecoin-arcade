@@ -1,0 +1,12 @@
+{#- The website's /look (2026-11-08): the ArcadeCore window's Settings -> Theme…, the operator's Options -> Themes, and
+    Settings -> Your tabs, drawn as one page of the website's look from the window's own partials. The operator's
+    themes come first in the markup, since _themes.html's code finds them as it runs, and last on the page. -#}
+<div class="core-look">
+  {% if audience == 'operator' %}<section class="core-look-manage" aria-label="This arcade's themes">
+    <h2>This arcade's themes</h2>
+    {% include "_themes_manage.html" %}
+    <p id="o-said" hidden></p>
+  </section>{% endif %}
+  {% include "_themes.html" %}
+  {% include "_yourtabs.html" %}
+</div>

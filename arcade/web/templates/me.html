@@ -335,6 +335,18 @@
 })();
 </script>
 
+{#- What ArcadeCore's menus open, on the account's own page too (2026-11-08): its Settings -> Theme… and Your tabs…, and
+    Window -> Console and Build -> API keys, drawn from the window's own code (app.py /look, /console, /me/keys). -#}
+<div class="panel" style="margin-top:14px" id="core-tools">
+  <h2 style="margin-top:0">Theme, tabs, console and API keys</h2>
+  <p class="muted" style="margin-top:0">The same in every look: what ArcadeCore's window has in its menus.</p>
+  <div class="row" style="gap:8px;flex-wrap:wrap">
+    <a class="btn small ghost" href="/look">Theme and tabs</a>
+    <a class="btn small ghost" href="/console">Console</a>
+    <a class="btn small ghost" href="/me/keys">API keys</a>
+    <a class="btn small ghost" href="/build">Build a theme</a>
+  </div>
+</div>
 {#- THEMES (2026-10-28: "put the toggle in 'your arcade' section near light or dark - and we can call it themes - lets
     try an ubuntu style one to add to the category"): the website as it is, or the Desktop View (desktop.html) in one
     of its looks. Kept in this browser (arcade.deskview), on a computer only: a phone keeps the website (and the

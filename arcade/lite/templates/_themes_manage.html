@@ -1,0 +1,17 @@
+{#- The operator's themes (arcade/packages.py): the installed ones, the arcade's own, who may pick which, and a folder on
+    this machine to check, try and install. In the window under Options -> Themes (_options.html), and on the
+    website's /look (2026-11-08). Its script is _themes.html's. -#}
+<fieldset><legend>Themes</legend>
+  <table><thead><tr><th>Theme</th><th>Version</th><th>The arcade's</th><th>People may pick</th><th></th></tr>
+    </thead><tbody id="o-themes"></tbody></table>
+  <p class="muted" id="o-trying" hidden style="margin:8px 0 0">Trying <code id="o-trying-at"></code> in this
+    machine's browser only. <button type="button" id="o-tstop">Stop</button></p>
+</fieldset>
+<fieldset><legend>Make your own</legend>
+  <div class="grid"><label for="o-tfolder">Folder</label><span><input id="o-tfolder" placeholder="~/my-theme"
+    spellcheck="false" autocomplete="off" style="width:16em"> <button type="button" id="o-tcheck">Check</button>
+    <button type="button" id="o-ttry">Try</button> <button type="button" id="o-tinstall">Install</button></span></div>
+  <p class="muted" style="margin:8px 0 0">A folder on this machine. Start one in a terminal with
+    <code>arcade-cli new theme my-theme</code>; its README says each value. A theme is colours, a font and
+    corner rounding only, so it can never hide a send or an address. Try shows it in this browser only.</p>
+</fieldset>
