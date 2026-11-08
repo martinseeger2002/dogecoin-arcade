@@ -547,6 +547,14 @@ holds blocks: switching it on there stops the node until it is restarted once
 with `-reindex`, a full rebuild. The installer says so; add it yourself when
 you are ready for that.
 
+**Keep your own savings out of that node's wallet.** The arcade uses the node's
+wallet as its own. The faucet, welcome gifts, cross-chain top-ups and node
+trades (off by default) pay from it with `sendtoaddress`. On Litecoin, the
+Admin buttons that make, load and unload wallets act on it. Anybody who gets
+The operator's Admin, or the admin password, can spend what is in it. Give
+the arcade a node, or a wallet, that holds only what you mean the arcade to
+spend, and keep the rest in a wallet the arcade never sees.
+
 ## Other platforms
 
 | | Linux | macOS | Windows |
