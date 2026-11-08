@@ -27,7 +27,7 @@ from test_trade_browser import _inscribe, _press                    # noqa: E402
 COIN = 100_000_000
 GAME, JUDGE, SWORD = "d1" * 32, "d2" * 32, "d3" * 32
 JUDGE_JS = (b"function judge(seed, inputs, params) {"
-            b" return inputs && inputs.ok === true ? {release: true}"
+            b" return inputs && inputs.ok === true ? {release: true, to: params.to}"
             b" : {release: false, why: 'not earned'}; }")
 PAGE = b"""<!doctype html><meta charset="utf-8"><body>
 <script src="/r/escrow.js"></script><script>window.ready = true;</script>"""

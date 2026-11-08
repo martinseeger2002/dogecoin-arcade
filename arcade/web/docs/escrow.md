@@ -57,14 +57,16 @@ function judge(seed, inputs, params) {
   // params.to:     the address asking to receive them
   // params.items:  what it asks for
   // inputs:        whatever the page sent as `replay` (your game's evidence)
-  if (provesTheWin(inputs, params)) return {release: true};
+  if (provesTheWin(inputs, params) && winnerIs(params.to, inputs)) return {release: true, to: params.to};
   return {release: false, why: "that duel was not won"};
 }
 ```
 
-`release: true` moves the items; anything else refuses them and shows `why`.
-A judge may also return `to`, which must match the address asked for. The
-`seed` is the escrow's address.
+`release: true` with `to` moves the items to `to`; anything else refuses them and shows `why`.
+**The judge must name who receives** (`to`, the address asked for), and should check that it is
+the winner's: anybody may ask for a release and names the address, so a judge that only says yes
+lets whoever can make it say yes choose where the items go (since 2026-11-08 a release without `to`
+is refused). The `seed` is the escrow's address.
 
 ## The page: `arcade.escrow`
 

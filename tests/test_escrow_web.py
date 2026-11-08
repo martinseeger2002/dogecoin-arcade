@@ -23,7 +23,10 @@ from arcade import escrow as E                                               # n
 COIN = 100_000_000
 JUDGE = (b"function judge(seed, inputs, params) {"
          b" return inputs && inputs.ok === true"
-         b" ? {release: true} : {release: false, why: 'not earned in the game'}; }")
+         b" ? {release: true, to: params.to} : {release: false, why: 'not earned in the game'}; }")
+#: The guide's example before 2026-11-08: yes, without saying to whom.
+UNNAMED = (b"function judge(seed, inputs, params) {"
+           b" return inputs && inputs.ok === true ? {release: true} : {release: false, why: 'no'}; }")
 
 
 def _row(state, txid, number, owner, kind, content, said=None):
@@ -80,6 +83,12 @@ def test_open_deposit_judge_release_and_no_early_reclaim(node):
            "unlock": unlock, "to": other, "items": [{"inscription": sword}]}
     no = app.post("/r/escrow/release", json={**ask, "replay": {"ok": False}})
     assert no.status_code == 400 and "not earned" in no.text
+    # A judge that says yes without naming who receives moves nothing (2026-11-08, security review): the asker names
+    # `to`, so whoever could make it say yes would choose where the sword goes.
+    _row(state, "c1" * 32, 9100, owner, "application/javascript", UNNAMED)
+    bare = app.post("/r/escrow/release", json={**ask, "replay": {"ok": True}})
+    assert bare.status_code == 400 and "must name who receives" in bare.text, bare.text
+    _row(state, "c1" * 32, 9100, owner, "application/javascript", JUDGE)
     yes = app.post("/r/escrow/release", json={**ask, "replay": {"ok": True}})
     assert yes.status_code == 200, yes.text
     _settled(state, rpc)
