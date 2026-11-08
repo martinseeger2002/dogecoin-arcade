@@ -1273,9 +1273,16 @@ class Walker:
             # SegWit and Taproot (2026-10-25): bel1q / bel1p, ltc1q / ltc1p, as Core and the chain's explorers name
             # them. The same programs the notes carry (ord_notes.witness_program), so a walk from notes names alike.
             program = ord_notes.witness_program(script) if getattr(p, "bech32_hrp", "") else None
-            if program is not None:
-                from .script import segwit_encode
-                return segwit_encode(p.bech32_hrp, *program)
+            if program is not None:                      # kept: a walk names the same few addresses over and over
+                names = self.__dict__.setdefault("_bech32_names", {})
+                key = (p.bech32_hrp, program)
+                name = names.get(key)
+                if name is None:
+                    from .script import segwit_encode
+                    if len(names) >= 200_000:
+                        names.clear()
+                    name = names[key] = segwit_encode(p.bech32_hrp, *program)
+                return name
         return "script:" + hash160(script).hex()
 
     def step(self, rpc, tip: int, budget: float = 5.0, notes: Callable[[int], Any] | None = None) -> int:
