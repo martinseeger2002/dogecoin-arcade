@@ -285,3 +285,22 @@ def test_an_announcement_without_the_key_is_published_again(client, monkeypatch)
         store.add_key_announcement("b2" * 32, home, b"\x01" * 32, "fp", 101, 2, stated=True, chain_addresses=chains,
                                    dd_keys=json.dumps({"dgb": _proof(MAIN_SECRET)}))
     assert app.get("/account").json()["announced"] is True
+
+
+def test_the_arcadecore_window_finishes_publishing_too(app_state):
+    """The full arcade's pages republish an out-of-date announcement (base.html); somebody who only uses ArcadeCore
+    gets the same check in its window, for their account only: not a stranger's window, not the node's wallet."""
+    from nacl.signing import SigningKey
+    from test_auth_web import _sign_in
+    app_state.set_setting("public_hosts", ["arcade.example.com"])
+    try:
+        app = TestClient(create_app(app_state))
+        assert "arcade.keycheck" not in app.get("/lite", headers=OUTSIDE).text, "a stranger"
+        assert "arcade.keycheck" not in app.get("/lite", headers={"host": "127.0.0.1:8420"}).text, "the node's wallet"
+        assert _sign_in(app, SigningKey.generate(), headers=OUTSIDE).status_code == 200
+        page = app.get("/lite", headers=OUTSIDE).text
+        check = page[page.index('LAST = "arcade.keycheck"'):]
+        check = check[:check.index("</script>")]
+        assert "mail.announce(keys" in check and "setInterval(" in check and "wallet.opened(TAGCHAIN)" in check
+    finally:
+        app_state.set_setting("public_hosts", [])

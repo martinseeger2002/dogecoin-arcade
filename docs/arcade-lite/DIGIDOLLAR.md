@@ -134,7 +134,8 @@ arcade for an @name's address (`/lite/api/ddaddress?to=@name&chain=...`, `arcade
   `sha256("DogecoinArcade DigiDollar key\n" || "dgb" || "\n" || hash160(name address) || key)`.
   The Wallet adds it to every announcement it publishes once the account has a DigiByte mainnet wallet
   (`coins.ddKeyProof`, `messaging.js` `publishAboutMe`). An account whose newest announcement lacks it reads as not
-  announced, so the page's usual check publishes it again, once, on the name chain.
+  announced, so the page's usual check publishes it again, once, on the name chain: the full arcade's pages
+  (`base.html`) and the ArcadeCore window (`lite.html`) both carry that check.
 - **What a reader trusts** (`ddaddress.proved`): the proof checks for that network, name and key; the announcement
   transaction has an input the name's own address signed with SIGHASH_ALL (the address first-claim ties to the name);
   and the key hashes to the DigiByte address the same announcement published, when it published one. A record that
