@@ -204,12 +204,16 @@ def test_a_new_password_ends_the_other_sessions_but_not_this_one(client):
     _sign_in(laptop, key)
     _sign_in(stranger, SigningKey.generate())
     _sign_in(app, key)                             # the Restore page signs in with the words first
-    answer = app.post("/account/vault", headers=LOCAL, json={"blob": {"v": 1, "new": True}})
+    answer = app.post("/account/vault", headers=LOCAL, json={"blob": {"v": 1, "new": True, "iterations": 600000}})
     assert answer.status_code == 200 and answer.json()["ended"] == 1
     assert _who(app) == pubkey                     # the browser that changed it stays signed in
     assert _who(laptop) is None                    # the one signed in with the old password does not
     assert _who(stranger) is not None
-    assert json.loads(state.vault().by_pubkey(pubkey)["blob"]) == {"v": 1, "new": True}
+    assert json.loads(state.vault().by_pubkey(pubkey)["blob"]) == {"v": 1, "new": True, "iterations": 600000}
+    # Sealed with fewer rounds than every page uses (2026-11-08, security review): refused, the wallet kept as it was.
+    weak = app.post("/account/vault", headers=LOCAL, json={"blob": {"v": 1, "weak": True, "iterations": 1000}})
+    assert weak.status_code == 400 and "sealed" in weak.json()["detail"]
+    assert json.loads(state.vault().by_pubkey(pubkey)["blob"])["iterations"] == 600000
 
 
 def test_a_new_operator_password_ends_the_operators_other_sessions(client):

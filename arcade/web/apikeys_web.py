@@ -96,7 +96,9 @@ def register(app, state, admin_check, signed_in, run_line) -> None:
 
     def made(body: Any, owner: str) -> JSONResponse:
         said = body if isinstance(body, dict) else {}
-        days = said.get("days")
+        # Read only and 90 days unless asked otherwise (2026-11-08, security review: every key was full write, from
+        # anywhere, for ever). Asked: "write": true, and "days" nothing or 0 for a key that does not end.
+        days = said.get("days", keylib.DEFAULT_DAYS)
         expires = None
         if days not in (None, "", 0):
             try:
@@ -109,7 +111,7 @@ def register(app, state, admin_check, signed_in, run_line) -> None:
             if not isinstance(modules, list) or any(m not in known for m in modules):
                 raise HTTPException(400, "modules is a list of this arcade's module ids, or nothing for every one")
         try:
-            key, row = store().make(owner, said.get("name", ""), modules, bool(said.get("write", True)),
+            key, row = store().make(owner, said.get("name", ""), modules, bool(said.get("write", False)),
                                     str(said.get("where") or "anywhere"), expires)
         except keylib.KeyRefused as exc:
             raise HTTPException(400, str(exc)) from None

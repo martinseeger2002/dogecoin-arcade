@@ -134,12 +134,23 @@ def test_known_collections_by_name_and_a_page_of_pieces(walking, monkeypatch):
 
 
 def test_a_visitor_asking_too_fast_waits(walking):
+    from fastapi.testclient import TestClient
     app, _state = walking
+    inner = app.app
+
+    async def tunnel(scope, receive, send):         # as the arcade's own tunnel brings visitors: from loopback
+        await inner({**scope, "client": ("127.0.0.1", 40000)} if scope["type"] == "http" else scope, receive, send)
+    app = TestClient(tunnel)
     who = {**EDGE, "cf-connecting-ip": "203.0.113.9"}
     codes = [app.get("/explore/api/inscription?net=main&number=0", headers=who).status_code for _ in range(125)]
     assert codes[:120] == [200] * 120 and codes[-1] == 429
     other = {**EDGE, "cf-connecting-ip": "203.0.113.10"}
     assert app.get("/explore/api/inscription?net=main&number=0", headers=other).status_code == 200, "each their own"
+    # The header from anybody but the tunnel is the asker's own word (2026-11-08): a new one each time is no way round.
+    direct = TestClient(inner)
+    named = [direct.get("/explore/api/inscription?net=main&number=0",
+                        headers={**EDGE, "cf-connecting-ip": f"203.0.113.{n}"}).status_code for n in range(20, 150)]
+    assert 429 in named, "naming another address each time does not reset the limit"
 
 
 # --------------------------------------------------------------------------- the arcade's own tokens and NFTs

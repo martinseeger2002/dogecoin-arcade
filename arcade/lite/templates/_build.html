@@ -128,13 +128,14 @@ allowtheme my-theme      people may pick it in Settings → Theme…</pre>
             <label>Opens</label><div><label><input type="radio" name="k-scope" value="all" checked> every module</label>
               <label><input type="radio" name="k-scope" value="some"> only these:</label>
               <div id="k-mods" class="b-mods" hidden></div></div>
-            <label>Can</label><div><label><input type="checkbox" id="k-write" checked> write too (post, trade{% if audience == 'operator' %},
+            <label>Can</label><div><label><input type="checkbox" id="k-write"> write too (post, trade{% if audience == 'operator' %},
               spend the node's coins{% endif %}); off reads only</label></div>
             <label for="k-where">From</label><div><select id="k-where"><option value="anywhere">anywhere</option>
               <option value="lan">this machine and its network</option><option value="machine">this machine only</option>
               <option value="list">these addresses…</option></select> <input id="k-ips" placeholder="1.2.3.4, 10.0.0.0/8" hidden></div>
             <label for="k-days">Ends</label><div><select id="k-days"><option value="">never</option><option value="1">in a day</option>
-              <option value="30">in 30 days</option><option value="365">in a year</option></select></div>
+              <option value="30">in 30 days</option><option value="90" selected>in 90 days</option>
+              <option value="365">in a year</option></select></div>
           </div>
           <p style="margin:8px 0 0"><button type="button" id="k-make">Make the key</button></p>
           <div id="k-new" hidden><p style="margin:8px 0 4px">Copy it now; it is not shown again:</p>

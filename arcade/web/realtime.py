@@ -570,7 +570,8 @@ def register(app, state, *, account_view: Callable, signed_in: Callable,
                 except Exception as exc:                 # noqa: BLE001 -- none borrowed this time
                     log.info("media relay: %s", exc)
             media_kept[address] = (time.time(), found)
-        asker = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "")
+        from ..apikeys import client_ip
+        asker = client_ip(request)                 # an edge's header only from the arcade's own tunnel (2026-11-08)
         return turnlib.player_relays(server, getattr(service, "stun", None), getattr(service, "stun_port", None),
                                      punchlib.local_ipv4(), asker, address,
                                      found)

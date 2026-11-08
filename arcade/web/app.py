@@ -12175,7 +12175,7 @@ def create_app(state: AppState) -> FastAPI:
                 str(said.get("nonce", "")),
                 str(said.get("signature", "")),
                 origin=_origin(request),
-                ip=(request.client.host if request.client else ""),
+                ip=apikeylib.client_ip(request),
                 join=bool(said.get("join")),
                 # The address the browser signed, its own (issue #6, 2026-10-25), and only this node's names do.
                 signed=str(said.get("origin") or "")[:300],
@@ -13004,7 +13004,7 @@ def create_app(state: AppState) -> FastAPI:
         elsewhere = None
         if not here and not on_chain and wanted != _fruit_here(request):
             register = state.accounts()
-            who = f"namecheck:{request.client.host if request.client else ''}"
+            who = f"namecheck:{apikeylib.client_ip(request)}"
             now = int(time.time())
             limited = register._rate_limited(who, now)
             if not limited:
@@ -13039,6 +13039,7 @@ def create_app(state: AppState) -> FastAPI:
             blob = said.get("blob")
             if not isinstance(blob, dict) or not blob.get("sealed"):
                 raise ValueError("that is not an encrypted wallet")
+            accountslib.check_sealed(blob)
             complaint = _check_address(address, mainnet=chain)
             if complaint:
                 raise ValueError(complaint)
@@ -13083,7 +13084,7 @@ def create_app(state: AppState) -> FastAPI:
             # a sign-up was a session for any public key posted here.
             token = register.login(
                 pubkey, str(said.get("nonce", "")), str(said.get("signature", "")),
-                origin=_origin(request), ip=(request.client.host if request.client else ""), join=True,
+                origin=_origin(request), ip=apikeylib.client_ip(request), join=True,
                 signed=str(said.get("origin") or "")[:300], accept=lambda signed: _signs_in_here(request, signed))
             state.vault().put(wanted, pubkey, address, json.dumps(blob))
         except accountslib.SeatsFull as full:
@@ -13140,7 +13141,7 @@ def create_app(state: AppState) -> FastAPI:
         try:
             gift = faucetlib.pour(
                 _account_chain(), state.faucet(), pubkey, address,
-                ip=(request.client.host if request.client else ""))
+                ip=apikeylib.client_ip(request))
             given = gift.amount
             # Spendable now, not in ten minutes. The node broadcast this
             # itself, so it knows the output exists -- making somebody wait
@@ -13183,7 +13184,7 @@ def create_app(state: AppState) -> FastAPI:
         worth collecting even when each one is useless without a password.
         """
         register = state.accounts()
-        who = (request.client.host if request.client else "")
+        who = apikeylib.client_ip(request)
         now = int(time.time())
         if register._rate_limited(f"vault:{who}", now):
             return JSONResponse(
@@ -13846,7 +13847,7 @@ def create_app(state: AppState) -> FastAPI:
                                "the file its Backup page saves.", "allowed": list(allowed)},
                     status_code=403)
             register = state.accounts()
-            who = (request.client.host if request.client else "")
+            who = apikeylib.client_ip(request)
             now = int(time.time())
             if register._rate_limited(f"import:{who}", now):
                 return JSONResponse({"detail": "too many in a row. Wait a few minutes."},
@@ -26711,6 +26712,11 @@ def create_app(state: AppState) -> FastAPI:
         said = payload if isinstance(payload, dict) else {}
         blob = said.get("blob")
         try:
+            try:
+                sealed = blob if isinstance(blob, dict) else json.loads(str(blob or "{}"))
+            except ValueError:
+                sealed = {}
+            accountslib.check_sealed(sealed)
             text = json.dumps(blob) if isinstance(blob, dict) else str(blob or "")
             if not state.vault().replace_blob(account.pubkey, text):
                 return JSONResponse({"detail": (
@@ -29754,7 +29760,7 @@ def create_app(state: AppState) -> FastAPI:
         try:
             token = state.credentials().open_session(
                 str(said.get("username", "")), str(said.get("password", "")),
-                ip=(request.client.host if request.client else ""))
+                ip=apikeylib.client_ip(request))
         except accountslib.AccountError as refused:
             return JSONResponse({"detail": str(refused)}, status_code=403)
         account = state.account_for(token)
@@ -29875,9 +29881,7 @@ def create_app(state: AppState) -> FastAPI:
         if not name:
             return False
         try:
-            creds.check(name, password,
-                        ip=(request.headers.get("cf-connecting-ip")
-                            or (request.client.host if request.client else "")))
+            creds.check(name, password, ip=apikeylib.client_ip(request))
             return True
         except accountslib.AccountError:
             return False
@@ -30679,8 +30683,7 @@ def create_app(state: AppState) -> FastAPI:
     _explore_seen: dict[str, list[float]] = {}
 
     def _explore_limited(request: Request) -> bool:
-        who = (request.headers.get("cf-connecting-ip") or (request.headers.get("x-forwarded-for") or "").split(",")[0]
-               or (request.client.host if request.client else "")).strip()
+        who = apikeylib.client_ip(request)        # an edge's header only from the arcade's own tunnel (2026-11-08)
         now = time.monotonic()
         times = [t for t in _explore_seen.get(who, ()) if now - t < 60]
         if len(times) >= EXPLORE_ASKS:
@@ -32821,7 +32824,7 @@ def create_app(state: AppState) -> FastAPI:
                 if not name or not said.get("password"):
                     raise accountslib.AccountError("")
                 creds.check(name, str(said["password"]),
-                            ip=(request.client.host if request.client else ""))
+                            ip=apikeylib.client_ip(request))
             except accountslib.AccountError as refused:
                 return JSONResponse(
                     {"detail": (str(refused) or "this node already has an operator. "
