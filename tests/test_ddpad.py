@@ -233,7 +233,7 @@ def test_a_payment_is_read_as_the_dollars_it_pays_the_pads_own_address(tmp_path)
                          bytes.fromhex("76a914" + "11" * 20 + "88ac"),
                          ddtx.dd_key("dgbtest", env.pay_address), 100)
     vout = [{"n": n, "value": v / 1e8, "scriptPubKey": {"hex": s}} for n, (v, s) in enumerate(prepared["outputs"])]
-    rpc.txs["t1"] = {"vout": vout, "confirmations": 0}
+    rpc.txs["t1"] = {"version": prepared["version"], "vout": vout, "confirmations": 0}
     assert env.payment("t1") == ("waiting", 100)
     rpc.txs["t1"]["confirmations"] = 2
     assert env.payment("t1") == ("confirmed", 100), "its $1.50 change back to the payer is not counted"

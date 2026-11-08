@@ -437,6 +437,8 @@ function centsOf(text) {
   return Number(m[1] || "0") * 100 + Number((m[2] || "").padEnd(2, "0"));
 }
 const DD_ADDRESSY = /^(?:DD|TD)[1-9A-HJ-NP-Za-km-z]{40,60}$/;
+//: The most a DigiDollar send's network fee may be, in DGB satoshis (ddtx.MAX_FEE, 0.5 DGB).
+const DD_MAX_FEE = 50000000;
 /** This wallet's public key on a DigiByte chain, as hex: the arcade checks it is the account's, and names its coins. */
 async function ddKey(network) {
   if (!keys) keys = await wallet.opened(TAGCHAIN);
@@ -1794,6 +1796,11 @@ async function step1(s, d) {
         const other = theirs.filter((x) => x.dd === undefined && Number(x.value || 0) > 0);
         if (ddPaid.length !== 1 || ddPaid[0].to !== payTo || Number(ddPaid[0].dd) !== centsOf(typedAmount) || other.length) {
           throw new Error("The transaction the arcade prepared is not the send you typed. Nothing was signed.");
+        }
+        // The fee, read from the bytes, held to DigiDollar's own cap here too (ddtx.MAX_FEE; 2026-11-08: only the
+        // arcade checked it, so a changed arcade could have asked for more).
+        if (Number(read.fee) > DD_MAX_FEE) {
+          throw new Error("The network fee is more than 0.5 DGB, more than a DigiDollar send ever needs. Nothing was signed.");
         }
         Object.assign(offer, {to: payTo, to_tag: payTag, amount: Number(ddPaid[0].dd)});
         step2(s, d, offer, read, {to: payTo, amount: typedAmount});

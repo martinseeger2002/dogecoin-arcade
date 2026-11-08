@@ -15,8 +15,10 @@ from . import taproot as tr
 
 #: DigiByte mainnet and its test chain, testnet26, as the arcade names them.
 MAIN, TEST = "dgb", "dgbtest"
+#: The "DD" marker in the low half of every DigiDollar transaction's version (primitives/transaction.h).
+DD_MARKER = 0x0770
 #: A DigiDollar send's transaction version: the "DD" marker 0x0770, type 2 in the top byte (primitives/transaction.h).
-SEND_VERSION = (2 << 24) | 0x0770
+SEND_VERSION = (2 << 24) | DD_MARKER
 #: A DigiDollar address (DigiByte Core base58.cpp CDigiDollarAddress): base58check of this two-byte version and a
 #: Taproot output key. "DD..." on mainnet, "TD..." on the test chain.
 DD_VERSIONS = {MAIN: bytes([0x52, 0x85]), TEST: bytes([0xb1, 0x29])}
@@ -75,6 +77,14 @@ def record(tx: dict):
     """(type, its numbers, the outputs its amounts belong to) from a decoded transaction's "DD" OP_RETURN, or None.
     A mint's record is 1 <cents> <lock> <tier> <owner>; a send's 2 <cents>...; a redeem's 3 <change cents>. The amounts
     of a send or a redeem belong to its zero-value Taproot outputs, in order; a mint's to its one."""
+    # Only a DigiDollar transaction's (2026-11-08, security review): DigiByte marks every one by its version, 0x0770 in
+    # the low half (a mint 0x01000770, a send 0x02000770); a "DD" record in any other transaction is not DigiDollars,
+    # and reading one would put dollars in a balance that DigiByte would never let anybody spend.
+    try:
+        if int(tx.get("version") or 0) & 0xFFFF != DD_MARKER:
+            return None
+    except (TypeError, ValueError):
+        return None
     vouts = tx.get("vout") or []
     for out in vouts:
         script = _script(out)

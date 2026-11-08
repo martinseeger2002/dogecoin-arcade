@@ -64,9 +64,11 @@ def test_a_send_is_the_pilots_and_reads_back_as_its_dollars():
     theirs = pilot.send(ME[1:], held, dgb, P2PKH, dd.key_of("dgbtest", to), 4000, "dgbtest", to)
     assert ours["outputs"] == theirs["outputs"] and ours["inputs"] == theirs["inputs"]
     assert ours["version"] == dd.SEND_VERSION
-    tx = {"txid": "ee" * 32, "vout": [{"n": n, "value": v / 1e8, "scriptPubKey": {"hex": s}}
-                                      for n, (v, s) in enumerate(ours["outputs"])]}
+    tx = {"txid": "ee" * 32, "version": ours["version"], "vout": [{"n": n, "value": v / 1e8, "scriptPubKey": {"hex": s}}
+                                                                for n, (v, s) in enumerate(ours["outputs"])]}
     assert dd.dollars_out(tx) == [(0, 4000, dd.output_key(THEM)), (1, 2000, dd.output_key(ME))]
+    # The same record in a transaction DigiByte does not mark as DigiDollar is none (2026-11-08, security review).
+    assert dd.dollars_out({**tx, "version": 2}) == [] and dd.dollars_out({k: v for k, v in tx.items() if k != "version"}) == []
     with pytest.raises(ValueError, match="you hold"):
         dd.prepare_send("dgbtest", ME, held, dgb, P2PKH, to, 7000)
     with pytest.raises(ValueError, match="under DigiDollar's \\$1 least"):
@@ -97,7 +99,7 @@ def test_the_index_follows_a_watched_accounts_digidollars_in_and_out():
     assert dd.watched_row(st.db, mine) == {"since": 100, "seeded": False}
     # Somebody pays this account $60 (a send of theirs: $60 to it, $5 back to them).
     record = bytes([dd.OP_RETURN]) + dd.push(b"DD") + dd.push(dd.num(2)) + dd.push(dd.num(6000)) + dd.push(dd.num(500))
-    paid = {"txid": "a1" * 32, "vin": [{"txid": "f0" * 32, "vout": 0}], "vout": [
+    paid = {"txid": "a1" * 32, "version": dd.SEND_VERSION, "vin": [{"txid": "f0" * 32, "vout": 0}], "vout": [
         {"n": 0, "value": 0, "scriptPubKey": {"hex": taproot.p2tr(dd.output_key(ME)).hex()}},
         {"n": 1, "value": 0, "scriptPubKey": {"hex": taproot.p2tr(dd.output_key(THEM)).hex()}},
         {"n": 2, "value": 0, "scriptPubKey": {"hex": record.hex()}}]}
@@ -110,7 +112,10 @@ def test_the_index_follows_a_watched_accounts_digidollars_in_and_out():
     assert dd.on_block(st, 102, {"tx": [spent]}, "dgbtest", dd.watching(st.db)) == {"added": 0, "spent": 1}
     assert dd.coins(st.db, mine) == []
     # A zero-value Taproot output with no "DD" record is nobody's dollars.
-    plain = {"txid": "c3" * 32, "vin": [], "vout": paid["vout"][:2]}
+    plain = {"txid": "c3" * 32, "version": dd.SEND_VERSION, "vin": [], "vout": paid["vout"][:2]}
     assert dd.on_block(st, 103, {"tx": [plain]}, "dgbtest", dd.watching(st.db))["added"] == 0
+    # Nor is a "DD" record in a transaction DigiByte does not mark as DigiDollar (2026-11-08, security review).
+    unmarked = {**paid, "txid": "c4" * 32, "version": 2}
+    assert dd.on_block(st, 103, {"tx": [unmarked]}, "dgbtest", dd.watching(st.db))["added"] == 0
     # Another chain's blocks are not DigiByte's.
     assert dd.on_block(st, 104, {"tx": [paid]}, "doge", dd.watching(st.db))["added"] == 0
