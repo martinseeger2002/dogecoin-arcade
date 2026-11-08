@@ -133,16 +133,20 @@ def test_the_offline_pages_words_make_the_arcades_seed_and_refuse_a_bad_checksum
 
 
 def test_every_chain_has_a_recipe_its_core_can_run():
-    """Descriptors only on the Cores that have importdescriptors (Litecoin 0.21+, Bells 3, DigiByte 8+), importprivkey
-    on the rest; SegWit descriptors exactly where the chain has a bech32 prefix; each since before the chain's floor."""
+    """Descriptors only on the Cores whose releases have descriptor wallets (Bells 3, DigiByte 8+); Litecoin 0.21's are
+    built without SQLite (createwallet refused one on node 2's 0.21.5.8 and on 0.21.3, 2026-11-07), so it gets a legacy
+    wallet, each kind's key and one rescan from a height; importprivkey on the rest; SegWit exactly where the chain has a
+    bech32 prefix; each since before the chain's floor."""
     rows = {r["network"]: r for r in restore_kit.chains()}
     assert set(rows) == set(config.NETWORKS) - {"regtest"}, "a chain added to config.NETWORKS needs a row in RECIPES"
-    descriptor_cores = {"litecoin": (0, 21), "bells": (3, 0), "digibyte": (8, 0)}
+    descriptor_cores = {"bells": (3, 0), "digibyte": (8, 0)}
     for name, row in rows.items():
         release = core_install.RELEASES.get(name)
         if row["recipe"] == "descriptors":
             assert release and tuple(int(x) for x in release.version.split(".")[:2]) >= descriptor_cores[release.family]
             assert 0 < row["since"] <= restore_kit._day(restore_kit.RECIPES[name]["day"]), name
+        elif row["recipe"] == "legacy-keys":
+            assert release.family == "litecoin" and row["height"] > 0 and row["since"] > 0, name
         else:
             assert row["since"] == 0
         assert row["hrp"] == config.NETWORKS[name].bech32_hrp
@@ -151,6 +155,9 @@ def test_every_chain_has_a_recipe_its_core_can_run():
     # An account this arcade knew before the floor's week rescans from a week before it knew the account.
     early = restore_kit._day("2026-09-01")
     assert {r["network"]: r for r in restore_kit.chains(early)}["dgb"]["since"] == early - restore_kit.WEEK
+    # ...and, with no height known for then, Litecoin rescans its whole chain.
+    assert {r["network"]: r for r in restore_kit.chains(early)}["ltc"]["height"] == 0
+    assert {r["network"] for r in restore_kit.chains() if r["recipe"] == "legacy-keys"} == {"ltc", "ltctest"}
 
 
 def _xprv_master(text: str) -> tuple[int, bytes, bytes]:
@@ -201,6 +208,16 @@ def test_every_chains_kit_is_the_arcades_own_keys(made):
             node = _bip32(s, (44 | H, coin | H, H))
             assert kit["xpub"] == _serialize(versions["pub"], 3, hash160(_pubkey(_bip32(s, (44 | H, coin | H))))[:4],
                                              H, _chain_code(s, (44 | H, coin | H, H)), _pubkey(node))
+        elif row["recipe"] == "legacy-keys":
+            cli = f'{row["cli"]}{" " + row["flags"] if row["flags"] else ""}'
+            purposes = (44, 49, 84) if p.bech32_hrp else (44,)
+            assert [k["path"] for k in kit["keys"]] == [f"m/{n}'/{coin}'/0'/0/0" for n in purposes], name
+            for k, n in zip(kit["keys"], purposes):
+                assert b58decode(k["wif"])[1:34] == _bip32(s, (n | H, coin | H, H, 0, 0)) + b"\x01", (name, n)
+            assert kit["commands"] == [f'{cli} createwallet "arcade"'] + [
+                f'{cli} -rpcwallet=arcade importprivkey "{k["wif"]}" "arcade" false' for k in kit["keys"]] + [
+                f'{cli} -rpcwallet=arcade rescanblockchain {row["height"]}']
+            assert not kit["descriptors"]
         else:
             assert kit["commands"][-1].endswith(f'importprivkey "{kit["wif"]}" "arcade" true')
             assert not kit["descriptors"]

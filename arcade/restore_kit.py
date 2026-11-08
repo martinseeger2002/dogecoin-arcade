@@ -9,7 +9,11 @@ every test chain, so a wallet that looks on a chain's registered type (DigiByte 
 words alone. Each chain's Core is told the keys in the form it reads:
 
   descriptors     a blank descriptor wallet, then importdescriptors with pkh(), and sh(wpkh())/wpkh() where the chain
-                  has SegWit (config.py bech32_hrp), each with its BIP380 checksum: Litecoin 0.21, Bells 3, DigiByte 9
+                  has SegWit (config.py bech32_hrp), each with its BIP380 checksum: Bells 3, DigiByte 9
+  legacy-keys     createwallet (a legacy wallet), importprivkey for each address type's key with no rescan, then one
+                  rescanblockchain from a block height: Litecoin 0.21, whose releases are built without SQLite and so
+                  refuse descriptor wallets (0.21.3 and 0.21.5.8 both said "Descriptor wallets not supported",
+                  2026-11-07, restoring @arcadedemo on node 2's Litecoin Core)
   privkey         importprivkey "<WIF>" "arcade" true into the one wallet.dat: Dogecoin 1.14 and its forks (Pepecoin,
                   Luckycoin, Flopcoin) and Kotia (Bitcoin 0.14's code), none of which has descriptors or createwallet
   privkey-wallet  createwallet first, then importprivkey: Wojakcoin 1.21.3 (Bitcoin Core 0.21's code, whose wallets
@@ -37,14 +41,15 @@ TEMPLATES = WEB / "templates"
 
 #: Each chain's Core and how it restores. `day` is roughly when the arcade began reading the chain (its floor, config.py):
 #: the rescan starts a week before it, or a week before this arcade first knew the account if that is earlier. Only
-#: the descriptor Cores take a timestamp; importprivkey rescans everything.
+#: the descriptor Cores take a timestamp; importprivkey rescans everything. `height` (legacy-keys) is the chain's first
+#: block on or after that week-early day, read from node 2's Litecoin Cores; rescanblockchain takes a height, not a time.
 #: Checked against the real Cores on 2026-11-07 (getdescriptorinfo / deriveaddresses): Litecoin 0.21.5.8 reads xpub and
 #: tpub; Bells 3.0.0-rc2 reads Dogecoin's dgpv/dgub and refuses an xpub; DigiByte 9.26.7 reads xpub and gave the
 #: arcade's own DGB address at index 0.
 RECIPES = {
     "main": dict(recipe="privkey", cli="pepecoin-cli", core="Pepecoin Core (Dogecoin 1.14's code)"),
     "doge": dict(recipe="privkey"),
-    "ltc": dict(recipe="descriptors", day="2026-10-17", legacy_fallback=True),
+    "ltc": dict(recipe="legacy-keys", day="2026-10-17", height=3_192_404),
     "bel": dict(recipe="descriptors", day="2026-10-22", xkey={"prv": 0x02FAC398, "pub": 0x02FACAFD}),
     "lky": dict(recipe="privkey"),
     "kot": dict(recipe="privkey", cli="kotia-cli", core="Kotia 1.0.0 (Bitcoin 0.14's code)"),
@@ -52,7 +57,7 @@ RECIPES = {
     "dgb": dict(recipe="descriptors", day="2026-10-25", taproot=True),
     "flop": dict(recipe="privkey"),
     "test": dict(recipe="privkey", cli="pepecoin-cli", flags="-testnet", core="Pepecoin Core (Dogecoin 1.14's code)"),
-    "ltctest": dict(recipe="descriptors", flags="-testnet", day="2026-10-18", legacy_fallback=True),
+    "ltctest": dict(recipe="legacy-keys", flags="-testnet", day="2026-10-18", height=4_912_330),
     "dgbtest": dict(recipe="descriptors", flags="-testnet", day="2026-11-04", taproot=True),
 }
 
@@ -80,17 +85,19 @@ def chains(known_since: int | None = None) -> list[dict]:
     for network, how in RECIPES.items():
         p = config.NETWORKS[network]
         cli, core = (how["cli"], how["core"]) if "cli" in how else _cli(network)
-        since = 0
+        since = height = 0
         if how.get("day"):
             since = _day(how["day"]) - WEEK
             if known_since:
                 since = min(since, int(known_since) - WEEK)
             since = max(0, since - since % 86400)
+            # An account known before the floor's week has no height here to start from: the whole chain, then.
+            height = how.get("height", 0) if since >= _day(how["day"]) - WEEK else 0
         out.append({"network": network, "label": p.label, "coin": p.coin, "real": p.real_coins,
                     "pubkeyhash": p.pubkeyhash_version, "scripthash": p.scripthash_version, "hrp": p.bech32_hrp,
                     "recipe": how["recipe"], "cli": cli, "flags": how.get("flags", ""), "core": core,
                     "since": since, "taproot": bool(how.get("taproot")), "xkey": how.get("xkey"),
-                    "legacy_fallback": bool(how.get("legacy_fallback"))})
+                    "height": height})
     return out
 
 

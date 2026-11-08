@@ -83,6 +83,8 @@ function command(text) {
   return box;
 }
 
+const KIND_SAID = {"legacy": "Legacy", "p2sh-segwit": "SegWit (P2SH)", "bech32": "Native SegWit"};
+
 /** One chain's panel. */
 export function drawKit({chain, kit}) {
   const box = el("details", "rk-chain");
@@ -96,7 +98,9 @@ export function drawKit({chain, kit}) {
       : " (coin type 1, as on every test chain)."]));
   for (const one of kit.segwit)
     box.append(para(["SegWit, if you used it here: ", code(one.address), " on ", code(one.path), "."]));
-  box.append(para(["Private key (WIF): ", code(kit.wif)]));
+  if (kit.keys.length)
+    for (const one of kit.keys) box.append(para([`Private key (WIF), ${KIND_SAID[one.kind]}: `, code(one.wif)]));
+  else box.append(para(["Private key (WIF): ", code(kit.wif)]));
   const cli = chain.cli + (chain.flags ? " " + chain.flags : "");
   if (kit.recipe === "descriptors") {
     box.append(para([`In ${chain.core} or newer: make an empty descriptor wallet named "arcade", then import the `
@@ -105,6 +109,11 @@ export function drawKit({chain, kit}) {
       + (kit.since ? `on ${day(kit.since)} (timestamp ${kit.since}); coins sent here before that are not looked for `
           + "unless you pick the whole chain, or put 0 for the timestamp."
         : "at the chain's first block (timestamp 0), which finds everything and takes a while.")]));
+  } else if (kit.recipe === "legacy-keys") {
+    box.append(para([`In ${chain.core}: its releases have no descriptor wallets, so make a wallet named "arcade" (a `
+      + "legacy one), import each address type's key with no rescan, then rescan once "
+      + (chain.height ? `from block ${chain.height} (about ${day(kit.since)}); coins sent here before that are not `
+          + "looked for unless you rescan from 0." : "from the chain's first block, which finds everything and takes a while.")]));
   } else if (kit.recipe === "privkey-wallet") {
     box.append(para([`In ${chain.core}: make a wallet named "arcade" (skip it if you already have one you want to `
       + "use), then import the key. The last word, true, rescans the whole chain for this address; it takes a while."]));
@@ -114,12 +123,6 @@ export function drawKit({chain, kit}) {
       code(`${cli} walletpassphrase "your wallet password" 600`), "."]));
   }
   for (const line of kit.commands) box.append(command(line));
-  if (kit.recipe === "descriptors" && chain.legacy_fallback) {
-    box.append(para([`If createwallet says descriptor wallets are not supported (a build without SQLite), make a `
-      + "legacy wallet and import the key instead:"]));
-    box.append(command(`${cli} createwallet "arcade"`));
-    box.append(command(`${cli} -rpcwallet=arcade importprivkey "${kit.wif}" "arcade" true`));
-  }
   if (kit.taproot) {
     box.append(para(["DigiDollars: your DigiDollar address ", code(kit.taproot.digidollar || "(none on this chain)"),
       " is the Taproot output ", code(kit.taproot.address), " of this same key (key path, no script), which the tr() "

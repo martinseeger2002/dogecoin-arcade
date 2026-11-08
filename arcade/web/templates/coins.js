@@ -2042,9 +2042,10 @@ export async function restoreKit(seed, chain, since = 0) {
                address: await address(mine.pubkey, chain.pubkeyhash),
                wif: await wif(mine.key, WIF[network]),
                xpub: await extendedKey(await xnode(seed, [44 + HARDENED, coin + HARDENED, HARDENED]), false, versions),
-               segwit: [], taproot: null, descriptors: [], commands: []};
+               segwit: [], taproot: null, descriptors: [], keys: [], commands: []};
+  let nested = null, native = null;
   if (chain.hrp) {
-    const nested = await p2shSegwitKey(seed, network), native = await nativeSegwitKey(seed, network);
+    nested = await p2shSegwitKey(seed, network); native = await nativeSegwitKey(seed, network);
     kit.segwit = [{path: `m/49'/${coin}'/0'/0/0`, address: await p2shSegwitAddress(nested.pubkey, chain.scripthash)},
                   {path: `m/84'/${coin}'/0'/0/0`, address: await p2wpkhAddress(native.pubkey, chain.hrp)}];
   }
@@ -2068,6 +2069,15 @@ export async function restoreKit(seed, chain, since = 0) {
     }
     kit.commands.push(`${cli} createwallet "arcade" false true "" false true`);
     kit.commands.push(`${cli} -rpcwallet=arcade importdescriptors '${JSON.stringify(asks)}'`);
+  } else if (chain.recipe === "legacy-keys") {
+    // Litecoin 0.21: no descriptor wallets in its releases, so a legacy wallet, each kind's own key (44', 49', 84' are
+    // three keys) with no rescan, then one rescan from the chain's height (restore_kit.py RECIPES).
+    kit.keys.push({kind: "legacy", path: kit.path, wif: kit.wif});
+    if (nested) kit.keys.push({kind: "p2sh-segwit", path: kit.segwit[0].path, wif: await wif(nested.key, WIF[network])},
+                              {kind: "bech32", path: kit.segwit[1].path, wif: await wif(native.key, WIF[network])});
+    kit.commands.push(`${cli} createwallet "arcade"`);
+    for (const one of kit.keys) kit.commands.push(`${cli} -rpcwallet=arcade importprivkey "${one.wif}" "arcade" false`);
+    kit.commands.push(`${cli} -rpcwallet=arcade rescanblockchain ${chain.height}`);
   } else {
     const wallet = chain.recipe === "privkey-wallet";       // a 0.21-style Core: no wallet until one is made
     if (wallet) kit.commands.push(`${cli} createwallet "arcade"`);
