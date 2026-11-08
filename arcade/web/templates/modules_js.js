@@ -198,7 +198,11 @@
       }).join(', ');
     }
     function flip(m, box) {
-      var off = !box.checked, also = off ? m.needed_by : m.needs;
+      // only what the switch changes (2026-11-08): the needs that are off now, the modules that need it that are on
+      var off = !box.checked, also = (off ? m.needed_by : m.needs).filter(function (id) {
+        var other = data.modules.filter(function (o) { return o.id === id; })[0];
+        return !other || other.on === off;
+      });
       var ask = off && m.caution ? m.caution + '\n\n' : '';
       if (also.length) ask += (off ? 'Also stops: ' : 'Also turns on: ') + names(also) + '.\n\n';
       if (ask && !confirm(ask + (off ? 'Switch ' + m.title + ' off?' : 'Switch ' + m.title + ' on?'))) {
