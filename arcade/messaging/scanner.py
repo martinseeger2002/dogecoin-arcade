@@ -508,6 +508,10 @@ class Scanner:
                     from ..config import NETWORKS as _NETS
                     if net in _NETS:
                         chain_addresses[net] = b58check_encode(_NETS[net].pubkeyhash_version, h160)
+                # 2026-11-08: a real chain's coin key with its proof (ANNOUNCE_TAG_DD_KEY), kept as read: whoever uses
+                # it checks the proof and who sent this (arcade.ddaddress.proved), so nothing is trusted on the way in.
+                dd_keys = {net: {"key": key.hex(), "sig": sig.hex()}
+                           for net, (key, sig) in (extras.get("dd_keys") or {}).items()}
                 address = atx.sender
                 if claimed_hash:
                     address = b58check_encode(self.params.pubkeyhash_version,
@@ -539,6 +543,7 @@ class Scanner:
                     pfp=extras.get("pfp", ""), bio=extras.get("bio", ""),
                     url=extras.get("url", ""), doge_address=doge_address,
                     chain_addresses=json.dumps(chain_addresses, sort_keys=True) if chain_addresses else "",
+                    dd_keys=json.dumps(dd_keys, sort_keys=True) if dd_keys else "",
                 )
                 result.announcements += 1
                 continue

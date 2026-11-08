@@ -2085,3 +2085,23 @@ export async function restoreKit(seed, chain, since = 0) {
   }
   return kit;
 }
+
+/* --- a published mainnet coin key (2026-11-08) ---------------------------
+ *
+ * An @name pays a mainnet DigiDollar only from a key its owner published: the name chain shows the test-coin key
+ * (coin type 1) and never the real chains' (coin type 3). The account's announcement carries the key with this proof,
+ * a BIP-340 signature by the key itself over the network, the name chain address it is published for, and the key,
+ * so nobody can publish somebody else's key. `arcade/ddaddress.py` (proof_message, proved) checks it.
+ */
+const DD_PROOF_TAG = "DogecoinArcade DigiDollar key\n";
+
+/** {network, key, sig} (hex) for the announcement of the account at `nameAddress` on the name chain, from that
+ *  account's coin key on `network` (`priv`, `pubkey`). */
+export async function ddKeyProof(network, nameAddress, priv, pubkey) {
+  const raw = unbase58(String(nameAddress));
+  if (raw.length !== 25 || !SAME((await hash256(raw.slice(0, 21))).slice(0, 4), raw.slice(21)))
+    throw new Error("that is not the name's address");
+  if (pubkey.length !== 33) throw new Error("a published coin key is a compressed key");
+  const message = await sha256(join([enc.encode(DD_PROOF_TAG + network + "\n"), raw.slice(1, 21), pubkey]));
+  return {network, key: hex(pubkey), sig: hex(await signSchnorr(priv, message))};
+}

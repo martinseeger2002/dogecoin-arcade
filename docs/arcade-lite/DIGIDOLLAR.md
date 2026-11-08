@@ -122,6 +122,26 @@ SadFrog: "add capability to send and receive store digidollar test and digidolla
   gathered, $100 minted, $40 sent to a second key and back, the supply unchanged, Core's `validateddaddress` taking the
   address in regtest's version, and the vault redeemed with the two coins that came back.
 
+## Paying an @name (test chain 2026-11-06, mainnet 2026-11-08)
+
+A DigiDollar address is made from the payee's public **key**, not an address hash, so the Wallet's Send asks the
+arcade for an @name's address (`/lite/api/ddaddress?to=@name&chain=...`, `arcade/ddaddress.py`):
+- **Test chain (`TD...`):** from the key that signed the name's claim on the name chain. Every test chain shares that
+  key (coin type 1), so it is the payee's DigiByte test key too.
+- **Mainnet (`DD...`):** the name chain never shows the real chains' key (coin type 3), so each account publishes it
+  in its profile. The key announcement gets a last section, `ANNOUNCE_TAG_DD_KEY` (0x09): the network's name
+  (`dgb`), the 33-byte compressed key, and a 64-byte BIP-340 signature by that key over
+  `sha256("DogecoinArcade DigiDollar key\n" || "dgb" || "\n" || hash160(name address) || key)`.
+  The Wallet adds it to every announcement it publishes once the account has a DigiByte mainnet wallet
+  (`coins.ddKeyProof`, `messaging.js` `publishAboutMe`). An account whose newest announcement lacks it reads as not
+  announced, so the page's usual check publishes it again, once, on the name chain.
+- **What a reader trusts** (`ddaddress.proved`): the proof checks for that network, name and key; the announcement
+  transaction has an input the name's own address signed with SIGHASH_ALL (the address first-claim ties to the name);
+  and the key hashes to the DigiByte address the same announcement published, when it published one. A record that
+  fails any of these is passed over, and an older one that holds still counts. With none, the answer is "@name hasn't
+  published a mainnet DigiDollar address yet", and the payer pastes a `DD...` address.
+- The resolved address is shown in the send's review, and `coins.js` still checks the transaction's bytes pay it.
+
 ## What does not work yet
 
 - **Mainnet mints** wait for the operator's switch (above).

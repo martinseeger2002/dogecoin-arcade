@@ -181,3 +181,29 @@ def test_the_wallet_reads_a_mints_record_whose_last_item_is_its_owners_key(loade
     assert vault["value"] == 10 ** 8 and vault["to"].startswith("dgbt1p") and not vault["mine"]   # its address (#100)
     assert dd == {"to": pilot.dd_address("dgbtest", pub[1:]), "dd": 10000, "value": 0, "mine": True}
     assert record["bytes"] > 32 and record["value"] == 0
+
+
+def test_the_wallets_digidollar_key_proof_is_the_one_the_arcade_checks(loaded):
+    """coins.ddKeyProof (2026-11-08): the browser's proof for a published mainnet key verifies as arcade/ddaddress.py
+    checks it, for a key of either parity, and only for the name and network it was made for."""
+    from arcade import ddaddress
+    from arcade.script import b58check_encode, hash160
+    driver, _, _ = loaded
+    name_hash = bytes(range(20))
+    name = b58check_encode(NETWORKS["test"].pubkeyhash_version, name_hash)
+    for secret in (7, 0x5EED * 1013, 0xC0FFEE):
+        x, y = taproot.mul(secret)
+        pub = bytes([2 + (y & 1)]) + x.to_bytes(32, "big")
+        said = _run(driver, """
+            const key = c.unhex(arguments[0]);
+            return await c.ddKeyProof("dgb", arguments[1], key, c.publicKey(key));""",
+                    secret.to_bytes(32, "big").hex(), name)
+        assert said["network"] == "dgb" and said["key"] == pub.hex()
+        sig = bytes.fromhex(said["sig"])
+        assert ddaddress.proof_ok("dgb", name_hash, pub, sig), secret
+        assert not ddaddress.proof_ok("dgb", hash160(b"another name"), pub, sig)
+        assert not ddaddress.proof_ok("dgbtest", name_hash, pub, sig)
+    bad = driver.execute_async_script(RUN % """
+        try { await c.ddKeyProof("dgb", "nNotAnAddress", new Uint8Array(32), new Uint8Array(33)); return "made"; }
+        catch (e) { return String(e.message); }""")
+    assert bad != "made"

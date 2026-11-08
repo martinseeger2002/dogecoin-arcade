@@ -274,6 +274,15 @@ ANNOUNCE_TAG_DOGE = 0x07
 #: After everything else, for the reason ANNOUNCE_TAG_DOGE is: an older reader stops here having read the rest.
 ANNOUNCE_TAG_CHAIN = 0x08
 
+#: The same person's coin key on a real chain, with a proof that its holder put it here (2026-11-08, SadFrog: an @name
+#: should resolve to its owner's mainnet DigiDollar address). A DigiDollar address is made from a public KEY, and the
+#: name chain shows only the test-coin key (coin type 1, revealed by the name's own claim); the real chains' key (coin
+#: type 3) appears nowhere until it is published. 0x09, the network's name length, the name ("dgb"), the 33-byte
+#: compressed key, and a 64-byte BIP-340 signature by that key over `arcade.ddaddress.proof_message` (the network, this
+#: announcement's identity hash160, the key), so nobody can publish somebody else's key as theirs. Last of all, for the
+#: reason ANNOUNCE_TAG_DOGE is. A reader trusts it only as `arcade.ddaddress.proved` says.
+ANNOUNCE_TAG_DD_KEY = 0x09
+
 #: What each may say. A bio is a sentence or two; a link is a link.
 MAX_ANNOUNCE_BIO = 160
 MAX_ANNOUNCE_URL = 120
@@ -307,7 +316,8 @@ def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
                            name: str = "", other_hash160: bytes = b"",
                            tag: str = "", pfp: str | bytes = b"",
                            bio: str = "", url: str = "", doge_hash160: bytes = b"",
-                           chains: dict[str, bytes] | None = None) -> bytes:
+                           chains: dict[str, bytes] | None = None,
+                           dd_keys: dict[str, tuple[bytes, bytes]] | None = None) -> bytes:
     """Header + X25519 public key, optionally saying whose key it is.
 
     The bare form is 38 bytes and is what earlier versions publish. The tail adds
@@ -385,6 +395,11 @@ def build_key_announcement(public_bytes: bytes, hash160: bytes = b"",
         if not 0 < len(name) <= 16 or len(h160) != 20:
             raise EnvelopeError(f"a chain's address is a name of 1-16 letters and a 20-byte hash ({net})")
         out += bytes([ANNOUNCE_TAG_CHAIN, len(name)]) + name + h160
+    for net, (key, sig) in sorted((dd_keys or {}).items()):
+        name = str(net).encode("ascii")
+        if not 0 < len(name) <= 16 or len(key) != 33 or key[0] not in (2, 3) or len(sig) != 64:
+            raise EnvelopeError(f"a published coin key is a network name, a 33-byte key and a 64-byte proof ({net})")
+        out += bytes([ANNOUNCE_TAG_DD_KEY, len(name)]) + name + key + sig
     return out
 
 
@@ -431,7 +446,7 @@ def parse_announced_extras(payload: bytes) -> dict:
     understood up to that point is kept.
     """
     found = {"hash160": b"", "name": "", "other_hash160": b"", "tag": "",
-             "pfp": "", "bio": "", "url": "", "doge_hash160": b"", "chains": {}}
+             "pfp": "", "bio": "", "url": "", "doge_hash160": b"", "chains": {}, "dd_keys": {}}
     at = KEY_ANNOUNCE_HEADER_LEN + 32
     if len(payload) <= at or payload[at] != ANNOUNCE_TAG_IDENTITY:
         return found              # bare announcement, or NUL padding
@@ -492,6 +507,16 @@ def parse_announced_extras(payload: bytes) -> dict:
                     break
                 found["chains"][name.decode("ascii")] = h160
                 at += 22 + length
+            elif kind == ANNOUNCE_TAG_DD_KEY:
+                length = payload[at + 1]
+                name = payload[at + 2 : at + 2 + length]
+                key = payload[at + 2 + length : at + 35 + length]
+                sig = payload[at + 35 + length : at + 99 + length]
+                if (not 0 < length <= 16 or len(name) != length or not name.isascii() or len(key) != 33
+                        or len(sig) != 64):
+                    break
+                found["dd_keys"][name.decode("ascii")] = (key, sig)    # unproved: arcade.ddaddress.proved decides
+                at += 99 + length
             else:
                 break             # NUL padding, or a section written by a
                                   # newer sender than this reader

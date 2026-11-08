@@ -662,6 +662,14 @@ export async function collect(me, {onProgress} = {}) {
  */
 async function publishAboutMe(wallet, me, where, body) {
   const coins = await import("/coins.js");
+  // With a DigiByte mainnet wallet, its key goes out too, with a proof made here by that key (2026-11-08: an @name
+  // then pays a mainnet DigiDollar; coins.ddKeyProof, arcade/ddaddress.py). Every announcement carries it, so a new
+  // picture or line never takes it down, and an account whose announcement lacks it is asked to publish again.
+  const dgb = wallet.on && wallet.on.dgb;
+  if (dgb && wallet.address && !body.dd) {
+    try { body = {...body, dd: await coins.ddKeyProof("dgb", wallet.address, dgb.key, dgb.pubkey)}; }
+    catch (e) { /* published without it; the rest is not held up */ }
+  }
   const asked = await fetch(where, {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify(body),
