@@ -7412,7 +7412,8 @@ def create_app(state: AppState) -> FastAPI:
         return _with_viewer_shim(_inscription_content(key, download, reveal),
                                  "" if download else v)
 
-    #: How many times a card's frame asks again for a piece its chain is still reading (10 s apart).
+    #: How many times a card's frame asks again for a piece its chain is still reading: 10 s later, then 20 s, ...
+    #: (a page of 48 tiles asking at once is 48 reads of a chain that may be lent by a busy arcade).
     FIT_TRIES = 6
 
     @app.get("/content/{key}/fit")
@@ -7436,7 +7437,7 @@ def create_app(state: AppState) -> FastAPI:
 
     def _fit_note(key: str, later: bool, tries: int):
         """A card frame's note for a piece it cannot show: "Reading from the chain" while its chain is still reading
-        it (the frame asks again, FIT_TRIES times), else "Not on this arcade". Never kept by a cache."""
+        it (the frame asks again, FIT_TRIES times, waiting longer each time), else "Not on this arcade". Never kept by a cache."""
         again = later and tries < FIT_TRIES
         said = ("Reading from the chain\u2026" if again else
                 "Not read yet. Open it to try again." if later else "Not on this arcade")
@@ -7445,7 +7446,8 @@ def create_app(state: AppState) -> FastAPI:
                 'box-sizing:border-box;font:12px/1.4 system-ui,sans-serif;color:#8a8a8a}</style>'
                 f'<p>{html.escape(said)}</p>')
         if again:
-            page += f'<script>setTimeout(function(){{location.replace("?tries={tries + 1}")}},10000)</script>'
+            page += (f'<script>setTimeout(function(){{location.replace("?tries={tries + 1}")}},'
+                     f'{10000 * (tries + 1)})</script>')
         return Response(page, media_type="text/html", status_code=503 if later else 404,
                         headers={**contentlib.CONTENT_HEADERS, "Cache-Control": "no-store"})
 

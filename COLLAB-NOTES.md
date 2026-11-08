@@ -99,8 +99,8 @@ are delegates, read over the mesh two at a time, and `Doginals.content` gave up 
   inscription from its chain; try again", with `Retry-After: 10` and `no-store` (`_read_later`). A transaction the
   chain does not have, or an envelope with no content, is still 404.
 - **`/content/<id>/fit`:** a 404 or 503 gets a short note in the frame ("Not on this arcade", "Reading from the
-  chain…"). While reading, the frame asks again every 10 s, up to `FIT_TRIES` (6) times, then "Not read yet. Open it to
-  try again."
+  chain…"). While reading, the frame asks again after 10 s, 20 s, ... up to `FIT_TRIES` (6) times, then "Not read yet.
+  Open it to try again." A busy or silent lender of a borrowed chain counts as "for now" too.
 - **Explore:** every tile and viewer frame goes through `/fit` (a page is sent on to `/content/<id>` as before), so a
   missing page piece gets the note too.
 - **Tests:** `tests/test_doginal_fit.py` +2.
