@@ -25541,9 +25541,18 @@ def create_app(state: AppState) -> FastAPI:
     @app.get("/account/digidollar")
     def account_digidollar(request: Request, chain: str = "", pubkey: str = ""):
         """This account's DigiDollars on a DigiByte chain: its DigiDollar address, what it holds, and since when the
-        index has followed it (arcade/digidollar.py). The first ask starts following it."""
+        index has followed it (arcade/digidollar.py). The first ask starts following it.
+
+        Without `pubkey` (a wallet shut in this browser) the key the account gave when its wallet opened here is used,
+        checked the same way, so a balance needs no password (2026-11-08, SadFrog, on Lite's Send: "i cannot see my
+        digidollar and digidollar test balances - it says open your wallet ... as this is the wallet")."""
         account = _signed_in_account(request)
         ch = _dd_chain(chain)
+        if not pubkey:
+            pubkey = str(state.setting(_coinkey_key(account.pubkey, ch), "") or "").strip()
+            if not pubkey:
+                return JSONResponse({"detail": "unlock your wallet once here, so the arcade knows your DigiByte key",
+                                     "unlock": True}, status_code=400, headers={"Cache-Control": "no-store"})
         _, pub = _dd_owner(account, ch, pubkey)
         dd = digidollib.address(ch.network, pub)
         index = state.token_index(ch)
