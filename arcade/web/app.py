@@ -25737,10 +25737,24 @@ def create_app(state: AppState) -> FastAPI:
                                 status_code=400)
         return offer
 
+    def _dd_mainnet_on() -> bool:
+        """The DigiDollar module's mainnet switch, read where `ddmainnet` writes it (its data folder's mainnet.json):
+        off until the operator turns it on, and off when it cannot be read."""
+        from .. import modhost as hostlib
+        try:
+            path = state.home / hostlib.DATA / "digidollar" / "mainnet.json"
+            return bool(json.loads(path.read_text()).get("on"))
+        except Exception:                                   # noqa: BLE001 -- no module, no file: off
+            return False
+
     def _dd_send(account, ch, pub: bytes, to: str, cents: int):
         """The unsigned send of `cents` DigiDollars from this account (its key `pub`, checked by _dd_owner) to the
         DigiDollar address `to`: its DigiDollar coins from this arcade's index, DGB coins for the fee. The Wallet's
         send, and the DigiDollar-test launchpad's payment (web/ddpadweb.py)."""
+        # Mainnet only once this arcade's operator has turned it on (2026-11-08, security review): the module's own
+        # switch, `ddmainnet`, gated its mints and sends, and the Wallet's send went out with it off.
+        if ch.network == "dgb" and not _dd_mainnet_on():
+            raise ValueError("mainnet DigiDollar sends are off on this arcade: its operator turns them on (ddmainnet)")
         address = _account_address(account.pubkey, ch)
         index = state.token_index(ch)
         with contextlib.closing(index.open()) as db:
