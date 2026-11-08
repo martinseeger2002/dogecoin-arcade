@@ -23,6 +23,15 @@ import pytest
 
 from arcade import update
 
+#: The commit a signed manifest names in the tests below (2026-11-08: a git node installs only the signed commit).
+SIGNED = "ab" * 20
+
+
+def _signed_release(monkeypatch, revision=SIGNED, published=1000.0):
+    """The channel's manifest, as if read and checked against the pinned key."""
+    monkeypatch.setattr(update, "_read_manifest",
+                        lambda channel="live": {"revision": revision, "published": published, "sha256": "00" * 32})
+
 
 @pytest.fixture
 def checkout(tmp_path):
@@ -217,6 +226,7 @@ def test_the_second_half_runs_in_the_code_just_installed(tmp_path, monkeypatch, 
     (src / "arcade").mkdir()
     (src / "pyproject.toml").write_text("[project]\nname='dogecoinarcade'\n")
     monkeypatch.setattr(update, "HOME", home)
+    _signed_release(monkeypatch)
     monkeypatch.setattr(update, "_find_git", lambda: "git")
     monkeypatch.setattr(update, "current_revision", lambda _c: "abc1234")
 
@@ -249,6 +259,7 @@ def test_windows_does_not_reinstall_under_a_running_arcade(tmp_path, monkeypatch
     (src / ".git").mkdir(parents=True)
     (src / "pyproject.toml").write_text("[project]\nname='dogecoinarcade'\n")
     monkeypatch.setattr(update, "HOME", home)
+    _signed_release(monkeypatch)
     monkeypatch.setattr(update, "_find_git", lambda: "git")
     monkeypatch.setattr(update, "current_revision", lambda _c: "abc1234")
     monkeypatch.setattr(update, "_serving", lambda port=8420: True)
@@ -317,6 +328,7 @@ def test_a_reinstall_that_leaves_nothing_importable_says_so(tmp_path, monkeypatc
     (src / ".git").mkdir(parents=True)
     (src / "pyproject.toml").write_text("[project]\nname='dogecoinarcade'\n")
     monkeypatch.setattr(update, "HOME", home)
+    _signed_release(monkeypatch)
     monkeypatch.setattr(update, "_find_git", lambda: "git")
     monkeypatch.setattr(update, "current_revision", lambda _c: "abc1234")
 
@@ -455,6 +467,84 @@ def test_a_checkout_with_local_edits_is_left_alone(tmp_path):
     assert (mine / "a.txt").read_text() == "my own change"
 
 
+def _git_node(tmp_path, monkeypatch, pub, signed, published=1000.0, installed=None):
+    """A git node cloned from `pub`, updating with real git against the signed manifest naming `signed`; pip and the
+    services half stand in."""
+    home = tmp_path / ".dogecoinarcade"
+    (home / "venv" / "bin").mkdir(parents=True)
+    _git("clone", "-q", str(pub), str(home / "src"), cwd=tmp_path)
+    monkeypatch.setattr(update, "HOME", home)
+    monkeypatch.setattr(update, "following", lambda: "live")
+    if installed is not None:
+        update._remember({"published": installed})
+    _signed_release(monkeypatch, signed, published)
+    import subprocess
+    real_run = subprocess.run
+
+    class Done:
+        returncode = 0
+        stdout = stderr = ""
+
+    def run(argv, *a, **k):                         # git for real; pip and the hand-off stand in
+        return real_run(argv, *a, **k) if Path(str(argv[0])).name == "git" else Done()
+    monkeypatch.setattr(update.subprocess, "run", run)
+    monkeypatch.setattr(update, "_find_git", lambda: "git")
+    return home / "src"
+
+
+def _commit(repo, text):
+    (repo / "a.txt").write_text(text)
+    _git("commit", "-q", "-am", text, cwd=repo)
+    return _git("rev-parse", "HEAD", cwd=repo)
+
+
+def test_a_git_node_moves_to_the_signed_commit_not_the_branch_tip(tmp_path, monkeypatch):
+    """2026-11-08, security review: a git node took whatever the branch held, unsigned. Now only the commit the signed
+    manifest names: a tip pushed past it, by anybody who can change what the repository serves, is not installed."""
+    pub = _published(tmp_path, "one")
+    mine = _git_node(tmp_path, monkeypatch, pub, "00" * 20)
+    release = _commit(pub, "the signed release")
+    _commit(pub, "pushed by somebody without the key")
+    _signed_release(monkeypatch, release, 2000.0)
+    assert update.update(dry_run=False) == 0
+    assert _git("rev-parse", "HEAD", cwd=mine) == release
+    assert (mine / "a.txt").read_text() == "the signed release"
+    assert json.loads((update.HOME / update.INSTALLED_FILE).read_text())["revision"] == release, "remembered"
+
+
+def test_an_unsigned_tip_alone_is_never_installed(tmp_path, monkeypatch):
+    pub = _published(tmp_path, "one")
+    first = _git("rev-parse", "HEAD", cwd=pub)
+    mine = _git_node(tmp_path, monkeypatch, pub, first)
+    _commit(pub, "pushed by somebody without the key")
+    assert update.update(dry_run=False) == 0, "the signed release is already here"
+    assert _git("rev-parse", "HEAD", cwd=mine) == first
+
+
+def test_a_signed_commit_the_repository_does_not_have_yet_installs_nothing(tmp_path, monkeypatch):
+    pub = _published(tmp_path, "one")
+    first = _git("rev-parse", "HEAD", cwd=pub)
+    mine = _git_node(tmp_path, monkeypatch, pub, "cd" * 20)
+    with pytest.raises(update.UpdateError, match="does not have the signed release"):
+        update.update(dry_run=False)
+    assert _git("rev-parse", "HEAD", cwd=mine) == first
+
+
+def test_a_rewritten_history_is_followed_only_to_a_newer_signed_release(tmp_path, monkeypatch):
+    pub = _published(tmp_path, "first, with a name in it")
+    mine = _git_node(tmp_path, monkeypatch, pub, "00" * 20, installed=2000.0)
+    shutil.rmtree(pub)
+    _published(tmp_path, "first, without").rename(pub)
+    rewritten = _git("rev-parse", "HEAD", cwd=pub)
+    _signed_release(monkeypatch, rewritten, 1500.0)                    # signed, but older than what is installed
+    with pytest.raises(update.UpdateError, match="older than the one installed"):
+        update.update(dry_run=False)
+    assert (mine / "a.txt").read_text() == "first, with a name in it"
+    _signed_release(monkeypatch, rewritten, 3000.0)
+    assert update.update(dry_run=False) == 0
+    assert (mine / "a.txt").read_text() == "first, without"
+
+
 # --- main live or main test (2026-10-28, Team HQ: "admin toggle for selecting main live vs main test") ----------
 
 def _choose(home, channel):
@@ -568,17 +658,23 @@ def test_a_git_node_on_test_fast_forwards_onto_the_test_branch(tmp_path, monkeyp
     monkeypatch.setattr(update, "_find_git", lambda: "git")
     monkeypatch.setattr(update, "current_revision", lambda _c: "abc1234")
     monkeypatch.setattr(update, "following", lambda: "test")
+    _signed_release(monkeypatch)
 
     class Done:
         returncode = 0
         stdout = stderr = ""
 
+    class Not:
+        returncode = 1
+        stdout = stderr = ""
+
     ran = []
-    monkeypatch.setattr(update, "_run", lambda *a, **k: ran.append(a) or Done())
+    monkeypatch.setattr(update, "_run", lambda *a, **k: ran.append(a) or (Not() if "merge-base" in a else Done()))
     monkeypatch.setattr(update.subprocess, "run", lambda argv, **k: Done())
     assert update.update(dry_run=False) == 0
     git = [a[1:] for a in ran if a[0] == "git"]
-    assert git[:2] == [("fetch", "--quiet", "origin", "test"), ("merge", "--ff-only", "--quiet", "FETCH_HEAD")]
+    assert git[:4] == [("merge-base", "--is-ancestor", SIGNED, "HEAD"), ("fetch", "--quiet", "origin", "test"),
+                       ("cat-file", "-e", SIGNED + "^{commit}"), ("merge", "--ff-only", "--quiet", SIGNED)]
     assert ("pull", "--ff-only", "--quiet") not in git
 
 

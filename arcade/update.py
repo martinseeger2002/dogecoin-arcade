@@ -255,7 +255,7 @@ def _ahead_of(checkout: Path, published: str, channel: str = "live") -> bool:
     return False
 
 
-def _resync(git: str, checkout: Path, branch: str = "master") -> bool:
+def _resync(git: str, checkout: Path, branch: str = "master", to: str = "FETCH_HEAD") -> bool:
     """Follow the published history when it was rewritten rather than extended.
 
     The published copy is filtered before it goes out (private documents and
@@ -269,8 +269,22 @@ def _resync(git: str, checkout: Path, branch: str = "master") -> bool:
         return False
     if _run(git, "fetch", "--quiet", "origin", branch, cwd=checkout).returncode != 0:
         return False
-    return _run(git, "reset", "--hard", "--quiet", "FETCH_HEAD",
+    if to != "FETCH_HEAD" and not _has_commit(git, checkout, to):
+        return False
+    return _run(git, "reset", "--hard", "--quiet", to,
                 cwd=checkout).returncode == 0
+
+
+def _has_commit(git: str, checkout: Path, commit: str) -> bool:
+    return _run(git, "cat-file", "-e", f"{commit}^{{commit}}", cwd=checkout).returncode == 0
+
+
+def _signed_commit(signed: dict) -> str:
+    """The commit a signed manifest names: the published HEAD, in full."""
+    wanted = str(signed.get("revision") or "").strip().lower()
+    if len(wanted) != 40 or any(c not in "0123456789abcdef" for c in wanted):
+        raise UpdateError("the signed release names no commit. Nothing was installed.")
+    return wanted
 
 
 def update(dry_run: bool = False) -> int:
@@ -317,29 +331,54 @@ def update(dry_run: bool = False) -> int:
               else f"  {before or 'unknown'} -> {after}")
         _remember(signed)
     elif (checkout / ".git").exists():
+        # Only the signed release's own commit (2026-11-08, security review): a git node took whatever the branch
+        # held, unsigned, so whoever could change what the repository serves ran code here. The signed manifest
+        # names the commit (`revision`, the published HEAD), as it names the archive's hash.
+        signed = _read_manifest(channel)
+        wanted = _signed_commit(signed)
+        branch = TEST_BRANCH if channel == "test" else "master"
         before = current_revision(checkout)
-        if channel == "test":
-            # The test branch, fast-forwarded onto whatever is checked out: live's master is always in its history.
-            result = _run(git, "fetch", "--quiet", "origin", TEST_BRANCH, cwd=checkout)
-            if result.returncode == 0:
-                result = _run(git, "merge", "--ff-only", "--quiet", "FETCH_HEAD", cwd=checkout)
+        if _run(git, "merge-base", "--is-ancestor", wanted, "HEAD", cwd=checkout).returncode == 0:
+            print(f"  already up to date ({before})")             # the signed release is here already
         else:
-            result = _run(git, "pull", "--ff-only", "--quiet", cwd=checkout)
-        if result.returncode != 0 and _resync(git, checkout, TEST_BRANCH if channel == "test" else "master"):
-            result = subprocess.CompletedProcess([], 0)       # followed it
-        if result.returncode != 0:
-            raise UpdateError(
-                f"could not fast-forward the checkout:\n  {result.stderr.strip()}\n"
-                f"  If you have edited files in {checkout}, move them aside first."
-            )
-        after = current_revision(checkout)
-        print(f"  already up to date ({after})" if before == after else f"  {before} -> {after}")
+            # The branch, fast-forwarded to the signed commit (test: live's master is always in its history).
+            result = _run(git, "fetch", "--quiet", "origin", branch, cwd=checkout)
+            if result.returncode == 0 and not _has_commit(git, checkout, wanted):
+                raise UpdateError(
+                    f"the repository does not have the signed release ({wanted[:7]}) yet.\n"
+                    "  Nothing was installed; the next check tries again.")
+            if result.returncode == 0:
+                result = _run(git, "merge", "--ff-only", "--quiet", wanted, cwd=checkout)
+            if result.returncode != 0:
+                # A rewritten history: followed to the signed commit only, and never to an older release than the
+                # one installed (an old signed release replayed to put a known bug back).
+                if not releaselib.is_newer(signed, _installed_published()):
+                    raise UpdateError("the published release is older than the one installed here. Nothing was "
+                                      "installed: that is what a downgrade attack looks like.")
+                if _resync(git, checkout, branch, to=wanted):
+                    result = subprocess.CompletedProcess([], 0)   # followed it
+            if result.returncode != 0:
+                raise UpdateError(
+                    f"could not fast-forward the checkout:\n  {result.stderr.strip()}\n"
+                    f"  If you have edited files in {checkout}, move them aside first."
+                )
+            after = current_revision(checkout)
+            print(f"  already up to date ({after})" if before == after else f"  {before} -> {after}")
+        _remember(signed)
     else:
+        signed = _read_manifest(channel)
+        wanted = _signed_commit(signed)
         checkout.parent.mkdir(parents=True, exist_ok=True)
         result = _run(git, "clone", "--quiet", REPO_URL, str(checkout))
         if result.returncode != 0:
             raise UpdateError(f"could not clone {REPO_URL}:\n  {result.stderr.strip()}")
-        print(f"  cloned into {checkout}")
+        # The signed commit, not whatever the clone's branch held (2026-11-08); nothing is installed without it.
+        if _run(git, "checkout", "--quiet", "--detach", wanted, cwd=checkout).returncode != 0:
+            shutil.rmtree(checkout, ignore_errors=True)
+            raise UpdateError(f"the repository does not have the signed release ({wanted[:7]}) yet. "
+                              "Nothing was installed; try again in a few minutes.")
+        _remember(signed)
+        print(f"  cloned into {checkout} at the signed release {wanted[:7]}")
 
     print("Reinstalling")
     if dry_run:
@@ -379,15 +418,8 @@ def update(dry_run: bool = False) -> int:
     return _update_services(checkout, venv, dry_run)
 
 
-def _signed_manifest(channel: str = "live") -> dict:
-    """The manifest for what is published, checked against the pinned key.
-
-    Everything downstream trusts this: the archive is then required to hash to
-    what it says. The refusals are deliberate and total -- no manifest, a
-    manifest signed by another key, or one older than what is already
-    installed, and nothing is installed. An updater that installs code it
-    cannot attribute is a website with a shell on every machine (D-065).
-    """
+def _read_manifest(channel: str = "live") -> dict:
+    """The channel's manifest, checked against the pinned key; whether it is newer is the caller's to ask."""
     url = TEST_MANIFEST_URL if channel == "test" else MANIFEST_URL
     try:
         with urllib.request.urlopen(_request(url), timeout=30) as response:
@@ -398,9 +430,21 @@ def _signed_manifest(channel: str = "live") -> dict:
             "  Nothing was installed. The manifest is what says the release is "
             "ours; without it there is nothing to check the download against.")
     try:
-        manifest = releaselib.verify(body)
+        return releaselib.verify(body)
     except releaselib.ReleaseError as exc:
         raise UpdateError(f"{exc}\n  Nothing was installed.")
+
+
+def _signed_manifest(channel: str = "live") -> dict:
+    """The manifest for what is published, checked against the pinned key.
+
+    Everything downstream trusts this: the archive is then required to hash to
+    what it says. The refusals are deliberate and total -- no manifest, a
+    manifest signed by another key, or one older than what is already
+    installed, and nothing is installed. An updater that installs code it
+    cannot attribute is a website with a shell on every machine (D-065).
+    """
+    manifest = _read_manifest(channel)
     if not releaselib.is_newer(manifest, _installed_published()):
         raise UpdateError(
             "the published release is older than the one installed here. That "
