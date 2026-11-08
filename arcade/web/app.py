@@ -465,6 +465,43 @@ def _session_cookie_headers(token: str, secure: bool) -> list[tuple[bytes, bytes
     return [h for h in shaped.raw_headers if h[0] == b"set-cookie"]
 
 
+#: Paths whose answers are one account's (or the operator's) own: never kept by a browser or a cache in between.
+PRIVATE_PATHS = ("/account", "/auth", "/signin", "/signup", "/admin", "/api/v1", "/me")
+
+
+class _SafeHeaders:
+    """ASGI middleware adding what a browser should be told about every answer, where the route did not say it
+    already (2026-11-08, security review): `nosniff`; a Referrer-Policy that keeps this arcade's addresses to itself
+    (inscribed content says its own, unsafe-url, for its viewer ticket); HSTS over https; and `no-store` on every
+    account, sign-in and admin answer (21 account GETs said nothing, so a cache in between could keep one)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        asked = Request(scope)
+        https = (asked.headers.get("x-forwarded-proto") or scope.get("scheme")) == "https"
+        path = scope.get("path", "")
+        private = any(path == p or path.startswith(p + "/") for p in PRIVATE_PATHS)
+
+        async def sending(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers") or [])
+                have = {k.lower() for k, _ in headers}
+                add = [(b"x-content-type-options", b"nosniff"), (b"referrer-policy", b"same-origin")]
+                if https:
+                    add.append((b"strict-transport-security", b"max-age=15552000"))
+                if private:
+                    add.append((b"cache-control", b"private, no-store"))
+                message = {**message, "headers": headers + [(k, v) for k, v in add if k not in have]}
+            await send(message)
+
+        await self.app(scope, receive, sending)
+
+
 class _SessionRenewal:
     """ASGI middleware sending the session cookie again when this request renewed its session.
 
@@ -1447,7 +1484,8 @@ def create_app(state: AppState) -> FastAPI:
         # sandbox already stops that -- an opaque origin is not 'self', and
         # without allow-forms nothing inside it can submit -- but a rule that
         # holds on its own is better than one that holds because of another.
-        response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+        # No plugin objects, and no <base> pointing the page's own relative addresses elsewhere (2026-11-08).
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
         return response
 
     @app.exception_handler(HTTPException)
@@ -5885,6 +5923,7 @@ def create_app(state: AppState) -> FastAPI:
     # Outside every other middleware, so a session renewed anywhere in a request (the door's look, the chain
     # pick, the route) sends the cookie again (issue #13, 2026-10-25).
     app.add_middleware(_SessionRenewal)
+    app.add_middleware(_SafeHeaders)
 
     @app.get("/create/chain")
     def create_chain(request: Request, to: str = "", back: str = "/create"):
