@@ -32908,6 +32908,21 @@ def create_app(state: AppState) -> FastAPI:
 
     # --- identity by key: who runs which arcade (arcade/instance.py) -------------
 
+    #: Where a security problem is reported, unless the operator names another (setting `security_contact`).
+    SECURITY_CONTACT = "mailto:hello@arcade-nodes.com"
+
+    @app.get("/.well-known/security.txt")
+    def security_txt():
+        """Where to report a security problem (RFC 9116; 2026-11-08, security review: there was nowhere). The
+        project's address, or the operator's own (`security_contact`); it expires in 180 days, as the RFC wants a
+        date, and is made fresh on every read."""
+        contact = str(state.setting("security_contact", "") or SECURITY_CONTACT).strip()
+        if "://" not in contact and not contact.startswith("mailto:"):
+            contact = "mailto:" + contact
+        expires = time.strftime("%Y-%m-%dT00:00:00Z", time.gmtime(time.time() + 180 * 86400))
+        body = f"Contact: {contact}\nExpires: {expires}\nPreferred-Languages: en\n"
+        return Response(body, media_type="text/plain; charset=utf-8", headers={"Cache-Control": "public, max-age=86400"})
+
     @app.get("/.well-known/dogecoinarcade.json")
     def instance_claim():
         """This arcade's own claim, for a directory visitor's browser to check
