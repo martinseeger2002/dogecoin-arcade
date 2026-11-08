@@ -430,7 +430,14 @@ def pack(notes: bytes) -> bytes:
     return zlib.compress(notes, 6)
 
 
-def unpack(blob: bytes, limit: int = 256 * 1024 * 1024) -> bytes:
+#: The most a chunk's notes may unpack to. A chunk is CHUNK (100) blocks; Litecoin's run to 4 MB each with their
+#: witnesses, and during the 2023 inscription rush 100 of them came to 324 MB of notes (chunk 575 from 2,424,429, the
+#: walk on the workhorse, 2026-11-07), past the old 256 MB, so every arcade dropped them and the walk stood still.
+#: 100 full 4 MB blocks plus the notes' own framing fit in 512 MB; a zip bomb still stops there.
+MAX_UNPACKED = 512 * 1024 * 1024
+
+
+def unpack(blob: bytes, limit: int = MAX_UNPACKED) -> bytes:
     d = zlib.decompressobj()
     try:
         out = d.decompress(blob, limit)
