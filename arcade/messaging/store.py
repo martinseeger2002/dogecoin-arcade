@@ -7,6 +7,7 @@ reset damage the ledger database.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from ..db import add_missing_columns
@@ -345,6 +346,15 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 
+def _json_object(text: str) -> dict:
+    """A JSON object stored as text, or {} for anything else."""
+    try:
+        said = json.loads(text or "{}")
+    except ValueError:
+        return {}
+    return said if isinstance(said, dict) else {}
+
+
 @dataclass
 class StoredMessage:
     id: int
@@ -438,6 +448,9 @@ class MessageStore:
         ("key_announcement", "doge_address", "TEXT NOT NULL DEFAULT ''"),   # 2026-10-15: published Dogecoin address
         # 2026-10-18: every other chain's published address, as JSON {network: address}
         ("key_announcement", "chain_addresses", "TEXT NOT NULL DEFAULT ''"),
+        # 2026-11-08: a real chain's coin key and its proof, as JSON {network: {"key": hex, "sig": hex}}, unproved
+        # (ANNOUNCE_TAG_DD_KEY; arcade.ddaddress.proved checks it when it is used)
+        ("key_announcement", "dd_keys", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_name", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_type", "TEXT NOT NULL DEFAULT ''"),
         ("sent", "file_data", "BLOB"),
@@ -911,6 +924,7 @@ class MessageStore:
         height: int, block_time: int, stated: bool = False, name: str = "",
         tag: str = "", other_address: str = "", pfp: str = "",
         bio: str = "", url: str = "", doge_address: str = "", chain_addresses: str = "",
+        dd_keys: str = "",
     ) -> None:
         """Record an announcement.
 
@@ -923,8 +937,8 @@ class MessageStore:
         self.conn.execute(
             "INSERT INTO key_announcement"
             "(txid,address,pubkey,fingerprint,height,block_time,seen_at,stated,name,"
-            "tag,other_address,pfp,bio,url,doge_address,chain_addresses) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "tag,other_address,pfp,bio,url,doge_address,chain_addresses,dd_keys) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
             # A longer name replaces a shorter one, so a rescan repairs a name an
             # older parser had cut. INSERT OR IGNORE meant the truncation was
             # permanent in the reader's store however often it was rescanned.
@@ -961,6 +975,9 @@ class MessageStore:
             "  chain_addresses=CASE WHEN excluded.chain_addresses <> '' "
             "                       THEN excluded.chain_addresses "
             "                       ELSE key_announcement.chain_addresses END, "
+            "  dd_keys=CASE WHEN excluded.dd_keys <> '' "
+            "               THEN excluded.dd_keys "
+            "               ELSE key_announcement.dd_keys END, "
             # A picture cleared is a picture cleared: unlike the fields above,
             # an empty one from a NEWER announcement is a person taking their
             # face down, and must not be read as an older parser seeing
@@ -972,7 +989,7 @@ class MessageStore:
             "  pfp=excluded.pfp, bio=excluded.bio, url=excluded.url",
             (txid, address, pubkey, fingerprint, height, block_time,
              int(time.time()), 1 if stated else 0, name, tag, other_address,
-             pfp, bio, url, doge_address, chain_addresses),
+             pfp, bio, url, doge_address, chain_addresses, dd_keys),
         )
 
     def superseded_addresses(self, pubkey: bytes) -> list[str]:
@@ -1028,6 +1045,16 @@ class MessageStore:
             "SELECT * FROM key_announcement WHERE address=? "
             "ORDER BY stated DESC, height DESC, rowid DESC LIMIT 1", (address,),
         ).fetchone()
+
+    def dd_key_records(self, address: str, network: str) -> list[sqlite3.Row]:
+        """Every announcement for `address` that published a coin key for `network` (ANNOUNCE_TAG_DD_KEY), the
+        newest first, as key_for orders them. Unproved: the caller checks each (arcade.ddaddress.proved) and takes the
+        first that holds, so a later forgery cannot hide an earlier genuine record."""
+        rows = self.conn.execute(
+            "SELECT * FROM key_announcement WHERE address=? AND dd_keys LIKE ? "
+            "ORDER BY height = 0 DESC, height DESC, rowid DESC",
+            (address, f'%"{network}"%')).fetchall()
+        return [row for row in rows if network in _json_object(row["dd_keys"])]
 
     def first_announced(self, address: str) -> int:
         """When this address first said who it is, as a block time, or 0.

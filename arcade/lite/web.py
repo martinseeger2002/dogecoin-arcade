@@ -7,6 +7,7 @@ the same commands, run as the same caller.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import Body, HTTPException, Request
@@ -317,10 +318,45 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         dd_keys[name] = key
         return key
 
+    dd_proved: dict[tuple[str, str, str], bytes] = {}   # (network, address, announcement txid) -> its proved key
+
+    def dd_proved_key_of_name(tag: str, network: str) -> bytes:
+        """The mainnet coin key an @name published and proved in its profile (ANNOUNCE_TAG_DD_KEY; ddaddress.proved),
+        or ValueError in plain words. Its newest record that holds wins; one that does not is passed over."""
+        from .. import ddaddress as ddlib
+        from ..script import b58check_decode
+        name = tag.lstrip("@").strip().lower()
+        claim = state.token_index(state.messaging).claim_of(name)
+        if not claim:
+            raise ValueError(f"nobody holds @{name}")
+        address = claim["address"]
+        name_hash = b58check_decode(address)[1]
+        with state.store() as store:
+            rows = store.dd_key_records(address, network)
+        for row in rows:
+            cached = dd_proved.get((network, address, row["txid"]))
+            if cached is not None:
+                return cached
+            try:
+                record = json.loads(row["dd_keys"] or "{}").get(network) or {}
+                said = json.loads(row["chain_addresses"] or "{}") if row["chain_addresses"] else {}
+                published = b58check_decode(said[network])[1] if said.get(network) else None
+                with state.messaging.rpc() as rpc:
+                    tx = rpc.call("getrawtransaction", row["txid"], 1)
+            except Exception:                              # noqa: BLE001 -- unreadable is unproved
+                continue
+            key = ddlib.proved(network, name_hash, record, tx, published)
+            if key is not None:
+                dd_proved[(network, address, row["txid"])] = key
+                return key
+        raise ValueError(f"@{name} hasn't published a mainnet DigiDollar address yet: ask them for their DigiDollar "
+                         f"address (DD...)")
+
     @app.get("/lite/api/ddaddress")
     def lite_ddaddress(request: Request, to: str = "", chain: str = "dgbtest"):
-        """{address, tag}: the DigiDollar address an @name is paid at on `chain` (dgbtest), a DD... / TD... address as
-        typed, or the signed-in account's own (`to=me`). Wallet -> Receive and Send ask it (_wallet.html)."""
+        """{address, tag}: the DigiDollar address an @name is paid at on `chain` (dgbtest from its claim, dgb from the key
+        it published and proved), a DD... / TD... address as typed, or the signed-in account's own (`to=me`). Wallet ->
+        Receive and Send ask it (_wallet.html, my_wallet.html)."""
         from .. import ddaddress as ddlib
         to, chain = str(to or "").strip(), str(chain or "")
         if chain not in ddlib.VERSIONS:
@@ -343,10 +379,13 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
                 return JSONResponse({"address": to, "tag": ""}, headers=NO_STORE)
             if not to.startswith("@") and not to.replace("_", "").isalnum():
                 raise ValueError(f"{to} is neither an @name nor a DigiDollar address (TD... or DD...)")
-            if chain not in ddlib.BY_NAME:
-                raise ValueError("on mainnet, pay a DigiDollar address (DD...): an @name's mainnet key is not on the "
-                                 "name chain")
-            return JSONResponse({"address": ddlib.address(chain, dd_key_of_name(to)), "tag": to.lstrip("@").lower()},
+            if chain in ddlib.PROVED:
+                key = dd_proved_key_of_name(to, chain)
+            elif chain in ddlib.BY_NAME:
+                key = dd_key_of_name(to)
+            else:
+                raise ValueError(f"an @name has no DigiDollar address on {chain}: pay a DigiDollar address")
+            return JSONResponse({"address": ddlib.address(chain, key), "tag": to.lstrip("@").lower()},
                                 headers=NO_STORE)
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=400, headers=NO_STORE)

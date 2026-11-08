@@ -54,6 +54,7 @@ from ..ledger import COIN, AmountError, format_amount, parse_amount
 from ..config import NETWORKS, MainnetRefused, WrongChain, unpayable_versions
 from .. import apikeys as apikeylib
 from .. import inscribe as inscribelib
+from .. import ddaddress as ddaddresslib
 from .. import owner as ownerlib
 from .. import games as gameslib
 from .. import ring as ringlib
@@ -14008,11 +14009,20 @@ def create_app(state: AppState) -> FastAPI:
                     # And every other chain's address (2026-10-18, Litecoin's two first): an announcement without one
                     # this node now has is out of date the same way, and the same check publishes it again.
                     wants_chains = set(_account_chain_hashes(account.pubkey))
+                    # And a real chain's coin key with its proof (2026-11-08: an @name pays a mainnet DigiDollar).
+                    wants_dd = _dd_keys_wanted(account.pubkey)
 
                     def _complete(row) -> bool:
                         if row is None or (wants_doge and not (
                                 "doge_address" in row.keys() and bool(row["doge_address"]))):
                             return False
+                        if wants_dd:
+                            try:
+                                have_dd = set(json.loads(row["dd_keys"] or "{}")) if "dd_keys" in row.keys() else set()
+                            except ValueError:
+                                have_dd = set()
+                            if not wants_dd <= have_dd:
+                                return False
                         if not wants_chains:
                             return True
                         try:
@@ -14029,7 +14039,7 @@ def create_app(state: AppState) -> FastAPI:
                     # On its way: ANY announcement for this address that is complete, mined or still in the pool (a
                     # pool row sorts under the older mined one in key_for, so asking only that would publish again
                     # every ten minutes until the block came).
-                    if wants_doge or wants_chains:
+                    if wants_doge or wants_chains or wants_dd:
                         said["announcing"] = any(_complete(row) for row in store.conn.execute(
                             "SELECT * FROM key_announcement WHERE address=?", (address,)).fetchall())
                     else:
@@ -26301,10 +26311,11 @@ def create_app(state: AppState) -> FastAPI:
                 if elsewhere:
                     _, other = b58check_decode(elsewhere)
                     break
+            chains = _account_chain_hashes(account.pubkey)
             body = envelopelib.build_key_announcement(
                 key, hash160=our_hash, tag=tag, other_hash160=other,
                 pfp=pfp, bio=bio, url=url, doge_hash160=_account_doge_hash(account.pubkey),
-                chains=_account_chain_hashes(account.pubkey))
+                chains=chains, dd_keys=_dd_key_said(said.get("dd"), our_hash, chains))
             index = state.token_index(chain)
             with contextlib.closing(index.open()) as db:
                 unsigned = fundinglib.build(
@@ -26322,6 +26333,43 @@ def create_app(state: AppState) -> FastAPI:
                             unsigned.what)
         return JSONResponse({"offer": offer.id, "chain": chain.network,
                              **unsigned.as_json()})
+
+    def _dd_key_said(dd: Any, our_hash: bytes, chains: dict[str, bytes]) -> dict[str, tuple[bytes, bytes]]:
+        """The real chain's coin key the browser asked to publish with its proof (ANNOUNCE_TAG_DD_KEY, 2026-11-08), as
+        build_key_announcement takes it: {} for none. A proof that does not check is refused (ValueError), as it
+        would be by every reader. A key that is not the address this announcement gives for that chain is left out
+        and the rest is published: readers would pass it over (ddaddress.proved), and `_dd_keys_wanted` does not ask
+        for it, so nothing publishes again for it."""
+        if not dd:
+            return {}
+        if not isinstance(dd, dict):
+            raise ValueError("a DigiDollar key is {network, key, sig}")
+        network = str(dd.get("network", ""))
+        if network not in ddaddresslib.PROVED:
+            raise ValueError(f"a coin key is published for {', '.join(ddaddresslib.PROVED)} only")
+        try:
+            key, sig = bytes.fromhex(str(dd.get("key", ""))), bytes.fromhex(str(dd.get("sig", "")))
+        except ValueError:
+            raise ValueError("a DigiDollar key and its proof are hex") from None
+        if not ddaddresslib.proof_ok(network, our_hash, key, sig):
+            raise ValueError("your DigiDollar key's proof does not check, so nothing was published")
+        if network in chains and hash160(key) != chains[network]:
+            return {}
+        return {network: (key, sig)}
+
+    def _dd_keys_wanted(pubkey: str) -> set[str]:
+        """The real chains whose coin key this account's announcement should carry, with its proof (2026-11-08): each
+        one it registered a coin key for that is its published address's own, so the Wallet that registered it can
+        always make the proof, and an announcement without it is out of date (`/account`'s `announced`)."""
+        hashes = _account_chain_hashes(pubkey)
+        out = set()
+        for chain in _account_chains():
+            if chain.network not in ddaddresslib.PROVED or chain.network not in hashes:
+                continue
+            key = _coin_pubkey(pubkey, chain)
+            if len(key) == 33 and hash160(key) == hashes[chain.network]:
+                out.add(chain.network)
+        return out
 
     @app.post("/account/announce")
     def account_announce(request: Request, payload: Any = Body(None)):

@@ -307,6 +307,38 @@ users interact - including the admin panel", and "if things are getting chosen c
   that opens as the website (+2).
 - **For the operator:** please merge into `main`. On an arcade with DigiDollar, add the module (Admin -> Edition &
   modules) for it to show in either wallet.
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/dd-name-mainnet` (on `main` 17c3f88d) · an @name pays a mainnet DigiDollar: a protocol addition
+
+SadFrog sent 1 DigiDollar to `@apple` on DigiByte mainnet and got "an @name's mainnet key is not on the name chain",
+and asked for the protocol so names resolve on mainnet too. A `DD...` address needs the payee's public key; the name
+chain shows only the test-coin key (coin type 1, from the name's claim), never the real chains' (coin type 3).
+- **Protocol (other arcades, please read):** the key announcement (the account's on-chain profile) gets one more
+  section, last, so older readers stop before it and lose nothing: `ANNOUNCE_TAG_DD_KEY = 0x09`, then the network's
+  name length and name (`dgb`), the 33-byte compressed coin key, and a 64-byte BIP-340 signature by that key over
+  `sha256("DogecoinArcade DigiDollar key\n" || network || "\n" || hash160(the name's address) || key)`
+  (`messaging/envelope.py`, `ddaddress.proof_message`). The tag string is protocol: it keeps the DogecoinArcade name on
+  every face. No new message type.
+- **Reading it** (`ddaddress.proved`, `/lite/api/ddaddress` on `dgb`): a record counts only when (1) its proof checks
+  for that network, name address and key, (2) the announcement transaction has an input signed SIGHASH_ALL by the name's
+  own address (read with `getrawtransaction`), and (3) the key hashes to the `dgb` address the same announcement
+  published under `ANNOUNCE_TAG_CHAIN`, when it published one. Failing records are passed over; an older one that holds
+  still counts. With none: "@name hasn't published a mainnet DigiDollar address yet: ask them for their DigiDollar
+  address (DD...)". `dgbtest` resolves from the claim exactly as before.
+- **Writing it:** `messaging.js` `publishAboutMe` adds `{network, key, sig}` from `coins.ddKeyProof` whenever the
+  account has a DigiByte mainnet wallet, so every announce and profile publish carries it. `/account/profile` and
+  `/account/announce` check the proof (400 if it fails) and leave out a key that is not the account's `dgb` address.
+  `/account`'s `announced` is false while the newest announcement lacks it (as for the Dogecoin address), so the page's
+  usual check republishes once on the name chain.
+- **Store:** `key_announcement.dd_keys` (JSON, a migration), filled by the scanner as read, unproved;
+  `Store.dd_key_records`.
+- **Untouched:** `_dd_send` and the `ddmainnet` gate, `wallet.js`; `coins.js` gains one function at its end. The
+  node's own announcement (`/publish-key`) does not carry a key yet.
+- **Tests:** `tests/test_dd_name_mainnet.py` (new: proved record → the right `DD...`; wrong signature, someone else's
+  key, a record not sent by the name's address, a key not its published address all refused; no record gives the plain
+  message; test chains unchanged) and `test_lite_schnorr_browser.py` (+1, Firefox: the browser's proof checks in
+  Python, both key parities). Docs: `docs/arcade-lite/DIGIDOLLAR.md`, *Paying an @name*.
+- **For the operator:** please merge into `main`. Nothing to set on a node, and nothing to rescan: no announcement
+  carries the section before this, and accounts republish by themselves once their arcade runs it.
 
 ### 2026-11-08 · the operator's side (Claude) · merged PRs #113 and #114 onto master
 
