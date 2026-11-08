@@ -1584,9 +1584,11 @@ class Walker:
                     if e.body is not None:
                         new.append((rid, f"{tx.txid}i{f['n']}", e.content_type or b"", e.body, 1))
                 landed[rid] = (k, self.owner_of(spk))
+            seen = {c[0] for c in carried}                           # a set: a batch tx moves thousands (2026-11-08)
             for f in floating:                                       # old ones gone to the fee: carried, not landed
-                if f["old"] and not any(c[0] == f["rid"] for c in carried):
+                if f["old"] and f["rid"] not in seen:
                     carried.append((f["rid"], f["offset"], False, f["was"]))
+                    seen.add(f["rid"])
             self._tokens(w, h, tx, new, carried, landed)
             self._names(w, h, new)
 
