@@ -106,6 +106,7 @@ def test_the_pad_inscribes_with_its_own_key_and_sends_the_piece_on(dgb, tmp_path
     ords.on[reveal_txid] = {0: [{"id": got["iid"], "offset": 0}]}
     guard = (lambda a: a == pad_address, ords)
     funding.GUARDS.append(guard)
+    funding.GUARD_BY_NET["dgb"] = ords                  # named by its chain: a DigiByte "D" is Dogecoin's byte
     try:
         with contextlib.closing(index.open()) as db:
             assert (reveal_txid, 0) in {(u["txid"], u["vout"]) for u in utxos.unspent(db, pad_address)}
@@ -113,6 +114,7 @@ def test_the_pad_inscribes_with_its_own_key_and_sends_the_piece_on(dgb, tmp_path
         sent = env.deliver(got["iid"], got["outpoint"], got["value"], buyer)
     finally:
         funding.GUARDS.remove(guard)
+        funding.GUARD_BY_NET.pop("dgb", None)
     tx = rpc.call("getrawtransaction", sent, True)
     assert (tx["vin"][0]["txid"], tx["vin"][0]["vout"]) == (reveal_txid, 0), "the inscribed coin is input 0"
     assert tx["vout"][0]["scriptPubKey"]["hex"] == funding.p2pkh_script(buyer).hex()
