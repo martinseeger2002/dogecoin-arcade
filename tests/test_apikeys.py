@@ -207,3 +207,20 @@ def test_a_key_that_reads_only_runs_the_console_lines_that_read_and_no_others(ap
     assert _run(app, both, "readfeed").status_code == 200
     assert _run(app, both, "post hello").status_code == 403
     assert _run(app, both, "getbalances").status_code == 403
+
+
+#: The console commands that only read (2026-11-08, on PR #113): a key made to read only runs these and no others. A
+#: command is a change unless it says `writes=False` by being here too, so one added without a thought fails below.
+READS_ONLY = {
+    "checkmodule", "checktheme", "getbalances", "getbook", "getmeshinfo", "getnodeinfo", "getpair", "help", "listapps",
+    "listarcades", "listchains", "listconversations", "listdoginals", "listmining", "listmodules", "listthemes",
+    "listtokens", "listtransactions", "listunspent", "mining", "readfeed", "readposts", "sharedthemes", "whoami",
+}
+
+
+def test_every_console_command_says_whether_a_read_only_key_may_run_it():
+    from arcade.lite import commands as cmdlib
+    reads = {name for name, cmd in cmdlib.COMMANDS.items() if not cmd.writes}
+    assert reads == READS_ONLY, (
+        f"read-only now but not listed: {sorted(reads - READS_ONLY)}; listed but now a change: {sorted(READS_ONLY - reads)}"
+        " -- a new command that changes anything takes writes=True; one that only reads is added to READS_ONLY")
