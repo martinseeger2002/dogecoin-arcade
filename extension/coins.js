@@ -1004,6 +1004,7 @@ export async function verifyOffer(offer, keys) {
   // order, and is said as a payment of dollars to its DigiDollar address, or as the signer's own.
   const ddVersion = DD_VERSIONS[keys.network || offer.chain];
   const ddAmounts = ddVersion ? ddRecordAmounts(tx.outputs) : null;
+  const vault = ddVersion ? await ddMintVault(tx.outputs, keys) : null;
   let ddAt = 0, ddOwn = null;
   for (const out of tx.outputs) {
     paid += out.value;
@@ -1028,6 +1029,14 @@ export async function verifyOffer(offer, keys) {
       if (!ddOwn) ddOwn = (await tweaked(keys.pubkey.slice(1))).key;
       const key = script.slice(2, 34), cents = ddAmounts[ddAt++];
       pays.push({to: await ddAddress(keys.network || offer.chain, key), dd: cents, value: 0, mine: SAME(key, ddOwn)});
+    } else if (vault && out.value > 0n && script.length === 34 && script[0] === 0x51 && script[1] === 0x20) {
+      // A mint's collateral: only into this key's own vault, rebuilt from the record (ddMintVault), and said as that.
+      if (!SAME(script.slice(2), vault.key)) {
+        throw new Error("this mint locks its DGB in a Taproot output that is not your own vault, so somebody else could "
+          + "take it. Nothing was signed.");
+      }
+      pays.push({to: `your DigiDollar vault, locked until block ${vault.lock.toLocaleString("en-US")}`,
+                 value: Number(out.value), mine: false, vault: true});
     } else if (script.length === 34 && script[0] === 0x51 && script[1] === 0x20) {
       // A Taproot (v1) output (2026-11-05 review: a DigiDollar vault read as "34 bytes written to the chain"): said as
       // a payment, with its address where this key's hrp is known, else its key's first characters.
@@ -1383,6 +1392,42 @@ function readScriptNum(bytes) {
   let n = 0n;
   for (let i = bytes.length - 1; i >= 0; i--) n = (n << 8n) | BigInt(i === bytes.length - 1 ? bytes[i] & 0x7f : bytes[i]);
   return bytes.length && bytes[bytes.length - 1] & 0x80 ? -n : n;
+}
+
+//: A DigiDollar vault's opcodes and its internal key, unspendable by anybody (arcade/ddlib/taproot.py, DigiByte Core
+//: scripts.h COLLATERAL_NUMS_POINT_BYTES).
+const OP_DIGIDOLLAR = 0xbb, OP_DDVERIFY = 0xbc, OP_CHECKCOLLATERAL = 0xbe;
+const DD_NUMS = unhex("50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0");
+
+/** `CScript << int64_t`: OP_1 to OP_16 where they fit, else the number as data (taproot.push_int). */
+const pushInt = (n) => (n >= 1 && n <= 16 ? new Uint8Array([0x50 + n]) : pushData(scriptNum(n)));
+
+/** A mint's vault, read from its own "DD" record -- {key, lock} -- or null for a transaction that is not a mint
+ *  (2026-11-08, security review: a mint's collateral was said as a payment to some dgb1p... address, so a module or an
+ *  arcade could have sent it to its own Taproot key and the review read like any mint's). The record names the vault's
+ *  owner, amount and lock; the vault is rebuilt here from them as the module builds it (module.py _leaves, mint), and a
+ *  record naming any owner but this key is refused. */
+async function ddMintVault(outputs, keys) {
+  for (const out of outputs) {
+    if (!out.script.length || out.script[0] !== 0x6a) continue;
+    const items = scriptPushes(out.script.slice(1));
+    if (!items || items.length < 2 || items[0].length !== 2 || items[0][0] !== 0x44 || items[0][1] !== 0x44) continue;
+    if (Number(readScriptNum(items[1])) !== 1) return null;
+    const [centsAt, lockAt, , owner] = items.slice(2);
+    if (!owner || owner.length !== 32 || !centsAt || !lockAt) throw new Error("this mint's record does not read. Nothing was signed.");
+    if (!SAME(owner, keys.pubkey.slice(1, 33))) {
+      throw new Error("this mint's vault would be redeemed by another key, not yours. Nothing was signed.");
+    }
+    const cents = Number(readScriptNum(centsAt)), lock = Number(readScriptNum(lockAt));
+    const dd = pushData(scriptNum(cents)), end = join([new Uint8Array([OP_DDVERIFY]), pushData(owner), new Uint8Array([0xac])]);
+    const normal = join([pushInt(lock), new Uint8Array([0xb1, 0x75, OP_DIGIDOLLAR]), dd, end]);
+    const emergency = join([pushInt(lock), new Uint8Array([0xb1, 0x75]), pushData(scriptNum(100)),
+                            new Uint8Array([OP_CHECKCOLLATERAL, 0x91, 0x69, OP_DIGIDOLLAR]), dd, end]);
+    const a = await leafHash(normal), b = await leafHash(emergency);
+    const root = await tagged("TapBranch", lessThan(a, b) ? join([a, b]) : join([b, a]));
+    return {key: (await tweaked(DD_NUMS, root)).key, lock};
+  }
+  return null;
 }
 
 /** The cents a DigiDollar transaction's record gives its zero-value Taproot outputs, in order, or null. */
