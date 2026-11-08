@@ -7500,15 +7500,16 @@ def create_app(state: AppState) -> FastAPI:
 
     def _read_later(exc: Exception) -> bool:
         """A chain read that failed for now, not for good: the chain busy with other reads, or its node (here, or
-        borrowed over the mesh) too slow to answer. Not one whose transaction the chain does not have, or whose
-        envelope says no content (ValueError)."""
+        borrowed over the mesh: "the sharing arcade said: busy", "did not answer just now", "being checked") too slow
+        or too busy to answer. Not one whose transaction the chain does not have, or whose envelope says no content
+        (ValueError)."""
         from .. import doginals as D
         if isinstance(exc, ValueError):
             return False
         said = str(exc).lower()
         if "timed out" in said or "timeout" in said or isinstance(exc, (TimeoutError, ConnectionError)):
             return True
-        return isinstance(exc, D.Unknown) and "busy" in said
+        return isinstance(exc, D.Unknown) and any(w in said for w in ("busy", "did not answer", "being checked"))
 
     def _ord_delegate(net: str, inscription: str) -> dict | None:
         """The delegate this arcade's own ord index of `net` says an inscription names (DoginalIndex.delegate, with the
