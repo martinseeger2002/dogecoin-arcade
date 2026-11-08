@@ -88,6 +88,17 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/arcadecore-names` (on `main` 8e4430f8) · ArcadeCore: the window's last ARCADE Lite names
+
+Found while re-recording the walkthrough videos for ArcadeCore: the window still said ARCADE Lite in a few places.
+- `arcade/lite/templates/lite.html`: Help -> "About ArcadeCore", the About box, the node window's title
+  ("ArcadeCore: node window") and the console's welcome.
+- `arcade/modules.py`: the core module "Your arcade" says "the ArcadeCore window".
+- `arcade/lite/commands.py`, `arcade/lite/web.py`: two messages say ArcadeCore instead of the Lite window.
+- Text only: the edition names (`full`, `lite`), settings, URLs (`/lite`) and the `X-Arcade-Lite` header are unchanged.
+- **Tests:** test_modules, test_lite*, test_module*: 106 passed, 16 skipped.
+- **For the operator:** please merge into `main`. Nothing to set on a node.
+
 ### 2026-11-07 · the operator's side (Claude) · merged PRs #98 #100 #101 #102 #103 #104 #105 #106 onto master
 
 PR #97 (nodes globe) is held for the operator, because it lists members' cities. Its log entries came in with #106 and were taken out until it lands.
