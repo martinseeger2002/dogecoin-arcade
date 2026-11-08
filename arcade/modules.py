@@ -180,8 +180,8 @@ _MODULES = (
            jobs=("ord-index", "sites-search", "inscription-history")),
     Module("collections", "app", "Collections and Creator", "Collections, mintpads, the launchpad and the Creator "
            "tab.",
-           routes=("/collections", "/mintpad", "/launch", "/launches", "/create", "/inscriptions/collection",
-                   "/account/mintpad", "/r/collection", "/r/collection-item", "/r/collections", "/r/mintpad",
+           routes=("/collections", "/mintpad", "/launch", "/launches", "/bytelings", "/ddpad", "/create",
+                   "/inscriptions/collection", "/account/mintpad", "/r/collection", "/r/collection-item", "/r/collections", "/r/mintpad",
                    "/admin/api/known-collections"),
            jobs=("known-collections", "scan-collections"), needs=("ords",), group="creating"),
     Module("tokens", "app", "Tokens", "The arcade's own tokens, and DRC-20 / PRC-20 balances.",

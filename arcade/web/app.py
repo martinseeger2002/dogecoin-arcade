@@ -1321,6 +1321,15 @@ def create_app(state: AppState) -> FastAPI:
         keep = ("public, max-age=31536000, immutable" if request.query_params.get("v") == mark else "no-store")
         return Response(body, media_type=kind, headers={"Cache-Control": keep})
 
+    def _page_look() -> str:
+        """The look pages open in: the arcade's (arcade/modules.py), except that a desktop look nobody chose follows
+        DESK_DEFAULT, the shipped default ("" in the tests' run, which open pages as the website)."""
+        settings = state.settings()
+        got = modulelib.look(settings)
+        if got in modulelib.DESKTOP_LOOKS and settings.get(modulelib.LOOK_SETTING) not in modulelib.LOOKS:
+            return DESK_DEFAULT if DESK_DEFAULT in modulelib.DESKTOP_LOOKS else "web"
+        return got
+
     def render(request: Request, template: str, **context: Any) -> HTMLResponse:
         """Render a page, never from a cache.
 
@@ -1375,9 +1384,8 @@ def create_app(state: AppState) -> FastAPI:
             "offers_waiting": 0 if _account_view(request) else _offers_waiting(),
             # The look a computer's browser opens in until its reader picks one (base.html, desktop.html, lite.html):
             # the arcade's look (arcade/modules.py), and the desktop's skin when that is not a desktop look
-            "look": modulelib.look(state.settings()),
-            "desk_default": modulelib.look(state.settings()) if modulelib.look(state.settings()) in modulelib.DESKTOP_LOOKS
-                            else DESK_DEFAULT,
+            "look": _page_look(),
+            "desk_default": _page_look() if _page_look() in modulelib.DESKTOP_LOOKS else DESK_DEFAULT,
             "phone_default": PHONE_DEFAULT,
             # What runs here (arcade/modules.py): base.html leaves out the desktop and the home screen when they are off
             "modules_on": modulelib.enabled(state.settings()),
@@ -37188,15 +37196,15 @@ def create_app(state: AppState) -> FastAPI:
     # Restoring without an arcade (recover_web.py, 2026-11-07): the offline /recover page and the backup page's renderer.
     from . import recover_web
     recover_web.register(app, state, versioned=_versioned)
-    # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
-    from . import modules_web
-    modules_web.register(app, state, admin_check=_admin_check, signed_in=signed_in)
     # The DigiDollar-test launchpad (ddpadweb.py, 2026-11-07: the Bytelings, "a launch pad that only takes digidollar
     # test"): /bytelings, paid with the Wallet's own DigiDollar send.
     from . import ddpadweb
     ddpadweb.register(app, state, signed_in=signed_in, signed_in_account=_signed_in_account, account_chain=_account_chain,
                       account_chains=_account_chains, account_address=_account_address, dd_chain=_dd_chain,
                       dd_owner=_dd_owner, dd_send=_dd_send, offers=_offers, render=render)
+    # Last: every route is in, and each one whose module is switched off here is taken out (arcade/modules.py).
+    from . import modules_web
+    modules_web.register(app, state, admin_check=_admin_check, signed_in=signed_in)
     # And outermost: a keyed call is checked before the door sees it.
     apikeys_web.guard(app, state)
     return app
