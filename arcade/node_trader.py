@@ -104,6 +104,13 @@ def observe(rpc: Any, lock: dict | None, my_addresses: set[str],
     out = tx["vout"][int(lock["vout"])]
     seen = T.LockSeen(lock["txid"], int(lock["vout"]), round(float(out["value"]) * COIN),
                       out["scriptPubKey"]["hex"], int(tx.get("confirmations", 0)))
+    # Not final while it can still be replaced (BIP 125, 2026-11-08): a lock in the mempool whose inputs say so may be
+    # swapped for one that pays its locker back. trade.next_step waits for the other side's to confirm.
+    seen.replaceable = not seen.confirmations and any(
+        int(v.get("sequence", 0xFFFFFFFF)) < 0xFFFFFFFE for v in tx.get("vin") or [])
+    lent = lent_rpc(rpc)
+    if lent is not None and seen.confirmations > 0:
+        seen.confirmations = proved_depth(lent, lock["txid"], str(tx.get("blockhash") or ""), seen.confirmations)
     if rpc.call("gettxout", lock["txid"], int(lock["vout"]), True) is not None:
         return seen
     spender = _spender(rpc, lock, scanned if scanned is not None else {})
@@ -127,6 +134,37 @@ def swap_big(state: Any) -> dict:
         except (TypeError, ValueError):
             out[network] = default
     return out
+
+
+#: The setting that makes every swap wait for a confirmation, whatever its value and chain (2026-11-08, security
+#: review): Admin -> Lock-script swaps. Off by default (zero-conf below the lines, SadFrog 2026-10-17).
+CONFIRM_ALL = "swap_confirm_all"
+
+
+def borrowed(chain: Any) -> bool:
+    """Whether this arcade reads `chain` from another arcade's Core: set to borrow, or borrowing while its own Core
+    catches up (core_catchup)."""
+    if getattr(chain, "borrowed", False):
+        return True
+    try:
+        from . import core_catchup
+        return bool(core_catchup.borrowing(chain))
+    except Exception:                                      # noqa: BLE001 -- no mesh: its own Core
+        return False
+
+
+def swap_lines(state: Any) -> dict:
+    """The lines a swap waits by here: the operator's (swap_big), except where nothing below a confirmation is safe
+    (2026-11-08, security review). On a chain this arcade borrows, a lock in the mempool is the lender's word alone --
+    a lender working with the other side could show one that is not there -- so every swap on it waits for one; and
+    with CONFIRM_ALL on, every swap on every chain does. A line of one satoshi: any coin leg is at or above it."""
+    lines = swap_big(state)
+    if state.setting(CONFIRM_ALL, False):
+        return {network: 1 for network in lines}
+    for chain in list(getattr(state, "all_chains", ()) or ()):
+        if chain.network in lines and borrowed(chain):
+            lines[chain.network] = 1
+    return lines
 
 
 #: The most one delegated order may hand this node, per mainnet network, in sats (2026-10-25, SadFrog: "label it
@@ -269,6 +307,44 @@ def fee_terms_fit(proposed: T.Leg, stood: dict) -> bool:
     # drops the field -- the lock then pays the lister's operator alone.
     return (proposed.fee_bps == int(stood.get("fee_bps") or 0) and proposed.fee_to == str(stood.get("fee_to") or "")
             and proposed.fee_share_to in ("", str(stood.get("fee_share_to") or "")))
+
+
+def lent_rpc(rpc: Any) -> Any:
+    """The BorrowedRpc behind `rpc` when its reads go to another arcade's Core, else None."""
+    from .mesh.coreshare import BorrowedRpc
+    if isinstance(rpc, BorrowedRpc):
+        return rpc
+    inner = getattr(rpc, "_borrowed", None)              # core_catchup.CatchingUpRpc: reads borrowed while behind
+    return inner if isinstance(inner, BorrowedRpc) else None
+
+
+#: How many linked lenders are asked a lock's depth.
+DEPTH_LENDERS = 3
+
+
+def proved_depth(lent: Any, txid: str, block_hash: str, said: int) -> int:
+    """A lock's confirmations on a borrowed chain (2026-11-08, security review: the lender's count was taken as it
+    came). 0 unless the lock is in the block the lender names, that block fetched raw and proved here (its merkle
+    root, and its work where the chain's is checked: BorrowedRpc._check); then the lowest count among the linked
+    lenders asked, and 0 when one of them does not know the block. One lender alone can still overstate the depth
+    of a real block; a second one linked is what checks it (web/docs/exchange-safety.md)."""
+    if not block_hash or said <= 0:
+        return 0
+    try:
+        block = lent.call("getblock", block_hash, 1)
+    except Exception:                                      # noqa: BLE001 -- unproved: not confirmed
+        return 0
+    if txid not in (block.get("tx") or []):
+        return 0
+    depth = said
+    from .mesh import coreshare
+    for peer, _lanes in coreshare.lenders(lent.net)[:DEPTH_LENDERS]:
+        try:
+            header = coreshare.lent_rpc(peer, lent._params).call("getblockheader", block_hash, True)
+            depth = min(depth, int(header.get("confirmations", 0)))
+        except Exception:                                  # noqa: BLE001 -- a lender that does not know it
+            return 0
+    return max(depth, 0)
 
 
 def asset_seen(seen: T.LockSeen | None, leg: T.Leg, lock_address: str, index: Any,
@@ -610,7 +686,7 @@ class NodeTrader:
     def need(self, give: T.Leg, get: T.Leg) -> int:
         """Confirmations this node waits for on a swap: the operator's lines (swap_big), and never under
         OWN_REAL_COINS when what this node gives (`give`) is on a real-coin chain."""
-        need = T.confirmations_for(give, get, swap_big(self.state))
+        need = T.confirmations_for(give, get, swap_lines(self.state))
         if give.tier() == "mainnet":
             need = max(need, self.OWN_REAL_COINS)
         return need

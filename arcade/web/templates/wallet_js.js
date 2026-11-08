@@ -3315,6 +3315,10 @@ export function confirmationsFor(give, get, big = TRADE.BIG) {
   return need;
 }
 
+/** The other side's lock is in the mempool and can still be replaced (BIP 125; trade._unsettled, 2026-11-08): waited
+ *  out until it confirms, whatever `need` says. */
+const unsettled = (seen) => !!(seen && seen.replaceable && !seen.confirmations);
+
 /** What a trade waits for: its stored `need` (or confirmationsFor), never under the asset rule (trade.next_step). */
 function tradeNeed(trade) {
   const need = trade.need || confirmationsFor(trade.give, trade.get);
@@ -3512,7 +3516,7 @@ export async function nextTradeStep(trade, facts, now) {
   }
   if (trade.role === "initiator") {
     if (!mine) return ["lock", "I lock first"];
-    if (!theirs || theirs.confirmations < need) {
+    if (!theirs || theirs.confirmations < need || unsettled(theirs)) {
       if (now >= myTime) return ["refund", "the other side never locked; my lock time has passed"];
       return ["wait", "waiting for the other lock to confirm"];
     }
@@ -3521,7 +3525,7 @@ export async function nextTradeStep(trade, facts, now) {
     if (now >= myTime) return ["refund", "too late to claim safely; my lock time has passed"];
     return ["wait", "too close to their lock time to claim safely; waiting to refund"];
   }
-  if (!theirs || theirs.confirmations < need) {
+  if (!theirs || theirs.confirmations < need || unsettled(theirs)) {
     if (mine && now >= myTime) return ["refund", "my lock time has passed"];
     return ["wait", "waiting for the initiator's lock to confirm"];
   }

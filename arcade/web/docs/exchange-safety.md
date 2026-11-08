@@ -197,12 +197,34 @@ The operator's sends from the node key (Admin, on a borrowed chain or a Core wit
 Kotia's `nTime`, both in the bytes and in each digest. The test checks the digest against a transaction
 that Kotia's own Core signed.
 
+## Rule 9: a swap acts only on a lock that cannot be taken back
+
+*Code:* `node_trader.swap_lines`, `node_trader.observe` / `proved_depth`, `trade._unsettled` (and `unsettled` in
+wallet_js.js). *Test:* `test_swap_settled.py`.
+
+Added 2026-11-08, after an outside security review.
+
+* **A borrowed chain needs a confirmation for every swap.** A lock in a lender's mempool is the lender's word alone.
+  A lender working with the other side of a trade could show a lock that was never broadcast. So on a chain this
+  arcade borrows, the line is one satoshi.
+* **A borrowed confirmation is proved.** The lock must be in the block the lender names. That block is fetched raw
+  and proved here (its merkle root, and its work where the chain's is checked). The depth is the lowest count among
+  the linked lenders, up to three, and a lender that does not know the block makes it 0.
+  *Left open:* with one lender, it can still overstate the depth of a real block. DigiByte's borrowed blocks get no
+  work check (multi-algo), so there the second lender is the check. Run the chain, or link two lenders, for big
+  swaps.
+* **A replaceable lock is waited out.** The other side's lock, in the mempool and signalling BIP 125, may be
+  replaced by one paying its locker back. Neither side acts on it until it confirms.
+* **Admin -> Lock-script swaps, "Every swap waits for 1 confirmation"** (`swap_confirm_all`) makes every swap on
+  every chain wait for one.
+
 ## Known and left as decided
 
 * **Zero-confirmation swaps** below the big-swap line (operator, 2026-10-17). Either side can double-spend
   an unconfirmed lock, up to that line. The node's own trades are protected (`OWN_REAL_COINS`); tab-to-tab
-  swaps are not. To close it: the initiator claims only against a confirmed lock, and locks that signal
-  RBF are refused.
+  swaps are not. Since 2026-11-08 (Rule 9): a lock that signals RBF is waited out, a borrowed chain never acts
+  at zero, and the operator can make every swap wait (`swap_confirm_all`). Without RBF signalling, a double
+  spend below the line is still possible.
 * **Bids** are ALL|ANYONECANPAY. Misusing a stored bid needs the node's database *and* the seller, and
   even then the ledger refuses the transfer. The buyer would pay for nothing, which is not a theft by a
   third party.
@@ -230,6 +252,7 @@ that Kotia's own Core signed.
    `NONE`, `LOCK_SECONDS`, `scripthash_version`.
 2. Run:
    `tests/test_account_list.py tests/test_doginal_market.py tests/test_standing.py tests/test_trade.py
-   tests/test_trade_tab.py tests/test_kotia.py tests/test_wojakcoin.py tests/test_swap.py`.
+   tests/test_trade_tab.py tests/test_kotia.py tests/test_wojakcoin.py tests/test_swap.py
+   tests/test_swap_settled.py`.
 3. If a rule above no longer holds, say so in COLLAB-NOTES.md before you push. Don't leave it for the
    other side to find.
