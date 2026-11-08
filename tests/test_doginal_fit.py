@@ -76,8 +76,11 @@ def test_a_piece_its_chain_is_still_reading_says_so_and_is_asked_for_again(clien
     assert note.headers["cache-control"] == "no-store" and "sandbox" in note.headers["content-security-policy"]
     last = client.get(f"/content/{ID}/fit?tries=6")
     assert "Not read yet" in last.text and "<script" not in last.text, "a few tries, then it stops asking"
-    monkeypatch.setattr(funding, "GUARD", _Slow(TimeoutError("timed out")))
-    assert client.get(f"/content/{ID}").status_code == 503
+    for now in (TimeoutError("timed out"), doginals.Unknown("not on this chain: Bellscoin: the arcades sharing it did "
+                "not answer just now"), doginals.Unknown("not on this chain: no arcade sharing bel answered "
+                "(5631a42e29e0: the sharing arcade said: busy)")):
+        monkeypatch.setattr(funding, "GUARD", _Slow(now))
+        assert client.get(f"/content/{ID}").status_code == 503, now
 
 
 def test_a_piece_no_chain_has_gets_a_note_not_json(client, monkeypatch):
