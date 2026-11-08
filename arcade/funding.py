@@ -173,16 +173,22 @@ def ord_guard(address: str, params=None):
     """The guard an ord send or listing from `address` is checked by: the one that watches it, else Dogecoin's GUARD --
     never Dogecoin's for an address of another ord chain (`params`: Pepecoin mainnet, Bellscoin ...), whose coins it
     has never read."""
-    got = guard_for(address)
+    net = getattr(params, "name", None)
+    got = guard_for(address, net)
     if got is not None:
         return got
     from .ord_chains import MOVED
-    net = getattr(params, "name", None)
     return None if net in MOVED and net != "doge" else GUARD
 
 
-def guard_for(address: str):
-    """The inscription guard that watches `address`, or None."""
+def guard_for(address: str, network: str | None = None):
+    """The inscription guard that watches `address`, or None. Named by its chain where the caller knows it: a DigiByte
+    "D" address is Dogecoin's byte, so the address alone would pick Dogecoin's guard (web/docs/exchange-safety.md, the
+    DigiByte branch: "never pick the guard by address alone")."""
+    if network is not None and network in GUARD_BY_NET:
+        return GUARD_BY_NET[network]
+    if network not in (None, "doge") and GUARD_APPLIES(address):
+        return None                     # another chain's "D" address: never Dogecoin's to judge
     if GUARD is not None and GUARD_APPLIES(address):
         return GUARD
     for applies, guard in GUARDS:
@@ -197,7 +203,7 @@ NOTE_COINS: set = set()
 
 
 def choose(db, address: str, target: int, exclude=frozenset(),
-           extra: list | None = None) -> list[dict]:
+           extra: list | None = None, network: str | None = None) -> list[dict]:
     """Coins for `address` worth at least `target`.
 
     Smallest sufficient first, so a wallet that has been split does not
@@ -216,7 +222,7 @@ def choose(db, address: str, target: int, exclude=frozenset(),
     listed = utxos.unspent(db, address)
     available = [u for u in listed
                  if (u["txid"], u["vout"]) not in exclude]
-    guard = guard_for(address)       # coins carrying an inscription stay put (arcade/doginals.py): Dogecoin and PEP mainnet
+    guard = guard_for(address, network)  # coins carrying an inscription stay put (arcade/doginals.py): Dogecoin and PEP mainnet
     if guard is not None:
         available = guard.spendable(available)
     # An `extra` coin the index also lists is the same coin twice. Once a block
@@ -402,10 +408,10 @@ def build(db, params: Params, address: str, payload_outputs: list,
     # over. The guess picks the coins; the fee is recomputed once their count
     # is known. Told to the caller as the number it actually is.
     guess = price(1, payload_outputs, rate, change=True, params=params)
-    chosen = choose(db, address, spend + guess, exclude=exclude, extra=extra)
+    chosen = choose(db, address, spend + guess, exclude=exclude, extra=extra, network=getattr(params, "name", None))
     fee = price(len(chosen), payload_outputs, rate, change=True, params=params)
     if sum(c["value"] for c in chosen) < spend + fee:
-        chosen = choose(db, address, spend + fee, exclude=exclude, extra=extra)
+        chosen = choose(db, address, spend + fee, exclude=exclude, extra=extra, network=getattr(params, "name", None))
         fee = price(len(chosen), payload_outputs, rate, change=True, params=params)
 
     total = sum(c["value"] for c in chosen)
@@ -1152,10 +1158,10 @@ def _doginal_first(db, address: str, coin: dict, inscription: str, first: bytes,
     keep_out = set(exclude) | {(coin["txid"], int(coin["vout"]))}
     rate = fees.rate_for(params, rate)              # this chain's own minimum
     fee = price(2, paid, rate, change=True, params=params)
-    fees_in = choose(db, address, owed + fee, exclude=keep_out, extra=extra)
+    fees_in = choose(db, address, owed + fee, exclude=keep_out, extra=extra, network=getattr(params, "name", None))
     fee = price(1 + len(fees_in), paid, rate, change=True, params=params)
     if sum(c["value"] for c in fees_in) < owed + fee:
-        fees_in = choose(db, address, owed + fee, exclude=keep_out, extra=extra)
+        fees_in = choose(db, address, owed + fee, exclude=keep_out, extra=extra, network=getattr(params, "name", None))
         fee = price(1 + len(fees_in), paid, rate, change=True, params=params)
     # The coin as a listing row holds it ({txid, vout, value}) names no address: it is the sender's own, and the offer
     # the tab signs says whose each input is (Unsigned.as_json; "Take it back" on the Doginals tab failed without it).

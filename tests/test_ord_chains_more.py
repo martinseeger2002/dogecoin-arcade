@@ -111,9 +111,28 @@ def test_a_send_and_a_purchase_are_sat_exact_at_the_chains_own_rate(net, tmp_pat
 def test_an_ord_of_another_chain_is_never_checked_by_dogecoins_guard(net, tmp_path, monkeypatch):
     seller, buyer = _coins(tmp_path, monkeypatch, net)
     monkeypatch.setattr(funding, "GUARDS", [])                     # this node reads none of that chain's ords
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {"doge": funding.GUARD})
     with pytest.raises(funding.FundingError, match="not checked on this chain"):
         funding.build_doginal_send(None, NETWORKS[net], seller, {"txid": INS_TX, "vout": 0, "value": 100_000},
                                    INSCRIPTION, buyer, rate=fees.MIN_FEE_PER_KB)
+
+
+
+def test_a_digibyte_d_address_is_checked_by_digibytes_guard_never_dogecoins(monkeypatch):
+    """DigiByte's "D" addresses are Dogecoin's byte (web/docs/exchange-safety.md, the DigiByte branch): named by its
+    chain, a DigiByte coin is judged by DigiByte's ord index, and by none where this arcade reads no DigiByte ords."""
+    dgb_address = b58check_encode(NETWORKS["dgb"].pubkeyhash_version, b"\x11" * 20)
+    doge, dgb = object(), object()
+    monkeypatch.setattr(funding, "GUARD", doge)
+    monkeypatch.setattr(funding, "GUARDS", [(lambda a: a.startswith("D"), dgb)])
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {"doge": doge, "dgb": dgb})
+    assert funding.guard_for(dgb_address) is doge, "by the address alone it is Dogecoin's: why the chain is named"
+    assert funding.guard_for(dgb_address, "dgb") is dgb
+    assert funding.ord_guard(dgb_address, NETWORKS["dgb"]) is dgb
+    assert funding.guard_for(dgb_address, "doge") is doge
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {"doge": doge})
+    assert funding.guard_for(dgb_address, "dgb") is None
+    assert funding.ord_guard(dgb_address, NETWORKS["dgb"]) is None, "DigiByte ords this arcade does not read: none"
 
 
 # --- the routes -------------------------------------------------------------------------------------------------------
@@ -250,6 +269,7 @@ def test_send_list_and_buy_an_ord_on_regtest(regtest_chain, tmp_path, monkeypatc
     (tmp_path / "b").mkdir()
     guard = _guard(tmp_path / "b", {sent: [(0, inscription, 0)]})
     monkeypatch.setattr(funding, "GUARDS", [(lambda a: b58check_decode(a)[0] == version, guard)])
+    monkeypatch.setattr(funding, "GUARD_BY_NET", {net: guard})
     coin = {"txid": sent, "vout": 0, "value": 100_000}
     ask = M.build_ask(friend, coin, inscription, 7 * COIN, params)
     sig = _sign(0xF00D, bytes.fromhex(ask.digest), funding.SINGLE_ANYONECANPAY)

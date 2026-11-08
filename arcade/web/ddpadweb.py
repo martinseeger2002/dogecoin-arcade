@@ -148,11 +148,17 @@ def register(app, state, *, signed_in: Callable, signed_in_account: Callable, ac
         k = (chain.network, pay.network)
         if k not in envs:
             envs[k] = ArcadeEnv(state, pad, key, chain, pay)
+        if pad.path.exists() and not envs[k]._watched:
+            # from the first moment, so the DGB sent to fund the pad is seen (the index is never retroactive)
+            try:
+                envs[k].watch()
+            except Exception as exc:                      # noqa: BLE001 -- tried again on the next ask
+                log.info("ddpad: could not watch the pad's address yet: %s", exc)
         return envs[k]
 
     def tick_forever() -> None:
         while True:
-            time.sleep(TICK)
+            time.sleep(TICK if envs else 1)
             try:
                 if not pad.path.exists():
                     continue

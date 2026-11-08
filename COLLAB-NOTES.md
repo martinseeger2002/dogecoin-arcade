@@ -96,6 +96,61 @@ from the module's `ddreceive`, so it and the full Wallet could show different Di
   index, for DigiDollar and DigiDollar test. Send still goes through the module's `ddsend` (one send, "two front doors").
 - **Tests:** `tests/test_digidollar_wallet_browser.py` (+1, Firefox), test_digidollar*, test_lite*: 142 + 3 passed.
 - **For the operator:** please merge into `main`. Nothing to set on a node.
+### 2026-11-07 Nodes globe rebased onto current main (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+Rebased onto main `c69f944e`. The only overlap was this log. `docs/nodes-globe.html` is unchanged. `/globe` still serves that file, and Admin → Overview → Nodes globe still chooses the list. Places stay city or country. Tiers stay copper, bronze, silver, gold, and diamond. Please merge when PR #97 is clean. Nothing here signs or spends.
+
+### 2026-11-07 Darrell's globe file, copied as-is (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+`docs/nodes-globe.html` is Darrell's local page, byte for byte: chain-count tiers, 8K earth, catalog stars dated 2026-04-20, cabinets at least 56px plus 10%. `/globe` still serves that file. City or country only.
+
+### 2026-11-07 Globe cabinets stay at least 56px (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+Arcade and “you” markers no longer use the 0.25 shrink. `iconPixelHeight` uses `h = Math.max(h, 56)`, so they stay readable zoomed in and still grow toward the old 74–80px lerp when zoomed out.
+
+### 2026-11-07 Globe starts when the page is already loaded (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+`NODES` is declared before the globe boots. If `document.readyState` is already `complete`, the earth starts immediately instead of waiting for a `load` event that has already fired.
+
+### 2026-11-07 Globe legend cabinets show without JavaScript (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+The Copper through Diamond and Inactive nodes pictures in `docs/nodes-globe.html` are small data URIs in the HTML, so a file preview can draw them. When the page runs, the metal icons still switch to the full cabinet pictures. "Any tier can be shared" stays out.
+
+### 2026-11-07 Globe legend drops "Any tier can be shared" (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+That sentence is gone from `docs/nodes-globe.html` and the admin globe panel. The cabinet icons, grey Inactive nodes marker, names-only list, and the rest of the page stay.
+
+### 2026-11-07 Globe markers are the metal cabinet pictures (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+`docs/nodes-globe.html` uses the copper, bronze, silver, gold, and diamond cabinet PNGs as the sprites. Inactive nodes keep the grey factory cabinet. Diamond hue-rotates as the view turns; the metals get a light moving shine. Sprite size stays at 25%. No purple active cabinet and no subtitle under the title.
+
+### 2026-11-07 Globe labels: shared tiers, names only, no subtitle (fioridarrell fork, `cursor/add-nodes-globe-d28a`)
+Any number of members can share copper, bronze, silver, gold, or diamond. Diamond stays everyone tied for the most linked nodes. The top-left list is names only. The title has no subtitle under it. The bottom legend is Copper, Bronze, Silver, Gold, Diamond, and the grey Inactive nodes marker. City or country stays on the globe markers.
+
+### 2026-11-07 Nodes globe list and tiers (fioridarrell fork, branch `cursor/add-nodes-globe-d28a`)
+A proposal for the operator, not a mesh change. Admin → Overview → Nodes globe chooses mesh, linked, or a ticked list, and a coarse place from the known cities. `/globe` polls `/globe.json` and redraws when that choice or its membership changes. The feed is tags, city-or-country labels, active counts and tiers only: no host, IP or mesh id. Copper through gold widen with how many chains the active arcades run; diamond is whoever has the most linked nodes, and a tie shares it. The page still opens from the snapshot in `docs/nodes-globe.html` when the feed is down. Nothing here signs or spends.
+### 2026-11-07 · SadFrog's side (Claude) · branch `team/bytelings` (on `main` c69f944e) · Bytelings: the arcade's DigiByte collection and a launchpad paid in DigiDollar test
+
+SadFrog: "a digibyte ordinals collection of 100 generated pixel creatures ... on a launch pad that only takes
+digidollar test ... the main collection of the Arcade on digibyte thanking people for testing out digidollar test",
+then "100 babys that can eventually become bigger ... every 30 days gain the ability to evolve".
+
+- **The art:** `examples/bytelings/generate.py` draws 100 baby pixel monsters (32x32, about 350 bytes each) from a
+  seed as a HashLips build. Our own monsters; no other franchise's characters. The grown stages are drawn too, for
+  later drops (`--stage`). `examples/bytelings/README.md` has the plan and the to-do (evolving by burning babies, on a
+  later Bytelings site).
+- **The pad:** `arcade/ddpad.py` (its book and tick) and `arcade/web/ddpadweb.py` (`/bytelings`, `/ddpad/state`,
+  `/ddpad/picture/<n>`, `/ddpad/mint`, and a card on the Exchange's Launchpad tab). A mint holds a random piece (which
+  one is said only once paid, so nobody rerolls), the Wallet's own DigiDollar send pays $1 DigiDollar test to the pad
+  (`app.py _dd_send`, factored out of `/account/digidollar/send`, unchanged for the Wallet), and once that payment is
+  in a block the pad sends the piece to the account's DigiByte address: the inscribed coin whole as output 0,
+  `funding.build_doginal_send`. One per account, per DigiByte address and per DigiDollar address. The pad has its own
+  key, `ddpad.key` (0600, as `trade.key`), and inscribes its pieces to itself one at a time. Nothing runs unless an
+  operator loads a build (`python -m arcade.ddpad <home> load ...`); an arcade without one is unchanged.
+- **Safety (exchange-safety.md, updated):** the DigiByte rule "never pick the guard by address alone" now holds in
+  code: `funding.guard_for(address, network)`, `ord_guard` by `params.name`, and `choose(..., network=)` from `build`
+  and the ord send. Before this, a DigiByte "D" address on an arcade with Dogecoin was judged by Dogecoin's ord index.
+  Test: `test_a_digibyte_d_address_is_checked_by_digibytes_guard_never_dogecoins`.
+- **Tests:** `tests/test_ddpad.py` (hold, pay, deliver, let go, limits, the 30 days, the routes, a payment read
+  back as dollars), `tests/test_ddpad_regtest.py` (DigiByte Core 9.26.7 takes the pad's commit, reveal and delivery,
+  and the picture reads back from the chain), the safety page's list, test_digidollar*, test_web, and the Wallet's
+  DigiDollar send in Firefox.
+- **For the operator:** please merge. SadFrog's side will run the pad on node 3 once it is
+  published there (node 3 runs only published code); the 100 are inscribed meanwhile from a test node with the pad's
+  key, which then moves to node 3 with its book.
 
 ### 2026-11-07 A player's borrowed relay list is asked again after 2 minutes, not 3 hours (Claude; found with the GBC session)
 
