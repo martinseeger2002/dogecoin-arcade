@@ -41,3 +41,24 @@ def test_a_mainnet_wallet_send_waits_for_ddmainnet(client, monkeypatch):
     assert "sends are off" not in on.text, on.text
     switch.write_text(json.dumps({"on": False}))
     assert "sends are off" in asks["dgb"]().text
+
+
+def test_a_send_to_ones_own_digidollar_address_is_said_plainly(client, monkeypatch):
+    """2026-11-08: the review refused it as "not the send you typed"; the arcade says what it is before building it."""
+    from arcade import digidollar
+    app, state = client
+    _with(state, monkeypatch, "dgbtest")
+    pubkey = _sign_in(app)
+    priv, pub = SP.coin_key()
+    state.set_setting(f"address:dgbtest:{pubkey}", b58check_encode(NETWORKS["dgbtest"].pubkeyhash_version, hash160(pub)))
+    said = app.post("/account/digidollar/send", json={"chain": "dgbtest", "pubkey": pub.hex(), "amount": "5.00",
+                                                      "to": digidollar.address("dgbtest", pub)})
+    assert said.status_code == 400 and "your own DigiDollar address" in said.json()["detail"], said.text
+
+
+def test_the_wallet_holds_a_digidollar_fee_to_its_cap():
+    import re
+    from arcade.ddlib import ddtx
+    page = (pathlib.Path(__file__).resolve().parent.parent / "arcade/web/templates/my_wallet.html").read_text()
+    assert int(re.search(r"const DD_MAX_FEE = (\d+);", page).group(1)) == ddtx.MAX_FEE
+    assert "read.fee) > DD_MAX_FEE" in page

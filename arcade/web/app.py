@@ -25805,6 +25805,9 @@ def create_app(state: AppState) -> FastAPI:
         # switch, `ddmainnet`, gated its mints and sends, and the Wallet's send went out with it off.
         if ch.network == "dgb" and not _dd_mainnet_on():
             raise ValueError("mainnet DigiDollar sends are off on this arcade: its operator turns them on (ddmainnet)")
+        # Said plainly (2026-11-08): the review refused a send to oneself as "not the send you typed".
+        if str(to or "").strip() == digidollib.address(ch.network, pub):
+            raise ValueError("that is your own DigiDollar address: send to somebody else's")
         address = _account_address(account.pubkey, ch)
         index = state.token_index(ch)
         with contextlib.closing(index.open()) as db:
