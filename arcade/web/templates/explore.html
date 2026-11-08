@@ -370,7 +370,7 @@
     if (/^image\//.test(ct) || /^text\/html/.test(ct) || /svg/.test(ct)) {
       // Sandboxed, scripts only, never this page's origin (as the Wallet and Admin -> Ords show one).
       var frame = document.createElement('iframe');
-      frame.src = /^image\//.test(ct) ? src + '/fit' : src;
+      frame.src = src + '/fit';    // a picture drawn whole, a page sent on; a note, not an error's JSON, when missing
       frame.title = 'Inscription ' + x.id; frame.loading = 'lazy';
       frame.setAttribute('sandbox', 'allow-scripts'); frame.setAttribute('scrolling', 'no');
       frame.setAttribute('referrerpolicy', 'no-referrer');
