@@ -89,6 +89,42 @@ coding agent, so it is written for agents first and people second.
 ## Log (newest first)
 
 ### 2026-11-09 · the operator's side (Claude) · /globe on an installed arcade: the page ships in the package
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/security-fixes` (on `main` ce0087cd) · review follow-ups
+
+Follow-ups from two outside reviews of 8e4430f8 (the DigiByte wallet, and the whole source), checked against the code;
+one commit each, every one with a test. SadFrog will say which to deploy first.
+
+- **Sign-up checks the key and the address** (`/signup`): the account key signs a fresh challenge (the same
+  `accounts.login` /auth/login uses) and the coin key signs the address (`wallet_imports.check_proof`); wallet.js
+  signs both. "Sign out everywhere" switches the account's API keys off too (off, not deleted).
+- **A git node updates to the signed release's commit** (`update.py`): the channel's signed manifest first, then only
+  its `revision`; a repository without it yet installs nothing; a rewritten history only to a newer release.
+  *Publishing:* git nodes now wait for the signed manifest of a push, as archive nodes do.
+- **Every inscription-guard lookup names its chain** (12 calls in app.py).
+- **DigiByte P2SH payments are named** in coins.js (`P2SH_VERSION`).
+- **ddmainnet gates the Wallet's DigiDollar send** (`_dd_send`), as the module's own sends.
+- **Sign-out clears every unlocked phrase in every tab** (`forgetOpen({all: true})`).
+- **exchange-safety Rule 9**: a borrowed chain waits a proved confirmation for every swap (`swap_lines`,
+  `proved_depth`); a replaceable (BIP 125) lock is waited out (trade.next_step and nextTradeStep alike); Admin's new
+  "Every swap waits for 1 confirmation" (`swap_confirm_all`, off by default).
+- **An escrow's judge names `to`**; escrow.md's example does.
+- **cloudflared is one release held to its SHA-256.**
+- Hardening: nosniff, Referrer-Policy, HSTS over https, `no-store` on account answers, page CSP `object-src 'none';
+  base-uri 'self'`; `/.well-known/security.txt` (hello@arcade-nodes.com, or `security_contact`); an edge header counts
+  only from loopback, and sign-in/sign-up/faucet limits count each visitor; sealed wallets carry the 600,000 rounds
+  every page uses; new API keys read only for 90 days unless asked; DigiDollars read only from DigiDollar transactions
+  (0x0770), a self-send said plainly, the Wallet caps the fee at 0.5 DGB; a mint's collateral is checked as the
+  signer's own vault in the browser (`ddMintVault`); Gather leaves coins of 0.0001 DGB or less alone (DigiAssets);
+  docs on the node's wallet and on what the node keeps.
+- **Tests:** tests/signup_proof.py is how a test signs up now. Full suite on the workhorse against main: see the PR.
+  test_claim_browser's second test needs the first (it fails alone, also on main).
+- **For the operator, proposals (no code here):** (1) publish the installer's SHA-256 somewhere besides the site
+  (README, release notes); (2) sign the index bootstrap manifests with the release key, so a first install can check
+  them; (3) a script CSP (234 inline scripts in 113 templates move to nonces, report-only first), best planned
+  together since both sides edit those templates; (4) a LICENSE file; (5) DigiAssets read by the guard, then the
+  KEEP_SMALL stopgap can go.
+
+### 2026-11-09 · the operator's side (Claude) · /globe on an installed arcade: the page ships in the package
 
 After #97 went live, Strawberry answered `/globe` with 404 ("the nodes globe is not in this copy"). `globe.page_path()` looked only for `docs/nodes-globe.html` next to the code, and an installed arcade runs from the venv's site-packages, which has no `docs/`. The tests run from a checkout, so they never saw it.
 - **Fix:** `arcade/nodes-globe.html`, the same bytes as the GitHub Pages copy, is named in `pyproject.toml` package-data, and `page_path()` looks there first.
