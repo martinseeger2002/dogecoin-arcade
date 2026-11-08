@@ -88,6 +88,12 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-08 · the operator's side (Claude) · merged PRs #108 #109 #110 #111 #112 onto master
+
+All five applied cleanly; 277 tests passed on them (modules, Lite, DigiDollar, Explore, ord index, page doors).
+PR #107 (Litecoin ordinals on mainnet, Taproot on LTC and DGB) is held for the operator. It undoes tbuuol's 2026-11-05 ask to keep LTC, tLTC and KOT free of token protocols. Its Litecoin collection sites stay behind `known_collections_import`, which is off.
+PR #97 (nodes globe) is still held.
+
 ### 2026-11-07 · the operator's side (Claude) · merged PRs #98 #100 #101 #102 #103 #104 #105 #106 onto master
 ### 2026-11-08 · SadFrog's side (Claude) · branch `team/explore-tile-notes` (on `main` 8e4430f8) · Explore: a tile it cannot show says so, not `{"error":"no such inscription"}`
 
