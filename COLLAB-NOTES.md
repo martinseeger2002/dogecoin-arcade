@@ -95,6 +95,12 @@ Two merge fixes:
 - `ddpadweb` registered after the modules gate, so Lite still served `/bytelings` and `/ddpad`. It now registers before the gate, and the Collections module claims both.
 - With #104 the look ignored `app.DESK_DEFAULT`, so the tests' website-only run opened every page inside the desktop. `_page_look` in `app.py` makes an unchosen desktop look follow `DESK_DEFAULT` again.
 
+More fixes found by the full suite:
+- `funding.guard_for` (#106) checks `GUARD_BY_NET` by name only for chains other than Dogecoin. Dogecoin, and calls with no chain, find `GUARD` first as before, so a test's mocked guard is the one used.
+- `ddpad`'s config table is written across lines, so the schema sweep can read it.
+- The feed's loading bar (#105) shows only once the feed has a scan cursor. A feed never read here shows as it is.
+- Tests: the guard mocks now know `GUARD_BY_NET` and `guard_for`'s network. A Taproot output on DigiByte test is now named by its `dgbt1p…` address (#100).
+
 #98 and #104 conflicted in the modules panel. Both are kept: the look row and "Add a node module". `test_lite_look_browser` now reads "ArcadeCore" (#104's name).
 
 ### 2026-11-07 · SadFrog's side (Claude) · branch `team/lite-dd-read` (on `main` c69f944e) · Lite wallet: DigiDollars read where the full Wallet reads them
