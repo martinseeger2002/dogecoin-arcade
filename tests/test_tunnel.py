@@ -112,3 +112,44 @@ def test_the_wizard_answers_only_at_the_node_machine(client):
         assert local.status_code == 200 and "cloudflared" in local.json()
     finally:
         state.set_setting("public_hosts", [])
+
+
+def _downloading(monkeypatch, body: bytes):
+    """urlretrieve, standing in: writes `body` and remembers the URL asked."""
+    asked = []
+
+    def fetch(url, path):
+        asked.append(url)
+        pathlib.Path(path).write_bytes(body)
+    monkeypatch.setattr(tunnel.urllib.request, "urlretrieve", fetch)
+    monkeypatch.setattr(tunnel.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(tunnel.platform, "machine", lambda: "x86_64")
+    return asked
+
+
+def test_cloudflared_is_one_release_held_to_its_hash(tmp_path, monkeypatch):
+    """2026-11-08, security review: "latest" was downloaded and run with no check. Now one version, and a download that
+    is not that version's published file is deleted and refused."""
+    import hashlib
+    body = b"the published cloudflared"
+    monkeypatch.setitem(tunnel.CLOUDFLARED_SHA256, "amd64", hashlib.sha256(body).hexdigest())
+    asked = _downloading(monkeypatch, body)
+    w = tunnel.Wizard(home=tmp_path, run=fake_run({}), which=lambda name: None)
+    got = w.install()
+    assert pathlib.Path(got).read_bytes() == body and asked == [
+        f"https://github.com/cloudflare/cloudflared/releases/download/{tunnel.CLOUDFLARED_VERSION}/cloudflared-linux-amd64"]
+    assert "latest" not in asked[0]
+
+
+def test_a_cloudflared_download_that_is_not_the_published_one_is_refused(tmp_path, monkeypatch):
+    _downloading(monkeypatch, b"something else")
+    w = tunnel.Wizard(home=tmp_path, run=fake_run({}), which=lambda name: None)
+    with pytest.raises(tunnel.TunnelError, match="does not match"):
+        w.install()
+    assert not list((tmp_path / ".local" / "bin").glob("cloudflared*")), "nothing left behind"
+
+
+def test_every_cloudflared_build_this_arcade_downloads_has_its_hash():
+    import re
+    assert set(tunnel.CLOUDFLARED_SHA256) == {"amd64", "arm64", "arm"}
+    assert all(re.fullmatch(r"[0-9a-f]{64}", h) for h in tunnel.CLOUDFLARED_SHA256.values())

@@ -22,6 +22,7 @@ written; this wizard's own files are `dogecoinarcade.yml` and its own service.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import platform
 import re
@@ -35,7 +36,16 @@ from typing import Any, Callable
 
 CONFIG_NAME = "dogecoinarcade.yml"
 SERVICE_NAME = "dogecoinarcade-tunnel.service"
-RELEASES = "https://github.com/cloudflare/cloudflared/releases/latest/download/"
+#: One release of cloudflared, held to its SHA-256 (2026-11-08, security review: "latest" was downloaded and run with no
+#: check at all). The hashes are GitHub's own digests of the release files, which the release notes repeat. A newer
+#: one: the version and its three hashes, here, together.
+CLOUDFLARED_VERSION = "2026.10.7"
+RELEASES = f"https://github.com/cloudflare/cloudflared/releases/download/{CLOUDFLARED_VERSION}/"
+CLOUDFLARED_SHA256 = {
+    "amd64": "1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872",
+    "arm64": "3df43aedc9ff291d1735b5cb576cb97e0b157488796db2e32b28aecabb445775",
+    "arm": "74f690f6707182839b63e0465726c7776dd63f0a174390b911d5d71f35cab94e",
+}
 LOGIN_URL = re.compile(r"https://dash\.cloudflare\.com/\S+")
 QUICK_URL = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 CREATED = re.compile(r"Created tunnel (\S+) with id ([0-9a-f-]{36})")
@@ -139,7 +149,14 @@ class Wizard:
         try:
             urllib.request.urlretrieve(RELEASES + f"cloudflared-linux-{name}", part)
         except Exception as exc:                             # noqa: BLE001
+            part.unlink(missing_ok=True)
             raise TunnelError(f"the download did not work: {exc}") from None
+        digest = hashlib.sha256(part.read_bytes()).hexdigest()
+        if digest != CLOUDFLARED_SHA256[name]:
+            part.unlink(missing_ok=True)
+            raise TunnelError(f"the cloudflared download is not cloudflared {CLOUDFLARED_VERSION} as published (its "
+                              "SHA-256 does not match), so it was deleted and nothing was installed. Try again later, "
+                              "or install cloudflared yourself.")
         part.chmod(0o755)
         part.replace(target)
         return str(target)
