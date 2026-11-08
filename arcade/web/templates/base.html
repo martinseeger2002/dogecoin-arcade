@@ -153,6 +153,11 @@ html.indesk body:not(.fullscreen){padding-top:0}
   // The Desktop View and the home screen are switched off here (arcade/modules.py): every page stays the website.
   return;
   {%- endif %}
+  {%- if edition_lite is defined and edition_lite %}
+  // ARCADE Lite opens on its own window, and Desktop View only when asked (Window -> Desktop View there, and back with
+  // "Back to the Lite window"): a page the Lite window sends a tab to, such as File -> Backup, stays that page.
+  return;
+  {%- endif %}
   // THE DESKTOP VIEW (desktop.html; 2026-10-28), on a computer's browser only: while its switch is on, a page opened in
   // a tab of its own goes to the desktop and opens there in a window (on by default, in Ubuntu's look). Never the Admin pages, the sign-in pages, a phone
   // or the installed app.

@@ -132,6 +132,10 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             "most_kb": packagelib.MOST_BYTES // 1000,
             "messages_on": "messages" in modulelib.enabled(settings),
             "ords_on": "ords" in modulelib.enabled(settings), "csrf": state.csrf_token,
+            # Window -> Desktop View, while that module is on and this caller may use it: the same arcade as a
+            # desktop, and "Back to the Lite window" from there (2026-11-07, SadFrog).
+            "desktop_on": "desktop" in modulelib.enabled(settings)
+                          and modulelib.may_use(settings, "desktop", caller.audience),
             "join": (join_facts or (lambda request: {"seats": 0, "free": 0, "secure": True}))(request),
             "tagchain": {"network": state.messaging.network, "version": state.messaging.params.pubkeyhash_version}},
             headers=NO_STORE)

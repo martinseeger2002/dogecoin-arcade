@@ -876,6 +876,9 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
   var COINS = {{ coins|tojson }};
   var SYSTEM = {{ system|tojson }};
   var OPERATOR = {{ 'true' if operator_view else 'false' }};
+  // On ARCADE Lite the way out goes back to the Lite window, not to the full arcade's website (2026-11-07, SadFrog: the
+  // Lite window to Desktop View "and then back without messing things up or turning off modules").
+  var LITE = {{ 'true' if edition_lite else 'false' }}, OUT = LITE ? 'Lite window' : 'Website';
   var WHO = {{ (account_name or ('node' if operator_view else 'guest'))|tojson }};
   var BRAND = {{ brand.name|tojson }};
   var STORE_ICON = '/apps/store-icon.png';
@@ -1690,7 +1693,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
     {hr: true},
   ]).concat(WHO !== 'guest' && !OPERATOR ? [{k: 'logoff', label: 'Log Off @' + WHO + '…',
                                                icon: smallIcon({glyph: ['#345d9d', '#fff', 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9']})}] : [])
-    .concat([{k: 'exit', label: 'Exit Desktop View…', icon: '<span class="dk-tglyph" style="background:#c00">' + glyphHtml(['', '#fff', 'M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0'], 12) + '</span>'}]);
+    .concat([{k: 'exit', label: LITE ? 'Back to the Lite window' : 'Exit Desktop View…', icon: '<span class="dk-tglyph" style="background:#c00">' + glyphHtml(['', '#fff', 'M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0'], 12) + '</span>'}]);
   function runStart(k) {
     var doc = /^doc:(\d+)$/.exec(k);
     if (doc) { var r = layout.recent[+doc[1]]; if (r) openWin({key: r.key, url: r.url, name: r.name, item: byKey[r.key] || {name: r.name}}); }
@@ -1779,7 +1782,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
       {k: 'skin:ubuntu', label: label('ubuntu', 'Ubuntu'), icon: themeMark('ubuntu')},
       {k: 'skin:dogefeedx', label: label('dogefeedx', 'DogeFeedX (macOS)'), icon: themeMark('dogefeedx')},
       {hr: true},
-      {k: 'exit', label: 'Website', icon: blank()}
+      {k: 'exit', label: OUT, icon: blank()}
     ];
   }
   function openCascade(b, run) {
@@ -2719,7 +2722,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
         {k: 'skin:w98', name: DESK_DEFAULT === 'w98' ? 'Windows 98 (default)' : 'Windows 98', it: {glyph: ['#245edb', '#fff', 'M3 5h18v14H3z']}},
         {k: 'skin:ubuntu', name: DESK_DEFAULT === 'ubuntu' ? 'Ubuntu (default)' : 'Ubuntu', it: {glyph: ['#e95420', '#fff', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z']}},
         {k: 'skin:dogefeedx', name: DESK_DEFAULT === 'dogefeedx' ? 'DogeFeedX (default)' : 'DogeFeedX', it: {glyph: ['#d9a520', '#1c1c1e', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z']}},
-        {k: 'exit', name: 'Website', it: {glyph: ['#3d3d3d', '#fff', 'M4 4h16v16H4z']}}
+        {k: 'exit', name: OUT, it: {glyph: ['#3d3d3d', '#fff', 'M4 4h16v16H4z']}}
       ]});
     }
     // DogeFeedX: Featured DFX apps at the top
@@ -2797,7 +2800,7 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
       {k: 'sub:themes', label: 'Switch Theme', sub: true, icon: blank()},
       {hr: true}
     ]).concat(WHO !== 'guest' && !OPERATOR ? [{k: 'logoff', label: 'Log Out…', icon: blank()}] : [])
-      .concat([{k: 'exit', label: 'Back to the Website', icon: blank()}]);
+      .concat([{k: 'exit', label: 'Back to the ' + OUT, icon: blank()}]);
     showMenu($('dk-ctx'), items, r.right, r.bottom + 4, function (k) {
       if (k.indexOf('skin:') === 0) setSkin(k.slice(5)); else runStart(k);
     });
@@ -2977,6 +2980,9 @@ html[data-skin="dogefeedx"], html[data-skin="dogefeedx"] body {
 
   // ---------- off: back to the website, at the page in front ----------
   function leave() {
+    // Lite: its window, always, and the look stays chosen for next time (Lite never sends a page here by itself:
+    // base.html); a page from the window in front would be the full arcade's, outside the Lite window.
+    if (LITE) { location.href = '/'; return; }
     try { localStorage.setItem('arcade.deskview', 'web'); } catch (e) {}   // chosen: the default would bring it back
     var to = '/', w = front();
     try { if (w && w.frame) to = w.frame.contentWindow.location.pathname + w.frame.contentWindow.location.search; } catch (e) {}
