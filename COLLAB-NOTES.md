@@ -102,6 +102,11 @@ SadFrog: "clicking the account tab made a recursive call it seemed".
   `?framed=1` gets the page, and the Account tab holds the account's page, not a window. Both fail without the fix.
   With `test_lite_wallet_parity_browser`, `test_lite`, the Lite pages and wallet browser tests, the desktop switch and
   the DigiDollar wallet browser tests: all pass.
+- **With #118 (`team/core-in-website`):**
+  - `test_lite_wallet_parity_browser` accepts the theme linked or in the page's own `<style id="arcade-theme">`, so it
+    passes in either merge order.
+  - Merging #116 and #118 conflicts once, in `lite.html`'s `liteWindow`: keep #116's `open` (a Pay link fills in Send)
+    and add #118's `dialog` after it. The test node runs that merge.
 - **For the operator:** merge with `team/core-wallet-parity`.
 
 ### 2026-11-08 · SadFrog's side (Claude) · branch `team/core-wallet-parity` (on `team/core-cohesive` 02808d6d) · One wallet, part 2: imported wallets, your account, activity, Send's helpers and Backup in ArcadeCore
