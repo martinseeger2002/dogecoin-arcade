@@ -1210,10 +1210,29 @@ def create_app(state: AppState) -> FastAPI:
         return _is_operator(request) and state.admin_sessions().valid(
             request.cookies.get(ADMIN_COOKIE, ""), state.operator)
 
-    def _nav_for(request: Request) -> list:
-        """The tabs, less those of modules switched off here (arcade/modules.py)."""
+    def _nav_for(request: Request, tabs: list | None = None) -> list:
+        """The tabs, less those of modules switched off here (arcade/modules.py), and less those this person hid under
+        Your tabs; a node module that is on and open to them is a tab too (/module/<name>), as in ArcadeCore's window
+        (2026-11-08: one choice of tabs for every look)."""
         settings = state.settings()
-        return [entry for entry in _nav_tabs(request) if modulelib.path_on(settings, entry[0])]
+        nav = [entry for entry in _nav_tabs(request) if modulelib.path_on(settings, entry[0])]
+        if tabs is None:
+            tabs = _lite_home.tabs_for(request)[0]
+        hidden = [t for t in tabs if t["hidden"]]
+        nav = [e for e in nav if not any(e[0] == t["page"] or modulelib.module_of(e[0]) == t["id"] for t in hidden)]
+        mods = [(f"/module/{t['id']}", t["title"], None, True) for t in tabs if t["package"] and not t["hidden"]]
+        at = next((i for i, e in enumerate(nav) if e[0] in ("/docs", "/admin")), len(nav))
+        return nav[:at] + mods + nav[at:]
+
+    def _nav_modules(nav: list, tabs: list) -> dict:
+        """{href: module id} for the bar's tabs that are a module's: a visitor's own choice of tabs is kept in their
+        browser, and base.html hides those there."""
+        out = {}
+        for e in nav:
+            for t in tabs:
+                if e[0] in (t["page"], f"/module/{t['id']}") or modulelib.module_of(e[0]) == t["id"]:
+                    out[e[0]] = t["id"]
+        return out
 
     def _nav_tabs(request: Request) -> list:
         """The tabs: an account's own, the operator's machine's, and Admin for the
@@ -1350,7 +1369,13 @@ def create_app(state: AppState) -> FastAPI:
             # An account gets its own tabs, not the operator's with the
             # unreachable ones removed: a menu of four things that work
             # beats a menu of eleven with seven missing.
-            "nav": _nav_for(request),
+            "nav": (nav := _nav_for(request, (tabs := _lite_home.tabs_for(request))[0])),
+            # Your tabs, as a visitor keeps them in their browser (base.html, _yourtabs.html)
+            "nav_modules": _nav_modules(nav, tabs[0]),
+            "tabs_kept": tabs[1],
+            # The caller's theme, in the page itself (base.html): no request more for any page, and none at all while
+            # they wear the arcade's own look. Never the end of the <style> it sits in.
+            "theme_css": _lite_home.theme_css(request).replace("</", "<\\/"),
             "public": _account_view(request),
             "terms_link": _terms_visitor(state, request),
             # Whether the operator is looking: their machine, or signed in from
@@ -25777,6 +25802,42 @@ def create_app(state: AppState) -> FastAPI:
         return render(request, "module_page.html", module=name, title=found.title, summary=found.summary,
                       tagchain={"network": chain.network, "version": chain.params.pubkeyhash_version})
 
+    # --- what the ArcadeCore window does in its dialogs, as pages of the website's look (2026-11-08) ---------------
+    # SadFrog: "there shouldnt be a differentiation between wallets now ... when you change the theme, thats it
+    # everything is styled differently but the availability and capability doesnt change", and "if things are getting
+    # chosen chose the lites version of things". Each is drawn from the window's own partials (liteweb.parts) and runs
+    # through the same routes: the console's, the keys', the themes' commands and /lite/api/tabs.
+    def _core_page(request: Request, which: str, title: str, *names: str, **extra):
+        chain = _account_chain()
+        return render(request, "core_window.html", which=which, title=title,
+                      parts=_lite_home.parts(request, *names, **extra) if names else "",
+                      tagchain={"network": chain.network, "version": chain.params.pubkeyhash_version})
+
+    @app.get("/console", response_class=HTMLResponse)
+    def console_page(request: Request):
+        """The console, as ArcadeCore's Window -> Console: every command this caller may run, the same line by line
+        (/lite/api/console), a module's spend signed by this browser's wallet only on a yes."""
+        return _core_page(request, "console", "Console")
+
+    @app.get("/build", response_class=HTMLResponse)
+    def build_page(request: Request):
+        """ArcadeCore's Window -> Build: making a theme, sharing one (the operator), API keys and the API reference."""
+        return _core_page(request, "build", "Build", "_build.html")
+
+    @app.get("/me/keys", response_class=HTMLResponse)
+    def my_keys_page(request: Request):
+        """This account's API keys (the operator's own, and the say over users', for the node's view): Build's API keys,
+        the same keys and routes (apikeys_web.py)."""
+        if signed_in(request) is None and not _reads_the_plans(request):
+            return _to_join(request)
+        return _core_page(request, "keys", "API keys", "_build.html", start="keys")
+
+    @app.get("/look", response_class=HTMLResponse)
+    def look_page(request: Request):
+        """ArcadeCore's Settings -> Theme… and Your tabs…, and the operator's Options -> Themes: one choice of theme and
+        of module tabs, worn by every look (the website through /lite/theme.css, base.html)."""
+        return _core_page(request, "look", "Theme and tabs", "_look.html")
+
     @app.get("/me/wallet/tokens", response_class=HTMLResponse)
     def my_wallet_tokens(request: Request):
         """The Tokens tab: what this account's addresses hold, and a form
@@ -37285,7 +37346,7 @@ def create_app(state: AppState) -> FastAPI:
                                   account_address=_account_address, name_of=_name_of, node_tools=node_tools,
                                   public_tools=public_tools, wallet_name=_account_name,
                                   account_view=_account_view, join_facts=_join_facts, offer_for=_module_offer,
-                                  admin_password_ok=_admin_password_ok)
+                                  admin_password_ok=_admin_password_ok, pages_for=_nav_for)
     # API keys (arcade/apikeys.py): their routes, kept by the gate below like every other.
     from . import apikeys_web
     apikeys_web.register(app, state, admin_check=_admin_check, signed_in=signed_in, run_line=_lite_home.run_line)

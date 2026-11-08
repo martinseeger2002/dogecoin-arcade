@@ -109,12 +109,13 @@ def test_a_theme_changed_on_disk_is_not_worn(app, app_state, tmp_path):
 
 def test_the_window_and_the_full_pages_in_lite_link_the_theme(app, app_state):
     assert '<link rel="stylesheet" href="/lite/theme.css">' in app.get("/lite", headers=OUTSIDE).text
-    # The full edition's pages link it only from inside the window (base.html writes it there), never as a page's own
-    # stylesheet: opened on their own they are unchanged (2026-11-08).
-    assert '<link rel="stylesheet" href="/lite/theme.css">{#' not in app.get("/docs", headers=LOCAL).text
+    # Every look wears the caller's theme (2026-11-08, SadFrog: "when you change the theme, thats it everything is
+    # styled differently"): the website's pages link it too, its values naming the website's own colours. The window's
+    # look (pages.css) is still only the Lite edition's, or a page's inside the window (base.html writes it there).
+    assert '<style id="arcade-theme">' in app.get("/docs", headers=LOCAL).text, "carried in the page itself"
     assert '</style>\n<link rel="stylesheet" href="/lite/pages.css">' not in app.get("/docs", headers=LOCAL).text
     app_state.set_setting("edition", "lite")
     try:
-        assert '<link rel="stylesheet" href="/lite/theme.css">' in app.get("/docs", headers=LOCAL).text
+        assert '<style id="arcade-theme">' in app.get("/docs", headers=LOCAL).text
     finally:
         app_state.set_setting("edition", None)

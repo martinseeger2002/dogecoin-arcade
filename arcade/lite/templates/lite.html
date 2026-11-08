@@ -146,6 +146,12 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     {% if audience == 'operator' %}<li><button type="button" data-win="peers">Peers</button></li>{% endif %}
     <li><hr></li><li><button type="button" data-build>Build…</button></li>
   </ul></div>
+  {#- Go: the website's own pages for this caller (its bar, app.py _nav_for), each opened inside this window: a tab of
+      its own when it has one, else framed, wearing the window's look and theme (2026-11-08, SadFrog: every look reaches
+      the same things). -#}
+  {% if go_pages %}<div class="menu"><button type="button">Go</button><ul>
+    {% for g in go_pages %}<li><button type="button" data-go="{{ g.href }}">{{ g.label }}</button></li>
+    {% endfor %}</ul></div>{% endif %}
   {#- View: the looks this arcade can be worn in (arcade/modules.py LOOKS; 2026-11-07, SadFrog: ArcadeCore "another theme
       that can be switched between ubuntu, window98"). The desktop's need its module, and a computer's screen. -#}
   <div class="menu"><button type="button">View</button><ul>
@@ -221,6 +227,8 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   {% for t in tabs %}<section data-panel="m-{{ t.id }}" class="frame{{ ' modframe' if t.package }}" hidden>{% if t.package %}<div class="modpanel" data-modpanel="{{ t.id }}" hidden></div>{% endif %}<iframe title="{{ t.title }}" data-src="{{ t.page }}"></iframe></section>
   {% endfor %}
   {% if admin_tab %}<section data-panel="admin" class="frame" hidden><iframe title="Admin" data-src="/admin"></iframe></section>{% endif %}
+  {#- Any other page of the arcade's, opened from Go or a menu: framed here, so it wears the window (base.html). #}
+  <section data-panel="page" class="frame" hidden><iframe title="Page" data-src="/docs"></iframe></section>
 </main>
 
 <footer class="statusbar"><span id="sync">Connecting…</span><span id="links"></span></footer>
@@ -256,23 +264,10 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   </div>
 </div>
 
-<div class="dialog" id="yourtabs" role="dialog" aria-label="Your tabs">
-  <div class="window" style="width:min(520px,96vw)">
-    <header><span>Your tabs</span><button type="button" data-close aria-label="Close">×</button></header>
-    <div class="wbody">
-      <p class="muted" style="margin:0 0 8px">The core tabs are always there. Pick which of this arcade's modules you see{% if not tab_owner %}
-        (kept in this browser; sign in to keep them with your account){% endif %}.</p>
-      <table><thead><tr><th>Tab</th><th>What it is</th></tr></thead><tbody id="yourtabs-list"></tbody></table>
-      <p class="muted" id="yourtabs-none" hidden>This arcade has no modules open to you yet.</p>
-      <p style="margin:10px 0 0;text-align:right"><button type="button" data-close>Cancel</button>
-        <button type="button" id="yourtabs-save">Save</button></p>
-    </div>
-  </div>
-</div>
-
 {% include "_options.html" %}
 {% include "_build.html" %}
 {% include "_themes.html" %}
+{% include "_yourtabs.html" %}
 
 <script>
 (function () {
@@ -418,12 +413,24 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
       if (mod && document.querySelector('main [data-panel="m-' + mod[1] + '"]')) return 'm-' + mod[1];
       var best = null, len = 0;
       document.querySelectorAll('main section.frame iframe').forEach(function (f) {
+        if (f.parentNode.dataset.panel === 'page') return;        // any page: not one tab's own
         var base = f.dataset.src.replace(/\/+$/, '');
         if ((path === base || path.indexOf(base + '/') === 0) && base.length > len) { best = f.parentNode.dataset.panel; len = base.length; }
       });
       return best;
     },
-    open: function (name, href) { if (document.querySelector('main [data-panel="' + name + '"]')) panel(name, href); }
+    open: function (name, href) { if (document.querySelector('main [data-panel="' + name + '"]')) panel(name, href); },
+    // The website's pages that are this window's own dialogs (app.py: /console, /build, /me/keys, /look): a framed
+    // page's link to one opens the dialog here instead. True when it did.
+    dialog: function (path, hash) {
+      var b = {'/console': '[data-win="console"]', '/build': '[data-build]', '/me/keys': '[data-build]',
+               '/look': '[data-theme-open]'}[path];
+      if (!b || !document.querySelector(b)) return false;
+      document.querySelector(b).click();
+      var t = path === '/me/keys' ? 'keys' : path === '/build' && hash;
+      if (t && document.querySelector('#build [data-btab="' + t + '"]')) document.querySelector('#build [data-btab="' + t + '"]').click();
+      return true;
+    }
   };
   document.querySelectorAll('[data-open]').forEach(function (a) {
     a.onclick = function (e) { e.preventDefault(); document.querySelector('.toolbar [data-tab="' + a.dataset.open + '"]').click(); };
@@ -432,42 +439,12 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   var opened = PATHS[location.pathname] || location.hash.slice(1);
   if (opened && document.querySelector('main [data-panel="' + opened + '"]')) panel(opened);
 
-  // Settings -> Your tabs: an account's choice is kept with it (and the operator's for the node's view); a visitor's
-  // stays in this browser.
-  var KEPT = {{ 'true' if tab_owner else 'false' }}, LOCAL = 'lite_tabs_hidden', yourTabs = [];
-  function localHidden() { try { return JSON.parse(localStorage.getItem(LOCAL) || '[]'); } catch (e) { return []; } }
-  if (!KEPT) localHidden().forEach(function (id) {
+  // Settings -> Your tabs (_yourtabs.html): a visitor's choice stays in this browser, and hides their tabs here.
+  if (!{{ 'true' if tab_owner else 'false' }}) (window.liteHiddenTabs ? window.liteHiddenTabs() : []).forEach(function (id) {
     var b = document.querySelector('.toolbar [data-module="' + id + '"]');
     if (b) { b.hidden = true; b.dataset.off = '1'; }
   });
   fit();
-  document.querySelector('[data-yourtabs]').onclick = function () {
-    fetch('/lite/api/tabs', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (j) {
-      yourTabs = j.tabs || [];
-      var hidden = KEPT ? yourTabs.filter(function (t) { return t.hidden; }).map(function (t) { return t.id; }) : localHidden();
-      var list = $('yourtabs-list'); list.textContent = '';
-      yourTabs.forEach(function (t) {
-        var tr = document.createElement('tr'), a = document.createElement('td'), b = document.createElement('td');
-        var label = document.createElement('label'), box = document.createElement('input');
-        box.type = 'checkbox'; box.value = t.id; box.checked = hidden.indexOf(t.id) < 0;
-        label.appendChild(box); label.appendChild(document.createTextNode(' ' + t.title));
-        a.appendChild(label); b.textContent = t.summary; b.className = 'muted';
-        tr.appendChild(a); tr.appendChild(b); list.appendChild(tr);
-      });
-      $('yourtabs-none').hidden = yourTabs.length > 0;
-      open('yourtabs');
-    });
-  };
-  $('yourtabs-save').onclick = function () {
-    var hidden = [];
-    document.querySelectorAll('#yourtabs-list input').forEach(function (x) { if (!x.checked) hidden.push(x.value); });
-    var done = KEPT
-      ? fetch('/lite/api/tabs', {method: 'POST', credentials: 'same-origin',
-          headers: {'Content-Type': 'application/json', 'X-Arcade-Lite': '1'}, body: JSON.stringify({hidden: hidden})})
-          .then(function (r) { if (!r.ok) throw new Error('not kept'); })
-      : Promise.resolve().then(function () { try { localStorage.setItem(LOCAL, JSON.stringify(hidden)); } catch (e) {} });
-    done.then(function () { location.reload(); }, function () { alert('Your tabs were not kept. Try again.'); });
-  };
 
   // menus: click to open, click elsewhere to close
   document.querySelectorAll('.menu>button').forEach(function (b) {
@@ -494,7 +471,13 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   document.querySelectorAll('[data-run]').forEach(function (b) {
     b.onclick = function () { open('debug'); wtab('console'); send(b.dataset.run); };
   });
-  document.querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { location.href = b.dataset.go; }; });
+  // A menu's page opens inside the window: its own panel (Join, Backup), the tab it belongs in, or framed (2026-11-08).
+  function go(href) {
+    var path = href.split('#')[0].split('?')[0], tab = PATHS[path] || window.liteWindow.route(path);
+    if (tab) return panel(tab, PATHS[path] || tab === 'overview' || /^m-/.test(tab) ? undefined : href);
+    panel('page', href);
+  }
+  document.querySelectorAll('[data-go]').forEach(function (b) { b.onclick = function () { go(b.dataset.go); }; });
   // View: another look is kept in this browser (base.html and desktop.html read it) and opened at once.
   document.querySelectorAll('[data-look]').forEach(function (b) {
     if (b.dataset.look === 'core') return;
@@ -515,26 +498,15 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
     if (e.key === 'Escape') document.querySelectorAll('.dialog.open').forEach(function (d) { d.classList.remove('open'); });
   });
 
-  // console
-  var out = $('out'), line = $('line'), past = [], back = 0;
-  function say(text, cls) {
-    var div = document.createElement('div'); if (cls) div.className = cls;
-    div.textContent = text; out.appendChild(div); out.scrollTop = out.scrollHeight;
-  }
-  say('Welcome to the ArcadeCore console.\nType help for the list of commands, or help <command> for one.');
-  function send(text) {
-    say('> ' + text, 'in');
-    // A command this window runs itself (an account's messages: _messages.html), unless only its help is asked.
-    var word = text.split(/\s+/)[0], rest = text.slice(word.length), local = (window.liteLocal || {})[word];
-    if (local && !/(^|\s)(-h|-help|--help)(\s|$)/.test(rest)) {
-      Promise.resolve().then(function () { return local(rest); })
-        .then(function (r) { say(typeof r === 'string' ? r : JSON.stringify(r, null, 2)); },
-              function (e) { say(String((e && e.message) || e), 'err'); });
-      return;
-    }
-    runLine(text, function (result) { say(typeof result === 'string' ? result : JSON.stringify(result, null, 2)); })
-      .then(function (signed) { if (signed) say(signed); }, function (e) { say(String((e && e.message) || e), 'err'); });
-  }
+  // console: /lite/modforms.js's, one copy for every look (the website's /console draws the same, 2026-11-08). A word
+  // this window runs itself (an account's messages: _messages.html, window.liteLocal) stays here.
+  var line = $('line');
+  var konsole = import('/lite/modforms.js').then(function (m) {
+    return m.startConsole($('out'), line, function () { return {pubkeys: window.litePubkeys, sign: window.liteSign}; },
+      {welcome: 'Welcome to the ArcadeCore console.\nType help for the list of commands, or help <command> for one.',
+       local: function () { return window.liteLocal || {}; }});
+  });
+  function send(text) { return konsole.then(function (c) { return c.send(text); }); }
   // One console line, typed or from a module's form: a node module's command is told the keys this browser's wallet
   // holds (only their public halves), so a mint can name its owner; what it prepares to spend comes back as an offer
   // this wallet reviews and signs (_wallet.html). `shown` gets the answer before the wallet asks; the promise ends
@@ -552,12 +524,6 @@ code{font:12px var(--mono);overflow-wrap:anywhere}
   // Drawn the first time its tab is shown (panel() calls this), or now if it is shown already.
   window.liteModulePanel = function (box) { if (!box.dataset.drawn) { box.dataset.drawn = '1'; drawModule(box); } };
   document.querySelectorAll('[data-modpanel]').forEach(function (box) { if (!box.parentNode.hidden) window.liteModulePanel(box); });
-  line.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && line.value.trim()) {
-      past.push(line.value); back = past.length; send(line.value.trim()); line.value = '';
-    } else if (e.key === 'ArrowUp' && back > 0) { back--; line.value = past[back]; e.preventDefault(); }
-    else if (e.key === 'ArrowDown') { back = Math.min(past.length, back + 1); line.value = past[back] || ''; e.preventDefault(); }
-  });
 })();
 </script>
 </body>

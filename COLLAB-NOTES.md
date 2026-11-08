@@ -88,6 +88,61 @@ coding agent, so it is written for agents first and people second.
 
 ## Log (newest first)
 
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/core-in-website` (on `team/core-cohesive` 02808d6d) · What only ArcadeCore did, in the website's look too
+
+SadFrog: "there shouldnt be a differentiation between wallets now it should all be the same thing - when you change
+the theme, thats it everything is styled differently but the availability and capability doesnt change", and "if things
+are getting chosen chose the lites version of things". The other direction from `team/core-cohesive`: API keys, themes,
+the console and Your tabs reached from the website, by the window's own code.
+- **The window's dialogs as website pages** (`app.py` `_core_page`, `core_window.html`, `liteweb.parts`): the window's
+  partials drawn with `page` set, so they open as the page, styled with the website's variables.
+  - `/me/keys`: Build -> API keys (`_build.html`, opened on its keys), over `/account/keys` or `/admin/api/keys` as the
+    window decides. Linked from Your arcade (`me.html`).
+  - `/build`: the whole Build window (theme guide, sharing, keys, API reference). Its "Type it in the console" goes to
+    `/console#<line>` when there is no window console.
+  - `/look`: Settings -> Theme… and Your tabs…, with the operator's Options -> Themes (now `_themes_manage.html`,
+    included by `_options.html` and by `_look.html`).
+  - `/console`: the console. Its code moved from `lite.html` into `modforms.js` (`startConsole`); the window and
+    the page both call it, with the browser wallet's keys and signing as hooks.
+  - All four are claimed by the core module (`modules.py`) and are public pages at the door (`door.py`). The website
+    footer links the first three.
+- **A theme in the website's look** (`base.html`): every page carries the caller's theme in its own
+  `<style id="arcade-theme">`. It holds what `/lite/theme.css` says (`liteweb.theme_css`), so a page needs no extra
+  request; a linked stylesheet held up every page, and the desktop's framed pages raced it.
+  - A theme's values already named the website's own variables (`packages.COLOURS`: `--bg`, `--fg`, `--accent` and
+    the rest), so the website wears its colours, font and corners; the window wears them its way.
+  - The style is empty while a person wears the arcade's own look, so nothing changes until a theme is chosen.
+  - A pick redraws the style in place (`_themes.html` restyle).
+  - The desktops keep their skins; the pages in their windows wear the theme.
+  - `test_lite_themes` and `test_digidollar_wallet_browser` (a framed page's theme) now expect the style.
+- **Your tabs in the website's bar** (`app.py` `_nav_for`): a module the person hid is left out of the bar as it is
+  out of the window's tabs; a node module that is on and open to them is a bar tab too (`/module/<id>`, before Docs). A
+  visitor's choice stays in their browser (`lite_tabs_hidden`); each bar tab says its module (`data-module`) and
+  `base.html` hides those.
+- **Fix, both looks:** the operator's Your tabs save was refused (403: an admin write needs `X-Arcade-Admin`).
+  `_yourtabs.html` (moved out of `lite.html`) now sends it.
+- **The website's pages in the window** (`lite.html`):
+  - **Go** menu: the website bar's pages for this caller (`pages_for`), minus what the window has its own way (Send to
+    Transactions for the Wallet, the Address book, Messages, Apps, Admin, Backup, Your account).
+  - Each opens inside the window: its tab, or a new `page` frame that wears the look and theme. The menus' Guides and
+    Your account open there too, instead of leaving the window.
+  - A framed page's link to `/console`, `/build`, `/me/keys` or `/look` opens the window's own dialog
+    (`liteWindow.dialog`, `base.html`).
+- **Fix:** Admin's "Open <module> →" inside the window did nothing when the window had no tab for it (hidden, or
+  switched on since). It now opens the module's page in the frame (`modules_js.js`).
+- **Not done:** an account's message commands (`liteLocal`, `_messages.html`) run only in the window's console; on
+  `/console` they go to the node, which runs only the commands it has. Switching a module on or off in Admin inside the
+  window still needs a reload for the window's tabs.
+- **Tests:** with the Lite, web, public, modules, API keys and wallet browser suites, all pass. `test_docs` fails the
+  same 2 on `team/core-cohesive` itself ("Every decision, and why"), so not from this branch.
+  - `tests/test_core_in_every_look.py` (8): the pages, door and claims; an account's keys; the theme on every page;
+    `/look`; the bar honouring Your tabs; a node module's tab; the shared console; Go reaching every bar page.
+  - `tests/test_core_in_every_look_browser.py` (5, Firefox): a theme made the arcade's from `/look`, worn by
+    website pages; Feed hidden there, gone from the bar and the window; the console and Build's guide; the operator's
+    API key; the window's Go -> Docs framed, with its footer's console opening the window's; Admin's Open link
+    for a hidden module.
+- **For the operator:** please merge after `team/core-cohesive`. Nothing to set on a node.
+
 ### 2026-11-08 · SadFrog's side (Claude) · branch `team/core-cohesive` (on `main` 17c3f88d) · One wallet in every look: framed pages wear the look, DigiDollar is the module's everywhere, module forms on the website
 
 SadFrog: "there shouldnt be a differentiation between wallets now it should all be the same thing - when you change

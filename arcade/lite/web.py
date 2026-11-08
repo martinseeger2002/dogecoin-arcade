@@ -12,6 +12,7 @@ from pathlib import Path
 from fastapi import Body, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 
 from . import commands as cmdlib
 from .. import modules as modulelib
@@ -52,7 +53,7 @@ CONSOLE_PER_MINUTE = 30
 
 def register(app, state, admin_check, signed_in, account_address, name_of, node_tools=None, public_tools=None,
              wallet_name=lambda request: "", account_view=lambda request: False, join_facts=None, offer_for=None,
-             admin_password_ok=None):
+             admin_password_ok=None, pages_for=lambda request: []):
     """Add /lite to the node's app, with the web app's own checks: `admin_check(request, write=False)` raises unless
     the operator is asking, `signed_in(request)` is the account or None, `account_address(pubkey, chain)` and
     `name_of(address)` look an account up. `node_tools` is what the operator's commands ask of the node,
@@ -60,7 +61,10 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
     `account_view(request)` whether the wallet shown is the account's rather than the node's, and `join_facts(request)`
     what Join says: seats, free, fruit, secure and why_not (app.py). `offer_for(pubkey)` makes a node module's prepared
     transaction an offer that account's wallet signs: (network, unsigned) -> the offer, as /account/sign takes it.
-    Returns the window's page, which ARCADE Lite also serves at /."""
+    `pages_for(request)` is the website's own bar for this caller, (href, label, ...) each: the window's Go menu opens
+    them inside it. Returns the window's page, which ARCADE Lite also serves at /, with `parts(request, *templates)`
+    (the window's dialogs drawn as a website page), `tabs_for(request)` (this caller's module tabs, each with whether
+    they hid it, for the website's bar) and `run_line`."""
 
     def caller_for(request: Request, write: bool = False, pubkeys: dict | None = None,
                    password: str = "") -> cmdlib.Caller:
@@ -100,12 +104,50 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         settings = state.settings()
         return modulelib.tabs(settings, caller.audience, modulelib.hidden_tabs(settings, tab_owner(caller, request)))
 
+    def window_context(caller, request: Request) -> dict:
+        """What the window's dialogs are drawn with, in the window and on the website's pages alike (parts)."""
+        return {"audience": caller.audience, "account": bool(caller.account),
+                "tab_owner": bool(tab_owner(caller, request)),
+                # Window -> Build's guide (_build.html) names a theme's limits as packages.py holds them
+                "fonts": list(packagelib.FONTS), "most_files": packagelib.MOST_FILES,
+                "most_kb": packagelib.MOST_BYTES // 1000}
+
+    def parts(request: Request, *names: str, **extra) -> Markup:
+        """The window's own dialogs (_build.html, _themes.html, _yourtabs.html ...) drawn for a website page: the same
+        markup and code, opened as the page (`page`), so the website does everything the window does with one copy
+        (2026-11-08, SadFrog: "if things are getting chosen chose the lites version of things")."""
+        context = {**window_context(caller_for(request), request), "page": True, **extra}
+        return Markup("".join(TEMPLATES.env.get_template(n).render(context) for n in names))
+
+    def tabs_for(request: Request) -> tuple[list[dict], bool]:
+        """(this caller's module tabs, each with whether they hid it; whether that choice is kept with them rather than
+        in their browser)."""
+        caller = caller_for(request)
+        return module_tabs(caller, request), bool(tab_owner(caller, request))
+
+    def go_pages(request: Request) -> list[dict]:
+        """Window -> Go: the website's own pages for this caller, each opened inside the window (a tab of its own when
+        it has one, else framed, wearing the window's look and theme: base.html). What the window has of its own is left
+        out, its way being the one kept: Overview, Send to Transactions (the Wallet), the Address book, Messages, Apps,
+        Admin, and the File and Settings menus' Backup and Your account."""
+        own = {"/", "/messages", "/me/messages", "/apps", "/admin", "/wallet", "/me/wallet", "/contacts",
+               "/me/contacts", "/backup", "/me/backup", "/me"}
+        out, seen = [], set()
+        for entry in pages_for(request):
+            href, label = entry[0], entry[1]
+            if href in own or href.startswith("/#") or href in seen or (len(entry) > 3 and not entry[3]):
+                continue
+            seen.add(href)
+            out.append({"href": href, "label": label})
+        return out
+
     @app.get("/lite", response_class=HTMLResponse)
     def lite_page(request: Request):
         from ..web import brand as brandlib
         caller = caller_for(request)
         settings = state.settings()
         return TEMPLATES.TemplateResponse(request, "lite.html", {
+            **window_context(caller, request), "page": False, "go_pages": go_pages(request),
             "name": brandlib.current().name, "audience": caller.audience,
             "edition": modulelib.edition(settings), "asking": modulelib.asking(settings),
             "apps": [m for m in modulelib.describe(settings)["modules"] if not m["core"]],
@@ -118,7 +160,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             # The window's tabs after the core's: each module that is on, open to this caller and not hidden by
             # them, opened inside the window (2026-11-04, SadFrog: "when enabled should be a part of the ui").
             "tabs": [t for t in module_tabs(caller, request) if not t["hidden"]],
-            "tab_owner": bool(tab_owner(caller, request)), "icons": ICONS,
+            "icons": ICONS,
             # DigiDollars in the wallet's own Send, Receive and balances, while the DigiDollar module is on and this
             # caller may use it (2026-11-06, SadFrog: "along side their wallet receives. and add them to send").
             "digidollar": any(t["id"] == "digidollar" for t in module_tabs(caller, request)),
@@ -127,9 +169,6 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
             # operator's account is enough to show the tab, and Admin itself asks for the password (2026-11-05).
             "admin_tab": caller.audience == "operator" or bool(
                 caller.account and state.operator and caller.account.lower() == state.operator.lower()),
-            # Window -> Build's guide (_build.html) names a theme's limits as packages.py holds them
-            "fonts": list(packagelib.FONTS), "most_files": packagelib.MOST_FILES,
-            "most_kb": packagelib.MOST_BYTES // 1000,
             "messages_on": "messages" in modulelib.enabled(settings),
             "ords_on": "ords" in modulelib.enabled(settings), "csrf": state.csrf_token,
             # Window -> Desktop View, while that module is on and this caller may use it: the same arcade as a
@@ -160,6 +199,11 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
 
         The operator at the machine sees a folder they are trying (`trytheme`) instead, read afresh on every load,
         and what is wrong with it as a comment."""
+        return Response(theme_for(request), media_type="text/css", headers=NO_STORE)
+
+    def theme_for(request: Request) -> str:
+        """lite_theme_css's CSS, which the website's pages also carry in their own <style> (base.html): every look wears
+        the caller's theme, and a page asks nothing more for it (2026-11-08)."""
         caller = caller_for(request)
         settings = state.settings()
         trying = settings.get(packagelib.TRY) if caller.audience == "operator" and caller.local else None
@@ -179,7 +223,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
                     css = packagelib.theme_css(manifest, f"/lite/packages/{pid}")
         except (packagelib.PackageError, OSError) as exc:          # the arcade's own look, and why
             css = f"/* {'trytheme' if trying else 'theme'}: {str(exc).replace('*/', '* /')} */\n"
-        return Response(css, media_type="text/css", headers=NO_STORE)
+        return css
 
     @app.get("/lite/packages/{pid}/files/{name}")
     def lite_package_file(request: Request, pid: str, name: str):
@@ -429,4 +473,7 @@ def register(app, state, admin_check, signed_in, account_address, name_of, node_
         return JSONResponse(said, headers={**NO_STORE, **MODULE_PAGE})
 
     lite_page.run_line = run_for
+    lite_page.parts = parts
+    lite_page.tabs_for = tabs_for
+    lite_page.theme_css = theme_for
     return lite_page

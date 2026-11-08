@@ -43,6 +43,38 @@ export function runLine(text, shown, hooks) {
     });
 }
 
+/** The console, in any look (2026-11-08, SadFrog: "there shouldnt be a differentiation between wallets now"): `out` is
+ * where lines are written, `input` the box a line is typed in. Lines run as runLine runs them, with `hooks` (the
+ * browser wallet's keys and signing); a word in `local` ({word: (rest) => answer}) is run by the page itself, as the
+ * ArcadeCore window runs an account's message commands (_messages.html), unless only its help is asked. Up and Down
+ * walk back through what was typed. Returns {send(line)}, for a menu item or a guide's button to run one. */
+export function startConsole(out, input, hooks, opts) {
+  var o = opts || {}, past = [], back = 0;
+  function say(text, cls) {
+    var div = document.createElement('div'); if (cls) div.className = cls;
+    div.textContent = text; out.appendChild(div); out.scrollTop = out.scrollHeight;
+  }
+  function shown(r) { say(typeof r === 'string' ? r : JSON.stringify(r, null, 2)); }
+  function fail(e) { say(String((e && e.message) || e), 'err'); }
+  say(o.welcome || 'Welcome to the console.\nType help for the list of commands, or help <command> for one.');
+  function send(text) {
+    say('> ' + text, 'in');
+    var word = text.split(/\s+/)[0], rest = text.slice(word.length), local = o.local ? (o.local() || {})[word] : null;
+    if (local && !/(^|\s)(-h|-help|--help)(\s|$)/.test(rest)) {
+      return Promise.resolve().then(function () { return local(rest); }).then(shown, fail);
+    }
+    return runLine(text, shown, typeof hooks === 'function' ? hooks() : hooks)
+      .then(function (signed) { if (signed) say(signed); }, fail);
+  }
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && input.value.trim()) {
+      past.push(input.value); back = past.length; send(input.value.trim()); input.value = '';
+    } else if (e.key === 'ArrowUp' && back > 0) { back--; input.value = past[back]; e.preventDefault(); }
+    else if (e.key === 'ArrowDown') { back = Math.min(past.length, back + 1); input.value = past[back] || ''; e.preventDefault(); }
+  });
+  return {send: send, say: say};
+}
+
 const coinsOf = (n) => (Number(n || 0) / 1e8).toLocaleString(undefined, {maximumFractionDigits: 8});
 const unitOf = (c) => (c.coin || c.label || "") + (c.mainnet === false && !/test/i.test(c.coin || "") ? " test" : "");
 

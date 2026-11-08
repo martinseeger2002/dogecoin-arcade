@@ -121,7 +121,9 @@ _MODULES = (
                    "/admin/api/release", "/admin/api/settings", "/admin/api/cores", "/admin/api/restart",
                    "/admin/api/setup", "/admin/api/welcome", "/admin/api/litecoin", "/admin/api/modules",
                    "/admin/modules.js", "/m", "/module", "/api/v1", "/admin/api/keys", "/account/keys", "/admin/api/owner",
-                   "/admin/api/your-nodes"),
+                   "/admin/api/your-nodes",
+                   # the window's dialogs as website pages (2026-11-08): the console, Build, API keys, theme and tabs
+                   "/console", "/build", "/me/keys", "/look"),
            jobs=("pack-source", "core-installs", "auto-update", "repair", "chain-scan", "token-indexes", "releases",
                  "faucets")),
     Module("wallet", "core", "Wallet", "Every chain's wallet for the operator and for users: Send, Receive, "

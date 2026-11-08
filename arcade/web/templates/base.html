@@ -23,14 +23,16 @@
   if (!win) return;
   document.documentElement.classList.add('in-window');
   {%- if not edition_lite %}
-  // the window's look and this caller's theme (scoped to body[data-lite], set as the body opens, below)
-  document.write('<link rel="stylesheet" href="/lite/pages.css"><link rel="stylesheet" href="/lite/theme.css">');
+  // the window's look (scoped to body[data-lite], set as the body opens, below); the caller's theme is every page's
+  document.write('<link rel="stylesheet" href="/lite/pages.css">');
   {%- endif %}
   document.addEventListener('click', function (e) {
     var a = e.target.closest && e.target.closest('a[href]');
     if (!a || (a.target && a.target !== '_self') || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey) return;
     var u = new URL(a.getAttribute('href'), location.href);
     if (u.origin !== location.origin) return;
+    // a page that is one of the window's own dialogs (the console, Build, API keys, theme and tabs) opens it there
+    if (win.dialog && win.dialog(u.pathname, u.hash.slice(1))) { e.preventDefault(); return; }
     var home = u.pathname === '/' || u.pathname === '/lite';
     var tab = home ? (u.hash.slice(1) || 'overview') : win.route(u.pathname);
     if (tab && tab !== win.route(location.pathname)) {
@@ -225,7 +227,12 @@ html.indesk body:not(.fullscreen){padding-top:0}
 <link rel="modulepreload" href="/vendor/hashes/_assert.js"><link rel="modulepreload" href="/vendor/hashes/crypto.js">
 {% endif %}
 {% if brand.css %}<style>/* this node's face (arcade/web/brand.py) */{{ brand.css | safe }}</style>{% endif %}
-{% if edition_lite %}<link rel="stylesheet" href="/lite/pages.css"><link rel="stylesheet" href="/lite/theme.css">{% endif %}{# ARCADE Lite's window look (arcade/lite) #}
+{% if edition_lite %}<link rel="stylesheet" href="/lite/pages.css">{% endif %}{# ARCADE Lite's window look (arcade/lite) #}
+{#- The theme this caller wears (arcade/packages.py; /look, or Settings -> Theme… in ArcadeCore), in every look: its
+    colours, font and corners as the website's own variables here, as the window's there; empty while they wear the
+    arcade's own look (2026-11-08, SadFrog: "when you change the theme, thats it everything is styled differently").
+    Carried in the page, as /lite/theme.css says it; a pick redraws it in place (_themes.html). #}
+<style id="arcade-theme">{{ (theme_css if theme_css is defined else '')|safe }}</style>
 </head>
 {# Every page is live. The counter lives on the body rather than in an
    element each page has to remember to add: eight templates had one and the
@@ -254,13 +261,23 @@ html.indesk body:not(.fullscreen){padding-top:0}
     {%- set waiting = {'/approvals': approvals_waiting, '/messages': unread_messages,
                        '/me/notifications': notif_count, '/notifications': notif_count, '/me/messages': mail_count,
                        '/feed': unread_board, '/exchange': offers_waiting}.get(href) %}
-    <a class="{{ 'on' if path == href or (href == '/create' and (path in ('/nfts', '/tokens', '/mintpad/new') or path.startswith('/tokens/'))) else '' }}" href="{{ href }}">{{ label
+    <a class="{{ 'on' if path == href or (href == '/create' and (path in ('/nfts', '/tokens', '/mintpad/new') or path.startswith('/tokens/'))) else '' }}"{% if nav_modules is defined and href in nav_modules %} data-module="{{ nav_modules[href] }}"{% endif %} href="{{ href }}">{{ label
       }}{% if waiting %}<span class="nav-count">{{ waiting if waiting < 100 else '99+' }}</span>{% endif %}</a>
     {%- else %}
     <a class="off" href="{{ href }}" title="not built yet">{{ label }}</a>
     {%- endif %}
   {%- endfor %}
   </nav>
+  {%- if tabs_kept is defined and not tabs_kept %}
+  {#- Your tabs (/look, _yourtabs.html): a visitor's choice is kept in this browser, and hides the same tabs here. #}
+  <script>(function () {
+    var hid = []; try { hid = JSON.parse(localStorage.getItem('lite_tabs_hidden') || '[]'); } catch (e) {}
+    hid.forEach(function (id) {
+      document.querySelectorAll('header nav a[data-module="' + String(id).replace(/[^\w-]/g, '') + '"]')
+        .forEach(function (a) { a.hidden = true; a.style.display = 'none'; });
+    });
+  })();</script>
+  {%- endif %}
   {%- endif %}
 </div></header>
 {% if stranger_here and not embed and not fullscreen and path not in ('/', '/join', '/restore', '/join/keys') %}
@@ -2740,6 +2757,9 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   {% endif %}
   {% if terms_link %}&middot; <a href="/terms">terms of use</a>{% endif %}
   &middot; <a href="#" id="theme-pick" title="Light, dark, or as this device is set">Theme: Auto</a>
+  {#- What ArcadeCore's menus open, in this look too (2026-11-08): its Settings -> Theme… and Your tabs…, Window ->
+      Console and Build. Inside the window each opens the window's own (base.html's click above). #}
+  &middot; <a href="/look">theme and tabs</a> &middot; <a href="/console">console</a> &middot; <a href="/build">build</a>
 </footer>
 <script>
 (function () {
