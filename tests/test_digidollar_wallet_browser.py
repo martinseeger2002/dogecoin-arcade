@@ -288,3 +288,37 @@ def test_the_lite_wallet_reads_the_same_digidollars_as_the_full_wallet(browser, 
     held = _wait(browser, "const t = document.getElementById('w-history').textContent; return t.includes('$10.75') && t")
     assert "$25.00" in held and "block 9" in held, held
     assert "$35.75 in all" in browser.execute_script("return document.getElementById('w-since').textContent")
+
+    # With the wallet shut in this browser, the same balance: the arcade reads with the key the account gave it when
+    # its wallet opened here (2026-11-08, SadFrog: "i cannot see my digidollar and digidollar test balances - it says
+    # open your wallet ... as this is the wallet").
+    browser.get(f"{base}/join")                  # away first: a Lite page keeps its balances as they are read
+    browser.execute_script("sessionStorage.clear(); localStorage.clear()")
+    browser.get(f"{base}/lite#send")
+    row = _wait(browser, """return [...document.querySelectorAll('#w-balances tr')]
+        .find(r => r.cells[0] && r.cells[0].textContent === 'DigiDollar (test)' && r.cells[1].textContent.includes('$'))""")
+    said = browser.execute_script("return arguments[0].textContent", row)
+    assert "$35.75" in said, said
+    assert not browser.execute_script("return sessionStorage.getItem('arcade-open-wallet')"), "the wallet stayed shut"
+
+    # An arcade that has no key of the account's says where to unlock, and Unlock reads the balance.
+    keys = {k: v for k, v in state.settings().items() if k.startswith("coinkey:") and v == me["pubkey"]}
+    assert keys, "the sign-up told the arcade its DigiByte test key"
+    for k in keys:
+        state.set_setting(k, "")
+    browser.get(f"{base}/join")
+    browser.execute_script("localStorage.clear()")
+    browser.get(f"{base}/lite#send")
+    button = _wait(browser, """return [...document.querySelectorAll('#w-balances tr')]
+        .filter(r => r.cells[0] && r.cells[0].textContent === 'DigiDollar (test)')
+        .map(r => r.cells[1].querySelector('button')).find(Boolean)""")
+    assert button.text == "Unlock to read"
+    for k, v in keys.items():
+        state.set_setting(k, v)
+    button.click()
+    assert browser.find_element(By.ID, "w-unlock").is_displayed()
+    browser.find_element(By.ID, "w-password").send_keys("a password nobody needs to guess for this test")
+    browser.find_element(By.CSS_SELECTOR, "#w-unlock-form button").click()
+    _wait(browser, """return [...document.querySelectorAll('#w-balances tr')]
+        .some(r => r.cells[0] && r.cells[0].textContent === 'DigiDollar (test)' && r.cells[1].textContent.includes('$35.75'))""")
+    assert not browser.find_element(By.ID, "w-unlock").is_displayed()

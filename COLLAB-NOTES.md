@@ -105,6 +105,17 @@ are delegates, read over the mesh two at a time, and `Doginals.content` gave up 
 - **Explore:** every tile and viewer frame goes through `/fit` (a page is sent on to `/content/<id>` as before), so a
   missing page piece gets the note too.
 - **Tests:** `tests/test_doginal_fit.py` +2.
+### 2026-11-08 · SadFrog's side (Claude) · branch `team/lite-dd-shut` (on `main` 8e4430f8) · Lite wallet: DigiDollar balances show with the wallet shut
+
+SadFrog, on Lite's Send: "i cannot see my digidollar and digidollar test balances - it says open your wallet - but i
+dont see where its talking about as this is the wallet". The DigiDollar rows read only with the wallet unlocked in
+that tab, and nothing on Send said where to unlock it.
+- **Now:** `/account/digidollar` (`app.py`) without `pubkey` uses the key the account gave when its wallet opened here
+  (`coinkey:` settings). `_dd_owner` checks that key against the account's address as before. With no stored key it
+  says `{"unlock": true}`. The Lite rows read with the wallet shut, and only that answer shows an "Unlock to read"
+  button, which opens Send's password box. Unlocking with the send form empty reads the balances again.
+- **Tests:** `tests/test_digidollar_wallet_browser.py` (Firefox): the shut wallet reads $35.75, and with no stored
+  key the button unlocks and reads it.
 - **For the operator:** please merge into `main`. Nothing to set on a node.
 
 ### 2026-11-07 · the operator's side (Claude) · merged PRs #98 #100 #101 #102 #103 #104 #105 #106 onto master

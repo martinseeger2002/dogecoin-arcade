@@ -166,9 +166,12 @@ async function fillIn(rows, mine) {
       try {
         const h = await ddHoldings(c);
         if (mine !== drawn) return;
-        if (h) { const r = {dollars: h.digidollars}; keep(c.network, r); show(tr, c, {...r, at: Date.now()}, false); }
-        else if (!kept()[c.network]) tr.cells[1].textContent = "open your wallet";
-      } catch (x) { if (mine === drawn) { tr.cells[1].textContent = String(x.message || x); tr.cells[1].className = "num bad"; } }
+        const r = {dollars: h.digidollars}; keep(c.network, r); show(tr, c, {...r, at: Date.now()}, false);
+      } catch (x) {
+        if (mine !== drawn) continue;
+        if (x.unlock) askUnlock(tr.cells[1]);                            // the arcade has no key of this account's yet
+        else { tr.cells[1].textContent = String(x.message || x); tr.cells[1].className = "num bad"; }
+      }
       continue;
     }
     let full = null;
@@ -191,9 +194,19 @@ async function console_(line) {
   if (!j.ok) throw new Error(j.error || j.detail || "refused");
   return j.result || {};
 }
-/** What this wallet holds in DigiDollars on `c`'s chain, or null while the wallet is shut: the full Wallet's own read,
- * /account/digidollar (arcade/digidollar.py, the arcade's index of the account's DigiDollar coins), given this wallet's
- * key on that chain. One ask at a time: the Balances rows and Transactions queue here with the module's ddsend (a
+/** An Unlock button where a balance would be, for a wallet the arcade cannot read without it: it opens the password
+ * box beside it (2026-11-08, SadFrog: "it says open your wallet - but i dont see where its talking about as this is the
+ * wallet"). */
+function askUnlock(td) {
+  td.textContent = ""; td.className = "num";
+  const b = document.createElement("button"); b.type = "button"; b.textContent = "Unlock to read";
+  b.onclick = () => { $("w-unlock").hidden = false; $("w-password").focus(); };
+  td.append(b);
+}
+/** What this wallet holds in DigiDollars on `c`'s chain: the full Wallet's own read, /account/digidollar
+ * (arcade/digidollar.py, the arcade's index of the account's DigiDollar coins), given this wallet's key on that chain,
+ * or with the wallet shut the key the account gave the arcade when it opened here (2026-11-08). An error with `unlock`
+ * set means the arcade has no key of this account's yet. One ask at a time: the Balances rows and Transactions queue here with the module's ddsend (a
  * module answers one request at a time, modhost.py), and an answer under 30 seconds old is used again. */
 function ddAsk(work) {
   const asked = ddQueue.then(work);
@@ -204,14 +217,14 @@ function ddHoldings(c) {
   const kept = ddHeld[c.network];
   if (kept && Date.now() - kept.at < 30000) return Promise.resolve(kept.said);
   return ddAsk(async () => {
-    const mine = await wallet.opened(TAGCHAIN);
-    if (!mine) return null;
-    const key = Array.from(wallet.keysOn(mine, c.base).pubkey, (b) => b.toString(16).padStart(2, "0")).join("");
+    const mine = await wallet.opened(TAGCHAIN).catch(() => null);
+    const key = !mine ? ""
+      : Array.from(wallet.keysOn(mine, c.base).pubkey, (b) => b.toString(16).padStart(2, "0")).join("");
     const r = await fetch(`/account/digidollar?chain=${encodeURIComponent(c.base)}&pubkey=${key}`,
                           {credentials: "same-origin", cache: "no-store"});
     let j = {};
     try { j = await r.json(); } catch (e) { /* said below */ }
-    if (!r.ok) throw new Error(j.detail || "The arcade did not answer.");
+    if (!r.ok) throw Object.assign(new Error(j.detail || "The arcade did not answer."), {unlock: !!j.unlock});
     const said = {digidollars: Number(j.cents || 0) / 100, address: j.address || "", since: j.since, whole: j.whole,
                   coins: (j.coins || []).map((x) => ({txid: x.txid, vout: x.vout, dollars: Number(x.cents) / 100,
                                                       height: x.height}))};
@@ -318,8 +331,11 @@ async function history() {
   if (c.dd) {
     // The DigiDollars this wallet holds now, coin by coin, as the full Wallet reads them (/account/digidollar).
     let h = null;
-    try { h = await ddHoldings(c); } catch (x) { cell(tb.insertRow(), String(x.message || x), "bad"); return; }
-    if (!h) { cell(tb.insertRow(), "Open your wallet (Send asks for its password) to read your DigiDollars.", "muted"); return; }
+    try { h = await ddHoldings(c); } catch (x) {
+      cell(tb.insertRow(), x.unlock ? "Unlock your wallet on Send once, so the arcade knows your DigiByte key."
+                                    : String(x.message || x), x.unlock ? "muted" : "bad");
+      return;
+    }
     for (const coin of h.coins || []) {
       const tr = tb.insertRow();
       cell(tr, ""); cell(tr, "Held"); cell(tr, coin.height ? `block ${Number(coin.height).toLocaleString()}` : "");
@@ -444,7 +460,9 @@ $("w-unlock-form").onsubmit = async (e) => {
   if (!ME) { tell("This account's wallet is not kept on this arcade: sign in again to open it here.", "bad"); return; }
   try {
     await wallet.unlockHere(ME, $("w-password").value, TAGCHAIN);
-    $("w-password").value = ""; $("w-unlock").hidden = true; $("w-form").requestSubmit();
+    $("w-password").value = ""; $("w-unlock").hidden = true;
+    if ($("w-to").value.trim() || $("w-amount").value.trim()) $("w-form").requestSubmit();   // the send it was asked for
+    else { ddHeld = {}; balances(true); }                                // or opened for the balances: read them now
   } catch (x) { tell(String(x.message || x), "bad"); }
 };
 $("w-cancel").onclick = () => { offer = null; $("w-review").hidden = true; tell("Not sent.", "muted"); };
