@@ -328,7 +328,9 @@ chain shows only the test-coin key (coin type 1, from the name's claim), never t
   account has a DigiByte mainnet wallet, so every announce and profile publish carries it. `/account/profile` and
   `/account/announce` check the proof (400 if it fails) and leave out a key that is not the account's `dgb` address.
   `/account`'s `announced` is false while the newest announcement lacks it (as for the Dogecoin address), so the page's
-  usual check republishes once on the name chain.
+  usual check republishes once on the name chain. The ArcadeCore window (`lite/templates/lite.html`) now carries the
+  same check as the full arcade's pages (`base.html`), for a signed-in account, so somebody who only uses ArcadeCore
+  republishes too; it asks each minute until the wallet is open there, then at most once every ten minutes.
 - **Store:** `key_announcement.dd_keys` (JSON, a migration), filled by the scanner as read, unproved;
   `Store.dd_key_records`.
 - **Untouched:** `_dd_send` and the `ddmainnet` gate, `wallet.js`; `coins.js` gains one function at its end. The
