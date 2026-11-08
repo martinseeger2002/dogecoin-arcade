@@ -4394,10 +4394,11 @@ def create_app(state: AppState) -> FastAPI:
         read from the chain by this node (doginals.trace), for somebody else's wallet page (2026-10-15: "We should
         be able to see doginals in others wallets. To make offers"). [{id, txid, vout, network, kind, market}]."""
         from .. import doginals as D
-        guard = fundinglib.guard_for(address) if address else None
+        # Each chain's own guard, named (2026-11-08, security review): a DigiByte "D..." address is Dogecoin's byte.
         chain = next((c for c in state.token_chains if _ord_chain(c)
-                      and fundinglib.guard_for(address) is not None
-                      and address and _addr_version(address) == c.params.pubkeyhash_version), None)
+                      and address and _addr_version(address) == c.params.pubkeyhash_version
+                      and fundinglib.guard_for(address, c.network) is not None), None)
+        guard = fundinglib.guard_for(address, chain.network) if chain is not None else None
         if guard is None or chain is None:
             return []
         out: list[dict] = []
@@ -12748,13 +12749,13 @@ def create_app(state: AppState) -> FastAPI:
         return sum(coin["value"] for coin in utxoslib.unspent(db, address)
                    if (coin["txid"], coin["vout"]) in held and (coin["txid"], coin["vout"]) not in spent)
 
-    def _inscribed(db, address: str) -> int:
+    def _inscribed(db, address: str, network: str | None = None) -> int:
         """Satoshis of this address's coins that carry an inscription (a Doginal, or one on Pepecoin mainnet) or could
         not be read -- held, never spent by an ordinary send (funding.choose keeps them out), so never counted as
         spendable either (2026-10-15: @apple's wallet said 0.01 DOGE to spend, and that coin was Anti Doginal Dog #1089).
         Only small coins are read; each is read from the chain once and kept."""
         from .. import doginals as D
-        guard = fundinglib.guard_for(address)
+        guard = fundinglib.guard_for(address, network)    # its chain's own guard, named (2026-11-08)
         if guard is None:
             return 0
         held = 0
@@ -13257,7 +13258,7 @@ def create_app(state: AppState) -> FastAPI:
             with contextlib.closing(index.open()) as db:
                 coins = utxoslib.unspent(db, address)
                 try:
-                    marks = _coin_marks(db, address)
+                    marks = _coin_marks(db, address, chain.network)
                 except Exception:                           # noqa: BLE001 -- unmarked rather than no answer
                     marks = {}
         except Exception:                                   # noqa: BLE001
@@ -13275,11 +13276,11 @@ def create_app(state: AppState) -> FastAPI:
     import arcade.web.dogefeedx.wallet_assets as _wa_hook
     _wa_hook.STATE = state
 
-    def _coin_marks(db, address: str) -> dict[tuple[str, int], str]:
+    def _coin_marks(db, address: str, network: str | None = None) -> dict[tuple[str, int], str]:
         """(txid, vout) -> "ins" (an inscription sits on it) or "ins:?" (a small coin not checked yet, held meanwhile)
         for this address's coins, from what is already known and reading NOTHING new (guard.sort_known): other arcades
         ask for an account's list about once a minute, and a read per coin made @apple's take 30 s (2026-10-25)."""
-        guard = fundinglib.guard_for(address)
+        guard = fundinglib.guard_for(address, network)    # its chain's own guard, named (2026-11-08)
         if guard is None:
             return {}
         _free, inscribed, unchecked = guard.sort_known(utxoslib.unspent(db, address))
@@ -13302,7 +13303,7 @@ def create_app(state: AppState) -> FastAPI:
                     marks: dict = {}
                     for a in addresses:
                         try:
-                            marks.update(_coin_marks(db, a))
+                            marks.update(_coin_marks(db, a, chain.network))
                         except Exception:                   # noqa: BLE001 -- unmarked rather than no list
                             pass
                     out[chain.network] = coinlistlib.listing(db, addresses, tip, marks)
@@ -14013,7 +14014,7 @@ def create_app(state: AppState) -> FastAPI:
                     said["leaving"] = _leaving(account.pubkey, chain.network,
                                                db, address)
                     said["held"] = _held(account.pubkey, chain.network, db, address)
-                    said["inscribed"] = _inscribed(db, address)
+                    said["inscribed"] = _inscribed(db, address, chain.network)
                     _spendable(said)
                 _top_off_later(account.pubkey, address, int(said.get("spendable") or 0))
                 said["tag"] = index.tag_of(address) or ""
@@ -14118,7 +14119,7 @@ def create_app(state: AppState) -> FastAPI:
                         row["leaving"] = _leaving(account.pubkey, one.network,
                                                   db, here)
                         row["held"] = _held(account.pubkey, one.network, db, here)
-                        row["inscribed"] = _inscribed(db, here)
+                        row["inscribed"] = _inscribed(db, here, one.network)
                         # The account's other address kinds on this chain (m/49', m/84'), each its own coins: listed
                         # with their balance, so a wallet's total counts every kind it holds, in either look
                         # (2026-11-08, SadFrog: "make them one behaviour (Lite's), and make Balances count every kind").
@@ -23097,7 +23098,7 @@ def create_app(state: AppState) -> FastAPI:
         there = _doge_address_for(str(address), h160)
         if not there:
             return JSONResponse({"detail": "no account on this arcade has that address"}, status_code=404, headers=contentlib.CORS)
-        guard = fundinglib.guard_for(there) or fundinglib.GUARD
+        guard = fundinglib.guard_for(there, "doge") or fundinglib.GUARD
         if guard is None:
             return JSONResponse({"detail": "Doginals are not checked on this node"}, status_code=503, headers=contentlib.CORS)
         reg = state.collection_registry()
@@ -28610,7 +28611,7 @@ def create_app(state: AppState) -> FastAPI:
         with contextlib.closing(index.open()) as db:
             coins = utxoslib.unspent(db, address)
             cov = coinlistlib.coverage(db, address, tip)
-            marks = _coin_marks(db, address)
+            marks = _coin_marks(db, address, picked.network)
         owner = next((w for w in _imports_of(picked.network) if w["address"] == address), None)
         if owner is None:
             for row in state.vault().conn.execute("SELECT tag, pubkey FROM vault"):
